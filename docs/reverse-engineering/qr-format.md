@@ -4,7 +4,7 @@
 > (`com.embo.embodied.parent`), classes `ProtoPairing`, `JSONPairing`,
 > `PairingModel`, `WifiNetworkInfo`, `PairingInfo`, `PairMoxieQrCodeFragment`.
 > A working, round-trip-tested encoder/decoder lives in
-> [`tools/pairing/moxie_qr.py`](../tools/pairing/moxie_qr.py).
+> [`tools/pairing/moxie_qr.py`](../../tools/pairing/moxie_qr.py).
 
 ## What the QR is for
 
@@ -83,7 +83,7 @@ Notes / gotchas faithfully reproduced from the app:
 In proto mode the app embeds
 `CryptoHelper.getInstance().getSigningKey().toBytes()`. It also registers
 `SHA-256(those bytes)` with the backend via `registerForPairing(...)`
-(`ProtoPairing.serectHashFromKey`). See [`crypto-and-pairing.md`](./crypto-and-pairing.md)
+(`ProtoPairing.serectHashFromKey`). See [`crypto-and-pairing.md`](./crypto-and-keys.md)
 for the exact key type, derivation, and the server-side handshake.
 
 ## Worked example
