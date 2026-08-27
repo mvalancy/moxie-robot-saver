@@ -41,6 +41,7 @@ flowchart TB
 ### Robot side — the firmware (for running custom software on the device)
 
 - [`firmware-image.md`](firmware-image.md) — RK3288 / Android 9 partition layout, verified boot (AVB), security posture, installed apps, and **how to unlock & flash custom firmware**.
+- [`ota-and-recovery.md`](ota-and-recovery.md) — the A/B OTA machinery, payload signing gate, and an **honest map of no-disassembly upgrade vectors** for reviving old robots.
 - [`robot-ipc-protocol.md`](robot-ipc-protocol.md) — the on-device **ZeroMQ + protobuf** message bus that wires the modules together; the module map and behavior-command markup.
 - [`qr-commands.md`](qr-commands.md) — the **complete QR grammar** the robot scans (pairing / VPN / debug-factory commands), read from `bo-wifi`.
 - [`hardware-map.md`](hardware-map.md) — motors, touch/switch/IMU sensors, LED face patterns, and power rails, from the MCU protobufs.
