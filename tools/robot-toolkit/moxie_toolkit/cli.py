@@ -44,7 +44,7 @@ def main(argv=None):
     vp.add_argument("command"); vp.add_argument("--vpn-id", default=""); vp.add_argument("--url", default="")
     vp.add_argument("--username", default=""); vp.add_argument("--password", default=""); vp.add_argument("--connect", action="store_true")
 
-    rp = sub.add_parser("proto", help="look up a protocol message/enum"); rp.add_argument("query", nargs="*")
+    rp = sub.add_parser("proto", help="look up a protocol message/enum"); rp.add_argument("query", nargs=argparse.REMAINDER)
     xp = sub.add_parser("decode"); xp.add_argument("data")
     sub.add_parser("validate")
     sub.add_parser("list-commands")
