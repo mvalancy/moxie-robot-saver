@@ -30,6 +30,15 @@ PROD_CLIENT_SECRET = "OKJMOFpcI16R7Mv1GTcyC9rTsuUomd_quZhsLQLGsd4"
 app = FastAPI(title="Local Moxie Parent-App Server")
 db.init()
 
+
+@app.middleware("http")
+async def _no_cache_static(request: Request, call_next):
+    resp = await call_next(request)
+    p = request.url.path
+    if p == "/" or p.endswith((".html", ".js", ".css")):
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
 _STATIC = os.path.join(os.path.dirname(__file__), "..", "static")
 
 
@@ -405,6 +414,40 @@ def endpoint_qr_png(host: str = "", port: int = 8883, ec: str = "l"):
     payload = moxie_endpoint_qr.build_endpoint_qr(h, port)
     buf = io.BytesIO()
     segno.make(payload, error=ec).save(buf, kind="png", scale=10, border=4)
+    return Response(content=buf.getvalue(), media_type="image/png")
+
+
+def _ap_config():
+    return {"ssid": os.environ.get("MOXIE_AP_SSID"),
+            "password": os.environ.get("MOXIE_AP_PASSWORD"),
+            "host": os.environ.get("MOXIE_AP_HOST", _lan_ip())}
+
+
+@app.get("/local/direct/info")
+def direct_info():
+    """Moxie Direct mode: this machine hosts its own Wi-Fi AP. Returns everything
+    needed to show Moxie two QRs with zero manual entry — a wifi-only QR for the AP,
+    then the endpoint QR pointing at the AP IP."""
+    ap = _ap_config()
+    ready = bool(ap["ssid"] and ap["password"])
+    wifi_payload = None
+    if ready:
+        wifi = moxie_qr.WifiInfo(ap["ssid"], ap["password"], band=moxie_qr.Band.ONLY_24G)
+        wifi_payload = moxie_qr.encode_wifi_only(wifi)
+    return {"ready": ready, "ssid": ap["ssid"], "password": ap["password"], "host": ap["host"],
+            "wifi_qr_payload": wifi_payload,
+            "endpoint_qr_payload": moxie_endpoint_qr.build_endpoint_qr(ap["host"])}
+
+
+@app.get("/local/direct/wifi_qr.png")
+def direct_wifi_qr(ec: str = "l"):
+    import segno, io
+    ap = _ap_config()
+    if not (ap["ssid"] and ap["password"]):
+        raise HTTPException(404, "Moxie Direct AP not configured")
+    wifi = moxie_qr.WifiInfo(ap["ssid"], ap["password"], band=moxie_qr.Band.ONLY_24G)
+    buf = io.BytesIO()
+    segno.make(moxie_qr.encode_wifi_only(wifi), error=ec).save(buf, kind="png", scale=10, border=4)
     return Response(content=buf.getvalue(), media_type="image/png")
 
 

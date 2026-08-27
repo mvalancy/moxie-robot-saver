@@ -26,13 +26,45 @@
   <!-- TABS -->
   <div id="tabs" class="hidden">
     <nav class="tabbar" role="tablist">
-      <button class="tab active" data-tab="wifi">📶 Wi-Fi Pairing</button>
-      <button class="tab" data-tab="server">🔗 Server Pairing</button>
+      <button class="tab active" data-tab="direct">🚀 Moxie Direct</button>
+      <button class="tab" data-tab="wifi">📶 Wi-Fi</button>
+      <button class="tab" data-tab="server">🔗 Server</button>
       <button class="tab" data-tab="moxie">🤖 Moxie</button>
     </nav>
 
+    <!-- TAB: Moxie Direct -->
+    <section class="tabpanel active" id="tab-direct">
+      <div class="card">
+        <span class="step">Easiest</span>
+        <h2>Moxie Direct</h2>
+        <p class="muted">This computer hosts its own Wi-Fi just for Moxie — no router settings, no
+          typing. Show Moxie these two codes in order.</p>
+        <div id="direct-notready" class="callout hidden">Moxie Direct AP isn't configured on the server.</div>
+      </div>
+
+      <div class="card" id="direct-step1">
+        <span class="step">1 · Wi-Fi</span>
+        <h2>Show Moxie this Wi-Fi code</h2>
+        <div class="qrwrap"><img id="direct-wifi-img" alt="Moxie Direct Wi-Fi QR"></div>
+        <p class="muted" id="direct-wifi-info">Moxie joins the network <b id="direct-ssid">MoxieDirect</b>.</p>
+      </div>
+
+      <div class="card" id="direct-step2">
+        <span class="step">2 · Server</span>
+        <h2>Then show Moxie this server code</h2>
+        <div class="qrwrap"><img id="direct-ep-img" alt="Moxie Direct endpoint QR"></div>
+        <p class="muted" id="direct-ep-info"></p>
+      </div>
+
+      <div class="card">
+        <h2>🔎 Connection monitor</h2>
+        <div id="mon-summary2" class="statusline">Checking…</div>
+        <div id="mon-log2" class="monlog"></div>
+      </div>
+    </section>
+
     <!-- TAB: Wi-Fi Pairing -->
-    <section class="tabpanel active" id="tab-wifi">
+    <section class="tabpanel" id="tab-wifi">
       <div class="card">
         <span class="step">Step 1</span>
         <h2>Get Moxie onto your Wi-Fi</h2>
@@ -117,7 +149,7 @@
 
 <footer class="muted">
   Local Moxie Saver · <a href="https://github.com/mvalancy/moxie-robot-saver">source</a> ·
-  reduce e-waste, keep kids happy
+  reduce e-waste, keep kids happy<br><strong>Created by Matthew Valancy</strong>
 </footer>
 <script src="/app.js"></script>
 </body>

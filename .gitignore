@@ -33,3 +33,11 @@ server/moxie.db*
 # MQTT broker private keys (each appliance generates its own via gen-certs.sh)
 mqtt/broker/keys/
 mqtt/broker/log/
+
+# large / proprietary firmware images (never commit)
+firmware/
+*.img
+
+# qr-rig runtime
+tools/qr-rig/qr_rig.log
+tools/qr-rig/__pycache__/

@@ -136,6 +136,27 @@ def decode_proto(qr: str) -> dict:
             raise ValueError(f"unknown tag 0x{tag:02x} at offset {i-1}")
     return out
 
+# ---------- Wi-Fi-only (OpenMoxie-style relocation flow) ----------
+def encode_wifi_only(wifi: WifiInfo, android_default: bool = False) -> str:
+    """Wi-Fi-ONLY pairing QR, byte-matching OpenMoxie's StartPairingQR(wifi_only=True):
+    fields ssid(1), password(2), wifi_only(5)=1, is_hidden(6), band_select(7).
+    No secret_key, no endpoint field — the robot just joins Wi-Fi, then the endpoint
+    QR relocates it. This is the correct first QR for the self-hosted revival flow
+    (a pairing key would send the robot chasing Embodied's dead cloud)."""
+    b = bytearray()
+    s = wifi.ssid.encode("utf-8"); b += b"\x0a" + _varint(len(s)) + s
+    p = wifi.password.encode("utf-8"); b += b"\x12" + _varint(len(p)) + p
+    b += b"\x28\x01"                                   # field 5 wifi_only = true
+    if wifi.is_hidden:
+        b += b"\x30\x01"                               # field 6 is_hidden = true
+    if wifi.band == Band.ONLY_5G:
+        b += b"\x38\x01"
+    elif wifi.band == Band.ONLY_24G:
+        b += b"\x38\x02"                               # field 7 band_select
+    enc = (base64.encodebytes if android_default else base64.b64encode)(bytes(b)).decode("ascii")
+    return PROTO_PAIR_HEADER + enc
+
+
 # ---------- JSON mode ----------
 def encode_json(wifi: WifiInfo, user_token: str | None) -> str:
     band_map = {Band.ANY: "ANY", Band.ONLY_5G: "ONLY_50G", Band.ONLY_24G: "ONLY_24G"}

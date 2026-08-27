@@ -18,8 +18,21 @@ function activateTab(name){
   $$('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
   $$('.tabpanel').forEach(p=>p.classList.toggle('active', p.id==='tab-'+name));
   clearInterval(monTimer);
+  if(name==='direct'){ loadDirect(); pollMonitor(); monTimer=setInterval(pollMonitor,2500); }
   if(name==='server'){ loadEndpointQR(); pollMonitor(); monTimer=setInterval(pollMonitor,2500); }
   if(name==='moxie') refreshMoxie();
+}
+
+// ---- Moxie Direct ----
+async function loadDirect(){
+  let d; try{ d=await api('/local/direct/info',{auth:false}); }catch(e){ return; }
+  if(!d.ready){ $('#direct-notready').classList.remove('hidden'); return; }
+  $('#direct-notready').classList.add('hidden');
+  $('#direct-ssid').textContent=d.ssid;
+  $('#direct-wifi-img').src='/local/direct/wifi_qr.png';
+  $('#direct-wifi-info').innerHTML=`Moxie joins <b>${d.ssid}</b> (password is baked into the code — nothing to type).`;
+  $('#direct-ep-img').src=`/local/endpoint/qr.png?host=${encodeURIComponent(d.host)}`;
+  $('#direct-ep-info').textContent=`Points Moxie at ${d.host}:8883 (this computer).`;
 }
 $$('.tab').forEach(t=>t.onclick=()=>activateTab(t.dataset.tab));
 document.addEventListener('click',e=>{
@@ -38,7 +51,7 @@ $('#btn-login').onclick = async () => {
 function enterApp(){
   $('#s-login').classList.add('hidden');
   $('#tabs').classList.remove('hidden');
-  refreshMoxie();
+  activateTab('direct');   // load the default tab's content (QRs + monitor) on entry
 }
 
 // ---- Wi-Fi pairing ----
@@ -97,20 +110,19 @@ setTimeout(()=>{ const el=$('#broker-host'); if(el) el.addEventListener('change'
 // ---- connection monitor ----
 async function pollMonitor(){
   let s; try{ s=await api('/local/broker/status',{auth:false}); }catch(e){ return; }
-  const sum=$('#mon-summary'), log=$('#mon-log');
-  if(!s.ok){ sum.textContent='⚠️ MQTT supervisor not running (start it in mqtt/).'; sum.classList.remove('ok'); }
+  let summaryHtml, ok=false;
+  if(!s.ok){ summaryHtml='⚠️ MQTT supervisor not running (start it in mqtt/).'; }
   else if(s.robots && s.robots.length){
     const r=s.robots[0];
-    sum.innerHTML=`✅ Moxie connected — <b>${r.device_id.slice(0,16)}…</b>`+(r.firmware?` · firmware <b>${r.firmware}</b>`:'');
-    sum.classList.add('ok');
-  } else { sum.textContent=`Broker up · app: ${s.app} · waiting for Moxie…`; sum.classList.remove('ok'); }
-  if(log && s.recent){
-    log.innerHTML = s.recent.slice().reverse().map(e=>{
-      const t=new Date(e.t*1000).toLocaleTimeString();
-      const cls=e.kind==='error'?'e':e.kind==='robot'?'r':e.kind==='chat'?'c':'i';
-      return `<div class="ln ${cls}"><span>${t}</span> ${escapeHtml(e.text)}</div>`;
-    }).join('') || '<div class="muted">No activity yet.</div>';
-  }
+    summaryHtml=`✅ Moxie connected — <b>${r.device_id.slice(0,16)}…</b>`+(r.firmware?` · firmware <b>${escapeHtml(r.firmware)}</b>`:''); ok=true;
+  } else { summaryHtml=`Broker up · app: ${s.app} · waiting for Moxie…`; }
+  const logHtml = (s.recent||[]).slice().reverse().map(e=>{
+    const t=new Date(e.t*1000).toLocaleTimeString();
+    const cls=e.kind==='error'?'e':e.kind==='robot'?'r':e.kind==='chat'?'c':'i';
+    return `<div class="ln ${cls}"><span>${t}</span> ${escapeHtml(e.text)}</div>`;
+  }).join('') || '<div class="muted">No activity yet — scan the codes above.</div>';
+  ['#mon-summary','#mon-summary2'].forEach(sel=>{const el=$(sel);if(el){el.innerHTML=summaryHtml;el.classList.toggle('ok',ok);}});
+  ['#mon-log','#mon-log2'].forEach(sel=>{const el=$(sel);if(el)el.innerHTML=logHtml;});
 }
 function escapeHtml(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 
