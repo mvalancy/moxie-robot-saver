@@ -86,10 +86,27 @@ native String getFTPUsername(String pkg);        native String getFTPPassword(St
 so the secrets are **derived from the caller's package name** inside the native lib (an obfuscation,
 not real key separation).
 
+### The obfuscation is repeating-XOR (cracked)
+
+Emulating `libsecrets.so` under Unicorn (see
+[`../../tools/robot-toolkit/secrets/`](../../tools/robot-toolkit/secrets/)) reveals the "encryption"
+is trivial once you run the real code. Each getter holds an obfuscated blob and calls
+`getOriginalKey(blob, len, packageName, JNIEnv*)`, whose Thumb disassembly is a plain repeating-key
+XOR:
+
+```
+key    = GetStringUTFChars(packageName)      # "me.embodied.productiontesting"
+out[i] = blob[i] XOR key[i % len(key)]       # ldrb / mod keylen / eor / strb
+return NewStringUTF(out)
+```
+
+**So every factory secret = its embedded blob XOR the package-name string.** No real key management —
+the package name *is* the key. The long PSK getters decrypt to clean printable strings; the shorter
+DB/FTP getters need a blob-length validation pass (their blobs are built inline via VFP `vstr`).
+
 ### Recovering the secret values
 
-`libsecrets.so` (ARMv7, ~18 KB) builds each string at runtime from an obfuscated table (visible as a
-per-character XOR/decrement routine in the disassembly) — `strings` alone won't reveal them. Two
+`libsecrets.so` (ARMv7, ~18 KB) builds each string at runtime by XOR-ing an embedded blob with the package name (see above) — `strings` alone won't reveal them. Two
 practical routes:
 
 1. **Emulate the getter.** Load `lib/armeabi-v7a/libsecrets.so` under `qemu-arm` (or on any
