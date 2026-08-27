@@ -55,6 +55,26 @@ client-service.
 > server that implements `api/robot-sessions`, `api/ota`, and the MQTT topics below can run it fully —
 > no OpenMoxie dependency. `OPEN_MOXIE=11` is the analogous community target.
 
+## Service configuration — how the robot is (re)pointed
+
+`embodied.logging.ServiceConfiguration` is the robot's **runtime connection config**, held in the
+native `embodied::core::SettingSchema` store (alongside `BRAIN_BASE_TOPIC` etc.) and delivered over
+the bus/provisioning (not the managed layer):
+
+| Field | Meaning |
+|---|---|
+| `connection_type` | `GOOGLE_IOT` \| `EMBODIED_IOT` \| `EMBODIED_LOCAL` |
+| `endpoint_id` | the `IOTEndpoint` enum ([`qr-commands.md`](qr-commands.md)) |
+| `endpoint` / `mqtt_host` / `override_port` | **override the REST/MQTT host + port** directly |
+| `webservice_root` / `webservice_pin` | REST base URL + a pairing PIN |
+| **`disable_verify`** | **skip TLS peer verification** (maps to `CURLOPT_SSL_VERIFYPEER=0`) |
+| `disable_sync` / `disable_log_upload` | turn off file-sync / log upload |
+
+This is the lever a backend uses to move a robot to a custom host — and `disable_verify` means a
+robot *can* be told to accept a self-signed cert (see [`network-trust.md`](network-trust.md) for the
+important caveat about how it's delivered). (OpenMoxie's `ServiceConfiguration2` is the same message
+under a different file name.)
+
 ## 2. MQTT — the live bus (Eclipse Paho, mutual TLS)
 
 The brain links Eclipse **Paho MQTT** (C) over TLS with client certificates (the classic Google

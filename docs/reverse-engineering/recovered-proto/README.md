@@ -45,7 +45,7 @@ the recovered schema is correct. Re-run with:
 python -m moxie_toolkit.validate_protos [path/to/openmoxie/.../protos]
 ```
 
-(OpenMoxie also ships `embodied/logging/Cloud2.proto`, a newer logging variant not in this set.)
+(OpenMoxie's `embodied/logging/Cloud2.proto` message `ServiceConfiguration2` is the **same message** as our `embodied.logging.ServiceConfiguration` in `Cloud.proto` — a file-name/version difference, not a coverage gap.)
 
 ## Caveats
 

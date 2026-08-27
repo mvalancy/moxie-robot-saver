@@ -53,6 +53,27 @@ authenticates anonymously. That's the whole trust story — **a real domain + a 
 bypass required. (`EMBODIED_LOCAL`'s `client-service-api.local` is the exception: `.local` can't get a
 public cert, so it needs a CA you install on the device.)
 
+## The `disable_verify` escape hatch (and its catch)
+
+`embodied.logging.ServiceConfiguration` carries a **`disable_verify`** flag that maps to
+`CURLOPT_SSL_VERIFYPEER=0` — i.e. the robot **can** be configured to skip TLS peer verification, which
+would let a **self-signed** cert work and remove the "real domain + Let's Encrypt" requirement.
+
+**The catch is delivery.** `ServiceConfiguration` (host/port/`disable_verify`) is applied natively via
+the `SettingSchema` store, pushed over the **already-connected** bus/provisioning — *not* settable
+from the setup QR. The setup QR (`StartPairingQR`) only carries an **`IOTEndpoint` enum** (a *fixed*
+host like `EMBODIED_LOCAL`→`client-service-api.local`), not an arbitrary `mqtt_host` or
+`disable_verify`. So bootstrapping is two-stage:
+
+1. Get the robot to connect *once* to a host it already trusts (a real cert, via the endpoint QR /
+   DNS), then
+2. push a `ServiceConfiguration` over MQTT to move it to your real host and/or set `disable_verify`.
+
+For a first-contact **self-signed** setup you'd still need to plant a `ServiceConfiguration` (or a CA)
+on the device — which needs on-device access. So `disable_verify` helps *operationally* (a running
+fleet can be moved to self-signed infra) but doesn't remove the first-connection trust requirement,
+and doesn't rescue pre-801 (which never connects to you in the first place).
+
 ## Why pre-801 is still stuck (goal #3) — precisely
 
 It is **not** cert pinning. Two things block a pre-801 unit, both about *reachability*, not crypto:
