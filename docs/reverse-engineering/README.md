@@ -6,6 +6,8 @@ its `bo-*` apps, read from the factory partition images. No Embodied source is i
 observed facts and schemas reconstructed from shipped binaries. Everything else in the repo derives
 from these.
 
+> 🧭 **New here? Start with the [FIELD-GUIDE](FIELD-GUIDE.md)** — everything below, organized by what you want to do (revive an old robot · run your own server · custom firmware).
+
 ```mermaid
 flowchart TB
     subgraph phone["📱 Parent app (phone side)"]
