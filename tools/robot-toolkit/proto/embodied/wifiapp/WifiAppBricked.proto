@@ -1,0 +1,9 @@
+syntax = "proto3";
+// file: embodied/wifiapp/WifiAppBricked.proto  package: embodied.unity
+package embodied.unity;
+message WifiAppBricked {
+  optional uint64 timestamp = 1;
+  optional uint32 error_code = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

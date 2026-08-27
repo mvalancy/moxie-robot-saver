@@ -1,0 +1,36 @@
+syntax = "proto3";
+// file: embodied/unity/Stats.proto  package: embodied.unity
+package embodied.unity;
+message FPSStatsPB {
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional float curr_deltatime = 4;
+  optional float curr_fps = 5;
+  optional float lowest_fps = 6;
+  optional float avg_fps = 7;
+  optional float highest_fps = 8;
+}
+message TTSAudioClipInfoPB {
+  optional string clip_name = 1;
+  optional float clip_length = 2;
+  optional float create_duration = 3;
+  optional float create_timestamp = 4;
+}
+message TTSStatsPB {
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional uint64 id = 4;
+  optional string input_id = 5;
+  optional float doa = 6;
+  optional string synth_speech = 7;
+  optional float synth_in_queue_duration = 8;
+  optional float synth_to_callback_duration = 9;
+  optional float synth_to_output_duration = 10;
+  optional float synth_total_duration = 11;
+  optional float synth_to_playbackqueue_duration = 12;
+  optional float audioclip_create_duration = 13;
+  optional float synth_to_playback_duration = 14;
+  repeated embodied.unity.TTSAudioClipInfoPB audioclips_info = 15;
+}

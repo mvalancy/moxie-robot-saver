@@ -1,0 +1,11 @@
+syntax = "proto3";
+// file: embodied/robotbrain/serialized/CSData.proto  package: embodied.robotbrain.serialized
+package embodied.robotbrain.serialized;
+message CSData {
+  optional uint32 content_day = 1;
+  optional uint64 forced_sleep_ts = 2;
+  optional string module_id = 3;
+  optional string content_id = 4;
+  optional uint64 module_started_ts = 5;
+  optional uint32 instance_id = 6;
+}

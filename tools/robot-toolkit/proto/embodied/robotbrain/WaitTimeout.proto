@@ -1,0 +1,9 @@
+syntax = "proto3";
+// file: embodied/robotbrain/WaitTimeout.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message WaitTimeout {
+  optional double time = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

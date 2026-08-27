@@ -1,0 +1,28 @@
+syntax = "proto3";
+// file: embodied/testing/Vision.proto  package: embodied.testing
+package embodied.testing;
+message Point {
+  optional float x = 1;
+  optional float y = 2;
+}
+message FaceDescriptor {
+  optional embodied.testing.Point center = 1;
+  optional float w = 2;
+  optional float h = 3;
+  optional float pitch = 4;
+  optional float yaw = 5;
+  optional float roll = 6;
+  optional float blur = 7;
+  optional embodied.testing.Point left_eye = 8;
+  optional embodied.testing.Point right_eye = 9;
+  optional embodied.testing.Point chin = 10;
+  repeated float descriptors = 11;
+  optional string image = 12;
+  optional uint64 id = 13;
+  optional float occlusion = 14;
+}
+message FaceDescriptors {
+  optional uint64 timestamp = 1;
+  optional uint64 frame_id = 2;
+  repeated embodied.testing.FaceDescriptor faces = 3;
+}

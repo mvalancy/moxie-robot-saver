@@ -1,0 +1,153 @@
+syntax = "proto3";
+// file: embodied/lizzerface/lizzerfaceoutput.proto  package: embodied.lizzerface
+package embodied.lizzerface;
+import "embodied/lizzerface/enums.proto";
+message BangEventPB {
+}
+message FlapEventPB {
+  optional int32 Amplitude = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message LightAdcDataEventPB {
+  optional int32 adcCounts = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message LightEventPB {
+  optional bool State = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message MpuEventPB {
+  optional embodied.lizzerface.MpuEventID ID = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message LizardErrorEventPB {
+  enum LizardErrorEventID {
+    UNKOWN = 0;
+    UNKNOWN_ERROR = 999;
+    BSTATE_ERROR = 1000;
+    BATTERY_OVER_TEMP = 1001;
+    DISCHARGE_OVER_CURRENT = 1002;
+    BATTERY_LOST = 1003;
+    MOTOR_IC_ALERT = 1004;
+    MOTOR_FAIL_BOOT = 1005;
+    IMU_LOST = 1006;
+    LED_IC_LOST = 1007;
+    HOST_MESSY_CMD = 1008;
+    FIRMWARE_DL_FAIL = 1009;
+    FIRMWARE_WORD_XFER_FAIL = 1010;
+    FIRMWARE_RCD_BAD_VER = 1011;
+    FIRMWARE_READ_VER_FAIL = 1012;
+    FIRMWARE_INVALID_ERASE_RESPONSE = 1013;
+    FIRMWARE_ERASE_ROBOT_FLASH_FAIL = 1014;
+    FIRMWARE_INVALID_ACK = 1015;
+    FIRMWARE_INVALID_PKT_LEN = 1016;
+    FIRMWARE_INVALID_SYSINFO_RESPONSE = 1017;
+    FIRMWARE_GET_SYSINFO_FAIL = 1018;
+    FIRMWARE_SERIALPORT_OPEN_FAIL = 1019;
+    FIRMWARE_UART_TX_FAIL = 1020;
+    FIRMWARE_UNKNOWN_CMD_RX = 1021;
+    FIRMWARE_JNI_ERROR = 1022;
+    FIRMWARE_LIZARD_CONNECT_ERROR = 1023;
+    FIRMWARE_DEBUG_BUILD_ERROR = 1024;
+    FIRMWARE_FILE_NOT_FOUND = 1025;
+    FIRMWARE_DOWNGRADE = 1026;
+    FIRMWARE_ERASE_LIZARD_FLASH_FAIL = 1027;
+    FIRMWARE_WRITE_LIZARD_FAIL = 1028;
+    IMU_UPDATE_TIMEOUT = 1029;
+    FIRMWARE_UPDATE_ABORT = 1030;
+    FIRMWARE_BUG = 1031;
+    BASE_MOTOR_SPIN = 1032;
+    BATTERY_PEC_ERR = 1033;
+    BODYTOUCH_ERR = 1039;
+    POWER_SET_STATE_FAIL = 1042;
+    FW_WATCHDOG_RESET = 1043;
+    MPU_IS_NOISY = 1044;
+    MOTOR_IS_STALLED = 1045;
+    MPU_EVENT = 1046;
+    FIRMWARE_UPDATED = 1047;
+    FIRMWARE_VERSION = 1048;
+    POWER_STATE_CHANGE = 1049;
+    CHARGING_EVENT = 1050;
+    WAKEUP_ANDROID_EVENT = 1051;
+  }
+  optional embodied.lizzerface.LizardErrorEventPB.LizardErrorEventID id = 1;
+  optional bool is_fixed = 2;
+  optional string error_detail = 3;
+  optional uint64 timestamp = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message ServoPosFdbackEventPB {
+  optional string cservoName = 1;
+  optional sint32 pos = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message ServoStallEventPB {
+  optional embodied.lizzerface.Motor motor_id = 1;
+  optional bool is_stalled = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message SwitchEventPB {
+  optional embodied.lizzerface.SwitchID ID = 1;
+  optional bool State = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message TouchEventPB {
+  optional embodied.lizzerface.TouchID ID = 1;
+  optional bool State = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message RevisionLevelEventPB {
+  optional embodied.lizzerface.Revision_Level level = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message BatteryEventPB {
+  optional sint32 Level = 1;
+  optional bool ChargingState = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message PowerStateEventPB {
+  enum PowerState {
+    UNKOWN = 0;
+    ACTIVE = 1;
+    SLEEPING = 2;
+    STANDBY = 3;
+    SHUTDOWN = 4;
+  }
+  optional embodied.lizzerface.PowerStateEventPB.PowerState state = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message LizardWakeupEventPB {
+  enum LizardWakeupEventID {
+    UNKOWN = 0;
+    TOUCH_WAKEUP = 1;
+    PICKUP_WAKEUP = 2;
+    DCPLUG_WAKEUP = 3;
+  }
+  optional embodied.lizzerface.LizardWakeupEventPB.LizardWakeupEventID id = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

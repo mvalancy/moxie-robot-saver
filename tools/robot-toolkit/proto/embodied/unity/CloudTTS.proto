@@ -1,0 +1,54 @@
+syntax = "proto3";
+// file: embodied/unity/CloudTTS.proto  package: embodied.unity
+package embodied.unity;
+enum RequestSourceType {
+  ROBOT_TTS_REQUEST = 0;
+  REMOTECHAT_TTS_REQUEST = 1;
+}
+message TTSMark {
+  optional uint32 time = 1;
+  optional uint32 start = 2;
+  optional uint32 end = 3;
+  optional string type = 4;
+  optional string value = 5;
+}
+message CloudTTSRequest {
+  optional string markup = 1;
+  optional string event_id = 2;
+  optional int32 chunk_num = 3;
+  optional uint64 timestamp = 4;
+  optional string user_id = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message AudioBuffer {
+  optional bytes buffer = 1;
+  optional int32 channels = 2;
+  optional int32 sample_rate = 3;
+}
+message CloudTTSResponse {
+  optional embodied.unity.RequestSourceType request_source = 1;
+  optional embodied.unity.AudioBuffer audio = 2;
+  repeated embodied.unity.TTSMark marks = 3;
+  optional string event_id = 4;
+  optional int32 chunk_num = 5;
+  optional uint64 timestamp = 6;
+  optional uint64 total_time = 7;
+  optional uint64 synthesis_time = 8;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message CloudTTSSupplement {
+  optional uint64 timestamp = 1;
+  optional string event_id = 2;
+  optional int32 chunk_num = 3;
+  optional string text = 4;
+  optional string markup = 5;
+  optional uint64 translation_time = 6;
+  optional uint64 automarkup_time = 7;
+  optional uint64 synthesis_time = 8;
+  optional string tts_engine = 9;
+  optional uint64 total_time = 20;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

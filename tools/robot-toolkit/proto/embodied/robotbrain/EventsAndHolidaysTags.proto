@@ -1,0 +1,15 @@
+syntax = "proto3";
+// file: embodied/robotbrain/EventsAndHolidaysTags.proto  package: embodied.robotbrain.serialized
+package embodied.robotbrain.serialized;
+message EventsAndHolidaysData {
+  repeated embodied.robotbrain.serialized.Holiday holidays = 1;
+}
+message Holiday {
+  optional string event_uid = 1;
+  optional string holiday_id = 2;
+  optional string name = 3;
+  optional string tag = 4;
+  optional string uuid = 5;
+  optional string date = 6;
+  optional string region = 7;
+}

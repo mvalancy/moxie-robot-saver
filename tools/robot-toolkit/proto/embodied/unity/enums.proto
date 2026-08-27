@@ -1,0 +1,12 @@
+syntax = "proto3";
+// file: embodied/unity/enums.proto  package: embodied.unity
+package embodied.unity;
+enum MpuShakeDirection {
+  Up = 0;
+  Roll = 1;
+  Pitch = 2;
+  Yaw = 3;
+  LeftRight = 4;
+  ForwardBack = 5;
+  Invalid = 6;
+}

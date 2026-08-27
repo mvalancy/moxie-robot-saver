@@ -1,0 +1,24 @@
+syntax = "proto3";
+// file: embodied/unity/AudioNotif.proto  package: embodied.unity
+package embodied.unity;
+message AudioNotifPauseEventPB {
+  optional float duration = 1;
+  optional uint64 timestamp = 2;
+}
+message AudioNotifSpeedChangeEventPB {
+  optional float speed = 1;
+  optional uint64 timestamp = 2;
+}
+message AudioNotifVolumeChangeEventPB {
+  optional float volume = 1;
+  optional uint64 timestamp = 2;
+}
+message AudioIsFinishedEventPB {
+  optional uint64 timestamp = 1;
+}
+message AudioNotifResumeEventPB {
+  optional uint64 timestamp = 1;
+}
+message AudioNotifChatEventPB {
+  optional string chatEvent = 1;
+}

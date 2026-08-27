@@ -1,0 +1,29 @@
+syntax = "proto3";
+// file: embodied/unity/UserData.proto  package: embodied.unity
+package embodied.unity;
+message UserPairingRequest {
+  enum PairingRequest {
+    PAIR_UNPAIR_LEGACY = 0;
+    PAIR = 1;
+    UNPAIR_USER = 2;
+    UNPAIR_FULL = 3;
+    UNPAIR_RFS_ONLY = 4;
+    RECOVER_USER = 5;
+    RECOVER_USER_LOCAL = 6;
+    USER_DATA_UPDATE = 7;
+  }
+  optional uint64 timestamp = 1;
+  optional string user_token = 2;
+  optional string public_key = 3;
+  optional uint32 request = 4;
+  optional bytes secret_key = 5;
+  optional bool is_staging = 6;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message UserDataStatus {
+  optional uint64 timestamp = 1;
+  optional uint32 code = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,9 @@
+syntax = "proto3";
+// file: embodied/unity/RobotTurnToOutOfViewChatTarget.proto  package: embodied.unity
+package embodied.unity;
+message RobotTurnToOutOfViewChatTarget {
+  optional uint64 timestamp = 1;
+  optional bool is_turning = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

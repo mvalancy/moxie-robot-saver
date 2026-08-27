@@ -1,0 +1,23 @@
+syntax = "proto3";
+// file: embodied/robotbrain/serialized/UserRecommendationData.proto  package: embodied.robotbrain.serialized
+package embodied.robotbrain.serialized;
+message UserRecommendationData {
+  message SparseValues {
+    optional float value = 1;
+    optional string id = 2;
+  }
+  message TagHistory {
+    repeated embodied.robotbrain.serialized.UserRecommendationData.SparseValues values = 1;
+  }
+  message TagHistoryEntry {
+    optional string key = 1;
+    optional embodied.robotbrain.serialized.UserRecommendationData.TagHistory value = 2;
+  }
+  message RandomTagState {
+    optional uint32 random_seed = 1;
+    optional string update_state = 2;
+    optional string weight_state = 3;
+  }
+  repeated embodied.robotbrain.serialized.UserRecommendationData.TagHistoryEntry tag_history = 1;
+  optional embodied.robotbrain.serialized.UserRecommendationData.RandomTagState random_tag_state = 2;
+}

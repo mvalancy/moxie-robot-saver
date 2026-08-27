@@ -1,0 +1,18 @@
+syntax = "proto3";
+// file: embodied/perception/vision/PeopleDetected.proto  package: embodied.perception.vision
+package embodied.perception.vision;
+message PersonPB {
+  optional float center_x = 1;
+  optional float center_y = 2;
+  optional float width = 3;
+  optional float height = 4;
+  optional float confidence = 5;
+}
+message PeopleDetectedPB {
+  optional uint64 frame_id = 1;
+  optional double timestamp_deprecated = 2;
+  repeated embodied.perception.vision.PersonPB people = 3;
+  optional uint64 timestamp = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

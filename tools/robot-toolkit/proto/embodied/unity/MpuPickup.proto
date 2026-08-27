@@ -1,0 +1,37 @@
+syntax = "proto3";
+// file: embodied/unity/MpuPickup.proto  package: embodied.unity
+package embodied.unity;
+import "embodied/unity/enums.proto";
+message MpuPickedUpEventPB {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message MpuPickedUpShakenEventPB {
+  optional embodied.unity.MpuShakeDirection shakeDirection = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message MpuPickUpStatusEventPB {
+  optional int32 pitch = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message MpuPutDownEventPB {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message MpuTiltEventPB {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message MpuIsNoisyEventPB {
+  optional uint64 timestamp = 1;
+  optional bool state = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

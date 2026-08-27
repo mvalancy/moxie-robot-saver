@@ -1,0 +1,213 @@
+syntax = "proto3";
+// file: embodied/playspace/PlaySpace.proto  package: embodied.playspace
+package embodied.playspace;
+enum Source {
+  ROBOT = 0;
+  PORTAL = 1;
+}
+enum ResponseCode {
+  OK = 0;
+  SYSTEM_ERROR = 1;
+  NO_GRL_USER = 2;
+  GAME_UNAVAILABLE = 3;
+  GAME_UNKNOWN = 4;
+  NO_CLIENT = 5;
+  WAITING_FOR_SYNC = 6;
+}
+enum MoxieState {
+  DONE_SPEAKING = 0;
+  DONE_MOVING = 1;
+  STARTED_SPEAKING = 2;
+  PAUSED = 3;
+  READY = 4;
+}
+enum TurnState {
+  UNKNOWN = 0;
+  USER = 1;
+  SYSTEM = 2;
+}
+enum ExitCode {
+  QUIT = 0;
+  ERROR = 1;
+  COMPLETE = 2;
+}
+enum AgeGroup {
+  AGE_0_4 = 0;
+  AGE_5_6 = 1;
+  AGE_7_8 = 2;
+  AGE_9_10 = 3;
+  AGE_11_PLUS = 4;
+}
+enum TriggerAction {
+  SET = 0;
+  CLEAR = 1;
+  CLEAR_ALL = 2;
+}
+enum TriggerDuration {
+  ONE_SHOT = 0;
+  PASSIVE = 1;
+  ACTIVE = 2;
+}
+message PlaySpaceHeader {
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+}
+message PlaySpaceConnect {
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional string request_id = 100;
+  optional embodied.playspace.AgeGroup age_group = 101;
+}
+message PlaySpaceQuery {
+  enum Query {
+    QUERY_UNSET = 0;
+    IS_LOGGED_IN = 1;
+  }
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional string request_id = 100;
+  optional embodied.playspace.PlaySpaceQuery.Query query = 101;
+}
+message PlaySpaceStart {
+  message GameDataEntry {
+    optional string key = 1;
+    optional string value = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional string game = 100;
+  repeated embodied.playspace.PlaySpaceStart.GameDataEntry game_data = 101;
+  optional string request_id = 102;
+}
+message PlaySpaceEnd {
+  message GameDataEntry {
+    optional string key = 1;
+    optional string value = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional string game = 100;
+  repeated embodied.playspace.PlaySpaceEnd.GameDataEntry game_data = 101;
+  optional embodied.playspace.ExitCode reason = 102;
+  optional string request_id = 103;
+}
+message PlaySpaceDisconnect {
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional embodied.playspace.ExitCode reason = 100;
+}
+message PlaySpaceResponse {
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional embodied.playspace.ResponseCode code = 100;
+  optional string message = 101;
+  optional string request_id = 102;
+}
+message GameData {
+  optional int64 priority = 100;
+  optional string value = 101;
+}
+message PlaySpaceState {
+  message GameDataEntry {
+    optional string key = 1;
+    optional embodied.playspace.GameData value = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional string game = 100;
+  repeated embodied.playspace.PlaySpaceState.GameDataEntry game_data = 101;
+  optional embodied.playspace.TurnState turn = 102;
+}
+message PlaySpaceMoxieState {
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional embodied.playspace.MoxieState state = 100;
+  optional string event_id = 101;
+}
+message Output {
+  optional string line_id = 1;
+  repeated string line_params = 2;
+  optional string text = 3;
+  optional string markup = 4;
+  repeated string line_ids = 5;
+}
+message PlaySpaceOutput {
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional string game = 100;
+  optional embodied.playspace.Output output = 101;
+  optional string event_id = 102;
+}
+message PlaySpaceTrigger {
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional string game = 100;
+  optional string trigger_id = 101;
+  optional embodied.playspace.TriggerAction trigger_action = 102;
+  repeated string intent_names = 103;
+  repeated string raw_inputs = 104;
+  optional embodied.playspace.TriggerDuration duration = 105;
+}
+message PlaySpaceInput {
+  message EntitiesEntry {
+    optional string key = 1;
+    optional string value = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional string game = 100;
+  repeated string trigger_ids = 101;
+  optional string intent_name = 102;
+  repeated embodied.playspace.PlaySpaceInput.EntitiesEntry entities = 103;
+  repeated string matched_words = 104;
+  repeated string matched_trigger_ids = 105;
+}
+message PlaySpaceMetrics {
+  message MetricsEntry {
+    optional string key = 1;
+    optional float value = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional string software_version = 2;
+  optional string module_name = 3;
+  optional string activity_session_id = 4;
+  optional embodied.playspace.Source source = 5;
+  optional string game = 100;
+  repeated embodied.playspace.PlaySpaceMetrics.MetricsEntry metrics = 101;
+}

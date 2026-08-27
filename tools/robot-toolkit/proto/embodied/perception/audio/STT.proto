@@ -1,0 +1,85 @@
+syntax = "proto3";
+// file: embodied/perception/audio/STT.proto  package: embodied.perception.audio
+package embodied.perception.audio;
+import "embodied/perception/audio/Speaker.proto";
+message STTPartial {
+  optional embodied.perception.audio.Speaker speaker = 1;
+  optional string speech = 2;
+  optional float confidence = 3;
+  optional uint64 timestamp = 4;
+  optional uint64 endTimestamp = 5;
+  optional uint64 startTimestamp = 6;
+  optional string event_id = 7;
+  repeated string alternatives = 9;
+  optional string original_language = 10;
+  optional string original_speech = 11;
+  repeated string original_alternatives = 12;
+  optional string language = 13;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message STTFinal {
+  optional embodied.perception.audio.Speaker speaker = 1;
+  optional string speech = 2;
+  optional float confidence = 3;
+  optional uint64 timestamp = 4;
+  optional uint64 endTimestamp = 5;
+  optional uint64 startTimestamp = 6;
+  optional string event_id = 7;
+  repeated string alternatives = 8;
+  optional string language = 9;
+  optional string original_language = 10;
+  optional string original_speech = 11;
+  repeated string original_alternatives = 12;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message STTReady {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message ASRAnalytics {
+  optional uint64 detected_speech_start = 1;
+  optional uint64 detected_speech_end = 2;
+  optional uint64 asr_detected_speech_start = 3;
+  optional uint64 asr_detected_speech_end = 4;
+  optional uint64 asr_first_response = 5;
+  optional bool asr_speech_detected = 6;
+  optional uint64 timestamp = 7;
+  optional uint64 first_message_sent_timestamp = 8;
+  optional uint64 total_send_time = 9;
+  optional uint64 maximum_send_time = 10;
+  optional uint64 minimum_send_time = 11;
+  optional uint64 first_final_asr_response = 12;
+  optional uint64 last_final_asr_response = 13;
+  optional uint64 final_result_count = 14;
+  optional uint64 number_of_writes = 15;
+  optional uint64 number_of_reads = 16;
+  optional string event_id = 17;
+  optional uint64 asr_last_response = 18;
+  repeated string error_message = 30;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message DeepgramResponse {
+  message Channel {
+    message Alternative {
+      message Word {
+        optional string word = 1;
+        optional float start = 2;
+        optional float end = 3;
+        optional float confidence = 4;
+      }
+      optional string transcript = 1;
+      optional float confidence = 2;
+      repeated embodied.perception.audio.DeepgramResponse.Channel.Alternative.Word words = 3;
+    }
+    repeated embodied.perception.audio.DeepgramResponse.Channel.Alternative alternatives = 1;
+  }
+  optional float duration = 1;
+  optional float start = 2;
+  optional bool is_final = 3;
+  optional bool speech_final = 4;
+  optional embodied.perception.audio.DeepgramResponse.Channel channel = 5;
+}

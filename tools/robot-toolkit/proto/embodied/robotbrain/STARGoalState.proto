@@ -1,0 +1,28 @@
+syntax = "proto3";
+// file: embodied/robotbrain/STARGoalState.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message STARGoalStateChange {
+  optional uint64 timestamp = 1;
+  optional string goal = 2;
+  optional uint64 goal_level = 3;
+  optional uint64 prompt_level = 4;
+  optional bool activated = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message STARGoalSuccess {
+  optional uint64 timestamp = 1;
+  optional string goal = 2;
+  optional uint64 goal_level = 3;
+  optional uint64 prompt_level = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message STARGoalFailure {
+  optional uint64 timestamp = 1;
+  optional string goal = 2;
+  optional uint64 goal_level = 3;
+  optional uint64 prompt_level = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

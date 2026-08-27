@@ -1,0 +1,7 @@
+syntax = "proto3";
+// file: embodied/unity/PredictedMotorNoise.proto  package: embodied.unity
+package embodied.unity;
+message PredictedMotorNoise {
+  optional uint64 timestamp = 1;
+  optional float noiseLevel = 2;
+}

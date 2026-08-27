@@ -1,0 +1,46 @@
+syntax = "proto3";
+// file: embodied/perception/vision/OfflineFace.proto  package: embodied.perception.vision
+package embodied.perception.vision;
+message ActionUnitPB {
+  optional float au01 = 1;
+  optional float au02 = 2;
+  optional float au04 = 3;
+  optional float au06 = 4;
+  optional float au12 = 5;
+  optional float au25 = 6;
+}
+message HeadPosePB {
+  optional float x = 1;
+  optional float y = 2;
+  optional float z = 3;
+  optional float pitch = 4;
+  optional float yaw = 5;
+  optional float roll = 6;
+}
+message AnalyzedFacePB {
+  optional uint32 face_x = 1;
+  optional uint32 face_y = 2;
+  optional uint32 face_width = 3;
+  optional uint32 face_height = 4;
+  optional embodied.perception.vision.HeadPosePB head_pose = 5;
+  optional embodied.perception.vision.ActionUnitPB action_unit = 6;
+  repeated float landmarks = 7;
+}
+message FacesAnalyzedPB {
+  optional uint64 timestamp = 1;
+  optional uint64 frame_id = 2;
+  repeated embodied.perception.vision.AnalyzedFacePB faces = 3;
+}
+message OfflineMediaPB {
+  optional sint32 version = 1;
+  optional string path = 2;
+  optional string session_uuid = 3;
+  optional string user_uuid = 4;
+  optional uint64 begin_timestamp = 5;
+  repeated embodied.perception.vision.FacesAnalyzedPB records = 6;
+}
+message OfflineAnalysisReady {
+  optional uint64 timestamp = 1;
+  optional string data_descriptor = 2;
+  optional string path = 3;
+}

@@ -1,0 +1,22 @@
+syntax = "proto3";
+// file: embodied/robotbrain/System.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message SystemVolumeModify {
+  optional uint64 timestamp = 1;
+  optional sint32 volume = 2;
+  optional bool relative = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message SystemVolumeState {
+  optional uint64 timestamp = 1;
+  optional uint32 volume = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message SystemSlowInputModify {
+  optional uint64 timestamp = 1;
+  optional bool slow_input = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

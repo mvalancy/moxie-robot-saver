@@ -1,0 +1,44 @@
+syntax = "proto3";
+// file: embodied/robotbrain/TurnTaking.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+enum TurnOwner {
+  TURNOWNER_UNKNOWN = 0;
+  TURNOWNER_MENTOR = 1;
+  TURNOWNER_MOXIE = 2;
+}
+enum MentorState {
+  MENTORSTATE_UNKNOWN = 0;
+  MENTORSTATE_IDLE = 1;
+  MENTORSTATE_SPEAKING = 2;
+  MENTORSTATE_INTERRUPTED = 3;
+}
+enum MoxieState {
+  MOXIESTATE_UNKNOWN = 0;
+  MOXIESTATE_IDLE = 1;
+  MOXIESTATE_LISTENING = 2;
+  MOXIESTATE_THINKING = 3;
+  MOXIESTATE_SPEAKING = 4;
+  MOXIESTATE_INTERRUPTED = 5;
+}
+enum EngagementState {
+  ENGAGEMENTSTATE_UNKNOWN = 0;
+  ENGAGEMENTSTATE_EARMUFFS = 1;
+  ENGAGEMENTSTATE_ENGAGED = 2;
+  ENGAGEMENTSTATE_SEEKING = 3;
+  ENGAGEMENTSTATE_DISENGAGED = 4;
+}
+enum TurnTakingAssistanceState {
+  ASSISTANCESTATE_UNKNOWN = 0;
+  ASSISTANCESTATE_NONE = 1;
+  ASSISTANCESTATE_ADVANCED = 2;
+}
+message TurnTakingState {
+  optional uint64 timestamp = 1;
+  optional embodied.robotbrain.TurnOwner turn_owner = 2;
+  optional embodied.robotbrain.MentorState mentor_state = 3;
+  optional embodied.robotbrain.MoxieState moxie_state = 4;
+  optional embodied.robotbrain.EngagementState engagement_state = 5;
+  optional embodied.robotbrain.TurnTakingAssistanceState assistance_state = 6;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

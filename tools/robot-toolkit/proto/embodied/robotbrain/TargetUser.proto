@@ -1,0 +1,40 @@
+syntax = "proto3";
+// file: embodied/robotbrain/TargetUser.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+enum AttentionState {
+  ATTENTION_UNKNOWN = 0;
+  TARGET_FOCUS = 1;
+  NO_TARGET_FOCUS = 2;
+  SEARCHING = 3;
+}
+message TargetedUser {
+  optional uint64 timestamp = 1;
+  optional uint64 targeted_user_id = 2;
+  optional uint64 targeted_user_face_id = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message NoTargetedUser {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message WorldLocation {
+  optional uint64 id = 1;
+  optional float x = 2;
+  optional float y = 3;
+  optional float z = 4;
+}
+message InterestPoint {
+  optional float weight = 1;
+  optional uint64 person_id = 2;
+  optional embodied.robotbrain.WorldLocation location = 3;
+}
+message Attention {
+  optional uint64 timestamp = 1;
+  optional embodied.robotbrain.AttentionState state = 2;
+  optional uint64 targeted_user = 3;
+  repeated embodied.robotbrain.InterestPoint locations = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

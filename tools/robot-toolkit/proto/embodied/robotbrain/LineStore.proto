@@ -1,0 +1,11 @@
+syntax = "proto3";
+// file: embodied/robotbrain/LineStore.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message LineStoreSerialState {
+  message LineStoreEntry {
+    optional string name = 1;
+    optional uint32 expressions = 2;
+    repeated uint64 masks = 3;
+  }
+  repeated embodied.robotbrain.LineStoreSerialState.LineStoreEntry lines = 1;
+}

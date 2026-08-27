@@ -1,0 +1,39 @@
+syntax = "proto3";
+// file: embodied/robotbrain/MentorBehavior.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+enum MentorAction {
+  UNKNOWN = 0;
+  QUIT = 1;
+  REFUSED = 2;
+  COMPLETED = 3;
+  REQUESTED = 4;
+  PRESENTED = 5;
+  SCHEDULED = 6;
+  SUGGESTED = 7;
+}
+enum EndedReason {
+  REASON_UNKNOWN = 0;
+  USER_QUIT = 1;
+  USER_DISENGAGED = 2;
+  MOXIE_DISENGAGED = 3;
+  USER_REQUEST = 4;
+  TIME_LIMIT = 5;
+  MOXIE_ENDED = 6;
+  USER_SLEPT = 7;
+  REMOTE_LAUNCH = 8;
+  REMOTE_ABORT = 9;
+}
+message MentorBehavior {
+  optional string module_id = 1;
+  optional string content_id = 2;
+  optional string content_day = 3;
+  optional uint64 timestamp = 4;
+  optional embodied.robotbrain.MentorAction action = 5;
+  optional uint64 instance_id = 6;
+  optional embodied.robotbrain.EndedReason ended_reason = 7;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message MentorBehaviorSet {
+  repeated embodied.robotbrain.MentorBehavior mentor_behaviors = 1;
+}

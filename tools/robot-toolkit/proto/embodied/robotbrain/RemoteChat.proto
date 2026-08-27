@@ -1,0 +1,350 @@
+syntax = "proto3";
+// file: embodied/robotbrain/RemoteChat.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+import "embodied/robotbrain/ChatResponse.proto";
+import "embodied/logging/Log.proto";
+import "embodied/robotbrain/Contexts.proto";
+import "embodied/logging/Family.proto";
+import "embodied/robotbrain/ContentModule.proto";
+message RemoteChatContext {
+  optional uint64 timestamp = 1;
+  optional string text = 2;
+  optional string context_type = 3;
+}
+message ExecuteReturn {
+  optional uint32 index = 1;
+  optional string function_id = 2;
+  optional string return = 3;
+}
+message RecommendationContext {
+  enum Urgency {
+    UNSET_URGENCY = 0;
+    casual = 1;
+    normal = 2;
+    immediate = 3;
+  }
+  message Recommendation {
+    optional string module_id = 1;
+    optional string content_id = 2;
+    optional string entry_line = 3;
+    optional string module_name = 4;
+    optional string module_description = 5;
+    optional bool seen = 6;
+    optional bool skip_hub = 7;
+  }
+  optional string context = 1;
+  optional embodied.robotbrain.RecommendationContext.Urgency urgency = 2;
+  repeated embodied.robotbrain.RecommendationContext.Recommendation exits = 3;
+  repeated string restricted_modules = 4;
+  repeated string holidays = 5;
+}
+message RemoteDataQuery {
+  enum Query {
+    UNSPECIFIED = 0;
+    contexts = 1;
+    modules = 2;
+  }
+  optional embodied.robotbrain.RemoteDataQuery.Query query = 1;
+  optional string key = 2;
+  optional string subkey = 3;
+  optional string current_version = 4;
+}
+message RemoteChatRequest {
+  message InputVarsEntry {
+    optional string key = 1;
+    optional string value = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional string command = 2;
+  optional uint32 sequence = 3;
+  optional string speech = 4;
+  optional float confidence = 5;
+  optional string event_id = 6;
+  repeated embodied.robotbrain.RemoteChatContext extra_lines = 7;
+  optional string backend = 8;
+  optional string session_id = 9;
+  optional uint32 api_version = 10;
+  optional uint32 rollback = 11;
+  optional string module_id = 12;
+  optional string content_id = 13;
+  optional string user_id = 14;
+  optional uint32 user_age = 15;
+  optional bool upgrade_fallbacks = 16;
+  optional embodied.logging.DeviceSettings settings = 17;
+  optional embodied.robotbrain.RecommendationContext recommend = 18;
+  optional bool allow_multiple = 19;
+  optional embodied.robotbrain.Context global_context = 20;
+  optional embodied.robotbrain.Context conversation_context = 21;
+  optional embodied.robotbrain.Context prompt_context = 22;
+  optional embodied.robotbrain.RemoteDataQuery query = 23;
+  optional embodied.logging.FamilyInformation family = 24;
+  optional bool stream_response = 25;
+  optional string source_event_id = 26;
+  repeated int32 response_chunks = 27;
+  optional bool is_mentor = 28;
+  optional string timezone_id = 29;
+  repeated embodied.robotbrain.RemoteChatRequest.InputVarsEntry input_vars = 30;
+  optional string nickname = 31;
+  optional uint64 debug_timestamp = 32;
+  repeated embodied.robotbrain.ExecuteReturn execute_returns = 33;
+  optional bool no_llm = 34;
+  optional embodied.robotbrain.ResponseSource notify_source = 35;
+  repeated string speech_alternates = 36;
+  optional string original_language = 37;
+  optional string original_speech = 38;
+  repeated string original_speech_alternates = 39;
+  repeated string activity_ids = 40;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message RemoteDialog {
+  enum DialogAct {
+    DIALOG_ACT_UNKNOWN = 0;
+    abandon = 1;
+    apology = 2;
+    apology_response = 3;
+    appreciation = 4;
+    backchannelling = 5;
+    closing = 6;
+    complaint = 7;
+    opinion = 8;
+    statement_non_opinion = 9;
+    factual_question = 10;
+    opinion_question = 11;
+    hold = 12;
+    opening = 13;
+    yes_no_question = 14;
+    pos_answer = 15;
+    neg_answer = 16;
+    other_answers = 17;
+    command = 18;
+    comment = 19;
+    thanking = 20;
+    other = 21;
+    timeout = 22;
+  }
+  enum EmotionState {
+    EMOTION_UNKNOWN = 0;
+    sadness = 1;
+    joy = 2;
+    love = 3;
+    anger = 4;
+    fear = 5;
+    surprise = 6;
+    neutral = 7;
+  }
+}
+message RemoteSignals {
+  enum Signal {
+    no_signal = 0;
+    closing = 1;
+    apology = 2;
+    interrupted_speech = 3;
+    complaint_clarification = 4;
+    confirmation_agreement = 5;
+    interest = 6;
+    non_interest = 7;
+    rejection_disagreement = 8;
+  }
+  message MultiUtterSignals {
+    optional float non_interest = 1;
+  }
+  optional string single_signal = 1;
+  optional string volley_signal = 2;
+  optional embodied.robotbrain.RemoteSignals.MultiUtterSignals multi_utter_signals = 3;
+}
+message TagScore {
+  optional string name = 1;
+  optional string uuid = 2;
+  optional float score = 3;
+}
+message RemoteChatOutput {
+  optional string text = 1;
+  optional string markup = 2;
+  optional string mood = 3;
+  optional float mood_intensity = 4;
+  optional string dialog_act = 5;
+  optional float dialog_act_score = 6;
+  optional string emotion = 7;
+  optional float emotion_score = 8;
+  optional string sentiment = 9;
+  optional float sentiment_score = 10;
+  optional string single_signal = 11;
+  optional string volley_signal = 12;
+  optional float perplexity = 13;
+  optional string source = 14;
+  optional embodied.robotbrain.RemoteSignals signals = 15;
+  repeated embodied.robotbrain.TagScore auto_tags = 16;
+  optional string text_extended = 17;
+}
+message RemoteChatInput {
+  message InputSafety {
+    optional bool is_unsafe = 1;
+    repeated string blocked_by = 2;
+    repeated string intents = 3;
+    optional int32 phrase_id = 4;
+  }
+  optional string emotion = 1;
+  optional float emotion_score = 2;
+  optional string dialog_act = 3;
+  optional float dialog_act_score = 4;
+  optional string sentiment = 5;
+  optional float sentiment_score = 6;
+  optional float perplexity = 7;
+  optional string single_signal = 8;
+  optional string volley_signal = 9;
+  optional embodied.robotbrain.RemoteSignals signals = 10;
+  optional string text = 11;
+  optional embodied.robotbrain.RemoteChatInput.InputSafety safety = 12;
+  repeated embodied.robotbrain.TagScore auto_tags = 13;
+}
+message RemoteConsistencyControl {
+  optional string prefix = 1;
+  optional bool is_completed = 2;
+  optional string extractor = 3;
+}
+message RemoteChatMetrics {
+  message HighLevel {
+    message Entity {
+      message PosNegSet {
+        optional float positive = 1;
+        optional float negative = 2;
+        optional float total = 3;
+      }
+      message RateSet {
+        optional float rate = 1;
+      }
+      message EngagementSet {
+        optional float opinion = 1;
+        optional float question = 2;
+        optional float total = 3;
+      }
+      optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity.PosNegSet emotionality = 1;
+      optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity.PosNegSet sentimentality = 2;
+      optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity.EngagementSet engagement = 3;
+      optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity.RateSet informativity = 4;
+      optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity.RateSet non_interest = 5;
+      optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity.RateSet cognitive_load = 6;
+      optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity.RateSet nonsense = 7;
+    }
+    optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity user = 1;
+    optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity bot = 2;
+    optional embodied.robotbrain.RemoteChatMetrics.HighLevel.Entity both = 3;
+  }
+  message Numerics {
+    message EntityCounts {
+      optional uint32 num_utters = 1;
+      optional float avg_num_words = 2;
+      optional float turn_balance = 3;
+    }
+    optional embodied.robotbrain.RemoteChatMetrics.Numerics.EntityCounts user = 1;
+    optional embodied.robotbrain.RemoteChatMetrics.Numerics.EntityCounts bot = 2;
+  }
+  message Classifications {
+    optional float frustrated_rate = 1;
+  }
+  optional embodied.robotbrain.RemoteChatMetrics.HighLevel high_level_metrics = 1;
+  optional embodied.robotbrain.RemoteChatMetrics.Numerics numerical_metrics = 2;
+  optional embodied.robotbrain.RemoteChatMetrics.Classifications classification_metrics = 3;
+}
+message EventSubscription {
+  optional bool clear = 1;
+  repeated string active = 2;
+  repeated string passive = 3;
+}
+message RemoteChatAction {
+  enum ActionID {
+    UNSET_ACTION_ID = 0;
+    launch = 1;
+    launch_if_confirmed = 2;
+    exit_module = 3;
+    request_next = 4;
+    abort_module = 5;
+    execute = 6;
+    sleep = 7;
+    tangent = 8;
+  }
+  message ActionArgsEntry {
+    optional string key = 1;
+    optional string value = 2;
+  }
+  optional embodied.robotbrain.RemoteChatAction.ActionID action = 1;
+  optional string module_id = 2;
+  optional string content_id = 3;
+  optional embodied.robotbrain.OutputType output_type = 4;
+  optional bool is_remote_module = 5;
+  optional embodied.robotbrain.EventSubscription event_subscription = 6;
+  optional string function_id = 7;
+  repeated string function_args = 8;
+  optional bool requested = 9;
+  repeated embodied.robotbrain.RemoteChatAction.ActionArgsEntry action_args = 10;
+}
+message IntentResult {
+  message EntitiesEntry {
+    optional string key = 1;
+    optional string value = 2;
+  }
+  message IntentRank {
+    optional string name = 1;
+    optional float score = 2;
+  }
+  optional string matched_intent = 1;
+  repeated embodied.robotbrain.IntentResult.EntitiesEntry entities = 2;
+  optional float score = 3;
+  repeated embodied.robotbrain.IntentResult.IntentRank ranking = 4;
+}
+message RemoteDataBlock {
+  optional string version = 1;
+  optional embodied.robotbrain.Contexts contexts = 2;
+  repeated embodied.robotbrain.ModuleDetail modules = 3;
+}
+message FlowInfo {
+  optional string module_id = 1;
+  optional string content_id = 2;
+  optional string version = 3;
+}
+message RemoteChatResponse {
+  enum ResultCode {
+    SUCCESS = 0;
+    ERROR_TIMEOUT = 1;
+    ERROR_STATE = 2;
+    ERROR_SERVICE = 3;
+    ERROR_OFFLINE = 4;
+    NOREPLY_INTERRUPT = 5;
+    NOREPLY_ACK = 6;
+    REPLY_FORCE_ANCHOR = 7;
+    REPLY_FORCE_QUIT = 8;
+    REPLY_PENDING = 9;
+  }
+  optional uint64 timestamp = 1;
+  optional uint32 result = 2;
+  optional uint32 sequence = 3;
+  optional string event_id = 4;
+  optional string input_speech = 5;
+  optional embodied.robotbrain.RemoteChatOutput output = 6;
+  optional uint64 processing_time = 7;
+  optional string backend = 8;
+  optional string input_sentiment = 9;
+  repeated string input_intents = 10;
+  optional uint64 server_timestamp = 11;
+  optional embodied.robotbrain.RemoteChatAction response_action = 12;
+  optional string worker_image = 13;
+  optional embodied.robotbrain.IntentResult nlp_intent = 14;
+  optional float relevancy_score = 15;
+  optional float nonsense_score = 16;
+  optional embodied.robotbrain.RemoteChatInput input = 17;
+  optional embodied.robotbrain.RemoteConsistencyControl consistency_control = 18;
+  optional embodied.robotbrain.RemoteChatMetrics metrics = 19;
+  optional int32 gpt_status = 20;
+  optional embodied.robotbrain.RemoteDataBlock query_data = 21;
+  optional int32 chunk_num = 22;
+  optional bool fallback = 23;
+  optional int32 total_volleys = 24;
+  optional int32 node_volleys = 25;
+  repeated embodied.robotbrain.RemoteChatAction response_actions = 26;
+  optional embodied.robotbrain.FlowInfo flow_info = 27;
+  optional embodied.robotbrain.RemoteChatOutput original_output = 28;
+  optional string output_speech = 99;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

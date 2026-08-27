@@ -1,0 +1,8 @@
+syntax = "proto3";
+// file: embodied/perception/audio/GoogleAccount.proto  package: embodied.perception.audio
+package embodied.perception.audio;
+message GoogleAccount {
+  optional string project_id = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

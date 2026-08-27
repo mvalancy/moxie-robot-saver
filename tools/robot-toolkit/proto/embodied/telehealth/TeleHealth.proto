@@ -1,0 +1,47 @@
+syntax = "proto3";
+// file: embodied/telehealth/TeleHealth.proto  package: embodied.telehealth
+package embodied.telehealth;
+enum Action {
+  UNKNOWN_ACTION = 0;
+  START_SESSION = 1;
+  PLAY_OUTPUT = 2;
+  END_SESSION = 3;
+  UPDATE_STATE = 4;
+  INTERRUPT = 5;
+}
+enum RobotState {
+  UNKNOWN_STATE = 0;
+  READY = 1;
+  IN_SESSION = 2;
+  EXITING = 3;
+}
+message TelehealthStatus {
+  optional uint64 timestamp = 1;
+  optional bool telehealth_active = 2;
+  optional bool session_active = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message Output {
+  optional string line_id = 1;
+  repeated string line_params = 2;
+  optional string text = 3;
+  optional string markup = 4;
+}
+message TelehealthMessage {
+  optional uint64 timestamp = 1;
+  optional embodied.telehealth.Action action = 2;
+  optional embodied.telehealth.Output output = 3;
+  optional embodied.telehealth.RobotState state = 4;
+  optional string session_id = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message TelehealthRobotCommand {
+  optional string command = 1;
+  optional embodied.telehealth.TelehealthMessage message = 2;
+}
+message TelehealthRobotEvent {
+  optional string subtopic = 1;
+  optional embodied.telehealth.TelehealthMessage message = 2;
+}

@@ -1,0 +1,23 @@
+syntax = "proto3";
+// file: embodied/perception/audio/Speaker.proto  package: embodied.perception.audio
+package embodied.perception.audio;
+message Speaker {
+  optional string id = 1;
+  optional float doa = 2;
+  optional float id_confidence = 3;
+  optional uint64 timestamp = 4;
+  repeated float doa_observations = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message EnrollmentState {
+  enum State {
+    STARTED = 0;
+    FINISHED = 1;
+  }
+  optional string id = 1;
+  optional embodied.perception.audio.EnrollmentState.State state = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

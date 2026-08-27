@@ -1,0 +1,8 @@
+syntax = "proto3";
+// file: embodied/unity/NetworkState.proto  package: embodied.unity
+package embodied.unity;
+message NetworkState {
+  optional bool Connected = 1;
+  optional int32 Ping = 2;
+  optional uint64 timestamp = 3;
+}

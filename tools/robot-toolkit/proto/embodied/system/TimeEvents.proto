@@ -1,0 +1,29 @@
+syntax = "proto3";
+// file: embodied/system/TimeEvents.proto  package: embodied.sys
+package embodied.sys;
+message TimeZoneInfo {
+  optional uint64 timestamp = 1;
+  optional string midnight_in_timezone = 2;
+  optional string olson_id = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message UserAlarmRequest {
+  enum ReservedTimers {
+    TIMER_ID_USER_WAKE = 0;
+    TIMER_ID_PARENT_APP = 1;
+    TIMER_ID_CUSTOM = 100;
+  }
+  optional uint64 timestamp = 1;
+  optional uint32 timer_id = 2;
+  optional uint64 alarm_expires = 3;
+  optional uint64 alarm_repeats = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message UserAlarmTriggered {
+  optional uint64 timestamp = 1;
+  optional uint32 timer_id = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

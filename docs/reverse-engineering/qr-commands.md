@@ -106,16 +106,53 @@ plausible lever for routing a stock robot's cloud traffic through infrastructure
 
 ## `IOTEndpoint` — the cloud selector (`embodied.logging`)
 
+Real enum value names (from the recovered descriptor):
+
 ```
-IotDefault=0  GoogleDevelop  GoogleStaging  GoogleProduction
-EmbodiedDevelop  EmbodiedStaging  EmbodiedProduction  EmbodiedHipaa
-EmbodiedLocal  EmbodiedChina  EmbodiedHk
+IOT_DEFAULT=0  GOOGLE_DEVELOP=1  GOOGLE_STAGING=2  GOOGLE_PRODUCTION=3
+EMBODIED_DEVELOP=4  EMBODIED_STAGING=5  EMBODIED_PRODUCTION=6  EMBODIED_HIPAA=7
+EMBODIED_LOCAL=8  EMBODIED_CHINA=9  EMBODIED_HK=10  OPEN_MOXIE=11
 ```
 
-`EmbodiedLocal` is the interesting one for revival — a build/endpoint intended to point at a
-**local** server rather than the (now-dead) Google/AWS clouds. Combined with `endpoint_update` via a
-`debug` QR, this is a path to point a stock robot at this repo's [`server/`](../../server/) +
-[`mqtt/`](../../mqtt/).
+Two values matter for revival, and **both are baked into the shipped 803 firmware**:
+
+- **`OPEN_MOXIE=11`** — a first-class endpoint for the community server. Confirmed by
+  `[OriginalName("OPEN_MOXIE")]` in *both* `WifiApp.Protos.dll` and `Embodied.Protos.dll`. The
+  firmware natively knows how to home to an OpenMoxie-style server.
+- **`EMBODIED_LOCAL=8`** — a local-server endpoint.
+
+Combined with `endpoint_update` via a `debug` QR, this is the path to point a stock robot at a server
+you control (this repo's [`server/`](../../server/) + [`mqtt/`](../../mqtt/), or OpenMoxie). Note this
+only **redirects** the robot's cloud — running *custom software on the robot itself* is a separate
+effort (see [`firmware-image.md`](firmware-image.md)).
+
+## Manufacturing QR codes
+
+The factory line's own apps (`me.embodied.productiontesting.*`) **generate** QR codes with
+`androidmads`' `QRGEncoder` (`qr/QR.java`) and drive them from an enum, `qr/Codes.java`. The shipped
+entry is:
+
+```java
+DisplaySerialNumber("Display Device Serial Number", "{\"debug\":{\"command\":\"serial_number_display\"}}")
+```
+
+i.e. **manufacturing QR codes ride the exact same `{"debug":{"command":…}}` JSON channel** documented
+above — the factory just pre-bakes specific codes. So any generator that emits this JSON produces a
+"factory-format" QR the robot treats identically. The serial/part grammar the factory scanners *read*
+(barcodes, not command QRs) is in [`factory-provisioning.md`](factory-provisioning.md).
+
+## Toolkit — generate & validate these codes
+
+A runnable encoder/validator lives at [`../../tools/robot-toolkit/`](../../tools/robot-toolkit/):
+
+```sh
+python -m moxie_toolkit.cli endpoint OPEN_MOXIE --png redirect.png   # re-home QR as a PNG
+python -m moxie_toolkit.cli debug reset_network                      # factory debug command
+python -m moxie_toolkit.cli validate                                 # 27 checks, incl. byte-parity
+```
+
+Every generator is validated by schema round-trip **and** by producing byte-identical `PA` payloads
+to the independently reverse-engineered phone-side encoder ([`../../tools/pairing/moxie_qr.py`](../../tools/pairing/moxie_qr.py)) — strong evidence the recovered grammar is exactly right.
 
 ## Also carried: `QRMultiDecoder`
 

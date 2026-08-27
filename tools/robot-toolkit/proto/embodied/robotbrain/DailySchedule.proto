@@ -1,0 +1,10 @@
+syntax = "proto3";
+// file: embodied/robotbrain/DailySchedule.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message DailySchedule {
+  optional string csv_day_name = 1;
+  optional string featured_module = 2;
+  repeated string modules = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+// file: embodied/robotbrain/Starbits.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message StarBitsEarned {
+  optional int32 earned = 1;
+  optional int32 total = 2;
+  optional string latest_unlocked = 3;
+  optional uint64 timestamp = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

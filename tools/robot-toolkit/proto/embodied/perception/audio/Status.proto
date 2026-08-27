@@ -1,0 +1,10 @@
+syntax = "proto3";
+// file: embodied/perception/audio/Status.proto  package: embodied.perception.audio
+package embodied.perception.audio;
+import "embodied/perception/audio/Speaker.proto";
+message Status {
+  optional uint64 timestamp = 1;
+  repeated string users = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

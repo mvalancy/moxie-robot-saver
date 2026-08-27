@@ -1,0 +1,14 @@
+syntax = "proto3";
+// file: embodied/unity/Gaze.proto  package: embodied.unity
+package embodied.unity;
+message Gaze {
+  optional uint64 idEyeTarget = 1;
+  optional float eyeTargetX = 2;
+  optional float eyeTargetY = 3;
+  optional float eyeTargetZ = 4;
+  optional uint64 idHeadTarget = 5;
+  optional float headTargetX = 6;
+  optional float headTargetY = 7;
+  optional float headTargetZ = 8;
+  optional uint64 timestamp = 9;
+}

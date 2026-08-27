@@ -1,0 +1,13 @@
+syntax = "proto3";
+// file: embodied/robotbrain/RemoteResponseData.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message RemoteResponseData {
+  optional uint64 instance_id = 1;
+  optional float positive_emotion_score = 2;
+  optional float negative_emotion_score = 3;
+  optional float dialog_act_engagement_score = 4;
+  optional float positive_sentiment_score = 5;
+  optional float negative_sentiment_score = 6;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

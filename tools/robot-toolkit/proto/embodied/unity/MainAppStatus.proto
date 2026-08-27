@@ -1,0 +1,7 @@
+syntax = "proto3";
+// file: embodied/unity/MainAppStatus.proto  package: embodied.unity
+package embodied.unity;
+message MainAppStatus {
+  optional uint64 timestamp = 1;
+  optional uint32 code = 2;
+}

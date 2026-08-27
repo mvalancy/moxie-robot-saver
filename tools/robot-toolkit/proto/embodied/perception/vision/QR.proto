@@ -1,0 +1,9 @@
+syntax = "proto3";
+// file: embodied/perception/vision/QR.proto  package: embodied.perception.vision
+package embodied.perception.vision;
+message QRPB {
+  optional uint64 timestamp = 2;
+  optional string qrcode = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,28 @@
+syntax = "proto3";
+// file: embodied/robotbrain/Contexts.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+import "embodied/robotbrain/Tags.proto";
+message Context {
+  optional string id = 1;
+  optional string text = 2;
+}
+message GlobalContext {
+  optional embodied.robotbrain.Context context = 1;
+}
+message EnvironmentContext {
+  optional embodied.robotbrain.Context context = 1;
+}
+message ConversationContext {
+  optional embodied.robotbrain.Context context = 1;
+  repeated string content_tags = 3;
+  repeated embodied.robotbrain.tags.GoalLevel goal_levels = 4;
+  repeated string properties = 5;
+  repeated string prompt = 6;
+  optional uint32 prompt_line_id = 7;
+}
+message Contexts {
+  repeated embodied.robotbrain.GlobalContext global_contexts = 1;
+  repeated embodied.robotbrain.EnvironmentContext environment_contexts = 2;
+  repeated embodied.robotbrain.ConversationContext conversation_contexts = 3;
+  optional string sha = 4;
+}

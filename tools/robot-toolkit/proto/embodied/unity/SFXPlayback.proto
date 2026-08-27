@@ -1,0 +1,11 @@
+syntax = "proto3";
+// file: embodied/unity/SFXPlayback.proto  package: embodied.unity
+package embodied.unity;
+message SFXPlaybackState {
+  optional bool isPlaying = 1;
+  optional uint64 timestamp = 2;
+  optional string input_id = 3;
+  optional string label = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

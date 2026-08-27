@@ -1,0 +1,25 @@
+syntax = "proto3";
+// file: embodied/robotbrain/Tags.proto  package: embodied.robotbrain.tags
+package embodied.robotbrain.tags;
+message Tag {
+  optional string uuid = 1;
+  optional string name = 2;
+}
+message GoalLevel {
+  optional string goal = 1;
+  optional string level = 2;
+}
+message Weight {
+  optional string parentUUID = 1;
+  optional string childUUID = 2;
+  optional float weighting = 3;
+}
+message SELTagInfo {
+  repeated embodied.robotbrain.tags.Tag allGoals = 1;
+  repeated embodied.robotbrain.tags.Tag allLevels = 2;
+  repeated embodied.robotbrain.tags.Tag allSkills = 3;
+  repeated embodied.robotbrain.tags.Tag allPillars = 4;
+  repeated embodied.robotbrain.tags.Weight goalsToLevels = 5;
+  repeated embodied.robotbrain.tags.Weight skillsToGoals = 6;
+  repeated embodied.robotbrain.tags.Weight pillarsToSkills = 7;
+}

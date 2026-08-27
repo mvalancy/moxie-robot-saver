@@ -1,0 +1,24 @@
+syntax = "proto3";
+// file: embodied/robotbrain/SessionState.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+import "embodied/logging/Log.proto";
+message SessionUser {
+  optional uint32 user_age = 1;
+  optional uint32 num_children = 2;
+  optional uint32 max_children = 3;
+}
+message SessionState {
+  enum RecordMode {
+    NORMAL = 0;
+    EXTENDED = 1;
+  }
+  optional bool inSession = 1;
+  optional uint64 timestamp = 2;
+  optional embodied.robotbrain.SessionState.RecordMode record_mode = 3;
+  optional embodied.robotbrain.SessionUser user = 4;
+  optional string outSessionReason = 5;
+  optional embodied.logging.DeviceSettings settings = 6;
+  optional bool prev_active = 7;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

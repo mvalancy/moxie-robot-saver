@@ -1,0 +1,27 @@
+syntax = "proto3";
+// file: embodied/unity/MarkUpToolMessages.proto  package: embodied.TTSMarkupTool
+package embodied.TTSMarkupTool;
+message MarkUpEditRequest {
+  optional uint64 timestamp = 1;
+  optional string id = 2;
+  optional string input = 3;
+}
+message MarkUpEditResponse {
+  optional uint64 timestamp = 1;
+  optional string id = 2;
+  optional string input = 3;
+  optional string output = 4;
+  optional uint64 revision = 5;
+  optional bool ended = 6;
+}
+message MarkUpEditorClosedEvent {
+  optional uint64 timestamp = 1;
+}
+message MarkUpLineRequest {
+  optional uint64 timestamp = 1;
+  optional bool forward = 2;
+}
+message MarkUpLineResponse {
+  optional uint64 timestamp = 1;
+  optional bool valid = 2;
+}

@@ -1,0 +1,92 @@
+syntax = "proto3";
+// file: embodied/lizzerface/enums.proto  package: embodied.lizzerface
+package embodied.lizzerface;
+enum PowerRail {
+  POWER_12V = 0;
+  POWER_3V3 = 1;
+  POWER_5V = 2;
+  POWER_LCOS = 3;
+  POWER_MUTE = 4;
+  POWER_SPEAKER = 5;
+  NUM_POWER_RAILS = 6;
+}
+enum LedrPattern {
+  F_BOOTUP_DEFAULT = 0;
+  F_RDY2LISTEN_BLUE = 1;
+  F_LISTEN_GREEN = 2;
+  F_PROCESS_YELLOW = 3;
+  F_LW_BAT = 4;
+  F_PRIV = 5;
+  NUM_PATTERNS = 6;
+}
+enum FirmwareControlID {
+  CONTROL_RESET_MOTOR_IC = 0;
+  NUM_CONTROL_IDS = 1;
+}
+enum Revision_Level {
+  REVISION_UNKNOWN = 0;
+  REVISION_D1_Bo = 209;
+  REVISION_D2_Bo = 210;
+  REVISION_D3_Karu1 = 211;
+  REVISION_D4_Karu1Skel = 212;
+  REVISION_D5_MoxieP6L1 = 213;
+  REVISION_D6_MoxieBlue = 214;
+  REVISION_D7_MoxieBlue = 215;
+}
+enum SensorPB {
+  FLAP_SENSOR = 0;
+  NUM_SENSORS = 1;
+}
+enum Motor {
+  L_ARM_UP_DN = 0;
+  L_ARM_IN_OUT = 1;
+  R_ARM_UP_RN = 2;
+  R_ARM_IN_OUT = 3;
+  HEAD_UP_DN = 4;
+  HEAD_L_R = 5;
+  HEAD_TILT = 6;
+  SQUISH = 7;
+  MOT0 = 8;
+  MOT1 = 9;
+  NUM_MOTORS = 10;
+  BASE_L_R = 11;
+  TORSO_F_B = 12;
+  UNKNOWN_MOTOR = 13;
+}
+enum ConfigParam {
+  CONFIG_MOTOR_RWD = 0;
+  CONFIG_KP = 1;
+  CONFIG_KI = 2;
+  CONFIG_KD = 3;
+  CONFIG_MAX_PWM = 4;
+  CONFIG_KI_LEAK = 5;
+  CONFIG_LIMIT = 6;
+  CONFIG_ADJ = 7;
+  NUM_CONFIG_PARAMS = 9;
+  CONFIG_MOTOR_FWD = 8;
+  CONFIG_WRITE = 85;
+}
+enum MpuEventID {
+  STABLE = 0;
+  NOT_STABLE = 1;
+  PICKED_UP = 2;
+  PUTDOWN = 3;
+  FORCE_PUTDOWN = 4;
+  TILT = 5;
+  UNKNOWN_MPU_EVENT = 6;
+}
+enum SwitchID {
+  SWITCH0 = 0;
+  SWITCH1 = 1;
+  SWITCH2 = 2;
+  DC_PLUG = 3;
+  LEFT_ARM = 16;
+  RIGHT_ARM = 17;
+}
+enum TouchID {
+  BACK = 0;
+  TUMMY = 1;
+  UNUSED = 2;
+  LEFTHAND = 3;
+  RIGHTHAND = 4;
+}

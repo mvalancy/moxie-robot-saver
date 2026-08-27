@@ -1,0 +1,32 @@
+syntax = "proto3";
+// file: embodied/robotbrain/serialized/FallbackInfo.proto  package: embodied.robotbrain.serialized
+package embodied.robotbrain.serialized;
+import "embodied/robotbrain/Contexts.proto";
+message NodeFallback {
+  enum FallbackOptions {
+    UNKNOWN = 0;
+    DEFAULT = 1;
+    CONVERSATION = 2;
+    SILENT = 3;
+    LOCAL_ONLY = 4;
+    FALLBACKS_NO_REMOTE = 5;
+  }
+  optional string id = 1;
+  optional embodied.robotbrain.Context context = 2;
+  optional embodied.robotbrain.serialized.NodeFallback.FallbackOptions opt = 3;
+}
+message ContentIDFallback {
+  optional string id = 1;
+  optional embodied.robotbrain.Context context = 2;
+}
+message ModuleFallback {
+  optional string id = 1;
+  optional embodied.robotbrain.Context context = 2;
+  repeated embodied.robotbrain.serialized.NodeFallback node_fallbacks = 3;
+  repeated embodied.robotbrain.serialized.ContentIDFallback content_id_fallbacks = 4;
+  optional embodied.robotbrain.serialized.NodeFallback module_default_fallback = 5;
+}
+message FallbackInfo {
+  optional embodied.robotbrain.Context default_context = 1;
+  repeated embodied.robotbrain.serialized.ModuleFallback modules = 2;
+}
