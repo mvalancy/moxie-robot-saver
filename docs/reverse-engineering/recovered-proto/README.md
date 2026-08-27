@@ -32,6 +32,21 @@ protoc --python_out=. --proto_path=. $(find . -name '*.proto')   # or --cpp_out 
 | `logging/` | Cloud/backup/file-sync, metrics, **IOTEndpoint**, SEL updates. |
 | `system/`, `launcher/`, `playspace/`, `telehealth/`, `testing/` | power/time/system events, component state, play-space, telehealth, test harnesses. |
 
+
+## Cross-validation
+
+The overlapping files were checked field-for-field against **OpenMoxie's independently reverse-
+engineered protos** (a different person, different method): **17 messages / 99 fields / 3 enums / 19
+enum values — zero differences.** This includes the revival-critical `embodied.wifiapp.QRCommands`
+and `embodied.logging.IOTEndpoint`. Two independent derivations agreeing exactly is strong evidence
+the recovered schema is correct. Re-run with:
+
+```sh
+python -m moxie_toolkit.validate_protos [path/to/openmoxie/.../protos]
+```
+
+(OpenMoxie also ships `embodied/logging/Cloud2.proto`, a newer logging variant not in this set.)
+
 ## Caveats
 
 - Rendered `syntax = "proto3"` (the descriptors are proto3); presence/labels shown as `optional` are

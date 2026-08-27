@@ -45,6 +45,7 @@ python -m moxie_toolkit.cli validate
 |---|---|
 | `moxie_toolkit/qr_codec.py` | Encode/decode every QR `bo-wifi` accepts: `PA`+`StartPairingQR`, `VN`+`QRVPNConfig`, JSON `{wifi,pair,debug}`. Mirrors `QRData.ParseFromString`. |
 | `moxie_toolkit/validate_qr.py` | Schema round-trip + byte-parity validation (27 checks). **This replaces acoustic QR brute-forcing.** |
+| `moxie_toolkit/validate_protos.py` | Cross-validate the 120 recovered protos vs OpenMoxie's independent set (17 msgs/99 fields/19 enum values — perfect match). |
 | `moxie_toolkit/cli.py` | `moxie-qr` CLI (gen / decode / validate / PNG-SVG). |
 | `moxie_toolkit/markup.py` | Build `<mark name="cmd:…">` behavior markup (gestures, mood, audio) to weave into TTS. See [behavior-markup.md](../../docs/reverse-engineering/behavior-markup.md). |
 | `secrets/emulate_secrets.py` | Recover factory secrets from `libsecrets.so` via Unicorn emulation (algorithm = XOR with package name). See [factory-provisioning.md](../../docs/reverse-engineering/factory-provisioning.md). |
