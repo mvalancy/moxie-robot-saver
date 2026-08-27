@@ -35,6 +35,10 @@ python -m moxie_toolkit.cli wifi --ssid HomeNet --password s3cret
 python -m moxie_toolkit.cli vpn VPN_ACTIVATE --url https://vpn/cfg --connect
 python -m moxie_toolkit.cli decode 'PA0a07...'
 
+# Look up any protocol message/enum from the 120 recovered protos
+python -m moxie_toolkit.cli proto StartPairingQR
+python -m moxie_toolkit.cli proto --grep mqtt
+
 # Validate every encoder (round-trip + cross-check vs phone-side tool) — the test framework
 python -m moxie_toolkit.cli validate
 ```
@@ -50,6 +54,7 @@ python -m moxie_toolkit.cli validate
 | `moxie_toolkit/markup.py` | Build `<mark name="cmd:…">` behavior markup (gestures, mood, audio) to weave into TTS. See [behavior-markup.md](../../docs/reverse-engineering/behavior-markup.md). |
 | `secrets/emulate_secrets.py` | Recover factory secrets from `libsecrets.so` via Unicorn emulation (algorithm = XOR with package name). See [factory-provisioning.md](../../docs/reverse-engineering/factory-provisioning.md). |
 | `moxie_toolkit/bus.py` | **MoxieBus** — the on-device ZMQ bus client (drive face/motors/LEDs, read sensors). `pip install pyzmq`; tunnel via `adb forward`. |
+| `moxie_toolkit/protoref.py` | Query the protocol: `python -m moxie_toolkit.cli proto QRCommand` / `proto --grep endpoint` / `proto --list` (382 msgs, 84 enums). |
 | `moxie_toolkit/embodied/…` | Generated Python bindings for all 120 recovered protos. |
 | `proto/embodied/…` | The `.proto` sources (copy of `docs/reverse-engineering/recovered-proto/`). |
 
