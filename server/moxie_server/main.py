@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request, Response, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db, crypto, diceware
+from . import db, crypto, diceware, extra_api
 from .serializers import user_document, robot_document
 
 import sys
@@ -519,6 +519,8 @@ def local_state(authorization: str = Header(None)):
 def healthz():
     return {"ok": True}
 
+
+extra_api.register(app)   # the rest of the RE'd REST surface (include_router is broken in this env)
 
 # static web client at /
 if os.path.isdir(_STATIC):
