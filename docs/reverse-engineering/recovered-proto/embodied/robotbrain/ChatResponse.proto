@@ -1,0 +1,99 @@
+syntax = "proto3";
+// file: embodied/robotbrain/ChatResponse.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+import "embodied/perception/fusion/FusedPeople.proto";
+import "embodied/robotbrain/MentorBehavior.proto";
+enum OutputType {
+  CATCH_ALL = 0;
+  FALLBACK = 1;
+  GLOBAL_COMMAND = 2;
+  NORMAL = 3;
+  EVENT_INPUT = 4;
+  BASE_CASE = 5;
+  STINGER = 6;
+  USER_EVENT = 7;
+  UNSET = 8;
+  GLOBAL_RESPONSE = 9;
+  SILENT = 10;
+  EMPTY = 11;
+  CONTEXTUAL_FALLBACK = 12;
+  REMOTE_DELAY = 13;
+}
+enum FallbackType {
+  FALLBACK_UNKNOWN = 0;
+  REPROMPT = 1;
+  CLARIFICATION = 2;
+  NEAR_GLOBAL_COMMAND = 3;
+  FALLBACK_LOCAL_RULE = 4;
+  FALLBACK_LOCAL_FALLBACK = 5;
+  FALLBACK_CONFIRMATION = 6;
+  FALLBACK_MOVE_ON = 7;
+  FALLBACK_USE_REMOTE = 8;
+  FALLBACK_NO_REMOTE = 9;
+}
+enum BlockedType {
+  NOT_BLOCKED = 0;
+  INTERRUPTION_FAILED = 1;
+  EMPTY_OUTPUT = 2;
+  TARGET_SPEAKING = 3;
+  TARGET_OUT_OF_VIEW = 4;
+  NOT_TARGETED = 5;
+  NOT_ENGAGED = 6;
+  NOT_MATCHED = 7;
+  THINKING = 8;
+  WAITING = 9;
+  MARKING_UP = 10;
+  SPEAKING = 11;
+  ASR_DENIED = 12;
+}
+enum ResponseSource {
+  LOCAL_RESPONSE = 0;
+  REMOTE_RESPONSE = 1;
+}
+message ActivityUpdateData {
+  optional string activity_id = 1;
+  optional embodied.robotbrain.MentorAction action = 2;
+}
+message ChatResponse {
+  message Engagement {
+    optional bool is_mentor = 1;
+    optional bool is_target = 2;
+  }
+  message InputVarsEntry {
+    optional string key = 1;
+    optional string value = 2;
+  }
+  optional string bot = 1;
+  optional string user = 2;
+  optional string response = 3;
+  optional uint64 id = 4;
+  optional float doa = 5;
+  optional uint64 timestamp = 6;
+  optional string input = 7;
+  optional string input_id = 8;
+  optional string star_goal_type = 9;
+  optional string star_goal_prompt = 10;
+  optional string star_goal_response = 11;
+  optional string star_goal_category = 12;
+  optional double output_time = 13;
+  optional embodied.robotbrain.OutputType output_type = 14;
+  optional string chat_topic = 15;
+  optional string chat_module = 16;
+  optional embodied.perception.fusion.FusedPersonPB person = 17;
+  optional string chat_content_id = 18;
+  optional embodied.robotbrain.BlockedType blocked_type = 19;
+  optional uint64 response_sequence_id = 20;
+  optional embodied.robotbrain.ResponseSource source = 21;
+  optional embodied.robotbrain.OutputType unused_output_type = 22;
+  optional embodied.robotbrain.FallbackType fallback_type = 23;
+  optional bool interruption = 24;
+  repeated int32 response_chunks = 25;
+  repeated string activity_completion_ids = 26;
+  repeated embodied.robotbrain.ActivityUpdateData activity_updates = 27;
+  optional embodied.robotbrain.ChatResponse.Engagement engagement = 28;
+  repeated embodied.robotbrain.ChatResponse.InputVarsEntry input_vars = 29;
+  optional int32 remote_module_volley_count = 30;
+  optional int32 remote_node_volley_count = 31;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

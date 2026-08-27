@@ -1,0 +1,29 @@
+syntax = "proto3";
+// file: embodied/robotbrain/ModuleTag.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+import "embodied/robotbrain/Tags.proto";
+message ModuleTagInfo {
+  repeated embodied.robotbrain.ModuleTagData module_tags = 1;
+}
+message ModuleTagData {
+  optional string _uuid = 1;
+  optional string _module_id = 2;
+  optional string _module_name = 3;
+  repeated embodied.robotbrain.ContentInfo _index_table = 8;
+  repeated embodied.robotbrain.tags.GoalLevel _sel_tags = 9;
+  repeated embodied.robotbrain.ModuleTag _content_tags = 10;
+  optional bool _does_report_completion = 11;
+}
+message ModuleTag {
+  optional string tag_uuid = 1;
+  optional string source_uuid = 2;
+}
+message ContentInfo {
+  optional string _content_id = 1;
+  optional embodied.robotbrain.ContentData _csv_dict = 2;
+}
+message ContentData {
+  optional string UUID = 1;
+  optional string content_tags = 11;
+  optional string sel_tags = 12;
+}

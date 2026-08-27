@@ -1,0 +1,40 @@
+syntax = "proto3";
+// file: embodied/perception/audio/zmqSTT.proto  package: embodied.perception.audio
+package embodied.perception.audio;
+message zmqSTTRequest {
+  enum VADState {
+    UNKNOWN = 0;
+    START_OF_SPEECH = 1;
+    SPEECH = 2;
+    END_OF_SPEECH = 3;
+  }
+  optional uint64 timestamp = 1;
+  optional embodied.perception.audio.zmqSTTRequest.VADState vad = 2;
+  optional bytes audio_content = 3;
+  optional string uuid = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message zmqSTTResponse {
+  enum ResponseType {
+    PARTIAL = 0;
+    FINAL = 1;
+  }
+  optional uint64 timestamp = 1;
+  optional embodied.perception.audio.zmqSTTResponse.ResponseType type = 2;
+  optional string speech = 3;
+  optional float confidence = 4;
+  optional uint64 end_timestamp = 5;
+  optional uint64 start_timestamp = 6;
+  optional string uuid = 7;
+  optional uint32 error_code = 8;
+  optional string error_message = 9;
+  optional string language = 10;
+  repeated string alternatives = 11;
+  optional string original_language = 12;
+  optional string original_speech = 13;
+  repeated string original_alternatives = 14;
+  repeated float speaker_id = 15;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

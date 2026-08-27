@@ -1,0 +1,12 @@
+syntax = "proto3";
+// file: embodied/robotbrain/ContentTags.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message Tag {
+  optional string uuid = 1;
+  optional string name = 2;
+}
+message ContentTag {
+  repeated embodied.robotbrain.Tag replaced = 1;
+  repeated embodied.robotbrain.Tag finalized = 2;
+  repeated embodied.robotbrain.Tag review = 3;
+}

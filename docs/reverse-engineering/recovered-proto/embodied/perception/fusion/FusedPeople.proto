@@ -1,0 +1,186 @@
+syntax = "proto3";
+// file: embodied/perception/fusion/FusedPeople.proto  package: embodied.perception.fusion
+package embodied.perception.fusion;
+enum FusedPersonSpeakingSource {
+  UNKNOWN = 0;
+  STT = 1;
+  VAD = 2;
+}
+message FusedPeoplePB {
+  optional double timestamp_double = 1;
+  repeated embodied.perception.fusion.FusedPersonPB people = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonPB {
+  optional double timestamp_double = 1;
+  optional uint64 id = 2;
+  optional string name = 3;
+  optional string fullname = 4;
+  optional bool is_visible = 5;
+  optional bool is_engaged = 6;
+  optional float engagement = 7;
+  optional embodied.perception.fusion.FusedFacePB face = 8;
+  optional embodied.perception.fusion.FusedBodyPB body = 9;
+  optional embodied.perception.fusion.FusedSpeechPB speech = 10;
+  optional uint64 timestamp = 11;
+  optional float confidence = 12;
+  optional float world_x = 13;
+  optional float world_y = 14;
+  optional float world_z = 15;
+  optional float world_width = 16;
+  optional float world_height = 17;
+  optional bool vad_speaking = 18;
+  optional uint64 started_speaking = 29;
+}
+message FusedFacePB {
+  optional float world_x = 1;
+  optional float world_y = 2;
+  optional float world_z = 3;
+  optional float world_width = 4;
+  optional float world_height = 5;
+  optional float screen_x = 6;
+  optional float screen_y = 7;
+  optional float screen_width = 8;
+  optional float screen_height = 9;
+  optional float roll = 10;
+  optional float pitch = 11;
+  optional float yaw = 12;
+  optional float confidence = 13;
+  optional bool is_smiling = 14;
+  optional float smile_confidence = 15;
+  optional double last_time_in_view_double = 16;
+  optional double last_time_seen_double = 17;
+  optional float world_left_eye_x = 18;
+  optional float world_left_eye_y = 19;
+  optional float world_right_eye_x = 20;
+  optional float world_right_eye_y = 21;
+  optional float screen_left_eye_x = 22;
+  optional float screen_left_eye_y = 23;
+  optional float screen_right_eye_x = 24;
+  optional float screen_right_eye_y = 25;
+  optional uint64 last_time_in_view = 26;
+  optional uint64 last_time_seen = 27;
+  optional uint64 face_tracker_id = 28;
+}
+message FusedBodyPB {
+  optional float world_x = 1;
+  optional float world_y = 2;
+  optional float world_z = 3;
+  optional float world_width = 4;
+  optional float world_height = 5;
+  optional float screen_x = 6;
+  optional float screen_y = 7;
+  optional float screen_width = 8;
+  optional float screen_height = 9;
+  optional float confidence = 10;
+  optional double last_time_in_view_double = 11;
+  optional double last_time_seen_double = 12;
+  optional uint64 last_time_in_view = 13;
+  optional uint64 last_time_seen = 14;
+}
+message FusedSpeechPB {
+  optional float world_x = 1;
+  optional float world_y = 2;
+  optional float world_z = 3;
+  optional float doa = 4;
+  optional string utterance = 5;
+  optional bool is_speaking = 6;
+  optional float begin_timestamp_float = 7;
+  optional float end_timestamp_float = 8;
+  optional float confidence = 9;
+  optional double last_time_in_view_double = 10;
+  optional double last_time_heard_double = 11;
+  optional uint64 begin_timestamp = 12;
+  optional uint64 end_timestamp = 13;
+  optional uint64 last_time_in_view = 14;
+  optional uint64 last_time_heard = 15;
+  optional string stt_event_id = 16;
+  optional float doa_confidence = 17;
+  repeated string alternate_utterances = 18;
+  optional string language = 19;
+  optional string original_language = 20;
+  optional string original_utterance = 21;
+  repeated string original_alternate_utterances = 22;
+}
+message FusedPersonAddedPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonRemovedPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonMovedPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonStartedSpeakingPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional embodied.perception.fusion.FusedPersonSpeakingSource source = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonStoppedSpeakingPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional embodied.perception.fusion.FusedPersonSpeakingSource source = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonSayingPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonSayingTimeoutPB {
+  optional uint64 timestamp = 2;
+  optional uint64 start_timestamp = 3;
+  optional uint64 end_timestamp = 4;
+  optional string event_id = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonSaidPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonSmiledPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonEngagedPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FusedPersonDisengagedPB {
+  optional double timestamp_double = 1;
+  optional embodied.perception.fusion.FusedPersonPB person = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

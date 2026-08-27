@@ -1,0 +1,23 @@
+syntax = "proto3";
+// file: embodied/launcher/ComponentState.proto  package: embodied.launcher
+package embodied.launcher;
+enum State {
+  UNKNOWN = 0;
+  Running = 1;
+  NotRunning = 2;
+  Fault = 3;
+}
+message ComponentState {
+  optional double timestamp = 1;
+  optional string name = 2;
+  optional embodied.launcher.State state = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message SetComponentState {
+  optional double timestamp = 1;
+  optional string name = 2;
+  optional embodied.launcher.State state = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,74 @@
+syntax = "proto3";
+// file: embodied/wifiapp/QRCommands.proto  package: embodied.unity
+package embodied.unity;
+import "embodied/logging/enums.proto";
+message QRCommand {
+  optional uint64 timestamp = 1;
+  optional string code = 2;
+  optional string param = 3;
+  optional embodied.logging.IOTEndpoint endpoint = 4;
+  optional string command = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message QRResponse {
+  optional uint64 timestamp = 1;
+  optional uint32 response_code = 2;
+  optional string response = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message QRDiagnosticData {
+  optional string robot_uuid = 1;
+  optional string rsa_pub = 2;
+  optional bool cloud_connected = 3;
+  optional uint32 user_state = 4;
+  optional string cloud_project = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message StartPairingQR {
+  enum WifiBandSelect {
+    ANY = 0;
+    ONLY_50G = 1;
+    ONLY_24G = 2;
+  }
+  optional string ssid = 1;
+  optional string password = 2;
+  optional bool is_staging = 3;
+  optional bytes secret_key = 4;
+  optional bool wifi_only = 5;
+  optional bool is_hidden = 6;
+  optional embodied.unity.StartPairingQR.WifiBandSelect band_select = 7;
+  optional embodied.logging.IOTEndpoint endpoint = 8;
+}
+message WifiNetworkUpdate {
+  optional uint64 timestamp = 1;
+  optional embodied.unity.StartPairingQR wifi_info = 2;
+  optional bool add_only = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message QRMultiDecoder {
+  optional embodied.unity.QRCommand debug = 1;
+  optional bytes encoded_proto = 2;
+}
+message QRVPNConfig {
+  enum VPNCommand {
+    UNKNOWN_VPN_COMMAND = 0;
+    VPN_DOWNLOAD = 1;
+    VPN_REVERT = 2;
+    VPN_CREDENTIALS = 3;
+    VPN_ACTIVATE = 4;
+    VPN_DEACTIVATE = 5;
+  }
+  optional uint64 timestamp = 1;
+  optional embodied.unity.QRVPNConfig.VPNCommand command = 2;
+  optional string vpn_id = 3;
+  optional string url = 4;
+  optional string username = 5;
+  optional string password = 6;
+  optional bool connect = 7;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

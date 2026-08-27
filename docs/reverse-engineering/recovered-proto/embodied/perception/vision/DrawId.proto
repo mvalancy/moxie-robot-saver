@@ -1,0 +1,11 @@
+syntax = "proto3";
+// file: embodied/perception/vision/DrawId.proto  package: embodied.perception.vision
+package embodied.perception.vision;
+message DrawIdPB {
+  optional string drawname = 1;
+  optional uint64 timestamp = 2;
+  optional uint32 center_x = 3;
+  optional uint32 center_y = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

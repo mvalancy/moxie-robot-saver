@@ -1,0 +1,13 @@
+syntax = "proto3";
+// file: embodied/robotbrain/Reset.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message SoftReset {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message HardReset {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

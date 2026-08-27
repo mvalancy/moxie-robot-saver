@@ -1,0 +1,31 @@
+syntax = "proto3";
+// file: embodied/robotbrain/ChatScriptState.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message ChatScriptReady {
+  optional string user = 1;
+  optional string bot = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message ChatScriptException {
+  optional string message = 1;
+  optional uint64 timestamp = 2;
+  optional bool restore_default = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message ChatbotListeningRequest {
+  optional string user = 1;
+  optional string bot = 2;
+  optional bool listening = 3;
+  optional uint64 timestamp = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message AllowCutoffEvent {
+  optional uint64 timestamp = 1;
+  optional bool allow = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

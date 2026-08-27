@@ -1,0 +1,73 @@
+syntax = "proto3";
+// file: embodied/robotbrain/ContentModule.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+import "embodied/robotbrain/Tags.proto";
+message ContentDetail {
+  message LegacyDataEntry {
+    optional string key = 1;
+    optional string value = 2;
+  }
+  optional string id = 1;
+  optional string name = 2;
+  optional string detail = 3;
+  repeated string content_tags = 4;
+  repeated embodied.robotbrain.tags.GoalLevel goal_levels = 5;
+  repeated string properties = 6;
+  optional string app_title = 7;
+  optional string app_detail = 8;
+  optional string set_id = 9;
+  optional embodied.robotbrain.ModuleDetail.ContentSource source = 10;
+  repeated embodied.robotbrain.ContentDetail.LegacyDataEntry legacy_data = 11;
+  optional string version = 12;
+  repeated string assets = 13;
+}
+message ModuleDetail {
+  enum ContentRules {
+    UNSPECIFIED = 0;
+    ORDERED = 1;
+    ORDERED_EXHAUST = 2;
+    RANDOM = 3;
+    RANDOM_EXHAUST = 4;
+    DAILY_MISSION = 5;
+    CALENDAR = 6;
+    ORDERED_EXHAUST_SEEN = 7;
+    RANDOM_EXHAUST_SEEN = 8;
+  }
+  enum ContentSource {
+    LOCAL = 0;
+    REMOTE_CHAT = 1;
+    HYBRID = 2;
+  }
+  enum FirstTimeRules {
+    FTUE_UNSPECIFIED = 0;
+    FTUE_ONCE = 1;
+    FTUE_REUSE = 2;
+  }
+  enum ModuleCategory {
+    UNASSIGNED = 0;
+    CREATIVITY = 1;
+    REGULATION = 2;
+    MOVEMENT = 3;
+    READING = 4;
+    PLAYFUL_GAME = 5;
+    PUZZLE_GAME = 6;
+    FUN_TIDBIT = 7;
+    LISTENING = 8;
+    MISSION = 9;
+    CONVERSATION = 10;
+    UTILITY = 11;
+    OTHER = 12;
+  }
+  optional embodied.robotbrain.ContentDetail info = 1;
+  optional bool recommendable = 2;
+  optional bool reportable = 3;
+  optional embodied.robotbrain.ModuleDetail.ContentRules rules = 4;
+  optional embodied.robotbrain.ModuleDetail.FirstTimeRules ft_rules = 5;
+  repeated embodied.robotbrain.ContentDetail content_infos = 6;
+  optional embodied.robotbrain.ModuleDetail.ContentSource source = 7;
+  optional embodied.robotbrain.ModuleDetail.ModuleCategory category = 8;
+  optional string confirmation_line = 9;
+  optional uint32 min_api_version = 10;
+  optional string app_type = 11;
+  repeated uint32 held_line_ids = 99;
+}

@@ -1,0 +1,28 @@
+syntax = "proto3";
+// file: embodied/logging/enums.proto  package: embodied.logging
+package embodied.logging;
+enum LoggingState {
+  START = 0;
+  STARTED = 1;
+  STOP = 2;
+  STOPPED = 3;
+}
+enum LoggingPolicy {
+  NO_DATA = 0;
+  NO_MEDIA = 1;
+  FULL = 2;
+}
+enum IOTEndpoint {
+  IOT_DEFAULT = 0;
+  GOOGLE_DEVELOP = 1;
+  GOOGLE_STAGING = 2;
+  GOOGLE_PRODUCTION = 3;
+  EMBODIED_DEVELOP = 4;
+  EMBODIED_STAGING = 5;
+  EMBODIED_PRODUCTION = 6;
+  EMBODIED_HIPAA = 7;
+  EMBODIED_LOCAL = 8;
+  EMBODIED_CHINA = 9;
+  EMBODIED_HK = 10;
+  OPEN_MOXIE = 11;
+}

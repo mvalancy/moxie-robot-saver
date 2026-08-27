@@ -1,0 +1,73 @@
+syntax = "proto3";
+// file: embodied/system/SystemEvents.proto  package: embodied.sys
+package embodied.sys;
+message WifiConnectionState {
+  optional uint64 timestamp = 1;
+  optional bool connected = 2;
+  optional string ssid = 3;
+  optional uint32 seconds_in_state = 4;
+  optional bool wifi_connected = 5;
+  optional bool inet_connected = 6;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message STTConnectionState {
+  optional uint64 timestamp = 1;
+  optional bool healthy = 2;
+  optional uint32 error_nr = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message OTAStatus {
+  optional uint64 timestamp = 1;
+  optional uint32 update_status = 2;
+  optional bool payload_complete = 3;
+  optional float update_percent = 4;
+  optional sint32 payload_result = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message WifiRecoverRequest {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message ShutdownRequest {
+  optional uint64 timestamp = 1;
+  optional uint32 recover_type = 2;
+  optional string source = 3;
+  optional string reason = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message SystemShutdown {
+  optional uint64 timestamp = 1;
+  optional uint32 recover_type = 2;
+  optional uint32 time_remaining = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message DebugConfigureRequest {
+  optional uint64 timestamp = 1;
+  optional string target = 2;
+  optional uint32 target_state = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message UnpairUserRequest {
+  enum DisengageReason {
+    UNPAIRING = 0;
+    TELEHEALTH = 1;
+    USER_DATA_UPDATE = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional uint32 time_remaining = 2;
+  optional embodied.sys.UnpairUserRequest.DisengageReason reason = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message UnpairUserReady {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,16 @@
+syntax = "proto3";
+// file: embodied/robotbrain/UserRecognition.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message LearnUserState {
+  enum State {
+    STARTING = 0;
+    LEARNING = 1;
+    FINISHED = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional string name = 2;
+  optional embodied.robotbrain.LearnUserState.State state = 3;
+  optional int64 id = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,7 @@
+syntax = "proto3";
+// file: embodied/unity/RobotCameraShake.proto  package: embodied.unity
+package embodied.unity;
+message RobotCameraShake {
+  optional uint64 timestamp = 1;
+  optional bool shaking = 2;
+}

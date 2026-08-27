@@ -1,0 +1,14 @@
+syntax = "proto3";
+// file: embodied/testing/Fusion.proto  package: embodied.testing
+package embodied.testing;
+import "embodied/perception/fusion/FusedPeople.proto";
+import "embodied/unity/RobotPosition.proto";
+message InitialFusionState {
+  optional uint64 timestamp = 1;
+  optional embodied.perception.fusion.FusedPeoplePB people = 50;
+  optional uint64 next_id = 51;
+  optional bool robot_is_speaking = 100;
+  optional embodied.unity.RobotPosition robot_position = 101;
+  optional bool user_is_targeted = 150;
+  optional uint64 targeted_user_id = 151;
+}

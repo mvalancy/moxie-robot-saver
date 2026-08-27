@@ -1,0 +1,366 @@
+syntax = "proto3";
+// file: embodied/logging/Cloud.proto  package: embodied.logging
+package embodied.logging;
+import "embodied/logging/enums.proto";
+import "embodied/logging/Log.proto";
+import "embodied/logging/Family.proto";
+import "embodied/robotbrain/ContentSchedule.proto";
+import "embodied/robotbrain/Contexts.proto";
+import "embodied/robotbrain/MentorBehavior.proto";
+enum MoxieMode {
+  DEFAULT_MODE = 0;
+  TELEHEALTH = 1;
+}
+enum CloudQuery {
+  QUERY_UNKNOWN = 0;
+  idf = 1;
+  license = 2;
+  schedule = 3;
+  contexts = 4;
+  context_store = 5;
+  mentor_behaviors = 6;
+  remote_lines = 7;
+}
+message Packet {
+  enum Model {
+    UNKNOWN = 0;
+    SessionLog = 1;
+    Device = 2;
+    Event = 3;
+    Raw = 4;
+  }
+  optional embodied.logging.Packet.Model model = 1;
+  optional uint32 version = 2;
+  optional uint64 recorded_at = 3;
+  optional string moxie_id = 4;
+  optional string moxie_session_id = 5;
+  optional string user_id = 6;
+  optional string event_name = 7;
+  optional bytes event_data = 8;
+  optional uint64 timestamp = 9;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message Device {
+  optional string fw_version = 3;
+  optional string sw_version = 4;
+  optional uint64 timestamp = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message RobotStatus {
+  optional string embodied_robot_id = 1;
+  optional string last_updated_at = 2;
+  optional string robot_firmware_version = 3;
+  optional string android_version = 4;
+  optional float battery_level = 5;
+  optional float audio_volume = 6;
+  optional string mode = 7;
+  optional string wifi_ssid = 8;
+  optional string last_back_up_at = 9;
+  optional bytes public_key = 10;
+  optional bytes user_id_encrypted = 11;
+  optional float screen_brightness = 12;
+  optional bool ota_reboot_required = 13;
+  optional uint64 timestamp = 14;
+  optional embodied.logging.DeviceSettings settings = 15;
+  optional string mac = 16;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message UserAuthConfirm {
+  enum ErrorCondition {
+    NONE = 0;
+    ALREADY_PAIRED = 1;
+  }
+  optional string user_token = 1;
+  optional bytes public_key = 2;
+  optional string embodied_robot_id = 3;
+  optional bytes secret_key_encrypted_with_public_key = 4;
+  optional string secret_key_hash = 5;
+  optional uint64 timestamp = 6;
+  optional string robot_firmware_version = 7;
+  optional embodied.logging.UserAuthConfirm.ErrorCondition error = 8;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message TopicParam {
+  optional string embodied_robot_id = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message RobotCloudRequest {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message ContentPreferences {
+  message SELPreference {
+    optional string sel_tag = 1;
+    optional float weight = 2;
+  }
+  repeated string pos_tags = 1;
+  repeated string neg_tags = 2;
+  repeated embodied.logging.ContentPreferences.SELPreference sel_weights = 3;
+  optional float shyness_weight = 4;
+  optional float structure_weight = 5;
+  optional string learning_focus_text = 6;
+  repeated string activity_preferences = 7;
+  repeated string learning_focus_topics = 8;
+  optional string mentor_interests_text = 9;
+}
+message WakeSchedule {
+  message WakeEntry {
+    repeated uint32 days = 1;
+    optional string time = 2;
+  }
+  repeated embodied.logging.WakeSchedule.WakeEntry wakes = 1;
+  optional bool enabled = 2;
+}
+message SchedulePreferences {
+  message ParentRequest {
+    optional string module_id = 1;
+    optional uint64 scheduled_at = 2;
+  }
+  repeated embodied.logging.SchedulePreferences.ParentRequest parent_requests = 1;
+}
+message ChildEncrypted {
+  optional bytes first_name_encrypted = 1;
+  optional bytes last_name_encrypted = 2;
+  optional bytes nickname_encrypted = 3;
+  optional bytes birthday_encrypted = 4;
+  optional bytes therapy_needs_encrypted = 5;
+  optional bytes self_regulation_tools_preferences_encrypted = 6;
+  optional bytes likes_imaginative_play_encrypted = 7;
+  optional string checksum = 8;
+  optional bytes volume_preference_encrypted = 9;
+  optional bytes calendar_events_encrypted = 10;
+  optional bool unlimited_time = 11;
+  repeated string holiday_events = 12;
+  optional string id = 13;
+  optional bool grl_connect_enabled = 14;
+  optional embodied.logging.ContentPreferences content_preferences = 15;
+  repeated string face_options = 16;
+  optional embodied.logging.FamilyInformation family = 17;
+  optional float input_speed = 18;
+  optional uint32 starbits = 19;
+}
+message ChildDecrypted {
+  optional string first_name = 1;
+  optional string last_name = 2;
+  optional string nickname = 3;
+  optional string birthday = 4;
+  optional uint64 birthday_ts = 5;
+  repeated string therapy_needs = 6;
+  repeated string self_regulation_tools_preferences = 7;
+  optional bool likes_imaginative_play = 8;
+  optional string checksum = 9;
+  repeated string volume_preference = 10;
+  repeated string calendar_events = 11;
+  optional bool unlimited_time = 12;
+  repeated string holiday_events = 13;
+  optional string id = 14;
+  optional bool grl_connect_enabled = 15;
+  optional embodied.logging.ContentPreferences content_preferences = 16;
+  repeated string face_options = 17;
+  optional embodied.logging.FamilyInformation family = 18;
+  optional float input_speed = 19;
+  optional uint32 starbits = 20;
+}
+message OtaUpdate {
+  optional string id = 1;
+  optional string version = 2;
+}
+message SwitchUserConfig {
+  enum UserAction {
+    UNKNOWN = 0;
+    NEW = 1;
+    RESET = 2;
+    RESTORE = 3;
+  }
+  optional embodied.logging.SwitchUserConfig.UserAction action = 1;
+  optional string restore_id = 2;
+  optional string child_id = 3;
+  optional bool force = 4;
+  optional string child_name = 5;
+}
+message RobotCloudConfig {
+  optional bool privacy_mode_enabled = 1;
+  optional bool weekday_bedtime_enabled = 2;
+  optional string weekday_bedtime_starts_at = 3;
+  optional string weekday_bedtime_ends_at = 4;
+  optional bool weekend_bedtime_enabled = 5;
+  optional string weekend_bedtime_starts_at = 6;
+  optional string weekend_bedtime_ends_at = 7;
+  optional string last_updated_at = 8;
+  optional float audio_volume = 9;
+  optional embodied.logging.ChildEncrypted child = 10;
+  optional embodied.logging.ChildDecrypted child_pii = 11;
+  optional bytes secret_key = 12;
+  optional embodied.logging.OtaUpdate ota_update = 13;
+  optional float screen_brightness = 14;
+  optional string timezone_id = 15;
+  optional string data_sharing = 16;
+  optional string forbid_otaver = 17;
+  optional uint64 timestamp = 18;
+  optional string rc_topic = 19;
+  optional bool grl_connected = 20;
+  optional embodied.logging.MoxieMode moxie_mode = 21;
+  optional embodied.logging.DeviceSettings settings = 22;
+  optional embodied.logging.SwitchUserConfig switch_user_config = 23;
+  optional embodied.logging.WakeSchedule alarms = 24;
+  optional bool wake_button_enabled = 25;
+  optional string audio_wake_set = 26;
+  optional bool touch_wake_enabled = 27;
+  optional embodied.logging.SchedulePreferences schedule_preferences = 28;
+  optional uint32 num_children = 29;
+  optional uint32 max_children = 30;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message ActivityContext {
+  optional string module_id = 1;
+  optional string content_id = 2;
+  optional string mentor_present = 3;
+}
+message ActivityUpdate {
+  optional string embodied_robot_id = 1;
+  optional string embodied_activity_id = 2;
+  optional string weekly_theme = 3;
+  optional string title = 4;
+  optional string activity_type_id = 5;
+  optional string description = 6;
+  optional string started_at = 7;
+  optional string ended_at = 8;
+  optional bool hide_activity = 9;
+  optional uint64 started_at_ts = 10;
+  optional uint64 ended_at_ts = 11;
+  optional embodied.logging.ActivityContext context = 12;
+  optional uint64 timestamp = 13;
+  optional embodied.robotbrain.MentorBehavior mentor_behavior = 14;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message EndpointConfiguration {
+  optional string endpoint = 1;
+  optional string gcp_project = 2;
+}
+message ServiceConfiguration {
+  enum ConnectionType {
+    GOOGLE_IOT = 0;
+    EMBODIED_IOT = 1;
+    EMBODIED_LOCAL = 2;
+  }
+  optional string gcp_project = 1;
+  optional string webservice_root = 2;
+  optional string webservice_pin = 3;
+  optional bool disable_sync = 4;
+  optional bool disable_log_upload = 5;
+  optional string endpoint = 6;
+  optional uint64 timestamp = 7;
+  optional string mqtt_host = 8;
+  optional embodied.logging.ServiceConfiguration.ConnectionType connection_type = 9;
+  optional embodied.logging.IOTEndpoint endpoint_id = 10;
+  optional uint32 override_port = 11;
+  optional bool disable_verify = 12;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message EndpointStore {
+  repeated embodied.logging.ServiceConfiguration endpoints = 1;
+}
+message PairingComplete {
+  optional bytes secret_key = 1;
+  optional bool restore = 2;
+  optional string restore_id = 3;
+  optional string http_token = 4;
+  optional uint64 timestamp = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message RestoreResult {
+  optional string embodied_robot_id = 1;
+  optional string restore_id = 2;
+  optional bool success = 3;
+  optional uint64 timestamp = 4;
+  optional string backup_id = 5;
+  optional string child_id = 6;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message CloudQueryRequest {
+  optional uint64 timestamp = 1;
+  optional string subtopic = 2;
+  optional string auid = 3;
+  optional embodied.logging.CloudQuery query = 4;
+  optional string request_id = 5;
+  optional string schedule_id = 6;
+  optional string subkey = 7;
+  optional uint32 api_version = 8;
+  optional uint32 user_age = 9;
+  optional string child_id = 10;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message MetaDataResponse {
+  optional string log = 1;
+  optional string text = 2;
+}
+message CloudQueryResponse {
+  enum LicenseID {
+    LICENSE_UNKNOWN = 0;
+    cereproc = 1;
+    google_speech = 2;
+  }
+  enum QueryResponseCode {
+    QUERY_OK = 0;
+    QUERY_NO_CHANGE = 1;
+    QUERY_NETWORK_FAIL = 2;
+  }
+  message IDFRecord {
+    optional string module_id = 1;
+    optional float score = 2;
+  }
+  message LicenseRecord {
+    optional embodied.logging.CloudQueryResponse.LicenseID id = 1;
+    optional string license = 2;
+    optional bytes license_binary = 3;
+  }
+  message VersionedContextsEntry {
+    optional string key = 1;
+    optional uint32 value = 2;
+  }
+  message DynamicLine {
+    optional string id = 1;
+    optional string text = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional embodied.logging.CloudQuery query = 2;
+  optional string request_id = 3;
+  repeated embodied.logging.CloudQueryResponse.IDFRecord idf_values = 4;
+  repeated embodied.logging.CloudQueryResponse.LicenseRecord license_values = 5;
+  optional embodied.robotbrain.ContentSchedule schedule = 6;
+  optional embodied.robotbrain.Contexts contexts = 7;
+  repeated string additional_contexts = 8;
+  repeated embodied.logging.CloudQueryResponse.VersionedContextsEntry versioned_contexts = 9;
+  repeated embodied.robotbrain.MentorBehavior mentor_behaviors = 10;
+  optional embodied.logging.MetaDataResponse meta_data = 11;
+  repeated embodied.logging.CloudQueryResponse.DynamicLine remote_lines = 12;
+  optional embodied.logging.CloudQueryResponse.QueryResponseCode response_code = 99;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message GRLTokenRequest {
+  optional uint64 timestamp = 1;
+  optional string subtopic = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message GRLTokenUpdate {
+  optional uint64 timestamp = 1;
+  optional string token = 2;
+  optional bool success = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,22 @@
+syntax = "proto3";
+// file: embodied/perception/vision/ShowState.proto  package: embodied.perception.vision
+package embodied.perception.vision;
+message ShowState {
+  enum Type {
+    TYPE_UNDEFINED = 0;
+    BOOK = 1;
+    DRAWING = 2;
+    ARUCO = 3;
+    FACE = 4;
+  }
+  enum State {
+    STATE_UNDEFINED = 0;
+    STARTED = 1;
+    FINISHED = 2;
+  }
+  optional uint64 timestamp = 1;
+  optional embodied.perception.vision.ShowState.Type type = 2;
+  optional embodied.perception.vision.ShowState.State state = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

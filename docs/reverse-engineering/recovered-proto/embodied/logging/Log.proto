@@ -1,0 +1,52 @@
+syntax = "proto3";
+// file: embodied/logging/Log.proto  package: embodied.logging
+package embodied.logging;
+message LogDevice {
+  optional double timestamp_deprecated = 1;
+  optional string deviceUUID = 2;
+  optional string eventArgsTypename = 3;
+  optional bytes eventArgs = 4;
+  optional uint64 timestamp = 5;
+}
+message LogUser {
+  optional double timestamp_deprecated = 1;
+  optional string deviceUUID = 2;
+  optional string userUUID = 3;
+  optional string eventArgsTypename = 4;
+  optional bytes eventArgs = 5;
+  optional uint64 timestamp = 6;
+}
+message LogcatTrace {
+  optional string timestamp = 1;
+  optional string level = 2;
+  optional string tag = 3;
+  optional uint32 pid = 4;
+  optional string message = 5;
+  optional uint32 tid = 6;
+  optional uint32 bo_uid = 7;
+}
+message DeviceSettings {
+  message PropsEntry {
+    optional string key = 1;
+    optional string value = 2;
+  }
+  repeated embodied.logging.DeviceSettings.PropsEntry props = 1;
+}
+message DeviceSettingsUpdate {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message ProtoSubscribe {
+  optional uint64 timestamp = 1;
+  repeated string protos = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message Ping {
+  optional uint64 timestamp = 1;
+  optional bool include_zmq = 2;
+  optional string user_data = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,35 @@
+syntax = "proto3";
+// file: embodied/perception/audio/Interrupt.proto  package: embodied.perception.audio
+package embodied.perception.audio;
+message Interrupt {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message AllowInterrupt {
+  optional bool allow = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message CutoffStatistics {
+  optional uint64 timestamp = 1;
+  optional uint64 cutoffs_detected = 2;
+  optional uint64 cutoffs_by_non_target = 3;
+  optional bool cutoffs_enabled = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message CutoffDetected {
+  optional uint64 timestamp = 1;
+  optional uint64 cutoff_duration = 2;
+  optional string stt_uuid = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message NonTargetCutoff {
+  optional uint64 timestamp = 1;
+  optional string stt_uuid = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,9 @@
+syntax = "proto3";
+// file: embodied/logging/SomethingHappened.proto  package: embodied.logging
+package embodied.logging;
+import "embodied/logging/enums.proto";
+message SomethingsNotRight {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

@@ -1,0 +1,9 @@
+syntax = "proto3";
+// file: embodied/robotbrain/EnableBook.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message EnableBook {
+  optional uint64 timestamp = 1;
+  optional bool run = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

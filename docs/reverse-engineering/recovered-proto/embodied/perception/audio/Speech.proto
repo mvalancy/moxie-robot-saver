@@ -1,0 +1,25 @@
+syntax = "proto3";
+// file: embodied/perception/audio/Speech.proto  package: embodied.perception.audio
+package embodied.perception.audio;
+import "embodied/perception/audio/Speaker.proto";
+message SpeechStateChanged {
+  optional int64 timestamp_deprecated = 1;
+  optional bool state = 2;
+  optional embodied.perception.audio.Speaker speaker = 3;
+  optional uint64 timestamp = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message VoiceActivity {
+  enum VoiceActivityState {
+    UNKNOWN = 0;
+    START_OF_SPEECH = 1;
+    SPEECH = 2;
+    END_OF_SPEECH = 3;
+  }
+  optional uint64 timestamp = 1;
+  optional embodied.perception.audio.VoiceActivity.VoiceActivityState state = 10;
+  repeated int32 doa = 11;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

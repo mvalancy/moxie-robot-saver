@@ -1,0 +1,29 @@
+syntax = "proto3";
+// file: embodied/perception/vision/FacesDetected.proto  package: embodied.perception.vision
+package embodied.perception.vision;
+message DetectedFacePB {
+  optional float center_x = 1;
+  optional float center_y = 2;
+  optional float width = 3;
+  optional float height = 4;
+  optional float confidence = 5;
+  optional float pitch = 6;
+  optional float yaw = 7;
+  optional float roll = 8;
+  optional uint64 emotion = 9;
+  optional float emotion_proba = 10;
+  optional float left_eye_x = 11;
+  optional float left_eye_y = 12;
+  optional float right_eye_x = 13;
+  optional float right_eye_y = 14;
+  optional float occlusion = 15;
+  optional string gesture = 16;
+}
+message FacesDetectedPB {
+  optional uint64 frame_id = 1;
+  optional double timestamp_deprecated = 2;
+  repeated embodied.perception.vision.DetectedFacePB faces = 3;
+  optional uint64 timestamp = 4;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

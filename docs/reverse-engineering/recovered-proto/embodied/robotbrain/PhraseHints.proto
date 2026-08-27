@@ -1,0 +1,19 @@
+syntax = "proto3";
+// file: embodied/robotbrain/PhraseHints.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message PhraseHints {
+  optional string module = 1;
+  repeated string hints = 2;
+  optional uint64 timestamp = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message NameHints {
+  repeated string names = 1;
+  optional uint64 timestamp = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message NativeHints {
+  repeated embodied.robotbrain.PhraseHints hints = 1;
+}

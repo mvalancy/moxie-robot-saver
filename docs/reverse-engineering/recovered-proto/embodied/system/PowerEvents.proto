@@ -1,0 +1,58 @@
+syntax = "proto3";
+// file: embodied/system/PowerEvents.proto  package: embodied.power
+package embodied.power;
+message SystemSuspendPB {
+  optional uint64 timestamp = 1;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message SystemResumePB {
+  enum ResumeCause {
+    RESUME_FIRST_START = 0;
+    RESUME_RECOVERY = 1;
+    RESUME_FROM_SUSPEND = 2;
+    RESUME_POWER_ONLY = 3;
+    RESUME_HIDDEN_REBOOT = 4;
+    RESUME_BRAIN_UPDATED = 5;
+  }
+  optional uint64 timestamp = 1;
+  optional uint32 cause = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message SystemRecoverRequest {
+  enum RecoveryTarget {
+    RESTART_NONE = 0;
+    RESTART_XMOS = 1;
+  }
+  optional uint64 timestamp = 1;
+  optional uint32 target = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message PowerStatePB {
+  enum State {
+    STATE_INIT = 0;
+    STATE_CONFIG = 1;
+    STATE_STARTUP = 2;
+    STATE_RUNNING = 3;
+    STATE_LIGHT_SLEEP = 4;
+    STATE_SUSPEND = 5;
+    STATE_DEMO = 6;
+    STATE_RECOVERY = 7;
+    STATE_TELEBRAIN = 8;
+    STATE_SILENT_REBOOT = 9;
+    STATE_SILENT_RECOVERY = 10;
+  }
+  optional uint64 timestamp = 1;
+  optional uint32 state = 2;
+  optional uint32 prev_state = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message PowerStayAwakePB {
+  optional uint64 timestamp = 1;
+  optional bool busy = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

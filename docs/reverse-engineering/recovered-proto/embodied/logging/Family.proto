@@ -1,0 +1,15 @@
+syntax = "proto3";
+// file: embodied/logging/Family.proto  package: embodied.logging
+package embodied.logging;
+message FamilyInformation {
+  enum FamilyRoles {
+    guardian = 0;
+    mother = 1;
+    father = 2;
+    grandmother = 3;
+    grandfather = 4;
+    sister = 5;
+    brother = 6;
+  }
+  repeated string members = 1;
+}

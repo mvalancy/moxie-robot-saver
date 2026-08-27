@@ -1,0 +1,13 @@
+syntax = "proto3";
+// file: embodied/robotbrain/TopicChange.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message TopicChange {
+  optional string user = 1;
+  optional string bot = 2;
+  optional string newTopic = 3;
+  optional uint64 timestamp = 4;
+  optional string currentModule = 5;
+  optional string currentContentID = 6;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

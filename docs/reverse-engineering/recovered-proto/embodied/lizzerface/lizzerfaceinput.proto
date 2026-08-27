@@ -1,0 +1,41 @@
+syntax = "proto3";
+// file: embodied/lizzerface/lizzerfaceinput.proto  package: embodied.lizzerface
+package embodied.lizzerface;
+import "embodied/lizzerface/enums.proto";
+message MotorSetPosEventPB {
+  optional embodied.lizzerface.Motor motor = 1;
+  optional uint32 pos = 2;
+  optional uint64 timestamp = 3;
+}
+message ConfigureMotorEventPB {
+  optional embodied.lizzerface.Motor motor = 1;
+  optional embodied.lizzerface.ConfigParam param = 2;
+  optional uint32 val = 3;
+  optional uint64 timestamp = 4;
+}
+message RobotEchoEventPB {
+  optional string message = 1;
+  optional uint64 timestamp = 2;
+}
+message PowerEnableEventPB {
+  optional embodied.lizzerface.PowerRail rail = 1;
+  optional uint64 timestamp = 2;
+}
+message PowerDisableEventPB {
+  optional embodied.lizzerface.PowerRail rail = 1;
+  optional uint64 timestamp = 2;
+}
+message SensorSetEnabledEventPB {
+  optional embodied.lizzerface.SensorPB sensor = 1;
+  optional bool enabled = 2;
+  optional uint64 timestamp = 3;
+}
+message SetLedrEventPB {
+  optional embodied.lizzerface.LedrPattern ledr = 1;
+  optional bool inloop = 2;
+  optional uint64 timestamp = 3;
+}
+message RobotControlFirmwareEventPB {
+  optional embodied.lizzerface.FirmwareControlID id = 1;
+  optional uint64 timestamp = 2;
+}

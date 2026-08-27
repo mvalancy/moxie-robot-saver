@@ -1,0 +1,28 @@
+syntax = "proto3";
+// file: embodied/perception/vision/FaceIDEnrollment.proto  package: embodied.perception.vision
+package embodied.perception.vision;
+message FaceIDEnrollmentState {
+  enum State {
+    STARTED = 0;
+    FINISHED = 1;
+    FAILED = 3;
+    SKIPPED = 4;
+  }
+  optional string id = 1;
+  optional embodied.perception.vision.FaceIDEnrollmentState.State state = 2;
+  optional string error = 3;
+  optional uint64 timestamp = 4;
+  optional uint64 frame_id = 5;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}
+message FaceIDEnrollmentInfo {
+  optional string uuid = 1;
+  optional uint64 number_of_enrollments = 2;
+}
+message FaceIDEnrollmentsInfo {
+  optional uint64 timestamp = 1;
+  repeated embodied.perception.vision.FaceIDEnrollmentInfo enrollments = 2;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

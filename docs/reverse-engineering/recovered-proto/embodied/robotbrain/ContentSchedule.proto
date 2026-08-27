@@ -1,0 +1,57 @@
+syntax = "proto3";
+// file: embodied/robotbrain/ContentSchedule.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+import "embodied/robotbrain/RemoteChat.proto";
+message ContentModule {
+  optional string module_id = 1;
+  optional bool allowed = 2;
+  repeated string denied_ids = 3;
+}
+message TagList {
+  repeated string allowed = 1;
+  repeated string denied = 2;
+}
+message ScheduleConfig {
+  repeated embodied.robotbrain.RecommendationContext.Recommendation day_one_schedule = 1;
+  repeated embodied.robotbrain.RecommendationContext.Recommendation promoted_content = 2;
+  optional string prompt_template = 3;
+  optional string prompt_lm = 4;
+}
+message EndOfSessionConfig {
+  optional embodied.robotbrain.RecommendationContext.Recommendation chat_module = 1;
+  optional embodied.robotbrain.RecommendationContext.Recommendation end_module = 2;
+  optional uint32 chat_count = 3;
+}
+message RewardsConfig {
+  optional string module_id = 1;
+  optional uint32 min_content_day = 2;
+}
+message MissionConfig {
+  optional string mission_id = 1;
+}
+message ContentSchedule {
+  message HubConfig {
+    repeated embodied.robotbrain.RecommendationContext.Recommendation hubs = 1;
+    repeated string skipped_modules = 2;
+  }
+  repeated embodied.robotbrain.ContentModule restricted_modules = 1;
+  optional embodied.robotbrain.TagList tags = 2;
+  repeated embodied.robotbrain.RecommendationContext.Recommendation provided_schedule = 3;
+  optional embodied.robotbrain.ScheduleConfig config = 4;
+  optional embodied.robotbrain.EndOfSessionConfig end_of_session = 5;
+  optional embodied.robotbrain.RecommendationContext.Recommendation chat_request = 7;
+  optional embodied.robotbrain.RecommendationContext.Recommendation wake_module = 8;
+  optional embodied.robotbrain.RewardsConfig rewards = 9;
+  optional embodied.robotbrain.MissionConfig mission_config = 10;
+  optional embodied.robotbrain.ContentSchedule.HubConfig hub_config = 11;
+  optional embodied.robotbrain.RecommendationContext.Recommendation alarm_module = 12;
+}
+message ScheduleStart {
+  repeated embodied.robotbrain.RecommendationContext.Recommendation schedule = 1;
+  optional bool resumed = 2;
+  optional string request_id = 3;
+  optional string log = 4;
+  optional uint64 timestamp = 99;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

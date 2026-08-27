@@ -1,0 +1,10 @@
+syntax = "proto3";
+// file: embodied/robotbrain/BedTimeStatus.proto  package: embodied.robotbrain
+package embodied.robotbrain;
+message BedTimeStatus {
+  optional uint64 timestamp = 1;
+  optional bool status = 2;
+  optional bool status_plus_20 = 3;
+  optional string software_version = 100;
+  optional string module_name = 101;
+}

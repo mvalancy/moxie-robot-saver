@@ -1,0 +1,15 @@
+syntax = "proto3";
+// file: embodied/unity/RobotPosition.proto  package: embodied.unity
+package embodied.unity;
+message RobotPosition {
+  optional uint64 timestamp = 1;
+  optional float camera_center_x = 2;
+  optional float camera_center_y = 3;
+  optional float camera_center_z = 4;
+  optional float camera_target_x = 5;
+  optional float camera_target_y = 6;
+  optional float camera_target_z = 7;
+  optional float camera_up_x = 8;
+  optional float camera_up_y = 9;
+  optional float camera_up_z = 10;
+}
