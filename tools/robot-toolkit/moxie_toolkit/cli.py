@@ -21,6 +21,9 @@ def render(data, path):
     print(f"wrote {path}", file=sys.stderr)
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "proto":
+        from moxie_toolkit import protoref; return protoref.main(argv[1:])
     ap = argparse.ArgumentParser(prog="moxie-qr")
     sub = ap.add_subparsers(dest="cmd", required=True)
     def add_png(p): p.add_argument("--png"); p.add_argument("--svg")
@@ -44,7 +47,7 @@ def main(argv=None):
     vp.add_argument("command"); vp.add_argument("--vpn-id", default=""); vp.add_argument("--url", default="")
     vp.add_argument("--username", default=""); vp.add_argument("--password", default=""); vp.add_argument("--connect", action="store_true")
 
-    rp = sub.add_parser("proto", help="look up a protocol message/enum"); rp.add_argument("query", nargs=argparse.REMAINDER)
+    sub.add_parser("proto", help="look up a protocol message/enum (see: cli proto --help)", add_help=False)
     xp = sub.add_parser("decode"); xp.add_argument("data")
     sub.add_parser("validate")
     sub.add_parser("list-commands")
@@ -69,8 +72,6 @@ def main(argv=None):
         if "proto" in d: print(d["type"], "\n", d["proto"])
         else: print(d)
         return 0
-    elif a.cmd == "proto":
-        from moxie_toolkit import protoref; return protoref.main(a.query)
     elif a.cmd == "validate":
         from moxie_toolkit import validate_qr; return validate_qr.main()
     elif a.cmd == "list-commands":
