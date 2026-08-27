@@ -37,6 +37,7 @@ flowchart TB
 | **pre-801 (Google-IoT)** | — | ❌ **Unsolved without opening.** Endpoint pinned to `mqtt.googleapis.com` (TLS hostname-checked) → can't relocate by QR/DNS; a signed OTA can't be delivered over the network; USB/recovery may need the shell open. |
 
 - **Do it:** `python -m moxie_toolkit.cli endpoint OPEN_MOXIE --png fix.png` → show `fix.png` to the robot.
+- **Why it works (801+):** an offline robot drops to `STATE_CONFIG` and *scans QR codes* ([`boot-and-launcher.md`](boot-and-launcher.md)); pre-801 still can't relocate off Google.
 - **Deep docs:** [`qr-commands.md`](qr-commands.md) · [`ota-and-recovery.md`](ota-and-recovery.md)
 - **Open leads (for pre-801):** find a recovery key-combo / external USB port; source a genuine
   signed 803 `update.zip`; characterize pre-801 setup-mode QR behavior. Tracked in
@@ -63,6 +64,7 @@ What the robot expects a backend to provide:
 |---|---|---|
 | Drive the body directly | [`robot-ipc-protocol.md`](robot-ipc-protocol.md) + [`../../tools/robot-toolkit/moxie_toolkit/bus.py`](../../tools/robot-toolkit/moxie_toolkit/bus.py) | `MoxieBus` over ZMQ: publish `lizzerface` motor/LED/power protos, read sensors. `adb forward tcp:5678/6789`. |
 | Hardware map | [`hardware-map.md`](hardware-map.md) | Motors, touch/switch/IMU, LED patterns, power rails. |
+| Boot/lifecycle | [`boot-and-launcher.md`](boot-and-launcher.md) | The Launcher state machine + component supervision to replicate. |
 | Protocol schemas | [`recovered-proto/`](recovered-proto/) | 120 `.proto` files, all compile under `protoc`. |
 | Firmware / flashing | [`firmware-image.md`](firmware-image.md) | Partitions, AVB, OEM-unlock, disable-verification, `rkdeveloptool`. |
 | Factory line | [`factory-provisioning.md`](factory-provisioning.md) + [`../../tools/robot-toolkit/secrets/`](../../tools/robot-toolkit/secrets/) | Serial/part grammar; secrets = blob XOR package-name (Unicorn extractor). |
