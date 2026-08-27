@@ -29,6 +29,27 @@ The robot connects to an MQTT/IoT broker for the live experience — speech in, 
 markup, speech out, activities. This is what makes Moxie *Moxie*. **Being built in `mqtt/` + `ai/`
 (Phases 2–3);** the community's OpenMoxie proves the approach.
 
+## Data flow at a glance
+
+```mermaid
+flowchart LR
+    phone(["📱 Phone<br/>web app"]) -->|REST| server["🛂 Parent-app server"]
+    server --> db[("🔒 Encrypted store<br/>zero-knowledge")]
+    server -->|"issues"| qr["🎫 Wi-Fi QR<br/>+ endpoint QR"]
+    qr -.->|scanned by camera| robot(["🤖 Moxie"])
+    robot -->|MQTT/TLS| broker["📡 MQTT broker"]
+    broker --> engine["💬 Conversation engine"]
+    engine --> stt["👂 STT (Whisper)"]
+    engine --> llm["🧠 LLM (local / OpenAI-compatible)"]
+    engine --> tts["🗣️ TTS (local voice)"]
+    classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
+    classDef wip fill:#fff3c4,stroke:#f9a825,color:#5d4037;
+    classDef ext fill:#e3eaf2,stroke:#607d8b,color:#263238;
+    class server,qr,db done;
+    class broker,engine,stt,llm,tts wip;
+    class phone,robot ext;
+```
+
 ## Components (all on one machine)
 
 | Component | Dir | Role |
@@ -50,3 +71,6 @@ The original app **end-to-end encrypts** all child PII: one 32-byte seed (derive
 phrase) is the symmetric key, and the server only ever stores opaque ciphertext and sealed copies of
 the seed. We preserve that exactly — the server is **zero-knowledge**, and the owner holds the keys.
 See [`../reverse-engineering/crypto-and-keys.md`](../reverse-engineering/crypto-and-keys.md).
+
+---
+📖 [Docs index](../README.md) · [Architecture: revival path →](revival-path.md)

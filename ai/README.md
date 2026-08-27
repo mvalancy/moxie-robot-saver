@@ -1,20 +1,46 @@
-# `ai/` — local AI adapters (Phase 3)
+# 🧠 `ai/` — local AI adapters (Phase 3)
 
-Pluggable **speech-to-text**, **LLM**, and **text-to-speech** for the conversation engine. Not built
-yet; this is the plan.
+Pluggable **speech-to-text** and **LLM** for the conversation engine. Not built yet; this is the plan,
+now grounded in the [MQTT & conversation spec](../docs/architecture/mqtt-and-conversation.md).
 
 ## Principles
 - **Local first.** Default to models running on this machine's GPU — no internet at runtime.
 - **No vendor lock-in.** The LLM speaks to **any OpenAI-compatible endpoint** (a local LiteLLM
   gateway, vLLM, Ollama, LM Studio, …). OpenAI itself is only an *optional fallback*, never required.
-- **Swappable.** STT, LLM, and TTS are independent adapters behind small interfaces.
+- **Swappable.** Each slot is a small adapter behind a tiny interface.
 
-## Planned adapters
-| Slot | Default (local) | Fallback |
-|------|-----------------|----------|
-| STT | faster-whisper (GPU) | any Whisper-compatible service |
-| LLM | local model via OpenAI-compatible API (LiteLLM/vLLM/Ollama/LM Studio) | any OpenAI-compatible endpoint |
-| TTS | local voice synthesis | — |
+## The good news: there are only two seams
+
+```mermaid
+flowchart LR
+    audio["🎙️ Moxie mic<br/>16kHz PCM"] -->|"ZMQ over MQTT"| stt["👂 STT seam<br/>faster-whisper (GPU)"]
+    stt --> llm["🧠 LLM seam<br/>OpenAI-compatible → local model"]
+    llm --> markup["🎭 automarkup<br/>text → behavior"]
+    markup -->|"text + markup over MQTT"| moxie["🗣️ Moxie speaks<br/>(on-device TTS)"]
+    classDef wip fill:#fff3c4,stroke:#f9a825,color:#5d4037;
+    classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
+    class stt,llm wip;
+    class audio,markup,moxie done;
+```
+
+| Slot | Where it plugs in | Default (local) | Fallback |
+|------|-------------------|-----------------|----------|
+| **LLM** | `ai_factory` → set `base_url` on the OpenAI client | local model via LiteLLM/vLLM/Ollama/LM Studio | any OpenAI-compatible endpoint |
+| **STT** | `zmq_stt_handler` → swap the transcription call | **faster-whisper** on the GPU | any Whisper-compatible service |
+
+## About TTS (important finding)
+**Moxie synthesizes its own voice on-device.** The server sends *text + behavior markup*; the robot
+speaks. So there is **no server-side TTS to run for Moxie's voice** — the "local TTS" requirement is
+satisfied by the robot itself, for free. Our expressiveness lever is the vendored **`automarkup`**
+engine (text → Moxie behavior/emotion), not a TTS model.
+
+> 🔊 **Piper TTS** (a great-sounding, fast, fully-local neural TTS) is noted as a favorite. It isn't
+> needed for Moxie's *own* voice (on-device), but it's the natural pick if we ever add server-side
+> speech — e.g. a "read this aloud" side feature, notifications, or an alternate-voice experiment.
+> Tracked as an optional extra, not a core dependency.
 
 ## Status
-🔨 Planned. Integration points come from the MQTT/conversation spec. See [`../ROADMAP.md`](../ROADMAP.md) Phase 3.
+🔨 Planned. See [`../ROADMAP.md`](../ROADMAP.md) Phase 3 and the [conversation spec](../docs/architecture/mqtt-and-conversation.md).
+
+---
+📖 [Back to top](../README.md) · [MQTT & conversation spec →](../docs/architecture/mqtt-and-conversation.md)
