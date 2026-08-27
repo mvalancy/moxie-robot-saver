@@ -1,5 +1,13 @@
 # Map 11 — Robot Lifecycle (pairing / unpair / FACTORY RESET / restore / reboot / OTA / state model)
 
+> **📖 About this document.** This is a *clean-room* description of the **original** Moxie parent app
+> (`com.embo.embodied.parent` v2.2.2), written by reverse-engineering it. **The decompiled app is NOT
+> included in this repository, and you do not need it.** Any file or class names below (e.g.
+> `api/Config.java`, `pair_moxie/…`, or paths shown as `<decompiled>/…`) are references into the
+> *original app's own internal structure* — they document *where a behavior lived in the app so the
+> protocol is reproducible*, and are **not** files in this repo. Our actual implementation lives in
+> [`server/`](../../server/), [`tools/`](../../tools/), and [`mqtt/`](../../mqtt/).
+
 App: `com.embo.embodied.parent` v2.2.2 (decompiled). Cross-refs: map 01 (REST/auth), 02 (crypto/sealed keys), 03 (pairing).
 All robot endpoints are relative to the API base URL (see map 01). All take `Authorization: Bearer <token>` via `@Header("Authorization")`.
 `{id}` everywhere = the **robot id** (JSON:API robot resource id), NOT the serial number. The app takes it from `Robot.INSTANCE.getData().getId()` or `User…getRelationships().getRobots().getData().get(0).getId()`.

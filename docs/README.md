@@ -7,6 +7,7 @@ The complete map of how Moxie works and how we bring it back. Suggested reading 
 2. [`../ROADMAP.md`](../ROADMAP.md) — the phased end-to-end plan.
 3. [`architecture/overview.md`](architecture/overview.md) — how all the pieces fit together.
 4. [`architecture/revival-path.md`](architecture/revival-path.md) — the exact steps + firmware gate to revive a robot.
+5. [`architecture/moxie-as-a-platform.md`](architecture/moxie-as-a-platform.md) — the SDK: apps/games driving Moxie as an avatar.
 
 ## Reverse-engineering (source of truth)
 Clean-room maps of the decompiled parent app. Everything else is derived from these.

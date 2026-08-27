@@ -1,5 +1,13 @@
 # 03 — Pairing, WiFi Provisioning, QR Generation & Robot Control
 
+> **📖 About this document.** This is a *clean-room* description of the **original** Moxie parent app
+> (`com.embo.embodied.parent` v2.2.2), written by reverse-engineering it. **The decompiled app is NOT
+> included in this repository, and you do not need it.** Any file or class names below (e.g.
+> `api/Config.java`, `pair_moxie/…`, or paths shown as `<decompiled>/…`) are references into the
+> *original app's own internal structure* — they document *where a behavior lived in the app so the
+> protocol is reproducible*, and are **not** files in this repo. Our actual implementation lives in
+> [`server/`](../../server/), [`tools/`](../../tools/), and [`mqtt/`](../../mqtt/).
+
 Reverse-engineered from the decompiled Embodied Parent App (`EmbodiedParentApp/v2.2.2`, jadx output at
 `work/jadx-out/sources/com/embo/embodied/parent`). Everything below is quoted or derived from real
 decompiled code. Line numbers refer to the jadx output files.

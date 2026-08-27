@@ -365,6 +365,62 @@ async def pairing_prepare(request: Request, authorization: str = Header(None)):
             "public_key": x_pub_b64}
 
 
+import moxie_endpoint_qr  # noqa: E402  (from tools/pairing, on sys.path)
+
+STATUS_URL = os.environ.get("MOXIE_SUPERVISOR_STATUS", "http://127.0.0.1:8930/status")
+
+
+def _lan_ip() -> str:
+    """Best-guess LAN IP of this machine — the address the robot should use to
+    reach the broker. Prefer an explicit MOXIE_BROKER_HOST; else the private IP on
+    the default route; never a Tailscale/CGNAT address unless it's all we have."""
+    env = os.environ.get("MOXIE_BROKER_HOST")
+    if env:
+        return env
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("192.168.255.255", 1))    # doesn't send; picks the LAN-facing iface
+        ip = s.getsockname()[0]; s.close()
+        if ip.startswith(("192.168.", "10.", "172.")) and not ip.startswith("100."):
+            return ip
+    except Exception:
+        pass
+    return "192.168.1.9"
+
+
+@app.get("/local/endpoint/payload")
+def endpoint_payload(host: str = "", port: int = 8883):
+    """QR #2 payload: repoints Moxie from Embodied's dead cloud to our MQTT broker.
+    `host` MUST be an address the ROBOT can reach (its LAN IP) — NOT a Tailscale IP."""
+    h = host or _lan_ip()
+    return {"qr_payload": moxie_endpoint_qr.build_endpoint_qr(h, port),
+            "mqtt_host": h, "mqtt_port": port, "default_host": _lan_ip()}
+
+
+@app.get("/local/endpoint/qr.png")
+def endpoint_qr_png(host: str = "", port: int = 8883, ec: str = "l"):
+    import segno, io
+    h = host or _lan_ip()
+    payload = moxie_endpoint_qr.build_endpoint_qr(h, port)
+    buf = io.BytesIO()
+    segno.make(payload, error=ec).save(buf, kind="png", scale=10, border=4)
+    return Response(content=buf.getvalue(), media_type="image/png")
+
+
+@app.get("/local/broker/status")
+def broker_status():
+    """Proxy the MQTT supervisor's status (connection monitor). Server-side fetch so
+    the browser has no CORS issue. Returns {ok:false} if the supervisor isn't running."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(STATUS_URL, timeout=2) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        return {"ok": False, "error": "supervisor not reachable", "detail": str(e),
+                "robots": [], "recent": []}
+
+
 @app.get("/local/pairing/qr.png")
 def pairing_qr_png(payload: str, ec: str = "l"):
     # The original app rendered with ZXing EC level L (low density) because Moxie's

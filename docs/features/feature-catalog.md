@@ -1,5 +1,13 @@
 # 10 — Exhaustive Feature Catalog (Moxie Parent App)
 
+> **📖 About this document.** This is a *clean-room* description of the **original** Moxie parent app
+> (`com.embo.embodied.parent` v2.2.2), written by reverse-engineering it. **The decompiled app is NOT
+> included in this repository, and you do not need it.** Any file or class names below (e.g.
+> `api/Config.java`, `pair_moxie/…`, or paths shown as `<decompiled>/…`) are references into the
+> *original app's own internal structure* — they document *where a behavior lived in the app so the
+> protocol is reproducible*, and are **not** files in this repo. Our actual implementation lives in
+> [`server/`](../../server/), [`tools/`](../../tools/), and [`mqtt/`](../../mqtt/).
+
 `com.embo.embodied.parent` v2.2.2 (versionCode 249). Decompiled Java under
 `.../jadx-out/sources/com/embo/embodied/parent/`, resources under `.../apktool-out/`.
 

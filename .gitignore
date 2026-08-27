@@ -29,3 +29,7 @@ secrets/
 
 # server runtime
 server/moxie.db*
+
+# MQTT broker private keys (each appliance generates its own via gen-certs.sh)
+mqtt/broker/keys/
+mqtt/broker/log/

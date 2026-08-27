@@ -1,0 +1,5 @@
+paho-mqtt>=2.0
+openai>=1.0
+# STT (Phase: voice) — uncomment when wiring faster-whisper:
+# faster-whisper>=1.0
+# numpy>=1.24

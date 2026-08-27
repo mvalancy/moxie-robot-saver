@@ -1,0 +1,46 @@
+"""
+The MoxieApp interface — the heart of the SDK.
+
+"Being Moxie" means implementing this one small interface. The runtime handles all
+the hard parts (MQTT, TLS, protobufs, STT, behavior markup, the robot's quirks); an
+app only decides what Moxie says and does.
+
+    class MyApp(MoxieApp):
+        def respond(self, turn: Turn) -> Reply:
+            return Reply(text=f"You said: {turn.speech}")
+
+This is how a game, an agent, or any external AI drives Moxie as an avatar. The
+default app is an LLM persona (apps/llm_app.py); an external service plugs in over
+the network via apps/webhook_app.py — no code from the external app lives here.
+"""
+from __future__ import annotations
+from typing import Optional
+from .types import Turn, Reply, RobotContext
+
+
+class MoxieApp:
+    """Base class for anything that drives Moxie. Subclass and override `respond`.
+
+    Lifecycle hooks are optional; override only what you need."""
+
+    name: str = "moxie-app"
+
+    # --- required: the conversational turn ---
+    def respond(self, turn: Turn) -> Reply:
+        """Given what the child said (+ context/history), return what Moxie says/does."""
+        raise NotImplementedError
+
+    # --- optional lifecycle hooks ---
+    def on_connect(self, robot: RobotContext) -> None:
+        """Called when a robot comes online (after config is pushed)."""
+
+    def on_disconnect(self, robot: RobotContext) -> None:
+        """Called when a robot goes offline."""
+
+    def on_event(self, robot: RobotContext, name: str, payload: dict) -> None:
+        """Called for non-conversation events (vision events like found-face,
+        module lifecycle, etc.). Useful for reactive/game behavior."""
+
+    def greeting(self, robot: RobotContext) -> Optional[Reply]:
+        """Optional opening line when a session starts."""
+        return None

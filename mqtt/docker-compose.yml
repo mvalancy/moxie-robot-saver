@@ -1,0 +1,17 @@
+# Local Moxie robot-cloud: MQTT broker + supervisor.
+# The broker uses host networking so a Moxie on your LAN can reach :8883.
+services:
+  broker:
+    image: eclipse-mosquitto:2
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./broker/keys:/mosquitto/config/keys:ro
+
+  supervisor:
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    env_file: .env
+    depends_on: [broker]

@@ -4,86 +4,119 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#5b5bd6">
-<title>Moxie Setup</title>
+<title>Moxie Saver</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header>
-  <div class="brand"><span class="dot"></span> Moxie&nbsp;Setup <small id="who"></small></div>
+  <div class="brand"><span class="dot"></span> Moxie&nbsp;Saver <small id="who"></small></div>
 </header>
 
 <main>
-  <!-- STEP: login -->
+  <!-- LOGIN gate -->
   <section id="s-login" class="card">
     <h1>Bring your Moxie back to life</h1>
     <p class="muted">A local, private setup server for your Moxie robot. Your data stays on this machine.</p>
-    <label>Your email <span class="muted">(used only as your local account name)</span>
+    <label>Your email <span class="muted">(local account name only)</span>
       <input id="email" type="email" placeholder="parent@home.lan" autocomplete="email">
     </label>
     <button id="btn-login" class="primary">Start</button>
   </section>
 
-  <!-- STEP: setup -->
-  <section id="s-setup" class="card hidden">
-    <h2>1 · Child</h2>
-    <label>Child's first name
-      <input id="child-name" type="text" placeholder="Alex">
-    </label>
+  <!-- TABS -->
+  <div id="tabs" class="hidden">
+    <nav class="tabbar" role="tablist">
+      <button class="tab active" data-tab="wifi">📶 Wi-Fi Pairing</button>
+      <button class="tab" data-tab="server">🔗 Server Pairing</button>
+      <button class="tab" data-tab="moxie">🤖 Moxie</button>
+    </nav>
 
-    <h2>2 · Wi-Fi for Moxie</h2>
-    <p class="muted">Moxie will join this network. 2.4&nbsp;GHz is the safest choice.</p>
-    <label>Network name (SSID)
-      <input id="ssid" type="text" placeholder="HomeWiFi" autocapitalize="off" autocorrect="off">
-    </label>
-    <label>Wi-Fi password
-      <input id="wifipass" type="text" placeholder="(leave blank for open network)" autocapitalize="off" autocorrect="off">
-    </label>
-    <div class="row">
-      <label class="grow">Band
-        <select id="band">
-          <option value="24g">2.4 GHz only (recommended)</option>
-          <option value="any">Any</option>
-          <option value="5g">5 GHz only</option>
-        </select>
-      </label>
-      <label class="check"><input id="hidden" type="checkbox"> Hidden network</label>
-    </div>
-    <button id="btn-qr" class="primary">Generate pairing QR</button>
-  </section>
+    <!-- TAB: Wi-Fi Pairing -->
+    <section class="tabpanel active" id="tab-wifi">
+      <div class="card">
+        <span class="step">Step 1</span>
+        <h2>Get Moxie onto your Wi-Fi</h2>
+        <label>Child's first name <input id="child-name" type="text" placeholder="Alex"></label>
+        <label>Network name (SSID)
+          <input id="ssid" type="text" placeholder="HomeWiFi" autocapitalize="off" autocorrect="off"></label>
+        <label>Wi-Fi password
+          <input id="wifipass" type="text" placeholder="(blank for open network)" autocapitalize="off" autocorrect="off"></label>
+        <div class="row">
+          <label class="grow">Band
+            <select id="band">
+              <option value="24g">2.4 GHz only (recommended)</option>
+              <option value="any">Any</option>
+              <option value="5g">5 GHz only</option>
+            </select></label>
+          <label class="check"><input id="hidden" type="checkbox"> Hidden</label>
+        </div>
+        <button id="btn-qr" class="primary">Generate pairing QR</button>
+      </div>
 
-  <!-- STEP: QR -->
-  <section id="s-qr" class="card hidden">
-    <h2>3 · Show this to Moxie</h2>
-    <p class="muted">Put Moxie on its pairing screen, then hold this QR code up to its camera.</p>
-    <div class="qrwrap"><img id="qr-img" alt="Pairing QR code"></div>
-    <div class="recovery">
-      <strong>Save your recovery phrase</strong>
-      <p class="muted">Write this down. It restores your child's data on a new setup. It never leaves this server.</p>
-      <code id="phrase"></code>
-    </div>
-    <div class="statusline" id="pair-status">Waiting for Moxie to connect…</div>
-    <details class="dev">
-      <summary>No robot handy? Test the flow</summary>
-      <p class="muted">Simulates a Moxie scanning the QR, so you can see pairing complete without hardware.</p>
-      <button id="btn-sim">Simulate robot scan</button>
-    </details>
-    <button id="btn-restart" class="ghost">Start over</button>
-  </section>
+      <div class="card hidden" id="wifi-qr-card">
+        <h2>Show this to Moxie</h2>
+        <p class="muted">Put Moxie on its pairing screen, then hold this QR up to its camera.</p>
+        <div class="qrwrap"><img id="qr-img" alt="Wi-Fi pairing QR"></div>
+        <div class="recovery">
+          <strong>Save your recovery phrase</strong>
+          <p class="muted">Write this down — it restores your child's data. It never leaves this server.</p>
+          <code id="phrase"></code>
+        </div>
+        <div class="statusline" id="pair-status">Waiting for Moxie to join Wi-Fi…</div>
+        <p class="muted">Once Moxie joins Wi-Fi it waits for a <em>second</em> code — head to
+          <a href="#" data-goto="server">🔗 Server Pairing</a>.</p>
+      </div>
+    </section>
 
-  <!-- STEP: done -->
-  <section id="s-done" class="card hidden">
-    <h2>✅ Moxie is paired</h2>
-    <div id="robot-card"></div>
-    <div class="row">
-      <button id="btn-wake" class="primary grow">Wake up Moxie</button>
-      <button id="btn-reboot" class="ghost grow">Reboot</button>
-    </div>
-    <button id="btn-restart2" class="ghost">Set up another</button>
-  </section>
+    <!-- TAB: Server Pairing -->
+    <section class="tabpanel" id="tab-server">
+      <div class="card">
+        <span class="step">Step 2</span>
+        <h2>Connect Moxie to your server</h2>
+        <p class="muted">After Moxie joins Wi-Fi it waits for a second, different-looking code. This one
+          points Moxie at <strong>your</strong> local server instead of the shut-down cloud.</p>
+        <label>Broker address <span class="muted">(an IP the robot can reach on your LAN — <b>not</b> a Tailscale IP)</span>
+          <input id="broker-host" type="text" autocapitalize="off" autocorrect="off"></label>
+        <div class="qrwrap"><img id="endpoint-img" alt="Server (endpoint) QR"></div>
+        <p class="muted" id="endpoint-info">Loading…</p>
+        <div class="callout">
+          <strong>Requires:</strong> Moxie on firmware <code>24.10.803</code> (self-signed OK) and the
+          MQTT broker running on this machine.
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🔎 Connection monitor</h2>
+        <p class="muted">Any sign of life from Moxie shows here — even a failed attempt. If nothing
+          appears after scanning, the robot can't reach the broker address above.</p>
+        <div id="mon-summary" class="statusline">Checking…</div>
+        <div id="mon-log" class="monlog"></div>
+      </div>
+    </section>
+
+    <!-- TAB: Moxie status -->
+    <section class="tabpanel" id="tab-moxie">
+      <div class="card" id="moxie-none">
+        <h2>No Moxie paired yet</h2>
+        <p class="muted">Finish Wi-Fi + Server pairing, then your robot appears here.</p>
+        <details class="dev"><summary>Test without a robot</summary>
+          <p class="muted">Simulate a robot scanning the Wi-Fi QR.</p>
+          <button id="btn-sim" class="ghost">Simulate robot scan</button></details>
+      </div>
+      <div class="card hidden" id="moxie-card">
+        <h2>✅ Your Moxie</h2>
+        <div id="robot-card"></div>
+        <div class="row">
+          <button id="btn-wake" class="primary grow">Wake up</button>
+          <button id="btn-reboot" class="ghost grow">Reboot</button>
+        </div>
+      </div>
+    </section>
+  </div>
 </main>
 
 <footer class="muted">
-  Local Moxie parent-app server · <a href="https://github.com/mvalancy/moxie-robot-parent-app">source</a> ·
+  Local Moxie Saver · <a href="https://github.com/mvalancy/moxie-robot-saver">source</a> ·
   reduce e-waste, keep kids happy
 </footer>
 <script src="/app.js"></script>

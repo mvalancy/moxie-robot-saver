@@ -1,5 +1,13 @@
 # Moxie Parent App — Cryptography & Key Management (subsystem map)
 
+> **📖 About this document.** This is a *clean-room* description of the **original** Moxie parent app
+> (`com.embo.embodied.parent` v2.2.2), written by reverse-engineering it. **The decompiled app is NOT
+> included in this repository, and you do not need it.** Any file or class names below (e.g.
+> `api/Config.java`, `pair_moxie/…`, or paths shown as `<decompiled>/…`) are references into the
+> *original app's own internal structure* — they document *where a behavior lived in the app so the
+> protocol is reproducible*, and are **not** files in this repo. Our actual implementation lives in
+> [`server/`](../../server/), [`tools/`](../../tools/), and [`mqtt/`](../../mqtt/).
+
 Source root: `<decompiled>/com/embo/embodied/parent`
 Native: `lib/arm64-v8a/libsodiumjni.so` — **libsodium 1.0.16** (version string confirmed in `.so`), loaded via
 `org.libsodium.jni.NaCl` (`System.loadLibrary("sodiumjni")`, then `Sodium.sodium_init()` on every call).

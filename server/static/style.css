@@ -44,3 +44,25 @@ details.dev summary{cursor:pointer;color:var(--muted);font-size:13px}
 #robot-card .k{color:var(--muted);font-size:13px}
 footer{max-width:520px;margin:8px auto 40px;padding:0 18px;text-align:center;font-size:12px}
 footer a{color:var(--brand)}
+
+/* tabs */
+.tabbar{display:flex;gap:6px;margin-bottom:14px;position:sticky;top:56px;z-index:4;
+  background:var(--bg);padding:6px 0}
+.tab{width:auto;flex:1;padding:10px 8px;margin:0;font-size:14px;font-weight:700;border-radius:12px;
+  background:var(--card);color:var(--muted);border:1px solid var(--line)}
+.tab.active{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+.tabpanel{display:none}
+.tabpanel.active{display:block}
+.step{display:inline-block;font-size:12px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--brand);background:color-mix(in srgb,var(--brand) 14%,transparent);
+  padding:3px 10px;border-radius:99px;margin-bottom:8px}
+.callout{margin-top:14px;padding:12px 14px;border-radius:12px;font-size:13px;
+  background:color-mix(in srgb,var(--brand) 8%,transparent);border:1px solid var(--line)}
+.callout code{background:var(--bg);padding:1px 5px;border-radius:5px}
+
+/* connection monitor */
+.monlog{margin-top:10px;max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;
+  background:var(--bg);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.monlog .ln{padding:6px 10px;border-bottom:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+.monlog .ln span{color:var(--muted);margin-right:8px}
+.monlog .ln.e{color:#c62828}.monlog .ln.r{color:var(--ok);font-weight:700}.monlog .ln.c{color:var(--brand)}
