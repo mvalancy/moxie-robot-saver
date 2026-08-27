@@ -150,13 +150,24 @@ flowchart TD
 ## 📚 Documentation
 
 Start at **[`docs/README.md`](docs/README.md)**. Highlights:
-- 🏗️ **Architecture** — [overview](docs/architecture/overview.md) · [revival path](docs/architecture/revival-path.md)
+- 🏗️ **Architecture** — [overview](docs/architecture/overview.md) · [revival path](docs/architecture/revival-path.md) · [MQTT & conversation](docs/architecture/mqtt-and-conversation.md) · [vision](docs/architecture/vision.md)
 - 🔬 **Reverse-engineering** (source of truth) — [REST API](docs/reverse-engineering/rest-api.md) · [crypto & keys](docs/reverse-engineering/crypto-and-keys.md) · [pairing & robot](docs/reverse-engineering/pairing-and-robot.md) · [QR format](docs/reverse-engineering/qr-format.md) · [app structure](docs/reverse-engineering/app-structure.md)
 - 🎛️ **Features** — the complete parent-app [feature catalog](docs/features/)
 - 🧭 **Guides** — [first-time setup](docs/guides/first-time-setup.md) · [factory reset](docs/guides/factory-reset-a-paired-moxie.md) · [find Moxie on the LAN](docs/guides/find-moxie-on-lan.md)
+- 🔬 **Research tracks** — [Moxie sees (vision)](docs/architecture/vision.md) · [older robots & firmware](hardware/firmware-and-older-robots.md)
 - 🌍 **Community** — [the existing revival landscape](docs/community-research.md) (OpenMoxie et al.)
 
 ---
+
+## 🙏 Built with the community
+
+None of this would exist without the people who kept Moxie alive after the shutdown — above all
+**[OpenMoxie](https://github.com/jbeghtol/openmoxie)** (MIT, © Justin Beghtol), the CEO-sanctioned
+open-source off-ramp, and its most active fork
+**[Noonster77/openmoxie](https://github.com/Noonster77/openmoxie)**, which already runs Moxie on
+local models. We build on their groundwork and aim to complete the picture — adding the phone-side
+parent app and unifying everything into one local box. Full credits and licenses:
+**[`ATTRIBUTION.md`](ATTRIBUTION.md)**.
 
 ## ⚖️ Legal & ethics
 

@@ -1,9 +1,10 @@
 # Roadmap — end-to-end Moxie revival
 
-The complete arc from "bricked robot" to "Moxie talks again, fully local." Each phase is
-independently useful; we don't stop at "it works."
+**Mission: an end-to-end system to revive _any_ Moxie robot, fully local.** The complete arc from
+"bricked robot" to "Moxie talks and sees again" — and, for units too old for the software path,
+whatever firmware-level work it takes. Each phase is independently useful; we don't stop at "it works."
 
-Legend: ✅ done · 🔨 in progress · ⬜ planned
+Legend: ✅ done · 🔨 in progress · ⬜ planned · 🔬 research
 
 ---
 
@@ -53,6 +54,28 @@ Make it something a non-engineer can run.
 - ⬜ One-command deploy (Docker Compose / a single installer) for **any GPU box** — gaming PC, home server, Jetson Orin.
 - ⬜ Optional hosted deployment for owners who can't self-host (multi-tenant, still zero-knowledge).
 - ⬜ Setup wizard, health dashboard, backup/restore of the whole appliance.
+
+---
+
+## Parallel research tracks 🔬
+Longer-horizon work that runs alongside the phases. In-scope, honestly hard, documented as we go.
+
+### Track A — Moxie sees (camera + vision)
+Give Moxie real vision, feeding the conversation.
+- ⬜ Subscribe to on-device vision **events** over MQTT (`eb-found-face`, `eb-lost-target`, marker
+  events) — the non-invasive starting point (semantic only; no pixels).
+- 🔬 An **external camera** + local vision stack (OpenCV → fast detector → local **VLM** on an
+  OpenAI-compatible endpoint), fused back into the conversation, for a true "Moxie sees" experience.
+- 🔬 Investigate any path to the robot's **own** camera frames (blocked in stock firmware today).
+- Detail + honest feasibility: [`docs/architecture/vision.md`](docs/architecture/vision.md).
+
+### Track B — Older robots (firmware)
+Bring back units older than firmware 24.10.801, which lack the custom-endpoint (QR relocation) path.
+- ⬜ Obtain / relay the signed **803 OTA** for 801 units.
+- 🔬 **Firmware acquisition & analysis** — dump and study a system image from a robot we own.
+- 🔬 **Bootloader / Verified Boot** investigation (unlock, downgrade, or signed-update paths).
+- 🔬 Hardware-assisted methods (serial/eMMC/CSI) for **research units only**, last resort.
+- Detail + the lockdown facts: [`hardware/firmware-and-older-robots.md`](hardware/firmware-and-older-robots.md).
 
 ---
 

@@ -19,5 +19,9 @@ The robot's filesystem is readable over ADB if ever needed (e.g. to read its MQT
 `/sdcard/EmbodiedStaticData/PERSISTENT_DATA/uuid.txt` and `.../rightpoint/RS256.key`. A normal setup
 does **not** need this.
 
+## Older robots & firmware
+Units older than firmware 24.10.801 can't use the QR-relocation path and need firmware-level work.
+Honest research directions + the lockdown facts: [`firmware-and-older-robots.md`](firmware-and-older-robots.md).
+
 ## Finding Moxie on your network
 See [`../docs/guides/find-moxie-on-lan.md`](../docs/guides/find-moxie-on-lan.md).
