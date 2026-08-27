@@ -94,6 +94,36 @@ Topics are **settings-driven** off a configurable **`BRAIN_BASE_TOPIC`** (an `em
 Payloads are the `embodied.*` protobufs (see [`recovered-proto/`](recovered-proto/)). Client-id and
 topic prefixes are provisioned per robot (uuid/serial-derived).
 
+### Exact topic map (Google IoT-Core convention, kept post-migration)
+
+The broker mimics Google Cloud IoT Core's topic layout — `{device_id}` is the robot UUID/serial:
+
+| Direction | Topic | Payload |
+|---|---|---|
+| robot → cloud | `/devices/{device_id}/events/{eventname}` | JSON events/telemetry/requests |
+| robot → cloud | `/devices/{device_id}/state` | connection state |
+| cloud → robot | `/devices/{device_id}/config` | JSON `ServiceConfiguration`-style config |
+| cloud → robot | `/devices/{device_id}/commands/{command}` | JSON command (e.g. `remote_chat`, `query_result`, `telehealth`) |
+| cloud → robot | **`/devices/{device_id}/commands/zmq`** | **binary: `"{proto_full_name}:" + serialized protobuf`** — injects a message straight onto the robot's ZMQ bus |
+| server subscribes | `/devices/+/events/#`, `/devices/+/state` | wildcard for all robots |
+
+**`commands/zmq` is the remote-control lever:** the cloud publishes `embodied.unity.QRCommand:` + bytes,
+or any `embodied.*` message, and it lands on the on-device bus ([`robot-ipc-protocol.md`](robot-ipc-protocol.md)).
+Same framing as the local bus, but the two frames are joined as `name:bytes` for MQTT.
+
+### Event names & envelope (robot → cloud)
+
+JSON events carry `event_id` / `request_id`, a `backend`, an optional `query`, and a `subtopic`:
+
+| `eventname` | Meaning |
+|---|---|
+| `remote-chat` (`-staging`) | conversation: `backend=router` → a chat turn (`RemoteChatRequest`); `backend=data`, `query=modules` → module-list request |
+| `client-service-activity-log` | multiplexed by `subtopic`: `query`=`schedule`/`mentor_behaviors`/`license`; `telehealth`; or a `mentor_behavior` report |
+| `client-service-http-token` | request for an access token (e.g. Google speech license) |
+
+The server answers by publishing to `…/commands/{command}` (JSON) or `…/config`. This is exactly what
+OpenMoxie's `moxie_server.py` implements — the concrete recipe for the [`server/`](../../server/) here.
+
 ## 3. STT — Deepgram over WebSocket
 
 Speech-to-text streams to a WebSocket, **not** MQTT:
