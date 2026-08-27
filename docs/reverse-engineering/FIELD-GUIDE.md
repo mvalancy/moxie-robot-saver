@@ -34,7 +34,7 @@ flowchart TB
 | Robot generation | No-disassembly path | Status |
 |---|---|---|
 | **801+ / 803** | QR `endpoint_update` → `OPEN_MOXIE`/`EMBODIED_LOCAL`, then run your server | ✅ Works. Generate the QR with the toolkit; hold it to the camera. |
-| **pre-801 (Google-IoT)** | — | ❌ **Unsolved without opening.** Endpoint pinned to `mqtt.googleapis.com` (TLS hostname-checked) → can't relocate by QR/DNS; a signed OTA can't be delivered over the network; USB/recovery may need the shell open. |
+| **pre-801 (Google-IoT)** | — | ❌ **Unsolved without opening.** Endpoint **hardcoded** to `mqtt.googleapis.com` (cert CA-validated, not pinned — see [`network-trust.md`](network-trust.md)) → can't relocate by QR, and DNS-redirect fails the cert hostname check; a signed OTA can't be delivered over the network; USB/recovery may need the shell open. |
 
 - **Do it:** `python -m moxie_toolkit.cli endpoint OPEN_MOXIE --png fix.png` → show `fix.png` to the robot.
 - **Why it works (801+):** an offline robot drops to `STATE_CONFIG` and *scans QR codes* ([`boot-and-launcher.md`](boot-and-launcher.md)); pre-801 still can't relocate off Google.

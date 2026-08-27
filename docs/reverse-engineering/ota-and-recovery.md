@@ -54,8 +54,8 @@ flowchart LR
 | Vector | Needs opening? | Status |
 |---|---|---|
 | **QR re-home** (`endpoint_update` → OPEN_MOXIE/EMBODIED_LOCAL) | ❌ no | ✅ Works on **803 / 801+** — the endpoints exist in firmware. Redirects the cloud; does **not** upgrade firmware or run custom code on-device. See [`qr-commands.md`](qr-commands.md). |
-| **QR re-home on pre-801** | ❌ no | ❌ **Does not work.** Pre-801 pins the endpoint to `mqtt.googleapis.com` with hostname-checked TLS; QR can't relocate it (see [`../debugging/live-hardware-debug.md`](../debugging/live-hardware-debug.md)). |
-| **Serve a genuine signed OTA** to a robot we control the network of | ❌ no | ⚠️ Plausible on 801+ (point it at our server via QR, serve the real `update.zip`). Blocked on pre-801 because we can't get it to connect to us (TLS pinning). **Also needs a genuine signed 803 `update.zip`, which we do not currently have** (we have raw partition images, not a signed payload). |
+| **QR re-home on pre-801** | ❌ no | ❌ **Does not work.** Pre-801 **hardcodes** the endpoint to `mqtt.googleapis.com` (CA-validated TLS, not pinned — see [`network-trust.md`](network-trust.md)); QR can't relocate it (see [`../debugging/live-hardware-debug.md`](../debugging/live-hardware-debug.md)). |
+| **Serve a genuine signed OTA** to a robot we control the network of | ❌ no | ⚠️ Plausible on 801+ (point it at our server via QR, serve the real `update.zip`). Blocked on pre-801 because we can't get it to connect to us (hardcoded hostname + no trusted cert for it; see [`network-trust.md`](network-trust.md)). **Also needs a genuine signed 803 `update.zip`, which we do not currently have** (we have raw partition images, not a signed payload). |
 | **ADB push `update.zip` + launch OSUpdate** | ❔ depends on an externally reachable USB port | ⚠️ `ro.adb.secure=1`, `ro.debuggable=0`: ADB needs an authorized key, and first-auth needs an on-screen "allow" the projector face can't show. Recovery-mode ADB sideload bypasses that auth but needs a button combo (unknown for Moxie) — **and reaching the port may itself require opening the shell.** |
 | **MTP copy `update.zip` + launch OSUpdate** | ❔ depends on a reachable USB port | ⚠️ The USB gadget offers **MTP** (`persist.sys.usb.config=mtp,adb`), which needs **no adb authorization** — a host could copy a file to `/sdcard` over MTP. But you still must *launch* `com.embodied.osupdate` (needs adb/an app/an intent), and the port may be internal. Promising *if* a port is reachable. |
 | **Rockchip maskrom + `rkdeveloptool`** | ✅ **yes** | ✅ Always works, but requires physical access to the board / USB — i.e. disassembly. This is today's only reliable pre-801 path. |
@@ -63,7 +63,7 @@ flowchart LR
 ## Where this leaves pre-801 revival
 
 **Unsolved without opening the shell, as of this analysis.** The blockers stack:
-1. Pre-801 won't relocate off Google's dead cloud (TLS hostname pinning) → we can't reach it over the
+1. Pre-801 won't relocate off Google's dead cloud (hardcoded hostname; cert CA-validated, not pinned) → we can't reach it over the
    network to hand it an OTA.
 2. Even if we could, we'd need a genuine Embodied-signed 803 `update.zip` (not just partition images).
 3. ADB/recovery delivery hinges on an externally reachable USB port and a recovery entry method we
