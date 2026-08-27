@@ -95,14 +95,16 @@ is trivial once you run the real code. Each getter holds an obfuscated blob and 
 XOR:
 
 ```
-key    = GetStringUTFChars(packageName)      # "me.embodied.productiontesting"
-out[i] = blob[i] XOR key[i % len(key)]       # ldrb / mod keylen / eor / strb
+keybuf = ASCII( hex( sha256(packageName) ) ) # 64 hex chars, packageName = "me.embodied.productiontesting"
+out[i] = blob[i] XOR keybuf[i % 64]          # ldrb / mod 64 / eor / strb
 return NewStringUTF(out)
 ```
 
-**So every factory secret = its embedded blob XOR the package-name string.** No real key management —
-the package name *is* the key. The long PSK getters decrypt to clean printable strings; the shorter
-DB/FTP getters need a blob-length validation pass (their blobs are built inline via VFP `vstr`).
+**So every factory secret = its embedded blob XOR the hex-SHA256 of the package name** — a fixed
+64-char keystream. All six getters recover clean values (a SQL `SA` login, the factory Wi-Fi PSK
+`Embodied<3robots!`, a 62-char staff PSK, an FTP `test-station` account, etc.). The extractor emulates
+each getter to capture its assembled blob, then derives the key with Python (the lib's own SHA256
+miscomputes under Unicorn). **Values are recovered locally, not committed.**
 
 ### Recovering the secret values
 

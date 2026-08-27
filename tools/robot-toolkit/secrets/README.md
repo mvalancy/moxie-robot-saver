@@ -11,13 +11,15 @@ Each JNI getter (`getDBUsername/Password`, `getEmbodiedPSK`, `getEmbodiedStaffPS
 `getOriginalKey(blob, len, packageName, JNIEnv*)`, which does a **repeating-key XOR**:
 
 ```
-key      = GetStringUTFChars(packageName)      # "me.embodied.productiontesting"
-out[i]   = blob[i] XOR key[i % len(key)]
+key      = ASCII( hex( sha256(packageName) ) )   # 64 hex chars of sha256("me.embodied.productiontesting")
+out[i]   = blob[i] XOR key[i % 64]
 return NewStringUTF(out)
 ```
 
-So the "encryption" is just **XOR with the package-name string**. (Verified from the `getOriginalKey`
-Thumb disassembly: `ldrb blob[i]` → `strlen(key)` → `i % keylen` → `eor` → `strb out[i]`.)
+So the "encryption" is a **repeating-XOR with the hex-SHA256 of the package name**. (Verified from the
+`getOriginalKey` Thumb disasm: build `keybuf = hex(sha256(pkg))` → `ldrb blob[i]` → `i % 64` → `eor`
+→ `strb out[i]`.) Note: the lib's own SHA256 miscomputes under Unicorn, so the harness captures the
+blob by emulation but derives the key with Python's `hashlib` — yielding clean plaintext.
 
 ## Run
 
@@ -31,5 +33,4 @@ addresses, stubs libc (`memcpy`, `memclr`, `strlen`, `sprintf`, `uidivmod`) and 
 ops, then runs each `Java_..._get*` export and prints `secret,value`.
 
 > **Values are not committed.** They decrypt live-ish factory credentials (for now-defunct infra);
-> run the tool locally to get them. The long PSK getters recover clean printable strings; the short
-> DB/FTP getters need a blob-length validation pass (tracked in PLAN.md).
+> run the tool locally to get them. All six getters now recover clean values. Run locally to see them.

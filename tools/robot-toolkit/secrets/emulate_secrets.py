@@ -8,7 +8,7 @@ packageName, JNIEnv*), which SHA256-derives a key from the package name and decr
 NewStringUTF()s the result. All crypto is internal to the .so, so we run the real code and only mock
 libc + a tiny JNIEnv (GetStringUTFChars -> the package name; NewStringUTF -> capture the secret).
 """
-import sys, struct
+import sys, struct, hashlib
 from unicorn import *
 from unicorn.arm_const import *
 from elftools.elf.elffile import ELFFile
@@ -56,6 +56,13 @@ class Emu:
         self._plt()
         self._jnienv()
         self.uc.hook_add(UC_HOOK_CODE, self._on_code)
+        # capture the obfuscated blob + length at getOriginalKey() entry (0x1014).
+        self.blob=None
+        def _gok(uc, address, size, u):
+            b=uc.reg_read(UC_ARM_REG_R0); ln=uc.reg_read(UC_ARM_REG_R1)
+            if 0 < ln < 512:
+                self.blob=bytes(uc.mem_read(b, ln))
+        self.uc.hook_add(UC_HOOK_CODE, _gok, begin=0x1014, end=0x1015)
 
     def malloc(self, b):
         a = self.heap; self.uc.mem_write(a, b); self.heap += align(len(b), 16); return a
@@ -226,8 +233,16 @@ class Emu:
 sym=elf.get_section_by_name('.dynsym')
 getters={s.name.split('_get')[-1]:s['st_value'] for s in sym.iter_symbols()
          if s.name.startswith('Java_me_embodied_productiontesting_Secrets_get')}
+# The real getOriginalKey XORs the blob with ASCII(hex(sha256(packageName))). We emulate the
+# getter only to *capture the assembled blob* (the lib's own SHA256 miscomputes under Unicorn), then
+# derive the key correctly in Python -> clean plaintext.
+KEY = hashlib.sha256(PKG[:-1]).hexdigest().encode()
+def decrypt(blob):
+    return bytes(b ^ KEY[i % len(KEY)] for i, b in enumerate(blob))
+
 emu=Emu()
 print("secret,value")
 for name,va in sorted(getters.items()):
-    val=emu.call_getter(va)
+    emu.call_getter(va)
+    val = decrypt(emu.blob) if emu.blob else b""
     print(f"{name},{val.decode(errors='replace') if val else '<none>'}")
