@@ -65,26 +65,40 @@ flowchart TB
     class m,mq wip;
 ```
 
-And the robot is revived by showing it a short sequence of **QR codes** — no teardown, no serial cable:
+### ⚠️ How you get there depends on the robot's firmware — read this first
+
+The clean "show it two QR codes" path **only works on firmware `24.10.801/803`**, which Embodied added
+late to bless the community server. In practice those units were claimed early; **most robots on the
+resale market today are older (`pre-801`)**, whose cloud endpoint is hard-pinned to Google Cloud IoT
+Core (dead since 2023) with hostname-checked TLS — so **they cannot be relocated by QR at all** (we
+confirmed this on real hardware). Treat the two-QR route as the lucky case, not the default.
 
 ```mermaid
-flowchart LR
-    A["🤖 Moxie<br/>pairing mode"] -->|"1️⃣ Wi-Fi QR"| B["📶 On your Wi-Fi"]
-    B -->|"2️⃣ Endpoint QR"| C["🔗 On your cloud"]
-    C -->|"3️⃣ MQTT connect"| D["🗣️ Moxie talks!"]
-    classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
-    classDef wip fill:#fff3c4,stroke:#f9a825,color:#5d4037;
-    class A,B done;
-    class C,D wip;
+flowchart TD
+    fw{"Firmware?"}
+    fw -->|"24.10.803 (lucky)"| qr["🎫 Two-QR relocation<br/>Wi-Fi QR + endpoint QR → your server"]
+    fw -->|"24.10.801"| qrs["🎫 Two-QR, but needs a real signed cert on the broker"]
+    fw -->|"pre-801 (most resale units)"| hard["🔩 QR route is impossible"]
+    hard --> hack["🕵️ QR-command discovery<br/>(hunt undocumented/factory codes)"]
+    hard --> flash["⚡ Reflash to 803<br/>Rockchip Maskrom + rkdeveloptool"]
+    qr --> talk["🗣️ Moxie talks (local AI)"]
+    flash --> talk
+    classDef ok fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
+    classDef warn fill:#fff3c4,stroke:#f9a825,color:#5d4037;
+    classDef res fill:#e1bee7,stroke:#6a1b9a,color:#4a148c;
+    class qr,talk ok; class qrs warn; class hard,hack,flash res;
 ```
 
-| Step | QR | What it does | Status |
-|------|-----|--------------|--------|
-| 1 | **Wi-Fi QR** (`"PA"`+protobuf) | gets Moxie onto your network | ✅ built & **verified on real hardware** |
-| 2 | **Endpoint QR** (`{"debug":{"om"}}`) | points Moxie at *your* server | 🔨 next |
-| 3 | MQTT connect | Moxie talks, via your local models | 🔨 after that |
+**The realistic paths this project builds toward:**
 
-Full decision tree + firmware requirement: **[`docs/architecture/revival-path.md`](docs/architecture/revival-path.md)**.
+| Path | For | Status |
+|------|-----|--------|
+| **Two-QR relocation** (Wi-Fi QR → endpoint QR → MQTT) | firmware **803** (increasingly rare) | ✅ Wi-Fi QR hardware-verified; endpoint QR + broker built |
+| **QR-command discovery** — hunt undocumented/factory QR codes the Wifi App still acts on | any firmware; exploratory | 🔬 automated rig ([`tools/qr-rig`](tools/qr-rig/)), running |
+| **Firmware reflash to 803** (open case → USB → `rkdeveloptool`) | **pre-801** (most resale units) | 🔩 documented; signed image located |
+
+Full decision tree + the honest firmware reality: **[`docs/architecture/revival-path.md`](docs/architecture/revival-path.md)**
+and the live log in **[`docs/debugging/`](docs/debugging/)**.
 
 ---
 
