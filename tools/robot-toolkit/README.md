@@ -12,7 +12,7 @@ hold a code up to its camera. Built on the [recovered protobuf schemas](../../do
 ## Install
 
 ```sh
-pip install protobuf segno          # segno only needed for PNG/SVG output
+pip install protobuf segno pyzmq    # segno=QR images, pyzmq=on-device bus client
 ```
 
 ## QR CLI
@@ -46,6 +46,7 @@ python -m moxie_toolkit.cli validate
 | `moxie_toolkit/qr_codec.py` | Encode/decode every QR `bo-wifi` accepts: `PA`+`StartPairingQR`, `VN`+`QRVPNConfig`, JSON `{wifi,pair,debug}`. Mirrors `QRData.ParseFromString`. |
 | `moxie_toolkit/validate_qr.py` | Schema round-trip + byte-parity validation (27 checks). **This replaces acoustic QR brute-forcing.** |
 | `moxie_toolkit/cli.py` | `moxie-qr` CLI (gen / decode / validate / PNG-SVG). |
+| `moxie_toolkit/bus.py` | **MoxieBus** — the on-device ZMQ bus client (drive face/motors/LEDs, read sensors). `pip install pyzmq`; tunnel via `adb forward`. |
 | `moxie_toolkit/embodied/…` | Generated Python bindings for all 120 recovered protos. |
 | `proto/embodied/…` | The `.proto` sources (copy of `docs/reverse-engineering/recovered-proto/`). |
 

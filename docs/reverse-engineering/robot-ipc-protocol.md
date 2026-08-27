@@ -40,9 +40,20 @@ flowchart LR
   class lizard,fw,audio,vision,brain,unity,wifi d;
 ```
 
-- **Transport:** ZeroMQ **pub/sub** over `tcp://` on loopback. Observed bind addresses
-  `tcp://0.0.0.0:5000`–`5005` (per-module pub/sub pairs) plus `tcp://127.0.0.1:5678` / `:6789`.
-  A module publishes protobufs and subscribes to the descriptor-names it cares about.
+- **Transport:** ZeroMQ over `tcp://` loopback. The dispatch daemon (`embodied::dispatch`
+  `ZMQEventBroadcaster`) runs an **XSUB/XPUB proxy**: modules **PUBLISH to `tcp://127.0.0.1:5678`**
+  (the broker's XSUB) and **SUBSCRIBE from `tcp://127.0.0.1:6789`** (the broker's XPUB). (Per-module
+  direct pairs `tcp://0.0.0.0:5000`–`5005` also exist for some components.)
+- **Wire framing:** every message is exactly **two ZMQ frames** — frame 0 is the protobuf
+  **descriptor `FullName`** as a UTF-8 string (e.g. `embodied.lizzerface.SetLedrEventPB`), frame 1 is
+  the **serialized protobuf**. Sent as `SendMore(full_name)` + `Send(bytes)`.
+- **Subscription = the descriptor name string.** ZMQ SUB does prefix matching, so subscribing to
+  `"embodied.unity.OTAStatus"` (or `""` for everything) selects messages by type. This is exactly how
+  `bo-wifi` subscribes to `CloudStatus`, `OTAStatus`, `BatteryEventPB`, etc.
+- **Client tool:** [`../../tools/robot-toolkit/moxie_toolkit/bus.py`](../../tools/robot-toolkit/moxie_toolkit/bus.py)
+  implements this contract (`MoxieBus.send/subscribe/recv`); reach a robot with
+  `adb forward tcp:5678 tcp:5678 && adb forward tcp:6789 tcp:6789`, then
+  `python -m moxie_toolkit.bus monitor` or `… led F_LISTEN_GREEN`.
 - **Routing key:** the protobuf **descriptor `FullName`** (e.g. `embodied.unity.QRCommand`). The
   managed side wraps each type in a `Deserializer<T>(Deserialize, Descriptor.FullName)` and registers
   it with the input-event system — so the wire is `[full-name][serialized-bytes]`.
