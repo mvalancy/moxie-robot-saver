@@ -1,0 +1,31 @@
+# NEVER commit the proprietary app or any extracted Embodied binaries
+*.xapk
+*.apk
+*.dex
+*.so
+*.jar
+work/
+jadx-out/
+apktool-out/
+tools/jadx/
+tools/apktool*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+
+# Secrets / local
+*.key
+*.pem
+.env
+secrets/
+
+# server runtime
+server/moxie.db*

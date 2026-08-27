@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#5b5bd6">
+<title>Moxie Setup</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span> Moxie&nbsp;Setup <small id="who"></small></div>
+</header>
+
+<main>
+  <!-- STEP: login -->
+  <section id="s-login" class="card">
+    <h1>Bring your Moxie back to life</h1>
+    <p class="muted">A local, private setup server for your Moxie robot. Your data stays on this machine.</p>
+    <label>Your email <span class="muted">(used only as your local account name)</span>
+      <input id="email" type="email" placeholder="parent@home.lan" autocomplete="email">
+    </label>
+    <button id="btn-login" class="primary">Start</button>
+  </section>
+
+  <!-- STEP: setup -->
+  <section id="s-setup" class="card hidden">
+    <h2>1 · Child</h2>
+    <label>Child's first name
+      <input id="child-name" type="text" placeholder="Alex">
+    </label>
+
+    <h2>2 · Wi-Fi for Moxie</h2>
+    <p class="muted">Moxie will join this network. 2.4&nbsp;GHz is the safest choice.</p>
+    <label>Network name (SSID)
+      <input id="ssid" type="text" placeholder="HomeWiFi" autocapitalize="off" autocorrect="off">
+    </label>
+    <label>Wi-Fi password
+      <input id="wifipass" type="text" placeholder="(leave blank for open network)" autocapitalize="off" autocorrect="off">
+    </label>
+    <div class="row">
+      <label class="grow">Band
+        <select id="band">
+          <option value="24g">2.4 GHz only (recommended)</option>
+          <option value="any">Any</option>
+          <option value="5g">5 GHz only</option>
+        </select>
+      </label>
+      <label class="check"><input id="hidden" type="checkbox"> Hidden network</label>
+    </div>
+    <button id="btn-qr" class="primary">Generate pairing QR</button>
+  </section>
+
+  <!-- STEP: QR -->
+  <section id="s-qr" class="card hidden">
+    <h2>3 · Show this to Moxie</h2>
+    <p class="muted">Put Moxie on its pairing screen, then hold this QR code up to its camera.</p>
+    <div class="qrwrap"><img id="qr-img" alt="Pairing QR code"></div>
+    <div class="recovery">
+      <strong>Save your recovery phrase</strong>
+      <p class="muted">Write this down. It restores your child's data on a new setup. It never leaves this server.</p>
+      <code id="phrase"></code>
+    </div>
+    <div class="statusline" id="pair-status">Waiting for Moxie to connect…</div>
+    <details class="dev">
+      <summary>No robot handy? Test the flow</summary>
+      <p class="muted">Simulates a Moxie scanning the QR, so you can see pairing complete without hardware.</p>
+      <button id="btn-sim">Simulate robot scan</button>
+    </details>
+    <button id="btn-restart" class="ghost">Start over</button>
+  </section>
+
+  <!-- STEP: done -->
+  <section id="s-done" class="card hidden">
+    <h2>✅ Moxie is paired</h2>
+    <div id="robot-card"></div>
+    <div class="row">
+      <button id="btn-wake" class="primary grow">Wake up Moxie</button>
+      <button id="btn-reboot" class="ghost grow">Reboot</button>
+    </div>
+    <button id="btn-restart2" class="ghost">Set up another</button>
+  </section>
+</main>
+
+<footer class="muted">
+  Local Moxie parent-app server · <a href="https://github.com/mvalancy/moxie-robot-parent-app">source</a> ·
+  reduce e-waste, keep kids happy
+</footer>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pynacl>=1.5
+segno>=1.6
+python-multipart>=0.0.9
