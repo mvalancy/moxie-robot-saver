@@ -72,6 +72,45 @@ present, **where**, and whether they're **engaged/looking** — driving targetin
 `RobotTurnToOutOfViewChatTarget`) and the `BlockedType` reasons (`TARGET_OUT_OF_VIEW`, `NOT_ENGAGED`)
 in [`cloud-protocol.md`](cloud-protocol.md).
 
+## XMOS firmware (DFU)
+
+The **XMOS audio DSP** — a VocalFusion-class far-field voice chip (mic-array beamforming, AEC,
+wake-word) — is a **third embedded processor** with its own firmware, updated from Android over
+**USB DFU** (`libusb`, `/dev/bus/usb`) by `xmosdfu` / `bo_xmosupdate` (native `XMOSDFU` class).
+
+| Aspect | Detail |
+|---|---|
+| Transport | **USB DFU** via libusb (`libusb_open_device_with_vid_pid`, `find_usbfs_path`) |
+| Ops | `xmos_dfu_resetintodfu` → `--download <image>` → `xmos_dfu_resetfromdfu`; **`--revertfactory`** restores the factory image |
+| Active image | **`/vendor/etc/firmware/xmosdfu.bin`** (and `xmosdfu-<variant>.bin`) — the deployed DSP firmware |
+| Trigger | `bo-android`'s **`BoXmosWatchdog`** (`isXmosUpdateRequired`, "Checking for XMOS Update"); gated by `FEA_XMOS_WATCHDOG` and XMOS readiness at boot ([`boot-and-launcher.md`](boot-and-launcher.md)) |
+
+### Shipped DSP images (`xmosdfu.apk`) — decode the naming
+`assets/fw/` + `res/raw/`: `p9_{16k,48k}_10_{10,30}_{cm,mic01,mic23}[_nowk].bin`,
+`wk_blue_p9_48k_10_10_cm.bin`. The fields:
+
+- **p9 / blue** — board rev (Moxie P9 / MoxieBlue).
+- **16k / 48k** — audio sample rate.
+- **10_10 / 10_30** — DSP pipeline/geometry variant.
+- **cm** — combined/comms mic mode; **mic01 / mic23** — which mic pair is active.
+- **wk / nowk** — wake-word enabled / disabled.
+
+`test.wav` (3 MB) ships alongside for audio validation.
+
+## The three embedded processors (firmware map)
+
+Moxie has **three** processors, each with its own firmware updated from the Android side:
+
+| Processor | Role | Update path | Image format |
+|---|---|---|---|
+| **RK3288** (this OS) | main SoC — brain, vision, Unity face | A/B `update_engine` OTA ([`ota-and-recovery.md`](ota-and-recovery.md)) | signed `payload.bin` |
+| **Lizard STM32 MCU** | motors · touch · IMU · LEDs · battery | UART `/dev/ttyS3`, GOBY bootloader ([`hardware-map.md`](hardware-map.md)) | Intel HEX @ `0x08000000` |
+| **XMOS DSP** | mic array · AEC · wake-word | **USB DFU** (libusb) | `.bin` → `/vendor/etc/firmware/xmosdfu.bin` |
+
+> `xmosdfu.apk` also bundles **newer Lizard MCU images** (`res/raw/d{4,5,6}_lizard_app.hex` = the
+> D4/D5/D6 board revs) in addition to XMOS `.bin`s — so this one app can reflash both the DSP and the
+> MCU. (`bo-firmwareUpdate` carries the older `v4_0_*`/`v7_7_*` Lizard images.)
+
 ## For custom firmware (goal #1)
 
 The XMOS DSP and camera CV run as their own components (`BO_AUDIO`, `BO_VISION`) publishing these
