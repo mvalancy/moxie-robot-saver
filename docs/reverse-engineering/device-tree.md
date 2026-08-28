@@ -50,6 +50,30 @@ Linux bus numbers are from the DT `aliases` (authoritative):
 - **RT5640** codec on i2c5 + **I²S** (`i2s@ff890000`) + **SPDIF** (`sound@ff8b0000`). The **XMOS DSP**
   (mic array/AEC/wake-word) sits on USB upstream of the codec ([`perception-pipeline.md`](perception-pipeline.md)).
 
+## Inputs & controls
+
+Moxie has **exactly two physical buttons** (`rockchip,key`):
+
+| Button | Wiring | Linux code | Notes |
+|---|---|---|---|
+| **Power** | **GPIO0_A5** (`gpio0` pin 5, active-low) | `KEY_POWER` (0x74) | `gpio-key,wakeup` — wakes the SoC |
+| **Macro** | **SARADC channel 1** (`adc_value=0x01`) | `KEY_MACRO` (0x70) | the multi-function button, read as an ADC level |
+
+Other GPIO/analog I/O of note (banks resolved from phandles):
+
+- **Camera power-down:** `gpio2` pin 14 (`pwdn-gpios` for OV2710 / GC2053).
+- **Projector enable / backlight:** `gpio7` (pins 2/3 `enable-gpios`, `backlight-en`) + `projector-en-regulator`.
+- **USB OTG + charger detect:** `dwc-control-usb` exposes `otg_id`/`otg_bvalid`/`otg_linestate` and the
+  USB-phy `chgdet`/`vdatdetenb` — USB role + charger detection (the barrel-jack `DC_PLUG` is sensed on
+  the MCU side, see [`hardware-map.md`](hardware-map.md)).
+- **SARADC** (`ff100000`, `vref` from a regulator) also backs the macro key; remaining channels are
+  available for analog sensing.
+
+> **Recovery-entry lead (goal #3):** with only Power + Macro exposed, any button-combo route into
+> maskrom/loader/recovery would use those two. This is a **hardware hypothesis to test on a bench
+> unit** (also `reboot loader`/`reboot recovery` from a root shell, and the maskrom test-point) —
+> see [`hardware-access.md`](hardware-access.md).
+
 ## Power, storage, misc
 
 - **RK808 PMIC** + power-management (`ff730000`) with power domains (`pd_vio/hevc/video/gpu`); a
