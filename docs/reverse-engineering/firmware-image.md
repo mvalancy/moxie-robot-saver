@@ -149,6 +149,37 @@ ro.build.fingerprint = rockchip/rk3288/rk3288:9/PQ2A.190305.002/cloud12282012:us
 builds relax constraints. `sys.embodied.qrsetup` and `auto_unity` gate the setup flow and whether the
 Unity experience auto-launches.
 
+## Code signing & app trust
+
+The build (`v24.10.803`) uses **three distinct signing identities** — worth knowing before you
+re-sign or replace anything:
+
+| Identity (cert subject) | SHA-256 fingerprint (16) | Signs |
+|---|---|---|
+| **`CN=Embodied`** (Pasadena, `signing@embodied.com`) | `6FA1065B92D3A5F0…` | **OTA / verified boot** — the `releasekey.x509.pem` in `otacerts.zip`; the `release-keys` build identity |
+| **`CN=Embodied Inc`** (Pasadena) | `789BC175525358FA…` | `bo-firmwareUpdate`, `me.embodied.productiontesting.*` (factory apps) |
+| **`CN=Android Debug, O=Android`** | `D5EF722984577 9CA…` | **`bo-android` and `bo-wifi`** — the two main experience apps |
+
+**The headline:** the brain (`bo-android`) and setup app (`bo-wifi`) are signed with a generic
+**"Android Debug"-identity** certificate, **not** the platform/OTA key. Implications:
+
+- They are **priv-app** (privileged) but there is **no Embodied `privapp-permissions` allowlist** in
+  `/system/etc/permissions` (only stock AOSP `privapp-permissions-platform.xml`), so their privileges
+  come from being privileged system apps, not from platform-signature permissions.
+- Signature-level relationships (shared `sharedUserId`, `signature` permissions) between the two apps
+  hold via this debug identity. If this is the **public Android SDK debug key**, that signature is
+  trivially reproducible by anyone (a weak choice for the main app); if it's a private key that merely
+  uses the default `Android Debug` subject, it isn't — the subject alone can't tell you which, only
+  possession of the key does.
+- **For custom firmware:** replacing `bo-android`/`bo-wifi` is easiest of all — you can re-sign your
+  replacement with your own key (and, if needed, update any `sharedUserId`/permission expectations),
+  since they don't chain to the platform key. Replacing `bo-firmwareUpdate`/factory apps or the OTA
+  payload requires the respective **Embodied** private keys (which we do **not** have) or an
+  AVB/signature bypass (see above + [`ota-and-recovery.md`](ota-and-recovery.md)).
+
+`/system/etc/permissions` and `/system/etc/sysconfig` are otherwise **stock AOSP 9** (no embodied
+feature/permission XML).
+
 ## Custom-firmware roadmap (pragmatic)
 
 1. **Get a shell first, non-destructively.** Flash a `--disable-verification` `vbmeta` + a `system`
