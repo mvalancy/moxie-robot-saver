@@ -22,6 +22,7 @@ run to replace the dead cloud) — plus the shared protocol that ties them toget
 ## ① The Robot — the machine itself
 Firmware, hardware, boot, on-device software. Everything on the device.
 - [`reverse-engineering/firmware-803-reference.md`](reverse-engineering/firmware-803-reference.md) — version-stamped reference for the analyzed build.
+- [`reverse-engineering/firmware-inventory.md`](reverse-engineering/firmware-inventory.md) — complete app + binary manifest (embodied vs stock).
 - [`reverse-engineering/firmware-image.md`](reverse-engineering/firmware-image.md) — RK3288/Android 9 partitions, verified boot, unlock & flash custom firmware.
 - [`reverse-engineering/hardware-access.md`](reverse-engineering/hardware-access.md) — the physical surface: maskrom/rockusb/fastboot, `rkdeveloptool`, UART/TTL serial console, JTAG (full teardown, in scope).
 - [`reverse-engineering/hardware-map.md`](reverse-engineering/hardware-map.md) — motors, sensors, LED patterns, power rails (the Lizard MCU).

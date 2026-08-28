@@ -132,7 +132,7 @@ ro.build.fingerprint = rockchip/rk3288/rk3288:9/PQ2A.190305.002/cloud12282012:us
 - Post-Google/AWS era: `client-service-*-api.embodied.com` REST + Paho MQTT + Deepgram STT.
 
 ## Deep dives (all measured from this build unless noted)
-[`firmware-image.md`](firmware-image.md) · [`boot-and-launcher.md`](boot-and-launcher.md) ·
+[`firmware-image.md`](firmware-image.md) · [`firmware-inventory.md`](firmware-inventory.md) · [`boot-and-launcher.md`](boot-and-launcher.md) ·
 [`ota-and-recovery.md`](ota-and-recovery.md) · [`cloud-protocol.md`](cloud-protocol.md) ·
 [`network-trust.md`](network-trust.md) · [`robot-ipc-protocol.md`](robot-ipc-protocol.md) ·
 [`hardware-map.md`](hardware-map.md) · [`perception-pipeline.md`](perception-pipeline.md) ·
