@@ -36,6 +36,29 @@ flowchart LR
 - **Barge-in**: `Interrupt` / `AllowInterrupt{allow}` / `CutoffStatistics` — lets a child interrupt
   Moxie mid-sentence (and measures how often speech was cut off).
 
+### Wake-word & VAD (fully on-device)
+
+Waking Moxie and detecting speech happen **entirely on the robot** — a server never handles wake; it
+only sees STT *after* a wake + speech. Three layers cooperate:
+
+- **XMOS DSP (hardware):** the `wk` firmware variants (vs `nowk`, [above](#xmos-firmware-dfu)) enable
+  **on-chip keyword spotting** — the "Hey, Moxie" wake word runs on the XMOS VocalFusion chip, plus its
+  DOA/AEC. `XMOS_VARIANT` (settings) picks the image; `XMOS_VAD_BOOST_*`/`XMOS_DOA_BOOST_*` tune it.
+- **TRILLsson features (TFLite, on RK3288):** `embodied::audio::TrillFeatureExtractor` +
+  `TrillVAD` + `TrillssonListener` run **Google TRILLsson** (a distilled non-semantic-speech embedding
+  model) via `libtensorflowlite` for **voice-activity detection** and speaker/voice features
+  (`USE_TRILS_FEATS`, `TRILL_THRESHOLD/VAD/PREFIX/POSTFIX`, `TRILL_WEBRTC_TH`).
+- **WebRTC VAD** as a classic fallback (`WEBRTC_VAD_AGGRESSIVENESS`, `..._SPEECH_START/STOP`) plus
+  `VAD_CONFIG_HIGH/LOW/OFF`.
+
+A detection emits **`WakeWordEvent{wake_word_detected}`** on the bus (`ACTION_WAKEWORD`,
+"Wakeword key event detected"). Wake can also come from **the button** (`WAKE_BUTTON`, the Macro key —
+[`device-tree.md`](device-tree.md)), **touch** (`TOUCH_WAKEUP`/`TOUCH_WAKE_ENABLED`), or
+**smart wakeup** (`ENABLE_SMART_WAKEUP`); `AUDIO_WAKE_SET`/`VC_WAKE`/`WAKE_WITHOUT_NET` gate voice wake.
+
+**Revival implication (goal #2):** wake + VAD are self-contained on the robot. Your server receives
+audio/STT only once Moxie is already awake and hears speech — you don't implement wake-word.
+
 ### Output side — TTS (`embodied.unity`)
 - The brain sends **`CloudTTSRequest{markup, event_id, chunk_num, user_id}`** — the *markup* is the
   speech + `<mark name="cmd:…">` behavior tags ([`behavior-markup.md`](behavior-markup.md)).
