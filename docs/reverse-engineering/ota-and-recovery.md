@@ -33,6 +33,39 @@ flowchart LR
   "file:///sdcard/osupdate-tmp/payload.bin", …)`. update_engine writes the **inactive** A/B slot and
   `bootctl` switches to it on reboot. No partitions are touched in place; a bad update rolls back.
 
+## Recovery mode (sideload)
+
+The `boot.img` ramdisk is **recovery-capable** (recovery-as-boot): it carries `/sbin/recovery`
+(1.68 MB, the AOSP recovery) and `/sbin/adbd` run with a **root seclabel**
+(`--root_seclabel=u:r:su:s0 --device_banner=recovery`). The recovery menu includes:
+
+- **Apply update from ADB** → `adb sideload <package>.zip`
+- **Apply update from SD card** → reads a package from removable storage
+- Wipe data / factory reset
+
+**Entry** is via the **BCB** (bootloader control block on the `misc` partition — recovery mounts
+`/dev/block/by-name/misc`): the string `boot-recovery` there tells the bootloader to boot recovery.
+That's set by `reboot recovery` (needs a shell) or by the bootloader on a key combo — and Moxie's
+only inputs are **Power + Macro** ([`device-tree.md`](device-tree.md)), so any combo route uses those
+two (a bench hypothesis to confirm).
+
+**Storage recovery can read** (`/etc/recovery.fstab`): a **USB drive** (vfat, `voldmanaged=usb`) and an
+**SD card** — the SoC's `dwmmc@ff0c0000` (mshc1/sdmmc) controller is present with card-detect, so an
+**SD slot exists** (whether it's externally reachable without opening is a hardware question).
+
+### The catch: recovery verifies the package signature
+Recovery checks the package's whole-file signature against the OTA cert store
+(`/system/etc/security/otacerts.zip` = Embodied's `releasekey`) — strings `Signature verification
+failed` / `failed to verify whole-file signature`. So both **ADB sideload and SD-card update require a
+genuine Embodied-signed OTA** (which we don't have), **unless** you first replace `otacerts.zip` /
+the recovery image — which needs `/system` write or a reflash (Tier-3, [`hardware-access.md`](hardware-access.md)).
+No `/adb_keys` is baked into the recovery ramdisk, so the sideload adbd's auth relies on
+`/data/misc/adb/adb_keys` (or the minadbd sideload path) — untested on hardware.
+
+**Net for revival:** recovery gives a **low-open** apply path (SD card or USB, no full teardown) — the
+closest thing to a "put a file in and reboot" fix — **but it's gated on a signed OTA**. Sourcing a
+genuine signed 803 `update.zip` would unlock it; otherwise it's Tier-3 (open + flash + resign).
+
 ## The signing gate (this is what stops arbitrary custom firmware)
 
 `update_engine` verifies every payload against a baked-in public key:
