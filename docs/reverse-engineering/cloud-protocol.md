@@ -70,6 +70,15 @@ the bus/provisioning (not the managed layer):
 | **`disable_verify`** | **skip TLS peer verification** (maps to `CURLOPT_SSL_VERIFYPEER=0`) |
 | `disable_sync` / `disable_log_upload` | turn off file-sync / log upload |
 
+The robot keeps a **table** of these, not just one:
+
+- `EndpointStore { repeated ServiceConfiguration endpoints }` — a persisted list of endpoint configs.
+- `EndpointConfiguration { endpoint, gcp_project }` — a lighter name→project record.
+- Endpoints are selected **by name / `IOTEndpoint` id**: `libbo-logger` carries a `DEFAULT_ENDPOINT_NAME`
+  and ships `{"endpoint":"openmoxie"}` as a known endpoint — i.e. the **803 firmware has first-class,
+  built-in "openmoxie" support**. An `endpoint_update` (QR or config) just switches which stored
+  `ServiceConfiguration` is active; its `mqtt_host`/`webservice_root` supply the actual host.
+
 This is the lever a backend uses to move a robot to a custom host — and `disable_verify` means a
 robot *can* be told to accept a self-signed cert (see [`network-trust.md`](network-trust.md) for the
 important caveat about how it's delivered). (OpenMoxie's `ServiceConfiguration2` is the same message
