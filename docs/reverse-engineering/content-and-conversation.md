@@ -69,6 +69,38 @@ handled; the `code` builds the response and fires execution actions.
 Mirrors `embodied.robotbrain.ContentSchedule` (`ScheduleConfig.day_one_schedule`, `promoted_content`,
 `MissionConfig`, `RewardsConfig`, `EndOfSessionConfig`).
 
+## TTS & dialog engine internals (formats & data)
+
+Both engines are **native libs baked into the firmware**, but their **data (voice model, dialog
+content) is delivered as synced content — not in the image**. This is the key revival fact: you supply
+your own voice/dialog; you can't extract (and don't need) Embodied's licensed assets.
+
+### CereVoice TTS (`libcerevoice_eng.so`, ~44 MB)
+- **CereProc CereVoice**, build **v5.0.2**, **DNN parametric synthesis** (`CPDNN` — deep-neural-net
+  spurt generation, not classic unit-selection).
+- Voice model format: a **`.voice` file** = "**CEREPROC TPDATABASE v 1.0**" (`CEREVOICE HEADER`), a
+  licensed text-processing DB + DNN weights. The voice file is **not on the firmware image** — it's
+  delivered as content; the engine performs a license check (`src/license/bigdigits.c`).
+- **Revival:** irrelevant to reproduce exactly — the brain requests TTS via `CloudTTSRequest` and the
+  **server returns rendered PCM** (`CloudTTSResponse.audio`, see [`perception-pipeline.md`](perception-pipeline.md)),
+  so any TTS (or a CereProc voice you license) drops in. Local CereVoice is the on-device path/fallback.
+
+### ChatScript (`libchatscript.so`, ~27 MB)
+- **Bruce Wilcox's ChatScript** rule engine (prints `ChatScript Version %s compiled %s`). Symbol
+  legend confirmed in the binary: `$` variables · `@` factsets · `_` match-vars · `^` macros ·
+  `~` topics/concepts.
+- Content authored as **`.top` topic files** (topics, `~concepts`, `table`/facts) and **compiled** to
+  a runtime dictionary + topic store (`AddTopicCode`, `AllocateTopicMemory`, `$cs_topicretrylimit`).
+  The compiled content is **not in the firmware** — it's synced content.
+- Drives the **LOCAL** dialog path and the always-on **global commands** (regex `globals`, above);
+  errors surface as `ChatScriptError`/`ChatScriptException`, readiness as `ChatScriptReady` on the bus.
+
+### Where the data lives
+Voice, ChatScript, and content modules are **synced to `/sdcard/EmbodiedData` / `/sdcard/EmbodiedStaticData`**
+over the MQTT **file-sync** channel (`MQTT_FILE_SYNC`, see [`cloud-protocol.md`](cloud-protocol.md)) —
+the same mechanism that delivers OTA images and content modules. A revival server hosts/serves these;
+the base firmware ships only the engines.
+
 ## The `volley` / `session` API (server-side hooks)
 
 Each turn hands your `code` a **`volley`** (this exchange) and **`session`** (the conversation):
