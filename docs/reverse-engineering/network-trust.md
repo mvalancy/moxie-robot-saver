@@ -89,6 +89,24 @@ The robot's willingness to connect isn't the problem (it drops to QR-reading whe
 the *fixed* hostname it insists on. Breaking that needs either the 801+ firmware (changeable endpoint)
 or on-device access to add a CA / edit the endpoint — i.e. the upgrade this whole effort is chasing.
 
+## Time sync (clock skew breaks auth) — and it's fine
+
+Correct time matters here: **TLS cert validity** (not-before/not-after) and the **RS256 JWT** `iat`/`exp`
+([device auth](cloud-protocol.md#robot-authentication-device-identity)) both fail if the robot's clock
+is wrong. Good news for revival — the time source is **public and still alive**:
+
+- `me.embodied.NTPService` runs SNTP against **`time.android.com, pool.ntp.org, time.nist.gov`**
+  (default), refreshes periodically, and sets the system clock (`SntpClient` → `setTime`). It falls
+  through the list and logs `BO#8013 Unable to reach any NTP servers` on total failure.
+- **Overridable** via the prop **`sys.embodied.ntp_servers`** — point it at a local NTP if you run a
+  fully-offline network.
+- Timezone comes from the cloud/parent (`requestSetTimezone`; `RemoteChatRequest.timezone_id`).
+
+**Caveat for revival:** a robot that boots **offline** (or after a long-dead battery) has a wrong
+clock until it reaches NTP — the *first* TLS/JWT handshake can fail on skew, then self-correct once
+online. If you serve a fully-offline setup, either run a local NTP (set `sys.embodied.ntp_servers`) or
+allow for the initial skew. Otherwise the public NTP path just works.
+
 ## Corrections to earlier docs
 
 Earlier notes said pre-801 endpoints are "TLS **hostname-pinned**." More precisely: **hostname is
