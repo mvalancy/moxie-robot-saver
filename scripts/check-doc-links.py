@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""
+Check that every internal markdown link in the repo resolves. Run from repo root:
+    python3 scripts/check-doc-links.py
+Exit 1 if any relative link points at a missing file. Skips external (http/mailto) and bare anchors.
+Used to keep the docs (docs/reverse-engineering/*, tools/*/README.md, ...) navigable.
+"""
+import os, re, glob, sys
+
+def main():
+    broken, checked, files = [], 0, 0
+    for md in glob.glob("**/*.md", recursive=True):
+        if "/.git/" in md:
+            continue
+        files += 1
+        base = os.path.dirname(md)
+        txt = open(md, encoding="utf-8", errors="ignore").read()
+        for m in re.finditer(r'\[[^\]]*\]\(([^)]+)\)', txt):
+            link = m.group(1).strip()
+            if re.match(r'^(https?:|mailto:|#)', link):
+                continue
+            path = link.split('#')[0]
+            if not path:
+                continue
+            checked += 1
+            target = os.path.normpath(os.path.join(base, path))
+            if not os.path.exists(target):
+                broken.append((md, link, target))
+    print(f"checked {checked} internal links across {files} markdown files")
+    if broken:
+        print(f"\n{len(broken)} BROKEN:")
+        for md, link, tgt in broken:
+            print(f"  {md}: [{link}] -> {tgt}")
+        return 1
+    print("all internal links resolve ✅")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
