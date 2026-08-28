@@ -129,6 +129,31 @@ Stock AOSP 9 minus telephony extras, **plus Embodied's stack**:
 See [`hardware-map.md`](hardware-map.md) for the motor/sensor/LED enumeration recovered from the
 firmware's own protobufs.
 
+## TEE / secure world (OP-TEE + RPMB)
+
+`trust.img` is the **OP-TEE** secure world (ARM TrustZone). It's device-bound and **separate from
+`system`/`vendor`** — reflashing those does **not** wipe it. What lives there matters when you rebuild:
+
+- **Runtime:** `tee-supplicant` (`/vendor/bin`) + `/dev/tee0`, `/dev/opteearmtz00` (`init.optee.rc`);
+  Trusted Apps under `/vendor/lib/optee_armtz` (`*.ta`, incl. `uboot_storedata_rpmb.ta`).
+- **Secure storage = RPMB** (`ro.tee.storage=rkss`; OP-TEE `tee_rpmb_fs`) — a **Replay-Protected
+  Memory Block** on the eMMC with an authentication key and **anti-rollback** protection
+  (`gpd.tee.trustedStorage.antiRollback.protectionLevel`).
+- **What it protects:**
+  - **Keymaster** — hardware-backed Android keystore keys (the `/data` `forceencrypt` FEK is wrapped
+    by keymaster, so **`/data` is cryptographically bound to this TEE** — a raw eMMC copy won't decrypt
+    elsewhere).
+  - **Gatekeeper** — lock-credential verification.
+  - **Widevine keybox** — DRM device keys (`storage_widevine_write`, `rk_store_keybox`).
+  - **AVB-ATX permanent attributes** — the Product Attestation Key public key + Product ID used by the
+    [attestation unlock](#unlock-reality-avb-attestation-not-plain-oem-unlock) (`trusty_read/write_permanent_attributes`), stored in RPMB (which is why unlock can't be spoofed).
+
+**Custom-firmware implications:** you can freely replace `system`/`vendor`/`boot` (maskrom route) and
+the **TEE + RPMB survive** — keymaster/gatekeeper keep working, so a debuggable custom `system` still
+boots. But **don't expect to read the old `/data`** without the original keymaster keys, and you
+**can't forge the AVB unlock** without Embodied's Product Attestation Key (RPMB-anchored). If you wipe
+RPMB or reflash `trust.img`, you lose keymaster-bound data and may brick attestation.
+
 ## Key `build.prop` / `prop.default` values
 
 ```
