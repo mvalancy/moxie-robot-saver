@@ -103,6 +103,58 @@ Rails are switched with `PowerEnableEventPB{ rail }` / `PowerDisableEventPB{ rai
 feeds the projector light engine; `POWER_MUTE`/`POWER_SPEAKER` gate audio; `PowerStateEventPB` and
 `BatteryEventPB` report charge/discharge state.
 
+## Lizard MCU firmware update (bootloader "GOBY")
+
+The Lizard board is a separate **STM32** microcontroller (Cortex-M) with its own firmware, updated
+from Android over UART by `bo-firmwareUpdate` / `me.embodied.firmwareupdatelib.fwUpdateLibEntry`
+(native `libnative-lib.so`, class `lizardPktAssembler`).
+
+| Aspect | Detail |
+|---|---|
+| Transport | **UART `/dev/ttyS3`** (`open UART` / `Uart closed`) |
+| Bootloader | **"GOBY"** (`bo-firmwareUpdate` VERSION_NAME) |
+| Image format | **Intel HEX** (`:` records), loaded to STM32 flash **`0x08000000`** (`:02000004 0800` ext-linear-address) |
+| Native API (JNI) | `start()` · `getSystemInfo()` · `invalidateApp()` (erase) · `sendBootLoaderPkt(bytes,len)` · `resetRobotVersion()` · `closeUart()` |
+
+### Version handshake
+`getSystemInfo()` returns a packed int read from the MCU:
+
+| Field | Bits |
+|---|---|
+| firmware **major** | `info & 0x7F` |
+| firmware **minor** | `(info >> 8) & 0x7F` |
+| **hardware** version | `(info >> 16) & 0x3F` |
+| release flag | bit 22 (`(info>>16)&64`) |
+
+`hardwareName = Hardware_Version[hwVersion]`, from the index table:
+
+```
+0:P5B 1:P5 2:P6A 3:P6B 4:P7 5:P8 6:P9 7:EP1 8:EP2 9:EP3 10:FEP 11:FEP2 12:PP 13:PS1 14:PS2 15:PS3
+```
+(P* = production board revs, EP/FEP = engineering/final-eng prototypes, PS = pilot, PP = pre-prod.)
+
+### Flash sequence
+1. `start()` → open `/dev/ttyS3`.
+2. `getSystemInfo()` → read current MCU hw/fw version.
+3. Pick the matching **Intel-HEX image** for the board rev.
+4. `invalidateApp()` → erase (`InvalidateLizardApp` / `WaitForEraseFinish`).
+5. `downloadLizardApp()` → stream each HEX record via `sendBootLoaderPkt` (progress %).
+6. `resetRobotVersion()` → boot the new app; `closeUart()`.
+
+### Shipped MCU firmware images (in `bo-firmwareUpdate.apk` `res/raw/`)
+Eight per-revision Intel-HEX images (~220–310 KB each) — **extractable**:
+
+| Image | For board rev |
+|---|---|
+| `v4_0_p6a_firmware` · `v4_0_p6b_firmware` · `v4_0_p7_firmware` | P6A / P6B / P7 (fw v4.0) |
+| `v7_7_ep1_firmware` · `v7_7_fep_firmware` · `v7_7_fep2_firmware` | EP1 / FEP / FEP2 (fw v7.7) |
+| `v7_7_p8_firmware` · `v7_7_p9_firmware` | P8 / P9 (fw v7.7) |
+
+Each file begins with a **SHA-1 line** then Intel-HEX records. For custom firmware / a bench MCU, this
+is the complete flash path (UART `/dev/ttyS3`, GOBY bootloader, Intel HEX @ `0x08000000`). The MCU's
+runtime protocol (motors/sensors/LEDs) is the `embodied.lizzerface` set above; MCU faults surface as
+`LizardErrorEventPB` (`FIRMWARE_*` = this DFU path's error space).
+
 ## MCU firmware & health (`LizardErrorEventPB.LizardErrorEventID`)
 
 The Lizard board reports a rich error/status stream (`1000`–`1051`), including battery over-temp
