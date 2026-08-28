@@ -59,3 +59,41 @@ def parse_event(topic, payload):
 EVENT_REMOTE_CHAT   = "remote-chat"
 EVENT_ACTIVITY_LOG  = "client-service-activity-log"   # multiplexed by payload["subtopic"]
 EVENT_HTTP_TOKEN    = "client-service-http-token"
+
+
+# ---- higher-level builders for goal-#2 server implementers ----
+def telehealth_play_output(text, markup="", *, session_id="", line_id="", line_params=None):
+    """Build a telehealth PLAY_OUTPUT TelehealthMessage — make Moxie speak `text` and perform the
+    `<mark cmd:...>` `markup` live (remote-puppet). Publish to /devices/{id}/commands/telehealth
+    (JSON command wrapping TelehealthRobotCommand) or over the activity-log subtopic=telehealth.
+    See docs/reverse-engineering/content-and-conversation.md#telehealth--remote-puppet-mode."""
+    from embodied.telehealth import TeleHealth_pb2 as TH
+    out = TH.Output(text=text, markup=markup, line_id=line_id)
+    if line_params:
+        out.line_params.extend(line_params)
+    return TH.TelehealthMessage(action=TH.PLAY_OUTPUT, output=out, session_id=session_id)
+
+def telehealth_session(action, *, session_id=""):
+    """START_SESSION / END_SESSION / INTERRUPT (pass the TeleHealth Action enum)."""
+    from embodied.telehealth import TeleHealth_pb2 as TH
+    return TH.TelehealthMessage(action=action, session_id=session_id)
+
+def service_configuration(*, mqtt_host=None, webservice_root=None, override_port=None,
+                          connection_type=None, endpoint_id=None, disable_verify=None,
+                          disable_sync=None, gcp_project=None, webservice_pin=None):
+    """Build an embodied.logging.ServiceConfiguration to repoint a robot at your backend.
+    Push over MQTT config. e.g. service_configuration(mqtt_host='my.example.com', override_port=8883,
+    connection_type=EMBODIED_LOCAL, disable_verify=True). Only set what you need.
+    See docs/reverse-engineering/cloud-protocol.md (Service configuration)."""
+    from embodied.logging import Cloud_pb2 as C
+    cfg = C.ServiceConfiguration()
+    if mqtt_host is not None: cfg.mqtt_host = mqtt_host
+    if webservice_root is not None: cfg.webservice_root = webservice_root
+    if override_port is not None: cfg.override_port = override_port
+    if connection_type is not None: cfg.connection_type = connection_type
+    if endpoint_id is not None: cfg.endpoint_id = endpoint_id
+    if disable_verify is not None: cfg.disable_verify = disable_verify
+    if disable_sync is not None: cfg.disable_sync = disable_sync
+    if gcp_project is not None: cfg.gcp_project = gcp_project
+    if webservice_pin is not None: cfg.webservice_pin = webservice_pin
+    return cfg

@@ -53,7 +53,7 @@ python -m moxie_toolkit.cli validate
 | `moxie_toolkit/cli.py` | `moxie-qr` CLI (gen / decode / validate / PNG-SVG). |
 | `moxie_toolkit/markup.py` | Build `<mark name="cmd:…">` behavior markup (gestures, mood, audio) to weave into TTS. See [behavior-markup.md](../../docs/reverse-engineering/behavior-markup.md). |
 | `secrets/emulate_secrets.py` | Recover factory secrets from `libsecrets.so` via Unicorn emulation (algorithm = XOR with package name). See [factory-provisioning.md](../../docs/reverse-engineering/factory-provisioning.md). |
-| `moxie_toolkit/cloud.py` | MQTT transport helpers: topic builders, the `/commands/zmq` `name:bytes` framing (inject any proto onto the bus), and event/command envelope parse/build. See [cloud-protocol.md](../../docs/reverse-engineering/cloud-protocol.md). |
+| `moxie_toolkit/cloud.py` | MQTT transport helpers: topic builders, the `/commands/zmq` `name:bytes` framing, event/command envelope parse/build, **`telehealth_play_output()`** (remote-puppet: speak+markup), and **`service_configuration()`** (repoint a robot: host/port/disable_verify). See [cloud-protocol.md](../../docs/reverse-engineering/cloud-protocol.md). |
 | `moxie_toolkit/bus.py` | **MoxieBus** — the on-device ZMQ bus client (drive face/motors/LEDs, read sensors). `pip install pyzmq`; tunnel via `adb forward`. |
 | `moxie_toolkit/protoref.py` | Query the protocol: `python -m moxie_toolkit.cli proto QRCommand` / `proto --grep endpoint` / `proto --list` (382 msgs, 84 enums). |
 | `moxie_toolkit/embodied/…` | Generated Python bindings for all 120 recovered protos. |
