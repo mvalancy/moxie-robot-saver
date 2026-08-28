@@ -61,6 +61,7 @@ flowchart TB
 - [`perception-pipeline.md`](perception-pipeline.md) — the **audio** (wake-word → XMOS → Deepgram STT → CloudTTS) and **vision** (faces/people/QR) pipelines a server sits in the middle of.
 - [`qr-commands.md`](qr-commands.md) — the **complete QR grammar** the robot scans (pairing / VPN / debug-factory commands), read from `bo-wifi`.
 - [`hardware-map.md`](hardware-map.md) — motors, touch/switch/IMU sensors, LED face patterns, and power rails, from the MCU protobufs.
+- [`device-tree.md`](device-tree.md) — board-level hardware wiring from the DTB (I²C/UART/display/camera/PMIC map) + the decompiled `.dts`.
 - [`factory-provisioning.md`](factory-provisioning.md) — the production-line apps, serial/part grammar, and the **factory secret** getters (and how to recover them).
 - [`recovered-proto/`](recovered-proto/) — **120 `.proto` files** reconstructed from the robot binaries; the machine-readable protocol.
 - [`proto-catalog.md`](proto-catalog.md) — the **browsable catalog** of all 382 messages / 84 enums / 2074 fields (auto-generated).
