@@ -44,6 +44,42 @@ also has:
 `bootloader-locked=%s` / `bootloader-min-versions=%s` strings confirm a lock-state variable; combined
 with `ro.oem_unlock_supported=1`, the bootloader can be unlocked (see [`firmware-image.md`](firmware-image.md)).
 
+## Boot-mode entry (reboot reasons & keys)
+
+U-Boot selects a boot mode from a **reboot-reason magic** (written to a PMU register by the kernel's
+`syscon-reboot-mode`, then read by the loader) **or** from a **key held at power-on**.
+
+### Software: `reboot <mode>` → magic (`0x5242c3xx` = "BRc")
+| `reboot` arg | Magic | Effect |
+|---|---|---|
+| normal | `0x5242c300` | normal boot |
+| **loader** | `0x5242c301` | **Rockchip loader / rockusb** download → `rkdeveloptool` |
+| recovery | `0x5242c303` | recovery ([sideload](ota-and-recovery.md)) |
+| **bootloader** | `0x5242c309` | **Android fastboot** (`fastboot usb 0`) |
+| **ums** | `0x5242c30c` | **USB Mass Storage** — exposes storage as a USB drive |
+| halt / quiet | `0x5242c30d/e` | halt / quiet |
+
+`bootonce-bootloader` gives a one-shot fastboot. All of these need a **root shell first** (normal-boot
+ADB is locked), so they're most useful once you already have access — or from recovery.
+
+### Hardware: a key at power-on (no shell needed)
+U-Boot reads **`adc-keys`** (via SARADC) and the **PMIC power key** (`rk8xx_pwrkey`) at boot:
+- `"recovery key pressed, entering recovery mode!"`
+- `"download key pressed... Enter bootrom download..."` → **rockusb/bootrom download** (rkdeveloptool)
+
+The **download and recovery keys are ADC levels on the SARADC** — the *same input class as the
+**Macro** button* ([`device-tree.md`](device-tree.md); the kernel node uses `saradc` ch1). This
+strongly implies **holding the Macro button (a specific ADC level/duration) at power-on enters
+recovery or bootrom-download mode** — the exact ADC thresholds live in the **U-Boot** DTB (a bench
+item to confirm). The power key is the RK808 PMIC key.
+
+> **Why this matters for goal #3 (low/no-open revival):** the **download-key → rockusb** path is
+> **unsigned** — `rkdeveloptool` can then flash *anything*, including a `--disable-verification`
+> `vbmeta`, bypassing the signed-OTA gate that blocks [recovery sideload](ota-and-recovery.md). So if
+> the Macro button enters download mode **and a USB data port is reachable**, you can revive/reflash a
+> unit (even pre-801) with just **USB + a button** — no teardown. Confirming (a) the button→mode
+> mapping and (b) an accessible USB port is the key bench experiment.
+
 ## Flashing a partition (the reliable path)
 
 1. Enter **maskrom** or **loader** mode over USB.
