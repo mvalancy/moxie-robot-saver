@@ -99,6 +99,26 @@ The camera (OV2710) feeds a CV stack (`libbo-vision`, TFLite) publishing:
 | **`QRPB{qrcode, timestamp}`** | **decoded QR string** — the vision QR event (feeds both the setup grammar in [`qr-commands.md`](qr-commands.md) and content QRs in [`content-and-conversation.md`](content-and-conversation.md)) |
 | `BookId` / `DrawId` / `ImageToText` | activity-specific recognizers (reading, drawing) |
 
+### Camera-driven activities (content activates these)
+
+Beyond faces/people, the vision stack has **object/scene recognizers that content modules switch on**
+for specific activities (via `Enable*{run}` toggles + the `eb_enable_*` execution actions,
+[`content-and-conversation.md`](content-and-conversation.md)):
+
+| Recognizer | Proto | Enable | Activity |
+|---|---|---|---|
+| **Book** | `BookIdPB{bookname, center_x/y}` | `EnableBook` | "read a book with Moxie" — IDs the physical book held up |
+| **Draw / card** | `DrawIdPB{drawname, center_x/y}` | `EnableDraw` | drawing/card recognition — IDs a card/drawing shown to the camera |
+| **Image→Text (VQA)** | `ImageToTextPB{question, prompt, description, targeted_region, is_mentor}` | `EnableICModule` | **visual question-answering / captioning** — Moxie "looks at" a region and describes/answers (a multimodal VLM; gated by `IMAGE_CAPTIONING`/`IMAGE_CAPTIONING_MODEL`, [`settings-schema.md`](settings-schema.md)) |
+| **QR** | `QRPB{qrcode}` | `EnableQRCode` | content/launch QR ([`qr-commands.md`](qr-commands.md)) |
+| **Gaze / look-at** | `LookAtMeRequest{user, bot}` | — | request the robot make eye contact with a specific user |
+
+So a content module (e.g. a reading or drawing activity) toggles the recognizer it needs, and reacts
+to the resulting `*IdPB`/`ImageToTextPB` event. `ImageToText` is the notable one — a **camera→VLM**
+capability (the `IMAGE_CAPTIONING_TIMEOUT`/`IMAGE_CAPTION_BY_RB` settings route it locally or via the
+remote brain). For a revival server (goal #2), these are optional: a module can ignore them, or you can
+implement the recognizer server-side and return the `*IdPB`/description.
+
 Perception + audio are fused (`embodied.perception.fusion.FusedPeople`) so the brain knows **who** is
 present, **where**, and whether they're **engaged/looking** — driving targeting (`RobotEngageTurn`,
 `RobotTurnToOutOfViewChatTarget`) and the `BlockedType` reasons (`TARGET_OUT_OF_VIEW`, `NOT_ENGAGED`)
