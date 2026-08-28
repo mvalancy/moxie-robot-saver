@@ -101,6 +101,46 @@ over the MQTT **file-sync** channel (`MQTT_FILE_SYNC`, see [`cloud-protocol.md`]
 the same mechanism that delivers OTA images and content modules. A revival server hosts/serves these;
 the base firmware ships only the engines.
 
+## Scheduling, progression & rewards (what to offer next)
+
+Above individual modules sits the pedagogy layer — how the robot/server decides **what content to
+offer**, tracks a child's progress, and rewards them. All `embodied.robotbrain`:
+
+### Content days & schedule (`ContentSchedule`, `DailySchedule`)
+- **`DailySchedule{csv_day_name, featured_module, modules[]}`** — content is organized into **"content
+  days"**; each day has a featured activity + a module list. A child advances through `content_day`s.
+- **`ScheduleConfig`** — `day_one_schedule` (onboarding), `promoted_content`, a `prompt_template`/
+  `prompt_lm`; **`MissionConfig{mission_id}`** (daily missions), **`RewardsConfig{module_id,
+  min_content_day}`**, **`EndOfSessionConfig{chat_module, end_module, chat_count}`**.
+- **`ContentModule{module_id, allowed, denied_ids}`** + **`TagList{allowed, denied}`** gate which
+  modules/tags are permitted (parental controls).
+
+### The recommender
+Which module to surface is ranked by weighted signals (the `RECOMMENDATION_*` settings,
+[`settings-schema.md`](settings-schema.md)): `RECOMMENDATION_MP_PARENT_WEIGHT`,
+`..._SENTIMENT_WEIGHT`, `..._RANDOM_WEIGHT`, `RECOMMENDATION_TAGHISTORY_ALPHA`,
+`RECOMMENDATION_RANDOM_SEED/MODIFIER/UPDATE_PROB`, `RECOMMENDATION_BY_SEL`. Recommendations arrive as
+`RecommendationContext.Recommendation{module_id, content_id, entry_line, seen, skip_hub}`
+(see [`cloud-protocol.md`](cloud-protocol.md)'s `RemoteChatRequest.recommend`).
+
+### STAR goals (the SEL curriculum)
+Moxie's socio-emotional-learning goals: **`STARGoalStateChange{goal, goal_level, prompt_level,
+activated}`** with **`STARGoalSuccess`/`STARGoalFailure`**. Content targets a `goal` at a `goal_level`;
+success advances levels (`RECOMMENDATION_BY_SEL` weights recommendations by SEL goal).
+
+### Rewards & history
+- **`StarBitsEarned{earned, total, latest_unlocked}`** — **StarBits**, the reward currency a child
+  earns to unlock content (the `RewardStar`/`reward-star` animation + markup, [`unity-assets.md`](unity-assets.md)).
+- **`MentorBehavior{module_id, content_id, content_day, action, ended_reason}`** + `MentorBehaviorSet`
+  — the **history** of what the child did (completed/abandoned, when). The robot **requests it** on
+  session start (`client-service-activity-log subtopic=query, query=mentor_behaviors`,
+  [`cloud-protocol.md`](cloud-protocol.md)) and **reports** new behaviors back — the server persists it
+  and feeds it to the recommender + parent reports.
+
+**Revival (goal #2):** a minimal server can ship a fixed `DailySchedule`/hub and ignore the
+recommender (OpenMoxie does — a static `provided_schedule` + a hub module, [`content-and-conversation`](#schedulesschedules--what-to-offer-when)).
+Full parity means persisting MentorBehavior + StarBits + STAR-goal state per child and ranking modules.
+
 ## Telehealth / remote puppet mode
 
 Besides ChatScript (LOCAL) and the LLM (REMOTE_CHAT), there's a **third response source: a live human
