@@ -20,7 +20,7 @@ i.e. a **post-Google, "803"-era** AWS-endpoint firmware — the same generation 
 | Boot | **A/B seamless** (`ro.build.ab_update=true`), **system-as-root** (`ro.build.system_root_image=true`) |
 | Verified boot | **AVB 1.1** (`avbtool 1.1.0`), `androidboot.veritymode=enforcing`, system mounted `ro` with `wait,avb,slotselect` |
 | Secure props | `ro.secure=1`, `ro.adb.secure=1`, `ro.debuggable=0` |
-| **OEM unlock** | **`ro.oem_unlock_supported=1`** — the bootloader *can* be unlocked ✅ |
+| **OEM unlock** | `ro.oem_unlock_supported=1`, **but** unlock is **Android Things ATX attestation** (challenge-response — needs Embodied's Product Attestation Key). Maskrom/rockusb bypasses it — see *Unlock reality* below. |
 | Data | `/data` is **f2fs, forceencrypt** (`forceencrypt=/cache/key_file`) |
 | Flashing | Rockchip loader / maskrom → `rkdeveloptool` (see below) |
 
@@ -81,8 +81,9 @@ To run a modified `system`/`vendor` you must defeat step 2, three ways, easiest 
   `AVB_VBMETA_IMAGE_FLAGS_VERIFICATION_DISABLED`; flash it to the `vbmeta` partition. The bootloader
   then skips hashtree checks and your modified `system` boots. (Requires the bootloader to honor the
   flag — Rockchip's does when unlocked.)
-- **OEM-unlock the bootloader.** `ro.oem_unlock_supported=1` is set; unlock consent is stored in the
-  `frp`/`misc` partitions. Once unlocked, AVB drops to "unlocked" and boots unsigned images.
+- **OEM-unlock the bootloader.** Gated by **Android Things ATX attestation** (challenge-response with
+  Embodied's Product Attestation Key — see *Unlock reality* below); not a plain `fastboot oem unlock`,
+  so this path needs a key we don't have. The **maskrom bypass** is the practical route instead.
 - **Re-sign properly.** Generate your own AVB key, re-sign `system`/`vendor` hashtrees + `vbmeta`,
   and (optionally) fuse your public key. Heaviest, but keeps verification *on*.
 
