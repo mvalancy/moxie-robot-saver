@@ -86,6 +86,40 @@ privileged manufacturing tools ([`factory-provisioning.md`](factory-provisioning
 The request arrives over the bus (a factory/service message), not a user QR — but it shows the hook a
 custom build could use to launch privileged bring-up tools.
 
+## Init service graph (native daemons)
+
+Below the app-layer Launcher sits the Android `init` service set. Across all `.rc` files (ramdisk +
+`/system/etc/init` + `/vendor/etc/init[/hw]`) this build defines **97 unique services**:
+
+| `class` | count | fires |
+|---|--:|---|
+| `main` | 38 | after `zygote` (most daemons) |
+| `hal` | 13 (+3 animation, +2 `early_hal`) | HIDL hardware services |
+| `core` | 11 (+3 animation) | early core daemons |
+| `late_start` | 8 | after boot completes |
+| (none) / `charger` / `animation` | 18 | one-shots, charger mode, boot anim |
+
+**The key structural fact: almost all of it is stock AOSP 9 + Rockchip.** Embodied adds only **two**
+native init daemons:
+
+| Service | Binary | Role |
+|---|---|---|
+| `ledctrld` | `/system/bin/ledctrld` (core, oneshot) | PCA963x status LEDs |
+| `projectorfanpid` | `/system/bin/projectorfanpid` (core, oneshot) | DLP projector PID fan |
+
+Everything else that makes Moxie *Moxie* runs in the **app layer** (the `bo-*` components the Launcher
+starts — see above), **not** as init services. For custom firmware this is the clean seam: you can
+replace the experience without touching the init/daemon layer.
+
+Notable stock services in the mix:
+- **OTA/recovery:** `update_engine`, `update_verifier`(`_nonencrypted`), `uncrypt`, `recovery`,
+  `setup-bcb`/`clear-bcb`/`getbootmode` (bootloader-control-block for recovery). See [`ota-and-recovery.md`](ota-and-recovery.md).
+- **DRM/keys:** `rk_store_keybox` (`/vendor/bin`, Widevine keybox), `rockchip.drmservice`,
+  `tee-supplicant` + `wait_for_keymaster` (OP-TEE).
+- **Vendor HALs:** `vendor.{camera-provider-2-4, audio-hal-2-0, light-hal-2-0, keymaster-3-0,
+  gralloc-2-0, hwcomposer-2-1, power-hal-1-0, boot-hal-1-0, wifi_hal_legacy, media.omx, …}`.
+- Kernel modules are loaded via `init.insmod.sh` (`insmod`/`modprobe` in `/vendor/bin`).
+
 ## For custom firmware
 
 A replacement app layer must reproduce this supervision: bring up `BO_DISPATCH` (the bus) first, then
