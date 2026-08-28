@@ -19,6 +19,8 @@ flowchart TB
   class qr,srv,content,bus,fw d;
 ```
 
+> ✅ Progress & gaps: **[COVERAGE.md](COVERAGE.md)**.
+
 ## The system at a glance
 
 > 🗺️ For the full picture, see **[architecture-diagrams.md](architecture-diagrams.md)** — a hierarchy of mermaid diagrams from product ecosystem down to hardware buses and motor drivers.

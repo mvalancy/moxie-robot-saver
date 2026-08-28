@@ -6,6 +6,8 @@ its `bo-*` apps, read from the factory partition images. No Embodied source is i
 observed facts and schemas reconstructed from shipped binaries. Everything else in the repo derives
 from these.
 
+> ✅ **[Coverage matrix](COVERAGE.md)** — what's documented per goal + the honest remaining gaps.
+
 > 🗺️ **See the [architecture diagrams](architecture-diagrams.md)** — the whole system as a hierarchy of mermaid diagrams, product level down to motor drivers.
 
 > 📇 **Firmware analyzed: [`v3.6.4-Zephyr` / OTA `v24.10.803`](firmware-803-reference.md)** — the version-stamped reference (identifiers, partition hashes, app + native-lib inventory). All robot-side docs describe this build.
