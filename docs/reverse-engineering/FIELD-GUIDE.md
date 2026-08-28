@@ -21,6 +21,9 @@ flowchart TB
 
 ## The system at a glance
 
+> Analyzed build: **[`v3.6.4-Zephyr` / OTA `v24.10.803`](firmware-803-reference.md)** (RK3288, Android 9, built 2024-12-28) — see the version-stamped reference for exact identifiers and partition hashes.
+
+
 - **Hardware:** Rockchip **RK3288**, ARMv7, **Android 9**, AVB-signed A/B, verity enforcing,
   `oem_unlock_supported=1`. Body driven by a **"Lizard" MCU** (motors/touch/IMU/LED/battery); face is a
   **DLP projector**; audio via an **XMOS** DSP; conversation via **ChatScript + cloud LLM**.
