@@ -65,6 +65,40 @@ BodyAssembly → InternalAssembly → InternalAssemblyBI → FinishedRobot
 factory DB; `assy/CustomerMode` + `Packout` handle the customer-facing "pack-out" step and
 `GCPKey`/`assy/Assembler` provision cloud keys.
 
+## Factory test catalog (`finaltest` — end of line)
+
+`ActivityFinalTest.DoTest()` runs the end-of-line functional test as an ordered sequence, mixing
+**native JNI tests** (in `librobotTesting.so`/`libfinalTest.so`) with operator prompts. This is the
+authoritative hardware-bring-up checklist for the robot:
+
+| # | Step | Kind | Exercises / error code |
+|--:|---|---|---|
+| 1 | Camera init | check | camera opens · `CORE_CAMERA` |
+| 2 | Lizard error-state + projector-attempts log | native | MCU health baseline |
+| 3 | **RSSITest** | native | Wi-Fi signal ≥ `RSSI_MIN` over `RSSI_NUM_SAMPLES` |
+| 4 | **CheckProjectorConfig** | native | DLP projector config valid |
+| 5 | Touch: `GetTouchSensor("BACK")` + **TestTouchSensors** | native | capacitive zones (`FINAL_TOUCH_NONE`) |
+| 6 | Close-door prompt → **ProjCamTest** (+ `ArucoAligner`, `DUTAlignment`) | native | projector renders a pattern, camera reads it, **ArUco markers** align the device-under-test |
+| 7 | **RingTest** | native | LED ring, verified through the camera |
+| 8 | **AudioTest** | native | speaker + mic |
+| 9 | **ScreenSharpnessCheck** / **ScreenDirtCheck** | operator | projected image sharp / clean (`FINAL_SHARP_BAD`, `FINAL_DIRT`) |
+| 10 | Touch zones again | native | re-check |
+| 11 | User-start motor → **TestMotor / DoMotorsTest** (×3), arm connect/disconnect | native + prompt | motors + arm limit switches (`FINAL_MTR_NOT_RUN`, `FINAL_ARM_DISCON`) |
+| 12 | Store serial as barcode to disk | check | `SerialNumber.txt` (`CORE_INVALID_SERIAL`, `MISC_FILE_WRITE`) |
+
+### Native test primitives (JNI)
+The factory native lib exposes reusable hardware pokes — a ready-made bring-up API:
+
+`ArmConnect` · `ArmDisconnect` · `CheckPluggedIn` · `CheckProjectorConfig` · `GetMPUState` (IMU) ·
+`GetTouchSensor` · `ArucoAligner` · `AudioTest` · `DUTAlignment` · `DoMotorsTest` · `Fan` ·
+`ProjCamTest` · `RingTest` · `TurnFront` / `TurnBack` (base rotation).
+
+The station uses a **closed test enclosure** (open/close-door prompts), **ArUco fiducials** for
+camera↔projector alignment, and reads the LED ring / projected image back through the camera —
+i.e. the robot self-validates its own face optics. `internalassytest` and `lifetest` reuse the same
+`AudioTest`/`DoMotorsTest`/`ProjCamTest`/`RingTest` primitives at earlier assembly stages. For custom
+firmware / hardware bring-up, these are the exact routines that prove each subsystem.
+
 ## The secrets (`Secrets` / `libsecrets.so`)
 
 Factory credentials are **not** plaintext in the DEX. `me.embodied.productiontesting.Secrets` is a
