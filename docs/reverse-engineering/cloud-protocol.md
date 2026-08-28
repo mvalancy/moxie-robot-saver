@@ -133,6 +133,25 @@ JSON events carry `event_id` / `request_id`, a `backend`, an optional `query`, a
 The server answers by publishing to `…/commands/{command}` (JSON) or `…/config`. This is exactly what
 OpenMoxie's `moxie_server.py` implements — the concrete recipe for the [`server/`](../../server/) here.
 
+## Robot authentication (device identity)
+
+The robot authenticates with the **Google Cloud IoT-Core device model**, kept post-migration:
+
+- On first boot, `me.embodied.KeyMaker.provisionKeysCheck()` generates an **RSA keypair** and writes
+  PEMs to `/sdcard/EmbodiedStaticData/PERSISTENT_DATA/rightpoint/RS256.key` (private) + `.key.pub`
+  (public). (`rightpoint` = Embodied's app codename.)
+- During **pairing** (`UserPairingRequest`, bound by the QR's `secret_key`), the **public key is
+  registered** with the backend for this device.
+- On every MQTT connect (Paho `_auth_username`/`_auth_password`), the **password is a JWT signed with
+  the device's RS256 private key** (`{iat, exp, aud=project}`); the `client_id` is the device path
+  (`…/registries/…/devices/{device_id}`). REST/STT use the resulting **bearer** token.
+
+**Why a self-hosted broker can ignore all this:** an anonymous broker (`allow_anonymous true`, as
+OpenMoxie uses) simply accepts the connection and never validates the JWT — so you don't need the
+device's key or a registry. A stricter server could instead verify the JWT against the registered
+public key. Either way, **device identity = the on-device RSA key**, not a shared secret you must
+possess. See [`network-trust.md`](network-trust.md) for the server-cert side.
+
 ## 3. STT — Deepgram over WebSocket
 
 Speech-to-text streams to a WebSocket, **not** MQTT:
