@@ -30,6 +30,15 @@ flowchart LR
   bearer auth; [`network-trust.md`](network-trust.md)) and emits:
   - `STTPartial` / (final) — `speech`, `confidence`, `alternatives`, `language`,
     `original_speech`/`original_language` (translation), `event_id`, start/end timestamps.
+  - **Two STT engines** (`STT_IMPL` / `LOCAL_STT`, [`settings-schema.md`](settings-schema.md)):
+    - **Cloud (primary):** Deepgram over WebSocket (above).
+    - **Offline: Kaldi.** `embodied::audio::KaldiSTT` runs a full **Kaldi online-nnet3** decoder —
+      MFCC + **i-vector** speaker adaptation (`OnlineNnet2FeaturePipelineInfo`, `AcceptIvector`) → an
+      **nnet3** acoustic model (`DecodableNnetSimpleLoopedInfo`) → `HCLG.fst` lattice decode
+      (`LatticeFaster`/`StdToken`) → **RNNLM** rescoring (`kaldi::rnnlm`). `USE_LOCAL_STT_QUANTIZED_MODEL`
+      selects a quantized model; used for offline / `WAKE_WITHOUT_NET` / fallback. The Kaldi model
+      (`final.mdl`, `HCLG.fst`, `words.txt`, i-vector extractor, RNNLM) is **synced content**, not in
+      the firmware (like the CereVoice voice + ChatScript, [`content-and-conversation.md`](content-and-conversation.md)).
   - `Speaker{id, doa, id_confidence, doa_observations}` + `EnrollmentState` — **speaker ID** (who's
     talking + where), with voice enrollment.
   - `VoiceActivity{state, doa}`, `DOA{doa, vad, doa_ready}`, `PoorSNR{event_id}` — activity/quality.
