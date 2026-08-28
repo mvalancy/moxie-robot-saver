@@ -20,6 +20,8 @@ Clean-room maps of the Moxie system — phone app **and** robot firmware. Everyt
 - [`reverse-engineering/app-structure.md`](reverse-engineering/app-structure.md) — manifest, components, SDKs, packages.
 
 **Robot side — the firmware (for custom software on the device):**
+- [`reverse-engineering/architecture-diagrams.md`](reverse-engineering/architecture-diagrams.md) — hierarchy of mermaid diagrams: product → software → bus → hardware → motor drivers.
+- [`reverse-engineering/firmware-803-reference.md`](reverse-engineering/firmware-803-reference.md) — version-stamped reference for the analyzed build (v3.6.4-Zephyr / OTA v24.10.803).
 - [`reverse-engineering/firmware-image.md`](reverse-engineering/firmware-image.md) — RK3288/Android 9 partitions, verified boot, and how to unlock & flash custom firmware.
 - [`reverse-engineering/robot-ipc-protocol.md`](reverse-engineering/robot-ipc-protocol.md) — the on-device ZeroMQ + protobuf message bus and module map.
 - [`reverse-engineering/qr-commands.md`](reverse-engineering/qr-commands.md) — the complete QR grammar the robot scans (pairing / VPN / debug-factory).

@@ -21,6 +21,9 @@ flowchart TB
 
 ## The system at a glance
 
+> 🗺️ For the full picture, see **[architecture-diagrams.md](architecture-diagrams.md)** — a hierarchy of mermaid diagrams from product ecosystem down to hardware buses and motor drivers.
+
+
 > Analyzed build: **[`v3.6.4-Zephyr` / OTA `v24.10.803`](firmware-803-reference.md)** (RK3288, Android 9, built 2024-12-28) — see the version-stamped reference for exact identifiers and partition hashes.
 
 
