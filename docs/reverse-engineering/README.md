@@ -53,6 +53,7 @@ flowchart TB
 - [`unity-assets.md`](unity-assets.md) — the Unity 2020.3 face/HUD/effects asset inventory + the boot animation.
 - [`firmware-manifest.md`](firmware-manifest.md) — consolidated per-file manifest (2250 system / 507 vendor files) + machine-readable TSVs.
 - [`hardware-access.md`](hardware-access.md) — the **physical surface**: maskrom/rockusb/fastboot, `rkdeveloptool` flashing, the **UART/TTL serial console** (`ttyFIQ0`), JTAG — the full teardown path (in scope).
+- [`flashing-runbook.md`](flashing-runbook.md) — **step-by-step** to build/flash custom firmware and revive a robot by reflashing.
 - [`ota-and-recovery.md`](ota-and-recovery.md) — the A/B OTA machinery, payload signing gate, and an **honest, tiered map of upgrade vectors** (no-open first, then USB/UART, then full teardown/flash) for reviving old robots.
 - [`boot-and-launcher.md`](boot-and-launcher.md) — the app-level **Launcher state machine** (config/QR-reading, running, recovery, factory test) and component supervision.
 - [`robot-ipc-protocol.md`](robot-ipc-protocol.md) — the on-device **ZeroMQ + protobuf** message bus that wires the modules together; the module map and behavior-command markup.
