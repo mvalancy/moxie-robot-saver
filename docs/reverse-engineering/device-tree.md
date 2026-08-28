@@ -84,6 +84,20 @@ Other GPIO/analog I/O of note (banks resolved from phandles):
 - **9 GPIO banks** (`gpio0..8`); **GMAC** ethernet present (unused on the robot); **USB**: OTG
   (`ff580000`) + EHCI/OHCI hosts (XMOS + peripherals).
 
+## Connectivity (Wi-Fi / Bluetooth)
+
+The combo module is an **AmPak AP6335** (`wireless-wlan { wifi_chip_type = "ap6335" }`) — a **Broadcom
+BCM4339** (single-stream 802.11ac + BT 4.x):
+- **Wi-Fi over SDIO** (`dwmmc`, `sdio-pwrseq` with a `wifi-enable-h` GPIO, `wifi-supply` regulator);
+  interface `wlan0`. Firmware from the vendor set: **`fw_bcm4339a0.bin`** + AP6335 `nvram`.
+- **Bluetooth over UART0** (`wireless-bluetooth`/`bluetooth-platdata`, `uart0_gpios`); BT patch
+  **`bcm4339a0.hcd`**. `ro.rk.bt_enable=true`.
+
+> `/vendor/etc/firmware` also ships the **generic Rockchip-SDK grab-bag** (~40 Wi-Fi/BT blobs for
+> Broadcom/Realtek/AP6xxx/SSV/Ralink parts) — only the **AP6335/BCM4339** files above are actually
+> loaded here. `/vendor/firmware/*.rkl` (RK1608 pre-ISP, OV2718/IMX327) are likewise unused SDK blobs
+> (Moxie's camera is the OV2710, [above](#display--camera)).
+
 ## Power tree (RK808 PMIC → rails)
 
 The RK808 (i2c0 @0x1b) regulators map to named rails (from DT `aliases`):
