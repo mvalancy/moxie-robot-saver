@@ -197,43 +197,51 @@ Deep docs: [`cloud-protocol.md`](cloud-protocol.md) · [`network-trust.md`](netw
 
 ## L5 — Hardware topology
 
-The RK3288 SoC and every peripheral bus.
+The RK3288 SoC and every peripheral, from the device tree (`rk3288-robot`, see [`device-tree.md`](device-tree.md)).
 
 ```mermaid
 flowchart TB
-    subgraph soc["Rockchip RK3288 SoC (ARMv7, Android 9)"]
-        cpu["CPU · GPU · VPU"]
-        emmc["eMMC<br/>boot/system/vendor/oem/userdata"]
+    subgraph soc["Rockchip RK3288 SoC (ARMv7 · Mali-T764 · Android 9)"]
+        cpu["4× Cortex-A12"]
+        emmc["eMMC (dwmmc)"]
+        vop["VOP display ctrl"]
     end
-    subgraph i2c["I²C"]
-        dlp["DLPC3430<br/>DLP projector ctrl<br/>(i2c-5 @0x1b)"]
-        pca["PCA963x<br/>status LED driver"]
+    subgraph i2c["I²C buses"]
+        rk808["RK808 PMIC<br/>i2c0 @0x1b"]
+        cams["OV2710 @0x36<br/>GC2053 @0x37<br/>i2c3"]
+        pca["PCA9635 @0x60<br/>i2c4 → 6× RGB LED"]
+        dlpc["DLPC3430 @0x1b<br/>+ HX7027 @0x48<br/>i2c5"]
+        rt5640["RT5640 codec"]
     end
-    subgraph uart["UART"]
-        lizard["Lizard MCU<br/>motors · sensors · IMU · battery · face LEDs"]
+    subgraph ser["UART"]
+        lizard["Lizard STM32 MCU<br/>uart3 /dev/ttyS3<br/>motors·touch·IMU·LEDs·batt"]
+        con["debug console<br/>uart2 ttyFIQ0"]
     end
-    subgraph usbi2s["USB / I²S / MIPI"]
-        xmos["XMOS DSP<br/>mic array · AEC"]
-        cam["OV2710 camera<br/>(V4L2)"]
-        mics["mic array"]
-        spk["speaker"]
+    subgraph usb["USB"]
+        xmos["XMOS DSP<br/>mic array · AEC · wakeword"]
     end
-    net["Wi-Fi (wlan0) · Bluetooth"]
+    mics["mic array"]
+    spk["speaker"]
+    face["projected DLP face"]
 
     cpu --- emmc
-    cpu --- dlp
+    cpu --- rk808
+    cpu -->|RKISP1 ISP| cams
     cpu --- pca
+    cpu --- dlpc
+    cpu -->|I²S| rt5640
     cpu -->|"lizzerface proto"| lizard
+    cpu --- con
     cpu --- xmos
-    cpu --- cam
-    cpu --- net
+    vop -->|"24-bit RGB parallel (simple-panel)"| dlpc
+    dlpc -->|light engine| face
     xmos --- mics
-    xmos --- spk
-    dlp -->|light engine| face["projected face"]
+    rt5640 --- spk
+    rk808 -.->|"vdd_cpu/gpu/ddr/io · vcc_lcd · vcc_wl"| soc
     classDef d fill:#e3eaf2,stroke:#607d8b,color:#263238;
     classDef h fill:#f3e3ea,stroke:#a05070,color:#3a1424;
-    class cpu,emmc d;
-    class dlp,pca,lizard,xmos,cam,mics,spk,net,face h;
+    class cpu,emmc,vop d;
+    class rk808,cams,pca,dlpc,rt5640,lizard,con,xmos,mics,spk,face h;
 ```
 
 Deep docs: [`hardware-map.md`](hardware-map.md) · [`firmware-803-reference.md`](firmware-803-reference.md)
