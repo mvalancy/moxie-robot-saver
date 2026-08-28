@@ -126,6 +126,31 @@ you control (this repo's [`server/`](../../server/) + [`mqtt/`](../../mqtt/), or
 only **redirects** the robot's cloud — running *custom software on the robot itself* is a separate
 effort (see [`firmware-image.md`](firmware-image.md)).
 
+## Wi-Fi provisioning support (what networks work)
+
+The QR Wi-Fi path (`bo-wifi` `AndroidWiFi.Connect(ssid, psk, isHidden)`) builds a **legacy Android-9
+`android.net.wifi.WifiConfiguration`** and `addNetwork`/`enableNetwork`. Supported:
+
+| Network type | Supported? |
+|---|---|
+| **Open** (no password) | ✅ (empty `psk` → `KeyMgmt.NONE`) |
+| **WPA / WPA2-Personal (PSK)** | ✅ (`preSharedKey` → `WPA_PSK`) |
+| **Hidden SSID** | ✅ (`hiddenSSID`; `StartPairingQR.is_hidden`) |
+| Band hint (any / 5 GHz / 2.4 GHz) | ✅ via `band_select` |
+| **WPA3-only (SAE)** | ❌ no SAE key-mgmt (legacy API + BCM4339) |
+| **WPA2-Enterprise / 802.1X / EAP** | ❌ no enterprise config (username/cert networks) |
+| **Captive portal** (hotel/campus splash) | ❌ needs a browser |
+
+**Revival note (goal #3):** a standard home **WPA2-PSK** router (or open, or hidden) works with the
+QR — the "single-mom" case is covered. **WPA3-only** routers (force one to WPA2/WPA3-mixed), **enterprise/
+campus** networks, and **captive portals** are not supported — use a phone hotspot or a normal
+WPA2 network instead. (Contrast the newer server-side [`WifiNetworkUpdate`](cloud-protocol.md) path,
+which can push credentials post-pairing.)
+
+> Cross-check: `bo-wifi`'s `UI_Connect()` hard-codes the **factory** network `"Embodied Guest"` /
+> `"Embodied<3robots!"` — which matches the `EmbodiedPSK` recovered from `libsecrets`
+> ([`factory-provisioning.md`](factory-provisioning.md)), independently confirming that secret.
+
 ## Manufacturing QR codes
 
 The factory line's own apps (`me.embodied.productiontesting.*`) **generate** QR codes with
