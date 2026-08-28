@@ -49,6 +49,7 @@ flowchart TB
 - [`firmware-image.md`](firmware-image.md) — RK3288 / Android 9 partition layout, verified boot (AVB), security posture, installed apps, and **how to unlock & flash custom firmware**.
 - [`firmware-inventory.md`](firmware-inventory.md) — complete app + binary manifest (50 priv-app / 29 app / 334 bin), embodied vs stock.
 - [`unity-assets.md`](unity-assets.md) — the Unity 2020.3 face/HUD/effects asset inventory + the boot animation.
+- [`firmware-manifest.md`](firmware-manifest.md) — consolidated per-file manifest (2250 system / 507 vendor files) + machine-readable TSVs.
 - [`hardware-access.md`](hardware-access.md) — the **physical surface**: maskrom/rockusb/fastboot, `rkdeveloptool` flashing, the **UART/TTL serial console** (`ttyFIQ0`), JTAG — the full teardown path (in scope).
 - [`ota-and-recovery.md`](ota-and-recovery.md) — the A/B OTA machinery, payload signing gate, and an **honest, tiered map of upgrade vectors** (no-open first, then USB/UART, then full teardown/flash) for reviving old robots.
 - [`boot-and-launcher.md`](boot-and-launcher.md) — the app-level **Launcher state machine** (config/QR-reading, running, recovery, factory test) and component supervision.
