@@ -35,19 +35,35 @@ flowchart TB
 - **Buses:** on-device **ZeroMQ** (`127.0.0.1:5678/6789`, protobuf) between modules; **MQTT + REST +
   Deepgram-WebSocket** to the cloud.
 
-## ① Revive an old robot — the honest state
+## Scope: the entire machine, end to end
 
-| Robot generation | No-disassembly path | Status |
-|---|---|---|
-| **801+ / 803** | QR `endpoint_update` → `OPEN_MOXIE`/`EMBODIED_LOCAL`, then run your server | ✅ Works. Generate the QR with the toolkit; hold it to the camera. |
-| **pre-801 (Google-IoT)** | — | ❌ **Unsolved without opening.** Endpoint **hardcoded** to `mqtt.googleapis.com` (cert CA-validated, not pinned — see [`network-trust.md`](network-trust.md)) → can't relocate by QR, and DNS-redirect fails the cert hostname check; a signed OTA can't be delivered over the network; USB/recovery may need the shell open. |
+**This project covers the whole robot — software *and* hardware, non-invasive *and* invasive.** We
+tackle it in tiers, cheapest-for-the-owner first, but nothing is off the table:
 
-- **Do it:** `python -m moxie_toolkit.cli endpoint OPEN_MOXIE --png fix.png` → show `fix.png` to the robot.
-- **Why it works (801+):** an offline robot drops to `STATE_CONFIG` and *scans QR codes* ([`boot-and-launcher.md`](boot-and-launcher.md)); pre-801 still can't relocate off Google.
-- **Deep docs:** [`qr-commands.md`](qr-commands.md) · [`ota-and-recovery.md`](ota-and-recovery.md)
-- **Open leads (for pre-801):** find a recovery key-combo / external USB port; source a genuine
-  signed 803 `update.zip`; characterize pre-801 setup-mode QR behavior. Tracked in
-  [`ota-and-recovery.md`](ota-and-recovery.md).
+1. **Tier 1 — no-disassembly** (best for a non-technical owner): QR re-home, network/OTA, config.
+   We map this first because if it works, anyone can do it with a phone.
+2. **Tier 2 — external ports**: USB (rockusb / fastboot), the UART/TTL **serial console** (`ttyFIQ0`).
+3. **Tier 3 — full teardown & flashing**: open the shell, maskrom/loader, `rkdeveloptool`, re-sign or
+   disable AVB, solder to test points / TTL headers, JTAG, chip-off if needed.
+
+Tier 1 being "exhausted" for a given robot just means we move down the list — **disassembly and
+flashing are planned, expected, and fully in scope**, not a failure. See
+[`hardware-access.md`](hardware-access.md) for the physical/flashing surface and
+[`firmware-image.md`](firmware-image.md) for building & signing custom images.
+
+## ① Revive an old robot
+
+| Robot generation | Tier-1 (no-open) path | Status | Tier-2/3 (planned) |
+|---|---|---|---|
+| **801+ / 803** | QR `endpoint_update` → `OPEN_MOXIE`/`EMBODIED_LOCAL`, run your server | ✅ Works — hold a QR to the camera | teardown/flash also available for custom firmware |
+| **pre-801 (Google-IoT)** | — | ⚠️ **No no-open path found** (endpoint hardcoded to `mqtt.googleapis.com`, CA-validated cert — see [`network-trust.md`](network-trust.md) — so QR/DNS can't relocate it) | ✅ **Open path works:** teardown → maskrom/`rkdeveloptool` flash to 803 (or custom), then Tier-1 applies. See [`hardware-access.md`](hardware-access.md). |
+
+- **Tier-1 (801+):** `python -m moxie_toolkit.cli endpoint OPEN_MOXIE --png fix.png` → show `fix.png` to the robot.
+- **Why Tier-1 works (801+):** an offline robot drops to `STATE_CONFIG` and *scans QR codes* ([`boot-and-launcher.md`](boot-and-launcher.md)); pre-801 simply can't be told a new endpoint over the air.
+- **Deep docs:** [`qr-commands.md`](qr-commands.md) · [`ota-and-recovery.md`](ota-and-recovery.md) · [`hardware-access.md`](hardware-access.md)
+- **Pre-801 route:** the reliable path is Tier-3 (open + flash). Tier-1/2 leads still worth chasing:
+  a recovery key-combo, an externally reachable USB port, a genuine signed 803 `update.zip` — tracked
+  in [`ota-and-recovery.md`](ota-and-recovery.md).
 
 ## ② Run your own server (client/server revival)
 

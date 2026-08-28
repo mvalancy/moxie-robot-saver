@@ -49,7 +49,11 @@ flowchart LR
   which requires already having write access to `/system` (or an unlocked bootloader). Chicken-and-egg
   — the first foothold has to come from a genuine signed image or from flashing.
 
-## No-disassembly vectors — honest status
+## Tier-1 (no-disassembly) vectors — honest status
+
+> These are the **first-tier, no-open** options (best for a non-technical owner). When they're
+> exhausted for a given robot we move to Tier-2/3 — external USB/UART and full teardown/flashing —
+> which are **planned and fully in scope** (see [`hardware-access.md`](hardware-access.md)).
 
 | Vector | Needs opening? | Status |
 |---|---|---|
@@ -58,11 +62,11 @@ flowchart LR
 | **Serve a genuine signed OTA** to a robot we control the network of | ❌ no | ⚠️ Plausible on 801+ (point it at our server via QR, serve the real `update.zip`). Blocked on pre-801 because we can't get it to connect to us (hardcoded hostname + no trusted cert for it; see [`network-trust.md`](network-trust.md)). **Also needs a genuine signed 803 `update.zip`, which we do not currently have** (we have raw partition images, not a signed payload). |
 | **ADB push `update.zip` + launch OSUpdate** | ❔ depends on an externally reachable USB port | ⚠️ `ro.adb.secure=1`, `ro.debuggable=0`: ADB needs an authorized key, and first-auth needs an on-screen "allow" the projector face can't show. Recovery-mode ADB sideload bypasses that auth but needs a button combo (unknown for Moxie) — **and reaching the port may itself require opening the shell.** |
 | **MTP copy `update.zip` + launch OSUpdate** | ❔ depends on a reachable USB port | ⚠️ The USB gadget offers **MTP** (`persist.sys.usb.config=mtp,adb`), which needs **no adb authorization** — a host could copy a file to `/sdcard` over MTP. But you still must *launch* `com.embodied.osupdate` (needs adb/an app/an intent), and the port may be internal. Promising *if* a port is reachable. |
-| **Rockchip maskrom + `rkdeveloptool`** | ✅ **yes** | ✅ Always works, but requires physical access to the board / USB — i.e. disassembly. This is today's only reliable pre-801 path. |
+| **Rockchip maskrom + `rkdeveloptool`** | ✅ **yes (planned Tier-3)** | ✅ **Always works** — the reliable pre-801 path and the route to custom firmware. Needs teardown + USB; fully in scope. See [`hardware-access.md`](hardware-access.md). |
 
 ## Where this leaves pre-801 revival
 
-**Unsolved without opening the shell, as of this analysis.** The blockers stack:
+**No *no-open* path found, as of this analysis — so the route is Tier-3 (open + flash), which works and is in scope** ([`hardware-access.md`](hardware-access.md)). The blockers that rule out a purely-over-the-air fix:
 1. Pre-801 won't relocate off Google's dead cloud (hardcoded hostname; cert CA-validated, not pinned) → we can't reach it over the
    network to hand it an OTA.
 2. Even if we could, we'd need a genuine Embodied-signed 803 `update.zip` (not just partition images).
