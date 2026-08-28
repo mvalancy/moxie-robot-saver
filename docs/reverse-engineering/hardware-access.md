@@ -68,10 +68,16 @@ U-Boot reads **`adc-keys`** (via SARADC) and the **PMIC power key** (`rk8xx_pwrk
 - `"download key pressed... Enter bootrom download..."` → **rockusb/bootrom download** (rkdeveloptool)
 
 The **download and recovery keys are ADC levels on the SARADC** — the *same input class as the
-**Macro** button* ([`device-tree.md`](device-tree.md); the kernel node uses `saradc` ch1). This
-strongly implies **holding the Macro button (a specific ADC level/duration) at power-on enters
-recovery or bootrom-download mode** — the exact ADC thresholds live in the **U-Boot** DTB (a bench
-item to confirm). The power key is the RK808 PMIC key.
+**Macro** button* ([`device-tree.md`](device-tree.md); the kernel node reads `saradc` ch1,
+`macro-key { rockchip,adc_value = <1> }`). Detection is **long-press** (U-Boot logs
+`'%s' key long pressed...`), so the entry is a **held** button at power-on, not a tap. This strongly
+implies **holding the Macro button while powering on enters recovery or bootrom-download mode**.
+
+The **exact microvolt threshold that distinguishes download vs recovery is not in the extracted DTBs**
+— the U-Boot control DTB is a stripped `Evb-RK3288` ([`manifests/uboot-control.dts`](manifests/uboot-control.dts))
+with no `adc-keys` node, so those thresholds are compiled into Rockchip U-Boot. Confirming *which*
+level → *which* mode is a **bench experiment** (watch the [serial console](#serial-console-uart--ttl)
+while holding Macro at power-on). The power key is the RK808 PMIC key (also long-press capable).
 
 > **Why this matters for goal #3 (low/no-open revival):** the **download-key → rockusb** path is
 > **unsigned** — `rkdeveloptool` can then flash *anything*, including a `--disable-verification`
