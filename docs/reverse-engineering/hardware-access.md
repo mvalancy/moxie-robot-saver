@@ -88,6 +88,35 @@ while holding Macro at power-on). The power key is the RK808 PMIC key (also long
 
 ## Flashing a partition (the reliable path)
 
+### Partition table (flash targets)
+
+`rkdeveloptool`/`upgrade_tool` address partitions **by name** (from the eMMC GPT), so you don't need
+offsets to flash — you need the names. The complete `by-name` set for this build:
+
+| Partition | A/B? | What |
+|---|---|---|
+| `uboot` | — | U-Boot (SPL + U-Boot) |
+| `trust` | — | OP-TEE secure world ([firmware-image](firmware-image.md#tee--secure-world-op-tee--rpmb)) |
+| `misc` | — | BCB (recovery/loader signalling) |
+| `resource` | — | boot logo + DTB (RSCE) |
+| `dtbo` | ✅ `_a`/`_b` | device-tree overlay (empty stub here) |
+| `vbmeta` | ✅ `_a`/`_b` | **AVB metadata** — flash a `--disable-verification` one here |
+| `boot` | ✅ `_a`/`_b` | kernel + ramdisk (+ recovery) |
+| `system` | ✅ `_a`/`_b` | Android `/` (system-as-root) |
+| `vendor` | ✅ `_a`/`_b` | Rockchip HALs + fstab + hw init |
+| `oem` | — | boot animation |
+| `metadata` | — | vold/metadata-encryption keys |
+| `frp` | — | factory-reset-protection / persistent unlock consent |
+| `cache` | — | (legacy) |
+| `userdata` | — | `/data` (f2fs, `forceencrypt`) |
+
+The **A/B (`slotselect`) partitions** carry `_a`/`_b` suffixes; flash the **inactive** slot (or both).
+`trust`, `uboot`, `misc`, `frp`, `userdata` are single-slot. **Exact offsets/sizes are in the eMMC
+GPT** (not in any partition image) — read them on a bench with `rkdeveloptool ppt` (print partition
+table) or `gpt`. Verify a read-back against the [SHA-256s](firmware-803-reference.md).
+
+
+
 1. Enter **maskrom** or **loader** mode over USB.
 2. `rkdeveloptool db rk3288_loader.bin` (download the DDR init + loader).
 3. `rkdeveloptool wl <offset> <partition.img>` (or `upgrade_tool uf update.img`). Partition names map
