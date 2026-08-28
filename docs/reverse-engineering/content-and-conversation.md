@@ -101,6 +101,35 @@ over the MQTT **file-sync** channel (`MQTT_FILE_SYNC`, see [`cloud-protocol.md`]
 the same mechanism that delivers OTA images and content modules. A revival server hosts/serves these;
 the base firmware ships only the engines.
 
+## Telehealth / remote puppet mode
+
+Besides ChatScript (LOCAL) and the LLM (REMOTE_CHAT), there's a **third response source: a live human
+operator** puppeting Moxie in real time (the telehealth / remote-caregiver feature). The robot enters
+**`STATE_TELEBRAIN`** ([`boot-and-launcher.md`](boot-and-launcher.md)) — perception + Unity face run,
+but **the local brain is off**; every utterance/behavior comes from the operator.
+
+Protocol (`embodied.telehealth`, over MQTT — the `client-service-activity-log` `subtopic=telehealth`
+and `/commands/telehealth`, see [`cloud-protocol.md`](cloud-protocol.md)):
+
+```proto
+enum Action { START_SESSION=1; PLAY_OUTPUT=2; END_SESSION=3; UPDATE_STATE=4; INTERRUPT=5; }
+enum RobotState { READY=1; IN_SESSION=2; EXITING=3; }
+message Output  { string line_id=1; repeated string line_params=2; string text=3; string markup=4; }
+message TelehealthMessage { Action action=2; Output output=3; RobotState state=4; string session_id=5; }
+TelehealthRobotCommand { string command; TelehealthMessage message; }   // cloud → robot
+TelehealthRobotEvent   { string subtopic; TelehealthMessage message; }   // robot → cloud (status)
+```
+
+Flow: `START_SESSION` → robot goes `IN_SESSION`; the operator sends **`PLAY_OUTPUT`** with `text` +
+**`markup`** (the same `<mark cmd:…>` behavior markup, [`behavior-markup.md`](behavior-markup.md)) —
+so the operator drives **speech *and* face/motion** live; **`INTERRUPT`** stops current output;
+`END_SESSION` returns to normal. `TelehealthStatus{telehealth_active, session_active}` reports state.
+
+**Revival use (goal #2):** trivial to implement — a server publishes `PLAY_OUTPUT{text, markup}` to let
+a parent speak through Moxie (type or TTS a line + optional gestures). OpenMoxie's server exposes
+exactly this (`send_telehealth` / `PLAY_OUTPUT` / `INTERRUPT`). It reuses the TTS + markup paths, so no
+new robot-side work is needed.
+
 ## The `volley` / `session` API (server-side hooks)
 
 Each turn hands your `code` a **`volley`** (this exchange) and **`session`** (the conversation):
