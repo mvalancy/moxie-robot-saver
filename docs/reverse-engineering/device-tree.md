@@ -7,18 +7,21 @@
 
 ## I²C buses & devices
 
+Linux bus numbers are from the DT `aliases` (authoritative):
+
 | Bus (base) | Linux | Device @addr | Chip | Role |
 |---|---|---|---|---|
-| `ff650000` | i2c0 | `pmic@1b` | **RK808** (`rockchip,rk808`) | PMIC — power rails, RTC, regulators |
-| `ff140000`/`ff150000` | i2c1/2 | `ov2710@36`, `gc2053@37` | **OV2710** (`ovti`) + **GC2053** (`galaxycore`) | camera sensors (two options) |
-| `ff160000` | i2c3 | `pca9635@60` | **PCA9635** (`nxp`) | 16-ch LED driver → **6× RGB** (`red/green/blue_1..6`) status LEDs |
-| `ff170000` | i2c4 | `hx7027@48` | **Himax HX7027** | sensor (ambient light / ADC front-end) |
-| `ff660000` | i2c5 | `rt5640@1c` | **Realtek RT5640** (ALC5640) | audio codec |
+| `ff650000` | **i2c0** | `pmic@1b` | **RK808** (`rockchip,rk808`) | PMIC — rails, RTC, regulators (power tree below) |
+| `ff140000` | **i2c1** | — | — | (camera bus) |
+| `ff150000` | **i2c3** | `ov2710@36`, `gc2053@37` | **OV2710** (`ovti`) + **GC2053** (`galaxycore`) | camera sensors (two options) |
+| `ff160000` | **i2c4** | `pca9635@60` | **PCA9635** (`nxp`) | 16-ch LED driver → **6× RGB** (`red/green/blue_1..6`) status LEDs |
+| `ff170000` | **i2c5** | `hx7027@48` **+ `@0x1b`** | **Himax HX7027** + **TI DLPC3430** | HX7027 sensor; **DLPC3430 DLP projector controller @0x1b** (runtime-probed as `5-001b`, see init `dlpc3430-bl`) |
+| `ff660000` | (audio i2c) | `rt5640@1c` | **Realtek RT5640** (ALC5640) | audio codec |
 
-> The DLP projector controller (**DLPC3430**, referenced in init as `ff170000.i2c/i2c-5/5-001b`) and
-> the XMOS DSP are **not** base-DTB I²C nodes here — the projector is driven over a display
-> output + a control channel, and XMOS is on **USB** ([`perception-pipeline.md`](perception-pipeline.md)).
-> They may be added by an overlay (`dtbo.img`) or probed at runtime.
+> The **DLPC3430** is on **i2c5 @0x1b** (probed at runtime — the base DTB lists only `hx7027@48` on
+> that bus; init drives `…/5-001b/{led_out,rgb_out,brightness_alt,temperature}`). The **XMOS DSP** is on
+> **USB** ([`perception-pipeline.md`](perception-pipeline.md)). `dtbo.img` is **empty** (a 72-byte stub —
+> no overlay hardware).
 
 ## UARTs
 
@@ -32,9 +35,12 @@
 
 ## Display & camera
 
-- **Display path:** dual **VOP** (`vop-big`/`vop-lit`) → **2× MIPI-DSI**, **DisplayPort (`dp`)**, **HDMI**,
-  MIPI-DPHY/CSI. The **DLP projector** (face) is fed by one of these outputs; PWM (`pwm@ff680000`×4)
-  drives backlight/fan (`projectorfanpid`).
+- **Display path (the face):** the **DLP projector** is wired as an **RGB parallel panel** —
+  `rgb-panel { compatible = "simple-panel"; status = "okay" }` driven by a **VOP** (`vop-big`/`vop-lit`);
+  `edp-panel` and `lvds-panel` are **disabled**. The **DLPC3430** takes that 24-bit RGB input, is
+  configured over **i2c5 @0x1b**, and its **backlight/enable is GPIO7** (`projector { backlight-en }`).
+  PWM (`pwm@ff680000`×4) drives the projector fan (`everflow,projectorfan-pwm` / `projectorfanpid`).
+  (MIPI-DSI/DP/HDMI blocks exist on the SoC but aren't the face path.)
 - **Camera path:** OV2710/GC2053 → **RKISP1**/CIF ISP (`isp@ff910000`) + IOMMU. `sys.embodied.camhw=ov2710`
   selects the sensor.
 - **GPU:** ARM **Mali-T764** (`gpu@ffa30000`); **VPU**/HEVC video codecs for decode.
@@ -53,6 +59,23 @@
   id / leakage / performance grades; **crypto-controller** (`ff8a0000`).
 - **9 GPIO banks** (`gpio0..8`); **GMAC** ethernet present (unused on the robot); **USB**: OTG
   (`ff580000`) + EHCI/OHCI hosts (XMOS + peripherals).
+
+## Power tree (RK808 PMIC → rails)
+
+The RK808 (i2c0 @0x1b) regulators map to named rails (from DT `aliases`):
+
+| Regulator | Rail | | Regulator | Rail |
+|---|---|---|---|---|
+| DCDC_REG1 | `vdd_cpu` | | LDO_REG5 | `vccio_sd` |
+| DCDC_REG2 | `vdd_gpu` | | LDO_REG6 | `vdd10_lcd` (projector 1.0 V) |
+| DCDC_REG3 | `vcc_ddr` | | LDO_REG7 | `vcc_18` |
+| DCDC_REG4 | `vcc_io` | | LDO_REG8 | `vcc18_lcd` (projector 1.8 V) |
+| LDO_REG1 | `vcc_tp` | | SWITCH_REG1 | `vcc_sd` |
+| LDO_REG2 | `vcca_codec` | | SWITCH_REG2 | `vcc_lcd` (projector main) |
+| LDO_REG3 | `vdd_10` | | | |
+| LDO_REG4 | `vcc_wl` (Wi-Fi) | | | |
+
+`rockchip-suspend` configures PMIC-driven sleep; `projector-en-regulator` gates projector power.
 
 ## For custom firmware (goal #1)
 
