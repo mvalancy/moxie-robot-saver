@@ -1,4 +1,8 @@
-# `server/` — parent-app server (Phase 1)
+# `server/` — server app: parent-app half (Phase 1)
+
+> One of the **two halves of the server app** (③ in [`../STRUCTURE.md`](../STRUCTURE.md)): this folder
+> is the **parent-app-facing** backend (what the phone hits). The **robot-facing** half — MQTT broker,
+> supervisor, Moxie SDK — lives in [`../mqtt/`](../mqtt/).
 
 A clean-room, account-free reimplementation of the Moxie parent-app backend
 (`client-service-api.embodied.com`) **plus** the mobile web client, in one FastAPI process.

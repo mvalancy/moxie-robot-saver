@@ -7,6 +7,8 @@ the field. This project is a complete, self-hosted replacement for **everything 
 internet for** — so an owner can pair a robot, configure it, and (as the project grows) have it
 *talk again* — all running on one machine at home.
 
+> 🗂️ **Repo layout:** see [`STRUCTURE.md`](STRUCTURE.md) — three domains (robot · parent app · server app).
+
 > 💚 **The goal:** unlock every Moxie so kids get their robot back, and keep a genuinely lovely piece
 > of hardware out of the landfill. **Local-first, private, no account, no subscription.**
 

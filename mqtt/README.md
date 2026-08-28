@@ -1,6 +1,6 @@
 # 📡 `mqtt/` — the robot cloud + Moxie SDK
 
-The half of the system the **robot** connects to: an MQTT broker, a supervisor that speaks Moxie's
+The **robot-facing half of the server app** (③ in [`../STRUCTURE.md`](../STRUCTURE.md); the parent-app-facing half is [`../server/`](../server/)). The half the **robot** connects to: an MQTT broker, a supervisor that speaks Moxie's
 protocol, and the **Moxie SDK** — the clean interface any AI uses to drive Moxie as an avatar.
 
 See the vision: [`../docs/architecture/moxie-as-a-platform.md`](../docs/architecture/moxie-as-a-platform.md) ·
