@@ -33,25 +33,29 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
 - **Head:** a **separate rounded head on top of the body**, clearly distinct from it (a visible neck/gap,
   not blended). The head **tilts forward/back** (`HEAD UP/DN`). The **face lives on the head** (moved up
   from the body).
-- **Face:** the animated face-screen is on the **front of the head** — but it's a **glowing DLP
-  projector**, not a flat panel. Render it as an **emissive, glowing** surface (bloom/light-emitting,
+- **Face:** the animated face-screen is on the **front of the head** — a **flat/near-flat DISK**
+  (a shallow round pane), **not a cone or a domed bulge**; it sits nearly flush in the head. It's a
+  **glowing DLP projector**, not a dull panel. Render it as an **emissive, glowing** surface (bloom/light-emitting,
   WebGL lighting) so the face literally casts light; eyes/brows/mouth glow. In a dark scene the face
   should be the light source.
 - **Scene lighting is adjustable:** expose a control to dim the whole scene from lit → dark; when dark,
   **Moxie's projected face glows** and lights its surroundings. (Fable: expose e.g.
   `window.moxie.setSceneLight(0..1)`; the HUD adds a slider.)
-- **Camera:** a **wider dark zone high on the head — the forehead** (above the face), where the camera
-  sits.
+- **Camera / forehead:** the camera is a **small lens** set into the head **above the face** — it is
+  **NOT** a massive black band/visor. Keep the dark area **subtle and small** (a slim recessed strip or
+  just the lens itself), the same teal shell elsewhere.
 - **Arms:** **two half-cylinder arms on the OUTSIDE of the body** (curved shells hugging the body sides),
   lighter teal — each a **two-segment limb, 2 DOF**: a **shoulder** bending the arm **up/down**
   (`L/R ARM UP/DN`) and an **elbow** bending the forearm **in/out** (`L/R ARM IN/OUT`); the elbow visibly
   folds. See the [motor map](../reverse-engineering/hardware-map.md).
-- **Hands:** each arm ends in a **hand = a single rounded finger** (one stubby rounded digit), in a
-  **lighter blue** than the arm. (These don't exist in the current model — add them.)
+- **Hands:** each arm ends in a **hand** in a **lighter blue** — it is the **same width as the arm**
+  (a continuation of the arm shell, one rounded finger-like tip), **not a narrow pill/capsule** stuck on
+  the end.
 - **Ears:** **small recessed oval cutouts on the left & right sides of the HEAD** — mic inputs. They're
   an **extruded/flush cut** (a darker inset oval), **nothing sticking out**.
-- **Heart LED:** a small chest LED (`HRT LED`) on the **body front, high up just under the neck** (the
-  chest) — **NOT** on the forehead (the forehead dark zone is the camera, a separate thing).
+- **Heart LED:** on the **body front, high on the chest just under the head**: a **thin white
+  horizontal line with a TINY white heart beneath it** — a small, delicate light indicator, **not** a
+  big black/solid heart shape.
 - **Base:** circular disc base with a **black rubber ring**; `moxie` wordmark.
 
 Rig (each `libmotionlib` DOF → one node): `bodyYaw(5) → bodyLean(6) → { head(4)→face+forehead-cam ;
