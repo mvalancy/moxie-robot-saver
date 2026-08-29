@@ -91,12 +91,26 @@ void LogLizardErrorState();
 > vocabulary; `libmotionlib`'s 0–6 is the factory app's own ordering. When driving motors, use the
 > index that matches the API you're calling.
 
-**Position units:** `MOTOR_MAX_POS = 32767` — positions are a 15-bit range (`0..32767`); individual
-joints are software-limited to sub-ranges (e.g. the app uses `8191` and `24575` as per-motor travel
-caps). `setMotorPositionDt`/`MoveToPositionVt` interpolate to the target over a millisecond duration,
-so this is a timed/trajectory move, not an instant set-point. A `SingleMotorTune` activity + a
-record/`playBackRunnable` path let the factory capture and replay motor trajectories (useful reference
-for a custom motion system).
+**Position units:** `MOTOR_MAX_POS = 32767` — positions are a 15-bit range (`0..32767`), rest ≈ `16384`.
+`setMotorPositionDt`/`MoveToPositionVt` interpolate to the target over a millisecond duration (a
+timed/trajectory move, not an instant set-point). A `SingleMotorTune` activity + a
+record/`playBackRunnable` path let the factory capture and replay motor trajectories.
+
+**Per-motor travel limits & timing** — from the engineering motor test (`MotorEngActivity`, which sweeps
+each joint to its endpoints via `MoveToPositionVt(idx, cur, target, milliSecs, segmentTime, mode)`):
+
+| idx | joint | tested travel | move time | notes |
+|--:|---|---|--:|---|
+| 0 | L arm up/down (shoulder) | **8191 – 24575** (≈ ±8192 around centre) | 1050 ms | shoulders use **~half** the full range |
+| 1 | L arm in/out (elbow) | **0 – 32767** (full) | 700 ms | elbows use the full range, faster |
+| 2 | R arm up/down (shoulder) | **8191 – 24575** | 1050 ms | |
+| 3 | R arm in/out (elbow) | **0 – 32767** (full) | 700 ms | |
+
+Both calls use **`segmentTime = 35 ms`** (the motion-planner tick) and **`motionPlanMode = 1`**. So the
+**shoulders are software-limited to the middle half of the range** (don't drive them to 0 or 32767), while
+the **elbows travel the full span**; a custom motion system (or the [SIL](../architecture/sil-and-cicd.md))
+should clamp/scale per-joint accordingly. (Head/base/body indices 4–6 aren't swept by this arm-focused
+test; treat their limits as bench-TBD.)
 
 **For custom firmware / bench work:** this JNI API and the proto bus are two faces of the same MCU —
 either drives the Lizard board. The proto/ZMQ path ([`robot-ipc-protocol.md`](robot-ipc-protocol.md))
