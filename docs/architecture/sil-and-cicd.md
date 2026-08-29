@@ -62,7 +62,9 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   **Kinematics:** the arm behaves like **a flat sheet of cardboard that folds at the joint** — the
   shoulder and elbow hinges are **aligned/co-planar, single-axis**, so the forearm folds **flat in-plane**
   toward the upper arm. No tilted/skewed hinge sweeping the forearm across the body.
-  **The elbow is a SPRING joint, not a free servo.** The spring pulls the forearm **closed**; the
+  **The elbow is NOT a controllable DOF — it is a pure spring mechanism** (no slider, no commanded
+  value): its bend is **derived entirely from the shoulder angle**, growing smoothly (eased) as the arm
+  lifts clear of the body until it reaches the mechanical stop. The spring pulls the forearm **closed**; the
   **body pushes it back open** when the arm rests against the side. So the elbow's resting fold is a
   **function of the shoulder angle** — arm down against the body → forced open; arm lifted clear →
   the spring closes it — and the motor can only **add** fold on top (never hyperextend). This is why the

@@ -51,13 +51,16 @@ const MOTOR_DEFS = [
   // forearm toward it — the flat-cardboard motion, identical on both sides (the
   // X axis needs no per-side mirroring).
   // Shoulders are bipolar around the 16384 rest pose (arm hangs down; it can swing
-  // slightly back and a long way up). ELBOWS ARE FOLD-ONLY (`unipolar`): the real
-  // joint hinges one way from straight and cannot hyperextend, so the whole
-  // 0..32767 range maps to straight -> fully folded, with no reverse rotation.
+  // slightly back and a long way up). ELBOWS ARE PASSIVE (`passive`): the real
+  // joint is spring-driven, not motorised: springElbow() derives the fold from the
+  // shoulder angle, so elbows get no slider and no commanded value.
   { name: 'L shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 0  (+X arm)
-  { name: 'L elbow (in/out)',     axis: 'x', sign: -1, pos: 2.10, unipolar: true }, // 1
+  // Elbows are PASSIVE: no motor slider. The spring closes the forearm and the body
+  // pushes it open, so the fold is derived entirely from the shoulder angle
+  // (see springElbow). Kept in the table so protocol motor indices stay 0..6.
+  { name: 'L elbow (spring)',     axis: 'x', sign: -1, pos: 2.10, passive: true }, // 1
   { name: 'R shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 2  (-X arm)
-  { name: 'R elbow (in/out)',     axis: 'x', sign: -1, pos: 2.10, unipolar: true }, // 3
+  { name: 'R elbow (spring)',     axis: 'x', sign: -1, pos: 2.10, passive: true }, // 3
   { name: 'Head tilt (nod)',      axis: 'x', sign: -1, neg: 0.38, pos: 0.38 }, // 4
   { name: 'Body turn (yaw)',      axis: 'y', sign: +1, neg: 1.05, pos: 1.05 }, // 5
   { name: 'Body lean (F/B)',      axis: 'x', sign: +1, neg: 0.28, pos: 0.28 }, // 6
@@ -874,21 +877,19 @@ const motorNodes = [
 // commanded fold. With the arm hanging at the side the body blocks the spring and
 // the forearm is held open (~0 fold); as the shoulder lifts the arm clear, the
 // spring closes it. The commanded fold adds on top and always wins if larger.
-const SPRING_CLOSE = 1.15;          // how far the spring folds a free-hanging arm
-function springElbow(shoulderA, cmd) {
-  // shoulder ~0 = arm down against the body; larger = lifted away from it.
-  const lifted = Math.min(1, Math.max(0, Math.abs(shoulderA) / 1.0));
-  const spring = SPRING_CLOSE * lifted * (cmd >= 0 ? 1 : -1);   // fold the same way the motor does
-  return Math.abs(cmd) > Math.abs(spring) ? cmd : spring;       // motor can only ADD fold
+const ELBOW_MAX_BEND = 1.85;        // mechanical stop: how far the spring can fold it
+const ELBOW_FULL_AT   = 1.15;        // shoulder angle (rad) at which the bend maxes out
+// The elbow is not driven. The spring pulls the forearm closed; the body blocks it
+// while the arm hangs at the side. As the shoulder lifts the arm clear, the bend
+// grows SMOOTHLY (eased) until it reaches the mechanical stop.
+function springElbow(shoulderA) {
+  const t = Math.min(1, Math.abs(shoulderA) / ELBOW_FULL_AT);   // 0..1 as the arm lifts
+  const eased = t * t * (3 - 2 * t);                             // smoothstep
+  return -ELBOW_MAX_BEND * eased;                                // fold direction
 }
 
 function motorAngle(i) {
   const d = MOTOR_DEFS[i];
-  if (d.unipolar) {
-    // fold-only joint: the full 0..32767 span is straight -> fully folded.
-    const u = motorValues[i] / MOTOR_MAX;                      // 0 .. 1
-    return d.sign * u * d.pos;
-  }
   const u = (motorValues[i] - MOTOR_CENTER) / MOTOR_CENTER;   // -1 .. +1
   return d.sign * (u < 0 ? u * d.neg : u * d.pos);
 }
@@ -1482,6 +1483,7 @@ const sliderEls = [];
 function buildPanel() {
   const motorsEl = document.getElementById('motors');
   MOTOR_DEFS.forEach((d, i) => {
+    if (d.passive) return;          // spring-driven joint — not user-controllable
     const wrap = document.createElement('div');
     wrap.className = 'motor';
     wrap.innerHTML =
@@ -1568,8 +1570,8 @@ function animate() {
   // against the body -> forced open; arm lifted away -> spring closes it. The
   // motor commands a fold on top of that, and can only ADD fold (never extend
   // past what the body allows).
-  armL.elbow.rotation.x = springElbow(a[0] + live[0], a[1] + live[1]);
-  armR.elbow.rotation.x = springElbow(a[2] + live[2], a[3] + live[3]);
+  armL.elbow.rotation.x = springElbow(a[0] + live[0]);
+  armR.elbow.rotation.x = springElbow(a[2] + live[2]);
   headTiltG.rotation.x     = a[4] + live[4];
   headRollG.rotation.z     = liveness.master * liveness.w[4] * liveness.roll;
   yawG.rotation.y          = a[5] + live[5];
