@@ -421,11 +421,12 @@ function makeHeadTexture() {
   const g = c.getContext('2d');
   g.fillStyle = '#3bb6b0';                    // must match COL.shell exactly
   g.fillRect(0, 0, 1024, 512);
-  for (const side of [-1, 1]) {
-    const cx = side < 0 ? 256 : 768;          // u=0.25 left ear, u=0.75 right
+  // One ear oval, centred on the texture's wrap edge (u=0 == u=1, which the
+  // mirrored side-angle UV mapping places at the exact left/right side of the
+  // head) — drawn at both canvas edges so the wrap shows the full ellipse.
+  for (const cx of [0, 1024]) {
     g.save();
     g.translate(cx, 250);
-    g.rotate(side * 0.18);                    // slight tilt, front end lower
     g.fillStyle = 'rgba(10, 25, 30, 0.10)';   // whisper-faint inset shading
     g.beginPath();
     g.ellipse(0, 0, 52, 30, 0, 0, Math.PI * 2);
@@ -437,18 +438,22 @@ function makeHeadTexture() {
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
   t.anisotropy = 4;
   return t;
 }
 
-// Spherical UVs recomputed from the final vertex positions (the source
-// sphere's UVs were deleted for vertex welding).
+// UVs recomputed from the final vertex positions (the source sphere's UVs
+// were deleted for vertex welding). u is the MIRRORED side angle
+// atan2(x, |z|) — continuous over the whole head (no wrap seam to smear),
+// mapping each side of the head onto one texture edge; the map is symmetric
+// front/back, which suits the symmetric ear marking.
 function sphericalUVs(geo, ry) {
   const pos = geo.attributes.position;
   const uv = new Float32Array(pos.count * 2);
   for (let i = 0; i < pos.count; i++) {
     const sy = Math.max(-1, Math.min(1, pos.getY(i) / ry));
-    uv[2 * i] = 0.5 + Math.atan2(pos.getX(i), pos.getZ(i)) / (2 * Math.PI);
+    uv[2 * i] = 0.5 + Math.atan2(pos.getX(i), Math.abs(pos.getZ(i))) / Math.PI;
     uv[2 * i + 1] = 0.5 + Math.asin(sy) / Math.PI;
   }
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
