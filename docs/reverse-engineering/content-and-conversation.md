@@ -153,6 +153,15 @@ How the brain builds what the LLM sees, and stays topical:
   `Context{id, text}`. These assemble into the LLM prompt (they map to
   `RemoteChatRequest.global_context/conversation_context/prompt_context`, [`cloud-protocol.md`](cloud-protocol.md)).
   A server fills these to steer the LLM (who's present, what activity, what's been said).
+  > **Where Moxie's personality lives (important for a revival brain).** The actual **system
+  > prompt / persona text is NOT in the firmware** — it was authored on **Embodied's cloud** and
+  > delivered per-turn in these `Context` blocks (plus each content module's Jinja2-templated `prompt`
+  > field, [above](#content-module-format-what-a-server-serves)). The robot only carries the *slots*
+  > (`global_context`, `conversation_context`, `prompt_context`) and the `gpt_status` flag. So a
+  > revival server **authors Moxie's character itself** — warm, playful, kid-safe SEL mentor (the
+  > [GRL](unity-assets.md) lore, age-adaptation, and the mood/emotion + behavior-markup systems are the
+  > cues) — and injects it here. This is the core of the ecosystem's
+  > [LLM-agent workstream](../architecture/moxie-ecosystem.md#5--brain--llm-agent--personality).
 - **Holiday / event awareness** — `EventsAndHolidaysData{holidays[]}` with
   `Holiday{event_uid, holiday_id, name, tag, date, region}`: **region-specific, dated events** the robot
   uses for topical content (birthdays, holidays). A server can supply this for seasonal behavior.
