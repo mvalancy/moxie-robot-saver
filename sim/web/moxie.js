@@ -39,7 +39,10 @@ const HEAD_PIVOT_Y = 1.52;        // head sits DOWN on the neck (underside ~1.48
                                   // (head underside ends up just above BODY_TOP, so
                                   // the neck is visible and the head clears the
                                   // chest when it tilts)
-const SHOULDER_Y = 1.26;          // arm shell pivots high on the flank
+const SHOULDER_Y = 1.11;          // CENTRE of the rounded boss at the top of the arm
+                                  // plate (shell top 1.27 minus its 0.16 cap radius) —
+                                  // the plate hinges about that circle's centre, not
+                                  // its top edge.
 
 // Motor table: index -> joint. neg/pos are radian magnitudes below/above center.
 // sign maps "value above center" onto the node's rotation axis direction.
@@ -58,6 +61,10 @@ const MOTOR_DEFS = [
   // slightly back and a long way up). ELBOWS ARE PASSIVE (`passive`): the real
   // joint is spring-driven, not motorised: springElbow() derives the fold from the
   // shoulder angle, so elbows get no slider and no commanded value.
+  // The arm is a FLAT PLATE against the body's side; its shoulder hinge is the
+  // circular boss at the plate's top, with the axis pointing sideways out of the
+  // body (X). So UP/DOWN swings the plate in its own vertical plane = rotation.Z,
+  // and IN/OUT lifts the plate away from the body = rotation.X.
   { name: 'L shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 0  (+X arm)
   // Index 1/3 = the shoulder's SECOND axis: IN/OUT (abduction — the arm swings away
   // from the body's side). Matches the board's `L/R ARM IN/OUT`. The ELBOW has no
