@@ -27,7 +27,12 @@ So the model is buildable from repo facts even if the photos vanish, Moxie's rea
 **Moxie is a two-part robot: a distinct HEAD sitting on top of a separate cylindrical BODY** — NOT one
 continuous teardrop. **~15 in (≈38 cm) tall.**
 
-- **Body:** an upright **cylinder** (softly rounded), teal `#3BB6B0`, sitting on a circular disc base.
+- **Body — TWO chest segments with a clean seam:** an **upper chest** (carries the **arms** and the
+  **heart LED**) that is **slightly wider** and **overhangs** a **lower chest** (carries the **speaker
+  grille**), with a **crisp shadowed step** at the division. Teal `#3BB6B0`, on a circular disc base.
+  The **waist/lean pivot is BELOW the speaker**, so the whole torso tips as one unit.
+- **Neck:** a **short, stubby** neck between head and upper chest — wide relative to its height (not a
+  tall stalk), sized so a full head tilt **clears the chest without intersecting**.
   The **speaker grille is low on the front of the body** (stays at the bottom). The body **turns** on
   the base (`BODY L/R` = yaw) and **leans** forward/back (`BODY F/B`).
 - **Head:** a **separate rounded head on top of the body**, clearly distinct from it (a visible neck/gap,

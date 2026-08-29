@@ -229,9 +229,17 @@ const lensMat     = new THREE.MeshPhysicalMaterial({
 // broad rounded shoulder that the head sits directly on (no neck).
 const bodyProfilePts = (() => {
   const ctrl = [
-    [0.00, 0.05], [0.36, 0.05], [0.58, 0.10], [0.645, 0.28],
-    [0.650, 0.50], [0.625, 0.78], [0.585, 1.00], [0.545, 1.18],
-    [0.50, 1.32], [0.42, 1.42], [0.28, 1.48], [0.00, BODY_TOP],
+    // LOWER CHEST (speaker section) — ends just under the seam
+    [0.00, 0.05], [0.36, 0.05], [0.58, 0.10], [0.628, 0.28],
+    [0.632, 0.46], [0.628, 0.60],
+    // ---- chest seam: a crisp step. The lower chest tucks IN (undercut) and the
+    // upper chest starts slightly WIDER, so the upper overhangs and casts a
+    // shadow line at the division (real Moxie's two-segment torso).
+    [0.612, 0.645], [0.606, 0.660],           // undercut going in
+    [0.658, 0.678], [0.664, 0.700],           // upper chest steps back out, wider
+    // UPPER CHEST (arms + heart LED) — tapers up to the neck
+    [0.650, 0.86], [0.612, 1.05], [0.560, 1.22],
+    [0.50, 1.34], [0.40, 1.43], [0.26, 1.49], [0.00, BODY_TOP],
   ].map(([x, y]) => new THREE.Vector3(x, y, 0));
   const curve = new THREE.CatmullRomCurve3(ctrl);
   return curve.getPoints(120).map(p => new THREE.Vector2(Math.max(0, p.x), p.y));
@@ -362,7 +370,9 @@ root.add(yawG);
 // The real robot's lean pivots ABOVE the speaker: the lower body (grille,
 // wordmark) stays upright while the torso above it tips. lowerG turns with the
 // body but never leans; leanG pivots at LEAN_PIVOT_Y, just above the grille.
-const LEAN_PIVOT_Y = 0.46;          // grille sits at y=0.34
+const LEAN_PIVOT_Y = 0.22;          // BELOW the speaker (grille y=0.34) — the
+                                    // waist is under the lower chest, so the whole
+                                    // torso (both chest segments) leans as one.
 const lowerG = new THREE.Group();   // fixed lower section (yaws, never leans)
 yawG.add(lowerG);
 
@@ -387,6 +397,25 @@ breatheG.add(body);
 
 const headTiltG = new THREE.Group();          // motor 4
 headTiltG.position.y = HEAD_PIVOT_Y;
+// ---- Short stubby neck ------------------------------------------------------
+// Wide-and-low (NOT the tall skinny stalk that was removed earlier): it gives the
+// head clearance so a full forward tilt doesn't intersect the upper chest, while
+// staying nearly hidden at rest.
+const neckGeo = (() => {
+  let g = new THREE.CylinderGeometry(0.255, 0.30, 0.15, 48, 2);
+  g.deleteAttribute('uv'); g.deleteAttribute('normal');
+  g = mergeVertices(g, 1e-4); g.computeVertexNormals();
+  return g;
+})();
+const neck = new THREE.Mesh(neckGeo, new THREE.MeshPhysicalMaterial({
+  color: new THREE.Color(COL.shell).multiplyScalar(0.82),   // slightly recessed/darker
+  roughness: 0.62, clearcoat: 0.25, flatShading: false,
+}));
+neck.position.set(0, BODY_TOP - 0.02, 0);
+neck.castShadow = true;
+neck.receiveShadow = true;
+breatheG.add(neck);
+
 breatheG.add(headTiltG);
 
 const headRollG = new THREE.Group();          // liveness-only curious head roll
@@ -652,7 +681,7 @@ const grille = new THREE.Mesh(
   })
 );
 grille.position.set(0, 0.34, 0);
-lowerG.add(grille);      // stays upright: the lean pivots above it
+breatheG.add(grille);    // lower chest: leans with the torso (pivot is below it)
 
 // ---- `moxie` wordmark near the base ----
 
@@ -682,7 +711,7 @@ const wordmark = new THREE.Mesh(
   })
 );
 wordmark.position.set(0, 0.155, 0);
-lowerG.add(wordmark);    // base marking, never leans
+lowerG.add(wordmark);    // on the base itself — never leans
 
 // ---- Heart LED: a THIN white horizontal line with a TINY white heart
 //      directly beneath it, on the upper chest just under the head — a small,
