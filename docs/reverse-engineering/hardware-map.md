@@ -36,6 +36,29 @@ Codenames trace the program's history — **Bo → Karu → Moxie**:
 
 `NUM_MOTORS=10` (the core face/arm/head set); `BASE_L_R`/`TORSO_F_B` are extended DOF.
 
+### What the joints actually are (factory naming)
+
+The proto enum names the *motions* (`L_ARM_UP_DN`, `L_ARM_IN_OUT`), which leaves the **anatomy**
+ambiguous — is `ARM_IN_OUT` a second shoulder axis or a real elbow? The **factory board-test app
+(`FabTestSoftware`)** settles it: its motor labels are
+
+```
+L Shoulder   L Elbow   R Shoulder   R Elbow   Neck   Head   Base   Body
+```
+
+So each arm has a **shoulder and a genuine ELBOW** (two segments, not two shoulder axes):
+
+| Proto / index | Factory label | Joint |
+|---|---|---|
+| `L_ARM_UP_DN` (0) | **L Shoulder** | raises/lowers the whole arm |
+| `L_ARM_IN_OUT` (1) | **L Elbow** | folds the forearm in/out |
+| `R_ARM_UP_RN` (2) | **R Shoulder** | |
+| `R_ARM_IN_OUT` (3) | **R Elbow** | |
+
+The list also confirms a **`Neck`** as a distinct named joint alongside `Head`, and `Base`/`Body` for
+the rotate/lean DOF. This is the authoritative joint vocabulary for anyone building motion or a
+[simulator](../architecture/sil-and-cicd.md).
+
 ### Driving a motor
 
 ```proto
