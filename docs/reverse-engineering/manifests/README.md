@@ -10,3 +10,4 @@ Machine-readable file inventories of the partition images, generated from read-o
 Regenerate: mount each image `-o loop,ro` and `find <mnt> -type f -printf '%s\t%P\n' | sort -k2`.
 See [`../firmware-manifest.md`](../firmware-manifest.md) for the summary.
 - [`init-services.tsv`](init-services.tsv) — all **98 Android `init` services** (name, class, binary, user, flags, source `.rc`). See [`../boot-and-launcher.md`](../boot-and-launcher.md#init-service-graph-native-daemons).
+- [`embodied-apps.tsv`](embodied-apps.tsv) — the **15 Embodied APKs** (package, versionName/Code, targetSdk, signer). See [`../firmware-inventory.md`](../firmware-inventory.md#embodied-apps-the-ones-that-make-it-a-moxie).
