@@ -25,7 +25,7 @@ needed), or use `--profile demo` to watch a scripted conversation play out — t
 | [`virtual_moxie.py`](virtual_moxie.py) | The SIL robot: speaks the real MQTT protocol. `--scenario`/`--loop-seconds` replay conversations. |
 | [`broker/ci-mosquitto.conf`](broker/) | Mosquitto with `:1883` (MQTT) + `:9001` (WebSocket for the browser). |
 | [`scenarios/`](scenarios/) | Scripted conversations (JSON) for the demo + tests. |
-| `run_smoke.sh` / `run_scenarios.sh` / `test_bridge.mjs` / `test_voice.mjs` / `test_qr.mjs` | The five test layers (also in CI, [`ci/ci.yml`](ci/)). `test_voice` exercises the real TTS/STT services and skips cleanly if they aren't running; `test_qr` asserts the browser QR encoder is byte-identical to the python toolkit. |
+| `run_smoke.sh` / `run_scenarios.sh` / `test_bridge.mjs` / `test_voice.mjs` / `test_qr.mjs` / `test_cloud.mjs` | The six test layers, all in the CI workflow ([`ci/ci.yml`](ci/) — a template; install to `.github/workflows/` to run on GitHub). `test_voice` exercises the real TTS/STT services and skips cleanly if they aren't running; `test_qr` asserts the browser QR encoder is byte-identical to the python toolkit; `test_cloud` asserts the cloud-console fixture keeps the real REST/MQTT shapes. |
 
 ## Without Docker
 ```sh

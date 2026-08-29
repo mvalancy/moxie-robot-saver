@@ -160,7 +160,10 @@ is ongoing — "feature-complete" is not "done", the look matters.
 Each day = one shippable milestone. The build loop picks the next unchecked item.
 
 - [x] **D1 — Protocol SIL + CI.** `virtual_moxie.py` round-trip (state→config(paired)→remote-chat→reply);
-  `sim/run_smoke.sh`; GitHub Actions (`.github/workflows/ci.yml`: doc-links + proto + SIL smoke). ✅
+  `sim/run_smoke.sh`; a ready **GitHub Actions workflow** ([`sim/ci/ci.yml`](../../sim/ci/ci.yml): doc-links
+  + proto + SIL smoke + bridge/voice/qr/cloud tests). ✅ The checks run **locally today** (and in the
+  loop); the workflow ships as a template because installing it under `.github/workflows/` needs a
+  push token with `workflow` scope — copy it there to enable it on GitHub.
 - [x] **D2 — 3D Moxie + bus to the browser.** ✅ WebGL 3D Moxie (`sim/web/`, three.js r160, Fable 5):
   teal teardrop shell, oval canvas face, two-segment arms, 7-DOF rig on the `libmotionlib` indices,
   `window.moxie` API + control panel. ✅ **Live bus**: broker `listener 9001 / websockets` +
@@ -188,8 +191,14 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
 - [x] **D7 — Package + deliver.** `docker compose -f sim/docker-compose.yml up` = broker + supervisor +
   web UI (+ `--profile demo` virtual robot); [`sim/README.md`](../../sim/README.md) one-command run.
   Compose config validated; loop-replay verified. ⏳ optional polish: screenshots/gif, release tag.
+- [x] **D9 — The experience as one static site.** Beyond the SIL: a **combined parent app + simulator +
+  cloud console** on one Cloudflare-deployable bundle (`sim/web/`) — `hub.html` front door,
+  `setup.html` (phone-first revival QR, server-free), `cloud.html` (parent console from a fixture that
+  mirrors the real REST/MQTT shapes). All four surfaces done; only the Pages deploy itself remains (needs
+  the owner's account). Map + roadmap: [`static-experience.md`](static-experience.md).
 
-Progress is tracked here (check items off) and mirrored in `work/firmware-re/progress/PLAN.md`.
+Progress is tracked here (check items off) and mirrored in
+[`work/firmware-re/progress/PLAN.md`](../../work/firmware-re/progress/PLAN.md).
 
 ## The layered session timers
 

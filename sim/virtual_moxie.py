@@ -16,7 +16,8 @@ What it does (the protocol round-trip a real Moxie performs):
   5. Publish a ``/devices/{id}/events/remote-chat`` prompt ("hello").
   6. Assert a ``/devices/{id}/commands/remote_chat`` reply with ``output.text`` arrives.
 
-Exit code 0 = the full round-trip worked. Used by CI (see .github/workflows/ci.yml)
+Exit code 0 = the full round-trip worked. Used by the CI workflow (sim/ci/ci.yml;
+install to .github/workflows/ to run it on GitHub)
 and by ``sim/run_smoke.sh`` locally.
 
 Usage:
