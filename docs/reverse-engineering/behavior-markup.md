@@ -87,6 +87,58 @@ Each verb is a `CommandMarkUpGenerator` with a typed request (its `data` fields)
 > names, mood ids, behavior-tree ids) live in the character asset bundles; the generators accept any
 > id the loaded bundle defines. `composite` aliases let content packs bundle common sequences.
 
+## Enumerated vocabularies (recovered)
+
+The named spaces are partly **hardcoded in the app** (recoverable) and partly **defined by the loaded
+content bundle** (open-ended). What we can enumerate directly:
+
+### Emotion / mood — `EmotionState` (`embodied.robotbrain`, `RemoteChat.proto`)
+The robot's classified/expressed emotion space — the natural target for a face renderer:
+
+```
+EMOTION_UNKNOWN=0  sadness=1  joy=2  love=3  anger=4  fear=5  surprise=6  neutral=7
+```
+
+`cmd:playback-mood`'s `mood` int selects a tone in this space (with `intensity` 0–2). A revival server
+maps its LLM's sentiment → one of these; a **[SIL face](../architecture/sil-and-cicd.md)** maps them →
+expressions (e.g. joy→smile, surprise→wide eyes, sadness→droop).
+
+### Conversational signals — `RemoteSignals.Signal` (`RemoteChat.proto`)
+Discourse acts the brain tags on a turn (drive acknowledgement gestures/prosody):
+
+```
+no_signal=0  closing=1  apology=2  interrupted_speech=3  complaint_clarification=4
+confirmation_agreement=5  interest=6  non_interest=7  rejection_disagreement=8
+```
+
+### Gestures — `Gesture_*` (hardcoded in `bo-android`)
+The app's built-in gesture set (content bundles may add more):
+
+```
+Gesture_None · Gesture_Talk · Gesture_Think · Gesture_Think_Subtle · Gesture_Question
+Gesture_Point · Gesture_Point_Right · Gesture_Self · Gesture_Higher · Gesture_Lower
+Gesture_Large · Gesture_Celebrate
+```
+
+### Behaviour trees — `Bht_*` (hardcoded in `bo-android`)
+Idle/expressive body-motion trees baked into the app:
+
+```
+Bht_Idle_Active_Listening · Bht_Idle_Curious · Bht_Active_Thinking · Bht_Vg_hmm_thinking
+Bht_VG · Bht_Gesture_Celebrate · Bht_Wing_Flap · Bht_Bangle_on_off · Bht_Sleep_Anim
+```
+
+Content packs reference **more** by name (e.g. `Bht_Demo_Wake_Up`, `Bht_Search`, `Bht_Spin_360`,
+`Bht_Gesture_Greet` seen in shipped modules) — those resolve inside the character asset bundle, so the
+full tree set is bundle-defined, not fixed in the binary. **Honest limit:** the Unity asset bundles
+(`sharedassets1.assets`) don't expose these names as plain strings to `grep`, so the lists above are the
+**app-hardcoded subset**, not the exhaustive animation catalog.
+
+### Perception side — detected human emotion (`Face.proto`)
+The vision pipeline also *reads* emotion off a person's face: `Face` carries `emotion` (uint64) +
+`emotion_proba` (float) — i.e. Moxie classifies the child's expression, distinct from its own
+`EmotionState` output. See [`perception-pipeline.md`](perception-pipeline.md).
+
 ## Toolkit — build marks programmatically
 
 [`tools/robot-toolkit/moxie_toolkit/markup.py`](../../tools/robot-toolkit/moxie_toolkit/markup.py)
