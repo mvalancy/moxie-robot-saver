@@ -15,6 +15,9 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a0a0f'/><path d='M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z' fill='%2312b5b0'/><ellipse cx='50' cy='49' rx='20' ry='18' fill='%23f4feff'/><circle cx='43' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='57' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='44.4' cy='46.4' r='1.3' fill='%2300f0ff'/><circle cx='58.4' cy='46.4' r='1.3' fill='%2300f0ff'/></svg>">
 <link rel="stylesheet" href="./vendor/fonts/fonts.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.js" } }
+</script>
 <style>
   :root{
     --void:#060609; --bg:#08080e; --panel:#101018; --panel2:#0c0c13; --hairline:#242a36; --hairline2:#1a1f28;
@@ -46,6 +49,9 @@
   .scan{position:absolute;inset:0;pointer-events:none;opacity:.5;
     background:repeating-linear-gradient(0deg,#0000 0 2px,#00000022 2px 3px);mix-blend-mode:overlay}
   .vig{position:absolute;inset:0;background:radial-gradient(120% 100% at 50% 40%,transparent 55%,#000000cc 100%)}
+  #wire-bg{position:fixed;top:0;bottom:0;left:34%;right:-4%;z-index:-1;pointer-events:none;
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 30%);mask-image:linear-gradient(90deg,transparent,#000 30%)}
+  @media(max-width:820px){#wire-bg{display:none}}
   .spark{position:absolute;width:2px;height:2px;border-radius:50%;background:#7fe9ff;opacity:.0;
     box-shadow:0 0 6px #00f0ff;animation:twinkle 6s ease-in-out infinite}
   @keyframes twinkle{0%,100%{opacity:0}50%{opacity:.9}}
@@ -165,6 +171,7 @@
   <div class="scan"></div>
   <div class="vig"></div>
 </div>
+<div id="wire-bg" aria-hidden="true"></div>
 
 <div class="wrap">
   <header class="top">
@@ -308,5 +315,9 @@
 })();
 </script>
 <script src="bg.js" data-density="1"></script>
+<script type="module">
+  import { mountMoxieWire } from "./moxie-wire.js";
+  try { mountMoxieWire(document.getElementById("wire-bg"), { opacity: 0.16 }); } catch (e) {}
+</script>
 </body>
 </html>
