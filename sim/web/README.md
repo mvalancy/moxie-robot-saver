@@ -22,9 +22,9 @@ API call by hand, so the model is demonstrable before any MQTT wiring exists.
 
 | file | purpose |
 |---|---|
-| `index.html` | page shell, importmap (three@0.160.0), control panel markup |
+| `index.html` | page shell, importmap (three@0.160.0), HUD rail markup, bus-status→HUD glue script |
 | `moxie.js` | model, rig, face renderer, animation loop, `window.moxie` API |
-| `style.css` | panel + speech bubble styling |
+| `style.css` | mission-control HUD skin (dark void + cyan telemetry, per [docs/design/style-guide.md](../../docs/design/style-guide.md)) |
 
 ## JS control API (`window.moxie`)
 

@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Moxie Simulator</title>
+<title>MOXIE &middot; SIL &mdash; Mission Control</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230a0a0f'/%3E%3Crect x='4.5' y='4.5' width='7' height='7' fill='%2300f0ff' transform='rotate(45 8 8)'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./vendor/fonts/fonts.css">
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
 {
@@ -14,70 +16,129 @@
 }
 </script>
 </head>
-<body>
+<body data-bus="idle">
+
+<!-- 3D stage (moxie.js mounts the renderer canvas here) -->
 <div id="app"></div>
 
-<div id="bubble" class="hidden"><span id="bubble-text"></span></div>
+<!-- HUD corner brackets around the stage -->
+<div id="hud-frame" aria-hidden="true">
+  <span class="corner tl"></span><span class="corner tr"></span>
+  <span class="corner bl"></span><span class="corner br"></span>
+</div>
 
+<!-- title bar -->
+<header id="topbar">
+  <div class="brand">
+    <span class="glyph" aria-hidden="true"></span>
+    <h1>MOXIE<span class="sep">&middot;</span>SIL</h1>
+    <span class="tag">v24.10.803</span>
+    <span class="tag dim">SOFTWARE-IN-THE-LOOP</span>
+  </div>
+  <div class="linkstate">
+    <span id="link-dot" class="dot" aria-hidden="true"></span>
+    <span id="link-label">LINK IDLE</span>
+  </div>
+</header>
+
+<!-- speech callout -->
+<div id="bubble" class="hidden">
+  <span class="callout-label">MOXIE &middot; TTS OUT</span>
+  <span id="bubble-text"></span>
+</div>
+
+<!-- stage hint -->
+<div id="scene-hint" aria-hidden="true">DRAG&thinsp;&middot;&thinsp;ORBIT&ensp;&#47;&#47;&ensp;SCROLL&thinsp;&middot;&thinsp;ZOOM&ensp;&#47;&#47;&ensp;<code>window.moxie</code> API</div>
+
+<!-- HUD rail -->
 <aside id="panel">
-  <h1>Moxie Sim</h1>
 
-  <section>
-    <h2>Motors <span class="hint">(0&ndash;32767, 16384 = rest)</span></h2>
+  <section class="card">
+    <h2><span class="tick"></span>Motors<span class="hint">0&ndash;32767 &middot; 16384 REST</span></h2>
     <div id="motors"></div>
     <button id="center-btn" class="wide">Center pose</button>
   </section>
 
-  <section>
-    <h2>Face</h2>
+  <section class="card">
+    <h2><span class="tick"></span>Face<span class="hint">expression cluster</span></h2>
     <div id="faces" class="btn-row"></div>
   </section>
 
-  <section>
-    <h2>Speech</h2>
+  <section class="card">
+    <h2><span class="tick"></span>Speech<span class="hint">TTS</span></h2>
     <div class="row">
-      <input id="speech-input" type="text" placeholder="Say something&hellip;" autocomplete="off">
+      <input id="speech-input" type="text" placeholder="transmit line&hellip;" autocomplete="off">
       <button id="speech-btn">Say</button>
     </div>
   </section>
 
-  <section>
-    <h2>Heart LED</h2>
+  <section class="card">
+    <h2><span class="tick"></span>Heart LED<span class="hint">chest indicator</span></h2>
     <div class="row">
-      <label class="chk"><input id="led-on" type="checkbox"> on</label>
+      <label class="chk"><input id="led-on" type="checkbox"><span>power</span></label>
       <input id="led-color" type="color" value="#ff5577">
     </div>
   </section>
 
-  <section>
-    <h2>Live bus <span class="hint">(MQTT&nbsp;/&nbsp;WS&nbsp;:9001)</span></h2>
+  <section class="card">
+    <h2><span class="tick"></span>Live bus<span class="hint">MQTT&#47;WS :9001</span></h2>
     <div class="row">
       <input id="bus-host" type="text" placeholder="broker host" autocomplete="off">
-      <button id="bus-connect">Connect</button>
+      <button id="bus-connect">Link</button>
     </div>
-    <p id="bus-status" class="hint">not connected</p>
+    <p id="bus-status">not connected</p>
   </section>
 
-  <section>
-    <h2>Transcript</h2>
+  <section class="card card-log">
+    <h2><span class="tick"></span>Comms log<span class="hint">child &harr; moxie</span></h2>
     <div id="transcript"></div>
   </section>
 
-  <section>
-    <h2>Session <span class="hint">(record / replay)</span></h2>
+  <section class="card">
+    <h2><span class="tick"></span>Session<span class="hint">record &#47; replay</span></h2>
     <div class="btn-row">
-      <button id="rec-toggle">Record</button>
+      <button id="rec-toggle">Rec</button>
       <button id="rec-save">Save</button>
-      <button id="rec-demo">Play demo</button>
+      <button id="rec-demo">Demo</button>
     </div>
-    <label class="hint" style="display:block;margin-top:6px">load&nbsp;<input id="rec-load" type="file" accept="application/json"></label>
+    <label class="file-load">load&nbsp;<input id="rec-load" type="file" accept="application/json"></label>
   </section>
 
-  <p class="foot">drag to orbit &middot; scroll to zoom &middot; <code>window.moxie</code> API</p>
 </aside>
 
 <script type="module" src="moxie.js"></script>
 <script src="./vendor/mqtt.min.js"></script>
 <script src="bridge.js"></script>
+<script>
+/* HUD glue — mirrors the #bus-status text (written by bridge.js) onto
+ * body[data-bus] so CSS can color the status line, the topbar link lamp,
+ * and the REC button. Pure presentation; touches no simulator state. */
+(function () {
+  "use strict";
+  var el = document.getElementById("bus-status");
+  var label = document.getElementById("link-label");
+  if (!el) return;
+  var LABELS = { live: "LINK LIVE", rec: "RECORDING", wait: "LINK …",
+                 down: "LINK DOWN", idle: "LINK IDLE" };
+  function classify(t) {
+    t = (t || "").toLowerCase();
+    if (t.indexOf("live") !== -1) return "live";
+    if (t.indexOf("recording") !== -1) return "rec";
+    if (t.indexOf("connecting") !== -1 || t.indexOf("reconnect") !== -1 ||
+        t.indexOf("replaying") !== -1) return "wait";
+    if (t.indexOf("error") !== -1 || t.indexOf("disconnected") !== -1 ||
+        t.indexOf("failed") !== -1 || t.indexOf("not loaded") !== -1 ||
+        t.indexOf("bad ") !== -1) return "down";
+    return "idle";
+  }
+  function sync() {
+    var s = classify(el.textContent);
+    document.body.setAttribute("data-bus", s);
+    if (label) label.textContent = LABELS[s];
+  }
+  new MutationObserver(sync).observe(el, { childList: true, characterData: true, subtree: true });
+  sync();
+})();
+</script>
 </body>
 </html>

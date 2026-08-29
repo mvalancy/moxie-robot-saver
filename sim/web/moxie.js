@@ -64,8 +64,9 @@ controls.maxDistance = 12.0;
 controls.maxPolarAngle = 1.48;
 controls.update();
 
-// Lights — soft studio setup
-scene.add(new THREE.HemisphereLight(0xffffff, 0x9fb3b8, 0.65));
+// Lights — cool control-room setup: white key, cold fill, cyan rim,
+// dark ground bounce so the shell reads against the void.
+scene.add(new THREE.HemisphereLight(0xdcecff, 0x10151d, 0.6));
 
 const key = new THREE.DirectionalLight(0xffffff, 2.1);
 key.position.set(3.2, 5.2, 4.0);
@@ -81,23 +82,59 @@ key.shadow.bias = -0.0004;
 key.shadow.radius = 5;
 scene.add(key);
 
-const fill = new THREE.DirectionalLight(0xd8f2ff, 0.55);
+const fill = new THREE.DirectionalLight(0xa9d8ff, 0.45);
 fill.position.set(-4, 2.2, 1.5);
 scene.add(fill);
 
-const rim = new THREE.DirectionalLight(0xffffff, 0.7);
+const rim = new THREE.DirectionalLight(0x66e6ff, 1.0);   // neon-cyan rim from behind
 rim.position.set(-1.2, 3.4, -4.2);
 scene.add(rim);
 
-// Ground shadow catcher
+// Ground shadow catcher (heavier opacity — shadows need weight on the void)
 const ground = new THREE.Mesh(
   new THREE.CircleGeometry(8, 64),
-  new THREE.ShadowMaterial({ opacity: 0.17 })
+  new THREE.ShadowMaterial({ opacity: 0.4 })
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.12;
 ground.receiveShadow = true;
 scene.add(ground);
+
+// Ambient void grid + soft cyan glow pad under the robot (visual only —
+// matches the mission-control HUD skin; see docs/design/style-guide.md).
+const grid = new THREE.GridHelper(26, 52, 0x00f0ff, 0x0e7490);
+grid.material.transparent = true;
+grid.material.opacity = 0.09;
+grid.material.depthWrite = false;
+grid.position.y = -0.125;
+scene.add(grid);
+
+const glowTex = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0.0, 'rgba(0, 240, 255, 0.20)');
+  grad.addColorStop(0.5, 'rgba(0, 240, 255, 0.05)');
+  grad.addColorStop(1.0, 'rgba(0, 240, 255, 0.0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 256, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+const glowPad = new THREE.Mesh(
+  new THREE.CircleGeometry(2.6, 48),
+  new THREE.MeshBasicMaterial({
+    map: glowTex,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+glowPad.rotation.x = -Math.PI / 2;
+glowPad.position.y = -0.118;
+scene.add(glowPad);
 
 // ---------------------------------------------------------------------------
 // Materials
