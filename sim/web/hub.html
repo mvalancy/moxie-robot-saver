@@ -62,7 +62,7 @@
   .orb.c{animation:floaty 21s ease-in-out infinite}
 
   /* ---- shell ---- */
-  .wrap{position:relative;z-index:2;max-width:1120px;margin:0 auto;padding:0 22px}
+  .wrap{position:relative;z-index:2;max-width:min(1320px,94vw);margin:0 auto;padding:0 24px}
   header.top{display:flex;align-items:center;gap:12px;padding:20px 0 6px}
   .logo{display:flex;align-items:center;gap:11px;text-decoration:none;color:inherit}
   .logo svg{width:34px;height:34px;filter:drop-shadow(0 0 10px #00f0ff55)}
@@ -117,7 +117,10 @@
   .sec-h .rule{flex:1;height:1px;background:linear-gradient(90deg,var(--hairline),transparent)}
 
   /* ---- cards ---- */
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin-top:18px}
+  .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-top:18px}
+  @media(max-width:1180px){ .cards{grid-template-columns:repeat(3,1fr)} }
+  @media(max-width:720px){ .cards{grid-template-columns:repeat(2,1fr)} }
+  @media(max-width:460px){ .cards{grid-template-columns:1fr} }
   a.card{position:relative;display:flex;flex-direction:column;text-decoration:none;color:inherit;overflow:hidden;
     background:linear-gradient(180deg,#12141d,#0b0b12);border:1px solid var(--hairline);border-radius:16px;padding:20px;
     transition:transform .16s ease,border-color .16s,box-shadow .2s;opacity:0;transform:translateY(14px)}

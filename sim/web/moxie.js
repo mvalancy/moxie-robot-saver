@@ -1235,7 +1235,10 @@ function drawFace(t) {
   fctx.closePath();
   fctx.fill();
 
-  const ink = '#1d3138';
+  // Cute, Moxie-blue face — NOT dark mime ink. Eyes are a warm cerulean with a
+  // glossy gradient; mouth/brows a soft muted teal so the smile reads gentle.
+  const ink = '#315863';                 // mouth + brows (soft, not harsh black)
+  const eyeCol = '#1ba6dc', eyeColDeep = '#0d6fac';
 
   // blink factor
   let blinkF = 1;
@@ -1248,7 +1251,11 @@ function drawFace(t) {
   const ry = Math.max(4, 64 * P.eyeH * blinkF);
   for (const s of [-1, 1]) {
     const ex = 256 + s * eyeDX + (P.pupilX + idleEyes.x) * 12;
-    fctx.fillStyle = ink;
+    const eg = fctx.createRadialGradient(ex, eyeY - ry * 0.35, Math.min(rx, ry) * 0.2,
+                                         ex, eyeY, Math.max(rx, ry) * 1.05);
+    eg.addColorStop(0, eyeCol);
+    eg.addColorStop(1, eyeColDeep);
+    fctx.fillStyle = eg;
     fctx.beginPath();
     fctx.ellipse(ex, eyeY, rx, ry, 0, 0, Math.PI * 2);
     fctx.fill();
