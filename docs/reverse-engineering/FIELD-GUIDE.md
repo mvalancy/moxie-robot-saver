@@ -107,4 +107,4 @@ extractor), and Python bindings for all 120 protos. Validate the QR encoders wit
 `python -m moxie_toolkit.cli validate` (27 checks incl. byte-parity with the phone-side tool).
 
 ---
-📖 [Reverse-engineering index](README.md) · [Docs index](../README.md) · [Repo root](../../README.md)
+📖 [Reverse-engineering index](README.md) · [External sources map](external-sources.md) · [Docs index](../README.md) · [Repo root](../../README.md)

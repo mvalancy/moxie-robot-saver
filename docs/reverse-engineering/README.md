@@ -70,5 +70,7 @@ flowchart TB
 - [`recovered-proto/`](recovered-proto/) — **120 `.proto` files** reconstructed from the robot binaries; the machine-readable protocol.
 - [`proto-catalog.md`](proto-catalog.md) — the **browsable catalog** of all 382 messages / 84 enums / 2074 fields (auto-generated).
 
+- [`external-sources.md`](external-sources.md) — **external & community research map** (FCC filings, teardowns, OpenMoxie, Lantronix, press) — facts extracted & adjudicated against our RE, with a provenance/licensing policy and a self-sufficiency doctrine.
+
 ---
 📖 [Docs index](../README.md) · [Back to top](../../README.md)
