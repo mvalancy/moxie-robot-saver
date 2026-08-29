@@ -32,7 +32,13 @@ To inspect: reassemble `cat sharedassets1.assets.split{0..59} > sharedassets1.as
 - **Face / body ("Karu" character):** materials `karuCurvedFace_Mat`, `karuEyeShell_Mat`,
   `karuBlend_Mat`, `KaruBodyMat` — "Karu" is the internal character/hardware codename
   (cf. `RobotIOFactoryKaru`, hardware rev `D3_Karu1`). This confirms the projected face is a Unity-
-  rendered character.
+  rendered character. The actual geometry (the 5 `Mesh` objects): **`rig3_faceMesh01`** (the face),
+  **`rig3_bodyMesh01`** (the body), **`visorMesh_KaruGeo_01_karuRig_A01`** (the visor/face-screen), and
+  `cup_geo_Capsule` / `lid_geo_Capsule` (capsule prop). The `rig3`/`karuRig` naming is the animation rig
+  the face expressions drive.
+- **Event icons (`IconsScreenAnimator`):** the on-screen icon panel animation — the Unity side of the
+  **`icons-v2`** markup verb ([`behavior-markup.md`](behavior-markup.md)), which shows School/Birthday/
+  Medical/Heart badges during calendar events.
 - **Status LEDs (animator `ledBarMoxieAnimator` / `ledSpriteAnimator`):** `LED_turningOn`,
   `LED_listening`, `LED_imTalking(Loop)`, `LedProcessing_Clip`, `LedResponding_Clip`,
   `LED_airPlaneMode`, `LedSystemSuspend(Sleep)_Clip`, `LED_systemFailure` — the on-screen LED-ring
