@@ -1,0 +1,13 @@
+# Cloudflare Pages config — makes "point Pages at this repo" a one-click static deploy.
+#
+# Dashboard path: Cloudflare → Workers & Pages → Create → Pages → Connect to Git →
+#   pick this repo. With this file present, the build output directory is taken from
+#   `pages_build_output_dir` below; set Build command = (empty), Framework preset = None.
+# CLI path:  npx wrangler pages deploy
+#
+# The site is a pre-built static bundle: no build step, all deps vendored (three.js,
+# mqtt.js, marked, mermaid, highlight.js, qrcode, Inter/JetBrains fonts), and the docs
+# bundle (sim/web/docs-bundle/) is committed. Nothing to compile.
+name = "moxie"
+pages_build_output_dir = "sim/web"
+compatibility_date = "2024-11-01"

@@ -21,10 +21,10 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0}
-  body{background:radial-gradient(1200px 600px at 50% -10%,#0d1622 0%,transparent 60%),var(--bg);
+  body{background:var(--void);
     color:var(--text);font-family:var(--font-ui);-webkit-font-smoothing:antialiased;line-height:1.5;
     padding:max(14px,env(safe-area-inset-top)) 16px 56px}
-  .wrap{max-width:1040px;margin:0 auto}
+  .wrap{max-width:1040px;margin:0 auto;position:relative;z-index:1}
   header{display:flex;align-items:center;gap:10px;padding:6px 2px 4px;flex-wrap:wrap}
   .dot{width:11px;height:11px;border-radius:50%;background:var(--mint);box-shadow:0 0 12px var(--mint);flex:none}
   .brand{font-weight:600}.brand small{color:var(--muted);font-weight:400;margin-left:6px}
@@ -255,5 +255,6 @@
     .catch(function(e){ document.getElementById("err").textContent="Could not load fixtures/cloud.json — "+e.message; tabsBar("overview"); });
 })();
 </script>
+<script src="bg.js" data-density="0.8"></script>
 </body>
 </html>

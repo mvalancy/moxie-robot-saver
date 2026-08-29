@@ -1,5 +1,5 @@
 {
- "generated": "547ddfc-dirty",
+ "generated": "99a25b1-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -439,11 +439,13 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploying the SIL to Cloudflare Pages",
    "section": "guides",
-   "bytes": 9009,
+   "bytes": 9978,
    "mermaid": 0,
    "headings": [
     "TL;DR",
     "1. Deploy the static bundle",
+    "Easiest: point Cloudflare Pages at this repo (no build step)",
+    "CLI alternative",
     "2. Pre-cache the audio (both sides of the conversation)",
     "Robot side (Moxie's lines) — Piper, at build time",
     "Child side (the \"user\" turns) — also pre-rendered",

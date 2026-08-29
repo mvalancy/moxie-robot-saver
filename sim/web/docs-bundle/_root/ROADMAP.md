@@ -68,7 +68,8 @@ Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-ex
   shapes mirror the real REST API + MQTT content model.
 - ✅ **Landing hub** — [`sim/web/hub.html`](sim/web/hub.html): one front door presenting the three surfaces.
 - ✅ **Docs explorer** — [`sim/web/docs.html`](sim/web/docs.html): browses every `docs/*.md` with
-  Mermaid rendered (marked + mermaid vendored), built by `sim/tools/build_docs_bundle.py`.
+  Mermaid rendered (marked + mermaid vendored), built by `sim/tools/build_docs_bundle.py`. Collapsible tree,
+  search, "On this page" TOC + scroll-spy, and code **syntax highlighting** (highlight.js vendored).
 - ⬜ **Cloudflare Pages deploy** — wrangler/dashboard, `_headers`, audio pre-cache (both sides).
 
 ---

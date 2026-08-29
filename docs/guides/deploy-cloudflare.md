@@ -42,6 +42,24 @@ reachable, it's used; if not, the stubs take over. The real ecosystem stays self
 
 ## 1. Deploy the static bundle
 
+### Easiest: point Cloudflare Pages at this repo (no build step)
+
+The repo ships a [`wrangler.toml`](../../wrangler.toml) with `pages_build_output_dir = "sim/web"`, so
+connecting Pages to the repo needs no configuration:
+
+1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git**, pick this repo.
+2. Build settings: **Framework preset = None**, **Build command = (empty)**, **Build output directory =
+   `sim/web`** (already set by `wrangler.toml`).
+3. **Save and Deploy.** Every push to `main` redeploys automatically.
+
+It works because the site is a **pre-built static bundle**: no compile step, all deps vendored (three.js,
+mqtt.js, marked, mermaid, highlight.js, qrcode, Inter/JetBrains fonts), and the docs bundle
+(`sim/web/docs-bundle/`) is committed. 8 MB, ~100 files, nothing over Cloudflare's 25 MB/file limit.
+
+Set the custom domain to **`moxie.mattvalancy.com`** (canonical + OG tags already point there).
+
+### CLI alternative
+
 ```sh
 # Wrangler (or connect the repo in the Cloudflare dashboard and set the output dir)
 npx wrangler pages deploy sim/web --project-name moxie-sil
