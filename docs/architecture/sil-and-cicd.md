@@ -52,8 +52,13 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   just the lens itself), the same teal shell elsewhere.
 - **Arms:** **two half-cylinder arms on the OUTSIDE of the body** (curved shells hugging the body sides),
   lighter teal — each a **two-segment limb, 2 DOF**: a **shoulder** bending the arm **up/down**
-  (`L/R ARM UP/DN`) and an **elbow** bending the forearm **in/out** (`L/R ARM IN/OUT`); the elbow visibly
-  folds. See the [motor map](../reverse-engineering/hardware-map.md).
+  (`L/R ARM UP/DN`) and an **elbow** bending the forearm **in/out** (`L/R ARM IN/OUT`).
+  **Kinematics:** the arm behaves like **a flat sheet of cardboard that folds at the joint** — the
+  shoulder and elbow hinges are **aligned/co-planar, single-axis**, so the forearm folds **flat in-plane**
+  toward the upper arm. No tilted/skewed hinge sweeping the forearm across the body.
+  **Handedness:** motor names are from the **robot's own perspective** (the Lizard board is silkscreened
+  `L ARM …`/`R ARM …`), so with a camera in front, the robot's **LEFT** arm (motors 0/1) appears on the
+  **viewer's RIGHT**. See the [motor map](../reverse-engineering/hardware-map.md).
 - **Arm width is CONSTANT:** the **upper arm, forearm, and hand are all the same width** — a
   uniform-width curved shell from shoulder to tip. No tapering.
 - **Hands:** the arm ends in a **hand** in a **lighter blue** — the **same width as the arm** (the
