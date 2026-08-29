@@ -933,3 +933,40 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
   }
   #rail-scroll > .group { break-inside: avoid; -webkit-column-break-inside: avoid; margin-bottom: var(--sp-3); }
 }
+
+/* ---- Environment awareness (env.js): hosted-demo vs local, disabled hints ---- */
+.env-badge {
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em;
+  padding: 2px 7px; border-radius: 4px; margin-right: var(--sp-3); white-space: nowrap;
+}
+.env-badge.local  { color: var(--mint);  border: 1px solid rgba(5, 255, 161, 0.4); }
+.env-badge.hosted { color: var(--amber); border: 1px solid rgba(252, 238, 10, 0.4); }
+button.needs-backend { opacity: 0.5; cursor: help; }
+button.needs-backend::after {
+  content: "\2298"; margin-left: 5px; font-size: 0.9em; opacity: 0.8;   /* ⊘ = needs server */
+}
+.hint.warn, #bus-status.warn { color: var(--amber); }
+.hint.warn code { color: var(--cyan); }
+#env-banner {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: max(14px, env(safe-area-inset-bottom)); z-index: 30;
+  display: flex; align-items: center; gap: var(--sp-3); max-width: min(920px, 94vw);
+  padding: 10px 12px 10px 14px;
+  background: rgba(10, 12, 20, 0.94); backdrop-filter: blur(12px);
+  border: 1px solid var(--hairline); border-left: 3px solid var(--amber);
+  border-radius: 12px; box-shadow: 0 14px 40px rgba(0,0,0,0.55);
+  font-size: 13px; color: var(--text-dim); line-height: 1.45;
+}
+#env-banner .eb-badge {
+  flex: none; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em;
+  color: var(--amber); border: 1px solid rgba(252,238,10,0.4); border-radius: 4px; padding: 2px 7px;
+}
+#env-banner .eb-text b { color: var(--text); }
+#env-banner .eb-link { flex: none; color: var(--cyan); text-decoration: none; font-weight: 500; }
+#env-banner .eb-link:hover { text-decoration: underline; }
+#env-banner .eb-x {
+  flex: none; background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 14px; padding: 2px 4px; line-height: 1;
+}
+#env-banner .eb-x:hover { color: var(--text); }
+@media (max-width: 640px) { #env-banner { flex-wrap: wrap; } }

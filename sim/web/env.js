@@ -1,0 +1,91 @@
+/* env.js — environment awareness for the SIL.
+ *
+ * Tells the user whether the sim is running LOCALLY (backend servers reachable)
+ * or as a HOSTED static demo (Cloudflare Pages — no backend), and clearly marks
+ * the controls that need a server (live voice, mic/STT, live-robot link) with
+ * tooltips, status text, and a one-time banner — so it's obvious why you can't,
+ * e.g., record and talk to Moxie on the hosted page. Purely presentational.
+ */
+(function () {
+  "use strict";
+  var host = location.hostname || "";
+  var isLocal = host === "" ||
+    /^(localhost|127\.|0\.0\.0\.0|::1|\[::1\]|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) ||
+    /\.local$|\.lan$/.test(host);
+  var origin = location.protocol + "//" + (host || "127.0.0.1");
+  if (document.body) document.body.setAttribute("data-env", isLocal ? "local" : "hosted");
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---- environment badge in the topbar ----
+  var ls = document.querySelector("#topbar .linkstate");
+  if (ls && ls.parentNode) {
+    var badge = document.createElement("span");
+    badge.className = "env-badge " + (isLocal ? "local" : "hosted");
+    badge.textContent = isLocal ? "LOCAL" : "HOSTED DEMO";
+    badge.title = isLocal
+      ? "Served from localhost — voice, mic and the live-robot link work when their servers are running."
+      : "Served as a static site — no backend. Voice, mic and the live-robot link need a locally-run server (see the banner).";
+    ls.parentNode.insertBefore(badge, ls);
+  }
+
+  function needsBackend(btn, tip) {
+    if (!btn) return;
+    btn.classList.add("needs-backend");
+    btn.setAttribute("title", tip);
+  }
+  function warn(el, html) { if (el) { el.innerHTML = html; el.classList.add("warn"); } }
+
+  // ---- probe the optional local services, then annotate ----
+  function probe(url) {
+    var opt = ("AbortSignal" in window && AbortSignal.timeout) ? { signal: AbortSignal.timeout(2500) } : {};
+    return fetch(url, opt).then(function (r) { return r.ok; }).catch(function () { return false; });
+  }
+  Promise.all([probe(origin + ":8081/health"), probe(origin + ":8082/health")])
+    .then(function (r) { apply(r[0], r[1]); });
+
+  function apply(tts, stt) {
+    // Voice / TTS
+    var ttsSt = $("tts-status");
+    if (tts) { if (ttsSt) { ttsSt.textContent = "piper tts · connected"; ttsSt.classList.remove("warn"); } }
+    else {
+      warn(ttsSt, isLocal
+        ? "no TTS server &mdash; run <code>python3 sim/tts/server.py</code>"
+        : "hosted demo &mdash; only pre&#8209;scripted lines have audio (no live TTS)");
+      needsBackend($("tts-test"), "Needs the Piper TTS server (python3 sim/tts/server.py). Not available on the hosted demo.");
+      needsBackend($("speech-btn"), "Speaks arbitrary text via the local Piper TTS server. On the hosted demo only pre-rendered demo lines play.");
+    }
+    // Mic / STT
+    var micSt = $("mic-status");
+    if (stt) { if (micSt) { micSt.textContent = "click to start / stop recording"; micSt.classList.remove("warn"); } }
+    else {
+      warn(micSt, isLocal
+        ? "no STT server &mdash; run <code>python3 sim/stt/server.py</code> (Listen falls back to a scripted line)"
+        : "hosted demo &mdash; Listen plays a scripted child line (no live speech&#8209;to&#8209;text)");
+      needsBackend($("mic-btn"), "Live speech-to-text needs the STT server (python3 sim/stt/server.py). On the hosted demo, Listen plays a scripted demo line instead.");
+    }
+    // Live bus / Link (no probe — it's a WebSocket broker connection)
+    needsBackend($("bus-connect"),
+      "Links a REAL robot's MQTT broker over WebSocket (:9001). Needs your self-hosted backend — not available on the hosted demo.");
+    var busSt = $("bus-status");
+    if (!isLocal && busSt && /not connected/i.test(busSt.textContent)) {
+      busSt.textContent = "not connected · needs a self-hosted broker"; busSt.classList.add("warn");
+    }
+  }
+
+  // ---- one-time banner on the hosted demo ----
+  if (!isLocal) {
+    try { if (localStorage.getItem("moxie.envBannerDismissed") === "1") return; } catch (e) {}
+    var w = document.createElement("div");
+    w.id = "env-banner";
+    w.innerHTML =
+      '<span class="eb-badge">HOSTED&nbsp;DEMO</span>' +
+      '<span class="eb-text"><b>3D Moxie, gestures, expressions, Play&nbsp;demo and the QR tools work here.</b> ' +
+      'Live voice, the mic and connecting a real robot need a locally&#8209;run backend.</span>' +
+      '<a class="eb-link" href="docs.html#guides/revive-your-moxie.md">Run it locally &rarr;</a>' +
+      '<button class="eb-x" aria-label="Dismiss">&#10005;</button>';
+    document.body.appendChild(w);
+    w.querySelector(".eb-x").addEventListener("click", function () {
+      w.remove(); try { localStorage.setItem("moxie.envBannerDismissed", "1"); } catch (e) {}
+    });
+  }
+})();
