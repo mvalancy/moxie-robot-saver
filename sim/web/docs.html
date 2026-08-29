@@ -115,6 +115,18 @@
   article blockquote p{color:var(--muted)}
   article img{max-width:100%;border-radius:8px}
   article hr{border:none;border-top:1px solid var(--hairline2);margin:2.2em 0}
+  /* syntax highlighting (highlight.js) — on-brand palette */
+  .hljs{color:#c6d2e0;background:none}
+  .hljs-comment,.hljs-quote{color:#5a6577;font-style:italic}
+  .hljs-keyword,.hljs-selector-tag,.hljs-built_in,.hljs-name,.hljs-tag{color:#a855f7}
+  .hljs-string,.hljs-title.class_,.hljs-doctag,.hljs-regexp{color:#05ffa1}
+  .hljs-number,.hljs-literal,.hljs-symbol,.hljs-bullet{color:#fcee0a}
+  .hljs-attr,.hljs-attribute,.hljs-variable,.hljs-template-variable{color:#00f0ff}
+  .hljs-title,.hljs-title.function_,.hljs-section{color:#7fd0ff}
+  .hljs-type,.hljs-class .hljs-title,.hljs-params{color:#12b5b0}
+  .hljs-meta,.hljs-meta .hljs-keyword{color:#8892a4}
+  .hljs-deletion{color:#ff2a6d}.hljs-addition{color:#05ffa1}
+  .hljs-emphasis{font-style:italic}.hljs-strong{font-weight:600}
   .mermaid{background:#0b0e15;border:1px solid var(--hairline);border-radius:12px;padding:18px;margin:1.3em 0;text-align:center;overflow-x:auto}
   .mermaid svg{max-width:100%;height:auto}
   .pager{max-width:760px;margin:40px auto 0;display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--hairline2);padding-top:20px}
@@ -165,6 +177,7 @@
 
 <script src="./vendor/marked.min.js"></script>
 <script src="./vendor/mermaid.min.js"></script>
+<script src="./vendor/highlight.min.js"></script>
 <script>
 (function(){
   "use strict";
@@ -240,6 +253,23 @@
       if(hit){ a.setAttribute("href","#"+hit); a.onclick=function(ev){ ev.preventDefault(); openDoc(hit); }; }
     });
   }
+  var HLJS_ALIAS={proto:"protobuf",sh:"bash",shell:"bash",jsonc:"json",yml:"yaml",js:"javascript",py:"python"};
+  var _hljsLangs=null;
+  function highlightCode(root){
+    if(typeof hljs==="undefined") return;
+    if(!_hljsLangs){ try{ _hljsLangs={}; hljs.listLanguages().forEach(function(l){_hljsLangs[l]=1;}); }catch(e){ _hljsLangs={}; } }
+    Array.prototype.forEach.call(root.querySelectorAll("pre code"),function(code){
+      var cls=(code.className||"").match(/language-([A-Za-z0-9_+-]+)/);
+      var lang=cls?cls[1].toLowerCase():null;
+      if(lang==="mermaid") return;                       // handled separately
+      if(lang){ lang=HLJS_ALIAS[lang]||lang;
+        if(_hljsLangs[lang]){ code.className="language-"+lang;
+          try{ hljs.highlightElement(code); }catch(e){} }
+        // unknown language: leave as plain text (no console error)
+      }
+    });
+  }
+
   function renderMermaid(root){
     if(!mmReady) return;
     var blocks=root.querySelectorAll("pre code.language-mermaid, code.language-mermaid");
@@ -333,6 +363,7 @@
         wrap.appendChild(art); if(toc) wrap.appendChild(toc);
         elContent.appendChild(wrap);
         while(pg.firstChild) art.appendChild(pg.firstChild);
+        highlightCode(art);
         renderMermaid(art);
         if(toc) spyTOC(art, toc);
         document.getElementById("main").scrollTop=0;

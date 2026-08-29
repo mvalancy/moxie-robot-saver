@@ -12,3 +12,4 @@ To update: re-fetch the same paths from `https://unpkg.com/three@<ver>/` and
 - `qrcode.js` — **qrcode-generator** v1.4.4 (Kazuhiko Arase). MIT License. Used by `qr.js` to render revival QR codes in-browser.
 - `marked.min.js` — **marked** v12.0.0 (MIT). Markdown → HTML for the docs explorer (`docs.html`).
 - `mermaid.min.js` — **mermaid** v10.9.1 (MIT). Renders ```mermaid diagrams in the docs explorer.
+- `highlight.min.js` — **highlight.js** v11.9.0 common build + the protobuf language (BSD-3-Clause). Syntax highlighting for code blocks in the docs explorer.

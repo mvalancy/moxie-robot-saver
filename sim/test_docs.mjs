@@ -63,8 +63,13 @@ for (const f of idx.files) {
 ok(mermaidTotal > 0, "expected at least one mermaid diagram across the docs");
 
 // ---- vendored renderers present ----
-for (const v of ["marked.min.js", "mermaid.min.js"])
+for (const v of ["marked.min.js", "mermaid.min.js", "highlight.min.js"])
   ok(existsSync(join(web, "vendor", v)), `vendored ${v} missing`);
+// the protobuf language must be bundled alongside hljs (30+ proto code blocks)
+{
+  const hl = readFileSync(join(web, "vendor", "highlight.min.js"), "utf8");
+  ok(/registerLanguage\(["']protobuf["']/.test(hl), "highlight.min.js must include the protobuf language");
+}
 
 // ---- docs.html wiring ----
 const html = readFileSync(join(web, "docs.html"), "utf8");
@@ -72,6 +77,8 @@ ok(html.includes("vendor/marked.min.js") && html.includes("vendor/mermaid.min.js
    "docs.html must load the vendored marked + mermaid");
 ok(html.includes("docs-index.json"), "docs.html must fetch docs-index.json");
 ok(html.includes("mermaid.render") || html.includes("mermaid.init"), "docs.html must render mermaid");
+ok(html.includes("vendor/highlight.min.js") && html.includes("highlightElement"),
+   "docs.html must load + apply the vendored highlighter");
 ok(html.includes("docs-bundle/"), "docs.html must fetch docs from docs-bundle/");
 
 // ---- report ----
