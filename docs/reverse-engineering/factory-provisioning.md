@@ -87,7 +87,8 @@ authoritative hardware-bring-up checklist for the robot:
 | 12 | Store serial as barcode to disk | check | `SerialNumber.txt` (`CORE_INVALID_SERIAL`, `MISC_FILE_WRITE`) |
 
 ### Native test primitives (JNI)
-The factory native lib exposes reusable hardware pokes — a ready-made bring-up API:
+The factory native lib exposes reusable hardware pokes — a ready-made bring-up API. This list is the
+**complete set of 15 `Java_…ActivityFinalTest_*` exports** in `libfinalTest.so` (verified via `nm -D`):
 
 `ArmConnect` · `ArmDisconnect` · `CheckPluggedIn` · `CheckProjectorConfig` · `GetMPUState` (IMU) ·
 `GetTouchSensor` · `ArucoAligner` · `AudioTest` · `DUTAlignment` · `DoMotorsTest` · `Fan` ·

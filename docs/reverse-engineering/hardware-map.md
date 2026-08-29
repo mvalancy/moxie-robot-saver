@@ -53,6 +53,56 @@ CONFIG_KI_LEAK=5    CONFIG_LIMIT=6  CONFIG_ADJ=7  CONFIG_MOTOR_FWD=8  CONFIG_WRI
 Feedback comes back as `ServoPosFdbackEventPB{ cservoName, pos }` and `ServoStallEventPB{ motor_id,
 is_stalled }`.
 
+### Native motion API (factory `libmotionlib` / `liblizardJNI`)
+
+Besides the ZMQ/proto path above, the firmware carries a **native JNI motor API**, recovered from the
+factory motor-test app (`bo_motor_test` → `libmotionlib.so`) and the shared `liblizardJNI.so`. This is
+the lower-level path a Java/native component uses to drive the body directly:
+
+```java
+// com.embodied.motionlib.MotionPlanning (libmotionlib.so)
+int  readMotorPosition(int idx);                 // current encoder position
+void setMotorPositionDt(int idx, int pos, int dtMillis);   // move to pos over dt ms
+void MoveToPositionVt(int idx, int curPos, int targetPos,  // segmented trajectory:
+                      int milliSecs, int segmentTime, int motionPlanMode);
+void register();                                 // attach to MCU comms (call first)
+// com.embodied.robot.Lizard (liblizardJNI.so) — even lower level
+void setMotorTarget(...); int getMotorPos(...);
+int  getContactStatesNative();   // touch/limit switches bitfield
+void waitForDC();                // block until charger (DC) event
+void LogLizardErrorState();
+```
+
+**`libmotionlib` motor index (its own compact 0–6 space — from the app's comms loop):**
+
+| idx | field | joint |
+|--:|---|---|
+| 0 | `laudCurrent` | left arm up/down |
+| 1 | `laioCurrent` | left arm in/out |
+| 2 | `raudCurrent` | right arm up/down |
+| 3 | `raioCurrent` | right arm in/out |
+| 4 | `headCurrent` | head |
+| 5 | `baseCurrent` | base (rotate) |
+| 6 | `bodyCurrent` | body (torso lean) |
+
+> ⚠️ **This index is _not_ the `Motor` proto enum above.** It coincides for the four arm motors
+> (0–3) but then diverges — `libmotionlib` 5/6 = base/body, whereas the proto enum 5/6 = `HEAD_L_R`/
+> `HEAD_TILT`. Treat the two index spaces as distinct: the proto `Motor` enum is the runtime bus
+> vocabulary; `libmotionlib`'s 0–6 is the factory app's own ordering. When driving motors, use the
+> index that matches the API you're calling.
+
+**Position units:** `MOTOR_MAX_POS = 32767` — positions are a 15-bit range (`0..32767`); individual
+joints are software-limited to sub-ranges (e.g. the app uses `8191` and `24575` as per-motor travel
+caps). `setMotorPositionDt`/`MoveToPositionVt` interpolate to the target over a millisecond duration,
+so this is a timed/trajectory move, not an instant set-point. A `SingleMotorTune` activity + a
+record/`playBackRunnable` path let the factory capture and replay motor trajectories (useful reference
+for a custom motion system).
+
+**For custom firmware / bench work:** this JNI API and the proto bus are two faces of the same MCU —
+either drives the Lizard board. The proto/ZMQ path ([`robot-ipc-protocol.md`](robot-ipc-protocol.md))
+is the cleaner seam for a replacement brain; `libmotionlib` documents the exact position units and
+timed-move semantics to reproduce.
+
 ## Touch & switches
 
 ```proto
