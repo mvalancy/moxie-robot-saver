@@ -48,9 +48,10 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   lighter teal — each a **two-segment limb, 2 DOF**: a **shoulder** bending the arm **up/down**
   (`L/R ARM UP/DN`) and an **elbow** bending the forearm **in/out** (`L/R ARM IN/OUT`); the elbow visibly
   folds. See the [motor map](../reverse-engineering/hardware-map.md).
-- **Hands:** each arm ends in a **hand** in a **lighter blue** — it is the **same width as the arm**
-  (a continuation of the arm shell, one rounded finger-like tip), **not a narrow pill/capsule** stuck on
-  the end.
+- **Arm width is CONSTANT:** the **upper arm, forearm, and hand are all the same width** — a
+  uniform-width curved shell from shoulder to tip. No tapering.
+- **Hands:** the arm ends in a **hand** in a **lighter blue** — the **same width as the arm** (the
+  rounded lighter-blue end of that same shell), **not a narrow pill/capsule** stuck on the end.
 - **Ears:** **small recessed oval cutouts on the left & right sides of the HEAD** — mic inputs. They're
   an **extruded/flush cut** (a darker inset oval), **nothing sticking out**.
 - **Heart LED:** on the **body front, high on the chest just under the head**: a **thin white
