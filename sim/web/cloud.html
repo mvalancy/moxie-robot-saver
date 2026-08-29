@@ -7,6 +7,9 @@
 <title>Moxie Cloud — parent console</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a0a0f'/><path d='M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z' fill='%2312b5b0'/><ellipse cx='50' cy='49' rx='20' ry='18' fill='%23f4feff'/><circle cx='43' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='57' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='44.4' cy='46.4' r='1.3' fill='%2300f0ff'/><circle cx='58.4' cy='46.4' r='1.3' fill='%2300f0ff'/></svg>">
 <link rel="stylesheet" href="./vendor/fonts/fonts.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.js" } }
+</script>
 <link rel="canonical" href="https://moxie.mattvalancy.com/cloud.html">
 <style>
   /* Read-only example of the Moxie parent cloud console. Data shapes mirror the
@@ -25,6 +28,9 @@
     color:var(--text);font-family:var(--font-ui);-webkit-font-smoothing:antialiased;line-height:1.5;
     padding:max(14px,env(safe-area-inset-top)) 16px 56px}
   .wrap{max-width:1040px;margin:0 auto;position:relative;z-index:1}
+  #wire-bg{position:fixed;top:0;bottom:0;left:52%;right:-6%;z-index:0;pointer-events:none;opacity:.9;
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 45%);mask-image:linear-gradient(90deg,transparent,#000 45%)}
+  @media(max-width:900px){#wire-bg{display:none}}
   header{display:flex;align-items:center;gap:10px;padding:6px 2px 4px;flex-wrap:wrap}
   .dot{width:11px;height:11px;border-radius:50%;background:var(--mint);box-shadow:0 0 12px var(--mint);flex:none}
   .brand{font-weight:600}.brand small{color:var(--muted);font-weight:400;margin-left:6px}
@@ -98,6 +104,7 @@
 </style>
 </head>
 <body>
+<div id="wire-bg" aria-hidden="true"></div>
 <div class="wrap">
   <header>
     <a class="hubback" href="hub.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M11 6l-6 6 6 6"/></svg> Hub</a>
@@ -254,6 +261,10 @@
       var h=(location.hash||"").replace("#",""); show(TABS.some(function(t){return t[0]===h;})?h:"overview"); })
     .catch(function(e){ document.getElementById("err").textContent="Could not load fixtures/cloud.json — "+e.message; tabsBar("overview"); });
 })();
+</script>
+<script type="module">
+  import { mountMoxieWire } from "./moxie-wire.js";
+  try { mountMoxieWire(document.getElementById("wire-bg"), { opacity: 0.12 }); } catch (e) {}
 </script>
 <script src="bg.js" data-density="0.8"></script>
 </body>

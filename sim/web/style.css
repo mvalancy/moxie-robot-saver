@@ -900,3 +900,36 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
 .notice-by a { color: var(--cyan-dim); text-decoration: none; }
 .notice-by a:hover { color: var(--cyan); }
 .notice-link { margin-left: var(--sp-3) !important; }
+
+/* ---- Wide landscape: multi-column rail so ALL controls fit on one screen with
+   no scrolling. Column count scales with viewport HEIGHT (each column can only
+   hold so much), so nothing ever spills into a clipped off-screen column. The
+   3D stage keeps a sensible minimum width. ---- */
+.rail-multicol #rail-scroll {          /* shared bits, applied by the queries below */
+  display: block;
+  column-gap: var(--sp-3);
+  padding-bottom: var(--sp-3);
+}
+.rail-multicol #rail-scroll > .group {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  margin-bottom: var(--sp-3);
+}
+/* Tall enough for 2 columns to hold everything (~980px+). */
+@media (min-width: 1280px) and (min-height: 980px) {
+  :root { --rail-w: clamp(640px, 38vw, 760px); }
+  #hud { grid-template-columns: minmax(440px, 1fr) var(--rail-w); }
+  #rail-scroll {
+    display: block; column-count: 2; column-gap: var(--sp-3); padding-bottom: var(--sp-3);
+  }
+  #rail-scroll > .group { break-inside: avoid; -webkit-column-break-inside: avoid; margin-bottom: var(--sp-3); }
+}
+/* Shorter but wide → 3 columns so it still fits without scrolling. */
+@media (min-width: 1360px) and (max-height: 979px) {
+  :root { --rail-w: clamp(900px, 58vw, 1060px); }
+  #hud { grid-template-columns: minmax(380px, 1fr) var(--rail-w); }
+  #rail-scroll {
+    display: block; column-count: 3; column-gap: var(--sp-3); padding-bottom: var(--sp-3);
+  }
+  #rail-scroll > .group { break-inside: avoid; -webkit-column-break-inside: avoid; margin-bottom: var(--sp-3); }
+}

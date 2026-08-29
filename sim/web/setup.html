@@ -7,6 +7,9 @@
 <title>Moxie Setup — revive your robot</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a0a0f'/><path d='M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z' fill='%2312b5b0'/><ellipse cx='50' cy='49' rx='20' ry='18' fill='%23f4feff'/><circle cx='43' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='57' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='44.4' cy='46.4' r='1.3' fill='%2300f0ff'/><circle cx='58.4' cy='46.4' r='1.3' fill='%2300f0ff'/></svg>">
 <link rel="stylesheet" href="./vendor/fonts/fonts.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.js" } }
+</script>
 <link rel="canonical" href="https://moxie.mattvalancy.com/setup.html">
 <style>
   /* Phone-first parent-app "basics": the two QR codes that re-home a robot,
@@ -27,6 +30,9 @@
     padding:max(16px,env(safe-area-inset-top)) 16px 48px;
   }
   .wrap{max-width:560px;margin:0 auto;position:relative;z-index:1}
+  #wire-bg{position:fixed;top:0;bottom:0;left:58%;right:-4%;z-index:0;pointer-events:none;
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 40%);mask-image:linear-gradient(90deg,transparent,#000 40%)}
+  @media(max-width:940px){#wire-bg{display:none}}
   header{display:flex;align-items:center;gap:10px;padding:6px 2px 18px}
   .dot{width:11px;height:11px;border-radius:50%;background:var(--cyan);
        box-shadow:0 0 12px var(--cyan);flex:none}
@@ -76,6 +82,7 @@
 </style>
 </head>
 <body>
+<div id="wire-bg" aria-hidden="true"></div>
 <div class="wrap">
   <header>
     <span class="dot"></span>
@@ -189,6 +196,10 @@
     show("ep", Q.encodeEndpoint(document.getElementById("endpoint").value));
   });
 })();
+</script>
+<script type="module">
+  import { mountMoxieWire } from "./moxie-wire.js";
+  try { mountMoxieWire(document.getElementById("wire-bg"), { opacity: 0.13 }); } catch (e) {}
 </script>
 <script src="bg.js" data-density="0.7"></script>
 </body>
