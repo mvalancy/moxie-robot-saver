@@ -187,6 +187,26 @@
           </div>
           <label class="file-load">load&nbsp;<input id="rec-load" type="file" accept="application/json"></label>
         </section>
+
+        <section class="sub">
+          <h3>Revive a robot<span class="hint">endpoint QR</span></h3>
+          <div class="row">
+            <select id="qr-kind">
+              <option value="OPEN_MOXIE">home &rarr; OPEN_MOXIE</option>
+              <option value="EMBODIED_LOCAL">home &rarr; EMBODIED_LOCAL</option>
+              <option value="serial_number_display">show serial number</option>
+              <option value="reset_network">forget wi&#8209;fi</option>
+              <option value="wifi">wi&#8209;fi credentials</option>
+            </select>
+            <button id="qr-make">Make</button>
+          </div>
+          <div class="row" id="qr-wifi" style="display:none;margin-top:6px">
+            <input id="qr-ssid" type="text" placeholder="SSID" autocomplete="off">
+            <input id="qr-pass" type="text" placeholder="password" autocomplete="off">
+          </div>
+          <canvas id="qr-canvas" style="display:none;margin-top:8px;width:100%;max-width:220px;border-radius:6px;image-rendering:pixelated"></canvas>
+          <p id="qr-status" class="hint">hold the code up to Moxie&#39;s camera</p>
+        </section>
       </details>
 
     </div>
@@ -196,6 +216,8 @@
 
 <script type="module" src="moxie.js"></script>
 <script src="./vendor/mqtt.min.js"></script>
+<script src="./vendor/qrcode.js"></script>
+<script src="qr.js"></script>
 <script src="stub.js"></script>
 <script src="bridge.js"></script>
 <script src="audio.js"></script>
@@ -278,6 +300,44 @@
         .then(function (j) { if (st) st.textContent = j.ok ? ("voice: " + j.voice) : "tts unavailable"; })
         .catch(function () { if (st) st.textContent = "tts unreachable — run sim/tts/server.py"; });
       window.moxieAudio.speak("Hi! I am Moxie. It is nice to meet you.");
+    });
+  })();
+
+  /* Revive QR — the codes that re-home a real robot are plain JSON, so we can
+   * build them client-side: a phone loading the static site can revive a Moxie
+   * with nothing installed. Byte-identical to moxie_toolkit's encoders.
+   * Grammar: docs/reverse-engineering/qr-commands.md */
+  (function () {
+    var kind = document.getElementById("qr-kind");
+    var btn = document.getElementById("qr-make");
+    var cv = document.getElementById("qr-canvas");
+    var st = document.getElementById("qr-status");
+    var wifi = document.getElementById("qr-wifi");
+    if (!btn || !window.moxieQR) return;
+
+    kind.addEventListener("change", function () {
+      wifi.style.display = kind.value === "wifi" ? "" : "none";
+    });
+
+    btn.addEventListener("click", function () {
+      var Q = window.moxieQR, v = kind.value, payload;
+      try {
+        if (v === "wifi") {
+          var ssid = document.getElementById("qr-ssid").value.trim();
+          if (!ssid) { st.textContent = "enter an SSID first"; return; }
+          payload = Q.encodeWifi(ssid, document.getElementById("qr-pass").value);
+        } else if (v in Q.ENDPOINTS) {
+          payload = Q.encodeEndpoint(v);
+        } else {
+          payload = Q.encodeDebug(v);
+        }
+        Q.render(cv, payload, 4);
+        cv.style.display = "block";
+        st.textContent = payload;
+      } catch (e) {
+        cv.style.display = "none";
+        st.textContent = "QR error: " + e.message;
+      }
     });
   })();
 })();

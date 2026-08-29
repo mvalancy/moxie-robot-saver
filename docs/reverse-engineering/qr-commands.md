@@ -194,6 +194,27 @@ python -m moxie_toolkit.cli validate                                 # 27 checks
 Every generator is validated by schema round-trip **and** by producing byte-identical `PA` payloads
 to the independently reverse-engineered phone-side encoder ([`../../tools/pairing/moxie_qr.py`](../../tools/pairing/moxie_qr.py)) — strong evidence the recovered grammar is exactly right.
 
+### …and in the browser, with nothing installed
+
+The three commands that actually revive a robot — **`endpoint_update`**, **`wifi`**, and the plain
+**`debug`** commands — are **pure JSON with no protobuf anywhere** (see the grammar above). That is a
+bigger deal than it looks: it means the whole encoder is ~40 lines of JavaScript, so a **static web
+page can generate real revival codes client-side**.
+
+[`sim/web/qr.js`](../../sim/web/qr.js) does exactly that, driving the **Revive a robot** panel in the
+simulator's rail. Someone with a dead Moxie, a phone, and no computer can load the page and re-home
+the robot — no Python, no install, no shell.
+
+One subtlety worth writing down: Python's `json.dumps` emits `{"a": 1, "b": 2}` (space after `:` and
+`,`) while JavaScript's `JSON.stringify` emits `{"a":1,"b":2}`. The robot's parser doesn't care —
+it's JSON either way — but a *byte-parity test between the two encoders* does, so `qr.js` matches
+Python's spacing deliberately. `node sim/test_qr.mjs` asserts all seven payload shapes are
+byte-identical to `moxie_toolkit.qr_codec`; if either encoder drifts, CI fails rather than shipping a
+code the robot silently won't scan.
+
+The protobuf-bearing codes (`PA` pairing payloads, `QRMultiDecoder.encoded_proto`) stay in the Python
+toolkit — those need a real protobuf runtime, and they aren't on the revival path.
+
 ## Also carried: `QRMultiDecoder`
 
 ```proto

@@ -80,10 +80,17 @@ of the same backend ([why](../architecture/moxie-ecosystem.md)).
 No disassembly. The robot scans a QR that points it at **your** server.
 
 1. **Get the robot on Wi-Fi + paired** — [`first-time-setup.md`](first-time-setup.md).
-2. **Point it at your backend**: generate an endpoint QR and show it to Moxie's camera:
+2. **Point it at your backend**: generate an endpoint QR and show it to Moxie's camera.
+
+   **From a phone, nothing installed** — open the [simulator page](../../sim/web/) (it's a static site,
+   so a Cloudflare Pages deploy works) and use the **Revive a robot** panel in the rail. The endpoint,
+   Wi-Fi and debug QRs are **plain JSON**, so the page builds them client-side; no server, no Python.
+
+   **From a terminal**, the toolkit does the same thing:
    ```sh
    python -m moxie_toolkit.cli endpoint OPEN_MOXIE --png fix.png
    ```
+   Both emit **byte-identical payloads** (asserted by `node sim/test_qr.mjs`).
    `OPEN_MOXIE` (=11) and `EMBODIED_LOCAL` (=8) are **built into the shipped firmware**, so the robot
    natively knows how to home to a self-hosted server ([`qr-commands.md`](../reverse-engineering/qr-commands.md)).
 3. **TLS**: the robot validates against the CA store with **no pinning**, so a real domain + Let's

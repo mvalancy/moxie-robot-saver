@@ -19,7 +19,12 @@ Inter + JetBrains Mono). Point Cloudflare Pages at it and it works. What changes
 | Child's voice (audible) | ✅ works | pre-rendered too — both sides of the conversation |
 | **Conversation** (talk → reply → gestures) | ✅ works | **stub brain** emits real behavior markup |
 | Mic button | ✅ degrades | falls back to a **scripted child line** (no STT model) |
+| **Revival QR** (re-home a real robot) | ✅ works | payloads are plain JSON, built client-side |
 | **Live bus** (a REAL robot connecting) | ❌ self-host | needs your MQTT broker + TLS |
+
+The one thing on that list that isn't a demo is the **revival QR**: the codes that re-home a robot are
+plain JSON, so the static page generates the real thing. A parent with a dead Moxie and no computer can
+open the Pages URL on a phone, tap **Make**, and hold it up to the camera.
 
 **So the static deploy is a complete, voiced, animated demo** — you can talk to Moxie and it answers,
 speaks, gestures and shows symbols with **no server at all**. The stubs use the *same protocol shapes*

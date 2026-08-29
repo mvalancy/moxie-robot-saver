@@ -9,3 +9,4 @@ doctrine — the sim must work if every external link dies). Pinned versions:
 
 To update: re-fetch the same paths from `https://unpkg.com/three@<ver>/` and
 `https://unpkg.com/mqtt@<ver>/dist/mqtt.min.js`, then bump the versions here.
+- `qrcode.js` — **qrcode-generator** v1.4.4 (Kazuhiko Arase). MIT License. Used by `qr.js` to render revival QR codes in-browser.
