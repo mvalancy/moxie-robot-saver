@@ -58,7 +58,17 @@
 `USE_FACE_ID_HISTORY` · `USE_SPEAKER_ID` · `MAX_ENROLL` · `MAX_ENROLLMENT_THRESHOLD` · `MIN_ENROLLMENT_THRESHOLD` ·
 `EMBEDDING_DECAY` · `EMBEDDING_DECAY_THRESHOLD` · `MIN_DECAY_CAP` · `FUSER_RANK_WARN` · `FUSION_IS_SPEAKING_TIMEOUT` ·
 `FUSION_MAXIMUM_DOA_ONLY_AGE` · `FUSION_MAXIMUM_DOA_ONLY_AGE_WHILE_ROBOT_SPEAKING` · `IMAGE_CAPTIONING` ·
-`IMAGE_CAPTIONING_MODEL` · `IMAGE_CAPTIONING_TIMEOUT` · `IMAGE_CAPTION_BY_RB` · `ENHANCED_VISION_LOG`
+`IMAGE_CAPTIONING_MODEL` · `IMAGE_CAPTIONING_TIMEOUT` · `IMAGE_CAPTION_BY_RB` · `ENHANCED_VISION_LOG` ·
+**`GAZE_WEIGHT`** · **`GAZE_DECAY`**
+
+> **Gaze / eye contact.** `GAZE_WEIGHT` and `GAZE_DECAY` tune how strongly a person's **gaze** counts
+> toward attention/targeting and how fast that contribution fades — the robot scores who is looking at
+> it (`gaze_score`, `eye_contact` in the fusion path) and uses it to pick whom to attend to, alongside
+> `FACE_TRACKING_THRESHOLD`/`ENGAGED_TARGETING_THRESHOLD`. Content can also explicitly request eye
+> contact via `LookAtMeRequest{user, bot}` ([`perception-pipeline.md`](perception-pipeline.md)). A
+> revival server can leave these at defaults (attention is computed on-device) or tune them to make
+> Moxie more/less eager to hold eye contact; a **[SIL](../architecture/sil-and-cicd.md)** can mirror the
+> same idea in its idle-gaze behavior.
 
 ## Wake · sleep · session
 
