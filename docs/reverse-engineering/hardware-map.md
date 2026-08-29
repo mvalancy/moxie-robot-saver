@@ -155,7 +155,7 @@ feeds the projector light engine; `POWER_MUTE`/`POWER_SPEAKER` gate audio; `Powe
 
 ## Lizard MCU firmware update (bootloader "GOBY")
 
-The Lizard board is a separate **STM32** microcontroller (Cortex-M) with its own firmware, updated
+The Lizard board is a separate **STM32F071VBT6** microcontroller (ARM Cortex-M0, LQFP-100, 128 KB flash — part number read directly off the die in the FCC internal photos, see [`fcc-teardown.md`](fcc-teardown.md)) with its own firmware, updated
 from Android over UART by `bo-firmwareUpdate` / `me.embodied.firmwareupdatelib.fwUpdateLibEntry`
 (native `libnative-lib.so`, class `lizardPktAssembler`).
 

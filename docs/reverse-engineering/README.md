@@ -72,5 +72,7 @@ flowchart TB
 
 - [`external-sources.md`](external-sources.md) — **external & community research map** (FCC filings, teardowns, OpenMoxie, Lantronix, press) — facts extracted & adjudicated against our RE, with a provenance/licensing policy and a self-sufficiency doctrine.
 
+- [`fcc-teardown.md`](fcc-teardown.md) — **board-level hardware map from the FCC filings** (rev1 vs rev2): full chip inventory, per-chip programmer/IDE/toolchain, the `LOAD` download button + STM32 `ISP & DEBUG` header, all cited to exhibit pages.
+
 ---
 📖 [Docs index](../README.md) · [Back to top](../../README.md)

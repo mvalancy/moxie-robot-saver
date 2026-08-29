@@ -52,7 +52,7 @@
 - [ ] **USB data port reachable without opening?** — decides whether the download-mode/ADB/MTP paths are truly "no-open".
 - [ ] **Macro-button → mode mapping** (long-press at power-on → recovery vs bootrom-download) + exact ADC thresholds (compiled into U-Boot; watch serial console).
 - [ ] **A genuine signed 803 `update.zip`** — unlocks recovery sideload / network-OTA revival.
-- [ ] **Teardown artifacts:** mainboard photos, UART pad map, maskrom test-point, per-partition read-back vs [hashes](firmware-803-reference.md).
+- [~] **Teardown artifacts:** ✅ mainboard photos + full chip inventory + the `LOAD` (download-mode) / `RESET` / `POWER` buttons + the Lizard MCU `ISP & DEBUG` (SWD) + `RX`/`TX` header — all from the **FCC filings**, see [`fcc-teardown.md`](fcc-teardown.md). ❌ still open: **SoC-side UART pad map** and **maskrom test-point** (not visible in the FCC photos), and per-partition read-back (needs a unit).
 - [ ] **Full Unity per-object export** (face mesh/expressions, audio banks) via AssetStudio.
 - [ ] **libsecrets DB/FTP creds** already recovered; other native ML model formats (`libbo-brain`) unmapped (low priority).
 

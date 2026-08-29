@@ -116,12 +116,12 @@ exhibits for us are the **internal photos** (PCB, SoC/module markings, antenna, 
 independent SoC/Wi-Fi confirmation, and possibly **UART/test-point pads visible on the board**) and
 the **RF test report** (confirms bands: 2.4 GHz Wi-Fi/BT and, if present, 5 GHz — a BCM4339 is 1×1
 802.11ac, so 5 GHz support in the report would corroborate [`device-tree.md`](device-tree.md)). Block
-diagram/schematics may be confidentiality-withheld. **Status: not yet extracted — both `fccid.io` and
-`fcc.report` sit behind a Cloudflare JS challenge that blocks automated fetch (verified 2026-08-28:
-HTTP 403 "Just a moment…", via both WebFetch and curl). The Test Report exhibit is `4817095`.** The
-files are public in a real browser; pulling the SoC/module/antenna/band facts (facts only, no
-re-hosting) into `hardware-map.md`/`device-tree.md` needs a browser-capable fetch or a manual paste —
-the top self-sufficiency TODO.
+diagram/schematics may be confidentiality-withheld. **✅ Substance captured in-repo** — the internal/
+external photos + test report (both rev1 `EMBODIEDMOXIEA` and rev2 `EMBMOXIEVTWO`) have been analysed
+and their facts extracted into **[`fcc-teardown.md`](fcc-teardown.md)**: full chip inventory, the
+`LOAD`/`RESET`/`POWER` buttons, the STM32F071VBT6 MCU + `ISP & DEBUG` SWD/UART header, XMOS `VSM02C`,
+motor connectors, and a per-chip programmer/IDE map — all cited to exhibit pages. (The mirrors block
+automated fetch behind Cloudflare; these were pulled manually and analysed locally.)
 
 ### FCC ID `2AV9N-EMBMOXIEVTWO` (Moxie **V2**)
 A **second hardware revision** exists ([fccid.io](https://fccid.io/2AV9NEMBMOXIEVTWO)). This matters
