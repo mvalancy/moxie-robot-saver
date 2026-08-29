@@ -66,15 +66,16 @@ Backend config is generic in the repo (Ollama/LiteLLM); no private endpoints/key
 `mqtt/` (broker + supervisor + brain + TTS + STT) + `server/` (accounts/REST/UI) as one cohesive,
 one-command stack that a **SIL virtual robot or a real re-homed Moxie** connects to identically.
 
-### 7 · Packaging & docs
-`docker compose up` = broker + brain + TTS + STT + web. Config guides for **Ollama** (recommended
+### 7 · Packaging & docs ✅ (core)
+`docker compose -f sim/docker-compose.yml up` = broker + supervisor + web; `--profile voice` adds
+Piper TTS + whisper STT; `--profile demo` adds a virtual robot. Config guides for **Ollama** (recommended
 offline) and **LiteLLM**. HUD polish. Everything version-stamped, self-contained (vendored deps).
 
 ## Phases (rough week)
 
 - **Phase 0 — Foundations (DONE):** protocol SIL + CI, 3D Moxie v1, live MQTT-WS bridge, markup→
   animation, record/replay, docker package, control-room HUD, vendored deps, Piper verified.
-- **Phase 1 — Real model + voice loop (IN PROGRESS):** ① two-part model + liveness (Fable, running);
+- **Phase 1 — Real model + voice loop (DONE):** ① two-part model + liveness (Fable, running);
   ③ Piper TTS audible in the web; ④ STT via web mic; wire ⑤ the LLM brain to LiteLLM/Ollama.
 - **Phase 2 — Agent + personality + expression:** Moxie converses with a personality, remembers, and
   drives mood/gesture/icons markup so the avatar emotes; STT↔TTS↔LLM full duplex; liveness integrated.
