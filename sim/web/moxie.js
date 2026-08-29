@@ -560,7 +560,8 @@ faceTex.colorSpace = THREE.SRGBColorSpace;
 faceTex.anisotropy = 4;
 
 const faceAssembly = new THREE.Group();
-faceAssembly.position.set(0, 0.62, 0.0);      // pane parallel to the flat face plane
+faceAssembly.position.set(0, 0.580, 0.0);     // lowered with the shorter pane so the BOTTOM
+                                              // edge stays exactly where it lined up
 headForm.add(faceAssembly);
 
 // Bake scale into a flat geometry, then give it a very shallow curve; used by
@@ -590,7 +591,8 @@ function bentPlate(geo, sx, sy, Rx, Ry) {
 // without burying the visible face area. Backlit: emissiveMap is the face
 // canvas, so the drawn features glow from within.
 const FACE_RX = 0.545;        // panel half-width — fills the (wider) head front
-const FACE_RY = 0.505;        // panel half-height — near-round, matches the chubby head
+const FACE_RY = 0.465;        // panel half-height — trimmed at the TOP so the pane stays
+                              // inside the egg head's narrowing crown (bottom edge unchanged)
 
 function facePanelGeometry(rx, ry) {
   // RingGeometry with inner radius ~0 gives a disk WITH radial segments, so
