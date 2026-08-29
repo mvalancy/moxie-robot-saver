@@ -91,9 +91,11 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
   ✅ **conversation transcript panel** — `bridge.js` subscribes to `events/remote-chat` (child) +
   `commands/remote_chat` (Moxie) and renders both sides in a scrolling panel; basic talking-mouth viseme
   during speech. ⏳ optional: phoneme-accurate viseme mouth shapes.
-- [~] **D6 — Scenarios + record/replay.** ✅ started: `sim/scenarios/*.json` scripted conversations +
-  `virtual_moxie.py --scenario` + `sim/run_scenarios.sh` (in CI); `basic.json` runs 4/4 turns. ⏳ remaining:
-  record a live session and replay into the UI; LLM-app scenarios.
+- [x] **D6 — Scenarios + record/replay.** ✅ `sim/scenarios/*.json` + `virtual_moxie.py --scenario`/
+  `--loop-seconds` + `sim/run_scenarios.sh` (in CI). ✅ **record/replay**: `bridge.js` records live bus
+  events and replays them (with original timing) through the same handlers — Record/Save/Load/**Play
+  demo** buttons; ships a canned `sim/web/sessions/demo.json` (a birthday exchange) that replays the 3D
+  Moxie **with no broker**.
 - [x] **D7 — Package + deliver.** `docker compose -f sim/docker-compose.yml up` = broker + supervisor +
   web UI (+ `--profile demo` virtual robot); [`sim/README.md`](../../sim/README.md) one-command run.
   Compose config validated; loop-replay verified. ⏳ optional polish: screenshots/gif, release tag.

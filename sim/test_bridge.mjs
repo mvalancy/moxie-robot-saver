@@ -20,17 +20,18 @@ const moxie = {
   clearIcons: () => calls.clearIcons.push(true),
   setHeartLED: () => {},
 };
-let clickHandler = null, mqttClient = null;
-const fakeEl = () => ({
-  value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0, scrollHeight: 0,
-  addEventListener: (e, cb) => { if (e === "click") clickHandler = cb; },
+const clickHandlers = {}, mqttClientRef = { c: null };
+const els = {};                                   // id-keyed elements (real DOM is stable per id)
+const fakeEl = (id) => ({
+  id, value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0, scrollHeight: 0,
+  addEventListener: (e, cb) => { if (e === "click" && id) clickHandlers[id] = cb; },
   appendChild: (child) => calls.transcript.push(child && child._text),
   querySelector: () => ({ set textContent(v) {}, get textContent() { return ""; } }),
 });
 globalThis.window = { moxie, addEventListener: () => {} };
 globalThis.location = { hostname: "127.0.0.1" };
 globalThis.document = {
-  getElementById: () => fakeEl(),
+  getElementById: (id) => (els[id] ||= fakeEl(id)),
   createElement: () => {
     const el = fakeEl();
     Object.defineProperty(el, "querySelector", { value: () => ({ set textContent(v) { el._text = v; } }) });
@@ -40,15 +41,16 @@ globalThis.document = {
 globalThis.mqtt = {
   connect: () => {
     const h = {};
-    mqttClient = { on: (e, cb) => { h[e] = cb; }, subscribe: () => {}, end: () => {}, _emit: (e, ...a) => h[e] && h[e](...a) };
-    return mqttClient;
+    mqttClientRef.c = { on: (e, cb) => { h[e] = cb; }, subscribe: () => {}, end: () => {}, _emit: (e, ...a) => h[e] && h[e](...a) };
+    return mqttClientRef.c;
   },
 };
 
-// ---- load bridge.js (IIFE runs; window.moxie exists → initUI wires the click) ----
+// ---- load bridge.js (IIFE runs; window.moxie exists → initUI wires the clicks) ----
 (0, eval)(src);
-if (!clickHandler) throw new Error("bridge did not wire the connect button");
-clickHandler();                       // → connect() → mqtt.connect → mqttClient
+if (!clickHandlers["bus-connect"]) throw new Error("bridge did not wire the connect button");
+clickHandlers["bus-connect"]();       // → connect() → mqtt.connect → mqttClientRef.c
+const mqttClient = mqttClientRef.c;
 if (!mqttClient) throw new Error("bridge did not connect over mqtt");
 mqttClient._emit("connect");
 

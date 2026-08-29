@@ -12,8 +12,8 @@ docker compose -f sim/docker-compose.yml up            # broker + supervisor + w
 ```
 
 Then open **http://localhost:8080** and click **Connect** (the UI talks MQTT-over-WebSocket to the
-broker on `:9001`). Drive Moxie by hand with the panel, or use `--profile demo` to watch a scripted
-conversation play out — the 3D Moxie speaks, emotes, gestures, and shows event icons from the live bus.
+broker on `:9001`). Drive Moxie by hand with the panel, hit **Play demo** to replay a canned birthday session (no broker
+needed), or use `--profile demo` to watch a scripted conversation play out — the 3D Moxie speaks, emotes, gestures, and shows event icons from the live bus.
 
 ## Pieces
 | Path | What |

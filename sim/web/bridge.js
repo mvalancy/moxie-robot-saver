@@ -145,14 +145,42 @@
     client.on("reconnect", () => status(`reconnecting ${url}…`));
     client.on("error", (e) => status(`error: ${e && e.message ? e.message : e}`));
     client.on("close", () => status(`○ disconnected`));
-    client.on("message", (topic, payload) => {
-      const s = payload.toString();
-      if (topic.endsWith("/commands/remote_chat")) handleRemoteChat(s);
-      else if (topic.endsWith("/events/remote-chat")) handleUserTurn(s);
-      else if (topic.endsWith("/config")) {
-        try { const c = JSON.parse(s); status(`config: pairing_status=${c.pairing_status}`); } catch {}
-      }
-    });
+    client.on("message", (topic, payload) => route(topic, payload.toString()));
+  }
+
+  // Route one message to the avatar. Shared by the live client and by replay,
+  // so a recorded session drives the exact same handlers.
+  function route(topic, s) {
+    if (recording && !replaying) recorded.push({ t: nowMs(), topic, payload: s });
+    if (topic.endsWith("/commands/remote_chat")) handleRemoteChat(s);
+    else if (topic.endsWith("/events/remote-chat")) handleUserTurn(s);
+    else if (topic.endsWith("/config")) {
+      try { const c = JSON.parse(s); status(`config: pairing_status=${c.pairing_status}`); } catch {}
+    }
+  }
+
+  // ---- record / replay ----
+  const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+  let recorded = [], recording = false, replaying = false;
+  function setRecording(on) {
+    recording = on;
+    if (on) recorded = [];
+    status(on ? "● recording…" : `recorded ${recorded.length} events`);
+  }
+  function replay(session, speed) {
+    if (!Array.isArray(session) || !session.length) { status("empty session"); return; }
+    speed = speed || 1; replaying = true;
+    const t0 = session[0].t || 0;
+    status(`▶ replaying ${session.length} events`);
+    session.forEach((ev) => setTimeout(() => route(ev.topic, ev.payload), Math.max(0, (ev.t - t0) / speed)));
+    const dur = ((session[session.length - 1].t - t0) / speed) + 200;
+    setTimeout(() => { replaying = false; status(`replay done (${session.length} events)`); }, dur);
+  }
+  function exportSession() {
+    const blob = new Blob([JSON.stringify(recorded, null, 0)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "moxie-session.json"; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   // ---- transcript ----
@@ -178,12 +206,26 @@
   }
 
   // ---- wire the panel once moxie + DOM are ready ----
+  function wire(id, fn) { const el = document.getElementById(id); if (el) el.addEventListener("click", fn); }
   function initUI() {
     const host = document.getElementById("bus-host");
     const btn = document.getElementById("bus-connect");
-    if (!btn) return;
     if (host && !host.value) host.value = location.hostname || "127.0.0.1";
-    btn.addEventListener("click", () => connect(host.value.trim() || "127.0.0.1", 9001));
+    if (btn) btn.addEventListener("click", () => connect(host.value.trim() || "127.0.0.1", 9001));
+    // record / replay controls
+    wire("rec-toggle", () => setRecording(!recording));
+    wire("rec-save", () => exportSession());
+    wire("rec-demo", async () => {
+      try { const r = await fetch("sessions/demo.json"); replay(await r.json(), 1); }
+      catch (e) { status("demo load failed: " + e); }
+    });
+    const loader = document.getElementById("rec-load");
+    if (loader) loader.addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => { try { replay(JSON.parse(rd.result), 1); } catch (err) { status("bad session file"); } };
+      rd.readAsText(f);
+    });
   }
   if (window.moxie) initUI();
   else window.addEventListener("moxie-ready", initUI, { once: true });
