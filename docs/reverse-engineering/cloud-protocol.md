@@ -181,6 +181,40 @@ ignore for a minimal revival). Three previously-undocumented messages:
 All three carry the usual `software_version` (100) / `module_name` (101) envelope fields and arrive on
 the `events` topic like other robot→cloud reports.
 
+## File sync — how a server delivers content, voice & ChatScript
+
+The robot pulls its **content modules, CereVoice voice data, and ChatScript** from the server by a
+**hash-based delta sync** (the `MQTT_FILE_SYNC` channel referenced in
+[content-and-conversation](content-and-conversation.md#where-the-data-lives)). The message set
+(`embodied.logging`), now fully recovered:
+
+```proto
+message FileEntry      { string path = 1; string hash = 2; }              // one file: rel-path + content hash
+message FileListQuery  { string root_name = 1; string current_version = 2; }        // robot → "what's in this root?"
+message FileListResponse { string root_name = 1; string current_version = 2;
+                           repeated FileEntry files = 3; }                 // server → the manifest (path+hash each)
+message FileRead       { string root_name = 1; FileEntry file = 2; }                 // robot → "send me this file"
+message FileResponse   { string root_name = 1; FileEntry file = 2; bytes contents = 3; } // server → the bytes
+message FileSyncState  { uint64 timestamp; string root_name; string local_path;
+                         enum SyncState { SYNC_IDLE=0; SYNC_ACTIVE=1; SYNC_COMPLETE=2; } sync_state;
+                         enum RootType  { ROOT_TYPE_UNKNOWN=0; ASSETS=1; } root_type; }  // robot → progress
+```
+
+**The exchange** (a **`root`** is a named tree, e.g. `ASSETS`):
+1. Robot sends **`FileListQuery{root_name, current_version}`** — "here's the version I have."
+2. Server replies **`FileListResponse{files:[{path, hash}, …]}`** — the full manifest with a hash per file.
+3. Robot diffs hashes against what it has and, for each changed/missing file, sends
+   **`FileRead{root_name, file}`**.
+4. Server returns **`FileResponse{file, contents:bytes}`** — the raw bytes.
+5. Robot reports **`FileSyncState`** (`SYNC_ACTIVE` → `SYNC_COMPLETE`) as it writes into `local_path`
+   (under `/sdcard/EmbodiedData` / `EmbodiedStaticData`).
+
+**Revival relevance (goal #2):** this is the whole mechanism for **pushing new content/voice to a
+robot** — a server implements the four request/response messages, serves files by path with a stable
+hash (any digest, as long as it's consistent so unchanged files are skipped), and the robot pulls only
+the deltas. No account or signing is involved in the transfer itself (unlike the signed **OTA** image
+path, [`ota-and-recovery.md`](ota-and-recovery.md)).
+
 ## Robot authentication (device identity)
 
 The robot authenticates with the **Google Cloud IoT-Core device model**, kept post-migration:
