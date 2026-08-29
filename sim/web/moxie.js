@@ -103,9 +103,10 @@ const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerH
 camera.position.set(1.8, 2.1, 4.8);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.22, 0);
+controls.target.set(0, 1.15, 0);        // Moxie's centre — orbit always pivots here
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
+controls.enablePan = false;             // rotation stays centred on Moxie (no drift)
 controls.minDistance = 2.0;
 controls.maxDistance = 12.0;
 controls.maxPolarAngle = 1.48;
@@ -1813,14 +1814,17 @@ animate();
 function applyStageOffset() {
   const W = window.innerWidth, H = window.innerHeight;
   camera.aspect = W / H;
+  // Centre Moxie in the OPEN part of the viewport (the area left of the docked
+  // control panel). Only when the panel is a right-side column — in drawer mode
+  // (panel is a bottom sheet) Moxie stays centred in the full viewport.
   const panel = document.getElementById('panel');
   let shift = 0;
-  if (W > 760 && panel) {
+  if (panel) {
     const r = panel.getBoundingClientRect();
-    // panel is docked to the right edge and visible
-    if (r.width > 0 && r.right >= W - 2) shift = r.width * 0.5;
+    const isSideColumn = r.width > 0 && r.left > W * 0.3 && r.top < H * 0.4 && r.height > H * 0.5;
+    if (isSideColumn) shift = (W - r.left) / 2;   // open area = [0, r.left]; centre = r.left/2
   }
-  if (shift > 4) camera.setViewOffset(W, H, shift, 0, W, H);
+  if (shift > 8) camera.setViewOffset(W, H, shift, 0, W, H);
   else camera.clearViewOffset();
   camera.updateProjectionMatrix();
   renderer.setSize(W, H);

@@ -359,12 +359,12 @@
   var hud = document.getElementById("hud");
   var t = document.getElementById("rail-toggle");
   if (!hud || !t) return;
-  var mq = window.matchMedia("(max-width: 700px)");
+  var mq = window.matchMedia("(max-width: 1359px)");
   function setClosed(closed) {
     hud.classList.toggle("rail-closed", closed);
     t.setAttribute("aria-expanded", String(!closed));
   }
-  if (mq.matches) setClosed(true);           // start collapsed on phones
+  if (mq.matches) setClosed(true);           // start collapsed on phones/tablets (drawer)
   mq.addEventListener("change", function (e) { if (!e.matches) setClosed(false); });
   t.addEventListener("click", function () {
     setClosed(!hud.classList.contains("rail-closed"));
