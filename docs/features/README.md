@@ -7,6 +7,7 @@ app; the [reverse-engineering maps](../reverse-engineering/) are the source of t
 ## Documents
 - [`feature-catalog.md`](feature-catalog.md) — **the complete catalog** (15 areas + a hidden/developer
   section, endpoint inventory, enums, PII-encryption map, COPPA/Privo, GRL, teletherapy).
+- [`robot-capabilities.md`](robot-capabilities.md) — **the robot's own capability catalog** (conversation, speech, vision, movement, activities, sessions, system) — indexed to the RE docs.
 - [`robot-lifecycle.md`](robot-lifecycle.md) — pairing, unpair, **factory reset**, restore/backup,
   reboot, OTA, the full robot state model.
 
