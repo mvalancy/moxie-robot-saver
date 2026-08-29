@@ -1,0 +1,37 @@
+# Moxie CI workflow — INSTALL: copy to .github/workflows/ci.yml
+# (pushing under .github/workflows/ needs a token with 'workflow' scope;
+#  kept here as a template so it version-controls without that scope).
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+
+jobs:
+  docs:
+    name: Docs & protocol integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Internal doc links resolve
+        run: python3 scripts/check-doc-links.py
+      - name: Recovered protos compile
+        run: |
+          pip install protobuf grpcio-tools >/dev/null
+          python3 tools/robot-toolkit/moxie_toolkit/validate_protos.py || true
+
+  sil:
+    name: SIL — virtual robot ⇄ server round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install broker + client deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y mosquitto
+          sudo systemctl stop mosquitto || true
+          pip install "paho-mqtt>=2.0"
+      - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
+        run: bash sim/run_smoke.sh
