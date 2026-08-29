@@ -41,6 +41,7 @@ Each verb is a `CommandMarkUpGenerator` with a typed request (its `data` fields)
 | **`blink-control`** | Control blinking. |
 | **`dynamic-face-texture`** | Swap the projected face texture. |
 | **`attachment` / `-animator` / `-particles`** | Show/animate a screen attachment + particle FX. |
+| **`icons-v2`** | Show up to **4 contextual icons** on the face screen (calendar/event cues). |
 | **`hud`** | HUD overlay element. |
 | **`notification`** | On-screen notification (`message`, `duration`). |
 | **`reward-star`** | Reward-star animation (STAR system). |
@@ -82,6 +83,28 @@ Each verb is a `CommandMarkUpGenerator` with a typed request (its `data` fields)
 **`idlestate`**: `idleState` int (e.g. 7).
 
 **`notification`**: `message` string, `duration` float (default 2s).
+
+**`icons-v2`**: shows a small row of icons on the face screen — used heavily by the **holiday/calendar
+event** content ([content-and-conversation](content-and-conversation.md#context-assembly--topical-awareness)).
+Recovered schema (from shipped content):
+
+```
+cmd:icons-v2, data:{
+  command:    int,     # 0 = show/enter, 2 = hide/clear  (paired around the spoken line)
+  index:      int,     # slot/page index
+  transition: float,   # fade time
+  volume:     float,   # associated cue volume (0.0–1.0)
+  icon0..icon3: { iconType: int,   # 0 = empty, 1 = named icon
+                  value:    string,# icon name, or "Null"
+                  background: string },  # bg id, or "Null"
+  highlight:  int }
+```
+
+Up to **four icon slots**; a turn typically emits `command:0` (show) before the sentence and `command:2`
+(clear) after. Real icon `value`s seen in shipped content: **`School`**, **`Birthday`**, **`Medical`**,
+**`Learning_About_Family_03_Heart_Family`** (icons are named assets in the character bundle, so the full
+set is bundle-defined). A [SIL face](../architecture/sil-and-cicd.md) can render these as small badges on
+the screen; a revival server that emits event reminders should pair each with the matching icon name.
 
 > Values above are read from shipped content and the request classes. The full enum spaces (all gesture
 > names, mood ids, behavior-tree ids) live in the character asset bundles; the generators accept any
