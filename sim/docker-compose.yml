@@ -14,10 +14,16 @@ services:
 
   supervisor:                                    # the mqtt/ robot-cloud supervisor (echo app = no LLM)
     build: ../mqtt
+    env_file:
+      - path: ../mqtt/.env          # your LLM config (gitignored) — optional
+        required: false
     environment:
-      MOXIE_APP: echo
+      MOXIE_APP: ${MOXIE_APP:-echo}          # set MOXIE_APP=llm in mqtt/.env for the brain
       MOXIE_MQTT_HOST: broker
       MOXIE_MQTT_PORT: "1883"
+      MOXIE_MEMORY_DIR: /data/memory         # conversation memory survives restarts
+    volumes:
+      - moxie-memory:/data/memory
     depends_on: [broker]
     restart: unless-stopped
 
@@ -57,3 +63,4 @@ services:
 
 volumes:
   whisper-cache:
+  moxie-memory:

@@ -53,6 +53,9 @@ class MoxieRuntime:
         self.host, self.port = host, port
         self.robots: dict[str, RobotContext] = {}
         self.history: dict[str, list] = {}
+        self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
+        self._max_memory = int(os.environ.get("MOXIE_MEMORY_TURNS", "40"))
+        self._load_memory()
         from concurrent.futures import ThreadPoolExecutor
         from collections import deque
         self._pool = ThreadPoolExecutor(max_workers=8)
@@ -61,6 +64,43 @@ class MoxieRuntime:
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="supervisor")
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
+
+    # ---- conversation memory (survives restarts) ----
+    def _memory_path(self, device_id: str) -> str:
+        safe = "".join(c for c in device_id if c.isalnum() or c in "-_")
+        return os.path.join(self._memory_dir, f"{safe}.json")
+
+    def _load_memory(self):
+        """Restore per-device conversation history from disk, if configured."""
+        if not self._memory_dir:
+            return
+        try:
+            os.makedirs(self._memory_dir, exist_ok=True)
+            for name in os.listdir(self._memory_dir):
+                if not name.endswith(".json"):
+                    continue
+                with open(os.path.join(self._memory_dir, name)) as fh:
+                    self.history[name[:-5]] = json.load(fh)
+            if self.history:
+                print(f"[runtime] restored memory for {len(self.history)} robot(s)")
+        except Exception as e:
+            print(f"[runtime] memory load failed: {e}")
+
+    def _save_memory(self, device_id: str):
+        """Persist one robot's history (trimmed) so it survives a restart."""
+        if not self._memory_dir:
+            return
+        h = self.history.get(device_id) or []
+        if len(h) > self._max_memory:
+            del h[: len(h) - self._max_memory]
+        try:
+            os.makedirs(self._memory_dir, exist_ok=True)
+            tmp = self._memory_path(device_id) + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump(h, fh)
+            os.replace(tmp, self._memory_path(device_id))
+        except Exception as e:
+            print(f"[runtime] memory save failed: {e}")
 
     # ---- lifecycle ----
     def run(self, status_port: int = 8930):
@@ -244,6 +284,7 @@ class MoxieRuntime:
         if speech:
             h.append({"role": "user", "content": speech})
         h.append({"role": "assistant", "content": reply.text})
+        self._save_memory(device_id)
         markup = reply.markup if reply.markup is not None else make_markup(reply.text)
         self._note("chat", f"💬 '{speech[:30]}' → '{reply.text[:40]}'")
         print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{reply.text[:60]}'", flush=True)
@@ -260,6 +301,7 @@ class MoxieRuntime:
                                if not l.startswith(("animation:", "silent:")))
             if spoken.strip():
                 h.append({"role": "assistant", "content": spoken.strip()})
+        self._save_memory(device_id)
 
     def _on_activity(self, device_id, payload):
         try:
