@@ -22,7 +22,7 @@ needed), or use `--profile demo` to watch a scripted conversation play out — t
 | [`virtual_moxie.py`](virtual_moxie.py) | The SIL robot: speaks the real MQTT protocol. `--scenario`/`--loop-seconds` replay conversations. |
 | [`broker/ci-mosquitto.conf`](broker/) | Mosquitto with `:1883` (MQTT) + `:9001` (WebSocket for the browser). |
 | [`scenarios/`](scenarios/) | Scripted conversations (JSON) for the demo + tests. |
-| `run_smoke.sh` / `run_scenarios.sh` / `test_bridge.mjs` | The three test layers (also in CI, [`ci/ci.yml`](ci/)). |
+| `run_smoke.sh` / `run_scenarios.sh` / `test_bridge.mjs` / `test_voice.mjs` | The four test layers (also in CI, [`ci/ci.yml`](ci/)). `test_voice` exercises the real TTS/STT services and skips cleanly if they aren't running. |
 
 ## Without Docker
 ```sh
