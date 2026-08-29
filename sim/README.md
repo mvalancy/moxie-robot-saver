@@ -34,3 +34,22 @@ cd sim/web && python3 -m http.server 8080   # serve the UI, then run a broker+su
 The firmware is the **contract, not the runtime** — we don't boot the RK3288 Android image (it needs
 absent vendor HALs). The virtual robot speaks the real MQTT topics + JSON/markup, so "works in the sim"
 means "works on a real re-homed robot." Scope + honest limits: [`sil-and-cicd.md`](../docs/architecture/sil-and-cicd.md#what-is-and-isnt-simulated--honest-scope).
+
+## Voice (Piper TTS)
+
+Moxie speaks via a local **Piper** service — offline, no cloud, no API key:
+
+```sh
+# 1) a python with piper installed
+python3 -m venv /tmp/piper-venv && /tmp/piper-venv/bin/pip install piper-tts
+# 2) a voice (amy is the default preference)
+curl -L -o sim/tts/voices/en_US-amy-medium.onnx \
+  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx
+curl -L -o sim/tts/voices/en_US-amy-medium.onnx.json \
+  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
+# 3) run it
+python3 sim/tts/server.py 8081     # GET /tts?text=... -> audio/wav, /health
+```
+
+The web UI's **Audio** panel points at `http://127.0.0.1:8081` by default (editable).
+Voice `.onnx` files are gitignored (63 MB each).
