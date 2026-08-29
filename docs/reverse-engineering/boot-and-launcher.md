@@ -25,6 +25,13 @@ them per state:
 | `BO_ANALYTICS` | analytics (gated by `FEA_ANALYTICS`) |
 | `BO_XMOS_WD` | XMOS audio-DSP watchdog (gated by `FEA_XMOS_WATCHDOG`) |
 
+Each component reports its lifecycle on the bus as **`ComponentState{name, state, timestamp}`**
+(`embodied.launcher`), where **`State`** is `UNKNOWN=0`, `Running=1`, `NotRunning=2`, `Fault=3`. The
+Launcher watches these to detect a crashed component (`Fault`/`NotRunning`) and restart it — so a
+custom app layer should emit the same `ComponentState` for its own processes to plug into the
+supervision (or run its own supervisor). `DebugConfigureRequest{target, target_state}`
+(`embodied.system`) toggles a named target's debug state at runtime.
+
 ## States (`LauncherState`)
 
 ```mermaid
