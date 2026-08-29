@@ -135,6 +135,24 @@ The camera (OV2710) feeds a CV stack (`libbo-vision`, TFLite) publishing:
 | **`QRPB{qrcode, timestamp}`** | **decoded QR string** — the vision QR event (feeds both the setup grammar in [`qr-commands.md`](qr-commands.md) and content QRs in [`content-and-conversation.md`](content-and-conversation.md)) |
 | `BookId` / `DrawId` / `ImageToText` | activity-specific recognizers (reading, drawing) |
 
+### Face recognition & enrollment data model
+How Moxie *recognizes* a returning child (the [MXNet embedding path](firmware-inventory.md#the-on-device-ml-stack--four-frameworks)):
+
+- **`FaceDescriptor`** — a detected face's full record: geometry (`center`, `w`/`h`, `pitch`/`yaw`/`roll`),
+  quality (`blur`, `occlusion`), landmarks (`left_eye`, `right_eye`, `chin`), and — the key field —
+  **`repeated float descriptors`**: the **face-embedding vector** (the MXNet network's output). Recognition
+  = nearest-neighbour of this vector against enrolled users; `id` is the matched identity.
+- **`FaceIDEnrollmentInfo{uuid, number_of_enrollments}`** + **`FaceIDEnrollmentsInfo{enrollments[]}`** — the
+  enrollment registry: per-user UUID and how many face samples were captured (the "learn my face" flow,
+  [content-and-conversation](content-and-conversation.md#session--sleep-lifecycle)).
+- **`AnalyzedFacePB`** — bbox + `HeadPosePB` + **`ActionUnitPB`** (facial **FACS action units** → the
+  child's expression/emotion, feeding `emotion`/`emotion_proba`) + `landmarks[]`.
+
+> 🔒 **Privacy / revival note:** the face **embedding is biometric data**. It lives and matches
+> **on-device** — recognition never needs the cloud, so a revival server neither receives nor stores it
+> (matching the child-PII encryption stance in [crypto-and-keys §5b](crypto-and-keys.md#5b-field-level-encryption--apimodelschildjava177-196--asdecrypteddata)).
+> A minimal server can ignore face-ID entirely; the robot recognizes locally.
+
 ### Camera-driven activities (content activates these)
 
 Beyond faces/people, the vision stack has **object/scene recognizers that content modules switch on**

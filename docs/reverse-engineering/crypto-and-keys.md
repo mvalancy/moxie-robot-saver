@@ -500,6 +500,17 @@ arrays/objects and are *not* quote-wrapped. Encrypted fields on `ChildrenModel` 
 **A replacement server stores these as opaque base64 blobs.** It cannot read them and does not need to;
 only the app and (via the sealed `secret-key-collection`) the robot hold the key.
 
+**Robot/cloud-side mirror (`embodied.logging.Cloud.proto`).** The same field-level scheme survives to the
+robot as two protos: **`ChildEncrypted`** — `bytes *_encrypted` for `first_name`, `last_name`,
+`nickname`, `birthday`, `therapy_needs`, `self_regulation_tools_preferences`, `likes_imaginative_play`,
+`volume_preference`, `calendar_events` + a `checksum`, alongside *clear* metadata (`id`, `starbits`,
+`face_options`, `content_preferences`, `family`, `input_speed`, `grl_connect_enabled`, `holiday_events`,
+`unlimited_time`) — and **`ChildDecrypted`** with the identical fields in plaintext (+ `birthday_ts`).
+So the PII pipeline is **end-to-end encrypted app→cloud→robot**; the robot decrypts with the seed-derived
+key to get `ChildDecrypted`, and only then is `nickname` available for prompts (`child_pii.nickname`).
+Note `therapy_needs`/`self_regulation_tools_preferences` are **health-adjacent** — consistent with the
+`EMBODIED_HIPAA` endpoint ([`qr-commands.md`](qr-commands.md)).
+
 ### 5c. AUID
 
 AUID = the child's analytics/anonymous user id.
