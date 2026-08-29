@@ -1,6 +1,7 @@
 // Moxie robot simulator — visual front-end.
 // three.js r160, pinned via the importmap in index.html.
-// Exposes window.moxie = { setMotor, getMotor, setFace, setSpeech, setHeartLED }.
+// Exposes window.moxie = { setMotor, getMotor, setFace, setSpeech, setHeartLED,
+//                           showIcons, clearIcons }.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -401,6 +402,151 @@ let faceTarget = { ...EXPRESSIONS.neutral };
 const blink = { active: false, phase: 0, next: 2.5 + Math.random() * 3 };
 const speech = { until: 0 };
 
+// ---- Icon badges (cmd:icons-v2): up to 4 contextual chips below the mouth ----
+
+const ICON_POP_MS = 200;      // per-badge pop-in duration
+const ICON_STAGGER_MS = 60;   // delay between successive badges popping in
+const ICON_FADE_MS = 180;     // fade-out duration on clearIcons()
+
+const icons = { names: [], shownAt: 0, fading: false, fadeAt: 0 };
+
+function roundedRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// One glyph, centered on (0,0), sized for a ~46px chip.
+function drawIconGlyph(name) {
+  const n = name.toLowerCase();
+  if (n.includes('heart')) {
+    // heart (also covers e.g. "Learning_About_Family_03_Heart_Family")
+    fctx.fillStyle = '#e2607e';
+    fctx.beginPath();
+    fctx.moveTo(0, 11);
+    fctx.bezierCurveTo(-14, 1, -13, -10, -6.5, -10);
+    fctx.bezierCurveTo(-2.5, -10, 0, -7, 0, -4);
+    fctx.bezierCurveTo(0, -7, 2.5, -10, 6.5, -10);
+    fctx.bezierCurveTo(13, -10, 14, 1, 0, 11);
+    fctx.closePath();
+    fctx.fill();
+  } else if (n.includes('medical')) {
+    // medical cross
+    fctx.fillStyle = '#dd4f4a';
+    roundedRectPath(fctx, -4.5, -12, 9, 24, 2.5);
+    fctx.fill();
+    roundedRectPath(fctx, -12, -4.5, 24, 9, 2.5);
+    fctx.fill();
+  } else if (n.includes('birthday')) {
+    // birthday cake with a candle
+    fctx.fillStyle = '#e88ab0';                       // cake
+    roundedRectPath(fctx, -11, -2, 22, 13, 3);
+    fctx.fill();
+    fctx.fillStyle = '#fdf6ec';                       // icing band
+    roundedRectPath(fctx, -11, -2, 22, 5, 2.5);
+    fctx.fill();
+    fctx.fillStyle = '#4d7fc4';                       // candle
+    roundedRectPath(fctx, -1.8, -10, 3.6, 8, 1.5);
+    fctx.fill();
+    fctx.fillStyle = '#f2a93b';                       // flame
+    fctx.beginPath();
+    fctx.ellipse(0, -12.5, 2.4, 3.4, 0, 0, Math.PI * 2);
+    fctx.fill();
+  } else if (n.includes('school')) {
+    // graduation cap
+    fctx.fillStyle = '#3f6fb5';
+    fctx.beginPath();                                  // mortarboard
+    fctx.moveTo(0, -10);
+    fctx.lineTo(14, -4);
+    fctx.lineTo(0, 2);
+    fctx.lineTo(-14, -4);
+    fctx.closePath();
+    fctx.fill();
+    fctx.beginPath();                                  // cap base
+    fctx.moveTo(-7, -1);
+    fctx.lineTo(7, -1);
+    fctx.lineTo(7, 6);
+    fctx.quadraticCurveTo(0, 10, -7, 6);
+    fctx.closePath();
+    fctx.fill();
+    fctx.strokeStyle = '#f2a93b';                      // tassel
+    fctx.lineWidth = 1.8;
+    fctx.lineCap = 'round';
+    fctx.beginPath();
+    fctx.moveTo(14, -4);
+    fctx.lineTo(14, 7);
+    fctx.stroke();
+    fctx.fillStyle = '#f2a93b';
+    fctx.beginPath();
+    fctx.arc(14, 8.5, 2.2, 0, Math.PI * 2);
+    fctx.fill();
+  } else {
+    // unknown: first letter in the accent teal
+    fctx.fillStyle = '#2b9a94';
+    fctx.font = '700 22px "Segoe UI", system-ui, sans-serif';
+    fctx.textAlign = 'center';
+    fctx.textBaseline = 'middle';
+    fctx.fillText((name.trim()[0] || '?').toUpperCase(), 0, 1);
+  }
+}
+
+// Row of icon chips, drawn onto the face canvas below the mouth.
+function drawIconBadges() {
+  const N = icons.names.length;
+  if (!N) return;
+  const now = performance.now();
+
+  let fadeA = 1, fadeS = 1;
+  if (icons.fading) {
+    const f = (now - icons.fadeAt) / ICON_FADE_MS;
+    if (f >= 1) { icons.names = []; icons.fading = false; return; }
+    fadeA = 1 - f;
+    fadeS = 1 - 0.15 * f;
+  }
+
+  const size = 46, gap = 12, rowY = 438;
+  const rowW = N * size + (N - 1) * gap;
+
+  for (let i = 0; i < N; i++) {
+    let a = fadeA, s = fadeS;
+    if (!icons.fading) {
+      const p = Math.min(1, Math.max(0, (now - icons.shownAt - i * ICON_STAGGER_MS) / ICON_POP_MS));
+      if (p <= 0) continue;                           // not popped in yet
+      const e = 1 - Math.pow(1 - p, 3);               // ease-out cubic
+      s = 0.6 + 0.4 * e + 0.06 * Math.sin(p * Math.PI);   // tiny overshoot
+      a = e;
+    }
+
+    const x = 256 - rowW / 2 + size / 2 + i * (size + gap);
+    fctx.save();
+    fctx.translate(x, rowY);
+    fctx.scale(s, s);
+    fctx.globalAlpha = a;
+
+    // chip
+    fctx.shadowColor = 'rgba(29, 49, 56, 0.22)';
+    fctx.shadowBlur = 6;
+    fctx.shadowOffsetY = 2;
+    fctx.fillStyle = '#ffffff';
+    roundedRectPath(fctx, -size / 2, -size / 2, size, size, 12);
+    fctx.fill();
+    fctx.shadowColor = 'transparent';
+    fctx.shadowBlur = 0;
+    fctx.shadowOffsetY = 0;
+    fctx.strokeStyle = 'rgba(29, 49, 56, 0.10)';
+    fctx.lineWidth = 1.5;
+    fctx.stroke();
+
+    fctx.scale(1.15, 1.15);   // glyphs slightly oversized for legibility
+    drawIconGlyph(icons.names[i]);
+    fctx.restore();
+  }
+}
+
 function drawFace(t) {
   const P = faceParams;
   const W = 512, H = 512;
@@ -510,6 +656,9 @@ function drawFace(t) {
     }
   }
 
+  // icon badges (additive; drawn last so they sit on top of the face)
+  drawIconBadges();
+
   faceTex.needsUpdate = true;
 }
 
@@ -579,6 +728,27 @@ const api = {
     }
     const chk = document.getElementById('led-on');
     if (chk) chk.checked = heartState.on;
+  },
+
+  showIcons(names) {
+    if (!Array.isArray(names)) {
+      console.warn('moxie.showIcons: expected an array of icon names');
+      return;
+    }
+    const list = names
+      .filter(n => typeof n === 'string' && n.trim().length)
+      .slice(0, 4)
+      .map(n => n.trim());
+    if (!list.length) { api.clearIcons(); return; }
+    icons.names = list;
+    icons.shownAt = performance.now();
+    icons.fading = false;
+  },
+
+  clearIcons() {
+    if (!icons.names.length || icons.fading) return;
+    icons.fading = true;
+    icons.fadeAt = performance.now();
   },
 
   centerAll() {

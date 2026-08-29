@@ -95,10 +95,23 @@
     // behaviour trees (behaviour Bht_*) — idle/expressive whole-body
     const bx = /\+behaviour\+:\+(Bht_[A-Za-z0-9_]+)\+/g; let b;
     while ((b = bx.exec(markup))) behaviourTree(b[1]);
-    // icons-v2 → log the icon names (badge rendering is a D5 face task)
-    const ix = /\+iconType\+:1,\+value\+:\+([A-Za-z0-9_]+)\+/g; const icons = [];
-    let ic; while ((ic = ix.exec(markup))) icons.push(ic[1]);
-    if (icons.length) status(`icons: ${icons.join(", ")}`);
+    // icons-v2 → show/clear badges on the face. Each mark carries a command
+    // (0 = show, 2 = clear) and up to 4 named icons (iconType:1). A turn shows
+    // at the start and clears at the end; we show the union and clear ~4s later.
+    const icx = /cmd:icons-v2,data:\{([\s\S]*?)\}"\/>/g; const shown = new Set();
+    let hasClear = false, im;
+    while ((im = icx.exec(markup))) {
+      const block = im[1];
+      const cmd = /\+command\+:(\d+)/.exec(block); const c = cmd ? +cmd[1] : 0;
+      const vx = /\+iconType\+:1,\+value\+:\+([A-Za-z0-9_]+)\+/g; let vm;
+      const vals = []; while ((vm = vx.exec(block))) vals.push(vm[1]);
+      if (c === 0) vals.forEach((v) => shown.add(v));
+      else if (c === 2) hasClear = true;
+    }
+    if (shown.size && window.moxie.showIcons) {
+      window.moxie.showIcons([...shown]); status(`icons: ${[...shown].join(", ")}`);
+      if (hasClear) setTimeout(() => window.moxie.clearIcons && window.moxie.clearIcons(), 4000);
+    }
   }
 
   function handleRemoteChat(payload) {

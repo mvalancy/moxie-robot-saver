@@ -16,7 +16,7 @@ sim. Instead:
 | **Protocol** (MQTT topics, JSON envelopes, JWT) | A **virtual robot** that speaks it exactly ([`sim/virtual_moxie.py`](../../sim/virtual_moxie.py)) | ✅ working — round-trips against the real [`mqtt/`](../../mqtt/) supervisor |
 | **Behavior** (`<mark cmd:…>` markup, moods, gestures) | `sim/web/bridge.js` parses the marks → drives face + arm gestures | 🟡 wired (D3 refining) |
 | **Motion** (arms/head/body DOF) | Drive a **WebGL (three.js) 3D Moxie** from the `libmotionlib` motor indices ([hardware-map](../reverse-engineering/hardware-map.md#native-motion-api-factory-libmotionlib--liblizardjni)) | 🟢 model+rig+API + live bus bridge |
-| **Face** (DLP expressions/visemes) | Render the animated face to a canvas **texture on the face-screen mesh**, from TTS marks + mood verbs | 🟡 canvas face + 6 expressions built; wire to `EmotionState` next |
+| **Face** (DLP expressions/visemes) | Render the animated face to a canvas **texture on the face-screen mesh**, from TTS marks + mood verbs | 🟢 6 expressions + mood-driven + icons-v2 badges |
 | **Component golden-tests** (optional, later) | Run specific ARM `.so` (`libchatscript`) under **qemu-user** for reference outputs | ⏸ backlog |
 
 ### Visual reference — the 3D model (from the FCC external photos)
@@ -81,10 +81,10 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
   `sim/web/bridge.js` (MQTT.js) subscribes `/devices/+/commands/remote_chat` and drives the avatar —
   verified end-to-end (WS client receives a supervisor reply over `:9001`). ✅ **three.js + mqtt.js
   vendored** in `sim/web/vendor/` — the sim runs with **no network/CDN** (self-sufficiency).
-- [~] **D3 — Behavior markup → animation.** ✅ `bridge.js` parses `<mark cmd:…>` — full `Gesture_*` set +
+- [x] **D3 — Behavior markup → animation.** `bridge.js` parses `<mark cmd:…>` — full `Gesture_*` set +
   `Bht_*` behaviour-trees (Wing_Flap/Sleep/Idle_Curious/…) → whole-body poses, `playback-mood` → face
-  (evidence-based mood map), text → speech bubble. ⏳ remaining: **`icons-v2` badges** on the face
-  (Fable, in progress).
+  (evidence-based mood map), text → speech bubble, and **`icons-v2` → face badges** (School/Birthday/
+  Medical/Heart glyphs drawn on the face canvas, Fable 5) with show(cmd 0)/clear(cmd 2).
 - [ ] **D4 — Motion from motor state.** Virtual robot publishes motor positions (the 7 `libmotionlib`
   DOFs); the UI animates arms/head/body from them. Sliders to drive motors manually.
 - [ ] **D5 — Face expressions + visemes.** Render expressions from mood + simple visemes from the spoken
