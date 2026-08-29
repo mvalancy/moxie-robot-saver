@@ -17,6 +17,7 @@ sim. Instead:
 | **Behavior** (`<mark cmd:…>` markup, moods, gestures) | Parse the same markup the server emits → animate the 3D avatar | 🔜 web UI |
 | **Motion** (arms/head/body DOF) | Drive a **WebGL (three.js) 3D Moxie** from the `libmotionlib` motor indices ([hardware-map](../reverse-engineering/hardware-map.md#native-motion-api-factory-libmotionlib--liblizardjni)) | 🔜 web UI |
 | **Face** (DLP expressions/visemes) | Render the animated face to a canvas **texture on the face-screen mesh**, from TTS marks + mood verbs | 🔜 web UI |
+| **Component golden-tests** (optional, later) | Run specific ARM `.so` (`libchatscript`) under **qemu-user** for reference outputs | ⏸ backlog |
 
 ### Visual reference — the 3D model (from the FCC external photos)
 
@@ -47,7 +48,6 @@ can replace the primitives later without changing the motor→node wiring.
 > delegated to **Fable 5** subagents (`Agent(model: "fable")`); the build timer spawns one for each
 > UI/appearance milestone (D2–D5), while the main loop keeps the protocol/motor **wiring** correct so
 > the look and the mechanics stay decoupled.
-| **Component golden-tests** (optional, later) | Run specific ARM `.so` (`libchatscript`) under **qemu-user** for reference outputs | ⏸ backlog |
 
 The **firmware is the contract, not the runtime.** Everything the sim does is validated against the
 recovered protocol docs, so "it works in the sim" means "it will work on a real re-homed robot."
@@ -57,7 +57,7 @@ recovered protocol docs, so "it works in the sim" means "it will work on a real 
 ```mermaid
 flowchart LR
   vm["🤖 sim/virtual_moxie.py<br/>(SIL robot: speaks MQTT/JSON)"] <-->|":1883 MQTT"| broker["📡 mosquitto"]
-  broker <-->|":9001 WebSocket"| ui["🖥️ sim/web/ (browser)<br/>SVG Moxie: face·arms·head·body"]
+  broker <-->|":9001 WebSocket"| ui["🖥️ sim/web/ (browser)<br/>WebGL 3D Moxie: face·arms·head·body"]
   broker <--> sup["⚙️ mqtt/ supervisor<br/>+ MoxieApp (echo/LLM)"]
   sup -.->|"commands/remote_chat<br/>+ markup + motor state"| broker
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
@@ -96,13 +96,14 @@ Progress is tracked here (check items off) and mirrored in `work/firmware-re/pro
 Three cadences run this campaign. They are **session-local crons** (they fire prompts into the running
 Claude Code session, which has the repo + docker + git) — so they progress while this session is alive,
 exactly like the existing `/loop`. (Durable cloud schedules can't touch the local repo, so they're not
-used for the build itself.)
+used for the build itself.) Session crons **auto-expire after 7 days** — which is exactly the delivery
+window; re-arm them if the campaign runs longer.
 
 | Tier | Cadence | Job | Prompt intent |
 |---|---|---|---|
-| **① Build** | ~45 min | Implement the next roadmap item | "Pick the next unchecked D-item in sil-and-cicd.md, build it, run `sim/run_smoke.sh`, commit, push, check the item off." |
-| **② Test** | ~3 h | Guard quality | "Run the SIL smoke + CI checks; expand `sim/scenarios`; verify the web UI renders; fix any regression; report." |
-| **③ Plan/Audit** | ~12 h | Keep it coherent & honest | "Run `work/firmware-re/progress/SELF-AUDIT.md`; review this roadmap; keep docs↔code↔protocol consistent; post a status summary." |
+| **① Build** | hourly (`:13`) | Implement the next roadmap item | "Pick the next unchecked D-item in sil-and-cicd.md, build it, run `sim/run_smoke.sh`, commit, push, check the item off." |
+| **② Test** | every 3 h (`:37`) | Guard quality | "Run the SIL smoke + CI checks; expand `sim/scenarios`; verify the web UI renders; fix any regression; report." |
+| **③ Plan/Audit** | every 12 h (`:23`) | Keep it coherent & honest | "Run `work/firmware-re/progress/SELF-AUDIT.md`; review this roadmap; keep docs↔code↔protocol consistent; post a status summary." |
 
 The **existing RE/deconstruction `/loop`** continues in parallel as the "research" tier — it feeds new
 protocol facts that the build tier consumes. All tiers share `PLAN.md` + this roadmap as the source of
