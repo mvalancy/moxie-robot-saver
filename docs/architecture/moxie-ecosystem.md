@@ -84,7 +84,8 @@ offline) and **LiteLLM**. HUD polish. Everything version-stamped, self-contained
 ## Immediate queue (Phase 1)
 - [x] **Piper audible on the web** — `sim/tts/server.py` (Piper, amy voice) + `sim/web/audio.js`
   (speech + synthesized SFX + envelope-driven mouth sync). ⏳ bubble restyle folded into the layout pass.
-- [ ] **STT in** — web mic → STT service → chat loop.
+- [x] **STT in** — `sim/stt/server.py` (faster-whisper → real `DeepgramResponse` shape) + `sim/web/mic.js`
+  (MediaRecorder → STT → publishes a child utterance on the bus). TTS→STT round-trip verified.
 - [x] **LLM brain** — `LLMApp` is now an **expressive agent**: model returns `{say, mood, gesture}` →
   translated into real behavior markup (`playback-mood` + `Gesture_*`), verified to parse through the SIL
   bridge. Moxie persona authored from firmware cues (GRL, kid-safe SEL mentor). Config via gitignored
