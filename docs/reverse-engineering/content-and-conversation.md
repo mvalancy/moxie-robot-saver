@@ -101,6 +101,37 @@ over the MQTT **file-sync** channel (`MQTT_FILE_SYNC`, see [`cloud-protocol.md`]
 the same mechanism that delivers OTA images and content modules. A revival server hosts/serves these;
 the base firmware ships only the engines.
 
+## Embodiment & activity runtime (PlaySpace, turn-taking, orientation)
+
+Between the content layer and the physical robot sits the **activity runtime** — how an activity runs,
+whose turn it is, and how Moxie orients its body. Two proto groups:
+
+### `PlaySpace` — the activity/turn-taking state machine (`embodied.playspace`, 15 msgs)
+- **`MoxieState`** — sync signals content waits on: `READY`, `STARTED_SPEAKING`, `DONE_SPEAKING`,
+  `DONE_MOVING`, `PAUSED`. (A module can gate a step on "done speaking".)
+- **`TurnState`** — conversational **turn-taking**: `USER` (child's turn) vs `SYSTEM` (Moxie's turn) vs
+  `UNKNOWN`. Drives when to listen vs speak (with the VAD/wake stack, [`perception-pipeline.md`](perception-pipeline.md)).
+- **`AgeGroup`** — **age-adaptive content**: `AGE_0_4`, `AGE_5_6`, `AGE_7_8`, `AGE_9_10`, `AGE_11_PLUS`
+  (Moxie tailors difficulty/tone to the child's bracket; ties to `RemoteChatRequest.user_age`).
+- **Triggers** — `TriggerAction {SET, CLEAR, CLEAR_ALL}` × `TriggerDuration {ONE_SHOT, PASSIVE, ACTIVE}`:
+  content arms conditions that fire callbacks.
+- `Source {ROBOT, PORTAL}` (local vs cloud-driven), `ExitCode {QUIT, ERROR, COMPLETE}` (how an
+  activity ends).
+
+### Spatial orientation & handling (`embodied.unity`)
+- **`RobotPosition`** — the Unity face camera's 3D pose (`camera_center/target/up` xyz) — where the
+  projected face "looks from/at" in world space.
+- **`RobotEngageTurn{turning}`** / **`RobotTurnToOutOfViewChatTarget{is_turning}`** — Moxie **physically
+  turns its body** (the `BASE_L_R` motor, [`hardware-map.md`](hardware-map.md)) to face the person it's
+  talking to, or to seek an engaged speaker who moved out of camera view.
+- **`MpuPickedUpEventPB`** / **`MpuPickedUpShakenEventPB{shakeDirection}`** / `MpuPickUpStatusEventPB{pitch}`
+  + **`RobotCameraShake{shaking}`** — from the IMU: Moxie reacts to being **picked up** and **shaken**
+  (with direction), including a face/camera-shake effect.
+
+**Revival note (goal #2):** most of this is on-device — the server sends content and speech; the robot
+handles turn-taking, orientation, and pickup reactions itself. A server mainly cares about `TurnState`
+(when to expect input) and `AgeGroup`/`user_age` (to tailor content).
+
 ## Scheduling, progression & rewards (what to offer next)
 
 Above individual modules sits the pedagogy layer — how the robot/server decides **what content to
