@@ -1,0 +1,3 @@
+# Serve the landing hub at the site root, keeping the URL clean (no /hub.html).
+# 200 = rewrite (serves hub.html's content at /, URL stays "/").
+/    /hub.html    200
