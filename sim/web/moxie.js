@@ -9,9 +9,9 @@
 // BODY (no visible neck, just a seam; Moxie is top-heavy). Curved arm-shell
 // pads conform to the body's surface and hang down its flanks — barely
 // visible from the front at rest — each a two-segment limb (shoulder +
-// elbow) ending in a small light rounded hand. The face screen and dark
-// camera forehead live on the head; the speaker grille, glowing heart LED
-// and `moxie` wordmark on the body.
+// elbow) ending in a light rounded hand the same width as the arm. The flat
+// face screen and a small camera lens live on the head; the speaker grille,
+// heart-LED marking (thin line + tiny heart) and `moxie` wordmark on the body.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -28,8 +28,6 @@ const COL = {
   shell:    0x3bb6b0,   // matte teal body + head
   arm:      0x45bfb9,   // arm shells, a whisper lighter than the body
   hand:     0x9fdce8,   // light blue-grey rounded hands
-  bezel:    0x2ba59f,   // face surround, slightly darker teal
-  forehead: 0x1c2b31,   // dark camera zone high on the head
   rubber:   0x15181a,   // base ring
   base:     0x2a2f33,   // base disc
   dark:     0x22343a,
@@ -79,6 +77,14 @@ controls.minDistance = 2.0;
 controls.maxDistance = 12.0;
 controls.maxPolarAngle = 1.48;
 controls.update();
+
+// Deterministic camera placement for screenshot/CI harnesses (debug-only;
+// not part of the window.moxie API).
+window.__setCam = (x, y, z, tx = 0, ty = 1.22, tz = 0) => {
+  camera.position.set(x, y, z);
+  controls.target.set(tx, ty, tz);
+  controls.update();
+};
 
 // Lights — cool control-room setup: white key, cold fill, cyan rim,
 // dark ground bounce so the shell reads against the void.
@@ -197,8 +203,6 @@ function plastic(color, extra = {}) {
 const shellMat    = plastic(COL.shell);
 const armMat      = plastic(COL.arm);
 const handMat     = plastic(COL.hand, { roughness: 0.45 });
-const bezelMat    = plastic(COL.bezel, { roughness: 0.45 });
-const foreheadMat = plastic(COL.forehead, { roughness: 0.35, clearcoat: 0.6 });
 const rubberMat   = new THREE.MeshStandardMaterial({ color: COL.rubber, roughness: 0.95 });
 const baseMat     = new THREE.MeshStandardMaterial({ color: COL.base, roughness: 0.65 });
 const lensMat     = new THREE.MeshPhysicalMaterial({
@@ -255,29 +259,56 @@ function smoothSphere(wSeg, hSeg, ...sector) {
   return g;
 }
 
-// Arm shell pads: a squashed ellipsoid whose vertices are wrapped around the
-// body's lathe profile, giving a smooth curved shell that hugs the flank —
-// a soft blister on the body at rest (like the real robot), swinging away
-// when the shoulder/elbow motors drive it. The inner half sinks below the
-// body surface so the rim reads as a thin shell edge.
+// Arm shell segments: a capsule (stadium profile — CONSTANT width along its
+// length, rounded only at the ends) wrapped around the body's lathe profile,
+// giving a smooth curved shell that hugs the flank. halfW is a LINEAR
+// half-width (scene units), converted to an arc per-vertex so the shell stays
+// the same width all the way down the tapering body — the whole arm (upper,
+// forearm, hand) is one constant width on the real robot.
 //   side: -1 left, +1 right. thetaBias rotates the pad toward the front.
 //   pivot: the joint position (body space); geometry is re-origined there.
-function makeArmPadGeometry(side, yTop, yBot, halfArc, thickness, thetaBias, pivot) {
-  const geo = smoothSphere(48, 36);
+// NOTE the wrap mapping mirrors chirality for one side (its Jacobian
+// determinant flips sign with `side`), which would invert the triangle
+// winding and flip the computed normals inside-out for that arm. After
+// building we check the average normal against the outward radial direction
+// and re-wind the indices if needed, so BOTH arms shade identically.
+function makeArmShellGeometry(side, yTop, yBot, halfW, thickness, thetaBias, pivot) {
+  const height = yTop - yBot;
+  const capH = Math.min(0.16, height * 0.35);        // rounded end height
+  const len = Math.max(0.01, height / capH - 2);     // source capsule mid-length
+  let geo = new THREE.CapsuleGeometry(1, len, 10, 36);
+  geo.deleteAttribute('uv');
+  geo.deleteAttribute('normal');
+  geo = mergeVertices(geo, 1e-4);
   const pos = geo.attributes.position;
-  const yc = (yTop + yBot) / 2, yr = (yTop - yBot) / 2;
+  const yc = (yTop + yBot) / 2;
+  const yScale = height / (len + 2);
   const theta0 = side * (Math.PI / 2 - thetaBias);
   for (let i = 0; i < pos.count; i++) {
     const sx = pos.getX(i), sy = pos.getY(i), sz = pos.getZ(i);
-    const y = yc + sy * yr;
-    const theta = theta0 + side * sx * halfArc;
-    const r = bodyRadiusAt(y) + 0.012 + sz * thickness;
+    const y = yc + sy * yScale;
+    const rBase = bodyRadiusAt(y) + 0.012;
+    const theta = theta0 + side * sx * (halfW / rBase);
+    const r = rBase + sz * thickness;
     pos.setXYZ(i,
       r * Math.sin(theta) - pivot.x,
       y - pivot.y,
       r * Math.cos(theta) - pivot.z);
   }
   geo.computeVertexNormals();
+  const nrm = geo.attributes.normal;
+  let outward = 0;
+  for (let i = 0; i < pos.count; i++) {
+    outward += nrm.getX(i) * (pos.getX(i) + pivot.x) +
+               nrm.getZ(i) * (pos.getZ(i) + pivot.z);
+  }
+  if (outward < 0) {                    // winding got mirrored — flip it back
+    const idx = geo.index.array;
+    for (let i = 0; i < idx.length; i += 3) {
+      const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t;
+    }
+    geo.computeVertexNormals();
+  }
   return geo;
 }
 
@@ -288,13 +319,13 @@ function makeArmPadGeometry(side, yTop, yBot, halfArc, thickness, thetaBias, piv
 //    +- yawG (motor 5)                       pivot at base centre
 //        +- leanG (motor 6)
 //            +- breatheG (idle breathing scale/bob, visual only)
-//                +- body cylinder, grille, wordmark, heart LED, neck
+//                +- body cylinder, grille, wordmark, heart-LED marking
 //                +- headTiltG (motor 4) -> headRollG (idle roll, visual only)
-//                     +- head, face screen, forehead camera band + lens
+//                     +- head (flat-front egg), face screen disk, camera lens
 //                +- armRootL -> shoulderL (m0) -> upper shell
-//                     +- elbowL (m1) -> forearm shell -> handL (single finger)
+//                     +- elbowL (m1) -> forearm shell + handL (same width)
 //                +- armRootR -> shoulderR (m2) -> upper shell
-//                     +- elbowR (m3) -> forearm shell -> handR
+//                     +- elbowR (m3) -> forearm shell + handR
 // ---------------------------------------------------------------------------
 
 const root = new THREE.Group();
@@ -348,8 +379,8 @@ headRollG.add(headForm);
 const HEAD_C = new THREE.Vector3(0, 0.64, 0.06);      // head centre (local)
 const HEAD_R = new THREE.Vector3(0.58, 0.68, 0.56);   // egg radii
 
-// Egg-shaping shared by the head shell and the forehead band: taper the
-// crown and ease it toward the back so the silhouette reads as a teardrop.
+// Egg-shaping for the head shell: taper the crown and ease it toward the
+// back so the silhouette reads as a teardrop.
 function eggify(geo, rx, ry, rz) {
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -365,30 +396,87 @@ function eggify(geo, rx, ry, rz) {
   return geo;
 }
 
-const head = new THREE.Mesh(eggify(smoothSphere(72, 52), HEAD_R.x, HEAD_R.y, HEAD_R.z), shellMat);
+// Flatten the front of the egg into the face plane — the real head is an egg
+// with a flat slice off the front where the screen (and, above it, the small
+// camera lens) sit. Soft-clamps z toward the plane so the crease is a smooth
+// fillet, not a hard edge. Geometry-local coords (head centre at origin).
+function flattenFront(geo, zPlane, fillet) {
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const z = pos.getZ(i);
+    const d = z - (zPlane - fillet);
+    if (d > 0) pos.setZ(i, zPlane - fillet + fillet * (1 - Math.exp(-d / fillet)));
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Head texture: uniform shell teal with the two ear ovals PAINTED on — flat
+// markings on the shell, zero geometry, so nothing clips or z-fights at any
+// angle. The map is flat colour everywhere else, which keeps the spherical-UV
+// wrap seam (back of head) and pole pinch invisible.
+function makeHeadTexture() {
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = '#3bb6b0';                    // must match COL.shell exactly
+  g.fillRect(0, 0, 1024, 512);
+  for (const side of [-1, 1]) {
+    const cx = side < 0 ? 256 : 768;          // u=0.25 left ear, u=0.75 right
+    g.save();
+    g.translate(cx, 250);
+    g.rotate(side * 0.18);                    // slight tilt, front end lower
+    g.fillStyle = 'rgba(10, 25, 30, 0.10)';   // whisper-faint inset shading
+    g.beginPath();
+    g.ellipse(0, 0, 52, 30, 0, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = 'rgba(14, 34, 40, 0.55)'; // thin seam outline
+    g.lineWidth = 5;
+    g.stroke();
+    g.restore();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+// Spherical UVs recomputed from the final vertex positions (the source
+// sphere's UVs were deleted for vertex welding).
+function sphericalUVs(geo, ry) {
+  const pos = geo.attributes.position;
+  const uv = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i++) {
+    const sy = Math.max(-1, Math.min(1, pos.getY(i) / ry));
+    uv[2 * i] = 0.5 + Math.atan2(pos.getX(i), pos.getZ(i)) / (2 * Math.PI);
+    uv[2 * i + 1] = 0.5 + Math.asin(sy) / Math.PI;
+  }
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return geo;
+}
+
+const headMat = plastic(0xffffff, { map: makeHeadTexture() });
+const head = new THREE.Mesh(
+  sphericalUVs(
+    flattenFront(eggify(smoothSphere(72, 52), HEAD_R.x, HEAD_R.y, HEAD_R.z), 0.335, 0.05),
+    HEAD_R.y),
+  headMat);
 head.position.copy(HEAD_C);
 head.castShadow = true;
 head.receiveShadow = true;
 headForm.add(head);
 
-// Forehead: dark camera band on the head's front, just above the face
-const forehead = new THREE.Mesh(
-  eggify(smoothSphere(64, 24, Math.PI / 2 - 1.25, 2.5, 0.52, 0.50),
-         HEAD_R.x * 1.012, HEAD_R.y * 1.012, HEAD_R.z * 1.012),
-  foreheadMat);
-forehead.position.copy(HEAD_C);
-headForm.add(forehead);
-
-// Camera lens, centred on the forehead band
-const lens = new THREE.Mesh(new THREE.SphereGeometry(0.05, 24, 16), lensMat);
-lens.scale.set(1, 0.8, 0.55);
-lens.rotation.x = -0.55;                      // lies on the sloping brow
-lens.position.set(0, 1.10, 0.395);
+// Camera: just a SMALL lens on the teal shell above the face — a modest dark
+// circle, slightly recessed-looking, nothing more (no band, no visor).
+const lens = new THREE.Mesh(new THREE.SphereGeometry(0.042, 24, 16), lensMat);
+lens.scale.set(1, 0.85, 0.35);
+lens.rotation.x = -0.08;                      // sits on the flat face plane
+lens.position.set(0, 1.045, 0.392);
 headForm.add(lens);
 const lensDot = new THREE.Mesh(
-  new THREE.SphereGeometry(0.016, 12, 8),
+  new THREE.SphereGeometry(0.013, 12, 8),
   new THREE.MeshBasicMaterial({ color: 0x3a5560 }));
-lensDot.position.set(0.012, 1.106, 0.425);
+lensDot.position.set(0.010, 1.050, 0.408);
 headForm.add(lensDot);
 
 // ---- Face screen (canvas texture on a curved oval, front of the HEAD) ----
@@ -402,12 +490,11 @@ faceTex.colorSpace = THREE.SRGBColorSpace;
 faceTex.anisotropy = 4;
 
 const faceAssembly = new THREE.Group();
-faceAssembly.position.set(0, 0.56, 0.0);
-faceAssembly.rotation.x = -0.06;              // slight upward gaze, like the robot
+faceAssembly.position.set(0, 0.56, 0.0);      // pane parallel to the flat face plane
 headForm.add(faceAssembly);
 
-// Bake scale into a flat geometry, then curve it in both directions so the
-// plate hugs the doubly-convex head instead of poking out at the edges.
+// Bake scale into a flat geometry, then give it a very shallow curve; used by
+// the face pane (nearly flush disk) and body decals (bend around the shell).
 function bentPlate(geo, sx, sy, Rx, Ry) {
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -423,25 +510,10 @@ function bentPlate(geo, sx, sy, Rx, Ry) {
   return geo;
 }
 
-// dome under the screen: fills the head-to-screen gap in profile
-const faceDome = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), bezelMat);
-faceDome.scale.set(0.544, 0.469, 0.0875);
-faceDome.position.z = 0.50;
-faceAssembly.add(faceDome);
-
-// backing plate (hides the seam against the head when it tilts)
-const facePlateBack = new THREE.Mesh(
-  bentPlate(new THREE.CircleGeometry(1, 64), 0.525, 0.45, 0.625, 0.45), bezelMat);
-facePlateBack.position.z = 0.5375;
-faceAssembly.add(facePlateBack);
-
-// bezel ring
-const bezel = new THREE.Mesh(
-  bentPlate(new THREE.RingGeometry(0.97, 1.10, 64, 1), 0.469, 0.394, 0.9375, 0.75), bezelMat);
-bezel.position.z = 0.669;
-faceAssembly.add(bezel);
-
-// the screen itself — off-white oval rendering the face canvas
+// The screen itself — a flat, shallow round DISK, nearly flush with the
+// flattened head front (world plane z ~0.395 here). The barely-there sag
+// sinks the rim just below the shell so the seam self-hides. Backlit:
+// emissiveMap is the face canvas, so the drawn features glow from within.
 const screenMat = new THREE.MeshPhysicalMaterial({
   map: faceTex,
   emissive: 0xffffff,
@@ -452,8 +524,8 @@ const screenMat = new THREE.MeshPhysicalMaterial({
   clearcoatRoughness: 0.2,
 });
 const screen = new THREE.Mesh(
-  bentPlate(new THREE.CircleGeometry(1, 64), 0.45, 0.375, 0.9375, 0.75), screenMat);
-screen.position.z = 0.681;
+  bentPlate(new THREE.CircleGeometry(1, 64), 0.44, 0.365, 2.4, 2.4), screenMat);
+screen.position.z = 0.415;
 faceAssembly.add(screen);
 
 // Projector light: the DLP face casts real light on the surroundings.
@@ -462,16 +534,18 @@ const faceLight = new THREE.PointLight(0xf3eedd, 0.15, 3.4, 2);
 faceLight.position.set(0, 0, 0.85);
 faceAssembly.add(faceLight);
 
-// Soft warm halo around the screen — a cheap bloom that fades in as the
-// scene darkens, so the glowing face reads like a projector in the dark.
+// Soft warm spill AROUND the pane — an annulus with a fully transparent
+// centre, so it rims the screen's edges as the scene darkens without ever
+// veiling the face itself (legibility beats glow: no overlay on the pane).
 const faceHaloTex = (() => {
   const c = document.createElement('canvas');
   c.width = c.height = 256;
   const g = c.getContext('2d');
-  const grad = g.createRadialGradient(128, 128, 20, 128, 128, 128);
-  grad.addColorStop(0.0, 'rgba(255, 248, 224, 0.55)');
-  grad.addColorStop(0.4, 'rgba(255, 244, 214, 0.16)');
-  grad.addColorStop(1.0, 'rgba(255, 244, 214, 0.0)');
+  const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0.00, 'rgba(255, 248, 224, 0.0)');   // clear over the pane
+  grad.addColorStop(0.52, 'rgba(255, 248, 224, 0.0)');
+  grad.addColorStop(0.62, 'rgba(255, 248, 224, 0.50)');  // peak at the rim
+  grad.addColorStop(1.00, 'rgba(255, 244, 214, 0.0)');
   g.fillStyle = grad;
   g.fillRect(0, 0, 256, 256);
   const t = new THREE.CanvasTexture(c);
@@ -485,50 +559,12 @@ const faceHalo = new THREE.Sprite(new THREE.SpriteMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
 }));
-faceHalo.scale.set(1.8, 1.6, 1);
-faceHalo.position.set(0, 0, 0.70);
+faceHalo.scale.set(1.5, 1.28, 1);
+faceHalo.position.set(0, 0, 0.55);
 faceAssembly.add(faceHalo);
 
-// ---- Ears: small flush oval seam lines on the head's left/right sides ----
-// On the real robot the "ear" is just a thin moulding seam — an oval outline
-// with the same teal inside, barely darker. Drawn as a mostly-transparent
-// decal bent to hug the head, flush, nothing sticking out.
-
-function makeEarTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d');
-  g.clearRect(0, 0, 256, 256);
-  g.fillStyle = 'rgba(10, 25, 30, 0.10)';     // whisper-faint inset shading
-  g.beginPath();
-  g.ellipse(128, 128, 108, 70, 0, 0, Math.PI * 2);
-  g.fill();
-  g.strokeStyle = 'rgba(14, 34, 40, 0.55)';   // thin seam outline
-  g.lineWidth = 6;
-  g.stroke();
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
-const earTex = makeEarTexture();
-for (const side of [-1, 1]) {
-  const earG = new THREE.Group();
-  earG.position.set(side * HEAD_R.x * 1.002, HEAD_C.y + 0.03, HEAD_C.z);
-  earG.rotation.y = side * Math.PI / 2;       // decal +z faces outward
-  const ear = new THREE.Mesh(
-    bentPlate(new THREE.CircleGeometry(1, 48), 0.19, 0.125, 0.58, 0.70),
-    new THREE.MeshStandardMaterial({
-      map: earTex,
-      transparent: true,
-      roughness: 0.85,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-    }));
-  ear.rotation.z = side * 0.18;               // slight tilt, front end lower
-  earG.add(ear);
-  headForm.add(earG);
-}
+// (Ears are painted into the head's texture map above — see makeHeadTexture —
+// so there is no separate ear geometry to clip or z-fight with the shell.)
 
 // ---- Speaker grille (transparent dot texture, LOW on the body front) ----
 
@@ -598,59 +634,82 @@ const wordmark = new THREE.Mesh(
 wordmark.position.set(0, 0.155, 0);
 breatheG.add(wordmark);
 
-// ---- Heart LED: a prominent heart-shaped lens on the upper chest ----
+// ---- Heart LED: a THIN white horizontal line with a TINY white heart
+//      directly beneath it, on the upper chest just under the head — a small,
+//      delicate LED marking (not a big solid heart). Painted decal, flat on
+//      the shell; the texture doubles as the emissive mask so it glows in the
+//      commanded colour when on and reads as a light-grey marking when off.
 
-function makeHeartGeometry(width) {
-  // classic heart path (three.js docs shape, drawn point-up; flipped below)
-  const s = new THREE.Shape();
-  s.moveTo(5, 5);
-  s.bezierCurveTo(5, 5, 4, 0, 0, 0);
-  s.bezierCurveTo(-6, 0, -6, 7, -6, 7);
-  s.bezierCurveTo(-6, 11, -3, 15.4, 5, 19);
-  s.bezierCurveTo(12, 15.4, 16, 11, 16, 7);
-  s.bezierCurveTo(16, 7, 16, 0, 10, 0);
-  s.bezierCurveTo(7, 0, 5, 5, 5, 5);
-
-  let geo = new THREE.ExtrudeGeometry(s, {
-    depth: 3.5, curveSegments: 24,
-    bevelEnabled: true, bevelThickness: 1.8, bevelSize: 1.8, bevelSegments: 5,
-  });
-  geo.center();
-  geo.rotateZ(Math.PI);                 // point down, lobes up
-  const k = width / 25.6;               // 22 shape units + 2x bevel
-  geo.scale(k, k, k);
-  geo.deleteAttribute('uv');
-  geo.deleteAttribute('normal');
-  geo = mergeVertices(geo, 1e-4);
-  geo.computeVertexNormals();           // smooth, lens-like
-  return geo;
+function makeHeartLEDTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, 256, 256);
+  g.fillStyle = '#ffffff';
+  roundedRectPath2(g, 48, 100, 160, 9, 4.5);   // thin horizontal line
+  g.fill();
+  g.save();                                     // tiny heart just beneath it
+  g.translate(128, 146);
+  g.scale(1.35, 1.35);
+  g.beginPath();
+  g.moveTo(0, 11);
+  g.bezierCurveTo(-14, 1, -13, -10, -6.5, -10);
+  g.bezierCurveTo(-2.5, -10, 0, -7, 0, -4);
+  g.bezierCurveTo(0, -7, 2.5, -10, 6.5, -10);
+  g.bezierCurveTo(13, -10, 14, 1, 0, 11);
+  g.closePath();
+  g.fill();
+  g.restore();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
-const heartMat = new THREE.MeshPhysicalMaterial({
-  color: 0x2a3f45,
-  emissive: 0x000000,
-  roughness: 0.3,
-  clearcoat: 0.7,
-  clearcoatRoughness: 0.2,
+function roundedRectPath2(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+const heartTex = makeHeartLEDTexture();
+const heartMat = new THREE.MeshStandardMaterial({
+  map: heartTex,
+  color: 0xdfe9ea,                 // subtle light-grey/white marking when off
+  transparent: true,
+  emissive: 0xffffff,
+  emissiveMap: heartTex,
+  emissiveIntensity: 0.10,
+  roughness: 0.55,
+  polygonOffset: true,
+  polygonOffsetFactor: -2,
 });
-const heart = new THREE.Mesh(makeHeartGeometry(0.20), heartMat);
-heart.position.set(0, 1.06, 0.585);   // centred on the upper chest, proud of it
-heart.rotation.x = -0.12;             // follows the chest's backward taper
-heart.castShadow = true;
+const heart = new THREE.Mesh(
+  bentPlate(new THREE.CircleGeometry(1, 48), 0.17, 0.17, bodyRadiusAt(1.08), 1.6),
+  heartMat);
+heart.position.set(0, 1.08, bodyRadiusAt(1.08) + 0.006);
+heart.rotation.x = -0.20;             // follows the chest's backward taper
 breatheG.add(heart);
 
 const heartLight = new THREE.PointLight(0xff5577, 0, 1.2);
-heartLight.position.copy(heart.position).z += 0.12;
+heartLight.position.set(0, 1.08, bodyRadiusAt(1.08) + 0.12);
 breatheG.add(heartLight);
 
 const heartState = { on: false, color: new THREE.Color(0xff5577) };
 
-// ---- Arms: curved shell pads conforming to the body's surface, hanging
-//      DOWN the flanks at rest (barely visible from the front — a soft
-//      curved bump on the body, like the real robot). The shoulder swings
-//      the whole arm out/up; the elbow folds the forearm on a pre-tilted
-//      hinge so the fold sweeps inward/front. Each arm ends in a small
-//      light rounded hand peeking out at the bottom front. ----
+// ---- Arms: ONE constant-width curved shell per arm, conforming to the
+//      body's surface and hanging down the flank at rest (a soft curved
+//      blister on the body, like the real robot). Upper arm, forearm and
+//      hand are all the SAME width — the hand is simply the lighter-blue
+//      rounded end of the same shell, rounding off at the tip. The shoulder
+//      swings the whole arm out/up; the elbow folds the forearm+hand on a
+//      pre-tilted hinge so the fold sweeps inward/front. ----
+
+const ARM_HALF_W = 0.21;   // uniform linear half-width: upper == forearm == hand
+const ARM_THICK  = 0.065;
 
 function makeArm(side) {  // side = -1 left, +1 right
   const shoulderPivot = new THREE.Vector3(
@@ -665,9 +724,10 @@ function makeArm(side) {  // side = -1 left, +1 right
   const shoulder = new THREE.Group();         // animated: rotation.z (motor 0/2)
   armRoot.add(shoulder);
 
-  // upper arm: long curved pad hugging the flank from shoulder to hip
+  // upper arm: constant-width shell from the shoulder down past the elbow
   const upper = new THREE.Mesh(
-    makeArmPadGeometry(side, 1.26, 0.58, 0.52, 0.068, 0.22, shoulderPivot), armMat);
+    makeArmShellGeometry(side, 1.27, 0.60, ARM_HALF_W, ARM_THICK, 0.22, shoulderPivot),
+    armMat);
   upper.castShadow = true;
   upper.receiveShadow = true;
   shoulder.add(upper);
@@ -687,23 +747,21 @@ function makeArm(side) {  // side = -1 left, +1 right
   elbowPost.rotation.y = -side * 0.5;
   elbow.add(elbowPost);
 
-  // forearm: narrower elongated pad tucked below the upper shell
+  // forearm: SAME width as the upper arm, overlapping it at the elbow
   const forearm = new THREE.Mesh(
-    makeArmPadGeometry(side, 0.70, 0.26, 0.34, 0.060, 0.28, elbowPivot), armMat);
+    makeArmShellGeometry(side, 0.74, 0.34, ARM_HALF_W, ARM_THICK, 0.26, elbowPivot),
+    armMat);
   forearm.castShadow = true;
   forearm.receiveShadow = true;
   elbowPost.add(forearm);
 
-  // hand: light rounded mitt at the bottom front edge of the shell
-  const hand = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.10, 12, 24), handMat);
-  const handTheta = side * (Math.PI / 2 - 0.62);
-  const handR = bodyRadiusAt(0.36) + 0.045;
-  hand.position.set(
-    handR * Math.sin(handTheta) - elbowPivot.x,
-    0.34 - elbowPivot.y,
-    handR * Math.cos(handTheta) - elbowPivot.z);
-  hand.rotation.set(-0.15, 0, side * -0.12);
+  // hand: the same-width continuation of the shell in the lighter blue,
+  // rounding off at the tip like a single finger
+  const hand = new THREE.Mesh(
+    makeArmShellGeometry(side, 0.44, 0.15, ARM_HALF_W, ARM_THICK, 0.30, elbowPivot),
+    handMat);
   hand.castShadow = true;
+  hand.receiveShadow = true;
   elbowPost.add(hand);
 
   breatheG.add(armRoot);
@@ -754,6 +812,10 @@ let faceTarget = { ...EXPRESSIONS.neutral };
 
 const blink = { active: false, phase: 0, next: 2.5 + Math.random() * 3 };
 const speech = { until: 0 };
+
+// external lip-sync drive (moxie.setMouthOpen, called by the audio layer);
+// additive — it only ever opens the mouth further than the expression does
+const mouthDrive = { v: 0 };
 
 // idle gaze drift (liveness layer; additive on top of expression pupils)
 const idleEyes = { x: 0, y: 0 };
@@ -971,8 +1033,8 @@ function drawFace(t) {
     }
   }
 
-  // mouth (talking overlays extra openness)
-  let open = P.mouthOpen;
+  // mouth (talking + external lip-sync overlay extra openness)
+  let open = Math.max(P.mouthOpen, mouthDrive.v);
   if (performance.now() < speech.until) {
     const n = Math.abs(Math.sin(t * 11)) * (0.6 + 0.4 * Math.sin(t * 3.7 + 1));
     open = Math.max(open, 0.15 + 0.5 * Math.abs(n));
@@ -1224,6 +1286,14 @@ const api = {
     showSpeech(text.trim());
   },
 
+  // Lip-sync drive from the audio layer: 0 = closed, 1 = fully open.
+  // Additive/harmless when unused — it only opens the mouth further than the
+  // current expression does.
+  setMouthOpen(v) {
+    if (!Number.isFinite(v)) return;
+    mouthDrive.v = Math.min(1, Math.max(0, v));
+  },
+
   setHeartLED(on, colorHex) {
     heartState.on = !!on;
     if (colorHex !== undefined) {
@@ -1400,15 +1470,17 @@ function animate() {
 
   drawFace(t);
 
-  // heart LED
+  // heart LED — glows in the commanded colour when on; when off it stays a
+  // subtle light-grey/white marking (never a dark shape)
   if (heartState.on) {
     const pulse = 0.75 + 0.35 * Math.sin(t * 2.6);
     heartMat.emissive.copy(heartState.color);
-    heartMat.emissiveIntensity = pulse;
+    heartMat.emissiveIntensity = 1.3 * pulse;
     heartLight.color.copy(heartState.color);
     heartLight.intensity = 0.6 * pulse;
   } else {
-    heartMat.emissiveIntensity = 0;
+    heartMat.emissive.set(0xffffff);
+    heartMat.emissiveIntensity = 0.10;
     heartLight.intensity = 0;
   }
 

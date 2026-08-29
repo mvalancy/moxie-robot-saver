@@ -37,109 +37,149 @@
 <!-- 3D stage (moxie.js mounts the renderer canvas here) -->
 <div id="app"></div>
 
-<!-- HUD corner brackets around the stage -->
-<div id="hud-frame" aria-hidden="true">
-  <span class="corner tl"></span><span class="corner tr"></span>
-  <span class="corner bl"></span><span class="corner br"></span>
-</div>
+<!-- HUD overlay: topbar / notice / stage+rail laid out as a grid over the canvas -->
+<div id="hud">
 
-<!-- title bar -->
-<header id="topbar">
-  <div class="brand">
-    <span class="glyph" aria-hidden="true"></span>
-    <h1>MOXIE<span class="sep">&middot;</span>SIL</h1>
-    <span class="tag">v24.10.803</span>
-    <span class="tag dim">SOFTWARE-IN-THE-LOOP</span>
-    <span class="disclaimer">Unofficial fan project &mdash; <strong>not affiliated with, endorsed by, or connected to Embodied, Inc.</strong> &ldquo;Moxie&rdquo; is their trademark. Built for fun, to keep retired robots alive. <a href="https://github.com/mvalancy/moxie-robot-saver" target="_blank" rel="noopener">GitHub &#8599;</a></span>
+  <!-- title bar -->
+  <header id="topbar">
+    <div class="brand">
+      <span class="glyph" aria-hidden="true"></span>
+      <h1>MOXIE<span class="sep">&middot;</span>SIL</h1>
+      <span class="tag">v24.10.803</span>
+      <span class="tag dim">SOFTWARE-IN-THE-LOOP</span>
+    </div>
+    <div class="linkstate">
+      <span id="link-dot" class="dot" aria-hidden="true"></span>
+      <span id="link-label">LINK IDLE</span>
+    </div>
+  </header>
+
+  <!-- legal / ethical disclaimer: its own slim bar so it stays legible -->
+  <div id="notice" role="note">
+    <span class="notice-badge">FAN&nbsp;PROJECT</span>
+    <p class="disclaimer">
+      <strong>Unofficial fan project</strong> &mdash; not affiliated with, endorsed by,
+      or connected to Embodied,&nbsp;Inc.
+      <span class="notice-more">&ldquo;Moxie&rdquo; is their trademark. Built for fun,
+      to keep retired robots alive.</span>
+    </p>
+    <a class="notice-link" href="https://github.com/mvalancy/moxie-robot-saver" target="_blank" rel="noopener">GitHub&nbsp;&#8599;</a>
   </div>
-  <div class="linkstate">
-    <span id="link-dot" class="dot" aria-hidden="true"></span>
-    <span id="link-label">LINK IDLE</span>
-  </div>
-</header>
 
-<!-- speech callout -->
-<div id="bubble" class="hidden">
-  <span class="callout-label">MOXIE &middot; TTS OUT</span>
-  <span id="bubble-text"></span>
+  <!-- stage overlays (canvas itself is fullscreen behind the HUD) -->
+  <main id="stage">
+    <div id="hud-frame" aria-hidden="true">
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+    </div>
+
+    <!-- speech callout -->
+    <div id="bubble" class="hidden">
+      <span class="callout-label">MOXIE &middot; TTS OUT</span>
+      <span id="bubble-text"></span>
+    </div>
+
+    <!-- stage hint -->
+    <div id="scene-hint" aria-hidden="true">DRAG&thinsp;&middot;&thinsp;ORBIT&ensp;&#47;&#47;&ensp;SCROLL&thinsp;&middot;&thinsp;ZOOM&ensp;&#47;&#47;&ensp;<code>window.moxie</code> API</div>
+  </main>
+
+  <!-- HUD rail -->
+  <aside id="panel">
+    <button id="rail-toggle" type="button" aria-expanded="true" aria-controls="rail-scroll">
+      <span class="tick" aria-hidden="true"></span>Controls<span class="caret" aria-hidden="true"></span>
+    </button>
+
+    <div id="rail-scroll">
+
+      <details class="group" open>
+        <summary><span class="tick" aria-hidden="true"></span>Motion<span class="hint">servos &middot; scene</span><span class="caret" aria-hidden="true"></span></summary>
+
+        <section class="sub">
+          <h3>Motors<span class="hint">0&ndash;32767 &middot; 16384 REST</span></h3>
+          <div id="motors"></div>
+          <button id="center-btn" class="wide">Center pose</button>
+        </section>
+
+        <section class="sub">
+          <h3>Scene<span class="hint">lighting &middot; liveness</span></h3>
+          <label class="rng"><span class="rng-name">LIGHT</span>
+            <input id="scene-light" type="range" min="0" max="100" value="85">
+            <span class="rng-val" id="scene-light-val">0.85</span></label>
+          <label class="chk"><input id="idle-on" type="checkbox" checked><span>liveness</span></label>
+        </section>
+      </details>
+
+      <details class="group" open>
+        <summary><span class="tick" aria-hidden="true"></span>Expression<span class="hint">face &middot; heart</span><span class="caret" aria-hidden="true"></span></summary>
+
+        <section class="sub">
+          <h3>Face<span class="hint">expression cluster</span></h3>
+          <div id="faces" class="btn-row"></div>
+        </section>
+
+        <section class="sub">
+          <h3>Heart LED<span class="hint">chest indicator</span></h3>
+          <div class="row">
+            <label class="chk"><input id="led-on" type="checkbox"><span>power</span></label>
+            <input id="led-color" type="color" value="#ff5577">
+          </div>
+        </section>
+      </details>
+
+      <details class="group" open>
+        <summary><span class="tick" aria-hidden="true"></span>Voice<span class="hint">tts &middot; audio</span><span class="caret" aria-hidden="true"></span></summary>
+
+        <section class="sub">
+          <h3>Speech<span class="hint">TTS</span></h3>
+          <div class="row">
+            <input id="speech-input" type="text" placeholder="transmit line&hellip;" autocomplete="off">
+            <button id="speech-btn">Say</button>
+          </div>
+        </section>
+
+        <section class="sub">
+          <h3>Audio<span class="hint">piper tts &middot; sfx</span></h3>
+          <label class="chk"><input id="audio-on" type="checkbox" checked><span>sound</span></label>
+          <div class="row" style="margin-top:8px">
+            <input id="tts-base" type="text" placeholder="http://127.0.0.1:8081">
+            <button id="tts-test">Test</button>
+          </div>
+          <p id="tts-status" class="hint">piper tts service</p>
+        </section>
+      </details>
+
+      <details class="group" open>
+        <summary><span class="tick" aria-hidden="true"></span>Link<span class="hint">bus &middot; log &middot; session</span><span class="caret" aria-hidden="true"></span></summary>
+
+        <section class="sub">
+          <h3>Live bus<span class="hint">MQTT&#47;WS :9001</span></h3>
+          <div class="row">
+            <input id="bus-host" type="text" placeholder="broker host" autocomplete="off">
+            <button id="bus-connect">Link</button>
+          </div>
+          <p id="bus-status">not connected</p>
+        </section>
+
+        <section class="sub sub-log">
+          <h3>Comms log<span class="hint">child &harr; moxie</span></h3>
+          <div id="transcript"></div>
+        </section>
+
+        <section class="sub">
+          <h3>Session<span class="hint">record &#47; replay</span></h3>
+          <div class="btn-row">
+            <button id="rec-toggle">Rec</button>
+            <button id="rec-save">Save</button>
+            <button id="rec-demo">Demo</button>
+          </div>
+          <label class="file-load">load&nbsp;<input id="rec-load" type="file" accept="application/json"></label>
+        </section>
+      </details>
+
+    </div>
+  </aside>
+
 </div>
-
-<!-- stage hint -->
-<div id="scene-hint" aria-hidden="true">DRAG&thinsp;&middot;&thinsp;ORBIT&ensp;&#47;&#47;&ensp;SCROLL&thinsp;&middot;&thinsp;ZOOM&ensp;&#47;&#47;&ensp;<code>window.moxie</code> API</div>
-
-<!-- HUD rail -->
-<aside id="panel">
-
-  <section class="card">
-    <h2><span class="tick"></span>Motors<span class="hint">0&ndash;32767 &middot; 16384 REST</span></h2>
-    <div id="motors"></div>
-    <button id="center-btn" class="wide">Center pose</button>
-  </section>
-
-  <section class="card">
-    <h2><span class="tick"></span>Face<span class="hint">expression cluster</span></h2>
-    <div id="faces" class="btn-row"></div>
-  </section>
-
-  <section class="card">
-    <h2><span class="tick"></span>Speech<span class="hint">TTS</span></h2>
-    <div class="row">
-      <input id="speech-input" type="text" placeholder="transmit line&hellip;" autocomplete="off">
-      <button id="speech-btn">Say</button>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2><span class="tick"></span>Audio<span class="hint">piper tts &middot; sfx</span></h2>
-    <label class="chk"><input id="audio-on" type="checkbox" checked><span>sound</span></label>
-    <div class="row" style="margin-top:6px">
-      <input id="tts-base" type="text" placeholder="http://127.0.0.1:8081">
-      <button id="tts-test">Test</button>
-    </div>
-    <p id="tts-status" class="hint">piper tts service</p>
-  </section>
-
-  <section class="card">
-    <h2><span class="tick"></span>Heart LED<span class="hint">chest indicator</span></h2>
-    <div class="row">
-      <label class="chk"><input id="led-on" type="checkbox"><span>power</span></label>
-      <input id="led-color" type="color" value="#ff5577">
-    </div>
-  </section>
-
-  <section>
-    <h2><span class="tick"></span>Scene<span class="hint">lighting · liveness</span></h2>
-    <label class="rng"><span class="rng-name">LIGHT</span>
-      <input id="scene-light" type="range" min="0" max="100" value="85">
-      <span class="rng-val" id="scene-light-val">0.85</span></label>
-    <label class="chk"><input id="idle-on" type="checkbox" checked><span>liveness</span></label>
-  </section>
-
-  <section class="card">
-    <h2><span class="tick"></span>Live bus<span class="hint">MQTT&#47;WS :9001</span></h2>
-    <div class="row">
-      <input id="bus-host" type="text" placeholder="broker host" autocomplete="off">
-      <button id="bus-connect">Link</button>
-    </div>
-    <p id="bus-status">not connected</p>
-  </section>
-
-  <section class="card card-log">
-    <h2><span class="tick"></span>Comms log<span class="hint">child &harr; moxie</span></h2>
-    <div id="transcript"></div>
-  </section>
-
-  <section class="card">
-    <h2><span class="tick"></span>Session<span class="hint">record &#47; replay</span></h2>
-    <div class="btn-row">
-      <button id="rec-toggle">Rec</button>
-      <button id="rec-save">Save</button>
-      <button id="rec-demo">Demo</button>
-    </div>
-    <label class="file-load">load&nbsp;<input id="rec-load" type="file" accept="application/json"></label>
-  </section>
-
-</aside>
 
 <script type="module" src="moxie.js"></script>
 <script src="./vendor/mqtt.min.js"></script>
@@ -217,6 +257,26 @@
       window.moxieAudio.speak("Hi! I am Moxie. It is nice to meet you.");
     });
   })();
+})();
+</script>
+<script>
+/* Rail drawer — on phone-width screens the rail collapses to a handle so the
+ * 3D stage stays visible; the handle toggles it. Pure presentation. */
+(function () {
+  "use strict";
+  var hud = document.getElementById("hud");
+  var t = document.getElementById("rail-toggle");
+  if (!hud || !t) return;
+  var mq = window.matchMedia("(max-width: 700px)");
+  function setClosed(closed) {
+    hud.classList.toggle("rail-closed", closed);
+    t.setAttribute("aria-expanded", String(!closed));
+  }
+  if (mq.matches) setClosed(true);           // start collapsed on phones
+  mq.addEventListener("change", function (e) { if (!e.matches) setClosed(false); });
+  t.addEventListener("click", function () {
+    setClosed(!hud.classList.contains("rail-closed"));
+  });
 })();
 </script>
 </body>
