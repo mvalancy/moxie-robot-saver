@@ -69,6 +69,18 @@ The browser subscribes (MQTT-over-WebSocket) to the same topics the robot sees, 
 from the **real** `remote_chat` replies + behavior markup + motor commands — it's a window into the live
 bus, not a mock.
 
+## Design language
+
+All web UI follows the **[valpatel.com-derived style guide](../design/style-guide.md)** — a dark
+robot **telemetry/mission-control HUD** (void `#0a0a0f`, neon-cyan `#00f0ff` accents, Inter +
+JetBrains Mono, mono-labels-on-dark). Fonts are vendored (offline). The functional milestones below
+(D1–D7) are complete; a **design/depth pass (D8)** re-skins the SIL into the control-room aesthetic and
+is ongoing — "feature-complete" is not "done", the look matters.
+
+- [~] **D8 — Control-room redesign.** Apply the style guide deeply to `sim/web/` (and the server UI):
+  Moxie in the void, HUD panels, telemetry gauges, comms-log transcript, live indicators. In progress
+  (Fable 5). Then: phoneme visemes, screenshots/gif, release tag.
+
 ## The 1-week roadmap (drives the build timer)
 
 Each day = one shippable milestone. The build loop picks the next unchecked item.
