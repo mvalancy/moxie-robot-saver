@@ -89,7 +89,8 @@ custom build could use to launch privileged bring-up tools.
 ## Init service graph (native daemons)
 
 Below the app-layer Launcher sits the Android `init` service set. Across all `.rc` files (ramdisk +
-`/system/etc/init` + `/vendor/etc/init[/hw]`) this build defines **97 unique services**:
+`/system/etc/init` + `/vendor/etc/init[/hw]`) this build defines **98 unique services** — the complete list (name · class · binary · user · flags ·
+source `.rc`) is in [`manifests/init-services.tsv`](manifests/init-services.tsv):
 
 | `class` | count | fires |
 |---|--:|---|
@@ -104,8 +105,13 @@ native init daemons:
 
 | Service | Binary | Role |
 |---|---|---|
-| `ledctrld` | `/system/bin/ledctrld` (core, oneshot) | PCA963x status LEDs |
-| `projectorfanpid` | `/system/bin/projectorfanpid` (core, oneshot) | DLP projector PID fan |
+| `ledctrld` | `/system/bin/ledctrld` (core, oneshot) | PCA963x status LEDs; own SELinux domain `u:r:ledctrld:s0` |
+| `projectorfanpid` | `/system/bin/projectorfanpid` (core, oneshot) | DLP projector PID fan; domain `u:r:projectorfanpid:s0` |
+
+Both are `core`/`oneshot` and each gets a **dedicated SELinux domain** — Embodied's only two additions
+to the SELinux policy at the init layer. A comment in `venhw_init.rockchip.rc` notes
+**`projectorfanpid` can be enabled/disabled via `/sdcard/scripts.config`** — a plaintext config knob on
+the (MTP-reachable) `/sdcard`, i.e. the projector-fan behaviour is tunable without reflashing.
 
 Everything else that makes Moxie *Moxie* runs in the **app layer** (the `bo-*` components the Launcher
 starts — see above), **not** as init services. For custom firmware this is the clean seam: you can
@@ -118,6 +124,10 @@ Notable stock services in the mix:
   `tee-supplicant` + `wait_for_keymaster` (OP-TEE).
 - **Vendor HALs:** `vendor.{camera-provider-2-4, audio-hal-2-0, light-hal-2-0, keymaster-3-0,
   gralloc-2-0, hwcomposer-2-1, power-hal-1-0, boot-hal-1-0, wifi_hal_legacy, media.omx, …}`.
+- **VPN:** `racoon` (IPsec/IKE) and `mtpd` (L2TP/PPTP), both `user vpn` with `NET_ADMIN`/`NET_RAW` —
+  the stock Android VPN daemons that sit behind the **VPN-config QR** (`VN`+`QRVPNConfig`, see
+  [`qr-commands.md`](qr-commands.md#vpn-qr--vn--qrvpnconfig)); a real OS-level path to tunnel a robot's
+  traffic through infra you control.
 - Kernel modules are loaded via `init.insmod.sh` (`insmod`/`modprobe` in `/vendor/bin`).
 
 ## For custom firmware
