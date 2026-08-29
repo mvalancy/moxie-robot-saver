@@ -14,8 +14,8 @@ sim. Instead:
 | Layer | Approach | Status |
 |---|---|---|
 | **Protocol** (MQTT topics, JSON envelopes, JWT) | A **virtual robot** that speaks it exactly ([`sim/virtual_moxie.py`](../../sim/virtual_moxie.py)) | ✅ working — round-trips against the real [`mqtt/`](../../mqtt/) supervisor |
-| **Behavior** (`<mark cmd:…>` markup, moods, gestures) | Parse the same markup the server emits → animate the 3D avatar | 🔜 web UI |
-| **Motion** (arms/head/body DOF) | Drive a **WebGL (three.js) 3D Moxie** from the `libmotionlib` motor indices ([hardware-map](../reverse-engineering/hardware-map.md#native-motion-api-factory-libmotionlib--liblizardjni)) | 🟡 model+rig+API built (`sim/web/`); bus-bridge next |
+| **Behavior** (`<mark cmd:…>` markup, moods, gestures) | `sim/web/bridge.js` parses the marks → drives face + arm gestures | 🟡 wired (D3 refining) |
+| **Motion** (arms/head/body DOF) | Drive a **WebGL (three.js) 3D Moxie** from the `libmotionlib` motor indices ([hardware-map](../reverse-engineering/hardware-map.md#native-motion-api-factory-libmotionlib--liblizardjni)) | 🟢 model+rig+API + live bus bridge |
 | **Face** (DLP expressions/visemes) | Render the animated face to a canvas **texture on the face-screen mesh**, from TTS marks + mood verbs | 🟡 canvas face + 6 expressions built; wire to `EmotionState` next |
 | **Component golden-tests** (optional, later) | Run specific ARM `.so` (`libchatscript`) under **qemu-user** for reference outputs | ⏸ backlog |
 
@@ -75,14 +75,15 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
 
 - [x] **D1 — Protocol SIL + CI.** `virtual_moxie.py` round-trip (state→config(paired)→remote-chat→reply);
   `sim/run_smoke.sh`; GitHub Actions (`.github/workflows/ci.yml`: doc-links + proto + SIL smoke). ✅
-- [~] **D2 — 3D Moxie + bus to the browser.** ✅ **WebGL 3D Moxie built** (`sim/web/`, three.js r160, by
-  a Fable 5 agent): teal teardrop shell, tilted oval canvas face, two-segment arms, 7-DOF rig matching
-  the `libmotionlib` motor indices, `window.moxie` API (`setMotor/getMotor/setFace/setSpeech/setHeartLED`)
-  + a hand-control panel; verified via headless-Chrome. ⏳ **Remaining:** a **WebSocket listener** on the
-  broker + an MQTT.js bridge so the page animates from the live bus; and **vendor three.js locally**
-  (self-sufficiency — don't depend on the unpkg CDN).
-- [ ] **D3 — Behavior markup → animation.** Parse `<mark cmd:…>` ([behavior-markup](../reverse-engineering/behavior-markup.md))
-  from `commands/remote_chat`; map mood/gesture verbs to face + arm poses. Speech bubble shows the line.
+- [x] **D2 — 3D Moxie + bus to the browser.** ✅ WebGL 3D Moxie (`sim/web/`, three.js r160, Fable 5):
+  teal teardrop shell, oval canvas face, two-segment arms, 7-DOF rig on the `libmotionlib` indices,
+  `window.moxie` API + control panel. ✅ **Live bus**: broker `listener 9001 / websockets` +
+  `sim/web/bridge.js` (MQTT.js) subscribes `/devices/+/commands/remote_chat` and drives the avatar —
+  verified end-to-end (WS client receives a supervisor reply over `:9001`).
+- [~] **D3 — Behavior markup → animation.** ✅ started: `bridge.js` parses `<mark cmd:…>`
+  ([behavior-markup](../reverse-engineering/behavior-markup.md)) — `behaviour-tree` `Gesture_*` → arm
+  poses, `playback-mood` → face, `remote_chat` text → speech bubble, `icons-v2` → icon log. ⏳ remaining:
+  nail the `mood` int→emotion mapping, render `icons-v2` badges on the screen, richer gesture poses.
 - [ ] **D4 — Motion from motor state.** Virtual robot publishes motor positions (the 7 `libmotionlib`
   DOFs); the UI animates arms/head/body from them. Sliders to drive motors manually.
 - [ ] **D5 — Face expressions + visemes.** Render expressions from mood + simple visemes from the spoken

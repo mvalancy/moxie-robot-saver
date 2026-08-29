@@ -49,9 +49,20 @@
     </div>
   </section>
 
+  <section>
+    <h2>Live bus <span class="hint">(MQTT&nbsp;/&nbsp;WS&nbsp;:9001)</span></h2>
+    <div class="row">
+      <input id="bus-host" type="text" placeholder="broker host" autocomplete="off">
+      <button id="bus-connect">Connect</button>
+    </div>
+    <p id="bus-status" class="hint">not connected</p>
+  </section>
+
   <p class="foot">drag to orbit &middot; scroll to zoom &middot; <code>window.moxie</code> API</p>
 </aside>
 
 <script type="module" src="moxie.js"></script>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="bridge.js"></script>
 </body>
 </html>
