@@ -712,7 +712,7 @@ const grille = new THREE.Mesh(
   })
 );
 grille.position.set(0, 0.34, 0);
-lowerG.add(grille);      // lower chest: stays planted — the lean pivots above it
+breatheG.add(grille);    // printed on the body — breathes + tilts WITH it
 
 // ---- `moxie` wordmark near the base ----
 
@@ -742,7 +742,7 @@ const wordmark = new THREE.Mesh(
   })
 );
 wordmark.position.set(0, 0.155, 0);
-lowerG.add(wordmark);    // on the base itself — never leans
+breatheG.add(wordmark);  // printed on the body — breathes + tilts WITH it
 
 // ---- Heart LED: a THIN white horizontal line with a TINY white heart
 //      directly beneath it, on the upper chest just under the head — a small,
