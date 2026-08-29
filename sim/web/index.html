@@ -106,6 +106,7 @@
             <input id="scene-light" type="range" min="0" max="100" value="85">
             <span class="rng-val" id="scene-light-val">0.85</span></label>
           <label class="chk"><input id="idle-on" type="checkbox" checked><span>liveness</span></label>
+          <label class="chk"><input id="axes-on" type="checkbox"><span>show axes</span></label>
         </section>
       </details>
 
@@ -238,6 +239,10 @@
     }
     if (idle && window.moxie && window.moxie.setIdle) {
       idle.addEventListener("change", function () { window.moxie.setIdle(idle.checked); });
+    }
+    var axes = document.getElementById("axes-on");
+    if (axes && window.moxie && window.moxie.setShowAxes) {
+      axes.addEventListener("change", function () { window.moxie.setShowAxes(axes.checked); });
     }
   }
   if (window.moxie) wireScene();

@@ -55,12 +55,12 @@ const MOTOR_DEFS = [
   // joint is spring-driven, not motorised: springElbow() derives the fold from the
   // shoulder angle, so elbows get no slider and no commanded value.
   { name: 'L shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 0  (+X arm)
-  // Elbows are PASSIVE: no motor slider. The spring closes the forearm and the body
-  // pushes it open, so the fold is derived entirely from the shoulder angle
-  // (see springElbow). Kept in the table so protocol motor indices stay 0..6.
-  { name: 'L elbow (spring)',     axis: 'x', sign: -1, pos: 2.10, passive: true }, // 1
+  // Index 1/3 = the shoulder's SECOND axis: IN/OUT (abduction — the arm swings away
+  // from the body's side). Matches the board's `L/R ARM IN/OUT`. The ELBOW has no
+  // motor at all: it's spring-driven off the shoulder (see springElbow).
+  { name: 'L shoulder (in/out)',  axis: 'z', sign: +1, neg: 0.10, pos: 1.05 }, // 1
   { name: 'R shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 2  (-X arm)
-  { name: 'R elbow (spring)',     axis: 'x', sign: -1, pos: 2.10, passive: true }, // 3
+  { name: 'R shoulder (in/out)',  axis: 'z', sign: -1, neg: 0.10, pos: 1.05 }, // 3
   { name: 'Head tilt (nod)',      axis: 'x', sign: -1, neg: 0.38, pos: 0.38 }, // 4
   { name: 'Body turn (yaw)',      axis: 'y', sign: +1, neg: 1.05, pos: 1.05 }, // 5
   { name: 'Body lean (F/B)',      axis: 'x', sign: +1, neg: 0.28, pos: 0.28 }, // 6
@@ -78,6 +78,10 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 document.getElementById('app').appendChild(renderer.domElement);
+
+// Debug-axis registry (declared early: makeArm() registers nodes during build).
+const _axisNodes = [];                      // [{name, node}]
+function registerAxisNode(name, node) { _axisNodes.push({ name, node }); }
 
 const scene = new THREE.Scene();
 
@@ -850,6 +854,9 @@ function makeArm(side) {  // side = -1 left, +1 right
   elbowPost.add(hand);
 
   breatheG.add(armRoot);
+  registerAxisNode(side > 0 ? 'armRootL (robot LEFT, +X)' : 'armRootR (robot RIGHT, -X)', armRoot);
+  registerAxisNode(side > 0 ? 'shoulderL (motor 0)' : 'shoulderR (motor 2)', shoulder);
+  registerAxisNode(side > 0 ? 'elbowL (spring)' : 'elbowR (spring)', elbow);
   return { shoulder, elbow };
 }
 
@@ -859,6 +866,73 @@ function makeArm(side) {  // side = -1 left, +1 right
 // viewer's right) and its RIGHT arm at -X. Motors 0/1 must drive +X, 2/3 -X.
 const armL = makeArm(+1);   // robot's left  -> viewer's right (+X)
 const armR = makeArm(-1);   // robot's right -> viewer's left  (-X)
+
+// Register the torso/head rig nodes for the debug overlay (arms register in makeArm).
+registerAxisNode('yawG (motor 5, base pivot)', yawG);
+registerAxisNode('lowerG (planted: speaker)', lowerG);
+registerAxisNode('leanG (motor 6, waist ABOVE speaker)', leanG);
+registerAxisNode('breatheG (torso)', breatheG);
+registerAxisNode('headTiltG (motor 4)', headTiltG);
+
+// ---------------------------------------------------------------------------
+// Debug: axis + origin overlay  (window.moxie.setShowAxes(true))
+// ---------------------------------------------------------------------------
+// Shows a labelled RGB axis triad (X=red, Y=green, Z=blue) at the WORLD origin
+// and at every named rig node's origin, so joint placement/orientation can be
+// inspected directly instead of inferred from renders.
+
+const axisGroup = new THREE.Group();
+axisGroup.visible = false;
+scene.add(axisGroup);
+
+function makeLabel(text, color) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 96;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(6,6,9,0.78)';
+  g.fillRect(0, 0, c.width, c.height);
+  g.font = 'bold 44px "JetBrains Mono", monospace';
+  g.fillStyle = color || '#e8edf5';
+  g.textBaseline = 'middle';
+  g.fillText(text, 12, c.height / 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, depthTest: false, transparent: true }));
+  spr.scale.set(0.62, 0.116, 1);
+  spr.renderOrder = 999;
+  return spr;
+}
+
+let _axesBuilt = false;
+function buildAxes() {
+  if (_axesBuilt) return;
+  _axesBuilt = true;
+  // world origin — bigger triad + label
+  const w = new THREE.AxesHelper(0.9);
+  w.material.depthTest = false; w.renderOrder = 998;
+  axisGroup.add(w);
+  const wl = makeLabel('WORLD origin (0,0,0)  X→red Y→green Z→blue', '#00f0ff');
+  wl.position.set(0.5, 0.06, 0);
+  axisGroup.add(wl);
+  // one triad per named node, parented so it follows the node's transform
+  for (const { name, node } of _axisNodes) {
+    const a = new THREE.AxesHelper(0.34);
+    a.material.depthTest = false; a.renderOrder = 998;
+    node.add(a);
+    const l = makeLabel(name, '#fcee0a');
+    l.position.set(0.2, 0.07, 0);
+    node.add(l);
+    axisGroup.userData.attached = axisGroup.userData.attached || [];
+    axisGroup.userData.attached.push(a, l);
+  }
+}
+
+function setShowAxes(on) {
+  buildAxes();
+  axisGroup.visible = !!on;
+  for (const o of (axisGroup.userData.attached || [])) o.visible = !!on;
+}
 
 // ---------------------------------------------------------------------------
 // Motor state + node wiring
@@ -885,7 +959,7 @@ const ELBOW_FULL_AT   = 1.15;        // shoulder angle (rad) at which the bend m
 function springElbow(shoulderA) {
   const t = Math.min(1, Math.abs(shoulderA) / ELBOW_FULL_AT);   // 0..1 as the arm lifts
   const eased = t * t * (3 - 2 * t);                             // smoothstep
-  return -ELBOW_MAX_BEND * eased;                                // fold direction
+  return ELBOW_MAX_BEND * eased;   // + folds the forearm IN toward the body
 }
 
 function motorAngle(i) {
@@ -1459,6 +1533,7 @@ const api = {
   },
 
   // Toggle the idle liveness layer (breathing/blink stay subtle regardless).
+  setShowAxes(on) { setShowAxes(on); },
   setIdle(on) {
     liveness.enabled = on !== false;
   },
@@ -1561,8 +1636,10 @@ function animate() {
 
   const a = [0, 1, 2, 3, 4, 5, 6].map(motorAngle);
 
-  armL.shoulder.rotation.x = a[0] + live[0];
-  armR.shoulder.rotation.x = a[2] + live[2];
+  armL.shoulder.rotation.x = a[0] + live[0];    // up/down  (motor 0)
+  armL.shoulder.rotation.z = a[1] + live[1];    // in/out   (motor 1)
+  armR.shoulder.rotation.x = a[2] + live[2];    // up/down  (motor 2)
+  armR.shoulder.rotation.z = a[3] + live[3];    // in/out   (motor 3)
   // Spring elbow (see hardware-map.md "Arm anatomy"): the spring pulls the
   // forearm CLOSED, and the BODY pushes it back OPEN when the arm rests against
   // the side — which is why the firmware only ever drives elbows toward MAX.
@@ -1570,8 +1647,9 @@ function animate() {
   // against the body -> forced open; arm lifted away -> spring closes it. The
   // motor commands a fold on top of that, and can only ADD fold (never extend
   // past what the body allows).
-  armL.elbow.rotation.x = springElbow(a[0] + live[0]);
-  armR.elbow.rotation.x = springElbow(a[2] + live[2]);
+  // the spring responds to how far the arm has swung clear of the body, on either axis
+  armL.elbow.rotation.x = springElbow(Math.hypot(a[0] + live[0], a[1] + live[1]));
+  armR.elbow.rotation.x = springElbow(Math.hypot(a[2] + live[2], a[3] + live[3]));
   headTiltG.rotation.x     = a[4] + live[4];
   headRollG.rotation.z     = liveness.master * liveness.w[4] * liveness.roll;
   yawG.rotation.y          = a[5] + live[5];
