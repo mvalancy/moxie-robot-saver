@@ -1,5 +1,5 @@
 {
- "generated": "fe9eb3f-dirty",
+ "generated": "7d52bd8-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -801,7 +801,7 @@
    "path": "reverse-engineering/firmware-803-reference.md",
    "title": "Firmware reference — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 8507,
+   "bytes": 8967,
    "mermaid": 0,
    "headings": [
     "Version identity",

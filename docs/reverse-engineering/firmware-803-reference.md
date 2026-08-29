@@ -114,11 +114,17 @@ sys.embodied.version  = v3.6.4-Zephyr        sys.embodied.hwtype   = robot
 sys.embodied.buildtype= customer             sys.embodied.certtype = release
 sys.embodied.qrsetup  = 0                     sys.embodied.auto_unity = 0
 sys.embodied.camtype  = v4l2  camhw = ov2710  displayhw = unknown
+sys.embodied.boot_reason = normal            sys.embodied.boot_error = 0
+sys.embodied.quiet_boot_done = 0             sys.embodied.wifi.freq_pref = 0
 persist.sys.disable_rescue = 1               persist.sys.usb.config = mtp,adb (vendor) / none (boot)
 ro.oem_unlock_supported = 1                  ro.board.platform = rk3288
 ro.rksdk.version = RK30_ANDROID9-SDK-v1.00.00
 ro.build.fingerprint = rockchip/rk3288/rk3288:9/PQ2A.190305.002/cloud12282012:user/release-keys
 ```
+> `boot_reason`/`boot_error`/`quiet_boot_done` are **runtime boot-state** flags the launcher sets
+> (normal vs recovery/factory boot, and a boot-fault code) — useful telemetry when diagnosing a robot
+> that won't come up. `wifi.freq_pref` is the band preference (0 = auto; pairs with the QR `band_select`).
+
 
 ## Embodied daemons & hardware hooks (init)
 - `ledctrld` (`/system/bin/ledctrld`) → **PCA963x** I²C LEDs (`/sys/class/leds/pca963x:{red,green,blue}_N`).
