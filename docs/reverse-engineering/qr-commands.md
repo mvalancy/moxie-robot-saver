@@ -144,8 +144,23 @@ The QR Wi-Fi path (`bo-wifi` `AndroidWiFi.Connect(ssid, psk, isHidden)`) builds 
 **Revival note (goal #3):** a standard home **WPA2-PSK** router (or open, or hidden) works with the
 QR — the "single-mom" case is covered. **WPA3-only** routers (force one to WPA2/WPA3-mixed), **enterprise/
 campus** networks, and **captive portals** are not supported — use a phone hotspot or a normal
-WPA2 network instead. (Contrast the newer server-side [`WifiNetworkUpdate`](cloud-protocol.md) path,
-which can push credentials post-pairing.)
+WPA2 network instead.
+
+### Post-pairing Wi-Fi push (`WifiNetworkUpdate`)
+After setup, a **server/parent can add or change Wi-Fi over MQTT** (no QR needed) with
+`embodied.wifiapp.WifiNetworkUpdate`:
+
+```proto
+message WifiNetworkUpdate {
+  embodied.unity.StartPairingQR wifi_info = 2;  // reuses ssid/password/is_hidden/band_select
+  bool add_only = 3;                             // true = add alongside; false = switch/replace
+}
+```
+
+`wifi_info` reuses the pairing message's Wi-Fi fields, so the **same support matrix applies** (Open /
+WPA2-PSK / hidden — no WPA3/enterprise). `add_only=true` keeps existing saved networks (add a second
+network, e.g. moving house); `false` switches. Handy for a revival server to manage a robot's Wi-Fi
+remotely once it's paired.
 
 > Cross-check: `bo-wifi`'s `UI_Connect()` hard-codes the **factory** network `"Embodied Guest"` /
 > `"Embodied<3robots!"` — which matches the `EmbodiedPSK` recovered from `libsecrets`
