@@ -47,7 +47,14 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   **glowing DLP projector**, not a dull panel. It **fills the head's front frame with NO black border**
   — the lit screen runs to the panel edge; the only dark area is a **small camera zone at the very top**. Render it as an **emissive, glowing** surface so the face
   literally casts light; eyes/brows/mouth glow. In a dark scene the face is the light source.
-  > 💡 **The glow comes from INSIDE/behind the face — never a haze on top of it.** Drive emissive from
+  > 💡 **The glow comes from the FEATURES themselves (emissive map), never a light shining at the pane.**
+> The screen is fully **matte** (roughness 1, no clearcoat/reflectivity) — a projection screen, not
+> glass — and the face's point light sits **in front of and below** the pane so it spills onto the
+> chest/surroundings without creating a hotspot on the face.
+> **Symbols** (`showIcons`) draw as a **large square panel over the eyes** with the face **dimmed**
+> behind them, matching the robot's scan/QR cue; a **`sleep`** expression closes the eyes to calm arcs.
+>
+> 💡 **The glow comes from INSIDE/behind the face — never a haze on top of it.** Drive emissive from
   > the face canvas so the drawn features themselves glow (a backlit projection screen), with any
   > halo/bloom as **spill around the pane's edges** and light cast onto the head/chest/surroundings.
   > **Expression legibility always wins:** the eyes/brows/mouth must stay crisp and high-contrast at

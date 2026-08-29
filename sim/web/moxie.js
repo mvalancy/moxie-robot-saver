@@ -213,8 +213,8 @@ function applySceneLight() {
 
   // the DLP face takes over as the scene dims
   const dark = 1 - s;
-  screenMat.emissiveIntensity = 0.55 + 1.6 * dark;
-  faceLight.intensity = 0.15 + 2.6 * dark;
+  screenMat.emissiveIntensity = 0.62 + 1.5 * dark;   // features self-glow
+  faceLight.intensity = 0.05 + 1.1 * dark;      // gentler: no hotspot on the pane
   faceHalo.material.opacity = 0.55 * dark * dark;
 }
 
@@ -619,14 +619,17 @@ function facePanelGeometry(rx, ry) {
   return geo;                  // RingGeometry UVs are planar — canvas maps 1:1
 }
 
+// roughness 1 / no specular: the pane is a projection screen, not glass — this
+// removes the mirror-like highlight that read as a light inside the head.
 const screenMat = new THREE.MeshPhysicalMaterial({
   map: faceTex,
   emissive: 0xffffff,
   emissiveMap: faceTex,
-  emissiveIntensity: 0.32,
-  roughness: 0.32,
-  clearcoat: 0.8,
-  clearcoatRoughness: 0.2,
+  emissiveIntensity: 0.45,
+  roughness: 1.0,          // fully matte — a projection screen, not glass
+  metalness: 0.0,
+  clearcoat: 0.0,          // no mirror highlight (this was the "light in the head")
+  reflectivity: 0.0,
 });
 const screen = new THREE.Mesh(facePanelGeometry(FACE_RX, FACE_RY), screenMat);
 screen.position.z = 0.422;
@@ -635,7 +638,10 @@ faceAssembly.add(screen);
 // Projector light: the DLP face casts real light on the surroundings.
 // Intensity scales up as the scene dims (see setSceneLight / animate loop).
 const faceLight = new THREE.PointLight(0xf3eedd, 0.15, 3.4, 2);
-faceLight.position.set(0, 0, 0.85);
+// Spill light only: placed well in front of and BELOW the pane so it lights the
+// chest/surroundings without shining back onto the face (which caused a bright
+// hotspot on the screen). The face's own glow comes from the emissive map.
+faceLight.position.set(0, -0.34, 1.15);
 faceAssembly.add(faceLight);
 
 // Soft warm spill AROUND the pane — an annulus with a fully transparent
@@ -1015,6 +1021,9 @@ function motorAngle(i) {
 // ---------------------------------------------------------------------------
 
 const EXPRESSIONS = {
+  // eyes fully closed (thin arcs) + soft calm mouth — Moxie asleep
+  sleep:     { eyeW: 1.00, eyeH: 0.06, browRaise: -0.25, browTilt: 0.0, browAsym: 0.0,
+               pupilX: 0.0, pupilY: 0.0, mouthCurve: 0.10, mouthOpen: 0.02, mouthWidth: 0.8, mouthX: 0.0 },
   neutral:   { eyeW: 1.00, eyeH: 1.00, browRaise: 0.0, browTilt: 0.0, browAsym: 0.0,
                pupilX: 0.0, pupilY: 0.0, mouthCurve: 0.18, mouthOpen: 0.04, mouthWidth: 1.0, mouthX: 0.0 },
   happy:     { eyeW: 1.00, eyeH: 0.62, browRaise: 0.2, browTilt: 0.0, browAsym: 0.0,
@@ -1146,8 +1155,22 @@ function drawIconBadges() {
     fadeS = 1 - 0.15 * f;
   }
 
-  const size = 44, gap = 12, rowY = 435;
+  // A LARGE symbol panel over the upper/middle face (covering the eyes), with the
+  // face dimmed behind it — matching how the robot shows scan/QR cues. Multiple
+  // icons sit side by side inside that panel.
+  const big = N === 1;
+  const size = big ? 250 : 150, gap = big ? 0 : 16, rowY = big ? 250 : 250;
   const rowW = N * size + (N - 1) * gap;
+
+  // dim the face beneath the symbol so it reads as an overlay
+  {
+    const d = (icons.fading ? fadeA : 1) * 0.62;
+    fctx.save();
+    fctx.globalAlpha = d;
+    fctx.fillStyle = '#0f1e24';
+    fctx.fillRect(0, 0, 512, 512);
+    fctx.restore();
+  }
 
   for (let i = 0; i < N; i++) {
     let a = fadeA, s = fadeS;
@@ -1170,7 +1193,7 @@ function drawIconBadges() {
     fctx.shadowBlur = 6;
     fctx.shadowOffsetY = 2;
     fctx.fillStyle = '#ffffff';
-    roundedRectPath(fctx, -size / 2, -size / 2, size, size, 12);
+    roundedRectPath(fctx, -size / 2, -size / 2, size, size, size * 0.22);
     fctx.fill();
     fctx.shadowColor = 'transparent';
     fctx.shadowBlur = 0;
@@ -1179,7 +1202,7 @@ function drawIconBadges() {
     fctx.lineWidth = 1.5;
     fctx.stroke();
 
-    fctx.scale(1.15, 1.15);   // glyphs slightly oversized for legibility
+    fctx.scale(size / 46 * 1.15, size / 46 * 1.15);   // glyph scales with the panel
     drawIconGlyph(icons.names[i]);
     fctx.restore();
   }
