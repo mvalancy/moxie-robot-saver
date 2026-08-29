@@ -174,9 +174,12 @@ security-model RE; does not settle silicon.
   `robot_credentials.py`, `site/openmoxie/urls.py`.
 - **`nhertanto/Embodied-Moxie`** — [GitHub](https://github.com/nhertanto/Embodied-Moxie). **ChatScript +
   Jinja2** files from a former Embodied contributor, used in-house to author Moxie **activities/content**.
-  This is a rare **primary source for the ChatScript/content-authoring format** — worth a dedicated
-  cross-check against [`content-and-conversation.md`](content-and-conversation.md) (we established
-  ChatScript runs cloud-side, not on the robot, so this is what a revival *server* would need to speak).
+  This is a rare **primary source for the ChatScript/content-authoring format**. **✅ Substance
+  captured in-repo** (self-sufficiency): the three-layer authoring pipeline (Python node classes →
+  Jinja2 templates → generated `.top`), the ChatScript `.top` syntax/operators, and the named **global
+  command** set are now in
+  [`content-and-conversation.md`](content-and-conversation.md#chatscript-authoring--the-real-format--pipeline)
+  (ChatScript runs cloud/server-side, so this is what a revival *server* authors).
 - **robotsaroundthehouse OpenMoxie setup guide** — [thread](https://robotsaroundthehouse.com/threads/setting-up-openmoxie-for-your-moxie-robot-a-detailed-step-by-step-guide.827/).
   A step-by-step owner walkthrough of the QR re-home + OpenMoxie stand-up — the real-world instance of
   our [FIELD-GUIDE](FIELD-GUIDE.md) ① path.
