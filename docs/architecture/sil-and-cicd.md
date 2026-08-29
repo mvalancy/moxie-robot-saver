@@ -33,8 +33,10 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
 - **Head:** a **separate rounded head on top of the body**, clearly distinct from it (a visible neck/gap,
   not blended). The head **tilts forward/back** (`HEAD UP/DN`). The **face lives on the head** (moved up
   from the body).
-- **Face:** the animated face-screen is on the **front of the head** — a **flat/near-flat DISK**
-  (a shallow round pane), **not a cone or a domed bulge**; it sits nearly flush in the head. It's a
+- **Face:** the animated face-screen is on the **front of the head** — a **flat/near-flat panel**
+  (shallow, **not a cone or domed bulge**) that **FILLS most of the head's front** and **runs up to meet
+  the camera zone**, forming one continuous front "screen + camera" assembly (only a modest teal border
+  around the outside; no teal gap between face and camera). It's a
   **glowing DLP projector**, not a dull panel. Render it as an **emissive, glowing** surface so the face
   literally casts light; eyes/brows/mouth glow. In a dark scene the face is the light source.
   > 💡 **The glow comes from INSIDE/behind the face — never a haze on top of it.** Drive emissive from
