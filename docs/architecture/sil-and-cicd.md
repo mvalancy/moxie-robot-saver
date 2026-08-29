@@ -81,10 +81,10 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
   `sim/web/bridge.js` (MQTT.js) subscribes `/devices/+/commands/remote_chat` and drives the avatar —
   verified end-to-end (WS client receives a supervisor reply over `:9001`). ✅ **three.js + mqtt.js
   vendored** in `sim/web/vendor/` — the sim runs with **no network/CDN** (self-sufficiency).
-- [~] **D3 — Behavior markup → animation.** ✅ started: `bridge.js` parses `<mark cmd:…>`
-  ([behavior-markup](../reverse-engineering/behavior-markup.md)) — `behaviour-tree` `Gesture_*` → arm
-  poses, `playback-mood` → face, `remote_chat` text → speech bubble, `icons-v2` → icon log. ⏳ remaining:
-  nail the `mood` int→emotion mapping, render `icons-v2` badges on the screen, richer gesture poses.
+- [~] **D3 — Behavior markup → animation.** ✅ `bridge.js` parses `<mark cmd:…>` — full `Gesture_*` set +
+  `Bht_*` behaviour-trees (Wing_Flap/Sleep/Idle_Curious/…) → whole-body poses, `playback-mood` → face
+  (evidence-based mood map), text → speech bubble. ⏳ remaining: **`icons-v2` badges** on the face
+  (Fable, in progress).
 - [ ] **D4 — Motion from motor state.** Virtual robot publishes motor positions (the 7 `libmotionlib`
   DOFs); the UI animates arms/head/body from them. Sliders to drive motors manually.
 - [ ] **D5 — Face expressions + visemes.** Render expressions from mood + simple visemes from the spoken

@@ -26,28 +26,59 @@
 
   const C = 16384, MAX = 32767;      // motor rest / range (MOTOR_MAX_POS)
 
-  // A gesture = a short pose on the arm motors, then ease back to centre.
-  // Motor indices: 0 L-shoulder, 1 L-elbow, 2 R-shoulder, 3 R-elbow.
+  // Motor indices: 0 L-shoulder, 1 L-elbow, 2 R-shoulder, 3 R-elbow, 4 head, 5 body-yaw, 6 body-lean.
+  const set = (i, v) => window.moxie && window.moxie.setMotor(i, Math.max(0, Math.min(MAX, v)));
+  const armsHome = () => { for (const i of [0, 1, 2, 3]) set(i, C); };
+  const home = () => { for (let i = 0; i < 7; i++) set(i, C); };
+
+  // A gesture = a short arm pose, then ease back to centre (the app's Gesture_* set).
   function gesture(name) {
     const m = window.moxie; if (!m) return;
-    const set = (i, v) => m.setMotor(i, Math.max(0, Math.min(MAX, v)));
-    const back = () => { for (const i of [0, 1, 2, 3]) set(i, C); };
     switch (name) {
       case "Gesture_Celebrate":
         set(0, 30000); set(2, 30000); set(1, 24000); set(3, 24000);
-        m.setFace("happy"); setTimeout(back, 1600); break;
+        m.setFace("happy"); setTimeout(armsHome, 1600); break;
       case "Gesture_Question":
       case "Gesture_Think":
       case "Gesture_Think_Subtle":
-        set(2, 24000); set(3, 8000);           // right hand up near face
-        m.setFace("thinking"); setTimeout(back, 1800); break;
+        set(2, 24000); set(3, 8000);            // right hand up near face
+        m.setFace("thinking"); setTimeout(armsHome, 1800); break;
       case "Gesture_Point":
       case "Gesture_Point_Right":
-        set(2, 26000); set(3, 30000); setTimeout(back, 1400); break;
-      case "Gesture_Higher": set(0, 28000); set(2, 28000); setTimeout(back, 1200); break;
-      case "Gesture_Lower":  set(0, 6000);  set(2, 6000);  setTimeout(back, 1200); break;
-      case "Gesture_Talk":   set(2, 20000); set(3, 20000); setTimeout(back, 900); break;
-      case "Gesture_None":   back(); break;
+        set(2, 26000); set(3, 30000); setTimeout(armsHome, 1400); break;
+      case "Gesture_Self":                       // hand to own chest
+        set(2, 18000); set(3, 4000); setTimeout(armsHome, 1400); break;
+      case "Gesture_Large":                      // both arms wide open
+        set(0, 26000); set(2, 26000); set(1, 30000); set(3, 30000); setTimeout(armsHome, 1500); break;
+      case "Gesture_Higher": set(0, 28000); set(2, 28000); setTimeout(armsHome, 1200); break;
+      case "Gesture_Lower":  set(0, 6000);  set(2, 6000);  setTimeout(armsHome, 1200); break;
+      case "Gesture_Talk":   set(2, 20000); set(3, 20000); setTimeout(armsHome, 900); break;
+      case "Gesture_None":   armsHome(); break;
+      default: break;
+    }
+  }
+
+  // Behaviour trees (Bht_*) — idle/expressive whole-body animations (the app's hardcoded set).
+  function behaviourTree(name) {
+    const m = window.moxie; if (!m) return;
+    switch (name) {
+      case "Bht_Gesture_Celebrate": return gesture("Gesture_Celebrate");
+      case "Bht_Wing_Flap": {                    // flap both arms a couple times
+        let up = true; const flap = (n) => { if (n <= 0) return armsHome();
+          set(0, up ? 30000 : 8000); set(2, up ? 30000 : 8000); up = !up;
+          setTimeout(() => flap(n - 1), 260); };
+        flap(5); break;
+      }
+      case "Bht_Sleep_Anim":                     // droop arms + lower head
+        set(0, 3000); set(2, 3000); set(4, 4000); setTimeout(home, 2500); break;
+      case "Bht_Idle_Curious":                   // head tilt + slight body turn
+        set(4, 24000); set(5, 22000); setTimeout(home, 1600); break;
+      case "Bht_Idle_Active_Listening":          // lean in a little
+        set(6, 22000); setTimeout(home, 1600); break;
+      case "Bht_Active_Thinking":
+      case "Bht_Vg_hmm_thinking":
+        m.setFace("thinking"); set(2, 24000); set(3, 8000); setTimeout(armsHome, 1800); break;
+      case "Bht_Bangle_on_off": set(1, 28000); setTimeout(armsHome, 900); break;
       default: break;
     }
   }
@@ -58,9 +89,12 @@
     // mood
     const mood = /cmd:playback-mood,data:\{[^}]*?\+mood\+:(\d+)/.exec(markup);
     if (mood) { const f = MOOD_TO_FACE[+mood[1]]; if (f) window.moxie.setFace(f); }
-    // gestures / behaviour-trees (eventName Gesture_*)
+    // gestures (eventName Gesture_*)
     const gx = /\+eventName\+:\+(Gesture_[A-Za-z_]+)\+/g; let g;
     while ((g = gx.exec(markup))) gesture(g[1]);
+    // behaviour trees (behaviour Bht_*) — idle/expressive whole-body
+    const bx = /\+behaviour\+:\+(Bht_[A-Za-z0-9_]+)\+/g; let b;
+    while ((b = bx.exec(markup))) behaviourTree(b[1]);
     // icons-v2 → log the icon names (badge rendering is a D5 face task)
     const ix = /\+iconType\+:1,\+value\+:\+([A-Za-z0-9_]+)\+/g; const icons = [];
     let ic; while ((ic = ix.exec(markup))) icons.push(ic[1]);
