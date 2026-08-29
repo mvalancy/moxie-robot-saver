@@ -133,6 +133,20 @@ JSON events carry `event_id` / `request_id`, a `backend`, an optional `query`, a
 The server answers by publishing to `…/commands/{command}` (JSON) or `…/config`. This is exactly what
 OpenMoxie's `moxie_server.py` implements — the concrete recipe for the [`server/`](../../server/) here.
 
+## Health telemetry & backup (robot → cloud)
+
+- **Device health** — `BoSystemMonitor` reports `embodied.logging.SystemMetrics.SystemState`:
+  `CPULoad`, `RAMFree`, `DiskFree`, `Uptime`, `Temperature`, `Battery`, `WifiRssi`. A revival server can
+  log/monitor these (or ignore them). `CloudStatus{connected, user_state, endpoint}` reports the robot's
+  own view of its connection.
+- **Backup** — `BackupStageRequest{path, end_timestamp}` + `BackupDataUpdate{actor, complete,
+  files_added[]}` stage `/sdcard/EmbodiedData` files for upload to the cloud (the `api/backups` REST
+  endpoint above + Google Cloud Storage). A minimal server can no-op backups; a full one persists them
+  per robot for `api/restores`.
+- **Family/child data** — `FamilyInformation{members[]}` is just a member list; the rich child PII
+  (nickname, age) that content prompts use (`child_pii.nickname`) comes from the **account** (parent-app
+  REST, [`rest-api.md`](rest-api.md)) via `RemoteChatRequest.family`/`settings`, not this proto.
+
 ## Robot authentication (device identity)
 
 The robot authenticates with the **Google Cloud IoT-Core device model**, kept post-migration:
