@@ -36,28 +36,27 @@ Codenames trace the program's history — **Bo → Karu → Moxie**:
 
 `NUM_MOTORS=10` (the core face/arm/head set); `BASE_L_R`/`TORSO_F_B` are extended DOF.
 
-### What the joints actually are (factory naming)
+### Arm anatomy — what `ARM_IN_OUT` actually is
 
-The proto enum names the *motions* (`L_ARM_UP_DN`, `L_ARM_IN_OUT`), which leaves the **anatomy**
-ambiguous — is `ARM_IN_OUT` a second shoulder axis or a real elbow? The **factory board-test app
-(`FabTestSoftware`)** settles it: its motor labels are
+The proto enum names *motions* (`L_ARM_UP_DN`, `L_ARM_IN_OUT`), not anatomy, so the arm's joint
+structure has to be inferred. What the firmware does tell us:
 
-```
-L Shoulder   L Elbow   R Shoulder   R Elbow   Neck   Head   Base   Body
-```
+- **The engineering motor test drives the two axes very differently** (`MotorEngActivity`): the
+  **shoulders (0/2) are swept bidirectionally** — to both `8191` *and* `24575`, i.e. driven up *and*
+  down — while the **elbows (1/3) are only ever driven toward `MOTOR_MAX_POS`**, never to a low value.
+  A joint that is powered in **one direction only** is the signature of a **spring/gravity return**:
+  the motor pulls it one way, and the forearm falls back under its own weight.
+- Practical reading (matches observed hardware): the **shoulder is the actuated joint** — it rotates and
+  extends the arm — and the **forearm is passively returned** (spring/gravity), so `ARM_IN_OUT` drives
+  the fold in one direction and physics does the rest.
+- ⚠️ **Not proven from the image.** There is no kinematic description in the firmware, and
+  ([as established](#position-units)) **no joint angles at all** — only counts. Confirming whether the
+  forearm segment is spring-loaded, damped, or free needs a **bench unit**.
 
-So each arm has a **shoulder and a genuine ELBOW** (two segments, not two shoulder axes):
-
-| Proto / index | Factory label | Joint |
-|---|---|---|
-| `L_ARM_UP_DN` (0) | **L Shoulder** | raises/lowers the whole arm |
-| `L_ARM_IN_OUT` (1) | **L Elbow** | folds the forearm in/out |
-| `R_ARM_UP_RN` (2) | **R Shoulder** | |
-| `R_ARM_IN_OUT` (3) | **R Elbow** | |
-
-The list also confirms a **`Neck`** as a distinct named joint alongside `Head`, and `Base`/`Body` for
-the rotate/lean DOF. This is the authoritative joint vocabulary for anyone building motion or a
-[simulator](../architecture/sil-and-cicd.md).
+> 🚫 **False lead, recorded so nobody repeats it:** `FabTestSoftware.apk` contains the strings
+> `L Shoulder / L Elbow / R Shoulder / R Elbow / L Wrist / R Wrist / L Hip / R Knee / Nose / Neck`.
+> These are **human pose-estimation keypoints** (Moxie has no wrists, hips, or knees) — the vision
+> model's skeleton labels, **not** Moxie's motor names. They say nothing about the robot's joints.
 
 ### Driving a motor
 
