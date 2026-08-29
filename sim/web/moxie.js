@@ -370,9 +370,9 @@ root.add(yawG);
 // The real robot's lean pivots ABOVE the speaker: the lower body (grille,
 // wordmark) stays upright while the torso above it tips. lowerG turns with the
 // body but never leans; leanG pivots at LEAN_PIVOT_Y, just above the grille.
-const LEAN_PIVOT_Y = 0.22;          // BELOW the speaker (grille y=0.34) — the
-                                    // waist is under the lower chest, so the whole
-                                    // torso (both chest segments) leans as one.
+const LEAN_PIVOT_Y = 0.66;          // ABOVE the speaker, at the chest seam. The
+                                    // LOWER chest (speaker) stays planted; only the
+                                    // UPPER chest (arms, heart LED, head) leans.
 const lowerG = new THREE.Group();   // fixed lower section (yaws, never leans)
 yawG.add(lowerG);
 
@@ -681,7 +681,7 @@ const grille = new THREE.Mesh(
   })
 );
 grille.position.set(0, 0.34, 0);
-breatheG.add(grille);    // lower chest: leans with the torso (pivot is below it)
+lowerG.add(grille);      // lower chest: stays planted — the lean pivots above it
 
 // ---- `moxie` wordmark near the base ----
 

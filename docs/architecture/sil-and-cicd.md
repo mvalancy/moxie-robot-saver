@@ -30,7 +30,8 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
 - **Body — TWO chest segments with a clean seam:** an **upper chest** (carries the **arms** and the
   **heart LED**) that is **slightly wider** and **overhangs** a **lower chest** (carries the **speaker
   grille**), with a **crisp shadowed step** at the division. Teal `#3BB6B0`, on a circular disc base.
-  The **waist/lean pivot is BELOW the speaker**, so the whole torso tips as one unit.
+  The **waist/lean pivot is ABOVE the speaker**, at the chest seam: the **lower chest (speaker) stays
+  planted** and only the **upper chest — arms, heart LED, head — leans**.
 - **Neck:** a **short, stubby** neck between head and upper chest — wide relative to its height (not a
   tall stalk), sized so a full head tilt **clears the chest without intersecting**.
   The **speaker grille is low on the front of the body** (stays at the bottom). The body **turns** on
