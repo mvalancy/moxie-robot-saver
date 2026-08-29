@@ -35,9 +35,13 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   from the body).
 - **Face:** the animated face-screen is on the **front of the head** — a **flat/near-flat DISK**
   (a shallow round pane), **not a cone or a domed bulge**; it sits nearly flush in the head. It's a
-  **glowing DLP projector**, not a dull panel. Render it as an **emissive, glowing** surface (bloom/light-emitting,
-  WebGL lighting) so the face literally casts light; eyes/brows/mouth glow. In a dark scene the face
-  should be the light source.
+  **glowing DLP projector**, not a dull panel. Render it as an **emissive, glowing** surface so the face
+  literally casts light; eyes/brows/mouth glow. In a dark scene the face is the light source.
+  > 💡 **The glow comes from INSIDE/behind the face — never a haze on top of it.** Drive emissive from
+  > the face canvas so the drawn features themselves glow (a backlit projection screen), with any
+  > halo/bloom as **spill around the pane's edges** and light cast onto the head/chest/surroundings.
+  > **Expression legibility always wins:** the eyes/brows/mouth must stay crisp and high-contrast at
+  > every `setSceneLight` level — never let an additive overlay sit in front of the pane and wash it out.
 - **Scene lighting is adjustable:** expose a control to dim the whole scene from lit → dark; when dark,
   **Moxie's projected face glows** and lights its surroundings. (Fable: expose e.g.
   `window.moxie.setSceneLight(0..1)`; the HUD adds a slider.)
