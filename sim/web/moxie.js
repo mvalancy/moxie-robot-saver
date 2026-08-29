@@ -767,14 +767,17 @@ function makeArm(side) {  // side = -1 left, +1 right
   // keeps the rest pose flush against the body.
   const elbowPre = new THREE.Group();
   elbowPre.position.copy(elbowPivot).sub(shoulderPivot);
-  elbowPre.rotation.y = side * 0.5;
+  // Coplanar hinge: Moxie's arm folds like a flat sheet of cardboard — the
+  // shoulder and elbow share one axis, so the forearm folds flat in-plane
+  // toward the upper arm (no skew sweeping it across the body).
+  elbowPre.rotation.y = 0;
   shoulder.add(elbowPre);
 
   const elbow = new THREE.Group();            // animated: rotation.z (motor 1/3)
   elbowPre.add(elbow);
 
   const elbowPost = new THREE.Group();
-  elbowPost.rotation.y = -side * 0.5;
+  elbowPost.rotation.y = 0;
   elbow.add(elbowPost);
 
   // forearm: SAME width as the upper arm, overlapping it at the elbow
@@ -798,8 +801,12 @@ function makeArm(side) {  // side = -1 left, +1 right
   return { shoulder, elbow };
 }
 
-const armL = makeArm(-1);
-const armR = makeArm(+1);
+// Handedness: the motor names (L/R) are from the ROBOT's own perspective — the
+// Lizard board is silkscreened `L ARM UP/DN` / `R ARM UP/DN` (fcc-teardown.md).
+// The camera looks at the front from +Z, so the robot's LEFT arm is at +X (the
+// viewer's right) and its RIGHT arm at -X. Motors 0/1 must drive +X, 2/3 -X.
+const armL = makeArm(+1);   // robot's left  -> viewer's right (+X)
+const armR = makeArm(-1);   // robot's right -> viewer's left  (-X)
 
 // ---------------------------------------------------------------------------
 // Motor state + node wiring
