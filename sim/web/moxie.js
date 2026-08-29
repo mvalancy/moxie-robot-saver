@@ -1806,8 +1806,24 @@ function animate() {
 
 animate();
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+// The control panel floats over the RIGHT of the full-bleed 3D. Shift the render
+// so Moxie sits centred in the visible area to the LEFT of it (instead of being
+// half-hidden behind the panel). On phone/drawer widths the panel isn't a side
+// column, so no offset.
+function applyStageOffset() {
+  const W = window.innerWidth, H = window.innerHeight;
+  camera.aspect = W / H;
+  const panel = document.getElementById('panel');
+  let shift = 0;
+  if (W > 760 && panel) {
+    const r = panel.getBoundingClientRect();
+    // panel is docked to the right edge and visible
+    if (r.width > 0 && r.right >= W - 2) shift = r.width * 0.5;
+  }
+  if (shift > 4) camera.setViewOffset(W, H, shift, 0, W, H);
+  else camera.clearViewOffset();
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+  renderer.setSize(W, H);
+}
+window.addEventListener('resize', applyStageOffset);
+applyStageOffset();
