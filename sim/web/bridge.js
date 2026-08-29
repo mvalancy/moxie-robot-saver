@@ -234,10 +234,17 @@
     route: route,
     sendUserTurn: function (text) {
       const payload = JSON.stringify({ command: "prompt", backend: "router", speech: text });
-      if (client && client.connected) {
-        client.publish("/devices/d_sim/events/remote-chat", payload);
-      }
+      const live = !!(client && client.connected);
+      if (live) client.publish("/devices/d_sim/events/remote-chat", payload);
       route("/devices/d_sim/events/remote-chat", payload);   // always show it locally
+      // No backend? Answer with the offline stub brain, using the SAME reply shape
+      // so the avatar animates from real behavior markup either way.
+      if (!live && window.moxieStub && window.moxieStub.enabled) {
+        const r = window.moxieStub.reply(text);
+        setTimeout(() => route("/devices/d_sim/commands/remote_chat", JSON.stringify(
+          { command: "remote_chat", result: "OK", backend: "router",
+            output: { text: r.text, markup: r.markup } })), 450);
+      }
     },
     isLive: function () { return !!(client && client.connected); },
   };

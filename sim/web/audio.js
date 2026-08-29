@@ -52,9 +52,68 @@
     if (current) { try { current.pause ? current.pause() : current.stop(); } catch (e) {} current = null; }
   }
 
-  function speak(text) {
+  // Fetch an audio URL, decode it, play it, and drive the mouth from its envelope.
+  function playUrl(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error("audio " + r.status);
+      return r.arrayBuffer();
+    }).then(function (buf) {
+      var a = actx(); if (!a) return false;
+      return a.decodeAudioData(buf.slice(0)).then(function (audio) {
+        var src = a.createBufferSource(); src.buffer = audio;
+        var analyser = a.createAnalyser(); analyser.fftSize = 256;
+        src.connect(analyser); analyser.connect(a.destination);
+        current = src;
+        var data = new Uint8Array(analyser.frequencyBinCount), raf = 0;
+        function pump() {
+          analyser.getByteTimeDomainData(data);
+          var peak = 0;
+          for (var i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i] - 128));
+          if (window.moxie && window.moxie.setMouthOpen)
+            window.moxie.setMouthOpen(Math.min(1, peak / 40));
+          raf = requestAnimationFrame(pump);
+        }
+        src.onended = function () {
+          cancelAnimationFrame(raf); current = null;
+          if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(0);
+        };
+        src.start(0); pump();
+        return true;
+      });
+    }).catch(function () { return false; });
+  }
+
+  // Pre-rendered clip manifest (static deploys): { moxie: {text:file}, child:{...} }
+  var clips = null, clipsTried = false;
+  function loadClips() {
+    if (clipsTried) return Promise.resolve(clips);
+    clipsTried = true;
+    return fetch("audio/index.json").then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { clips = j; return j; }).catch(function () { return null; });
+  }
+
+  // Play a pre-rendered clip for `text` if one exists (either speaker).
+  function playClip(text, who) {
+    return loadClips().then(function (j) {
+      if (!j) return false;
+      var rel = (j[who || "moxie"] || {})[text] || (j.moxie || {})[text] || (j.child || {})[text];
+      if (!rel) return false;
+      return playUrl("audio/" + rel);
+    });
+  }
+
+  function speak(text, who) {
     if (!enabled || !text) return Promise.resolve(false);
     stop();
+    // 1) pre-cached clip (works on a fully static deploy)
+    return playClip(text, who).then(function (done) {
+      if (done) return true;
+      // 2) live Piper service, if one is reachable
+      return speakLive(text);
+    });
+  }
+
+  function speakLive(text) {
     var url = TTS_BASE.replace(/\/$/, "") + "/tts?text=" + encodeURIComponent(text.slice(0, 1000));
     return fetch(url).then(function (r) {
       if (!r.ok) throw new Error("tts " + r.status);

@@ -47,7 +47,18 @@
       status('heard: "' + text.slice(0, 40) + '"');
       publishUtterance(text);
       return text;
-    }).catch(function (e) {
+    }).catch(function () {
+      // No STT service (static deploy): fall back to a scripted child line so the
+      // conversation still runs. Cycles through the lines we have audio for.
+      if (window.moxieStub && window.moxieStub.enabled) {
+        return window.moxieStub.scriptedLines().then(function (lines) {
+          if (!lines.length) { status("stt unavailable — run sim/stt/server.py"); return null; }
+          var text = lines[(window.moxieMic._n = (window.moxieMic._n || 0) + 1) % lines.length];
+          status('heard (scripted): "' + text.slice(0, 36) + '"');
+          publishUtterance(text);
+          return text;
+        });
+      }
       status("stt unavailable — run sim/stt/server.py");
       return null;
     });
