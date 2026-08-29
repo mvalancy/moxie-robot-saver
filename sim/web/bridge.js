@@ -19,9 +19,10 @@
     1: "sad", 2: "happy", 3: "happy", 4: "sad",
     5: "surprised", 6: "surprised", 7: "neutral",
   };
-  // cmd:playback-mood `mood` int — exact semantics not fully reverse-engineered,
-  // so this is a labelled best-guess; refine in D5 when the mood enum is nailed.
-  const MOOD_TO_FACE = { 0: "happy", 1: "sad", 2: "surprised", 3: "thinking" };
+  // cmd:playback-mood `mood` int → face. Inferred from shipped content (see
+  // behavior-markup.md#data-schemas): 0 neutral/default, 1 positive/engaged,
+  // 2 concerned ("I'm sorry"), 4 oops ("Oops."), 5 surprised ("Oh!").
+  const MOOD_TO_FACE = { 0: "neutral", 1: "happy", 2: "sad", 4: "sad", 5: "surprised" };
 
   const C = 16384, MAX = 32767;      // motor rest / range (MOTOR_MAX_POS)
 

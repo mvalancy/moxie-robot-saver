@@ -80,7 +80,22 @@ Each verb is a `CommandMarkUpGenerator` with a typed request (its `data` fields)
 
 **`stopaudio`**: `scope` int, `channel` int, `FadeOutTime` float, `ClearQueue` bool.
 
-**`playback-mood`**: `mood` int (0,1,… — emotional tone), `intensity` int (0–2, `maxIntensity=2`).
+**`playback-mood`**: `mood` int (emotional tone), `intensity` int (0–2, `maxIntensity=2`). The `mood`
+enum names aren't in the binary (IL2CPP, no metadata), but the values and their meaning are **inferred
+from shipped content** (frequency + the line each precedes):
+
+| `mood` | seen | inferred tone | evidence (line it precedes) | → SIL face |
+|--:|--:|---|---|---|
+| **0** | 188× | **neutral / default** (baseline) | most lines; the resting tone | `neutral` |
+| **1** | 36× | **positive / engaged** | general expressive speech + gesture | `happy` |
+| **2** | 8× | **concerned / sympathetic** | "Oh, gosh." · "I'm sorry. You should talk to a trusted adult." · "Whoops." (genre `intimate`) | `sad` |
+| **4** | 2× | **embarrassed / oops** | "Oops." | `sad` |
+| **5** | 14× | **surprised / startled** | "Oh!" (then settles to mood 1) | `surprised` |
+
+Values `3`, `6`, `7` don't appear in shipped content. ⚠️ **Inferred, not authoritative** — this is the
+best evidence-based reading; the exact enum lives in the (unavailable) Unity `global-metadata.dat`. It
+is, however, enough for a [SIL face](../architecture/sil-and-cicd.md) to map `mood`→expression (the
+right-hand column), replacing the earlier guess in `sim/web/bridge.js`.
 
 **`idlestate`**: `idleState` int (e.g. 7).
 
