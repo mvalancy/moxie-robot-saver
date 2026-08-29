@@ -13,8 +13,8 @@ python3 -m http.server 8080
 # then open http://localhost:8080/
 ```
 
-Any static server works. It needs the network once to fetch three.js
-(pinned to **r160** from unpkg via an importmap in `index.html`).
+Any static server works, **fully offline** — three.js (r160) and MQTT.js (5.10.1)
+are vendored in [`vendor/`](vendor/) (no CDN).
 Drag to orbit the camera, scroll to zoom. The right-hand panel drives every
 API call by hand, so the model is demonstrable before any MQTT wiring exists.
 

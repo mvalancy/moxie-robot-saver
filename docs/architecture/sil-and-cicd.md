@@ -79,7 +79,8 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
   teal teardrop shell, oval canvas face, two-segment arms, 7-DOF rig on the `libmotionlib` indices,
   `window.moxie` API + control panel. ✅ **Live bus**: broker `listener 9001 / websockets` +
   `sim/web/bridge.js` (MQTT.js) subscribes `/devices/+/commands/remote_chat` and drives the avatar —
-  verified end-to-end (WS client receives a supervisor reply over `:9001`).
+  verified end-to-end (WS client receives a supervisor reply over `:9001`). ✅ **three.js + mqtt.js
+  vendored** in `sim/web/vendor/` — the sim runs with **no network/CDN** (self-sufficiency).
 - [~] **D3 — Behavior markup → animation.** ✅ started: `bridge.js` parses `<mark cmd:…>`
   ([behavior-markup](../reverse-engineering/behavior-markup.md)) — `behaviour-tree` `Gesture_*` → arm
   poses, `playback-mood` → face, `remote_chat` text → speech bubble, `icons-v2` → icon log. ⏳ remaining:
