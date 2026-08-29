@@ -101,6 +101,15 @@ GLTF can replace them later without changing the motor→node wiring.
 > wrong and is being redone by Fable 5 to match the above** (separate cylinder body + head, forehead
 > camera, half-cylinder arms, single-finger hands).
 
+> ⚠️ **Known limitation — the arm shells are body-wrapped.** `makeArmShellGeometry()` maps every vertex
+> onto `bodyRadiusAt(y)`, baking the body's curvature into the mesh. Consequences: (a) the plate's local
+> **Z is not its own plane**, so the anatomically-correct hinge axes (up/down about the boss axis) can't
+> be expressed — rotating on Z sends the arm behind the body; (b) a Z rotation isn't mirror-symmetric
+> across ±X, so the two elbows fold slightly differently. The fix is to build each plate **flat in its own
+> local frame** (origin at the hinge-boss centre) and *place* it with a transform. A first attempt at that
+> rebuild put the plates inside the body and was reverted — it needs the boss offset and the plate's
+> outward yaw solved together, not guessed. Tracked as the next model task.
+
 > **Modeling & look → Fable 5.** The 3D model, materials, face art, and overall visual polish are
 > delegated to **Fable 5** subagents (`Agent(model: "fable")`); the build timer spawns one for each
 > UI/appearance milestone (D2–D5), while the main loop keeps the protocol/motor **wiring** correct so
