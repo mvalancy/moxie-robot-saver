@@ -228,6 +228,20 @@
       if (window.moxieAudio) window.moxieAudio.sfx("listen"); }
   }
 
+  // Public surface for other modules (mic.js): inject a child utterance either
+  // onto the live bus (so the real backend answers) or locally into the avatar.
+  window.moxieBridge = {
+    route: route,
+    sendUserTurn: function (text) {
+      const payload = JSON.stringify({ command: "prompt", backend: "router", speech: text });
+      if (client && client.connected) {
+        client.publish("/devices/d_sim/events/remote-chat", payload);
+      }
+      route("/devices/d_sim/events/remote-chat", payload);   // always show it locally
+    },
+    isLive: function () { return !!(client && client.connected); },
+  };
+
   // ---- wire the panel once moxie + DOM are ready ----
   function wire(id, fn) { const el = document.getElementById(id); if (el) el.addEventListener("click", fn); }
   function initUI() {

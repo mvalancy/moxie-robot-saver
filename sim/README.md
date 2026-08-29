@@ -53,3 +53,18 @@ python3 sim/tts/server.py 8081     # GET /tts?text=... -> audio/wav, /health
 
 The web UI's **Audio** panel points at `http://127.0.0.1:8081` by default (editable).
 Voice `.onnx` files are gitignored (63 MB each).
+
+## Ears (STT — talk to Moxie)
+
+The browser mic feeds a local **faster-whisper** service that returns the robot's own
+**Deepgram-compatible** shape (`DeepgramResponse`), so the same service serves the sim
+and a real robot:
+
+```sh
+/tmp/piper-venv/bin/pip install faster-whisper     # or any python env
+python3 sim/stt/server.py 8082                     # POST /stt (audio) -> DeepgramResponse, GET /health
+```
+
+Then click **Listen** in the VOICE group, talk, click again to stop — the transcript is
+published as a child utterance on `/devices/<id>/events/remote-chat`, the brain answers,
+and Moxie speaks the reply (Piper). Model via `MOXIE_STT_MODEL` (default `base.en`).

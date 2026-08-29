@@ -146,6 +146,15 @@
           </div>
           <p id="tts-status" class="hint">piper tts service</p>
         </section>
+
+        <section class="sub">
+          <h3>Mic<span class="hint">talk to moxie</span></h3>
+          <div class="row">
+            <button id="mic-btn">Listen</button>
+            <input id="stt-base" type="text" placeholder="http://127.0.0.1:8082">
+          </div>
+          <p id="mic-status" class="hint">click to start / stop recording</p>
+        </section>
       </details>
 
       <details class="group" open>
@@ -185,6 +194,7 @@
 <script src="./vendor/mqtt.min.js"></script>
 <script src="bridge.js"></script>
 <script src="audio.js"></script>
+<script src="mic.js"></script>
 <script>
 /* HUD glue — mirrors the #bus-status text (written by bridge.js) onto
  * body[data-bus] so CSS can color the status line, the topbar link lamp,

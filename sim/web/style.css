@@ -871,3 +871,8 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   #topbar h1 { font-size: 14px; }
   .notice-badge { display: none; }
 }
+
+/* mic recording state */
+body[data-mic="on"] #mic-btn { border-color: var(--magenta); color: var(--magenta);
+  box-shadow: 0 0 0 1px rgba(255,42,109,.25), 0 0 18px rgba(255,42,109,.18); }
+body[data-mic="on"] #mic-btn::before { content: "● "; }
