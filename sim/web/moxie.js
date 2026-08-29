@@ -45,10 +45,15 @@ const MOTOR_DEFS = [
   // sign follows the SIDE the arm sits on: robot-left = +X (viewer's right),
   // robot-right = -X. Raising an arm rotates away from the body, so the sign is
   // mirrored between the two sides (see makeArm / the armL=+1 wiring below).
-  { name: 'L shoulder (up/down)', axis: 'z', sign: +1, neg: 0.35, pos: 1.75 }, // 0  (+X arm)
-  { name: 'L elbow (in/out)',     axis: 'z', sign: -1, neg: 0.44, pos: 1.48 }, // 1
-  { name: 'R shoulder (up/down)', axis: 'z', sign: -1, neg: 0.35, pos: 1.75 }, // 2  (-X arm)
-  { name: 'R elbow (in/out)',     axis: 'z', sign: +1, neg: 0.44, pos: 1.48 }, // 3
+  // The arm shells are wrapped around Y (they hug the body flank at x = ±r), so a
+  // Z rotation only swings them sideways. Rotating about X swings the arm in the
+  // vertical fore/aft plane: the shoulder LIFTS the arm and the elbow FOLDS the
+  // forearm toward it — the flat-cardboard motion, identical on both sides (the
+  // X axis needs no per-side mirroring).
+  { name: 'L shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 0  (+X arm)
+  { name: 'L elbow (in/out)',     axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 1
+  { name: 'R shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 2  (-X arm)
+  { name: 'R elbow (in/out)',     axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 3
   { name: 'Head tilt (nod)',      axis: 'x', sign: -1, neg: 0.38, pos: 0.38 }, // 4
   { name: 'Body turn (yaw)',      axis: 'y', sign: +1, neg: 1.05, pos: 1.05 }, // 5
   { name: 'Body lean (F/B)',      axis: 'x', sign: +1, neg: 0.28, pos: 0.28 }, // 6
@@ -1496,10 +1501,10 @@ function animate() {
 
   const a = [0, 1, 2, 3, 4, 5, 6].map(motorAngle);
 
-  armL.shoulder.rotation.z = a[0] + live[0];
-  armL.elbow.rotation.z    = a[1] + live[1];
-  armR.shoulder.rotation.z = a[2] + live[2];
-  armR.elbow.rotation.z    = a[3] + live[3];
+  armL.shoulder.rotation.x = a[0] + live[0];
+  armL.elbow.rotation.x    = a[1] + live[1];
+  armR.shoulder.rotation.x = a[2] + live[2];
+  armR.elbow.rotation.x    = a[3] + live[3];
   headTiltG.rotation.x     = a[4] + live[4];
   headRollG.rotation.z     = liveness.master * liveness.w[4] * liveness.roll;
   yawG.rotation.y          = a[5] + live[5];
