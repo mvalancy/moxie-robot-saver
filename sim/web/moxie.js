@@ -61,9 +61,12 @@ const MOTOR_DEFS = [
   // Index 1/3 = the shoulder's SECOND axis: IN/OUT (abduction — the arm swings away
   // from the body's side). Matches the board's `L/R ARM IN/OUT`. The ELBOW has no
   // motor at all: it's spring-driven off the shoulder (see springElbow).
-  { name: 'L shoulder (in/out)',  axis: 'z', sign: +1, neg: 0.10, pos: 1.05 }, // 1
+  // OUT-ONLY: the arm can swing away from the body but not into it, so this slider
+  // starts at 0 (arm against the side) rather than centred. `fromZero` maps the
+  // whole 0..32767 span to 0..pos.
+  { name: 'L shoulder (in/out)',  axis: 'z', sign: +1, pos: 1.05, fromZero: true }, // 1
   { name: 'R shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 2  (-X arm)
-  { name: 'R shoulder (in/out)',  axis: 'z', sign: -1, neg: 0.10, pos: 1.05 }, // 3
+  { name: 'R shoulder (in/out)',  axis: 'z', sign: -1, pos: 1.05, fromZero: true }, // 3
   { name: 'Head tilt (nod)',      axis: 'x', sign: -1, neg: 0.38, pos: 0.38 }, // 4
   { name: 'Body turn (yaw)',      axis: 'y', sign: +1, neg: 1.05, pos: 1.05 }, // 5
   { name: 'Body lean (F/B)',      axis: 'x', sign: +1, neg: 0.28, pos: 0.28 }, // 6
@@ -436,7 +439,7 @@ headForm.rotation.x = 0.05;
 headRollG.add(headForm);
 
 const HEAD_C = new THREE.Vector3(0, 0.64, 0.06);      // head centre (local)
-const HEAD_R = new THREE.Vector3(0.58, 0.68, 0.56);   // egg radii
+const HEAD_R = new THREE.Vector3(0.66, 0.60, 0.63);   // WIDER than tall — chubby base, near-sphere, pointy top
 
 // Egg-shaping for the head shell: taper the crown and ease it toward the
 // back so the silhouette reads as a teardrop.
@@ -941,8 +944,11 @@ function setShowAxes(on) {
 // Motor state + node wiring
 // ---------------------------------------------------------------------------
 
-const motorTargets = new Float32Array(7).fill(MOTOR_CENTER);
-const motorValues  = new Float32Array(7).fill(MOTOR_CENTER);
+// Rest pose: most joints centre at 16384; OUT-ONLY joints (shoulder in/out) rest
+// at 0 — arm against the body, since they cannot swing inward.
+const MOTOR_REST = MOTOR_DEFS.map(d => (d.fromZero ? 0 : MOTOR_CENTER));
+const motorTargets = new Float32Array(MOTOR_REST);
+const motorValues  = new Float32Array(MOTOR_REST);
 
 const motorNodes = [
   armL.shoulder, armL.elbow,
@@ -967,6 +973,10 @@ function springElbow(shoulderA) {
 
 function motorAngle(i) {
   const d = MOTOR_DEFS[i];
+  if (d.fromZero) {
+    // out-only joint: rest is 0 (against the body), full span swings outward.
+    return d.sign * (motorValues[i] / MOTOR_MAX) * d.pos;
+  }
   const u = (motorValues[i] - MOTOR_CENTER) / MOTOR_CENTER;   // -1 .. +1
   return d.sign * (u < 0 ? u * d.neg : u * d.pos);
 }
@@ -1532,7 +1542,7 @@ const api = {
   },
 
   centerAll() {
-    for (let i = 0; i < 7; i++) api.setMotor(i, MOTOR_CENTER);
+    for (let i = 0; i < 7; i++) api.setMotor(i, MOTOR_REST[i]);   // out-only joints -> 0
   },
 
   // Toggle the idle liveness layer (breathing/blink stay subtle regardless).
@@ -1564,9 +1574,10 @@ function buildPanel() {
     if (d.passive) return;          // spring-driven joint — not user-controllable
     const wrap = document.createElement('div');
     wrap.className = 'motor';
+    const rest = d.fromZero ? 0 : MOTOR_CENTER;      // out-only joints rest at 0
     wrap.innerHTML =
-      `<label><span>${i} &middot; ${d.name}</span><span class="val">${MOTOR_CENTER}</span></label>` +
-      `<input type="range" min="0" max="${MOTOR_MAX}" step="1" value="${MOTOR_CENTER}">`;
+      `<label><span>${i} &middot; ${d.name}</span><span class="val">${rest}</span></label>` +
+      `<input type="range" min="0" max="${MOTOR_MAX}" step="1" value="${rest}">`;
     const input = wrap.querySelector('input');
     const val = wrap.querySelector('.val');
     input.addEventListener('input', () => {
@@ -1651,8 +1662,9 @@ function animate() {
   // motor commands a fold on top of that, and can only ADD fold (never extend
   // past what the body allows).
   // the spring responds to how far the arm has swung clear of the body, on either axis
-  armL.elbow.rotation.x = springElbow(Math.hypot(a[0] + live[0], a[1] + live[1]));
-  armR.elbow.rotation.x = springElbow(Math.hypot(a[2] + live[2], a[3] + live[3]));
+  // The elbow folds about Z (in the arm's own plane, toward the body).
+  armL.elbow.rotation.z =  springElbow(Math.hypot(a[0] + live[0], a[1] + live[1]));
+  armR.elbow.rotation.z = -springElbow(Math.hypot(a[2] + live[2], a[3] + live[3]));
   headTiltG.rotation.x     = a[4] + live[4];
   headRollG.rotation.z     = liveness.master * liveness.w[4] * liveness.roll;
   yawG.rotation.y          = a[5] + live[5];

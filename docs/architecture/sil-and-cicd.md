@@ -36,7 +36,8 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   tall stalk), sized so a full head tilt **clears the chest without intersecting**.
   The **speaker grille is low on the front of the body** (stays at the bottom). The body **turns** on
   the base (`BODY L/R` = yaw) and **leans** forward/back (`BODY F/B`).
-- **Head:** a **separate rounded head on top of the body**, clearly distinct from it (a visible neck/gap,
+- **Head:** **wider than it is tall** — chubby at the base, close to a sphere but with a **pointy top**
+  (radii ≈ x 0.66 · y 0.60 · z 0.63). A **separate rounded head on top of the body**, clearly distinct from it (a visible neck/gap,
   not blended). The head **tilts forward/back** (`HEAD UP/DN`). The **face lives on the head** (moved up
   from the body).
 - **Face:** the animated face-screen is on the **front of the head** — a **flat/near-flat panel**
@@ -62,7 +63,8 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   **Kinematics:** the arm behaves like **a flat sheet of cardboard that folds at the joint** — the
   shoulder and elbow hinges are **aligned/co-planar, single-axis**, so the forearm folds **flat in-plane**
   toward the upper arm. No tilted/skewed hinge sweeping the forearm across the body.
-  **The elbow is NOT a controllable DOF — it is a pure spring mechanism** (no slider, no commanded
+  **Shoulders are OUT-ONLY on the in/out axis** — the arm cannot swing into the body, so that control
+  rests at **0** (arm against the side), not centred. **The elbow is NOT a controllable DOF — it is a pure spring mechanism** (no slider, no commanded
   value): its bend is **derived entirely from the shoulder angle**, growing smoothly (eased) as the arm
   lifts clear of the body until it reaches the mechanical stop. The spring pulls the forearm **closed**; the
   **body pushes it back open** when the arm rests against the side. So the elbow's resting fold is a
