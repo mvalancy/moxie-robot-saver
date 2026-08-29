@@ -25,8 +25,28 @@ def behaviour_tree(behaviour="", *, eventName="Gesture_None", category="Behaviou
         "variableValue": variableValue, "eventName": eventName, "lifetime": lifetime,
         "category": category, "behaviour": behaviour, "Track": Track})
 
+# playback-mood `mood` ints — inferred from shipped content (behavior-markup.md).
+MOOD_NEUTRAL, MOOD_POSITIVE, MOOD_CONCERNED, MOOD_OOPS, MOOD_SURPRISED = 0, 1, 2, 4, 5
+
 def playback_mood(mood=0, intensity=0):
     return _mark("playback-mood", {"mood": mood, "intensity": intensity})
+
+def icons(names=(), *, command=0, index=0, transition=0, volume=0.5, highlight=0):
+    """cmd:icons-v2 — show/clear up to 4 icons on the face screen.
+
+    command: 0 = show, 2 = clear. `names` are icon value strings (e.g. "Birthday",
+    "School", "Medical", or a "*Heart*" name); empty slots are filled as iconType 0.
+    A turn typically emits icons(names, command=0) before the line and
+    icons(names, command=2) after. See behavior-markup.md.
+    """
+    names = list(names)[:4]
+    slots = {}
+    for i in range(4):
+        v = names[i] if i < len(names) and names[i] else None
+        slots[f"icon{i}"] = ({"iconType": 1, "value": v, "background": "Null"} if v
+                             else {"iconType": 0, "value": "Null", "background": "Null"})
+    return _mark("icons-v2", {"command": command, "index": index, "transition": transition,
+                              "volume": volume, **slots, "highlight": highlight})
 
 def idlestate(idleState=0):
     return _mark("idlestate", {"idleState": idleState})
@@ -56,11 +76,15 @@ def raw(verb, **data):
 
 # All known verbs (docs/reverse-engineering/behavior-markup.md)
 VERBS = ["animation","attachment","attachment-animator","attachment-particles","behaviour-tree",
-         "blink-control","composite","dynamic-face-texture","emotion","hud","idlestate","notification",
-         "playaudio","playback-mood","playback-restore","playback-save","reward-star","scripted",
-         "speech-playback","start-systemsuspend","start-systemunpair","stopaudio","vocal-gesture","whiteboard"]
+         "blink-control","composite","dynamic-face-texture","emotion","hud","icons-v2","idlestate",
+         "notification","playaudio","playback-mood","playback-restore","playback-save","reward-star",
+         "scripted","speech-playback","start-systemsuspend","start-systemunpair","stopaudio",
+         "vocal-gesture","whiteboard"]
 
-def usel(text, variant=0, genre="neutral"):
+# <usel> voice-style genres seen in shipped content (behavior-markup.md).
+GENRES = ("none", "question", "motivational", "intimate", "excited")
+
+def usel(text, variant=0, genre="none"):
     return f'<usel variant="{variant}" genre="{genre}">{text}</usel>'
 
 def brk(seconds):
