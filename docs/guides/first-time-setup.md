@@ -1,7 +1,9 @@
 # Guide: first-time setup (Phase 1)
 
-Set up a Moxie from scratch using the local parent-app server. This covers the **Wi-Fi pairing**
-step, which is working today. (Making Moxie *talk* is Phases 2–3 — see [`../../ROADMAP.md`](../../ROADMAP.md).)
+Set up a Moxie from scratch using the local parent-app server. This covers the **Wi-Fi pairing** step.
+
+> 👉 For the **full path** — pairing, re-homing to your own server, and getting Moxie **talking**
+> (LLM brain + Piper voice + mic) — see **[`revive-your-moxie.md`](revive-your-moxie.md)**.
 
 ## 1. Start the server
 On any machine on your network (Linux/macOS/Windows):
