@@ -80,6 +80,14 @@
     </div>
   </section>
 
+  <section>
+    <h2><span class="tick"></span>Scene<span class="hint">lighting · liveness</span></h2>
+    <label class="rng"><span class="rng-name">LIGHT</span>
+      <input id="scene-light" type="range" min="0" max="100" value="85">
+      <span class="rng-val" id="scene-light-val">0.85</span></label>
+    <label class="chk"><input id="idle-on" type="checkbox" checked><span>liveness</span></label>
+  </section>
+
   <section class="card">
     <h2><span class="tick"></span>Live bus<span class="hint">MQTT&#47;WS :9001</span></h2>
     <div class="row">
@@ -138,6 +146,24 @@
   }
   new MutationObserver(sync).observe(el, { childList: true, characterData: true, subtree: true });
   sync();
+
+  // Scene lighting + liveness controls -> window.moxie (once ready).
+  function wireScene() {
+    var sl = document.getElementById("scene-light");
+    var slv = document.getElementById("scene-light-val");
+    var idle = document.getElementById("idle-on");
+    if (sl && window.moxie && window.moxie.setSceneLight) {
+      sl.addEventListener("input", function () {
+        var v = (+sl.value) / 100; if (slv) slv.textContent = v.toFixed(2);
+        window.moxie.setSceneLight(v);
+      });
+    }
+    if (idle && window.moxie && window.moxie.setIdle) {
+      idle.addEventListener("change", function () { window.moxie.setIdle(idle.checked); });
+    }
+  }
+  if (window.moxie) wireScene();
+  else window.addEventListener("moxie-ready", wireScene, { once: true });
 })();
 </script>
 </body>

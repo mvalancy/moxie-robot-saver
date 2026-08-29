@@ -638,3 +638,9 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   #topbar .tag.dim { display: none; }
   #scene-hint { display: none; }
 }
+
+/* scene lighting slider (index.html) */
+.rng { display: flex; align-items: center; gap: 8px; }
+.rng-name { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .08em; color: var(--muted); }
+.rng input[type=range] { flex: 1; accent-color: var(--cyan); }
+.rng-val { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--cyan); min-width: 2.6em; text-align: right; }

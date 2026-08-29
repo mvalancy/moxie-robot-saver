@@ -1,7 +1,15 @@
 // Moxie robot simulator — visual front-end.
 // three.js r160, pinned via the importmap in index.html.
 // Exposes window.moxie = { setMotor, getMotor, setFace, setSpeech, setHeartLED,
-//                           showIcons, clearIcons }.
+//                           showIcons, clearIcons, centerAll, setIdle,
+//                           setSceneLight }.
+//
+// Anatomy (docs/architecture/sil-and-cicd.md "Visual reference"): a two-part
+// robot — a distinct rounded HEAD on a separate cylindrical BODY, with a
+// visible neck gap. Half-cylinder arm shells hug the body sides, each a
+// two-segment limb (shoulder + elbow) ending in a single-finger hand. The
+// face screen and dark camera forehead live on the head; the speaker grille,
+// heart LED and `moxie` wordmark on the body.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -15,26 +23,33 @@ const MOTOR_MAX = 32767;          // real hardware range (MOTOR_MAX_POS)
 const MOTOR_CENTER = 16384;       // rest pose
 
 const COL = {
-  shell:  0x3bb6b0,   // matte teal body
-  arm:    0x5ccac3,   // lighter teal arms
-  bezel:  0x2ba59f,   // face surround, slightly darker teal
-  rubber: 0x15181a,   // base ring
-  base:   0x2a2f33,   // base disc
-  dark:   0x22343a,
+  shell:    0x3bb6b0,   // matte teal body + head
+  arm:      0x5ccac3,   // lighter teal arm shells
+  hand:     0x8fd9ea,   // lighter blue single-finger hands
+  bezel:    0x2ba59f,   // face surround, slightly darker teal
+  forehead: 0x1c2b31,   // dark camera zone high on the head
+  neck:     0x1a2226,   // dark neck between head and body
+  rubber:   0x15181a,   // base ring
+  base:     0x2a2f33,   // base disc
+  dark:     0x22343a,
 };
 
-const BODY_H = 2.30;              // shell height in scene units (~15 in real life)
+const BODY_TOP = 1.62;            // top of the body cylinder (scene units; ~15 in overall)
+const HEAD_PIVOT_Y = 1.78;        // head-tilt pivot, inside the neck
+const SHOULDER_Y = 1.28;          // arm shell pivots on the upper body
 
 // Motor table: index -> joint. neg/pos are radian magnitudes below/above center.
 // sign maps "value above center" onto the node's rotation axis direction.
+// Ranges: shoulders -20..+100 deg, elbows -25..+85 deg, head tilt +-22 deg,
+// body yaw +-60 deg, body lean +-16 deg.
 const MOTOR_DEFS = [
-  { name: 'L shoulder (up/down)', axis: 'z', sign: -1, neg: 0.35, pos: 1.90 }, // 0
-  { name: 'L elbow (in/out)',     axis: 'z', sign: +1, neg: 0.45, pos: 1.50 }, // 1
-  { name: 'R shoulder (up/down)', axis: 'z', sign: +1, neg: 0.35, pos: 1.90 }, // 2
-  { name: 'R elbow (in/out)',     axis: 'z', sign: -1, neg: 0.45, pos: 1.50 }, // 3
-  { name: 'Head tilt (nod)',      axis: 'x', sign: -1, neg: 0.28, pos: 0.28 }, // 4
+  { name: 'L shoulder (up/down)', axis: 'z', sign: -1, neg: 0.35, pos: 1.75 }, // 0
+  { name: 'L elbow (in/out)',     axis: 'z', sign: +1, neg: 0.44, pos: 1.48 }, // 1
+  { name: 'R shoulder (up/down)', axis: 'z', sign: +1, neg: 0.35, pos: 1.75 }, // 2
+  { name: 'R elbow (in/out)',     axis: 'z', sign: -1, neg: 0.44, pos: 1.48 }, // 3
+  { name: 'Head tilt (nod)',      axis: 'x', sign: -1, neg: 0.38, pos: 0.38 }, // 4
   { name: 'Body turn (yaw)',      axis: 'y', sign: +1, neg: 1.05, pos: 1.05 }, // 5
-  { name: 'Body lean (F/B)',      axis: 'x', sign: +1, neg: 0.30, pos: 0.30 }, // 6
+  { name: 'Body lean (F/B)',      axis: 'x', sign: +1, neg: 0.28, pos: 0.28 }, // 6
 ];
 
 // ---------------------------------------------------------------------------
@@ -53,10 +68,10 @@ document.getElementById('app').appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 
 const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 60);
-camera.position.set(1.7, 1.9, 4.6);
+camera.position.set(1.8, 2.1, 4.8);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.05, 0);
+controls.target.set(0, 1.22, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 2.0;
@@ -66,7 +81,8 @@ controls.update();
 
 // Lights — cool control-room setup: white key, cold fill, cyan rim,
 // dark ground bounce so the shell reads against the void.
-scene.add(new THREE.HemisphereLight(0xdcecff, 0x10151d, 0.6));
+const hemi = new THREE.HemisphereLight(0xdcecff, 0x10151d, 0.6);
+scene.add(hemi);
 
 const key = new THREE.DirectionalLight(0xffffff, 2.1);
 key.position.set(3.2, 5.2, 4.0);
@@ -136,6 +152,32 @@ glowPad.rotation.x = -Math.PI / 2;
 glowPad.position.y = -0.118;
 scene.add(glowPad);
 
+// Adjustable scene lighting (moxie.setSceneLight): 1 = fully lit studio,
+// 0 = near-dark, where the glowing projected face becomes the main source.
+// Baselines are the restyle's values above; the eased level scales them.
+const sceneLight = {
+  level: 0.85,      // commanded (default per HUD spec)
+  current: 0.85,    // eased
+  base: { hemi: 0.6, key: 2.1, fill: 0.45, rim: 1.0, grid: 0.09, pad: 1.0 },
+};
+
+function applySceneLight() {
+  const s = sceneLight.current;
+  const lit = 0.04 + 0.96 * s;                 // never a hard zero
+  hemi.intensity = sceneLight.base.hemi * lit;
+  key.intensity  = sceneLight.base.key * lit;
+  fill.intensity = sceneLight.base.fill * lit;
+  rim.intensity  = sceneLight.base.rim * (0.12 + 0.88 * s);  // keep a silhouette
+  grid.material.opacity = sceneLight.base.grid * (0.35 + 0.65 * s);
+  glowPad.material.opacity = sceneLight.base.pad * (0.45 + 0.55 * s);
+
+  // the DLP face takes over as the scene dims
+  const dark = 1 - s;
+  screenMat.emissiveIntensity = 0.55 + 1.6 * dark;
+  faceLight.intensity = 0.15 + 2.6 * dark;
+  faceHalo.material.opacity = 0.55 * dark * dark;
+}
+
 // ---------------------------------------------------------------------------
 // Materials
 // ---------------------------------------------------------------------------
@@ -151,35 +193,36 @@ function plastic(color, extra = {}) {
   });
 }
 
-const shellMat  = plastic(COL.shell);
-const armMat    = plastic(COL.arm);
-const bezelMat  = plastic(COL.bezel, { roughness: 0.45 });
-const rubberMat = new THREE.MeshStandardMaterial({ color: COL.rubber, roughness: 0.95 });
-const baseMat   = new THREE.MeshStandardMaterial({ color: COL.base, roughness: 0.65 });
+const shellMat    = plastic(COL.shell);
+const armMat      = plastic(COL.arm);
+const handMat     = plastic(COL.hand, { roughness: 0.45 });
+const bezelMat    = plastic(COL.bezel, { roughness: 0.45 });
+const foreheadMat = plastic(COL.forehead, { roughness: 0.35, clearcoat: 0.6 });
+const neckMat     = new THREE.MeshStandardMaterial({ color: COL.neck, roughness: 0.85 });
+const rubberMat   = new THREE.MeshStandardMaterial({ color: COL.rubber, roughness: 0.95 });
+const baseMat     = new THREE.MeshStandardMaterial({ color: COL.base, roughness: 0.65 });
+const lensMat     = new THREE.MeshPhysicalMaterial({
+  color: 0x0a0f12, roughness: 0.12, clearcoat: 1.0, clearcoatRoughness: 0.08,
+});
 
 // ---------------------------------------------------------------------------
-// Body shell — teardrop lathe, bent so the tip points top-rear and the belly
-// leans gently forward (+z is the robot's front, toward the default camera).
+// Geometry helpers
 // ---------------------------------------------------------------------------
 
-function makeShellGeometry() {
+// Body: an upright, softly-rounded cylinder (lathe) — widest low, gently
+// tapering to a rounded top where the neck sits.
+function makeBodyGeometry() {
   const ctrl = [
-    [0.00, 0.00], [0.45, 0.00], [0.62, 0.03], [0.80, 0.14],
-    [0.90, 0.42], [0.93, 0.72], [0.87, 1.05], [0.75, 1.40],
-    [0.57, 1.72], [0.37, 2.00], [0.19, 2.16], [0.00, BODY_H],
+    [0.00, 0.06], [0.30, 0.06], [0.52, 0.08], [0.60, 0.13],
+    [0.625, 0.25], [0.635, 0.45], [0.615, 0.75], [0.585, 1.00],
+    [0.545, 1.20], [0.50, 1.35], [0.43, 1.47], [0.33, 1.55],
+    [0.19, 1.60], [0.00, BODY_TOP],
   ].map(([x, y]) => new THREE.Vector3(x, y, 0));
 
   const curve = new THREE.CatmullRomCurve3(ctrl);
-  const pts = curve.getPoints(90).map(p => new THREE.Vector2(Math.max(0, p.x), p.y));
+  const pts = curve.getPoints(80).map(p => new THREE.Vector2(Math.max(0, p.x), p.y));
 
   let geo = new THREE.LatheGeometry(pts, 96);
-
-  // Bend: forward bulge low-mid, tip swept to the rear.
-  const pos = geo.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const t = pos.getY(i) / BODY_H;
-    pos.setZ(i, pos.getZ(i) + 0.30 * t - 0.58 * Math.pow(Math.max(t, 0), 2.6));
-  }
   geo.deleteAttribute('uv');
   geo.deleteAttribute('normal');
   geo = mergeVertices(geo, 1e-4);
@@ -187,33 +230,66 @@ function makeShellGeometry() {
   return geo;
 }
 
-// zOffset of the bend at height y (used to place surface details).
-function bendZ(y) {
-  const t = y / BODY_H;
-  return 0.30 * t - 0.58 * Math.pow(Math.max(t, 0), 2.6);
+// Arm shells: curved half-cylinder panels that hug the body's flank.
+// Built as an annular-sector shape extruded vertically (with a soft bevel),
+// centred on the body axis, then re-origined so the mesh pivots at the
+// shoulder/elbow point on the body's side.
+//   side: -1 left, +1 right;  pivotX: distance of the pivot from body axis.
+function makeArmShellGeometry(side, rIn, rOut, h, arc, pivotX) {
+  const centerA = side > 0 ? 0 : Math.PI;    // shape angle: +x right, PI left
+  const shape = new THREE.Shape();
+  shape.absarc(0, 0, rOut, centerA - arc / 2, centerA + arc / 2, false);
+  shape.absarc(0, 0, rIn, centerA + arc / 2, centerA - arc / 2, true);
+  shape.closePath();
+
+  let geo = new THREE.ExtrudeGeometry(shape, {
+    depth: h,
+    curveSegments: 28,
+    bevelEnabled: true,
+    bevelThickness: 0.020,
+    bevelSize: 0.016,
+    bevelSegments: 3,
+  });
+  geo.rotateX(-Math.PI / 2);                 // extrusion axis -> +y
+  geo.translate(-side * pivotX, -h, 0);      // pivot at top edge, on the flank
+  geo.deleteAttribute('uv');
+  geo.deleteAttribute('normal');
+  geo = mergeVertices(geo, 1e-4);
+  geo.computeVertexNormals();
+  return geo;
 }
 
 // ---------------------------------------------------------------------------
 // Rig
 //   root
-//    +- base disc (static)
-//    +- yawG (motor 5)            pivot at base centre
-//        +- leanG (motor 6 + a bit of motor 4)
-//            +- shell, rubber ring, grille, heart LED
-//            +- headG (motor 4) -> face screen
-//            +- armRootL -> shoulderL (m0) -> upper arm -> elbowL (m1) -> forearm
-//            +- armRootR -> shoulderR (m2) -> upper arm -> elbowR (m3) -> forearm
+//    +- base disc + rubber ring (static)
+//    +- yawG (motor 5)                       pivot at base centre
+//        +- leanG (motor 6)
+//            +- breatheG (idle breathing scale/bob, visual only)
+//                +- body cylinder, grille, wordmark, heart LED, neck
+//                +- headTiltG (motor 4) -> headRollG (idle roll, visual only)
+//                     +- head, face screen, forehead camera band + lens
+//                +- armRootL -> shoulderL (m0) -> upper shell
+//                     +- elbowL (m1) -> forearm shell -> handL (single finger)
+//                +- armRootR -> shoulderR (m2) -> upper shell
+//                     +- elbowR (m3) -> forearm shell -> handR
 // ---------------------------------------------------------------------------
 
 const root = new THREE.Group();
 scene.add(root);
 
-// Base disc (does not rotate with the body)
-const baseDisc = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.57, 0.12, 64), baseMat);
-baseDisc.position.y = -0.06;
+// Base disc (does not rotate with the body) + black rubber ring
+const baseDisc = new THREE.Mesh(new THREE.CylinderGeometry(0.60, 0.66, 0.14, 64), baseMat);
+baseDisc.position.y = -0.05;
 baseDisc.receiveShadow = true;
 baseDisc.castShadow = true;
 root.add(baseDisc);
+
+const ring = new THREE.Mesh(new THREE.TorusGeometry(0.615, 0.055, 20, 80), rubberMat);
+ring.rotation.x = Math.PI / 2;
+ring.position.y = 0.025;
+ring.castShadow = true;
+root.add(ring);
 
 const yawG = new THREE.Group();
 root.add(yawG);
@@ -222,20 +298,60 @@ const leanG = new THREE.Group();
 leanG.position.y = 0.02;
 yawG.add(leanG);
 
-// Shell
-const shell = new THREE.Mesh(makeShellGeometry(), shellMat);
-shell.castShadow = true;
-shell.receiveShadow = true;
-leanG.add(shell);
+const breatheG = new THREE.Group();          // liveness: breathing scale/bob
+leanG.add(breatheG);
 
-// Black rubber ring around the base edge of the shell
-const ring = new THREE.Mesh(new THREE.TorusGeometry(0.625, 0.055, 20, 80), rubberMat);
-ring.rotation.x = Math.PI / 2;
-ring.position.y = 0.045;
-ring.castShadow = true;
-leanG.add(ring);
+// Body cylinder
+const body = new THREE.Mesh(makeBodyGeometry(), shellMat);
+body.castShadow = true;
+body.receiveShadow = true;
+breatheG.add(body);
 
-// ---- Face screen (canvas texture on a tilted oval) ----
+// Dark neck — makes the head/body separation read as a real gap
+const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.185, 0.21, 0.26, 40), neckMat);
+neck.position.y = 1.68;
+breatheG.add(neck);
+
+// ---- Head (separate rounded form on top of the body) ----
+
+const headTiltG = new THREE.Group();          // motor 4
+headTiltG.position.y = HEAD_PIVOT_Y;
+breatheG.add(headTiltG);
+
+const headRollG = new THREE.Group();          // liveness-only curious head roll
+headTiltG.add(headRollG);
+
+const HEAD_C = new THREE.Vector3(0, 0.37, 0.02);       // head centre (local)
+const HEAD_R = new THREE.Vector3(0.525, 0.425, 0.475); // ellipsoid radii
+
+const headGeo = new THREE.SphereGeometry(0.5, 48, 36);
+headGeo.scale(HEAD_R.x / 0.5, HEAD_R.y / 0.5, HEAD_R.z / 0.5);
+const head = new THREE.Mesh(headGeo, shellMat);
+head.position.copy(HEAD_C);
+head.castShadow = true;
+head.receiveShadow = true;
+headRollG.add(head);
+
+// Forehead: wider dark camera band high on the head, above the face
+const foreheadGeo = new THREE.SphereGeometry(
+  0.5, 48, 16, Math.PI / 2 - 1.3, 2.6, 0.32, 0.53);
+foreheadGeo.scale(HEAD_R.x / 0.5 * 1.015, HEAD_R.y / 0.5 * 1.015, HEAD_R.z / 0.5 * 1.015);
+const forehead = new THREE.Mesh(foreheadGeo, foreheadMat);
+forehead.position.copy(HEAD_C);
+headRollG.add(forehead);
+
+// Camera lens, centred on the forehead band
+const lens = new THREE.Mesh(new THREE.SphereGeometry(0.05, 24, 16), lensMat);
+lens.scale.set(1, 0.8, 0.55);
+lens.position.set(0, 0.72, 0.31);
+headRollG.add(lens);
+const lensDot = new THREE.Mesh(
+  new THREE.SphereGeometry(0.018, 12, 8),
+  new THREE.MeshBasicMaterial({ color: 0x3a5560 }));
+lensDot.position.set(0.012, 0.727, 0.345);
+headRollG.add(lensDot);
+
+// ---- Face screen (canvas texture on a curved oval, front of the HEAD) ----
 
 const faceCanvas = document.createElement('canvas');
 faceCanvas.width = 512;
@@ -245,17 +361,13 @@ const faceTex = new THREE.CanvasTexture(faceCanvas);
 faceTex.colorSpace = THREE.SRGBColorSpace;
 faceTex.anisotropy = 4;
 
-const headG = new THREE.Group();
-headG.position.set(0, 1.30, 0.30);
-leanG.add(headG);
-
 const faceAssembly = new THREE.Group();
-faceAssembly.position.set(0, 0.116, 0.55);    // pushed out along the plate normal
-faceAssembly.rotation.x = -0.54;              // tilted up, following the shell slope
-headG.add(faceAssembly);
+faceAssembly.position.set(0, 0.33, 0.02);
+faceAssembly.rotation.x = -0.06;              // slight upward gaze, like the robot
+headRollG.add(faceAssembly);
 
 // Bake scale into a flat geometry, then curve it in both directions so the
-// plate hugs the doubly-convex shell instead of poking out at the edges.
+// plate hugs the doubly-convex head instead of poking out at the edges.
 function bentPlate(geo, sx, sy, Rx, Ry) {
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -271,19 +383,25 @@ function bentPlate(geo, sx, sy, Rx, Ry) {
   return geo;
 }
 
-// backing plate (hides the seam against the shell when the head tilts)
+// dome under the screen: fills the head-to-screen gap in profile
+const faceDome = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), bezelMat);
+faceDome.scale.set(0.435, 0.375, 0.07);
+faceDome.position.z = 0.40;
+faceAssembly.add(faceDome);
+
+// backing plate (hides the seam against the head when it tilts)
 const facePlateBack = new THREE.Mesh(
-  bentPlate(new THREE.CircleGeometry(1, 64), 0.52, 0.63, 0.70, 1.35), bezelMat);
-facePlateBack.position.z = -0.05;
+  bentPlate(new THREE.CircleGeometry(1, 64), 0.42, 0.36, 0.50, 0.36), bezelMat);
+facePlateBack.position.z = 0.43;
 faceAssembly.add(facePlateBack);
 
 // bezel ring
 const bezel = new THREE.Mesh(
-  bentPlate(new THREE.RingGeometry(0.97, 1.18, 64, 1), 0.45, 0.535, 0.72, 1.5), bezelMat);
-bezel.position.z = 0.004;
+  bentPlate(new THREE.RingGeometry(0.97, 1.10, 64, 1), 0.375, 0.315, 0.75, 0.60), bezelMat);
+bezel.position.z = 0.535;
 faceAssembly.add(bezel);
 
-// the screen itself
+// the screen itself — off-white oval rendering the face canvas
 const screenMat = new THREE.MeshPhysicalMaterial({
   map: faceTex,
   emissive: 0xffffff,
@@ -294,11 +412,88 @@ const screenMat = new THREE.MeshPhysicalMaterial({
   clearcoatRoughness: 0.2,
 });
 const screen = new THREE.Mesh(
-  bentPlate(new THREE.CircleGeometry(1, 64), 0.45, 0.535, 0.72, 1.5), screenMat);
-screen.position.z = 0.012;
+  bentPlate(new THREE.CircleGeometry(1, 64), 0.36, 0.30, 0.75, 0.60), screenMat);
+screen.position.z = 0.545;
 faceAssembly.add(screen);
 
-// ---- Speaker grille (transparent dot texture floating just off the shell) ----
+// Projector light: the DLP face casts real light on the surroundings.
+// Intensity scales up as the scene dims (see setSceneLight / animate loop).
+const faceLight = new THREE.PointLight(0xf3eedd, 0.15, 3.4, 2);
+faceLight.position.set(0, 0, 0.85);
+faceAssembly.add(faceLight);
+
+// Soft warm halo around the screen — a cheap bloom that fades in as the
+// scene darkens, so the glowing face reads like a projector in the dark.
+const faceHaloTex = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(128, 128, 20, 128, 128, 128);
+  grad.addColorStop(0.0, 'rgba(255, 248, 224, 0.55)');
+  grad.addColorStop(0.4, 'rgba(255, 244, 214, 0.16)');
+  grad.addColorStop(1.0, 'rgba(255, 244, 214, 0.0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 256, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+const faceHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: faceHaloTex,
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+}));
+faceHalo.scale.set(1.5, 1.35, 1);
+faceHalo.position.set(0, 0, 0.68);
+faceAssembly.add(faceHalo);
+
+// ---- Ears: recessed oval mic cutouts on the head's left/right sides ----
+// Faked inset (no CSG): a dark oval decal shaded like a sunken cut — darker
+// toward the top edge where an overhang would shadow it — bent to hug the
+// head surface, flush, nothing sticking out.
+
+function makeEarTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, 256, 256);
+  const grad = g.createLinearGradient(0, 30, 0, 226);
+  grad.addColorStop(0.0, '#0b1417');    // deep shadow under the top lip
+  grad.addColorStop(0.55, '#1a2a30');
+  grad.addColorStop(1.0, '#2b4048');    // catches a little light at the bottom
+  g.fillStyle = grad;
+  g.beginPath();
+  g.ellipse(128, 128, 92, 122, 0, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = 'rgba(10, 18, 20, 0.85)';   // crisp cut edge
+  g.lineWidth = 7;
+  g.stroke();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+const earTex = makeEarTexture();
+for (const side of [-1, 1]) {
+  const earG = new THREE.Group();
+  earG.position.set(side * HEAD_R.x * 1.012, HEAD_C.y + 0.02, HEAD_C.z);
+  earG.rotation.y = side * Math.PI / 2;       // decal +z faces outward
+  const ear = new THREE.Mesh(
+    bentPlate(new THREE.CircleGeometry(1, 48), 0.075, 0.105, 0.60, 0.55),
+    new THREE.MeshStandardMaterial({
+      map: earTex,
+      transparent: true,
+      roughness: 0.85,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    }));
+  earG.add(ear);
+  headRollG.add(earG);
+}
+
+// ---- Speaker grille (transparent dot texture, LOW on the body front) ----
 
 function makeGrilleTexture() {
   const c = document.createElement('canvas');
@@ -324,7 +519,7 @@ function makeGrilleTexture() {
 }
 
 const grille = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.975, 0.90, 0.24, 48, 1, true, -0.40, 0.80),
+  new THREE.CylinderGeometry(0.642, 0.648, 0.28, 48, 1, true, -0.45, 0.90),
   new THREE.MeshStandardMaterial({
     map: makeGrilleTexture(),
     transparent: true,
@@ -333,10 +528,40 @@ const grille = new THREE.Mesh(
     polygonOffsetFactor: -1,
   })
 );
-grille.position.set(0, 0.42, 0.012);
-leanG.add(grille);
+grille.position.set(0, 0.34, 0);
+breatheG.add(grille);
 
-// ---- Heart LED ----
+// ---- `moxie` wordmark near the base ----
+
+function makeWordmarkTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, c.width, c.height);
+  g.fillStyle = 'rgba(16, 49, 52, 0.88)';
+  g.font = '600 38px "Trebuchet MS", "Segoe UI", system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('moxie', 128, 34);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+const wordmark = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.625, 0.632, 0.11, 32, 1, true, -0.30, 0.60),
+  new THREE.MeshStandardMaterial({
+    map: makeWordmarkTexture(),
+    transparent: true,
+    roughness: 0.7,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+  })
+);
+wordmark.position.set(0, 0.155, 0);
+breatheG.add(wordmark);
+
+// ---- Heart LED (body front, upper chest) ----
 
 const heartMat = new THREE.MeshStandardMaterial({
   color: 0x2c3a3d,
@@ -344,53 +569,54 @@ const heartMat = new THREE.MeshStandardMaterial({
   roughness: 0.4,
 });
 const heart = new THREE.Mesh(new THREE.SphereGeometry(0.038, 24, 16), heartMat);
-heart.position.set(0, 0.72, 0.945 + bendZ(0.72));
+heart.position.set(0, 1.34, 0.505);   // high on the chest, just under the neck
 heart.scale.z = 0.5;
-leanG.add(heart);
+breatheG.add(heart);
 
 const heartLight = new THREE.PointLight(0xff5577, 0, 1.2);
 heartLight.position.copy(heart.position).z += 0.1;
-leanG.add(heartLight);
+breatheG.add(heartLight);
 
 const heartState = { on: false, color: new THREE.Color(0xff5577) };
 
-// ---- Arms: shoulder (up/down flap) + elbow (fold in/out, hinge tilted so the
-//      forearm folds inward and slightly across the front, like a hug) ----
+// ---- Arms: half-cylinder shells on the OUTSIDE of the body.
+//      shoulder (up/down flap) + elbow (fold in/out, hinge pre-tilted so the
+//      forearm folds inward and slightly across the front, like a hug),
+//      forearm ends in a single-finger hand. ----
 
 function makeArm(side) {  // side = -1 left, +1 right
   const armRoot = new THREE.Group();
-  armRoot.position.set(side * 0.80, 1.02, 0.10 + bendZ(1.02));
-  armRoot.rotation.z = side * 0.22;           // rest: hangs slightly outward
+  armRoot.position.set(side * 0.64, SHOULDER_Y, 0);
+  armRoot.rotation.z = side * 0.06;           // rest: shell floats just off the body
 
-  const shoulder = new THREE.Group();         // animated: rotation.z
+  const shoulder = new THREE.Group();         // animated: rotation.z (motor 0/2)
   armRoot.add(shoulder);
 
-  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.16, 32, 24), armMat);
-  cap.position.x = side * 0.04;
-  cap.castShadow = true;
-  shoulder.add(cap);
-
-  const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.105, 0.22, 8, 24), armMat);
-  upper.position.set(0, -0.18, 0.01);
+  // upper arm: tall curved panel hugging the upper body
+  const upper = new THREE.Mesh(
+    makeArmShellGeometry(side, 0.615, 0.665, 0.50, 1.25, 0.64), armMat);
   upper.castShadow = true;
   shoulder.add(upper);
 
-  const elbow = new THREE.Group();            // animated: rotation.z (hinge pre-tilted via rotation.y)
-  elbow.position.set(0, -0.36, 0.02);
-  elbow.rotation.y = side * 0.55;
+  const elbow = new THREE.Group();            // animated: rotation.z (motor 1/3)
+  elbow.position.set(side * 0.02, -0.52, 0);
+  elbow.rotation.y = side * 0.55;             // hinge pre-tilt: fold sweeps inward/front
   shoulder.add(elbow);
 
-  const elbowBall = new THREE.Mesh(new THREE.SphereGeometry(0.12, 28, 20), armMat);
-  elbowBall.castShadow = true;
-  elbow.add(elbowBall);
-
-  const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.125, 0.26, 8, 24), armMat);
-  forearm.position.set(0, -0.22, 0);
-  forearm.scale.z = 0.62;                     // flattened paddle
+  // forearm: shorter, slightly wider panel nested below the upper shell
+  const forearm = new THREE.Mesh(
+    makeArmShellGeometry(side, 0.655, 0.705, 0.40, 1.05, 0.66), armMat);
   forearm.castShadow = true;
   elbow.add(forearm);
 
-  leanG.add(armRoot);
+  // hand: one stubby rounded finger in lighter blue
+  const hand = new THREE.Mesh(new THREE.CapsuleGeometry(0.095, 0.12, 8, 20), handMat);
+  hand.position.set(side * 0.02, -0.50, 0.05);
+  hand.rotation.x = -0.22;                    // pokes slightly forward
+  hand.castShadow = true;
+  elbow.add(hand);
+
+  breatheG.add(armRoot);
   return { shoulder, elbow };
 }
 
@@ -407,7 +633,7 @@ const motorValues  = new Float32Array(7).fill(MOTOR_CENTER);
 const motorNodes = [
   armL.shoulder, armL.elbow,
   armR.shoulder, armR.elbow,
-  headG, yawG, leanG,
+  headTiltG, yawG, leanG,
 ];
 
 function motorAngle(i) {
@@ -438,6 +664,9 @@ let faceTarget = { ...EXPRESSIONS.neutral };
 
 const blink = { active: false, phase: 0, next: 2.5 + Math.random() * 3 };
 const speech = { until: 0 };
+
+// idle gaze drift (liveness layer; additive on top of expression pupils)
+const idleEyes = { x: 0, y: 0 };
 
 // ---- Icon badges (cmd:icons-v2): up to 4 contextual chips below the mouth ----
 
@@ -601,13 +830,13 @@ function drawFace(t) {
   let blinkF = 1;
   if (blink.active) blinkF = Math.max(0.04, 1 - Math.sin(Math.PI * blink.phase));
 
-  // eyes
-  const eyeY = 212 + P.pupilY * 10;
+  // eyes (idleEyes adds the liveness gaze drift on top of the expression)
+  const eyeY = 212 + (P.pupilY + idleEyes.y) * 10;
   const eyeDX = 86;
   const rx = 44 * P.eyeW;
   const ry = Math.max(4, 60 * P.eyeH * blinkF);
   for (const s of [-1, 1]) {
-    const ex = 256 + s * eyeDX + P.pupilX * 12;
+    const ex = 256 + s * eyeDX + (P.pupilX + idleEyes.x) * 12;
     fctx.fillStyle = ink;
     fctx.beginPath();
     fctx.ellipse(ex, eyeY, rx, ry, 0, 0, Math.PI * 2);
@@ -717,6 +946,154 @@ function showSpeech(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Liveness — idle animation layer so Moxie feels alive.
+//
+// Additive-only: offsets are applied on top of the commanded motor angles at
+// render time and are never written into motorTargets/motorValues, so
+// getMotor() always reports the commanded state. Each DOF's liveness weight
+// eases to zero while that DOF is being actively commanded (recent setMotor /
+// slider input, or still travelling to its target), then eases back in.
+//
+// Layers:
+//   * breathing  — ~4.3 s body scale + vertical bob (breatheG, visual only)
+//   * micro      — continuous tiny sways on head/yaw/lean/arms
+//   * behaviors  — randomized idle behaviors mirroring the robot's set:
+//        Bht_Idle_Curious           head tilt + roll + slight body turn, gaze
+//        Bht_Idle_Active_Listening  slight lean in, head tips down a touch
+//        weight-shift               tiny yaw/lean drift
+//        arm-settle                 one arm eases out and back
+//   * gaze drift — small randomized pupil offsets (idleEyes)
+// ---------------------------------------------------------------------------
+
+const liveness = {
+  enabled: true,
+  master: 1,                              // eases toward enabled ? 1 : 0
+  w: new Float32Array(7).fill(1),         // per-DOF blend weight
+  cmdAt: new Float32Array(7).fill(-1e9),  // ms timestamp of last command per DOF
+  off: new Float32Array(7),               // eased behavior offsets (radians)
+  tgt: new Float32Array(7),               // behavior target offsets
+  out: new Float32Array(7),               // final per-frame additive angles
+  roll: 0, rollTgt: 0,                    // visual-only curious head roll
+  gazeX: 0, gazeY: 0,                     // behavior-driven gaze target
+  eyeTX: 0, eyeTY: 0, eyeNext: 1.5,       // random gaze drift
+  mode: 'idle', until: 0, nextAt: 2.0 + Math.random() * 3,
+};
+
+function noteCommand(i) {
+  liveness.cmdAt[i] = performance.now();
+}
+
+function pickIdleBehavior(t) {
+  const L = liveness;
+  const r = Math.random();
+  const dir = Math.random() < 0.5 ? -1 : 1;
+  L.tgt.fill(0);
+  L.rollTgt = 0;
+  L.gazeX = 0;
+  L.gazeY = 0;
+
+  const speaking = performance.now() < speech.until;
+  if (speaking || r < 0.30) {
+    // Bht_Idle_Active_Listening — lean in slightly, head tips down a touch
+    L.mode = 'listen';
+    L.tgt[6] = 0.09 + Math.random() * 0.05;      // lean forward
+    L.tgt[4] = 0.04 + Math.random() * 0.03;      // head pitches down slightly
+    L.until = t + 2.2 + Math.random() * 1.6;
+  } else if (r < 0.62) {
+    // Bht_Idle_Curious — head tilt + roll, slight body turn, gaze follows
+    L.mode = 'curious';
+    L.tgt[4] = -(0.05 + Math.random() * 0.08);   // head tips up a bit
+    L.tgt[5] = dir * (0.10 + Math.random() * 0.16);
+    L.rollTgt = -dir * (0.08 + Math.random() * 0.08);
+    L.gazeX = dir * (0.35 + Math.random() * 0.25);
+    L.gazeY = -(Math.random() * 0.2);
+    L.until = t + 1.8 + Math.random() * 1.8;
+  } else if (r < 0.82) {
+    // weight shift — tiny yaw + lean drift
+    L.mode = 'shift';
+    L.tgt[5] = dir * (0.04 + Math.random() * 0.05);
+    L.tgt[6] = (Math.random() - 0.5) * 0.06;
+    L.until = t + 1.6 + Math.random() * 1.4;
+  } else {
+    // arm settle — one arm eases out and back
+    L.mode = 'settle';
+    if (Math.random() < 0.5) {
+      L.tgt[0] = -(0.04 + Math.random() * 0.04);  // left shell flaps out a touch
+      L.tgt[1] = 0.04 + Math.random() * 0.04;
+    } else {
+      L.tgt[2] = 0.04 + Math.random() * 0.04;
+      L.tgt[3] = -(0.04 + Math.random() * 0.04);
+    }
+    L.until = t + 1.2 + Math.random() * 1.0;
+  }
+}
+
+function updateLiveness(t, dt, now) {
+  const L = liveness;
+
+  // master fade for setIdle()
+  const mTgt = L.enabled ? 1 : 0;
+  L.master += (mTgt - L.master) * (1 - Math.exp(-dt * 3));
+
+  // behavior scheduler
+  if (t >= L.until && L.mode !== 'idle') {
+    L.mode = 'idle';
+    L.tgt.fill(0);
+    L.rollTgt = 0;
+    L.gazeX = 0;
+    L.gazeY = 0;
+    L.nextAt = t + 2.0 + Math.random() * 5.0;
+  }
+  if (L.mode === 'idle' && t >= L.nextAt && L.master > 0.05) {
+    pickIdleBehavior(t);
+  }
+
+  // eased behavior offsets
+  const kb = 1 - Math.exp(-dt * 2.5);
+  for (let i = 0; i < 7; i++) L.off[i] += (L.tgt[i] - L.off[i]) * kb;
+  L.roll += (L.rollTgt - L.roll) * kb;
+
+  // per-DOF suppression: recently commanded or still travelling -> weight 0
+  for (let i = 0; i < 7; i++) {
+    const active = (now - L.cmdAt[i] < 1200) ||
+                   Math.abs(motorTargets[i] - motorValues[i]) > 80;
+    const wTgt = active ? 0 : 1;
+    const rate = active ? 8 : 1.5;          // duck fast, resume slowly
+    L.w[i] += (wTgt - L.w[i]) * (1 - Math.exp(-dt * rate));
+  }
+
+  // continuous micro-motion (gentle head sway, weight shift, arm drift)
+  const micro = [
+    -0.008 * Math.sin(t * 1.05 + 0.4),          // L shoulder
+    0.006 * Math.sin(t * 0.85 + 2.2),           // L elbow
+    0.008 * Math.sin(t * 1.05 + 3.5),           // R shoulder
+    -0.006 * Math.sin(t * 0.85 + 5.0),          // R elbow
+    0.012 * Math.sin(t * 0.47 + 1.3),           // head tilt
+    0.018 * Math.sin(t * 0.33) + 0.006 * Math.sin(t * 0.9 + 2.0),  // yaw
+    0.006 * Math.sin(t * 0.80 + 0.5),           // lean
+  ];
+
+  for (let i = 0; i < 7; i++) {
+    L.out[i] = L.master * L.w[i] * (L.off[i] + micro[i]);
+  }
+
+  // gaze: behavior gaze + random small drift
+  if (t > L.eyeNext) {
+    if (Math.random() < 0.4) { L.eyeTX = 0; L.eyeTY = 0; }
+    else {
+      L.eyeTX = (Math.random() * 2 - 1) * 0.45;
+      L.eyeTY = (Math.random() * 2 - 1) * 0.25;
+    }
+    L.eyeNext = t + 1.2 + Math.random() * 2.6;
+  }
+  const ke = 1 - Math.exp(-dt * 4);
+  idleEyes.x += ((L.eyeTX + L.gazeX) * L.master - idleEyes.x) * ke;
+  idleEyes.y += ((L.eyeTY + L.gazeY) * L.master - idleEyes.y) * ke;
+
+  return L.out;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -730,6 +1107,7 @@ const api = {
     const i = index | 0;
     if (i < 0 || i > 6 || !Number.isFinite(value)) return;
     motorTargets[i] = Math.min(MOTOR_MAX, Math.max(0, value));
+    noteCommand(i);
     syncSlider(i);
   },
 
@@ -791,6 +1169,18 @@ const api = {
   centerAll() {
     for (let i = 0; i < 7; i++) api.setMotor(i, MOTOR_CENTER);
   },
+
+  // Toggle the idle liveness layer (breathing/blink stay subtle regardless).
+  setIdle(on) {
+    liveness.enabled = on !== false;
+  },
+
+  // Scene lighting, 0 (near-dark — the projected face lights the room)
+  // to 1 (fully lit). Eased over a few frames.
+  setSceneLight(level) {
+    if (!Number.isFinite(level)) return;
+    sceneLight.level = Math.min(1, Math.max(0, level));
+  },
 };
 
 window.moxie = api;
@@ -815,6 +1205,7 @@ function buildPanel() {
     input.addEventListener('input', () => {
       val.textContent = input.value;
       motorTargets[i] = +input.value;
+      noteCommand(i);
     });
     motorsEl.appendChild(wrap);
     sliderEls[i] = { input, val };
@@ -867,6 +1258,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
+  const now = performance.now();
 
   // smooth motor motion
   const k = 1 - Math.exp(-dt * 7);
@@ -875,22 +1267,28 @@ function animate() {
     if (Math.abs(motorTargets[i] - motorValues[i]) < 2) motorValues[i] = motorTargets[i];
   }
 
-  // gentle idle life (additive, never stored back into motor state)
-  const breathe = 0.010 * Math.sin(t * 1.6);
-  const sway    = 0.014 * Math.sin(t * 0.5);
-  const headIdle = 0.012 * Math.sin(t * 0.9 + 1.0);
-  const armIdleL = 0.015 * Math.sin(t * 1.3);
-  const armIdleR = 0.015 * Math.sin(t * 1.3 + 2.1);
+  // liveness offsets (additive, never stored back into motor state)
+  const live = updateLiveness(t, dt, now);
 
   const a = [0, 1, 2, 3, 4, 5, 6].map(motorAngle);
 
-  armL.shoulder.rotation.z = a[0] + armIdleL;
-  armL.elbow.rotation.z    = a[1];
-  armR.shoulder.rotation.z = a[2] + armIdleR;
-  armR.elbow.rotation.z    = a[3];
-  headG.rotation.x = a[4] + headIdle;
-  yawG.rotation.y  = a[5] + sway;
-  leanG.rotation.x = a[6] + 0.30 * a[4] + breathe;
+  armL.shoulder.rotation.z = a[0] + live[0];
+  armL.elbow.rotation.z    = a[1] + live[1];
+  armR.shoulder.rotation.z = a[2] + live[2];
+  armR.elbow.rotation.z    = a[3] + live[3];
+  headTiltG.rotation.x     = a[4] + live[4];
+  headRollG.rotation.z     = liveness.master * liveness.w[4] * liveness.roll;
+  yawG.rotation.y          = a[5] + live[5];
+  leanG.rotation.x         = a[6] + live[6];
+
+  // breathing — slow body scale + vertical bob (~4.3 s cycle)
+  const breath = Math.sin(t * (Math.PI * 2 / 4.3)) * liveness.master;
+  breatheG.scale.set(1 - 0.004 * breath, 1 + 0.011 * breath, 1 - 0.004 * breath);
+  breatheG.position.y = 0.005 * breath;
+
+  // scene lighting eases toward the commanded level
+  sceneLight.current += (sceneLight.level - sceneLight.current) * (1 - Math.exp(-dt * 5));
+  applySceneLight();
 
   // face params ease toward target
   const fk = 1 - Math.exp(-dt * 9);
@@ -898,12 +1296,12 @@ function animate() {
     faceParams[key] += (faceTarget[key] - faceParams[key]) * fk;
   }
 
-  // blinking
+  // blinking — randomized, with an occasional quick double-blink
   if (blink.active) {
     blink.phase += dt / 0.22;
     if (blink.phase >= 1) {
       blink.active = false;
-      blink.next = t + 2.5 + Math.random() * 4;
+      blink.next = t + (Math.random() < 0.12 ? 0.25 : 1.8 + Math.random() * 4.2);
     }
   } else if (t > blink.next) {
     blink.active = true;
