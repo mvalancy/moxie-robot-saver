@@ -50,10 +50,14 @@ const MOTOR_DEFS = [
   // vertical fore/aft plane: the shoulder LIFTS the arm and the elbow FOLDS the
   // forearm toward it — the flat-cardboard motion, identical on both sides (the
   // X axis needs no per-side mirroring).
+  // Shoulders are bipolar around the 16384 rest pose (arm hangs down; it can swing
+  // slightly back and a long way up). ELBOWS ARE FOLD-ONLY (`unipolar`): the real
+  // joint hinges one way from straight and cannot hyperextend, so the whole
+  // 0..32767 range maps to straight -> fully folded, with no reverse rotation.
   { name: 'L shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 0  (+X arm)
-  { name: 'L elbow (in/out)',     axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 1
+  { name: 'L elbow (in/out)',     axis: 'x', sign: -1, pos: 2.10, unipolar: true }, // 1
   { name: 'R shoulder (up/down)', axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 2  (-X arm)
-  { name: 'R elbow (in/out)',     axis: 'x', sign: -1, neg: 0.30, pos: 1.90 }, // 3
+  { name: 'R elbow (in/out)',     axis: 'x', sign: -1, pos: 2.10, unipolar: true }, // 3
   { name: 'Head tilt (nod)',      axis: 'x', sign: -1, neg: 0.38, pos: 0.38 }, // 4
   { name: 'Body turn (yaw)',      axis: 'y', sign: +1, neg: 1.05, pos: 1.05 }, // 5
   { name: 'Body lean (F/B)',      axis: 'x', sign: +1, neg: 0.28, pos: 0.28 }, // 6
@@ -831,6 +835,11 @@ const motorNodes = [
 
 function motorAngle(i) {
   const d = MOTOR_DEFS[i];
+  if (d.unipolar) {
+    // fold-only joint: the full 0..32767 span is straight -> fully folded.
+    const u = motorValues[i] / MOTOR_MAX;                      // 0 .. 1
+    return d.sign * u * d.pos;
+  }
   const u = (motorValues[i] - MOTOR_CENTER) / MOTOR_CENTER;   // -1 .. +1
   return d.sign * (u < 0 ? u * d.neg : u * d.pos);
 }
