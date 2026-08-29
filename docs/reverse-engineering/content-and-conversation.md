@@ -101,6 +101,25 @@ over the MQTT **file-sync** channel (`MQTT_FILE_SYNC`, see [`cloud-protocol.md`]
 the same mechanism that delivers OTA images and content modules. A revival server hosts/serves these;
 the base firmware ships only the engines.
 
+## Context assembly & topical awareness
+
+How the brain builds what the LLM sees, and stays topical:
+
+- **Context blocks** (`embodied.robotbrain`): `GlobalContext`, `EnvironmentContext`, and
+  `ConversationContext{context, content_tags, goal_levels, properties, prompt[]}` — each a
+  `Context{id, text}`. These assemble into the LLM prompt (they map to
+  `RemoteChatRequest.global_context/conversation_context/prompt_context`, [`cloud-protocol.md`](cloud-protocol.md)).
+  A server fills these to steer the LLM (who's present, what activity, what's been said).
+- **Holiday / event awareness** — `EventsAndHolidaysData{holidays[]}` with
+  `Holiday{event_uid, holiday_id, name, tag, date, region}`: **region-specific, dated events** the robot
+  uses for topical content (birthdays, holidays). A server can supply this for seasonal behavior.
+- **Content tags** — `Tag{uuid, name}` / `ContentTag{replaced, finalized, review}` — the tag lifecycle
+  that gates/curates which content is offered (with `TagList` allow/deny, above).
+- **NLU & fallback** — `IntentPB{intent, input}` (intent classification), `Fallback{topic, module,
+  userInput, fallbackType}` (what fired when Moxie didn't understand — maps to `ChatResponse.FallbackType`,
+  [`cloud-protocol.md`](cloud-protocol.md)), and `IdleStateChange{state}` (idle-behavior transitions, the
+  `idlestate` markup verb).
+
 ## Session & sleep lifecycle
 
 - **Session** — `SessionState{inSession, record_mode, user, outSessionReason, prev_active}` with
