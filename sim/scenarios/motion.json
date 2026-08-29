@@ -1,0 +1,10 @@
+{
+  "name": "motion-demo",
+  "note": "SIL-only motor channel: publishes /devices/<id>/commands/motor to drive the 7-DOF rig (libmotionlib indices). No cloud motor stream on the real robot; this is for demo/tests.",
+  "turns": [
+    { "motors": { "0": 30000, "2": 30000 }, "hold": 0.8 },
+    { "motors": { "1": 26000, "3": 26000 }, "hold": 0.8 },
+    { "motors": { "4": 24000, "5": 22000 }, "hold": 0.8 },
+    { "motors": { "0": 16384, "1": 16384, "2": 16384, "3": 16384, "4": 16384, "5": 16384, "6": 16384 }, "hold": 0.5 }
+  ]
+}

@@ -69,6 +69,9 @@ mqttClient._emit("message", "/devices/d_test/events/remote-chat",
 mqttClient._emit("message", "/devices/d_test/events/remote-chat",
   Buffer.from(JSON.stringify({ command: "notify", speech: "echo of Moxie" })));  // must be skipped
 
+mqttClient._emit("message", "/devices/d_test/commands/motor",
+  Buffer.from(JSON.stringify({ motors: { "0": 30000, "4": 24000 } })));  // SIL motor channel
+
 // ---- assertions ----
 const fails = [];
 const ok = (cond, msg) => { if (!cond) fails.push(msg); };
@@ -79,6 +82,8 @@ ok(JSON.stringify(calls.showIcons).includes("Birthday"), `icons-v2 → showIcons
 ok(calls.transcript.includes("I feel happy today"), `child turn → transcript; got ${JSON.stringify(calls.transcript)}`);
 ok(!calls.transcript.includes("echo of Moxie"), "notify turn must NOT appear in transcript");
 ok(calls.transcript.includes("Happy birthday!"), "Moxie reply → transcript");
+ok(calls.setMotor.some(([i, v]) => i === 0 && v === 30000) && calls.setMotor.some(([i, v]) => i === 4 && v === 24000),
+   `commands/motor → setMotor(0,30000)+setMotor(4,24000); got ${JSON.stringify(calls.setMotor)}`);
 
 if (fails.length) {
   console.log("❌ bridge unit test FAILED:");

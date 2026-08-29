@@ -142,6 +142,14 @@ class VirtualMoxie:
             if (self.config_payload or {}).get("pairing_status") != "paired":
                 self.errors.append("config not paired"); return (0, len(turns))
             for i, turn in enumerate(turns):
+                # motor turn (SIL-only): publish a rig pose, no reply expected.
+                if "motors" in turn:
+                    self.client.publish(f"/devices/{self.device_id}/commands/motor",
+                                        json.dumps({"motors": turn["motors"]}))
+                    self.log(f"turn {i}: motors {turn['motors']} ✓")
+                    passed += 1
+                    time.sleep(turn.get("hold", 0.6))
+                    continue
                 say = turn.get("say", "")
                 self.got_reply.clear(); self.reply_payload = None
                 self.client.publish(self.t_event("remote-chat"), json.dumps(

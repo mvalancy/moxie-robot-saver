@@ -85,8 +85,11 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
   `Bht_*` behaviour-trees (Wing_Flap/Sleep/Idle_Curious/…) → whole-body poses, `playback-mood` → face
   (evidence-based mood map), text → speech bubble, and **`icons-v2` → face badges** (School/Birthday/
   Medical/Heart glyphs drawn on the face canvas, Fable 5) with show(cmd 0)/clear(cmd 2).
-- [ ] **D4 — Motion from motor state.** Virtual robot publishes motor positions (the 7 `libmotionlib`
-  DOFs); the UI animates arms/head/body from them. Sliders to drive motors manually.
+- [x] **D4 — Motion from motor state.** ✅ hand sliders (D2) + a **SIL-only motor channel**:
+  `/devices/<id>/commands/motor` `{motors:{idx:val}}` → `bridge.js` → the rig animates the 7
+  `libmotionlib` DOFs over the bus. `virtual_moxie.py` scenarios can carry `motors` turns
+  ([`scenarios/motion.json`](../../sim/scenarios/motion.json)); unit-tested. ⚠️ sim-only — the real
+  robot's motion is markup-driven on-device, not a cloud motor stream.
 - [~] **D5 — Face expressions + visemes + transcript.** ✅ 6 expressions + mood-driven face (D3);
   ✅ **conversation transcript panel** — `bridge.js` subscribes to `events/remote-chat` (child) +
   `commands/remote_chat` (Moxie) and renders both sides in a scrolling panel; basic talking-mouth viseme

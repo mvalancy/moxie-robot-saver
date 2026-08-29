@@ -141,6 +141,7 @@
       client.subscribe("/devices/+/commands/remote_chat");   // Moxie's replies
       client.subscribe("/devices/+/events/remote-chat");     // the child's utterances
       client.subscribe("/devices/+/config");
+      client.subscribe("/devices/+/commands/motor");         // SIL-only: drive motors directly
     });
     client.on("reconnect", () => status(`reconnecting ${url}…`));
     client.on("error", (e) => status(`error: ${e && e.message ? e.message : e}`));
@@ -154,9 +155,24 @@
     if (recording && !replaying) recorded.push({ t: nowMs(), topic, payload: s });
     if (topic.endsWith("/commands/remote_chat")) handleRemoteChat(s);
     else if (topic.endsWith("/events/remote-chat")) handleUserTurn(s);
+    else if (topic.endsWith("/commands/motor")) handleMotor(s);
     else if (topic.endsWith("/config")) {
       try { const c = JSON.parse(s); status(`config: pairing_status=${c.pairing_status}`); } catch {}
     }
+  }
+
+  // SIL-only motor channel. The real robot's motion is markup-driven on-device
+  // (there is no cloud motor-position stream); this lets a scenario/test/recording
+  // command the rig directly to demonstrate the 7 libmotionlib DOFs over the bus.
+  // Payload: {"motors":{"0":30000,"2":30000}} or {"index":4,"value":24000}.
+  function handleMotor(s) {
+    let msg; try { msg = JSON.parse(s); } catch { return; }
+    const m = window.moxie; if (!m || !m.setMotor) return;
+    if (msg.motors && typeof msg.motors === "object")
+      for (const [i, v] of Object.entries(msg.motors)) m.setMotor(+i, +v);
+    else if (typeof msg.index === "number" && typeof msg.value === "number")
+      m.setMotor(msg.index, msg.value);
+    status(`motors ${JSON.stringify(msg.motors || { [msg.index]: msg.value })}`);
   }
 
   // ---- record / replay ----
