@@ -11,7 +11,25 @@ except ImportError: sys.exit("pip install segno")
 _DIAG=["diag","diagnostic","diagnostics","info","status","version","show","qr","state","health","hello","test","id","dump","report"]
 _ACCESS=["adb","adbon","enableadb","enable_adb","usbdebug","dev","devmode","developer","debug","eng","engineering","unlock","shell","console","service","factory_mode","maintenance","support"]
 _NET=["wifi","endpoint","cloud","server","mqtt","connect","relocate","reconnect","clear_endpoint","reset_endpoint","local","embodied_local"]
-_FACTORY=["factory","factorytest","factory_test","factorymode","mfg","manufacturing","provision","provisioning","qa","qc","burnin","selftest","calibrate","calibration","jig","station","testmode","fct","ate","eol","diagmode","enroll","register","activate","cameratest","boot","recovery","fastboot","edl"]
+_FACTORY=["factory","factorytest","factory_test","factorymode","factory_mode","mfg","mfgmode","mfg_mode",
+ "manufacturing","prodmode","production","provision","provisioning","prov","qa","qc","qatest","burnin","burn_in",
+ "selftest","self_test","st","calibrate","calibration","cal","jig","fixture","station","testmode","test_mode",
+ "fct","ate","eol","end_of_line","diagmode","enroll","enrollment","register","activate","activation",
+ # component tests a line would run
+ "cameratest","camera_test","mictest","mic_test","audiotest","audio_test","speakertest","speaker_test",
+ "screentest","screen_test","displaytest","display_test","touchtest","led_test","ledtest","motortest",
+ "sensortest","batterytest","battery_test","wifitest","wifi_test","bttest","bt_test","haptictest","vibratetest",
+ "loopback","aging","aging_test","stress","stresstest",
+ # provisioning / identity a factory writes
+ "setserial","set_serial","writesn","setsn","setmac","set_mac","setuuid","writeuuid","setkey","writekey",
+ "keyprov","attest","attestation","efuse","fuse","securewrite","writecert",
+ # service / retail / demo modes
+ "servicemode","service_mode","service","shipmode","ship_mode","ship","demo","demomode","demo_mode","kiosk",
+ "retail","store","showroom","standby",
+ # info / dump a technician would pull
+ "getinfo","get_info","sysinfo","hwinfo","buildinfo","getserial","getmac","getversion","getlog","showinfo","whoami",
+ # rockchip / android low-level (this is an RK Android device)
+ "maskrom","loader","rockchip","rk","recovery","fastboot","bootloader","download","dload","edl","upgrade"]
 _ENDPOINTS=["EMBODIED_LOCAL","EMBODIED_PRODUCTION","OPEN_MOXIE"]
 def candidates():
     cmds=list(dict.fromkeys(_DIAG+_ACCESS+_NET+_FACTORY+[
@@ -29,6 +47,37 @@ def candidates():
     for c in cmds:
         for sn,fn in shapes: out.append((f"{sn}:{c}",fn(c)))
     for e in _ENDPOINTS: out.append((f"ep:{e}",json.dumps({"debug":{"command":"om","endpoint":e}})))
+    return out
+
+def candidates_focus():
+    """Zero-in set built on two field hypotheses:
+      1) The overnight PAUSE-producers are real manufacturing/mode entries (survived randomized repeats).
+      2) Those modes expose SUB-COMMANDS that configure important values (serial, MAC, UUID, keys, and
+         the endpoint host / GCP project -- i.e. where the robot phones home).
+    Test each potential (a) alone to re-confirm its pause under the fixed pacing, (b) as a PRIMER followed
+    by a config sub-command (two-frame), and (c) as a nested single-frame sub-command in case a mode
+    addresses its sub-commands as {command:factory, sub:set_endpoint} rather than two scans."""
+    def cmd(c): return json.dumps({"command":c})
+    def dcode(c): return json.dumps({"debug":{"code":c}})
+    def dcmd(c): return json.dumps({"debug":{"command":c}})
+    primers=[("raw:eng","eng"),("raw:mfg_mode","mfg_mode"),("raw:rockchip","rockchip"),
+             ("top.cmd:factory_mode",cmd("factory_mode")),("dbg.code:kiosk",dcode("kiosk")),
+             ("top.cmd:ca",cmd("ca")),("top.cmd:audio_test",cmd("audio_test")),
+             ("dbg.code:attestation",dcode("attestation"))]
+    subcmds=["setserial","setmac","setuuid","setkey","writecert","set_endpoint","set_host",
+             "set_project","set_gcp","set_wifi","set_ssid","set_url","set_region","factory_reset"]
+    out=[]
+    for pl,pp in primers: out.append({"label":pl,"frames":[(pl,pp)]})            # (a) singles
+    for pl,pp in primers:                                                        # (b) primer -> sub-command
+        pk=pl.split(":",1)[-1]
+        for sc in subcmds:
+            out.append({"label":f"seq[{pk}>{sc}]","frames":[(pl,pp),(f"top.cmd:{sc}",cmd(sc))]})
+    for mode in ("factory","mfg","eng"):                                         # (c) nested single-frame
+        for sc in ("set_endpoint","set_host","set_project","setserial"):
+            out.append({"label":f"nest[{mode}.{sc}]","frames":[(f"nest:{mode}.{sc}",
+                json.dumps({"command":mode,"sub":sc}))]})
+            out.append({"label":f"nest[{mode}:{sc}]","frames":[(f"nest2:{mode}.{sc}",
+                json.dumps({"debug":{"command":mode,"sub":sc}}))]})
     return out
 
 STATE={"n":1,"label":"test","payload":json.dumps({"debug":{"command":"info"}}),
@@ -197,61 +246,117 @@ def audio_thread():
                 below=True
             STATE["rms"]=int(rms)
 
-def fuzz_thread():
-    allc=candidates();i=0;base=None;order=list(range(len(allc)));random.shuffle(order)
-    while True:
-        with LOCK:
-            on=STATE["fuzz"];ip=STATE["moxie"];mode=STATE["mode"];dwell=STATE["dwell"]
-            seq=[(m["label"],m["payload"]) for m in STATE["maybes"]] if mode=="retest" else [allc[order[k]] for k in range(len(order))]
-        if not on or not seq: time.sleep(0.5);continue
-        if base is None: base=probe(ip)
-        if i>0 and i%len(seq)==0 and mode!="retest": random.shuffle(order)
-        label,payload=seq[i%len(seq)];i+=1
-        with LOCK:
-            STATE["payload"]=payload;STATE["label"]=("RETEST " if mode=="retest" else "")+label;STATE["n"]+=1
-            STATE["recent"]=([{"t":time.strftime("%H:%M:%S"),"label":label,"payload":payload}]+STATE["recent"])[:5]
-        try: open(TIMELINE,"a").write(f"{time.time():.0f} {time.strftime('%H:%M:%S')} {label}\n")
-        except: pass
-        show=time.time(); scan_t=None; resume_t=None
-        with LOCK: paced=STATE.get("paced",True)
+def _measure_frame(label,payload,final):
+    """Show one QR frame. PHASE 1: wait for the first scan beep (Moxie locked+read it). An intermediate
+    (primer) frame settles briefly and advances so the next frame lands while the mode is active. The
+    FINAL frame runs PHASE 2: hold the code -- never swapping while Moxie is paused -- until it returns to
+    steady rapid-scan cadence, so a post-scan pause stays pinned to THIS code. Returns (scanned,gap,hung);
+    gap = longest inter-beep pause = the reaction metric."""
+    with LOCK:
+        mode=STATE["mode"]; paced=STATE.get("paced",True); dwell=STATE["dwell"]
+        pref={"retest":"RETEST ","focus":("" if final else "| ")}.get(mode,"")
+        STATE["payload"]=payload; STATE["label"]=pref+label; STATE["n"]+=1
+        STATE["recent"]=([{"t":time.strftime("%H:%M:%S"),"label":label,"payload":payload}]+STATE["recent"])[:5]
+    try: open(TIMELINE,"a").write(f"{time.time():.0f} {time.strftime('%H:%M:%S')} {'' if final else '|frame '}{label}\n")
+    except: pass
+    show=time.time(); maxwin=22 if mode=="retest" else 12; SAFETY=45.0
+    def bp(): return sorted(e for e in AUDIO["events"] if e>show+0.05)
+    scanned=False; hung=False
+    if not paced:
         while True:
             time.sleep(0.08)
             with LOCK:
-                if not STATE["fuzz"]: break
-            if not paced:
-                if time.time()-show>=dwell: break
-                continue
-            evs=sorted(e for e in AUDIO["events"] if e>show+0.05)
-            if evs and scan_t is None: scan_t=evs[0]
-            if scan_t and len(evs)>=2 and resume_t is None: resume_t=evs[1]
-            now=time.time()
-            if now-show<3.0: continue                                    # min stable hold so Moxie locks+scans
-            if resume_t and now-max(AUDIO["last"],resume_t)>0.6: break   # got 2 beeps (gap measured) + quiet
-            if scan_t and resume_t is None and now-scan_t>7: break       # scanned once, no re-beep in 7s = reaction
-            if scan_t is None and now-show>10: break                     # gave 10s, never scanned -> skip
-            if now-show>18: break                                        # hard cap
-        gap=(resume_t-scan_t) if (scan_t and resume_t) else (time.time()-show if scan_t else 0)
-        ports=probe(ip);new=[x for x in ports if x not in (base or [])]
+                if not STATE["fuzz"]: return (bool(bp()),0.0,False)
+            if time.time()-show>=dwell: break
+        scanned=bool(bp())
+    else:
+        while True:                                          # PHASE 1: first scan beep
+            time.sleep(0.08)
+            with LOCK:
+                if not STATE["fuzz"]: return (False,0.0,False)
+            if bp(): scanned=True; break
+            if time.time()-show>maxwin: break                # never scanned -> not a valid read
+        if scanned and not final:
+            time.sleep(0.4); return (True,0.0,False)         # primer scanned -> keep mode hot, next frame
+        if scanned and final:
+            while True:                                      # PHASE 2: hold through reaction to cadence
+                time.sleep(0.08)
+                with LOCK:
+                    if not STATE["fuzz"]: break
+                now=time.time(); bs=bp()
+                if now-show>SAFETY: hung=True; break
+                if len(bs)>=3:
+                    g=[bs[i+1]-bs[i] for i in range(len(bs)-1)]
+                    if max(g[-2:])<3.0 and now-bs[-1]<3.0: break
+    bs=bp()
+    if bs:
+        s2=bs+[time.time()]; gap=round(max(s2[i+1]-s2[i] for i in range(len(s2)-1)),2)
+    else: gap=0.0
+    if hung: print(f"HUNG (>{SAFETY:.0f}s gap={gap:.1f}s) {label}",flush=True)
+    return (scanned,gap,hung)
+
+def fuzz_thread():
+    allc=candidates(); foc=candidates_focus()
+    i=0; base=None
+    order=list(range(len(allc))); random.shuffle(order)
+    forder=list(range(len(foc))); random.shuffle(forder)
+    while True:
         with LOCK:
-            STATE["ports"]=ports; STATE["gap"]=round(gap,2)
-            rt=STATE["react_thresh"]
-            if gap>0.3:   # only count shows Moxie actually scanned
-                st=STATE["stats"].setdefault(label,{"shows":0,"gaps":[],"react":0,"payload":payload})
+            on=STATE["fuzz"]; ip=STATE["moxie"]; mode=STATE["mode"]
+        if not on: time.sleep(0.5); continue
+        if base is None: base=probe(ip)
+        if mode=="focus":
+            if not foc: time.sleep(0.5); continue
+            if i>0 and i%len(forder)==0: random.shuffle(forder)
+            cand=foc[forder[i%len(forder)]]; i+=1; frames=cand["frames"]; clabel=cand["label"]
+        elif mode=="retest":
+            with LOCK: ms=[(m["label"],m["payload"]) for m in STATE["maybes"]]
+            if not ms: time.sleep(0.5); continue
+            clabel,pay=ms[i%len(ms)]; i+=1; frames=[(clabel,pay)]
+        else:                                                # brute
+            if i>0 and i%len(order)==0: random.shuffle(order)
+            clabel,pay=allc[order[i%len(order)]]; i+=1; frames=[(clabel,pay)]
+        scanned=False; gap=0.0; aborted=False
+        for fi,(flab,fpay) in enumerate(frames):
+            final=(fi==len(frames)-1); lab=clabel if final else flab
+            sc,g,hung=_measure_frame(lab,fpay,final)
+            if final: scanned=sc; gap=g
+            elif not sc: aborted=True; break                 # primer never scanned -> skip this pass
+        if aborted: continue
+        ports=probe(ip); new=[x for x in ports if x not in (base or [])]
+        with LOCK:
+            STATE["ports"]=ports; STATE["gap"]=round(gap,2); rt=STATE["react_thresh"]
+            if scanned:
+                st=STATE["stats"].setdefault(clabel,{"shows":0,"gaps":[],"react":0,"payload":frames[-1][1]})
                 st["shows"]+=1; st["gaps"]=(st["gaps"]+[round(gap,2)])[-30:]
                 if gap>=rt: st["react"]+=1
             if new:
-                STATE["hits"].append({"label":label,"new_ports":new,"payload":payload})
-                print(f"HIT {label} new_ports={new}",flush=True)
-            if gap>=4.5:   # long scan->resume delay = a REACTION -> auto-flag
-                m={"t":time.strftime("%H:%M:%S"),"label":label,"payload":payload,"gap":round(gap,2)}
-                if not any(x["label"]==label for x in STATE["maybes"]): STATE["maybes"].append(m)
-                print(f"AUTO-FLAG (gap={gap:.1f}s) {label}",flush=True)
+                STATE["hits"].append({"label":clabel,"new_ports":new,"payload":frames[-1][1]})
+                print(f"HIT {clabel} new_ports={new}",flush=True)
+            if gap>=4.5:
+                m={"t":time.strftime("%H:%M:%S"),"label":clabel,"payload":frames[-1][1],"gap":round(gap,2)}
+                if not any(x["label"]==clabel for x in STATE["maybes"]): STATE["maybes"].append(m)
+                print(f"AUTO-FLAG (gap={gap:.1f}s) {clabel}",flush=True)
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--port",type=int,default=8091)
     ap.add_argument("--moxie-ip",default="10.42.0.79");ap.add_argument("--no-chrome",action="store_true");ap.add_argument("--autofuzz",action="store_true")
+    ap.add_argument("--maybes-file",help="JSON list of {label,payload} candidates -> start in retest mode")
+    ap.add_argument("--focus",action="store_true",help="focus mode: overnight potentials + config-subcommand sequences")
     a=ap.parse_args();STATE["moxie"]=a.moxie_ip
     if a.autofuzz: STATE["fuzz"]=True
+    if getattr(a,"focus",False):
+        STATE["mode"]="focus"; STATE["fuzz"]=True
+        STATE["maybes"]=[{"label":c["label"],"payload":c["frames"][-1][1]} for c in candidates_focus() if len(c["frames"])==1]
+        print(f"FOCUS mode: {len(candidates_focus())} candidates (singles + multi-phase + nested)",flush=True)
+    if a.maybes_file and os.path.exists(a.maybes_file):
+        try:
+            ms=json.load(open(a.maybes_file))
+            STATE["maybes"]=[{"label":m["label"],"payload":m["payload"]} for m in ms if m.get("payload")]
+            STATE["mode"]="retest"; STATE["fuzz"]=True
+            print(f"loaded {len(STATE['maybes'])} candidates -> RETEST mode",flush=True)
+        except Exception as e:
+            print("maybes load fail:",e,flush=True)
     load_cfg()
     shutil.rmtree("/tmp/qrrig-chrome",ignore_errors=True)
     s=http.server.HTTPServer(("0.0.0.0",a.port),H)
