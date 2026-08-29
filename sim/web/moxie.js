@@ -981,10 +981,15 @@ const ELBOW_FULL_AT   = 1.15;        // shoulder angle (rad) at which the bend m
 // toward the body and the fold eases out, reaching flat at the top of travel.
 const ELBOW_MAX_AT = 13064;         // shoulder value where the fold is fully closed
 function springElbowFromMotor(v) {
-  if (v <= ELBOW_MAX_AT) return ELBOW_MAX_BEND;                  // fully folded
-  const t = (v - ELBOW_MAX_AT) / (MOTOR_MAX - ELBOW_MAX_AT);     // 0 at max bend .. 1 at top
-  const eased = t * t * (3 - 2 * t);                             // smoothstep
-  return ELBOW_MAX_BEND * (1 - eased);                           // folds out as the arm rises
+  // At rest (shoulder 0) the arm lies at the side and the forearm is FLAT against
+  // the body — zero fold. As the shoulder rises the hand leaves the body and the
+  // spring closes the elbow, reaching MAX BEND at ELBOW_MAX_AT and holding there.
+  // Smooth everywhere — no step at the threshold. The fold eases in from flat and
+  // approaches max asymptotically, so there is no visible discontinuity when the
+  // shoulder crosses ELBOW_MAX_AT.
+  const t = Math.min(1, Math.max(0, v / ELBOW_MAX_AT));          // 0 flat .. 1 at threshold
+  const eased = t * t * (3 - 2 * t);                             // smoothstep (C1: flat slope at both ends)
+  return ELBOW_MAX_BEND * eased;
 }
 
 function motorAngle(i) {
