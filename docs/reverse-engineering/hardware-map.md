@@ -96,6 +96,13 @@ void LogLizardErrorState();
 timed/trajectory move, not an instant set-point). A `SingleMotorTune` activity + a
 record/`playBackRunnable` path let the factory capture and replay motor trajectories.
 
+> ⚠️ **There are no joint angles (degrees) anywhere in the firmware.** Everything is **encoder counts**
+> in the `0..32767` space; the *mechanical* end-stops are enforced per motor by the MCU via
+> **`CONFIG_LIMIT`** (with `CONFIG_ADJ` for the zero/offset), set at factory calibration — so counts→degrees
+> is a **per-unit calibration constant that isn't in the image**. Anyone building motion (custom firmware
+> or a [simulator](../architecture/sil-and-cicd.md)) must derive the mapping empirically on a bench unit,
+> or pick visually sensible angles. The count ranges below are the only travel data the firmware gives.
+
 **Per-motor travel limits & timing** — from the engineering motor test (`MotorEngActivity`, which sweeps
 each joint to its endpoints via `MoveToPositionVt(idx, cur, target, milliSecs, segmentTime, mode)`):
 
