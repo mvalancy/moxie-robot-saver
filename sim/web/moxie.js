@@ -821,7 +821,10 @@ function makeArm(side) {  // side = -1 left, +1 right
 
   // upper arm: constant-width shell from the shoulder down past the elbow
   const upper = new THREE.Mesh(
-    makeArmShellGeometry(side, 1.27, 0.60, ARM_HALF_W, ARM_THICK, 0.22, shoulderPivot),
+    // 25% shorter (0.67 -> 0.503): the upper arm now ends at ~0.767, right at the
+    // elbow pivot (0.76), so the two segments meet mid-joint instead of the upper
+    // arm running long past it.
+    makeArmShellGeometry(side, 1.27, 0.767, ARM_HALF_W, ARM_THICK, 0.22, shoulderPivot),
     armMat);
   upper.castShadow = true;
   upper.receiveShadow = true;
@@ -973,16 +976,15 @@ const ELBOW_FULL_AT   = 1.15;        // shoulder angle (rad) at which the bend m
 // The elbow is not driven. The spring pulls the forearm closed; the body blocks it
 // while the arm hangs at the side. As the shoulder lifts the arm clear, the bend
 // grows SMOOTHLY (eased) until it reaches the mechanical stop.
-const ELBOW_CONTACT_AT = 0.22;      // arm angle (rad) at which the HAND touches the body
-function springElbow(shoulderA) {
-  // The spring holds the elbow FOLDED. It only opens when the hand physically
-  // reaches the body: while the arm is away from the side the fold stays at max,
-  // and only inside the contact band does the body push it back toward flat.
-  const a = Math.abs(shoulderA);
-  if (a >= ELBOW_CONTACT_AT) return ELBOW_MAX_BEND;              // hand clear of the body
-  const t = a / ELBOW_CONTACT_AT;                                // 0 at the side .. 1 at contact
+// Elbow spring, keyed to the SHOULDER MOTOR VALUE (not a derived angle):
+// at/below 13064 the elbow is at MAX BEND; going UP from there the hand comes back
+// toward the body and the fold eases out, reaching flat at the top of travel.
+const ELBOW_MAX_AT = 13064;         // shoulder value where the fold is fully closed
+function springElbowFromMotor(v) {
+  if (v <= ELBOW_MAX_AT) return ELBOW_MAX_BEND;                  // fully folded
+  const t = (v - ELBOW_MAX_AT) / (MOTOR_MAX - ELBOW_MAX_AT);     // 0 at max bend .. 1 at top
   const eased = t * t * (3 - 2 * t);                             // smoothstep
-  return ELBOW_MAX_BEND * eased;   // flat against the body -> folds as it lifts away
+  return ELBOW_MAX_BEND * (1 - eased);                           // folds out as the arm rises
 }
 
 function motorAngle(i) {
@@ -1671,8 +1673,8 @@ function animate() {
   // The elbow folds about Z (in the arm's own plane, toward the body).
   // elbowSign is baked into each arm at build time (mirrored by `side`), so the
   // same positive fold value produces a symmetric inward fold on both arms.
-  armL.elbow.rotation.z = armL.elbowSign * springElbow(Math.hypot(a[0] + live[0], a[1] + live[1]));
-  armR.elbow.rotation.z = armR.elbowSign * springElbow(Math.hypot(a[2] + live[2], a[3] + live[3]));
+  armL.elbow.rotation.z = armL.elbowSign * springElbowFromMotor(motorValues[0]);
+  armR.elbow.rotation.z = armR.elbowSign * springElbowFromMotor(motorValues[2]);
   headTiltG.rotation.x     = a[4] + live[4];
   headRollG.rotation.z     = liveness.master * liveness.w[4] * liveness.roll;
   yawG.rotation.y          = a[5] + live[5];
