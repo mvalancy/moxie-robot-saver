@@ -44,6 +44,30 @@ The full factory image (`moxie-prod-partitions_*.zip`) contains eight partitions
 | `system.img` | 3.4 GiB | Android `/system` incl. all `bo-*` apps (ext4, mounted at `/`) |
 | `vendor.img` | 4.7 GiB | Rockchip HALs, `fstab.rk30board`, hw init `.rc`, firmware blobs |
 
+### SELinux confinement — the apps run in **stock** domains (v24.10.803)
+
+The MAC layer complements the priv-app permission story above, and it's almost entirely **unmodified
+AOSP**. Recovered from `/system/etc/selinux/` + `/vendor/etc/selinux/`:
+
+- **Enforcing.** `user`/`release-keys` build, no `androidboot.selinux=permissive` in the
+  [kernel cmdline](#bootimg-kernel-cmdline-verbatim), and no permissive statement for any Embodied
+  type — so SELinux runs **enforcing**, the stock AOSP policy.
+- **`bo-android` gets no special domain.** `plat_seapp_contexts` maps it by the ordinary rule
+  `user=_app isPrivApp=true domain=priv_app` — the flagship app runs in the **standard `priv_app`
+  domain**, exactly like any other privileged app. It appears **nowhere** in `seapp_contexts`,
+  `mac_permissions.xml`, or as a custom type. So its power comes entirely from `/system/priv-app`
+  placement + the (unenforced) priv-app permission grants — **not** from a permissive or bespoke MAC
+  domain.
+- **Embodied's entire sepolicy footprint is two daemon domains** — `ledctrld` and `projectorfanpid`
+  (the LED + projector-fan helpers, [boot-and-launcher](boot-and-launcher.md#init-service-graph-native-daemons)),
+  added to the **platform** policy (`plat_sepolicy.cil`), each with its own `*_exec` type. Every other
+  type/domain is stock AOSP/Rockchip.
+
+**For custom firmware (goal 1):** a replacement app dropped into `/system/priv-app` **inherits the same
+`priv_app` domain automatically** — no sepolicy edit needed for an app-level swap, and it's neither more
+nor less MAC-confined than the original. Only a *new native daemon touching new hardware* needs a policy
+change — and Embodied's `ledctrld`/`projectorfanpid` pair is the ready-made template for how to add one.
+
 ### `oem.img` — one telling leftover (`/oem/etc/package_performance.xml`)
 
 Besides the boot animation, the OEM partition carries a **202-byte** `package_performance.xml` — a

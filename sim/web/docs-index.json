@@ -1,5 +1,5 @@
 {
- "generated": "99a25b1-dirty",
+ "generated": "6d7b617-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -823,11 +823,12 @@
    "path": "reverse-engineering/firmware-image.md",
    "title": "Moxie firmware image — the robot's own Android system",
    "section": "reverse-engineering",
-   "bytes": 17187,
+   "bytes": 18972,
    "mermaid": 0,
    "headings": [
     "TL;DR for going custom",
     "Partition set",
+    "SELinux confinement — the apps run in **stock** domains (v24.10.803)",
     "oem.img` — one telling leftover (`/oem/etc/package_performance.xml`)",
     "boot.img kernel cmdline (verbatim)",
     "fstab (`/vendor/etc/fstab.rk30board`)",
