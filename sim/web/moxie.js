@@ -359,11 +359,19 @@ root.add(ring);
 const yawG = new THREE.Group();
 root.add(yawG);
 
+// The real robot's lean pivots ABOVE the speaker: the lower body (grille,
+// wordmark) stays upright while the torso above it tips. lowerG turns with the
+// body but never leans; leanG pivots at LEAN_PIVOT_Y, just above the grille.
+const LEAN_PIVOT_Y = 0.46;          // grille sits at y=0.34
+const lowerG = new THREE.Group();   // fixed lower section (yaws, never leans)
+yawG.add(lowerG);
+
 const leanG = new THREE.Group();
-leanG.position.y = 0.02;
+leanG.position.y = LEAN_PIVOT_Y;
 yawG.add(leanG);
 
 const breatheG = new THREE.Group();          // liveness: breathing scale/bob
+breatheG.position.y = -LEAN_PIVOT_Y;   // children keep their absolute Y
 leanG.add(breatheG);
 
 // Body cylinder
@@ -644,7 +652,7 @@ const grille = new THREE.Mesh(
   })
 );
 grille.position.set(0, 0.34, 0);
-breatheG.add(grille);
+lowerG.add(grille);      // stays upright: the lean pivots above it
 
 // ---- `moxie` wordmark near the base ----
 
@@ -674,7 +682,7 @@ const wordmark = new THREE.Mesh(
   })
 );
 wordmark.position.set(0, 0.155, 0);
-breatheG.add(wordmark);
+lowerG.add(wordmark);    // base marking, never leans
 
 // ---- Heart LED: a THIN white horizontal line with a TINY white heart
 //      directly beneath it, on the upper chest just under the head — a small,
@@ -1522,7 +1530,7 @@ function animate() {
   // breathing — slow body scale + vertical bob (~4.3 s cycle)
   const breath = Math.sin(t * (Math.PI * 2 / 4.3)) * liveness.master;
   breatheG.scale.set(1 - 0.004 * breath, 1 + 0.011 * breath, 1 - 0.004 * breath);
-  breatheG.position.y = 0.005 * breath;
+  breatheG.position.y = -LEAN_PIVOT_Y + 0.005 * breath;   // keep the pivot offset
 
   // scene lighting eases toward the commanded level
   sceneLight.current += (sceneLight.level - sceneLight.current) * (1 - Math.exp(-dt * 5));
