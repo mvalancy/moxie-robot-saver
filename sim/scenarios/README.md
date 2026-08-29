@@ -12,3 +12,5 @@ python3 sim/virtual_moxie.py --scenario sim/scenarios/basic.json --port 1883
 app the reply is model-generated, so omit `expect_contains` and rely on the non-empty check.
 
 `sim/run_scenarios.sh` boots a broker + echo supervisor and runs every scenario here.
+
+Bridge markup→avatar logic is unit-tested (no browser) by `node sim/test_bridge.mjs`.
