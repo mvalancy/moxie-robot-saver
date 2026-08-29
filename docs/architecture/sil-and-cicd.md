@@ -44,7 +44,8 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   (shallow, **not a cone or domed bulge**) that **FILLS most of the head's front** and **runs up to meet
   the camera zone**, forming one continuous front "screen + camera" assembly (only a modest teal border
   around the outside; no teal gap between face and camera). It's a
-  **glowing DLP projector**, not a dull panel. Render it as an **emissive, glowing** surface so the face
+  **glowing DLP projector**, not a dull panel. It **fills the head's front frame with NO black border**
+  — the lit screen runs to the panel edge; the only dark area is a **small camera zone at the very top**. Render it as an **emissive, glowing** surface so the face
   literally casts light; eyes/brows/mouth glow. In a dark scene the face is the light source.
   > 💡 **The glow comes from INSIDE/behind the face — never a haze on top of it.** Drive emissive from
   > the face canvas so the drawn features themselves glow (a backlit projection screen), with any
@@ -79,7 +80,8 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   uniform-width curved shell from shoulder to tip. No tapering.
 - **Hands:** the arm ends in a **hand** in a **lighter blue** — the **same width as the arm** (the
   rounded lighter-blue end of that same shell), **not a narrow pill/capsule** stuck on the end.
-- **Ears:** **small oval mic-port markings on the left & right sides of the HEAD**. **Paint them into
+- **Ears:** **horizontal oval mic-port markings on the left & right sides of the HEAD** (clearly wider
+  than they are tall — not circles). **Paint them into
   the head's texture — do NOT model them as separate/intersecting geometry** (that clips and z-fights).
   Thin, subtle ovals flat on the shell; nothing protruding, nothing sunken.
 - **Heart LED:** on the **body front, high on the chest just under the head**: a **thin white

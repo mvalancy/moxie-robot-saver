@@ -34,7 +34,8 @@ const COL = {
 };
 
 const BODY_TOP = 1.50;            // top of the body (scene units; ~15 in overall)
-const HEAD_PIVOT_Y = 1.60;        // head-tilt pivot, at the top of the stubby neck
+const HEAD_PIVOT_Y = 1.52;        // head sits DOWN on the neck (underside ~1.48,
+                                  // just into the neck collar at BODY_TOP 1.50)
                                   // (head underside ends up just above BODY_TOP, so
                                   // the neck is visible and the head clears the
                                   // chest when it tilts)
@@ -491,7 +492,7 @@ function makeHeadTexture() {
     g.translate(cx, 250);
     g.fillStyle = 'rgba(10, 25, 30, 0.10)';   // whisper-faint inset shading
     g.beginPath();
-    g.ellipse(0, 0, 52, 30, 0, 0, Math.PI * 2);
+    g.ellipse(0, 0, 74, 26, 0, 0, Math.PI * 2);   // clearly HORIZONTAL oval mic port
     g.fill();
     g.strokeStyle = 'rgba(14, 34, 40, 0.55)'; // thin seam outline
     g.lineWidth = 5;
@@ -588,8 +589,8 @@ function bentPlate(geo, sx, sy, Rx, Ry) {
 // the radius, tucking the rim just behind the shell so the seam self-hides
 // without burying the visible face area. Backlit: emissiveMap is the face
 // canvas, so the drawn features glow from within.
-const FACE_RX = 0.46;         // panel half-width  (flattened front chord ~0.465)
-const FACE_RY = 0.50;         // panel half-height (spans y ~0.12..1.12 in headForm)
+const FACE_RX = 0.545;        // panel half-width — fills the (wider) head front
+const FACE_RY = 0.505;        // panel half-height — near-round, matches the chubby head
 
 function facePanelGeometry(rx, ry) {
   // RingGeometry with inner radius ~0 gives a disk WITH radial segments, so
@@ -1172,23 +1173,15 @@ function drawFace(t) {
   fctx.fillStyle = bg;
   fctx.fillRect(0, 0, W, H);
 
-  // dark bezel ring around the panel edge — the gasket between the glowing
-  // screen and the teal shell (its outer part hides under the shell rim)
-  fctx.strokeStyle = '#15232a';
-  fctx.lineWidth = 44;
-  fctx.beginPath();
-  fctx.arc(256, 256, 236, 0, Math.PI * 2);
-  fctx.stroke();
-
-  // dark camera zone across the panel's top — merges into the bezel ring at
-  // the sides so screen + camera read as one assembly; the 3D lens sits on
-  // the panel inside this zone. Dark on the emissive map = it never glows.
+  // NO bezel ring: the lit screen runs to the panel edge, so there is no black
+  // border around the face. Only a SMALL dark zone at the very top holds the
+  // camera (dark on the emissive map = it never glows).
   fctx.fillStyle = '#15232a';
   fctx.beginPath();
-  fctx.moveTo(0, 0);
-  fctx.lineTo(512, 0);
-  fctx.lineTo(512, 96);
-  fctx.quadraticCurveTo(256, 160, 0, 96);
+  fctx.moveTo(96, 0);
+  fctx.lineTo(416, 0);
+  fctx.quadraticCurveTo(430, 46, 256, 62);
+  fctx.quadraticCurveTo(82, 46, 96, 0);
   fctx.closePath();
   fctx.fill();
 
