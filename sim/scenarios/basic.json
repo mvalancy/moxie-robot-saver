@@ -1,0 +1,10 @@
+{
+  "name": "basic-conversation",
+  "note": "Protocol-level: each utterance must get a non-empty reply. expect_contains works with the echo app (reply = 'You said: <input>'); drop it for LLM apps.",
+  "turns": [
+    { "say": "hello Moxie",        "expect_contains": "hello Moxie" },
+    { "say": "what is your name",  "expect_contains": "name" },
+    { "say": "tell me a joke",     "expect_contains": "joke" },
+    { "say": "I feel happy today", "expect_contains": "happy" }
+  ]
+}

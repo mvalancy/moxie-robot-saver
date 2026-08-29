@@ -123,6 +123,45 @@ class VirtualMoxie:
             self.client.loop_stop()
             self.client.disconnect()
 
+    def run_scenario(self, turns):
+        """Play a scripted list of turns through the real round-trip.
+
+        `turns` = [{"say": str, "expect_contains": str?}, ...]. Each turn sends a
+        remote-chat prompt and asserts a non-empty reply arrives; if
+        `expect_contains` is set, the reply text must contain it (case-insensitive).
+        Returns (passed:int, total:int); details go to self.errors.
+        """
+        passed = 0
+        self.client.connect(self.host, self.port, 30)
+        self.client.loop_start()
+        try:
+            self.client.publish(self.t_state, json.dumps(
+                {"software_version": FIRMWARE, "state": "config"}))
+            if not self.got_config.wait(self.timeout):
+                self.errors.append("no config pushed within timeout"); return (0, len(turns))
+            if (self.config_payload or {}).get("pairing_status") != "paired":
+                self.errors.append("config not paired"); return (0, len(turns))
+            for i, turn in enumerate(turns):
+                say = turn.get("say", "")
+                self.got_reply.clear(); self.reply_payload = None
+                self.client.publish(self.t_event("remote-chat"), json.dumps(
+                    {"event_id": str(uuid.uuid4()), "command": "prompt",
+                     "backend": "router", "speech": say}))
+                if not self.got_reply.wait(self.timeout):
+                    self.errors.append(f"turn {i} ({say!r}): no reply"); continue
+                text = ((self.reply_payload or {}).get("output") or {}).get("text", "")
+                if not text:
+                    self.errors.append(f"turn {i} ({say!r}): empty reply"); continue
+                exp = turn.get("expect_contains")
+                if exp and exp.lower() not in text.lower():
+                    self.errors.append(f"turn {i} ({say!r}): reply {text!r} lacks {exp!r}"); continue
+                self.log(f"turn {i}: {say!r} → {text[:48]!r} ✓")
+                passed += 1
+            return (passed, len(turns))
+        finally:
+            self.client.loop_stop()
+            self.client.disconnect()
+
 
 def main():
     ap = argparse.ArgumentParser(description="Virtual Moxie SIL robot (protocol round-trip test).")
@@ -130,10 +169,28 @@ def main():
     ap.add_argument("--port", type=int, default=1883)
     ap.add_argument("--timeout", type=float, default=15.0)
     ap.add_argument("--device-id", default=None, help="override the d_<uuid> device id")
+    ap.add_argument("--scenario", default=None, help="path to a scenario JSON (turns list)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
     vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet)
+
+    if args.scenario:
+        with open(args.scenario) as fh:
+            spec = json.load(fh)
+        turns = spec.get("turns", spec) if isinstance(spec, dict) else spec
+        name = spec.get("name", args.scenario) if isinstance(spec, dict) else args.scenario
+        try:
+            passed, total = vm.run_scenario(turns)
+        except Exception as e:
+            print(f"❌ scenario {name}: exception: {e}"); sys.exit(1)
+        if passed == total:
+            print(f"✅ scenario '{name}': {passed}/{total} turns OK"); sys.exit(0)
+        print(f"❌ scenario '{name}': {passed}/{total} turns OK")
+        for e in vm.errors:
+            print("   -", e)
+        sys.exit(1)
+
     ok = False
     try:
         ok = vm.run_smoke()

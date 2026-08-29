@@ -35,3 +35,5 @@ jobs:
           pip install "paho-mqtt>=2.0"
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
+      - name: Run SIL scenarios (scripted conversations)
+        run: bash sim/run_scenarios.sh

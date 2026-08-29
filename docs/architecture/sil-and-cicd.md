@@ -88,8 +88,9 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
   DOFs); the UI animates arms/head/body from them. Sliders to drive motors manually.
 - [ ] **D5 — Face expressions + visemes.** Render expressions from mood + simple visemes from the spoken
   text; conversation transcript panel.
-- [ ] **D6 — Scenarios + record/replay.** `sim/scenarios/*.json` scripted conversations; a runner; record
-  a live session and replay it into the UI. Wire the LLM app path (optional).
+- [~] **D6 — Scenarios + record/replay.** ✅ started: `sim/scenarios/*.json` scripted conversations +
+  `virtual_moxie.py --scenario` + `sim/run_scenarios.sh` (in CI); `basic.json` runs 4/4 turns. ⏳ remaining:
+  record a live session and replay into the UI; LLM-app scenarios.
 - [ ] **D7 — Package + deliver.** `docker-compose up` = broker + supervisor + web UI + virtual robot;
   screenshots/gif in the README; final docs pass; tag a release.
 
