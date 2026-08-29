@@ -96,9 +96,37 @@ The factory native lib exposes reusable hardware pokes — a ready-made bring-up
 
 The station uses a **closed test enclosure** (open/close-door prompts), **ArUco fiducials** for
 camera↔projector alignment, and reads the LED ring / projected image back through the camera —
-i.e. the robot self-validates its own face optics. `internalassytest` and `lifetest` reuse the same
-`AudioTest`/`DoMotorsTest`/`ProjCamTest`/`RingTest` primitives at earlier assembly stages. For custom
-firmware / hardware bring-up, these are the exact routines that prove each subsystem.
+i.e. the robot self-validates its own face optics. For custom firmware / hardware bring-up, these are
+the exact routines that prove each subsystem.
+
+### `internalassytest` — sub-assembly bring-up (`InternalAssyTest.DoTest()`)
+
+A **distinct**, shorter sequence run at an earlier station (before final assembly), verified from the
+decompiled `me.embodied.productiontesting.internalassytest` (firmware **v24.10.803**). Ordered steps:
+
+| # | Step | What it proves |
+|---|---|---|
+| 1 | `CheckNoTouch` → `CheckTouchSensors` (×2) | capacitive touch zones read correctly with/without contact |
+| 2 | `ArucoAligner` | align the device-under-test in the fixture via **ArUco** markers + camera |
+| 3 | `ArucoOnScreen` | the **projector** renders an ArUco pattern the camera reads back (face optics) |
+| 4 | `LEDTest` (through camera) | status LEDs |
+| 5 | `RingTest` (through camera) | the LED ring |
+| 6 | `FanRunning` → `FanNoise` | the DLP projector fan spins + isn't rattling |
+| 7 | `AECTest` | acoustic echo cancellation (mic array + speaker) |
+| 8 | `Spin` | base yaw rotation (re-checks ArUco alignment after spinning) |
+| 9 | `ReRun(TestMotor, ×3)` | the motor set, **repeated 3×** |
+
+So the assembly station is optics/touch/fan/motor focused; the **`finaltest` end-of-line run above adds**
+the Wi-Fi/RSSI, camera-cover, audio speaker and arm connect/disconnect checks.
+
+### `lifetest` — a **550-hour reliability soak** (`ActivityLifeTest.DoTest()`)
+
+Not a pass/fail station test at all — it's a **burn-in**: `TimePeriod(550L, TimeUnit.HOURS)` (~23 days).
+It **requires the charger** (`Lizard.waitForDC(30000)`, else `ErrorCode.ROBOT_NO_CHARGER` — *"Charger must
+be connected"*) and then runs a `Scheduler` that **cycles the test primitives** for the whole duration
+("LifeTest start.\nCradle…" → "LifeTest end.\n… to grave."). This is the routine that would cycle a
+bench unit's motors/optics/audio for reliability data — useful context for how much duty these actuators
+were validated for.
 
 ## The secrets (`Secrets` / `libsecrets.so`)
 

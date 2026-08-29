@@ -1,5 +1,5 @@
 {
- "generated": "7d52bd8-dirty",
+ "generated": "e23f9a7-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -756,7 +756,7 @@
    "path": "reverse-engineering/factory-provisioning.md",
    "title": "Factory provisioning — production apps, serials & secrets",
    "section": "reverse-engineering",
-   "bytes": 9909,
+   "bytes": 11634,
    "mermaid": 0,
    "headings": [
     "The factory apps (shipped on every robot)",
@@ -764,6 +764,8 @@
     "Manufacturing part hierarchy (`assy/Part.java`)",
     "Factory test catalog (`finaltest` — end of line)",
     "Native test primitives (JNI)",
+    "internalassytest` — sub-assembly bring-up (`InternalAssyTest.DoTest()`)",
+    "lifetest` — a **550-hour reliability soak** (`ActivityLifeTest.DoTest()`)",
     "The secrets (`Secrets` / `libsecrets.so`)",
     "The obfuscation is repeating-XOR (cracked)",
     "Recovering the secret values",
