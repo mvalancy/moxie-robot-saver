@@ -47,8 +47,10 @@ structure has to be inferred. What the firmware does tell us:
   A joint that is powered in **one direction only** is the signature of a **spring/gravity return**:
   the motor pulls it one way, and the forearm falls back under its own weight.
 - Practical reading (matches observed hardware): the **shoulder is the actuated joint** — it rotates and
-  extends the arm — and the **forearm is passively returned** (spring/gravity), so `ARM_IN_OUT` drives
-  the fold in one direction and physics does the rest.
+  extends the arm — and the **forearm is spring-returned**. The **spring pulls the elbow closed**, and the
+  **body pushes it back open** when the arm rests against the side: so the forearm's resting position is a
+  **function of the shoulder angle** (arm down → held open by the body; arm lifted clear → spring folds
+  it), with the motor only ever **adding** fold. That is exactly the asymmetry seen above.
 - ⚠️ **Not proven from the image.** There is no kinematic description in the firmware, and
   ([as established](#position-units)) **no joint angles at all** — only counts. Confirming whether the
   forearm segment is spring-loaded, damped, or free needs a **bench unit**.

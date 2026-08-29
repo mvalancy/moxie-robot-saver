@@ -841,6 +841,18 @@ const motorNodes = [
   headTiltG, yawG, leanG,
 ];
 
+// Spring-loaded elbow: `shoulderA` is the shoulder's current angle, `cmd` the
+// commanded fold. With the arm hanging at the side the body blocks the spring and
+// the forearm is held open (~0 fold); as the shoulder lifts the arm clear, the
+// spring closes it. The commanded fold adds on top and always wins if larger.
+const SPRING_CLOSE = 1.15;          // how far the spring folds a free-hanging arm
+function springElbow(shoulderA, cmd) {
+  // shoulder ~0 = arm down against the body; larger = lifted away from it.
+  const lifted = Math.min(1, Math.max(0, Math.abs(shoulderA) / 1.0));
+  const spring = SPRING_CLOSE * lifted * (cmd >= 0 ? 1 : -1);   // fold the same way the motor does
+  return Math.abs(cmd) > Math.abs(spring) ? cmd : spring;       // motor can only ADD fold
+}
+
 function motorAngle(i) {
   const d = MOTOR_DEFS[i];
   if (d.unipolar) {
@@ -1519,9 +1531,16 @@ function animate() {
   const a = [0, 1, 2, 3, 4, 5, 6].map(motorAngle);
 
   armL.shoulder.rotation.x = a[0] + live[0];
-  armL.elbow.rotation.x    = a[1] + live[1];
   armR.shoulder.rotation.x = a[2] + live[2];
-  armR.elbow.rotation.x    = a[3] + live[3];
+  // Spring elbow (see hardware-map.md "Arm anatomy"): the spring pulls the
+  // forearm CLOSED, and the BODY pushes it back OPEN when the arm rests against
+  // the side — which is why the firmware only ever drives elbows toward MAX.
+  // So the elbow's resting fold is a function of the SHOULDER angle: arm down
+  // against the body -> forced open; arm lifted away -> spring closes it. The
+  // motor commands a fold on top of that, and can only ADD fold (never extend
+  // past what the body allows).
+  armL.elbow.rotation.x = springElbow(a[0] + live[0], a[1] + live[1]);
+  armR.elbow.rotation.x = springElbow(a[2] + live[2], a[3] + live[3]);
   headTiltG.rotation.x     = a[4] + live[4];
   headRollG.rotation.z     = liveness.master * liveness.w[4] * liveness.roll;
   yawG.rotation.y          = a[5] + live[5];

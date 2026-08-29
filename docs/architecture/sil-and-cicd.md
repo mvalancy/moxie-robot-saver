@@ -56,9 +56,12 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   **Kinematics:** the arm behaves like **a flat sheet of cardboard that folds at the joint** — the
   shoulder and elbow hinges are **aligned/co-planar, single-axis**, so the forearm folds **flat in-plane**
   toward the upper arm. No tilted/skewed hinge sweeping the forearm across the body.
-  **The elbow is FOLD-ONLY**: it hinges one way from straight and **cannot hyperextend/rotate back**, so
-  its whole `0..32767` span maps straight → fully folded (unipolar). Only the shoulder is bipolar
-  around the rest pose.
+  **The elbow is a SPRING joint, not a free servo.** The spring pulls the forearm **closed**; the
+  **body pushes it back open** when the arm rests against the side. So the elbow's resting fold is a
+  **function of the shoulder angle** — arm down against the body → forced open; arm lifted clear →
+  the spring closes it — and the motor can only **add** fold on top (never hyperextend). This is why the
+  firmware only ever drives elbows toward `MOTOR_MAX_POS`
+  ([evidence](../reverse-engineering/hardware-map.md#arm-anatomy--what-arm_in_out-actually-is)).
   **Handedness:** motor names are from the **robot's own perspective** (the Lizard board is silkscreened
   `L ARM …`/`R ARM …`), so with a camera in front, the robot's **LEFT** arm (motors 0/1) appears on the
   **viewer's RIGHT**. See the [motor map](../reverse-engineering/hardware-map.md).
