@@ -844,8 +844,12 @@ function makeArm(side) {  // side = -1 left, +1 right
   elbow.add(elbowPost);
 
   // forearm: SAME width as the upper arm, overlapping it at the elbow
+  // Start the forearm ABOVE the elbow pivot so it overlaps the upper arm through
+  // the whole fold — otherwise the two wrapped shells separate at the joint and
+  // the forearm pokes through (they are curved on the body radius, so rotating
+  // takes the forearm off that curve).
   const forearm = new THREE.Mesh(
-    makeArmShellGeometry(side, 0.74, 0.34, ARM_HALF_W, ARM_THICK, 0.26, elbowPivot),
+    makeArmShellGeometry(side, 0.92, 0.34, ARM_HALF_W * 0.97, ARM_THICK * 0.94, 0.26, elbowPivot),
     armMat);
   forearm.castShadow = true;
   forearm.receiveShadow = true;
@@ -967,10 +971,16 @@ const ELBOW_FULL_AT   = 1.15;        // shoulder angle (rad) at which the bend m
 // The elbow is not driven. The spring pulls the forearm closed; the body blocks it
 // while the arm hangs at the side. As the shoulder lifts the arm clear, the bend
 // grows SMOOTHLY (eased) until it reaches the mechanical stop.
+const ELBOW_CONTACT_AT = 0.22;      // arm angle (rad) at which the HAND touches the body
 function springElbow(shoulderA) {
-  const t = Math.min(1, Math.abs(shoulderA) / ELBOW_FULL_AT);   // 0..1 as the arm lifts
+  // The spring holds the elbow FOLDED. It only opens when the hand physically
+  // reaches the body: while the arm is away from the side the fold stays at max,
+  // and only inside the contact band does the body push it back toward flat.
+  const a = Math.abs(shoulderA);
+  if (a >= ELBOW_CONTACT_AT) return ELBOW_MAX_BEND;              // hand clear of the body
+  const t = a / ELBOW_CONTACT_AT;                                // 0 at the side .. 1 at contact
   const eased = t * t * (3 - 2 * t);                             // smoothstep
-  return ELBOW_MAX_BEND * eased;   // + folds the forearm IN toward the body
+  return ELBOW_MAX_BEND * eased;   // flat against the body -> folds as it lifts away
 }
 
 function motorAngle(i) {

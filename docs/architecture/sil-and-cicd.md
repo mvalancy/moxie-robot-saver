@@ -66,8 +66,9 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   toward the upper arm. No tilted/skewed hinge sweeping the forearm across the body.
   **Shoulders are OUT-ONLY on the in/out axis** — the arm cannot swing into the body, so that control
   rests at **0** (arm against the side), not centred. **The elbow is NOT a controllable DOF — it is a pure spring mechanism** (no slider, no commanded
-  value): its bend is **derived entirely from the shoulder angle**, growing smoothly (eased) as the arm
-  lifts clear of the body until it reaches the mechanical stop. The spring pulls the forearm **closed**; the
+  value): its bend is **derived entirely from the shoulder angle**. The spring holds it **folded**; it only
+  straightens when the **hand physically reaches the body** — so the fold stays at its stop while the arm
+  is away from the side, and opens only inside the narrow contact band as the arm returns. The spring pulls the forearm **closed**; the
   **body pushes it back open** when the arm rests against the side. So the elbow's resting fold is a
   **function of the shoulder angle** — arm down against the body → forced open; arm lifted clear →
   the spring closes it — and the motor can only **add** fold on top (never hyperextend). This is why the
