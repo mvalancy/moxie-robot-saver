@@ -1,11 +1,45 @@
-/vendor/*
-  Cache-Control: public, max-age=31536000, immutable
-/audio/*
-  Cache-Control: public, max-age=31536000, immutable
-/*.js
-  Cache-Control: public, max-age=3600
-/index.html
+# HTML — always revalidate so a redeploy's new asset references show up immediately.
+/
+  Cache-Control: no-cache
+/*.html
   Cache-Control: no-cache
 
+# App scripts — change often; must revalidate (the /*.js glob is unreliable on
+# Pages, so each app script is listed explicitly).
+/moxie.js
+  Cache-Control: no-cache
+/bridge.js
+  Cache-Control: no-cache
+/audio.js
+  Cache-Control: no-cache
+/mic.js
+  Cache-Control: no-cache
+/stub.js
+  Cache-Control: no-cache
+/qr.js
+  Cache-Control: no-cache
+/bg.js
+  Cache-Control: no-cache
+/moxie-wire.js
+  Cache-Control: no-cache
+/env.js
+  Cache-Control: no-cache
+
+# Rendered imagery + docs bundle — short cache so overwrites propagate fast.
+/img/*
+  Cache-Control: public, max-age=300
 /docs-bundle/*
-  Cache-Control: public, max-age=3600
+  Cache-Control: public, max-age=300
+/docs-index.json
+  Cache-Control: no-cache
+/fixtures/*
+  Cache-Control: public, max-age=300
+/sessions/*
+  Cache-Control: public, max-age=300
+/audio/*
+  Cache-Control: public, max-age=86400
+
+# Vendored libraries + fonts — content-addressed, safe to cache for a year.
+# (Listed LAST so it wins for vendored .js over the no-cache rules above.)
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
