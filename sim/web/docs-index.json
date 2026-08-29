@@ -1,5 +1,5 @@
 {
- "generated": "bd90429-dirty",
+ "generated": "ea2b4eb-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -439,7 +439,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploying the SIL to Cloudflare Pages",
    "section": "guides",
-   "bytes": 8751,
+   "bytes": 9009,
    "mermaid": 0,
    "headings": [
     "TL;DR",
