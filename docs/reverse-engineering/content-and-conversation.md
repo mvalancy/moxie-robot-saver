@@ -232,6 +232,25 @@ Which module to surface is ranked by weighted signals (the `RECOMMENDATION_*` se
 `RecommendationContext.Recommendation{module_id, content_id, entry_line, seen, skip_hub}`
 (see [`cloud-protocol.md`](cloud-protocol.md)'s `RemoteChatRequest.recommend`).
 
+#### Content metadata & tagging taxonomy
+What the recommender ranks *over* — each content item is categorized along four dimensions
+(`ContentMetaList`, `embodied.robotbrain`), the vocabulary a revival server tags its own content with:
+
+| Dimension | Tag type | Meaning |
+|---|---|---|
+| **`cognitive_load`** | `CognitiveTag{name, uuid, value}` | how mentally demanding (the `value` is a numeric load level) |
+| **`intimacy_level`** | `IntimacyTag{name, uuid, order}` | how emotionally close/personal (`order` ranks the levels) |
+| **`topics`** | `Tag{name, uuid}` | subject matter |
+| **`genres`** | `Tag{name, uuid}` | style/format |
+
+Per item, **`ContentInfo{_content_id, _csv_dict: ContentData}`** maps a content id to its
+**`ContentData{UUID, content_tags, sel_tags}`** — the item's topic/genre `content_tags` plus its
+**`sel_tags`** (which Social-Emotional-Learning goals it serves, tying content to the [STAR
+curriculum](#star-goals-the-sel-curriculum)). The `cognitive_load`/`intimacy_level` dimensions let the
+recommender pace difficulty and emotional intensity over a session; `content_tags`/`sel_tags` drive the
+tag-history weighting (`RECOMMENDATION_TAGHISTORY_ALPHA`, `..._BY_SEL`). A server that serves its own
+modules populates these so the recommender can rank them.
+
 ### STAR goals (the SEL curriculum)
 Moxie's socio-emotional-learning goals: **`STARGoalStateChange{goal, goal_level, prompt_level,
 activated}`** with **`STARGoalSuccess`/`STARGoalFailure`**. Content targets a `goal` at a `goal_level`;
