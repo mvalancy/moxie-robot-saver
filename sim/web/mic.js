@@ -12,7 +12,8 @@
 (function () {
   "use strict";
 
-  var STT_BASE = (localStorage.getItem("moxie.sttBase") || "http://127.0.0.1:8082");
+  var STT_BASE = (localStorage.getItem("moxie.sttBase") ||
+                  (location.protocol + "//" + (location.hostname || "127.0.0.1") + ":8082"));
   var rec = null, chunks = [], stream = null, recording = false;
 
   function status(t) {

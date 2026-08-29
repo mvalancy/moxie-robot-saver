@@ -11,7 +11,8 @@
 (function () {
   "use strict";
 
-  var TTS_BASE = (localStorage.getItem("moxie.ttsBase") || "http://127.0.0.1:8081");
+  var TTS_BASE = (localStorage.getItem("moxie.ttsBase") ||
+                  (location.protocol + "//" + (location.hostname || "127.0.0.1") + ":8081"));
   var enabled = true;
   var ctx = null;            // created on first user gesture (autoplay policy)
   var current = null;        // current HTMLAudio/AudioBufferSourceNode

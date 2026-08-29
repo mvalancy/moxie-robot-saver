@@ -1,6 +1,8 @@
 # One-command Moxie SIL: broker + supervisor + web UI (+ optional virtual robot).
-#   docker compose -f sim/docker-compose.yml up           # core stack
-#   docker compose -f sim/docker-compose.yml --profile demo up   # + a looping virtual robot
+#   docker compose -f sim/docker-compose.yml up                    # core stack
+#   docker compose -f sim/docker-compose.yml --profile voice up    # + Piper TTS + whisper STT
+#   docker compose -f sim/docker-compose.yml --profile demo up     # + a looping virtual robot
+#   ... --profile voice --profile demo up                          # everything
 # Then open http://localhost:8080 and click "Connect" (broker WS on :9001).
 name: moxie-sil
 services:
@@ -36,3 +38,22 @@ services:
     volumes: ["./:/sim:ro"]
     depends_on: [broker, supervisor]
     restart: unless-stopped
+
+  tts:                                           # Piper TTS — Moxie's voice (optional)
+    build: ./tts
+    profiles: ["voice"]
+    ports: ["8081:8081"]
+    volumes: ["./tts/voices:/app/voices:ro"]      # download a voice first (see sim/README.md)
+    restart: unless-stopped
+
+  stt:                                           # faster-whisper STT — talk to Moxie (optional)
+    build: ./stt
+    profiles: ["voice"]
+    ports: ["8082:8082"]
+    volumes: ["whisper-cache:/root/.cache"]       # persist the downloaded model
+    environment:
+      MOXIE_STT_MODEL: base.en
+    restart: unless-stopped
+
+volumes:
+  whisper-cache:

@@ -7,9 +7,12 @@ protocol reverse-engineered from firmware v3.6.4-Zephyr / OTA v24.10.803** — w
 ## One command
 
 ```sh
-docker compose -f sim/docker-compose.yml up            # broker + supervisor + web UI
-#            add: --profile demo                        # + a virtual robot that chats on a loop
+docker compose -f sim/docker-compose.yml up                   # broker + supervisor + web UI
+#                                    --profile voice          # + Piper TTS + whisper STT (Moxie speaks & listens)
+#                                    --profile demo           # + a virtual robot that chats on a loop
+#                        --profile voice --profile demo       # everything
 ```
+> The `voice` profile needs a Piper voice on disk first — see [Voice (Piper TTS)](#voice-piper-tts).
 
 Then open **http://localhost:8080** and click **Connect** (the UI talks MQTT-over-WebSocket to the
 broker on `:9001`). Drive Moxie by hand with the panel, hit **Play demo** to replay a canned birthday session (no broker
