@@ -175,3 +175,10 @@ label.chk input { accent-color: #2fa8a2; }
   #panel { width: 240px; }
   #bubble { left: calc(50% - 120px); }
 }
+
+/* conversation transcript (bridge.js) */
+#transcript { max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+#transcript .turn { font-size: 12px; line-height: 1.35; padding: 4px 7px; border-radius: 7px; }
+#transcript .turn.user  { background: rgba(120,140,160,.18); align-self: flex-start; }
+#transcript .turn.moxie { background: rgba(59,182,176,.20); align-self: flex-end; text-align: right; }
+#transcript .who { display: block; font-size: 10px; opacity: .6; text-transform: uppercase; letter-spacing: .04em; }

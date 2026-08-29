@@ -87,8 +87,10 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
   Medical/Heart glyphs drawn on the face canvas, Fable 5) with show(cmd 0)/clear(cmd 2).
 - [ ] **D4 — Motion from motor state.** Virtual robot publishes motor positions (the 7 `libmotionlib`
   DOFs); the UI animates arms/head/body from them. Sliders to drive motors manually.
-- [ ] **D5 — Face expressions + visemes.** Render expressions from mood + simple visemes from the spoken
-  text; conversation transcript panel.
+- [~] **D5 — Face expressions + visemes + transcript.** ✅ 6 expressions + mood-driven face (D3);
+  ✅ **conversation transcript panel** — `bridge.js` subscribes to `events/remote-chat` (child) +
+  `commands/remote_chat` (Moxie) and renders both sides in a scrolling panel; basic talking-mouth viseme
+  during speech. ⏳ optional: phoneme-accurate viseme mouth shapes.
 - [~] **D6 — Scenarios + record/replay.** ✅ started: `sim/scenarios/*.json` scripted conversations +
   `virtual_moxie.py --scenario` + `sim/run_scenarios.sh` (in CI); `basic.json` runs 4/4 turns. ⏳ remaining:
   record a live session and replay into the UI; LLM-app scenarios.

@@ -123,7 +123,7 @@
     if (typeof msg.emotion === "number" && EMOTION_TO_FACE[msg.emotion])
       window.moxie && window.moxie.setFace(EMOTION_TO_FACE[msg.emotion]);
     applyMarkup(out.markup || "");
-    if (text) status(`💬 "${text.slice(0, 48)}"`);
+    if (text) { status(`💬 "${text.slice(0, 48)}"`); addTranscript("moxie", text); }
   }
 
   // ---- connection ----
@@ -138,7 +138,8 @@
     client = mqtt.connect(url, { reconnectPeriod: 3000, connectTimeout: 8000 });
     client.on("connect", () => {
       status(`● live on ${url}`);
-      client.subscribe("/devices/+/commands/remote_chat");
+      client.subscribe("/devices/+/commands/remote_chat");   // Moxie's replies
+      client.subscribe("/devices/+/events/remote-chat");     // the child's utterances
       client.subscribe("/devices/+/config");
     });
     client.on("reconnect", () => status(`reconnecting ${url}…`));
@@ -147,10 +148,33 @@
     client.on("message", (topic, payload) => {
       const s = payload.toString();
       if (topic.endsWith("/commands/remote_chat")) handleRemoteChat(s);
+      else if (topic.endsWith("/events/remote-chat")) handleUserTurn(s);
       else if (topic.endsWith("/config")) {
         try { const c = JSON.parse(s); status(`config: pairing_status=${c.pairing_status}`); } catch {}
       }
     });
+  }
+
+  // ---- transcript ----
+  function addTranscript(role, text) {
+    const el = document.getElementById("transcript"); if (!el || !text) return;
+    const row = document.createElement("div");
+    row.className = "turn " + (role === "moxie" ? "moxie" : "user");
+    row.innerHTML = `<span class="who">${role === "moxie" ? "Moxie" : "Child"}</span>` +
+                    `<span class="msg"></span>`;
+    row.querySelector(".msg").textContent = text;   // textContent = XSS-safe
+    el.appendChild(row);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function handleUserTurn(payload) {
+    let msg; try { msg = JSON.parse(payload); } catch { return; }
+    // 'notify' turns are the robot echoing what it said — skip (avoid dupes).
+    if (msg.command === "notify") return;
+    let speech = msg.speech || "";
+    for (const ln of msg.extra_lines || [])
+      if (ln.context_type === "input" && ln.text) speech = ln.text;
+    if (speech) addTranscript("user", speech);
   }
 
   // ---- wire the panel once moxie + DOM are ready ----
