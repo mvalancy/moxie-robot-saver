@@ -313,7 +313,8 @@ function smoothSphere(wSeg, hSeg, ...sector) {
 // winding and flip the computed normals inside-out for that arm. After
 // building we check the average normal against the outward radial direction
 // and re-wind the indices if needed, so BOTH arms shade identically.
-function makeArmShellGeometry(side, yTop, yBot, halfW, thickness, thetaBias, pivot) {
+function makeArmShellGeometry(side, yTop, yBot, halfW, thickness, thetaBias, pivot,
+                             standoff = 0) {
   const height = yTop - yBot;
   const capH = Math.min(0.16, height * 0.35);        // rounded end height
   const len = Math.max(0.01, height / capH - 2);     // source capsule mid-length
@@ -328,7 +329,8 @@ function makeArmShellGeometry(side, yTop, yBot, halfW, thickness, thetaBias, piv
   for (let i = 0; i < pos.count; i++) {
     const sx = pos.getX(i), sy = pos.getY(i), sz = pos.getZ(i);
     const y = yc + sy * yScale;
-    const rBase = bodyRadiusAt(y) + 0.012;
+    const rBase = bodyRadiusAt(y) + 0.012 + standoff + thickness;   // ride ON the flank,
+                                                                   // not half-buried in it
     const theta = theta0 + side * sx * (halfW / rBase);
     const r = rBase + sz * thickness;
     pos.setXYZ(i,
@@ -861,7 +863,7 @@ function makeArm(side) {  // side = -1 left, +1 right
   // the forearm pokes through (they are curved on the body radius, so rotating
   // takes the forearm off that curve).
   const forearm = new THREE.Mesh(
-    makeArmShellGeometry(side, 0.92, 0.34, ARM_HALF_W * 0.97, ARM_THICK * 0.94, 0.26, elbowPivot),
+    makeArmShellGeometry(side, 0.92, 0.34, ARM_HALF_W * 0.97, ARM_THICK * 0.94, 0.26, elbowPivot, 0.012),
     armMat);
   forearm.castShadow = true;
   forearm.receiveShadow = true;
@@ -870,7 +872,7 @@ function makeArm(side) {  // side = -1 left, +1 right
   // hand: the same-width continuation of the shell in the lighter blue,
   // rounding off at the tip like a single finger
   const hand = new THREE.Mesh(
-    makeArmShellGeometry(side, 0.44, 0.15, ARM_HALF_W, ARM_THICK, 0.30, elbowPivot),
+    makeArmShellGeometry(side, 0.44, 0.15, ARM_HALF_W, ARM_THICK, 0.30, elbowPivot, 0.012),
     handMat);
   hand.castShadow = true;
   hand.receiveShadow = true;
