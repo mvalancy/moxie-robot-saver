@@ -471,17 +471,19 @@ head.castShadow = true;
 head.receiveShadow = true;
 headForm.add(head);
 
-// Camera: just a SMALL lens on the teal shell above the face — a modest dark
-// circle, slightly recessed-looking, nothing more (no band, no visor).
+// Camera: just a SMALL lens — a modest dark circle, slightly recessed-looking,
+// nothing more (no band, no visor). It sits ON the face panel, inside the dark
+// camera zone painted across the panel's top (see drawFace), so screen +
+// camera read as one continuous front assembly.
 const lens = new THREE.Mesh(new THREE.SphereGeometry(0.042, 24, 16), lensMat);
 lens.scale.set(1, 0.85, 0.35);
 lens.rotation.x = -0.08;                      // sits on the flat face plane
-lens.position.set(0, 1.045, 0.392);
+lens.position.set(0, 0.980, 0.410);
 headForm.add(lens);
 const lensDot = new THREE.Mesh(
   new THREE.SphereGeometry(0.013, 12, 8),
   new THREE.MeshBasicMaterial({ color: 0x3a5560 }));
-lensDot.position.set(0.010, 1.050, 0.408);
+lensDot.position.set(0.010, 0.985, 0.424);
 headForm.add(lensDot);
 
 // ---- Face screen (canvas texture on a curved oval, front of the HEAD) ----
@@ -495,7 +497,7 @@ faceTex.colorSpace = THREE.SRGBColorSpace;
 faceTex.anisotropy = 4;
 
 const faceAssembly = new THREE.Group();
-faceAssembly.position.set(0, 0.56, 0.0);      // pane parallel to the flat face plane
+faceAssembly.position.set(0, 0.62, 0.0);      // pane parallel to the flat face plane
 headForm.add(faceAssembly);
 
 // Bake scale into a flat geometry, then give it a very shallow curve; used by
@@ -515,10 +517,34 @@ function bentPlate(geo, sx, sy, Rx, Ry) {
   return geo;
 }
 
-// The screen itself — a flat, shallow round DISK, nearly flush with the
-// flattened head front (world plane z ~0.395 here). The barely-there sag
-// sinks the rim just below the shell so the seam self-hides. Backlit:
-// emissiveMap is the face canvas, so the drawn features glow from within.
+// The screen itself — a LARGE flat, shallow elliptical panel filling most of
+// the head's flattened front (world plane z ~0.395 here), leaving only a
+// modest teal border. It runs from below the chin area right up under the
+// crown, meeting the darker camera zone painted across its top (see
+// drawFace) so screen + camera read as one continuous front assembly.
+// The profile is flat across the middle and dives only in the last ~10% of
+// the radius, tucking the rim just behind the shell so the seam self-hides
+// without burying the visible face area. Backlit: emissiveMap is the face
+// canvas, so the drawn features glow from within.
+const FACE_RX = 0.46;         // panel half-width  (flattened front chord ~0.465)
+const FACE_RY = 0.50;         // panel half-height (spans y ~0.12..1.12 in headForm)
+
+function facePanelGeometry(rx, ry) {
+  // RingGeometry with inner radius ~0 gives a disk WITH radial segments, so
+  // the flat-then-dive profile is real geometry (CircleGeometry has only a
+  // single rim ring and would render any profile as a cone).
+  const geo = new THREE.RingGeometry(0.001, 1, 96, 24);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const ux = pos.getX(i), uy = pos.getY(i);
+    const s = Math.min(1, Math.hypot(ux, uy));         // 0 centre -> 1 rim
+    const dive = 0.012 * s * s + 0.055 * Math.pow(s, 10);
+    pos.setXYZ(i, ux * rx, uy * ry, -dive);
+  }
+  geo.computeVertexNormals();
+  return geo;                  // RingGeometry UVs are planar — canvas maps 1:1
+}
+
 const screenMat = new THREE.MeshPhysicalMaterial({
   map: faceTex,
   emissive: 0xffffff,
@@ -528,9 +554,8 @@ const screenMat = new THREE.MeshPhysicalMaterial({
   clearcoat: 0.8,
   clearcoatRoughness: 0.2,
 });
-const screen = new THREE.Mesh(
-  bentPlate(new THREE.CircleGeometry(1, 64), 0.44, 0.365, 2.4, 2.4), screenMat);
-screen.position.z = 0.415;
+const screen = new THREE.Mesh(facePanelGeometry(FACE_RX, FACE_RY), screenMat);
+screen.position.z = 0.422;
 faceAssembly.add(screen);
 
 // Projector light: the DLP face casts real light on the surroundings.
@@ -564,7 +589,7 @@ const faceHalo = new THREE.Sprite(new THREE.SpriteMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
 }));
-faceHalo.scale.set(1.5, 1.28, 1);
+faceHalo.scale.set(1.65, 1.75, 1);
 faceHalo.position.set(0, 0, 0.55);
 faceAssembly.add(faceHalo);
 
@@ -931,7 +956,7 @@ function drawIconBadges() {
     fadeS = 1 - 0.15 * f;
   }
 
-  const size = 46, gap = 12, rowY = 438;
+  const size = 44, gap = 12, rowY = 435;
   const rowW = N * size + (N - 1) * gap;
 
   for (let i = 0; i < N; i++) {
@@ -974,12 +999,36 @@ function drawFace(t) {
   const P = faceParams;
   const W = 512, H = 512;
 
+  // Only the inscribed circle of the canvas is mapped onto the elliptical
+  // panel (planar disk UVs), centre (256,256), radius 256; the outermost
+  // ~10% of that radius tucks behind the shell (see facePanelGeometry).
+
   // background — warm off-white screen
-  const bg = fctx.createRadialGradient(256, 230, 60, 256, 256, 330);
+  const bg = fctx.createRadialGradient(256, 270, 70, 256, 270, 310);
   bg.addColorStop(0, '#f2efe5');
   bg.addColorStop(1, '#e4dfd1');
   fctx.fillStyle = bg;
   fctx.fillRect(0, 0, W, H);
+
+  // dark bezel ring around the panel edge — the gasket between the glowing
+  // screen and the teal shell (its outer part hides under the shell rim)
+  fctx.strokeStyle = '#15232a';
+  fctx.lineWidth = 44;
+  fctx.beginPath();
+  fctx.arc(256, 256, 236, 0, Math.PI * 2);
+  fctx.stroke();
+
+  // dark camera zone across the panel's top — merges into the bezel ring at
+  // the sides so screen + camera read as one assembly; the 3D lens sits on
+  // the panel inside this zone. Dark on the emissive map = it never glows.
+  fctx.fillStyle = '#15232a';
+  fctx.beginPath();
+  fctx.moveTo(0, 0);
+  fctx.lineTo(512, 0);
+  fctx.lineTo(512, 96);
+  fctx.quadraticCurveTo(256, 160, 0, 96);
+  fctx.closePath();
+  fctx.fill();
 
   const ink = '#1d3138';
 
@@ -988,10 +1037,10 @@ function drawFace(t) {
   if (blink.active) blinkF = Math.max(0.04, 1 - Math.sin(Math.PI * blink.phase));
 
   // eyes (idleEyes adds the liveness gaze drift on top of the expression)
-  const eyeY = 212 + (P.pupilY + idleEyes.y) * 10;
-  const eyeDX = 86;
-  const rx = 44 * P.eyeW;
-  const ry = Math.max(4, 60 * P.eyeH * blinkF);
+  const eyeY = 252 + (P.pupilY + idleEyes.y) * 10;
+  const eyeDX = 90;
+  const rx = 48 * P.eyeW;
+  const ry = Math.max(4, 64 * P.eyeH * blinkF);
   for (const s of [-1, 1]) {
     const ex = 256 + s * eyeDX + (P.pupilX + idleEyes.x) * 12;
     fctx.fillStyle = ink;
@@ -1001,10 +1050,10 @@ function drawFace(t) {
     if (ry > 14) {
       fctx.fillStyle = 'rgba(255,255,255,0.92)';
       fctx.beginPath();
-      fctx.ellipse(ex - 13 + P.pupilX * 6, eyeY - ry * 0.35 + P.pupilY * 4, 11, 12, 0, 0, Math.PI * 2);
+      fctx.ellipse(ex - 14 + P.pupilX * 6, eyeY - ry * 0.35 + P.pupilY * 4, 12, 13, 0, 0, Math.PI * 2);
       fctx.fill();
       fctx.beginPath();
-      fctx.ellipse(ex + 12, eyeY + ry * 0.3, 4.5, 5, 0, 0, Math.PI * 2);
+      fctx.ellipse(ex + 13, eyeY + ry * 0.3, 5, 5.5, 0, 0, Math.PI * 2);
       fctx.fill();
     }
   }
@@ -1033,7 +1082,7 @@ function drawFace(t) {
     fctx.fillStyle = `rgba(233, 150, 138, ${0.30 * (P.mouthCurve - 0.55) / 0.45})`;
     for (const s of [-1, 1]) {
       fctx.beginPath();
-      fctx.ellipse(256 + s * 148, 296, 26, 16, 0, 0, Math.PI * 2);
+      fctx.ellipse(256 + s * 160, 335, 29, 17, 0, 0, Math.PI * 2);
       fctx.fill();
     }
   }
@@ -1045,14 +1094,14 @@ function drawFace(t) {
     open = Math.max(open, 0.15 + 0.5 * Math.abs(n));
   }
   const mx = 256 + P.mouthX * 40;
-  const my = 334;
-  const mw = 62 * P.mouthWidth;
+  const my = 378;
+  const mw = 66 * P.mouthWidth;
   const c = P.mouthCurve;
   const endY = my - c * 16;
 
   if (open < 0.1) {
     fctx.strokeStyle = ink;
-    fctx.lineWidth = 13;
+    fctx.lineWidth = 14;
     fctx.lineCap = 'round';
     fctx.beginPath();
     fctx.moveTo(mx - mw, endY);
@@ -1060,7 +1109,7 @@ function drawFace(t) {
     fctx.stroke();
   } else {
     const topCtl = my + c * 26 - open * 10;
-    const botCtl = my + c * 26 + open * 95 + 14;
+    const botCtl = my + c * 26 + open * 88 + 14;
     fctx.fillStyle = ink;
     fctx.beginPath();
     fctx.moveTo(mx - mw, endY);
