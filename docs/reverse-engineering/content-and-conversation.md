@@ -101,6 +101,22 @@ over the MQTT **file-sync** channel (`MQTT_FILE_SYNC`, see [`cloud-protocol.md`]
 the same mechanism that delivers OTA images and content modules. A revival server hosts/serves these;
 the base firmware ships only the engines.
 
+## Session & sleep lifecycle
+
+- **Session** — `SessionState{inSession, record_mode, user, outSessionReason, prev_active}` with
+  **`SessionUser{user_age, num_children, max_children}`**. Notably **`num_children`/`max_children` mean
+  Moxie supports *group* sessions** (multiple kids at once — ties to the multi-party `MP_*` settings,
+  [`settings-schema.md`](settings-schema.md)). A session begins on engagement and ends with an
+  `outSessionReason`.
+- **Bedtime / sleep** — parents set a **`WakeSchedule`** (`embodied.logging`):
+  `weekday_bedtime_enabled` + `weekday_bedtime_starts_at`/`ends_at`, and the same for `weekend_*`
+  (HH:MM strings). During a bedtime window Moxie **sleeps** and won't fully wake; **`BedTimeStatus{status,
+  status_plus_20}`** reports whether it's currently bedtime (`status_plus_20` = a 20-minute grace/warning
+  window). A revival server pushes the `WakeSchedule`; the robot enforces it locally.
+- **Users** — `TargetedUser{targeted_user_id, targeted_user_face_id}` (who Moxie is attending to),
+  `LearnUserState` (face-based **user enrollment/recognition** — Moxie learns family members by face,
+  paired with the audio speaker-ID in [`perception-pipeline.md`](perception-pipeline.md)).
+
 ## Embodiment & activity runtime (PlaySpace, turn-taking, orientation)
 
 Between the content layer and the physical robot sits the **activity runtime** — how an activity runs,

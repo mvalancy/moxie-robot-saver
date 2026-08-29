@@ -32,6 +32,10 @@ flowchart LR
     `original_speech`/`original_language` (translation), `event_id`, start/end timestamps.
   - **Two STT engines** (`STT_IMPL` / `LOCAL_STT`, [`settings-schema.md`](settings-schema.md)):
     - **Cloud (primary):** Deepgram over WebSocket (above).
+    - **ASR biasing** — content boosts recognition accuracy by sending expected terms:
+      `PhraseHints{module, hints[]}` (per-activity phrases), `NameHints{names[]}` (the child's/family
+      names), `NativeHints`. A revival server can pass these to its STT (Deepgram keyword boosting /
+      Kaldi) to match Moxie's per-activity accuracy.
     - **Offline: Kaldi.** `embodied::audio::KaldiSTT` runs a full **Kaldi online-nnet3** decoder —
       MFCC + **i-vector** speaker adaptation (`OnlineNnet2FeaturePipelineInfo`, `AcceptIvector`) → an
       **nnet3** acoustic model (`DecodableNnetSimpleLoopedInfo`) → `HCLG.fst` lattice decode
