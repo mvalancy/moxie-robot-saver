@@ -41,3 +41,4 @@ firmware/
 # qr-rig runtime
 tools/qr-rig/qr_rig.log
 tools/qr-rig/__pycache__/
+sim/.env

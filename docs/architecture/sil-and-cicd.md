@@ -24,25 +24,44 @@ sim. Instead:
 So the model is buildable from repo facts even if the photos vanish, Moxie's real appearance
 ([R1‑EXT], [fcc-teardown](../reverse-engineering/fcc-teardown.md)):
 
-- **Silhouette:** a single **teardrop/egg body** (wide rounded base, tapering to a rounded point at the
-  **top-rear**) — head and body are one continuous form, gently leaning forward. **~15 in (≈38 cm) tall**
-  by the ruler in the photo.
-- **Colour:** **teal / turquoise** matte shell (hex ≈ `#3BB6B0`), with **lighter teal arms** and a **black
-  rubber ring** around the base edge.
-- **Face:** a **tilted oval face-screen** on the front upper body — an **off-white / warm-grey fresnel
-  panel** (`≈ #E8E4D8`) angled up ~15–20°; the animated DLP face is projected onto it (in the sim: a
-  canvas texture on this oval mesh).
-- **Arms:** **two short paddle arms** low on the sides, lighter teal — each a **two-segment limb** with
-  **2 DOF**: a **shoulder** that bends the whole arm **up/down** (`L/R ARM UP/DN`) and an **elbow** that
-  bends the forearm **in/out** (`L/R ARM IN/OUT`) — see the [motor map](../reverse-engineering/hardware-map.md).
-  Rig as upper-arm + forearm so the elbow visibly folds, not a single rigid paddle.
-- **Base:** a **circular disc base** (~7 in dia) with the `moxie` wordmark; the body rotates on it
-  (`BODY L/R`) and leans (`BODY F/B`).
-- **Details:** speaker grille low-front; a small chest/"heart" LED (`HRT LED`).
+**Moxie is a two-part robot: a distinct HEAD sitting on top of a separate cylindrical BODY** — NOT one
+continuous teardrop. **~15 in (≈38 cm) tall.**
 
-three.js build: primitives first (a lathed teardrop body, an angled ellipse face plane, two capsule
-arms, a cylinder base), grouped so each `libmotionlib` DOF maps to a node's rotation. A sculpted GLTF
-can replace the primitives later without changing the motor→node wiring.
+- **Body:** an upright **cylinder** (softly rounded), teal `#3BB6B0`, sitting on a circular disc base.
+  The **speaker grille is low on the front of the body** (stays at the bottom). The body **turns** on
+  the base (`BODY L/R` = yaw) and **leans** forward/back (`BODY F/B`).
+- **Head:** a **separate rounded head on top of the body**, clearly distinct from it (a visible neck/gap,
+  not blended). The head **tilts forward/back** (`HEAD UP/DN`). The **face lives on the head** (moved up
+  from the body).
+- **Face:** the animated face-screen is on the **front of the head** — but it's a **glowing DLP
+  projector**, not a flat panel. Render it as an **emissive, glowing** surface (bloom/light-emitting,
+  WebGL lighting) so the face literally casts light; eyes/brows/mouth glow. In a dark scene the face
+  should be the light source.
+- **Scene lighting is adjustable:** expose a control to dim the whole scene from lit → dark; when dark,
+  **Moxie's projected face glows** and lights its surroundings. (Fable: expose e.g.
+  `window.moxie.setSceneLight(0..1)`; the HUD adds a slider.)
+- **Camera:** a **wider dark zone high on the head — the forehead** (above the face), where the camera
+  sits.
+- **Arms:** **two half-cylinder arms on the OUTSIDE of the body** (curved shells hugging the body sides),
+  lighter teal — each a **two-segment limb, 2 DOF**: a **shoulder** bending the arm **up/down**
+  (`L/R ARM UP/DN`) and an **elbow** bending the forearm **in/out** (`L/R ARM IN/OUT`); the elbow visibly
+  folds. See the [motor map](../reverse-engineering/hardware-map.md).
+- **Hands:** each arm ends in a **hand = a single rounded finger** (one stubby rounded digit), in a
+  **lighter blue** than the arm. (These don't exist in the current model — add them.)
+- **Ears:** **small recessed oval cutouts on the left & right sides of the HEAD** — mic inputs. They're
+  an **extruded/flush cut** (a darker inset oval), **nothing sticking out**.
+- **Heart LED:** a small chest LED (`HRT LED`) on the **body front, high up just under the neck** (the
+  chest) — **NOT** on the forehead (the forehead dark zone is the camera, a separate thing).
+- **Base:** circular disc base with a **black rubber ring**; `moxie` wordmark.
+
+Rig (each `libmotionlib` DOF → one node): `bodyYaw(5) → bodyLean(6) → { head(4)→face+forehead-cam ;
+shoulderL(0)→elbowL(1)→handL ; shoulderR(2)→elbowR(3)→handR }`. Body cylinder + separate head group so
+the neck/gap is real; arms as half-cylinder shells on the body exterior. Primitives first; a sculpted
+GLTF can replace them later without changing the motor→node wiring.
+
+> ⚠️ **The current `sim/web/moxie.js` model is a single teardrop with the face on the body — this is
+> wrong and is being redone by Fable 5 to match the above** (separate cylinder body + head, forehead
+> camera, half-cylinder arms, single-finger hands).
 
 > **Modeling & look → Fable 5.** The 3D model, materials, face art, and overall visual polish are
 > delegated to **Fable 5** subagents (`Agent(model: "fable")`); the build timer spawns one for each
