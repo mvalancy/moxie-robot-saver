@@ -3,111 +3,153 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0a0a0f">
+<meta name="theme-color" content="#08080e">
 <title>Moxie Docs — reverse-engineering explorer</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%93%9A%3C/text%3E%3C/svg%3E">
+<meta name="description" content="Browse every Moxie reverse-engineering doc with Mermaid diagrams rendered — firmware, protocol, hardware, revival.">
+<link rel="canonical" href="https://moxie.mattvalancy.com/docs.html">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a0a0f'/><path d='M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z' fill='%2312b5b0'/><ellipse cx='50' cy='49' rx='20' ry='18' fill='%23f4feff'/><circle cx='43' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='57' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='44.4' cy='46.4' r='1.3' fill='%2300f0ff'/><circle cx='58.4' cy='46.4' r='1.3' fill='%2300f0ff'/></svg>">
+<link rel="stylesheet" href="./vendor/fonts/fonts.css">
 <style>
   :root{
-    --void:#060609; --bg:#0a0a0f; --panel:#101018; --panel2:#0c0c13; --hairline:#2a303c;
-    --text:#e8edf5; --text-dim:#c8d0dc; --muted:#8892a4; --dim:#5a6577;
-    --cyan:#00f0ff; --cyan-dim:#0e7490; --mint:#05ffa1; --amber:#fcee0a; --magenta:#ff2a6d; --purple:#a855f7;
-    --font-ui:'Inter',system-ui,sans-serif; --font-mono:'JetBrains Mono',ui-monospace,monospace;
-    --rail:300px;
+    --void:#060609; --bg:#08080e; --panel:#0f1119; --panel2:#0b0b12; --hairline:#242a36; --hairline2:#1a1f28;
+    --text:#eef2f8; --text-dim:#cdd5e0; --muted:#8892a4; --dim:#5a6577;
+    --cyan:#00f0ff; --cyan-dim:#0e7490; --teal:#12b5b0; --mint:#05ffa1; --amber:#fcee0a; --magenta:#ff2a6d; --purple:#a855f7;
+    --font-ui:'Inter',system-ui,-apple-system,sans-serif; --font-mono:'JetBrains Mono',ui-monospace,monospace;
+    --rail:320px;
   }
   *{box-sizing:border-box} html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--text);font-family:var(--font-ui);-webkit-font-smoothing:antialiased;
     display:grid;grid-template-columns:var(--rail) 1fr;height:100vh;overflow:hidden}
-  /* rail */
+  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#20262f;border-radius:6px;border:2px solid var(--bg)}
+  ::-webkit-scrollbar-thumb:hover{background:#2c3542}
+
+  /* ---- rail ---- */
   aside{background:linear-gradient(180deg,var(--panel),var(--panel2));border-right:1px solid var(--hairline);
     display:flex;flex-direction:column;min-height:0}
-  .railhead{padding:14px 14px 10px;border-bottom:1px solid var(--hairline)}
-  .brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px}
-  .dot{width:10px;height:10px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan)}
-  .brand small{color:var(--muted);font-weight:400}
-  .fw{font-family:var(--font-mono);font-size:10.5px;color:var(--mint);margin-top:6px}
-  .nav{display:flex;gap:8px;margin-top:8px;font-size:12px}
-  .nav a{color:var(--muted);text-decoration:none}.nav a:hover{color:var(--cyan)}
-  #q{width:100%;margin-top:10px;background:var(--void);border:1px solid var(--hairline);color:var(--text);
-    border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit}
-  #q:focus{outline:none;border-color:var(--cyan-dim)}
-  .tree{overflow-y:auto;padding:8px 6px 24px;flex:1;min-height:0}
-  .sec{margin:10px 8px 4px;font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);font-weight:600}
-  a.doc{display:block;padding:5px 10px;border-radius:7px;color:var(--text-dim);text-decoration:none;font-size:13px;
-    line-height:1.3;border-left:2px solid transparent}
-  a.doc:hover{background:#161c26;color:var(--text)}
-  a.doc.active{background:#12202b;border-left-color:var(--cyan);color:var(--cyan)}
-  a.doc .m{font-family:var(--font-mono);font-size:10px;color:var(--dim);margin-left:4px}
+  .railhead{padding:14px 14px 12px;border-bottom:1px solid var(--hairline)}
+  a.hubback{display:inline-flex;align-items:center;gap:7px;color:var(--muted);text-decoration:none;font-size:12.5px;
+    padding:5px 10px;border:1px solid var(--hairline);border-radius:8px;transition:.15s;margin-bottom:12px}
+  a.hubback:hover{color:var(--cyan);border-color:var(--cyan-dim);background:#00f0ff0a}
+  a.hubback svg{width:13px;height:13px}
+  .brand{display:flex;align-items:center;gap:9px}
+  .brand svg{width:26px;height:26px}
+  .brand b{font-weight:640;font-size:15px}.brand small{color:var(--muted);font-weight:400}
+  .fw{font-family:var(--font-mono);font-size:10.5px;color:var(--mint);margin-top:8px;letter-spacing:.3px}
+  .searchwrap{position:relative;margin-top:11px}
+  .searchwrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;stroke:var(--dim);fill:none;stroke-width:2}
+  #q{width:100%;background:var(--void);border:1px solid var(--hairline);color:var(--text);border-radius:9px;
+    padding:9px 10px 9px 32px;font-size:13px;font-family:inherit}
+  #q:focus{outline:none;border-color:var(--cyan-dim);box-shadow:0 0 0 3px #0e749022}
+
+  .tree{overflow-y:auto;padding:8px 8px 30px;flex:1;min-height:0}
+  .grp{margin-bottom:2px}
+  .grp>.gh{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;cursor:pointer;
+    color:var(--text-dim);font-family:inherit;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;font-weight:600;
+    padding:9px 8px 6px;text-align:left}
+  .grp>.gh .caret{width:11px;height:11px;stroke:var(--dim);fill:none;stroke-width:2.4;transition:transform .18s;flex:none}
+  .grp.open>.gh .caret{transform:rotate(90deg)}
+  .grp>.gh .cnt{margin-left:auto;font-family:var(--font-mono);font-size:9.5px;color:var(--dim);letter-spacing:0;
+    background:#0a1016;border:1px solid var(--hairline2);border-radius:10px;padding:0 6px}
+  .grp>.items{overflow:hidden;max-height:0;transition:max-height .22s ease}
+  .grp.open>.items{max-height:2400px}
+  a.doc{display:flex;align-items:center;gap:7px;padding:6px 10px 6px 24px;border-radius:7px;color:var(--muted);
+    text-decoration:none;font-size:13px;line-height:1.3;border-left:2px solid transparent}
+  a.doc:hover{background:#161c26;color:var(--text-dim)}
+  a.doc.active{background:#0d2029;border-left-color:var(--cyan);color:var(--cyan)}
+  a.doc .dm{margin-left:auto;font-family:var(--font-mono);font-size:9px;color:var(--dim)}
   a.doc.hit em{color:var(--amber);font-style:normal}
-  .hidden{display:none!important}
-  /* content */
-  main{overflow-y:auto;min-height:0}
-  .topbar{position:sticky;top:0;z-index:5;background:#0a0a0fcc;backdrop-filter:blur(8px);
-    border-bottom:1px solid var(--hairline);padding:9px 26px;display:flex;align-items:center;gap:12px;font-size:12px;color:var(--muted)}
+  .railfoot{border-top:1px solid var(--hairline);padding:11px 14px;font-size:11.5px;color:var(--dim)}
+  .railfoot a{color:var(--muted);text-decoration:none}.railfoot a:hover{color:var(--cyan)}
+
+  /* ---- content ---- */
+  main{overflow-y:auto;min-height:0;scroll-behavior:smooth}
+  .topbar{position:sticky;top:0;z-index:6;background:#08080ed9;backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--hairline);padding:11px 30px;display:flex;align-items:center;gap:12px;font-size:12px;color:var(--muted)}
+  .topbar .burger{display:none;background:none;border:1px solid var(--hairline);color:var(--muted);border-radius:8px;padding:5px 10px;cursor:pointer}
   .topbar .path{font-family:var(--font-mono);color:var(--text-dim)}
-  .topbar .burger{display:none;background:none;border:1px solid var(--hairline);color:var(--muted);
-    border-radius:7px;padding:4px 9px;cursor:pointer;font-size:14px}
-  .topbar a.src{margin-left:auto;color:var(--cyan-dim);text-decoration:none}
-  article{max-width:860px;margin:0 auto;padding:30px 26px 90px;line-height:1.65}
-  article h1{font-size:29px;letter-spacing:-.4px;margin:.2em 0 .5em;border-bottom:1px solid var(--hairline);padding-bottom:.3em}
-  article h2{font-size:22px;margin:1.5em 0 .5em;border-bottom:1px solid #1a1f28;padding-bottom:.2em}
-  article h3{font-size:17px;margin:1.3em 0 .4em}
-  article h4{font-size:15px;margin:1.2em 0 .3em;color:var(--text-dim)}
+  .topbar .path b{color:var(--cyan);font-weight:500}
+  .topbar .actions{margin-left:auto;display:flex;gap:16px}
+  .topbar a{color:var(--cyan-dim);text-decoration:none;display:inline-flex;align-items:center;gap:5px}
+  .topbar a:hover{color:var(--cyan)} .topbar a svg{width:13px;height:13px}
+
+  .hero{position:relative;margin:0;padding:38px 30px 26px;border-bottom:1px solid var(--hairline2);
+    background:radial-gradient(700px 300px at 78% 40%,#0e2230 0%,transparent 60%),linear-gradient(180deg,#0b0f14,transparent)}
+  .hero .row{max-width:1000px;margin:0 auto;display:flex;align-items:center;gap:26px}
+  .hero .txt{flex:1}
+  .hero h1{font-size:30px;letter-spacing:-.6px;margin:0 0 8px}
+  .hero p{color:var(--text-dim);margin:0;font-size:15px;max-width:560px}
+  .hero .fwline{font-family:var(--font-mono);font-size:12px;color:var(--mint);margin-top:12px}
+  .hero img{width:210px;height:auto;border-radius:16px;border:1px solid var(--hairline);
+    box-shadow:0 18px 50px #000000aa;background:#080810}
+  @media(max-width:760px){.hero img{display:none}}
+
+  article{max-width:calc(760px + 60px);margin:0 auto;padding:30px 30px 90px;line-height:1.72;font-size:15.5px}
+  article>*:first-child{margin-top:0}
+  article h1{font-size:28px;letter-spacing:-.4px;margin:1.4em 0 .5em;padding-bottom:.3em;border-bottom:1px solid var(--hairline)}
+  article h2{font-size:22px;margin:1.7em 0 .6em;padding-bottom:.25em;border-bottom:1px solid var(--hairline2)}
+  article h3{font-size:17.5px;margin:1.5em 0 .5em;color:var(--text)}
+  article h4{font-size:15px;margin:1.3em 0 .35em;color:var(--text-dim)}
   article p,article li{color:var(--text-dim)}
-  article a{color:var(--cyan);text-decoration:none}article a:hover{text-decoration:underline}
-  article code{font-family:var(--font-mono);font-size:.88em;background:#12141c;border:1px solid var(--hairline);
-    border-radius:5px;padding:.08em .35em;color:var(--mint)}
-  article pre{background:#0c0e14;border:1px solid var(--hairline);border-radius:10px;padding:14px 16px;overflow-x:auto}
-  article pre code{background:none;border:none;padding:0;color:var(--text-dim);font-size:12.5px;line-height:1.55}
-  article table{border-collapse:collapse;width:100%;margin:1em 0;font-size:13.5px;display:block;overflow-x:auto}
-  article th,article td{border:1px solid var(--hairline);padding:7px 11px;text-align:left}
-  article th{background:#12141c;color:var(--text)}
-  article blockquote{border-left:3px solid var(--cyan-dim);margin:1em 0;padding:.3em 1em;background:#0c141a;
-    border-radius:0 8px 8px 0;color:var(--muted)}
-  article img{max-width:100%}
-  article hr{border:none;border-top:1px solid var(--hairline);margin:2em 0}
-  .mermaid{background:#0c0e14;border:1px solid var(--hairline);border-radius:10px;padding:16px;margin:1em 0;text-align:center;overflow-x:auto}
+  article li{margin:.28em 0}
+  article a{color:var(--cyan);text-decoration:none;border-bottom:1px solid #0e749055}
+  article a:hover{border-bottom-color:var(--cyan)}
+  article code{font-family:var(--font-mono);font-size:.85em;background:#121722;border:1px solid var(--hairline);border-radius:5px;padding:.1em .38em;color:var(--mint)}
+  article pre{background:#0b0e15;border:1px solid var(--hairline);border-radius:12px;padding:16px 18px;overflow-x:auto;margin:1.1em 0}
+  article pre code{background:none;border:none;padding:0;color:#c6d2e0;font-size:12.5px;line-height:1.6}
+  article table{border-collapse:collapse;margin:1.2em 0;font-size:13.5px;display:block;overflow-x:auto;max-width:100%}
+  article th,article td{border:1px solid var(--hairline);padding:8px 12px;text-align:left;vertical-align:top}
+  article th{background:#121722;color:var(--text);white-space:nowrap}
+  article tbody tr:nth-child(even){background:#0d1017}
+  article blockquote{border-left:3px solid var(--cyan-dim);margin:1.1em 0;padding:.5em 1.1em;background:#0b141a;border-radius:0 10px 10px 0;color:var(--muted)}
+  article blockquote p{color:var(--muted)}
+  article img{max-width:100%;border-radius:8px}
+  article hr{border:none;border-top:1px solid var(--hairline2);margin:2.2em 0}
+  .mermaid{background:#0b0e15;border:1px solid var(--hairline);border-radius:12px;padding:18px;margin:1.3em 0;text-align:center;overflow-x:auto}
   .mermaid svg{max-width:100%;height:auto}
-  #welcome{color:var(--muted)}
-  #welcome h1{color:var(--text)}
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:18px}
-  .cards a{display:block;padding:14px;border:1px solid var(--hairline);border-radius:12px;text-decoration:none;
-    color:var(--text-dim);background:var(--panel)}
-  .cards a:hover{border-color:var(--cyan-dim)}
-  .cards a b{color:var(--text);display:block;margin-bottom:3px;font-size:14px}
+  .pager{max-width:760px;margin:40px auto 0;display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--hairline2);padding-top:20px}
+  .pager a{flex:1;text-decoration:none;color:var(--text-dim);border:1px solid var(--hairline);border-radius:11px;padding:12px 15px;font-size:13px;transition:.15s}
+  .pager a:hover{border-color:var(--cyan-dim);color:var(--text)} .pager a.next{text-align:right}
+  .pager a small{display:block;color:var(--dim);font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+  .docfoot{max-width:760px;margin:40px auto 0;text-align:center;font-size:12px;color:var(--dim);line-height:1.7}
+  .docfoot a{color:var(--muted);text-decoration:none}.docfoot a:hover{color:var(--cyan)}
   .err{color:var(--magenta);font-family:var(--font-mono);font-size:13px}
   @media(max-width:760px){
     body{grid-template-columns:1fr}
-    aside{position:fixed;z-index:20;width:86%;max-width:340px;height:100%;transform:translateX(-100%);transition:transform .2s}
+    aside{position:fixed;z-index:30;width:88%;max-width:340px;height:100%;transform:translateX(-100%);transition:transform .22s;box-shadow:20px 0 60px #000a}
     body.nav-open aside{transform:none}
-    .topbar .burger{display:inline-block}
+    .topbar .burger{display:inline-flex}
+    .hero{padding:26px 20px 20px} article{padding:24px 20px 80px}
   }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important} main,html{scroll-behavior:auto}}
 </style>
 </head>
 <body>
 <aside id="rail">
   <div class="railhead">
-    <div class="brand"><span class="dot"></span> Moxie&nbsp;Docs <small>explorer</small></div>
+    <a class="hubback" href="hub.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M11 6l-6 6 6 6"/></svg> Back to hub</a>
+    <div class="brand">
+      <svg viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#0e1620"/><path d="M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z" fill="#12b5b0"/><ellipse cx="50" cy="49" rx="20" ry="18" fill="#f4feff"/><circle cx="43" cy="48" r="4.2" fill="#0a0a0f"/><circle cx="57" cy="48" r="4.2" fill="#0a0a0f"/><circle cx="44.4" cy="46.4" r="1.3" fill="#00f0ff"/><circle cx="58.4" cy="46.4" r="1.3" fill="#00f0ff"/></svg>
+      <span style="display:flex;flex-direction:column;line-height:1.1"><b>Moxie Docs</b><small>reverse-engineering</small></span>
+    </div>
     <div class="fw" id="fw"></div>
-    <div class="nav"><a href="hub.html">← hub</a><a href="./">simulator</a><a href="setup.html">setup</a><a href="cloud.html">console</a></div>
-    <input id="q" type="search" placeholder="Search titles & headings…" autocomplete="off" spellcheck="false">
+    <div class="searchwrap">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="q" type="search" placeholder="Search docs & headings…" autocomplete="off" spellcheck="false">
+    </div>
   </div>
   <nav class="tree" id="tree"></nav>
+  <div class="railfoot">Created by <a href="https://mattvalancy.com" target="_blank" rel="noopener">Matthew Valancy</a> · <a href="https://github.com/mvalancy/moxie-robot-saver" target="_blank" rel="noopener">GitHub</a></div>
 </aside>
+
 <main id="main">
   <div class="topbar">
-    <button class="burger" id="burger" aria-label="menu">☰</button>
-    <span class="path" id="crumb">Select a document</span>
-    <a class="src" id="src" href="#" target="_blank" rel="noopener">view source ↗</a>
+    <button class="burger" id="burger" aria-label="menu">☰ Docs</button>
+    <span class="path" id="crumb">Overview</span>
+    <span class="actions">
+      <a id="src" href="#" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg> source</a>
+    </span>
   </div>
-  <article id="content">
-    <div id="welcome">
-      <h1>📚 Moxie reverse-engineering docs</h1>
-      <p>Every Markdown doc in the repo, browsable here with Mermaid diagrams rendered — no server, no
-        install. Firmware under analysis: <code id="fw2"></code>.</p>
-      <p class="muted">Pick a document on the left, or start with these:</p>
-      <div class="cards" id="startcards"></div>
-    </div>
-  </article>
+  <div id="content"><article><p class="muted" style="padding:40px 30px">Loading docs…</p></article></div>
 </main>
 
 <script src="./vendor/marked.min.js"></script>
@@ -115,143 +157,154 @@
 <script>
 (function(){
   "use strict";
-  var BUNDLE="docs-bundle/", idx=null, current=null, mmReady=false;
+  var BUNDLE="docs-bundle/", idx=null, current=null, mmReady=false, order=[];
+  var HOME="_root/README.md";
   var elTree=document.getElementById("tree"), elContent=document.getElementById("content"),
-      elCrumb=document.getElementById("crumb"), elSrc=document.getElementById("src"),
-      elQ=document.getElementById("q");
+      elCrumb=document.getElementById("crumb"), elSrc=document.getElementById("src"), elQ=document.getElementById("q");
+  var reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion:reduce)").matches;
 
-  try{ mermaid.initialize({startOnLoad:false, theme:"dark",
-        themeVariables:{fontFamily:"Inter, sans-serif", darkMode:true,
-          primaryColor:"#12202b", primaryBorderColor:"#0e7490", primaryTextColor:"#e8edf5",
-          lineColor:"#5a6577", secondaryColor:"#161226", tertiaryColor:"#101018"}});
-      mmReady=true;
-  }catch(e){ /* mermaid optional */ }
+  try{ mermaid.initialize({startOnLoad:false, theme:"dark", securityLevel:"loose",
+    themeVariables:{fontFamily:"Inter, sans-serif", darkMode:true, background:"#0b0e15",
+      primaryColor:"#0d2029", primaryBorderColor:"#0e7490", primaryTextColor:"#eef2f8",
+      lineColor:"#5a6577", secondaryColor:"#161226", tertiaryColor:"#101018",
+      clusterBkg:"#0b0e15", clusterBorder:"#242a36", edgeLabelBackground:"#0b0e15"}}); mmReady=true;
+  }catch(e){}
 
   var esc=function(s){return String(s).replace(/[&<>]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});};
+  var SECTION_LABEL={ "_root":"Start here","reverse-engineering":"Reverse engineering","architecture":"Architecture",
+    "guides":"Guides","features":"Features","design":"Design","debugging":"Debugging","docs":"Reference" };
+  var SECTION_ORDER={"_root":0,"guides":1,"architecture":2,"reverse-engineering":3,"debugging":4,"features":5,"design":6,"docs":7};
 
-  // Prefix section labels for a clean tree.
-  var SECTION_LABEL={ "reverse-engineering":"Reverse engineering", "architecture":"Architecture",
-    "guides":"Guides", "design":"Design", "features":"Features", "_root":"Overview", "docs":"Docs" };
-
-  function buildTree(filter){
-    elTree.innerHTML="";
-    var bySec={};
-    idx.files.forEach(function(f){ (bySec[f.section]=bySec[f.section]||[]).push(f); });
-    var order=Object.keys(bySec).sort(function(a,b){
-      var pri={_root:0,"reverse-engineering":1,architecture:2,guides:3,features:4,design:5};
-      return (pri[a]==null?9:pri[a])-(pri[b]==null?9:pri[b]) || a.localeCompare(b);
-    });
-    var shown=0;
-    order.forEach(function(sec){
-      var items=bySec[sec].filter(function(f){ return !filter || matches(f,filter); });
-      if(!items.length) return;
-      var h=document.createElement("div"); h.className="sec";
-      h.textContent=SECTION_LABEL[sec]||sec; elTree.appendChild(h);
-      items.forEach(function(f){
-        var a=document.createElement("a"); a.className="doc"; a.href="#"+f.path;
-        a.dataset.path=f.path;
-        var label=f.title; 
-        if(filter){ a.classList.add("hit"); label=highlight(f.title,filter); }
-        a.innerHTML=label+'<span class="m">'+(f.mermaid?("◈"+f.mermaid+" "):"")+(f.bytes/1024|0)+'k</span>';
-        a.onclick=function(ev){ ev.preventDefault(); open(f.path); if(window.innerWidth<=760) document.body.classList.remove("nav-open"); };
-        elTree.appendChild(a); shown++;
-      });
-    });
-    if(!shown){ elTree.innerHTML='<div class="sec">no matches</div>'; }
+  function grouped(filter){
+    var by={}; idx.files.forEach(function(f){ if(filter&&!matches(f,filter)) return; (by[f.section]=by[f.section]||[]).push(f); });
+    return Object.keys(by).sort(function(a,b){ return (SECTION_ORDER[a]==null?9:SECTION_ORDER[a])-(SECTION_ORDER[b]==null?9:SECTION_ORDER[b])||a.localeCompare(b); })
+      .map(function(s){ return {sec:s, items:by[s]}; });
   }
   function matches(f,q){ q=q.toLowerCase();
-    return f.title.toLowerCase().indexOf(q)>=0 || f.path.toLowerCase().indexOf(q)>=0 ||
-           (f.headings||[]).some(function(h){return h.toLowerCase().indexOf(q)>=0;}); }
-  function highlight(t,q){ var i=t.toLowerCase().indexOf(q.toLowerCase());
+    return f.title.toLowerCase().indexOf(q)>=0||f.path.toLowerCase().indexOf(q)>=0||(f.headings||[]).some(function(h){return h.toLowerCase().indexOf(q)>=0;}); }
+  function highlight(t,q){ if(!q) return esc(t); var i=t.toLowerCase().indexOf(q.toLowerCase());
     return i<0?esc(t):esc(t.slice(0,i))+"<em>"+esc(t.slice(i,i+q.length))+"</em>"+esc(t.slice(i+q.length)); }
 
-  function setActive(path){
-    Array.prototype.forEach.call(elTree.querySelectorAll("a.doc"),function(a){
-      a.classList.toggle("active", a.dataset.path===path); });
-  }
+  var CARET='<svg class="caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+  var ARROW='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
 
-  // Rewrite intra-doc relative links (../foo.md, ./bar.md) to explorer hashes.
+  function buildTree(filter){
+    elTree.innerHTML=""; order=[];
+    var groups=grouped(filter), any=false;
+    var activeSec=current?current.split("/")[0]:"_root";
+    groups.forEach(function(g){
+      if(!g.items.length) return; any=true;
+      var wrap=document.createElement("div"); wrap.className="grp";
+      var openIt = !!filter || g.sec===activeSec || g.sec==="_root";
+      if(openIt) wrap.classList.add("open");
+      var gh=document.createElement("button"); gh.className="gh";
+      gh.innerHTML=CARET+'<span>'+(SECTION_LABEL[g.sec]||g.sec)+'</span><span class="cnt">'+g.items.length+'</span>';
+      gh.onclick=function(){ wrap.classList.toggle("open"); };
+      wrap.appendChild(gh);
+      var items=document.createElement("div"); items.className="items";
+      g.items.forEach(function(f){ order.push(f.path);
+        var a=document.createElement("a"); a.className="doc"; a.href="#"+f.path; a.dataset.path=f.path;
+        if(filter) a.classList.add("hit");
+        a.innerHTML='<span>'+highlight(f.title,filter)+'</span>'+(f.mermaid?'<span class="dm">◈'+f.mermaid+'</span>':'');
+        a.onclick=function(ev){ ev.preventDefault(); openDoc(f.path); if(window.innerWidth<=760) document.body.classList.remove("nav-open"); };
+        items.appendChild(a); });
+      wrap.appendChild(items); elTree.appendChild(wrap);
+    });
+    if(!any) elTree.innerHTML='<div class="grp"><div class="gh"><span>no matches</span></div></div>';
+    setActive(current);
+  }
+  function setActive(path){ Array.prototype.forEach.call(elTree.querySelectorAll("a.doc"),function(a){ a.classList.toggle("active",a.dataset.path===path); }); }
+
   function fixLinks(root, fromPath){
     var baseDir=fromPath.indexOf("/")>=0?fromPath.replace(/\/[^/]*$/,""):"";
     Array.prototype.forEach.call(root.querySelectorAll("a[href]"),function(a){
       var href=a.getAttribute("href");
-      if(/^(https?:|mailto:|#)/.test(href)) { if(/^https?:/.test(href)) a.target="_blank"; return; }
-      // strip anchor
+      if(/^(https?:|mailto:|#)/.test(href)){ if(/^https?:/.test(href)){a.target="_blank";a.rel="noopener";} return; }
       var hash=""; var m=href.match(/#.*$/); if(m){ hash=m[0]; href=href.slice(0,m.index); }
-      if(!href){ return; }
-      if(!/\.md$/i.test(href)){ return; } // leave non-md relative links alone
-      // resolve relative to baseDir
+      if(!href||!/\.md$/i.test(href)) return;
       var parts=(baseDir?baseDir.split("/"):[]);
-      href.split("/").forEach(function(seg){
-        if(seg===".."){ parts.pop(); } else if(seg==="."||seg===""){} else { parts.push(seg); }
-      });
+      href.split("/").forEach(function(seg){ if(seg===".."){parts.pop();} else if(seg==="."||seg===""){} else {parts.push(seg);} });
       var target=parts.join("/");
-      // top-level README/ROADMAP live under _root/
-      if(idx.files.some(function(f){return f.path===target;})){ a.setAttribute("href","#"+target); a.onclick=function(ev){ev.preventDefault();open(target);}; }
-      else if(idx.files.some(function(f){return f.path==="_root/"+target;})){ a.onclick=function(ev){ev.preventDefault();open("_root/"+target);}; a.setAttribute("href","#_root/"+target); }
+      var hit=idx.files.some(function(f){return f.path===target;})?target:(idx.files.some(function(f){return f.path==="_root/"+target;})?"_root/"+target:null);
+      if(hit){ a.setAttribute("href","#"+hit); a.onclick=function(ev){ ev.preventDefault(); openDoc(hit); }; }
     });
   }
-
   function renderMermaid(root){
     if(!mmReady) return;
     var blocks=root.querySelectorAll("pre code.language-mermaid, code.language-mermaid");
-    var jobs=[];
     Array.prototype.forEach.call(blocks,function(code,i){
-      var pre=code.closest("pre")||code;
-      var div=document.createElement("div"); div.className="mermaid";
-      var id="mm-"+Date.now()+"-"+i;
-      jobs.push(mermaid.render(id, code.textContent).then(function(r){ div.innerHTML=r.svg; })
-        .catch(function(e){ div.innerHTML='<div class="err">mermaid: '+esc(e.message||e)+'</div>'; }));
+      var pre=code.closest("pre")||code, div=document.createElement("div"); div.className="mermaid";
+      var id="mm-"+(current||"x").replace(/\W/g,"")+"-"+i;
       pre.replaceWith(div);
+      mermaid.render(id, code.textContent).then(function(r){ div.innerHTML=r.svg; })
+        .catch(function(e){ div.innerHTML='<div class="err">mermaid: '+esc(e.message||e)+'</div>'; });
     });
   }
-
-  function open(path){
-    var f=idx.files.filter(function(x){return x.path===path;})[0];
-    if(!f){ return; }
-    current=path; setActive(path);
-    try{ location.hash=path; }catch(e){}
-    elCrumb.textContent=f.path.replace("_root/","");
-    var srcRel = f.path.indexOf("_root/")===0 ? ("../../"+f.path.replace("_root/","")) : ("../../docs/"+f.path);
-    elSrc.href=srcRel;
-    elContent.innerHTML='<p class="muted">loading…</p>';
-    fetch(BUNDLE+encodeURI(f.path)).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); })
-      .then(function(md){
-        elContent.innerHTML=marked.parse(md);
-        fixLinks(elContent, f.path);
-        renderMermaid(elContent);
-        elContent.scrollIntoView({block:"start"}); document.getElementById("main").scrollTop=0;
-      })
-      .catch(function(e){ elContent.innerHTML='<p class="err">Could not load '+esc(f.path)+' — '+esc(e.message)+'</p>'; });
+  function heroHtml(){
+    return '<div class="hero"><div class="row"><div class="txt">'+
+      '<h1>Moxie Robot Saver</h1>'+
+      '<p>An open, self-hostable revival of the Moxie robot. Everything below is the reverse-engineering that makes it possible — firmware, protocol, hardware, and the path to bring a robot back to life.</p>'+
+      '<div class="fwline">firmware under analysis · '+esc(idx.firmware)+'</div>'+
+      '</div><img src="img/hero-think.png" alt="The 3D Moxie simulator"></div></div>';
+  }
+  function pager(path){
+    var i=order.indexOf(path); if(i<0) return "";
+    var prev=i>0?order[i-1]:null, next=i<order.length-1?order[i+1]:null;
+    function label(p){ var f=idx.files.filter(function(x){return x.path===p;})[0]; return f?esc(f.title):p; }
+    var h='<div class="pager">';
+    h+= prev?('<a href="#'+prev+'" data-go="'+prev+'"><small>Previous</small>'+label(prev)+'</a>'):'<span></span>';
+    h+= next?('<a class="next" href="#'+next+'" data-go="'+next+'"><small>Next</small>'+label(next)+'</a>'):'<span></span>';
+    return h+'</div>';
+  }
+  function footHtml(){
+    return '<div class="docfoot">Created by <a href="https://mattvalancy.com" target="_blank" rel="noopener">Matthew Valancy</a> · '+
+      '<a href="https://github.com/mvalancy/moxie-robot-saver" target="_blank" rel="noopener">moxie-robot-saver on GitHub</a><br>'+
+      'Unofficial fan project — not affiliated with Embodied, Inc.</div>';
   }
 
-  function startCards(){
-    var picks=["reverse-engineering/FIELD-GUIDE.md","architecture/static-experience.md",
-      "reverse-engineering/firmware-803-reference.md","reverse-engineering/qr-commands.md",
-      "guides/revive-your-moxie.md","reverse-engineering/COVERAGE.md"];
-    var el=document.getElementById("startcards"); if(!el) return;
-    picks.forEach(function(p){ var f=idx.files.filter(function(x){return x.path===p;})[0]; if(!f) return;
-      var a=document.createElement("a"); a.href="#"+p; a.innerHTML="<b>"+esc(f.title)+"</b><span>"+esc(f.section)+"</span>";
-      a.onclick=function(ev){ev.preventDefault();open(p);}; el.appendChild(a); });
+  function openDoc(path){
+    var f=idx.files.filter(function(x){return x.path===path;})[0]; if(!f) return;
+    current=path; try{ location.hash=path; }catch(e){}
+    elCrumb.innerHTML=(SECTION_LABEL[f.section]||f.section)+' / <b>'+esc(f.title)+'</b>';
+    var srcRel=f.path.indexOf("_root/")===0?("../../"+f.path.replace("_root/","")):("../../docs/"+f.path);
+    elSrc.href=srcRel;
+    // ensure the doc's section group is open + active
+    var sec=path.split("/")[0];
+    var grp=elTree.querySelector('a.doc[data-path="'+CSS.escape(path)+'"]');
+    if(grp){ var g=grp.closest(".grp"); if(g) g.classList.add("open"); }
+    setActive(path);
+    fetch(BUNDLE+encodeURI(f.path)).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); })
+      .then(function(md){
+        var isHome=(path===HOME);
+        var art=document.createElement("article"); art.innerHTML=marked.parse(md);
+        fixLinks(art, f.path);
+        // pager + footer
+        var pg=document.createElement("div"); pg.innerHTML=pager(path)+footHtml();
+        Array.prototype.forEach.call(pg.querySelectorAll("a[data-go]"),function(a){ a.onclick=function(ev){ ev.preventDefault(); openDoc(a.dataset.go); }; });
+        elContent.innerHTML="";
+        if(isHome) elContent.insertAdjacentHTML("beforeend", heroHtml());
+        elContent.appendChild(art);
+        while(pg.firstChild) art.appendChild(pg.firstChild);
+        renderMermaid(art);
+        document.getElementById("main").scrollTop=0;
+      })
+      .catch(function(e){ elContent.innerHTML='<article><p class="err" style="padding:30px">Could not load '+esc(f.path)+' — '+esc(e.message)+'</p></article>'; });
   }
 
   marked.setOptions({gfm:true, breaks:false, headerIds:true, mangle:false});
   fetch("docs-index.json").then(function(r){return r.json();}).then(function(d){
-    idx=d;
-    document.getElementById("fw").textContent=d.firmware;
-    var fw2=document.getElementById("fw2"); if(fw2) fw2.textContent=d.firmware;
-    buildTree(""); startCards();
+    idx=d; document.getElementById("fw").textContent=d.firmware;
     var initial=(location.hash||"").replace(/^#/,"");
-    if(initial && idx.files.some(function(f){return f.path===initial;})) open(initial);
+    current = (initial && idx.files.some(function(f){return f.path===initial;})) ? initial : HOME;
+    if(!idx.files.some(function(f){return f.path===HOME;})) current=idx.files[0].path;
+    buildTree(""); openDoc(current);
   }).catch(function(e){
-    elTree.innerHTML='<div class="err" style="padding:12px">Could not load docs-index.json — run<br>'
-      +'<code>python3 sim/tools/build_docs_bundle.py</code></div>';
+    elTree.innerHTML='<div style="padding:14px" class="err">Could not load docs-index.json.<br>Run <code>python3 sim/tools/build_docs_bundle.py</code>.</div>';
   });
 
-  var qt;
-  elQ.addEventListener("input",function(){ clearTimeout(qt); qt=setTimeout(function(){ buildTree(elQ.value.trim()); },120); });
+  var qt; elQ.addEventListener("input",function(){ clearTimeout(qt); qt=setTimeout(function(){ buildTree(elQ.value.trim()); },110); });
   document.getElementById("burger").onclick=function(){ document.body.classList.toggle("nav-open"); };
-  window.addEventListener("hashchange",function(){ var h=(location.hash||"").replace(/^#/,""); if(h && h!==current) open(h); });
+  window.addEventListener("hashchange",function(){ var h=(location.hash||"").replace(/^#/,""); if(h&&h!==current&&idx&&idx.files.some(function(f){return f.path===h;})) openDoc(h); });
 })();
 </script>
 </body>

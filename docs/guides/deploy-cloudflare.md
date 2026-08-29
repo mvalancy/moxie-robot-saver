@@ -36,6 +36,10 @@ as the real services, so **plugging in the real backend is transparent**: if a b
 reachable, it's used; if not, the stubs take over. The real ecosystem stays self-hostable
 ([revival guide](revive-your-moxie.md)).
 
+> **Production domain:** this site is built to be served at **`moxie.mattvalancy.com`** (canonical URLs
+> and Open Graph tags point there). Set that as a custom domain on the Pages project; the pages are
+> otherwise origin-relative and work under any host.
+
 ## 1. Deploy the static bundle
 
 ```sh
