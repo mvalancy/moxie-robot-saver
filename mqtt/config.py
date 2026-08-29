@@ -1,6 +1,25 @@
 """Runtime configuration for the Moxie robot-cloud supervisor.
-All local-first; override via environment variables."""
+All local-first; override via environment variables or a git-ignored `mqtt/.env`
+(see .env.example — never commit real endpoints/keys)."""
 import os
+
+
+def _load_env():
+    """Load KEY=VALUE lines from mqtt/.env into the environment (no dependency)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+    except FileNotFoundError:
+        pass
+
+
+_load_env()
 
 # --- broker ---
 MQTT_HOST = os.environ.get("MOXIE_MQTT_HOST", "127.0.0.1")   # supervisor→broker (loopback)
