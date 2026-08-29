@@ -52,6 +52,22 @@ What the internal photos show:
 - **Silkscreened connectors:** **`LIZARD`** (the MCU board), **`LED`**, **`SPK`**, **`MICS`** (FFC),
   **`PROJECTOR`** (FFC, `J4`), **`CAMERA`**, plus power.
 
+### Other rev1 boards (and the Lizard is in both generations)
+
+rev1's internal photos also include **its own `"THE LIZARD"` board** (silk `EB001+003+02 12-02-2019`)
+**[R1‑INT p.30]** — so the STM32-based motion board is present in **both** the 2020 and 2023 hardware,
+not a V2 addition. rev1's Lizard silk exposes extra connector labels beyond the motor DOFs:
+**`HRT LED`** (the chest/"heart" light), **`SPACE MOUSE`** (a 6‑DOF reference — the IMU/handling
+connector; the same `SPACE MOUSE` silk also appears on the mainboard **[R1‑INT p.6]**), **`RIGHT ARM`**,
+**`LEFT ARM`**, **`HEAD UP/DN`**, **`BODY L/R`**, **`ON/OFF SWITCH`**, **`16V IN`**. Other pages show
+the camera module **[R1‑INT p.9, p.12]**, the DLP projector engine **[R1‑INT p.15]**, sub-boards
+**[R1‑INT p.18–39]**, and the **Wi‑Fi antenna** (flex PIFA, silk `2014.07.22 RoHS`) **[R1‑INT p.42]**.
+
+> **Honest limit of the photo pass:** the **RK808 PMIC**, **RT5640 codec**, and **DLPC3430** are not
+> marking-legible in any rev1 page (they sit in the dense mainboard area around the paste-covered SoC),
+> so they remain **DTB/firmware-sourced** (#7, #9, #10 above) rather than photo-confirmed. The camera
+> sensor markings (OV2710/GC2053) are likewise not legible on the module close-ups.
+
 ### 🔑 `RESET` · `LOAD` · `POWER` — on-board buttons (major bench finding)
 
 The rev1 mainboard carries **three tactile buttons, silkscreened `RESET`, `LOAD` (S1), and `POWER` (S2)**,
@@ -259,9 +275,11 @@ images described, not re-hosted.
   (SoC under thermal compound, 2× Samsung DDR3, eMMC).
 - **p.6** — mainboard with **XMOS `VSM02C`** QFP, **Wi‑Fi module + u.FL `WIFI J3`**, and the
   **`RESET` / `LOAD` / `POWER`** buttons; connectors `LIZARD`/`LED`/`SPK`/`MICS`/`PROJECTOR`.
-- **p.12** — camera module (OV2710) + bracket.
-- **p.17** — **DLP projector engine** (metal‑cased, heatsink, lens) + button/sensor daughterboard.
+- **p.9, p.12** — camera module (OV2710) + bracket (two views).
+- **p.15/p.17** — **DLP projector engine** (metal‑cased, heatsink, lens) + button/sensor daughterboard.
 - **p.22** — projector‑interface **"JETTA"** board (`100747`, `Proj`, `TEMP`, `Android`).
+- **p.30** — rev1 **"THE LIZARD"** motion board (`EB001+003+02 12‑02‑2019`); connectors `HRT LED`, `SPACE MOUSE`, `RIGHT/LEFT ARM`, motor DOFs, `ON/OFF SWITCH`, `16V IN`.
+- **p.42** — **Wi‑Fi antenna** (flex PIFA, silk `2014.07.22 RoHS`).
 
 **rev2 Internal Photos:**
 - **p.4** — **"THE LIZARD"** motor board `#101557` (top: labelled motor connectors; bottom: MCU side).
