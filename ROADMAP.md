@@ -66,7 +66,7 @@ Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-ex
 - ✅ **Example cloud UI** — [`sim/web/cloud.html`](sim/web/cloud.html): read-only parent console (child,
   Daily Missions & rewards, conversation + activity log, robot, notifications) from fixture JSON whose
   shapes mirror the real REST API + MQTT content model.
-- ⬜ **Landing hub** — one front door presenting the three surfaces.
+- ✅ **Landing hub** — [`sim/web/hub.html`](sim/web/hub.html): one front door presenting the three surfaces.
 - ⬜ **Cloudflare Pages deploy** — wrangler/dashboard, `_headers`, audio pre-cache (both sides).
 
 ---

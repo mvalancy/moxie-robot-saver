@@ -21,6 +21,7 @@ Inter + JetBrains Mono). Point Cloudflare Pages at it and it works. What changes
 | Mic button | ✅ degrades | falls back to a **scripted child line** (no STT model) |
 | **Revival QR** (re-home a real robot) | ✅ works | payloads are plain JSON, built client-side |
 | **Setup page** (`setup.html`) — parent-app basics | ✅ works | phone-first Wi-Fi + server QR, no server |
+| **Landing hub** (`hub.html`) — the front door | ✅ works | links the three surfaces |
 | **Cloud console** (`cloud.html`) — parent dashboard | ✅ works | read-only demo from `fixtures/cloud.json` |
 | **Live bus** (a REAL robot connecting) | ❌ self-host | needs your MQTT broker + TLS |
 
@@ -58,6 +59,17 @@ also why the site works offline once loaded.
 ```
 Vendored libs, fonts and pre-rendered audio are content-addressed and never change → cache them for a
 year. Keep `index.html` uncached so redeploys take effect immediately.
+
+**Landing page.** On localhost and by default on Pages, `/` is the **simulator** (`index.html`). To make
+the **hub** (`hub.html`) your public front door instead, add a `sim/web/_redirects`:
+
+```
+/    /hub.html    200
+```
+
+That rewrite serves the hub at `/` on Pages only; the simulator stays reachable at `/index.html`, which
+is exactly what the hub's "Simulator" card links to. Localhost is unaffected (the dev server ignores
+`_redirects`), so your `http://localhost:8080/` muscle memory still opens the simulator.
 
 ## 2. Pre-cache the audio (both sides of the conversation)
 
