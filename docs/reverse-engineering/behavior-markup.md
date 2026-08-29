@@ -26,6 +26,26 @@ command marks:
 - `<usel variant="N" genre="…">` selects a voice unit-selection style (e.g. `excited`,
   `motivational`); `<break time="1.5s"/>` inserts a pause.
 
+## Speech markup (SSML / CereVoice)
+
+Alongside the `cmd:` behavior marks, the spoken text uses a **CereVoice SSML dialect** (the TTS engine,
+[perception-pipeline](perception-pipeline.md#tts)). A revival server emits these to *style the voice*;
+the tags below are the ones actually used in shipped content (with observed value sets):
+
+| Tag | Attributes (observed) | Purpose |
+|---|---|---|
+| `<usel variant genre>` | `variant` 0–8; `genre` = `none` · `question` · `motivational` · `intimate` · `excited` | **unit-selection style** — picks the voice's delivery. `question`/`none` dominate; `variant` chooses among recorded takes. |
+| `<break time>` | e.g. `0.75s`, `1.5s` | pause |
+| `<prosody>` | `pitch` (`medium`), `rate` (`slow`/`medium`/`x-fast`), `volume` (`medium`) | pitch/rate/volume shaping |
+| `<emphasis level>` | `strong` | stress a word |
+| `<phoneme ph>` | dotted phones, e.g. `ph="r.iy.d"` (read), `ph="k.ih.p.uw.r"` | **pronunciation override** (names/rare words); phones are ARPAbet-ish, dot-separated |
+| `<spurt>` | `spurt_id`, `speaker` | **non-verbal vocalization** (breath, laugh, "hmm") — CereVoice "spurt" |
+
+So a full line interleaves three layers: **SSML** (how it's *said*: `usel`/`prosody`/`phoneme`),
+**behavior marks** (`cmd:` — what the *body/face* does), and plain text (what's *said*). The
+[`markup.py`](../../tools/robot-toolkit/moxie_toolkit/markup.py) helper emits the `cmd:` layer; the
+SSML tags above are standard-ish and can be templated directly.
+
 ## The command verbs (24)
 
 Each verb is a `CommandMarkUpGenerator` with a typed request (its `data` fields):
