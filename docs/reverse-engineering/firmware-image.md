@@ -185,22 +185,39 @@ re-sign or replace anything:
 |---|---|---|
 | **`CN=Embodied`** (Pasadena, `signing@embodied.com`) | `6FA1065B92D3A5F0…` | **OTA / verified boot** — the `releasekey.x509.pem` in `otacerts.zip`; the `release-keys` build identity |
 | **`CN=Embodied Inc`** (Pasadena) | `789BC175525358FA…` | `bo-firmwareUpdate`, `me.embodied.productiontesting.*` (factory apps) |
-| **`CN=Android Debug, O=Android`** | `D5EF722984577 9CA…` | **`bo-android` and `bo-wifi`** — the two main experience apps |
+| **`CN=Android Debug, O=Android, C=US`** | `D5EF722984577 9CA…` | **`bo-android`** (`com.embodied.bo_unity` v24.10.803) and **`bo-wifi`** (`com.embodied.bo_unity_wifi` v24.6.100) — the two main experience apps (packages/versions decoded from each APK's binary `AndroidManifest.xml`) |
 
 **The headline:** the brain (`bo-android`) and setup app (`bo-wifi`) are signed with a generic
 **"Android Debug"-identity** certificate, **not** the platform/OTA key. Implications:
 
-- They are **priv-app** (privileged) but there is **no Embodied `privapp-permissions` allowlist** in
-  `/system/etc/permissions` (only stock AOSP `privapp-permissions-platform.xml`), so their privileges
-  come from being privileged system apps, not from platform-signature permissions.
-- Signature-level relationships (shared `sharedUserId`, `signature` permissions) between the two apps
-  hold via this debug identity. If this is the **public Android SDK debug key**, that signature is
-  trivially reproducible by anyone (a weak choice for the main app); if it's a private key that merely
-  uses the default `Android Debug` subject, it isn't — the subject alone can't tell you which, only
-  possession of the key does.
-- **For custom firmware:** replacing `bo-android`/`bo-wifi` is easiest of all — you can re-sign your
-  replacement with your own key (and, if needed, update any `sharedUserId`/permission expectations),
-  since they don't chain to the platform key. Replacing `bo-firmwareUpdate`/factory apps or the OTA
+- **How they hold privileged permissions (the exact mechanism).** Both live in `/system/priv-app/`
+  and `bo-android` requests **24** permissions including five `signature|privileged` ones —
+  `REBOOT`, `SET_TIME`, `SET_TIME_ZONE`, `READ_LOGS`, `PACKAGE_USAGE_STATS` (plus `CAMERA`,
+  `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `SYSTEM_ALERT_WINDOW`, `INTERNET`, …). Yet there is **no
+  `privapp-permissions` allowlist entry** for `com.embodied.bo_unity` **anywhere** (`/system`,
+  `/system/product`, `/vendor` `/etc/permissions` all checked — only the stock
+  `privapp-permissions-platform.xml`), **and** `ro.control_privapp_permissions` is **unset in every
+  prop source** (system/vendor `build.prop`, ramdisk `default.prop`/`prop.default`). Since the app
+  demonstrably uses `SET_TIME` (NTP) and `REBOOT` on shipping robots, this build effectively **does not
+  enforce** the priv-app allowlist — a privileged app gets its `signature|privileged` grants from
+  **`/system/priv-app` placement alone**, not from platform-signature or an allowlist. (`bo-wifi`
+  requests no `signature|privileged` perms — 11 normal/dangerous ones.) A bench `getprop
+  ro.control_privapp_permissions` + logcat would pin the exact default literal, but the shipped
+  behaviour is unambiguous: privileged perms are granted.
+- **Version skew:** `bo-wifi` is **v24.6.100** — *older* than the v24.10.803 OTA; the setup app was not
+  rebuilt for this release, so its Wi-Fi/pairing surface is the 24.6 vintage even on an 803 robot.
+- Neither app declares a `sharedUserId` (both decoded manifests have none), so they run as ordinary
+  distinct app UIDs — the debug identity governs signature-permission *eligibility*, not a shared UID.
+  If this is the **public Android SDK debug key**, that signature is trivially reproducible by anyone
+  (a weak choice for the main app); if it's a private key that merely uses the default `Android Debug`
+  subject, it isn't — the subject alone can't tell you which, only possession of the key does.
+- **For custom firmware (the big lever):** because privileged grants come from priv-app *placement*
+  (not platform-signature or allowlist), a replacement brain **signed with any key — even a throwaway
+  debug key — dropped into `/system/priv-app/` inherits the same powers** (`REBOOT`/`SET_TIME`/
+  `READ_LOGS`/…). You do **not** need Embodied's platform or OTA keys to reproduce `bo-android`'s
+  privileges. The only real gate is *writing to the system image* (AVB / flashing — see above and
+  [`hardware-access.md`](hardware-access.md)); once you can do that, the app layer imposes no extra
+  signing barrier. Replacing `bo-firmwareUpdate`/factory apps or the OTA
   payload requires the respective **Embodied** private keys (which we do **not** have) or an
   AVB/signature bypass (see above + [`ota-and-recovery.md`](ota-and-recovery.md)).
 
