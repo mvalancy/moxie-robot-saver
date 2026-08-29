@@ -63,8 +63,9 @@ Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-ex
 - ✅ **Parent app (basics)** — [`sim/web/setup.html`](sim/web/setup.html): phone-first, server-free
   Wi-Fi + server QR, built client-side by [`sim/web/qr.js`](sim/web/qr.js) (byte-identical to the CLI).
 - ✅ **Revival QR in-browser** — plain-JSON QR types generated client-side (no install).
-- ⬜ **Example cloud UI** — read-only operator/console view (robot status, session transcript, content)
-  from fixture JSON.
+- ✅ **Example cloud UI** — [`sim/web/cloud.html`](sim/web/cloud.html): read-only parent console (child,
+  Daily Missions & rewards, conversation + activity log, robot, notifications) from fixture JSON whose
+  shapes mirror the real REST API + MQTT content model.
 - ⬜ **Landing hub** — one front door presenting the three surfaces.
 - ⬜ **Cloudflare Pages deploy** — wrangler/dashboard, `_headers`, audio pre-cache (both sides).
 

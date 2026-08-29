@@ -1,0 +1,111 @@
+{
+  "_comment": "Example cloud-console fixture. Shapes mirror the real Moxie REST API (JSON:API, see server/moxie_server/serializers.py) and the MQTT content/activity model (docs/reverse-engineering/content-and-conversation.md). Read-only demo data — no real child. A live server would serve the same shapes from /api/users/me, /api/children/{id}/rewards, etc.",
+  "generatedFor": "SIL demo",
+  "user": {
+    "data": {
+      "id": "u_demo", "type": "users",
+      "attributes": {
+        "first-name": "Sam", "last-name": "Rivera",
+        "email": "parent@home.lan",
+        "coppa-consent-status": "granted", "max-children": 4,
+        "active-child-id": "c_demo"
+      },
+      "relationships": {
+        "child": { "data": { "id": "c_demo", "type": "children" } },
+        "children": { "data": [ { "id": "c_demo", "type": "children" } ] },
+        "robots": { "data": [ { "id": "r_demo", "type": "robots" } ] }
+      }
+    },
+    "included": [
+      {
+        "id": "c_demo", "type": "children",
+        "attributes": {
+          "first-name": "Alex", "nickname": "Alex", "pronoun": "they",
+          "birthday": "2016-05-11", "coppa-consent-status": "granted",
+          "content-day": 24, "active": true
+        }
+      },
+      {
+        "id": "r_demo", "type": "robots",
+        "attributes": {
+          "name": "Moxie", "serial": "MX-DEMO-0803",
+          "software-version": "24.10.803", "online": true,
+          "battery-level": 0.82, "charging": false,
+          "wifi-ssid": "HomeWiFi", "last-seen": "2026-08-29T15:41:00Z",
+          "endpoint": "OPEN_MOXIE"
+        },
+        "relationships": { "robot-setting": { "data": { "id": "r_demo", "type": "robot-setting" } } }
+      },
+      {
+        "id": "r_demo", "type": "robot-setting",
+        "attributes": {
+          "volume": 0.7, "bedtime": "20:30", "wakeup": "07:00",
+          "daily-time-limit-min": 60, "voice": "moxie",
+          "sensitive-topics-enabled": true
+        }
+      }
+    ]
+  },
+  "otaStatus": { "status": "up_to_date", "version": "24.10.803" },
+  "rewards": {
+    "data": {
+      "badges": [
+        { "id": "b_calm",  "title": "Calm Explorer",    "earned": true,  "earned-on": "2026-08-27", "icon": "🫧" },
+        { "id": "b_story", "title": "Story Weaver",     "earned": true,  "earned-on": "2026-08-25", "icon": "📖" },
+        { "id": "b_kind",  "title": "Kindness Champ",   "earned": true,  "earned-on": "2026-08-22", "icon": "💛" },
+        { "id": "b_brave", "title": "Brave Heart",      "earned": false, "icon": "🦁" }
+      ],
+      "missions": [
+        { "mission_id": "DM_BREATHE_01", "module_id": "DM", "content_id": "breathing", "title": "Rainbow Breathing", "status": "completed", "content-day": 24, "sel-skill": "self-regulation" },
+        { "mission_id": "DM_GRAT_03",    "module_id": "DM", "content_id": "gratitude", "title": "Three Good Things", "status": "completed", "content-day": 24, "sel-skill": "gratitude" },
+        { "mission_id": "DM_FEEL_02",    "module_id": "DM", "content_id": "feelings", "title": "Name That Feeling", "status": "in_progress", "content-day": 24, "sel-skill": "emotion-vocabulary" },
+        { "mission_id": "DM_KIND_05",    "module_id": "DM", "content_id": "kindness", "title": "A Kind Act", "status": "locked", "content-day": 25, "sel-skill": "empathy" }
+      ],
+      "rewards-choices": [
+        { "id": "rc_dance", "title": "Silly Dance", "cost": 3, "chosen": false },
+        { "id": "rc_joke",  "title": "Joke of the Day", "cost": 1, "chosen": true }
+      ]
+    }
+  },
+  "activity": {
+    "_comment": "MentorBehavior reports arrive on client-service-activity-log (subtopic mentor_behavior). Shape per docs/reverse-engineering/content-and-conversation.md.",
+    "mentor_behaviors": [
+      { "module_id": "DM",            "content_id": "breathing", "content_day": 24, "action": "completed", "ended_reason": "finished",   "at": "2026-08-29T15:12:00Z", "minutes": 4 },
+      { "module_id": "OPENMOXIE_CHAT","content_id": "memory",    "content_day": 24, "action": "conversation", "ended_reason": "user_left", "at": "2026-08-29T15:04:00Z", "minutes": 9 },
+      { "module_id": "MOXIE_GO",      "content_id": "default",   "content_day": 24, "action": "hub_visit",    "ended_reason": "navigated",  "at": "2026-08-29T14:58:00Z", "minutes": 1 },
+      { "module_id": "DM",            "content_id": "gratitude", "content_day": 24, "action": "completed",    "ended_reason": "finished",   "at": "2026-08-28T19:40:00Z", "minutes": 5 }
+    ]
+  },
+  "conversation": {
+    "_comment": "A recent chat turn set, as delivered by remote-chat (backend=router, RemoteChatRequest/Response). Parent view is read-only summary, not verbatim by default.",
+    "module_id": "OPENMOXIE_CHAT", "content_id": "memory", "content-day": 24,
+    "started": "2026-08-29T15:04:00Z",
+    "turns": [
+      { "speaker": "child", "text": "Moxie, I was nervous about my spelling test today." },
+      { "speaker": "moxie", "text": "That takes courage to share, Alex. Being nervous means you care. Want to try a slow breath together?", "mood": "empathy", "gesture": "Gesture_Nod" },
+      { "speaker": "child", "text": "Okay. I did the rainbow breathing and it helped a little." },
+      { "speaker": "moxie", "text": "I'm proud of you for using your calm-down tool. What color did you reach today?", "mood": "positive", "gesture": "Gesture_Celebrate" }
+    ]
+  },
+  "insights": {
+    "_comment": "Parent-facing summary. The real app surfaced SEL themes + time, never raw transcripts by default.",
+    "week-of": "2026-08-24",
+    "talk-minutes": 128,
+    "sessions": 11,
+    "sel-themes": [
+      { "theme": "Self-regulation", "weight": 0.42 },
+      { "theme": "Gratitude",       "weight": 0.28 },
+      { "theme": "Empathy",         "weight": 0.18 },
+      { "theme": "Confidence",      "weight": 0.12 }
+    ],
+    "mood-trend": [ "calm", "happy", "nervous", "calm", "happy", "proud", "calm" ]
+  },
+  "notifications": {
+    "data": [
+      { "id": "n1", "type": "notifications", "attributes": { "title": "Alex earned the Calm Explorer badge", "body": "Completed Rainbow Breathing 3 days running.", "at": "2026-08-27T19:45:00Z", "read": false } },
+      { "id": "n2", "type": "notifications", "attributes": { "title": "New content unlocked", "body": "Day 25 missions are ready for tomorrow.", "at": "2026-08-28T08:00:00Z", "read": true } },
+      { "id": "n3", "type": "notifications", "attributes": { "title": "Sensitive conversation reminder", "body": "You scheduled a 'big feelings' check-in for Friday.", "at": "2026-08-26T12:00:00Z", "read": true } }
+    ],
+    "meta": { "unread": 1 }
+  }
+}

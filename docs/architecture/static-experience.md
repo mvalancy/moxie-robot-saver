@@ -16,14 +16,14 @@ flowchart LR
   hub --> cloud["📊 Example cloud UI<br/>the operator/console view"]
   classDef d fill:#0e0e14,stroke:#00f0ff,color:#e8edf5;
   classDef todo fill:#0e0e14,stroke:#5a6577,color:#8892a4,stroke-dasharray:4 3;
-  class hub,setup,sim d; class cloud todo;
+  class hub d; class setup,sim,cloud d; class hub todo;
 ```
 
 | Surface | What it is | Static today? | Where |
 |---|---|---|---|
 | **Parent app** (basics) | The phone flow that re-homes a real robot: Wi-Fi QR + server QR. | ✅ **done** — `setup.html` builds both codes client-side via [`qr.js`](../../sim/web/qr.js) (plain-JSON QR types, no protobuf, no server). | [`sim/web/setup.html`](../../sim/web/setup.html) |
 | **Simulator** | The 3D Moxie — face, arms, liveness — driven by the real protocol, with a stub brain + pre-rendered audio so it talks with no server. | ✅ **done** | [`sim/web/`](../../sim/web/) |
-| **Example cloud UI** | The operator/console view: a robot's status, the child's session transcript, content — read-only, canned data. | ⏳ **planned** — static with fixture JSON. | *(next)* |
+| **Example cloud UI** | The parent console: child profile, Daily Missions & rewards, conversation + activity log, robot status, notifications — read-only. | ✅ **done** — [`cloud.html`](../../sim/web/cloud.html) from [`fixtures/cloud.json`](../../sim/web/fixtures/cloud.json), shapes mirror the real REST API + MQTT content model. | [`sim/web/cloud.html`](../../sim/web/cloud.html) |
 | **Landing hub** | One front door tying the three together. | ⏳ **planned** | *(next)* |
 
 ## What's static vs. what needs a server
@@ -48,7 +48,7 @@ What the user means by *the basics*, concretely:
 
 1. **A parent with a dead Moxie and only a phone can revive it** — `setup.html`, no install. ✅
 2. **Anyone can see the 3D Moxie talk** — the simulator with stubs. ✅
-3. **A read-only example of the cloud/console view** — so the shape of the real product is visible. ⏳
+3. **A read-only example of the cloud/console view** — so the shape of the real product is visible. ✅
 4. **One landing page** that presents all three. ⏳
 
 Explicitly *out of scope* for this milestone (deferred to the end-to-end phase): LLM gateway
