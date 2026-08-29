@@ -95,6 +95,49 @@ your own voice/dialog; you can't extract (and don't need) Embodied's licensed as
 - Drives the **LOCAL** dialog path and the always-on **global commands** (regex `globals`, above);
   errors surface as `ChatScriptError`/`ChatScriptException`, readiness as `ChatScriptReady` on the bus.
 
+### ChatScript authoring — the real format & pipeline
+
+The abstract "`.top` files" above have a concrete shape, recovered from an **ex-Embodied game
+designer's public sample repo** ([`nhertanto/Embodied-Moxie`](https://github.com/nhertanto/Embodied-Moxie);
+facts captured here per the [self-sufficiency doctrine](external-sources.md)). Embodied authored content
+through a **three-layer pipeline**, not by hand-writing ChatScript:
+
+1. **Python node classes** (`*.py`) — subclass `FlexibleInteractions`/`FlexibleNodeData` to declare a
+   node's authoring-tool **UI properties** (fixed-choice dropdowns, text+markup fields, "move-on"
+   transitions). This is what a designer edits in the **in-house visual tool**.
+2. **Jinja2 templates** (`*.jinja`) — turn that property data into ChatScript. A `base_topic.jinja`
+   emits `topic:`/`t:` blocks and expands **text variations** and **markup variations** (multiple
+   `[ … ]` alternatives so a response isn't identical every time); templates `{% import %}` shared
+   `Macros/node_utility.jinja`.
+3. **Generated `.top` files** (`Generated-*.top`) — the compiled-to output that ships as synced content.
+
+The **ChatScript `.top` syntax** itself (Bruce Wilcox's engine) as Embodied uses it:
+
+```chatscript
+# reusable intent pattern (what the child said to trigger an activity)
+patternmacro: ^P_JOKES_userTellJoke()
+[ (!~negation [can could may] I *~2 tell {you} a *~2 joke)
+  (!~negation I [have know] *~2 joke) ]
+
+# a topic = a dialog node; CS flags then robot-brain [flags]
+topic: ~my_topic keep repeat [FLAG]
+  t: PROMPT() ^keep() ^repeat()        # a gambit/output rule
+     [ Here is one variation of the line. ]   # text/markup variations in [ ]
+     [ Here is another phrasing. ]
+```
+
+Operator legend: `[ a b ]` = alternates · `{ x }` = optional · `*~N` = up to N-word gap · `!~negation`
+= must-not-precede · `~concept` = a concept set (`~want`, `~silly`, `~botname`, `~intensifier`) ·
+`%tense=present` · `< … >` = sentence bounds · `^macro()` = call a pattern/output macro (e.g.
+`^intentPattern_request()`). A revival server that wants **offline/local** dialog authors `.top` files
+in exactly this form and compiles them into the on-device ChatScript store.
+
+**The named global commands** (always-listening voice controls, from the sample's
+`FlexibleGlobalCommand1` choice list): **`Sleep`, `WakeUp`, `Hello`, `ListenToMe`, `Earmuffs`,
+`HoldOn`, `RepeatThat`, `SpeakLouder`, `SpeakSofter`, `SomethingElse`** — these are the phrases Moxie
+recognizes at any time (independent of the active activity); `Earmuffs` also appears as
+`ENGAGEMENTSTATE_EARMUFFS` in [`proto-catalog.md`](proto-catalog.md), cross-confirming it.
+
 ### Where the data lives
 Voice, ChatScript, and content modules are **synced to `/sdcard/EmbodiedData` / `/sdcard/EmbodiedStaticData`**
 over the MQTT **file-sync** channel (`MQTT_FILE_SYNC`, see [`cloud-protocol.md`](cloud-protocol.md)) —
