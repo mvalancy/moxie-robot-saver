@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moxie Simulator</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="bubble" class="hidden"><span id="bubble-text"></span></div>
+
+<aside id="panel">
+  <h1>Moxie Sim</h1>
+
+  <section>
+    <h2>Motors <span class="hint">(0&ndash;32767, 16384 = rest)</span></h2>
+    <div id="motors"></div>
+    <button id="center-btn" class="wide">Center pose</button>
+  </section>
+
+  <section>
+    <h2>Face</h2>
+    <div id="faces" class="btn-row"></div>
+  </section>
+
+  <section>
+    <h2>Speech</h2>
+    <div class="row">
+      <input id="speech-input" type="text" placeholder="Say something&hellip;" autocomplete="off">
+      <button id="speech-btn">Say</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Heart LED</h2>
+    <div class="row">
+      <label class="chk"><input id="led-on" type="checkbox"> on</label>
+      <input id="led-color" type="color" value="#ff5577">
+    </div>
+  </section>
+
+  <p class="foot">drag to orbit &middot; scroll to zoom &middot; <code>window.moxie</code> API</p>
+</aside>
+
+<script type="module" src="moxie.js"></script>
+</body>
+</html>
