@@ -14,7 +14,7 @@ docker compose -f sim/docker-compose.yml up                   # broker + supervi
 ```
 > The `voice` profile needs a Piper voice on disk first — see [Voice (Piper TTS)](#voice-piper-tts).
 
-Then open **http://localhost:8080** and click **Connect** (the UI talks MQTT-over-WebSocket to the
+Then open **http://localhost:8080** (the hub; the simulator is at **/sim.html**) and click **Connect** (the UI talks MQTT-over-WebSocket to the
 broker on `:9001`). Drive Moxie by hand with the panel, hit **Play demo** to replay a canned birthday session (no broker
 needed), or use `--profile demo` to watch a scripted conversation play out — the 3D Moxie speaks, emotes, gestures, and shows event icons from the live bus.
 

@@ -64,7 +64,7 @@ Both are **offline**, no API keys. Setup details in [`sim/README.md`](../../sim/
 ## Path A — no robot: run the simulator
 
 ```sh
-python3 sim/serve.py 8080          # then open http://localhost:8080
+python3 sim/serve.py 8080          # hub at http://localhost:8080  (simulator: /sim.html)
 ```
 You get the **3D Moxie** — face, arms, head, body, liveness — driven by the same protocol a real robot
 speaks. Click **Connect** (live bus), **Listen** to talk to it, or **Play demo** for a canned

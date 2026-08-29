@@ -22,7 +22,7 @@ Inter + JetBrains Mono). Point Cloudflare Pages at it and it works. What changes
 | **Revival QR** (re-home a real robot) | ✅ works | payloads are plain JSON, built client-side |
 | **Setup page** (`setup.html`) — parent-app basics | ✅ works | phone-first Wi-Fi + server QR, no server |
 | **Docs explorer** (`docs.html`) — every RE doc + mermaid | ✅ works | reads committed `docs-bundle/` + `docs-index.json` |
-| **Landing hub** (`hub.html`) — the front door | ✅ works | links the three surfaces |
+| **Landing hub** (`index.html`) — the front door, served at `/` | ✅ works | links the four surfaces |
 | **Cloud console** (`cloud.html`) — parent dashboard | ✅ works | read-only demo from `fixtures/cloud.json` |
 | **Live bus** (a REAL robot connecting) | ❌ self-host | needs your MQTT broker + TLS |
 
@@ -83,16 +83,10 @@ also why the site works offline once loaded.
 Vendored libs, fonts and pre-rendered audio are content-addressed and never change → cache them for a
 year. Keep `index.html` uncached so redeploys take effect immediately.
 
-**Landing page.** On localhost and by default on Pages, `/` is the **simulator** (`index.html`). To make
-the **hub** (`hub.html`) your public front door instead, add a `sim/web/_redirects`:
-
-```
-/    /hub.html    200
-```
-
-That rewrite serves the hub at `/` on Pages only; the simulator stays reachable at `/index.html`, which
-is exactly what the hub's "Simulator" card links to. Localhost is unaffected (the dev server ignores
-`_redirects`), so your `http://localhost:8080/` muscle memory still opens the simulator.
+**Landing page.** The **hub is the site index** (`sim/web/index.html`), so `/` serves it natively with
+no redirect. The **simulator** lives at `/sim.html` (reachable at the clean URL `/sim` on Pages). A small
+`sim/web/_redirects` sends any old `/hub` or `/hub.html` links to `/`. Locally, `python3 sim/serve.py`
+serves the same layout — `http://localhost:8080/` is the hub, `http://localhost:8080/sim.html` the simulator.
 
 ## 2. Pre-cache the audio (both sides of the conversation)
 

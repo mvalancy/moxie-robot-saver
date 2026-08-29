@@ -92,11 +92,11 @@ for (const cmd of ["serial_number_display", "restore_factory", "reset_network",
   ok(cmd in Q.KNOWN_DEBUG, `KNOWN_DEBUG missing documented command ${cmd}`);
 
 // ---- 4. the HUD panel is actually wired --------------------------------------
-const html = readFileSync(join(here, "web", "index.html"), "utf8");
+const html = readFileSync(join(here, "web", "sim.html"), "utf8");
 for (const id of ["qr-kind", "qr-make", "qr-canvas", "qr-status", "qr-ssid", "qr-pass"])
-  ok(html.includes(`id="${id}"`), `index.html missing #${id}`);
-ok(html.includes("vendor/qrcode.js"), "index.html must load the vendored qrcode.js");
-ok(html.includes('src="qr.js"'), "index.html must load qr.js");
+  ok(html.includes(`id="${id}"`), `sim.html missing #${id}`);
+ok(html.includes("vendor/qrcode.js"), "sim.html must load the vendored qrcode.js");
+ok(html.includes('src="qr.js"'), "sim.html must load qr.js");
 ok(html.includes("setup.html"), "sim HUD should link to the full static setup page");
 
 // ---- 5. the standalone parent-app "basics" page is wired ---------------------

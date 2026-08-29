@@ -25,8 +25,12 @@ class H(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
     def do_GET(self):
         path = self.path.split("?", 1)[0]
-        if path in ("/", "/index.html"):
-            body = bust(open(os.path.join(WEB, "index.html"), encoding="utf-8").read()).encode("utf-8")
+        # Serve any HTML page with on-the-fly cache-busting. "/" is the hub
+        # (index.html); the simulator is sim.html (which is what actually loads
+        # moxie.js/bridge.js/style.css, so busting matters there).
+        rel = "index.html" if path == "/" else path.lstrip("/")
+        if rel.endswith(".html") and os.path.isfile(os.path.join(WEB, rel)):
+            body = bust(open(os.path.join(WEB, rel), encoding="utf-8").read()).encode("utf-8")
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             return

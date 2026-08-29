@@ -12,7 +12,7 @@
 flowchart LR
   hub["🏠 Landing hub<br/>one front door"]
   hub --> setup["📷 Parent app (basics)<br/>setup.html — revive a robot"]
-  hub --> sim["🖥️ Simulator<br/>index.html — 3D Moxie"]
+  hub --> sim["🖥️ Simulator<br/>sim.html — 3D Moxie"]
   hub --> cloud["📊 Example cloud UI<br/>the operator/console view"]
   classDef d fill:#0e0e14,stroke:#00f0ff,color:#e8edf5;
   classDef todo fill:#0e0e14,stroke:#5a6577,color:#8892a4,stroke-dasharray:4 3;
@@ -24,7 +24,7 @@ flowchart LR
 | **Parent app** (basics) | The phone flow that re-homes a real robot: Wi-Fi QR + server QR. | ✅ **done** — `setup.html` builds both codes client-side via [`qr.js`](../../sim/web/qr.js) (plain-JSON QR types, no protobuf, no server). | [`sim/web/setup.html`](../../sim/web/setup.html) |
 | **Simulator** | The 3D Moxie — face, arms, liveness — driven by the real protocol, with a stub brain + pre-rendered audio so it talks with no server. | ✅ **done** | [`sim/web/`](../../sim/web/) |
 | **Example cloud UI** | The parent console: child profile, Daily Missions & rewards, conversation + activity log, robot status, notifications — read-only. | ✅ **done** — [`cloud.html`](../../sim/web/cloud.html) from [`fixtures/cloud.json`](../../sim/web/fixtures/cloud.json), shapes mirror the real REST API + MQTT content model. | [`sim/web/cloud.html`](../../sim/web/cloud.html) |
-| **Landing hub** | One front door tying the three together. | ✅ **done** — [`hub.html`](../../sim/web/hub.html) | [`sim/web/hub.html`](../../sim/web/hub.html) |
+| **Landing hub** | One front door tying the three together. | ✅ **done** — [`index.html`](../../sim/web/index.html) | [`sim/web/index.html`](../../sim/web/index.html) |
 | **Docs explorer** | Browses every Markdown doc in the repo with Mermaid diagrams rendered — no server. | ✅ **done** — [`docs.html`](../../sim/web/docs.html) + `docs-bundle/` (built by [`build_docs_bundle.py`](../../sim/tools/build_docs_bundle.py)) | [`sim/web/docs.html`](../../sim/web/docs.html) |
 
 ## What's static vs. what needs a server

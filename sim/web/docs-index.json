@@ -1,5 +1,5 @@
 {
- "generated": "6d7b617-dirty",
+ "generated": "fe9eb3f-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -25,7 +25,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap — end-to-end Moxie revival",
    "section": "_root",
-   "bytes": 6874,
+   "bytes": 6878,
    "mermaid": 0,
    "headings": [
     "Phase 0 — Reverse engineering  ✅",
@@ -183,7 +183,7 @@
    "path": "architecture/static-experience.md",
    "title": "The Moxie experience as one static site",
    "section": "architecture",
-   "bytes": 5550,
+   "bytes": 5556,
    "mermaid": 1,
    "headings": [
     "The three surfaces",
@@ -439,7 +439,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploying the SIL to Cloudflare Pages",
    "section": "guides",
-   "bytes": 9978,
+   "bytes": 9902,
    "mermaid": 0,
    "headings": [
     "TL;DR",
@@ -500,7 +500,7 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie — the full path",
    "section": "guides",
-   "bytes": 6999,
+   "bytes": 7020,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",

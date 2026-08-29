@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOXIE &middot; SIL &mdash; Mission Control</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a0a0f'/><path d='M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z' fill='%2312b5b0'/><ellipse cx='50' cy='49' rx='20' ry='18' fill='%23f4feff'/><circle cx='43' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='57' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='44.4' cy='46.4' r='1.3' fill='%2300f0ff'/><circle cx='58.4' cy='46.4' r='1.3' fill='%2300f0ff'/></svg>">
+<link rel="stylesheet" href="./vendor/fonts/fonts.css">
+<link rel="stylesheet" href="style.css">
+<script>
+/* Dev self-heal: if a stale service worker from another app on this port is
+   intercepting requests, unregister it and reload once so the current files load. */
+(function () {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.getRegistrations().then(function (rs) {
+    if (!rs.length) return;
+    Promise.all(rs.map(function (r) { return r.unregister(); })).then(function () {
+      if (window.caches && caches.keys) caches.keys().then(function (ks) {
+        return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+      }).then(function () { location.reload(); });
+      else location.reload();
+    });
+  }).catch(function () {});
+})();
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/"
+  }
+}
+</script>
+</head>
+<body data-bus="idle">
+
+<!-- 3D stage (moxie.js mounts the renderer canvas here) -->
+<div id="app"></div>
+
+<!-- HUD overlay: topbar / notice / stage+rail laid out as a grid over the canvas -->
+<div id="hud">
+
+  <!-- title bar -->
+  <header id="topbar">
+    <a id="hub-back" href="./" title="Back to the hub">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+      <span>Hub</span>
+    </a>
+    <div class="brand">
+      <span class="glyph" aria-hidden="true"></span>
+      <h1>MOXIE<span class="sep">&middot;</span>SIL</h1>
+      <span class="tag">v24.10.803</span>
+      <span class="tag dim">SOFTWARE-IN-THE-LOOP</span>
+    </div>
+    <div class="linkstate">
+      <span id="link-dot" class="dot" aria-hidden="true"></span>
+      <span id="link-label">LINK IDLE</span>
+    </div>
+  </header>
+
+  <!-- legal / ethical disclaimer: its own slim bar so it stays legible -->
+  <div id="notice" role="note">
+    <span class="notice-badge">FAN&nbsp;PROJECT</span>
+    <p class="disclaimer">
+      <strong>Not affiliated with Embodied,&nbsp;Inc.</strong>
+      <span class="notice-more">&ldquo;Moxie&rdquo; is their trademark.</span>
+    </p>
+    <span class="notice-by">Created by <a href="https://mattvalancy.com" target="_blank" rel="noopener">Matthew&nbsp;Valancy</a></span>
+    <a class="notice-link" href="https://github.com/mvalancy/moxie-robot-saver" target="_blank" rel="noopener">GitHub&nbsp;&#8599;</a>
+  </div>
+
+  <!-- stage overlays (canvas itself is fullscreen behind the HUD) -->
+  <main id="stage">
+    <div id="hud-frame" aria-hidden="true">
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+    </div>
+
+    <!-- speech callout -->
+    <div id="bubble" class="hidden">
+      <span class="callout-label">MOXIE &middot; TTS OUT</span>
+      <span id="bubble-text"></span>
+    </div>
+
+    <!-- stage hint -->
+    <div id="scene-hint" aria-hidden="true">DRAG&thinsp;&middot;&thinsp;ORBIT&ensp;&#47;&#47;&ensp;SCROLL&thinsp;&middot;&thinsp;ZOOM&ensp;&#47;&#47;&ensp;<code>window.moxie</code> API</div>
+  </main>
+
+  <!-- HUD rail -->
+  <aside id="panel">
+    <button id="rail-toggle" type="button" aria-expanded="true" aria-controls="rail-scroll">
+      <span class="tick" aria-hidden="true"></span>Controls<span class="caret" aria-hidden="true"></span>
+    </button>
+
+    <div id="rail-scroll">
+
+      <details class="group" open>
+        <summary><span class="tick" aria-hidden="true"></span>Motion<span class="hint">servos &middot; scene</span><span class="caret" aria-hidden="true"></span></summary>
+
+        <section class="sub">
+          <h3>Motors<span class="hint">0&ndash;32767 &middot; 16384 REST</span></h3>
+          <div id="motors"></div>
+          <button id="center-btn" class="wide">Center pose</button>
+        </section>
+
+        <section class="sub">
+          <h3>Scene<span class="hint">lighting &middot; liveness</span></h3>
+          <label class="rng"><span class="rng-name">LIGHT</span>
+            <input id="scene-light" type="range" min="0" max="100" value="85">
+            <span class="rng-val" id="scene-light-val">0.85</span></label>
+          <label class="chk"><input id="idle-on" type="checkbox" checked><span>liveness</span></label>
+          <label class="chk"><input id="axes-on" type="checkbox"><span>show axes</span></label>
+          <div id="axis-legend" hidden>
+            <span class="ax ax-x"><i></i>X <em>right / left</em></span>
+            <span class="ax ax-y"><i></i>Y <em>up / down</em></span>
+            <span class="ax ax-z"><i></i>Z <em>front / back</em></span>
+          </div>
+        </section>
+      </details>
+
+      <details class="group" open>
+        <summary><span class="tick" aria-hidden="true"></span>Expression<span class="hint">face &middot; heart</span><span class="caret" aria-hidden="true"></span></summary>
+
+        <section class="sub">
+          <h3>Face<span class="hint">expression cluster</span></h3>
+          <div id="faces" class="btn-row"></div>
+        </section>
+
+        <section class="sub">
+          <h3>Heart LED<span class="hint">chest indicator</span></h3>
+          <div class="row">
+            <label class="chk"><input id="led-on" type="checkbox"><span>power</span></label>
+            <input id="led-color" type="color" value="#ff5577">
+          </div>
+        </section>
+      </details>
+
+      <details class="group" open>
+        <summary><span class="tick" aria-hidden="true"></span>Voice<span class="hint">tts &middot; audio</span><span class="caret" aria-hidden="true"></span></summary>
+
+        <section class="sub">
+          <h3>Speech<span class="hint">TTS</span></h3>
+          <div class="row">
+            <input id="speech-input" type="text" placeholder="transmit line&hellip;" autocomplete="off">
+            <button id="speech-btn">Say</button>
+          </div>
+        </section>
+
+        <section class="sub">
+          <h3>Audio<span class="hint">piper tts &middot; sfx</span></h3>
+          <label class="chk"><input id="audio-on" type="checkbox" checked><span>sound</span></label>
+          <div class="row" style="margin-top:8px">
+            <input id="tts-base" type="text" placeholder="http://127.0.0.1:8081">
+            <button id="tts-test">Test</button>
+          </div>
+          <p id="tts-status" class="hint">piper tts service</p>
+        </section>
+
+        <section class="sub">
+          <h3>Mic<span class="hint">talk to moxie</span></h3>
+          <div class="row">
+            <button id="mic-btn">Listen</button>
+            <input id="stt-base" type="text" placeholder="http://127.0.0.1:8082">
+          </div>
+          <p id="mic-status" class="hint">click to start / stop recording</p>
+        </section>
+      </details>
+
+      <details class="group" open>
+        <summary><span class="tick" aria-hidden="true"></span>Link<span class="hint">bus &middot; log &middot; session</span><span class="caret" aria-hidden="true"></span></summary>
+
+        <section class="sub">
+          <h3>Live bus<span class="hint">MQTT&#47;WS :9001</span></h3>
+          <div class="row">
+            <input id="bus-host" type="text" placeholder="broker host" autocomplete="off">
+            <button id="bus-connect">Link</button>
+          </div>
+          <p id="bus-status">not connected</p>
+        </section>
+
+        <section class="sub sub-log">
+          <h3>Comms log<span class="hint">child &harr; moxie</span></h3>
+          <div id="transcript"></div>
+        </section>
+
+        <section class="sub">
+          <h3>Session<span class="hint">record &#47; replay</span></h3>
+          <div class="btn-row">
+            <button id="rec-toggle">Rec</button>
+            <button id="rec-save">Save</button>
+            <button id="rec-demo">Demo</button>
+          </div>
+          <label class="file-load">load&nbsp;<input id="rec-load" type="file" accept="application/json"></label>
+        </section>
+
+        <section class="sub">
+          <h3>Revive a robot<span class="hint">endpoint QR</span></h3>
+          <div class="row">
+            <select id="qr-kind">
+              <option value="OPEN_MOXIE">home &rarr; OPEN_MOXIE</option>
+              <option value="EMBODIED_LOCAL">home &rarr; EMBODIED_LOCAL</option>
+              <option value="serial_number_display">show serial number</option>
+              <option value="reset_network">forget wi&#8209;fi</option>
+              <option value="wifi">wi&#8209;fi credentials</option>
+            </select>
+            <button id="qr-make">Make</button>
+          </div>
+          <div class="row" id="qr-wifi" style="display:none;margin-top:6px">
+            <input id="qr-ssid" type="text" placeholder="SSID" autocomplete="off">
+            <input id="qr-pass" type="text" placeholder="password" autocomplete="off">
+          </div>
+          <canvas id="qr-canvas" style="display:none;margin-top:8px;width:100%;max-width:220px;border-radius:6px;image-rendering:pixelated"></canvas>
+          <p id="qr-status" class="hint">hold the code up to Moxie&#39;s camera</p>
+          <p class="hint" style="margin-top:6px"><a href="setup.html" style="color:var(--cyan)">full setup page &rarr;</a> &middot; Wi&#8209;Fi + server, phone&#8209;friendly</p>
+          <p class="hint" style="margin-top:4px"><a href="cloud.html" style="color:var(--cyan)">parent cloud console &rarr;</a> &middot; example dashboard</p>
+          <p class="hint" style="margin-top:4px"><a href="./" style="color:var(--cyan)">&larr; all experiences</a> &middot; the landing hub</p>
+          <p class="hint" style="margin-top:4px"><a href="docs.html" style="color:var(--cyan)">docs explorer &rarr;</a> &middot; RE docs + mermaid</p>
+        </section>
+      </details>
+
+    </div>
+  </aside>
+
+</div>
+
+<script type="module" src="moxie.js"></script>
+<script src="./vendor/mqtt.min.js"></script>
+<script src="./vendor/qrcode.js"></script>
+<script src="qr.js"></script>
+<script src="stub.js"></script>
+<script src="bridge.js"></script>
+<script src="audio.js"></script>
+<script src="mic.js"></script>
+<script>
+/* HUD glue — mirrors the #bus-status text (written by bridge.js) onto
+ * body[data-bus] so CSS can color the status line, the topbar link lamp,
+ * and the REC button. Pure presentation; touches no simulator state. */
+(function () {
+  "use strict";
+  var el = document.getElementById("bus-status");
+  var label = document.getElementById("link-label");
+  if (!el) return;
+  var LABELS = { live: "LINK LIVE", rec: "RECORDING", wait: "LINK …",
+                 down: "LINK DOWN", idle: "LINK IDLE" };
+  function classify(t) {
+    t = (t || "").toLowerCase();
+    if (t.indexOf("live") !== -1) return "live";
+    if (t.indexOf("recording") !== -1) return "rec";
+    if (t.indexOf("connecting") !== -1 || t.indexOf("reconnect") !== -1 ||
+        t.indexOf("replaying") !== -1) return "wait";
+    if (t.indexOf("error") !== -1 || t.indexOf("disconnected") !== -1 ||
+        t.indexOf("failed") !== -1 || t.indexOf("not loaded") !== -1 ||
+        t.indexOf("bad ") !== -1) return "down";
+    return "idle";
+  }
+  function sync() {
+    var s = classify(el.textContent);
+    document.body.setAttribute("data-bus", s);
+    if (label) label.textContent = LABELS[s];
+  }
+  new MutationObserver(sync).observe(el, { childList: true, characterData: true, subtree: true });
+  sync();
+
+  // Scene lighting + liveness controls -> window.moxie (once ready).
+  function wireScene() {
+    var sl = document.getElementById("scene-light");
+    var slv = document.getElementById("scene-light-val");
+    var idle = document.getElementById("idle-on");
+    if (sl && window.moxie && window.moxie.setSceneLight) {
+      sl.addEventListener("input", function () {
+        var v = (+sl.value) / 100; if (slv) slv.textContent = v.toFixed(2);
+        window.moxie.setSceneLight(v);
+      });
+    }
+    if (idle && window.moxie && window.moxie.setIdle) {
+      idle.addEventListener("change", function () { window.moxie.setIdle(idle.checked); });
+    }
+    var axes = document.getElementById("axes-on");
+    if (axes && window.moxie && window.moxie.setShowAxes) {
+      axes.addEventListener("change", function () {
+        window.moxie.setShowAxes(axes.checked);
+        var lg = document.getElementById("axis-legend");
+        if (lg) lg.hidden = !axes.checked;
+      });
+    }
+  }
+  if (window.moxie) wireScene();
+  else window.addEventListener("moxie-ready", wireScene, { once: true });
+
+  // Audio: SAY speaks via Piper; mute toggle; TTS endpoint + test.
+  (function wireAudio() {
+    var say = document.getElementById("speech-btn");
+    var inp = document.getElementById("speech-input");
+    var on = document.getElementById("audio-on");
+    var base = document.getElementById("tts-base");
+    var test = document.getElementById("tts-test");
+    var st = document.getElementById("tts-status");
+    function speak(t) { if (t && window.moxieAudio) window.moxieAudio.speak(t); }
+    if (say) say.addEventListener("click", function () { speak((inp && inp.value || "").trim()); });
+    if (inp) inp.addEventListener("keydown", function (e) { if (e.key === "Enter") speak(inp.value.trim()); });
+    if (on) on.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setEnabled(on.checked); });
+    if (base && window.moxieAudio) base.value = window.moxieAudio.getTtsBase();
+    if (base) base.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setTtsBase(base.value.trim()); });
+    if (test) test.addEventListener("click", function () {
+      if (!window.moxieAudio) return;
+      if (st) st.textContent = "synthesizing…";
+      fetch(window.moxieAudio.getTtsBase().replace(/\/$/, "") + "/health")
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (st) st.textContent = j.ok ? ("voice: " + j.voice) : "tts unavailable"; })
+        .catch(function () { if (st) st.textContent = "tts unreachable — run sim/tts/server.py"; });
+      window.moxieAudio.speak("Hi! I am Moxie. It is nice to meet you.");
+    });
+  })();
+
+  /* Revive QR — the codes that re-home a real robot are plain JSON, so we can
+   * build them client-side: a phone loading the static site can revive a Moxie
+   * with nothing installed. Byte-identical to moxie_toolkit's encoders.
+   * Grammar: docs/reverse-engineering/qr-commands.md */
+  (function () {
+    var kind = document.getElementById("qr-kind");
+    var btn = document.getElementById("qr-make");
+    var cv = document.getElementById("qr-canvas");
+    var st = document.getElementById("qr-status");
+    var wifi = document.getElementById("qr-wifi");
+    if (!btn || !window.moxieQR) return;
+
+    kind.addEventListener("change", function () {
+      wifi.style.display = kind.value === "wifi" ? "" : "none";
+    });
+
+    btn.addEventListener("click", function () {
+      var Q = window.moxieQR, v = kind.value, payload;
+      try {
+        if (v === "wifi") {
+          var ssid = document.getElementById("qr-ssid").value.trim();
+          if (!ssid) { st.textContent = "enter an SSID first"; return; }
+          payload = Q.encodeWifi(ssid, document.getElementById("qr-pass").value);
+        } else if (v in Q.ENDPOINTS) {
+          payload = Q.encodeEndpoint(v);
+        } else {
+          payload = Q.encodeDebug(v);
+        }
+        Q.render(cv, payload, 4);
+        cv.style.display = "block";
+        st.textContent = payload;
+      } catch (e) {
+        cv.style.display = "none";
+        st.textContent = "QR error: " + e.message;
+      }
+    });
+  })();
+})();
+</script>
+<script>
+/* Rail drawer — on phone-width screens the rail collapses to a handle so the
+ * 3D stage stays visible; the handle toggles it. Pure presentation. */
+(function () {
+  "use strict";
+  var hud = document.getElementById("hud");
+  var t = document.getElementById("rail-toggle");
+  if (!hud || !t) return;
+  var mq = window.matchMedia("(max-width: 700px)");
+  function setClosed(closed) {
+    hud.classList.toggle("rail-closed", closed);
+    t.setAttribute("aria-expanded", String(!closed));
+  }
+  if (mq.matches) setClosed(true);           // start collapsed on phones
+  mq.addEventListener("change", function (e) { if (!e.matches) setClosed(false); });
+  t.addEventListener("click", function () {
+    setClosed(!hud.classList.contains("rail-closed"));
+  });
+})();
+</script>
+<script src="env.js"></script>
+</body>
+</html>

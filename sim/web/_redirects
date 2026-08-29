@@ -1,3 +1,4 @@
-# Serve the landing hub at the site root, keeping the URL clean (no /hub.html).
-# 200 = rewrite (serves hub.html's content at /, URL stays "/").
-/    /hub.html    200
+# The landing hub is now the site index (served at /). Redirect any old
+# /hub or /hub.html links to the root so they keep working.
+/hub        /   301
+/hub.html   /   301
