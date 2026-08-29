@@ -56,8 +56,9 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   uniform-width curved shell from shoulder to tip. No tapering.
 - **Hands:** the arm ends in a **hand** in a **lighter blue** — the **same width as the arm** (the
   rounded lighter-blue end of that same shell), **not a narrow pill/capsule** stuck on the end.
-- **Ears:** **small recessed oval cutouts on the left & right sides of the HEAD** — mic inputs. They're
-  an **extruded/flush cut** (a darker inset oval), **nothing sticking out**.
+- **Ears:** **small oval mic-port markings on the left & right sides of the HEAD**. **Paint them into
+  the head's texture — do NOT model them as separate/intersecting geometry** (that clips and z-fights).
+  Thin, subtle ovals flat on the shell; nothing protruding, nothing sunken.
 - **Heart LED:** on the **body front, high on the chest just under the head**: a **thin white
   horizontal line with a TINY white heart beneath it** — a small, delicate light indicator, **not** a
   big black/solid heart shape.
