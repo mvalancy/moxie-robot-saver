@@ -207,9 +207,15 @@ present on the boards per the FCC photos (cited).
   code — it's a fixed‑function controller configured via registers/flash.
 
 ### Wi‑Fi/BT (BCM4339 / AP6335) — no separate programmer
-- Firmware is **host‑loaded at runtime** (`fw_bcm4339a0.bin` + AP6335 NVRAM over SDIO; BT `.hcd` over
-  UART0) — you don't flash the module; you change the files the RK3288 loads
-  ([device-tree](device-tree.md)). So "reprogramming Wi‑Fi" = editing `/vendor` on the SoC.
+- Firmware is **host‑loaded at runtime** from `/vendor/etc/firmware/` over SDIO (Wi‑Fi) and UART0 (BT) —
+  you don't flash the module; you change the files the RK3288 loads ([device-tree](device-tree.md)). So
+  "reprogramming Wi‑Fi" = editing `/vendor` on the SoC.
+- **Exact blobs a custom build must ship (verified on `vendor.img`, v24.10.803):** the BCM4339 Wi‑Fi
+  firmware is the **`_ag`** (a/g‑band) family — `fw_bcm4339a0_ag.bin` (STA), `fw_bcm4339a0_ag_apsta.bin`
+  (STA+SoftAP), `fw_bcm4339a0_ag_p2p.bin` (Wi‑Fi Direct) — paired with **`nvram_AP6335.txt`** (the AP6335
+  module's calibration/NVRAM), and BT patchram **`bcm4339a0.hcd`**. The DTB selects them via
+  `wifi_chip_type="ap6335"`. (`/vendor/etc/firmware/` also carries the full stock Rockchip BSP blob set
+  for dozens of other BCM/RTL/SSV parts — dormant; only the `4339a0`/`AP6335` files above are loaded.)
 
 ### Not host‑programmable
 RK808 PMIC, RT5640 codec, PCA9635 LED driver, OV2710/GC2053 cameras — configured over I²C by the SoC at
