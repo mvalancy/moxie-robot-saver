@@ -34,7 +34,10 @@ const COL = {
 };
 
 const BODY_TOP = 1.50;            // top of the body (scene units; ~15 in overall)
-const HEAD_PIVOT_Y = 1.30;        // head-tilt pivot, inside the head/body overlap
+const HEAD_PIVOT_Y = 1.60;        // head-tilt pivot, at the top of the stubby neck
+                                  // (head underside ends up just above BODY_TOP, so
+                                  // the neck is visible and the head clears the
+                                  // chest when it tilts)
 const SHOULDER_Y = 1.26;          // arm shell pivots high on the flank
 
 // Motor table: index -> joint. neg/pos are radian magnitudes below/above center.
@@ -409,7 +412,7 @@ headTiltG.position.y = HEAD_PIVOT_Y;
 // head clearance so a full forward tilt doesn't intersect the upper chest, while
 // staying nearly hidden at rest.
 const neckGeo = (() => {
-  let g = new THREE.CylinderGeometry(0.255, 0.30, 0.15, 48, 2);
+  let g = new THREE.CylinderGeometry(0.30, 0.345, 0.22, 48, 2);   // short + CHUNKY
   g.deleteAttribute('uv'); g.deleteAttribute('normal');
   g = mergeVertices(g, 1e-4); g.computeVertexNormals();
   return g;
@@ -418,7 +421,7 @@ const neck = new THREE.Mesh(neckGeo, new THREE.MeshPhysicalMaterial({
   color: new THREE.Color(COL.shell).multiplyScalar(0.82),   // slightly recessed/darker
   roughness: 0.62, clearcoat: 0.25, flatShading: false,
 }));
-neck.position.set(0, BODY_TOP - 0.02, 0);
+neck.position.set(0, BODY_TOP - 0.05, 0);
 neck.castShadow = true;
 neck.receiveShadow = true;
 breatheG.add(neck);

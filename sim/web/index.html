@@ -107,6 +107,11 @@
             <span class="rng-val" id="scene-light-val">0.85</span></label>
           <label class="chk"><input id="idle-on" type="checkbox" checked><span>liveness</span></label>
           <label class="chk"><input id="axes-on" type="checkbox"><span>show axes</span></label>
+          <div id="axis-legend" hidden>
+            <span class="ax ax-x"><i></i>X <em>right / left</em></span>
+            <span class="ax ax-y"><i></i>Y <em>up / down</em></span>
+            <span class="ax ax-z"><i></i>Z <em>front / back</em></span>
+          </div>
         </section>
       </details>
 
@@ -242,7 +247,11 @@
     }
     var axes = document.getElementById("axes-on");
     if (axes && window.moxie && window.moxie.setShowAxes) {
-      axes.addEventListener("change", function () { window.moxie.setShowAxes(axes.checked); });
+      axes.addEventListener("change", function () {
+        window.moxie.setShowAxes(axes.checked);
+        var lg = document.getElementById("axis-legend");
+        if (lg) lg.hidden = !axes.checked;
+      });
     }
   }
   if (window.moxie) wireScene();

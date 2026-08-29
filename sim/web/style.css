@@ -876,3 +876,13 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
 body[data-mic="on"] #mic-btn { border-color: var(--magenta); color: var(--magenta);
   box-shadow: 0 0 0 1px rgba(255,42,109,.25), 0 0 18px rgba(255,42,109,.18); }
 body[data-mic="on"] #mic-btn::before { content: "● "; }
+
+/* axis legend (shown with "show axes") */
+#axis-legend { display: flex; flex-direction: column; gap: 3px; margin: 7px 0 2px 22px; }
+#axis-legend .ax { display: flex; align-items: center; gap: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--text-dim); }
+#axis-legend .ax i { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+#axis-legend .ax em { font-style: normal; color: var(--muted); }
+#axis-legend .ax-x i { background: #ff4136; }
+#axis-legend .ax-y i { background: #2ecc40; }
+#axis-legend .ax-z i { background: #0074ff; }
