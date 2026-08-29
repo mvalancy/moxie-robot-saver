@@ -82,9 +82,10 @@ No disassembly. The robot scans a QR that points it at **your** server.
 1. **Get the robot on Wi-Fi + paired** — [`first-time-setup.md`](first-time-setup.md).
 2. **Point it at your backend**: generate an endpoint QR and show it to Moxie's camera.
 
-   **From a phone, nothing installed** — open the [simulator page](../../sim/web/) (it's a static site,
-   so a Cloudflare Pages deploy works) and use the **Revive a robot** panel in the rail. The endpoint,
-   Wi-Fi and debug QRs are **plain JSON**, so the page builds them client-side; no server, no Python.
+   **From a phone, nothing installed** — open the static **[setup page](../../sim/web/setup.html)**
+   (`setup.html`, deployable to Cloudflare Pages) and follow the two steps: make the **Wi-Fi** code, then
+   the **server** code. The endpoint, Wi-Fi and debug QRs are **plain JSON**, so the page builds them
+   client-side; no server, no Python. (The simulator's **Revive a robot** rail panel does the same thing.)
 
    **From a terminal**, the toolkit does the same thing:
    ```sh

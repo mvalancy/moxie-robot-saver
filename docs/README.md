@@ -14,7 +14,7 @@ run to replace the dead cloud) — plus the shared protocol that ties them toget
 2b. [`../STRUCTURE.md`](../STRUCTURE.md) — how the repo is organized across the three domains.
 3. [`reverse-engineering/FIELD-GUIDE.md`](reverse-engineering/FIELD-GUIDE.md) — everything organized by what you want to do.
 4. [`reverse-engineering/architecture-diagrams.md`](reverse-engineering/architecture-diagrams.md) — the whole system as a hierarchy of diagrams (product → hardware → motor drivers).
-5. [`architecture/overview.md`](architecture/overview.md) · [`architecture/revival-path.md`](architecture/revival-path.md) · [`architecture/moxie-as-a-platform.md`](architecture/moxie-as-a-platform.md).
+5. [`architecture/overview.md`](architecture/overview.md) · [`architecture/revival-path.md`](architecture/revival-path.md) · [`architecture/moxie-as-a-platform.md`](architecture/moxie-as-a-platform.md). · [`architecture/static-experience.md`](architecture/static-experience.md).
 
 > The robot-side docs describe firmware **v3.6.4-Zephyr / OTA v24.10.803** — see
 > [`reverse-engineering/firmware-803-reference.md`](reverse-engineering/firmware-803-reference.md).

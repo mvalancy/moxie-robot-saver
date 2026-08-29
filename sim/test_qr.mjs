@@ -97,6 +97,24 @@ for (const id of ["qr-kind", "qr-make", "qr-canvas", "qr-status", "qr-ssid", "qr
   ok(html.includes(`id="${id}"`), `index.html missing #${id}`);
 ok(html.includes("vendor/qrcode.js"), "index.html must load the vendored qrcode.js");
 ok(html.includes('src="qr.js"'), "index.html must load qr.js");
+ok(html.includes("setup.html"), "sim HUD should link to the full static setup page");
+
+// ---- 5. the standalone parent-app "basics" page is wired ---------------------
+// setup.html is the phone-first, server-free revival page — the parent-app basics
+// hosted statically. It must reuse qr.js (not reimplement the encoders) so it can
+// never drift from the byte-parity guarantee above.
+const setup = readFileSync(join(here, "web", "setup.html"), "utf8");
+ok(setup.includes("vendor/qrcode.js") && setup.includes('src="qr.js"'),
+   "setup.html must load the vendored qrcode.js + qr.js");
+ok(setup.includes("moxieQR.encodeWifi") || setup.includes("Q.encodeWifi"),
+   "setup.html must build the Wi-Fi code via qr.js (no reimplemented encoder)");
+ok(setup.includes("moxieQR.encodeEndpoint") || setup.includes("Q.encodeEndpoint"),
+   "setup.html must build the server code via qr.js");
+for (const id of ["ssid", "pass", "band", "endpoint", "cv-wifi", "cv-ep"])
+  ok(setup.includes(`id="${id}"`), `setup.html missing #${id}`);
+// the band values must be the firmware's WifiBandSelect enum names
+for (const band of ["ANY", "ONLY_24G", "ONLY_50G"])
+  ok(setup.includes(`"${band}"`), `setup.html missing band value ${band}`);
 
 // ---- report ------------------------------------------------------------------
 if (fails.length) {
@@ -106,4 +124,4 @@ if (fails.length) {
 }
 console.log(`✅ qr tests OK — ${CASES.length} payloads` +
             (py ? " byte-identical to the python toolkit" : " (parity skipped)") +
-            ", enum + HUD wiring verified`".slice(0, -1));
+            ", enum + HUD + setup.html wiring verified`".slice(0, -1));

@@ -20,6 +20,7 @@ Inter + JetBrains Mono). Point Cloudflare Pages at it and it works. What changes
 | **Conversation** (talk → reply → gestures) | ✅ works | **stub brain** emits real behavior markup |
 | Mic button | ✅ degrades | falls back to a **scripted child line** (no STT model) |
 | **Revival QR** (re-home a real robot) | ✅ works | payloads are plain JSON, built client-side |
+| **Setup page** (`setup.html`) — parent-app basics | ✅ works | phone-first Wi-Fi + server QR, no server |
 | **Live bus** (a REAL robot connecting) | ❌ self-host | needs your MQTT broker + TLS |
 
 The one thing on that list that isn't a demo is the **revival QR**: the codes that re-home a robot are
