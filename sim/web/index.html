@@ -50,6 +50,7 @@
     <h1>MOXIE<span class="sep">&middot;</span>SIL</h1>
     <span class="tag">v24.10.803</span>
     <span class="tag dim">SOFTWARE-IN-THE-LOOP</span>
+    <span class="disclaimer">Unofficial fan project &mdash; <strong>not affiliated with, endorsed by, or connected to Embodied, Inc.</strong> &ldquo;Moxie&rdquo; is their trademark. Built for fun, to keep retired robots alive. <a href="https://github.com/mvalancy/moxie-robot-saver" target="_blank" rel="noopener">GitHub &#8599;</a></span>
   </div>
   <div class="linkstate">
     <span id="link-dot" class="dot" aria-hidden="true"></span>
@@ -86,6 +87,16 @@
       <input id="speech-input" type="text" placeholder="transmit line&hellip;" autocomplete="off">
       <button id="speech-btn">Say</button>
     </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="tick"></span>Audio<span class="hint">piper tts &middot; sfx</span></h2>
+    <label class="chk"><input id="audio-on" type="checkbox" checked><span>sound</span></label>
+    <div class="row" style="margin-top:6px">
+      <input id="tts-base" type="text" placeholder="http://127.0.0.1:8081">
+      <button id="tts-test">Test</button>
+    </div>
+    <p id="tts-status" class="hint">piper tts service</p>
   </section>
 
   <section class="card">
@@ -133,6 +144,7 @@
 <script type="module" src="moxie.js"></script>
 <script src="./vendor/mqtt.min.js"></script>
 <script src="bridge.js"></script>
+<script src="audio.js"></script>
 <script>
 /* HUD glue — mirrors the #bus-status text (written by bridge.js) onto
  * body[data-bus] so CSS can color the status line, the topbar link lamp,
@@ -180,6 +192,31 @@
   }
   if (window.moxie) wireScene();
   else window.addEventListener("moxie-ready", wireScene, { once: true });
+
+  // Audio: SAY speaks via Piper; mute toggle; TTS endpoint + test.
+  (function wireAudio() {
+    var say = document.getElementById("speech-btn");
+    var inp = document.getElementById("speech-input");
+    var on = document.getElementById("audio-on");
+    var base = document.getElementById("tts-base");
+    var test = document.getElementById("tts-test");
+    var st = document.getElementById("tts-status");
+    function speak(t) { if (t && window.moxieAudio) window.moxieAudio.speak(t); }
+    if (say) say.addEventListener("click", function () { speak((inp && inp.value || "").trim()); });
+    if (inp) inp.addEventListener("keydown", function (e) { if (e.key === "Enter") speak(inp.value.trim()); });
+    if (on) on.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setEnabled(on.checked); });
+    if (base && window.moxieAudio) base.value = window.moxieAudio.getTtsBase();
+    if (base) base.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setTtsBase(base.value.trim()); });
+    if (test) test.addEventListener("click", function () {
+      if (!window.moxieAudio) return;
+      if (st) st.textContent = "synthesizing…";
+      fetch(window.moxieAudio.getTtsBase().replace(/\/$/, "") + "/health")
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (st) st.textContent = j.ok ? ("voice: " + j.voice) : "tts unavailable"; })
+        .catch(function () { if (st) st.textContent = "tts unreachable — run sim/tts/server.py"; });
+      window.moxieAudio.speak("Hi! I am Moxie. It is nice to meet you.");
+    });
+  })();
 })();
 </script>
 </body>

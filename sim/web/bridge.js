@@ -110,6 +110,7 @@
     }
     if (shown.size && window.moxie.showIcons) {
       window.moxie.showIcons([...shown]); status(`icons: ${[...shown].join(", ")}`);
+      if (window.moxieAudio) window.moxieAudio.sfx("icon");
       if (hasClear) setTimeout(() => window.moxie.clearIcons && window.moxie.clearIcons(), 4000);
     }
   }
@@ -123,7 +124,10 @@
     if (typeof msg.emotion === "number" && EMOTION_TO_FACE[msg.emotion])
       window.moxie && window.moxie.setFace(EMOTION_TO_FACE[msg.emotion]);
     applyMarkup(out.markup || "");
-    if (text) { status(`💬 "${text.slice(0, 48)}"`); addTranscript("moxie", text); }
+    if (text) {
+      status(`💬 "${text.slice(0, 48)}"`); addTranscript("moxie", text);
+      if (window.moxieAudio) window.moxieAudio.speak(text);   // Piper TTS out
+    }
   }
 
   // ---- connection ----
@@ -138,6 +142,7 @@
     client = mqtt.connect(url, { reconnectPeriod: 3000, connectTimeout: 8000 });
     client.on("connect", () => {
       status(`● live on ${url}`);
+      if (window.moxieAudio) window.moxieAudio.sfx("connect");
       client.subscribe("/devices/+/commands/remote_chat");   // Moxie's replies
       client.subscribe("/devices/+/events/remote-chat");     // the child's utterances
       client.subscribe("/devices/+/config");
@@ -145,7 +150,8 @@
     });
     client.on("reconnect", () => status(`reconnecting ${url}…`));
     client.on("error", (e) => status(`error: ${e && e.message ? e.message : e}`));
-    client.on("close", () => status(`○ disconnected`));
+    client.on("close", () => { status(`○ disconnected`);
+      if (window.moxieAudio) window.moxieAudio.sfx("disconnect"); });
     client.on("message", (topic, payload) => route(topic, payload.toString()));
   }
 
@@ -218,7 +224,8 @@
     let speech = msg.speech || "";
     for (const ln of msg.extra_lines || [])
       if (ln.context_type === "input" && ln.text) speech = ln.text;
-    if (speech) addTranscript("user", speech);
+    if (speech) { addTranscript("user", speech);
+      if (window.moxieAudio) window.moxieAudio.sfx("listen"); }
   }
 
   // ---- wire the panel once moxie + DOM are ready ----
