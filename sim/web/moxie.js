@@ -863,7 +863,8 @@ function makeArm(side) {  // side = -1 left, +1 right
   registerAxisNode(side > 0 ? 'armRootL (robot LEFT, +X)' : 'armRootR (robot RIGHT, -X)', armRoot);
   registerAxisNode(side > 0 ? 'shoulderL (motor 0)' : 'shoulderR (motor 2)', shoulder);
   registerAxisNode(side > 0 ? 'elbowL (spring)' : 'elbowR (spring)', elbow);
-  return { shoulder, elbow };
+  // fold inward = toward the body, which is -Z rotation on +X and +Z on -X
+  return { shoulder, elbow, elbowSign: -side };
 }
 
 // Handedness: the motor names (L/R) are from the ROBOT's own perspective — the
@@ -960,7 +961,7 @@ const motorNodes = [
 // commanded fold. With the arm hanging at the side the body blocks the spring and
 // the forearm is held open (~0 fold); as the shoulder lifts the arm clear, the
 // spring closes it. The commanded fold adds on top and always wins if larger.
-const ELBOW_MAX_BEND = 1.85;        // mechanical stop: how far the spring can fold it
+const ELBOW_MAX_BEND = 0.85;        // mechanical stop (~49deg) — a gentle spring fold
 const ELBOW_FULL_AT   = 1.15;        // shoulder angle (rad) at which the bend maxes out
 // The elbow is not driven. The spring pulls the forearm closed; the body blocks it
 // while the arm hangs at the side. As the shoulder lifts the arm clear, the bend
@@ -1663,8 +1664,10 @@ function animate() {
   // past what the body allows).
   // the spring responds to how far the arm has swung clear of the body, on either axis
   // The elbow folds about Z (in the arm's own plane, toward the body).
-  armL.elbow.rotation.z =  springElbow(Math.hypot(a[0] + live[0], a[1] + live[1]));
-  armR.elbow.rotation.z = -springElbow(Math.hypot(a[2] + live[2], a[3] + live[3]));
+  // elbowSign is baked into each arm at build time (mirrored by `side`), so the
+  // same positive fold value produces a symmetric inward fold on both arms.
+  armL.elbow.rotation.z = armL.elbowSign * springElbow(Math.hypot(a[0] + live[0], a[1] + live[1]));
+  armR.elbow.rotation.z = armR.elbowSign * springElbow(Math.hypot(a[2] + live[2], a[3] + live[3]));
   headTiltG.rotation.x     = a[4] + live[4];
   headRollG.rotation.z     = liveness.master * liveness.w[4] * liveness.roll;
   yawG.rotation.y          = a[5] + live[5];
