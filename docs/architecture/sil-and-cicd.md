@@ -66,10 +66,10 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   toward the upper arm. No tilted/skewed hinge sweeping the forearm across the body.
   **Shoulders are OUT-ONLY on the in/out axis** — the arm cannot swing into the body, so that control
   rests at **0** (arm against the side), not centred. **The elbow is NOT a controllable DOF — it is a pure spring mechanism** (no slider, no commanded
-  value): its bend is **derived entirely from the shoulder angle**. At the **rest pose (shoulder `16384`)** the arm hangs at the side with the forearm pointing
-  **straight down** — zero fold. Folding is driven by **travel above rest**: as the shoulder lifts the
-  arm the hand leaves the body and the spring smoothly closes the elbow, reaching **max bend after
-  `13064` of travel** (≈ shoulder 29448) and holding there. The curve is smoothstepped end-to-end so there is
+  value): its bend is **derived entirely from the shoulder angle**. The fold is driven by the shoulder's **OUT/IN axis** (motors 1/3) — *not* up/down: it's the arm
+  swinging **away from the body** that releases the spring. At rest (out/in `0`, arm flat against the
+  side) the forearm points **straight down**, zero fold; as the arm swings out the spring closes the
+  elbow, reaching **max bend at `13064`**. Raising the arm up/down alone leaves the forearm straight. The curve is smoothstepped end-to-end so there is
   **no step** at the threshold — so the fold stays at its stop while the arm
   is away from the side, and opens only inside the narrow contact band as the arm returns. The spring pulls the forearm **closed**; the
   **body pushes it back open** when the arm rests against the side. So the elbow's resting fold is a

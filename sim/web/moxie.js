@@ -990,12 +990,11 @@ const ELBOW_FULL_AT   = 1.15;        // shoulder angle (rad) at which the bend m
 // toward the body and the fold eases out, reaching flat at the top of travel.
 const ELBOW_MAX_AT = 13064;         // shoulder value where the fold is fully closed
 function springElbowFromMotor(v) {
-  // At the REST pose (shoulder 16384) the arm hangs at the side and the forearm
-  // points STRAIGHT DOWN — zero fold. Folding is driven by travel ABOVE rest: as
-  // the shoulder lifts the arm, the hand leaves the body and the spring closes
-  // the elbow, reaching max bend by ELBOW_MAX_AT of travel. Below rest (arm
-  // pressed down/back) it stays straight. Smoothstep => no step at either end.
-  const travel = v - MOTOR_CENTER;                               // + = lifted above rest
+  // Driven by the shoulder OUT/IN axis, which rests at 0 (arm flat against the
+  // body) — there the forearm points STRAIGHT DOWN, zero fold. As the arm swings
+  // out, the body stops holding it and the spring closes the elbow, reaching max
+  // bend at ELBOW_MAX_AT. Smoothstep => no step at either end.
+  const travel = v;                                              // out/in rests at 0 (fromZero)
   const t = Math.min(1, Math.max(0, travel / ELBOW_MAX_AT));     // 0 straight .. 1 max fold
   const eased = t * t * (3 - 2 * t);                             // smoothstep (flat slope both ends)
   return ELBOW_MAX_BEND * eased;
@@ -1687,8 +1686,11 @@ function animate() {
   // The elbow folds about Z (in the arm's own plane, toward the body).
   // elbowSign is baked into each arm at build time (mirrored by `side`), so the
   // same positive fold value produces a symmetric inward fold on both arms.
-  armL.elbow.rotation.z = armL.elbowSign * springElbowFromMotor(motorValues[0]);
-  armR.elbow.rotation.z = armR.elbowSign * springElbowFromMotor(motorValues[2]);
+  // The spring is released by the arm swinging AWAY from the body — the OUT/IN
+  // axis (motors 1/3) — not by raising it up/down. With the arm against the side
+  // the body holds the forearm straight down; as it swings out, the elbow folds.
+  armL.elbow.rotation.z = armL.elbowSign * springElbowFromMotor(motorValues[1]);
+  armR.elbow.rotation.z = armR.elbowSign * springElbowFromMotor(motorValues[3]);
   headTiltG.rotation.x     = a[4] + live[4];
   headRollG.rotation.z     = liveness.master * liveness.w[4] * liveness.roll;
   yawG.rotation.y          = a[5] + live[5];
