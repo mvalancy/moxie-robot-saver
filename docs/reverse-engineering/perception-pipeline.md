@@ -51,6 +51,31 @@ flowchart LR
 - **Barge-in**: `Interrupt` / `AllowInterrupt{allow}` / `CutoffStatistics` — lets a child interrupt
   Moxie mid-sentence (and measures how often speech was cut off).
 
+#### STT response wire format (`DeepgramResponse`)
+What a revival server's STT must **return** — a **Deepgram-compatible** result the robot already parses:
+
+```proto
+message DeepgramResponse {
+  float duration = 1; float start = 2;
+  bool  is_final = 3;                 // this segment is final (vs interim)
+  bool  speech_final = 4;             // end-of-utterance (endpointing) → close the turn
+  message Channel {
+    message Alternative {
+      string transcript = 1; float confidence = 2;
+      message Word { string word = 1; float start = 2; float end = 3; float confidence = 4; }
+      repeated Word words = 3;        // per-word timings + confidence
+    }
+    repeated Alternative alternatives = 1;   // n-best
+  }
+  Channel channel = 5;
+}
+```
+
+So a self-hosted STT (Whisper, Vosk, …) just needs to emit `{transcript, confidence, words[], is_final,
+speech_final}` in this shape — `speech_final=true` is the endpoint that ends the child's turn. Timing
+telemetry rides alongside in **`ASRAnalytics`** (`detected_speech_start/end`, `asr_first_response`,
+`total/max/min_send_time`, `final_result_count`, `error_message[]`) — a server can populate or omit it.
+
 ### Wake-word & VAD (fully on-device)
 
 Waking Moxie and detecting speech happen **entirely on the robot** — a server never handles wake; it
@@ -83,6 +108,11 @@ audio/STT only once Moxie is already awake and hears speech — you don't implem
 - **`TTSMark{time, start, end, type, value}`** — timeline marks lifted from the markup, so the Unity
   face syncs **visemes/lip-sync and gestures** to the audio. `SpeechPlaybackState{isPlaying}` reports
   playback.
+- **`CloudTTSSupplement{event_id, chunk_num, text, markup, tts_engine, translation_time,
+  automarkup_time, synthesis_time, total_time}`** — per-chunk metadata that reveals the **server-side TTS
+  pipeline stages**: *translate* → *auto-markup* (insert behavior marks) → *synthesize*, then chunked
+  back (`chunk_num`). It names the `tts_engine` used and times each stage — a revival server can send
+  this (with zeros) or skip it; it's analytics, not required for playback.
 
 **For a revival server:** you terminate STT (proxy Deepgram or swap any STT with the same framing),
 answer `RemoteChat`, then satisfy `CloudTTSRequest` by synthesizing audio (any TTS) and returning a
