@@ -1,5 +1,5 @@
 {
- "generated": "ea2b4eb-dirty",
+ "generated": "a53d7ab-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -167,7 +167,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 18621,
+   "bytes": 18786,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",

@@ -197,8 +197,9 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
   mirrors the real REST/MQTT shapes). All four surfaces done; only the Pages deploy itself remains (needs
   the owner's account). Map + roadmap: [`static-experience.md`](static-experience.md).
 
-Progress is tracked here (check items off) and mirrored in
-[`work/firmware-re/progress/PLAN.md`](../../work/firmware-re/progress/PLAN.md).
+Progress is tracked here (check items off) and in [`ROADMAP.md`](../../ROADMAP.md). A lightweight
+per-tick status mirror also lives at `work/firmware-re/progress/PLAN.md` — but `work/` is git-ignored
+(it holds the multi-GB firmware images), so that file is **local working state only**, not published.
 
 ## The layered session timers
 
