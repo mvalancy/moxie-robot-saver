@@ -42,10 +42,13 @@ const SHOULDER_Y = 1.26;          // arm shell pivots high on the flank
 // Ranges: shoulders -20..+100 deg, elbows -25..+85 deg, head tilt +-22 deg,
 // body yaw +-60 deg, body lean +-16 deg.
 const MOTOR_DEFS = [
-  { name: 'L shoulder (up/down)', axis: 'z', sign: -1, neg: 0.35, pos: 1.75 }, // 0
-  { name: 'L elbow (in/out)',     axis: 'z', sign: +1, neg: 0.44, pos: 1.48 }, // 1
-  { name: 'R shoulder (up/down)', axis: 'z', sign: +1, neg: 0.35, pos: 1.75 }, // 2
-  { name: 'R elbow (in/out)',     axis: 'z', sign: -1, neg: 0.44, pos: 1.48 }, // 3
+  // sign follows the SIDE the arm sits on: robot-left = +X (viewer's right),
+  // robot-right = -X. Raising an arm rotates away from the body, so the sign is
+  // mirrored between the two sides (see makeArm / the armL=+1 wiring below).
+  { name: 'L shoulder (up/down)', axis: 'z', sign: +1, neg: 0.35, pos: 1.75 }, // 0  (+X arm)
+  { name: 'L elbow (in/out)',     axis: 'z', sign: -1, neg: 0.44, pos: 1.48 }, // 1
+  { name: 'R shoulder (up/down)', axis: 'z', sign: -1, neg: 0.35, pos: 1.75 }, // 2  (-X arm)
+  { name: 'R elbow (in/out)',     axis: 'z', sign: +1, neg: 0.44, pos: 1.48 }, // 3
   { name: 'Head tilt (nod)',      axis: 'x', sign: -1, neg: 0.38, pos: 0.38 }, // 4
   { name: 'Body turn (yaw)',      axis: 'y', sign: +1, neg: 1.05, pos: 1.05 }, // 5
   { name: 'Body lean (F/B)',      axis: 'x', sign: +1, neg: 0.28, pos: 0.28 }, // 6
