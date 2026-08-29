@@ -157,6 +157,30 @@ OpenMoxie's `moxie_server.py` implements — the concrete recipe for the [`serve
   (nickname, age) that content prompts use (`child_pii.nickname`) comes from the **account** (parent-app
   REST, [`rest-api.md`](rest-api.md)) via `RemoteChatRequest.family`/`settings`, not this proto.
 
+## Conversation & learning telemetry (robot → cloud)
+
+Beyond health, the brain emits per-turn **analytics** a server can log for the parent dashboard (or
+ignore for a minimal revival). Three previously-undocumented messages:
+
+- **`RemoteResponseData`** (`embodied.robotbrain`) — the brain's **affect + engagement scoring** of the
+  child, computed each turn: `positive_emotion_score`, `negative_emotion_score`,
+  `dialog_act_engagement_score`, `positive_sentiment_score`, `negative_sentiment_score` (all `float`),
+  plus `instance_id`. This is the quantified read of how the child is feeling/engaging — it feeds the
+  **recommender's sentiment weight** ([content-and-conversation](content-and-conversation.md#the-recommender))
+  and the parent-app mood reports. A revival server can compute these (e.g. from an LLM/sentiment model)
+  or send zeros.
+- **`SELUpdate`** / **`SELUpdateSet`** (`embodied.logging`) — a **Social-Emotional-Learning progress**
+  event: `{goal_uuid, level_uuid, module_id, timestamp}`. Emitted when the child advances a STAR
+  goal/level ([the SEL curriculum](content-and-conversation.md#star-goals-the-sel-curriculum)); the
+  batched `SELUpdateSet` syncs progress. This is the core learning-tracking signal — a server persists
+  it to drive the recommender and parent reports.
+- **`TopicChange`** (`embodied.robotbrain`) — logs a **conversation topic transition**:
+  `{user, bot, newTopic, currentModule, currentContentID, timestamp}` — the utterance pair and the topic
+  it moved to. Useful for transcripts/analytics; safe to no-op.
+
+All three carry the usual `software_version` (100) / `module_name` (101) envelope fields and arrive on
+the `events` topic like other robot→cloud reports.
+
 ## Robot authentication (device identity)
 
 The robot authenticates with the **Google Cloud IoT-Core device model**, kept post-migration:
