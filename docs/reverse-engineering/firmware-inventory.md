@@ -63,6 +63,50 @@ WAPPushManager webview`
 - **`/vendor/bin`** — Rockchip HAL binaries + `rockchip.drmservice`, `rk_store_keybox` (Widevine),
   `tee-supplicant` (OP-TEE), `insmod`/`modprobe`.
 
+## Embodied native libraries (`bo-android`, `armeabi-v7a`)
+
+The on-device processing lives in **30 native `.so`s** inside `bo-android.apk` — the modules a custom
+brain would replace or reuse. Sizes indicate where the weight is (embedded ML models inflate several):
+
+| Library | Size | Role |
+|---|--:|---|
+| `libbo-audio.so` | **176 MB** | Audio pipeline (STT/Kaldi models, DSP, AEC) — the heaviest lib |
+| `libbo-brain.so` | **147 MB** | The **brain** — dialog/decision + protobuf (`embodied.logging.CloudQueryResponse`) |
+| `libbo-analytics.so` | 89 MB | On-device analytics / media analysis |
+| `libbo-vision.so` | 88 MB | Vision pipeline (faces/people/pose) |
+| `libwatchdog.so` | 68 MB | Watchdog (bundles models/assets) |
+| `libbo-logger.so` | 60 MB | Logging/telemetry buffering |
+| **`libmxnet.so`** | 46 MB | **Apache MXNet** deep-learning runtime (`_backward_Embedding` → **face embeddings**) |
+| `libcerevoice_eng.so` | 42 MB | **CereVoice** DNN TTS engine |
+| `libbo-fusion.so` | 39 MB | Sensor fusion |
+| `libbo-system-monitor.so` | 34 MB | `BoSystemMonitor` (health metrics, [cloud-protocol](cloud-protocol.md)) |
+| `libchatscript.so` | 25 MB | **ChatScript** offline dialog ([content-and-conversation](content-and-conversation.md)) |
+| `libbsk.so` | 22 MB | **OpenCV** classical vision — `cv::CascadeClassifier` (Haar/LBP detection) |
+| `libdevset.so` | 20 MB | Device settings / provisioning |
+| `libbo-dispatch.so` | 8 MB | **ZMQ bus** dispatcher ([robot-ipc-protocol](robot-ipc-protocol.md)) |
+| **`libtensorflowlite_gpu_delegate.so`** + **`libtensorflowlite.so`** | 6 + 2.4 MB | **TensorFlow Lite** (+ GPU delegate) — wake-word / VAD ([perception-pipeline](perception-pipeline.md)) |
+| **`libxgb.so`** | 0.9 MB | **XGBoost** gradient-boosted trees (classification/scoring) |
+| `librfc.so` | 0.6 MB | classifier helper (random-forest-class) |
+| `libzbar.so` | 0.5 MB | **ZBar** QR/barcode decode |
+| `librobinface.so` | 30 KB | face-render interface (thin) |
+| `liblizzerface.so` | 29 KB | **Lizard MCU** interface ([hardware-map](hardware-map.md)) |
+| `libnative-lib.so` | 102 KB | `lizardPktAssembler` (MCU DFU packetizer) |
+| `libusb.so` | 317 KB | libusb (XMOS DFU) |
+| Unity runtime | — | `libunity`, `libmonobdwgc-2.0`, `libMonoPosixHelper`, `libmain`, `libc++_shared`, `libev`, `libiconv` |
+
+### The on-device ML stack — four frameworks
+Moxie runs **four ML runtimes on-device**, not one:
+- **Apache MXNet** (`libmxnet`) — deep nets with an **Embedding** backward op → **face-recognition
+  embeddings** (the enrollment/user-recognition path in [content-and-conversation](content-and-conversation.md#session--sleep-lifecycle)).
+- **TensorFlow Lite** + **GPU delegate** — lightweight inference: wake-word (TRILLsson) + VAD.
+- **XGBoost** (`libxgb`) — gradient-boosted trees for tabular classification/scoring (e.g. recommender/SEL).
+- **OpenCV** (`libbsk`) — classical **cascade classifiers** (Haar/LBP) for fast face/object detection.
+
+For **custom firmware**: a replacement brain must either bundle equivalents (MXNet/TFLite models are the
+hard part — the weights ship *inside* these `.so`s, not as loose files) or offload perception/ASR to a
+server. The thin interface libs (`liblizzerface`, `libnative-lib`, `libbo-dispatch`) are the clean seams
+to keep — they speak the MCU + ZMQ bus this repo documents.
+
 ## Observations
 
 - **No GMS / Play Services / Google apps** beyond `CaptivePortalLogin` + `webview` — a locked-down
