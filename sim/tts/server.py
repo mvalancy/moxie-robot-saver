@@ -40,6 +40,11 @@ def find_voice():
     if v and os.path.exists(v):
         return v
     hits = sorted(glob.glob(os.path.join(HERE, "voices", "*.onnx")))
+    # prefer amy (warmer, better for Moxie) over whatever sorts first
+    for pref in ("amy", "libritts", "lessac"):
+        for h in hits:
+            if pref in os.path.basename(h).lower():
+                return h
     return hits[0] if hits else None
 
 PY_BIN, VOICE = find_python(), find_voice()
