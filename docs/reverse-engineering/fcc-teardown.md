@@ -47,8 +47,9 @@ What the internal photos show:
   on the sibling board (`100438` area). This is the **first outside confirmation** of the XMOS DSP that
   [`perception-pipeline.md`](perception-pipeline.md) derived from `xmosdfu`/firmware alone.
 - **Wi-Fi:** a **shielded RF module** with a **u.FL/IPEX antenna connector silkscreened `WIFI` (`J3`)**,
-  near `U16`/`TP17`. Discrete module + external antenna pigtail — **not** an AMPAK part as older
-  community notes assumed.
+  near `U16`/`TP17`. Discrete module + external antenna pigtail. The DTB names it **`ap6335`**, i.e. an
+  **AmPak AP6335** (Broadcom BCM4339 inside) — so "AMPAK" community notes are **correct**; the FCC photo
+  can't read the shield marking, so it corroborates a discrete BCM4339 module without refuting AMPAK.
 - **Silkscreened connectors:** **`LIZARD`** (the MCU board), **`LED`**, **`SPK`**, **`MICS`** (FFC),
   **`PROJECTOR`** (FFC, `J4`), **`CAMERA`**, plus power.
 
@@ -143,7 +144,7 @@ Photos exhibit, page 6.
 | 2 | **Samsung DDR3 SDRAM** ×2 | Main memory | `SEC …` (Samsung; full P/N not legible) | **Read (partial)** — two packages flanking the SoC **[R1‑INT p.3]** |
 | 3 | **eMMC (Samsung)** | Flash storage (`by-name` GPT) | `SEC …` (P/N not legible) | **Read (partial)** **[R1‑INT p.3]**; partitioning from [firmware-image](firmware-image.md) |
 | 4 | **XMOS VSM02C** | Audio DSP (wake/VAD/DFU) | **`XMOS VSM02C` / `GT170802` / `PBPS13‑AM`** | **Read** QFP on `100438` **[R1‑INT p.6]**; role from [perception-pipeline](perception-pipeline.md) |
-| 5 | **Broadcom BCM4339** (AzureWave **AP6335** module) | Wi‑Fi 802.11ac + BT | *module shield, P/N not legible* | **DTB/FW** ([device-tree](device-tree.md)); **module + u.FL `WIFI J3` located** **[R1‑INT p.6]**; 5 GHz band **[R1‑TR]** |
+| 5 | **Broadcom BCM4339** (**AmPak AP6335** module) | Wi‑Fi 802.11ac + BT | *module shield, P/N not legible* | **DTB/FW** (`wifi_chip_type="ap6335"`, [device-tree](device-tree.md)); **module + u.FL `WIFI J3` located** **[R1‑INT p.6]**; 5 GHz band **[R1‑TR]** |
 | 6 | **ST STM32F071VBT6** | "Lizard" motor/sensor MCU (Cortex‑M0, 128 KB) | **`STM32F071VBT6` / `AA027 98` / `TWN AA 105`** | **Read** LQFP‑100 on `"THE LIZARD"` `#101557` **[R2‑INT p.5]**; role from [hardware-map](hardware-map.md) |
 | 7 | **TI DLPC3430** | DLP projector controller (the face) | *not marking‑read* | **DTB/FW** (i2c5 @0x1b, [device-tree](device-tree.md)); DLP **engine located** **[R1‑INT p.17]** |
 | 8 | **TI DLPA‑class PMIC + DMD** | Projector power + micromirror | *not marking‑read* | **DTB/FW**; projector assembly **[R1‑INT p.17]** |
@@ -240,7 +241,9 @@ boot; no standalone firmware to flash.
 ## What this resolves (and what it doesn't)
 
 **Resolved by these filings:**
-- ✅ Dual-band 5 GHz (U-NII-1) radio — corroborates BCM4339-class Wi-Fi; **kills the "AMPAK" claim**.
+- ✅ Dual-band 5 GHz (U-NII-1) radio — corroborates the **AmPak AP6335 / BCM4339** module (AP6335 *is* an
+  AMPAK part, per the DTB `wifi_chip_type="ap6335"`); the shield P/N isn't legible, so the photo confirms
+  a discrete BCM4339 module without reading the marking.
 - ✅ **XMOS DSP** confirmed by direct chip marking (`XMOS VSM02C`).
 - ✅ **Lizard MCU = `STM32F071VBT6`**, exact part.
 - ✅ **`LOAD` (download-mode) button exists on the mainboard**; `RESET`/`POWER` alongside.

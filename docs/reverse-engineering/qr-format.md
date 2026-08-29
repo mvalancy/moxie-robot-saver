@@ -1,5 +1,7 @@
 # Moxie Pairing QR Code Format
 
+> Analyzed build: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9) — see [`firmware-803-reference.md`](firmware-803-reference.md).
+
 > **📖 About this document.** This is a *clean-room* description of the **original** Moxie parent app
 > (`com.embo.embodied.parent` v2.2.2), written by reverse-engineering it. **The decompiled app is NOT
 > included in this repository, and you do not need it.** Any file or class names below (e.g.

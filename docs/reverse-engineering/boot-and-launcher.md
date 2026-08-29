@@ -1,5 +1,7 @@
 # 🚦 Boot & lifecycle — the Launcher state machine
 
+> Analyzed build: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9) — see [`firmware-803-reference.md`](firmware-803-reference.md).
+
 > **What this is.** How the robot boots into its experience and switches modes — the `me.embodied
 > .services.Launcher` state machine that starts/stops the `bo-*` components. This is the app-level
 > lifecycle *above* the Android boot in [`firmware-image.md`](firmware-image.md): what a custom

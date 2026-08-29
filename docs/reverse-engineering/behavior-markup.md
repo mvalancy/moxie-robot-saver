@@ -1,5 +1,7 @@
 # 🎭 Behavior markup — making Moxie move & emote while it talks
 
+> Analyzed build: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9) — see [`firmware-803-reference.md`](firmware-803-reference.md).
+
 > **What this is.** The inline command language a server embeds in Moxie's speech to drive its **body,
 > face, audio, and screen** in sync with words. One `ChatResponse`'s text carries `<mark
 > name="cmd:…">` tags; the brain's markup engine turns them into behavior-tree, motor, LED, and audio

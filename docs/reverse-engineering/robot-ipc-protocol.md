@@ -1,5 +1,7 @@
 # 🧠 On-robot IPC — the ZeroMQ + protobuf message bus
 
+> Analyzed build: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9) — see [`firmware-803-reference.md`](firmware-803-reference.md).
+
 > **What this is.** How Moxie's on-device modules talk to *each other* (not the cloud). The robot is
 > a set of processes wired together by a **ZeroMQ pub/sub bus carrying Protocol Buffers**, routed by
 > each message's protobuf **descriptor full-name**. Speak this bus and you can drive Moxie's face,

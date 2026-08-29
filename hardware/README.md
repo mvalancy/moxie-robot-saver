@@ -17,7 +17,7 @@ Reference facts about the Moxie hardware.
   renders the face. See [`hardware-map.md`](../docs/reverse-engineering/hardware-map.md).
 - Body is a **"Lizard" STM32 MCU** (motors/touch/IMU/LED/battery); audio via an **XMOS** DSP. Three
   processors total — [`perception-pipeline.md`](../docs/reverse-engineering/perception-pipeline.md).
-- **Wi-Fi/BT is a Broadcom `BCM4339` (AzureWave `AP6335`)** combo — **not** an AMPAK module. Wi-Fi over
+- **Wi-Fi/BT is an `AmPak AP6335`** combo module (Broadcom **`BCM4339`** inside; DTB `wifi_chip_type="ap6335"`). Wi-Fi over
   SDIO, BT over UART0. See [`device-tree.md`](../docs/reverse-engineering/device-tree.md).
 - Lantronix (ex-Intrinsyc) provided **Secure Boot + AVB + a camera auto-exposure library** as
   engineering services ([case study](https://www.lantronix.com/resources/case-studies/moxie/); mapped
