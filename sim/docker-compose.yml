@@ -1,0 +1,38 @@
+# One-command Moxie SIL: broker + supervisor + web UI (+ optional virtual robot).
+#   docker compose -f sim/docker-compose.yml up           # core stack
+#   docker compose -f sim/docker-compose.yml --profile demo up   # + a looping virtual robot
+# Then open http://localhost:8080 and click "Connect" (broker WS on :9001).
+name: moxie-sil
+services:
+  broker:
+    image: eclipse-mosquitto:2
+    ports: ["1883:1883", "9001:9001"]          # 1883 MQTT (supervisor/robot), 9001 WS (browser UI)
+    volumes: ["./broker/ci-mosquitto.conf:/mosquitto/config/mosquitto.conf:ro"]
+    restart: unless-stopped
+
+  supervisor:                                    # the mqtt/ robot-cloud supervisor (echo app = no LLM)
+    build: ../mqtt
+    environment:
+      MOXIE_APP: echo
+      MOXIE_MQTT_HOST: broker
+      MOXIE_MQTT_PORT: "1883"
+    depends_on: [broker]
+    restart: unless-stopped
+
+  web:                                           # the WebGL 3D Moxie UI, served static
+    image: nginx:alpine
+    ports: ["8080:80"]
+    volumes: ["./web:/usr/share/nginx/html:ro"]
+    depends_on: [broker]
+    restart: unless-stopped
+
+  virtual-robot:                                 # optional: drives a scripted conversation on a loop
+    build: ../mqtt                               # reuse the image (has paho-mqtt)
+    profiles: ["demo"]
+    command: >
+      python virtual_moxie.py --host broker --port 1883
+      --scenario scenarios/basic.json --loop-seconds 25 --quiet
+    working_dir: /sim
+    volumes: ["./:/sim:ro"]
+    depends_on: [broker, supervisor]
+    restart: unless-stopped

@@ -170,6 +170,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=15.0)
     ap.add_argument("--device-id", default=None, help="override the d_<uuid> device id")
     ap.add_argument("--scenario", default=None, help="path to a scenario JSON (turns list)")
+    ap.add_argument("--loop-seconds", type=float, default=0.0,
+                    help="with --scenario: replay every N seconds (0 = once, for the demo stack)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -180,16 +182,22 @@ def main():
             spec = json.load(fh)
         turns = spec.get("turns", spec) if isinstance(spec, dict) else spec
         name = spec.get("name", args.scenario) if isinstance(spec, dict) else args.scenario
-        try:
-            passed, total = vm.run_scenario(turns)
-        except Exception as e:
-            print(f"❌ scenario {name}: exception: {e}"); sys.exit(1)
-        if passed == total:
-            print(f"✅ scenario '{name}': {passed}/{total} turns OK"); sys.exit(0)
-        print(f"❌ scenario '{name}': {passed}/{total} turns OK")
-        for e in vm.errors:
-            print("   -", e)
-        sys.exit(1)
+        while True:                       # --loop-seconds replays for the demo stack
+            vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet)
+            try:
+                passed, total = vm.run_scenario(turns)
+            except Exception as e:
+                print(f"❌ scenario {name}: exception: {e}")
+                if not args.loop_seconds:
+                    sys.exit(1)
+                passed, total = 0, len(turns)
+            mark = "✅" if passed == total else "❌"
+            print(f"{mark} scenario '{name}': {passed}/{total} turns OK")
+            for e in vm.errors:
+                print("   -", e)
+            if not args.loop_seconds:
+                sys.exit(0 if passed == total else 1)
+            time.sleep(args.loop_seconds)
 
     ok = False
     try:

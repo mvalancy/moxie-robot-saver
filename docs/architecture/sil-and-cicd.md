@@ -94,8 +94,9 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
 - [~] **D6 — Scenarios + record/replay.** ✅ started: `sim/scenarios/*.json` scripted conversations +
   `virtual_moxie.py --scenario` + `sim/run_scenarios.sh` (in CI); `basic.json` runs 4/4 turns. ⏳ remaining:
   record a live session and replay into the UI; LLM-app scenarios.
-- [ ] **D7 — Package + deliver.** `docker-compose up` = broker + supervisor + web UI + virtual robot;
-  screenshots/gif in the README; final docs pass; tag a release.
+- [x] **D7 — Package + deliver.** `docker compose -f sim/docker-compose.yml up` = broker + supervisor +
+  web UI (+ `--profile demo` virtual robot); [`sim/README.md`](../../sim/README.md) one-command run.
+  Compose config validated; loop-replay verified. ⏳ optional polish: screenshots/gif, release tag.
 
 Progress is tracked here (check items off) and mirrored in `work/firmware-re/progress/PLAN.md`.
 
