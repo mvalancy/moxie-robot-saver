@@ -1216,10 +1216,12 @@ function drawFace(t) {
   // panel (planar disk UVs), centre (256,256), radius 256; the outermost
   // ~10% of that radius tucks behind the shell (see facePanelGeometry).
 
-  // background — warm off-white screen
-  const bg = fctx.createRadialGradient(256, 270, 70, 256, 270, 310);
-  bg.addColorStop(0, '#f2efe5');
-  bg.addColorStop(1, '#e4dfd1');
+  // background — warm off-white screen, brightest at the centre (it's a PROJECTOR
+  // beam, not a flat LCD): a strong central peak that falls off toward the edges.
+  const bg = fctx.createRadialGradient(256, 280, 40, 256, 280, 300);
+  bg.addColorStop(0, '#fdfbf5');
+  bg.addColorStop(0.55, '#efeadd');
+  bg.addColorStop(1, '#d3ccbc');
   fctx.fillStyle = bg;
   fctx.fillRect(0, 0, W, H);
 
@@ -1235,10 +1237,12 @@ function drawFace(t) {
   fctx.closePath();
   fctx.fill();
 
-  // Cute, Moxie-blue face — NOT dark mime ink. Eyes are a warm cerulean with a
-  // glossy gradient; mouth/brows a soft muted teal so the smile reads gentle.
-  const ink = '#315863';                 // mouth + brows (soft, not harsh black)
-  const eyeCol = '#1ba6dc', eyeColDeep = '#0d6fac';
+  // Cute, GLOWING Moxie face — never dark mime ink. Big glossy cyan eyes that
+  // light up (the projector face emits), soft rounded eyebrows always present so
+  // the face never looks blank, and a gentle smile.
+  const ink = '#3f6f7d';                                   // mouth (soft teal)
+  const browCol = '#5f8390';                               // soft rounded brows
+  const eyeCore = '#9beeff', eyeMid = '#25a9e8', eyeDeep = '#0a5f9e';
 
   // blink factor
   let blinkF = 1;
@@ -1251,42 +1255,59 @@ function drawFace(t) {
   const ry = Math.max(4, 64 * P.eyeH * blinkF);
   for (const s of [-1, 1]) {
     const ex = 256 + s * eyeDX + (P.pupilX + idleEyes.x) * 12;
-    const eg = fctx.createRadialGradient(ex, eyeY - ry * 0.35, Math.min(rx, ry) * 0.2,
+    // 1) soft glow halo — the eyes emit light on the projector screen
+    if (ry > 10) {
+      const halo = fctx.createRadialGradient(ex, eyeY, Math.min(rx, ry) * 0.3, ex, eyeY, rx * 2.1);
+      halo.addColorStop(0, 'rgba(90,210,255,0.50)');
+      halo.addColorStop(0.45, 'rgba(60,180,240,0.18)');
+      halo.addColorStop(1, 'rgba(60,180,240,0)');
+      fctx.fillStyle = halo;
+      fctx.beginPath();
+      fctx.ellipse(ex, eyeY, rx * 2.1, Math.max(ry, rx) * 1.9, 0, 0, Math.PI * 2);
+      fctx.fill();
+    }
+    // 2) eye body — vibrant cyan→blue gradient, bright core (glows)
+    const eg = fctx.createRadialGradient(ex - rx * 0.22, eyeY - ry * 0.38, Math.min(rx, ry) * 0.12,
                                          ex, eyeY, Math.max(rx, ry) * 1.05);
-    eg.addColorStop(0, eyeCol);
-    eg.addColorStop(1, eyeColDeep);
+    eg.addColorStop(0, eyeCore);
+    eg.addColorStop(0.5, eyeMid);
+    eg.addColorStop(1, eyeDeep);
     fctx.fillStyle = eg;
     fctx.beginPath();
     fctx.ellipse(ex, eyeY, rx, ry, 0, 0, Math.PI * 2);
     fctx.fill();
+    // 3) glossy highlights (big upper-left + tiny lower-right) — cute + alive
     if (ry > 14) {
-      fctx.fillStyle = 'rgba(255,255,255,0.92)';
+      fctx.fillStyle = 'rgba(255,255,255,0.96)';
       fctx.beginPath();
-      fctx.ellipse(ex - 14 + P.pupilX * 6, eyeY - ry * 0.35 + P.pupilY * 4, 12, 13, 0, 0, Math.PI * 2);
+      fctx.ellipse(ex - rx * 0.34 + P.pupilX * 6, eyeY - ry * 0.42 + P.pupilY * 4,
+                   rx * 0.30, ry * 0.26, 0, 0, Math.PI * 2);
       fctx.fill();
+      fctx.fillStyle = 'rgba(255,255,255,0.72)';
       fctx.beginPath();
-      fctx.ellipse(ex + 13, eyeY + ry * 0.3, 5, 5.5, 0, 0, Math.PI * 2);
+      fctx.ellipse(ex + rx * 0.30, eyeY + ry * 0.30, rx * 0.13, ry * 0.13, 0, 0, Math.PI * 2);
       fctx.fill();
     }
   }
 
-  // brows (only when an expression needs them)
-  const browAmt = Math.min(1, P.browRaise + Math.abs(P.browTilt) + P.browAsym);
-  if (browAmt > 0.05) {
-    fctx.strokeStyle = ink;
-    fctx.globalAlpha = browAmt;
-    fctx.lineWidth = 11;
+  // cute eyebrows — ALWAYS present (a soft rounded arch), so the face never looks
+  // blank; expression only modulates the lift/tilt on top of the friendly base.
+  {
+    fctx.strokeStyle = browCol;
+    fctx.lineWidth = 13;
     fctx.lineCap = 'round';
+    fctx.lineJoin = 'round';
     for (const s of [-1, 1]) {
-      const asymLift = (s < 0 ? P.browAsym * 16 : P.browAsym * -2);
-      const by = eyeY - 78 - P.browRaise * 18 - asymLift;
-      const tilt = P.browTilt * 14 * -s;   // sad: inner ends up
+      const asymLift = P.browAsym * (s < 0 ? 16 : -2);
+      const by = eyeY - ry - 26 - P.browRaise * 18 - asymLift;   // just above the eye
+      const tilt = P.browTilt * 15 * -s;                          // sad: inner ends up
+      const x0 = 256 + s * (eyeDX - 30), x1 = 256 + s * (eyeDX + 32);
+      const midX = 256 + s * eyeDX;
       fctx.beginPath();
-      fctx.moveTo(256 + s * (eyeDX - 34), by + tilt * -1);
-      fctx.lineTo(256 + s * (eyeDX + 30), by + tilt);
+      fctx.moveTo(x0, by + 5 + tilt * -1);                        // outer end
+      fctx.quadraticCurveTo(midX, by - 9 + tilt * 0.4, x1, by + tilt);  // gentle upward arch
       fctx.stroke();
     }
-    fctx.globalAlpha = 1;
   }
 
   // blush when very happy
@@ -1339,6 +1360,16 @@ function drawFace(t) {
       fctx.restore();
     }
   }
+
+  // projector falloff — dim the outer screen so the beam reads brightest at the
+  // centre and fades toward the edges (not a uniform LCD). Applied over the face +
+  // features; icons are drawn AFTER so overlays stay bright.
+  const proj = fctx.createRadialGradient(256, 282, 120, 256, 282, 262);
+  proj.addColorStop(0, 'rgba(6,14,18,0)');
+  proj.addColorStop(0.62, 'rgba(6,14,18,0.06)');
+  proj.addColorStop(1, 'rgba(4,10,14,0.62)');
+  fctx.fillStyle = proj;
+  fctx.fillRect(0, 0, W, H);
 
   // icon badges (additive; drawn last so they sit on top of the face)
   drawIconBadges();
