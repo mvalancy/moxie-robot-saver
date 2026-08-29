@@ -55,6 +55,19 @@ Make it something a non-engineer can run.
 - ⬜ Optional hosted deployment for owners who can't self-host (multi-tenant, still zero-knowledge).
 - ⬜ Setup wizard, health dashboard, backup/restore of the whole appliance.
 
+## Milestone — the experience, hosted online (static) 🔨
+A **combined parent app + simulator + example cloud UI** on **Cloudflare Pages** — "just the basics
+online," growing into the real end-to-end system. Deploy root is `sim/web/` (shared vendored deps).
+Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-experience.md).
+- ✅ **Simulator** — the 3D Moxie with a stub brain + pre-rendered audio; talks with no server.
+- ✅ **Parent app (basics)** — [`sim/web/setup.html`](sim/web/setup.html): phone-first, server-free
+  Wi-Fi + server QR, built client-side by [`sim/web/qr.js`](sim/web/qr.js) (byte-identical to the CLI).
+- ✅ **Revival QR in-browser** — plain-JSON QR types generated client-side (no install).
+- ⬜ **Example cloud UI** — read-only operator/console view (robot status, session transcript, content)
+  from fixture JSON.
+- ⬜ **Landing hub** — one front door presenting the three surfaces.
+- ⬜ **Cloudflare Pages deploy** — wrangler/dashboard, `_headers`, audio pre-cache (both sides).
+
 ---
 
 ## Parallel research tracks 🔬
