@@ -40,9 +40,29 @@ The full factory image (`moxie-prod-partitions_*.zip`) contains eight partitions
 | `dtbo.img` | 4 MiB | Device-tree overlay |
 | `vbmeta.img` | 4 KiB | **AVB metadata** — hashtree descriptors for system/vendor, signed |
 | `boot.img` | 64 MiB | Kernel (`0x10008000`) + ramdisk (system-as-root init) + 2nd-stage |
-| `oem.img` | 384 MiB | Boot animation only (`/oem/media/bootanimation.zip`, 84 MB) + `fs_config` |
+| `oem.img` | 384 MiB | Boot animation (`/oem/media/bootanimation.zip`, 84 MB) + `fs_config_files`/`fs_config_dirs` + `/oem/etc/package_performance.xml` (see below) |
 | `system.img` | 3.4 GiB | Android `/system` incl. all `bo-*` apps (ext4, mounted at `/`) |
 | `vendor.img` | 4.7 GiB | Rockchip HALs, `fstab.rk30board`, hw init `.rc`, firmware blobs |
+
+### `oem.img` — one telling leftover (`/oem/etc/package_performance.xml`)
+
+Besides the boot animation, the OEM partition carries a **202-byte** `package_performance.xml` — a
+**stock Rockchip BSP** feature that boosts CPU/GPU clocks when a listed package runs. On this 803 image
+it lists **only AnTuTu**, verbatim:
+
+```xml
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<performance-package>
+<app package="com.antutu.ABenchMark" mode="1"/>
+<app package="com.antutu.benchmark.full" mode="1"/>
+</performance-package>
+```
+
+Neither AnTuTu package is installed (`/system/app` has no `antutu*`), so the file is **dormant vendor
+boilerplate** — Rockchip's benchmark-boost list shipped untouched. It's a small but concrete data point
+that the base OS is an **unmodified RK3288 Android-9 BSP** (brand/manufacturer `rockchip`, fingerprint
+`rockchip/rk3288/rk3288:9/PQ2A.190305.002/…:user/release-keys`) with the Embodied `bo-*` apps layered on
+top — so a custom build inherits the RK BSP's quirks, including this file (safe to drop or repurpose).
 
 ### boot.img kernel cmdline (verbatim)
 

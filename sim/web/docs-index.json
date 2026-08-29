@@ -1,5 +1,5 @@
 {
- "generated": "f989c44-dirty",
+ "generated": "de2a171-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -25,7 +25,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap — end-to-end Moxie revival",
    "section": "_root",
-   "bytes": 6755,
+   "bytes": 6874,
    "mermaid": 0,
    "headings": [
     "Phase 0 — Reverse engineering  ✅",
@@ -821,11 +821,12 @@
    "path": "reverse-engineering/firmware-image.md",
    "title": "Moxie firmware image — the robot's own Android system",
    "section": "reverse-engineering",
-   "bytes": 16063,
+   "bytes": 17187,
    "mermaid": 0,
    "headings": [
     "TL;DR for going custom",
     "Partition set",
+    "oem.img` — one telling leftover (`/oem/etc/package_performance.xml`)",
     "boot.img kernel cmdline (verbatim)",
     "fstab (`/vendor/etc/fstab.rk30board`)",
     "The verified-boot chain (and how to break it for custom code)",
