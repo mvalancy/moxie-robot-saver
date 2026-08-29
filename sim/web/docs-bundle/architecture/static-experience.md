@@ -25,7 +25,6 @@ flowchart LR
 | **Simulator** | The 3D Moxie — face, arms, liveness — driven by the real protocol, with a stub brain + pre-rendered audio so it talks with no server. | ✅ **done** | [`sim/web/`](../../sim/web/) |
 | **Example cloud UI** | The parent console: child profile, Daily Missions & rewards, conversation + activity log, robot status, notifications — read-only. | ✅ **done** — [`cloud.html`](../../sim/web/cloud.html) from [`fixtures/cloud.json`](../../sim/web/fixtures/cloud.json), shapes mirror the real REST API + MQTT content model. | [`sim/web/cloud.html`](../../sim/web/cloud.html) |
 | **Landing hub** | One front door tying the three together. | ✅ **done** — [`hub.html`](../../sim/web/hub.html) | [`sim/web/hub.html`](../../sim/web/hub.html) |
-| **Docs explorer** | Browses every Markdown doc in the repo with Mermaid diagrams rendered — no server. | ✅ **done** — [`docs.html`](../../sim/web/docs.html) + `docs-bundle/` (built by [`build_docs_bundle.py`](../../sim/tools/build_docs_bundle.py)) | [`sim/web/docs.html`](../../sim/web/docs.html) |
 
 ## What's static vs. what needs a server
 

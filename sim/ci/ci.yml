@@ -45,5 +45,9 @@ jobs:
           node sim/test_qr.mjs
       - name: Cloud-console fixture + wiring test
         run: node sim/test_cloud.mjs
+      - name: Build docs bundle for the explorer
+        run: python3 sim/tools/build_docs_bundle.py
+      - name: Docs-explorer bundle + wiring test
+        run: node sim/test_docs.mjs
       - name: Run SIL scenarios (scripted conversations)
         run: bash sim/run_scenarios.sh

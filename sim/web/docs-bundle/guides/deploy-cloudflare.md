@@ -21,7 +21,6 @@ Inter + JetBrains Mono). Point Cloudflare Pages at it and it works. What changes
 | Mic button | ✅ degrades | falls back to a **scripted child line** (no STT model) |
 | **Revival QR** (re-home a real robot) | ✅ works | payloads are plain JSON, built client-side |
 | **Setup page** (`setup.html`) — parent-app basics | ✅ works | phone-first Wi-Fi + server QR, no server |
-| **Docs explorer** (`docs.html`) — every RE doc + mermaid | ✅ works | reads committed `docs-bundle/` + `docs-index.json` |
 | **Landing hub** (`hub.html`) — the front door | ✅ works | links the three surfaces |
 | **Cloud console** (`cloud.html`) — parent dashboard | ✅ works | read-only demo from `fixtures/cloud.json` |
 | **Live bus** (a REAL robot connecting) | ❌ self-host | needs your MQTT broker + TLS |

@@ -1,0 +1,83 @@
+/* Docs-explorer test. The static site ships a docs explorer (sim/web/docs.html)
+ * that browses every Markdown doc with Mermaid rendered — deployable to Cloudflare
+ * Pages with NO build step, which means the bundle must be committed and current.
+ * This asserts:
+ *   1. docs-index.json exists and covers every docs/*.md in the repo (no drift),
+ *   2. each indexed file was actually copied into docs-bundle/,
+ *   3. mermaid counts are right, and the vendored renderers are present,
+ *   4. docs.html is wired to the vendored marked + mermaid and the index.
+ * If the bundle is stale, `python3 sim/tools/build_docs_bundle.py` fixes it.
+ * Run: node sim/test_docs.mjs
+ */
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repo = join(here, "..");
+const web = join(here, "web");
+const fails = [];
+const ok = (c, m) => { if (!c) fails.push(m); };
+
+function walk(dir, base, out) {
+  for (const n of readdirSync(dir)) {
+    const full = join(dir, n), st = statSync(full);
+    if (st.isDirectory()) walk(full, base, out);
+    else if (n.endsWith(".md")) out.push(full.slice(base.length + 1).replace(/\\/g, "/"));
+  }
+  return out;
+}
+
+// ---- index exists & parses ----
+const idxPath = join(web, "docs-index.json");
+let idx = null;
+if (!existsSync(idxPath)) {
+  console.log("❌ docs tests FAILED:\n   - docs-index.json missing — run python3 sim/tools/build_docs_bundle.py");
+  process.exit(1);
+}
+idx = JSON.parse(readFileSync(idxPath, "utf8"));
+ok(idx.firmware && idx.firmware.includes("24.10.803"), "index must be firmware-stamped v24.10.803");
+ok(Array.isArray(idx.files) && idx.files.length > 0, "index.files must be non-empty");
+
+// ---- coverage: every docs/*.md is indexed ----
+const docsDir = join(repo, "docs");
+const onDisk = walk(docsDir, docsDir, []);          // paths relative to docs/
+const indexed = new Set(idx.files.filter(f => f.section !== "_root").map(f => f.path));
+for (const rel of onDisk)
+  ok(indexed.has(rel), `docs/${rel} is not in docs-index.json (stale bundle — rebuild it)`);
+ok(indexed.size === onDisk.length,
+   `index has ${indexed.size} docs but repo has ${onDisk.length} (rebuild the bundle)`);
+
+// ---- each indexed file copied into the bundle, mermaid count correct ----
+let mermaidTotal = 0;
+for (const f of idx.files) {
+  const bundled = join(web, "docs-bundle", f.path);
+  ok(existsSync(bundled), `docs-bundle missing ${f.path}`);
+  if (existsSync(bundled)) {
+    const txt = readFileSync(bundled, "utf8");
+    const nm = (txt.match(/```mermaid/g) || []).length;
+    ok(nm === f.mermaid, `${f.path}: index says ${f.mermaid} mermaid, bundle has ${nm}`);
+    mermaidTotal += nm;
+  }
+}
+ok(mermaidTotal > 0, "expected at least one mermaid diagram across the docs");
+
+// ---- vendored renderers present ----
+for (const v of ["marked.min.js", "mermaid.min.js"])
+  ok(existsSync(join(web, "vendor", v)), `vendored ${v} missing`);
+
+// ---- docs.html wiring ----
+const html = readFileSync(join(web, "docs.html"), "utf8");
+ok(html.includes("vendor/marked.min.js") && html.includes("vendor/mermaid.min.js"),
+   "docs.html must load the vendored marked + mermaid");
+ok(html.includes("docs-index.json"), "docs.html must fetch docs-index.json");
+ok(html.includes("mermaid.render") || html.includes("mermaid.init"), "docs.html must render mermaid");
+ok(html.includes("docs-bundle/"), "docs.html must fetch docs from docs-bundle/");
+
+// ---- report ----
+if (fails.length) {
+  console.log("❌ docs tests FAILED:");
+  for (const f of fails) console.log("   -", f);
+  process.exit(1);
+}
+console.log(`✅ docs tests OK — ${idx.files.length} docs indexed & bundled, ${mermaidTotal} mermaid diagrams, explorer wired`);
