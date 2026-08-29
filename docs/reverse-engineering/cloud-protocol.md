@@ -115,6 +115,16 @@ The broker mimics Google Cloud IoT Core's topic layout — `{device_id}` is the 
 | cloud → robot | `/devices/{device_id}/commands/{command}` | JSON command (e.g. `remote_chat`, `query_result`, `telehealth`) |
 | cloud → robot | **`/devices/{device_id}/commands/zmq`** | **binary: `"{proto_full_name}:" + serialized protobuf`** — injects a message straight onto the robot's ZMQ bus |
 | server subscribes | `/devices/+/events/#`, `/devices/+/state` | wildcard for all robots |
+| server subscribes | `$SYS/broker/clients/#`, `$SYS/broker/log/#` | **presence detection** — the mosquitto broker's own system topics; the server watches these to see a robot **connect/disconnect** (in addition to the device-published `/state`) |
+
+> **Cross-confirmed by a working server.** This exact subscribe/publish set is independently
+> implemented by the community **OpenMoxie** server ([`site/hive/mqtt/moxie_server.py`](https://github.com/jbeghtol/openmoxie/blob/main/site/hive/mqtt/moxie_server.py)):
+> it subscribes to `/devices/+/events/#`, `/devices/+/state`, `$SYS/broker/clients/#`,
+> `$SYS/broker/log/#` and publishes to `/devices/{id}/config`, `/devices/{id}/commands/{command}`, and
+> `/devices/{id}/commands/zmq` — matching this table. So a revival server can be built **from this
+> document alone**; OpenMoxie is a reference, not a dependency. (Robot→cloud events land on
+> `/devices/{id}/events/{eventname}`, e.g. `client-service-activity-log`, multiplexed by `subtopic`
+> including `query` and `telehealth`.)
 
 **`commands/zmq` is the remote-control lever:** the cloud publishes `embodied.unity.QRCommand:` + bytes,
 or any `embodied.*` message, and it lands on the on-device bus ([`robot-ipc-protocol.md`](robot-ipc-protocol.md)).

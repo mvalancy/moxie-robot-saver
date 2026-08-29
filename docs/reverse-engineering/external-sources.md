@@ -116,8 +116,12 @@ exhibits for us are the **internal photos** (PCB, SoC/module markings, antenna, 
 independent SoC/Wi-Fi confirmation, and possibly **UART/test-point pads visible on the board**) and
 the **RF test report** (confirms bands: 2.4 GHz Wi-Fi/BT and, if present, 5 GHz — a BCM4339 is 1×1
 802.11ac, so 5 GHz support in the report would corroborate [`device-tree.md`](device-tree.md)). Block
-diagram/schematics may be confidentiality-withheld. **Next tick: extract those facts (facts only, no
-re-hosting) into `hardware-map.md`/`device-tree.md` with citation.**
+diagram/schematics may be confidentiality-withheld. **Status: not yet extracted — both `fccid.io` and
+`fcc.report` sit behind a Cloudflare JS challenge that blocks automated fetch (verified 2026-08-28:
+HTTP 403 "Just a moment…", via both WebFetch and curl). The Test Report exhibit is `4817095`.** The
+files are public in a real browser; pulling the SoC/module/antenna/band facts (facts only, no
+re-hosting) into `hardware-map.md`/`device-tree.md` needs a browser-capable fetch or a manual paste —
+the top self-sufficiency TODO.
 
 ### FCC ID `2AV9N-EMBMOXIEVTWO` (Moxie **V2**)
 A **second hardware revision** exists ([fccid.io](https://fccid.io/2AV9NEMBMOXIEVTWO)). This matters
@@ -161,6 +165,13 @@ security-model RE; does not settle silicon.
   [`network-trust.md`](network-trust.md), and the 120 recovered `.proto` files were **cross-validated
   against OpenMoxie with zero diffs**, which is strong mutual confirmation of the protocol. It's the
   reference our own [`mqtt/`](../../mqtt/) + [`server/`](../../server/) aim to match and extend.
+  **✅ Substance captured in-repo** (self-sufficiency): its concrete server surface —
+  the MQTT subscribe/publish topic set (`/devices/+/events/#`, `/devices/+/state`,
+  `$SYS/broker/clients/#` + `$SYS/broker/log/#` for **presence**, and `/devices/{id}/config|commands/{cmd}|commands/zmq`)
+  and its RS256-JWT/`RS256.key` device-auth flow — is now documented in
+  [`cloud-protocol.md`](cloud-protocol.md) (topic map + auth), so a server is buildable from this repo
+  even if the OpenMoxie repo disappears. Source files: `site/hive/mqtt/moxie_server.py`,
+  `robot_credentials.py`, `site/openmoxie/urls.py`.
 - **`nhertanto/Embodied-Moxie`** — [GitHub](https://github.com/nhertanto/Embodied-Moxie). **ChatScript +
   Jinja2** files from a former Embodied contributor, used in-house to author Moxie **activities/content**.
   This is a rare **primary source for the ChatScript/content-authoring format** — worth a dedicated
