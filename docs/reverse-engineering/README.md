@@ -56,6 +56,7 @@ flowchart TB
 - [`flashing-runbook.md`](flashing-runbook.md) — **step-by-step** to build/flash custom firmware and revive a robot by reflashing.
 - [`ota-and-recovery.md`](ota-and-recovery.md) — the A/B OTA machinery, payload signing gate, and an **honest, tiered map of upgrade vectors** (no-open first, then USB/UART, then full teardown/flash) for reviving old robots.
 - [`boot-and-launcher.md`](boot-and-launcher.md) — the app-level **Launcher state machine** (config/QR-reading, running, recovery, factory test) and component supervision.
+- [`power-and-system-events.md`](power-and-system-events.md) — the **power lifecycle protocol**: the authoritative `PowerStatePB` state enum (11 states, 0–10), the `ResumeCause` wake taxonomy, `RESTART_XMOS` co-processor recovery, and the `embodied.sys` status events (Wi-Fi vs internet, STT/OTA health, shutdown, and the unpair/telehealth **disengage** flow).
 - [`robot-ipc-protocol.md`](robot-ipc-protocol.md) — the on-device **ZeroMQ + protobuf** message bus that wires the modules together; the module map and behavior-command markup.
 - [`cloud-protocol.md`](cloud-protocol.md) — the robot↔backend surface (REST `client-service`, MQTT topics, Deepgram STT, the chat envelope) — **what a self-hosted server must implement**.
 - [`settings-schema.md`](settings-schema.md) — the **199 `SettingSchema` keys** (the full runtime config surface a server can tune).

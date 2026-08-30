@@ -2,7 +2,7 @@
 
 > A single view of what's documented for each goal, and the honest remaining gaps (mostly things that
 > need a **bench unit**). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9).
-> 28 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
+> 29 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
 
 ## Goal ① — Build custom firmware / run custom software on the robot
 
@@ -12,6 +12,7 @@
 | Partitions, AVB, A/B, OEM-unlock, security posture | ✅ | [firmware-image](firmware-image.md) · [firmware-803-reference](firmware-803-reference.md) |
 | Full file/app/binary manifest + hashes | ✅ | [firmware-manifest](firmware-manifest.md) · [firmware-inventory](firmware-inventory.md) |
 | Boot chain + Launcher state machine + init services | ✅ | [boot-and-launcher](boot-and-launcher.md) |
+| Power lifecycle: PowerStatePB states, resume causes, XMOS recovery, suspend/keep-awake | ✅ | [power-and-system-events](power-and-system-events.md) |
 | Code signing (3 keys) & permissions | ✅ | [firmware-image](firmware-image.md#code-signing--app-trust) |
 | Android permissions + SELinux confinement | ✅ | [security-policy](security-policy.md) |
 | Vendor HALs + kernel drivers + co-processor/radio firmware | ✅ | [hal-and-drivers](hal-and-drivers.md) |
@@ -42,6 +43,7 @@
 | Wake-word/VAD (server doesn't handle it) | ✅ | [perception-pipeline](perception-pipeline.md#wake-word--vad-fully-on-device) |
 | Scheduling/recommender/STAR/StarBits/mentor history | ✅ | [content-and-conversation](content-and-conversation.md#scheduling-progression--rewards-what-to-offer-next) |
 | Telehealth / live remote puppet (TeleBrain protocol) | ✅ | [telehealth](telehealth.md) |
+| System status a server observes (Wi-Fi vs internet, STT/OTA health, shutdown, unpair/disengage) | ✅ | [power-and-system-events](power-and-system-events.md) |
 | Full protocol reference (382 msgs) + bindings | ✅ + tools | [proto-catalog](proto-catalog.md) · [recovered-proto/](recovered-proto/) · `protoref` |
 | Pairing crypto (phone side) | ✅ | [crypto-and-keys](crypto-and-keys.md) · [qr-format](qr-format.md) |
 
