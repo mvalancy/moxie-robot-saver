@@ -39,6 +39,11 @@ fields that matter here and aren't listed there:
   controls (retry/rollback a sequence, allow multiple outputs, force a non-LLM path).
 - **Translation** — `original_language`, `original_speech`, `original_speech_alternates[]` alongside the
   (translated) `speech` — same translation-awareness seen in [perception fusion](perception-fusion.md#fusedspeechpb-the-voice-fused-onto-the-person).
+- **`extra_lines[]`** (`RemoteChatContext{ text, context_type }`) — extra context lines injected into the
+  turn (typed situational context the brain should factor in beyond the raw `speech`).
+
+> A related standalone signal, **`PrimaryUserNameChange`**, is published when the paired child's display
+> name changes, so the brain re-reads the name it addresses the child by.
 
 ## The response — `RemoteChatResponse`
 

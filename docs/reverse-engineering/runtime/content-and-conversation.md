@@ -313,6 +313,15 @@ each module's goals and per-content tags.
   session start (`client-service-activity-log subtopic=query, query=mentor_behaviors`,
   [`cloud-protocol.md`](../protocol/cloud-protocol.md)) and **reports** new behaviors back — the server persists it
   and feeds it to the recommender + parent reports.
+  - **`action`** is a **`MentorAction`**: `PRESENTED` · `SUGGESTED` · `SCHEDULED` · `REQUESTED` (offered
+    or asked for) → `COMPLETED` · `REFUSED` · `QUIT` (the outcome). (`ActivityUpdateData{activity_id,
+    MentorAction}` carries a live update of the same.)
+  - **`ended_reason`** is an **`EndedReason`**: `USER_QUIT` · `USER_DISENGAGED` · `MOXIE_DISENGAGED` ·
+    `USER_REQUEST` · `TIME_LIMIT` · `MOXIE_ENDED` · `USER_SLEPT` · `REMOTE_LAUNCH` · `REMOTE_ABORT` — the
+    full "why did this activity stop" taxonomy a parent dashboard / recommender reads.
+  - Related history/flow messages: `FlowInfo{module_id, content_id, version}` (which content flow is
+    running), `ScheduleStart{schedule[], resumed}` (a day's schedule begins / resumes), and the
+    `TurnTakingAssistanceState` (`NONE`/`ADVANCED`) mirroring [turn-taking](turn-taking.md)'s assist axis.
 
 **Revival (goal #2):** a minimal server can ship a fixed `DailySchedule`/hub and ignore the
 recommender (OpenMoxie does — a static `provided_schedule` + a hub module, [`content-and-conversation`](#schedules-what-to-offer-when)).

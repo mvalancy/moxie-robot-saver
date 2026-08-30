@@ -1,5 +1,5 @@
 {
- "generated": "docs-0e12d989812a",
+ "generated": "docs-5e2019751605",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 9145,
+   "bytes": 9131,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -801,7 +801,7 @@
    "path": "reverse-engineering/protocol/remote-chat-protocol.md",
    "title": "RemoteChat — the robot ↔ brain conversation protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 9596,
+   "bytes": 9971,
    "mermaid": 1,
    "headings": [
     "One turn",
@@ -1130,7 +1130,7 @@
    "path": "reverse-engineering/runtime/content-and-conversation.md",
    "title": "Content & conversation — ChatScript, content modules, the volley API",
    "section": "reverse-engineering",
-   "bytes": 26268,
+   "bytes": 27147,
    "mermaid": 1,
    "headings": [
     "Two dialog engines",
