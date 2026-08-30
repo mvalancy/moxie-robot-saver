@@ -1,5 +1,5 @@
 {
- "generated": "docs-84a0d182023c",
+ "generated": "docs-e60319739a73",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 11390,
+   "bytes": 11557,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 7216,
+   "bytes": 7270,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -1112,11 +1112,12 @@
    "path": "reverse-engineering/gaze-and-attention.md",
    "title": "Gaze & attention — how Moxie decides where to look (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 6972,
+   "bytes": 9659,
    "mermaid": 1,
    "headings": [
     "TL;DR",
     "The attention model",
+    "The published attention state — `robotbrain.Attention`",
     "GazeBehavior — the controller",
     "Motion tuning (constants from the binary)",
     "Control from content / behavior trees",

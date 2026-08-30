@@ -19,7 +19,7 @@
 | On-device ZMQ bus (drive the robot) + client | ✅ + tool | [robot-ipc-protocol](robot-ipc-protocol.md) · `MoxieBus` |
 | Behavior input-event vocabulary (163 events, Farmers→InputEngine) | ✅ | [behavior-input-events](behavior-input-events.md) |
 | Decision engine (NodeCanvas BT/FSM/Dialogue + Blackboard, 45 trees) | ✅ | [behavior-tree-engine](behavior-tree-engine.md) |
-| Gaze & attention (interest points, saccades, IK look-at) | ✅ | [gaze-and-attention](gaze-and-attention.md) |
+| Gaze & attention (interest points, saccades, IK look-at, published Attention state machine) | ✅ + tool | [gaze-and-attention](gaze-and-attention.md) · `bus.py` |
 | Perception fusion: the tracked world-model of people (FusedPeople, world/screen coords, events) | ✅ + tool | [perception-fusion](perception-fusion.md) · `bus.py` |
 | Conversation turn-taking & engagement state machine | ✅ | [turn-taking](turn-taking.md) |
 | Hardware map: motors/sensors/LEDs/power rails | ✅ | [hardware-map](hardware-map.md) |

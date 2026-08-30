@@ -99,6 +99,16 @@ def fused_people_classes():
     ]
 
 
+# ---- attention / targeting decision (embodied.robotbrain / TargetUser) ----
+# See docs/reverse-engineering/gaze-and-attention.md (The published attention state)
+def attention_classes():
+    """The published attention decision — who Moxie is attending to and in what state.
+    Subscribe to receive parsed events: Attention (state + targeted_user + candidate
+    InterestPoints), TargetedUser (acquired), NoTargetedUser (lost). targeted_user is a
+    FusedPerson.id from perception fusion. See gaze-and-attention.md."""
+    from embodied.robotbrain import TargetUser_pb2 as A
+    return [A.Attention, A.TargetedUser, A.NoTargetedUser]
+
 # ---- time, timezone & wake alarms (embodied.sys / TimeEvents) ----
 # See docs/reverse-engineering/power-and-system-events.md (Time, timezone & alarms)
 def user_alarm(alarm_expires, *, timer_id=None, alarm_repeats=0):

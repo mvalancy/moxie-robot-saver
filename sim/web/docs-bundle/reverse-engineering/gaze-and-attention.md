@@ -53,6 +53,39 @@ Faces/people (from `libbo-vision`, [`perception-pipeline.md`](perception-pipelin
 most-recent valid point becomes the `AttentionTarget`. `AttentionEvent` publishes attention changes onto
 the [input-event bus](behavior-input-events.md).
 
+## The published attention state — `robotbrain.Attention`
+
+The structs above are the brain's *internal* model; what it **publishes on the bus** (from
+`embodied/robotbrain/TargetUser.proto`) is the decision other modules consume — the brain, turn-taking,
+and content all read "who is Moxie attending to, and in what state":
+
+```proto
+enum AttentionState { ATTENTION_UNKNOWN=0; TARGET_FOCUS=1; NO_TARGET_FOCUS=2; SEARCHING=3; }
+message WorldLocation { uint64 id; float x; float y; float z; }              // a 3D world point
+message InterestPoint { float weight; uint64 person_id; WorldLocation location; }  // wire form of InterestPointInfo
+message Attention {                                                          // the published decision
+  AttentionState        state;         // focused / no target / actively searching
+  uint64                targeted_user; // the person being attended to (0 = none)
+  repeated InterestPoint locations;    // the candidate interest points considered
+}
+message TargetedUser  { uint64 targeted_user_id; uint64 targeted_user_face_id; }  // target acquired
+message NoTargetedUser { }                                                         // target lost
+```
+
+- **`AttentionState`** is the coarse state a consumer keys off: `TARGET_FOCUS` (locked on someone),
+  `NO_TARGET_FOCUS` (aware but not fixed on anyone), `SEARCHING` (actively looking for a person). This is
+  the machine behind Moxie's "settled vs looking-around" body language.
+- **`Attention.targeted_user`** / **`TargetedUser.targeted_user_id`** is a **`FusedPerson.id`** from
+  [perception fusion](perception-fusion.md#fusedpersonpb--one-tracked-human) — so the attention decision
+  names a *specific tracked person*, and `targeted_user_face_id` ties to that person's
+  [`FusedFacePB.face_tracker_id`](perception-fusion.md#fusedfacepb--the-face-in-two-coordinate-frames).
+- **`InterestPoint.person_id` + `WorldLocation`** are the wire form of the `InterestPointInfo` struct
+  above: the weighted candidates, each tied to a person and a 3D point.
+
+So the pipeline is **[fusion](perception-fusion.md) (who's in the room) → `Attention` (who I'm attending
+to + state) → `GazeBehavior` (aim the eyes/head)**. `TargetedUser`/`NoTargetedUser` are the acquire/lose
+edges; `Attention` is the continuous state + candidate set.
+
 ## GazeBehavior — the controller
 
 Once a target is chosen, `GazeBehavior` runs three swappable strategies:
@@ -99,11 +132,14 @@ angle-scaled saccades floored at ~12.5 ms. The [SIL](../architecture/sil-and-cic
 *simplified* version of this (idle gaze drift + the imaginary-life look-around beats in `life.js`); the
 constants here are what a faithful re-implementation would use.
 
-**② Server revival.** Gaze is on-device (it needs the camera + mic-array in real time), so a self-hosted
-server does not run it — it only nudges it via content markup (`RobotBT_GazeControl*`). Noted to bound
-it out.
+**② Server revival.** Gaze *motion* is on-device (it needs the camera + mic-array in real time), so a
+self-hosted server does not run it — it only nudges it via content markup (`RobotBT_GazeControl*`). But a
+server (or a [telehealth](telehealth.md) operator, or the parent app) **can subscribe to the published
+`Attention`** to know *who* Moxie is attending to (a [fused-person](perception-fusion.md) id) and its
+state (`TARGET_FOCUS`/`SEARCHING`) — useful situational awareness even though the server doesn't drive the
+motors.
 
 **③ Pre-801 revival.** No new lever; brain-side, above the network boundary.
 
 ---
-📖 [Reverse-engineering index](README.md) · [Perception pipeline](perception-pipeline.md) · [Behavior input events](behavior-input-events.md) · [Behavior-tree engine](behavior-tree-engine.md) · [Hardware map](hardware-map.md)
+📖 [Reverse-engineering index](README.md) · [Perception fusion](perception-fusion.md) · [Perception pipeline](perception-pipeline.md) · [Behavior input events](behavior-input-events.md) · [Behavior-tree engine](behavior-tree-engine.md) · [Hardware map](hardware-map.md)
