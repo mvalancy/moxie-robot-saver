@@ -38,8 +38,10 @@ flowchart TB
 | [`hardware/`](hardware/) | ① robot | Hardware notes / teardown material (grows as we open a unit). |
 | [`server/`](server/) | ③ server app | **Parent-app half** of the backend: clean-room `client-service` REST API + mobile web UI (FastAPI). |
 | [`mqtt/`](mqtt/) | ③ server app | **Robot-facing half** of the backend: MQTT broker, the supervisor (speaks the robot protocol), and the Moxie SDK. |
-| [`ai/`](ai/) | shared | AI/agent notes. |
-| [`scripts/`](scripts/) | shared | Repo-maintenance helpers (doc-link + mermaid checkers). |
+| [`sim/`](sim/) | ③ server app / demo | The **software-in-the-loop simulator** + the static site (`sim/web/`): a browser 3D Moxie driven by the exact protocol, the setup/cloud/hub pages, and the docs explorer. |
+| [`ai/`](ai/) | shared | AI/agent notes (the LLM/STT/TTS seam the server app plugs into). |
+| [`scripts/`](scripts/) | shared | Repo-maintenance helpers (doc-link + consistency + mermaid checkers). |
+| [`.claude/`](.claude/) | shared | Shared Claude **agents + skills** — revival + protocol experts, plus the reverse-engineering methodology suite — so the hard-won knowledge travels with the repo. |
 
 ## The "server app" domain — how it grows
 
