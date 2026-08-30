@@ -244,8 +244,23 @@
 
   function grouped(filter){
     var by={}; idx.files.forEach(function(f){ if(filter&&!matches(f,filter)) return; (by[f.section]=by[f.section]||[]).push(f); });
+    // When searching, order each section's hits by relevance (title/heading match +
+    // full-text hit count) so the doc that actually documents the term floats to the
+    // top of its section instead of whatever sorts first (e.g. the section README).
+    // With no filter, keep the curated README reading order untouched.
+    if(filter){ var q=filter.toLowerCase();
+      Object.keys(by).forEach(function(s){ by[s].sort(function(a,b){ return score(b,q)-score(a,q); }); }); }
     return Object.keys(by).sort(function(a,b){ return (SECTION_ORDER[a]==null?9:SECTION_ORDER[a])-(SECTION_ORDER[b]==null?9:SECTION_ORDER[b])||a.localeCompare(b); })
       .map(function(s){ return {sec:s, items:by[s]}; });
+  }
+  function score(f,q){  // higher = more relevant to query q (already lower-cased)
+    var s=0;
+    if(f.title.toLowerCase().indexOf(q)>=0) s+=1000;                                   // title hit
+    if((f.headings||[]).some(function(h){return h.toLowerCase().indexOf(q)>=0;})) s+=100; // heading hit
+    if(f.path.toLowerCase().indexOf(q)>=0) s+=50;                                       // filename hit
+    var body=SEARCH&&SEARCH[f.path]; if(body){ var lc=body.toLowerCase(),i=0,n=0;       // full-text hit count
+      while((i=lc.indexOf(q,i))>=0){ n++; i+=q.length; } s+=n; }
+    return s;
   }
   function matches(f,q){ q=q.toLowerCase();
     if(f.title.toLowerCase().indexOf(q)>=0||f.path.toLowerCase().indexOf(q)>=0||(f.headings||[]).some(function(h){return h.toLowerCase().indexOf(q)>=0;})) return true;

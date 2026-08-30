@@ -118,7 +118,27 @@ try {
   const hits = await page.$$eval("a.doc.hit", (els) => els.length).catch(() => 0);
   ok(hits > 0, "full-text search should filter the tree to matching docs");
 
+  // 4b) search hits are ranked by relevance within a section: a proto message name
+  //     should surface the doc that documents it ahead of the section README.
+  await page.evaluate(() => { const q = document.getElementById("q"); q.value = ""; q.dispatchEvent(new Event("input")); });
+  await page.type("#q", "SystemVolumeModify");         // documented in runtime-control.md; README only lists it
+  await new Promise((r) => setTimeout(r, 800));
+  const reOrder = await page.evaluate(() => {
+    for (const g of document.querySelectorAll(".grp")) {
+      const h = g.querySelector(".gh span");
+      if (h && /Reverse engineering/.test(h.textContent))
+        return [...g.querySelectorAll("a.doc")].map((a) => a.dataset.path.split("/").pop());
+    }
+    return [];
+  });
+  const iDoc = reOrder.indexOf("runtime-control.md"), iReadme = reOrder.indexOf("README.md");
+  ok(iDoc === 0, `search should rank the documenting doc first in its section (got ${reOrder.slice(0, 3).join(", ")})`);
+  ok(iReadme === -1 || iDoc < iReadme, "the documenting doc should outrank the section README");
+
   // 5) opening a search hit highlights the term in the doc + scrolls to it
+  await page.evaluate(() => { const q = document.getElementById("q"); q.value = ""; q.dispatchEvent(new Event("input")); });
+  await page.type("#q", "projectorfanpid");
+  await new Promise((r) => setTimeout(r, 700));
   await page.evaluate(() => { const a = document.querySelector("a.doc.hit") || document.querySelector("a.doc"); a && a.click(); });
   await new Promise((r) => setTimeout(r, 700));
   const hl = await page.evaluate(() => ({
