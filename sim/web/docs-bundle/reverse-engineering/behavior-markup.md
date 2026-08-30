@@ -100,22 +100,33 @@ Each verb is a `CommandMarkUpGenerator` with a typed request (its `data` fields)
 
 **`stopaudio`**: `scope` int, `channel` int, `FadeOutTime` float, `ClearQueue` bool.
 
-**`playback-mood`**: `mood` int (emotional tone), `intensity` int (0–2, `maxIntensity=2`). The `mood`
-enum names aren't in the binary (IL2CPP, no metadata), but the values and their meaning are **inferred
-from shipped content** (frequency + the line each precedes):
+**`playback-mood`**: `PlaybackMoodRequest { ePlaybackMood mood; int intensity=0 (maxIntensity=2); }`;
+`Submit()` calls `SpeechPlaybackBehavior.PlaybackMood.SetMood(mood, intensity)`. The **`ePlaybackMood`
+enum is authoritative** — recovered by name **and** value from `Assembly-CSharp` (the .NET assembly keeps
+its metadata; an earlier note that the names weren't recoverable was wrong). The same `ePlaybackMood`
+type is the robot's **`RobotState_EyesemeState`** blackboard variable, so **mood *is* the face
+expression**: each value plays the matching **`Bht_Eyeseme_<name>` behavior tree** (see
+[`behavior-tree-engine.md`](behavior-tree-engine.md#the-45-named-behavior-trees-bht_)).
 
-| `mood` | seen | inferred tone | evidence (line it precedes) | → SIL face |
-|--:|--:|---|---|---|
-| **0** | 188× | **neutral / default** (baseline) | most lines; the resting tone | `neutral` |
-| **1** | 36× | **positive / engaged** | general expressive speech + gesture | `happy` |
-| **2** | 8× | **concerned / sympathetic** | "Oh, gosh." · "I'm sorry. You should talk to a trusted adult." · "Whoops." (genre `intimate`) | `sad` |
-| **4** | 2× | **embarrassed / oops** | "Oops." | `sad` |
-| **5** | 14× | **surprised / startled** | "Oh!" (then settles to mood 1) | `surprised` |
+| `mood` | `ePlaybackMood` | viseme base¹ | in shipped content | → SIL face |
+|--:|---|--:|--:|---|
+| **0** | `Neutral` | 0 | 188× (resting) | `neutral` |
+| **1** | `Happy` | 1 | 36× | `happy` |
+| **2** | `Sad` | 5 | 8× ("I'm sorry…") | `sad` |
+| **3** | `Angry` | 9 | — | `sad` |
+| **4** | `Shy` | 13 | 2× ("Oops.") | `happy` |
+| **5** | `Surprised` | 17 | 14× ("Oh!") | `surprised` |
+| **6** | `Afraid` | 21 | — | `surprised` |
+| **7** | `Concerned` | 25 | — | `sad` |
+| **8** | `Confused` | 29 | — | `thinking` |
+| **9** | `Curious` | 33 | — | `thinking` |
+| **10** | `Embarrassed` | 37 | — | `happy` |
 
-Values `3`, `6`, `7` don't appear in shipped content. ⚠️ **Inferred, not authoritative** — this is the
-best evidence-based reading; the exact enum lives in the (unavailable) Unity `global-metadata.dat`. It
-is, however, enough for a [SIL face](../architecture/sil-and-cicd.md) to map `mood`→expression (the
-right-hand column), replacing the earlier guess in `sim/web/bridge.js`.
+¹ `VisemeIndices[mood]` — the base frame index into the face viseme set (blocks of 4). Only moods
+`0,1,2,4,5` appear in the shipped content sampled, but **all 11 are valid** to emit. Note the earlier
+*inferred* reading mislabeled mood `4` as "embarrassed" — it is actually **`Shy`** (`Embarrassed` is
+`10`), which is exactly the kind of error the authoritative enum resolves. The SIL maps the 11 moods
+onto its 6 faces (right column); `sim/web/bridge.js` `MOOD_TO_FACE` carries this table.
 
 **`idlestate`**: `idleState` int (e.g. 7).
 
@@ -159,9 +170,11 @@ The robot's classified/expressed emotion space — the natural target for a face
 EMOTION_UNKNOWN=0  sadness=1  joy=2  love=3  anger=4  fear=5  surprise=6  neutral=7
 ```
 
-`cmd:playback-mood`'s `mood` int selects a tone in this space (with `intensity` 0–2). A revival server
-maps its LLM's sentiment → one of these; a **[SIL face](../architecture/sil-and-cicd.md)** maps them →
-expressions (e.g. joy→smile, surprise→wide eyes, sadness→droop).
+This `EmotionState` (8 values) is the **perception/classification** enum on the chat wire — distinct
+from the **`ePlaybackMood`** (11 values, above) that `cmd:playback-mood` actually carries. A revival
+server maps its LLM's sentiment → an `ePlaybackMood` for the face/posture, and may separately report an
+`EmotionState` on the chat channel; a **[SIL face](../architecture/sil-and-cicd.md)** maps either → an
+expression.
 
 ### Conversational signals — `RemoteSignals.Signal` (`RemoteChat.proto`)
 Discourse acts the brain tags on a turn (drive acknowledgement gestures/prosody):

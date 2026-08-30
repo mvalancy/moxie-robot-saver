@@ -64,6 +64,11 @@ const birthdayMarkup =
 mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
   Buffer.from(JSON.stringify({ command: "remote_chat", output: { text: "Happy birthday!", markup: birthdayMarkup } })));
 
+// a second reply exercising the authoritative ePlaybackMood map (8 = Confused → thinking)
+mqttClient._emit("message", "/devices/d_test/commands/remote_chat",
+  Buffer.from(JSON.stringify({ command: "remote_chat", output: { text: "Hmm?", markup:
+    '<mark name="cmd:playback-mood,data:{+mood+:8,+intensity+:1}"/>Hmm?' } })));
+
 mqttClient._emit("message", "/devices/d_test/events/remote-chat",
   Buffer.from(JSON.stringify({ command: "prompt", speech: "I feel happy today" })));
 mqttClient._emit("message", "/devices/d_test/events/remote-chat",
@@ -77,6 +82,7 @@ const fails = [];
 const ok = (cond, msg) => { if (!cond) fails.push(msg); };
 ok(calls.setSpeech.includes("Happy birthday!"), "setSpeech('Happy birthday!')");
 ok(calls.setFace.includes("happy"), `mood 1 → setFace('happy'); got ${JSON.stringify(calls.setFace)}`);
+ok(calls.setFace.includes("thinking"), `mood 8 (Confused) → setFace('thinking'); got ${JSON.stringify(calls.setFace)}`);
 ok(calls.setMotor.length > 0, "Gesture_Celebrate → setMotor(...) called");
 ok(JSON.stringify(calls.showIcons).includes("Birthday"), `icons-v2 → showIcons(['Birthday']); got ${JSON.stringify(calls.showIcons)}`);
 ok(calls.transcript.includes("I feel happy today"), `child turn → transcript; got ${JSON.stringify(calls.transcript)}`);

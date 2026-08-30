@@ -1,5 +1,5 @@
 {
- "generated": "4f9663a-dirty",
+ "generated": "e0b2c6e-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -618,7 +618,7 @@
    "path": "reverse-engineering/behavior-markup.md",
    "title": "Behavior markup — making Moxie move & emote while it talks",
    "section": "reverse-engineering",
-   "bytes": 12145,
+   "bytes": 12855,
    "mermaid": 0,
    "headings": [
     "Shape",

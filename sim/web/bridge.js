@@ -19,10 +19,14 @@
     1: "sad", 2: "happy", 3: "happy", 4: "sad",
     5: "surprised", 6: "surprised", 7: "neutral",
   };
-  // cmd:playback-mood `mood` int → face. Inferred from shipped content (see
-  // behavior-markup.md#data-schemas): 0 neutral/default, 1 positive/engaged,
-  // 2 concerned ("I'm sorry"), 4 oops ("Oops."), 5 surprised ("Oh!").
-  const MOOD_TO_FACE = { 0: "neutral", 1: "happy", 2: "sad", 4: "sad", 5: "surprised" };
+  // cmd:playback-mood `mood` int → SIL face. AUTHORITATIVE ePlaybackMood enum
+  // (recovered from Assembly-CSharp — see behavior-markup.md): 0 Neutral, 1 Happy,
+  // 2 Sad, 3 Angry, 4 Shy, 5 Surprised, 6 Afraid, 7 Concerned, 8 Confused,
+  // 9 Curious, 10 Embarrassed. Mapped onto the SIL's 6 faces.
+  const MOOD_TO_FACE = {
+    0: "neutral", 1: "happy", 2: "sad", 3: "sad", 4: "happy", 5: "surprised",
+    6: "surprised", 7: "sad", 8: "thinking", 9: "thinking", 10: "happy",
+  };
 
   const C = 16384, MAX = 32767;      // motor rest / range (MOTOR_MAX_POS)
 
