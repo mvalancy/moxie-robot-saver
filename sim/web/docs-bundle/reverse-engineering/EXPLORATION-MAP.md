@@ -27,7 +27,7 @@ status (the count is a documented-by-name proxy; the status reflects real covera
 | ✅ | `embodied.TTSMarkupTool` | 5/5 | [behavior-markup](runtime/behavior-markup.md) |
 | ✅ | `embodied.Robot` | 1/1 | [behavior-input-events](runtime/behavior-input-events.md) |
 | 🟡 | `embodied.robotbrain` (100) | 91/100 | [remote-chat-protocol](protocol/remote-chat-protocol.md), [content-and-conversation](runtime/content-and-conversation.md), [runtime-control](protocol/runtime-control.md), [gaze-and-attention](runtime/gaze-and-attention.md) — residue: a few `ChatResponse`/`RemoteChat` sub-messages |
-| 🟡 | `embodied.logging` (55) | 37/55 | [device-config-and-telemetry](protocol/device-config-and-telemetry.md), [cloud-protocol](protocol/cloud-protocol.md) — residue: `Cloud`/`CloudQuery` sub-messages (covered conceptually) |
+| 🟡 | `embodied.logging` (55) | 40/55 | [device-config-and-telemetry](protocol/device-config-and-telemetry.md), [cloud-protocol](protocol/cloud-protocol.md) (CloudQuery API now documented) — residue: RobotCloudConfig field-messages (covered as fields) + small pairing/report stubs |
 | ✅ | `embodied.lizzerface` (32) | 32/32 | [hardware-map](hardware/hardware-map.md) (+ the [native MCU C API](runtime/native-boundary.md)), [robot-ipc-protocol](protocol/robot-ipc-protocol.md) |
 | 🟡 | `embodied.perception.vision` (30) | 14/30 | [perception-pipeline](runtime/perception-pipeline.md) — concepts fully covered; not every message named |
 | ✅ | `embodied.perception.audio` (22) | 22/22 | [perception-pipeline](runtime/perception-pipeline.md) (incl. the `zmqSTT` bus interface + STT event stream) |

@@ -181,6 +181,29 @@ ignore for a minimal revival). Three previously-undocumented messages:
 All three carry the usual `software_version` (100) / `module_name` (101) envelope fields and arrive on
 the `events` topic like other robot→cloud reports.
 
+## Content queries — `CloudQuery` (robot → cloud, pull)
+
+Beyond the telemetry it *pushes*, the robot **pulls** its configuration and content from the server with a
+single request/response API (`embodied.logging.CloudQueryRequest` / `CloudQueryResponse`). One
+`CloudQueryRequest { CloudQuery query; request_id; schedule_id; subkey; child_id; user_age; api_version }`
+selects **what** to fetch:
+
+| `CloudQuery` | Returns (in `CloudQueryResponse`) | Consumer |
+|--:|---|---|
+| `idf` | `IDFRecord[] { module_id, score }` | the recommender's per-module relevance scores |
+| `license` | `LicenseRecord[] { LicenseID (cereproc / google_speech), license, license_binary }` | the **TTS/STT license blobs** the robot needs to run CereVoice / Google Speech |
+| `schedule` | `ContentSchedule` | the day's [schedule](../runtime/content-and-conversation.md) |
+| `contexts` / `context_store` | `Contexts` + `versioned_contexts[] {key, value}` | ChatScript contexts |
+| `mentor_behaviors` | `MentorBehavior[]` | [mentor-behavior history](../runtime/content-and-conversation.md) |
+| `remote_lines` | `DynamicLine[] { id, text }` | server-authored dynamic lines |
+
+The response carries a **`QueryResponseCode`** — **`QUERY_OK`**, **`QUERY_NO_CHANGE`** (the robot's
+`current_version` is still current — nothing to send, a **version cache**), or **`QUERY_NETWORK_FAIL`** —
+plus an optional `MetaDataResponse { log, text }`. So a revival server implements this one endpoint (over
+the MQTT `query` subtopic / REST) to feed the robot its schedule, contexts, recommender scores, mentor
+history, dynamic lines, and — notably — its **synthesis/recognition licenses**; the `QUERY_NO_CHANGE` path
+lets it skip unchanged payloads by version.
+
 ## File sync — how a server delivers content, voice & ChatScript
 
 The robot pulls its **content modules, CereVoice voice data, and ChatScript** from the server by a

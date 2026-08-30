@@ -1,5 +1,5 @@
 {
- "generated": "docs-f6a04780c6a3",
+ "generated": "docs-724f5824cc34",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 9082,
+   "bytes": 9138,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -777,7 +777,7 @@
    "path": "reverse-engineering/protocol/cloud-protocol.md",
    "title": "Robot ↔ cloud protocol — REST, MQTT, STT",
    "section": "reverse-engineering",
-   "bytes": 17828,
+   "bytes": 19556,
    "mermaid": 1,
    "headings": [
     "Three channels",
@@ -789,6 +789,7 @@
     "Event names & envelope (robot → cloud)",
     "Health telemetry & backup (robot → cloud)",
     "Conversation & learning telemetry (robot → cloud)",
+    "Content queries — `CloudQuery` (robot → cloud, pull)",
     "File sync — how a server delivers content, voice & ChatScript",
     "Robot authentication (device identity)",
     "3. STT — Deepgram over WebSocket",
