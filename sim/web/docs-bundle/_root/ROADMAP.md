@@ -69,8 +69,10 @@ Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-ex
 - ✅ **Landing hub** — [`sim/web/index.html`](sim/web/index.html): one front door presenting the three surfaces.
 - ✅ **Docs explorer** — [`sim/web/docs.html`](sim/web/docs.html): browses every `docs/*.md` with
   Mermaid rendered (marked + mermaid vendored), built by `sim/tools/build_docs_bundle.py`. Collapsible tree,
-  search, "On this page" TOC + scroll-spy, and code **syntax highlighting** (highlight.js vendored).
-- ⬜ **Cloudflare Pages deploy** — wrangler/dashboard, `_headers`, audio pre-cache (both sides).
+  **full-text search** (lazy `docs-search.json`) with snippets + in-document match highlighting & scroll-to-hit,
+  prev/next pager, "On this page" TOC + scroll-spy, and code **syntax highlighting** (highlight.js vendored).
+- ✅ **Cloudflare Pages deploy** — live at [moxie.mattvalancy.com](https://moxie.mattvalancy.com);
+  `_headers` cache policy + clean URLs, pre-cached MP3 voice + ambient self-talk, responsive across phone→ultrawide.
 
 ---
 

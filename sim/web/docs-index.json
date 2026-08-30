@@ -1,5 +1,5 @@
 {
- "generated": "1f1b38b-dirty",
+ "generated": "1d0985d-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -25,7 +25,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap — end-to-end Moxie revival",
    "section": "_root",
-   "bytes": 6878,
+   "bytes": 7121,
    "mermaid": 0,
    "headings": [
     "Phase 0 — Reverse engineering  ✅",
@@ -804,7 +804,7 @@
    "path": "reverse-engineering/firmware-803-reference.md",
    "title": "Firmware reference — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 8967,
+   "bytes": 9203,
    "mermaid": 0,
    "headings": [
     "Version identity",
@@ -932,7 +932,7 @@
    "path": "reverse-engineering/hardware-map.md",
    "title": "Hardware map — motors, sensors, LEDs, power",
    "section": "reverse-engineering",
-   "bytes": 13970,
+   "bytes": 17072,
    "mermaid": 0,
    "headings": [
     "Hardware revisions (`Revision_Level`)",
@@ -948,7 +948,8 @@
     "Version handshake",
     "Flash sequence",
     "Shipped MCU firmware images (in `bo-firmwareUpdate.apk` `res/raw/`)",
-    "MCU firmware & health (`LizardErrorEventPB.LizardErrorEventID`)"
+    "MCU firmware & health (`LizardErrorEventPB.LizardErrorEventID`)",
+    "Raw UART command set (`Lizzerface.Commands`)"
    ]
   },
   {

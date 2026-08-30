@@ -259,5 +259,44 @@ and **`WAKEUP_ANDROID_EVENT=1051`** — the MCU waking the Android SoC. `bo-firm
 `RobotControlFirmwareEventPB{ CONTROL_RESET_MOTOR_IC }` drive MCU DFU over UART. Custom firmware that
 replaces the Android side can leave the Lizard MCU stock and just speak this protocol.
 
+## Raw UART command set (`Lizzerface.Commands`)
+
+Below the `embodied.lizzerface` proto/ZMQ abstraction, the Android side (`Lizzerface` static class →
+`liblizzerface.so`/`liblizardJNI.so`) speaks a **byte-opcode UART protocol** to the MCU on `/dev/ttyS3`.
+The opcode enum (recovered verbatim from `Assembly-CSharp`) — most are **MCU→host** events, the last two
+are **host→MCU** commands:
+
+| Opcode | Command | Dir | Meaning |
+|--:|---|:--:|---|
+| `160` | `CMD_TKEY_EVENT` | ← | capacitive touch-key (`TouchID`: BACK/TUMMY/hands) |
+| `161` | `CMD_SWITCH_EVENT` | ← | switch (`SwitchID`: SWITCH0-2, `DC_PLUG`=3, `LEFT_ARM`=16, `RIGHT_ARM`=17) |
+| `164` | `CMD_MOTOR_STALL_EVENT` | ← | a motor stalled |
+| `165` | `CMD_MPU_EVENT` | ← | IMU gesture (`MpuEventID`: PICKED_UP/PUT_DOWN/TILT/FORCE_PUTDOWN) |
+| `167` | `CMD_WAKEUP_ADR_EVENT` | ← | wake the Android SoC (`WakeupID`: `TOUCH_WAKEUP`/`PICKUP_WAKEUP`/`DCPLUG_WAKEUP`) |
+| `169`/`170` | `CMD_BATTERY_LEVEL` / `CMD_BATTERY_TEMP` | ← | battery telemetry |
+| `176`–`190` | `CMD_ERR_*` | ← | fault codes (battery over-temp `176`, discharge over-current `177`, battery lost `178`, motor-IC alert `179`, motor fail-boot `180`, IMU lost `181`, LED-IC lost `182`, host-messy-cmd `183`, bstate `184`, IMU-update-timeout `185`, FW-bug-len2/4 `186`/`187`, base-motor-spin `188`, battery-PEC `189`, body-touch `190`) — surfaced to Android as `LizardErrorEventPB` (`1000`+) |
+| `196` | `CMD_SEND_WATCHDOG_INFO` | ← | watchdog status |
+| `220` | `CMD_RESTART_MOTOR_POS_FD` | ⇄ | motor-position **feedback** frame (body/waist/head values) — the loop below |
+| `221` | `CMD_SET_POWER_STATE` | → | set the power state (below) |
+
+**Host→MCU command API** (`Lizzerface` methods → UART frames):
+
+| Call | Effect |
+|---|---|
+| `motor_set_pos(byte motor, ushort pos)` | set one motor's target position (16-bit, `0…MOTOR_MAX` = 32767) |
+| `SetPowerState(Power_State ps)` | `POWER_STATE_ACTIVE / SLEEPING / STANDBY / SHUTDOWN` (opcode `221`) |
+| `SetHeartBrightness(byte brightness)` | chest heart-LED brightness (the MCU owns the LED IC) |
+| `reset_xmos()` | the MCU hard-resets the **XMOS** audio DSP (see [`hal-and-drivers.md`](hal-and-drivers.md)) |
+| `SetQuietBoot(bool isQuiet, bool isDone)` | quiet-boot flag (pairs with `sys.embodied.quiet_boot_done`) |
+| `PublishBatteryStatus()` | request/emit a battery report |
+
+**Real-time motor loop.** `Lizzerface` runs a dedicated `Lizzeface.EventReciever` thread at a fixed
+**16.667 ms cadence (≈60 Hz)** (`MSPERLOOP = 16.666668`). Each tick it reads the motor-position
+feedback frame (opcode `0x220` → body/waist/head values), republishes it on the on-device **ZeroMQ**
+bus (as the camera/motor event other modules consume — see [`robot-ipc-protocol.md`](robot-ipc-protocol.md)),
+and paces the next command. A flood guard (`HOST_MESSY_CMD`, ≥40 cmds / 1.5 s → fault `183`) protects the
+MCU. So a custom Android replacement drives the body by writing `motor_set_pos` frames at ~60 Hz and
+consuming the `0x220` feedback — the position servo lives in the MCU, not the SoC.
+
 ---
 📖 [Reverse-engineering index](README.md) · [IPC protocol](robot-ipc-protocol.md) · [Docs index](../README.md) · [Back to top](../../README.md)

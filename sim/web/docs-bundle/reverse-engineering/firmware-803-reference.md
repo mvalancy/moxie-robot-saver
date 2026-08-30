@@ -99,7 +99,8 @@ Sizes are from this build's APK:
 | `libtensorflowlite(_gpu).so` | 2.5 / 6.4 MB | TFLite inference |
 | `libxgb.so` | 0.9 MB | XGBoost |
 | `libzbar.so` | 0.5 MB | ZBar QR/barcode |
-| `liblizzerface.so`/`librobinface.so` | ~30 KB ea | face-character renderers |
+| `liblizzerface.so` | ~30 KB | **Lizard MCU** UART bridge — the `Lizzerface` native layer for motors/sensors/power/LED ([hardware-map](hardware-map.md#raw-uart-command-set-lizzerfacecommands)), NOT a face renderer |
+| `librobinface.so` | ~30 KB | companion native lib (unconfirmed; paired with `liblizzerface`) |
 | (+ `libmonobdwgc-2.0.so`, `libMonoPosixHelper.so`, `libiconv.so`, `librfc.so`, `libusb.so`, `libev.so`, `libmain.so`, `libnative-lib.so`, `libc++_shared.so`) | | Mono runtime + support |
 
 ### Managed assemblies (cleartext .NET IL)
