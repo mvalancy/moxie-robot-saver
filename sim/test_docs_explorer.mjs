@@ -146,6 +146,24 @@ try {
   const afterHash = await page.evaluate(() => location.hash);
   ok(afterHash && afterHash !== beforeHash, `"]" should open the next doc (got ${beforeHash} → ${afterHash})`);
 
+  // 7) a cross-doc link to a heading anchor opens that doc AND scrolls to the heading
+  await page.goto(base + "/docs.html#reverse-engineering/behavior-input-events.md", { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("article a[data-anchor]", { timeout: 8000 }).catch(() => {});
+  const clickedAnchor = await page.evaluate(() => {
+    const l = [...document.querySelectorAll("article a[data-anchor]")]
+      .find((x) => /hardware-map/.test(x.getAttribute("href") || "") && /raw-uart/i.test(x.dataset.anchor));
+    if (l) { l.click(); return true; }
+    return false;
+  });
+  if (clickedAnchor) {
+    await new Promise((r) => setTimeout(r, 1400));
+    const anc = await page.evaluate(() => ({
+      hash: location.hash, scroll: document.getElementById("main").scrollTop,
+    }));
+    ok(/hardware-map/.test(anc.hash) && anc.scroll > 200,
+       `cross-doc heading link should scroll to the section (hash ${anc.hash}, scroll ${Math.round(anc.scroll)})`);
+  }
+
   ok(errs.length === 0, `console errors: ${errs.slice(0, 4).join(" | ")}`);
 } finally {
   await browser.close();

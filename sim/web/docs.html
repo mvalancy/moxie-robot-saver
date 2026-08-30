@@ -108,6 +108,7 @@
   .toc a.active{color:var(--cyan);border-left-color:var(--cyan)}
   @media(max-width:1140px){.toc{display:none}}
   article>*:first-child{margin-top:0}
+  article :is(h1,h2,h3,h4,h5){scroll-margin-top:64px}  /* clear the sticky topbar on anchor jumps */
   article h1{font-size:28px;letter-spacing:-.4px;margin:1.4em 0 .5em;padding-bottom:.3em;border-bottom:1px solid var(--hairline)}
   article h2{font-size:22px;margin:1.7em 0 .6em;padding-bottom:.25em;border-bottom:1px solid var(--hairline2)}
   article h3{font-size:17.5px;margin:1.5em 0 .5em;color:var(--text)}
@@ -275,6 +276,17 @@
   }
   function setActive(path){ Array.prototype.forEach.call(elTree.querySelectorAll("a.doc"),function(a){ a.classList.toggle("active",a.dataset.path===path); }); }
 
+  // resolve a "#heading-anchor" to its element in the rendered doc — exact id first
+  // (marked headerIds), then a fallback matching a heading's slugified text.
+  function slugify(t){ return String(t).toLowerCase().trim().replace(/[^\w\- ]+/g,"").replace(/\s+/g,"-").replace(/\-+/g,"-"); }
+  function anchorEl(root, anchor){
+    var id=String(anchor||"").replace(/^#/,""); if(!id) return null;
+    var el=null; try{ el=root.querySelector("#"+CSS.escape(id)); }catch(e){}
+    if(el) return el;
+    var hs=root.querySelectorAll("h1,h2,h3,h4,h5");
+    for(var i=0;i<hs.length;i++){ if(slugify(hs[i].textContent)===id) return hs[i]; }
+    return null;
+  }
   function fixLinks(root, fromPath){
     var baseDir=fromPath.indexOf("/")>=0?fromPath.replace(/\/[^/]*$/,""):"";
     Array.prototype.forEach.call(root.querySelectorAll("a[href]"),function(a){
@@ -286,7 +298,7 @@
       href.split("/").forEach(function(seg){ if(seg===".."){parts.pop();} else if(seg==="."||seg===""){} else {parts.push(seg);} });
       var target=parts.join("/");
       var hit=idx.files.some(function(f){return f.path===target;})?target:(idx.files.some(function(f){return f.path==="_root/"+target;})?"_root/"+target:null);
-      if(hit){ a.setAttribute("href","#"+hit); a.onclick=function(ev){ ev.preventDefault(); openDoc(hit); }; }
+      if(hit){ var frag=hash; a.setAttribute("href","#"+hit); if(frag) a.dataset.anchor=frag; a.onclick=function(ev){ ev.preventDefault(); openDoc(hit, frag); }; }
     });
   }
   var HLJS_ALIAS={proto:"protobuf",sh:"bash",shell:"bash",jsonc:"json",yml:"yaml",js:"javascript",py:"python"};
@@ -342,24 +354,28 @@
     });
   }
 
+  // Returns a Promise that resolves once every diagram has rendered (so callers can
+  // scroll to an anchor AFTER the layout settles).
   function renderMermaid(root){
-    if(!mmReady) return;
+    if(!mmReady) return Promise.resolve();
     var blocks=root.querySelectorAll("pre code.language-mermaid, code.language-mermaid");
-    if(!blocks.length) return;
+    if(!blocks.length) return Promise.resolve();
     function doRender(){
+      var ps=[];
       Array.prototype.forEach.call(blocks,function(code,i){
         if(!code.isConnected) return;
         var pre=code.closest("pre")||code, div=document.createElement("div"); div.className="mermaid";
         var id="mm-"+(current||"x").replace(/\W/g,"")+"-"+i;
         pre.replaceWith(div);
-        mermaid.render(id, code.textContent).then(function(r){ div.innerHTML=r.svg; })
-          .catch(function(e){ div.innerHTML='<div class="err">mermaid: '+esc(e.message||e)+'</div>'; });
+        ps.push(mermaid.render(id, code.textContent).then(function(r){ div.innerHTML=r.svg; })
+          .catch(function(e){ div.innerHTML='<div class="err">mermaid: '+esc(e.message||e)+'</div>'; }));
       });
+      return Promise.all(ps);
     }
     // Render only once the webfont (Inter) has loaded, so Mermaid measures node
     // boxes with the SAME metrics it renders with — otherwise it sizes boxes with
     // the fallback font and the real font reflows taller, clipping label text.
-    if(document.fonts&&document.fonts.ready) document.fonts.ready.then(doRender); else doRender();
+    return (document.fonts&&document.fonts.ready) ? document.fonts.ready.then(doRender) : doRender();
   }
   function heroHtml(){
     return '<div class="hero"><div class="row"><div class="txt">'+
@@ -417,7 +433,7 @@
     Array.prototype.forEach.call(hs,function(h){ _tocObs.observe(h); });
   }
 
-  function openDoc(path){
+  function openDoc(path, anchor){
     var f=idx.files.filter(function(x){return x.path===path;})[0]; if(!f) return;
     current=path; try{ location.hash=path; }catch(e){}
     elCrumb.innerHTML=(SECTION_LABEL[f.section]||f.section)+' / <b>'+esc(f.title)+'</b>';
@@ -448,13 +464,17 @@
         elContent.appendChild(wrap);
         while(pg.firstChild) art.appendChild(pg.firstChild);
         highlightCode(art);
-        renderMermaid(art);
         if(toc) spyTOC(art, toc);
-        // if we arrived via search, highlight the term in the doc + jump to it
+        // scroll target priority: search hit > cross-doc heading anchor > top
         var q=elQ.value.trim();
         var firstHit=q?markMatches(art,q):null;
-        if(firstHit){ setTimeout(function(){ firstHit.scrollIntoView({block:"center",behavior:"smooth"}); },60); }
-        else document.getElementById("main").scrollTop=0;
+        var anchEl=(!firstHit&&anchor)?anchorEl(art,anchor):null;
+        document.getElementById("main").scrollTop=0;
+        // scroll AFTER Mermaid finishes (it renders async and shifts layout)
+        renderMermaid(art).then(function(){
+          if(firstHit&&firstHit.isConnected) firstHit.scrollIntoView({block:"center",behavior:"auto"});
+          else if(anchEl&&anchEl.isConnected) anchEl.scrollIntoView({block:"start",behavior:"auto"});
+        });
       })
       .catch(function(e){ elContent.innerHTML='<article><p class="err" style="padding:30px">Could not load '+esc(f.path)+' — '+esc(e.message)+'</p></article>'; });
   }
