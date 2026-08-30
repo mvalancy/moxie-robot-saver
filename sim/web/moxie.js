@@ -699,19 +699,21 @@ faceAssembly.add(faceHalo);
 // ---- Speaker grille (transparent dot texture, LOW on the body front) ----
 
 function makeGrilleTexture() {
+  // A ROUND speaker port: a circular field of dots on a square canvas, mapped onto
+  // a near-square patch of the body so it reads as a circle (not a wide oval).
   const c = document.createElement('canvas');
-  c.width = 256; c.height = 144;
+  c.width = 200; c.height = 200;
   const g = c.getContext('2d');
   g.clearRect(0, 0, c.width, c.height);
   g.fillStyle = 'rgba(18, 42, 44, 0.9)';
-  const cx = 128, cy = 72, rx = 112, ry = 56;
-  for (let y = 14; y <= 130; y += 14) {
-    const odd = ((y / 14) % 2) === 0 ? 7 : 0;
-    for (let x = 10 + odd; x <= 246; x += 14) {
-      const dx = (x - cx) / rx, dy = (y - cy) / ry;
-      if (dx * dx + dy * dy <= 1) {
+  const cx = 100, cy = 100, R = 88;
+  for (let y = 16, row = 0; y <= 184; y += 13, row++) {
+    const odd = (row % 2) === 0 ? 6.5 : 0;
+    for (let x = 12 + odd; x <= 188; x += 13) {
+      const dx = x - cx, dy = y - cy;
+      if (dx * dx + dy * dy <= R * R) {
         g.beginPath();
-        g.arc(x, y, 3.4, 0, Math.PI * 2);
+        g.arc(x, y, 3.2, 0, Math.PI * 2);
         g.fill();
       }
     }
@@ -721,8 +723,10 @@ function makeGrilleTexture() {
   return t;
 }
 
+// Near-square patch of the lower-torso front (arc ≈ height) so the round dot field
+// stays round on the curved shell; centred on the lower torso.
 const grille = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.660, 0.642, 0.26, 48, 1, true, -0.45, 0.90),
+  new THREE.CylinderGeometry(0.652, 0.648, 0.30, 48, 1, true, -0.245, 0.49),
   new THREE.MeshStandardMaterial({
     map: makeGrilleTexture(),
     transparent: true,
@@ -731,7 +735,7 @@ const grille = new THREE.Mesh(
     polygonOffsetFactor: -1,
   })
 );
-grille.position.set(0, 0.34, 0);
+grille.position.set(0, 0.32, 0);
 lowerG.add(grille);      // printed on the lower torso — planted, never leans
 
 // ---- `moxie` wordmark near the base ----
