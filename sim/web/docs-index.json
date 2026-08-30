@@ -1,5 +1,5 @@
 {
- "generated": "a370575-dirty",
+ "generated": "dbb9a4e-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -25,7 +25,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap — end-to-end Moxie revival",
    "section": "_root",
-   "bytes": 7626,
+   "bytes": 7657,
    "mermaid": 0,
    "headings": [
     "Phase 0 — Reverse engineering  ✅",
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 5951,
+   "bytes": 6045,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 8034,
+   "bytes": 8327,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -1304,6 +1304,22 @@
     "Parent-app-controlled",
     "System · power · logging · recovery · feature flags",
     "For revival (goal #2)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/turn-taking.md",
+   "title": "Turn-taking & engagement — the conversation state machine (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 6176,
+   "mermaid": 1,
+   "headings": [
+    "The state model — `TurnTakingState`",
+    "Derived predicates (from `TurnTakingBehavior` / `EventTurnOwner`)",
+    "Barge-in / interruption",
+    "Who is speaking — DOA person scoring",
+    "Response timing",
+    "Content / behavior-tree control",
+    "What this means for the three goals"
    ]
   },
   {
