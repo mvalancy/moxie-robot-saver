@@ -41,7 +41,7 @@
 | Perception in/out: STT (Deepgram/local) · TTS (CloudTTS) · vision | ✅ | [perception-pipeline](perception-pipeline.md) |
 | Wake-word/VAD (server doesn't handle it) | ✅ | [perception-pipeline](perception-pipeline.md#wake-word--vad-fully-on-device) |
 | Scheduling/recommender/STAR/StarBits/mentor history | ✅ | [content-and-conversation](content-and-conversation.md#scheduling-progression--rewards-what-to-offer-next) |
-| Telehealth / live remote puppet | ✅ | [content-and-conversation](content-and-conversation.md#telehealth--remote-puppet-mode) |
+| Telehealth / live remote puppet (TeleBrain protocol) | ✅ | [telehealth](telehealth.md) |
 | Full protocol reference (382 msgs) + bindings | ✅ + tools | [proto-catalog](proto-catalog.md) · [recovered-proto/](recovered-proto/) · `protoref` |
 | Pairing crypto (phone side) | ✅ | [crypto-and-keys](crypto-and-keys.md) · [qr-format](qr-format.md) |
 
