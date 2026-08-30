@@ -192,10 +192,10 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
   web UI (+ `--profile demo` virtual robot); [`sim/README.md`](../../sim/README.md) one-command run.
   Compose config validated; loop-replay verified. ⏳ optional polish: screenshots/gif, release tag.
 - [x] **D9 — The experience as one static site.** Beyond the SIL: a **combined parent app + simulator +
-  cloud console** on one Cloudflare-deployable bundle (`sim/web/`) — `hub.html` front door,
-  `setup.html` (phone-first revival QR, server-free), `cloud.html` (parent console from a fixture that
-  mirrors the real REST/MQTT shapes). All four surfaces done; only the Pages deploy itself remains (needs
-  the owner's account). Map + roadmap: [`static-experience.md`](static-experience.md).
+  cloud console** on one Cloudflare-deployable bundle (`sim/web/`) — `index.html` front door
+  (`/hub.html`→`/` redirect), `setup.html` (phone-first revival QR, server-free), `cloud.html` (parent
+  console from a fixture that mirrors the real REST/MQTT shapes). All surfaces done and **deployed live**
+  at [moxie.mattvalancy.com](https://moxie.mattvalancy.com). Map + roadmap: [`static-experience.md`](static-experience.md).
 
 Progress is tracked here (check items off) and in [`ROADMAP.md`](../../ROADMAP.md). A lightweight
 per-tick status mirror also lives at `work/firmware-re/progress/PLAN.md` — but `work/` is git-ignored
