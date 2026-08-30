@@ -1,5 +1,5 @@
 {
- "generated": "docs-66527d6a879d",
+ "generated": "docs-9f1e2e48439a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1301,7 +1301,7 @@
    "path": "reverse-engineering/runtime/behavior-markup.md",
    "title": "Behavior markup — making Moxie move & emote while it talks",
    "section": "reverse-engineering",
-   "bytes": 12996,
+   "bytes": 14594,
    "mermaid": 0,
    "headings": [
     "Shape",
@@ -1312,6 +1312,7 @@
     "Emotion / mood — `EmotionState` (`embodied.robotbrain`, `RemoteChat.proto`)",
     "Conversational signals — `RemoteSignals.Signal` (`RemoteChat.proto`)",
     "Gestures — `Gesture_*` (hardcoded in `bo-android`)",
+    "Vocal gestures / spurts — `VocalGestures.availableGestures` (hardcoded in `bo-android`)",
     "Behaviour trees — `Bht_*` (hardcoded in `bo-android`)",
     "Perception side — detected human emotion (`Face.proto`)",
     "Toolkit — build marks programmatically"

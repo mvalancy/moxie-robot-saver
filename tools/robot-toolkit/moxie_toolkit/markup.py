@@ -70,6 +70,20 @@ def notification(message, duration=2.0):
 def composite(alias):
     return _mark("composite", {"alias": alias})
 
+# The 52 built-in CereProc vocal gestures / "spurts" (VocalGestures.availableGestures, v24.10.803;
+# assets named g0001_<id>). See docs/reverse-engineering/runtime/behavior-markup.md.
+VOCAL_GESTURES = [
+    "tut", "tut tut", "cough", "cough2", "cough3", "clear throat", "breath in", "sharp intake of breath",
+    "breath in through teeth", "sigh happy", "sigh sad", "hmm question", "hmm yes", "hmm thinking", "umm",
+    "umm2", "err", "err2", "giggle", "giggle2", "laugh", "laugh2", "laugh3", "laugh4", "ah positive",
+    "ah negative", "yeah question", "yeah positive", "yeah resigned", "sniff", "sniff2", "argh", "argh2",
+    "ugh", "ocht", "yay", "oh positive", "oh negative", "sarcastic noise", "yawn", "yawn2", "snore", "null",
+    "snore phew", "zzz", "raspberry", "raspberry2", "brr cold", "snort", "ha ha (sarcastic)", "doh", "gasp"]
+
+def vocal_gesture(gesture):
+    """cmd:vocal-gesture — play a non-word vocalization (laugh/sigh/hmm…). See VOCAL_GESTURES."""
+    return _mark("vocal-gesture", {"gesture": gesture})
+
 def raw(verb, **data):
     """Escape hatch for any of the 24 verbs: raw('emotion', state=...)."""
     return _mark(verb, data or None)

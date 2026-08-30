@@ -39,7 +39,7 @@ the tags below are the ones actually used in shipped content (with observed valu
 | `<prosody>` | `pitch` (`medium`), `rate` (`slow`/`medium`/`x-fast`), `volume` (`medium`) | pitch/rate/volume shaping |
 | `<emphasis level>` | `strong` | stress a word |
 | `<phoneme ph>` | dotted phones, e.g. `ph="r.iy.d"` (read), `ph="k.ih.p.uw.r"` | **pronunciation override** (names/rare words); phones are ARPAbet-ish, dot-separated |
-| `<spurt>` | `spurt_id`, `speaker` | **non-verbal vocalization** (breath, laugh, "hmm") — CereVoice "spurt" |
+| `<spurt>` | `spurt_id`, `speaker` | **non-verbal vocalization** — CereVoice "spurt" ([52 built-ins enumerated below](#vocal-gestures-spurts-vocalgesturesavailablegestures-hardcoded-in-bo-android)) |
 
 So a full line interleaves three layers: **SSML** (how it's *said*: `usel`/`prosody`/`phoneme`),
 **behavior marks** (`cmd:` — what the *body/face* does), and plain text (what's *said*). The
@@ -192,6 +192,24 @@ Gesture_None · Gesture_Talk · Gesture_Think · Gesture_Think_Subtle · Gesture
 Gesture_Point · Gesture_Point_Right · Gesture_Self · Gesture_Higher · Gesture_Lower
 Gesture_Large · Gesture_Celebrate
 ```
+
+### Vocal gestures / spurts — `VocalGestures.availableGestures` (hardcoded in `bo-android`)
+
+The non-word vocalizations behind the [`vocal-gesture`](#the-command-verbs-24) verb and the CereVoice
+`<spurt>` tag — **52** built-in gestures (`VocalGestures.availableGestures`, `v24.10.803`). Each maps to a
+CereProc audio asset named **`g0001_<id>`**; a `<spurt spurt_id="…">` or `<mark cmd:vocal-gesture>` plays
+one. (At runtime the *live* set is whatever the loaded `RobotAnimationAssetResourceSingleton`'s
+`vocalGestures` bundle provides — `RobotVocalGestureRequest.values` — but these 52 are the shipped
+built-ins.) By family:
+
+| Family | IDs |
+|---|---|
+| **Laughs** | `laugh` · `laugh2` · `laugh3` · `laugh4` · `giggle` · `giggle2` · `ha ha (sarcastic)` |
+| **Thinking / filler** | `hmm question` · `hmm yes` · `hmm thinking` · `umm` · `umm2` · `err` · `err2` |
+| **Breaths / sighs** | `breath in` · `sharp intake of breath` · `breath in through teeth` · `sigh happy` · `sigh sad` · `yawn` · `yawn2` · `snore` · `snore phew` · `zzz` |
+| **Affirm / react** | `ah positive` · `ah negative` · `oh positive` · `oh negative` · `yeah question` · `yeah positive` · `yeah resigned` · `yay` |
+| **Displeasure** | `argh` · `argh2` · `ugh` · `ocht` · `doh` · `gasp` · `sarcastic noise` |
+| **Bodily / misc** | `tut` · `tut tut` · `cough` · `cough2` · `cough3` · `clear throat` · `sniff` · `sniff2` · `snort` · `raspberry` · `raspberry2` · `brr cold` · `null` |
 
 ### Behaviour trees — `Bht_*` (hardcoded in `bo-android`)
 Idle/expressive body-motion trees baked into the app:
