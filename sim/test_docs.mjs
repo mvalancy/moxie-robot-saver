@@ -104,17 +104,22 @@ ok(html.includes("docs-bundle/"), "docs.html must fetch docs from docs-bundle/")
 {
   const sections = [...new Set(idx.files.map(f => f.section))].filter(s => s !== "_root" && s !== "docs");
   for (const sec of sections) {
-    // top-level docs of this section (subfolder docs like recovered-proto/README.md are exempt)
-    const files = idx.files.filter(f => f.section === sec && f.path.split("/").length === 2);
     const readmePath = join(repo, "docs", sec, "README.md");
-    if (!files.some(f => f.path.endsWith("/README.md")) || !existsSync(readmePath)) continue;  // no section index → A–Z is fine
-    ok(files[0].path.endsWith("/README.md"), `${sec} must lead with its README (got ${files[0].path})`);
+    if (!existsSync(readmePath)) continue;                       // no section index → A–Z is fine
+    const secDocs = idx.files.filter(f => f.section === sec);    // all docs in the section, any depth
+    if (!secDocs.some(f => f.path === `${sec}/README.md`)) continue;
+    ok(secDocs[0].path === `${sec}/README.md`, `${sec} must lead with its README (got ${secDocs[0].path})`);
     const readme = readFileSync(readmePath, "utf8");
-    const linkOrder = [...readme.matchAll(/\]\(([A-Za-z0-9._-]+\.md)\)/g)].map(m => m[1]);
-    const rank = new Map(linkOrder.map((b, i) => [b, i]));
-    const unlisted = files.map(f => f.path.split("/").pop()).filter(b => b !== "README.md" && !rank.has(b));
+    // README links may now be subfolder-prefixed (protocol/foo.md); key by basename, like the bundler.
+    const rank = new Map();
+    [...readme.matchAll(/\]\(([A-Za-z0-9._/-]+\.md)\)/g)].map(m => m[1].split("/").pop())
+      .forEach((b, i) => { if (!rank.has(b)) rank.set(b, i); });
+    // content docs = every section doc except a README.md (the section index + any subfolder index)
+    const content = secDocs.filter(f => !f.path.endsWith("/README.md"));
+    const bn = f => f.path.split("/").pop();
+    const unlisted = content.map(bn).filter(b => !rank.has(b));
     ok(unlisted.length === 0, `${sec} docs missing from its README (orphaned to A–Z tail): ${unlisted.join(", ")}`);
-    const ranks = files.slice(1).map(f => f.path.split("/").pop()).filter(b => rank.has(b)).map(b => rank.get(b));
+    const ranks = content.map(bn).filter(b => rank.has(b)).map(b => rank.get(b));
     ok(ranks.every((r, i) => i === 0 || r >= ranks[i - 1]), `${sec} docs must be ordered by the README link list`);
   }
 }
