@@ -164,6 +164,19 @@ try {
        `cross-doc heading link should scroll to the section (hash ${anc.hash}, scroll ${Math.round(anc.scroll)})`);
   }
 
+  // 8) a shareable section URL (#doc#heading) deep-loads to that section, and each
+  //    section heading has a copyable "#" permalink.
+  await page.goto(base + "/docs.html#reverse-engineering/hardware-map.md#raw-uart-command-set-lizzerfacecommands",
+                  { waitUntil: "domcontentloaded" });
+  await page.waitForFunction('document.querySelectorAll("article h2[id]").length>0', { timeout: 9000 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 1400));
+  const deep = await page.evaluate(() => ({
+    scroll: document.getElementById("main").scrollTop,
+    permalinks: document.querySelectorAll("article h2 .hlink, article h3 .hlink").length,
+  }));
+  ok(deep.scroll > 200, `section deep-link URL should scroll to the section (scroll ${Math.round(deep.scroll)})`);
+  ok(deep.permalinks > 3, `section headings should have copyable permalinks (got ${deep.permalinks})`);
+
   ok(errs.length === 0, `console errors: ${errs.slice(0, 4).join(" | ")}`);
 } finally {
   await browser.close();

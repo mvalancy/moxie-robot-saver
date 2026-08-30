@@ -109,6 +109,12 @@
   @media(max-width:1140px){.toc{display:none}}
   article>*:first-child{margin-top:0}
   article :is(h1,h2,h3,h4,h5){scroll-margin-top:64px}  /* clear the sticky topbar on anchor jumps */
+  /* hover permalink on section headings */
+  .hlink{margin-left:9px;color:var(--dim);text-decoration:none;font-weight:400;opacity:0;transition:opacity .12s,color .12s}
+  article h2:hover .hlink,article h3:hover .hlink{opacity:.55}
+  .hlink:hover{opacity:1;color:var(--cyan)}
+  .hlink.copied{opacity:1;color:var(--mint)}
+  .hlink.copied::after{content:" copied";font-size:11px;color:var(--mint);font-family:var(--font-mono)}
   article h1{font-size:28px;letter-spacing:-.4px;margin:1.4em 0 .5em;padding-bottom:.3em;border-bottom:1px solid var(--hairline)}
   article h2{font-size:22px;margin:1.7em 0 .6em;padding-bottom:.25em;border-bottom:1px solid var(--hairline2)}
   article h3{font-size:17.5px;margin:1.5em 0 .5em;color:var(--text)}
@@ -416,6 +422,20 @@
     });
     return nav;
   }
+  // add a copyable "#" permalink to each section heading (ids set by buildTOC)
+  function addHeadingLinks(art){
+    Array.prototype.forEach.call(art.querySelectorAll("h2[id], h3[id]"),function(h){
+      if(h.querySelector(".hlink")) return;
+      var a=document.createElement("a"); a.className="hlink"; a.href="#"+current+"#"+h.id;
+      a.textContent="#"; a.title="Copy link to this section"; a.setAttribute("aria-label","Copy link to this section");
+      a.onclick=function(ev){ ev.preventDefault();
+        try{ location.hash=current+"#"+h.id; }catch(e){}
+        try{ if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(location.href); }catch(e){}
+        a.classList.add("copied"); setTimeout(function(){ a.classList.remove("copied"); },1100);
+      };
+      h.appendChild(a);
+    });
+  }
   function spyTOC(art, toc){
     if(_tocObs){ _tocObs.disconnect(); _tocObs=null; }
     var links={}; Array.prototype.forEach.call(toc.querySelectorAll("a"),function(a){ links[a.dataset.id]=a; });
@@ -435,7 +455,7 @@
 
   function openDoc(path, anchor){
     var f=idx.files.filter(function(x){return x.path===path;})[0]; if(!f) return;
-    current=path; try{ location.hash=path; }catch(e){}
+    current=path; try{ location.hash=path+(anchor||""); }catch(e){}
     elCrumb.innerHTML=(SECTION_LABEL[f.section]||f.section)+' / <b>'+esc(f.title)+'</b>';
     // compact reading-time + diagram-count from the index metadata (~1100 bytes/min ≈ 200 wpm)
     var meta=document.getElementById("docmeta");
@@ -458,7 +478,7 @@
         Array.prototype.forEach.call(pg.querySelectorAll("a[data-go]"),function(a){ a.onclick=function(ev){ ev.preventDefault(); openDoc(a.dataset.go); }; });
         elContent.innerHTML="";
         if(isHome) elContent.insertAdjacentHTML("beforeend", heroHtml());
-        var toc=buildTOC(art);
+        var toc=buildTOC(art); addHeadingLinks(art);
         var wrap=document.createElement("div"); wrap.className="docwrap";
         wrap.appendChild(art); if(toc) wrap.appendChild(toc);
         elContent.appendChild(wrap);
@@ -482,17 +502,27 @@
   marked.setOptions({gfm:true, breaks:false, headerIds:true, mangle:false});
   fetch("docs-index.json").then(function(r){return r.json();}).then(function(d){
     idx=d; document.getElementById("fw").textContent=d.firmware;
-    var initial=(location.hash||"").replace(/^#/,"");
-    current = (initial && idx.files.some(function(f){return f.path===initial;})) ? initial : HOME;
+    var ih=parseHash();
+    current = (ih.path && idx.files.some(function(f){return f.path===ih.path;})) ? ih.path : HOME;
     if(!idx.files.some(function(f){return f.path===HOME;})) current=idx.files[0].path;
-    buildTree(""); openDoc(current);
+    buildTree(""); openDoc(current, ih.path===current?ih.anchor:"");
   }).catch(function(e){
     elTree.innerHTML='<div style="padding:14px" class="err">Could not load docs-index.json.<br>Run <code>python3 sim/tools/build_docs_bundle.py</code>.</div>';
   });
 
   var qt; elQ.addEventListener("input",function(){ clearTimeout(qt); qt=setTimeout(function(){ var v=elQ.value.trim(); if(v&&!SEARCH){ loadSearch(function(){ buildTree(elQ.value.trim()); }); } buildTree(v); },110); });
   document.getElementById("burger").onclick=function(){ document.body.classList.toggle("nav-open"); };
-  window.addEventListener("hashchange",function(){ var h=(location.hash||"").replace(/^#/,""); if(h&&h!==current&&idx&&idx.files.some(function(f){return f.path===h;})) openDoc(h); });
+  // the URL fragment is "<docpath>" optionally followed by "#<heading-anchor>", so a
+  // link to a section is shareable/bookmarkable (doc paths never contain '#').
+  function parseHash(){
+    var raw=(location.hash||"").replace(/^#/,""); var i=raw.indexOf("#");
+    return i>=0 ? {path:raw.slice(0,i), anchor:"#"+raw.slice(i+1)} : {path:raw, anchor:""};
+  }
+  window.addEventListener("hashchange",function(){
+    var hh=parseHash(); if(!hh.path||!idx) return;
+    if(hh.path!==current){ if(idx.files.some(function(f){return f.path===hh.path;})) openDoc(hh.path, hh.anchor); }
+    else if(hh.anchor){ var el=anchorEl(elContent, hh.anchor); if(el) el.scrollIntoView({block:"start",behavior:"smooth"}); }
+  });
 
   // keyboard shortcuts: "/" focus search · Esc clear/blur · [ / ] prev / next doc
   document.addEventListener("keydown",function(e){
