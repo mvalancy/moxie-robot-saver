@@ -18,6 +18,7 @@
 | On-device ZMQ bus (drive the robot) + client | ✅ + tool | [robot-ipc-protocol](robot-ipc-protocol.md) · `MoxieBus` |
 | Behavior input-event vocabulary (163 events, Farmers→InputEngine) | ✅ | [behavior-input-events](behavior-input-events.md) |
 | Decision engine (NodeCanvas BT/FSM/Dialogue + Blackboard, 45 trees) | ✅ | [behavior-tree-engine](behavior-tree-engine.md) |
+| Gaze & attention (interest points, saccades, IK look-at) | ✅ | [gaze-and-attention](gaze-and-attention.md) |
 | Hardware map: motors/sensors/LEDs/power rails | ✅ | [hardware-map](hardware-map.md) |
 | **3-processor firmware** (RK3288 OTA · Lizard STM32 · XMOS DSP) | ✅ incl. images | [hardware-map](hardware-map.md) · [perception-pipeline](perception-pipeline.md) |
 | Physical flashing surface (maskrom/rockusb/fastboot/UART/JTAG) | ✅ | [hardware-access](hardware-access.md) |

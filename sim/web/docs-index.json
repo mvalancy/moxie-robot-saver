@@ -1,5 +1,5 @@
 {
- "generated": "9544533-dirty",
+ "generated": "7769a79-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -25,7 +25,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap — end-to-end Moxie revival",
    "section": "_root",
-   "bytes": 7594,
+   "bytes": 7626,
    "mermaid": 0,
    "headings": [
     "Phase 0 — Reverse engineering  ✅",
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 5838,
+   "bytes": 5951,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 7763,
+   "bytes": 8034,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -926,6 +926,21 @@
     "D. Flash your images",
     "E. First boot & verify",
     "Reviving a stranded robot by flashing"
+   ]
+  },
+  {
+   "path": "reverse-engineering/gaze-and-attention.md",
+   "title": "Gaze & attention — how Moxie decides where to look (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 6939,
+   "mermaid": 1,
+   "headings": [
+    "TL;DR",
+    "The attention model",
+    "GazeBehavior — the controller",
+    "Motion tuning (constants from the binary)",
+    "Control from content / behavior trees",
+    "What this means for the three goals"
    ]
   },
   {

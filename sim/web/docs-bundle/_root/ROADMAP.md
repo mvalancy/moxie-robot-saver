@@ -41,7 +41,11 @@ The live experience, powered entirely by local AI.
 - ⬜ **Local STT** — Whisper (e.g. faster-whisper) on the GPU; ZMQ-over-MQTT audio bridge.
 - ⬜ **Local LLM** — any local model via an OpenAI-compatible endpoint (LiteLLM / vLLM / Ollama / LM Studio); OpenAI itself only as an optional fallback. **Never hard-wired to a vendor.**
 - ⬜ **Local TTS** — on-device voice synthesis.
-- ⬜ **Behavior markup** — the text→Moxie-expression engine so Moxie moves/emotes, not just speaks.
+- 🔨 **Behavior markup** — the text→Moxie-expression engine so Moxie moves/emotes, not just speaks. The
+  SIL bridge ([`sim/web/bridge.js`](sim/web/bridge.js)) already parses the `cmd:` marks and drives the
+  avatar: `playback-mood`→one of the 11 authentic Eyeseme faces, `Gesture_*`→arm poses, and the
+  distinctive `Bht_*` behaviour trees (spin, greet, pickup/putdown, wake, search…). Server-side
+  emission from the conversation engine is the remaining piece.
 
 ## Phase 4 — The full experience  ⬜
 - ⬜ Content **modules/activities** (Daily Missions, Reading, Tips, jokes, breathing, …).
@@ -70,7 +74,7 @@ Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-ex
 - ✅ **Docs explorer** — [`sim/web/docs.html`](sim/web/docs.html): browses every `docs/*.md` with
   Mermaid rendered (marked + mermaid vendored), built by `sim/tools/build_docs_bundle.py`. Collapsible tree,
   **full-text search** (lazy `docs-search.json`) with snippets + in-document match highlighting & scroll-to-hit,
-  prev/next pager, "On this page" TOC + scroll-spy, per-doc reading-time + diagram-count meta, and code
+  prev/next pager (+ `[`/`]` keys, `/` to search), "On this page" TOC + scroll-spy, per-doc reading-time + diagram-count meta, and code
   **syntax highlighting** (highlight.js vendored). Runtime behavior guarded by `sim/test_docs_explorer.mjs`.
 - ✅ **Cloudflare Pages deploy** — live at [moxie.mattvalancy.com](https://moxie.mattvalancy.com);
   `_headers` cache policy + clean URLs, pre-cached MP3 voice + ambient self-talk, responsive across phone→ultrawide.
