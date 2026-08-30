@@ -1,5 +1,5 @@
 {
- "generated": "docs-1f26fd3dd2f6",
+ "generated": "docs-f0c9e1417502",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -554,7 +554,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 16626,
+   "bytes": 16851,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app ([`phone/`](phone/README.md))",
@@ -606,6 +606,22 @@
     "The full module roster — what each remaining `bo-*` `.so` actually is",
     "Resolved: who consumes `QRCommand` (the setup-QR → brain bridge)",
     "What this means for the three goals"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/PLAYBOOK.md",
+   "title": "The Android-robot revival playbook",
+   "section": "reverse-engineering",
+   "bytes": 7417,
+   "mermaid": 1,
+   "headings": [
+    "Why this generalizes",
+    "The mindset (what actually mattered)",
+    "The arc (how the Moxie project actually unfolded — a reusable order)",
+    "The method, step by step (each is a skill)",
+    "What saved (and wasted) the most time",
+    "Reuse what Moxie produced"
    ],
    "kind": "md"
   },

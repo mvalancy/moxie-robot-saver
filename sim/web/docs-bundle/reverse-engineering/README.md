@@ -12,6 +12,8 @@ The end goal is not just to *revive* old robots but to make Moxie's body host **
 [out-of-process behind the ZMQ bus](runtime/native-boundary.md), so any AI that speaks that contract
 *becomes* Moxie. Running a compatible server is the floor; a full brain transplant is the ceiling.
 
+> 🧭 **[Playbook](PLAYBOOK.md)** — the transferable deep-dive: how we reversed + revived Moxie, generalized so a new team can repeat it on another Android robot (packaged as [`.claude/skills/`](../../.claude/skills/)).
+>
 > 🧪 **[Methodology](METHODOLOGY.md)** — how these facts are produced (tool tiers incl. Ghidra) and the disciplined per-iteration loop every session runs.
 >
 > ✅ **[Coverage matrix](COVERAGE.md)** — what's documented per goal + the honest remaining gaps.
