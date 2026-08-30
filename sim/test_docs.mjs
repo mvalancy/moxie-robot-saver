@@ -45,8 +45,10 @@ const onDisk = walk(docsDir, docsDir, []);          // paths relative to docs/
 const indexed = new Set(idx.files.filter(f => f.section !== "_root").map(f => f.path));
 for (const rel of onDisk)
   ok(indexed.has(rel), `docs/${rel} is not in docs-index.json (stale bundle — rebuild it)`);
-ok(indexed.size === onDisk.length,
-   `index has ${indexed.size} docs but repo has ${onDisk.length} (rebuild the bundle)`);
+// Equality is over .md only — the index also carries bundled .tsv/.dts manifests (kind:"text").
+const indexedMd = [...indexed].filter(p => p.endsWith(".md")).length;
+ok(indexedMd === onDisk.length,
+   `index has ${indexedMd} md docs but repo has ${onDisk.length} (rebuild the bundle)`);
 
 // ---- each indexed file copied into the bundle, mermaid count correct ----
 let mermaidTotal = 0;
@@ -114,8 +116,9 @@ ok(html.includes("docs-bundle/"), "docs.html must fetch docs from docs-bundle/")
     const rank = new Map();
     [...readme.matchAll(/\]\(([A-Za-z0-9._/-]+\.md)\)/g)].map(m => m[1].split("/").pop())
       .forEach((b, i) => { if (!rank.has(b)) rank.set(b, i); });
-    // content docs = every section doc except a README.md (the section index + any subfolder index)
-    const content = secDocs.filter(f => !f.path.endsWith("/README.md"));
+    // content docs = every section .md except a README.md (the section index + any subfolder index).
+    // Non-.md files (bundled manifests like .tsv/.dts) aren't curated docs — they're not README-ordered.
+    const content = secDocs.filter(f => f.path.endsWith(".md") && !f.path.endsWith("/README.md"));
     const bn = f => f.path.split("/").pop();
     const unlisted = content.map(bn).filter(b => !rank.has(b));
     ok(unlisted.length === 0, `${sec} docs missing from its README (orphaned to A–Z tail): ${unlisted.join(", ")}`);

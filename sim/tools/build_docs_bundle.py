@@ -59,11 +59,14 @@ def headings(text):
 def collect():
     files = []
     roots = [(os.path.join(REPO, "docs"), "docs")]
-    # docs/ tree
+    # Markdown docs (the curated pages) + the plain-text manifests/schemas the docs LINK to
+    # (`.tsv`/`.dts`) so those links open in the explorer instead of 404-ing. Rendered as
+    # syntax-highlighted code, not markdown (see `kind` below).
+    TEXT_EXT = (".tsv", ".dts")
     for base, prefix in roots:
         for dirpath, _dirs, names in os.walk(base):
             for n in sorted(names):
-                if not n.endswith(".md"):
+                if not (n.endswith(".md") or n.endswith(TEXT_EXT)):
                     continue
                 full = os.path.join(dirpath, n)
                 rel = os.path.relpath(full, base)          # e.g. reverse-engineering/qr-commands.md
@@ -105,13 +108,15 @@ def main():
         # A section's own README defines the curated within-section reading order.
         if rel == section + "/README.md":
             readme_rank[section] = link_order(text)
+        is_md = rel.endswith(".md")
         entries.append({
             "path": rel,
-            "title": title_of(text, os.path.basename(rel)),
+            "title": title_of(text, os.path.basename(rel)) if is_md else os.path.basename(rel),
             "section": section,
             "bytes": len(text.encode("utf-8")),
-            "mermaid": text.count("```mermaid"),
-            "headings": headings(text),
+            "mermaid": text.count("```mermaid") if is_md else 0,
+            "headings": headings(text) if is_md else [],
+            "kind": "md" if is_md else "text",
         })
         # full-text search blob: strip mermaid/code fences' language markers + collapse
         # whitespace so a client-side substring search over the prose + code works.

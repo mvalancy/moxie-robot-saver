@@ -108,6 +108,12 @@ try {
   const meta = await page.evaluate(() => (document.getElementById("docmeta") || {}).textContent || "");
   ok(/~\d+ min/.test(meta) && /diagram/.test(meta), `topbar should show reading time + diagram count (got "${meta}")`);
 
+  // 2b) linked non-.md manifests (.tsv/.dts) open in the explorer as a code block (not a 404)
+  await page.goto(base + "/docs.html#reverse-engineering/firmware/manifests/init-services.tsv", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction('document.querySelectorAll("#content pre code").length>0', { timeout: 8000 }).catch(() => {});
+  const manifest = await page.evaluate(() => { const c = document.querySelector("#content pre code"); return { hasCode: !!c, len: c ? c.textContent.length : 0 }; });
+  ok(manifest.hasCode && manifest.len > 50, `linked .tsv manifest should render as a code block (got ${JSON.stringify(manifest)})`);
+
   // 3) code highlighting applies (hljs token spans)
   await page.goto(base + "/docs.html#reverse-engineering/hardware/hardware-map.md", { waitUntil: "domcontentloaded" });
   await page.waitForFunction('document.querySelectorAll("article pre code").length>0', { timeout: 8000 }).catch(() => {});

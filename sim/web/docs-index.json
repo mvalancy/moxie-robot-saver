@@ -1,5 +1,5 @@
 {
- "generated": "docs-1c88508e07a4",
+ "generated": "docs-141a6b6f201e",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -19,7 +19,8 @@
     "Built with the community",
     "Legal & ethics",
     "License"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "_root/ROADMAP.md",
@@ -39,7 +40,8 @@
     "Track A — Moxie sees (camera + vision)",
     "Track B — Older robots (firmware)",
     "Deployment target"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "architecture/README.md",
@@ -47,7 +49,8 @@
    "section": "architecture",
    "bytes": 1161,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "architecture/overview.md",
@@ -64,7 +67,8 @@
     "Components (all on one machine)",
     "The appliance",
     "Data & privacy"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "architecture/revival-path.md",
@@ -80,7 +84,8 @@
     "Step 3 — Connect & talk 🔨",
     "If you're on 24.10.801",
     "No teardown required"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "architecture/mqtt-and-conversation.md",
@@ -127,7 +132,8 @@
     "7.3 Recommended phased build order",
     "Appendix A — File map (OpenMoxie, for reference)",
     "Appendix B — Endpoint QR #2 generator (pseudocode, no protobuf runtime needed)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "architecture/moxie-as-a-platform.md",
@@ -141,7 +147,8 @@
     "Driving Moxie from an external app (the avatar bridge)",
     "Why this shape",
     "Where it lives"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "architecture/static-experience.md",
@@ -155,7 +162,8 @@
     "The \"basics online\" scope (this milestone)",
     "Growing into the end-to-end system",
     "Deploy"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "architecture/moxie-ecosystem.md",
@@ -175,7 +183,8 @@
     "7 · Packaging & docs ✅ (core)",
     "Phases (rough week)",
     "Immediate queue (Phase 1)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "architecture/sil-and-cicd.md",
@@ -191,7 +200,8 @@
     "The 1-week roadmap (drives the build timer)",
     "The layered session timers",
     "Run it now"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "architecture/vision.md",
@@ -215,7 +225,8 @@
     "5. Camera hardware: resolution / format / FPS / location",
     "6. Verdict — feasibility table",
     "Sources"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "debugging/README.md",
@@ -225,7 +236,8 @@
    "mermaid": 0,
    "headings": [
     "How the QR-command hunt works"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "debugging/live-hardware-debug.md",
@@ -244,7 +256,8 @@
     "Honest conclusion for a pre-801 / Google-IoT robot",
     "State of the running stack (for whoever continues)",
     "QR command surface (for easter-egg hunting)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "debugging/qr-command-findings.md",
@@ -256,7 +269,8 @@
     "Consistent reactors (the interesting ones)",
     "Worth watching (partial/intermittent, 20–50% rate)",
     "Everything tried (ranked by reaction rate)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "design/README.md",
@@ -264,7 +278,8 @@
    "section": "design",
    "bytes": 250,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "design/style-guide.md",
@@ -279,7 +294,8 @@
     "Layout & components",
     "Motion",
     "Applying it"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "README.md",
@@ -295,7 +311,8 @@
     "Shared — the protocol & interfaces (spans all three)",
     "Guides & context",
     "How this documentation tree is maintained (SOP)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "community-research.md",
@@ -313,7 +330,8 @@
     "Other repos",
     "Community hubs",
     "Where OUR repo fits (the gap)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "features/README.md",
@@ -324,7 +342,8 @@
    "headings": [
     "Documents",
     "Hidden / developer features (highlights)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "features/feature-catalog.md",
@@ -370,7 +389,8 @@
     "15.9 Deep links",
     "Appendix A — Full endpoint inventory (from `Config.java`)",
     "Appendix B — Notable prefs (`SharedKeys` + Config)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "features/robot-capabilities.md",
@@ -386,7 +406,8 @@
     "Activities, content & progression",
     "Session & wellbeing",
     "Setup, connectivity & system"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "features/robot-lifecycle.md",
@@ -434,7 +455,8 @@
     "9.3 Battery",
     "9.4 Network / speed test flow",
     "10. Quick endpoint reference (this map)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "guides/README.md",
@@ -442,7 +464,8 @@
    "section": "guides",
    "bytes": 849,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "guides/first-time-setup.md",
@@ -457,7 +480,8 @@
     "4. Pair Moxie",
     "No robot handy?",
     "What happens next"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "guides/factory-reset-a-paired-moxie.md",
@@ -470,7 +494,8 @@
     "Doing it from our local server",
     "Restore from backup instead of wiping",
     "Reference"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "guides/find-moxie-on-lan.md",
@@ -482,7 +507,8 @@
     "Quick method — ARP scan by vendor",
     "Confirming it's Moxie",
     "Worked example"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "guides/revive-your-moxie.md",
@@ -499,7 +525,8 @@
     "Path B — you have an 801/803 robot: re-home it with a QR",
     "Path C — a pre-801 robot: flash it first",
     "Going further"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "guides/deploy-cloudflare.md",
@@ -520,7 +547,8 @@
     "4. What to configure per-environment",
     "5. How the stubs work (and how the real server plugs in)",
     "6. Honest limits"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/README.md",
@@ -535,7 +563,8 @@
     "Firmware — the OS image, boot, security & flashing ([`firmware/`](firmware/README.md))",
     "Hardware — the physical board & teardown ([`hardware/`](hardware/README.md))",
     "External research"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/remote-chat-protocol.md",
@@ -553,7 +582,8 @@
     "Taxonomies",
     "RemoteChatMetrics` — conversation-quality analytics",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/native-boundary.md",
@@ -576,7 +606,8 @@
     "The full module roster — what each remaining `bo-*` `.so` actually is",
     "Resolved: who consumes `QRCommand` (the setup-QR → brain bridge)",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/METHODOLOGY.md",
@@ -589,7 +620,8 @@
     "The tool tiers — light to heavy",
     "Using Ghidra (via PyGhidra)",
     "The per-iteration loop (standard operating procedure)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/COVERAGE.md",
@@ -603,7 +635,8 @@
     "Goal ③ — Revive old pre-801 robots without disassembly",
     "Clean-room self-sufficiency — *what would go missing?*",
     "Open items (need a bench unit or an external artifact)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/EXPLORATION-MAP.md",
@@ -617,7 +650,8 @@
     "Disk images",
     "Apps & native libs",
     "Hardware (needs a bench unit — tracked in COVERAGE)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/architecture-diagrams.md",
@@ -634,7 +668,8 @@
     "L5 — Hardware topology",
     "L6 — Actuation & sensing (the Lizard MCU)",
     "L7 — Boot chain & lifecycle"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/firmware-803-reference.md",
@@ -656,7 +691,8 @@
     "Embodied daemons & hardware hooks (init)",
     "What's notable in THIS build",
     "Deep dives (all measured from this build unless noted)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/FIELD-GUIDE.md",
@@ -671,7 +707,8 @@
     "② Put your own AI inside Moxie — the *ghost in the shell*",
     "③ Custom software / firmware on the robot",
     "The toolkit"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/README.md",
@@ -679,7 +716,8 @@
    "section": "reverse-engineering",
    "bytes": 2506,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/manifests/README.md",
@@ -687,7 +725,8 @@
    "section": "reverse-engineering",
    "bytes": 1111,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/hardware/README.md",
@@ -695,7 +734,8 @@
    "section": "reverse-engineering",
    "bytes": 1010,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/phone/README.md",
@@ -703,7 +743,8 @@
    "section": "reverse-engineering",
    "bytes": 868,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/phone/keys/README.md",
@@ -711,7 +752,8 @@
    "section": "reverse-engineering",
    "bytes": 789,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/README.md",
@@ -719,7 +761,8 @@
    "section": "reverse-engineering",
    "bytes": 4988,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/recovered-proto/README.md",
@@ -732,7 +775,8 @@
     "Layout (`embodied.*`)",
     "Cross-validation",
     "Caveats"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/README.md",
@@ -740,7 +784,8 @@
    "section": "reverse-engineering",
    "bytes": 5024,
    "mermaid": 0,
-   "headings": []
+   "headings": [],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/phone/rest-api.md",
@@ -781,7 +826,8 @@
     "Minimum server surface to reach a pairable session",
     "6. Quick reference — every `Config.API_*` constant",
     "7. Open questions / gaps for the clean-room server"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/phone/crypto-and-keys.md",
@@ -808,7 +854,8 @@
     "6. Hardcoded keys, salts and constants",
     "7. Security observations relevant to a reimplementation",
     "8. File index"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/phone/pairing-and-robot.md",
@@ -850,7 +897,8 @@
     "Minimum replacement-server surface for pairing to *appear* to succeed in the app",
     "9. Gaps / things this APK cannot tell you",
     "10. File map (this subsystem)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/phone/qr-format.md",
@@ -865,7 +913,8 @@
     "Wire format",
     "The signing key",
     "Worked example"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/phone/app-structure.md",
@@ -889,7 +938,8 @@
     "6. Version / build info",
     "7. Hardcoded backend hostnames / URLs",
     "Key takeaways for the interop/repair effort"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/robot-ipc-protocol.md",
@@ -904,7 +954,8 @@
     "The behavior-command markup (how the cloud drives the body)",
     "Console commands",
     "Using this for custom software"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/cloud-protocol.md",
@@ -931,7 +982,8 @@
     "The chat request/response envelope",
     "The full session — power-on to first spoken line",
     "Minimum viable backend (for revival)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/device-config-and-telemetry.md",
@@ -950,7 +1002,8 @@
     "Small control messages (`embodied.logging.Log`)",
     "IOTEndpoint` — the endpoint taxonomy",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/runtime-control.md",
@@ -965,7 +1018,8 @@
     "Reset — `SoftReset` / `HardReset`",
     "ChatScript lifecycle — `ChatScriptReady`, `ChatScriptException`",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/power-and-system-events.md",
@@ -981,7 +1035,8 @@
     "Unpair / disengage — `UnpairUserRequest`",
     "Time, timezone & alarms — `embodied.sys` (`TimeEvents.proto`)",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/perception-fusion.md",
@@ -999,7 +1054,8 @@
     "The event stream",
     "Coordinate frames",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/offline-and-brain-state.md",
@@ -1014,7 +1070,8 @@
     "The resume point — `CSData`",
     "The recommender's memory — `UserRecommendationData`",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/telehealth.md",
@@ -1029,7 +1086,8 @@
     "Session flow",
     "Transport (MQTT)",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/qr-commands.md",
@@ -1055,7 +1113,8 @@
     "Toolkit — generate & validate these codes",
     "and in the browser, with nothing installed",
     "Also carried: `QRMultiDecoder`"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/network-trust.md",
@@ -1072,7 +1131,8 @@
     "Why pre-801 is still stuck (goal #3) — precisely",
     "Time sync (clock skew breaks auth) — and it's fine",
     "Corrections to earlier docs"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/unity-mainapp-interface.md",
@@ -1090,7 +1150,8 @@
     "Perf & network telemetry — `Stats`, `NetworkState`",
     "Dev / authoring tools",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/protocol/proto-catalog.md",
@@ -1139,7 +1200,8 @@
     "embodied/perception/vision/BookId.proto`",
     "embodied/perception/vision/DrawId.proto`",
     "embodied/perception/vision/Face.proto`"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/behavior-input-events.md",
@@ -1160,7 +1222,8 @@
     "Timers, assets, logging, debug",
     "The bus-serializable subset — the external contract (24 events)",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/behavior-tree-engine.md",
@@ -1176,7 +1239,8 @@
     "The 45 named behavior trees (`Bht_*`)",
     "DialogueTrees — scripted conversation",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/behavior-nodes.md",
@@ -1195,7 +1259,8 @@
     "Tree control & flow → structure",
     "Markup & events → content hooks",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/robot-actions.md",
@@ -1211,7 +1276,8 @@
     "Content — `RobotActionActivity`",
     "Worked example — a drawing activity, interrupted",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/task-scheduler.md",
@@ -1228,7 +1294,8 @@
     "The priority ladder — `RobotTaskPriority`",
     "Worked example — Moxie greets a child",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/behavior-markup.md",
@@ -1248,7 +1315,8 @@
     "Behaviour trees — `Bht_*` (hardcoded in `bo-android`)",
     "Perception side — detected human emotion (`Face.proto`)",
     "Toolkit — build marks programmatically"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/content-and-conversation.md",
@@ -1282,7 +1350,8 @@
     "Execution actions (content → robot bridge)",
     "QR inside content (ties to the QR toolkit)",
     "Revival implications"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/content-delivery.md",
@@ -1298,7 +1367,8 @@
     "Content types — the 24 processors",
     "Markup + selection",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/perception-pipeline.md",
@@ -1320,7 +1390,8 @@
     "Shipped DSP images (`xmosdfu.apk`) — decode the naming",
     "The three embedded processors (firmware map)",
     "For custom firmware (goal #1)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/gaze-and-attention.md",
@@ -1336,7 +1407,8 @@
     "Motion tuning (constants from the binary)",
     "Control from content / behavior trees",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/turn-taking.md",
@@ -1352,7 +1424,8 @@
     "Response timing",
     "Content / behavior-tree control",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/runtime/unity-face-animation.md",
@@ -1374,7 +1447,8 @@
     "9. Accessibility & global gates",
     "10. The per-frame picture",
     "What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/firmware-image.md",
@@ -1397,7 +1471,8 @@
     "Key `build.prop` / `prop.default` values",
     "Code signing & app trust",
     "Custom-firmware roadmap (pragmatic)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/firmware-inventory.md",
@@ -1413,7 +1488,8 @@
     "Embodied native libraries (`bo-android`, `armeabi-v7a`)",
     "The on-device ML stack — four frameworks",
     "Observations"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/firmware-manifest.md",
@@ -1427,7 +1503,8 @@
     "Largest files (system)",
     "File-type breakdown (system)",
     "Embodied file hashes"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/boot-and-launcher.md",
@@ -1443,7 +1520,8 @@
     "Factory test entry (`FactoryTest`)",
     "Init service graph (native daemons)",
     "For custom firmware"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/security-policy.md",
@@ -1460,7 +1538,8 @@
     "Custom device / file / property types (label → hardware)",
     "App domains & properties",
     "3. What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/hal-and-drivers.md",
@@ -1477,7 +1556,8 @@
     "XMOS voice DSP — the \"second processor\" (re-flashable, in the image)",
     "Radio (BCM4339 / AP6335)",
     "5. What this means for the three goals"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/settings-schema.md",
@@ -1496,7 +1576,8 @@
     "Parent-app-controlled",
     "System · power · logging · recovery · feature flags",
     "For revival (goal #2)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/ota-and-recovery.md",
@@ -1513,7 +1594,8 @@
     "Where this leaves pre-801 revival",
     "Open leads worth chasing (tracked for the loop)",
     "Building custom firmware (once you have a foothold)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/flashing-runbook.md",
@@ -1529,7 +1611,8 @@
     "D. Flash your images",
     "E. First boot & verify",
     "Reviving a stranded robot by flashing"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/unity-assets.md",
@@ -1542,7 +1625,8 @@
     "sharedassets1.assets` inventory (the UI / HUD / effects layer)",
     "Notable named assets (maps to features)",
     "Boot animation"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/firmware/factory-provisioning.md",
@@ -1564,7 +1648,8 @@
     "The obfuscation is repeating-XOR (cracked)",
     "Recovering the secret values",
     "Why this matters for revival / custom"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/hardware/hardware-map.md",
@@ -1590,7 +1675,8 @@
     "MCU firmware & health (`LizardErrorEventPB.LizardErrorEventID`)",
     "The remaining MCU control messages",
     "Raw UART command set (`Lizzerface.Commands`)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/hardware/device-tree.md",
@@ -1608,7 +1694,8 @@
     "Connectivity (Wi-Fi / Bluetooth)",
     "Power tree (RK808 PMIC → rails)",
     "For custom firmware (goal #1)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/hardware/hardware-access.md",
@@ -1628,7 +1715,8 @@
     "ADB / USB (when booted normally)",
     "JTAG / SWD & chip-off (deep tier)",
     "In-scope checklist (as we open a unit)"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/hardware/fcc-teardown.md",
@@ -1655,7 +1743,8 @@
     "rev1 vs rev2 — what changed",
     "What this resolves (and what it doesn't)",
     "References"
-   ]
+   ],
+   "kind": "md"
   },
   {
    "path": "reverse-engineering/external-sources.md",
@@ -1676,7 +1765,80 @@
     "Community revival projects",
     "Press / context",
     "What external work resolves vs. what still needs our bench"
-   ]
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/firmware/manifests/embodied-apps.tsv",
+   "title": "embodied-apps.tsv",
+   "section": "reverse-engineering",
+   "bytes": 1178,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "text"
+  },
+  {
+   "path": "reverse-engineering/firmware/manifests/embodied-sha256.tsv",
+   "title": "embodied-sha256.tsv",
+   "section": "reverse-engineering",
+   "bytes": 1494,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "text"
+  },
+  {
+   "path": "reverse-engineering/firmware/manifests/init-services.tsv",
+   "title": "init-services.tsv",
+   "section": "reverse-engineering",
+   "bytes": 8214,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "text"
+  },
+  {
+   "path": "reverse-engineering/firmware/manifests/oem-files.tsv",
+   "title": "oem-files.tsv",
+   "section": "reverse-engineering",
+   "bytes": 109,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "text"
+  },
+  {
+   "path": "reverse-engineering/firmware/manifests/rk3288-robot-gen1p5.dts",
+   "title": "rk3288-robot-gen1p5.dts",
+   "section": "reverse-engineering",
+   "bytes": 101585,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "text"
+  },
+  {
+   "path": "reverse-engineering/firmware/manifests/system-files.tsv",
+   "title": "system-files.tsv",
+   "section": "reverse-engineering",
+   "bytes": 101369,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "text"
+  },
+  {
+   "path": "reverse-engineering/firmware/manifests/uboot-control.dts",
+   "title": "uboot-control.dts",
+   "section": "reverse-engineering",
+   "bytes": 4902,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "text"
+  },
+  {
+   "path": "reverse-engineering/firmware/manifests/vendor-files.tsv",
+   "title": "vendor-files.tsv",
+   "section": "reverse-engineering",
+   "bytes": 21738,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "text"
   }
  ]
 }

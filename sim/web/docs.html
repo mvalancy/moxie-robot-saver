@@ -342,7 +342,7 @@
       var href=a.getAttribute("href");
       if(/^(https?:|mailto:|#)/.test(href)){ if(/^https?:/.test(href)){a.target="_blank";a.rel="noopener";} return; }
       var hash=""; var m=href.match(/#.*$/); if(m){ hash=m[0]; href=href.slice(0,m.index); }
-      if(!href||!/\.md$/i.test(href)) return;
+      if(!href||!/\.(md|tsv|dts)$/i.test(href)) return;   // .md docs + bundled .tsv/.dts manifests
       var parts=(baseDir?baseDir.split("/"):[]);
       href.split("/").forEach(function(seg){ if(seg===".."){parts.pop();} else if(seg==="."||seg===""){} else {parts.push(seg);} });
       var target=parts.join("/");
@@ -538,14 +538,23 @@
     fetch(BUNDLE+encodeURI(f.path)).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); })
       .then(function(md){
         var isHome=(path===HOME);
-        var art=document.createElement("article"); art.innerHTML=marked.parse(md);
-        fixLinks(art, f.path);
+        var isText=(f.kind==="text")||!/\.md$/i.test(f.path);   // .tsv/.dts manifests → code, not markdown
+        var art=document.createElement("article");
+        if(isText){
+          var ext=(f.path.split(".").pop()||"").toLowerCase();
+          var lang=ext==="dts"?"cpp":"plaintext";              // DTS is C-like; TSV is plain
+          art.innerHTML='<h1>'+esc(f.title)+'</h1><p class="filemeta">Source manifest — rendered verbatim.</p>'+
+                        '<pre><code class="language-'+lang+'">'+esc(md)+'</code></pre>';
+        } else {
+          art.innerHTML=marked.parse(md);
+          fixLinks(art, f.path);
+        }
         // pager + footer
         var pg=document.createElement("div"); pg.innerHTML=pager(path)+footHtml();
         Array.prototype.forEach.call(pg.querySelectorAll("a[data-go]"),function(a){ a.onclick=function(ev){ ev.preventDefault(); openDoc(a.dataset.go); }; });
         elContent.innerHTML="";
         if(isHome) elContent.insertAdjacentHTML("beforeend", heroHtml());
-        var toc=buildTOC(art); addHeadingLinks(art);
+        var toc=isText?null:buildTOC(art); if(!isText) addHeadingLinks(art);
         var wrap=document.createElement("div"); wrap.className="docwrap";
         wrap.appendChild(art); if(toc) wrap.appendChild(toc);
         elContent.appendChild(wrap);
