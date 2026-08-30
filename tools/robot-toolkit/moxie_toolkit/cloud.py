@@ -158,3 +158,49 @@ def parse_cloud_status(payload):
     """Parse a CloudStatus{connected, user_state (UserState), endpoint} from serialized bytes."""
     from embodied.logging import CloudStatus_pb2 as CS
     m = CS.CloudStatus(); m.ParseFromString(payload); return m
+
+
+# ---- RemoteChat: the robot <-> brain conversation RPC (embodied.robotbrain) ----
+# See docs/reverse-engineering/remote-chat-protocol.md
+
+def remote_chat_reply(text, *, markup="", mood="", mood_intensity=None, result=None,
+                      dialog_act="", emotion="", sequence=None, event_id=""):
+    """Build a RemoteChatResponse a brain server returns for one turn. Minimum: text
+    (+ optional markup/mood). `result` defaults to SUCCESS. Attach a response_action
+    with remote_chat_action(...) on the returned object if you want to drive navigation.
+    See remote-chat-protocol.md (RemoteChatResponse / RemoteChatOutput)."""
+    from embodied.robotbrain import RemoteChat_pb2 as RC
+    resp = RC.RemoteChatResponse()
+    resp.result = RC.RemoteChatResponse.SUCCESS if result is None else result
+    if sequence is not None: resp.sequence = sequence
+    if event_id: resp.event_id = event_id
+    o = resp.output
+    o.text = text
+    if markup: o.markup = markup
+    if mood: o.mood = mood
+    if mood_intensity is not None: o.mood_intensity = mood_intensity
+    if dialog_act: o.dialog_act = dialog_act
+    if emotion: o.emotion = emotion
+    return resp
+
+def remote_chat_action(action, *, module_id="", content_id="", function_id="", function_args=None):
+    """Build a RemoteChatAction (launch / exit_module / execute / sleep / tangent / …).
+    Set it on a response: resp.response_action.CopyFrom(remote_chat_action(RC.RemoteChatAction.launch,
+    module_id='m1')). See remote-chat-protocol.md (RemoteChatAction)."""
+    from embodied.robotbrain import RemoteChat_pb2 as RC
+    a = RC.RemoteChatAction(action=action)
+    if module_id: a.module_id = module_id
+    if content_id: a.content_id = content_id
+    if function_id: a.function_id = function_id
+    if function_args: a.function_args.extend(function_args)
+    return a
+
+def parse_remote_chat_request(payload):
+    """Parse a RemoteChatRequest (robot -> brain, one user turn) from serialized bytes."""
+    from embodied.robotbrain import RemoteChat_pb2 as RC
+    m = RC.RemoteChatRequest(); m.ParseFromString(payload); return m
+
+def parse_remote_chat_response(payload):
+    """Parse a RemoteChatResponse (brain -> robot) from serialized bytes."""
+    from embodied.robotbrain import RemoteChat_pb2 as RC
+    m = RC.RemoteChatResponse(); m.ParseFromString(payload); return m

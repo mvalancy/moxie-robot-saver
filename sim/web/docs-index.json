@@ -1,5 +1,5 @@
 {
- "generated": "docs-985cf78a92f8",
+ "generated": "docs-dc1ae3439eeb",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 6808,
+   "bytes": 6977,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 10213,
+   "bytes": 10718,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -1280,6 +1280,24 @@
     "Layout (`embodied.*`)",
     "Cross-validation",
     "Caveats"
+   ]
+  },
+  {
+   "path": "reverse-engineering/remote-chat-protocol.md",
+   "title": "RemoteChat — the robot ↔ brain conversation protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 9539,
+   "mermaid": 1,
+   "headings": [
+    "One turn",
+    "The request — `RemoteChatRequest` (delta over cloud-protocol)",
+    "The response — `RemoteChatResponse`",
+    "RemoteChatOutput` — the spoken turn",
+    "RemoteChatAction` — the brain drives navigation",
+    "RemoteChatInput` — the brain's read of the child",
+    "Taxonomies",
+    "RemoteChatMetrics` — conversation-quality analytics",
+    "What this means for the three goals"
    ]
   },
   {

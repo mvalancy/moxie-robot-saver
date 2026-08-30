@@ -2,7 +2,7 @@
 
 > A single view of what's documented for each goal, and the honest remaining gaps (mostly things that
 > need a **bench unit**). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9).
-> 31 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
+> 32 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
 
 ## Goal ① — Build custom firmware / run custom software on the robot
 
@@ -39,6 +39,7 @@
 | REST `client-service` (sessions, OTA, backups) + endpoints | ✅ | [cloud-protocol](cloud-protocol.md) |
 | Repointing (`ServiceConfiguration`, `EndpointStore`, QR) | ✅ + tool | [cloud-protocol](cloud-protocol.md) · [qr-commands](qr-commands.md) · `moxie-qr` |
 | Conversation: ChatScript + LLM + module format + volley API | ✅ | [content-and-conversation](content-and-conversation.md) |
+| RemoteChat robot↔brain RPC (full response: output/actions/safety/metrics/ResultCodes) | ✅ + tool | [remote-chat-protocol](remote-chat-protocol.md) · `cloud.py` |
 | Content delivery (dynamic AssetBundles: remote fetch, manifest, processors) | ✅ | [content-delivery](content-delivery.md) |
 | Behavior markup (make it move while talking) | ✅ + tool | [behavior-markup](behavior-markup.md) · `markup.py` |
 | Perception in/out: STT (Deepgram/local) · TTS (CloudTTS) · vision | ✅ | [perception-pipeline](perception-pipeline.md) |
