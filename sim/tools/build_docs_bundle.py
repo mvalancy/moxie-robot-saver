@@ -76,6 +76,17 @@ def collect():
     return files
 
 
+def link_order(text):
+    """The ordered list of local .md link *basenames* in a README's body — the curated
+    reading order a section index defines. Deduped, first-occurrence wins."""
+    order, seen = [], set()
+    for target in re.findall(r"\]\(([A-Za-z0-9._/-]+\.md)\)", text):
+        bn = target.rsplit("/", 1)[-1]
+        if bn not in seen:
+            seen.add(bn); order.append(bn)
+    return {bn: i for i, bn in enumerate(order)}
+
+
 def main():
     if os.path.isdir(OUT):
         shutil.rmtree(OUT)
@@ -83,6 +94,7 @@ def main():
 
     entries = []
     search = {}
+    readme_rank = {}   # section -> {basename: position in that section's README}
     for full, rel in collect():
         with open(full, "r", encoding="utf-8", errors="replace") as fh:
             text = fh.read()
@@ -90,6 +102,9 @@ def main():
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(full, dst)
         section = rel.split("/")[0] if "/" in rel else "docs"
+        # A section's own README defines the curated within-section reading order.
+        if rel == section + "/README.md":
+            readme_rank[section] = link_order(text)
         entries.append({
             "path": rel,
             "title": title_of(text, os.path.basename(rel)),
@@ -102,7 +117,21 @@ def main():
         # whitespace so a client-side substring search over the prose + code works.
         search[rel] = re.sub(r"\s+", " ", text).strip()
 
-    entries.sort(key=lambda e: (e["section"], e["path"]))
+    # Order docs WITHIN each section by that section's README link list (the curated
+    # narrative), so the explorer's tree + prev/next pager read in the intended order
+    # instead of alphabetically. The section index README pins to the top; docs the
+    # README doesn't link fall after the listed ones, alphabetically. (Section ORDER
+    # itself is decided by the explorer's SECTION_ORDER.) Self-maintaining: adding a
+    # doc to a README reorders it here automatically.
+    def sort_key(e):
+        sec, path = e["section"], e["path"]
+        bn = path.rsplit("/", 1)[-1]
+        if path == sec + "/README.md":
+            rank = -1                                   # the section index, first
+        else:
+            rank = readme_rank.get(sec, {}).get(bn, 10 ** 6)   # unlisted → after, A–Z
+        return (sec, rank, path)
+    entries.sort(key=sort_key)
     # A DETERMINISTIC content stamp: sha256 over each doc's (path + bytes), so an
     # unchanged doc set always produces a byte-identical index. That keeps this
     # tracked artifact reproducible (no spurious `git status` drift on rebuild) and
