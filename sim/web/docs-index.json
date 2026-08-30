@@ -1,5 +1,5 @@
 {
- "generated": "docs-f0c9e1417502",
+ "generated": "docs-4b6d915a0712",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -961,7 +961,7 @@
    "path": "reverse-engineering/protocol/robot-ipc-protocol.md",
    "title": "On-robot IPC — the ZeroMQ + protobuf message bus",
    "section": "reverse-engineering",
-   "bytes": 7867,
+   "bytes": 9605,
    "mermaid": 1,
    "headings": [
     "Where this came from",

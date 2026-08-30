@@ -30,6 +30,23 @@ def encode_zmq_command(message):
     """message: a protobuf message. Returns bytes to publish on /commands/zmq."""
     return (message.DESCRIPTOR.full_name + ":").encode("utf-8") + message.SerializeToString()
 
+# The 31 developer-console commands (EBConsoleCommand, v24.10.803) injectable via console_command().
+# See docs/reverse-engineering/protocol/robot-ipc-protocol.md#console-commands.
+CONSOLE_COMMANDS = (
+    "build branch", "build date", "build hash", "dump", "dump methods", "dump vars",
+    "fps display", "fps output", "fps outputinterval", "fps watchdogprecision", "fps watchdogthreshold",
+    "mem display", "mem once", "mem output", "mem outputinterval",
+    "say", "phoneme", "emphasis", "genre", "prosody pitch", "prosody rate", "prosody volume",
+    "vocal gesture", "playback mood", "play composite", "stop playback",
+    "stt", "toggle stt", "behavior", "toggle animator", "upload log")
+
+def console_command(command):
+    """Frame an embodied.Robot.ConsoleCommandRequest for /commands/zmq (or the local bus) — inject a
+    developer-console command like "say Hello" or "vocal gesture laugh" to test the brain with no cloud
+    turn. Returns the framed bytes; see CONSOLE_COMMANDS for the base verbs."""
+    from moxie_toolkit.embodied.unity.ConsoleCommandRequest_pb2 import ConsoleCommandRequest
+    return encode_zmq_command(ConsoleCommandRequest(command=command))
+
 def decode_zmq_command(payload, registry=None):
     """Split a /commands/zmq payload into (full_name, body_bytes). If `registry` maps
     full_name -> message class, also returns the parsed message as the 3rd element."""

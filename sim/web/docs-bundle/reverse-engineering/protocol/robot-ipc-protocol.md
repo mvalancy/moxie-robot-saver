@@ -101,9 +101,27 @@ talking — it rides the normal TTS/markup path in `embodied.unity` (`CloudTTS`,
 
 ## Console commands
 
-`embodied.Robot.ConsoleCommandRequest{ command }` feeds a developer console inside `bo-android`
-(the `AddConsoleCommand*` / `ConsoleCommandSender` machinery). It accepts free-form command strings
-dispatched to registered handlers — a direct lever for poking the brain in a custom build.
+`embodied.Robot.ConsoleCommandRequest{ command }` feeds a **developer console** inside `bo-android` —
+inject it over this bus (or the cloud's [`/commands/zmq`](cloud-protocol.md#exact-topic-map-google-iot-core-convention-kept-post-migration))
+to poke the brain directly, without a full [RemoteChat](remote-chat-protocol.md) turn. The `command`
+string is dispatched to a handler registered by an `[EBConsoleCommand(name, description)]` attribute — a
+**closed set of 31** in the `v24.10.803` brain (`Assembly-CSharp`), not free-form:
+
+| Group | Commands |
+|---|---|
+| **Build info** | `build branch` · `build date` · `build hash` (return git branch / compile date / hash) |
+| **Introspection** | `dump` (print all commands) · `dump methods` · `dump vars` |
+| **FPS diagnostics** | `fps display` (toggle the FPS GUI) · `fps output` · `fps outputinterval` · `fps watchdogprecision` · `fps watchdogthreshold` |
+| **Memory diagnostics** | `mem display` (toggle the mem-usage GUI) · `mem once` · `mem output` · `mem outputinterval` |
+| **Speech / TTS test** | `say <text>` (submit a TTS request) · `phoneme` · `emphasis` · `genre` · `prosody pitch` · `prosody rate` · `prosody volume` · `vocal gesture` (preview one, see [behavior-markup](../runtime/behavior-markup.md#vocal-gestures-spurts-vocalgesturesavailablegestures-hardcoded-in-bo-android)) · `playback mood` · `play composite` (play a markup composite) · `stop playback` |
+| **STT** | `stt` (submit a speech-to-text request) · `toggle stt` |
+| **Behavior / anim** | `behavior` · `toggle animator` (animator on/off) |
+| **Logging** | `upload log` (upload the current log) |
+
+For revival + custom builds this is a **direct test lever**: `ConsoleCommandRequest{command:"say Hello"}`
+or `{command:"vocal gesture laugh"}` exercises TTS / the vocal-gesture system on-device with no cloud turn.
+The speech commands mirror the [markup verbs](../runtime/behavior-markup.md) — the console is the
+manually-testable subset of the same speech/behavior engine.
 
 ## Using this for custom software
 
