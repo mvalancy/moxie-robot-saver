@@ -25,6 +25,38 @@ Anything parsed as a `debug` block is turned into a `QRCommand{code, param}` pro
 app, acts on it. Four codes are additionally special-cased by the Wifi App's own UI state machine;
 everything else just shows the "QR diagnostic" screen and forwards the command.
 
+## The setup app's runtime status — `WifiAppStatus` / `WifiAppBricked`
+
+Besides handling QRs, `bo-wifi` publishes its own **liveness/state on the ZMQ bus** — the WifiApp status
+protos (`embodied.unity.WifiAppStatus` et al., in the `wifiapp` file group) — so `bo-android`, or an
+observer via the [toolkit bus](robot-ipc-protocol.md), can tell what the setup app is doing. This is the
+signal that says a stranded robot is *ready to scan a QR* (the `STATE_CONFIG` surface,
+[boot-and-launcher](boot-and-launcher.md#states-launcherstate)).
+
+**`WifiAppStatus { uint32 code }`** — the status code, from the `WifiAppStatusCodes` enum:
+
+| Code | Name | Meaning |
+|--:|---|---|
+| 1 | `WifiAndUserGood` | Wi-Fi **and** a paired user are valid — nothing to set up |
+| 100 | `WifiAppReady` | the setup app is up and **ready to scan a pairing/Wi-Fi/debug QR** |
+| 101 | `WantsToDisplaySomething` | it needs the screen (e.g. to show a prompt/diagnostic) |
+| 1977 | `Alive` | heartbeat — the app is running |
+| 1978 | `Unquiet` | heartbeat variant (active/needs attention) |
+
+- **`WifiAppSilentBoot`** / **`WifiAppShutdown`** — the app booting without UI / shutting down, matching
+  the `STATE_SILENT_REBOOT` path in [power-and-system-events](power-and-system-events.md).
+- **`WifiAppBricked { uint32 error_code }`** — the setup app **failed to come up**. `error_code` is an
+  `EBErrorCode` — observed values `UNHANDLED_EXCEPTION` and `ASSERTION` — i.e. the setup surface itself
+  crashed. This is distinct from *hardware* faults, which come from the Lizard MCU as `LizardErrorEvent`
+  (`BATTERY_OVER_TEMP`, `BATTERY_LOST`, `MOTOR_FAIL_BOOT`, `BODYTOUCH_ERR`, see
+  [hardware-map](hardware-map.md)).
+
+**Revival relevance (goal ③).** `WifiAppReady` (code 100) is the concrete "the robot is now in
+QR-scanning mode" signal — a [re-homing QR](#toolkit--generate--validate-these-codes) is worth presenting
+once it's seen. `WifiAppBricked` says the *setup app* (not the hardware) is the failure, which bounds
+whether a no-open QR revival can work at all: a bricked setup app can't scan, so that unit needs the
+physical [recovery path](ota-and-recovery.md) rather than a QR.
+
 ## JSON debug/factory commands
 
 ```json

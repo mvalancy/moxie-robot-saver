@@ -126,6 +126,21 @@ def time_zone_info(olson_id, midnight_in_timezone=""):
     return T.TimeZoneInfo(olson_id=olson_id, midnight_in_timezone=midnight_in_timezone)
 
 
+# ---- setup app (bo-wifi) status on the bus (embodied.unity, wifiapp file group) ----
+# See docs/reverse-engineering/qr-commands.md (The setup app's runtime status)
+WIFI_APP_STATUS_CODES = {1:"WifiAndUserGood", 100:"WifiAppReady",
+                         101:"WantsToDisplaySomething", 1977:"Alive", 1978:"Unquiet"}
+def wifi_app_status_classes():
+    """The bo-wifi setup-app status messages: WifiAppStatus (code, see
+    WIFI_APP_STATUS_CODES — 100=WifiAppReady means ready to scan a QR), WifiAppBricked
+    (error_code), WifiAppSilentBoot, WifiAppShutdown. Subscribe to know when a stranded
+    robot is in QR-scanning mode. See qr-commands.md."""
+    from embodied.wifiapp import WifiAppStatus_pb2 as S
+    from embodied.wifiapp import WifiAppBricked_pb2 as B
+    from embodied.wifiapp import WifiAppSilentBoot_pb2 as SB
+    from embodied.wifiapp import WifiAppShutdown_pb2 as SD
+    return [S.WifiAppStatus, B.WifiAppBricked, SB.WifiAppSilentBoot, SD.WifiAppShutdown]
+
 # ---- imperative runtime control of a running brain (embodied.robotbrain) ----
 # See docs/reverse-engineering/runtime-control.md
 def volume_modify(volume, relative=False):

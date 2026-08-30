@@ -1,5 +1,5 @@
 {
- "generated": "docs-9ec50e75d74c",
+ "generated": "docs-c1ce7810a3bd",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 7496,
+   "bytes": 7675,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -1262,10 +1262,11 @@
    "path": "reverse-engineering/qr-commands.md",
    "title": "QR command grammar — what the robot actually scans",
    "section": "reverse-engineering",
-   "bytes": 11276,
+   "bytes": 13454,
    "mermaid": 0,
    "headings": [
     "The dispatcher",
+    "The setup app's runtime status — `WifiAppStatus` / `WifiAppBricked`",
     "JSON debug/factory commands",
     "QRCommand` protobuf (`embodied.unity`)",
     "Pairing QR — `PA` + `StartPairingQR`",

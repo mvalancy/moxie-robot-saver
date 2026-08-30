@@ -60,6 +60,7 @@
 | **pre-801** over the air | ❌ endpoint hardcoded to Google, CA-validated cert ([network-trust](network-trust.md)) — can't redirect |
 | Recovery sideload (SD/USB/adb) | ⚠️ exists, but **gated on a signed OTA** ([ota-and-recovery](ota-and-recovery.md)) |
 | **Button-triggered rockusb (download mode) → unsigned flash** | ⭐ **best low-open lead** ([hardware-access](hardware-access.md#boot-mode-entry-reboot-reasons--keys)) |
+| **Setup-app status signal** (`WifiAppReady`=100 → ready to scan a QR; `WifiAppBricked` → needs physical recovery) | ✅ + tool ([qr-commands](qr-commands.md) · `bus.py`) |
 
 ## Open items (need a bench unit or an external artifact)
 
