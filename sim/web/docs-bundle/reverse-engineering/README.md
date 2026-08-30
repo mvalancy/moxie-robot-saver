@@ -68,6 +68,7 @@ flowchart TB
 - [`gaze-and-attention.md`](gaze-and-attention.md) — **how Moxie decides where to look**: weighted 3D interest points → attention target → face/spot selection → facing calc → IK look-at with angle-scaled **saccades** (12.5 ms floor, 10° re-target hysteresis).
 - [`turn-taking.md`](turn-taking.md) — the **conversation state machine**: `TurnTakingState`'s five axes (TurnOwner · Mentor/Moxie state · Engagement · Assist), barge-in via `ChatbotAllowCutoffEvent`/`AllowInterruption`, DOA speaker scoring, and the `WaitingForResponse` re-prompt timer.
 - [`content-and-conversation.md`](content-and-conversation.md) — the dialog engines (ChatScript + LLM), the **content-module format**, and the `volley`/`session` hooks a server fills in.
+- [`content-delivery.md`](content-delivery.md) — how content is **packaged & delivered**: dynamic Unity AssetBundles from 3 sources (baked/local/**remote**), the file manifest (hash+version), the load lifecycle, and the 24 per-type processors (behavior trees, audio, icons, bangles, customizations).
 - [`perception-pipeline.md`](perception-pipeline.md) — the **audio** (wake-word → XMOS → Deepgram STT → CloudTTS) and **vision** (faces/people/QR) pipelines a server sits in the middle of.
 - [`qr-commands.md`](qr-commands.md) — the **complete QR grammar** the robot scans (pairing / VPN / debug-factory commands), read from `bo-wifi`.
 - [`hardware-map.md`](hardware-map.md) — motors, touch/switch/IMU sensors, LED face patterns, and power rails, from the MCU protobufs.

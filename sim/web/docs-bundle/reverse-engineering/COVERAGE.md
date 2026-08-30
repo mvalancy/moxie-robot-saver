@@ -36,6 +36,7 @@
 | REST `client-service` (sessions, OTA, backups) + endpoints | ✅ | [cloud-protocol](cloud-protocol.md) |
 | Repointing (`ServiceConfiguration`, `EndpointStore`, QR) | ✅ + tool | [cloud-protocol](cloud-protocol.md) · [qr-commands](qr-commands.md) · `moxie-qr` |
 | Conversation: ChatScript + LLM + module format + volley API | ✅ | [content-and-conversation](content-and-conversation.md) |
+| Content delivery (dynamic AssetBundles: remote fetch, manifest, processors) | ✅ | [content-delivery](content-delivery.md) |
 | Behavior markup (make it move while talking) | ✅ + tool | [behavior-markup](behavior-markup.md) · `markup.py` |
 | Perception in/out: STT (Deepgram/local) · TTS (CloudTTS) · vision | ✅ | [perception-pipeline](perception-pipeline.md) |
 | Wake-word/VAD (server doesn't handle it) | ✅ | [perception-pipeline](perception-pipeline.md#wake-word--vad-fully-on-device) |

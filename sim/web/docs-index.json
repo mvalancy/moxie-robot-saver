@@ -1,5 +1,5 @@
 {
- "generated": "dbb9a4e-dirty",
+ "generated": "e7862f5-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 6045,
+   "bytes": 6173,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 8327,
+   "bytes": 8629,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -721,6 +721,22 @@
     "Execution actions (content → robot bridge)",
     "QR inside content (ties to the QR toolkit)",
     "Revival implications"
+   ]
+  },
+  {
+   "path": "reverse-engineering/content-delivery.md",
+   "title": "Content delivery — dynamic AssetBundles (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 6534,
+   "mermaid": 1,
+   "headings": [
+    "TL;DR",
+    "Where bundles come from — `RobotAssetBundleSource`",
+    "The bundle manifest — `EBAssetBundleFileManifest`",
+    "The load lifecycle",
+    "Content types — the 24 processors",
+    "Markup + selection",
+    "What this means for the three goals"
    ]
   },
   {
