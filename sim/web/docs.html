@@ -76,6 +76,8 @@
   .topbar .path{font-family:var(--font-mono);color:var(--text-dim)}
   .topbar .path b{color:var(--cyan);font-weight:500}
   .topbar .actions{margin-left:auto;display:flex;gap:16px}
+  .docmeta{font-family:var(--font-mono);font-size:10.5px;color:var(--dim);white-space:nowrap;letter-spacing:.2px}
+  @media(max-width:640px){.docmeta{display:none}}
   .topbar a{color:var(--cyan-dim);text-decoration:none;display:inline-flex;align-items:center;gap:5px}
   .topbar a:hover{color:var(--cyan)} .topbar a svg{width:13px;height:13px}
 
@@ -175,6 +177,7 @@
   <div class="topbar">
     <button class="burger" id="burger" aria-label="menu">☰ Docs</button>
     <span class="path" id="crumb">Overview</span>
+    <span class="docmeta" id="docmeta" aria-live="polite"></span>
     <span class="actions">
       <a id="src" href="#" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg> source</a>
     </span>
@@ -402,6 +405,10 @@
     var f=idx.files.filter(function(x){return x.path===path;})[0]; if(!f) return;
     current=path; try{ location.hash=path; }catch(e){}
     elCrumb.innerHTML=(SECTION_LABEL[f.section]||f.section)+' / <b>'+esc(f.title)+'</b>';
+    // compact reading-time + diagram-count from the index metadata (~1100 bytes/min ≈ 200 wpm)
+    var meta=document.getElementById("docmeta");
+    if(meta){ var mins=Math.max(1,Math.round((f.bytes||0)/1100));
+      meta.textContent='~'+mins+' min'+(f.mermaid?'  ·  ◈ '+f.mermaid+' diagram'+(f.mermaid>1?'s':''):''); }
     var srcRel=f.path.indexOf("_root/")===0?("../../"+f.path.replace("_root/","")):("../../docs/"+f.path);
     elSrc.href=srcRel;
     // ensure the doc's section group is open + active

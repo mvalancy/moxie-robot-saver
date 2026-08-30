@@ -94,11 +94,13 @@ try {
   ok(await page.evaluate(() => !!document.querySelector("article h1, article h2, article p")),
      "home document markdown should render");
 
-  // 2) Mermaid renders on a diagram-heavy doc
+  // 2) Mermaid renders on a diagram-heavy doc + the topbar meta shows reading time + diagram count
   await page.goto(base + "/docs.html#reverse-engineering/architecture-diagrams.md", { waitUntil: "domcontentloaded" });
   await page.waitForFunction('document.querySelectorAll("article svg").length>0', { timeout: 8000 }).catch(() => {});
   const svgs = await page.evaluate(() => document.querySelectorAll("article svg").length);
   ok(svgs > 0, "Mermaid diagrams should render to SVG");
+  const meta = await page.evaluate(() => (document.getElementById("docmeta") || {}).textContent || "");
+  ok(/~\d+ min/.test(meta) && /diagram/.test(meta), `topbar should show reading time + diagram count (got "${meta}")`);
 
   // 3) code highlighting applies (hljs token spans)
   await page.goto(base + "/docs.html#reverse-engineering/hardware-map.md", { waitUntil: "domcontentloaded" });
