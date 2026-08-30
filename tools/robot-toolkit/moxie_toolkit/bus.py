@@ -126,6 +126,53 @@ def time_zone_info(olson_id, midnight_in_timezone=""):
     return T.TimeZoneInfo(olson_id=olson_id, midnight_in_timezone=midnight_in_timezone)
 
 
+# ---- MAINAPP (Unity front-end) interface (embodied.unity) ----
+# See docs/reverse-engineering/unity-mainapp-interface.md
+def mainapp_lifecycle_classes():
+    """The Unity MAINAPP lifecycle messages: MainAppStatus (code), MainAppShutdown,
+    SilentBootComplete, SoftwareVersion (UnityVersion + CommitHash)."""
+    from embodied.unity import MainAppStatus_pb2 as MS
+    from embodied.unity import MainAppShutdown_pb2 as MD
+    from embodied.unity import SilentBootComplete_pb2 as SB
+    from embodied.unity import SoftwareVersion_pb2 as SV
+    return [MS.MainAppStatus, MD.MainAppShutdown, SB.SilentBootComplete, SV.SoftwareVersion]
+
+def audio_notif_classes():
+    """The MAINAPP audio-playback control/notification events: pause/resume/speed/
+    volume/finished/chat. See unity-mainapp-interface.md (Audio out)."""
+    from embodied.unity import AudioNotif_pb2 as A
+    return [A.AudioNotifPauseEventPB, A.AudioNotifResumeEventPB, A.AudioNotifSpeedChangeEventPB,
+            A.AudioNotifVolumeChangeEventPB, A.AudioIsFinishedEventPB, A.AudioNotifChatEventPB]
+
+def robot_camera(center, target, up=(0.0, 1.0, 0.0), fov=60.0, aspect=1.0, near=0.1, far=100.0):
+    """Build a RobotCamera to drive the Unity face camera (self-view). center/target/up
+    are (x,y,z) tuples. See unity-mainapp-interface.md (The virtual camera)."""
+    from embodied.unity import RobotCamera_pb2 as R
+    c = R.RobotCamera(center_x=center[0], center_y=center[1], center_z=center[2],
+                      target_x=target[0], target_y=target[1], target_z=target[2],
+                      up_x=up[0], up_y=up[1], up_z=up[2], fov=fov, aspect=aspect, near=near, far=far)
+    return c
+
+def cloud_tts_response(pcm, *, sample_rate=16000, channels=1, event_id="", marks=None, remote=True):
+    """Build a CloudTTSResponse a server returns for a CloudTTSRequest — raw PCM audio +
+    optional TTSMarks (viseme/behavior timing). marks = list of dicts
+    {time,start,end,type,value}. See unity-mainapp-interface.md (Audio out)."""
+    from embodied.unity import CloudTTS_pb2 as C
+    resp = C.CloudTTSResponse(event_id=event_id,
+                              request_source=C.REMOTECHAT_TTS_REQUEST if remote else C.ROBOT_TTS_REQUEST)
+    resp.audio.buffer = pcm; resp.audio.channels = channels; resp.audio.sample_rate = sample_rate
+    for m in (marks or []):
+        tm = resp.marks.add()
+        for k, v in m.items(): setattr(tm, k, v)
+    return resp
+
+def user_pairing_request(action, *, user_token="", public_key="", secret_key=b"", is_staging=False):
+    """Build a UserPairingRequest. `action` is a UserPairingRequest.PairingRequest value
+    (PAIR / UNPAIR_USER / UNPAIR_FULL / UNPAIR_RFS_ONLY / RECOVER_USER / ...)."""
+    from embodied.unity import UserData_pb2 as U
+    return U.UserPairingRequest(request=action, user_token=user_token, public_key=public_key,
+                                secret_key=secret_key, is_staging=is_staging)
+
 # ---- semantic handling events (embodied.unity / MpuPickup) ----
 # See docs/reverse-engineering/hardware-map.md (Semantic handling events)
 def mpu_handling_classes():

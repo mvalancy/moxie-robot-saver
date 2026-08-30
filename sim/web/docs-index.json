@@ -1,5 +1,5 @@
 {
- "generated": "docs-0a401f717941",
+ "generated": "docs-851a48c8d594",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 11949,
+   "bytes": 12513,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 7753,
+   "bytes": 7920,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -904,6 +904,24 @@
     "The behavior-command markup (how the cloud drives the body)",
     "Console commands",
     "Using this for custom software"
+   ]
+  },
+  {
+   "path": "reverse-engineering/unity-mainapp-interface.md",
+   "title": "MAINAPP interface — the Unity front-end protocol (`embodied.unity`) (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 10725,
+   "mermaid": 1,
+   "headings": [
+    "App lifecycle & version",
+    "The virtual camera — Moxie's self-view",
+    "Audio out — TTS, SFX, playback control",
+    "Engagement & physical orientation",
+    "Asset bundles — runtime face/HUD assets",
+    "Pairing (MAINAPP side) — `UserPairingRequest`",
+    "Perf & network telemetry — `Stats`, `NetworkState`",
+    "Dev / authoring tools",
+    "What this means for the three goals"
    ]
   },
   {

@@ -2,7 +2,7 @@
 
 > A single view of what's documented for each goal, and the honest remaining gaps (mostly things that
 > need a **bench unit**). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9).
-> 34 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
+> 35 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
 
 ## Goal ① — Build custom firmware / run custom software on the robot
 
@@ -17,6 +17,7 @@
 | Android permissions + SELinux confinement | ✅ | [security-policy](security-policy.md) |
 | Vendor HALs + kernel drivers + co-processor/radio firmware | ✅ | [hal-and-drivers](hal-and-drivers.md) |
 | On-device ZMQ bus (drive the robot) + client | ✅ + tool | [robot-ipc-protocol](robot-ipc-protocol.md) · `MoxieBus` |
+| MAINAPP interface (brain↔Unity face/audio/camera seam, full embodied.unity map) | ✅ + tool | [unity-mainapp-interface](unity-mainapp-interface.md) · `bus.py` |
 | Behavior input-event vocabulary (163 events, Farmers→InputEngine) | ✅ | [behavior-input-events](behavior-input-events.md) |
 | Decision engine (NodeCanvas BT/FSM/Dialogue + Blackboard, 45 trees) | ✅ | [behavior-tree-engine](behavior-tree-engine.md) |
 | Gaze & attention (interest points, saccades, IK look-at, published Attention state machine) | ✅ + tool | [gaze-and-attention](gaze-and-attention.md) · `bus.py` |
