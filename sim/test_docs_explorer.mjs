@@ -97,8 +97,8 @@ try {
   // 1b) the reverse-engineering section is sub-grouped by folder (Protocol / Runtime / Firmware / …)
   const subheads = await page.$$eval(".subhead", (els) => els.map((e) => e.textContent));
   ok(subheads.some((t) => /Protocol/.test(t)) && subheads.some((t) => /Runtime/.test(t)) &&
-     subheads.some((t) => /Firmware/.test(t)),
-     `tree should show folder sub-group headers while browsing (got ${subheads.join(", ")})`);
+     subheads.some((t) => /Firmware/.test(t)) && subheads.some((t) => /Manifests/.test(t)),
+     `tree should show folder sub-group headers incl. Manifests (got ${subheads.join(", ")})`);
 
   // 2) Mermaid renders on a diagram-heavy doc + the topbar meta shows reading time + diagram count
   await page.goto(base + "/docs.html#reverse-engineering/architecture-diagrams.md", { waitUntil: "domcontentloaded" });

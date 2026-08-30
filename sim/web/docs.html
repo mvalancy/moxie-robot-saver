@@ -306,7 +306,11 @@
       }
       // bucket a section's docs by their subfolder (path segment [1]); "" = docs at the section root.
       var buckets={}, hasSub=false;
-      g.items.forEach(function(f){ var seg=f.path.split("/"); var sub=(seg.length>=3)?seg[1]:""; if(sub) hasSub=true; (buckets[sub]=buckets[sub]||[]).push(f); });
+      g.items.forEach(function(f){ var seg=f.path.split("/"); var sub=(seg.length>=3)?seg[1]:"";
+        // route known nested containers (manifests/, recovered-proto/, keys/) to their own sub-group
+        // instead of lumping them into the parent subfolder (e.g. firmware/manifests/*.tsv → "Manifests")
+        if(seg.length>=4 && /^(manifests|recovered-proto|keys)$/.test(seg[2])) sub=seg[2];
+        if(sub) hasSub=true; (buckets[sub]=buckets[sub]||[]).push(f); });
       if(filter||!hasSub){
         // searching (or a flat section): render in relevance/curated order, no sub-headers
         g.items.forEach(renderItem);
