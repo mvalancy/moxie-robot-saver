@@ -1,5 +1,5 @@
 {
- "generated": "docs-724f5824cc34",
+ "generated": "docs-0e12d989812a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 9138,
+   "bytes": 9145,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -1180,7 +1180,7 @@
    "path": "reverse-engineering/runtime/perception-pipeline.md",
    "title": "Perception pipeline — audio & vision",
    "section": "reverse-engineering",
-   "bytes": 18286,
+   "bytes": 20691,
    "mermaid": 1,
    "headings": [
     "Audio: hear → understand → speak",
@@ -1188,6 +1188,7 @@
     "Wake-word & VAD (fully on-device)",
     "Output side — TTS (`embodied.unity`)",
     "Vision (`embodied.perception.vision`)",
+    "The detection wire schema — detection → tracking → pose",
     "Face recognition & enrollment data model",
     "Camera-driven activities (content activates these)",
     "XMOS firmware (DFU)",

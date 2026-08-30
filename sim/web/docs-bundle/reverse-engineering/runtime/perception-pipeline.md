@@ -177,6 +177,33 @@ The camera (OV2710) feeds a CV stack (`libbo-vision`, TFLite) publishing:
 | **`QRPB{qrcode, timestamp}`** | **decoded QR string** — the vision QR event (feeds both the setup grammar in [`qr-commands.md`](../protocol/qr-commands.md) and content QRs in [`content-and-conversation.md`](content-and-conversation.md)) |
 | `BookId` / `DrawId` / `ImageToText` | activity-specific recognizers (reading, drawing) |
 
+### The detection wire schema — detection → tracking → pose
+
+The vision events above have a concrete per-frame schema (the raw output that feeds
+[perception fusion](../protocol/perception-fusion.md)), a **detection → tracking** progression:
+
+- **`FacesDetectedPB { frame_id, DetectedFacePB faces[] }`** — the per-frame face detections. Each
+  **`DetectedFacePB`** is rich: `center_x/y`, `width`, `height`, `confidence`, head pose
+  (`pitch`/`yaw`/`roll`), **`emotion` + `emotion_proba`** (the classified expression), `left_eye_x/y` +
+  `right_eye_x/y` (eye landmarks), `occlusion`, and a **`gesture`** string (a recognized face gesture).
+- **`FacesTrackedPB { TrackedFacePB faces[] }`** — the same faces after **tracking**: a `TrackedFacePB`
+  adds a stable **`id`** and a recognized **`name`** to the detection, plus a **`WorldPosition
+  { center_x/y/z, width, height }`** — the 3D placement. `FacesRecognizedPB` / `RecognizedPersonPB` carry
+  the recognition result (and `Person { Face }` pairs a detected person with their face). So a face goes **detected (2D + emotion) → tracked (id + name + 3D world) →
+  [fused](../protocol/perception-fusion.md)**.
+- **`PosesEstimatedPB { PosePB people[] }`** — body **pose estimation**: each `PosePB` is a `class_id`, a
+  `new_pose_id`, a `proba`, and **`jointPosPB joints[] { index, x, y }`** — the 2D **skeleton keypoints**.
+  (These are the human-pose keypoints hardware-map warns are *not* motor names, [hardware-map](../hardware/hardware-map.md#arm-anatomy-what-arm_in_out-actually-is).)
+- **`OcclusionPB { occluded, occlusion_percentage }`** (camera covered) and **`RapidMotionPB
+  { rapid_motion }`** (fast motion) — frame-quality signals.
+- **`ShowState { Type, State }`** — the "show me" state machine: **`Type`** = `BOOK` / `DRAWING` /
+  **`ARUCO`** (fiducial marker) / `FACE`, **`State`** = `STARTED` / `FINISHED`. So when the child holds a
+  book, a drawing, an **ArUco marker**, or a face up to the camera, `ShowState` brackets the show — the
+  trigger the [camera-driven activities](#camera-driven-activities-content-activates-these) below key off.
+- **Offline analysis** (`OfflineFace`): `OfflineMediaPB` + `FacesAnalyzedPB { AnalyzedFacePB }` +
+  `OfflineAnalysisReady` — the robot can analyze **stored media** (not just the live feed) through the
+  same `AnalyzedFacePB` (head pose + FACS action units) path below.
+
 ### Face recognition & enrollment data model
 How Moxie *recognizes* a returning child (the [MXNet embedding path](../firmware/firmware-inventory.md#the-on-device-ml-stack-four-frameworks)):
 
