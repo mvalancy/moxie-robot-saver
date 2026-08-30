@@ -1,5 +1,5 @@
 {
- "generated": "docs-13c608aee7f2",
+ "generated": "docs-76dd75db2867",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -909,8 +909,8 @@
    "path": "reverse-engineering/protocol/cloud-protocol.md",
    "title": "Robot ↔ cloud protocol — REST, MQTT, STT (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 22249,
-   "mermaid": 1,
+   "bytes": 25773,
+   "mermaid": 2,
    "headings": [
     "Three channels",
     "1. REST — `client-service`",
@@ -928,6 +928,7 @@
     "Robot authentication (device identity)",
     "3. STT — Deepgram over WebSocket",
     "The chat request/response envelope",
+    "The full session — power-on to first spoken line",
     "Minimum viable backend (for revival)"
    ]
   },

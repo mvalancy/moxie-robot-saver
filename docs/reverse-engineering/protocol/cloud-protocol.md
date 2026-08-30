@@ -319,6 +319,60 @@ contract a custom "brain server" must answer:
 `REMOTE_RESPONSE`). The spoken text carries inline behavior markup (`<mark name="cmd:…">`, see
 [`robot-ipc-protocol.md`](robot-ipc-protocol.md)) so one response drives speech **and** body.
 
+## The full session — power-on to first spoken line
+
+The pieces above are scattered by concern; this is the **ordered end-to-end handshake** a revival server
+must satisfy, from boot to a rendered reply. Every message here is one documented on this page (or its
+linked docs) — the value is the *sequence*.
+
+```mermaid
+sequenceDiagram
+  participant R as 🤖 Robot
+  participant W as 🌐 client-service (REST)
+  participant B as 📡 MQTT broker
+  participant S as 🧠 Server / brain
+  participant T as 🎙️ Deepgram (STT)
+  Note over R: boot → read cloud.json → endpoint (e.g. EMBODIED_LOCAL → client-service-api.local + mqtt_host)
+  R->>W: POST api/robot-sessions  (bearer = RS256 device JWT)
+  W-->>R: session opened
+  R->>B: MQTT CONNECT (mutual TLS · password = RS256 JWT)
+  R->>B: PUBLISH /devices/{id}/state {connected}
+  B-->>S: $SYS/broker/clients/# + /state  (presence)
+  R->>B: SUBSCRIBE /devices/{id}/config · /commands/#
+  S->>B: PUBLISH /devices/{id}/config  (RobotCloudConfig: pairing_status, settings, BRAIN_BASE_TOPIC)
+  B-->>R: config applied → robot is live
+  Note over R,T: — a conversation turn —
+  R->>T: wss /v2/listen/stream  (XMOS-cleaned audio)
+  T-->>R: transcript
+  R->>B: PUBLISH /devices/{id}/events/remote-chat  (backend=router · RemoteChatRequest{speech,context})
+  B-->>S: routed
+  S->>B: PUBLISH /devices/{id}/commands/remote_chat  (RemoteChatResponse{output.text, markup, mood, action})
+  B-->>R: reply
+  Note over R: render — CloudTTS/local CereVoice audio + <mark cmd:…> gestures + mood on the face
+  R->>B: PUBLISH /devices/{id}/events/client-service-activity-log  (metrics · SEL updates)
+```
+
+Step by step, with the authority for each:
+
+1. **Boot → endpoint.** The robot reads [`cloud.json`](#the-built-in-endpoint-hosts-baked-into-libbo-logger)
+   to learn which cloud it is homed to (host + `mqtt_host`). A revived robot was pointed at
+   `EMBODIED_LOCAL`/`openmoxie` by a [QR `endpoint_update`/`om`](qr-commands.md#the-effective-command-set-native-dispatch-rightpointon_qrcommand).
+2. **REST session.** It opens a session at [`api/robot-sessions`](#endpoints-seen), authenticating with its
+   [RS256 device JWT](#robot-authentication-device-identity).
+3. **MQTT connect + presence.** It connects to the broker over [mutual TLS with the JWT as the password](#robot-authentication-device-identity)
+   and publishes `/devices/{id}/state`; the server also sees it via the broker's `$SYS` topics.
+4. **Config push.** The server publishes `/devices/{id}/config` — the [`RobotCloudConfig`/`ServiceConfiguration`](#service-configuration-how-the-robot-is-repointed)
+   with `pairing_status`, settings, and the `BRAIN_BASE_TOPIC` the robot will talk on.
+5. **A turn.** Child speech is cleaned by the [XMOS DSP](../runtime/perception-pipeline.md) and streamed to
+   [Deepgram STT](#3-stt-deepgram-over-websocket); the robot emits a `remote-chat` event carrying a
+   [`RemoteChatRequest`](remote-chat-protocol.md); the server answers on `commands/remote_chat` with a
+   [`RemoteChatResponse`](remote-chat-protocol.md) (text + `markup` + `mood` + navigation `action`).
+6. **Render.** The robot speaks it (CloudTTS audio, or local CereVoice) and performs the
+   [`<mark cmd:…>` markup](robot-ipc-protocol.md#the-behavior-command-markup-how-the-cloud-drives-the-body)
+   + mood on the projected face. Per-turn metrics/SEL flow back on `client-service-activity-log`.
+
+A server that answers **steps 2, 4, and 5** has a talking robot; everything else is enrichment.
+
 ## Minimum viable backend (for revival)
 
 1. Serve `https://client-service-api.local/` (DNS + TLS) and point the robot at `EMBODIED_LOCAL`.
