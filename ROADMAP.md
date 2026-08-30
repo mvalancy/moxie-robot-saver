@@ -75,7 +75,7 @@ Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-ex
   Mermaid rendered (marked + mermaid vendored), built by `sim/tools/build_docs_bundle.py`. Collapsible tree,
   **full-text search** (lazy `docs-search.json`) with snippets + in-document match highlighting & scroll-to-hit,
   shareable section deep links (heading permalinks + `#doc#section` URLs), prev/next pager (+ `[`/`]` keys, `/` to search), "On this page" TOC + scroll-spy, per-doc reading-time + diagram-count meta, and code
-  **syntax highlighting** (highlight.js vendored). Runtime behavior guarded by `sim/test_docs_explorer.mjs`.
+  **syntax highlighting** + per-block copy buttons (highlight.js vendored). Runtime behavior guarded by `sim/test_docs_explorer.mjs`.
 - ✅ **Cloudflare Pages deploy** — live at [moxie.mattvalancy.com](https://moxie.mattvalancy.com);
   `_headers` cache policy + clean URLs, pre-cached MP3 voice + ambient self-talk, responsive across phone→ultrawide.
 
