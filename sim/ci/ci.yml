@@ -53,6 +53,8 @@ jobs:
         run: node sim/test_docs.mjs
       - name: Responsive UI test (skips cleanly if no browser is available)
         run: node sim/test_responsive.mjs
+      - name: Hosted-deploy env test (no doomed backend probes; skips cleanly if no browser)
+        run: node sim/test_env_hosted.mjs
       - name: Docs-explorer runtime test (Mermaid/search/highlight; skips cleanly if no browser)
         run: node sim/test_docs_explorer.mjs
       - name: Mermaid diagram render audit (no parse errors / clipped labels; skips cleanly if no browser)

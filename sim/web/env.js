@@ -40,8 +40,16 @@
     var opt = ("AbortSignal" in window && AbortSignal.timeout) ? { signal: AbortSignal.timeout(2500) } : {};
     return fetch(url, opt).then(function (r) { return r.ok; }).catch(function () { return false; });
   }
-  Promise.all([probe(origin + ":8081/health"), probe(origin + ":8082/health")])
-    .then(function (r) { apply(r[0], r[1]); });
+  // Locally, probe for the optional TTS/STT sidecars and annotate accordingly.
+  // On the hosted static deploy those ports can't exist, so skip the two
+  // guaranteed-to-fail cross-origin requests and go straight to the hosted-demo
+  // annotations — same UI, no wasted requests or pending connections.
+  if (isLocal) {
+    Promise.all([probe(origin + ":8081/health"), probe(origin + ":8082/health")])
+      .then(function (r) { apply(r[0], r[1]); });
+  } else {
+    apply(false, false);
+  }
 
   function apply(tts, stt) {
     // Voice / TTS
