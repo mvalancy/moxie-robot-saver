@@ -55,12 +55,12 @@ The brain + MAINAPP. Major subsystems and their exploration status:
 | ✅ | Cloud/MQTT/REST client + config/telemetry data-model | [cloud-protocol](cloud-protocol.md), [device-config-and-telemetry](device-config-and-telemetry.md) |
 | ✅ | Offline fallback + persisted brain state | [offline-and-brain-state](offline-and-brain-state.md) |
 | ✅ | Crypto & pairing | [crypto-and-keys](crypto-and-keys.md), [pairing-and-robot](pairing-and-robot.md) |
-| 🟡 | The `EB*` game-task / GT-manager runtime scheduler | partial (touched in [unity-face-animation](unity-face-animation.md)) — **open: the EBGameTask/EBGTManager execution model** |
+| ✅ | The `EB*` game-task / GT-manager runtime scheduler (priority + resource arbitration) | [task-scheduler](task-scheduler.md) |
 | 🟡 | Content-module runtime (activity execution, volley) | [content-and-conversation](content-and-conversation.md) — concepts covered; execution-engine internals open |
 | ⬜ | `libbo-brain` native ML models (sentiment/intent/NLU on-device) | format unmapped (low priority) |
 
-**Next C# threads:** the `EBGameTask`/`EBGTManager` task-execution model (how behavior tasks are scheduled
-and prioritized on the animation/audio/motor outputs) — the runtime glue under the face-animation engine.
+**Next C# threads:** the content-module *execution engine* internals (activity/volley runtime beyond the
+documented format), then the `libbo-brain` native ML model formats (low priority).
 
 ## Disk images
 

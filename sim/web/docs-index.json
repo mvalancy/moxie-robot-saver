@@ -1,5 +1,5 @@
 {
- "generated": "docs-01bdfc5074de",
+ "generated": "docs-086ebc2f7845",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 13332,
+   "bytes": 13756,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 8083,
+   "bytes": 8233,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -541,7 +541,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 8053,
+   "bytes": 7969,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -1173,6 +1173,23 @@
     "The embodied `Robot*` layer",
     "The 45 named behavior trees (`Bht_*`)",
     "DialogueTrees — scripted conversation",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/task-scheduler.md",
+   "title": "The task scheduler — how concurrent behaviors share Moxie's outputs (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 10227,
+   "mermaid": 1,
+   "headings": [
+    "The problem",
+    "The task — `EBGameTask`",
+    "The manager — `EBGTManager`",
+    "The arbitration (`UpdateTaskActivations`)",
+    "The outputs — `RobotResourceFlags`",
+    "The priority ladder — `RobotTaskPriority`",
+    "Worked example — Moxie greets a child",
     "What this means for the three goals"
    ]
   },
