@@ -32,6 +32,8 @@
   Cache-Control: public, max-age=300
 /docs-index.json
   Cache-Control: no-cache
+/docs-search.json
+  Cache-Control: no-cache
 /fixtures/*
   Cache-Control: public, max-age=300
 /sessions/*

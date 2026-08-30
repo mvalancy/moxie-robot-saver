@@ -25,6 +25,7 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 WEB = os.path.join(REPO, "sim", "web")
 OUT = os.path.join(WEB, "docs-bundle")
 INDEX = os.path.join(WEB, "docs-index.json")
+SEARCH = os.path.join(WEB, "docs-search.json")
 FIRMWARE = "v3.6.4-Zephyr / OTA v24.10.803"
 
 # What to include: the whole docs/ tree, plus these top-level docs.
@@ -81,6 +82,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
 
     entries = []
+    search = {}
     for full, rel in collect():
         with open(full, "r", encoding="utf-8", errors="replace") as fh:
             text = fh.read()
@@ -96,6 +98,9 @@ def main():
             "mermaid": text.count("```mermaid"),
             "headings": headings(text),
         })
+        # full-text search blob: strip mermaid/code fences' language markers + collapse
+        # whitespace so a client-side substring search over the prose + code works.
+        search[rel] = re.sub(r"\s+", " ", text).strip()
 
     entries.sort(key=lambda e: (e["section"], e["path"]))
     try:
@@ -108,11 +113,15 @@ def main():
     with open(INDEX, "w", encoding="utf-8") as fh:
         json.dump({"generated": desc, "firmware": FIRMWARE, "files": entries},
                   fh, indent=1, ensure_ascii=False)
+    # Separate, lazily-fetched full-text index (only loaded when the user searches).
+    with open(SEARCH, "w", encoding="utf-8") as fh:
+        json.dump(search, fh, ensure_ascii=False, separators=(",", ":"))
 
     total_mermaid = sum(e["mermaid"] for e in entries)
     print(f"[docs-bundle] {len(entries)} markdown files, "
           f"{sum(e['bytes'] for e in entries)//1024} KiB, "
-          f"{total_mermaid} mermaid diagrams → {os.path.relpath(OUT, REPO)}/ + docs-index.json")
+          f"{total_mermaid} mermaid diagrams, {sum(len(v) for v in search.values())//1024} KiB full-text "
+          f"→ {os.path.relpath(OUT, REPO)}/ + docs-index.json + docs-search.json")
     return 0
 
 

@@ -62,6 +62,19 @@ for (const f of idx.files) {
 }
 ok(mermaidTotal > 0, "expected at least one mermaid diagram across the docs");
 
+// ---- full-text search index (lazily fetched by docs.html) ----
+const searchPath = join(web, "docs-search.json");
+ok(existsSync(searchPath), "docs-search.json missing — rebuild the bundle");
+if (existsSync(searchPath)) {
+  const search = JSON.parse(readFileSync(searchPath, "utf8"));
+  for (const f of idx.files)
+    ok(typeof search[f.path] === "string" && search[f.path].length > 0,
+       `docs-search.json missing full text for ${f.path}`);
+  // a known term from the firmware docs must be findable in the body text
+  const hay = Object.values(search).join("\n").toLowerCase();
+  ok(hay.includes("dlpc3430"), "full-text index should contain body prose (e.g. 'DLPC3430')");
+}
+
 // ---- vendored renderers present ----
 for (const v of ["marked.min.js", "mermaid.min.js", "highlight.min.js"])
   ok(existsSync(join(web, "vendor", v)), `vendored ${v} missing`);
@@ -76,6 +89,7 @@ const html = readFileSync(join(web, "docs.html"), "utf8");
 ok(html.includes("vendor/marked.min.js") && html.includes("vendor/mermaid.min.js"),
    "docs.html must load the vendored marked + mermaid");
 ok(html.includes("docs-index.json"), "docs.html must fetch docs-index.json");
+ok(html.includes("docs-search.json"), "docs.html must fetch the full-text docs-search.json");
 ok(html.includes("mermaid.render") || html.includes("mermaid.init"), "docs.html must render mermaid");
 ok(html.includes("vendor/highlight.min.js") && html.includes("highlightElement"),
    "docs.html must load + apply the vendored highlighter");

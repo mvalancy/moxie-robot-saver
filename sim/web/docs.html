@@ -58,6 +58,10 @@
   a.doc.active{background:#0d2029;border-left-color:var(--cyan);color:var(--cyan)}
   a.doc .dm{margin-left:auto;font-family:var(--font-mono);font-size:9px;color:var(--dim)}
   a.doc.hit em{color:var(--amber);font-style:normal}
+  .snip{margin:-3px 0 5px 24px;padding:1px 10px 1px 13px;border-left:1px solid #22303c;
+    font-family:var(--font-mono);font-size:10px;line-height:1.45;color:var(--dim);
+    white-space:normal;overflow:hidden}
+  .snip em{color:var(--amber);font-style:normal}
   .railfoot{border-top:1px solid var(--hairline);padding:11px 14px;font-size:11.5px;color:var(--dim)}
   .railfoot a{color:var(--muted);text-decoration:none}.railfoot a:hover{color:var(--cyan)}
 
@@ -157,7 +161,7 @@
     <div class="fw" id="fw"></div>
     <div class="searchwrap">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input id="q" type="search" placeholder="Search docs & headings…" autocomplete="off" spellcheck="false">
+      <input id="q" type="search" placeholder="Search all docs (full text)…" autocomplete="off" spellcheck="false">
     </div>
   </div>
   <nav class="tree" id="tree"></nav>
@@ -182,6 +186,15 @@
 (function(){
   "use strict";
   var BUNDLE="docs-bundle/", idx=null, current=null, mmReady=false, order=[];
+  var SEARCH=null, searchLoading=false;
+  function loadSearch(cb){
+    if(SEARCH){ cb&&cb(); return; }
+    if(searchLoading) return;
+    searchLoading=true;
+    fetch("docs-search.json").then(function(r){return r.json();}).then(function(j){
+      SEARCH=j; searchLoading=false; cb&&cb();
+    }).catch(function(){ searchLoading=false; });
+  }
   var HOME="_root/README.md";
   var elTree=document.getElementById("tree"), elContent=document.getElementById("content"),
       elCrumb=document.getElementById("crumb"), elSrc=document.getElementById("src"), elQ=document.getElementById("q");
@@ -205,7 +218,15 @@
       .map(function(s){ return {sec:s, items:by[s]}; });
   }
   function matches(f,q){ q=q.toLowerCase();
-    return f.title.toLowerCase().indexOf(q)>=0||f.path.toLowerCase().indexOf(q)>=0||(f.headings||[]).some(function(h){return h.toLowerCase().indexOf(q)>=0;}); }
+    if(f.title.toLowerCase().indexOf(q)>=0||f.path.toLowerCase().indexOf(q)>=0||(f.headings||[]).some(function(h){return h.toLowerCase().indexOf(q)>=0;})) return true;
+    return !!(SEARCH && SEARCH[f.path] && SEARCH[f.path].toLowerCase().indexOf(q)>=0); }
+  function snippetFor(f,q){
+    if(!SEARCH||!q) return "";
+    var body=SEARCH[f.path]; if(!body) return "";
+    var lc=body.toLowerCase(), i=lc.indexOf(q.toLowerCase()); if(i<0) return "";
+    var start=Math.max(0,i-42), end=Math.min(body.length,i+q.length+64);
+    var seg=(start>0?"…":"")+body.slice(start,end)+(end<body.length?"…":"");
+    return highlight(seg,q); }
   function highlight(t,q){ if(!q) return esc(t); var i=t.toLowerCase().indexOf(q.toLowerCase());
     return i<0?esc(t):esc(t.slice(0,i))+"<em>"+esc(t.slice(i,i+q.length))+"</em>"+esc(t.slice(i+q.length)); }
 
@@ -231,7 +252,8 @@
         if(filter) a.classList.add("hit");
         a.innerHTML='<span>'+highlight(f.title,filter)+'</span>'+(f.mermaid?'<span class="dm">◈'+f.mermaid+'</span>':'');
         a.onclick=function(ev){ ev.preventDefault(); openDoc(f.path); if(window.innerWidth<=760) document.body.classList.remove("nav-open"); };
-        items.appendChild(a); });
+        items.appendChild(a);
+        if(filter){ var sn=snippetFor(f,filter); if(sn){ var sd=document.createElement("div"); sd.className="snip"; sd.innerHTML=sn; sd.onclick=function(){ openDoc(f.path); if(window.innerWidth<=760) document.body.classList.remove("nav-open"); }; items.appendChild(sd); } } });
       wrap.appendChild(items); elTree.appendChild(wrap);
     });
     if(!any) elTree.innerHTML='<div class="grp"><div class="gh"><span>no matches</span></div></div>';
@@ -382,7 +404,7 @@
     elTree.innerHTML='<div style="padding:14px" class="err">Could not load docs-index.json.<br>Run <code>python3 sim/tools/build_docs_bundle.py</code>.</div>';
   });
 
-  var qt; elQ.addEventListener("input",function(){ clearTimeout(qt); qt=setTimeout(function(){ buildTree(elQ.value.trim()); },110); });
+  var qt; elQ.addEventListener("input",function(){ clearTimeout(qt); qt=setTimeout(function(){ var v=elQ.value.trim(); if(v&&!SEARCH){ loadSearch(function(){ buildTree(elQ.value.trim()); }); } buildTree(v); },110); });
   document.getElementById("burger").onclick=function(){ document.body.classList.toggle("nav-open"); };
   window.addEventListener("hashchange",function(){ var h=(location.hash||"").replace(/^#/,""); if(h&&h!==current&&idx&&idx.files.some(function(f){return f.path===h;})) openDoc(h); });
 })();
