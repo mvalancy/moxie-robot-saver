@@ -95,8 +95,8 @@ for (const cmd of ["serial_number_display", "restore_factory", "reset_network",
 const html = readFileSync(join(here, "web", "sim.html"), "utf8");
 for (const id of ["qr-kind", "qr-make", "qr-canvas", "qr-status", "qr-ssid", "qr-pass"])
   ok(html.includes(`id="${id}"`), `sim.html missing #${id}`);
-ok(html.includes("vendor/qrcode.js"), "sim.html must load the vendored qrcode.js");
-ok(html.includes('src="qr.js"'), "sim.html must load qr.js");
+ok(/vendor\/qrcode\.js/.test(html), "sim.html must load the vendored qrcode.js");
+ok(/src="qr\.js(\?[^"]*)?"/.test(html), "sim.html must load qr.js");
 ok(html.includes("setup.html"), "sim HUD should link to the full static setup page");
 
 // ---- 5. the standalone parent-app "basics" page is wired ---------------------

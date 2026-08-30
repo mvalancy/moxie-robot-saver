@@ -103,10 +103,10 @@ const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerH
 camera.position.set(1.8, 2.1, 4.8);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.15, 0);        // Moxie's centre — orbit always pivots here
+controls.target.set(0, 1.15, 0);        // Moxie's centre — orbit pivots here by default
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.enablePan = false;             // rotation stays centred on Moxie (no drift)
+controls.enablePan = true;              // let people reposition Moxie (e.g. out from behind a panel)
 controls.minDistance = 2.0;
 controls.maxDistance = 12.0;
 controls.maxPolarAngle = 1.48;
@@ -391,28 +391,47 @@ root.add(ring);
 const yawG = new THREE.Group();
 root.add(yawG);
 
-// The real robot's lean pivots ABOVE the speaker: the lower body (grille,
-// wordmark) stays upright while the torso above it tips. lowerG turns with the
-// body but never leans; leanG pivots at LEAN_PIVOT_Y, just above the grille.
-const LEAN_PIVOT_Y = 0.66;          // ABOVE the speaker, at the chest seam. The
-                                    // LOWER chest (speaker) stays planted; only the
-                                    // UPPER chest (arms, heart LED, head) leans.
-const lowerG = new THREE.Group();   // fixed lower section (yaws, never leans)
-yawG.add(lowerG);
+// Moxie's lean is a single joint ABOVE the speaker: only the UPPER torso (chest,
+// arms, heart, head) tips forward; the LOWER torso (speaker section + its grille
+// and wordmark) stays planted. So the body mesh is SPLIT at the pivot — lower on
+// a planted group, upper on the lean group. Both still breathe + yaw together.
+const LEAN_PIVOT_Y = 0.66;          // the chest seam, just above the speaker
 
-const leanG = new THREE.Group();
+const breatheG = new THREE.Group();          // liveness breathing (whole robot)
+yawG.add(breatheG);
+
+const lowerG = new THREE.Group();            // planted lower torso — breathes + yaws, NEVER leans
+breatheG.add(lowerG);
+
+const leanG = new THREE.Group();             // motor 6 — tips ONLY the upper torso
 leanG.position.y = LEAN_PIVOT_Y;
-yawG.add(leanG);
+breatheG.add(leanG);
 
-const breatheG = new THREE.Group();          // liveness: breathing scale/bob
-breatheG.position.y = -LEAN_PIVOT_Y;   // children keep their absolute Y
-leanG.add(breatheG);
+const upperG = new THREE.Group();            // carrier so upper parts keep their absolute Y
+upperG.position.y = -LEAN_PIVOT_Y;
+leanG.add(upperG);
 
-// Body cylinder
-const body = new THREE.Mesh(makeBodyGeometry(), shellMat);
-body.castShadow = true;
-body.receiveShadow = true;
-breatheG.add(body);
+// Split the lathe profile at the pivot; both halves share the seam radius so
+// they meet cleanly (Moxie has a real chest-divider seam right here).
+function bodyLatheFrom(profile) {
+  let g = new THREE.LatheGeometry(profile, 128);
+  g.deleteAttribute('uv'); g.deleteAttribute('normal');
+  g = mergeVertices(g, 1e-4); g.computeVertexNormals();
+  return g;
+}
+const seamR = bodyRadiusAt(LEAN_PIVOT_Y);
+const lowerProfile = bodyProfilePts.filter(p => p.y <= LEAN_PIVOT_Y)
+  .concat([new THREE.Vector2(seamR, LEAN_PIVOT_Y)]);
+const upperProfile = [new THREE.Vector2(seamR, LEAN_PIVOT_Y)]
+  .concat(bodyProfilePts.filter(p => p.y > LEAN_PIVOT_Y));
+
+const lowerBody = new THREE.Mesh(bodyLatheFrom(lowerProfile), shellMat);
+lowerBody.castShadow = true; lowerBody.receiveShadow = true;
+lowerG.add(lowerBody);
+
+const upperBody = new THREE.Mesh(bodyLatheFrom(upperProfile), shellMat);
+upperBody.castShadow = true; upperBody.receiveShadow = true;
+upperG.add(upperBody);
 
 // ---- Head: a large egg/teardrop sitting DIRECTLY on the body (no neck —
 //      the head's underside overlaps the body's rounded shoulder, leaving
@@ -438,9 +457,9 @@ const neck = new THREE.Mesh(neckGeo, new THREE.MeshPhysicalMaterial({
 neck.position.set(0, BODY_TOP - 0.05, 0);
 neck.castShadow = true;
 neck.receiveShadow = true;
-breatheG.add(neck);
+upperG.add(neck);
 
-breatheG.add(headTiltG);
+upperG.add(headTiltG);
 
 const headRollG = new THREE.Group();          // liveness-only curious head roll
 headTiltG.add(headRollG);
@@ -713,7 +732,7 @@ const grille = new THREE.Mesh(
   })
 );
 grille.position.set(0, 0.34, 0);
-breatheG.add(grille);    // printed on the body — breathes + tilts WITH it
+lowerG.add(grille);      // printed on the lower torso — planted, never leans
 
 // ---- `moxie` wordmark near the base ----
 
@@ -743,7 +762,7 @@ const wordmark = new THREE.Mesh(
   })
 );
 wordmark.position.set(0, 0.155, 0);
-breatheG.add(wordmark);  // printed on the body — breathes + tilts WITH it
+lowerG.add(wordmark);    // printed on the lower torso — planted, never leans
 
 // ---- Heart LED: a THIN white horizontal line with a TINY white heart
 //      directly beneath it, on the upper chest just under the head — a small,
@@ -803,11 +822,11 @@ const heart = new THREE.Mesh(
   heartMat);
 heart.position.set(0, 1.08, bodyRadiusAt(1.08) + 0.006);
 heart.rotation.x = -0.20;             // follows the chest's backward taper
-breatheG.add(heart);
+upperG.add(heart);
 
 const heartLight = new THREE.PointLight(0xff5577, 0, 1.2);
 heartLight.position.set(0, 1.08, bodyRadiusAt(1.08) + 0.12);
-breatheG.add(heartLight);
+upperG.add(heartLight);
 
 const heartState = { on: false, color: new THREE.Color(0xff5577) };
 
@@ -885,7 +904,7 @@ function makeArm(side) {  // side = -1 left, +1 right
   hand.receiveShadow = true;
   elbowPost.add(hand);
 
-  breatheG.add(armRoot);
+  upperG.add(armRoot);
   registerAxisNode(side > 0 ? 'armRootL (robot LEFT, +X)' : 'armRootR (robot RIGHT, -X)', armRoot);
   registerAxisNode(side > 0 ? 'shoulderL (motor 0)' : 'shoulderR (motor 2)', shoulder);
   registerAxisNode(side > 0 ? 'elbowL (spring)' : 'elbowR (spring)', elbow);
@@ -1242,81 +1261,74 @@ function drawFace(t) {
   // light up (the projector face emits), soft rounded eyebrows always present so
   // the face never looks blank, and a gentle smile.
   const ink = '#3f6f7d';                                   // mouth (soft teal)
-  const browCol = '#5f8390';                               // soft rounded brows
-  const eyeCore = '#9beeff', eyeMid = '#25a9e8', eyeDeep = '#0a5f9e';
+  // Soft, KIND eyes — friendly, never a glowing stare. A warm rounded shape with a
+  // gently lidded top so Moxie looks sweet, one soft shine, no glow halo. Brows are
+  // off by default (a blank calm face) and only appear for expressions that need them.
+  const eyeTop = '#d6f0ff', eyeBot = '#57a9dd', eyeEdge = '#3182b4';
+  const screenCol = '#fcf8f0';                              // warm screen (for the lid)
 
-  // blink factor
   let blinkF = 1;
   if (blink.active) blinkF = Math.max(0.04, 1 - Math.sin(Math.PI * blink.phase));
 
-  // eyes (idleEyes adds the liveness gaze drift on top of the expression)
-  const eyeY = 252 + (P.pupilY + idleEyes.y) * 10;
-  const eyeDX = 90;
-  const rx = 48 * P.eyeW;
-  const ry = Math.max(4, 64 * P.eyeH * blinkF);
+  const eyeY = 258 + (P.pupilY + idleEyes.y) * 10;
+  const eyeDX = 86;
+  const rx = 43 * P.eyeW;
+  const ry = Math.max(4, 56 * P.eyeH * blinkF);
   for (const s of [-1, 1]) {
-    const ex = 256 + s * eyeDX + (P.pupilX + idleEyes.x) * 12;
-    // 1) soft glow halo — the eyes emit light on the projector screen
-    if (ry > 10) {
-      const halo = fctx.createRadialGradient(ex, eyeY, Math.min(rx, ry) * 0.3, ex, eyeY, rx * 2.1);
-      halo.addColorStop(0, 'rgba(90,210,255,0.50)');
-      halo.addColorStop(0.45, 'rgba(60,180,240,0.18)');
-      halo.addColorStop(1, 'rgba(60,180,240,0)');
-      fctx.fillStyle = halo;
-      fctx.beginPath();
-      fctx.ellipse(ex, eyeY, rx * 2.1, Math.max(ry, rx) * 1.9, 0, 0, Math.PI * 2);
-      fctx.fill();
-    }
-    // 2) eye body — vibrant cyan→blue gradient, bright core (glows)
-    const eg = fctx.createRadialGradient(ex - rx * 0.22, eyeY - ry * 0.38, Math.min(rx, ry) * 0.12,
-                                         ex, eyeY, Math.max(rx, ry) * 1.05);
-    eg.addColorStop(0, eyeCore);
-    eg.addColorStop(0.5, eyeMid);
-    eg.addColorStop(1, eyeDeep);
+    const ex = 256 + s * eyeDX + (P.pupilX + idleEyes.x) * 10;
+    // eye body: soft vertical gradient (light on top, deeper below) — matte, no glow
+    const eg = fctx.createLinearGradient(ex, eyeY - ry, ex, eyeY + ry);
+    eg.addColorStop(0, eyeTop);
+    eg.addColorStop(0.5, eyeBot);
+    eg.addColorStop(1, eyeEdge);
     fctx.fillStyle = eg;
     fctx.beginPath();
     fctx.ellipse(ex, eyeY, rx, ry, 0, 0, Math.PI * 2);
     fctx.fill();
-    // 3) glossy highlights (big upper-left + tiny lower-right) — cute + alive
-    if (ry > 14) {
-      fctx.fillStyle = 'rgba(255,255,255,0.96)';
+    if (ry > 16) {
+      // gentle upper lid: cover the top ~22% with the warm screen colour so the eye
+      // reads as a soft, kind curve instead of a wide-open stare
+      fctx.fillStyle = screenCol;
       fctx.beginPath();
-      fctx.ellipse(ex - rx * 0.34 + P.pupilX * 6, eyeY - ry * 0.42 + P.pupilY * 4,
-                   rx * 0.30, ry * 0.26, 0, 0, Math.PI * 2);
+      fctx.ellipse(ex, eyeY - ry * 1.02, rx * 1.25, ry * 0.5, 0, 0, Math.PI * 2);
       fctx.fill();
-      fctx.fillStyle = 'rgba(255,255,255,0.72)';
+      // one soft shine, upper-inner
+      fctx.fillStyle = 'rgba(255,255,255,0.9)';
       fctx.beginPath();
-      fctx.ellipse(ex + rx * 0.30, eyeY + ry * 0.30, rx * 0.13, ry * 0.13, 0, 0, Math.PI * 2);
+      fctx.ellipse(ex - rx * 0.26 + P.pupilX * 5, eyeY - ry * 0.02, rx * 0.24, ry * 0.2, 0, 0, Math.PI * 2);
       fctx.fill();
     }
   }
 
-  // cute eyebrows — ALWAYS present (a soft rounded arch), so the face never looks
-  // blank; expression only modulates the lift/tilt on top of the friendly base.
-  {
-    fctx.strokeStyle = browCol;
-    fctx.lineWidth = 13;
+  // eyebrows — OFF for the calm/happy face (prominent brows read as stern). Only
+  // shown when an expression asks for them (sleep, sad, surprised, thinking).
+  const browAmt = Math.min(1, P.browRaise + Math.abs(P.browTilt) + P.browAsym);
+  if (browAmt > 0.05) {
+    fctx.strokeStyle = '#7a97a1';
+    fctx.globalAlpha = Math.min(1, browAmt + 0.25);
+    fctx.lineWidth = 11;
     fctx.lineCap = 'round';
-    fctx.lineJoin = 'round';
     for (const s of [-1, 1]) {
       const asymLift = P.browAsym * (s < 0 ? 16 : -2);
-      const by = eyeY - ry - 26 - P.browRaise * 18 - asymLift;   // just above the eye
-      const tilt = P.browTilt * 15 * -s;                          // sad: inner ends up
-      const x0 = 256 + s * (eyeDX - 30), x1 = 256 + s * (eyeDX + 32);
+      const by = eyeY - ry - 24 - P.browRaise * 18 - asymLift;
+      const tilt = P.browTilt * 14 * -s;                          // sad: inner ends up
+      const x0 = 256 + s * (eyeDX - 28), x1 = 256 + s * (eyeDX + 30);
       const midX = 256 + s * eyeDX;
       fctx.beginPath();
-      fctx.moveTo(x0, by + 5 + tilt * -1);                        // outer end
-      fctx.quadraticCurveTo(midX, by - 9 + tilt * 0.4, x1, by + tilt);  // gentle upward arch
+      fctx.moveTo(x0, by + 5 + tilt * -1);
+      fctx.quadraticCurveTo(midX, by - 8 + tilt * 0.4, x1, by + tilt);   // gentle arch
       fctx.stroke();
     }
+    fctx.globalAlpha = 1;
   }
 
-  // blush when very happy
-  if (P.mouthCurve > 0.55) {
-    fctx.fillStyle = `rgba(233, 150, 138, ${0.30 * (P.mouthCurve - 0.55) / 0.45})`;
+  // soft rosy cheeks — always a hint, warmer when smiling (adds the "aww" factor)
+  {
+    const cheekA = Math.min(0.4, 0.15 + 0.4 * Math.max(0, P.mouthCurve - 0.15));
+    fctx.fillStyle = `rgba(244, 156, 156, ${cheekA})`;
     for (const s of [-1, 1]) {
       fctx.beginPath();
-      fctx.ellipse(256 + s * 160, 335, 29, 17, 0, 0, Math.PI * 2);
+      fctx.ellipse(256 + s * 148, eyeY + 66, 30, 17, 0, 0, Math.PI * 2);
       fctx.fill();
     }
   }
@@ -1761,7 +1773,7 @@ function animate() {
   // breathing — slow body scale + vertical bob (~4.3 s cycle)
   const breath = Math.sin(t * (Math.PI * 2 / 4.3)) * liveness.master;
   breatheG.scale.set(1 - 0.004 * breath, 1 + 0.011 * breath, 1 - 0.004 * breath);
-  breatheG.position.y = -LEAN_PIVOT_Y + 0.005 * breath;   // keep the pivot offset
+  breatheG.position.y = 0.005 * breath;   // gentle vertical bob
 
   // scene lighting eases toward the commanded level
   sceneLight.current += (sceneLight.level - sceneLight.current) * (1 - Math.exp(-dt * 5));
@@ -1811,23 +1823,26 @@ animate();
 // so Moxie sits centred in the visible area to the LEFT of it (instead of being
 // half-hidden behind the panel). On phone/drawer widths the panel isn't a side
 // column, so no offset.
+// Keep Moxie centred in the *visible* area. Landscape: the glassy panels float
+// over the 3D (Moxie shows through), so no shift. Portrait: when the bottom
+// controls drawer is open it centres Moxie in the space ABOVE the drawer.
 function applyStageOffset() {
   const W = window.innerWidth, H = window.innerHeight;
   camera.aspect = W / H;
-  // Centre Moxie in the OPEN part of the viewport (the area left of the docked
-  // control panel). Only when the panel is a right-side column — in drawer mode
-  // (panel is a bottom sheet) Moxie stays centred in the full viewport.
+  camera.clearViewOffset();
   const panel = document.getElementById('panel');
-  let shift = 0;
-  if (panel) {
+  const hud = document.getElementById('hud');
+  if (panel && hud && !hud.classList.contains('rail-closed')) {
     const r = panel.getBoundingClientRect();
-    const isSideColumn = r.width > 0 && r.left > W * 0.3 && r.top < H * 0.4 && r.height > H * 0.5;
-    if (isSideColumn) shift = (W - r.left) / 2;   // open area = [0, r.left]; centre = r.left/2
+    const isBottomDrawer = r.height > 40 && r.bottom >= H - 6 && r.width > W * 0.6 && r.top > H * 0.35;
+    if (isBottomDrawer) {
+      const shiftY = (H - r.top) / 2;      // open area = [0, r.top]; centre Moxie there
+      camera.setViewOffset(W, H, 0, shiftY, W, H);
+    }
   }
-  if (shift > 8) camera.setViewOffset(W, H, shift, 0, W, H);
-  else camera.clearViewOffset();
   camera.updateProjectionMatrix();
   renderer.setSize(W, H);
 }
 window.addEventListener('resize', applyStageOffset);
+window.__applyStageOffset = applyStageOffset;   // re-run when the drawer toggles
 applyStageOffset();

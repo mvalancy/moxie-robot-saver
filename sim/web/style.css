@@ -357,9 +357,14 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: linear-gradient(180deg, rgba(6, 6, 9, 0.66), rgba(6, 6, 9, 0.82));
-  backdrop-filter: blur(12px);
-  border-left: 1px solid var(--hairline);
+  margin: 10px 10px 10px 0;               /* float, don't touch the edges */
+  background: rgba(9, 12, 19, 0.30);       /* GLASS — the 3D shows through */
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
 }
 #rail-scroll {
   min-height: 0;
@@ -831,11 +836,16 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   .disclaimer { font-size: 11px; }
 
   #panel {
-    border-left: none;
-    border-top: 1px solid var(--hairline);
-    background: linear-gradient(180deg, rgba(6, 6, 9, 0.88), rgba(6, 6, 9, 0.94));
-    max-height: 60vh;
+    margin: 0 8px 8px;                      /* float above the bottom edge */
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    background: rgba(9, 12, 19, 0.34);      /* GLASS, so Moxie shows through */
+    backdrop-filter: blur(22px) saturate(1.15);
+    -webkit-backdrop-filter: blur(22px) saturate(1.15);
+    max-height: 42vh;                       /* never cover more than ~40% — Moxie stays visible */
   }
+  /* when the drawer is open, keep the stage area tall so Moxie isn't squeezed */
+  #hud:not(.rail-closed) { grid-template-rows: auto auto minmax(0, 1fr) auto; }
   #rail-toggle { display: flex; }
   #hud.rail-closed #rail-scroll { display: none; }
   #hud.rail-closed #rail-toggle { border-bottom: none; }
@@ -907,7 +917,7 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
   margin-bottom: var(--sp-3);
 }
 /* Tall enough for 2 columns to hold every control with no scroll. */
-@media (min-width: 1360px) and (min-height: 1030px) {
+@media (min-width: 1360px) and (min-height: 1130px) {
   :root { --rail-w: clamp(600px, 34vw, 720px); }
   #hud { grid-template-columns: minmax(440px, 1fr) var(--rail-w); }
   #rail-scroll {
@@ -916,7 +926,7 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
   #rail-scroll > .group { break-inside: avoid; -webkit-column-break-inside: avoid; margin-bottom: var(--sp-3); }
 }
 /* Shorter but wide → 3 columns so it still fits with no scroll. */
-@media (min-width: 1360px) and (max-height: 1029px) {
+@media (min-width: 1360px) and (max-height: 1129px) {
   :root { --rail-w: clamp(860px, 54vw, 1020px); }
   #hud { grid-template-columns: minmax(400px, 1fr) var(--rail-w); }
   #rail-scroll {
