@@ -105,6 +105,53 @@ protocol**. A custom brain or a self-hosted server **replaces those modules by s
 in-process natives above (MCU, LEDs, TTS, settings) are things a *custom firmware* image must actually
 provide or call.
 
+## Native symbol tables (`nm -D` on the shipped `.so`s)
+
+Reading the exports of the actual libraries (extracted from `bo-android.apk` and the factory apps)
+confirms — and extends — the boundary above.
+
+### `liblizzerface.so` — the full MCU export set (20 functions)
+
+The library exports **more than the C# calls**. Beyond the [documented P/Invoke set](#liblizzerfaceso-the-mcu-control-c-api),
+these **7 are exported but never imported by the managed brain** — the lower-level MCU primitives the
+higher-level API is built on (and that the factory tools use directly):
+
+| Native-only export | Purpose |
+|---|---|
+| `robot_get_system_info` | query the MCU's system/version info |
+| `robot_event_reset` | flush the MCU event queue |
+| `robot_require_motor_pos` | request/poll a motor's current position |
+| `robot_set_motor_state` | enable/disable an individual motor |
+| `robot_new_command` / `robot_new_param` | raw command/param injection into the MCU protocol |
+| `robot_app_exit` | shut the MCU-side app down |
+
+So a custom firmware driving the Lizard board natively has this full surface, not just the dozen the
+stock brain uses.
+
+### `librobinface.so` — the LED face is **I²C + GPIO**
+
+Its exports reveal the transport: alongside the `LEDA_*` API (`LEDA_init`, `LEDA_connect`,
+`LEDA_get_color`, `_LEDA_init_led_map`, `_LEDA_push_cmd`) it exports **`i2c1_init`, `i2c2_init`,
+`i2c_init`, `initGPIO`, `_daq_connect`** — the LED-array face is driven over **two I²C buses + GPIO**
+(matching the [device-tree](../hardware/device-tree.md) I²C map), not the UART the motor MCU uses. LEDs
+and motors are *different* hardware paths.
+
+### `libbo-dispatch.so` — the ZMQ bus broker (8.6 MB)
+
+The native implementation of the [on-device bus](../protocol/robot-ipc-protocol.md). Demangled symbols +
+strings show it is:
+
+- **statically-linked ZeroMQ** — the exports are the full `zmq_*` C API (`zmq_poller_*` for the event
+  loop, `zmq_msg_*`, `zmq_socket_monitor*`, and the **RADIO/DISH group** draft API `zmq_join`/`zmq_leave`/
+  `zmq_msg_set_group`), so the bus is real libzmq, not a reimplementation;
+- **`embodied::dispatch::Dispatcher`** (log tag `[BoDispatcher]`, module `bo-dispatch`) — a C++ dispatcher
+  that runs its loop **on its own thread** (a `void (Dispatcher::*)()` thread entry), plus
+  **`core::EventBroadcaster`**. This is the XSUB↔XPUB proxy broker every module connects to — the concrete
+  thing behind "the ZMQ dispatch bus" throughout these docs.
+
+A custom on-device program joins this bus the same way: connect a ZeroMQ socket to the broker's XSUB/XPUB
+endpoints and speak framed protobuf ([robot-ipc-protocol](../protocol/robot-ipc-protocol.md) / the toolkit's `MoxieBus`).
+
 ## What this means for the three goals
 
 **① Custom firmware.** `liblizzerface.so` is the exact C API to drive the motors, LEDs, power, and read

@@ -1,5 +1,5 @@
 {
- "generated": "docs-febeb01e94e0",
+ "generated": "docs-efe989308137",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 9580,
+   "bytes": 9667,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -1112,7 +1112,7 @@
    "path": "reverse-engineering/runtime/native-boundary.md",
    "title": "The native boundary — how the managed brain reaches native code (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 8016,
+   "bytes": 10729,
    "mermaid": 1,
    "headings": [
     "Three mechanisms",
@@ -1122,6 +1122,10 @@
     "The rest",
     "2. JNI — `AndroidJava*` (managed → Java/Android)",
     "3. Out-of-process modules — the ZMQ bus",
+    "Native symbol tables (`nm -D` on the shipped `.so`s)",
+    "liblizzerface.so` — the full MCU export set (20 functions)",
+    "librobinface.so` — the LED face is **I²C + GPIO**",
+    "libbo-dispatch.so` — the ZMQ bus broker (8.6 MB)",
     "What this means for the three goals"
    ]
   },

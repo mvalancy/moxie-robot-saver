@@ -9,7 +9,7 @@
 > Legend: ✅ documented in depth · 🟡 substantially covered, minor/scattered residue · ⬜ open ·
 > ⛔ deliberately deferred (out of scope for the 3 goals).
 >
-> **Depth note.** A namespace at *N/N* means every message is documented, not that the subsystem is fully mined — the C# has 2750 classes and many (behavior-tree nodes, the input Farmers, per-object Unity assets, native-lib internals) still hold depth. ✅ = deep coverage of a coherent thread, not "nothing left."
+> **Depth note.** A namespace at *N/N* means every message is documented, not that the subsystem is fully mined — the C# has 2750 classes and many (behavior-tree nodes, the input Farmers, per-object Unity assets, native-lib internals — partially mined now via `nm -D`, see [native-boundary](runtime/native-boundary.md)) still hold depth. ✅ = deep coverage of a coherent thread, not "nothing left."
 
 ## Protocol — the `embodied.*` proto namespaces
 
