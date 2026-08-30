@@ -71,7 +71,8 @@ Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-ex
   Daily Missions & rewards, conversation + activity log, robot, notifications) from fixture JSON whose
   shapes mirror the real REST API + MQTT content model.
 - ✅ **Landing hub** — [`sim/web/index.html`](sim/web/index.html): one front door presenting the three surfaces.
-- ✅ **Docs explorer** — [`sim/web/docs.html`](sim/web/docs.html): browses every `docs/*.md` with
+- ✅ **Docs explorer** — [`sim/web/docs.html`](sim/web/docs.html): browses every `docs/*.md` (plus the
+  linked `.tsv`/`.dts` manifests, rendered as code) with
   Mermaid rendered (marked + mermaid vendored), built by `sim/tools/build_docs_bundle.py`, with every internal link **and #section anchor** validated in CI (`scripts/check-doc-links.py`); the docs are organized into map-aligned subfolders (phone/protocol/runtime/firmware/hardware) the explorer renders as labeled sub-groups, guarded for order + orphans. Collapsible tree,
   **full-text search** (lazy `docs-search.json`), **relevance-ranked** within each section, with snippets + in-document match highlighting & scroll-to-hit,
   shareable section deep links (heading permalinks + `#doc#section` URLs), prev/next pager in **curated README order** (+ `[`/`]` keys, `/` to search), "On this page" TOC + scroll-spy, per-doc reading-time + diagram-count meta, and code
