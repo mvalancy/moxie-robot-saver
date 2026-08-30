@@ -126,6 +126,33 @@ def time_zone_info(olson_id, midnight_in_timezone=""):
     return T.TimeZoneInfo(olson_id=olson_id, midnight_in_timezone=midnight_in_timezone)
 
 
+# ---- imperative runtime control of a running brain (embodied.robotbrain) ----
+# See docs/reverse-engineering/runtime-control.md
+def volume_modify(volume, relative=False):
+    """SystemVolumeModify — set the volume live. relative=True adds a signed delta."""
+    from embodied.robotbrain import System_pb2 as S
+    return S.SystemVolumeModify(volume=volume, relative=relative)
+
+def slow_input(on=True):
+    """SystemSlowInputModify — toggle the 'slowinput' accessibility pacing mode."""
+    from embodied.robotbrain import System_pb2 as S
+    return S.SystemSlowInputModify(slow_input=on)
+
+def chatbot_listening(on=True, user="", bot=""):
+    """ChatbotListeningRequest — force the chatbot to start/stop listening."""
+    from embodied.robotbrain import ChatScriptState_pb2 as C
+    return C.ChatbotListeningRequest(listening=on, user=user, bot=bot)
+
+def allow_cutoff(allow=True):
+    """AllowCutoffEvent — permit (True) or block (False) barge-in mid-line."""
+    from embodied.robotbrain import ChatScriptState_pb2 as C
+    return C.AllowCutoffEvent(allow=allow)
+
+def brain_reset(hard=False):
+    """SoftReset (default) clears conversational/session state; HardReset restarts the brain."""
+    from embodied.robotbrain import Reset_pb2 as R
+    return (R.HardReset if hard else R.SoftReset)()
+
 # ---- CLI: monitor the bus, or send a control message (needs pyzmq + a reachable robot) ----
 def _main(argv=None):
     import argparse

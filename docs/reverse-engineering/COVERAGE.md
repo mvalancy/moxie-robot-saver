@@ -2,7 +2,7 @@
 
 > A single view of what's documented for each goal, and the honest remaining gaps (mostly things that
 > need a **bench unit**). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9).
-> 33 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
+> 34 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
 
 ## Goal ① — Build custom firmware / run custom software on the robot
 
@@ -43,6 +43,7 @@
 | Offline fallback + persisted brain state (FallbackInfo, CSData resume, recommender history) | ✅ + tool | [offline-and-brain-state](offline-and-brain-state.md) · `cloud.py` |
 | Content delivery (dynamic AssetBundles: remote fetch, manifest, processors) | ✅ | [content-delivery](content-delivery.md) |
 | Behavior markup (make it move while talking) | ✅ + tool | [behavior-markup](behavior-markup.md) · `markup.py` |
+| Imperative runtime control (volume/pacing/listen/barge-in/reset live) | ✅ + tool | [runtime-control](runtime-control.md) · `bus.py` |
 | Perception in/out: STT (Deepgram/local) · TTS (CloudTTS) · vision | ✅ | [perception-pipeline](perception-pipeline.md) |
 | Wake-word/VAD (server doesn't handle it) | ✅ | [perception-pipeline](perception-pipeline.md#wake-word--vad-fully-on-device) |
 | Scheduling/recommender/STAR/StarBits/mentor history | ✅ | [content-and-conversation](content-and-conversation.md#scheduling-progression--rewards-what-to-offer-next) |

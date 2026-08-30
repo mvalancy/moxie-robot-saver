@@ -1,5 +1,5 @@
 {
- "generated": "docs-e60319739a73",
+ "generated": "docs-b935c046e6c8",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 11557,
+   "bytes": 11949,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 7270,
+   "bytes": 7409,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -998,6 +998,21 @@
     "Parent-app-controlled",
     "System · power · logging · recovery · feature flags",
     "For revival (goal #2)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime-control.md",
+   "title": "Runtime control — imperative commands to a running brain (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 5395,
+   "mermaid": 0,
+   "headings": [
+    "Audio volume — `SystemVolume*`",
+    "Accessibility pacing — `SystemSlowInputModify`",
+    "Listening & barge-in — `ChatbotListeningRequest`, `AllowCutoffEvent`",
+    "Reset — `SoftReset` / `HardReset`",
+    "ChatScript lifecycle — `ChatScriptReady`, `ChatScriptException`",
+    "What this means for the three goals"
    ]
   },
   {
