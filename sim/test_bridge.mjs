@@ -82,7 +82,7 @@ const fails = [];
 const ok = (cond, msg) => { if (!cond) fails.push(msg); };
 ok(calls.setSpeech.includes("Happy birthday!"), "setSpeech('Happy birthday!')");
 ok(calls.setFace.includes("happy"), `mood 1 → setFace('happy'); got ${JSON.stringify(calls.setFace)}`);
-ok(calls.setFace.includes("thinking"), `mood 8 (Confused) → setFace('thinking'); got ${JSON.stringify(calls.setFace)}`);
+ok(calls.setFace.includes("confused"), `mood 8 (Confused) → setFace('confused'); got ${JSON.stringify(calls.setFace)}`);
 ok(calls.setMotor.length > 0, "Gesture_Celebrate → setMotor(...) called");
 ok(JSON.stringify(calls.showIcons).includes("Birthday"), `icons-v2 → showIcons(['Birthday']); got ${JSON.stringify(calls.showIcons)}`);
 ok(calls.transcript.includes("I feel happy today"), `child turn → transcript; got ${JSON.stringify(calls.transcript)}`);

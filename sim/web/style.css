@@ -631,7 +631,33 @@ button:focus-visible {
   flex-wrap: wrap;
   gap: 6px;
 }
-#faces button { flex: 1 1 30%; }
+/* 13 expression chips (the full Bht_Eyeseme_* set) rendered as emoji — compact, cute,
+   and self-explanatory. A tidy rounded-chip grid that stays short enough to share a
+   column in the multi-column rail. id-specificity beats the touch min-height rule. */
+#faces { gap: 6px; }
+#faces button.face-emoji {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  min-height: 0;
+  padding: 0;
+  font-size: 19px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  filter: saturate(1.05);
+}
+#faces button.face-emoji:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 12px var(--glow-12);
+}
+#faces button.face-emoji.active {
+  border-color: var(--cyan);
+  background: rgba(0, 240, 255, 0.12);
+  box-shadow: inset 0 0 10px var(--glow-06), 0 0 12px var(--glow-12);
+}
 
 /* recording: the REC button burns amber while the bus reports recording */
 body[data-bus="rec"] #rec-toggle {
@@ -947,41 +973,16 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
    no scrolling. Column count scales with viewport HEIGHT (each column can only
    hold so much), so nothing ever spills into a clipped off-screen column. The
    3D stage keeps a sensible minimum width. ---- */
-.rail-multicol #rail-scroll {          /* shared bits, applied by the queries below */
-  display: block;
-  column-gap: var(--sp-3);
-  padding-bottom: var(--sp-3);
-}
-.rail-multicol #rail-scroll > .group {
-  break-inside: avoid;
-  -webkit-column-break-inside: avoid;
-  margin-bottom: var(--sp-3);
-}
-/* Medium widths: a narrow single-column GLASS side panel (scrolls) — far better
-   than a full-width drawer wasting the space. */
+/* Side panel at all widths ≥900: a narrow single GLASS column that scrolls
+   independently. This is deliberately single-column — earlier multi-column layouts
+   put ~4 non-splittable control groups into 3 columns, which is inherently fragile
+   (a group barely-too-tall spills into an off-screen 4th column). A single scrolling
+   column always fits with zero clipped groups, at every wide aspect ratio. */
 @media (min-width: 900px) {
-  :root { --rail-w: clamp(320px, 26vw, 380px); }   /* SIDE-PANEL single-column base */
+  :root { --rail-w: clamp(340px, 25vw, 400px); }
   #hud { grid-template-columns: minmax(0, 1fr) var(--rail-w); }
   #rail-toggle { display: none; }
   #hud.rail-closed #rail-scroll { display: flex; }
-}
-/* Tall enough for 2 columns to hold every control with no scroll. */
-@media (min-width: 1300px) and (min-height: 1131px) {
-  :root { --rail-w: clamp(600px, 34vw, 720px); }
-  #hud { grid-template-columns: minmax(440px, 1fr) var(--rail-w); }
-  #rail-scroll {
-    display: block; column-count: 2; column-gap: var(--sp-3); padding-bottom: var(--sp-3);
-  }
-  #rail-scroll > .group { break-inside: avoid; -webkit-column-break-inside: avoid; margin-bottom: var(--sp-3); }
-}
-/* Shorter but wide → 3 columns so it still fits with no scroll. */
-@media (min-width: 1500px) and (max-height: 1130px) {
-  :root { --rail-w: clamp(860px, 54vw, 1020px); }
-  #hud { grid-template-columns: minmax(400px, 1fr) var(--rail-w); }
-  #rail-scroll {
-    display: block; column-count: 3; column-gap: var(--sp-3); padding-bottom: var(--sp-3);
-  }
-  #rail-scroll > .group { break-inside: avoid; -webkit-column-break-inside: avoid; margin-bottom: var(--sp-3); }
 }
 
 /* ---- Environment awareness (env.js): hosted-demo vs local, disabled hints ---- */

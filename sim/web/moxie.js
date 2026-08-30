@@ -1048,20 +1048,49 @@ function motorAngle(i) {
 // Face: parameterised cartoon face rendered to the canvas texture
 // ---------------------------------------------------------------------------
 
+// The robot's real expression set is the 11 `ePlaybackMood` / `Bht_Eyeseme_*`
+// moods recovered from the firmware (docs/reverse-engineering/behavior-markup.md):
+// Neutral, Happy, Sad, Angry, Shy, Surprised, Afraid, Concerned, Confused, Curious,
+// Embarrassed — plus `sleep` and a generic `thinking`. Each is a cute-companion read
+// (soft eyes, rosy cheeks) — Moxie is never scary. `blush` boosts the cheeks for the
+// bashful moods.
 const EXPRESSIONS = {
   // eyes fully closed (thin arcs) + soft calm mouth — Moxie asleep
-  sleep:     { eyeW: 1.00, eyeH: 0.06, browRaise: -0.25, browTilt: 0.0, browAsym: 0.0,
-               pupilX: 0.0, pupilY: 0.0, mouthCurve: 0.10, mouthOpen: 0.02, mouthWidth: 0.8, mouthX: 0.0 },
-  neutral:   { eyeW: 1.00, eyeH: 1.00, browRaise: 0.0, browTilt: 0.0, browAsym: 0.0,
-               pupilX: 0.0, pupilY: 0.0, mouthCurve: 0.18, mouthOpen: 0.04, mouthWidth: 1.0, mouthX: 0.0 },
-  happy:     { eyeW: 1.00, eyeH: 0.62, browRaise: 0.2, browTilt: 0.0, browAsym: 0.0,
-               pupilX: 0.0, pupilY: 0.0, mouthCurve: 1.00, mouthOpen: 0.35, mouthWidth: 1.1, mouthX: 0.0 },
-  sad:       { eyeW: 0.95, eyeH: 0.85, browRaise: 0.15, browTilt: 1.0, browAsym: 0.0,
-               pupilX: 0.0, pupilY: 0.5, mouthCurve: -0.9, mouthOpen: 0.03, mouthWidth: 0.8, mouthX: 0.0 },
-  surprised: { eyeW: 1.15, eyeH: 1.30, browRaise: 1.0, browTilt: 0.0, browAsym: 0.0,
-               pupilX: 0.0, pupilY: 0.0, mouthCurve: 0.0, mouthOpen: 0.95, mouthWidth: 0.45, mouthX: 0.0 },
-  thinking:  { eyeW: 0.95, eyeH: 0.80, browRaise: 0.3, browTilt: 0.0, browAsym: 1.0,
-               pupilX: 0.6, pupilY: -0.6, mouthCurve: 0.05, mouthOpen: 0.03, mouthWidth: 0.55, mouthX: 0.5 },
+  sleep:      { eyeW: 1.00, eyeH: 0.06, browRaise: -0.25, browTilt: 0.0, browAsym: 0.0,
+                pupilX: 0.0, pupilY: 0.0, mouthCurve: 0.10, mouthOpen: 0.02, mouthWidth: 0.8, mouthX: 0.0, blush: 0.0 },
+  neutral:    { eyeW: 1.00, eyeH: 1.00, browRaise: 0.0, browTilt: 0.0, browAsym: 0.0,
+                pupilX: 0.0, pupilY: 0.0, mouthCurve: 0.18, mouthOpen: 0.04, mouthWidth: 1.0, mouthX: 0.0, blush: 0.0 },
+  happy:      { eyeW: 1.00, eyeH: 0.62, browRaise: 0.2, browTilt: 0.0, browAsym: 0.0,
+                pupilX: 0.0, pupilY: 0.0, mouthCurve: 1.00, mouthOpen: 0.35, mouthWidth: 1.1, mouthX: 0.0, blush: 0.18 },
+  sad:        { eyeW: 0.95, eyeH: 0.85, browRaise: 0.15, browTilt: 1.0, browAsym: 0.0,
+                pupilX: 0.0, pupilY: 0.5, mouthCurve: -0.9, mouthOpen: 0.03, mouthWidth: 0.8, mouthX: 0.0, blush: 0.0 },
+  // Angry — a CUTE grumpy pout: low furrowed brows (inner-down), narrow glaring
+  // squint, looking down, tight little frown
+  angry:      { eyeW: 1.00, eyeH: 0.50, browRaise: -0.35, browTilt: -1.4, browAsym: 0.0,
+                pupilX: 0.0, pupilY: 0.30, mouthCurve: -0.45, mouthOpen: 0.04, mouthWidth: 0.50, mouthX: 0.0, blush: 0.08 },
+  // Shy — glancing well away with a bashful little smile and a big blush
+  shy:        { eyeW: 0.90, eyeH: 0.62, browRaise: 0.05, browTilt: 0.2, browAsym: 0.0,
+                pupilX: 0.72, pupilY: 0.32, mouthCurve: 0.45, mouthOpen: 0.03, mouthWidth: 0.60, mouthX: 0.14, blush: 0.62 },
+  surprised:  { eyeW: 1.15, eyeH: 1.30, browRaise: 1.0, browTilt: 0.0, browAsym: 0.0,
+                pupilX: 0.0, pupilY: 0.0, mouthCurve: 0.0, mouthOpen: 0.95, mouthWidth: 0.45, mouthX: 0.0, blush: 0.0 },
+  // Afraid — big worried eyes, inner brows up, an anxious open grimace
+  afraid:     { eyeW: 1.14, eyeH: 1.22, browRaise: 0.75, browTilt: 0.95, browAsym: 0.0,
+                pupilX: 0.0, pupilY: -0.10, mouthCurve: -0.4, mouthOpen: 0.42, mouthWidth: 0.58, mouthX: 0.0, blush: 0.0 },
+  // Concerned — gentle caring worry (softer than sad)
+  concerned:  { eyeW: 1.00, eyeH: 0.90, browRaise: 0.25, browTilt: 0.7, browAsym: 0.0,
+                pupilX: 0.0, pupilY: 0.12, mouthCurve: -0.4, mouthOpen: 0.04, mouthWidth: 0.85, mouthX: 0.0, blush: 0.0 },
+  // Confused — one brow up, gaze to the side, small uneven mouth
+  confused:   { eyeW: 0.98, eyeH: 0.85, browRaise: 0.2, browTilt: 0.0, browAsym: 1.0,
+                pupilX: -0.4, pupilY: 0.0, mouthCurve: -0.1, mouthOpen: 0.05, mouthWidth: 0.50, mouthX: -0.35, blush: 0.0 },
+  // Curious — bright wide engaged eyes, brows up, interested little smile
+  curious:    { eyeW: 1.08, eyeH: 1.08, browRaise: 0.65, browTilt: 0.0, browAsym: 0.35,
+                pupilX: 0.2, pupilY: -0.25, mouthCurve: 0.35, mouthOpen: 0.12, mouthWidth: 0.80, mouthX: 0.1, blush: 0.1 },
+  // Embarrassed — squinty happy eyes, looking down-away, sheepish smile, deep blush
+  embarrassed:{ eyeW: 0.95, eyeH: 0.50, browRaise: 0.15, browTilt: 0.4, browAsym: 0.0,
+                pupilX: -0.45, pupilY: 0.4, mouthCurve: 0.42, mouthOpen: 0.05, mouthWidth: 0.62, mouthX: -0.12, blush: 0.70 },
+  // generic pensive look-away (not an Eyeseme mood, kept for the UI)
+  thinking:   { eyeW: 0.95, eyeH: 0.80, browRaise: 0.3, browTilt: 0.0, browAsym: 1.0,
+                pupilX: 0.6, pupilY: -0.6, mouthCurve: 0.05, mouthOpen: 0.03, mouthWidth: 0.55, mouthX: 0.5, blush: 0.0 },
 };
 
 const faceParams = { ...EXPRESSIONS.neutral };
@@ -1330,13 +1359,16 @@ function drawFace(t) {
     fctx.globalAlpha = 1;
   }
 
-  // soft rosy cheeks — always a hint, warmer when smiling (adds the "aww" factor)
+  // soft rosy cheeks — always a hint, warmer when smiling, and a deeper blush for
+  // the bashful moods (shy / embarrassed) via the expression `blush` param
   {
-    const cheekA = Math.min(0.4, 0.15 + 0.4 * Math.max(0, P.mouthCurve - 0.15));
-    fctx.fillStyle = `rgba(244, 156, 156, ${cheekA})`;
+    const b = P.blush || 0;
+    const cheekA = Math.min(0.62, 0.15 + 0.4 * Math.max(0, P.mouthCurve - 0.15) + b * 0.5);
+    const cw = 30 + b * 9, ch = 17 + b * 5;
+    fctx.fillStyle = `rgba(244, ${Math.round(156 - b * 26)}, ${Math.round(156 - b * 20)}, ${cheekA})`;
     for (const s of [-1, 1]) {
       fctx.beginPath();
-      fctx.ellipse(256 + s * 148, eyeY + 66, 30, 17, 0, 0, Math.PI * 2);
+      fctx.ellipse(256 + s * 148, eyeY + 66, cw, ch, 0, 0, Math.PI * 2);
       fctx.fill();
     }
   }
@@ -1719,10 +1751,20 @@ function buildPanel() {
     sliderEls[i] = { input, val };
   });
 
+  // Each expression gets a matching emoji glyph — compact + reads at a glance. The
+  // 11 Bht_Eyeseme_* moods + sleep + thinking.
+  const EXPR_EMOJI = {
+    neutral: '😐', happy: '😄', sad: '😢', angry: '😠', shy: '☺️', surprised: '😮',
+    afraid: '😨', concerned: '😟', confused: '😕', curious: '🧐', embarrassed: '😳',
+    sleep: '😴', thinking: '🤔', blink: '😉',
+  };
   const facesEl = document.getElementById('faces');
   api.expressions.forEach(name => {
     const b = document.createElement('button');
-    b.textContent = name;
+    b.className = 'face-emoji';
+    b.textContent = EXPR_EMOJI[name] || name;
+    b.title = name;                       // hover / tooltip
+    b.setAttribute('aria-label', name);
     b.dataset.expr = name;
     b.addEventListener('click', () => api.setFace(name));
     facesEl.appendChild(b);

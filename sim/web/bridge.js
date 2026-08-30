@@ -20,12 +20,11 @@
     5: "surprised", 6: "surprised", 7: "neutral",
   };
   // cmd:playback-mood `mood` int → SIL face. AUTHORITATIVE ePlaybackMood enum
-  // (recovered from Assembly-CSharp — see behavior-markup.md): 0 Neutral, 1 Happy,
-  // 2 Sad, 3 Angry, 4 Shy, 5 Surprised, 6 Afraid, 7 Concerned, 8 Confused,
-  // 9 Curious, 10 Embarrassed. Mapped onto the SIL's 6 faces.
+  // (recovered from Assembly-CSharp — see behavior-markup.md). The SIL now renders
+  // all 11 Bht_Eyeseme_* expressions, so this maps 1:1.
   const MOOD_TO_FACE = {
-    0: "neutral", 1: "happy", 2: "sad", 3: "sad", 4: "happy", 5: "surprised",
-    6: "surprised", 7: "sad", 8: "thinking", 9: "thinking", 10: "happy",
+    0: "neutral", 1: "happy", 2: "sad", 3: "angry", 4: "shy", 5: "surprised",
+    6: "afraid", 7: "concerned", 8: "confused", 9: "curious", 10: "embarrassed",
   };
 
   const C = 16384, MAX = 32767;      // motor rest / range (MOTOR_MAX_POS)

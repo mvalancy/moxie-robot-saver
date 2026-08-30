@@ -1,12 +1,12 @@
 {
- "generated": "e0b2c6e-dirty",
+ "generated": "932a04d-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 9830,
+   "bytes": 9989,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
@@ -618,7 +618,7 @@
    "path": "reverse-engineering/behavior-markup.md",
    "title": "Behavior markup — making Moxie move & emote while it talks",
    "section": "reverse-engineering",
-   "bytes": 12855,
+   "bytes": 12890,
    "mermaid": 0,
    "headings": [
     "Shape",

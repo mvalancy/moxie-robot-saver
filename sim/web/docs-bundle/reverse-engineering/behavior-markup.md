@@ -113,20 +113,20 @@ expression**: each value plays the matching **`Bht_Eyeseme_<name>` behavior tree
 | **0** | `Neutral` | 0 | 188× (resting) | `neutral` |
 | **1** | `Happy` | 1 | 36× | `happy` |
 | **2** | `Sad` | 5 | 8× ("I'm sorry…") | `sad` |
-| **3** | `Angry` | 9 | — | `sad` |
-| **4** | `Shy` | 13 | 2× ("Oops.") | `happy` |
+| **3** | `Angry` | 9 | — | `angry` |
+| **4** | `Shy` | 13 | 2× ("Oops.") | `shy` |
 | **5** | `Surprised` | 17 | 14× ("Oh!") | `surprised` |
-| **6** | `Afraid` | 21 | — | `surprised` |
-| **7** | `Concerned` | 25 | — | `sad` |
-| **8** | `Confused` | 29 | — | `thinking` |
-| **9** | `Curious` | 33 | — | `thinking` |
-| **10** | `Embarrassed` | 37 | — | `happy` |
+| **6** | `Afraid` | 21 | — | `afraid` |
+| **7** | `Concerned` | 25 | — | `concerned` |
+| **8** | `Confused` | 29 | — | `confused` |
+| **9** | `Curious` | 33 | — | `curious` |
+| **10** | `Embarrassed` | 37 | — | `embarrassed` |
 
 ¹ `VisemeIndices[mood]` — the base frame index into the face viseme set (blocks of 4). Only moods
 `0,1,2,4,5` appear in the shipped content sampled, but **all 11 are valid** to emit. Note the earlier
 *inferred* reading mislabeled mood `4` as "embarrassed" — it is actually **`Shy`** (`Embarrassed` is
-`10`), which is exactly the kind of error the authoritative enum resolves. The SIL maps the 11 moods
-onto its 6 faces (right column); `sim/web/bridge.js` `MOOD_TO_FACE` carries this table.
+`10`), which is exactly the kind of error the authoritative enum resolves. The **[SIL face](../architecture/sil-and-cicd.md)
+now renders all 11 `Bht_Eyeseme_*` expressions 1:1** (`sim/web/bridge.js` `MOOD_TO_FACE`).
 
 **`idlestate`**: `idleState` int (e.g. 7).
 
