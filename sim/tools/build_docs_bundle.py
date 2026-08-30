@@ -5,7 +5,7 @@
 Walks docs/ (+ a few top-level .md), copies each file verbatim into
 sim/web/docs-bundle/<same relative path>, and writes sim/web/docs-index.json:
 
-    { "generated": "<git-describe or n/a>",
+    { "generated": "docs-<sha256[:12]>",   # deterministic content stamp
       "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
       "files": [ { "path": "reverse-engineering/qr-commands.md",
                    "title": "QR commands", "section": "reverse-engineering",
@@ -18,7 +18,7 @@ explorer shows is exactly what's in the repo.
 
 Usage:  python3 sim/tools/build_docs_bundle.py
 """
-import json, os, re, shutil, subprocess, sys
+import hashlib, json, os, re, shutil, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -103,12 +103,17 @@ def main():
         search[rel] = re.sub(r"\s+", " ", text).strip()
 
     entries.sort(key=lambda e: (e["section"], e["path"]))
-    try:
-        desc = subprocess.check_output(
-            ["git", "-C", REPO, "describe", "--always", "--dirty"],
-            stderr=subprocess.DEVNULL).decode().strip()
-    except Exception:
-        desc = "n/a"
+    # A DETERMINISTIC content stamp: sha256 over each doc's (path + bytes), so an
+    # unchanged doc set always produces a byte-identical index. That keeps this
+    # tracked artifact reproducible (no spurious `git status` drift on rebuild) and
+    # lets CI verify freshness with `git diff --exit-code` after a rebuild. (A git
+    # commit hash was volatile — always one commit behind or `-dirty`.)
+    h = hashlib.sha256()
+    for e in sorted(entries, key=lambda e: e["path"]):
+        h.update(e["path"].encode("utf-8"))
+        h.update(str(e["bytes"]).encode("utf-8"))
+        h.update(search.get(e["path"], "").encode("utf-8"))
+    desc = "docs-" + h.hexdigest()[:12]
 
     with open(INDEX, "w", encoding="utf-8") as fh:
         json.dump({"generated": desc, "firmware": FIRMWARE, "files": entries},

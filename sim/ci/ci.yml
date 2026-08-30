@@ -47,6 +47,8 @@ jobs:
         run: node sim/test_cloud.mjs
       - name: Build docs bundle for the explorer
         run: python3 sim/tools/build_docs_bundle.py
+      - name: Docs bundle is fresh (committed bundle matches a rebuild of docs/)
+        run: python3 sim/tools/check_bundle_fresh.py
       - name: Docs-explorer bundle + wiring test
         run: node sim/test_docs.mjs
       - name: Responsive UI test (skips cleanly if no browser is available)
