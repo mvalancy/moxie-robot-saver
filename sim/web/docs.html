@@ -62,6 +62,9 @@
     font-family:var(--font-mono);font-size:10px;line-height:1.45;color:var(--dim);
     white-space:normal;overflow:hidden}
   .snip em{color:var(--amber);font-style:normal}
+  /* in-document search-term highlights (from a full-text hit) */
+  mark.qmatch{background:rgba(252,238,10,0.22);color:var(--text);border-radius:2px;padding:0 1px}
+  mark.qmatch-first{background:var(--amber);color:#0a0a0f;box-shadow:0 0 0 2px rgba(252,238,10,0.35)}
   .railfoot{border-top:1px solid var(--hairline);padding:11px 14px;font-size:11.5px;color:var(--dim)}
   .railfoot a{color:var(--muted);text-decoration:none}.railfoot a:hover{color:var(--cyan)}
 
@@ -277,6 +280,42 @@
   }
   var HLJS_ALIAS={proto:"protobuf",sh:"bash",shell:"bash",jsonc:"json",yml:"yaml",js:"javascript",py:"python"};
   var _hljsLangs=null;
+  // Highlight every occurrence of the search query in the rendered prose (skipping
+  // code/mermaid so it never disrupts hljs or diagrams) and return the first mark.
+  function markMatches(root, q){
+    if(!q) return null;
+    q=q.toLowerCase();
+    var first=null, nodes=[];
+    var walker=document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode:function(n){
+        if(!n.nodeValue || n.nodeValue.toLowerCase().indexOf(q)<0) return NodeFilter.FILTER_REJECT;
+        for(var p=n.parentNode; p && p!==root; p=p.parentNode){
+          var t=p.nodeName;
+          // allow code (runs after hljs, so highlighting a token is safe) but never
+          // touch rendered mermaid/SVG, scripts, styles, or already-marked text.
+          if(t==="SCRIPT"||t==="STYLE"||t==="MARK"||t==="svg"||
+             (p.classList&&p.classList.contains("mermaid"))) return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    while(walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function(n){
+      var text=n.nodeValue, low=text.toLowerCase(), i=0, pos, frag=document.createDocumentFragment();
+      while((pos=low.indexOf(q,i))>=0){
+        if(pos>i) frag.appendChild(document.createTextNode(text.slice(i,pos)));
+        var mk=document.createElement("mark"); mk.className="qmatch";
+        mk.textContent=text.slice(pos,pos+q.length);
+        if(!first){ first=mk; mk.classList.add("qmatch-first"); }
+        frag.appendChild(mk);
+        i=pos+q.length;
+      }
+      if(i<text.length) frag.appendChild(document.createTextNode(text.slice(i)));
+      n.parentNode.replaceChild(frag, n);
+    });
+    return first;
+  }
+
   function highlightCode(root){
     if(typeof hljs==="undefined") return;
     if(!_hljsLangs){ try{ _hljsLangs={}; hljs.listLanguages().forEach(function(l){_hljsLangs[l]=1;}); }catch(e){ _hljsLangs={}; } }
@@ -388,7 +427,11 @@
         highlightCode(art);
         renderMermaid(art);
         if(toc) spyTOC(art, toc);
-        document.getElementById("main").scrollTop=0;
+        // if we arrived via search, highlight the term in the doc + jump to it
+        var q=elQ.value.trim();
+        var firstHit=q?markMatches(art,q):null;
+        if(firstHit){ setTimeout(function(){ firstHit.scrollIntoView({block:"center",behavior:"smooth"}); },60); }
+        else document.getElementById("main").scrollTop=0;
       })
       .catch(function(e){ elContent.innerHTML='<article><p class="err" style="padding:30px">Could not load '+esc(f.path)+' — '+esc(e.message)+'</p></article>'; });
   }
