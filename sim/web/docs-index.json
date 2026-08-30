@@ -1,5 +1,5 @@
 {
- "generated": "docs-270ca6163506",
+ "generated": "docs-7bd9ec99dab0",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 10718,
+   "bytes": 10887,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 6977,
+   "bytes": 7037,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -879,7 +879,7 @@
    "path": "reverse-engineering/power-and-system-events.md",
    "title": "Power & system events — the lifecycle protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 5745,
+   "bytes": 8569,
    "mermaid": 1,
    "headings": [
     "The power state — `PowerStatePB`",
@@ -887,6 +887,7 @@
     "Recovery — `SystemRecoverRequest`",
     "System status events — `embodied.sys`",
     "Unpair / disengage — `UnpairUserRequest`",
+    "Time, timezone & alarms — `embodied.sys` (`TimeEvents.proto`)",
     "What this means for the three goals"
    ]
   },

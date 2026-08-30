@@ -12,7 +12,7 @@
 | Partitions, AVB, A/B, OEM-unlock, security posture | ✅ | [firmware-image](firmware-image.md) · [firmware-803-reference](firmware-803-reference.md) |
 | Full file/app/binary manifest + hashes | ✅ | [firmware-manifest](firmware-manifest.md) · [firmware-inventory](firmware-inventory.md) |
 | Boot chain + Launcher state machine + init services | ✅ | [boot-and-launcher](boot-and-launcher.md) |
-| Power lifecycle: PowerStatePB states, resume causes, XMOS recovery, suspend/keep-awake | ✅ | [power-and-system-events](power-and-system-events.md) |
+| Power lifecycle + time/alarms: PowerStatePB states, resume causes, XMOS recovery, suspend/keep-awake, TimeZone + UserAlarm wake | ✅ + tool | [power-and-system-events](power-and-system-events.md) · `bus.py` |
 | Code signing (3 keys) & permissions | ✅ | [firmware-image](firmware-image.md#code-signing--app-trust) |
 | Android permissions + SELinux confinement | ✅ | [security-policy](security-policy.md) |
 | Vendor HALs + kernel drivers + co-processor/radio firmware | ✅ | [hal-and-drivers](hal-and-drivers.md) |

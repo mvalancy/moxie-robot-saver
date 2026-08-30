@@ -99,6 +99,23 @@ def fused_people_classes():
     ]
 
 
+# ---- time, timezone & wake alarms (embodied.sys / TimeEvents) ----
+# See docs/reverse-engineering/power-and-system-events.md (Time, timezone & alarms)
+def user_alarm(alarm_expires, *, timer_id=None, alarm_repeats=0):
+    """Build a UserAlarmRequest to arm a wake/timer. timer_id defaults to
+    TIMER_ID_USER_WAKE (the child's wake alarm); use TIMER_ID_PARENT_APP or a
+    TIMER_ID_CUSTOM+n for others. alarm_expires = fire time, alarm_repeats = repeat
+    interval (0 = one-shot). See power-and-system-events.md."""
+    from embodied.system import TimeEvents_pb2 as T
+    tid = T.UserAlarmRequest.TIMER_ID_USER_WAKE if timer_id is None else timer_id
+    return T.UserAlarmRequest(timer_id=tid, alarm_expires=alarm_expires, alarm_repeats=alarm_repeats)
+
+def time_zone_info(olson_id, midnight_in_timezone=""):
+    """Build a TimeZoneInfo (the robot's local timezone as an IANA/Olson id)."""
+    from embodied.system import TimeEvents_pb2 as T
+    return T.TimeZoneInfo(olson_id=olson_id, midnight_in_timezone=midnight_in_timezone)
+
+
 # ---- CLI: monitor the bus, or send a control message (needs pyzmq + a reachable robot) ----
 def _main(argv=None):
     import argparse

@@ -87,7 +87,48 @@ detach of the current child:
 So *entering telehealth* and *updating the child profile* both disengage the active user the same way an
 unpair does — the robot quiesces, then emits `UnpairUserReady`.
 
+## Time, timezone & alarms — `embodied.sys` (`TimeEvents.proto`)
+
+The other half of the `embodied.sys` family (recovered from `embodied/system/TimeEvents.proto`) is how
+the robot knows *what time it is locally* and runs **wake alarms** — the on-device implementation of the
+`WakeSchedule`/bedtime windows the cloud pushes in [`RobotCloudConfig`](device-config-and-telemetry.md#robotcloudconfig--the-master-config-document-cloud--robot).
+
+- **`TimeZoneInfo { olson_id, midnight_in_timezone }`** — the robot's current timezone as an **IANA/Olson
+  id** (e.g. `America/New_York`) plus the concrete `midnight_in_timezone` string. This is what turns the
+  config's `timezone_id` + `weekday_bedtime_starts_at`/`…_ends_at` (wall-clock strings) into real local
+  instants — bedtime/quiet-hours can't be evaluated without it.
+- **`UserAlarmRequest { timer_id, alarm_expires, alarm_repeats }`** — arm a wake/timer. `timer_id` is
+  namespaced by **`ReservedTimers`**:
+
+  | `ReservedTimers` | Meaning |
+  |--:|---|
+  | 0 `TIMER_ID_USER_WAKE` | the child's wake alarm (the `WakeSchedule` alarms) |
+  | 1 `TIMER_ID_PARENT_APP` | a parent-app–set timer ("wake Moxie at…") |
+  | 100 `TIMER_ID_CUSTOM` | base id for content/activity-defined timers |
+
+  `alarm_expires` is the fire time; `alarm_repeats` the repeat interval (recurring wakes).
+- **`UserAlarmTriggered { timer_id }`** — emitted when an armed alarm fires, so the behavior layer can run
+  the wake/animation for that `timer_id`.
+
+So the loop is: cloud sets `WakeSchedule`/bedtime + `timezone_id`
+([device-config-and-telemetry](device-config-and-telemetry.md)) → the robot resolves them against
+`TimeZoneInfo` and arms `UserAlarmRequest`s → `UserAlarmTriggered` wakes Moxie. The reserved-timer split
+is why a parent-app alarm and the child's recurring wake don't collide.
+
 ## What this means for the three goals
+
+**① Custom firmware.** The power state machine (11 states, with `prev_state` edges) and the resume-cause
+taxonomy are the lifecycle a custom build must drive; `RESTART_XMOS` shows co-processor recovery is a
+first-class, targeted operation. A custom build must also resolve local time via an Olson timezone and
+arm/fire `UserAlarm`s to honor the wake/bedtime schedule.
+
+**② Server revival.** A server observes `WifiConnectionState` (the wifi-vs-internet split is why revival
+works at all), `STTConnectionState`, and `OTAStatus`, and participates in the unpair/telehealth
+disengage flow. It drives time behavior indirectly: setting `timezone_id` + `WakeSchedule` in
+`RobotCloudConfig` is what the robot turns into `TimeZoneInfo` + `UserAlarmRequest`s. These are the
+health/lifecycle signals a self-hosted backend reads and writes to know and shape what the robot is doing.
+
+**③ Pre-801 revival.** No new lever; the same network boundary as [`network-trust.md`](network-trust.md).
 
 **① Custom firmware.** The power state machine (11 states, with `prev_state` edges) and the resume-cause
 taxonomy are the lifecycle a custom build must drive; `RESTART_XMOS` shows co-processor recovery is a
