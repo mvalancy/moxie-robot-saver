@@ -1,5 +1,5 @@
 {
- "generated": "docs-e232c9d3a028",
+ "generated": "docs-174254e71954",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -558,8 +558,8 @@
    "path": "reverse-engineering/runtime/native-boundary.md",
    "title": "The native boundary — how the managed brain reaches native code (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 10729,
-   "mermaid": 1,
+   "bytes": 15699,
+   "mermaid": 2,
    "headings": [
     "Three mechanisms",
     "1. In-process native — `[DllImport]`",
@@ -572,6 +572,8 @@
     "liblizzerface.so` — the full MCU export set (20 functions)",
     "librobinface.so` — the LED face is **I²C + GPIO**",
     "libbo-dispatch.so` — the ZMQ bus broker (8.6 MB)",
+    "The full module roster — what each remaining `bo-*` `.so` actually is",
+    "Resolved: who consumes `QRCommand` (the setup-QR → brain bridge)",
     "What this means for the three goals"
    ]
   },
@@ -592,7 +594,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 9667,
+   "bytes": 9933,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -623,7 +625,7 @@
    "path": "reverse-engineering/firmware/firmware-803-reference.md",
    "title": "Firmware reference — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 9353,
+   "bytes": 9501,
    "mermaid": 0,
    "headings": [
     "Version identity",
@@ -1015,7 +1017,7 @@
    "path": "reverse-engineering/protocol/qr-commands.md",
    "title": "QR command grammar — what the robot actually scans",
    "section": "reverse-engineering",
-   "bytes": 14719,
+   "bytes": 15139,
    "mermaid": 0,
    "headings": [
     "The dispatcher",

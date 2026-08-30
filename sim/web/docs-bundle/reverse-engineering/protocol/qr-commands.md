@@ -81,10 +81,13 @@ literal `else → SetAppState(State.QRDiagnostic)`. There is **no fifth app-side
 these four plus the pairing/VPN/Wi-Fi forms — nothing else.
 
 Every debug command is *also* published to the ZMQ bus as `QRCommand{Code, Param}` (via `QRDebug()`),
-recognized or not. **But the managed brain does not consume it:** `Assembly-CSharp` (the 7 MB
-`bo-android` decompile) has **zero** references to `QRCommand`, `endpoint_update`, or `QRDebug`. So the
-only place an *unknown* effect could hide is a **native** bus consumer (launcher/logger) — a targeted
-native-RE question (`nm`/`strings` on the consumer), not a QR-fuzzing one.
+recognized or not. **The managed brain does not consume it** — `Assembly-CSharp` (the 7 MB `bo-android`
+decompile) has **zero** references to `QRCommand`/`endpoint_update`/`QRDebug`. That open edge is now
+**resolved by native RE** (`readelf`/`nm` on the modules, [native-boundary](../runtime/native-boundary.md#resolved-who-consumes-qrcommand-the-setup-qr-brain-bridge)):
+the consumers are **`libbo-logger`** (`embodied::logging::cloud::RightPoint` — the cloud/MQTT module, where
+**`endpoint_update`** lands: it re-homes the robot to a new cloud) and **`libbo-system-monitor`**
+(`SystemStatusService` — system-level codes), with **`libwatchdog`** (the launcher) relaying the proto. So
+the effective set is bounded to what those two native subscribers handle — not open-ended app behavior.
 
 > ⚠️ **`endpoint_update` is not a debug command.** It is emitted *internally* by the Wifi App
 > (`RequestEndpoint`) when a **pairing QR's** `Endpoint` field differs from the current cloud — it

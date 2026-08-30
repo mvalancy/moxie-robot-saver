@@ -3,7 +3,7 @@
 > Reverse-engineered from the decompiled `Assembly-CSharp.dll` (`bo-android`, the Unity brain) in the
 > **v24.10.803** image — the `[DllImport]` P/Invoke declarations and `AndroidJava*` calls. The
 > [native-library *inventory*](../firmware/firmware-803-reference.md#bo-android-native-libraries-the-brain-libarmeabi-v7a)
-> lists the 29 `.so`s and their sizes; **this doc is the wiring** — the three distinct ways the managed
+> lists the 30 `.so`s and their sizes; **this doc is the wiring** — the three distinct ways the managed
 > C# brain actually reaches native code, and (the important part for a custom build) which heavy native
 > work is *out of process* and therefore replaceable without reimplementing it.
 
@@ -151,6 +151,52 @@ strings show it is:
 
 A custom on-device program joins this bus the same way: connect a ZeroMQ socket to the broker's XSUB/XPUB
 endpoints and speak framed protobuf ([robot-ipc-protocol](../protocol/robot-ipc-protocol.md) / the toolkit's `MoxieBus`).
+
+### The full module roster — what each remaining `bo-*` `.so` actually is
+
+`bo-android` ships **30 native `.so`s** (the [inventory + sizes](../firmware/firmware-803-reference.md#bo-android-native-libraries-the-brain-libarmeabi-v7a)).
+The mechanisms above covered the in-process P/Invoke libs and *named* the out-of-process bus modules
+(vision/fusion/audio/brain/logger). Running `readelf -d` + demangled symbols on the **rest** — several
+were previously only names — closes the roster (all from the **v24.10.803** `bo-android.apk`):
+
+| Library | Size | Identity (namespace / build tag) | Role |
+|---|--:|---|---|
+| **`libbo-analytics.so`** | 93 MB | `embodied::vision::MainLoop` · `perception::vision` | A **camera-vision analytics engine** distinct from `libbo-vision`: OpenCV (ArUco, RANSAC, `wechat_qrcode`) + TFLite + camera2-NDK + ZBar. Emits `FacesTracked`, `ZBarQRCodeRead` / `MarkerRead`, and **`ImageToTextPB`** — a vision-language "image→text" message carrying `prompt` / `question` / `session_id` (on-device **VQA**). `NEEDED: libbsk, libtensorflowlite, libcamera2ndk, libmediandk, libzbar`. |
+| **`libbo-system-monitor.so`** | 35 MB | `embodied::logging::SystemStatusService` | The **system-status service** — tracks power (`PowerStatePB`), volume (`SystemVolumeModify`), timezone (`TimeZoneInfo`), and `SettingSchema`; `NEEDED: liblizzerface` (reads the MCU). **Consumes `QRCommand`** (below). |
+| **`libwatchdog.so`** | 71 MB | `embodied::launcher::Watchdog` · build tag `bo-launcher` | The **launcher watchdog** — supervises/restarts the module processes (the native half of `ServiceLauncher`, [§2](#2-jni-androidjava-managed-javaandroid)). Statically links the `perception::fusion` + `robotbrain` + `QRCommand` protos it relays between supervised modules. |
+| **`libbsk.so`** | 22 MB | `BSK*` (`BSKCustomImageWarp`, `BSK_PCCR`, `BSKProfileUtil`) | A low-level **image-processing kernel** (image warp, LUT, a `PCCR` routine) that `libbo-analytics` is built on (`NEEDED` by it). Pure compute — no `embodied::` API of its own. |
+| **`librfc.so`** | 0.6 MB | `RfcPredict` / `RfcTrilsPredict`, path `bo-audio/third_party/rfc` | A **random-forest classifier** third-party lib inside the **audio** pipeline (acoustic feature/event classification — `float*` in, prediction out). |
+| **`libmain.so`** · **`libnative-lib.so`** | 27 KB · 104 KB | — | The Unity/app **entry glue** — `libmain` is the loaded-plugin entry ([`libbo-launcher.Start(pluginPath)`](#the-rest)); `libnative-lib` a small JNI helper. |
+
+So the "heavy natives" are really **two** vision engines (`bo-vision` + `bo-analytics`), the audio/brain/fusion
+trio, and a supervision/telemetry layer (`watchdog` = launcher, `system-monitor`, `analytics`, `logger`) —
+all out-of-process behind the bus, all replaceable by [speaking it](../protocol/robot-ipc-protocol.md).
+
+### Resolved: who consumes `QRCommand` (the setup-QR → brain bridge)
+
+[qr-commands](../protocol/qr-commands.md) established that `bo-wifi` publishes every scanned debug command
+as `embodied.unity.QRCommand{Code, Param}` on the bus, and that the **managed** Unity brain has **zero**
+references to it — leaving the consumer open. `readelf`/`nm` on the native modules **closes that edge** —
+the consumers are native, and they are the *cloud* and *system* layers, exactly where the known codes belong:
+
+```mermaid
+flowchart LR
+  wifi["bo-wifi<br/>(scans QR)"] -->|"QRCommand{Code,Param} on ZMQ"| bus(("dispatch bus"))
+  bus --> logger["libbo-logger<br/>embodied::logging::cloud::RightPoint"]
+  bus --> sysmon["libbo-system-monitor<br/>SystemStatusService"]
+  bus -.relays.-> wd["libwatchdog<br/>(launcher)"]
+  logger -->|"endpoint_update →"| cloud["re-home to new cloud/MQTT"]
+  sysmon -->|"system codes →"| sys["power / restart / settings"]
+```
+
+- **`libbo-logger`** (`embodied::logging::cloud::RightPoint`) — `AddListener<embodied::ProtoEventArgs<embodied::unity::QRCommand>>`, including a `RightPoint::*` member handler. The **cloud/MQTT module** subscribes to `QRCommand`; this is precisely where **`endpoint_update`** lands (it re-points the robot at a new cloud — the cloud module owns that connection).
+- **`libbo-system-monitor`** (`SystemStatusService`) — also `AddListener<…QRCommand…>` (a free-function handler). The **system service** takes the *system-level* codes.
+- **`libwatchdog`** — links the proto descriptor `descriptor_table_embodied_2fwifiapp_2fQRCommands_2eproto` (`CreateMessage<QRCommand>`), i.e. it **relays/constructs** the message across the supervised modules.
+
+So the "effective QR command set" is **not** open-ended: it is what these native subscribers act on —
+the **cloud/logger** (`endpoint_update` → re-home, the high-value one for revival) and the **system-monitor**.
+A custom firmware or a bus client reproduces it by publishing `QRCommand` and handling the codes in its
+own cloud/system layer — no managed-brain path exists to reimplement.
 
 ## What this means for the three goals
 

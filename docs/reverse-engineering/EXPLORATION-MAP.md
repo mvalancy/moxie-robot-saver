@@ -85,7 +85,7 @@ proto residue below (lizzerface MCU I/O, perception.audio STT).
 | ✅ | `bo-wifi` setup app (QR grammar + status/brick protocol) | [qr-commands](protocol/qr-commands.md) |
 | ✅ | Parent app (`com.embo.embodied.parent` 2.2.2) — REST + crypto | [rest-api](phone/rest-api.md), [app-structure](phone/app-structure.md), [crypto-and-keys](phone/crypto-and-keys.md) |
 | ✅ | Factory/production-testing apps (finaltest 15-test catalog) | [factory-provisioning](firmware/factory-provisioning.md) |
-| ✅ | Native libs: XMOS DSP, `libbo-*`, CereVoice, ChatScript, libsecrets | [hal-and-drivers](firmware/hal-and-drivers.md), [perception-pipeline](runtime/perception-pipeline.md), [content-and-conversation](runtime/content-and-conversation.md), [factory-provisioning](firmware/factory-provisioning.md) |
+| ✅ | Native libs: **complete 30-`.so` roster + roles** (XMOS DSP, `libbo-*` incl. analytics/system-monitor/watchdog, `libbsk`, `librfc`, CereVoice, ChatScript, libsecrets); `QRCommand` bus consumer resolved (logger/system-monitor) | [native-boundary](runtime/native-boundary.md#the-full-module-roster-what-each-remaining-bo-so-actually-is), [hal-and-drivers](firmware/hal-and-drivers.md), [perception-pipeline](runtime/perception-pipeline.md), [content-and-conversation](runtime/content-and-conversation.md), [factory-provisioning](firmware/factory-provisioning.md) |
 | ✅ | Unity assets + bootanimation inventory | [unity-assets](firmware/unity-assets.md) |
 
 ## Hardware (needs a bench unit — tracked in COVERAGE)

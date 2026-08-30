@@ -68,7 +68,7 @@ Kernel load `0x10008000`, ramdisk `0x11000000`, page size 2048. Kernel: RK3288 A
 ### Embodied apps (`/system/priv-app`)
 | App | Package | Role |
 |---|---|---|
-| **bo-android** | *(the brain)* | conversation/vision/behavior + Unity face; 29 native libs (below) |
+| **bo-android** | *(the brain)* | conversation/vision/behavior + Unity face; 30 native libs (partial table below; full roster + roles in [native-boundary](../runtime/native-boundary.md#the-full-module-roster-what-each-remaining-bo-so-actually-is)) |
 | **bo-wifi** | *(setup/Unity)* | QR scan, Wi-Fi, pairing (`WifiApp.dll`) |
 | bo-firmwareUpdate | | MCU/XMOS DFU |
 | bo_motor_test, bo_xmosupdate, xmosdfu, qcapp | | factory/service utilities |
