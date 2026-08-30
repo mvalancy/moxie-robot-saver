@@ -22,15 +22,18 @@ protoc --python_out=. --proto_path=. $(find . -name '*.proto')   # or --cpp_out 
 
 ## Layout (`embodied.*`)
 
-| Package | Highlights |
-|---|---|
-| `lizzerface/` | **MCU protocol** — motors, PID config, power rails, LED patterns, touch/switch/IMU/battery/servo events. See [`../hardware-map.md`](../../hardware/hardware-map.md). |
-| `wifiapp/` | Setup app ↔ brain — **QR commands**, pairing, Wi-Fi update. See [`../qr-commands.md`](../qr-commands.md). |
-| `perception/{audio,vision,fusion}/` | STT, wake-word, DOA, XMOS config; faces/people/poses/QR; fused people. |
-| `robotbrain/` | ChatScript, content modules & schedules, intents, contexts, idle/mentor/STAR, remote chat, users. |
-| `unity/` | Brain ↔ face — CloudTTS, speech/SFX playback, markup, gaze, camera, console commands, status. |
-| `logging/` | Cloud/backup/file-sync, metrics, **IOTEndpoint**, SEL updates. |
-| `system/`, `launcher/`, `playspace/`, `telehealth/`, `testing/` | power/time/system events, component state, play-space, telehealth, test harnesses. |
+Each package's **every message & enum** is rendered in the [protocol message catalog](../proto-catalog.md)
+— the links below jump straight to it:
+
+| Package | Highlights | Messages |
+|---|---|---|
+| `lizzerface/` | **MCU protocol** — motors, PID config, power rails, LED patterns, touch/switch/IMU/battery/servo events. See [`../hardware-map.md`](../../hardware/hardware-map.md). | [catalog](../proto-catalog.md#embodiedlizzerface) |
+| `wifiapp/` | Setup app ↔ brain — **QR commands**, pairing, Wi-Fi update. See [`../qr-commands.md`](../qr-commands.md). | [catalog](../proto-catalog.md#embodiedunity) *(pkg `embodied.unity`)* |
+| `perception/{audio,vision,fusion}/` | STT, wake-word, DOA, XMOS config; faces/people/poses/QR; fused people. | [audio](../proto-catalog.md#embodiedperceptionaudio) · [vision](../proto-catalog.md#embodiedperceptionvision) · [fusion](../proto-catalog.md#embodiedperceptionfusion) |
+| `robotbrain/` | ChatScript, content modules & schedules, intents, contexts, idle/mentor/STAR, remote chat, users. | [catalog](../proto-catalog.md#embodiedrobotbrain) |
+| `unity/` | Brain ↔ face — CloudTTS, speech/SFX playback, markup, gaze, camera, console commands, status. | [catalog](../proto-catalog.md#embodiedunity) |
+| `logging/` | Cloud/backup/file-sync, metrics, **IOTEndpoint**, SEL updates. | [catalog](../proto-catalog.md#embodiedlogging) |
+| `system/`, `launcher/`, `playspace/`, `telehealth/`, `testing/` | power/time/system events, component state, play-space, telehealth, test harnesses. | [sys](../proto-catalog.md#embodiedsys) · [launcher](../proto-catalog.md#embodiedlauncher) · [playspace](../proto-catalog.md#embodiedplayspace) · [telehealth](../proto-catalog.md#embodiedtelehealth) · [testing](../proto-catalog.md#embodiedtesting) |
 
 
 ## Cross-validation

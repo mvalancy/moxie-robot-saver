@@ -1,5 +1,5 @@
 {
- "generated": "docs-ddfacf9cfc2c",
+ "generated": "docs-13c608aee7f2",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -724,7 +724,7 @@
    "path": "reverse-engineering/protocol/recovered-proto/README.md",
    "title": "Recovered protobuf schemas",
    "section": "reverse-engineering",
-   "bytes": 3232,
+   "bytes": 4092,
    "mermaid": 0,
    "headings": [
     "Provenance",
