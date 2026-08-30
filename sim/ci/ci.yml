@@ -51,5 +51,7 @@ jobs:
         run: node sim/test_docs.mjs
       - name: Responsive UI test (skips cleanly if no browser is available)
         run: node sim/test_responsive.mjs
+      - name: Docs-explorer runtime test (Mermaid/search/highlight; skips cleanly if no browser)
+        run: node sim/test_docs_explorer.mjs
       - name: Run SIL scenarios (scripted conversations)
         run: bash sim/run_scenarios.sh
