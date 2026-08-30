@@ -1,5 +1,5 @@
 {
- "generated": "docs-349726391973",
+ "generated": "docs-1f26fd3dd2f6",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1093,7 +1093,7 @@
    "path": "reverse-engineering/protocol/qr-commands.md",
    "title": "QR command grammar — what the robot actually scans",
    "section": "reverse-engineering",
-   "bytes": 21525,
+   "bytes": 22552,
    "mermaid": 0,
    "headings": [
     "The dispatcher",

@@ -47,9 +47,26 @@ signal that says a stranded robot is *ready to scan a QR* (the `STATE_CONFIG` su
 
 - **`WifiAppSilentBoot`** / **`WifiAppShutdown`** — the app booting without UI / shutting down, matching
   the `STATE_SILENT_REBOOT` path in [power-and-system-events](power-and-system-events.md).
-- **`WifiAppBricked { uint32 error_code }`** — the setup app **failed to come up**. `error_code` is an
-  `EBErrorCode` — observed values `UNHANDLED_EXCEPTION` and `ASSERTION` — i.e. the setup surface itself
-  crashed. This is distinct from *hardware* faults, which come from the Lizard MCU as `LizardErrorEvent`
+- **`WifiAppBricked { uint32 error_code }`** — the setup app **failed to come up**. `error_code` is the
+  **`EBErrorCode`** enum (`Assembly-CSharp`, `v24.10.803`) — the full set, useful for diagnosing a
+  stranded robot ([goal ③](../COVERAGE.md)):
+
+  | # | `EBErrorCode` | Meaning |
+  |--:|---|---|
+  | 0 | `UNKNOWN` | unclassified |
+  | 5000 | `UNHANDLED_EXCEPTION` | a C# exception crashed the app |
+  | 5001 | `STREAMING_ASSETBUNDLES` | failed loading a **streamed** asset bundle |
+  | 5002 | `LOCAL_ASSETBUNDLES` | failed loading a **local** (on-disk) asset bundle |
+  | 5003 | `REMOTE_ASSETBUNDLES` | failed loading a **downloaded** asset bundle |
+  | 5004 | `ASSETBUNDLE_GENERAL` | other asset-bundle load failure |
+  | 5005 | `ASSERTION` | a code assertion tripped |
+  | 5006 | `ZMQ` | the on-device [ZMQ bus](robot-ipc-protocol.md) failed to come up |
+  | 5007 | `ASSETBUNDLE_INVALID` | an asset bundle was corrupt/incompatible |
+
+  **Diagnostic read:** codes **5001–5004 / 5007 mean an asset-bundle load failure** (the app's content
+  is missing/corrupt — a re-flash or content re-sync territory), `5000`/`5005` are a code crash, and
+  `5006` is the bus. So a bricked setup surface is *most often an asset problem*, not hardware. This is
+  distinct from *hardware* faults, which come from the Lizard MCU as `LizardErrorEvent`
   (`BATTERY_OVER_TEMP`, `BATTERY_LOST`, `MOTOR_FAIL_BOOT`, `BODYTOUCH_ERR`, see
   [hardware-map](../hardware/hardware-map.md)).
 
