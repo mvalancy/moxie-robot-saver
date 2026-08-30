@@ -1506,6 +1506,9 @@ const liveness = {
   gazeX: 0, gazeY: 0,                     // behavior-driven gaze target
   eyeTX: 0, eyeTY: 0, eyeNext: 1.5,       // random gaze drift
   mode: 'idle', until: 0, nextAt: 2.0 + Math.random() * 3,
+  // ms of the last USER slider drag per DOF — the imaginary-life module (life.js)
+  // reads this (via window.moxie.isUserHeld) so it never fights a joint you grabbed.
+  userAt: new Float32Array(7).fill(-1e9),
 };
 
 function noteCommand(i) {
@@ -1573,9 +1576,11 @@ function updateLiveness(t, dt, now) {
     L.gazeY = 0;
     L.nextAt = t + 2.0 + Math.random() * 5.0;
   }
-  if (L.mode === 'idle' && t >= L.nextAt && L.master > 0.05) {
-    pickIdleBehavior(t);
-  }
+  // NOTE: the additive idle-behavior scheduler (pickIdleBehavior) is intentionally
+  // NOT called here anymore — deliberate idle behaviors now live in life.js, which
+  // drives the REAL motor targets so the sliders move. This additive layer keeps
+  // only the subtle continuous micro-sway + breathing + gaze drift underneath.
+  void pickIdleBehavior;   // retained for reference / manual use
 
   // eased behavior offsets
   const kb = 1 - Math.exp(-dt * 2.5);
@@ -1713,6 +1718,14 @@ const api = {
     liveness.enabled = on !== false;
   },
 
+  // Hooks for the imaginary-life module (life.js), which drives Moxie through the
+  // public setMotor/setFace API to autonomously "live" while the sliders move.
+  isAlive() { return liveness.enabled && liveness.master > 0.6; },   // safe to drive?
+  isUserHeld(i) {                                                     // did the user just grab joint i?
+    return (i | 0) >= 0 && (i | 0) < 7 &&
+      performance.now() - liveness.userAt[i | 0] < 5000;
+  },
+
   // Scene lighting, 0 (near-dark — the projected face lights the room)
   // to 1 (fully lit). Eased over a few frames.
   setSceneLight(level) {
@@ -1746,6 +1759,7 @@ function buildPanel() {
       val.textContent = input.value;
       motorTargets[i] = +input.value;
       noteCommand(i);
+      liveness.userAt[i] = performance.now();   // user grabbed this joint — life.js backs off
     });
     motorsEl.appendChild(wrap);
     sliderEls[i] = { input, val };

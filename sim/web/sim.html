@@ -52,6 +52,11 @@
       <span class="tag">v24.10.803</span>
       <span class="tag dim">SOFTWARE-IN-THE-LOOP</span>
     </div>
+    <button id="alive-toggle" type="button" class="alive-on" aria-pressed="true"
+            title="Moxie's imaginary life — autonomous idle motion. Turn OFF for full manual control of the sliders.">
+      <span class="alive-dot" aria-hidden="true"></span>
+      <span class="alive-label">ALIVE</span>
+    </button>
     <div class="linkstate">
       <span id="link-dot" class="dot" aria-hidden="true"></span>
       <span id="link-label">LINK IDLE</span>
@@ -108,7 +113,7 @@
           <label class="rng"><span class="rng-name">LIGHT</span>
             <input id="scene-light" type="range" min="0" max="100" value="85">
             <span class="rng-val" id="scene-light-val">0.85</span></label>
-          <label class="chk"><input id="idle-on" type="checkbox" checked><span>liveness</span></label>
+          <label class="chk"><input id="idle-on" type="checkbox" checked><span>liveness (imaginary life &mdash; same as the ALIVE button)</span></label>
           <label class="chk"><input id="axes-on" type="checkbox"><span>show axes</span></label>
           <div id="axis-legend" hidden>
             <span class="ax ax-x"><i></i>X <em>right / left</em></span>
@@ -225,15 +230,16 @@
 
 </div>
 
-<script type="module" src="moxie.js?v=cute5"></script>
+<script type="module" src="moxie.js?v=cute6"></script>
 <script src="./vendor/mqtt.min.js"></script>
 <script src="./vendor/qrcode.js"></script>
-<script src="qr.js?v=cute5"></script>
-<script src="stub.js?v=cute5"></script>
-<script src="bridge.js?v=cute5"></script>
-<script src="audio.js?v=cute5"></script>
-<script src="ambient.js?v=cute5"></script>
-<script src="mic.js?v=cute5"></script>
+<script src="qr.js?v=cute6"></script>
+<script src="stub.js?v=cute6"></script>
+<script src="bridge.js?v=cute6"></script>
+<script src="audio.js?v=cute6"></script>
+<script src="ambient.js?v=cute6"></script>
+<script src="life.js?v=cute6"></script>
+<script src="mic.js?v=cute6"></script>
 <script>
 /* HUD glue — mirrors the #bus-status text (written by bridge.js) onto
  * body[data-bus] so CSS can color the status line, the topbar link lamp,
@@ -275,9 +281,27 @@
         window.moxie.setSceneLight(v);
       });
     }
-    if (idle && window.moxie && window.moxie.setIdle) {
-      idle.addEventListener("change", function () { window.moxie.setIdle(idle.checked); });
+    // Unified ALIVE control — the prominent topbar button and the panel "liveness"
+    // checkbox both drive the same state: window.moxie.setIdle (additive liveness) +
+    // window.moxieLife (the autonomous motor loop). ON by default; OFF = full manual.
+    var aliveBtn = document.getElementById("alive-toggle");
+    function setAlive(on) {
+      on = !!on;
+      if (window.moxie && window.moxie.setIdle) window.moxie.setIdle(on);
+      if (window.moxieLife) (on ? window.moxieLife.start() : window.moxieLife.stop());
+      if (idle) idle.checked = on;
+      if (aliveBtn) {
+        aliveBtn.classList.toggle("alive-on", on);
+        aliveBtn.classList.toggle("alive-off", !on);
+        aliveBtn.setAttribute("aria-pressed", String(on));
+        aliveBtn.querySelector(".alive-label").textContent = on ? "ALIVE" : "PAUSED";
+      }
     }
+    if (aliveBtn) aliveBtn.addEventListener("click", function () {
+      setAlive(!aliveBtn.classList.contains("alive-on"));
+    });
+    if (idle) idle.addEventListener("change", function () { setAlive(idle.checked); });
+    setAlive(idle ? idle.checked : true);   // initialise from the (checked-by-default) box
     var axes = document.getElementById("axes-on");
     if (axes && window.moxie && window.moxie.setShowAxes) {
       axes.addEventListener("change", function () {
@@ -392,6 +416,6 @@
   });
 })();
 </script>
-<script src="env.js?v=cute5"></script>
+<script src="env.js?v=cute6"></script>
 </body>
 </html>
