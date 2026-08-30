@@ -39,6 +39,7 @@ the tags below are the ones actually used in shipped content (with observed valu
 | `<prosody>` | `pitch` (`medium`), `rate` (`slow`/`medium`/`x-fast`), `volume` (`medium`) | pitch/rate/volume shaping |
 | `<emphasis level>` | `strong` | stress a word |
 | `<phoneme ph>` | dotted phones, e.g. `ph="r.iy.d"` (read), `ph="k.ih.p.uw.r"` | **pronunciation override** (names/rare words); phones are ARPAbet-ish, dot-separated |
+| `<say-as interpret-as>` | one of **`characters` · `cardinal` · `ordinal` · `digits` · `fraction` · `unit` · `date` · `time` · `address` · `telephone`** (the `SayAsInterpretation` enum) | **how to read a token** — e.g. speak `1/2` as a fraction, `1024` as digits vs. cardinal, a `date`/`time`/`telephone` naturally |
 | `<spurt>` | `spurt_id`, `speaker` | **non-verbal vocalization** — CereVoice "spurt" ([52 built-ins enumerated below](#vocal-gestures-spurts-vocalgesturesavailablegestures-hardcoded-in-bo-android)) |
 
 So a full line interleaves three layers: **SSML** (how it's *said*: `usel`/`prosody`/`phoneme`),
@@ -94,11 +95,14 @@ Each verb is a `CommandMarkUpGenerator` with a typed request (its `data` fields)
 | `lifetime` | int | |
 
 **`playaudio`**: `SoundToPlay` (asset id, e.g. `sfx_twinkly_upbeat_stinger_1`,
-`moxie_mu_cast_zarcona_theme_loop_v2`), `LoopSound` bool, `playInBackground` bool, `channel` int
-(0=music, 2=sfx observed), `ReplaceCurrentSound` bool, `PlayImmediate` bool, `ForceQueue` bool,
-`Volume` float, `FadeInTime`/`FadeOutTime` float, `AudioTimelineField` string.
+`moxie_mu_cast_zarcona_theme_loop_v2`), `LoopSound` bool, `playInBackground` bool, `channel`
+(the **`Channel`** enum — **`FX`=0 · `BackGround`=1 · `Stinger`=2 · `VocalGesture`=3**; FX is one-shot
+effects, BackGround is looping music, Stinger is short accents, VocalGesture is the [spurt](#vocal-gestures-spurts-vocalgesturesavailablegestures-hardcoded-in-bo-android)
+channel), `ReplaceCurrentSound` bool, `PlayImmediate` bool, `ForceQueue` bool, `Volume` float,
+`FadeInTime`/`FadeOutTime` float, `AudioTimelineField` string.
 
-**`stopaudio`**: `scope` int, `channel` int, `FadeOutTime` float, `ClearQueue` bool.
+**`stopaudio`**: `scope` (**`Scope`** enum — **`All`=0** stops everything · **`Channel`=1** stops just the
+given `channel`), `channel` (the `Channel` above), `FadeOutTime` float, `ClearQueue` bool.
 
 **`playback-mood`**: `PlaybackMoodRequest { ePlaybackMood mood; int intensity=0 (maxIntensity=2); }`;
 `Submit()` calls `SpeechPlaybackBehavior.PlaybackMood.SetMood(mood, intensity)`. The **`ePlaybackMood`

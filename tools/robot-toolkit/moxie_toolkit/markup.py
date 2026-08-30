@@ -51,7 +51,11 @@ def icons(names=(), *, command=0, index=0, transition=0, volume=0.5, highlight=0
 def idlestate(idleState=0):
     return _mark("idlestate", {"idleState": idleState})
 
-def playaudio(SoundToPlay, *, channel=0, LoopSound=False, playInBackground=False,
+# Audio `Channel` enum (playaudio/stopaudio) and stopaudio `Scope` enum (v24.10.803).
+CHANNEL_FX, CHANNEL_BACKGROUND, CHANNEL_STINGER, CHANNEL_VOCALGESTURE = 0, 1, 2, 3
+SCOPE_ALL, SCOPE_CHANNEL = 0, 1
+
+def playaudio(SoundToPlay, *, channel=CHANNEL_FX, LoopSound=False, playInBackground=False,
               ReplaceCurrentSound=False, PlayImmediate=True, ForceQueue=False, Volume=1.0,
               FadeInTime=0.0, FadeOutTime=0.0, AudioTimelineField="none"):
     return _mark("playaudio", {
@@ -60,7 +64,7 @@ def playaudio(SoundToPlay, *, channel=0, LoopSound=False, playInBackground=False
         "ForceQueue": ForceQueue, "Volume": Volume, "FadeInTime": FadeInTime,
         "FadeOutTime": FadeOutTime, "AudioTimelineField": AudioTimelineField})
 
-def stopaudio(*, scope=1, channel=0, FadeOutTime=1.0, ClearQueue=True):
+def stopaudio(*, scope=SCOPE_CHANNEL, channel=CHANNEL_FX, FadeOutTime=1.0, ClearQueue=True):
     return _mark("stopaudio", {"scope": scope, "channel": channel,
                                "FadeOutTime": FadeOutTime, "ClearQueue": ClearQueue})
 
@@ -103,3 +107,11 @@ def usel(text, variant=0, genre="none"):
 
 def brk(seconds):
     return f'<break time="{seconds}s"/>'
+
+# <say-as interpret-as> types (SayAsInterpretation, v24.10.803).
+SAYAS_TYPES = ("characters", "cardinal", "ordinal", "digits", "fraction", "unit",
+               "date", "time", "address", "telephone")
+
+def say_as(text, interpret_as="cardinal"):
+    """<say-as interpret-as=…> — how to read a token (see SAYAS_TYPES)."""
+    return f'<say-as interpret-as="{interpret_as}">{text}</say-as>'
