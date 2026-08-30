@@ -204,3 +204,25 @@ def parse_remote_chat_response(payload):
     """Parse a RemoteChatResponse (brain -> robot) from serialized bytes."""
     from embodied.robotbrain import RemoteChat_pb2 as RC
     m = RC.RemoteChatResponse(); m.ParseFromString(payload); return m
+
+
+# ---- on-device serialized brain state (embodied.robotbrain.serialized) ----
+# See docs/reverse-engineering/offline-and-brain-state.md
+
+def parse_fallback_info(payload):
+    """Parse a FallbackInfo tree — the on-device offline fallback content the robot
+    serves when the cloud brain is unreachable (ERROR_OFFLINE). A server pushes an
+    updated one via RemoteChatRequest.upgrade_fallbacks."""
+    from embodied.robotbrain.serialized import FallbackInfo_pb2 as F
+    m = F.FallbackInfo(); m.ParseFromString(payload); return m
+
+def parse_cs_data(payload):
+    """Parse a CSData resume checkpoint (content_day, module_id/content_id, timestamps)."""
+    from embodied.robotbrain.serialized import CSData_pb2 as C
+    m = C.CSData(); m.ParseFromString(payload); return m
+
+def parse_user_recommendation_data(payload):
+    """Parse UserRecommendationData — the persisted recommender history (tag_history +
+    random_tag_state) that decides what content to offer next."""
+    from embodied.robotbrain.serialized import UserRecommendationData_pb2 as U
+    m = U.UserRecommendationData(); m.ParseFromString(payload); return m

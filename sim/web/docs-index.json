@@ -1,5 +1,5 @@
 {
- "generated": "docs-7bd9ec99dab0",
+ "generated": "docs-78a1659a360e",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 10887,
+   "bytes": 11390,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 7037,
+   "bytes": 7216,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -944,6 +944,21 @@
     "RemoteChatInput` — the brain's read of the child",
     "Taxonomies",
     "RemoteChatMetrics` — conversation-quality analytics",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/offline-and-brain-state.md",
+   "title": "Offline behavior & on-device brain state (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 6899,
+   "mermaid": 1,
+   "headings": [
+    "Online vs offline",
+    "The fallback content tree — `FallbackInfo`",
+    "The server controls offline behavior — `upgrade_fallbacks`",
+    "The resume point — `CSData`",
+    "The recommender's memory — `UserRecommendationData`",
     "What this means for the three goals"
    ]
   },
