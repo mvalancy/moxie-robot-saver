@@ -63,10 +63,10 @@ EVENT_HTTP_TOKEN    = "client-service-http-token"
 
 # ---- higher-level builders for goal-#2 server implementers ----
 def telehealth_play_output(text, markup="", *, session_id="", line_id="", line_params=None):
-    """Build a telehealth PLAY_OUTPUT TelehealthMessage — make Moxie speak `text` and perform the
-    `<mark cmd:...>` `markup` live (remote-puppet). Publish to /devices/{id}/commands/telehealth
-    (JSON command wrapping TelehealthRobotCommand) or over the activity-log subtopic=telehealth.
-    See docs/reverse-engineering/content-and-conversation.md#telehealth--remote-puppet-mode."""
+    """Build a telehealth PLAY_OUTPUT `TelehealthMessage` — make Moxie speak `text` and perform the
+    `<mark cmd:...>` `markup` live (remote-puppet). Wrap it with `telehealth_command()` and publish to
+    `telehealth_topic(device_id)`.
+    See docs/reverse-engineering/telehealth.md (the TeleBrain remote-puppet protocol)."""
     from embodied.telehealth import TeleHealth_pb2 as TH
     out = TH.Output(text=text, markup=markup, line_id=line_id)
     if line_params:
@@ -74,9 +74,29 @@ def telehealth_play_output(text, markup="", *, session_id="", line_id="", line_p
     return TH.TelehealthMessage(action=TH.PLAY_OUTPUT, output=out, session_id=session_id)
 
 def telehealth_session(action, *, session_id=""):
-    """START_SESSION / END_SESSION / INTERRUPT (pass the TeleHealth Action enum)."""
+    """START_SESSION / END_SESSION / INTERRUPT / UPDATE_STATE `TelehealthMessage` (pass the TeleHealth
+    Action enum, e.g. `TeleHealth_pb2.START_SESSION`). See docs/reverse-engineering/telehealth.md."""
     from embodied.telehealth import TeleHealth_pb2 as TH
     return TH.TelehealthMessage(action=action, session_id=session_id)
+
+def telehealth_topic(device_id):
+    """The MQTT topic a telehealth command is published to (cloud -> robot)."""
+    return command_topic(device_id, "telehealth")
+
+def telehealth_command(message, command=""):
+    """Wrap a `TelehealthMessage` in the publishable `TelehealthRobotCommand` (cloud -> robot).
+    Serialize with `.SerializeToString()` and publish to `telehealth_topic(device_id)`.
+    See docs/reverse-engineering/telehealth.md."""
+    from embodied.telehealth import TeleHealth_pb2 as TH
+    return TH.TelehealthRobotCommand(command=command, message=message)
+
+def parse_telehealth_event(payload):
+    """Parse a robot -> cloud `TelehealthRobotEvent` (reported on the client-service-activity-log
+    `telehealth` subtopic). Returns the protobuf message (has `.subtopic` and `.message`)."""
+    from embodied.telehealth import TeleHealth_pb2 as TH
+    ev = TH.TelehealthRobotEvent()
+    ev.ParseFromString(payload if isinstance(payload, (bytes, bytearray)) else bytes(payload))
+    return ev
 
 def service_configuration(*, mqtt_host=None, webservice_root=None, override_port=None,
                           connection_type=None, endpoint_id=None, disable_verify=None,

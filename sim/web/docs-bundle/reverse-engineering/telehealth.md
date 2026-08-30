@@ -102,6 +102,12 @@ with `text` + `markup`, and Moxie speaks and moves. Because the local brain is o
 server has full authority over every line without fighting an on-device dialog engine. A genuinely
 useful revival feature beyond autonomous chat.
 
+> **Toolkit:** [`moxie_toolkit/cloud.py`](../../tools/robot-toolkit/moxie_toolkit/cloud.py) builds the
+> whole session — `telehealth_session(START_SESSION/END_SESSION/INTERRUPT)`,
+> `telehealth_play_output(text, markup, …)`, `telehealth_command(msg)` (the publishable
+> `TelehealthRobotCommand`), `telehealth_topic(device_id)`, and `parse_telehealth_event(payload)` for the
+> robot's replies. Wire-round-trip tested in `tools/robot-toolkit/test_telehealth.py`.
+
 **③ Pre-801 revival.** No new lever; it rides the same MQTT/endpoint path as normal chat
 ([`network-trust.md`](network-trust.md)).
 

@@ -1,5 +1,5 @@
 {
- "generated": "086a4dd-dirty",
+ "generated": "936fd57-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1326,7 +1326,7 @@
    "path": "reverse-engineering/telehealth.md",
    "title": "Telehealth / remote-puppet — the \"TeleBrain\" protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 5925,
+   "bytes": 6391,
    "mermaid": 1,
    "headings": [
     "TL;DR",
