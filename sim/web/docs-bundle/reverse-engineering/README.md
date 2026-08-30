@@ -6,6 +6,12 @@ its `bo-*` apps, read from the factory partition images. No Embodied source is i
 observed facts and schemas reconstructed from shipped binaries. Everything else in the repo derives
 from these.
 
+The end goal is not just to *revive* old robots but to make Moxie's body host **any** mind — a
+**ghost in the shell**. The robot decides everything it says and does behind one documented seam
+([`RemoteChat`](protocol/remote-chat-protocol.md)) with the heavy ML
+[out-of-process behind the ZMQ bus](runtime/native-boundary.md), so any AI that speaks that contract
+*becomes* Moxie. Running a compatible server is the floor; a full brain transplant is the ceiling.
+
 > ✅ **[Coverage matrix](COVERAGE.md)** — what's documented per goal + the honest remaining gaps.
 >
 > 🗺️ **[Exploration map](EXPLORATION-MAP.md)** — the source-surface view: every proto namespace, C# subsystem, image, app & native lib with its status (✅/🟡/⬜) and covering doc — *what we've examined and what's still open*.
@@ -41,7 +47,7 @@ flowchart TB
 ```
 
 
-### 📱 Phone side — the parent app (`phone/`)
+### 📱 Phone side — the parent app ([`phone/`](phone/README.md))
 
 - [`rest-api.md`](phone/rest-api.md) — every endpoint, the passwordless-email→OAuth flow, headers, token shapes.
 - [`crypto-and-keys.md`](phone/crypto-and-keys.md) — the one 32-byte seed (Argon2id) → Ed25519/X25519/secretbox, recovery keys, E2E encryption.
@@ -49,7 +55,7 @@ flowchart TB
 - [`qr-format.md`](phone/qr-format.md) — the exact pairing-QR wire format (protobuf + legacy JSON), as the phone emits it.
 - [`app-structure.md`](phone/app-structure.md) — manifest, components, third-party SDKs, package inventory.
 
-### 🔌 Protocol — the robot↔server & on-device wire (`protocol/`)
+### 🔌 Protocol — the robot↔server & on-device wire ([`protocol/`](protocol/README.md))
 
 - [`robot-ipc-protocol.md`](protocol/robot-ipc-protocol.md) — the on-device **ZeroMQ + protobuf** message bus that wires the modules together; the module map and behavior-command markup.
 - [`cloud-protocol.md`](protocol/cloud-protocol.md) — the robot↔backend surface (REST `client-service`, MQTT topics, Deepgram STT, the chat envelope) — **what a self-hosted server must implement**.
@@ -66,7 +72,7 @@ flowchart TB
 - [`proto-catalog.md`](protocol/proto-catalog.md) — the **browsable catalog** of all 382 messages / 84 enums / 2074 fields (auto-generated).
 - [`recovered-proto/`](protocol/recovered-proto/) — **120 `.proto` files** reconstructed from the robot binaries; the machine-readable protocol.
 
-### 🧠 Runtime — the on-device brain, behavior & face engine (`runtime/`)
+### 🧠 Runtime — the on-device brain, behavior & face engine ([`runtime/`](runtime/README.md))
 
 - [`behavior-input-events.md`](runtime/behavior-input-events.md) — the **input contract**: the 163 `InputEvent` types (sensors, vision, audio, speech, chat, system) that drive the behavior tree via the Farmer→`InputEngine` bus, and the 24 that are proto-serializable (the ZMQ external contract).
 - [`behavior-tree-engine.md`](runtime/behavior-tree-engine.md) — the **decision layer**: the brain runs on **ParadoxNotion NodeCanvas** (BT · Dialogue · FSM · FlowScript) with a Blackboard; the node taxonomy, embodied's ~70 `Robot*` nodes, the logic/animation tree split, and the 45 named `Bht_*` trees (incl. the `Eyeseme` facial expressions).
@@ -82,7 +88,7 @@ flowchart TB
 - [`turn-taking.md`](runtime/turn-taking.md) — the **conversation state machine**: `TurnTakingState`'s five axes (TurnOwner · Mentor/Moxie state · Engagement · Assist), barge-in via `ChatbotAllowCutoffEvent`/`AllowInterruption`, DOA speaker scoring, and the `WaitingForResponse` re-prompt timer.
 - [`unity-face-animation.md`](runtime/unity-face-animation.md) — **how the animated face actually renders**, from the decompiled Unity code: the `rig3` blendshape mesh, the **`EBAnimGrinder`** build-time controller generator, the layered/masked Animator + `EBCompositeAnimPlayer` (Playables), the **`StateVariables` blackboard** (`RobotState_*`) the behavior tree writes, the **Eyeseme** mood layer (11 `ePlaybackMood`s) + post-process blink, the **viseme** mouth layer (41 ARPABET phonemes, two TTS sources), IK look-at, the `SensoryMode` idle selector, and the accessibility gates.
 
-### 🧱 Firmware — the OS image, boot, security & flashing (`firmware/`)
+### 🧱 Firmware — the OS image, boot, security & flashing ([`firmware/`](firmware/README.md))
 
 - [`firmware-image.md`](firmware/firmware-image.md) — RK3288 / Android 9 partition layout, verified boot (AVB), security posture, installed apps, and **how to unlock & flash custom firmware**.
 - [`firmware-inventory.md`](firmware/firmware-inventory.md) — complete app + binary manifest (50 priv-app / 29 app / 334 bin), embodied vs stock.
@@ -96,7 +102,7 @@ flowchart TB
 - [`unity-assets.md`](firmware/unity-assets.md) — the Unity 2020.3 face/HUD/effects asset inventory + the boot animation.
 - [`factory-provisioning.md`](firmware/factory-provisioning.md) — the production-line apps, serial/part grammar, and the **factory secret** getters (and how to recover them).
 
-### 🦾 Hardware — the physical board & teardown (`hardware/`)
+### 🦾 Hardware — the physical board & teardown ([`hardware/`](hardware/README.md))
 
 - [`hardware-map.md`](hardware/hardware-map.md) — motors, touch/switch/IMU sensors, LED face patterns, and power rails, from the MCU protobufs.
 - [`device-tree.md`](hardware/device-tree.md) — board-level hardware wiring from the DTB (I²C/UART/display/camera/PMIC map) + the decompiled `.dts`.

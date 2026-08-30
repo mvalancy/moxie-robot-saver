@@ -34,7 +34,12 @@
 | Unity face/asset pipeline | ✅ inventory (full per-object export = open) | [unity-assets](firmware/unity-assets.md) |
 | Face-animation engine (rig3 blendshapes, EBAnimGrinder, Eyeseme moods, visemes, blackboard) | ✅ decompiled | [unity-face-animation](runtime/unity-face-animation.md) |
 
-## Goal ② — Client/server revival (self-hosted backend)
+## Goal ② — Put any AI inside Moxie (the *ghost in the shell*)
+
+> More than a self-hosted backend: the goal is a full **brain transplant** — any AI (LLM, agent, your own
+> model) wearing Moxie's body by answering the [`RemoteChat`](protocol/remote-chat-protocol.md) seam. A
+> compatible MQTT+REST server is the *floor*; swapping the brain behind the bus is the *ceiling*
+> ([why the brain is replaceable](runtime/native-boundary.md)).
 
 | Layer | Status | Doc |
 |---|---|---|

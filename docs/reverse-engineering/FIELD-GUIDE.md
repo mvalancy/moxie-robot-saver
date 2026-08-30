@@ -1,4 +1,4 @@
-# 🧭 Moxie field guide — revive it, run it, rebuild it
+# 🧭 Moxie field guide — revive it, re-brain it, rebuild it
 
 The one-page map of everything reverse-engineered here, organized by what you're trying to do. Each
 row links to the deep doc and the tool that does the work. Start here.
@@ -8,7 +8,7 @@ flowchart TB
   subgraph G1["① Revive an OLD robot (no account, dead cloud)"]
     qr["QR to re-home / reset"] --> srv
   end
-  subgraph G2["② Run YOUR server (client/server revival)"]
+  subgraph G2["② Put ANY AI inside Moxie (ghost in the shell)"]
     srv["local server:<br/>REST + MQTT + STT"] --> content["content modules<br/>+ behavior markup"]
   end
   subgraph G3["③ Custom software / firmware ON the robot"]
@@ -67,9 +67,23 @@ flashing are planned, expected, and fully in scope**, not a failure. See
   a recovery key-combo, an externally reachable USB port, a genuine signed 803 `update.zip` — tracked
   in [`ota-and-recovery.md`](firmware/ota-and-recovery.md).
 
-## ② Run your own server (client/server revival)
+## ② Put your own AI inside Moxie — the *ghost in the shell*
 
-What the robot expects a backend to provide:
+The ambition here is bigger than "run a compatible server." The robot's whole personality — every spoken
+line, mood, gaze, and body move — is decided by a **brain** that sits *behind a documented seam*: the
+robot sends a [`RemoteChatRequest`](protocol/remote-chat-protocol.md) each turn and performs whatever
+[`RemoteChatResponse`](protocol/remote-chat-protocol.md) comes back (text + `markup` + `mood` + navigation
+`response_action`s). **Anything** that answers that contract *is* Moxie's mind — a stock ChatScript clone,
+an LLM, a Claude agent, your own model. The heavy on-device ML (`libbo-brain`, vision, fusion) is
+[out-of-process behind the ZMQ bus](runtime/native-boundary.md), so a new brain **replaces it by speaking
+the bus/RemoteChat — never by reimplementing it**. Running a basic MQTT+REST backend is just the *floor*
+that gets the robot talking to you; the ceiling is a full **brain transplant**.
+
+**The seam where the ghost goes in:** [`remote-chat-protocol.md`](protocol/remote-chat-protocol.md) —
+minimum viable brain is `RemoteChatResponse{result:SUCCESS, output:{text, markup}}` and Moxie speaks it;
+a fuller brain sets mood, drives activities (`launch`/`exit`/`execute`), moderates input, and streams.
+
+What the robot expects that backend/brain to provide:
 
 | Piece | Doc | Notes |
 |---|---|---|
@@ -81,8 +95,10 @@ What the robot expects a backend to provide:
 | Hearing & seeing | [`perception-pipeline.md`](runtime/perception-pipeline.md) | STT in (Deepgram), TTS out (CloudTTS audio+marks), faces/people/QR events. |
 | Phone-app API | [`rest-api.md`](phone/rest-api.md) · [`pairing-and-robot.md`](phone/pairing-and-robot.md) | The parent-app surface. |
 
-- **Do it:** implement the above in [`../../server/`](../../server/) + [`../../mqtt/`](../../mqtt/);
-  point the robot at it with an `endpoint_update` QR. OpenMoxie is a working reference.
+- **Do it:** implement the transport in [`../../server/`](../../server/) + [`../../mqtt/`](../../mqtt/),
+  then put your AI behind the [`RemoteChat`](protocol/remote-chat-protocol.md) seam; point the robot at it
+  with an `endpoint_update` QR. OpenMoxie is a working reference for the *floor* (a compatible server);
+  the *ceiling* is any brain you want wearing Moxie's body.
 
 ## ③ Custom software / firmware on the robot
 

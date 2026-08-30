@@ -124,6 +124,24 @@ ok(html.includes("docs-bundle/"), "docs.html must fetch docs from docs-bundle/")
   }
 }
 
+
+// ---- README-hierarchy guard: no docs subfolder becomes a junk pile ----
+// Every directory under docs/ that holds >=2 content .md files must carry a README.md
+// index, so the tree stays navigable through a chain of READMEs (session-loop rule).
+{
+  const docsRoot = join(repo, "docs");
+  const checkDir = (dir) => {
+    const entries = readdirSync(dir).map(n => ({ n, st: statSync(join(dir, n)) }));
+    const mds = entries.filter(e => e.st.isFile() && e.n.endsWith(".md") && e.n !== "README.md");
+    if (mds.length >= 2) {
+      const rel = dir.slice(repo.length + 1).replace(/\\/g, "/");
+      ok(existsSync(join(dir, "README.md")), `${rel}/ has ${mds.length} docs but no README.md (README-hierarchy rule)`);
+    }
+    for (const e of entries) if (e.st.isDirectory()) checkDir(join(dir, e.n));
+  };
+  if (existsSync(docsRoot)) checkDir(docsRoot);
+}
+
 // ---- report ----
 if (fails.length) {
   console.log("❌ docs tests FAILED:");

@@ -1,5 +1,5 @@
 {
- "generated": "docs-efe989308137",
+ "generated": "docs-273fb5d46f2d",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -257,6 +257,14 @@
     "Worth watching (partial/intermittent, 20–50% rate)",
     "Everything tried (ranked by reaction rate)"
    ]
+  },
+  {
+   "path": "design/README.md",
+   "title": "Design",
+   "section": "design",
+   "bytes": 250,
+   "mermaid": 0,
+   "headings": []
   },
   {
    "path": "design/style-guide.md",
@@ -517,26 +525,65 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 15895,
+   "bytes": 16465,
    "mermaid": 1,
    "headings": [
-    "Phone side — the parent app (`phone/`)",
-    "Protocol — the robot↔server & on-device wire (`protocol/`)",
-    "Runtime — the on-device brain, behavior & face engine (`runtime/`)",
-    "Firmware — the OS image, boot, security & flashing (`firmware/`)",
-    "Hardware — the physical board & teardown (`hardware/`)",
+    "Phone side — the parent app ([`phone/`](phone/README.md))",
+    "Protocol — the robot↔server & on-device wire ([`protocol/`](protocol/README.md))",
+    "Runtime — the on-device brain, behavior & face engine ([`runtime/`](runtime/README.md))",
+    "Firmware — the OS image, boot, security & flashing ([`firmware/`](firmware/README.md))",
+    "Hardware — the physical board & teardown ([`hardware/`](hardware/README.md))",
     "External research"
+   ]
+  },
+  {
+   "path": "reverse-engineering/protocol/remote-chat-protocol.md",
+   "title": "RemoteChat — the robot ↔ brain conversation protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 9971,
+   "mermaid": 1,
+   "headings": [
+    "One turn",
+    "The request — `RemoteChatRequest` (delta over cloud-protocol)",
+    "The response — `RemoteChatResponse`",
+    "RemoteChatOutput` — the spoken turn",
+    "RemoteChatAction` — the brain drives navigation",
+    "RemoteChatInput` — the brain's read of the child",
+    "Taxonomies",
+    "RemoteChatMetrics` — conversation-quality analytics",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/native-boundary.md",
+   "title": "The native boundary — how the managed brain reaches native code (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 10729,
+   "mermaid": 1,
+   "headings": [
+    "Three mechanisms",
+    "1. In-process native — `[DllImport]`",
+    "liblizzerface.so` — the MCU control C API",
+    "librobinface.so` — the physical LED-face driver",
+    "The rest",
+    "2. JNI — `AndroidJava*` (managed → Java/Android)",
+    "3. Out-of-process modules — the ZMQ bus",
+    "Native symbol tables (`nm -D` on the shipped `.so`s)",
+    "liblizzerface.so` — the full MCU export set (20 functions)",
+    "librobinface.so` — the LED face is **I²C + GPIO**",
+    "libbo-dispatch.so` — the ZMQ bus broker (8.6 MB)",
+    "What this means for the three goals"
    ]
   },
   {
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 9128,
+   "bytes": 9509,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
-    "Goal ② — Client/server revival (self-hosted backend)",
+    "Goal ② — Put any AI inside Moxie (the *ghost in the shell*)",
     "Goal ③ — Revive old pre-801 robots without disassembly",
     "Open items (need a bench unit or an external artifact)"
    ]
@@ -596,18 +643,87 @@
   },
   {
    "path": "reverse-engineering/FIELD-GUIDE.md",
-   "title": "Moxie field guide — revive it, run it, rebuild it",
+   "title": "Moxie field guide — revive it, re-brain it, rebuild it",
    "section": "reverse-engineering",
-   "bytes": 7718,
+   "bytes": 9172,
    "mermaid": 1,
    "headings": [
     "The system at a glance",
     "Scope: the entire machine, end to end",
     "① Revive an old robot",
-    "② Run your own server (client/server revival)",
+    "② Put your own AI inside Moxie — the *ghost in the shell*",
     "③ Custom software / firmware on the robot",
     "The toolkit"
    ]
+  },
+  {
+   "path": "reverse-engineering/firmware/README.md",
+   "title": "Firmware — the OS image, boot, security & flashing",
+   "section": "reverse-engineering",
+   "bytes": 2506,
+   "mermaid": 0,
+   "headings": []
+  },
+  {
+   "path": "reverse-engineering/firmware/manifests/README.md",
+   "title": "Firmware manifests (v3.6.4-Zephyr / OTA v24.10.803)",
+   "section": "reverse-engineering",
+   "bytes": 1111,
+   "mermaid": 0,
+   "headings": []
+  },
+  {
+   "path": "reverse-engineering/hardware/README.md",
+   "title": "Hardware — the physical board & teardown",
+   "section": "reverse-engineering",
+   "bytes": 1010,
+   "mermaid": 0,
+   "headings": []
+  },
+  {
+   "path": "reverse-engineering/phone/README.md",
+   "title": "Phone side — the parent app",
+   "section": "reverse-engineering",
+   "bytes": 868,
+   "mermaid": 0,
+   "headings": []
+  },
+  {
+   "path": "reverse-engineering/phone/keys/README.md",
+   "title": "Recovered public keys",
+   "section": "reverse-engineering",
+   "bytes": 789,
+   "mermaid": 0,
+   "headings": []
+  },
+  {
+   "path": "reverse-engineering/protocol/README.md",
+   "title": "Protocol — the robot↔server & on-device wire",
+   "section": "reverse-engineering",
+   "bytes": 4988,
+   "mermaid": 0,
+   "headings": []
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/README.md",
+   "title": "Recovered protobuf schemas",
+   "section": "reverse-engineering",
+   "bytes": 3232,
+   "mermaid": 0,
+   "headings": [
+    "Provenance",
+    "Layout (`embodied.*`)",
+    "Cross-validation",
+    "Caveats"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/README.md",
+   "title": "Runtime — the on-device brain, behavior & face engine",
+   "section": "reverse-engineering",
+   "bytes": 5024,
+   "mermaid": 0,
+   "headings": []
   },
   {
    "path": "reverse-engineering/phone/rest-api.md",
@@ -795,24 +911,6 @@
     "3. STT — Deepgram over WebSocket",
     "The chat request/response envelope",
     "Minimum viable backend (for revival)"
-   ]
-  },
-  {
-   "path": "reverse-engineering/protocol/remote-chat-protocol.md",
-   "title": "RemoteChat — the robot ↔ brain conversation protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 9971,
-   "mermaid": 1,
-   "headings": [
-    "One turn",
-    "The request — `RemoteChatRequest` (delta over cloud-protocol)",
-    "The response — `RemoteChatResponse`",
-    "RemoteChatOutput` — the spoken turn",
-    "RemoteChatAction` — the brain drives navigation",
-    "RemoteChatInput` — the brain's read of the child",
-    "Taxonomies",
-    "RemoteChatMetrics` — conversation-quality analytics",
-    "What this means for the three goals"
    ]
   },
   {
@@ -1105,27 +1203,6 @@
     "The outputs — `RobotResourceFlags`",
     "The priority ladder — `RobotTaskPriority`",
     "Worked example — Moxie greets a child",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/runtime/native-boundary.md",
-   "title": "The native boundary — how the managed brain reaches native code (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 10729,
-   "mermaid": 1,
-   "headings": [
-    "Three mechanisms",
-    "1. In-process native — `[DllImport]`",
-    "liblizzerface.so` — the MCU control C API",
-    "librobinface.so` — the physical LED-face driver",
-    "The rest",
-    "2. JNI — `AndroidJava*` (managed → Java/Android)",
-    "3. Out-of-process modules — the ZMQ bus",
-    "Native symbol tables (`nm -D` on the shipped `.so`s)",
-    "liblizzerface.so` — the full MCU export set (20 functions)",
-    "librobinface.so` — the LED face is **I²C + GPIO**",
-    "libbo-dispatch.so` — the ZMQ bus broker (8.6 MB)",
     "What this means for the three goals"
    ]
   },
@@ -1572,35 +1649,6 @@
     "Community revival projects",
     "Press / context",
     "What external work resolves vs. what still needs our bench"
-   ]
-  },
-  {
-   "path": "reverse-engineering/firmware/manifests/README.md",
-   "title": "Firmware manifests (v3.6.4-Zephyr / OTA v24.10.803)",
-   "section": "reverse-engineering",
-   "bytes": 1111,
-   "mermaid": 0,
-   "headings": []
-  },
-  {
-   "path": "reverse-engineering/phone/keys/README.md",
-   "title": "Recovered public keys",
-   "section": "reverse-engineering",
-   "bytes": 789,
-   "mermaid": 0,
-   "headings": []
-  },
-  {
-   "path": "reverse-engineering/protocol/recovered-proto/README.md",
-   "title": "Recovered protobuf schemas",
-   "section": "reverse-engineering",
-   "bytes": 3232,
-   "mermaid": 0,
-   "headings": [
-    "Provenance",
-    "Layout (`embodied.*`)",
-    "Cross-validation",
-    "Caveats"
    ]
   }
  ]
