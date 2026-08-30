@@ -16,9 +16,17 @@ Specialists you can delegate to.
 
 ## Skills (`skills/`)
 Task recipes Claude can invoke by name.
+
+**For owners / developers using Moxie:**
 - **`generate-pairing-qr`** — make a Wi-Fi pairing QR from the CLI or server.
 - **`factory-reset-moxie`** — unpair or factory-reset a paired robot.
 - **`find-moxie-on-lan`** — locate the robot's IP after it joins Wi-Fi.
+
+**For contributors extending the reverse-engineering** (codified from the long deconstruction — the
+techniques + gotchas that saved the most time):
+- **`reversing-moxie-firmware`** — the RE loop: pick the next unexplored thread, decompile, write clean-room-complete `v24.10.803`-stamped findings. The "named-but-not-enumerated" and clean-room-sufficiency lenses.
+- **`decompiling-native-libs`** — the escalation ladder for native `.so` libs (`nm`/`strings` → capstone → **PyGhidra** on a JRE-only host) and Unity assets (UnityPy), with the string-ref + project-lock gotchas that cost real time.
+- **`publishing-moxie-docs`** — rebuild the static docs-explorer bundle and run every guard (links/anchors, consistency, mermaid, headless explorer) so the doc tree stays consistent top-to-bottom.
 
 ## How they stay accurate
 Every agent and skill points at the **source-of-truth docs** in this repo (`docs/reverse-engineering/`,
