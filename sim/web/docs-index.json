@@ -1,5 +1,5 @@
 {
- "generated": "c332d0d-dirty",
+ "generated": "4f9663a-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -25,7 +25,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap — end-to-end Moxie revival",
    "section": "_root",
-   "bytes": 7121,
+   "bytes": 7224,
    "mermaid": 0,
    "headings": [
     "Phase 0 — Reverse engineering  ✅",
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 5710,
+   "bytes": 5838,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 7421,
+   "bytes": 7763,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -632,6 +632,22 @@
     "Behaviour trees — `Bht_*` (hardcoded in `bo-android`)",
     "Perception side — detected human emotion (`Face.proto`)",
     "Toolkit — build marks programmatically"
+   ]
+  },
+  {
+   "path": "reverse-engineering/behavior-tree-engine.md",
+   "title": "Behavior-tree engine — the decision layer (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 10006,
+   "mermaid": 1,
+   "headings": [
+    "TL;DR",
+    "The engine — NodeCanvas",
+    "Behaviour-tree node taxonomy (authoritative descriptions from the binary)",
+    "The embodied `Robot*` layer",
+    "The 45 named behavior trees (`Bht_*`)",
+    "DialogueTrees — scripted conversation",
+    "What this means for the three goals"
    ]
   },
   {
