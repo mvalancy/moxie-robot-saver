@@ -1,5 +1,5 @@
 {
- "generated": "1d0985d-dirty",
+ "generated": "8737ae1-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 5580,
+   "bytes": 5710,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 7129,
+   "bytes": 7421,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -591,6 +591,27 @@
     "L5 — Hardware topology",
     "L6 — Actuation & sensing (the Lizard MCU)",
     "L7 — Boot chain & lifecycle"
+   ]
+  },
+  {
+   "path": "reverse-engineering/behavior-input-events.md",
+   "title": "Behavior input events — the robot's perception vocabulary (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 8923,
+   "mermaid": 1,
+   "headings": [
+    "How events reach the behavior tree — the Farmer pattern",
+    "The event vocabulary (163 types, by domain)",
+    "Physical / sensor (from the Lizard MCU)",
+    "Vision / people (from `libbo-vision` / fusion)",
+    "Audio & speech (percepts + playback)",
+    "STT / TTS",
+    "Chat / conversation",
+    "Behavior-tree control & turn-taking",
+    "System / power / network",
+    "Timers, assets, logging, debug",
+    "The bus-serializable subset — the external contract (24 events)",
+    "What this means for the three goals"
    ]
   },
   {

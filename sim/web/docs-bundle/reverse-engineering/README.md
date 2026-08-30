@@ -63,6 +63,7 @@ flowchart TB
 - [`hal-and-drivers.md`](hal-and-drivers.md) — the **vendor HAL set** (all stock — no embodied HAL), in-tree kernel drivers, and the **co-processor firmware blobs**: the two XMOS voice-DSP images (`xmosdfu.bin` + a VAD variant, with hashes) and the BCM4339 radio.
 - [`network-trust.md`](network-trust.md) — the TLS trust model: **CA-store validation, no pinning**; what cert a self-hosted server needs, and the precise pre-801 block.
 - [`behavior-markup.md`](behavior-markup.md) — the inline `<mark name="cmd:…">` command language (24 verbs) a server uses to make Moxie **move, emote, and play audio while speaking**.
+- [`behavior-input-events.md`](behavior-input-events.md) — the **input contract**: the 163 `InputEvent` types (sensors, vision, audio, speech, chat, system) that drive the behavior tree via the Farmer→`InputEngine` bus, and the 24 that are proto-serializable (the ZMQ external contract).
 - [`content-and-conversation.md`](content-and-conversation.md) — the dialog engines (ChatScript + LLM), the **content-module format**, and the `volley`/`session` hooks a server fills in.
 - [`perception-pipeline.md`](perception-pipeline.md) — the **audio** (wake-word → XMOS → Deepgram STT → CloudTTS) and **vision** (faces/people/QR) pipelines a server sits in the middle of.
 - [`qr-commands.md`](qr-commands.md) — the **complete QR grammar** the robot scans (pairing / VPN / debug-factory commands), read from `bo-wifi`.
