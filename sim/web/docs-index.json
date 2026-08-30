@@ -1,5 +1,5 @@
 {
- "generated": "docs-1df41355c04a",
+ "generated": "docs-ddfacf9cfc2c",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1302,8 +1302,8 @@
    "path": "reverse-engineering/runtime/perception-pipeline.md",
    "title": "Perception pipeline — audio & vision",
    "section": "reverse-engineering",
-   "bytes": 20691,
-   "mermaid": 1,
+   "bytes": 23574,
+   "mermaid": 2,
    "headings": [
     "Audio: hear → understand → speak",
     "Input side (`embodied.perception.audio`)",
@@ -1314,6 +1314,7 @@
     "Face recognition & enrollment data model",
     "Camera-driven activities (content activates these)",
     "XMOS firmware (DFU)",
+    "The update chain — three layers (`v24.10.803`)",
     "Shipped DSP images (`xmosdfu.apk`) — decode the naming",
     "The three embedded processors (firmware map)",
     "For custom firmware (goal #1)"

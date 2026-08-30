@@ -260,17 +260,56 @@ wake-word) — is a **third embedded processor** with its own firmware, updated 
 | Active image | **`/vendor/etc/firmware/xmosdfu.bin`** (and `xmosdfu-<variant>.bin`) — the deployed DSP firmware |
 | Trigger | `bo-android`'s **`BoXmosWatchdog`** (`isXmosUpdateRequired`, "Checking for XMOS Update"); gated by `FEA_XMOS_WATCHDOG` and XMOS readiness at boot ([`boot-and-launcher.md`](../firmware/boot-and-launcher.md)) |
 
+### The update chain — three layers (`v24.10.803`)
+
+Reflashing the DSP is a **three-app/-thread chain**, not one call — decompiled from `bo-android`'s
+`me.embodied.services.XMOSDFU` + the standalone `me.embodied.xmosdfu` app:
+
+```mermaid
+flowchart LR
+  wd["BoXmosWatchdog<br/>(isXmosUpdateRequired)"] --> orch
+  orch["XMOSDFU service (bo-android)<br/>variant-select · version-gate"] -->|"bind + EXTRA_FW_PATH"| svc
+  svc["ServiceDFU (me.embodied.xmosdfu)<br/>Messenger: flash + progress"] --> dfu
+  dfu["DFU thread<br/>find XMOS (VID 0x20B1) → native"] --> nat["JNI: Configure · Flash · Validate<br/>(libusb control transfers)"]
+```
+
+1. **`XMOSDFU` service (in `bo-android`)** — *orchestration*. Picks the image from the **`xmos_variant`**
+   setting → `/vendor/etc/firmware/xmosdfu-<variant>.bin` (+ `xmosdfu-<variant>_version.txt`), falling
+   back to plain `xmosdfu.bin`. **Version-gates**: it reads the `*_version.txt`, compares to the
+   SharedPreference `xmos_version`, and flashes **only if they differ** (a variant's version is encoded
+   `firstChar*100 + baseVersion`). It then `bindService`s to the DFU app, passing the chosen path as
+   `EXTRA_FW_PATH`/`fwpath`, and polls progress on a timer.
+2. **`ServiceDFU` (in `me.embodied.xmosdfu`)** — the *DFU driver service*, reached over **Messenger IPC**
+   (`ComponentName("me.embodied.xmosdfu", "…ServiceDFU")`). On `Flash(fwpath)` it spawns a `DFU` thread
+   and exposes `GetProgress()` + a `PASS`/`FAIL` state back to the orchestrator.
+3. **`DFU` thread** — finds the XMOS by **USB vendor id `0x20B1` (8369, XMOS Ltd)** (`USB.java`), then runs
+   **`Setup → Flash → Validate`** through three **native JNI** methods — `Configure(int)`, `Flash(int,
+   path)`, `Validate(int, path)` — which are the actual [libusb control transfers](#xmos-firmware-dfu)
+   (search 10 s, reset 10 s, 1 KB blocks). So the Java is discovery + orchestration; the DFU wire protocol
+   is in native code.
+
+**For custom firmware:** the DSP is reflashable entirely from Android userspace over USB — drop a
+`xmosdfu[-variant].bin` at `/vendor/etc/firmware/`, bump its `_version.txt`, and the watchdog re-flashes
+on next boot. No JTAG needed for the DSP.
+
 ### Shipped DSP images (`xmosdfu.apk`) — decode the naming
-`assets/fw/` + `res/raw/`: `p9_{16k,48k}_10_{10,30}_{cm,mic01,mic23}[_nowk].bin`,
-`wk_blue_p9_48k_10_10_cm.bin`. The fields:
+`res/raw/` ships **8** DSP images (`v24.10.803`): six `nowk`/mic builds at ~146 KB and two `wk`
+(wake-word) builds at ~426 KB — the wake model adds ~280 KB:
 
-- **p9 / blue** — board rev (Moxie P9 / MoxieBlue).
-- **16k / 48k** — audio sample rate.
-- **10_10 / 10_30** — DSP pipeline/geometry variant.
-- **cm** — combined/comms mic mode; **mic01 / mic23** — which mic pair is active.
-- **wk / nowk** — wake-word enabled / disabled.
+| Image | Size |
+|---|--:|
+| `p9_16k_10_10_cm_nowk.bin` · `p9_16k_10_30_mic01.bin` · `p9_16k_10_30_mic23.bin` | 146,432 |
+| `p9_48k_10_10_cm_nowk.bin` · `p9_48k_10_10_mic01.bin` | 147,200 |
+| `p9_48k_10_10_mic23.bin` | 147,456 |
+| **`wk_moxie_ep1_48k_10_10_cm.bin`** · **`wk_moxie_p9_48k_10_10_cm.bin`** | 425,728 |
 
-`test.wav` (3 MB) ships alongside for audio validation.
+The fields: **p9 / ep1** — the audio-board rev in XMOS's *own* naming (Moxie **P9** / **EP1**), which is
+**not** the Lizard `REVISION_D*` / MoxieBlue scheme in [hardware-map](../hardware/hardware-map.md) — and
+note the two `wk` builds are `wk_moxie_ep1`/`wk_moxie_p9`, not the `wk_blue` an earlier read assumed;
+**16k / 48k** — sample rate; **10_10 / 10_30** — DSP pipeline/geometry; **cm** —
+combined/comms mic mode, **mic01 / mic23** — active mic pair; **wk / nowk** — wake-word on/off (only the
+`wk` pair carries the on-chip wake model, and only at 48k/cm for the two board revs). `test.wav` (3 MB)
+ships alongside for audio validation.
 
 ## The three embedded processors (firmware map)
 
