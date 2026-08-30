@@ -2,7 +2,7 @@
 
 > A single view of what's documented for each goal, and the honest remaining gaps (mostly things that
 > need a **bench unit**). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9).
-> 30 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
+> 31 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
 
 ## Goal ① — Build custom firmware / run custom software on the robot
 
@@ -20,6 +20,7 @@
 | Behavior input-event vocabulary (163 events, Farmers→InputEngine) | ✅ | [behavior-input-events](behavior-input-events.md) |
 | Decision engine (NodeCanvas BT/FSM/Dialogue + Blackboard, 45 trees) | ✅ | [behavior-tree-engine](behavior-tree-engine.md) |
 | Gaze & attention (interest points, saccades, IK look-at) | ✅ | [gaze-and-attention](gaze-and-attention.md) |
+| Perception fusion: the tracked world-model of people (FusedPeople, world/screen coords, events) | ✅ + tool | [perception-fusion](perception-fusion.md) · `bus.py` |
 | Conversation turn-taking & engagement state machine | ✅ | [turn-taking](turn-taking.md) |
 | Hardware map: motors/sensors/LEDs/power rails | ✅ | [hardware-map](hardware-map.md) |
 | **3-processor firmware** (RK3288 OTA · Lizard STM32 · XMOS DSP) | ✅ incl. images | [hardware-map](hardware-map.md) · [perception-pipeline](perception-pipeline.md) |

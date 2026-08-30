@@ -80,6 +80,25 @@ def power(rail, enable=True):
     return (L.PowerEnableEventPB if enable else L.PowerDisableEventPB)(rail=rail)
 
 
+# ---- read side: the fused world-model of people (embodied.perception.fusion) ----
+def fused_people_classes():
+    """The perception-fusion message classes — the tracked world-model of people.
+    Subscribe to them to receive parsed events instead of raw bytes:
+        bus.subscribe(*fused_people_classes())
+        fn, msg = bus.recv()
+    Returns the roster snapshot (FusedPeoplePB) + the person-level event messages
+    (added/removed/moved, started/stopped speaking, saying/said, smiled, engaged/
+    disengaged). See docs/reverse-engineering/perception-fusion.md."""
+    from embodied.perception.fusion import FusedPeople_pb2 as F
+    return [
+        F.FusedPeoplePB,
+        F.FusedPersonAddedPB, F.FusedPersonRemovedPB, F.FusedPersonMovedPB,
+        F.FusedPersonStartedSpeakingPB, F.FusedPersonStoppedSpeakingPB,
+        F.FusedPersonSayingPB, F.FusedPersonSayingTimeoutPB, F.FusedPersonSaidPB,
+        F.FusedPersonSmiledPB, F.FusedPersonEngagedPB, F.FusedPersonDisengagedPB,
+    ]
+
+
 # ---- CLI: monitor the bus, or send a control message (needs pyzmq + a reachable robot) ----
 def _main(argv=None):
     import argparse

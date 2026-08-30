@@ -73,6 +73,7 @@ flowchart TB
 - [`content-and-conversation.md`](content-and-conversation.md) — the dialog engines (ChatScript + LLM), the **content-module format**, and the `volley`/`session` hooks a server fills in.
 - [`content-delivery.md`](content-delivery.md) — how content is **packaged & delivered**: dynamic Unity AssetBundles from 3 sources (baked/local/**remote**), the file manifest (hash+version), the load lifecycle, and the 24 per-type processors (behavior trees, audio, icons, bangles, customizations).
 - [`perception-pipeline.md`](perception-pipeline.md) — the **audio** (wake-word → XMOS → Deepgram STT → CloudTTS) and **vision** (faces/people/QR) pipelines a server sits in the middle of.
+- [`perception-fusion.md`](perception-fusion.md) — the **fused world-model of people**: `libbo-fusion.so` ties face + body + voice (DOA/VAD/STT) into one tracked `FusedPersonPB` with 3D **world** + **screen** coordinates, per-eye landmarks, head pose, engagement, and a **translation-aware** speech model, plus the person-level event stream (added/removed/moved, started/stopped-speaking with STT-vs-VAD source, smiled, engaged/disengaged) the brain reasons over.
 - [`qr-commands.md`](qr-commands.md) — the **complete QR grammar** the robot scans (pairing / VPN / debug-factory commands), read from `bo-wifi`.
 - [`hardware-map.md`](hardware-map.md) — motors, touch/switch/IMU sensors, LED face patterns, and power rails, from the MCU protobufs.
 - [`device-tree.md`](device-tree.md) — board-level hardware wiring from the DTB (I²C/UART/display/camera/PMIC map) + the decompiled `.dts`.

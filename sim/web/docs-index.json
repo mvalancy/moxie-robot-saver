@@ -1,5 +1,5 @@
 {
- "generated": "docs-11b67dc3f18d",
+ "generated": "docs-985cf78a92f8",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 6639,
+   "bytes": 6808,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 9747,
+   "bytes": 10213,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -1129,6 +1129,24 @@
     "Minimum replacement-server surface for pairing to *appear* to succeed in the app",
     "9. Gaps / things this APK cannot tell you",
     "10. File map (this subsystem)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/perception-fusion.md",
+   "title": "Perception fusion — the world-model of people (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 7611,
+   "mermaid": 1,
+   "headings": [
+    "Where it sits",
+    "The roster — `FusedPeoplePB`",
+    "FusedPersonPB` — one tracked human",
+    "FusedFacePB` — the face, in two coordinate frames",
+    "FusedBodyPB` — the body",
+    "FusedSpeechPB` — the voice, fused onto the person",
+    "The event stream",
+    "Coordinate frames",
+    "What this means for the three goals"
    ]
   },
   {
