@@ -1,5 +1,5 @@
 {
- "generated": "docs-cb4f51b165d3",
+ "generated": "docs-6a8aa5b98625",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 14910,
+   "bytes": 15439,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app (`phone/`)",
@@ -532,7 +532,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 8837,
+   "bytes": 8990,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 8803,
+   "bytes": 9078,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -1085,6 +1085,23 @@
     "The outputs — `RobotResourceFlags`",
     "The priority ladder — `RobotTaskPriority`",
     "Worked example — Moxie greets a child",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/native-boundary.md",
+   "title": "The native boundary — how the managed brain reaches native code (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 8016,
+   "mermaid": 1,
+   "headings": [
+    "Three mechanisms",
+    "1. In-process native — `[DllImport]`",
+    "liblizzerface.so` — the MCU control C API",
+    "librobinface.so` — the physical LED-face driver",
+    "The rest",
+    "2. JNI — `AndroidJava*` (managed → Java/Android)",
+    "3. Out-of-process modules — the ZMQ bus",
     "What this means for the three goals"
    ]
   },

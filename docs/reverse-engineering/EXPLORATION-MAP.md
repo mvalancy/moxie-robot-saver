@@ -58,7 +58,8 @@ The brain + MAINAPP. Major subsystems and their exploration status:
 | ✅ | The `EB*` game-task / GT-manager runtime scheduler (priority + resource arbitration) | [task-scheduler](runtime/task-scheduler.md) |
 | ✅ | Top-level action/activity arbiter (RobotAction scored selection) | [robot-actions](runtime/robot-actions.md) |
 | ✅ | Content-module runtime: on-device activity shells + server-side execution (no on-device Python) | [robot-actions](runtime/robot-actions.md), [content-and-conversation](runtime/content-and-conversation.md), [remote-chat-protocol](protocol/remote-chat-protocol.md) |
-| ⬜ | `libbo-brain` native ML models (sentiment/intent/NLU on-device) | format unmapped (low priority) |
+| ✅ | Native boundary: P/Invoke (lizzerface/robinface/cerevoice/devset) + JNI + out-of-process bus modules | [native-boundary](runtime/native-boundary.md) |
+| ⬜ | `libbo-brain` native ML model *weights* (MXNet/sentiment/intent) — but the modules are behind the bus (replaceable, not reimplemented), so low priority | context in [native-boundary](runtime/native-boundary.md) |
 
 **Next C# threads:** the on-device C# subsystems are now mapped end-to-end (decision → action arbiter →
 task scheduler → face engine). Remaining: `libbo-brain` native ML model formats (⬜ low priority) and the
