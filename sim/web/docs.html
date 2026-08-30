@@ -126,6 +126,15 @@
   article code{font-family:var(--font-mono);font-size:.85em;background:#121722;border:1px solid var(--hairline);border-radius:5px;padding:.1em .38em;color:var(--mint)}
   article pre{background:#0b0e15;border:1px solid var(--hairline);border-radius:12px;padding:16px 18px;overflow-x:auto;margin:1.1em 0}
   article pre code{background:none;border:none;padding:0;color:#c6d2e0;font-size:12.5px;line-height:1.6}
+  /* copy-to-clipboard button on code blocks (pinned to the block's top-right) */
+  .codewrap{position:relative}
+  .codewrap>pre{margin:1.1em 0}
+  .copy-btn{position:absolute;top:8px;right:8px;z-index:1;font-family:var(--font-mono);font-size:10px;letter-spacing:.05em;
+    color:var(--dim);background:#0a1016cc;border:1px solid var(--hairline2);border-radius:6px;padding:3px 9px;cursor:pointer;
+    opacity:0;transition:opacity .12s,color .12s,border-color .12s}
+  .codewrap:hover .copy-btn,.copy-btn:focus{opacity:.85}
+  .copy-btn:hover{color:var(--cyan);border-color:var(--cyan-dim);opacity:1}
+  .copy-btn.copied{color:var(--mint);border-color:var(--mint);opacity:1}
   article table{border-collapse:collapse;margin:1.2em 0;font-size:13.5px;display:block;overflow-x:auto;max-width:100%}
   article th,article td{border:1px solid var(--hairline);padding:8px 12px;text-align:left;vertical-align:top}
   article th{background:#121722;color:var(--text);white-space:nowrap}
@@ -422,6 +431,30 @@
     });
     return nav;
   }
+  // add a Copy button to each code block (skips Mermaid sources, which become diagrams)
+  function addCopyButtons(root){
+    Array.prototype.forEach.call(root.querySelectorAll("pre > code"),function(code){
+      if(/language-mermaid/.test(code.className||"")) return;
+      var pre=code.parentNode; if(!pre) return;
+      if(pre.parentNode&&pre.parentNode.classList&&pre.parentNode.classList.contains("codewrap")) return;
+      var wrap=document.createElement("div"); wrap.className="codewrap";
+      pre.parentNode.insertBefore(wrap, pre); wrap.appendChild(pre);
+      var btn=document.createElement("button"); btn.className="copy-btn"; btn.type="button";
+      btn.textContent="Copy"; btn.setAttribute("aria-label","Copy code to clipboard");
+      btn.onclick=function(){
+        var t=code.textContent;
+        function legacy(){ try{ var ta=document.createElement("textarea"); ta.value=t; ta.style.position="fixed"; ta.style.opacity="0";
+          document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }catch(e){} }
+        // async Clipboard API first; on unavailable/denied, fall back to execCommand
+        // (and always catch the rejection so it never logs a console error)
+        if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).catch(legacy); }
+        else legacy();
+        btn.textContent="Copied"; btn.classList.add("copied");
+        setTimeout(function(){ btn.textContent="Copy"; btn.classList.remove("copied"); },1200);
+      };
+      wrap.appendChild(btn);
+    });
+  }
   // add a copyable "#" permalink to each section heading (ids set by buildTOC)
   function addHeadingLinks(art){
     Array.prototype.forEach.call(art.querySelectorAll("h2[id], h3[id]"),function(h){
@@ -483,7 +516,7 @@
         wrap.appendChild(art); if(toc) wrap.appendChild(toc);
         elContent.appendChild(wrap);
         while(pg.firstChild) art.appendChild(pg.firstChild);
-        highlightCode(art);
+        highlightCode(art); addCopyButtons(art);
         if(toc) spyTOC(art, toc);
         // scroll target priority: search hit > cross-doc heading anchor > top
         var q=elQ.value.trim();

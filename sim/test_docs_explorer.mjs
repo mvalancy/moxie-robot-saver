@@ -177,6 +177,17 @@ try {
   ok(deep.scroll > 200, `section deep-link URL should scroll to the section (scroll ${Math.round(deep.scroll)})`);
   ok(deep.permalinks > 3, `section headings should have copyable permalinks (got ${deep.permalinks})`);
 
+  // 9) code blocks get a Copy button (and Mermaid sources don't)
+  const copyInfo = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll("article .codewrap .copy-btn")];
+    const onMermaid = document.querySelectorAll(".mermaid .copy-btn").length;
+    if (btns.length) { btns[0].click(); }
+    return { count: btns.length, label: btns[0] ? btns[0].textContent : "", onMermaid };
+  });
+  ok(copyInfo.count > 0, "code blocks should have a Copy button");
+  ok(copyInfo.label === "Copied", `clicking Copy should give feedback (got "${copyInfo.label}")`);
+  ok(copyInfo.onMermaid === 0, "Mermaid diagrams must not get a Copy button");
+
   ok(errs.length === 0, `console errors: ${errs.slice(0, 4).join(" | ")}`);
 } finally {
   await browser.close();
