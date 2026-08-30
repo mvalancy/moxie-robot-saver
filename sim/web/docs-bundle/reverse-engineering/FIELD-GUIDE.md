@@ -9,10 +9,10 @@ flowchart TB
     qr["QR to re-home / reset"] --> srv
   end
   subgraph G2["② Run YOUR server (client/server revival)"]
-    srv["local server:\nREST + MQTT + STT"] --> content["content modules\n+ behavior markup"]
+    srv["local server:<br/>REST + MQTT + STT"] --> content["content modules<br/>+ behavior markup"]
   end
   subgraph G3["③ Custom software / firmware ON the robot"]
-    bus["on-device ZMQ bus"] --> fw["custom firmware\n(RK3288 / AVB)"]
+    bus["on-device ZMQ bus"] --> fw["custom firmware<br/>(RK3288 / AVB)"]
   end
   G1 -.-> G2 -.-> G3
   classDef d fill:#e3eaf2,stroke:#607d8b,color:#263238;

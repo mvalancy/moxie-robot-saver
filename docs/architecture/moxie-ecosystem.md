@@ -14,15 +14,15 @@ ecosystem, not the deliverable itself.
 
 ```mermaid
 flowchart LR
-  mic["🎙️ mic (web/robot)"] --> stt["STT in\n(Whisper/Vosk → DeepgramResponse)"]
+  mic["🎙️ mic (web/robot)"] --> stt["STT in<br/>(Whisper/Vosk → DeepgramResponse)"]
   stt --> brain
   subgraph BE["🧠 Backend (mqtt/ + server/)"]
-    brain["MoxieApp: LLM agent + personality\n(LiteLLM / Ollama)"] --> markup["behavior markup\n(mood·gesture·icons)"]
-    brain --> tts["TTS out\n(Piper → audio)"]
+    brain["MoxieApp: LLM agent + personality<br/>(LiteLLM / Ollama)"] --> markup["behavior markup<br/>(mood·gesture·icons)"]
+    brain --> tts["TTS out<br/>(Piper → audio)"]
   end
   broker["📡 MQTT broker"]
   brain <--> broker
-  broker <-->|"same protocol"| sil["🖥️ SIL 3D Moxie\n(avatar + liveness)"]
+  broker <-->|"same protocol"| sil["🖥️ SIL 3D Moxie<br/>(avatar + liveness)"]
   broker <-->|"same protocol"| real["🤖 real re-homed Moxie"]
   classDef d fill:#0e0e14,stroke:#00f0ff,color:#e8edf5;
   class mic,stt,brain,markup,tts,broker,sil,real d;

@@ -17,14 +17,14 @@ systems **subscribe by event type**.
 ```mermaid
 flowchart LR
   subgraph farmers["Farmers (produce InputEvents)"]
-    lz["LizardFarmer\n(MCU: touch, IMU, switch,\nbattery, power, wakeup)"]
-    tm["TimerFarmer\n(TimerEvent)"]
-    uf["UnityFarmer\n(engine + everything off\nthe ZMQ bus: vision, audio,\nSTT/TTS, chat, system)"]
+    lz["LizardFarmer<br/>(MCU: touch, IMU, switch,<br/>battery, power, wakeup)"]
+    tm["TimerFarmer<br/>(TimerEvent)"]
+    uf["UnityFarmer<br/>(engine + everything off<br/>the ZMQ bus: vision, audio,<br/>STT/TTS, chat, system)"]
   end
   farmers -->|"farmInput() → _inputs[]"| harv["Farmer.harvest()"]
-  harv --> eng["InputEngine\n(IEBEventDispatcher&lt;InputEvent&gt;)"]
-  eng -->|"Subscribe&lt;T&gt;(node, handler)"| bt["Behavior-tree nodes\n+ managers (gaze, chat,\nattention, idle…)"]
-  bt -->|reacts| out["markup / motion / speech\n(behavior-markup.md)"]
+  harv --> eng["InputEngine<br/>(IEBEventDispatcher&lt;InputEvent&gt;)"]
+  eng -->|"Subscribe&lt;T&gt;(node, handler)"| bt["Behavior-tree nodes<br/>+ managers (gaze, chat,<br/>attention, idle…)"]
+  bt -->|reacts| out["markup / motion / speech<br/>(behavior-markup.md)"]
 ```
 
 - **`abstract class Farmer`** — holds `List<InputEvent> _inputs`; each frame `farmInput()` fills it and

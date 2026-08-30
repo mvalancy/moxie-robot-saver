@@ -39,14 +39,14 @@ A Moxie in setup mode is a QR reader. Reviving it is a short sequence of codes h
 sequenceDiagram
     participant You as 📱 You (web app)
     participant Moxie as 🤖 Moxie
-    participant Box as 🖥️ Your server
+    participant Server as 🖥️ Your server
     Note over Moxie: In pairing mode (QR reader)
     You->>Moxie: 1️⃣ Wi-Fi QR ("PA"+protobuf)
     Note over Moxie: joins your Wi-Fi ✅
     Moxie-->>You: waits for a 2nd, different QR
-    You->>Moxie: 2️⃣ Endpoint QR ({"debug":{"om"}})
-    Moxie->>Box: 3️⃣ MQTT connect (TLS :8883)
-    Box-->>Moxie: config + "paired"
+    You->>Moxie: 2️⃣ Endpoint QR (debug endpoint = OPEN_MOXIE)
+    Moxie->>Server: 3️⃣ MQTT connect (TLS :8883)
+    Server-->>Moxie: config + "paired"
     Note over Moxie: 🗣️ talks, via your local models
 ```
 

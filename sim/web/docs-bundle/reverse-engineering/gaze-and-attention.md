@@ -26,18 +26,18 @@
 ```mermaid
 flowchart LR
   subgraph perc["Perception (perception-pipeline.md)"]
-    faces["FacesEvent / PeopleEvent\n(vision)"]
-    doa["DOA — mic direction\n(XMOS array)"]
+    faces["FacesEvent / PeopleEvent<br/>(vision)"]
+    doa["DOA — mic direction<br/>(XMOS array)"]
   end
-  faces --> ip["Interest points\n{weight, id, location xyz}"]
+  faces --> ip["Interest points<br/>{weight, id, location xyz}"]
   doa --> ip
-  ip --> att["AttentionTarget\n(select by relevance)"]
-  att --> sel["GazeFaceSelector /\nGazeFaceSpotSelector\n(which face + spot)"]
-  sel --> calc["GazeFacingCalculator\n(target → yaw/pitch)"]
-  calc --> ik["EBAnimIKLookAtHandler\n(IK look-at) + saccades"]
-  ik --> motors["head (4) + body-yaw (5)\n+ projected eye pupils"]
-  ik --> pub["GazePublisher → GazeEvent\n(behavior-input-events.md)"]
-  bt["BT gaze nodes\n(enable / disable / manual target)"] -.aims/gates.-> att
+  ip --> att["AttentionTarget<br/>(select by relevance)"]
+  att --> sel["GazeFaceSelector /<br/>GazeFaceSpotSelector<br/>(which face + spot)"]
+  sel --> calc["GazeFacingCalculator<br/>(target → yaw/pitch)"]
+  calc --> ik["EBAnimIKLookAtHandler<br/>(IK look-at) + saccades"]
+  ik --> motors["head (4) + body-yaw (5)<br/>+ projected eye pupils"]
+  ik --> pub["GazePublisher → GazeEvent<br/>(behavior-input-events.md)"]
+  bt["BT gaze nodes<br/>(enable / disable / manual target)"] -.aims/gates.-> att
 ```
 
 ## The attention model

@@ -11,12 +11,12 @@
 
 ```mermaid
 flowchart LR
-  mic["mic array"] --> xmos["XMOS DSP\nAEC · beamform · VAD · DOA"]
-  xmos --> ww["wake-word\n(ACTION_WAKEWORD)"]
-  xmos --> stt["STT: Deepgram\nwss /v2/listen/stream"]
-  stt --> brain["brain\nRemoteChat"]
-  brain --> tts["CloudTTS\n(server renders) / local CereVoice"]
-  tts --> spk["speaker + TTSMarks\n(gestures/visemes)"]
+  mic["mic array"] --> xmos["XMOS DSP<br/>AEC · beamform · VAD · DOA"]
+  xmos --> ww["wake-word<br/>(ACTION_WAKEWORD)"]
+  xmos --> stt["STT: Deepgram<br/>wss /v2/listen/stream"]
+  stt --> brain["brain<br/>RemoteChat"]
+  brain --> tts["CloudTTS<br/>(server renders) / local CereVoice"]
+  tts --> spk["speaker + TTSMarks<br/>(gestures/visemes)"]
   classDef d fill:#e3eaf2,stroke:#607d8b,color:#263238;
   class mic,xmos,ww,stt,brain,tts,spk d;
 ```

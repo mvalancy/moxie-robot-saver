@@ -12,8 +12,8 @@
 ```mermaid
 flowchart TB
   user["user speech / event"] --> brain["bo-android brain"]
-  brain --> cs["on-device ChatScript\n(libchatscript.so) — LOCAL"]
-  brain --> remote["cloud LLM chat\n(RemoteChat) — REMOTE_CHAT"]
+  brain --> cs["on-device ChatScript<br/>(libchatscript.so) — LOCAL"]
+  brain --> remote["cloud LLM chat<br/>(RemoteChat) — REMOTE_CHAT"]
   cs & remote --> resp["ChatResponse + <mark cmd:...> markup"]
   resp --> body["speech + gestures/face/audio"]
   classDef d fill:#e3eaf2,stroke:#607d8b,color:#263238;

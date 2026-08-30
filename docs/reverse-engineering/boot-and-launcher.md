@@ -42,11 +42,13 @@ stateDiagram-v2
   STATE_STARTUP --> STATE_RUNNING: paired + online
   STATE_CONFIG --> STATE_RUNNING: paired via QR + online
   STATE_RUNNING --> STATE_CONFIG: lost internet on resume
-  STATE_RUNNING --> STATE_SUSPEND --> STATE_LIGHT_SLEEP
+  STATE_RUNNING --> STATE_SUSPEND: idle timeout
+  STATE_SUSPEND --> STATE_LIGHT_SLEEP
   STATE_RUNNING --> STATE_RECOVERY: user-data recovery
   STATE_RUNNING --> STATE_TELEBRAIN: telehealth session
   STATE_STARTUP --> STATE_SILENT_REBOOT: apply OTA
-  STATE_* --> STATE_SHUTDOWN
+  STATE_RUNNING --> STATE_SHUTDOWN: power off
+  note right of STATE_SHUTDOWN : reachable from any state
 ```
 
 | State | Components up | Meaning |

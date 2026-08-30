@@ -24,14 +24,14 @@
 
 ```mermaid
 flowchart LR
-  ev["InputEngine events\n(behavior-input-events.md)"] -->|"Condition tasks\n(Check*, RobotBT_Has*/Is*)"| bt
+  ev["InputEngine events<br/>(behavior-input-events.md)"] -->|"Condition tasks<br/>(Check*, RobotBT_Has*/Is*)"| bt
   subgraph bt["NodeCanvas graphs (RobotBehaviourTreeOwner)"]
-    logic["LOGIC tree\n(decide)"] --> anim["ANIMATION tree\n(express: Eyeseme, poses, sound)"]
-    bb[("Blackboard\nshared vars")] --- logic
+    logic["LOGIC tree<br/>(decide)"] --> anim["ANIMATION tree<br/>(express: Eyeseme, poses, sound)"]
+    bb[("Blackboard<br/>shared vars")] --- logic
     bb --- anim
   end
-  anim -->|"MarkUpNode → MarkUpGenerator"| mk["&lt;mark name='cmd:…'&gt;\n(behavior-markup.md)"]
-  dt["DialogueTrees\n(scripted conversation)"] -.-> bt
+  anim -->|"MarkUpNode → MarkUpGenerator"| mk["&lt;mark name='cmd:…'&gt;<br/>(behavior-markup.md)"]
+  dt["DialogueTrees<br/>(scripted conversation)"] -.-> bt
 ```
 
 ## The engine — NodeCanvas

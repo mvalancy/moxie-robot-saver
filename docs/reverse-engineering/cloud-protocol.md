@@ -11,10 +11,10 @@
 ```mermaid
 flowchart LR
   brain["bo-android brain"]
-  rest["REST: client-service-*-api.embodied.com\n(sessions, OTA, backups, chat)"]
-  mqtt["MQTT (Paho, mutual TLS)\nBRAIN_BASE_TOPIC/*"]
-  stt["STT: wss deepgram\n/v2/listen/stream"]
-  gcs["Google Cloud Storage\n(log/asset upload)"]
+  rest["REST: client-service-*-api.embodied.com<br/>(sessions, OTA, backups, chat)"]
+  mqtt["MQTT (Paho, mutual TLS)<br/>BRAIN_BASE_TOPIC/*"]
+  stt["STT: wss deepgram<br/>/v2/listen/stream"]
+  gcs["Google Cloud Storage<br/>(log/asset upload)"]
   brain --> rest
   brain <--> mqtt
   brain --> stt

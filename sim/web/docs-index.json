@@ -1,5 +1,5 @@
 {
- "generated": "7769a79-dirty",
+ "generated": "43cc9cb-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -67,7 +67,7 @@
    "path": "architecture/moxie-ecosystem.md",
    "title": "The Moxie ecosystem — master build plan (~1 week)",
    "section": "architecture",
-   "bytes": 6565,
+   "bytes": 6580,
    "mermaid": 1,
    "headings": [
     "The stack (one backend, two robots)",
@@ -151,7 +151,7 @@
    "path": "architecture/revival-path.md",
    "title": "The revival path",
    "section": "architecture",
-   "bytes": 4364,
+   "bytes": 4384,
    "mermaid": 2,
    "headings": [
     "1. Check the firmware gate first",
@@ -530,7 +530,7 @@
    "path": "reverse-engineering/FIELD-GUIDE.md",
    "title": "Moxie field guide — revive it, run it, rebuild it",
    "section": "reverse-engineering",
-   "bytes": 7499,
+   "bytes": 7508,
    "mermaid": 1,
    "headings": [
     "The system at a glance",
@@ -597,7 +597,7 @@
    "path": "reverse-engineering/behavior-input-events.md",
    "title": "Behavior input events — the robot's perception vocabulary (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 8923,
+   "bytes": 8953,
    "mermaid": 1,
    "headings": [
     "How events reach the behavior tree — the Farmer pattern",
@@ -638,7 +638,7 @@
    "path": "reverse-engineering/behavior-tree-engine.md",
    "title": "Behavior-tree engine — the decision layer (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 10006,
+   "bytes": 10027,
    "mermaid": 1,
    "headings": [
     "TL;DR",
@@ -654,7 +654,7 @@
    "path": "reverse-engineering/boot-and-launcher.md",
    "title": "Boot & lifecycle — the Launcher state machine",
    "section": "reverse-engineering",
-   "bytes": 8919,
+   "bytes": 9024,
    "mermaid": 1,
    "headings": [
     "Components (`BOComponent`)",
@@ -670,7 +670,7 @@
    "path": "reverse-engineering/cloud-protocol.md",
    "title": "Robot ↔ cloud protocol — REST, MQTT, STT",
    "section": "reverse-engineering",
-   "bytes": 17714,
+   "bytes": 17726,
    "mermaid": 1,
    "headings": [
     "Three channels",
@@ -693,7 +693,7 @@
    "path": "reverse-engineering/content-and-conversation.md",
    "title": "Content & conversation — ChatScript, content modules, the volley API",
    "section": "reverse-engineering",
-   "bytes": 23613,
+   "bytes": 23619,
    "mermaid": 1,
    "headings": [
     "Two dialog engines",
@@ -932,7 +932,7 @@
    "path": "reverse-engineering/gaze-and-attention.md",
    "title": "Gaze & attention — how Moxie decides where to look (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 6939,
+   "bytes": 6972,
    "mermaid": 1,
    "headings": [
     "TL;DR",
@@ -1100,7 +1100,7 @@
    "path": "reverse-engineering/perception-pipeline.md",
    "title": "Perception pipeline — audio & vision",
    "section": "reverse-engineering",
-   "bytes": 15454,
+   "bytes": 15472,
    "mermaid": 1,
    "headings": [
     "Audio: hear → understand → speak",
@@ -1259,7 +1259,7 @@
    "path": "reverse-engineering/robot-ipc-protocol.md",
    "title": "On-robot IPC — the ZeroMQ + protobuf message bus",
    "section": "reverse-engineering",
-   "bytes": 7810,
+   "bytes": 7831,
    "mermaid": 1,
    "headings": [
     "Where this came from",

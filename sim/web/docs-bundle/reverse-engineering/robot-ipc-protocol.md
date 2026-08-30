@@ -22,13 +22,13 @@ the shipped binaries, not Embodied source.
 ```mermaid
 flowchart LR
   subgraph robot["Moxie (RK3288, Android 9)"]
-    lizard["'Lizard' MCU\nmotors · touch · IMU · LEDs · battery"]
-    fw["bo-firmwareUpdate\n(MCU/XMOS DFU over UART)"]
-    audio["libbo-audio\nXMOS DSP · STT · CereVoice TTS"]
-    vision["libbo-vision\nfaces · people · QR"]
-    brain["libbo-brain / dispatch\nChatScript · ML · behavior tree"]
-    unity["Unity face\nDLP projector render"]
-    wifi["bo-wifi\nsetup · pairing · QR"]
+    lizard["'Lizard' MCU<br/>motors · touch · IMU · LEDs · battery"]
+    fw["bo-firmwareUpdate<br/>(MCU/XMOS DFU over UART)"]
+    audio["libbo-audio<br/>XMOS DSP · STT · CereVoice TTS"]
+    vision["libbo-vision<br/>faces · people · QR"]
+    brain["libbo-brain / dispatch<br/>ChatScript · ML · behavior tree"]
+    unity["Unity face<br/>DLP projector render"]
+    wifi["bo-wifi<br/>setup · pairing · QR"]
   end
   cloud["☁️ cloud (MQTT)"]
   lizard <-- UART/proto --> fw
