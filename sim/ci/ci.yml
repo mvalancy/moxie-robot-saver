@@ -20,6 +20,8 @@ jobs:
         run: |
           pip install protobuf grpcio-tools >/dev/null
           python3 tools/robot-toolkit/moxie_toolkit/validate_protos.py || true
+      - name: Toolkit protocol round-trip tests (cloud.py / bus.py encoders vs the recovered protos)
+        run: python3 tools/robot-toolkit/run_tests.py
 
   sil:
     name: SIL — virtual robot ⇄ server round-trip
