@@ -82,6 +82,42 @@
       case "Bht_Vg_hmm_thinking":
         m.setFace("thinking"); set(2, 24000); set(3, 8000); setTimeout(armsHome, 1800); break;
       case "Bht_Bangle_on_off": set(1, 28000); setTimeout(armsHome, 900); break;
+
+      // --- authoritative Bht_* trees (docs/reverse-engineering/behavior-tree-engine.md) ---
+      case "Bht_Gesture_Greet": {                // friendly wave — arm up, hand wiggles
+        m.setFace("happy"); set(0, 30000);
+        let n = 5, out = true;
+        const w = () => { if (n-- <= 0) return armsHome(); set(1, out ? 26000 : 12000); out = !out; setTimeout(w, 240); };
+        w(); break;
+      }
+      case "Bht_Spin_360":                       // playful whole-body spin (yaw sweep both ways)
+        set(5, 31000); setTimeout(() => set(5, 3000), 650); setTimeout(() => set(5, C), 1350); break;
+      case "Bht_Robot_Pickup":                   // startled: arms up, surprised, head up
+        m.setFace("surprised"); set(0, 27000); set(2, 27000); set(4, 26000); setTimeout(home, 2000); break;
+      case "Bht_Robot_Putdown":                  // settle back to rest
+        m.setFace("neutral"); set(4, 12000); setTimeout(home, 1400); break;
+      case "Bht_Demo_Wake_Up":                   // wake: from droop → alert + happy
+        m.setFace("sleep"); set(0, 4000); set(2, 4000); set(4, 5000);
+        setTimeout(() => { m.setFace("happy"); home(); }, 1200); break;
+      case "Bht_Search":                         // scan the room (yaw + head sweep)
+        m.setFace("curious"); set(5, 27000); set(4, 22000);
+        setTimeout(() => set(5, 7000), 900); setTimeout(home, 2000); break;
+      case "Bht_Sign_off":                       // goodbye wave
+        return behaviourTree("Bht_Gesture_Greet");
+      case "Bht_Idle_Listening":                 // attentive lean-in + head tilt
+        set(6, 20000); set(4, 20000); setTimeout(home, 1600); break;
+      case "Bht_Talking_With_Gestures":
+      case "Bht_Talking_Poses":
+      case "Bht_Vocal_Gestures":                 // talking arm gestures (alternating)
+        set(2, 22000); set(3, 17000);
+        setTimeout(() => { armsHome(); set(0, 22000); set(1, 15000); }, 550);
+        setTimeout(armsHome, 1500); break;
+      case "Bht_Sleeping_Anim":
+      case "Bht_System_Suspend":                 // go to sleep — droop + eyes shut
+        m.setFace("sleep"); set(0, 3000); set(2, 3000); set(4, 4000); setTimeout(home, 2500); break;
+      case "Bht_System_Resume":                  // wake back up
+        m.setFace("neutral"); home(); break;
+
       default: break;
     }
   }
