@@ -34,6 +34,7 @@ flowchart LR
     `original_speech`/`original_language` (translation), `event_id`, start/end timestamps.
   - **Two STT engines** (`STT_IMPL` / `LOCAL_STT`, [`settings-schema.md`](../firmware/settings-schema.md)):
     - **Cloud (primary):** Deepgram over WebSocket (above).
+      A legacy **Google Speech** path also exists (`GoogleAccount{project_id}` selects the GCP project); Deepgram is the shipping primary.
     - **ASR biasing** — content boosts recognition accuracy by sending expected terms:
       `PhraseHints{module, hints[]}` (per-activity phrases), `NameHints{names[]}` (the child's/family
       names), `NativeHints`. A revival server can pass these to its STT (Deepgram keyword boosting /
@@ -75,6 +76,47 @@ So a self-hosted STT (Whisper, Vosk, …) just needs to emit `{transcript, confi
 speech_final}` in this shape — `speech_final=true` is the endpoint that ends the child's turn. Timing
 telemetry rides alongside in **`ASRAnalytics`** (`detected_speech_start/end`, `asr_first_response`,
 `total/max/min_send_time`, `final_result_count`, `error_message[]`) — a server can populate or omit it.
+
+#### The internal STT bus interface (`zmqSTT`) — how any engine plugs in
+
+The Deepgram WebSocket above is the *external* (cloud) STT path. On-device, the audio module talks to
+**whichever** STT engine (the Deepgram glue **or** local Kaldi) through one **bus abstraction** —
+`embodied.perception.audio.zmqSTT` — so a custom engine drops in behind a single request/response contract:
+
+```proto
+message zmqSTTRequest {
+  enum VADState { UNKNOWN=0; START_OF_SPEECH=1; SPEECH=2; END_OF_SPEECH=3; }
+  VADState vad;          // the XMOS VAD state for this chunk (frames the utterance)
+  bytes    audio_content;// the PCM chunk
+  string   uuid;         // the utterance id
+}
+message zmqSTTResponse {
+  enum ResponseType { PARTIAL=0; FINAL=1; }
+  ResponseType type;  string speech;  float confidence;  uint64 start_timestamp, end_timestamp;  string uuid;
+  uint32 error_code;  string error_message;
+  string language;  repeated string alternatives;                       // recognized + n-best
+  string original_language;  string original_speech;  repeated string original_alternatives;  // pre-translation
+  repeated float speaker_id;                                            // per-word speaker attribution
+}
+```
+
+The audio module streams **VAD-framed** chunks (`START_OF_SPEECH` → `SPEECH…` → `END_OF_SPEECH`) and the
+engine streams back `PARTIAL` then `FINAL` results — **translation-aware** (`original_*` carry the
+pre-translation text) and speaker-attributed (`speaker_id`), the same duality seen in
+[perception fusion](../protocol/perception-fusion.md#fusedspeechpb-the-voice-fused-onto-the-person).
+
+The engine's results are then republished to the brain as the STT **event stream**:
+
+| Event | Meaning |
+|---|---|
+| `STTReady` | the STT engine is up and listening |
+| `STTPartial` / `STTFinal { Speaker, speech, confidence, start/endTimestamp, event_id }` | interim / committed transcription, attributed to a `Speaker` (id + DOA) |
+| `SpeechStateChanged { bool state, Speaker }` | a speaker started/stopped talking |
+| `CutoffDetected { cutoff_duration, stt_uuid }` / `NonTargetCutoff` | a **barge-in** cut the current line (a non-target speaker for the latter) |
+
+**Revival relevance (goal ②).** Two places a server/engine plugs in: emit the **Deepgram-shaped**
+`DeepgramResponse` (above) to be a drop-in cloud STT, **or** implement the `zmqSTT` request/response to be
+a drop-in *on-device* engine (like Kaldi). Either way the brain consumes the same `STTFinal` event stream.
 
 ### Wake-word & VAD (fully on-device)
 

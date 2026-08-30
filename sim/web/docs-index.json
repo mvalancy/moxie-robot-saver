@@ -1,5 +1,5 @@
 {
- "generated": "docs-83399d31bac4",
+ "generated": "docs-f6a04780c6a3",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1179,7 +1179,7 @@
    "path": "reverse-engineering/runtime/perception-pipeline.md",
    "title": "Perception pipeline — audio & vision",
    "section": "reverse-engineering",
-   "bytes": 15651,
+   "bytes": 18286,
    "mermaid": 1,
    "headings": [
     "Audio: hear → understand → speak",

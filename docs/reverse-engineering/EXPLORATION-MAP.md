@@ -30,7 +30,7 @@ status (the count is a documented-by-name proxy; the status reflects real covera
 | 🟡 | `embodied.logging` (55) | 37/55 | [device-config-and-telemetry](protocol/device-config-and-telemetry.md), [cloud-protocol](protocol/cloud-protocol.md) — residue: `Cloud`/`CloudQuery` sub-messages (covered conceptually) |
 | ✅ | `embodied.lizzerface` (32) | 32/32 | [hardware-map](hardware/hardware-map.md) (+ the [native MCU C API](runtime/native-boundary.md)), [robot-ipc-protocol](protocol/robot-ipc-protocol.md) |
 | 🟡 | `embodied.perception.vision` (30) | 14/30 | [perception-pipeline](runtime/perception-pipeline.md) — concepts fully covered; not every message named |
-| 🟡 | `embodied.perception.audio` (22) | 14/22 | [perception-pipeline](runtime/perception-pipeline.md) — residue: `STT`/`Interrupt`/`zmqSTT` sub-messages |
+| ✅ | `embodied.perception.audio` (22) | 22/22 | [perception-pipeline](runtime/perception-pipeline.md) (incl. the `zmqSTT` bus interface + STT event stream) |
 | 🟡 | `embodied.testing` (4) · `embodied.launcher` (3) | 2/4 · 2/3 | [factory-provisioning](firmware/factory-provisioning.md) · [boot-and-launcher](firmware/boot-and-launcher.md) |
 | ⛔ | `embodied.playspace` (23) | 8/23 | peripheral to the 3 goals + Graphling-sensitive — **deliberately deferred** |
 
