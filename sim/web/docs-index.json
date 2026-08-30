@@ -1,5 +1,5 @@
 {
- "generated": "docs-2855a557b938",
+ "generated": "docs-1c88508e07a4",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -595,7 +595,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 13136,
+   "bytes": 13152,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -1358,7 +1358,7 @@
    "path": "reverse-engineering/runtime/unity-face-animation.md",
    "title": "The face-animation engine — how Moxie's face actually renders (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 15459,
+   "bytes": 15816,
    "mermaid": 1,
    "headings": [
     "Architecture",
@@ -1535,7 +1535,7 @@
    "path": "reverse-engineering/firmware/unity-assets.md",
    "title": "Unity assets & boot animation",
    "section": "reverse-engineering",
-   "bytes": 4539,
+   "bytes": 5372,
    "mermaid": 0,
    "headings": [
     "Engine & layout",

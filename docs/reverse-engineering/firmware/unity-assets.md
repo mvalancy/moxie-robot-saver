@@ -35,7 +35,12 @@ To inspect: reassemble `cat sharedassets1.assets.split{0..59} > sharedassets1.as
   rendered character. The actual geometry (the 5 `Mesh` objects): **`rig3_faceMesh01`** (the face),
   **`rig3_bodyMesh01`** (the body), **`visorMesh_KaruGeo_01_karuRig_A01`** (the visor/face-screen), and
   `cup_geo_Capsule` / `lid_geo_Capsule` (capsule prop). The `rig3`/`karuRig` naming is the animation rig
-  the face expressions drive.
+  the face expressions drive. **`rig3_faceMesh01` carries exactly 10 blendshapes** (UnityPy, `v24.10.803`),
+  all under the `karuBlendShapes.` namespace: `rig3_bs_{L,R}_lowerLid01` · `…_upperLid01` (the 4 blink
+  lids), `…_cheekAir01` (cheek puff, ×2), `…_happyEyes01` (×2), `…_sadEyes01` (×2). **That's the whole
+  morph set** — so most expression is *bone/animation-clip*-driven, not blendshape morphs; only the
+  lids, cheeks, and the happy/sad eye-squash are shape keys. (The eyeseme *mood* set and visemes are
+  animation clips in the separate `rig3animations` bundle, not this mesh.)
 - **Event icons (`IconsScreenAnimator`):** the on-screen icon panel animation — the Unity side of the
   **`icons-v2`** markup verb ([`behavior-markup.md`](../runtime/behavior-markup.md)), which shows School/Birthday/
   Medical/Heart badges during calendar events.
@@ -54,9 +59,11 @@ To inspect: reassemble `cat sharedassets1.assets.split{0..59} > sharedassets1.as
 - **Lore:** `GRL_envelope_*`, `GRL_note_*` sprites — the **G**lobal **R**obotics **L**aboratory,
   Moxie's fictional origin.
 
-> `sharedassets1` is the **UI/HUD/effects** file. The core face mesh/expression animation set and audio
-> banks live in other serialized files / the `.resource` blob; a full per-object export
-> (AssetStudio/UnityPy) is a good next pass.
+> `sharedassets1` is the **UI/HUD/effects** file (its face mesh + 56 named HUD/LED/reward/whiteboard clips
+> are inventoried above; the 10 face blendshapes are now captured via UnityPy). Still out: the **eyeseme
+> mood + viseme animation clips** and the **`Bht_*` NodeCanvas trees**, which live in the streamed
+> **`rig3animations`** bundle (not the base APK's `sharedassets`/`level*`), i.e. the last in-scope
+> [clean-room gap](../COVERAGE.md#clean-room-self-sufficiency-what-would-go-missing).
 
 ## Boot animation
 

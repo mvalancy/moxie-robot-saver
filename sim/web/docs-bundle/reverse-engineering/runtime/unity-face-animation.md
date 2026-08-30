@@ -58,18 +58,21 @@ clean-room build reproduces *without* Moxie's art:
 ## 1. The face rig — `Rig3Robot`, blendshapes
 
 Moxie's face is **rig 3** (`Rig3Robot` / `Rig3`): a Unity **`SkinnedMeshRenderer`** (`FaceMesh`) driven by
-**blendshapes** + a skeleton (head/jaw bones). Blendshapes follow a strict naming convention —
-`rig3_bs_<side>_<feature><nn>[…]` — e.g. the blink shapes:
+**blendshapes** + a skeleton (head/jaw bones). The mesh (`rig3_faceMesh01`) carries a **deliberately small
+morph set — exactly 10 blendshapes** (confirmed via UnityPy on `sharedassets1`, `v24.10.803`), namespaced
+`karuBlendShapes.` (`bs` = blendshape, `L`/`R` = side):
 
 ```
-rig3_bs_L_upperLid01_postp_blink   rig3_bs_R_upperLid01_postp_blink
-rig3_bs_L_lowerLid01_postp_blink   rig3_bs_R_lowerLid01_postp_blink
+rig3_bs_{L,R}_upperLid01   rig3_bs_{L,R}_lowerLid01   ← the 4 blink lids
+rig3_bs_{L,R}_cheekAir01   ← cheek puff
+rig3_bs_{L,R}_happyEyes01  rig3_bs_{L,R}_sadEyes01    ← eye-squash for happy / sad
 ```
 
-`bs` = blendshape, `L`/`R` = side, and the **`_postp_blink`** suffix marks a **post-process** shape —
-applied *after* the base animation each frame (the blink layer overlays the expression, below). Expressions
-and visemes are just weighted sets of these blendshapes; the animation system's whole job is to compute
-their weights every frame.
+So **only** the lids, cheeks, and happy/sad eye-squash are shape keys — **everything else (the 11 eyeseme
+moods, the 41 visemes, gestures) is *bone/animation-clip*-driven**, not morphs. That's the key rig fact for
+a clean-room build: a tiny blendshape set + a rich bone rig, animated by clips (the [`rig3animations`
+bundle](../firmware/unity-assets.md)). The **blink** layer applies the four lid shapes *post-process* over
+the base animation each frame — the C# references them by a `…_postp_blink` param name (§5).
 
 ## 2. The animation controller — the `EBAnimGrinder`
 

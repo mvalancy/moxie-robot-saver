@@ -96,15 +96,14 @@ this piece from the doc alone?** A doc that only *points at* Moxie data isn't do
 
 | Gap | Status | In scope? |
 |---|---|---|
-| The `rig3` **face mesh + full blendshape list** (only ~8 shapes surface in the C#) | ⚠ needs AssetStudio on the asset bundle | Yes — for a *pixel-faithful* face; a clean-room build supplies its own art on the [same blendshape roles](runtime/unity-face-animation.md) |
-| The **45 `Bht_*` tree structures** (names + the 65-node vocabulary are captured; the graphs aren't) | ⚠ NodeCanvas assets — needs AssetStudio/JSON export | Partly — a revival authors its *own* trees from the [node catalog](runtime/behavior-nodes.md); the *stock personality* would go missing |
-| The **animation/gesture clip set** (`rig3animations`) | ⚠ asset bundle — needs AssetStudio | Partly — same as above |
+| The `rig3` **face mesh blendshape list** | ✅ **captured** (UnityPy): `rig3_faceMesh01` has exactly **10** shapes (lids/cheek/happy-sad eyes), see [face rig](runtime/unity-face-animation.md#1-the-face-rig-rig3robot-blendshapes) · [asset inventory](firmware/unity-assets.md) | — |
+| The **eyeseme mood + viseme animation clips** and the **45 `Bht_*` NodeCanvas tree structures** | ⚠ live in the streamed **`rig3animations`** bundle (not the base APK `sharedassets`/`level*`; UnityPy on those is done) | Partly — a revival authors its *own* clips/trees from the [node catalog](runtime/behavior-nodes.md) + [markup verbs](runtime/behavior-markup.md); only the *stock* motion/personality would go missing |
 | The 199 settings' **default values** (keys + meaning captured; defaults aren't) | ⚠ native `SettingSchema` init (libbo-logger) — deep native RE | Yes for goal ①; goal ② runs on the robot's baked-in defaults |
 | CereVoice **voice data**, ChatScript/**content modules**, `libbo-brain` **ML weights** | ⚠ licensed/downloaded/native blobs | **No** — a clean-room build supplies its own TTS, content, and brain (the whole point of [goal ②](#goal-put-any-ai-inside-moxie-the-ghost-in-the-shell)) |
 
-So the **in-scope** clean-room backlog is concentrated in one place: the **Unity asset bundle**
-(blendshapes, `Bht_*` graphs, animation clips) — one AssetStudio pass would close most of it — plus the
-native settings defaults. Everything else is either captured or is content a revival replaces by design.
+So the **in-scope** clean-room backlog is now down to the streamed **`rig3animations`** bundle (the eyeseme
+/viseme clips + `Bht_*` graphs — the base-APK Unity assets have been UnityPy-inventoried) plus the native
+settings defaults. Everything else is either captured or is content a revival replaces by design.
 
 ## Open items (need a bench unit or an external artifact)
 
