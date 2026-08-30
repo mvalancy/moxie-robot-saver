@@ -118,26 +118,27 @@ user_state, cloud_project}` come back the other way — the diagnostic screen di
 
 The [WifiApp forwards every debug command](#json-debugfactory-commands) to the bus as `QRCommand{code,
 param}`; the **managed brain ignores it** and the [native cloud module consumes it](../runtime/native-boundary.md#resolved-who-consumes-qrcommand-the-setup-qr-brain-bridge).
-`nm`/`c++filt` on **`libbo-logger.so`** name the handler and its dispatch targets directly — so the
-"effective command set" is no longer guesswork, it is these exported functions:
+**Ghidra** (PyGhidra) decompilation of `libbo-logger.so` reads `on_QRCommand`'s body directly — so the
+"effective command set" is no longer guesswork or inference: it dispatches `QRCommand.code` by **exact
+string match** to **exactly three** commands (default → *"Unknown QR Diagnostic Command"*):
 
-| `QRCommand.code` | Native handler in `embodied::logging::cloud::RightPoint` | Effect |
+| `QRCommand.code` | Handler in `embodied::logging::cloud::RightPoint` | Effect (from the decompiled body) |
 |---|---|---|
-| **`endpoint_update`** | `on_EndpointUpdate(json_t*, string)` | Re-home the robot: apply a new [`ServiceConfiguration2`](#the-om-relocation-the-real-re-home-payload) (endpoint/mqtt_host/project) and reconnect. Reached from a pairing QR's `endpoint` field **or** a `debug` command. |
-| **`om`** | → same `on_EndpointUpdate` | OpenMoxie's relocation form — `param` = base64(`ServiceConfiguration2`). See below. |
-| *(diagnostic)* | `on_DiagnosticDataRequest(json_t*, string)` | Produce `QRDiagnosticData{robot_uuid, rsa_pub, cloud_connected, user_state, cloud_project}` — the identity/diagnostic read the [easter-egg study](#supersedes-the-pre-decompilation-easter-egg-study) wanted a trigger for. It exists, as a named handler. |
-| *(user reset)* | `ClearResetUserFlag()` | Clear the paired-user flag (unpair/reset). |
+| **`report`** | `on_DiagnosticDataRequest` | Build a `QRDiagnosticData{robot_uuid, rsa_pub, cloud_connected, cloud_project}` (device UUID from `core::UUID::GetDevice()`, RSA pubkey via `Client::LoadFile`), serialize it (`MessageToJsonString`, wrapped as `{"encoded_proto":"…"}`), and **post it** on a worker thread (`RPTokenURL::post_diagnostics`). This is the diagnostic trigger the [easter-egg study](#supersedes-the-pre-decompilation-easter-egg-study) hunted for — its name is **`report`**, not the guessed "diag". |
+| **`endpoint_update`** | `on_EndpointUpdate(json_t*, string)` | Look the `endpoint` profile up in an **`EndpointMap`** (`ForName`); if valid, build `GoogleIOTOpts`/`ConnectionOpts`, **write `cloud.json`**, and *"Exit… to restart logger"* so the new endpoint takes effect. Invalid name → logs *"Received endpoint_update to invalid endpoint"*. Also reachable from a pairing QR's `endpoint` field. |
+| **`om`** | `on_EndpointUpdate` (OpenMoxie path) | Base64-decode `param` → [`ServiceConfiguration2`](#the-om-relocation-the-real-re-home-payload); write `cloud.json` as `{"endpoint":"openmoxie"}` and *"Updating to OPEN_MOXIE and exiting to restart"*. Bad base64 → *"Invalid open_moxie configuration QR - base64 decode failed."* |
+| *(anything else)* | — | logged *"Received unsupported QR Diagnostic Command"* / *"Unknown QR Diagnostic Command"* — **no other code is handled.** |
 
-Supporting members confirm the shape: `RightPoint::GetServiceConfig()` / `InitServiceConfig()` and the
-`RightPoint::*` listener bound to `ProtoEventArgs<QRCommand>`. `RightPoint` is the robot's **cloud
-connection manager**, so these same actions are also reachable over MQTT (the handlers take a `json_t*`
-payload) — QR is just one transport into them.
+`RightPoint` is the robot's **cloud connection manager**; the persisted config is **`cloud.json`**, and
+applying `endpoint_update`/`om` **restarts the logger process** to reconnect. Because the handlers take a
+`json_t*`, the same actions are reachable over MQTT too — QR is just one transport in. (`ClearResetUserFlag`
+and `GetServiceConfig`/`InitServiceConfig` are supporting members, not QR codes.)
 
-> **Honest scope.** The `on_*` **handlers** are confirmed from the export table; the exact `code`-string
-> that selects each (beyond `endpoint_update`, confirmed on both sides, and `om`, confirmed from
-> OpenMoxie's emitter) is inside `on_QRCommand`'s body, which needs ARM disassembly to read
-> byte-for-byte. The **capabilities** (re-home, diagnostic-data, user-reset) are certain; treat any
-> other single code string as unconfirmed until disassembled.
+> **Confidence: decompiled.** All three code strings (`report`, `endpoint_update`, `om`), the default
+> "Unknown QR Diagnostic Command" branch, and the `cloud.json`/restart behavior are read from
+> `on_QRCommand`'s decompiled body (Ghidra/PyGhidra on the `v24.10.803` `libbo-logger.so`, which carries
+> DWARF) — see [methodology](../METHODOLOGY.md#using-ghidra-via-pyghidra). The command set is **closed**: three
+> codes, nothing else.
 
 ### The `om` relocation — the real re-home payload
 

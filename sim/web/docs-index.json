@@ -1,5 +1,5 @@
 {
- "generated": "docs-386fe1dbc33c",
+ "generated": "docs-64dad80783b1",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -582,12 +582,12 @@
    "path": "reverse-engineering/METHODOLOGY.md",
    "title": "Methodology — how we reverse-engineer Moxie (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 6495,
+   "bytes": 7758,
    "mermaid": 0,
    "headings": [
     "The evidence base",
     "The tool tiers — light to heavy",
-    "Using Ghidra (headless)",
+    "Using Ghidra (via PyGhidra)",
     "The per-iteration loop (standard operating procedure)"
    ]
   },
@@ -1031,7 +1031,7 @@
    "path": "reverse-engineering/protocol/qr-commands.md",
    "title": "QR command grammar — what the robot actually scans",
    "section": "reverse-engineering",
-   "bytes": 20764,
+   "bytes": 21525,
    "mermaid": 0,
    "headings": [
     "The dispatcher",

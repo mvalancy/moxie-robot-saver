@@ -38,7 +38,7 @@ Reach for the **lightest tool that answers the question**; escalate only when it
    pseudocode of a native function, with cross-references, string/data flow, and (when the `.so` carries
    **DWARF**, as several `libbo-*` do) real variable and type names. This is the tool for the hard native
    questions — e.g. the exact `QRCommand`-string → handler dispatch inside `libbo-logger`'s cloud router.
-   See [Using Ghidra](#using-ghidra-headless) below.
+   See [Using Ghidra](#using-ghidra-via-pyghidra) below.
 
 > **Confidence discipline.** Mark every finding as **confirmed** (read from the binary) or **inferred**
 > (reasoned, not yet seen). A name in a symbol table proves the *capability* exists; the exact trigger or
@@ -46,23 +46,43 @@ Reach for the **lightest tool that answers the question**; escalate only when it
 > tool instead, or label it honestly. If a tick finds nothing genuinely new, say so; don't manufacture a
 > commit.
 
-## Using Ghidra (headless)
+## Using Ghidra (via PyGhidra)
 
-Ghidra (the NSA's open-source decompiler) is installed at **`work/tools/ghidra/`** (JDK 21+ required).
-It reconstructs C-like pseudocode and resolves the data-flow the disassembler tiers cannot. Headless
-recipe used for the native `.so` work:
+Ghidra (the NSA's open-source decompiler) is installed at **`work/tools/ghidra/`**. It reconstructs
+C-like pseudocode and resolves the data-flow the disassembler tiers cannot — GOT-indirected strings,
+`std::map` dispatch, protobuf/JSON plumbing.
+
+**Use PyGhidra, not Ghidra's own scripts.** This box has a **JRE, not a JDK** (no `javac`), so Ghidra
+*Java* scripts won't compile, and Ghidra 12 dropped Jython so *`.py` GhidraScripts* need PyGhidra anyway.
+PyGhidra (installed from Ghidra's bundled wheel into `work/firmware-re/extract/csharp/.venv`) drives the
+same Ghidra API from CPython and needs no compiler:
 
 ```bash
-GH=work/tools/ghidra/support/analyzeHeadless
-"$GH" <project-dir> <project-name> \
-  -import lib/armeabi-v7a/libbo-logger.so -processor "ARM:LE:32:v7" \
-  -scriptPath <scripts> -postScript decompile_targets.py     # a Jython script that decompiles named funcs
+VENV/bin/pip install work/tools/ghidra/Ghidra/Features/PyGhidra/pypkg/dist/pyghidra-*.whl   # once
+GHIDRA_INSTALL_DIR=work/tools/ghidra  VENV/bin/python decompile.py
+```
+```python
+import pyghidra; pyghidra.start()
+from ghidra.base.project import GhidraProject
+from ghidra.app.decompiler import DecompInterface
+proj = GhidraProject.openProject(PROJ_DIR, "proj", True)      # reuse a prior analysis (fast)
+program = proj.openProgram("/", "libbo-logger.so", False)
+di = DecompInterface(); di.openProgram(program)
+for f in program.getFunctionManager().getFunctions(True):
+    if f.getName() in TARGETS:
+        print(di.decompileFunction(f, 180, monitor).getDecompiledFunction().getC())
 ```
 
-A post-script uses `DecompInterface().decompileFunction(fn, timeout, monitor)` to dump the pseudocode of
-specific functions (find them via `getFunctionManager().getFunctions(True)`). Analysis of a large
-(≈60 MB) module takes minutes and gigabytes of RAM — run it in the background and pick up the result when
-it lands, rather than blocking. Prefer decompiling **named targets** over reading a whole 60 MB module.
+**Workflow.** Import + auto-analyze once with `analyzeHeadless <proj> <name> -import <so> -processor
+ARM:LE:32:v7` (minutes + GBs of RAM for a ~60 MB module — run it in the background, don't block), then
+re-open that saved project read-only from PyGhidra to decompile **named targets** or resolve string
+references (follow `getReferencesFrom()` into `.rodata`). One JVM at a time — a killed run leaves the
+project open; clear stray `java` procs before retrying.
+
+**Worked example.** This is how the [QR command router](protocol/qr-commands.md#the-effective-command-set-native-dispatch-rightpointon_qrcommand)
+was closed: capstone showed `on_QRCommand` spawned a worker but couldn't resolve the dispatch strings;
+PyGhidra decompiled the body and its `.rodata` refs, proving the exact closed set (`report` /
+`endpoint_update` / `om`, else *"Unknown QR Diagnostic Command"*).
 
 ## The per-iteration loop (standard operating procedure)
 
