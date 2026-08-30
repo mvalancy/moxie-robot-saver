@@ -724,9 +724,10 @@ function makeGrilleTexture() {
 }
 
 // Near-square patch of the lower-torso front (arc ≈ height) so the round dot field
-// stays round on the curved shell; centred on the lower torso.
+// stays round on the curved shell; sized ~25% bigger and raised to sit centred on
+// the belly of the lower torso (which spans y≈0.05→0.66, bulge centred ~0.43).
 const grille = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.652, 0.648, 0.30, 48, 1, true, -0.245, 0.49),
+  new THREE.CylinderGeometry(0.646, 0.642, 0.375, 48, 1, true, -0.2975, 0.595),
   new THREE.MeshStandardMaterial({
     map: makeGrilleTexture(),
     transparent: true,
@@ -735,7 +736,7 @@ const grille = new THREE.Mesh(
     polygonOffsetFactor: -1,
   })
 );
-grille.position.set(0, 0.32, 0);
+grille.position.set(0, 0.42, 0);
 lowerG.add(grille);      // printed on the lower torso — planted, never leans
 
 // ---- `moxie` wordmark near the base ----
@@ -1831,6 +1832,20 @@ animate();
 // controls panel. Landscape: centre in the space to the LEFT of the side panel;
 // portrait: centre in the space ABOVE the bottom drawer. Re-runs on every resize
 // (and drawer toggle) so it stays centred as the window is scaled.
+// Zoom-out + recentre so the WHOLE normal framing (what fills W×H) is scaled to
+// fit inside the visible rect (vw×vh, centred at cx,cy) that the controls panel
+// does NOT cover — i.e. Moxie shrinks to fit and slides fully into view instead
+// of being clipped behind an open drawer/column. Derivation: render the base
+// frustum onto a k× larger virtual image (k = zoom-out factor) and offset it so
+// the frustum centre lands at (cx,cy). Rotation still orbits controls.target, so
+// Moxie stays the pivot.
+function frameInRect(vw, vh, cx, cy) {
+  const W = window.innerWidth, H = window.innerHeight;
+  const k = Math.max(W / vw, H / vh);            // shrink the full frame to fit the band
+  const offX = (W - W * k) / 2 - (cx - W / 2) * k;
+  const offY = (H - H * k) / 2 - (cy - H / 2) * k;
+  camera.setViewOffset(W, H, offX, offY, W * k, H * k);
+}
 function applyStageOffset() {
   const W = window.innerWidth, H = window.innerHeight;
   camera.aspect = W / H;
@@ -1843,9 +1858,9 @@ function applyStageOffset() {
       const isRightColumn = r.right >= W - 8 && r.top < H * 0.4 && r.height > H * 0.55 && r.width < W * 0.9;
       const isBottomDrawer = r.bottom >= H - 8 && r.left < W * 0.2 && r.width > W * 0.6 && r.top > H * 0.3;
       if (isRightColumn) {
-        camera.setViewOffset(W, H, (W - r.left) / 2, 0, W, H);   // centre in [0, panel.left]
+        frameInRect(r.left, H, r.left / 2, H / 2);       // fit into the space LEFT of the column
       } else if (isBottomDrawer) {
-        camera.setViewOffset(W, H, 0, (H - r.top) / 2, W, H);    // centre in [0, panel.top]
+        frameInRect(W, r.top, W / 2, r.top / 2);         // fit into the space ABOVE the drawer
       }
     }
   }
@@ -1854,4 +1869,11 @@ function applyStageOffset() {
 }
 window.addEventListener('resize', applyStageOffset);
 window.__applyStageOffset = applyStageOffset;   // re-run when the drawer toggles
+// Project a world point to screen px (respects the active view offset) — used by
+// the responsive tests to assert Moxie stays framed in the useful viewport.
+window.__moxieProject = function (x, y, z) {
+  const v = new THREE.Vector3(x, y, z).project(camera);
+  return { x: (v.x * 0.5 + 0.5) * window.innerWidth,
+           y: (1 - (v.y * 0.5 + 0.5)) * window.innerHeight };
+};
 applyStageOffset();

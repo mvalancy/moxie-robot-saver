@@ -1,0 +1,12 @@
+# Fixed Moxie phrases pre-rendered for the static deploy (sound works with no server).
+# Regenerate: python3 sim/tools/prerender_audio.py --phrases sim/web/audio/moxie-phrases.txt --out sim/web/audio
+Hi! I am Moxie. It is nice to meet you.
+Hello there! I am so happy to see you.
+Let's have some fun together!
+You did a great job. I am really proud of you.
+Can you take a deep breath with me?
+I love spending time with you.
+What would you like to talk about today?
+Great job! High five!
+It is okay to feel however you feel.
+I am always here whenever you need me.

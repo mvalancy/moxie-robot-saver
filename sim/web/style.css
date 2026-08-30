@@ -591,6 +591,13 @@ button:hover {
 }
 button:active { background: #101826; }
 button.wide { width: 100%; margin-top: 2px; }
+/* tap-to-play speech phrase chips (pre-cached voice) */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip {
+  text-transform: none; letter-spacing: 0; font-weight: 500;
+  padding: 5px 10px; font-size: 11px; max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 button.active {
   border-color: var(--cyan);
   color: var(--cyan);

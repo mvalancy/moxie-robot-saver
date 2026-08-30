@@ -139,7 +139,8 @@
         <summary><span class="tick" aria-hidden="true"></span>Voice<span class="hint">tts &middot; audio</span><span class="caret" aria-hidden="true"></span></summary>
 
         <section class="sub">
-          <h3>Speech<span class="hint">TTS</span></h3>
+          <h3>Speech<span class="hint">tap a phrase &middot; real voice</span></h3>
+          <div id="speech-chips" class="chips"></div>
           <div class="row">
             <input id="speech-input" type="text" placeholder="transmit line&hellip;" autocomplete="off">
             <button id="speech-btn">Say</button>
@@ -147,13 +148,14 @@
         </section>
 
         <section class="sub">
-          <h3>Audio<span class="hint">piper tts &middot; sfx</span></h3>
+          <h3>Audio<span class="hint">pre-cached voice &middot; sfx</span></h3>
           <label class="chk"><input id="audio-on" type="checkbox" checked><span>sound</span></label>
+          <p class="hint" style="margin-top:6px">Tap phrases above play shipped audio (no server). Free text uses your browser's voice, or a local Piper service if you run one.</p>
           <div class="row" style="margin-top:8px">
-            <input id="tts-base" type="text" placeholder="http://127.0.0.1:8081">
+            <input id="tts-base" type="text" placeholder="http://127.0.0.1:8081 (optional Piper)">
             <button id="tts-test">Test</button>
           </div>
-          <p id="tts-status" class="hint">piper tts service</p>
+          <p id="tts-status" class="hint">optional local Piper service</p>
         </section>
 
         <section class="sub">
@@ -223,14 +225,15 @@
 
 </div>
 
-<script type="module" src="moxie.js?v=cute2"></script>
+<script type="module" src="moxie.js?v=cute3"></script>
 <script src="./vendor/mqtt.min.js"></script>
 <script src="./vendor/qrcode.js"></script>
-<script src="qr.js?v=cute2"></script>
-<script src="stub.js?v=cute2"></script>
-<script src="bridge.js?v=cute2"></script>
-<script src="audio.js?v=cute2"></script>
-<script src="mic.js?v=cute2"></script>
+<script src="qr.js?v=cute3"></script>
+<script src="stub.js?v=cute3"></script>
+<script src="bridge.js?v=cute3"></script>
+<script src="audio.js?v=cute3"></script>
+<script src="ambient.js?v=cute3"></script>
+<script src="mic.js?v=cute3"></script>
 <script>
 /* HUD glue — mirrors the #bus-status text (written by bridge.js) onto
  * body[data-bus] so CSS can color the status line, the topbar link lamp,
@@ -298,17 +301,33 @@
     function speak(t) { if (t && window.moxieAudio) window.moxieAudio.speak(t); }
     if (say) say.addEventListener("click", function () { speak((inp && inp.value || "").trim()); });
     if (inp) inp.addEventListener("keydown", function (e) { if (e.key === "Enter") speak(inp.value.trim()); });
+    // Tap-to-play chips from the pre-cached phrase set — guaranteed to make sound
+    // on the static deploy (no TTS server needed).
+    var chips = document.getElementById("speech-chips");
+    if (chips && window.moxieAudio && window.moxieAudio.getClipPhrases) {
+      window.moxieAudio.getClipPhrases().then(function (phrases) {
+        (phrases || []).slice(0, 10).forEach(function (p) {
+          var b = document.createElement("button");
+          b.className = "chip"; b.type = "button";
+          b.textContent = p.length > 30 ? p.slice(0, 28) + "…" : p;
+          b.title = p;
+          b.addEventListener("click", function () { if (inp) inp.value = p; speak(p); });
+          chips.appendChild(b);
+        });
+      });
+    }
     if (on) on.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setEnabled(on.checked); });
     if (base && window.moxieAudio) base.value = window.moxieAudio.getTtsBase();
     if (base) base.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setTtsBase(base.value.trim()); });
     if (test) test.addEventListener("click", function () {
       if (!window.moxieAudio) return;
-      if (st) st.textContent = "synthesizing…";
+      // Always plays a real pre-cached clip; separately probe for an optional Piper.
+      window.moxieAudio.speak("Hi! I am Moxie. It is nice to meet you.");
+      if (st) st.textContent = "checking for local Piper…";
       fetch(window.moxieAudio.getTtsBase().replace(/\/$/, "") + "/health")
         .then(function (r) { return r.json(); })
-        .then(function (j) { if (st) st.textContent = j.ok ? ("voice: " + j.voice) : "tts unavailable"; })
-        .catch(function () { if (st) st.textContent = "tts unreachable — run sim/tts/server.py"; });
-      window.moxieAudio.speak("Hi! I am Moxie. It is nice to meet you.");
+        .then(function (j) { if (st) st.textContent = j.ok ? ("local Piper: " + j.voice) : "no Piper (using pre-cached + browser voice)"; })
+        .catch(function () { if (st) st.textContent = "no Piper (using pre-cached + browser voice)"; });
     });
   })();
 
@@ -373,6 +392,6 @@
   });
 })();
 </script>
-<script src="env.js?v=cute2"></script>
+<script src="env.js?v=cute3"></script>
 </body>
 </html>

@@ -12,6 +12,8 @@
   Cache-Control: no-cache
 /audio.js
   Cache-Control: no-cache
+/ambient.js
+  Cache-Control: no-cache
 /mic.js
   Cache-Control: no-cache
 /stub.js
@@ -30,6 +32,8 @@
   Cache-Control: public, max-age=300
 /docs-bundle/*
   Cache-Control: public, max-age=300
+/ambient.json
+  Cache-Control: no-cache
 /docs-index.json
   Cache-Control: no-cache
 /docs-search.json

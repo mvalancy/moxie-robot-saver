@@ -1,12 +1,18 @@
-/* audio.js — Moxie's voice (Piper TTS) + UI sound effects.
+/* audio.js — Moxie's voice + UI sound effects.
  *
- * TTS: the SERVER renders speech (mirroring the real robot's CloudTTSResponse ->
- * PCM path, docs/reverse-engineering/perception-pipeline.md). We fetch WAV from
- * the local Piper service (sim/tts/server.py, default :8081) and play it, driving
- * a simple mouth/viseme animation from the audio envelope while it speaks.
+ * Voice, in priority order (so sound ALWAYS works, incl. a fully static deploy):
+ *   1) a PRE-CACHED clip shipped with the site (audio/index.json, rendered by
+ *      sim/tools/prerender_audio.py with Piper) — the fixed UI phrases + scenario
+ *      lines play as real recorded speech with envelope-driven mouth-sync.
+ *   2) a live local Piper service (sim/tts/server.py) IF one is actually reachable
+ *      — lets arbitrary typed text be synthesized when self-hosting.
+ *   3) the browser's own speechSynthesis (Web Speech API) — an honest fallback so
+ *      free text still makes sound on the static site instead of silently failing.
+ * This mirrors the real robot's CloudTTSResponse -> PCM path
+ * (docs/reverse-engineering/perception-pipeline.md) as closely as a web page can.
  *
  * SFX: short synthesized cues (WebAudio oscillators) — no asset files needed.
- * Exposes window.moxieAudio = { speak, sfx, setEnabled, setTtsBase }.
+ * Exposes window.moxieAudio = { speak, sfx, setEnabled, setTtsBase, getClipPhrases }.
  */
 (function () {
   "use strict";
@@ -102,20 +108,73 @@
     });
   }
 
+  function setVoiceStatus(mode) {
+    var el = document.getElementById("bus-status");
+    if (!el) return;
+    var msg = { clip: "🔊 playing (pre-cached voice)", piper: "🔊 playing (Piper)",
+                browser: "🔊 playing (browser voice)", none: "muted / no audio available" }[mode];
+    if (msg) el.textContent = msg;
+  }
+
   function speak(text, who) {
     if (!enabled || !text) return Promise.resolve(false);
     stop();
-    // 1) pre-cached clip (works on a fully static deploy)
+    // 1) pre-cached clip (real recorded speech — works on a fully static deploy)
     return playClip(text, who).then(function (done) {
-      if (done) return true;
-      // 2) live Piper service, if one is reachable
-      return speakLive(text);
+      if (done) { setVoiceStatus("clip"); return true; }
+      // 2) live Piper service, ONLY if one is actually reachable
+      return speakLive(text).then(function (ok) {
+        if (ok) { setVoiceStatus("piper"); return true; }
+        // 3) honest fallback: the browser's own voice, so sound really plays
+        var spoke = speakBrowser(text);
+        setVoiceStatus(spoke ? "browser" : "none");
+        return spoke;
+      });
     });
+  }
+
+  // Browser Web Speech API fallback. No audio stream to analyse, so drive a gentle
+  // mouth oscillation for the utterance's duration instead of the envelope.
+  function speakBrowser(text) {
+    if (!("speechSynthesis" in window)) return false;
+    try {
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.0; u.pitch = 1.25; u.volume = 1.0;   // slightly higher = warmer/companion
+      var vs = window.speechSynthesis.getVoices() || [];
+      var pick = vs.filter(function (v) { return /^en/i.test(v.lang); })
+        .sort(function (a, b) {
+          var pref = /female|samantha|zira|karen|moira|tessa|aria|jenny|google us/i;
+          return (pref.test(b.name) ? 1 : 0) - (pref.test(a.name) ? 1 : 0);
+        })[0];
+      if (pick) u.voice = pick;
+      var mo = 0;
+      u.onstart = function () {
+        var t0 = Date.now();
+        mo = setInterval(function () {
+          if (window.moxie && window.moxie.setMouthOpen)
+            window.moxie.setMouthOpen(0.25 + 0.35 * Math.abs(Math.sin((Date.now() - t0) / 90)));
+        }, 55);
+      };
+      u.onend = u.onerror = function () {
+        clearInterval(mo);
+        if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(0);
+        current = null;
+      };
+      current = { stop: function () { clearInterval(mo); window.speechSynthesis.cancel(); } };
+      window.speechSynthesis.speak(u);
+      return true;
+    } catch (e) { return false; }
   }
 
   function speakLive(text) {
     var url = TTS_BASE.replace(/\/$/, "") + "/tts?text=" + encodeURIComponent(text.slice(0, 1000));
-    return fetch(url).then(function (r) {
+    // Fast timeout so an unreachable service falls back to the browser voice
+    // quickly instead of hanging (important on the static deploy).
+    var ctl = ("AbortController" in window) ? new AbortController() : null;
+    var to = ctl ? setTimeout(function () { ctl.abort(); }, 1400) : 0;
+    return fetch(url, ctl ? { signal: ctl.signal } : undefined).then(function (r) {
+      clearTimeout(to);
       if (!r.ok) throw new Error("tts " + r.status);
       return r.arrayBuffer();
     }).then(function (buf) {
@@ -142,10 +201,9 @@
         src.start(0); pump();
         return true;
       });
-    }).catch(function (e) {
-      var el = document.getElementById("bus-status");
-      if (el) el.textContent = "tts unavailable (start sim/tts/server.py)";
-      return false;
+    }).catch(function () {
+      clearTimeout(to);
+      return false;   // caller falls back to the browser voice; no scary message
     });
   }
 
@@ -155,6 +213,9 @@
     isEnabled: function () { return enabled; },
     setTtsBase: function (u) { TTS_BASE = u; try { localStorage.setItem("moxie.ttsBase", u); } catch (e) {} },
     getTtsBase: function () { return TTS_BASE; },
+    getClipPhrases: function () {   // pre-cached Moxie lines guaranteed to make sound
+      return loadClips().then(function (j) { return j && j.moxie ? Object.keys(j.moxie) : []; });
+    },
   };
 
   // Unlock audio on the first user gesture (browser autoplay policy).

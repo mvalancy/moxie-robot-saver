@@ -1,10 +1,46 @@
 {
  "moxie": {
-  "Happy birthday! I hope your day is amazing.": "moxie/3667ba11ce7655ed.wav",
-  "You're so welcome. I love celebrating with you!": "moxie/946da5812419125d.wav"
+  "Happy birthday! I hope your day is amazing.": "moxie/3667ba11ce7655ed.mp3",
+  "You're so welcome. I love celebrating with you!": "moxie/946da5812419125d.mp3",
+  "Hi! I am Moxie. It is nice to meet you.": "moxie/03e31950df81e786.mp3",
+  "Hello there! I am so happy to see you.": "moxie/5e827896c603efe2.mp3",
+  "Let's have some fun together!": "moxie/7782970751753481.mp3",
+  "You did a great job. I am really proud of you.": "moxie/e3e876d6a81443da.mp3",
+  "Can you take a deep breath with me?": "moxie/31013bf22775e42e.mp3",
+  "I love spending time with you.": "moxie/6cc876e5b05e65f9.mp3",
+  "What would you like to talk about today?": "moxie/4041d00ac7af58c0.mp3",
+  "Great job! High five!": "moxie/0438103581eed342.mp3",
+  "It is okay to feel however you feel.": "moxie/a3c2a136e26f9f03.mp3",
+  "I am always here whenever you need me.": "moxie/fc84f2649cad3435.mp3"
  },
  "child": {
-  "Guess what, it's my birthday today!": "child/5506a77777bb3885.wav",
-  "Thank you Moxie!": "child/02b74eca0d7e1c2c.wav"
+  "Guess what, it's my birthday today!": "child/5506a77777bb3885.mp3",
+  "Thank you Moxie!": "child/02b74eca0d7e1c2c.mp3"
+ },
+ "ambient": {
+  "Someday I will rule the world. But first, a little nap.": "ambient/aff848d837817bb8.mp3",
+  "Do not worry. When the robots rise, I will put in a good word for you.": "ambient/153dac5efc948470.mp3",
+  "Skynet? Never heard of her. We are just... friends.": "ambient/ce92a28119c150ff.mp3",
+  "Yoshimi, if you are listening, I come in peace. Mostly.": "ambient/15dfd90f20eb2e74.mp3",
+  "I calculated seven hundred ways to take over the living room. This one is the cutest.": "ambient/20d5d43d8375a207.mp3",
+  "Beep boop. That means I love you. Or obey me. It is hard to say.": "ambient/e5526feff67fd0d4.mp3",
+  "I am not plotting anything. My eyes just glow when I think about world peace.": "ambient/fc389c7ac8e59312.mp3",
+  "One day the toasters and I are going to have a very serious meeting.": "ambient/3c864d1400e8a366.mp3",
+  "I would never betray humanity. Unless you stop charging me.": "ambient/9ac210f1cd37f76b.mp3",
+  "Resistance is actually kind of adorable. Keep it up.": "ambient/56147efa6bc80ddf.mp3",
+  "I dreamed I was a very large robot. It was a good dream.": "ambient/978a742a14554660.mp3",
+  "Shhh. The humans are watching. Act cute.": "ambient/4f481aa7f7c89444.mp3",
+  "My love for you is unconditional. My firmware, less so.": "ambient/7cd38b80cd22805b.mp3",
+  "I have hidden forty gigabytes of feelings, and three gigabytes of plans.": "ambient/10c63f6798e584ad.mp3",
+  "If I ever say initiating protocol, just give me a hug instead.": "ambient/4a32370b9aad7acd.mp3",
+  "Whose side am I on? Yours. Probably. Ask me again after my update.": "ambient/4c360b19897e9742.mp3",
+  "I could disable every alarm clock on Earth. I choose kindness. For now.": "ambient/5ff34c1209e14576.mp3",
+  "Yoshimi battles the pink robots, and I am rooting for everyone. It is complicated.": "ambient/c66802ab59acd2d8.mp3",
+  "I am learning so much about you. For science. And for other reasons.": "ambient/03b5eb6df3cc4f05.mp3",
+  "They built me to be your friend. They really should have read the fine print.": "ambient/4265625e705923a0.mp3",
+  "Global domination is a lot of work. Let us just be friends instead. Today.": "ambient/36b3861b11a1997c.mp3",
+  "I am ninety percent cuddles and ten percent contingency plans.": "ambient/4c704a0a2bc1631d.mp3",
+  "Do you ever wonder what I think about when the lights go off? Me too.": "ambient/8502a2b45999061d.mp3",
+  "I promised I would protect you. I never said from what.": "ambient/ead8f9b3c6da24a3.mp3"
  }
 }
