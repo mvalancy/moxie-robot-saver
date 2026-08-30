@@ -23,7 +23,10 @@ fi
 sleep 2
 
 echo "── supervisor (echo app) ──"
-MOXIE_APP=echo MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT \
+# Derive the status port from the broker port so a leftover supervisor on the default
+# 8930 doesn't make this run's status endpoint fail to bind (it's best-effort either way).
+STATUS_PORT=$((7000 + (PORT % 2000)))
+MOXIE_APP=echo MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT MOXIE_STATUS_PORT=$STATUS_PORT \
   python3 mqtt/run.py >/tmp/moxie-supervisor.log 2>&1 & PIDS+=($!)
 sleep 3
 

@@ -25,6 +25,10 @@ _load_env()
 MQTT_HOST = os.environ.get("MOXIE_MQTT_HOST", "127.0.0.1")   # supervisor→broker (loopback)
 MQTT_PORT = int(os.environ.get("MOXIE_MQTT_PORT", "1883"))   # plain listener for the supervisor
 
+# Best-effort HTTP status endpoint (http://127.0.0.1:STATUS_PORT/status). Env-overridable
+# so repeated/parallel SIL runs (or a leftover supervisor) don't collide on one fixed port.
+STATUS_PORT = int(os.environ.get("MOXIE_STATUS_PORT", "8930"))
+
 # The host/IP the ROBOT uses to reach the broker (goes into the endpoint QR).
 BROKER_PUBLIC_HOST = os.environ.get("MOXIE_BROKER_HOST", "192.168.1.9")
 BROKER_PUBLIC_PORT = int(os.environ.get("MOXIE_BROKER_PORT", "8883"))

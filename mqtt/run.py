@@ -11,4 +11,5 @@ if __name__ == "__main__":
     app = config.build_app()
     child = ChildProfile(nickname=config.CHILD_NICKNAME)
     print(f"[run] Moxie runtime · app={app.name} · broker={config.MQTT_HOST}:{config.MQTT_PORT}")
-    MoxieRuntime(app, host=config.MQTT_HOST, port=config.MQTT_PORT, child=child).run()
+    MoxieRuntime(app, host=config.MQTT_HOST, port=config.MQTT_PORT, child=child).run(
+        status_port=config.STATUS_PORT)
