@@ -1,5 +1,5 @@
 {
- "generated": "docs-b0e54fa7cc35",
+ "generated": "docs-b769b44ee14d",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1528,11 +1528,12 @@
    "path": "reverse-engineering/firmware/factory-provisioning.md",
    "title": "Factory provisioning — production apps, serials & secrets",
    "section": "reverse-engineering",
-   "bytes": 13243,
+   "bytes": 14521,
    "mermaid": 0,
    "headings": [
     "The factory apps (shipped on every robot)",
     "Serial-number / barcode grammar (`SerialNumber.java`)",
+    "The scanner + the factory→robot command QR",
     "Manufacturing part hierarchy (`assy/Part.java`)",
     "Factory-DB schema (ORMLite → MySQL, v24.10.803)",
     "Factory test catalog (`finaltest` — end of line)",

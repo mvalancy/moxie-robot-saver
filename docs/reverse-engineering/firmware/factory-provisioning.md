@@ -32,23 +32,35 @@ Two end-user modes (`Version.EndUser`):
 - **Customer** builds: a serial is valid iff it is **exactly 13 chars**.
 - **Factory** builds: full `SerialFormat` validation by **2-letter prefix** + length.
 
-| Prefix | Length | Part |
-|---|--:|---|
-| `BT` | 13/14 | Battery package (13 = Harding `yyyyMMdd…`, 14 = GLW, digits) |
-| `IB` | 18 | IMU PCBA |
-| `PB` | 18 | Projector PCBA |
-| `BP` | 18 | Battery assembly |
-| `SA` | 18 | Speaker |
-| `LB` | 18 | Lizard PCBA |
-| `PA` | 18 | Projector assembly |
-| `AB` | 18 | Android DAQ / Android PCBA |
-| `CA` | 18 | Image sensor / Camera assembly |
-| (plus `FA/FR/HA/IA/MB/PR/BA`) | 18 | other sub-assemblies |
+The 15 formats each bind a **2-letter prefix** to a `Part` (`BT`→BatteryPackage, `IB`→IMUPCBA,
+`PB`→ProjectorPCBA, `BP`→BatteryAssembly, `SA`→Speaker, `PA`→ProjectorAssembly, `AB`→AndroidDAQ,
+`CA`→ImageSensor, `MB`→MicFPCA, `FA`→FrontHeadAssembly, `HA`→HeadAssembly, `BA`→BodyAssembly,
+`IA`→InternalAssembly, `PR`→Projector, `FR`→FinishedRobot). The length rule is **content-based**, not
+fixed per prefix (verified in the `isValidFormat` overrides):
 
-- Robot / projector / Harding serials: **13 digits**; assembly serials: **18 chars**.
-- Assembly serials embed a **date** (`yyyyMMdd`, validated non-lenient) — the line rejects
-  mis-scanned or wrong-format barcodes with `CORE_INVALID_SERIAL` ("Try to rescan barcode").
-- The finished-robot serial is persisted to `PERSISTENT_DATA_PATH/SerialNumber.txt` on the device.
+| Serial content | Length | Rule |
+|---|--:|---|
+| **all digits** | **13** | date-prefixed `yyyyMMdd` + 5-digit sequence (the "Harding" format), `SimpleDateFormat` non-lenient |
+| all digits (battery `BT` / "GLW") | 14 | digits from offset 4 (`substring(4)`) |
+| **contains letters** | **18** | the alphanumeric assembly serial |
+| **`FR` FinishedRobot** | 13 | digits-only **and a valid EAN-13 checksum** (`Validator.EAN13`) — the finished robot's serial is a real **EAN-13 barcode** |
+
+- The generic rule is literally `isDigitsOnly ? length==13 : length==18`, with the named-format lookup
+  additionally enforcing `serialLength` when set.
+- **Customer** builds skip all of this — any exactly-13-char serial is accepted.
+- Mis-scans are rejected with `CORE_INVALID_SERIAL` ("Try to rescan barcode"); the finished-robot serial
+  is persisted to `PERSISTENT_DATA_PATH/SerialNumber.txt`.
+
+### The scanner + the factory→robot command QR
+
+The stations scan with **ZXing** via `com.journeyapps.barcodescanner.DecoratedBarcodeView`
+(`qr/Scanner.java`, `decodeSingle`), validating GS1/EAN product codes (`ExpandedProductParsedResult`,
+`qr/Validator.EAN13`). The apps also **generate** a QR to *show the robot* (`qr/QR.java` → `QRGEncoder`),
+driven by `qr/Codes.java` — whose **only shipped entry** is
+`{"debug":{"command":"serial_number_display"}}`. So a "manufacturing QR command" is just a
+[debug-command QR](../protocol/qr-commands.md#json-debugfactory-commands) on the same channel `bo-wifi`
+scans — there is **no hidden factory command catalog**, only this one generated code plus the barcode
+*reading* above.
 
 ## Manufacturing part hierarchy (`assy/Part.java`)
 
