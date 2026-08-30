@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#06060b">
-<title>Moxie — bring your robot back to life</title>
-<meta name="description" content="An open, self-hostable revival of the Moxie robot: a browser 3D simulator, a phone tool to re-home a real robot, an example parent console, and the full reverse-engineering docs.">
+<title>Moxie — put any AI inside your robot</title>
+<meta name="description" content="An open kit to put any AI inside Moxie — a full brain transplant, not just a revival. A browser 3D simulator, a phone tool to re-home a real robot, an example parent console, and the full reverse-engineering docs.">
 <link rel="canonical" href="https://moxie.mattvalancy.com/">
-<meta property="og:title" content="Moxie — bring your robot back to life">
-<meta property="og:description" content="A self-hostable revival of the Moxie robot. Simulator, revival tool, parent console, and reverse-engineering docs — all in the browser.">
+<meta property="og:title" content="Moxie — put any AI inside your robot">
+<meta property="og:description" content="Put any AI inside Moxie — the body is a shell, any brain can wear it. Simulator, revival tool, parent console, and reverse-engineering docs — all in the browser.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://moxie.mattvalancy.com/">
 <meta property="og:image" content="https://moxie.mattvalancy.com/img/hero-moxie-cute.png">
@@ -182,7 +182,7 @@
   <header class="top">
     <a class="logo" href="./">
       <svg viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#0e1620"/><path d="M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z" fill="#12b5b0"/><ellipse cx="50" cy="49" rx="20" ry="18" fill="#f4feff"/><circle cx="43" cy="48" r="4.2" fill="#0a0a0f"/><circle cx="57" cy="48" r="4.2" fill="#0a0a0f"/><circle cx="44.4" cy="46.4" r="1.3" fill="#00f0ff"/><circle cx="58.4" cy="46.4" r="1.3" fill="#00f0ff"/></svg>
-      <span style="display:flex;flex-direction:column;line-height:1.05"><b>Moxie</b><span>self-hosted revival</span></span>
+      <span style="display:flex;flex-direction:column;line-height:1.05"><b>Moxie</b><span>a ghost in the shell</span></span>
     </a>
     <div class="right">
       <a href="docs.html">Docs</a>
@@ -194,12 +194,13 @@
 
   <section class="hero">
     <div class="hero-copy">
-      <span class="tag"><span class="pulse"></span> Unofficial revival project</span>
-      <h1 class="hl">Bring your Moxie<br><span class="g">back to life.</span></h1>
-      <p class="sub">Embodied shut down and every Moxie went quiet. This is an open, self-hostable
-        revival — a 3D simulator you can talk to right now, a phone tool that re-homes a real robot to a
-        server you control, an example parent console, and the full reverse-engineering docs. It all runs
-        in your browser.</p>
+      <span class="tag"><span class="pulse"></span> Unofficial · a new brain for Moxie</span>
+      <h1 class="hl">Put any AI<br><span class="g">inside Moxie.</span></h1>
+      <p class="sub">Embodied shut down and every Moxie went quiet. But the body — face, voice, gaze, motion —
+        is just a <em>shell</em> that performs whatever brain answers one documented seam. So this is more
+        than a revival: it&rsquo;s an open kit to put <b>any AI</b> inside that shell. Talk to the 3D simulator
+        now, re-home a real robot to a server you control, and read the full reverse-engineering docs —
+        all in your browser.</p>
       <div class="cta">
         <a class="btn primary" href="sim.html">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -262,10 +263,11 @@
 
   <div class="strip">
     <div class="txt">
-      <h3>Want the real thing, not just the demo?</h3>
-      <p>The demo talks with a stub brain. For a robot that really converses — on the sim <em>or</em> a
-        re-homed Moxie — stand up the backend with <code>docker compose -f sim/docker-compose.yml up</code>,
-        give it a brain (Ollama, offline), and point it here.</p>
+      <h3>Bring your own brain</h3>
+      <p>Moxie decides everything it says and does behind one seam — the <code>RemoteChat</code> request it
+        sends each turn. Anything that answers it <em>becomes</em> Moxie: a local LLM (Ollama, offline), a
+        cloud model, your own agent. Stand up the backend with <code>docker compose -f sim/docker-compose.yml up</code>,
+        wire in a brain, and point the sim <em>or</em> a re-homed robot at it.</p>
     </div>
     <a class="btn ghost" href="docs.html#guides/revive-your-moxie.md">Read the revival guide</a>
   </div>
