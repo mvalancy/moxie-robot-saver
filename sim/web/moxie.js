@@ -100,7 +100,10 @@ function registerAxisNode(name, node) { _axisNodes.push({ name, node }); }
 const scene = new THREE.Scene();
 
 const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 60);
-camera.position.set(1.8, 2.1, 4.8);
+// On narrow / portrait screens the 40° vertical FOV frames Moxie tighter, so start
+// the camera further back for breathing room; roomier landscape stays closer.
+const _portraitish = window.innerWidth < 900 || window.innerWidth < window.innerHeight;
+camera.position.set(_portraitish ? 1.4 : 1.8, 2.1, _portraitish ? 6.8 : 4.8);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.15, 0);        // Moxie's centre — orbit pivots here by default
@@ -1401,15 +1404,42 @@ function drawFace(t) {
 
 const bubbleEl = document.getElementById('bubble');
 const bubbleText = document.getElementById('bubble-text');
-let bubbleTimer = null;
+let bubbleTimer = null, typeTimer = null;
+const _reduceMotion = window.matchMedia &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+// Typewriter reveal: Moxie's line types out char-by-char with a blinking caret,
+// then holds and fades. Reduced-motion users get the full text at once.
 function showSpeech(text) {
-  const dur = Math.max(1800, 900 + 70 * text.length);
-  bubbleText.textContent = text;
+  const typeDur = _reduceMotion ? 0 : Math.min(1500, text.length * 32); // ~32ms/char, capped
+  const holdDur = Math.max(1600, 700 + 55 * text.length);
+  const dur = typeDur + holdDur;
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+  if (typeTimer) { clearInterval(typeTimer); typeTimer = null; }
   bubbleEl.classList.remove('hidden');
   speech.until = performance.now() + dur;
-  if (bubbleTimer) clearTimeout(bubbleTimer);
-  bubbleTimer = setTimeout(() => bubbleEl.classList.add('hidden'), dur);
+
+  if (typeDur === 0) {
+    bubbleText.textContent = text;
+    bubbleEl.classList.remove('typing');
+  } else {
+    bubbleText.textContent = '';
+    bubbleEl.classList.add('typing');
+    const step = Math.max(14, Math.floor(typeDur / text.length));
+    let i = 0;
+    typeTimer = setInterval(() => {
+      i = Math.min(text.length, i + 1);
+      bubbleText.textContent = text.slice(0, i);
+      if (i >= text.length) { clearInterval(typeTimer); typeTimer = null; bubbleEl.classList.remove('typing'); }
+    }, step);
+  }
+
+  bubbleTimer = setTimeout(() => {
+    bubbleEl.classList.add('hidden');
+    if (typeTimer) { clearInterval(typeTimer); typeTimer = null; }
+    bubbleEl.classList.remove('typing');
+    bubbleText.textContent = text;   // ensure full text if it lingers in the DOM
+  }, dur);
 }
 
 // ---------------------------------------------------------------------------

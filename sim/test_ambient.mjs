@@ -17,6 +17,8 @@ const ok = (c, m) => { if (!c) fails.push(m); };
 
 // valid faces = EXPRESSIONS in moxie.js (+ blink)
 const FACES = new Set(["sleep", "neutral", "happy", "sad", "surprised", "thinking", "blink"]);
+// valid gestures = GESTURES in ambient.js
+const GESTURES = new Set(["wave", "raiseBoth", "shrug", "leanIn", "tilt", "point", "peek", "slump"]);
 
 const amb = JSON.parse(readFileSync(join(web, "ambient.json"), "utf8"));
 ok(Array.isArray(amb.lines) && amb.lines.length > 0, "ambient.json must have a non-empty lines[]");
@@ -29,6 +31,7 @@ for (const ln of amb.lines || []) {
   ok(t.length > 0, `ambient line missing text: ${JSON.stringify(ln)}`);
   ok(!ln.face || FACES.has(ln.face), `ambient line has unknown face "${ln.face}": ${t.slice(0, 40)}`);
   ok(!ln.heart || /^#[0-9a-fA-F]{6}$/.test(ln.heart), `ambient line has bad heart color "${ln.heart}": ${t.slice(0, 40)}`);
+  ok(!ln.gesture || GESTURES.has(ln.gesture), `ambient line has unknown gesture "${ln.gesture}": ${t.slice(0, 40)}`);
   // pre-cached clip present + file exists on disk
   const rel = clips[t];
   ok(!!rel, `no pre-cached clip for ambient line (run prerender_audio.py --ambient): ${t.slice(0, 48)}`);

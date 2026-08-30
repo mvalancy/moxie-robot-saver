@@ -216,10 +216,19 @@
     getClipPhrases: function () {   // pre-cached Moxie lines guaranteed to make sound
       return loadClips().then(function (j) { return j && j.moxie ? Object.keys(j.moxie) : []; });
     },
+    isUnlocked: function () { return !!(ctx && ctx.state === "running"); },
   };
 
-  // Unlock audio on the first user gesture (browser autoplay policy).
-  ["click", "keydown", "touchstart"].forEach(function (ev) {
-    window.addEventListener(ev, function once() { actx(); }, { once: true, passive: true });
+  // Unlock audio on the first user gesture (browser autoplay policy) and announce
+  // it, so ambient self-talk waits for real audio instead of miming silently.
+  var unlocked = false;
+  function unlock() {
+    if (unlocked) return;
+    actx();
+    unlocked = true;
+    window.dispatchEvent(new CustomEvent("moxie-audio-unlocked"));
+  }
+  ["pointerdown", "click", "keydown", "touchstart"].forEach(function (ev) {
+    window.addEventListener(ev, unlock, { once: true, passive: true });
   });
 })();
