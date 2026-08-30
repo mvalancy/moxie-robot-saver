@@ -2,7 +2,7 @@
 
 > A single view of what's documented for each goal, and the honest remaining gaps (mostly things that
 > need a **bench unit**). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9).
-> 39 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
+> 40 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
 
 ## Goal ① — Build custom firmware / run custom software on the robot
 
@@ -22,6 +22,7 @@
 | Behavior input-event vocabulary (163 events, Farmers→InputEngine) | ✅ | [behavior-input-events](runtime/behavior-input-events.md) |
 | Top-level action arbiter (scored: handling>affection>activity>idle; personality) | ✅ decompiled | [robot-actions](runtime/robot-actions.md) |
 | Decision engine (NodeCanvas BT/FSM/Dialogue + Blackboard, 45 trees) | ✅ | [behavior-tree-engine](runtime/behavior-tree-engine.md) |
+| Behavior-node vocabulary (the 65 RobotBT_* nodes trees are built from) | ✅ decompiled | [behavior-nodes](runtime/behavior-nodes.md) |
 | Task scheduler (priority + resource arbitration over 44 outputs, RobotTaskPriority ladder) | ✅ decompiled | [task-scheduler](runtime/task-scheduler.md) |
 | Gaze & attention (interest points, saccades, IK look-at, published Attention state machine) | ✅ + tool | [gaze-and-attention](runtime/gaze-and-attention.md) · `bus.py` |
 | Perception fusion: the tracked world-model of people (FusedPeople, world/screen coords, events) | ✅ + tool | [perception-fusion](protocol/perception-fusion.md) · `bus.py` |

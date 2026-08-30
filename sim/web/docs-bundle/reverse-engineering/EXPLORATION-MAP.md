@@ -8,6 +8,8 @@
 >
 > Legend: ✅ documented in depth · 🟡 substantially covered, minor/scattered residue · ⬜ open ·
 > ⛔ deliberately deferred (out of scope for the 3 goals).
+>
+> **Depth note.** A namespace at *N/N* means every message is documented, not that the subsystem is fully mined — the C# has 2750 classes and many (behavior-tree nodes, the input Farmers, per-object Unity assets, native-lib internals) still hold depth. ✅ = deep coverage of a coherent thread, not "nothing left."
 
 ## Protocol — the `embodied.*` proto namespaces
 
@@ -46,6 +48,7 @@ The brain + MAINAPP. Major subsystems and their exploration status:
 |:--:|---|---|
 | ✅ | Face-animation engine (EBAnimGrinder, rig3 blendshapes, Eyeseme, visemes, Playables) | [unity-face-animation](runtime/unity-face-animation.md) |
 | ✅ | Behavior engine (NodeCanvas BT/FSM/Dialogue, Blackboard, `Bht_*` trees) | [behavior-tree-engine](runtime/behavior-tree-engine.md) |
+| ✅ | Behavior-node vocabulary (the 65 RobotBT_* nodes — the instruction set) | [behavior-nodes](runtime/behavior-nodes.md) |
 | ✅ | Behavior input events (163 `InputEvent`s, Farmer→InputEngine) | [behavior-input-events](runtime/behavior-input-events.md) |
 | ✅ | Behavior markup (`<mark cmd:…>` verbs) | [behavior-markup](runtime/behavior-markup.md) |
 | ✅ | Gaze & attention (interest points, saccades, IK look-at) | [gaze-and-attention](runtime/gaze-and-attention.md) |

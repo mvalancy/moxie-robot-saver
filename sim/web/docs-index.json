@@ -1,5 +1,5 @@
 {
- "generated": "docs-5e2019751605",
+ "generated": "docs-febeb01e94e0",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 15439,
+   "bytes": 15895,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app (`phone/`)",
@@ -532,7 +532,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 8990,
+   "bytes": 9128,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 9131,
+   "bytes": 9580,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -1053,6 +1053,25 @@
     "The embodied `Robot*` layer",
     "The 45 named behavior trees (`Bht_*`)",
     "DialogueTrees — scripted conversation",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/behavior-nodes.md",
+   "title": "Behavior-node catalog — Moxie's behavior-programming vocabulary (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 7691,
+   "mermaid": 0,
+   "headings": [
+    "The node model",
+    "Expression & mood → the face",
+    "Gaze → where Moxie looks",
+    "Animation, camera & audio → the outputs",
+    "Sensory idle → the ambient layer",
+    "Turn-taking conditions → react to the conversation",
+    "Accessibility globals → the gates",
+    "Tree control & flow → structure",
+    "Markup & events → content hooks",
     "What this means for the three goals"
    ]
   },
