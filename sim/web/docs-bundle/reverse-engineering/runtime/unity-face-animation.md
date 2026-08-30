@@ -1,11 +1,10 @@
 # 🎭 The face-animation engine — how Moxie's face actually renders (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
-> Reverse-engineered from the decompiled `Assembly-CSharp.dll` (the Unity MAINAPP, `bo-android`) in the
-> **v24.10.803** image — the `EB*` (Embodied) animation classes, the `StateVariables` blackboard, the
-> `Eyeseme`/`Viseme` systems, and the `rig3` face rig. Where [`unity-mainapp-interface.md`](../protocol/unity-mainapp-interface.md)
-> is the *protocol seam* between the brain logic and the Unity app, **this is the machine on the other
-> side of that seam**: the actual code that turns a mood, a gaze target, and a stream of phonemes into the
-> animated face. Every class, field, and constant below is read from the binary.
+> From the decompiled `Assembly-CSharp.dll` (`bo-android`, **v24.10.803**) — the `EB*` animation classes,
+> the `StateVariables` blackboard, and the `Eyeseme`/`Viseme`/`rig3` systems.
+> [`unity-mainapp-interface.md`](../protocol/unity-mainapp-interface.md) is the *protocol seam*; **this is
+> the machine behind it** — the code that turns a mood + gaze target + phoneme stream into the animated
+> face. Every class/field/constant below is read from the binary.
 
 ## Architecture
 
@@ -24,6 +23,37 @@ The face is driven **entirely off a blackboard**: the behavior tree, perception,
 `RobotState_*` variables; animation tasks read them and set Animator parameters; the Animator (plus a
 Playables compositor) blends blendshape/bone layers on the `rig3` mesh. A server never touches this — it
 supplies mood + markup + TTS audio ([the seam](../protocol/unity-mainapp-interface.md)) and this engine renders it.
+
+## The face itself — a customizable avatar (clean-room visual spec)
+
+Everything below animates a **customizable character**, not a fixed picture — the design surface a
+clean-room build reproduces *without* Moxie's art:
+
+- **Render target:** a **640×480** image ([Unity → RenderTexture → the DLPC3430 projector](../firmware/unity-assets.md)),
+  projected onto the fresnel faceplate. Design for that size/aspect.
+- **Anatomy — 14 independent, swappable slots** (`MoxieCustomizationType`; the child styles the avatar):
+
+| Slot(s) | Styles |
+|---|---|
+| `EyeColor` · `EyeDesign` · `EyeLid` | the **eyes** — color, iris/shape design, lid style (the expressive core) |
+| `Brows` | eyebrows (expression amplifier) |
+| `Mouth` · `Nose` · `Mustache` | lower-face features |
+| `FaceColor` · `FaceDesign` | base head color + surface pattern |
+| `Hair` · `Glasses` · `Stickers` · `Extras` · `Misc` | cosmetic add-on layers |
+
+  So a faithful face is: a base head (color + design), two prominent eyes (the expressive core), brows, a
+  mouth, and optional cosmetic layers — each an independent layer.
+- **Expression repertoire:** **11 eye-moods** (Afraid · Angry · Concerned · Confused · Curious ·
+  Embarrassed · Happy · Neutral · Sad · Shy · Surprised) cross-fading over ~2 s, each also reshaping the
+  visemes; the mouth lip-syncs **41 ARPABET visemes** (§6).
+- **Blink:** procedural and **per-eye**, a **4-phase profile** — close (`Start→Hold`), hold-shut
+  (`Hold→Open`), reopen (`Open→End`) to a fully-closed blend of `100` — modulated by the current mood (a
+  squint-happy blink ≠ a wide-surprised one) and re-timable via `TriggerProceduralBlink(profile, speed)`;
+  independent L/R lids allow winks (§5).
+- **Parametric vs. art:** the *timing, structure, and repertoire* above are RE-derived — reproduce them
+  for faithful behavior. The specific *geometry and palette* live in Moxie's `rig3` mesh + `rig3animations`
+  bundle, so a clean-room build supplies its **own** eye/face art driven by the same blendshape roles (this
+  project's independent take is the [SIL face](../../architecture/sil-and-cicd.md)).
 
 ## 1. The face rig — `Rig3Robot`, blendshapes
 
@@ -184,11 +214,12 @@ layer** (timed to phonemes) **+ the IK look-at** — all summed into blendshape 
 
 ## What this means for the three goals
 
-**① Custom firmware — the headline.** This is the complete face-animation architecture. To **build a
-custom face**, reproduce: a blendshape rig, a layered/masked animator, a blackboard of the `RobotState_*`
-variables above, an Eyeseme mood layer (11 moods) + a post-process blink, a viseme mouth layer fed by a
-phoneme→viseme table, an IK look-at, and the `SensoryMode` idle selector. The `EBAnimGrinder` (XML +
-`rig3animations` → controller) is the **authoring pipeline** to recreate. To keep the stock face, you just
+**① Custom firmware — the headline.** The complete face architecture, clean-room. To **build a custom
+face**, design the [avatar](#the-face-itself-a-customizable-avatar-clean-room-visual-spec) (640×480, the
+customization slots, your own eye/face art) then reproduce the engine: a blendshape rig, a layered/masked
+animator, the `RobotState_*` blackboard, an Eyeseme mood layer (11 moods) + post-process blink, a viseme
+mouth layer fed by a phoneme→viseme table, an IK look-at, and the `SensoryMode` idle selector — authored
+via the `EBAnimGrinder` pipeline (XML + `rig3animations` → controller). To keep the *stock* face, you just
 write the blackboard.
 
 **② Server revival.** The server never runs this — it stays on-device. The server's job is upstream:

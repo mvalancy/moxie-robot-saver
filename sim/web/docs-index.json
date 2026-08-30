@@ -1,5 +1,5 @@
 {
- "generated": "docs-76dd75db2867",
+ "generated": "docs-ebb1e3049646",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1357,10 +1357,11 @@
    "path": "reverse-engineering/runtime/unity-face-animation.md",
    "title": "The face-animation engine — how Moxie's face actually renders (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 13357,
+   "bytes": 15459,
    "mermaid": 1,
    "headings": [
     "Architecture",
+    "The face itself — a customizable avatar (clean-room visual spec)",
     "1. The face rig — `Rig3Robot`, blendshapes",
     "2. The animation controller — the `EBAnimGrinder`",
     "3. The runtime players",
