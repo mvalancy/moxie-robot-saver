@@ -1,5 +1,5 @@
 {
- "generated": "docs-174254e71954",
+ "generated": "docs-b0e54fa7cc35",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1017,19 +1017,23 @@
    "path": "reverse-engineering/protocol/qr-commands.md",
    "title": "QR command grammar — what the robot actually scans",
    "section": "reverse-engineering",
-   "bytes": 15139,
+   "bytes": 20764,
    "mermaid": 0,
    "headings": [
     "The dispatcher",
     "The setup app's runtime status — `WifiAppStatus` / `WifiAppBricked`",
     "JSON debug/factory commands",
     "QRCommand` protobuf (`embodied.unity`)",
+    "The effective command set — native dispatch (`RightPoint::on_QRCommand`)",
+    "The `om` relocation — the real re-home payload",
     "Pairing QR — `PA` + `StartPairingQR`",
     "VPN QR — `VN` + `QRVPNConfig`",
     "IOTEndpoint` — the cloud selector (`embodied.logging`)",
     "Wi-Fi provisioning support (what networks work)",
     "Post-pairing Wi-Fi push (`WifiNetworkUpdate`)",
     "Manufacturing QR codes",
+    "Runtime content QR — the *second* scanner (`bo-android`, in play)",
+    "Supersedes the pre-decompilation \"easter-egg\" study",
     "Toolkit — generate & validate these codes",
     "and in the browser, with nothing installed",
     "Also carried: `QRMultiDecoder`"

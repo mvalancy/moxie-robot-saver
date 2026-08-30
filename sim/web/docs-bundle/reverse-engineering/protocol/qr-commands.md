@@ -1,9 +1,11 @@
 # 🎫 QR command grammar — what the robot actually scans
 
-> **What this is.** The **complete** set of QR codes Moxie's setup app (`bo-wifi`, the "Wifi App")
-> recognizes, recovered from its managed code (`WifiApp.dll` → `QRData.ParseFromString`) and the
-> `embodied.wifiapp` protobufs. This is the *robot-side* truth that complements the *phone-side*
-> [`qr-format.md`](../phone/qr-format.md) (pairing QR as the parent app emits it).
+> **What this is.** The **complete QR command space** of the robot, read from the `v24.10.803` binaries —
+> all three pathways: (1) the `bo-wifi` **setup grammar** (`WifiApp.dll` → `QRData.ParseFromString` + the
+> `embodied.wifiapp` protos), (2) the **native `QRCommand` dispatch** those forward into
+> (`RightPoint::on_QRCommand` in `libbo-logger`), and (3) the **runtime content-QR** path the brain scans
+> in play (`EnableQRCode` / `QRPB`). Complements the *phone-side* [`qr-format.md`](../phone/qr-format.md)
+> (pairing QR as the parent app emits it).
 >
 > ⚠️ **Supersedes guesswork.** The acoustic brute-force log in
 > [`../debugging/qr-command-findings.md`](../../debugging/qr-command-findings.md) was speculating at the
@@ -111,6 +113,58 @@ message QRCommand {
 
 `QRResponse{response_code, response}` and `QRDiagnosticData{robot_uuid, rsa_pub, cloud_connected,
 user_state, cloud_project}` come back the other way — the diagnostic screen displays them.
+
+## The effective command set — native dispatch (`RightPoint::on_QRCommand`)
+
+The [WifiApp forwards every debug command](#json-debugfactory-commands) to the bus as `QRCommand{code,
+param}`; the **managed brain ignores it** and the [native cloud module consumes it](../runtime/native-boundary.md#resolved-who-consumes-qrcommand-the-setup-qr-brain-bridge).
+`nm`/`c++filt` on **`libbo-logger.so`** name the handler and its dispatch targets directly — so the
+"effective command set" is no longer guesswork, it is these exported functions:
+
+| `QRCommand.code` | Native handler in `embodied::logging::cloud::RightPoint` | Effect |
+|---|---|---|
+| **`endpoint_update`** | `on_EndpointUpdate(json_t*, string)` | Re-home the robot: apply a new [`ServiceConfiguration2`](#the-om-relocation-the-real-re-home-payload) (endpoint/mqtt_host/project) and reconnect. Reached from a pairing QR's `endpoint` field **or** a `debug` command. |
+| **`om`** | → same `on_EndpointUpdate` | OpenMoxie's relocation form — `param` = base64(`ServiceConfiguration2`). See below. |
+| *(diagnostic)* | `on_DiagnosticDataRequest(json_t*, string)` | Produce `QRDiagnosticData{robot_uuid, rsa_pub, cloud_connected, user_state, cloud_project}` — the identity/diagnostic read the [easter-egg study](#supersedes-the-pre-decompilation-easter-egg-study) wanted a trigger for. It exists, as a named handler. |
+| *(user reset)* | `ClearResetUserFlag()` | Clear the paired-user flag (unpair/reset). |
+
+Supporting members confirm the shape: `RightPoint::GetServiceConfig()` / `InitServiceConfig()` and the
+`RightPoint::*` listener bound to `ProtoEventArgs<QRCommand>`. `RightPoint` is the robot's **cloud
+connection manager**, so these same actions are also reachable over MQTT (the handlers take a `json_t*`
+payload) — QR is just one transport into them.
+
+> **Honest scope.** The `on_*` **handlers** are confirmed from the export table; the exact `code`-string
+> that selects each (beyond `endpoint_update`, confirmed on both sides, and `om`, confirmed from
+> OpenMoxie's emitter) is inside `on_QRCommand`'s body, which needs ARM disassembly to read
+> byte-for-byte. The **capabilities** (re-home, diagnostic-data, user-reset) are certain; treat any
+> other single code string as unconfirmed until disassembled.
+
+### The `om` relocation — the real re-home payload
+
+OpenMoxie's dashboard "Migration QR" emits exactly (`moxie_server.py:get_endpoint_qr_data`):
+
+```json
+{ "debug": { "command": "om", "param": "<base64(ServiceConfiguration2)>" } }
+```
+
+The WifiApp forwards it as `QRCommand{code:"om", param:…}`; `RightPoint::on_QRCommand` decodes the param
+as **`embodied.logging.ServiceConfiguration2`** and re-homes:
+
+```proto
+message ServiceConfiguration2 {          // embodied/logging/Cloud2.proto
+  string gcp_project = 1;   string webservice_root = 2;   string webservice_pin = 3;
+  bool   disable_sync = 4;  bool   disable_log_upload = 5; string endpoint = 6;
+  uint64 timestamp = 7;     string mqtt_host = 8;
+  ConnectionType connection_type = 9;    // GOOGLE_IOT=0 · EMBODIED_IOT=1 · EMBODIED_LOCAL=2
+  IOTEndpoint endpoint_id = 10;  uint32 override_port = 11;  bool disable_verify = 12;
+}
+```
+
+- **`mqtt_host` / `endpoint` / `override_port`** point the robot at *your* broker.
+- **`disable_verify` (field 12)** is the field that makes "unverified MQTTS" work — it relaxes cloud cert
+  verification, which is why an OpenMoxie/self-signed host is accepted. This is the concrete mechanism
+  behind the [network-trust](network-trust.md) re-home, and it is **gated to firmware ≥ 24.10.801**
+  (`OPEN_MOXIE`/relocation handler absent below 801 — the pre-801 wall).
 
 ## Pairing QR — `PA` + `StartPairingQR`
 
@@ -229,6 +283,32 @@ i.e. **manufacturing QR codes ride the exact same `{"debug":{"command":…}}` JS
 above — the factory just pre-bakes specific codes. So any generator that emits this JSON produces a
 "factory-format" QR the robot treats identically. The serial/part grammar the factory scanners *read*
 (barcodes, not command QRs) is in [`factory-provisioning.md`](../firmware/factory-provisioning.md).
+
+## Runtime content QR — the *second* scanner (`bo-android`, in play)
+
+The setup grammar above is `bo-wifi`. Once paired, the **runtime brain** (`bo-android`) has its own QR
+path, used for content/play (showing Moxie a QR card), not configuration:
+
+- **`embodied.robotbrain.EnableQRCode{ bool run }`** — the brain turns camera QR-reading **on/off** for a
+  moment of content (it is not always scanning).
+- **`embodied.perception.vision.QRPB{ string qrcode }`** — when enabled, the [vision analytics module
+  `libbo-analytics`](../runtime/native-boundary.md#the-full-module-roster-what-each-remaining-bo-so-actually-is)
+  reads a code (OpenCV `wechat_qrcode` + ZBar) and publishes the decoded string as `QRPB`.
+
+So a QR the child shows Moxie during play is delivered to the brain as a plain string for content logic —
+a different pathway from the `bo-wifi` config scanner, and one a revival server can drive by toggling
+`EnableQRCode` and reacting to `QRPB` ([perception-pipeline](../runtime/perception-pipeline.md#vision-embodiedperceptionvision),
+[content-and-conversation](../runtime/content-and-conversation.md)).
+
+## Supersedes the pre-decompilation "easter-egg" study
+
+An earlier survey (`work/maps/14-qr-easter-eggs.md`, and the acoustic
+[`qr-command-findings.md`](../../debugging/qr-command-findings.md)) was written **before** the robot binaries
+were decompiled; its premise was *"the dispatch is a native if/switch we can't see, so only `om` is
+confirmed and everything else is speculative."* That premise no longer holds — the WifiApp grammar, the
+`QRCommand` proto, and the native `RightPoint::on_QRCommand` handlers above are all now read from the
+`v24.10.803` binaries. This document is the current, code-grounded map; treat the easter-egg study as a
+historical artifact.
 
 ## Toolkit — generate & validate these codes
 
