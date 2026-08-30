@@ -1,5 +1,5 @@
 {
- "generated": "docs-851a48c8d594",
+ "generated": "docs-a1eaaff91bae",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 12513,
+   "bytes": 13091,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 7920,
+   "bytes": 8083,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -921,6 +921,27 @@
     "Pairing (MAINAPP side) — `UserPairingRequest`",
     "Perf & network telemetry — `Stats`, `NetworkState`",
     "Dev / authoring tools",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/unity-face-animation.md",
+   "title": "The face-animation engine — how Moxie's face actually renders (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 13255,
+   "mermaid": 1,
+   "headings": [
+    "Architecture",
+    "1. The face rig — `Rig3Robot`, blendshapes",
+    "2. The animation controller — the `EBAnimGrinder`",
+    "3. The runtime players",
+    "4. The blackboard bridge — `StateVariables`",
+    "5. The eyes — Eyeseme + blink",
+    "6. The mouth — visemes (lip-sync)",
+    "7. Gaze / look-at",
+    "8. The sensory / idle layer — `SensoryMode`",
+    "9. Accessibility & global gates",
+    "10. The per-frame picture",
     "What this means for the three goals"
    ]
   },

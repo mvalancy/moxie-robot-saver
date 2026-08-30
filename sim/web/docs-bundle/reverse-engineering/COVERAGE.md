@@ -2,7 +2,7 @@
 
 > A single view of what's documented for each goal, and the honest remaining gaps (mostly things that
 > need a **bench unit**). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9).
-> 35 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
+> 36 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
 
 ## Goal ① — Build custom firmware / run custom software on the robot
 
@@ -28,6 +28,7 @@
 | Physical flashing surface (maskrom/rockusb/fastboot/UART/JTAG) | ✅ | [hardware-access](hardware-access.md) |
 | Runtime config surface (199 settings) | ✅ | [settings-schema](settings-schema.md) |
 | Unity face/asset pipeline | ✅ inventory (full per-object export = open) | [unity-assets](unity-assets.md) |
+| Face-animation engine (rig3 blendshapes, EBAnimGrinder, Eyeseme moods, visemes, blackboard) | ✅ decompiled | [unity-face-animation](unity-face-animation.md) |
 
 ## Goal ② — Client/server revival (self-hosted backend)
 
