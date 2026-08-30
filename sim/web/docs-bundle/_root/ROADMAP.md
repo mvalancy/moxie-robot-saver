@@ -78,6 +78,8 @@ Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-ex
   **syntax highlighting** + per-block copy buttons (highlight.js vendored). Runtime behavior guarded by `sim/test_docs_explorer.mjs`.
 - ✅ **Cloudflare Pages deploy** — live at [moxie.mattvalancy.com](https://moxie.mattvalancy.com);
   `_headers` cache policy + clean URLs, pre-cached MP3 voice + ambient self-talk, responsive across phone→ultrawide.
+  Environment-aware: the hosted demo detects it has no backend and skips the local-sidecar `/health`
+  probes (no doomed requests), annotating the server-only controls — guarded by `sim/test_env_hosted.mjs`.
 
 ---
 
