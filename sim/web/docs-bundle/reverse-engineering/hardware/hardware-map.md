@@ -1,4 +1,4 @@
-# 🦾 Hardware map — motors, sensors, LEDs, power
+# 🦾 Hardware map — motors, sensors, LEDs, power (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
 > **What this is.** Moxie's physical hardware, enumerated straight from the firmware's own MCU
 > protobufs (`embodied.lizzerface`, recovered under [`recovered-proto/`](../protocol/recovered-proto/)) and the

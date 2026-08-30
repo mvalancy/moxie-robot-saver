@@ -7,6 +7,12 @@ the field. This project is a complete, self-hosted replacement for **everything 
 internet for** — so an owner can pair a robot, configure it, and (as the project grows) have it
 *talk again* — all running on one machine at home.
 
+But the ambition is bigger than reviving the dead cloud. Moxie decides everything it says and does
+behind **one documented seam** (the `RemoteChat` turn), so **any** AI that answers it *becomes*
+Moxie — a local LLM, a cloud model, your own agent. The body is a shell; this project lets **any mind
+wear it**. Reviving the original experience is the floor; a full **brain transplant — a ghost in the
+shell** — is the ceiling.
+
 <p align="center">
   <img width="712" alt="Moxie SIL simulator" src="https://github.com/user-attachments/assets/81f325da-725c-4902-9d1f-9233f0b5cf97" />
 </p>
@@ -85,7 +91,7 @@ flowchart TD
     fw -->|"24.10.803 (lucky)"| qr["🎫 Two-QR relocation<br/>Wi-Fi QR + endpoint QR → your server"]
     fw -->|"24.10.801"| qrs["🎫 Two-QR, but needs a real signed cert on the broker"]
     fw -->|"pre-801 (most resale units)"| hard["🔩 QR route is impossible"]
-    hard --> hack["🕵️ QR-command discovery<br/>(hunt undocumented/factory codes)"]
+    hard --> hack["🎫 QR command space fully mapped<br/>(closed grammar — no hidden codes)"]
     hard --> flash["⚡ Reflash to 803<br/>Rockchip Maskrom + rkdeveloptool"]
     qr --> talk["🗣️ Moxie talks (local AI)"]
     flash --> talk
@@ -100,7 +106,7 @@ flowchart TD
 | Path | For | Status |
 |------|-----|--------|
 | **Two-QR relocation** (Wi-Fi QR → endpoint QR → MQTT) | firmware **803** (increasingly rare) | ✅ Wi-Fi QR hardware-verified; endpoint QR + broker built |
-| **QR-command discovery** — hunt undocumented/factory QR codes the Wifi App still acts on | any firmware; exploratory | 🔬 automated rig ([`tools/qr-rig`](tools/qr-rig/)), running |
+| **The QR command space** — mapped in full from the robot binaries (not guessed) | any firmware; reference | ✅ Closed grammar: pairing/Wi-Fi/VPN + `{"debug":{"command":…}}`; native `endpoint_update`/`om` re-home decoded ([`qr-commands.md`](docs/reverse-engineering/protocol/qr-commands.md)). The old discovery rig is retired — there are no hidden codes. |
 | **Firmware reflash to 803** (open case → USB → `rkdeveloptool`) | **pre-801** (most resale units) | 🔩 documented; signed image located |
 
 Full decision tree + the honest firmware reality: **[`docs/architecture/revival-path.md`](docs/architecture/revival-path.md)**

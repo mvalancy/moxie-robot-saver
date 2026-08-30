@@ -12,6 +12,8 @@ The end goal is not just to *revive* old robots but to make Moxie's body host **
 [out-of-process behind the ZMQ bus](runtime/native-boundary.md), so any AI that speaks that contract
 *becomes* Moxie. Running a compatible server is the floor; a full brain transplant is the ceiling.
 
+> 🧪 **[Methodology](METHODOLOGY.md)** — how these facts are produced (tool tiers incl. Ghidra) and the disciplined per-iteration loop every session runs.
+>
 > ✅ **[Coverage matrix](COVERAGE.md)** — what's documented per goal + the honest remaining gaps.
 >
 > 🗺️ **[Exploration map](EXPLORATION-MAP.md)** — the source-surface view: every proto namespace, C# subsystem, image, app & native lib with its status (✅/🟡/⬜) and covering doc — *what we've examined and what's still open*.

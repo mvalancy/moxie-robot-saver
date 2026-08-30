@@ -1,4 +1,4 @@
-# 🔐 Network trust — TLS, CA validation, and what a server needs
+# 🔐 Network trust — TLS, CA validation, and what a server needs (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
 > **What this is.** Exactly how the robot decides which servers to trust — the piece that determines
 > whether you can point it at your own backend (goal #2) and why old robots are stuck (goal #3).

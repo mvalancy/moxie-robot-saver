@@ -59,6 +59,32 @@ What a self-hosted replacement backend must implement (this repo's [`../server/`
 - [`debugging/`](debugging/) — live hardware-debug notes, QR-command findings.
 - [`community-research.md`](community-research.md) — the revival community (OpenMoxie & friends) and where we fit.
 
+## 🌳 How this documentation tree is maintained (SOP)
+
+These docs are a **tree we grow, not a pile we polish** — the message must stay consistent from the root
+`README.md` down to every leaf. That consistency is a **standing step in every session loop**, not an
+occasional cleanup:
+
+1. **One message, root to leaf.** The framing at the top (revive the experience *and* put any AI inside
+   Moxie — a [ghost in the shell](../README.md)) must hold at every level below it. When a finding
+   changes the story, push the change **upward** — the leaf doc, its subfolder README, the section index,
+   and (if it changes the headline) `docs/README.md` and the root `README.md` — never leave two levels
+   disagreeing.
+2. **Every folder is navigable.** Each docs subfolder with ≥2 pages carries a `README.md` that indexes it
+   and links back up; parent indexes link *down*. New pages join the curated order, not an A–Z tail.
+   (Guarded by `sim/test_docs.mjs`.)
+3. **Retire, don't strand.** When a finding supersedes an earlier belief, update or banner the old page in
+   the same pass — no doc should still assert something we've since disproven (e.g. "hunt for hidden QR
+   codes" after the grammar was proven closed).
+4. **Stamp the build.** Robot-side pages are stamped with the analyzed firmware (`v24.10.803`); the RE
+   [methodology](reverse-engineering/METHODOLOGY.md) and per-iteration loop keep new pages consistent.
+5. **Verify mechanically.** `python3 sim/tools/build_docs_bundle.py` → `node sim/test_docs.mjs` →
+   `python3 scripts/check-doc-links.py` → `python3 scripts/check-doc-consistency.py` (stale-message +
+   version-stamp guard). The tree must pass these before a commit.
+
+See [`reverse-engineering/METHODOLOGY.md`](reverse-engineering/METHODOLOGY.md) for the full RE loop and
+tool tiers (including Ghidra for native decompilation).
+
 ---
 *Robot-side docs: firmware **v3.6.4-Zephyr / OTA v24.10.803**. Parent-app docs:
 `com.embo.embodied.parent` v2.2.2 (versionCode 249). Docs are versioned with the code.*

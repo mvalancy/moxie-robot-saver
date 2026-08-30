@@ -16,6 +16,8 @@ jobs:
         with: { python-version: "3.11" }
       - name: Internal doc links resolve
         run: python3 scripts/check-doc-links.py
+      - name: Doc-tree consistency (no stale claims, version-stamped)
+        run: python3 scripts/check-doc-consistency.py
       - name: Recovered protos compile
         run: |
           pip install protobuf grpcio-tools >/dev/null

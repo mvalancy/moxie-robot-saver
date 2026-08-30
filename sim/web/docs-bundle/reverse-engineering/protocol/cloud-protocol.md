@@ -1,4 +1,4 @@
-# ☁️ Robot ↔ cloud protocol — REST, MQTT, STT
+# ☁️ Robot ↔ cloud protocol — REST, MQTT, STT (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
 > **What this is.** How the robot's brain (`bo-android`) talks to the **backend** — the surface a
 > self-hosted server must implement to run a Moxie (goal #2, client/server revival). This is the

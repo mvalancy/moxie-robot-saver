@@ -1,4 +1,4 @@
-# 🔄 OTA & recovery — can a robot be upgraded without opening it?
+# 🔄 OTA & recovery — can a robot be upgraded without opening it? (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
 > **The hard question for reviving old robots.** A pre-801 Moxie (Google-IoT firmware) is stranded:
 > its cloud is dead, so it never gets told to update. Can we upgrade it to 803 (or push custom

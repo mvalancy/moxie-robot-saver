@@ -1,12 +1,12 @@
 {
- "generated": "docs-b769b44ee14d",
+ "generated": "docs-386fe1dbc33c",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 10019,
+   "bytes": 10637,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
@@ -285,7 +285,7 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 6252,
+   "bytes": 8123,
    "mermaid": 0,
    "headings": [
     "Start here",
@@ -293,7 +293,8 @@
     "② The Parent app — the phone (`com.embo.embodied.parent` v2.2.2)",
     "③ The Server app — the backend we run",
     "Shared — the protocol & interfaces (spans all three)",
-    "Guides & context"
+    "Guides & context",
+    "How this documentation tree is maintained (SOP)"
    ]
   },
   {
@@ -525,7 +526,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 16465,
+   "bytes": 16626,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app ([`phone/`](phone/README.md))",
@@ -575,6 +576,19 @@
     "The full module roster — what each remaining `bo-*` `.so` actually is",
     "Resolved: who consumes `QRCommand` (the setup-QR → brain bridge)",
     "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/METHODOLOGY.md",
+   "title": "Methodology — how we reverse-engineer Moxie (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 6495,
+   "mermaid": 0,
+   "headings": [
+    "The evidence base",
+    "The tool tiers — light to heavy",
+    "Using Ghidra (headless)",
+    "The per-iteration loop (standard operating procedure)"
    ]
   },
   {
@@ -893,9 +907,9 @@
   },
   {
    "path": "reverse-engineering/protocol/cloud-protocol.md",
-   "title": "Robot ↔ cloud protocol — REST, MQTT, STT",
+   "title": "Robot ↔ cloud protocol — REST, MQTT, STT (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 19556,
+   "bytes": 19593,
    "mermaid": 1,
    "headings": [
     "Three channels",
@@ -1041,9 +1055,9 @@
   },
   {
    "path": "reverse-engineering/protocol/network-trust.md",
-   "title": "Network trust — TLS, CA validation, and what a server needs",
+   "title": "Network trust — TLS, CA validation, and what a server needs (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 7085,
+   "bytes": 7122,
    "mermaid": 0,
    "headings": [
     "The stack",
@@ -1234,9 +1248,9 @@
   },
   {
    "path": "reverse-engineering/runtime/content-and-conversation.md",
-   "title": "Content & conversation — ChatScript, content modules, the volley API",
+   "title": "Content & conversation — ChatScript, content modules, the volley API (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 27147,
+   "bytes": 27184,
    "mermaid": 1,
    "headings": [
     "Two dialog engines",
@@ -1480,9 +1494,9 @@
   },
   {
    "path": "reverse-engineering/firmware/ota-and-recovery.md",
-   "title": "OTA & recovery — can a robot be upgraded without opening it?",
+   "title": "OTA & recovery — can a robot be upgraded without opening it? (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 9822,
+   "bytes": 9859,
    "mermaid": 1,
    "headings": [
     "How OTA actually works (803 firmware)",
@@ -1548,9 +1562,9 @@
   },
   {
    "path": "reverse-engineering/hardware/hardware-map.md",
-   "title": "Hardware map — motors, sensors, LEDs, power",
+   "title": "Hardware map — motors, sensors, LEDs, power (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 20038,
+   "bytes": 20075,
    "mermaid": 0,
    "headings": [
     "Hardware revisions (`Revision_Level`)",

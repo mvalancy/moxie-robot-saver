@@ -1,4 +1,4 @@
-# 🗣️ Content & conversation — ChatScript, content modules, the volley API
+# 🗣️ Content & conversation — ChatScript, content modules, the volley API (`v3.6.4-Zephyr` / OTA `v24.10.803`)
 
 > **What this is.** How Moxie decides what to *say and do* — the two-layer dialog engine, the
 > content-module format a server delivers, and the `volley`/`session` hooks that let content run code
