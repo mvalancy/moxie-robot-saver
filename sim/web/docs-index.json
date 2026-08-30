@@ -1,5 +1,5 @@
 {
- "generated": "docs-a1eaaff91bae",
+ "generated": "docs-01bdfc5074de",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 13091,
+   "bytes": 13332,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -535,6 +535,20 @@
     "Goal ② — Client/server revival (self-hosted backend)",
     "Goal ③ — Revive old pre-801 robots without disassembly",
     "Open items (need a bench unit or an external artifact)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/EXPLORATION-MAP.md",
+   "title": "Exploration map — what's been examined, what's open",
+   "section": "reverse-engineering",
+   "bytes": 8053,
+   "mermaid": 0,
+   "headings": [
+    "Protocol — the `embodied.*` proto namespaces",
+    "Decompiled C# — `bo-android` (Assembly-CSharp.dll, 2750 classes)",
+    "Disk images",
+    "Apps & native libs",
+    "Hardware (needs a bench unit — tracked in COVERAGE)"
    ]
   },
   {

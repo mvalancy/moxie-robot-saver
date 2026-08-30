@@ -7,6 +7,8 @@ observed facts and schemas reconstructed from shipped binaries. Everything else 
 from these.
 
 > ✅ **[Coverage matrix](COVERAGE.md)** — what's documented per goal + the honest remaining gaps.
+>
+> 🗺️ **[Exploration map](EXPLORATION-MAP.md)** — the source-surface view: every proto namespace, C# subsystem, image, app & native lib with its status (✅/🟡/⬜) and covering doc — *what we've examined and what's still open*.
 
 > 🗺️ **See the [architecture diagrams](architecture-diagrams.md)** — the whole system as a hierarchy of mermaid diagrams, product level down to motor drivers.
 
