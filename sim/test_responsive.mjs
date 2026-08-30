@@ -140,6 +140,7 @@ try {
         moxieReady: !!window.moxie,
         canvasFull: !!canvas && canvas.clientWidth >= window.innerWidth - 2 && canvas.clientHeight >= window.innerHeight - 2,
         railScroll: rail ? rail.scrollHeight - rail.clientHeight : 0,
+        columns: rail ? parseInt(getComputedStyle(rail).columnCount) || 1 : 1,
         clippedGroups: clipped,
         toggleShown: toggle ? getComputedStyle(toggle).display !== "none" : false,
         panelWidth: panel ? Math.round(panel.getBoundingClientRect().width) : 0,
@@ -150,9 +151,9 @@ try {
     ok(await noHScroll(p), `[sim ${label}] page scrolls horizontally`);
     ok(s.moxieReady, `[sim ${label}] window.moxie API did not initialise`);
     ok(s.canvasFull, `[sim ${label}] 3D canvas does not fill the viewport`);
-    if (w < 1360) {
-      // compact (phone/tablet): the rail collapses to a drawer. The handle must be
-      // shown, and opening it must reveal the controls (scrolling inside is fine).
+    if (w < 900) {
+      // compact (phone/small tablet): the rail collapses to a drawer. The handle
+      // must show, and opening it must reveal the controls (scrolling inside is fine).
       ok(s.toggleShown, `[sim ${label}] drawer handle not shown (rail should collapse)`);
       const opened = await p.evaluate(() => {
         const t = document.getElementById("rail-toggle");
@@ -167,11 +168,14 @@ try {
       ok(opened.visible && opened.groups >= 4, `[sim ${label}] opening the drawer did not reveal the controls`);
       ok(!opened.anyOff, `[sim ${label}] a control group runs off the side when the drawer is open`);
     } else {
-      // roomy (laptop/desktop/ultrawide): a docked multi-column panel that shows
-      // EVERY control with no internal scroll, no clipping, and leaves room for the 3D.
+      // side panel (medium → ultrawide): a glassy right column. No control group runs
+      // off-screen, it leaves room for the 3D, and a MULTI-column panel must fit with
+      // no internal scroll (a single-column panel is allowed to scroll).
       ok(s.clippedGroups === 0, `[sim ${label}] ${s.clippedGroups} control group(s) off-screen`);
-      ok(s.railScroll <= 2, `[sim ${label}] rail scrolls internally by ${s.railScroll}px (controls not all visible)`);
-      ok(s.panelWidth < s.innerW * 0.7, `[sim ${label}] control panel is ${Math.round(s.panelWidth / s.innerW * 100)}% of width (too wide)`);
+      ok(s.panelWidth > 0 && s.panelWidth < s.innerW * 0.7, `[sim ${label}] control panel is ${Math.round(s.panelWidth / s.innerW * 100)}% of width`);
+      if (s.columns > 1) {
+        ok(s.railScroll <= 2, `[sim ${label}] multi-col rail scrolls internally by ${s.railScroll}px (controls not all visible)`);
+      }
     }
     await p.close();
   }

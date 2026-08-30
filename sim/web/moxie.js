@@ -1823,9 +1823,10 @@ animate();
 // so Moxie sits centred in the visible area to the LEFT of it (instead of being
 // half-hidden behind the panel). On phone/drawer widths the panel isn't a side
 // column, so no offset.
-// Keep Moxie centred in the *visible* area. Landscape: the glassy panels float
-// over the 3D (Moxie shows through), so no shift. Portrait: when the bottom
-// controls drawer is open it centres Moxie in the space ABOVE the drawer.
+// Keep Moxie centred in the USEFUL viewport — the area NOT covered by the open
+// controls panel. Landscape: centre in the space to the LEFT of the side panel;
+// portrait: centre in the space ABOVE the bottom drawer. Re-runs on every resize
+// (and drawer toggle) so it stays centred as the window is scaled.
 function applyStageOffset() {
   const W = window.innerWidth, H = window.innerHeight;
   camera.aspect = W / H;
@@ -1834,10 +1835,14 @@ function applyStageOffset() {
   const hud = document.getElementById('hud');
   if (panel && hud && !hud.classList.contains('rail-closed')) {
     const r = panel.getBoundingClientRect();
-    const isBottomDrawer = r.height > 40 && r.bottom >= H - 6 && r.width > W * 0.6 && r.top > H * 0.35;
-    if (isBottomDrawer) {
-      const shiftY = (H - r.top) / 2;      // open area = [0, r.top]; centre Moxie there
-      camera.setViewOffset(W, H, 0, shiftY, W, H);
+    if (r.width > 20 && r.height > 20) {
+      const isRightColumn = r.right >= W - 8 && r.top < H * 0.4 && r.height > H * 0.55 && r.width < W * 0.9;
+      const isBottomDrawer = r.bottom >= H - 8 && r.left < W * 0.2 && r.width > W * 0.6 && r.top > H * 0.3;
+      if (isRightColumn) {
+        camera.setViewOffset(W, H, (W - r.left) / 2, 0, W, H);   // centre in [0, panel.left]
+      } else if (isBottomDrawer) {
+        camera.setViewOffset(W, H, 0, (H - r.top) / 2, W, H);    // centre in [0, panel.top]
+      }
     }
   }
   camera.updateProjectionMatrix();

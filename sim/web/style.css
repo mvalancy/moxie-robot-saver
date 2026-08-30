@@ -822,7 +822,7 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
 
 /* Compact (phones, tablets, small laptops): the rail is a bottom drawer over the
    full-screen 3D so Moxie stays visible; tap the handle to open the controls. */
-@media (max-width: 1359px) {
+@media (max-width: 899px) {
   #hud {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -916,8 +916,16 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
   -webkit-column-break-inside: avoid;
   margin-bottom: var(--sp-3);
 }
+/* Medium widths: a narrow single-column GLASS side panel (scrolls) — far better
+   than a full-width drawer wasting the space. */
+@media (min-width: 900px) {
+  :root { --rail-w: clamp(320px, 26vw, 380px); }   /* SIDE-PANEL single-column base */
+  #hud { grid-template-columns: minmax(0, 1fr) var(--rail-w); }
+  #rail-toggle { display: none; }
+  #hud.rail-closed #rail-scroll { display: flex; }
+}
 /* Tall enough for 2 columns to hold every control with no scroll. */
-@media (min-width: 1360px) and (min-height: 1130px) {
+@media (min-width: 1300px) and (min-height: 1131px) {
   :root { --rail-w: clamp(600px, 34vw, 720px); }
   #hud { grid-template-columns: minmax(440px, 1fr) var(--rail-w); }
   #rail-scroll {
@@ -926,7 +934,7 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
   #rail-scroll > .group { break-inside: avoid; -webkit-column-break-inside: avoid; margin-bottom: var(--sp-3); }
 }
 /* Shorter but wide → 3 columns so it still fits with no scroll. */
-@media (min-width: 1360px) and (max-height: 1129px) {
+@media (min-width: 1500px) and (max-height: 1130px) {
   :root { --rail-w: clamp(860px, 54vw, 1020px); }
   #hud { grid-template-columns: minmax(400px, 1fr) var(--rail-w); }
   #rail-scroll {
