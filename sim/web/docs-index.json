@@ -1,5 +1,5 @@
 {
- "generated": "b30d9b4-dirty",
+ "generated": "2502546-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 5379,
+   "bytes": 5471,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 6574,
+   "bytes": 6861,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -1198,6 +1198,23 @@
     "The behavior-command markup (how the cloud drives the body)",
     "Console commands",
     "Using this for custom software"
+   ]
+  },
+  {
+   "path": "reverse-engineering/security-policy.md",
+   "title": "Android permissions & SELinux policy — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 9632,
+   "mermaid": 1,
+   "headings": [
+    "TL;DR",
+    "1. Android permission surface (`/system/etc/permissions`, `/system/etc/sysconfig`)",
+    "Declared hardware features (what a custom ROM must advertise)",
+    "2. SELinux — the embodied additions",
+    "Custom daemon domains",
+    "Custom device / file / property types (label → hardware)",
+    "App domains & properties",
+    "3. What this means for the three goals"
    ]
   },
   {

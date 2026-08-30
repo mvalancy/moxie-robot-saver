@@ -13,6 +13,7 @@
 | Full file/app/binary manifest + hashes | ✅ | [firmware-manifest](firmware-manifest.md) · [firmware-inventory](firmware-inventory.md) |
 | Boot chain + Launcher state machine + init services | ✅ | [boot-and-launcher](boot-and-launcher.md) |
 | Code signing (3 keys) & permissions | ✅ | [firmware-image](firmware-image.md#code-signing--app-trust) |
+| Android permissions + SELinux confinement | ✅ | [security-policy](security-policy.md) |
 | On-device ZMQ bus (drive the robot) + client | ✅ + tool | [robot-ipc-protocol](robot-ipc-protocol.md) · `MoxieBus` |
 | Hardware map: motors/sensors/LEDs/power rails | ✅ | [hardware-map](hardware-map.md) |
 | **3-processor firmware** (RK3288 OTA · Lizard STM32 · XMOS DSP) | ✅ incl. images | [hardware-map](hardware-map.md) · [perception-pipeline](perception-pipeline.md) |

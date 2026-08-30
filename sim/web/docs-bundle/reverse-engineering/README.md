@@ -59,6 +59,7 @@ flowchart TB
 - [`robot-ipc-protocol.md`](robot-ipc-protocol.md) — the on-device **ZeroMQ + protobuf** message bus that wires the modules together; the module map and behavior-command markup.
 - [`cloud-protocol.md`](cloud-protocol.md) — the robot↔backend surface (REST `client-service`, MQTT topics, Deepgram STT, the chat envelope) — **what a self-hosted server must implement**.
 - [`settings-schema.md`](settings-schema.md) — the **199 `SettingSchema` keys** (the full runtime config surface a server can tune).
+- [`security-policy.md`](security-policy.md) — the **Android permission + SELinux** surface: embodied apps are platform-signed (no privapp/seapp policy), the 2 custom daemon domains (`ledctrld`/`projectorfanpid`) + `emb_*` device labels, and the minimal declared hardware-feature set.
 - [`network-trust.md`](network-trust.md) — the TLS trust model: **CA-store validation, no pinning**; what cert a self-hosted server needs, and the precise pre-801 block.
 - [`behavior-markup.md`](behavior-markup.md) — the inline `<mark name="cmd:…">` command language (24 verbs) a server uses to make Moxie **move, emote, and play audio while speaking**.
 - [`content-and-conversation.md`](content-and-conversation.md) — the dialog engines (ChatScript + LLM), the **content-module format**, and the `volley`/`session` hooks a server fills in.
