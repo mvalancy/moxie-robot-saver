@@ -1,5 +1,5 @@
 {
- "generated": "2502546-dirty",
+ "generated": "c331bb0-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 5471,
+   "bytes": 5580,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 6861,
+   "bytes": 7129,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -889,6 +889,23 @@
     "D. Flash your images",
     "E. First boot & verify",
     "Reviving a stranded robot by flashing"
+   ]
+  },
+  {
+   "path": "reverse-engineering/hal-and-drivers.md",
+   "title": "Vendor HALs, kernel drivers & co-processor firmware — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 8968,
+   "mermaid": 0,
+   "headings": [
+    "TL;DR",
+    "1. HAL interfaces declared (VINTF `manifest.xml`)",
+    "2. HAL implementations & services",
+    "3. Kernel drivers",
+    "4. Co-processor & radio firmware blobs (`/vendor/etc/firmware`)",
+    "XMOS voice DSP — the \"second processor\" (re-flashable, in the image)",
+    "Radio (BCM4339 / AP6335)",
+    "5. What this means for the three goals"
    ]
   },
   {
