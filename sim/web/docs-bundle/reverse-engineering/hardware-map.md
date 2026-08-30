@@ -170,6 +170,34 @@ Emitted as `MpuEventPB{ ID }` — this is how the robot knows it's been picked u
 `FlapEventPB{ Amplitude }` (the "flap"/ear or mouth flap sensor) and `LightEventPB{ State }` /
 `LightAdcDataEventPB{ adcCounts }` (ambient light) round out the sensing.
 
+### Semantic handling events (`embodied.unity`)
+
+Above the raw `MpuEventPB{ID}` state, the brain publishes richer **handling events** (from
+`embodied/unity/MpuPickup.proto`) that behavior reacts to — the reason Moxie giggles when shaken or
+settles when set down:
+
+| Message | Payload | Meaning |
+|---|---|---|
+| `MpuPickedUpEventPB` | — | lifted off the surface |
+| `MpuPickedUpShakenEventPB` | `shakeDirection` (`MpuShakeDirection`) | **shaken** — *how* it was shaken |
+| `MpuPickUpStatusEventPB` | `pitch` (int) | continuous **pitch angle while held** (how it's oriented in a hand) |
+| `MpuTiltEventPB` | — | tilted past threshold |
+| `MpuPutDownEventPB` | — | set back down |
+| `MpuIsNoisyEventPB` | `state` (bool) | the **IMU-noise gate** (below) |
+
+**`MpuShakeDirection`** — the shake axis, so content can respond to *how* the child moved Moxie:
+`Up` (0), `Roll` (1), `Pitch` (2), `Yaw` (3), `LeftRight` (4), `ForwardBack` (5), `Invalid` (6).
+
+**`MpuIsNoisyEventPB{state}`** is the clever bit: when Moxie's **own motors move**, the IMU sees that
+motion too, which would fire false pickup/tilt events. This flag goes `true` while the signal is
+untrustworthy so the handling detector **gates itself off during self-motion** — a custom firmware that
+skips this will report phantom "picked up" events every time the robot gestures.
+
+> **For a server / custom brain (goals ① ②):** these arrive on the bus like any other input event
+> ([behavior-input-events](behavior-input-events.md)); a server puppeting Moxie ([telehealth](telehealth.md))
+> can react to being shaken/held, and a custom build must reproduce the `MpuIsNoisy` gating to avoid
+> false positives.
+
 ## LEDs & the face
 
 The **face pattern** LEDs are a small enum of moods (`LedrPattern`), driven by `SetLedrEventPB`:

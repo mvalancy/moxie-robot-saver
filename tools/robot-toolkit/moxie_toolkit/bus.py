@@ -126,6 +126,16 @@ def time_zone_info(olson_id, midnight_in_timezone=""):
     return T.TimeZoneInfo(olson_id=olson_id, midnight_in_timezone=midnight_in_timezone)
 
 
+# ---- semantic handling events (embodied.unity / MpuPickup) ----
+# See docs/reverse-engineering/hardware-map.md (Semantic handling events)
+def mpu_handling_classes():
+    """The IMU handling events the brain publishes: picked-up, shaken (with
+    MpuShakeDirection), pickup-status (pitch), tilt, put-down, and the MpuIsNoisy
+    self-motion gate. Subscribe to react to Moxie being held/shaken. See hardware-map.md."""
+    from embodied.unity import MpuPickup_pb2 as M
+    return [M.MpuPickedUpEventPB, M.MpuPickedUpShakenEventPB, M.MpuPickUpStatusEventPB,
+            M.MpuTiltEventPB, M.MpuPutDownEventPB, M.MpuIsNoisyEventPB]
+
 # ---- setup app (bo-wifi) status on the bus (embodied.unity, wifiapp file group) ----
 # See docs/reverse-engineering/qr-commands.md (The setup app's runtime status)
 WIFI_APP_STATUS_CODES = {1:"WifiAndUserGood", 100:"WifiAppReady",

@@ -22,7 +22,7 @@
 | Gaze & attention (interest points, saccades, IK look-at, published Attention state machine) | ✅ + tool | [gaze-and-attention](gaze-and-attention.md) · `bus.py` |
 | Perception fusion: the tracked world-model of people (FusedPeople, world/screen coords, events) | ✅ + tool | [perception-fusion](perception-fusion.md) · `bus.py` |
 | Conversation turn-taking & engagement state machine | ✅ | [turn-taking](turn-taking.md) |
-| Hardware map: motors/sensors/LEDs/power rails | ✅ | [hardware-map](hardware-map.md) |
+| Hardware map: motors/sensors/LEDs/power rails + semantic handling events (pickup/shake/tilt, IMU-noise gate) | ✅ + tool | [hardware-map](hardware-map.md) · `bus.py` |
 | **3-processor firmware** (RK3288 OTA · Lizard STM32 · XMOS DSP) | ✅ incl. images | [hardware-map](hardware-map.md) · [perception-pipeline](perception-pipeline.md) |
 | Physical flashing surface (maskrom/rockusb/fastboot/UART/JTAG) | ✅ | [hardware-access](hardware-access.md) |
 | Runtime config surface (199 settings) | ✅ | [settings-schema](settings-schema.md) |

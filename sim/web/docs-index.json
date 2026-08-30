@@ -1,5 +1,5 @@
 {
- "generated": "docs-b5fd8d30c429",
+ "generated": "docs-0a401f717941",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 7671,
+   "bytes": 7753,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -1284,7 +1284,7 @@
    "path": "reverse-engineering/hardware-map.md",
    "title": "Hardware map — motors, sensors, LEDs, power",
    "section": "reverse-engineering",
-   "bytes": 17073,
+   "bytes": 18754,
    "mermaid": 0,
    "headings": [
     "Hardware revisions (`Revision_Level`)",
@@ -1294,6 +1294,7 @@
     "Native motion API (factory `libmotionlib` / `liblizardJNI`)",
     "Touch & switches",
     "IMU / motion (`MpuEventID`)",
+    "Semantic handling events (`embodied.unity`)",
     "LEDs & the face",
     "Power rails (`PowerRail`)",
     "Lizard MCU firmware update (bootloader \"GOBY\")",
