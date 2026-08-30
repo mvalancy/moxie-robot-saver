@@ -72,7 +72,7 @@ Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-ex
   shapes mirror the real REST API + MQTT content model.
 - ✅ **Landing hub** — [`sim/web/index.html`](sim/web/index.html): one front door presenting the three surfaces.
 - ✅ **Docs explorer** — [`sim/web/docs.html`](sim/web/docs.html): browses every `docs/*.md` with
-  Mermaid rendered (marked + mermaid vendored), built by `sim/tools/build_docs_bundle.py`. Collapsible tree,
+  Mermaid rendered (marked + mermaid vendored), built by `sim/tools/build_docs_bundle.py`, with every internal link **and #section anchor** validated in CI (`scripts/check-doc-links.py`). Collapsible tree,
   **full-text search** (lazy `docs-search.json`), **relevance-ranked** within each section, with snippets + in-document match highlighting & scroll-to-hit,
   shareable section deep links (heading permalinks + `#doc#section` URLs), prev/next pager in **curated README order** (+ `[`/`]` keys, `/` to search), "On this page" TOC + scroll-spy, per-doc reading-time + diagram-count meta, and code
   **syntax highlighting** + per-block copy buttons (highlight.js vendored). Runtime behavior guarded by `sim/test_docs_explorer.mjs`.
