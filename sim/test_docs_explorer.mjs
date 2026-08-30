@@ -129,6 +129,23 @@ try {
   ok(hl.marks > 0 && hl.first, "search term should be highlighted in the opened doc");
   ok(hl.scroll > 30, "the view should scroll to the first match");
 
+  // 6) keyboard shortcuts: "/" focuses search; "]" / "[" move to next / prev doc.
+  // Clear the search first so the tree (and its nav order) is the full doc set.
+  await page.evaluate(() => {
+    const q = document.getElementById("q"); q.value = ""; q.dispatchEvent(new Event("input")); q.blur();
+    location.hash = "_root/README.md";
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  await page.keyboard.press("Slash");
+  ok(await page.evaluate(() => document.activeElement && document.activeElement.id === "q"),
+     '"/" should focus the search box');
+  await page.evaluate(() => document.getElementById("q").blur());
+  const beforeHash = await page.evaluate(() => location.hash);
+  await page.keyboard.press("BracketRight");
+  await new Promise((r) => setTimeout(r, 250));
+  const afterHash = await page.evaluate(() => location.hash);
+  ok(afterHash && afterHash !== beforeHash, `"]" should open the next doc (got ${beforeHash} → ${afterHash})`);
+
   ok(errs.length === 0, `console errors: ${errs.slice(0, 4).join(" | ")}`);
 } finally {
   await browser.close();

@@ -1075,7 +1075,23 @@ button.needs-backend::after {
   font-size: 14px; padding: 2px 4px; line-height: 1;
 }
 #env-banner .eb-x:hover { color: var(--text); }
-@media (max-width: 640px) { #env-banner { flex-wrap: wrap; } }
+@media (max-width: 640px) {
+  /* On phones: a wider, evenly-centered card (10px margins each side) with a big,
+     easy-to-hit corner X instead of the tiny inline one. */
+  #env-banner {
+    left: 10px; right: 10px; transform: none; max-width: none; width: auto;
+    flex-wrap: wrap; gap: 8px;
+    padding: 14px 46px 14px 14px;          /* reserve room for the corner X */
+  }
+  #env-banner .eb-badge { order: -1; }
+  #env-banner .eb-link { margin-top: 2px; }
+  #env-banner .eb-x {
+    position: absolute; top: 6px; right: 6px;
+    width: 36px; height: 36px; padding: 0; font-size: 19px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 9px; border: 1px solid var(--hairline);
+  }
+}
 
 /* ---- Large displays: scale the HUD text up so it isn't tiny on big monitors. --- */
 @media (min-width: 1900px) {

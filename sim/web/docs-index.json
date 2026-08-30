@@ -1,5 +1,5 @@
 {
- "generated": "3f87bfe-dirty",
+ "generated": "9544533-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -25,7 +25,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap — end-to-end Moxie revival",
    "section": "_root",
-   "bytes": 7224,
+   "bytes": 7594,
    "mermaid": 0,
    "headings": [
     "Phase 0 — Reverse engineering  ✅",

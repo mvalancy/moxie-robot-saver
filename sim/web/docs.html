@@ -37,6 +37,9 @@
   .fw{font-family:var(--font-mono);font-size:10.5px;color:var(--mint);margin-top:8px;letter-spacing:.3px}
   .searchwrap{position:relative;margin-top:11px}
   .searchwrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;stroke:var(--dim);fill:none;stroke-width:2}
+  .qkbd{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-family:var(--font-mono);font-size:11px;
+    color:var(--dim);background:#0a1016;border:1px solid var(--hairline2);border-radius:5px;padding:1px 7px;pointer-events:none}
+  #q:focus ~ .qkbd{opacity:0}
   #q{width:100%;background:var(--void);border:1px solid var(--hairline);color:var(--text);border-radius:9px;
     padding:9px 10px 9px 32px;font-size:13px;font-family:inherit}
   #q:focus{outline:none;border-color:var(--cyan-dim);box-shadow:0 0 0 3px #0e749022}
@@ -166,7 +169,8 @@
     <div class="fw" id="fw"></div>
     <div class="searchwrap">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input id="q" type="search" placeholder="Search all docs (full text)…" autocomplete="off" spellcheck="false">
+      <input id="q" type="search" placeholder="Search all docs (full text)…" autocomplete="off" spellcheck="false" title="Press / to search · [ ] for prev / next doc">
+      <kbd class="qkbd" aria-hidden="true">/</kbd>
     </div>
   </div>
   <nav class="tree" id="tree"></nav>
@@ -457,6 +461,21 @@
   var qt; elQ.addEventListener("input",function(){ clearTimeout(qt); qt=setTimeout(function(){ var v=elQ.value.trim(); if(v&&!SEARCH){ loadSearch(function(){ buildTree(elQ.value.trim()); }); } buildTree(v); },110); });
   document.getElementById("burger").onclick=function(){ document.body.classList.toggle("nav-open"); };
   window.addEventListener("hashchange",function(){ var h=(location.hash||"").replace(/^#/,""); if(h&&h!==current&&idx&&idx.files.some(function(f){return f.path===h;})) openDoc(h); });
+
+  // keyboard shortcuts: "/" focus search · Esc clear/blur · [ / ] prev / next doc
+  document.addEventListener("keydown",function(e){
+    if(e.ctrlKey||e.metaKey||e.altKey) return;
+    var typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||"");
+    if(e.key==="/"){ if(!typing){ e.preventDefault(); elQ.focus(); elQ.select(); } return; }
+    if(e.key==="Escape"){ if(e.target===elQ){ if(elQ.value){ elQ.value=""; buildTree(""); } elQ.blur(); } return; }
+    if(typing) return;
+    if(e.key==="["||e.key==="]"){
+      if(!order.length||!current) return;
+      var i=order.indexOf(current); if(i<0) return;
+      var j=e.key==="]"?i+1:i-1;
+      if(j>=0&&j<order.length){ e.preventDefault(); openDoc(order[j]); }
+    }
+  });
 })();
 </script>
 </body>
