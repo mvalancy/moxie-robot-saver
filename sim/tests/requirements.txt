@@ -1,0 +1,3 @@
+# Browser automation for the SIL + static-site pytest suite.
+pytest>=8
+playwright>=1.40

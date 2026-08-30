@@ -973,10 +973,26 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
 }
 
 /* very small phones: tighten the brand row */
+/* phones/small: keep the topbar from overcrowding. The ALIVE toggle + LOCAL badge
+   must stay visible and not overlap the brand, so drop the "LINK IDLE" telemetry
+   text (keep just the lamp), stop the brand shrinking, and compact the toggle. */
+@media (max-width: 640px) {
+  #topbar { gap: var(--sp-2); }
+  #topbar .brand { flex: 0 0 auto; }
+  #link-label { display: none; }
+  #topbar .linkstate { gap: 0; flex: none; }
+  #alive-toggle { padding: 5px 10px; font-size: 10px; gap: 5px; letter-spacing: 0.06em; }
+  .env-badge { font-size: 9px; padding: 2px 6px; }
+}
 @media (max-width: 420px) {
   #topbar { padding: 0 var(--sp-3); min-height: 44px; }
   #topbar h1 { font-size: 14px; }
   .notice-badge { display: none; }
+}
+/* only at very small widths does the ALIVE label give way to just its pulsing dot */
+@media (max-width: 359px) {
+  #alive-toggle .alive-label { display: none; }
+  #alive-toggle { padding: 6px; }
 }
 
 /* mic recording state */
