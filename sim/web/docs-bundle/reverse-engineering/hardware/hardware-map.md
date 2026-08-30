@@ -287,6 +287,21 @@ and **`WAKEUP_ANDROID_EVENT=1051`** — the MCU waking the Android SoC. `bo-firm
 `RobotControlFirmwareEventPB{ CONTROL_RESET_MOTOR_IC }` drive MCU DFU over UART. Custom firmware that
 replaces the Android side can leave the Lizard MCU stock and just speak this protocol.
 
+### The remaining MCU control messages
+
+For completeness, the last few `embodied.lizzerface` control messages (closing the namespace):
+
+| Message | Meaning |
+|---|---|
+| `RobotControlFirmwareEventPB` (`FirmwareControlID`) | firmware-level control — the only op is **`CONTROL_RESET_MOTOR_IC`** (reset the motor-driver IC) |
+| `SensorSetEnabledEventPB { SensorPB sensor, bool enabled }` | toggle an MCU sensor — the only enumerated sensor is **`FLAP_SENSOR`** (the ear/mouth flap) |
+| `RobotEchoEventPB { string message }` | echo/ping the MCU with a payload string (the round-trip link test; native `robot_echo`, [native-boundary](../runtime/native-boundary.md#1-in-process-native-dllimport)) |
+| `RevisionLevelEventPB { Revision_Level level }` | the MCU reporting its **hardware revision** (`Revision_Level`, [hardware revisions](#hardware-revisions-revision_level)) |
+| `BangEventPB {}` | a **payload-less MCU event** — a discrete "bang"/impact-style trigger (no data, just the edge) |
+
+These plus the motor/sensor/LED/power/error messages above make the full `lizzerface` MCU protocol —
+everything a custom Android-side build sends to, or receives from, a stock Lizard board.
+
 ## Raw UART command set (`Lizzerface.Commands`)
 
 Below the `embodied.lizzerface` proto/ZMQ abstraction, the Android side (`Lizzerface` static class →

@@ -1,5 +1,5 @@
 {
- "generated": "docs-6a8aa5b98625",
+ "generated": "docs-83399d31bac4",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 9078,
+   "bytes": 9082,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -1441,7 +1441,7 @@
    "path": "reverse-engineering/hardware/hardware-map.md",
    "title": "Hardware map — motors, sensors, LEDs, power",
    "section": "reverse-engineering",
-   "bytes": 18852,
+   "bytes": 20038,
    "mermaid": 0,
    "headings": [
     "Hardware revisions (`Revision_Level`)",
@@ -1459,6 +1459,7 @@
     "Flash sequence",
     "Shipped MCU firmware images (in `bo-firmwareUpdate.apk` `res/raw/`)",
     "MCU firmware & health (`LizardErrorEventPB.LizardErrorEventID`)",
+    "The remaining MCU control messages",
     "Raw UART command set (`Lizzerface.Commands`)"
    ]
   },

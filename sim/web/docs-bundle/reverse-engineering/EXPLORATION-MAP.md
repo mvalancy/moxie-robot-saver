@@ -28,15 +28,15 @@ status (the count is a documented-by-name proxy; the status reflects real covera
 | ✅ | `embodied.Robot` | 1/1 | [behavior-input-events](runtime/behavior-input-events.md) |
 | 🟡 | `embodied.robotbrain` (100) | 91/100 | [remote-chat-protocol](protocol/remote-chat-protocol.md), [content-and-conversation](runtime/content-and-conversation.md), [runtime-control](protocol/runtime-control.md), [gaze-and-attention](runtime/gaze-and-attention.md) — residue: a few `ChatResponse`/`RemoteChat` sub-messages |
 | 🟡 | `embodied.logging` (55) | 37/55 | [device-config-and-telemetry](protocol/device-config-and-telemetry.md), [cloud-protocol](protocol/cloud-protocol.md) — residue: `Cloud`/`CloudQuery` sub-messages (covered conceptually) |
-| 🟡 | `embodied.lizzerface` (32) | 26/32 | [hardware-map](hardware/hardware-map.md), [robot-ipc-protocol](protocol/robot-ipc-protocol.md) — residue: a few MCU face/motor input/output messages |
+| ✅ | `embodied.lizzerface` (32) | 32/32 | [hardware-map](hardware/hardware-map.md) (+ the [native MCU C API](runtime/native-boundary.md)), [robot-ipc-protocol](protocol/robot-ipc-protocol.md) |
 | 🟡 | `embodied.perception.vision` (30) | 14/30 | [perception-pipeline](runtime/perception-pipeline.md) — concepts fully covered; not every message named |
 | 🟡 | `embodied.perception.audio` (22) | 14/22 | [perception-pipeline](runtime/perception-pipeline.md) — residue: `STT`/`Interrupt`/`zmqSTT` sub-messages |
 | 🟡 | `embodied.testing` (4) · `embodied.launcher` (3) | 2/4 · 2/3 | [factory-provisioning](firmware/factory-provisioning.md) · [boot-and-launcher](firmware/boot-and-launcher.md) |
 | ⛔ | `embodied.playspace` (23) | 8/23 | peripheral to the 3 goals + Graphling-sensitive — **deliberately deferred** |
 
-**Next proto threads (⬜/🟡 residue):** the scattered `lizzerface` input/output messages (goal ① — driving
-the MCU), then the `perception.audio` STT/Interrupt sub-messages. Most other residue is covered
-conceptually; playspace is out of scope.
+**Next proto threads (⬜/🟡 residue):** the `perception.audio` STT/Interrupt sub-messages and the
+`perception.vision` detection messages (both covered conceptually in perception-pipeline). Most residue is
+named-but-conceptual; playspace is out of scope.
 
 ## Decompiled C# — `bo-android` (Assembly-CSharp.dll, 2750 classes)
 
