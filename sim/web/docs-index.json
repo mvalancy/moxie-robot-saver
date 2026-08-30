@@ -1,5 +1,5 @@
 {
- "generated": "16e536e-dirty",
+ "generated": "35552f5-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -517,7 +517,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 6450,
+   "bytes": 6639,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -545,7 +545,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 9286,
+   "bytes": 9747,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app",
@@ -764,6 +764,25 @@
     "6. Hardcoded keys, salts and constants",
     "7. Security observations relevant to a reimplementation",
     "8. File index"
+   ]
+  },
+  {
+   "path": "reverse-engineering/device-config-and-telemetry.md",
+   "title": "Device config & telemetry — the `embodied.logging` data-model (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 10549,
+   "mermaid": 1,
+   "headings": [
+    "The loop",
+    "RobotCloudConfig` — the master config document (cloud → robot)",
+    "The child-PII encryption boundary",
+    "RobotStatus` — the status snapshot (robot → cloud)",
+    "CloudStatus.UserState` — the pairing / OTA lifecycle",
+    "The telemetry envelope — `Packet` + `Log*`",
+    "LoggingPolicy` / `LoggingState` — the data-collection gate",
+    "Small control messages (`embodied.logging.Log`)",
+    "IOTEndpoint` — the endpoint taxonomy",
+    "What this means for the three goals"
    ]
   },
   {

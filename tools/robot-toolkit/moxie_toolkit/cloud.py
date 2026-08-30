@@ -117,3 +117,44 @@ def service_configuration(*, mqtt_host=None, webservice_root=None, override_port
     if gcp_project is not None: cfg.gcp_project = gcp_project
     if webservice_pin is not None: cfg.webservice_pin = webservice_pin
     return cfg
+
+
+# ---- device config & telemetry (embodied.logging data-model) ----
+# See docs/reverse-engineering/device-config-and-telemetry.md
+
+def build_robot_cloud_config(**fields):
+    """Build an embodied.logging.RobotCloudConfig — the master config the cloud pushes on
+    the /config topic to drive a robot's runtime state. Pass any scalar RobotCloudConfig
+    field by name, e.g.:
+        build_robot_cloud_config(audio_volume=0.6, screen_brightness=0.8,
+                                 timezone_id='America/New_York', privacy_mode_enabled=False,
+                                 weekday_bedtime_enabled=True,
+                                 weekday_bedtime_starts_at='20:00', weekday_bedtime_ends_at='07:00')
+    Nested messages (child, alarms, settings, ota_update, switch_user_config) are left for the
+    caller to set on the returned object. See device-config-and-telemetry.md (RobotCloudConfig)."""
+    from embodied.logging import Cloud_pb2 as C
+    cfg = C.RobotCloudConfig()
+    for k, v in fields.items():
+        if v is not None:
+            setattr(cfg, k, v)
+    return cfg
+
+def parse_robot_cloud_config(payload):
+    """Parse a RobotCloudConfig (the /config document) from serialized bytes."""
+    from embodied.logging import Cloud_pb2 as C
+    m = C.RobotCloudConfig(); m.ParseFromString(payload); return m
+
+def parse_robot_status(payload):
+    """Parse a RobotStatus (the robot's /state snapshot) from serialized bytes."""
+    from embodied.logging import Cloud_pb2 as C
+    m = C.RobotStatus(); m.ParseFromString(payload); return m
+
+def parse_telemetry_packet(payload):
+    """Parse an embodied.logging.Packet telemetry envelope (model/event_name/event_data) from bytes."""
+    from embodied.logging import Cloud_pb2 as C
+    m = C.Packet(); m.ParseFromString(payload); return m
+
+def parse_cloud_status(payload):
+    """Parse a CloudStatus{connected, user_state (UserState), endpoint} from serialized bytes."""
+    from embodied.logging import CloudStatus_pb2 as CS
+    m = CS.CloudStatus(); m.ParseFromString(payload); return m

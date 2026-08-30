@@ -2,7 +2,7 @@
 
 > A single view of what's documented for each goal, and the honest remaining gaps (mostly things that
 > need a **bench unit**). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9).
-> 29 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
+> 30 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
 
 ## Goal ① — Build custom firmware / run custom software on the robot
 
@@ -34,6 +34,7 @@
 | TLS trust model (what cert a server needs) | ✅ | [network-trust](network-trust.md) |
 | Robot device auth (RS256 JWT) | ✅ | [cloud-protocol](cloud-protocol.md#robot-authentication-device-identity) |
 | MQTT topics + envelope + `/commands/zmq` inject | ✅ + tool | [cloud-protocol](cloud-protocol.md) · `cloud.py` |
+| Config/telemetry data-model (RobotCloudConfig down · RobotStatus/Packet up · LoggingPolicy) | ✅ + tool | [device-config-and-telemetry](device-config-and-telemetry.md) · `cloud.py` |
 | REST `client-service` (sessions, OTA, backups) + endpoints | ✅ | [cloud-protocol](cloud-protocol.md) |
 | Repointing (`ServiceConfiguration`, `EndpointStore`, QR) | ✅ + tool | [cloud-protocol](cloud-protocol.md) · [qr-commands](qr-commands.md) · `moxie-qr` |
 | Conversation: ChatScript + LLM + module format + volley API | ✅ | [content-and-conversation](content-and-conversation.md) |
