@@ -1,5 +1,5 @@
 {
- "generated": "docs-ebb1e3049646",
+ "generated": "docs-7e64e8c6ad37",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -582,7 +582,7 @@
    "path": "reverse-engineering/METHODOLOGY.md",
    "title": "Methodology — how we reverse-engineer Moxie (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 7758,
+   "bytes": 8348,
    "mermaid": 0,
    "headings": [
     "The evidence base",
@@ -595,12 +595,13 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 9509,
+   "bytes": 13136,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
     "Goal ② — Put any AI inside Moxie (the *ghost in the shell*)",
     "Goal ③ — Revive old pre-801 robots without disassembly",
+    "Clean-room self-sufficiency — *what would go missing?*",
     "Open items (need a bench unit or an external artifact)"
    ]
   },

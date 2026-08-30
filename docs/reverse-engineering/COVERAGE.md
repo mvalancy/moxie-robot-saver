@@ -73,6 +73,39 @@
 | **Button-triggered rockusb (download mode) → unsigned flash** | ⭐ **best low-open lead** ([hardware-access](hardware/hardware-access.md#boot-mode-entry-reboot-reasons-keys)) |
 | **Setup-app status signal** (`WifiAppReady`=100 → ready to scan a QR; `WifiAppBricked` → needs physical recovery) | ✅ + tool ([qr-commands](protocol/qr-commands.md) · `bus.py`) |
 
+## Clean-room self-sufficiency — *what would go missing?*
+
+The sharpest completeness test: **if every Moxie binary, image, and asset vanished, could someone rebuild
+this piece from the doc alone?** A doc that only *points at* Moxie data isn't done. Where the stack stands:
+
+**Self-sufficient — the doc *is* the data (rebuild from it):**
+
+| Piece | Captured in |
+|---|---|
+| Wire protocol — all 376 messages + fields, + the `.proto` IDL | [proto-catalog](protocol/proto-catalog.md) · [recovered-proto/](protocol/recovered-proto/) |
+| Cloud/REST/MQTT — endpoints, topics, auth, [built-in hosts](protocol/cloud-protocol.md#the-built-in-endpoint-hosts-baked-into-libbo-logger), [full session sequence](protocol/cloud-protocol.md#the-full-session-power-on-to-first-spoken-line) | [cloud-protocol](protocol/cloud-protocol.md) |
+| QR command space — the closed grammar + native dispatch (`report`/`endpoint_update`/`om`) | [qr-commands](protocol/qr-commands.md) |
+| Crypto & pairing — the one-seed key system, algorithms | [crypto-and-keys](phone/crypto-and-keys.md) |
+| Behavior markup — all 24 command verbs + the CereVoice SSML dialect | [behavior-markup](runtime/behavior-markup.md) |
+| Face — the [customizable-avatar visual spec](runtime/unity-face-animation.md#the-face-itself-a-customizable-avatar-clean-room-visual-spec) + the animation engine | [unity-face-animation](runtime/unity-face-animation.md) |
+| Firmware — partitions, AVB, OTA, flashing; MCU (GOBY/HEX) + XMOS (DFU chain) updates | [firmware-image](firmware/firmware-image.md) · [hardware-map](hardware/hardware-map.md) · [perception-pipeline](runtime/perception-pipeline.md) |
+| Hardware — the device-tree (DTS captured verbatim), board map, teardown | [device-tree](hardware/device-tree.md) · [hardware-map](hardware/hardware-map.md) |
+| On-device bus — the ZMQ two-frame framing + module roster | [robot-ipc-protocol](protocol/robot-ipc-protocol.md) · [native-boundary](runtime/native-boundary.md) |
+
+**Gaps — the doc references Moxie data that *would* go missing:**
+
+| Gap | Status | In scope? |
+|---|---|---|
+| The `rig3` **face mesh + full blendshape list** (only ~8 shapes surface in the C#) | ⚠ needs AssetStudio on the asset bundle | Yes — for a *pixel-faithful* face; a clean-room build supplies its own art on the [same blendshape roles](runtime/unity-face-animation.md) |
+| The **45 `Bht_*` tree structures** (names + the 65-node vocabulary are captured; the graphs aren't) | ⚠ NodeCanvas assets — needs AssetStudio/JSON export | Partly — a revival authors its *own* trees from the [node catalog](runtime/behavior-nodes.md); the *stock personality* would go missing |
+| The **animation/gesture clip set** (`rig3animations`) | ⚠ asset bundle — needs AssetStudio | Partly — same as above |
+| The 199 settings' **default values** (keys + meaning captured; defaults aren't) | ⚠ native `SettingSchema` init (libbo-logger) — deep native RE | Yes for goal ①; goal ② runs on the robot's baked-in defaults |
+| CereVoice **voice data**, ChatScript/**content modules**, `libbo-brain` **ML weights** | ⚠ licensed/downloaded/native blobs | **No** — a clean-room build supplies its own TTS, content, and brain (the whole point of [goal ②](#goal-put-any-ai-inside-moxie-the-ghost-in-the-shell)) |
+
+So the **in-scope** clean-room backlog is concentrated in one place: the **Unity asset bundle**
+(blendshapes, `Bht_*` graphs, animation clips) — one AssetStudio pass would close most of it — plus the
+native settings defaults. Everything else is either captured or is content a revival replaces by design.
+
 ## Open items (need a bench unit or an external artifact)
 
 - [ ] **USB data port reachable without opening?** — decides whether the download-mode/ADB/MTP paths are truly "no-open".

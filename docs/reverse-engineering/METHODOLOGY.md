@@ -40,6 +40,13 @@ Reach for the **lightest tool that answers the question**; escalate only when it
    questions — e.g. the exact `QRCommand`-string → handler dispatch inside `libbo-logger`'s cloud router.
    See [Using Ghidra](#using-ghidra-via-pyghidra) below.
 
+> **Clean-room sufficiency test.** For every doc ask: *if all Moxie binaries, images, and assets
+> vanished, could someone rebuild this piece from the doc alone?* Capture the data (schemas, tables,
+> constants, algorithms) — don't just point at it. A doc that names a subsystem but leaves its actual
+> spec in the binary isn't done. Track the honest answer per subsystem in
+> [`COVERAGE.md`](COVERAGE.md#clean-room-self-sufficiency-what-would-go-missing); legitimately-out-of-scope
+> data (voice, content, ML weights a revival replaces) is a gap only if the doc *pretends* to cover it.
+>
 > **Confidence discipline.** Mark every finding as **confirmed** (read from the binary) or **inferred**
 > (reasoned, not yet seen). A name in a symbol table proves the *capability* exists; the exact trigger or
 > value often needs the next tier down. Never upgrade a guess to a fact by restating it — escalate the
