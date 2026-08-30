@@ -84,6 +84,38 @@ robot *can* be told to accept a self-signed cert (see [`network-trust.md`](netwo
 important caveat about how it's delivered). (OpenMoxie's `ServiceConfiguration2` is the same message
 under a different file name.)
 
+### The built-in endpoint hosts (baked into `libbo-logger`)
+
+Beyond the *mechanism*, `libbo-logger.so` (the [`RightPoint` cloud manager](../runtime/native-boundary.md#resolved-who-consumes-qrcommand-the-setup-qr-brain-bridge))
+carries the **concrete host table** for each `IOTEndpoint` environment — the REST base URL and the MQTT
+host string-constants are compiled in (recovered via `strings`/Ghidra on the **v24.10.803** lib):
+
+| Profile (`IOTEndpoint`) | REST `client-service` base | MQTT host |
+|---|---|---|
+| `EMBODIED_PRODUCTION` | `https://client-service-api.embodied.com/` | `mqtt.embodied.com` |
+| `EMBODIED_STAGING` | `https://client-service-staging-api.embodied.com/` | `mqtt-staging.embodied.com` |
+| `EMBODIED_DEVELOP` | `https://client-service-develop-api.embodied.com/` | `mqtt-develop.embodied.com` |
+| `EMBODIED_HIPAA` | `https://client-service-hipaa-api.embodied.com/` | `mqtt-hipaa.embodied.com` |
+| `EMBODIED_HK` | `https://client-service-hk-api.embodied.com/` | `mqtt-hk.embodied.com` |
+| `EMBODIED_CHINA` | `https://client-service-cn-api.embodied.com/` | `mqtt-cn.embodied.com` |
+| **`EMBODIED_LOCAL`** | **`https://client-service-api.local/`** | *(from `cloud.json`; `.local` = mDNS/LAN)* |
+
+- **`EMBODIED_LOCAL` is the revival profile** already baked into stock 803: it resolves the REST API at
+  the **mDNS name `client-service-api.local`** on the LAN, so a robot on `EMBODIED_LOCAL` looks for *your*
+  server by that `.local` name (no DNS, no internet). Its MQTT host isn't a compiled `*.embodied.com`
+  constant — it comes from the active `ServiceConfiguration` (`mqtt_host`), so a local backend supplies it
+  via config. `OPEN_MOXIE=11` is the community analogue, shipped as the `{"endpoint":"openmoxie"}` profile.
+- The `GOOGLE_*` profiles are the dead IoT-Core era (`mqtt.googleapis.com`, [pre-801](../firmware/ota-and-recovery.md)); the `EMBODIED_*` hosts above are the post-migration cloud.
+
+### `cloud.json` — the persisted active config
+
+`RightPoint` stores the live selection in a **`cloud.json`** file (native `CLOUD_CONFIG_PATH`; a
+`cloud_config_valid_` flag + a `BAD_CLOUD_CONFIG` error guard it, and a legacy form is auto-migrated —
+*"Detected legacy cloud.json"*). This is what the [QR `endpoint_update` / `om` commands](qr-commands.md#the-effective-command-set-native-dispatch-rightpointon_qrcommand)
+write, after which `RightPoint` **exits to restart the logger** so the new endpoint takes effect. For
+revival: point a robot at `EMBODIED_LOCAL` (or `openmoxie`) and its `cloud.json` then names your
+`.local`/host — the [minimum viable backend](#minimum-viable-backend-for-revival) answers those hosts.
+
 ## 2. MQTT — the live bus (Eclipse Paho, mutual TLS)
 
 The brain links Eclipse **Paho MQTT** (C) over TLS with client certificates (the classic Google

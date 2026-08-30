@@ -1,5 +1,5 @@
 {
- "generated": "docs-64dad80783b1",
+ "generated": "docs-1df41355c04a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -608,7 +608,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 9933,
+   "bytes": 10081,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -909,13 +909,15 @@
    "path": "reverse-engineering/protocol/cloud-protocol.md",
    "title": "Robot ↔ cloud protocol — REST, MQTT, STT (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 19593,
+   "bytes": 22249,
    "mermaid": 1,
    "headings": [
     "Three channels",
     "1. REST — `client-service`",
     "Endpoints seen",
     "Service configuration — how the robot is (re)pointed",
+    "The built-in endpoint hosts (baked into `libbo-logger`)",
+    "cloud.json` — the persisted active config",
     "2. MQTT — the live bus (Eclipse Paho, mutual TLS)",
     "Exact topic map (Google IoT-Core convention, kept post-migration)",
     "Event names & envelope (robot → cloud)",
