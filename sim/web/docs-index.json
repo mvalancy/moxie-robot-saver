@@ -1,5 +1,5 @@
 {
- "generated": "docs-4b6d915a0712",
+ "generated": "docs-1e123afe7ba4",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 1161,
+   "bytes": 1378,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -132,6 +132,26 @@
     "7.3 Recommended phased build order",
     "Appendix A — File map (OpenMoxie, for reference)",
     "Appendix B — Endpoint QR #2 generator (pseudocode, no protobuf runtime needed)"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/ai-seam.md",
+   "title": "The AI seam — LLM / STT / TTS interface contract",
+   "section": "architecture",
+   "bytes": 10401,
+   "mermaid": 1,
+   "headings": [
+    "Why this is the whole game",
+    "① STT in — audio → text",
+    "② Brain — the RemoteChat contract (where the AI lives)",
+    "Request in — `RemoteChatRequest`",
+    "Response out — `RemoteChatResponse`",
+    "③ TTS out — markup → audio + viseme marks",
+    "Request in — `CloudTTSRequest`",
+    "Response out — `CloudTTSResponse`",
+    "Conformance checklist",
+    "Where each seam is implemented in this repo"
    ],
    "kind": "md"
   },

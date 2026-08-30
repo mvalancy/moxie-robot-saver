@@ -6,6 +6,8 @@ How all the pieces fit together.
 - [`revival-path.md`](revival-path.md) — the exact steps + firmware gate to revive a robot (the 3-QR sequence).
 - [`mqtt-and-conversation.md`](mqtt-and-conversation.md) — the robot-cloud spec: endpoint QR, MQTT broker,
   topics, conversation flow, and the local-AI plug-in points (Phases 2–3).
+- [`ai-seam.md`](ai-seam.md) — **the interface contract** for the three seams a backend fills (STT in /
+  brain-RemoteChat / TTS out): exact wire shapes + a conformance checklist. Build any AI into Moxie from this.
 - [`moxie-as-a-platform.md`](moxie-as-a-platform.md) — **the SDK**: how any AI/game drives Moxie as an avatar.
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
