@@ -1,5 +1,5 @@
 {
- "generated": "ebf1279-dirty",
+ "generated": "5705ae8-dirty",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -756,12 +756,13 @@
    "path": "reverse-engineering/factory-provisioning.md",
    "title": "Factory provisioning — production apps, serials & secrets",
    "section": "reverse-engineering",
-   "bytes": 11634,
+   "bytes": 13228,
    "mermaid": 0,
    "headings": [
     "The factory apps (shipped on every robot)",
     "Serial-number / barcode grammar (`SerialNumber.java`)",
     "Manufacturing part hierarchy (`assy/Part.java`)",
+    "Factory-DB schema (ORMLite → MySQL, v24.10.803)",
     "Factory test catalog (`finaltest` — end of line)",
     "Native test primitives (JNI)",
     "internalassytest` — sub-assembly bring-up (`InternalAssyTest.DoTest()`)",

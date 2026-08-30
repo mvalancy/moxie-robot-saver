@@ -65,6 +65,29 @@ BodyAssembly → InternalAssembly → InternalAssemblyBI → FinishedRobot
 factory DB; `assy/CustomerMode` + `Packout` handle the customer-facing "pack-out" step and
 `GCPKey`/`assy/Assembler` provision cloud keys.
 
+### Factory-DB schema (ORMLite → MySQL, v24.10.803)
+
+Recovered from the `@DatabaseTable`/`@DatabaseField` annotations in the decompiled factory apps — the
+exact tables the line writes over the `jdbc:mysql://…` connection above:
+
+| Table | Column | Type / constraint | Meaning |
+|---|---|---|---|
+| **`parts`** | `id` | `BIGINT` auto‑PK | row id |
+| | `parent` | FK → `parts.id` (self, auto‑refresh **8 levels**) | the **assembly tree** — a part points at its parent sub‑assembly, up to the 8‑deep [part hierarchy](#manufacturing-part-hierarchy-assypartjava) |
+| | `part_name` | `VARCHAR` not‑null | the `Part` enum name (e.g. `LizardPCBA`, `FinishedRobot`) |
+| | `pass` | `BOOLEAN` not‑null | did this part pass its station test |
+| | `serial` | `VARCHAR` not‑null | the scanned barcode serial |
+| **`customer_mode_parts`** | *(same 5 columns as `parts`)* | | the **customer‑mode** mirror (the retail/service pack path, `assy/CustomerMode`) |
+| **`packout`** | `id` | `BIGINT` auto‑PK | row id |
+| | `isPacked` | `BOOLEAN` not‑null | boxed for shipment |
+| | `serial` | `VARCHAR` not‑null | finished‑robot serial |
+| | `timestamp` | `DATETIME` not‑null | when it was packed out |
+
+So the whole build is captured as a **tree of `parts` rows** (each part↔serial↔pass, linked to its
+parent) culminating in a `FinishedRobot` row, plus a `packout` row when it ships. Nothing here is needed
+to revive a robot — it's the manufacturing side — but it completes the factory data model and confirms
+the serial/part grammar above is exactly what the DB stores.
+
 ## Factory test catalog (`finaltest` — end of line)
 
 `ActivityFinalTest.DoTest()` runs the end-of-line functional test as an ordered sequence, mixing
