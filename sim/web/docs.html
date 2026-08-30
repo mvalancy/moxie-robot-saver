@@ -55,6 +55,8 @@
     background:#0a1016;border:1px solid var(--hairline2);border-radius:10px;padding:0 6px}
   .grp>.items{overflow:hidden;max-height:0;transition:max-height .22s ease}
   .grp.open>.items{max-height:2400px}
+  .subhead{padding:9px 10px 3px 14px;font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);opacity:.85}
+  .grp.open>.items{max-height:4000px}
   a.doc{display:flex;align-items:center;gap:7px;padding:6px 10px 6px 24px;border-radius:7px;color:var(--muted);
     text-decoration:none;font-size:13px;line-height:1.3;border-left:2px solid transparent}
   a.doc:hover{background:#161c26;color:var(--text-dim)}
@@ -238,6 +240,8 @@
   }catch(e){}
 
   var esc=function(s){return String(s).replace(/[&<>]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});};
+  var SUBSECTION_LABEL={ "":"Overview", "phone":"📱 Phone side", "protocol":"🔌 Protocol", "runtime":"🧠 Runtime (brain & face)", "firmware":"🧱 Firmware", "hardware":"🦾 Hardware", "keys":"Keys", "manifests":"Manifests", "recovered-proto":"Recovered protos" };
+  var SUB_ORDER=["","phone","protocol","runtime","firmware","hardware","recovered-proto","manifests","keys"];
   var SECTION_LABEL={ "_root":"Start here","reverse-engineering":"Reverse engineering","architecture":"Architecture",
     "guides":"Guides","features":"Features","design":"Design","debugging":"Debugging","docs":"Reference" };
   var SECTION_ORDER={"_root":0,"guides":1,"architecture":2,"reverse-engineering":3,"debugging":4,"features":5,"design":6,"docs":7};
@@ -292,13 +296,28 @@
       gh.onclick=function(){ wrap.classList.toggle("open"); };
       wrap.appendChild(gh);
       var items=document.createElement("div"); items.className="items";
-      g.items.forEach(function(f){ order.push(f.path);
+      function renderItem(f){ order.push(f.path);
         var a=document.createElement("a"); a.className="doc"; a.href="#"+f.path; a.dataset.path=f.path;
         if(filter) a.classList.add("hit");
         a.innerHTML='<span>'+highlight(f.title,filter)+'</span>'+(f.mermaid?'<span class="dm">◈'+f.mermaid+'</span>':'');
         a.onclick=function(ev){ ev.preventDefault(); openDoc(f.path); if(window.innerWidth<=760) document.body.classList.remove("nav-open"); };
         items.appendChild(a);
-        if(filter){ var sn=snippetFor(f,filter); if(sn){ var sd=document.createElement("div"); sd.className="snip"; sd.innerHTML=sn; sd.onclick=function(){ openDoc(f.path); if(window.innerWidth<=760) document.body.classList.remove("nav-open"); }; items.appendChild(sd); } } });
+        if(filter){ var sn=snippetFor(f,filter); if(sn){ var sd=document.createElement("div"); sd.className="snip"; sd.innerHTML=sn; sd.onclick=function(){ openDoc(f.path); if(window.innerWidth<=760) document.body.classList.remove("nav-open"); }; items.appendChild(sd); } }
+      }
+      // bucket a section's docs by their subfolder (path segment [1]); "" = docs at the section root.
+      var buckets={}, hasSub=false;
+      g.items.forEach(function(f){ var seg=f.path.split("/"); var sub=(seg.length>=3)?seg[1]:""; if(sub) hasSub=true; (buckets[sub]=buckets[sub]||[]).push(f); });
+      if(filter||!hasSub){
+        // searching (or a flat section): render in relevance/curated order, no sub-headers
+        g.items.forEach(renderItem);
+      } else {
+        // browsing a section with subfolders: group under labeled sub-headers
+        var subkeys=Object.keys(buckets).sort(function(a,b){ var ia=SUB_ORDER.indexOf(a),ib=SUB_ORDER.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib)||a.localeCompare(b); });
+        subkeys.forEach(function(sub){
+          var sh=document.createElement("div"); sh.className="subhead"; sh.textContent=SUBSECTION_LABEL[sub]||sub||"Overview"; items.appendChild(sh);
+          buckets[sub].forEach(renderItem);
+        });
+      }
       wrap.appendChild(items); elTree.appendChild(wrap);
     });
     if(!any) elTree.innerHTML='<div class="grp"><div class="gh"><span>no matches</span></div></div>';

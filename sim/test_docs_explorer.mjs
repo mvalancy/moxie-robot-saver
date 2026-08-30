@@ -94,6 +94,12 @@ try {
   ok(await page.evaluate(() => !!document.querySelector("article h1, article h2, article p")),
      "home document markdown should render");
 
+  // 1b) the reverse-engineering section is sub-grouped by folder (Protocol / Runtime / Firmware / …)
+  const subheads = await page.$$eval(".subhead", (els) => els.map((e) => e.textContent));
+  ok(subheads.some((t) => /Protocol/.test(t)) && subheads.some((t) => /Runtime/.test(t)) &&
+     subheads.some((t) => /Firmware/.test(t)),
+     `tree should show folder sub-group headers while browsing (got ${subheads.join(", ")})`);
+
   // 2) Mermaid renders on a diagram-heavy doc + the topbar meta shows reading time + diagram count
   await page.goto(base + "/docs.html#reverse-engineering/architecture-diagrams.md", { waitUntil: "domcontentloaded" });
   await page.waitForFunction('document.querySelectorAll("article svg").length>0', { timeout: 8000 }).catch(() => {});
@@ -103,7 +109,7 @@ try {
   ok(/~\d+ min/.test(meta) && /diagram/.test(meta), `topbar should show reading time + diagram count (got "${meta}")`);
 
   // 3) code highlighting applies (hljs token spans)
-  await page.goto(base + "/docs.html#reverse-engineering/hardware-map.md", { waitUntil: "domcontentloaded" });
+  await page.goto(base + "/docs.html#reverse-engineering/hardware/hardware-map.md", { waitUntil: "domcontentloaded" });
   await page.waitForFunction('document.querySelectorAll("article pre code").length>0', { timeout: 8000 }).catch(() => {});
   const tokenSpans = await page.evaluate(() =>
     document.querySelectorAll("article pre code .hljs-keyword, article pre code .hljs-string, article pre code .hljs-comment, article pre code .hljs-number, article pre code .hljs-title, article pre code .hljs-attr").length);
@@ -167,7 +173,7 @@ try {
   ok(afterHash && afterHash !== beforeHash, `"]" should open the next doc (got ${beforeHash} → ${afterHash})`);
 
   // 7) a cross-doc link to a heading anchor opens that doc AND scrolls to the heading
-  await page.goto(base + "/docs.html#reverse-engineering/behavior-input-events.md", { waitUntil: "domcontentloaded" });
+  await page.goto(base + "/docs.html#reverse-engineering/runtime/behavior-input-events.md", { waitUntil: "domcontentloaded" });
   await page.waitForSelector("article a[data-anchor]", { timeout: 8000 }).catch(() => {});
   const clickedAnchor = await page.evaluate(() => {
     const l = [...document.querySelectorAll("article a[data-anchor]")]
@@ -186,7 +192,7 @@ try {
 
   // 8) a shareable section URL (#doc#heading) deep-loads to that section, and each
   //    section heading has a copyable "#" permalink.
-  await page.goto(base + "/docs.html#reverse-engineering/hardware-map.md#raw-uart-command-set-lizzerfacecommands",
+  await page.goto(base + "/docs.html#reverse-engineering/hardware/hardware-map.md#raw-uart-command-set-lizzerfacecommands",
                   { waitUntil: "domcontentloaded" });
   await page.waitForFunction('document.querySelectorAll("article h2[id]").length>0', { timeout: 9000 }).catch(() => {});
   await new Promise((r) => setTimeout(r, 1400));
