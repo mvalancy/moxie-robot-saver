@@ -20,7 +20,7 @@ flowchart TD
   tree --> line["a local fallback line · FallbackType"]
 ```
 
-When [`RemoteChatResponse.result`](remote-chat-protocol.md#the-response--remotechatresponse) is
+When [`RemoteChatResponse.result`](remote-chat-protocol.md#the-response-remotechatresponse) is
 `ERROR_OFFLINE` (or times out), the robot doesn't go silent — the **local dialog manager** serves a line
 from the on-device `FallbackInfo` tree. So a robot with no reachable backend still talks; that behavior is
 entirely governed by this persisted data.
@@ -62,7 +62,7 @@ gave up on remote, moved the activity on, or asked to confirm.
 
 ### The server controls offline behavior — `upgrade_fallbacks`
 
-`RemoteChatRequest.upgrade_fallbacks` (field 16, [remote-chat-protocol](remote-chat-protocol.md#the-request--remotechatrequest-delta-over-cloud-protocol))
+`RemoteChatRequest.upgrade_fallbacks` (field 16, [remote-chat-protocol](remote-chat-protocol.md#the-request-remotechatrequest-delta-over-cloud-protocol))
 is the robot asking the brain to **push an updated `FallbackInfo`**. So a self-hosted server doesn't just
 answer live turns — it seeds what the robot will say when *it* is later unreachable. Offline resilience is
 a server responsibility, not a fixed ROM string.
@@ -90,7 +90,7 @@ described in [content-and-conversation](content-and-conversation.md#the-recommen
 - **`tag_history`** — a map of SEL/content **tag → `TagHistory`** (a list of `SparseValues{id, value}`):
   the child's accumulated engagement per tag. This is how Moxie learns the child likes some themes more
   than others, and it feeds the same weights as the parent-set `ContentPreferences`
-  ([device-config-and-telemetry](device-config-and-telemetry.md#robotcloudconfig--the-master-config-document-cloud--robot)).
+  ([device-config-and-telemetry](device-config-and-telemetry.md#robotcloudconfig-the-master-config-document-cloud-robot)).
 - **`random_tag_state`** — `{random_seed, update_state, weight_state}`: the exploration/exploitation state
   (a seeded RNG + serialized weights) so the recommender's variety is reproducible across reboots rather
   than resetting every boot.

@@ -13,7 +13,7 @@
 | Full file/app/binary manifest + hashes | ✅ | [firmware-manifest](firmware-manifest.md) · [firmware-inventory](firmware-inventory.md) |
 | Boot chain + Launcher state machine + init services | ✅ | [boot-and-launcher](boot-and-launcher.md) |
 | Power lifecycle + time/alarms: PowerStatePB states, resume causes, XMOS recovery, suspend/keep-awake, TimeZone + UserAlarm wake | ✅ + tool | [power-and-system-events](power-and-system-events.md) · `bus.py` |
-| Code signing (3 keys) & permissions | ✅ | [firmware-image](firmware-image.md#code-signing--app-trust) |
+| Code signing (3 keys) & permissions | ✅ | [firmware-image](firmware-image.md#code-signing-app-trust) |
 | Android permissions + SELinux confinement | ✅ | [security-policy](security-policy.md) |
 | Vendor HALs + kernel drivers + co-processor/radio firmware | ✅ | [hal-and-drivers](hal-and-drivers.md) |
 | On-device ZMQ bus (drive the robot) + client | ✅ + tool | [robot-ipc-protocol](robot-ipc-protocol.md) · `MoxieBus` |
@@ -45,8 +45,8 @@
 | Behavior markup (make it move while talking) | ✅ + tool | [behavior-markup](behavior-markup.md) · `markup.py` |
 | Imperative runtime control (volume/pacing/listen/barge-in/reset live) | ✅ + tool | [runtime-control](runtime-control.md) · `bus.py` |
 | Perception in/out: STT (Deepgram/local) · TTS (CloudTTS) · vision | ✅ | [perception-pipeline](perception-pipeline.md) |
-| Wake-word/VAD (server doesn't handle it) | ✅ | [perception-pipeline](perception-pipeline.md#wake-word--vad-fully-on-device) |
-| Scheduling/recommender/STAR/StarBits/mentor history | ✅ | [content-and-conversation](content-and-conversation.md#scheduling-progression--rewards-what-to-offer-next) |
+| Wake-word/VAD (server doesn't handle it) | ✅ | [perception-pipeline](perception-pipeline.md#wake-word-vad-fully-on-device) |
+| Scheduling/recommender/STAR/StarBits/mentor history | ✅ | [content-and-conversation](content-and-conversation.md#scheduling-progression-rewards-what-to-offer-next) |
 | Telehealth / live remote puppet (TeleBrain protocol) | ✅ | [telehealth](telehealth.md) |
 | System status a server observes (Wi-Fi vs internet, STT/OTA health, shutdown, unpair/disengage) | ✅ | [power-and-system-events](power-and-system-events.md) |
 | Full protocol reference (382 msgs) + bindings | ✅ + tools | [proto-catalog](proto-catalog.md) · [recovered-proto/](recovered-proto/) · `protoref` |
@@ -59,7 +59,7 @@
 | **801+**: QR `endpoint_update` → OPEN_MOXIE/local, run your server | ✅ works ([qr-commands](qr-commands.md)) |
 | **pre-801** over the air | ❌ endpoint hardcoded to Google, CA-validated cert ([network-trust](network-trust.md)) — can't redirect |
 | Recovery sideload (SD/USB/adb) | ⚠️ exists, but **gated on a signed OTA** ([ota-and-recovery](ota-and-recovery.md)) |
-| **Button-triggered rockusb (download mode) → unsigned flash** | ⭐ **best low-open lead** ([hardware-access](hardware-access.md#boot-mode-entry-reboot-reasons--keys)) |
+| **Button-triggered rockusb (download mode) → unsigned flash** | ⭐ **best low-open lead** ([hardware-access](hardware-access.md#boot-mode-entry-reboot-reasons-keys)) |
 | **Setup-app status signal** (`WifiAppReady`=100 → ready to scan a QR; `WifiAppBricked` → needs physical recovery) | ✅ + tool ([qr-commands](qr-commands.md) · `bus.py`) |
 
 ## Open items (need a bench unit or an external artifact)

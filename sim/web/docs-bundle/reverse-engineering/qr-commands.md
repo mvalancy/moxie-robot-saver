@@ -52,7 +52,7 @@ signal that says a stranded robot is *ready to scan a QR* (the `STATE_CONFIG` su
   [hardware-map](hardware-map.md)).
 
 **Revival relevance (goal ③).** `WifiAppReady` (code 100) is the concrete "the robot is now in
-QR-scanning mode" signal — a [re-homing QR](#toolkit--generate--validate-these-codes) is worth presenting
+QR-scanning mode" signal — a [re-homing QR](#toolkit-generate-validate-these-codes) is worth presenting
 once it's seen. `WifiAppBricked` says the *setup app* (not the hardware) is the failure, which bounds
 whether a no-open QR revival can work at all: a bricked setup app can't scan, so that unit needs the
 physical [recovery path](ota-and-recovery.md) rather than a QR.

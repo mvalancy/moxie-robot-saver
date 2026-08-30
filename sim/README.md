@@ -36,7 +36,7 @@ cd sim/web && python3 -m http.server 8080   # serve the UI, then run a broker+su
 ## What's real vs simulated
 The firmware is the **contract, not the runtime** — we don't boot the RK3288 Android image (it needs
 absent vendor HALs). The virtual robot speaks the real MQTT topics + JSON/markup, so "works in the sim"
-means "works on a real re-homed robot." Scope + honest limits: [`sil-and-cicd.md`](../docs/architecture/sil-and-cicd.md#what-is-and-isnt-simulated--honest-scope).
+means "works on a real re-homed robot." Scope + honest limits: [`sil-and-cicd.md`](../docs/architecture/sil-and-cicd.md#what-is-and-isnt-simulated-honest-scope).
 
 ## Voice (Piper TTS)
 

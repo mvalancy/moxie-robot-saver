@@ -35,7 +35,7 @@ robot are interchangeable clients.** Everything proven in the sim works on hardw
 
 ### 1 · Avatar (3D) — *Fable 5*
 Accurate two-part model (separate **head** + cylinder **body**, forehead camera, half-cylinder arms,
-single-finger hands — see [visual reference](sil-and-cicd.md#visual-reference--the-3d-model-from-the-fcc-external-photos)),
+single-finger hands — see [visual reference](sil-and-cicd.md#visual-reference-the-3d-model-from-the-fcc-external-photos)),
 the 7-DOF `libmotionlib` rig, the control-room HUD ([style guide](../design/style-guide.md)).
 
 ### 2 · Liveness / animation system

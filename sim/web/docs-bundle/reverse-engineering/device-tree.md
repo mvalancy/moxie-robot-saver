@@ -96,7 +96,7 @@ BCM4339** (single-stream 802.11ac + BT 4.x):
 > `/vendor/etc/firmware` also ships the **generic Rockchip-SDK grab-bag** (~40 Wi-Fi/BT blobs for
 > Broadcom/Realtek/AP6xxx/SSV/Ralink parts) — only the **AP6335/BCM4339** files above are actually
 > loaded here. `/vendor/firmware/*.rkl` (RK1608 pre-ISP, OV2718/IMX327) are likewise unused SDK blobs
-> (Moxie's camera is the OV2710, [above](#display--camera)).
+> (Moxie's camera is the OV2710, [above](#display-camera)).
 
 ## Power tree (RK808 PMIC → rails)
 

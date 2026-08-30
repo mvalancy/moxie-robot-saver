@@ -4,10 +4,10 @@
 > the product ecosystem down to motor drivers and hardware buses. Every box is grounded in the
 > reverse-engineering in this folder; each level links to its deep doc. GitHub renders these natively.
 
-**Levels:** [L0 Product](#l0--product-ecosystem) · [L1 Software stack](#l1--on-robot-software-stack) ·
-[L2 Component bus](#l2--on-device-component-bus) · [L3 Interaction loop](#l3--the-interaction-loop) ·
-[L4 Cloud transport](#l4--cloud-transport) · [L5 Hardware topology](#l5--hardware-topology) ·
-[L6 Actuation & sensing](#l6--actuation--sensing-the-lizard-mcu) · [L7 Boot chain](#l7--boot-chain--lifecycle)
+**Levels:** [L0 Product](#l0-product-ecosystem) · [L1 Software stack](#l1-on-robot-software-stack) ·
+[L2 Component bus](#l2-on-device-component-bus) · [L3 Interaction loop](#l3-the-interaction-loop) ·
+[L4 Cloud transport](#l4-cloud-transport) · [L5 Hardware topology](#l5-hardware-topology) ·
+[L6 Actuation & sensing](#l6-actuation-sensing-the-lizard-mcu) · [L7 Boot chain](#l7-boot-chain-lifecycle)
 
 ---
 

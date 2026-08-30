@@ -32,7 +32,7 @@ may bind. **21 HAL interfaces**, all standard:
 | HAL interface | Ver | Notable for Moxie |
 |---|---|---|
 | `android.hardware.audio` (+ `audio.effect`) | 4.0 | audio path; **`audio.usb.default`** is how the **XMOS** USB-audio device is reached (mic array + speaker) |
-| `android.hardware.soundtrigger` | 2.0 | hotword HAL is *present*, but Moxie's wake-word/VAD actually runs in the **XMOS DSP + `libbo-audio`**, not this HAL (see [`perception-pipeline.md`](perception-pipeline.md#wake-word--vad-fully-on-device)) |
+| `android.hardware.soundtrigger` | 2.0 | hotword HAL is *present*, but Moxie's wake-word/VAD actually runs in the **XMOS DSP + `libbo-audio`**, not this HAL (see [`perception-pipeline.md`](perception-pipeline.md#wake-word-vad-fully-on-device)) |
 | `android.hardware.camera.provider` | 2.4 | OV2710 via `camera.rk30board` |
 | `android.hardware.light` | 2.0 | present, but Moxie's RGB status LEDs go through the **`ledctrld`** daemon (PCA963x), not the light HAL |
 | `android.hardware.boot` | 1.0 | A/B slot control (`bootctrl.rk30board`) — the OTA applier's seam |

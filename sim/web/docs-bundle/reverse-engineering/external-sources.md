@@ -7,10 +7,10 @@
 > the authoritative source where they disagree).
 
 ## Contents
-- [Provenance & the law](#provenance--the-law-can-we-use-this) — FCC public records, copyright, fair use
+- [Provenance & the law](#provenance-the-law-can-we-use-this) — FCC public records, copyright, fair use
 - [SoC adjudication](#soc-adjudication-rk3288-vs-the-qualcomm-assumption) — settling RK3288 vs "Open-Q"
-- [Regulatory / official](#regulatory--official-sources) — FCC filings, Lantronix
-- [Teardowns](#teardowns) · [Community projects](#community-revival-projects) · [Press](#press--context)
+- [Regulatory / official](#regulatory-official-sources) — FCC filings, Lantronix
+- [Teardowns](#teardowns) · [Community projects](#community-revival-projects) · [Press](#press-context)
 - [What's resolved vs. still open](#what-external-work-resolves-vs-what-still-needs-our-bench)
 
 ---
@@ -178,7 +178,7 @@ security-model RE; does not settle silicon.
   captured in-repo** (self-sufficiency): the three-layer authoring pipeline (Python node classes →
   Jinja2 templates → generated `.top`), the ChatScript `.top` syntax/operators, and the named **global
   command** set are now in
-  [`content-and-conversation.md`](content-and-conversation.md#chatscript-authoring--the-real-format--pipeline)
+  [`content-and-conversation.md`](content-and-conversation.md#chatscript-authoring-the-real-format-pipeline)
   (ChatScript runs cloud/server-side, so this is what a revival *server* authors).
 - **robotsaroundthehouse OpenMoxie setup guide** — [thread](https://robotsaroundthehouse.com/threads/setting-up-openmoxie-for-your-moxie-robot-a-detailed-step-by-step-guide.827/).
   A step-by-step owner walkthrough of the QR re-home + OpenMoxie stand-up — the real-world instance of

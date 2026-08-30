@@ -5,7 +5,7 @@
 > modify a *running* Moxie from outside — set the volume now, slow the interaction down for accessibility,
 > force it to listen, allow a barge-in, or reset the brain. They're the counterpart to the **declarative**
 > config in [`settings-schema.md`](settings-schema.md) and
-> [`RobotCloudConfig`](device-config-and-telemetry.md#robotcloudconfig--the-master-config-document-cloud--robot):
+> [`RobotCloudConfig`](device-config-and-telemetry.md#robotcloudconfig-the-master-config-document-cloud-robot):
 > config sets the *persisted default*; these change *live state this instant*. Injectable onto the ZMQ bus
 > ([`robot-ipc-protocol.md`](robot-ipc-protocol.md)) or over MQTT `/commands/zmq`
 > ([`cloud-protocol.md`](cloud-protocol.md)), so a server, the parent app, or a custom module can drive
@@ -44,7 +44,7 @@ message AllowCutoffEvent        { bool allow; }                               //
 - **`ChatbotListeningRequest`** forces the chatbot to start/stop **listening** for a given `user`/`bot`
   pair — make Moxie open the mic on demand, or close it.
 - **`AllowCutoffEvent`** permits or blocks **barge-in** (the child cutting Moxie off mid-line) — the
-  imperative form of the barge-in policy in [`turn-taking.md`](turn-taking.md#barge-in--interruption). A module sets
+  imperative form of the barge-in policy in [`turn-taking.md`](turn-taking.md#barge-in-interruption). A module sets
   `allow=false` during a line that must not be interrupted, `true` when interruption is welcome.
 
 ## Reset — `SoftReset` / `HardReset`

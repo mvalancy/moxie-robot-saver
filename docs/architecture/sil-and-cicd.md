@@ -15,7 +15,7 @@ sim. Instead:
 |---|---|---|
 | **Protocol** (MQTT topics, JSON envelopes, JWT) | A **virtual robot** that speaks it exactly ([`sim/virtual_moxie.py`](../../sim/virtual_moxie.py)) | ✅ working — round-trips against the real [`mqtt/`](../../mqtt/) supervisor |
 | **Behavior** (`<mark cmd:…>` markup, moods, gestures) | `sim/web/bridge.js` parses the marks → drives face + arm gestures | 🟡 wired (D3 refining) |
-| **Motion** (arms/head/body DOF) | Drive a **WebGL (three.js) 3D Moxie** from the `libmotionlib` motor indices ([hardware-map](../reverse-engineering/hardware-map.md#native-motion-api-factory-libmotionlib--liblizardjni)) | 🟢 model+rig+API + live bus bridge |
+| **Motion** (arms/head/body DOF) | Drive a **WebGL (three.js) 3D Moxie** from the `libmotionlib` motor indices ([hardware-map](../reverse-engineering/hardware-map.md#native-motion-api-factory-libmotionlib-liblizardjni)) | 🟢 model+rig+API + live bus bridge |
 | **Face** (DLP expressions/visemes) | Render the animated face to a canvas **texture on the face-screen mesh**, from TTS marks + mood verbs | 🟢 6 expressions + mood-driven + icons-v2 badges |
 | **Component golden-tests** (optional, later) | Run specific ARM `.so` (`libchatscript`) under **qemu-user** for reference outputs | ⏸ backlog |
 
@@ -83,7 +83,7 @@ continuous teardrop. **~15 in (≈38 cm) tall.**
   **function of the shoulder angle** — arm down against the body → forced open; arm lifted clear →
   the spring closes it — and the motor can only **add** fold on top (never hyperextend). This is why the
   firmware only ever drives elbows toward `MOTOR_MAX_POS`
-  ([evidence](../reverse-engineering/hardware-map.md#arm-anatomy--what-arm_in_out-actually-is)).
+  ([evidence](../reverse-engineering/hardware-map.md#arm-anatomy-what-arm_in_out-actually-is)).
   **Handedness:** motor names are from the **robot's own perspective** (the Lizard board is silkscreened
   `L ARM …`/`R ARM …`), so with a camera in front, the robot's **LEFT** arm (motors 0/1) appears on the
   **viewer's RIGHT**. See the [motor map](../reverse-engineering/hardware-map.md).

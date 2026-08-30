@@ -1,5 +1,5 @@
 {
- "generated": "docs-c1ce7810a3bd",
+ "generated": "docs-1e018f08f962",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -161,7 +161,7 @@
    "path": "architecture/moxie-ecosystem.md",
    "title": "The Moxie ecosystem — master build plan (~1 week)",
    "section": "architecture",
-   "bytes": 6580,
+   "bytes": 6579,
    "mermaid": 1,
    "headings": [
     "The stack (one backend, two robots)",
@@ -181,7 +181,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 18786,
+   "bytes": 18784,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -367,7 +367,7 @@
    "path": "features/robot-capabilities.md",
    "title": "Robot capability catalog",
    "section": "features",
-   "bytes": 6079,
+   "bytes": 6070,
    "mermaid": 0,
    "headings": [
     "Conversation",
@@ -479,7 +479,7 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie — the full path",
    "section": "guides",
-   "bytes": 7020,
+   "bytes": 7018,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 7675,
+   "bytes": 7671,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -541,7 +541,7 @@
    "path": "reverse-engineering/architecture-diagrams.md",
    "title": "Architecture diagrams — the whole system, top to bottom",
    "section": "reverse-engineering",
-   "bytes": 11126,
+   "bytes": 11116,
    "mermaid": 9,
    "headings": [
     "L0 — Product ecosystem",
@@ -744,7 +744,7 @@
    "path": "reverse-engineering/firmware-image.md",
    "title": "Moxie firmware image — the robot's own Android system",
    "section": "reverse-engineering",
-   "bytes": 18972,
+   "bytes": 18980,
    "mermaid": 0,
    "headings": [
     "TL;DR for going custom",
@@ -767,7 +767,7 @@
    "path": "reverse-engineering/firmware-inventory.md",
    "title": "Firmware inventory — apps & binaries",
    "section": "reverse-engineering",
-   "bytes": 9608,
+   "bytes": 9604,
    "mermaid": 0,
    "headings": [
     "Embodied apps (the ones that make it a Moxie)",
@@ -810,7 +810,7 @@
    "path": "reverse-engineering/hardware-access.md",
    "title": "Hardware access & flashing — the physical surface",
    "section": "reverse-engineering",
-   "bytes": 9688,
+   "bytes": 9685,
    "mermaid": 1,
    "headings": [
     "Access tiers",
@@ -830,7 +830,7 @@
    "path": "reverse-engineering/flashing-runbook.md",
    "title": "Flashing runbook — custom firmware & flash-based revival",
    "section": "reverse-engineering",
-   "bytes": 5347,
+   "bytes": 5352,
    "mermaid": 0,
    "headings": [
     "What you need",
@@ -863,7 +863,7 @@
    "path": "reverse-engineering/boot-and-launcher.md",
    "title": "Boot & lifecycle — the Launcher state machine",
    "section": "reverse-engineering",
-   "bytes": 9024,
+   "bytes": 9022,
    "mermaid": 1,
    "headings": [
     "Components (`BOComponent`)",
@@ -879,7 +879,7 @@
    "path": "reverse-engineering/power-and-system-events.md",
    "title": "Power & system events — the lifecycle protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 8569,
+   "bytes": 8567,
    "mermaid": 1,
    "headings": [
     "The power state — `PowerStatePB`",
@@ -933,7 +933,7 @@
    "path": "reverse-engineering/remote-chat-protocol.md",
    "title": "RemoteChat — the robot ↔ brain conversation protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 9539,
+   "bytes": 9538,
    "mermaid": 1,
    "headings": [
     "One turn",
@@ -951,7 +951,7 @@
    "path": "reverse-engineering/offline-and-brain-state.md",
    "title": "Offline behavior & on-device brain state (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 6899,
+   "bytes": 6895,
    "mermaid": 1,
    "headings": [
     "Online vs offline",
@@ -966,7 +966,7 @@
    "path": "reverse-engineering/device-config-and-telemetry.md",
    "title": "Device config & telemetry — the `embodied.logging` data-model (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 10549,
+   "bytes": 10560,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -1004,7 +1004,7 @@
    "path": "reverse-engineering/runtime-control.md",
    "title": "Runtime control — imperative commands to a running brain (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 5395,
+   "bytes": 5392,
    "mermaid": 0,
    "headings": [
     "Audio volume — `SystemVolume*`",
@@ -1019,7 +1019,7 @@
    "path": "reverse-engineering/security-policy.md",
    "title": "Android permissions & SELinux policy — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 9632,
+   "bytes": 9630,
    "mermaid": 1,
    "headings": [
     "TL;DR",
@@ -1036,7 +1036,7 @@
    "path": "reverse-engineering/hal-and-drivers.md",
    "title": "Vendor HALs, kernel drivers & co-processor firmware — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 8968,
+   "bytes": 8967,
    "mermaid": 0,
    "headings": [
     "TL;DR",
@@ -1070,7 +1070,7 @@
    "path": "reverse-engineering/behavior-markup.md",
    "title": "Behavior markup — making Moxie move & emote while it talks",
    "section": "reverse-engineering",
-   "bytes": 12890,
+   "bytes": 12915,
    "mermaid": 0,
    "headings": [
     "Shape",
@@ -1127,7 +1127,7 @@
    "path": "reverse-engineering/gaze-and-attention.md",
    "title": "Gaze & attention — how Moxie decides where to look (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 9659,
+   "bytes": 9657,
    "mermaid": 1,
    "headings": [
     "TL;DR",
@@ -1174,7 +1174,7 @@
    "path": "reverse-engineering/content-and-conversation.md",
    "title": "Content & conversation — ChatScript, content modules, the volley API",
    "section": "reverse-engineering",
-   "bytes": 26053,
+   "bytes": 26037,
    "mermaid": 1,
    "headings": [
     "Two dialog engines",
@@ -1224,7 +1224,7 @@
    "path": "reverse-engineering/perception-pipeline.md",
    "title": "Perception pipeline — audio & vision",
    "section": "reverse-engineering",
-   "bytes": 15472,
+   "bytes": 15468,
    "mermaid": 1,
    "headings": [
     "Audio: hear → understand → speak",
@@ -1244,7 +1244,7 @@
    "path": "reverse-engineering/perception-fusion.md",
    "title": "Perception fusion — the world-model of people (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 7611,
+   "bytes": 7604,
    "mermaid": 1,
    "headings": [
     "Where it sits",
@@ -1262,7 +1262,7 @@
    "path": "reverse-engineering/qr-commands.md",
    "title": "QR command grammar — what the robot actually scans",
    "section": "reverse-engineering",
-   "bytes": 13454,
+   "bytes": 13452,
    "mermaid": 0,
    "headings": [
     "The dispatcher",
@@ -1284,7 +1284,7 @@
    "path": "reverse-engineering/hardware-map.md",
    "title": "Hardware map — motors, sensors, LEDs, power",
    "section": "reverse-engineering",
-   "bytes": 17072,
+   "bytes": 17073,
    "mermaid": 0,
    "headings": [
     "Hardware revisions (`Revision_Level`)",
@@ -1308,7 +1308,7 @@
    "path": "reverse-engineering/device-tree.md",
    "title": "Device tree — board-level hardware wiring",
    "section": "reverse-engineering",
-   "bytes": 7384,
+   "bytes": 7383,
    "mermaid": 0,
    "headings": [
     "I²C buses & devices",
@@ -1396,7 +1396,7 @@
    "path": "reverse-engineering/external-sources.md",
    "title": "External & community research map",
    "section": "reverse-engineering",
-   "bytes": 16375,
+   "bytes": 16370,
    "mermaid": 0,
    "headings": [
     "Contents",
@@ -1417,7 +1417,7 @@
    "path": "reverse-engineering/fcc-teardown.md",
    "title": "FCC filings — board-level hardware map (rev1 vs rev2)",
    "section": "reverse-engineering",
-   "bytes": 23636,
+   "bytes": 23629,
    "mermaid": 0,
    "headings": [
     "The two filings at a glance",

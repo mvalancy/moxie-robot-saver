@@ -161,7 +161,7 @@ How the brain builds what the LLM sees, and stays topical:
   > revival server **authors Moxie's character itself** — warm, playful, kid-safe SEL mentor (the
   > [GRL](unity-assets.md) lore, age-adaptation, and the mood/emotion + behavior-markup systems are the
   > cues) — and injects it here. This is the core of the ecosystem's
-  > [LLM-agent workstream](../architecture/moxie-ecosystem.md#5--brain--llm-agent--personality).
+  > [LLM-agent workstream](../architecture/moxie-ecosystem.md#5-brain-llm-agent-personality).
 - **Holiday / event awareness** — `EventsAndHolidaysData{holidays[]}` with
   `Holiday{event_uid, holiday_id, name, tag, date, region}`: **region-specific, dated events** the robot
   uses for topical content (birthdays, holidays). A server can supply this for seasonal behavior.
@@ -283,9 +283,9 @@ message SELTagInfo {
 
 So the taxonomy is **Pillars → Skills → Goals → Levels**, and the `*To*` `Weight` lists are the weighted
 edges between adjacent levels. A child's engagement recorded per-tag (`UserRecommendationData.tag_history`,
-[`offline-and-brain-state`](offline-and-brain-state.md#the-recommenders-memory--userrecommendationdata)) and
+[`offline-and-brain-state`](offline-and-brain-state.md#the-recommenders-memory-userrecommendationdata)) and
 the parent's `ContentPreferences.SELPreference{sel_tag, weight}`
-([`device-config-and-telemetry`](device-config-and-telemetry.md#robotcloudconfig--the-master-config-document-cloud--robot))
+([`device-config-and-telemetry`](device-config-and-telemetry.md#robotcloudconfig-the-master-config-document-cloud-robot))
 both index into *this* tree, and the weighted edges are how a signal on one Goal propagates up to its Skill
 and Pillar when the recommender scores content (`RECOMMENDATION_BY_SEL`).
 
@@ -315,7 +315,7 @@ each module's goals and per-content tags.
   and feeds it to the recommender + parent reports.
 
 **Revival (goal #2):** a minimal server can ship a fixed `DailySchedule`/hub and ignore the
-recommender (OpenMoxie does — a static `provided_schedule` + a hub module, [`content-and-conversation`](#schedulesschedules--what-to-offer-when)).
+recommender (OpenMoxie does — a static `provided_schedule` + a hub module, [`content-and-conversation`](#schedules-what-to-offer-when)).
 Full parity means persisting MentorBehavior + StarBits + STAR-goal state per child and ranking modules.
 
 ## Telehealth / remote puppet mode

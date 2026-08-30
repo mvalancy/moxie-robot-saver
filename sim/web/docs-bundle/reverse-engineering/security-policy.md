@@ -4,7 +4,7 @@
 > *access-control* surface: which Android platform permissions & hardware features the firmware
 > declares, and how SELinux confines the embodied daemons. It answers a custom-firmware question the
 > other docs don't: **what policy must a custom build satisfy (or replace) to run the experience?**
-> Pairs with [`firmware-image.md`](firmware-image.md#code-signing--app-trust) (code signing),
+> Pairs with [`firmware-image.md`](firmware-image.md#code-signing-app-trust) (code signing),
 > [`hardware-map.md`](hardware-map.md) (the devices these labels protect) and
 > [`boot-and-launcher.md`](boot-and-launcher.md) (the init services these domains run as).
 
@@ -14,7 +14,7 @@
   `privapp-permissions-platform.xml` and **no custom `seapp_contexts`** — the brain (`bo-android`),
   `bo-wifi`, OSUpdate, the factory apps, etc. run in the **stock** `platform_app` / `priv_app` SELinux
   domains with `seinfo=platform`. They get their power purely from being **signed with the platform
-  key** (signature-level permissions) — see [`firmware-image.md`](firmware-image.md#code-signing--app-trust).
+  key** (signature-level permissions) — see [`firmware-image.md`](firmware-image.md#code-signing-app-trust).
   → For custom firmware this is the clean seam: **sign your app with the platform key (or resign the
   ROM) and you inherit the same access with no policy edits.**
 - **Embodied's SELinux additions are tiny and hardware-focused**: **2 custom daemon domains**

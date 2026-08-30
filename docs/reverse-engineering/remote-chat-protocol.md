@@ -38,7 +38,7 @@ fields that matter here and aren't listed there:
 - **`notify_source`** (`ResponseSource`), **`rollback`**, **`allow_multiple`**, **`no_llm`** — turn
   controls (retry/rollback a sequence, allow multiple outputs, force a non-LLM path).
 - **Translation** — `original_language`, `original_speech`, `original_speech_alternates[]` alongside the
-  (translated) `speech` — same translation-awareness seen in [perception fusion](perception-fusion.md#fusedspeechpb--the-voice-fused-onto-the-person).
+  (translated) `speech` — same translation-awareness seen in [perception fusion](perception-fusion.md#fusedspeechpb-the-voice-fused-onto-the-person).
 
 ## The response — `RemoteChatResponse`
 

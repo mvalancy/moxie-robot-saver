@@ -3,9 +3,9 @@
 > **What this is.** Facts extracted from Moxie's **public FCC equipment-authorization exhibits** —
 > the independent, outside confirmation of the hardware our firmware analysis
 > (**v3.6.4-Zephyr / OTA v24.10.803**) inferred from software. Written per the
-> [self-sufficiency doctrine](external-sources.md#self-sufficiency-doctrine--assume-every-link-dies-tomorrow):
+> [self-sufficiency doctrine](external-sources.md#self-sufficiency-doctrine-assume-every-link-dies-tomorrow):
 > the **facts live here**, so this document stands alone if the filings ever become unreachable.
-> Photos are **described, not re-hosted** (see the [provenance policy](external-sources.md#provenance--the-law-can-we-use-this)).
+> Photos are **described, not re-hosted** (see the [provenance policy](external-sources.md#provenance-the-law-can-we-use-this)).
 >
 > **Sources:** FCC ID **`2AV9N-EMBODIEDMOXIEA`** (rev1) and **`2AV9N-EMBMOXIEVTWO`** (rev2/V2),
 > grantee **Embodied, Inc.** (grantee code `2AV9N`), internal/external photo + test-report exhibits.
@@ -76,7 +76,7 @@ clustered at the board edge beside the `MICS` FFC.
 
 **`LOAD` is the Rockchip download-mode button.** On RK-family boards, a `LOAD`/`RECOVERY` key held at
 power-on drives the SoC into **maskrom / rockusb download mode** — exactly the unsigned-flash entry
-described in [`hardware-access.md`](hardware-access.md#the-rockchip-boot--download-modes-rk3288) and the
+described in [`hardware-access.md`](hardware-access.md#the-rockchip-boot-download-modes-rk3288) and the
 one that bypasses the signed-OTA gate blocking pre-801 revival. This resolves part of a long-standing
 open question: **a dedicated download-mode button physically exists on the mainboard** — no test-point
 soldering or shorting required *once the shell is open*.
@@ -113,7 +113,7 @@ recovered from `liblizardJNI`/`lizzerface` was the **literal board name**, not a
 ### Cross-check: the motor list vs. our two index spaces
 
 The seven silkscreened motor connectors match the **7-entry `libmotionlib` index** documented in
-[`hardware-map.md`](hardware-map.md#native-motion-api-factory-libmotionlib--liblizardjni) — including
+[`hardware-map.md`](hardware-map.md#native-motion-api-factory-libmotionlib-liblizardjni) — including
 its divergence from the `Motor` proto enum:
 
 | Board silkscreen | `libmotionlib` idx | Notes |
@@ -236,7 +236,7 @@ boot; no standalone firmware to flash.
 | Test lab | Intertek HK | **unchanged** | Same compliance path |
 | MCU | (Lizard board not in rev1's public set) | **`STM32F071VBT6`** on `"THE LIZARD"` `#101557` | rev2 exposes the MCU part number |
 | Boards shown | mainboard `100438`, projector/`JETTA` iface, camera, DLP engine | Lizard `#101557`, `Penguin Board` `#101505` | The two filings are **complementary**: rev1 documents compute/optics, rev2 documents motion control |
-| Confidentiality | photos public | short-term to 2024-05-18, **then public**; **Block Diagram, Schematics, and Operational Description withheld ("metadata only")** | Matches the [expected pattern](external-sources.md#provenance--the-law-can-we-use-this) — photos public, schematics not |
+| Confidentiality | photos public | short-term to 2024-05-18, **then public**; **Block Diagram, Schematics, and Operational Description withheld ("metadata only")** | Matches the [expected pattern](external-sources.md#provenance-the-law-can-we-use-this) — photos public, schematics not |
 
 > **Touch sensors across generations.** Community teardowns report *older* Moxie **lack touch sensors**
 > ([external-sources](external-sources.md#teardowns)). rev2's Lizard board silkscreens dedicated
@@ -268,7 +268,7 @@ boot; no standalone firmware to flash.
 
 All exhibits are public FCC equipment-authorization records, grantee **Embodied, Inc.** (`2AV9N`).
 Citations above use these tags; page numbers are the page of that exhibit PDF as published on
-`fccid.io`. Facts extracted per the [provenance policy](external-sources.md#provenance--the-law-can-we-use-this);
+`fccid.io`. Facts extracted per the [provenance policy](external-sources.md#provenance-the-law-can-we-use-this);
 images described, not re-hosted.
 
 | Tag | Exhibit | Report No. | FCC ID | URL |
@@ -298,7 +298,7 @@ images described, not re-hosted.
 > **Confidentiality note:** rev2's **Block Diagram, Schematics, and Operational Description** are filed
 > **"metadata only"** (permanently withheld under 47 CFR §0.457/§0.459); internal/external photos and
 > the test/SAR reports are public (short‑term confidentiality lapsed 2024‑05‑18). See the
-> [law section](external-sources.md#provenance--the-law-can-we-use-this).
+> [law section](external-sources.md#provenance-the-law-can-we-use-this).
 
 ---
 📖 [External sources map](external-sources.md) · [Hardware map](hardware-map.md) · [Hardware access](hardware-access.md) · [Device tree](device-tree.md) · [Coverage](COVERAGE.md) · [RE index](README.md)

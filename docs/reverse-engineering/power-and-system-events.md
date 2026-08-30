@@ -91,7 +91,7 @@ unpair does — the robot quiesces, then emits `UnpairUserReady`.
 
 The other half of the `embodied.sys` family (recovered from `embodied/system/TimeEvents.proto`) is how
 the robot knows *what time it is locally* and runs **wake alarms** — the on-device implementation of the
-`WakeSchedule`/bedtime windows the cloud pushes in [`RobotCloudConfig`](device-config-and-telemetry.md#robotcloudconfig--the-master-config-document-cloud--robot).
+`WakeSchedule`/bedtime windows the cloud pushes in [`RobotCloudConfig`](device-config-and-telemetry.md#robotcloudconfig-the-master-config-document-cloud-robot).
 
 - **`TimeZoneInfo { olson_id, midnight_in_timezone }`** — the robot's current timezone as an **IANA/Olson
   id** (e.g. `America/New_York`) plus the concrete `midnight_in_timezone` string. This is what turns the

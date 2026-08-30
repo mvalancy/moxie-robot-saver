@@ -190,7 +190,7 @@ firmware's own protobufs.
   - **Gatekeeper** — lock-credential verification.
   - **Widevine keybox** — DRM device keys (`storage_widevine_write`, `rk_store_keybox`).
   - **AVB-ATX permanent attributes** — the Product Attestation Key public key + Product ID used by the
-    [attestation unlock](#unlock-reality-avb-attestation-not-plain-oem-unlock) (`trusty_read/write_permanent_attributes`), stored in RPMB (which is why unlock can't be spoofed).
+    [attestation unlock](#the-verified-boot-chain-and-how-to-break-it-for-custom-code) (`trusty_read/write_permanent_attributes`), stored in RPMB (which is why unlock can't be spoofed).
 
 **Custom-firmware implications:** you can freely replace `system`/`vendor`/`boot` (maskrom route) and
 the **TEE + RPMB survive** — keymaster/gatekeeper keep working, so a debuggable custom `system` still

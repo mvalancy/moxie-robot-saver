@@ -23,7 +23,7 @@ Pick whichever you can reach — all bypass the locked normal-boot ADB:
 1. **Maskrom** ⚙️ — hold the SoC `BOOT`/recovery test-point low while powering (needs the board open),
    then `rkdeveloptool db rk3288_loader.bin` to load the miniloader.
 2. **Loader / rockusb** — `reboot loader` from a root shell, **or** hold the **Macro button at
-   power-on** ⚙️ (long-press → bootrom download; [confirm on serial console](hardware-access.md#boot-mode-entry-reboot-reasons--keys)),
+   power-on** ⚙️ (long-press → bootrom download; [confirm on serial console](hardware-access.md#boot-mode-entry-reboot-reasons-keys)),
    **or** it auto-enters on AVB failure (U-Boot `bootcmd` falls back to `rockusb`).
 3. Confirm the host sees it: `rkdeveloptool ld` (should list a device in `Maskrom`/`Loader` mode).
 
@@ -41,7 +41,7 @@ confirm you have this exact build.
 ## C. Disable AVB verification (to run modified images)
 
 You can't `fastboot oem unlock` (AVB-ATX attestation needs Embodied's key — see
-[firmware-image](firmware-image.md#unlock-reality-avb-attestation-not-plain-oem-unlock)), but maskrom
+[firmware-image](firmware-image.md#the-verified-boot-chain-and-how-to-break-it-for-custom-code)), but maskrom
 flashes below AVB, so just neuter `vbmeta`:
 
 ```sh
@@ -62,7 +62,7 @@ rkdeveloptool td                              # reset the device
 ```
 - Flash the **inactive A/B slot** (or both `_a` and `_b`) — see the [partition table](hardware-access.md#partition-table-flash-targets).
 - **Keep `trust`/`uboot` untouched** unless you must — reflashing `trust` risks the TEE/RPMB
-  (keymaster, attestation) and can brick unlock ([firmware-image TEE](firmware-image.md#tee--secure-world-op-tee--rpmb)).
+  (keymaster, attestation) and can brick unlock ([firmware-image TEE](firmware-image.md#tee-secure-world-op-tee-rpmb)).
 - **Minimal-invasive custom personality:** keep stock `system`/`vendor` + a debuggable `boot`, get root
   ADB, then replace only the **app layer** (`bo-android`) and speak the [ZMQ bus](robot-ipc-protocol.md).
 

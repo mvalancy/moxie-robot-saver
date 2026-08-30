@@ -76,9 +76,9 @@ message NoTargetedUser { }                                                      
   `NO_TARGET_FOCUS` (aware but not fixed on anyone), `SEARCHING` (actively looking for a person). This is
   the machine behind Moxie's "settled vs looking-around" body language.
 - **`Attention.targeted_user`** / **`TargetedUser.targeted_user_id`** is a **`FusedPerson.id`** from
-  [perception fusion](perception-fusion.md#fusedpersonpb--one-tracked-human) — so the attention decision
+  [perception fusion](perception-fusion.md#fusedpersonpb-one-tracked-human) — so the attention decision
   names a *specific tracked person*, and `targeted_user_face_id` ties to that person's
-  [`FusedFacePB.face_tracker_id`](perception-fusion.md#fusedfacepb--the-face-in-two-coordinate-frames).
+  [`FusedFacePB.face_tracker_id`](perception-fusion.md#fusedfacepb-the-face-in-two-coordinate-frames).
 - **`InterestPoint.person_id` + `WorldLocation`** are the wire form of the `InterestPointInfo` struct
   above: the weighted candidates, each tied to a person and a 3D point.
 

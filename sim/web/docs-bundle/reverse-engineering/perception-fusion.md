@@ -2,12 +2,12 @@
 
 > Recovered from `embodied/perception/fusion/FusedPeople.proto` (`package embodied.perception.fusion`),
 > implemented by the ~40 MB native `libbo-fusion.so`, in the **v24.10.803** image. This is the layer that
-> turns raw percepts — [face/body/QR detections](perception-pipeline.md) and [audio DOA/STT](perception-pipeline.md#audio-hear--understand--speak) —
+> turns raw percepts — [face/body/QR detections](perception-pipeline.md) and [audio DOA/STT](perception-pipeline.md#audio-hear-understand-speak) —
 > into a single **tracked model of the people in the room**: who they are, where they are in 3D, whether
 > they're engaged, whether they're speaking, and what they said. It's the perception *output* the brain
 > actually reasons over — the input beneath [gaze](gaze-and-attention.md) and
 > [turn-taking](turn-taking.md), and it arrives on the bus as `FusedPeopleEvent`
-> ([behavior-input-events](behavior-input-events.md#-vision--people-from-libbo-vision--fusion)).
+> ([behavior-input-events](behavior-input-events.md#-vision-people-from-libbo-vision-fusion)).
 
 ## Where it sits
 
@@ -36,7 +36,7 @@ republished as it changes. Each person:
 | Field | Meaning |
 |---|---|
 | `id` | stable tracking id across frames |
-| `name`, `fullname` | recognized identity (from [face recognition / enrollment](perception-pipeline.md#face-recognition--enrollment-data-model)); empty if unknown |
+| `name`, `fullname` | recognized identity (from [face recognition / enrollment](perception-pipeline.md#face-recognition-enrollment-data-model)); empty if unknown |
 | `is_visible` | currently seen by the camera |
 | `is_engaged`, `engagement` (float) | attending to Moxie — the boolean + a continuous score |
 | `confidence` | fusion confidence this is a real, correctly-associated person |
@@ -84,7 +84,7 @@ who said it.
 
 Beyond the roster snapshot, fusion emits discrete **person-level events** (each wraps the `FusedPersonPB`
 so the consumer gets full context), which surface on the bus as the corresponding `…Event`
-([behavior-input-events](behavior-input-events.md#-vision--people-from-libbo-vision--fusion)):
+([behavior-input-events](behavior-input-events.md#-vision-people-from-libbo-vision-fusion)):
 
 | Event | Fires when |
 |---|---|

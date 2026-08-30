@@ -29,7 +29,7 @@ command marks:
 ## Speech markup (SSML / CereVoice)
 
 Alongside the `cmd:` behavior marks, the spoken text uses a **CereVoice SSML dialect** (the TTS engine,
-[perception-pipeline](perception-pipeline.md#tts)). A revival server emits these to *style the voice*;
+[perception-pipeline](perception-pipeline.md#output-side-tts-embodiedunity)). A revival server emits these to *style the voice*;
 the tags below are the ones actually used in shipped content (with observed value sets):
 
 | Tag | Attributes (observed) | Purpose |
@@ -133,7 +133,7 @@ now renders all 11 `Bht_Eyeseme_*` expressions 1:1** (`sim/web/bridge.js` `MOOD_
 **`notification`**: `message` string, `duration` float (default 2s).
 
 **`icons-v2`**: shows a small row of icons on the face screen — used heavily by the **holiday/calendar
-event** content ([content-and-conversation](content-and-conversation.md#context-assembly--topical-awareness)).
+event** content ([content-and-conversation](content-and-conversation.md#context-assembly-topical-awareness)).
 Recovered schema (from shipped content):
 
 ```

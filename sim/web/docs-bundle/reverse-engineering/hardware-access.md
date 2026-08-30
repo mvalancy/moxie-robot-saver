@@ -76,7 +76,7 @@ implies **holding the Macro button while powering on enters recovery or bootrom-
 The **exact microvolt threshold that distinguishes download vs recovery is not in the extracted DTBs**
 — the U-Boot control DTB is a stripped `Evb-RK3288` ([`manifests/uboot-control.dts`](manifests/uboot-control.dts))
 with no `adc-keys` node, so those thresholds are compiled into Rockchip U-Boot. Confirming *which*
-level → *which* mode is a **bench experiment** (watch the [serial console](#serial-console-uart--ttl)
+level → *which* mode is a **bench experiment** (watch the [serial console](#serial-console-uart-ttl)
 while holding Macro at power-on). The power key is the RK808 PMIC key (also long-press capable).
 
 > **Why this matters for goal #3 (low/no-open revival):** the **download-key → rockusb** path is
@@ -96,7 +96,7 @@ offsets to flash — you need the names. The complete `by-name` set for this bui
 | Partition | A/B? | What |
 |---|---|---|
 | `uboot` | — | U-Boot (SPL + U-Boot) |
-| `trust` | — | OP-TEE secure world ([firmware-image](firmware-image.md#tee--secure-world-op-tee--rpmb)) |
+| `trust` | — | OP-TEE secure world ([firmware-image](firmware-image.md#tee-secure-world-op-tee-rpmb)) |
 | `misc` | — | BCB (recovery/loader signalling) |
 | `resource` | — | boot logo + DTB (RSCE) |
 | `dtbo` | ✅ `_a`/`_b` | device-tree overlay (empty stub here) |

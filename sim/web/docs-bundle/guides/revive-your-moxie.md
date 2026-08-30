@@ -132,7 +132,7 @@ TLS, so **no QR or DNS trick can relocate them** — they need new firmware.
 - **Drive the body directly** — the ZMQ bus + motor protos ([`robot-ipc-protocol.md`](../reverse-engineering/robot-ipc-protocol.md),
   [`hardware-map.md`](../reverse-engineering/hardware-map.md)).
 - **Serve your own content** — content modules, ChatScript, and the hash-based
-  [file-sync protocol](../reverse-engineering/cloud-protocol.md#file-sync--how-a-server-delivers-content-voice--chatscript).
+  [file-sync protocol](../reverse-engineering/cloud-protocol.md#file-sync-how-a-server-delivers-content-voice-chatscript).
 
 ---
 📖 [Field guide](../reverse-engineering/FIELD-GUIDE.md) · [Ecosystem plan](../architecture/moxie-ecosystem.md) · [Simulator](../../sim/README.md) · [Docs index](../README.md)

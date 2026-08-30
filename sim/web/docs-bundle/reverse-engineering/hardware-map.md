@@ -52,7 +52,7 @@ structure has to be inferred. What the firmware does tell us:
   **function of the shoulder angle** (arm down → held open by the body; arm lifted clear → spring folds
   it), with the motor only ever **adding** fold. That is exactly the asymmetry seen above.
 - ⚠️ **Not proven from the image.** There is no kinematic description in the firmware, and
-  ([as established](#position-units)) **no joint angles at all** — only counts. Confirming whether the
+  ([as established](#driving-a-motor)) **no joint angles at all** — only counts. Confirming whether the
   forearm segment is spring-loaded, damped, or free needs a **bench unit**.
 
 > 🚫 **False lead, recorded so nobody repeats it:** `FabTestSoftware.apk` contains the strings

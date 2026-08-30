@@ -15,7 +15,7 @@ Package, version, and signer decoded from each APK's binary `AndroidManifest.xml
 | **bo-android** | `com.embodied.bo_unity` | **24.10.803** | Android Debug | the brain — conversation/vision/behavior + Unity face ([reference](firmware-803-reference.md)) |
 | **bo-wifi** | `com.embodied.bo_unity_wifi` | **24.6.100** | Android Debug | setup/QR/pairing (Unity) — *older than the 803 OTA (not rebuilt)* |
 | **bo-firmwareUpdate** | `me.embodied.bo_firmwareupdate` | `GOBY` (code 7) | Embodied Inc | Lizard-MCU firmware DFU (versionName = the **GOBY** bootloader name) |
-| **bo_motor_test** | `com.embodied.bo_motor_test` | 1.0 | Embodied Inc | motor bring-up utility ([native motion API](hardware-map.md#native-motion-api-factory-libmotionlib--liblizardjni)) |
+| **bo_motor_test** | `com.embodied.bo_motor_test` | 1.0 | Embodied Inc | motor bring-up utility ([native motion API](hardware-map.md#native-motion-api-factory-libmotionlib-liblizardjni)) |
 | **bo_xmosupdate** | `me.embodied.bo_xmosupdate` | 2.0 | Embodied Inc | XMOS audio-DSP DFU |
 | **xmosdfu** | `me.embodied.xmosdfu` | 1.1 | Embodied Inc | XMOS DFU (low-level) |
 | **qcapp** | `me.embodied.productiontesting.qc` | 3005004-PP | Embodied Inc | QC utility (factory suite) |
@@ -28,10 +28,10 @@ Package, version, and signer decoded from each APK's binary `AndroidManifest.xml
 | **internalassytest** | `me.embodied.productiontesting.internalassytest` | 3005004-PP | Embodied Inc | sub-assembly test |
 | **lifetest** | `me.embodied.productiontesting.lifetest` | 3005004-PP | Embodied Inc | life/reliability test |
 
-**Three signing identities, split by trust tier** (completes the [firmware-image](firmware-image.md#code-signing--app-trust) table with full per-app assignment):
+**Three signing identities, split by trust tier** (completes the [firmware-image](firmware-image.md#code-signing-app-trust) table with full per-app assignment):
 - **`CN=Embodied`** (the release/verified-boot key): `OSUpdate`, `Launcher3Robot`, `BluetoothSpeaker` — the most-trusted core system apps.
 - **`CN=Embodied Inc`**: every factory/service/updater app (`bo-firmwareUpdate`, `bo_motor_test`, `bo_xmosupdate`, `xmosdfu`, and the whole `productiontesting.*` suite — all one build `3005004-PP`).
-- **`CN=Android Debug`**: the two main experience apps (`bo-android`, `bo-wifi`) **and** `FabTestSoftware` — notably the *least*-trusted key signs the brain (see [firmware-image.md](firmware-image.md#code-signing--app-trust) for why that still yields full privileges via priv-app placement).
+- **`CN=Android Debug`**: the two main experience apps (`bo-android`, `bo-wifi`) **and** `FabTestSoftware` — notably the *least*-trusted key signs the brain (see [firmware-image.md](firmware-image.md#code-signing-app-trust) for why that still yields full privileges via priv-app placement).
 
 **Version-skew note:** `bo-android` is the only app at the OTA's `24.10.803`; `bo-wifi` lags at `24.6.100` (setup surface is the 24.6 vintage); the factory suite is one unified `3005004-PP` build.
 
@@ -97,7 +97,7 @@ brain would replace or reuse. Sizes indicate where the weight is (embedded ML mo
 ### The on-device ML stack — four frameworks
 Moxie runs **four ML runtimes on-device**, not one:
 - **Apache MXNet** (`libmxnet`) — deep nets with an **Embedding** backward op → **face-recognition
-  embeddings** (the enrollment/user-recognition path in [content-and-conversation](content-and-conversation.md#session--sleep-lifecycle)).
+  embeddings** (the enrollment/user-recognition path in [content-and-conversation](content-and-conversation.md#session-sleep-lifecycle)).
 - **TensorFlow Lite** + **GPU delegate** — lightweight inference: wake-word (TRILLsson) + VAD.
 - **XGBoost** (`libxgb`) — gradient-boosted trees for tabular classification/scoring (e.g. recommender/SEL).
 - **OpenCV** (`libbsk`) — classical **cascade classifiers** (Haar/LBP) for fast face/object detection.

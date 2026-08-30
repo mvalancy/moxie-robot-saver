@@ -48,7 +48,7 @@ The child appears **twice**: `child` is a **`ChildEncrypted`** (every personal f
 `bytes` blob — `first_name_encrypted`, `birthday_encrypted`, `therapy_needs_encrypted`,
 `volume_preference_encrypted`, … + a `checksum`), while `child_pii` is the decrypted **`ChildDecrypted`**
 (plain `first_name`, `birthday`, `therapy_needs[]`, …). The `*_encrypted` fields are unsealed with the
-**pairing `secret_key` seed** ([`crypto-and-keys.md`](crypto-and-keys.md#key-properties-for-reimplementation)),
+**pairing `secret_key` seed** ([`crypto-and-keys.md`](crypto-and-keys.md#7-security-observations-relevant-to-a-reimplementation)),
 so an honest cloud stores only ciphertext — the robot decrypts locally. Non-PII knobs
 (`content_preferences` with `SELPreference{sel_tag, weight}`, `starbits`, `face_options`, `input_speed`,
 `family`) sit alongside in the clear.
@@ -69,7 +69,7 @@ Published on **`/devices/{id}/state`**. The robot's self-report (`embodied.loggi
 | `settings` (`DeviceSettings`) | `last_updated_at`, `timestamp` |
 
 Live **health metrics** ride separately as `SystemState{CPULoad, RAMFree, DiskFree, Uptime, Temperature,
-Battery, WifiRssi}` — already documented in [cloud-protocol → health telemetry](cloud-protocol.md#health-telemetry--backup-robot--cloud).
+Battery, WifiRssi}` — already documented in [cloud-protocol → health telemetry](cloud-protocol.md#health-telemetry-backup-robot-cloud).
 
 ## `CloudStatus.UserState` — the pairing / OTA lifecycle
 
@@ -82,7 +82,7 @@ Battery, WifiRssi}` — already documented in [cloud-protocol → health telemet
 | 1 | `NONE` | unpaired / factory |
 | 2 | `PAIRED_PENDING` | pairing started, not confirmed |
 | 3 | `PAIRED_VALID` | fully paired & operating |
-| 4 | `UNPAIR_REQUESTED` | unpair in progress (cf. [`UnpairUserRequest`](power-and-system-events.md#unpair--disengage--unpaieruserrequest)) |
+| 4 | `UNPAIR_REQUESTED` | unpair in progress (cf. [`UnpairUserRequest`](power-and-system-events.md#unpair-disengage-unpairuserrequest)) |
 | 5 | `OTA_LOCK` | held for an OTA (no user activity) |
 | 6 | `UNPAIR_WITH_RFS` | unpair **+ restore-factory-settings** (wipe) |
 | 7 | `USER_DATA_UPDATE` | child profile being updated |
@@ -130,7 +130,7 @@ What actually gets uploaded is governed by a **consent policy** and a per-sessio
 
 > **Revival + firmware note.** A server (or custom firmware) should **honor `NO_DATA`/`NO_MEDIA`** — it's
 > the child-privacy contract, not a cosmetic flag. Staged files land under `/sdcard/EmbodiedData`
-> (cf. [backup, cloud-protocol](cloud-protocol.md#health-telemetry--backup-robot--cloud)) and upload only
+> (cf. [backup, cloud-protocol](cloud-protocol.md#health-telemetry-backup-robot-cloud)) and upload only
 > per policy.
 
 ## Small control messages (`embodied.logging.Log`)
@@ -150,7 +150,7 @@ config/service layer:
 
 Both **`EMBODIED_LOCAL`** and **`OPEN_MOXIE`** are first-class enum values in the 803 firmware — the
 self-hosted/community endpoints are ones the stock robot already understands, which is exactly the hook
-[`cloud-protocol.md`](cloud-protocol.md#service-configuration--how-the-robot-is-repointed) and
+[`cloud-protocol.md`](cloud-protocol.md#service-configuration-how-the-robot-is-repointed) and
 [`qr-commands.md`](qr-commands.md) use to repoint a robot.
 
 ## What this means for the three goals

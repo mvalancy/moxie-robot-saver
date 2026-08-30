@@ -137,7 +137,7 @@ Notable stock services in the mix:
   gralloc-2-0, hwcomposer-2-1, power-hal-1-0, boot-hal-1-0, wifi_hal_legacy, media.omx, …}`.
 - **VPN:** `racoon` (IPsec/IKE) and `mtpd` (L2TP/PPTP), both `user vpn` with `NET_ADMIN`/`NET_RAW` —
   the stock Android VPN daemons that sit behind the **VPN-config QR** (`VN`+`QRVPNConfig`, see
-  [`qr-commands.md`](qr-commands.md#vpn-qr--vn--qrvpnconfig)); a real OS-level path to tunnel a robot's
+  [`qr-commands.md`](qr-commands.md#vpn-qr-vn-qrvpnconfig)); a real OS-level path to tunnel a robot's
   traffic through infra you control.
 - Kernel modules are loaded via `init.insmod.sh` (`insmod`/`modprobe` in `/vendor/bin`).
 
