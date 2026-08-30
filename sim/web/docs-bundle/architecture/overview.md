@@ -70,7 +70,7 @@ dependency.
 The original app **end-to-end encrypts** all child PII: one 32-byte seed (derived from the recovery
 phrase) is the symmetric key, and the server only ever stores opaque ciphertext and sealed copies of
 the seed. We preserve that exactly — the server is **zero-knowledge**, and the owner holds the keys.
-See [`../reverse-engineering/crypto-and-keys.md`](../reverse-engineering/crypto-and-keys.md).
+See [`../reverse-engineering/crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md).
 
 ---
 📖 [Docs index](../README.md) · [Architecture: revival path →](revival-path.md)

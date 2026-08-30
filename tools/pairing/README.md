@@ -21,7 +21,7 @@ python moxie_qr.py            # runs the round-trip self-test
 ```
 
 ## Format
-Full wire spec: [`../../docs/reverse-engineering/qr-format.md`](../../docs/reverse-engineering/qr-format.md).
+Full wire spec: [`../../docs/reverse-engineering/qr-format.md`](../../docs/reverse-engineering/phone/qr-format.md).
 
 ---
-📖 [Back to top](../../README.md) · [QR format spec →](../../docs/reverse-engineering/qr-format.md)
+📖 [Back to top](../../README.md) · [QR format spec →](../../docs/reverse-engineering/phone/qr-format.md)

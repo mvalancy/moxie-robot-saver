@@ -41,7 +41,7 @@ the 7-DOF `libmotionlib` rig, the control-room HUD ([style guide](../design/styl
 ### 2 · Liveness / animation system
 Moxie **acts alive**: breathing, natural blinks, micro head-sways, glances, weight-shifts, and idle
 behaviors mirroring the real set (`Bht_Idle_Curious`, `Bht_Idle_Active_Listening`, `Bht_Active_Thinking`
-— [behavior-markup](../reverse-engineering/behavior-markup.md)). Layered *over* commanded motion; damps
+— [behavior-markup](../reverse-engineering/runtime/behavior-markup.md)). Layered *over* commanded motion; damps
 out when the brain drives a gesture. Expressive during conversation (gesture + mood + icons from markup).
 
 ### 3 · Voice — TTS out (Piper)
@@ -51,7 +51,7 @@ viseme sync**. Guide users to Piper (offline) & Ollama; the author's local run u
 
 ### 4 · Voice — STT in (talk to Moxie)
 **Web mic capture** → STT (faster-whisper / Vosk, or a Deepgram-compatible service) → the
-[`DeepgramResponse`](../reverse-engineering/perception-pipeline.md#stt-response-wire-format-deepgramresponse)
+[`DeepgramResponse`](../reverse-engineering/runtime/perception-pipeline.md#stt-response-wire-format-deepgramresponse)
 shape → the chat loop. `speech_final` ends the turn. So you actually **converse** with Moxie in the
 browser (and the same STT serves a real robot's `events/zmq` audio).
 
@@ -98,4 +98,4 @@ offline) and **LiteLLM**. HUD polish. Everything version-stamped, self-contained
 > The repo ships Ollama/LiteLLM examples with placeholders.
 
 ---
-📖 [SIL & CI/CD](sil-and-cicd.md) · [Design language](../design/style-guide.md) · [Cloud protocol](../reverse-engineering/cloud-protocol.md) · [Perception (STT/TTS)](../reverse-engineering/perception-pipeline.md) · [Behavior markup](../reverse-engineering/behavior-markup.md)
+📖 [SIL & CI/CD](sil-and-cicd.md) · [Design language](../design/style-guide.md) · [Cloud protocol](../reverse-engineering/protocol/cloud-protocol.md) · [Perception (STT/TTS)](../reverse-engineering/runtime/perception-pipeline.md) · [Behavior markup](../reverse-engineering/runtime/behavior-markup.md)

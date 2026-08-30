@@ -5,7 +5,7 @@ A hardware-in-the-loop rig for showing QR codes to a Moxie that sits in front of
 > **Pivoted (2026-08).** This rig started as a *brute-force* sweep — cycling unknown candidate codes
 > and listening to Moxie's beeps to guess reactions. That approach is **deprecated**: we have since
 > read the QR grammar directly from `bo-wifi` (see
-> [`../../docs/reverse-engineering/qr-commands.md`](../../docs/reverse-engineering/qr-commands.md))
+> [`../../docs/reverse-engineering/qr-commands.md`](../../docs/reverse-engineering/protocol/qr-commands.md))
 > and built validated encoders in [`../robot-toolkit`](../robot-toolkit). The rig's job now is
 > **end-to-end validation**: display codes we *know* the firmware parses (proven by schema
 > round-trip + byte-parity) and observe the real reaction. Generate the deck with

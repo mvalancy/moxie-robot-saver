@@ -8,7 +8,7 @@ Canned JSON that lets the static site render a full experience with **no server*
   - the **JSON:API** documents the app's DataManager expects (`data`/`included`/`attributes` for
     `users` · `children` · `robots` · `robot-setting`) — see [`../../../server/moxie_server/serializers.py`](../../../server/moxie_server/serializers.py);
   - the **MQTT content model** — `module_id`/`content_id`, `MentorBehavior`, `MissionConfig` (Daily
-    Missions), rewards/badges — see [`content-and-conversation.md`](../../../docs/reverse-engineering/content-and-conversation.md).
+    Missions), rewards/badges — see [`content-and-conversation.md`](../../../docs/reverse-engineering/runtime/content-and-conversation.md).
 
   It's demo data (no real child). `node sim/test_cloud.mjs` asserts the fixture keeps these shapes and
   that `cloud.html` consumes them.

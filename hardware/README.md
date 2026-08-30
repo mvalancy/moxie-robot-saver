@@ -11,14 +11,14 @@ Reference facts about the Moxie hardware.
 ## What Moxie is (corrected against the firmware)
 - A **Rockchip RK3288** (ARMv7 Cortex-A17) **Android 9** device — **not** a Qualcomm/Intrinsyc Open-Q
   board, as sometimes assumed. AVB-signed A/B, verity-enforcing. See
-  [`firmware-image.md`](../docs/reverse-engineering/firmware-image.md) and the
-  [803 reference](../docs/reverse-engineering/firmware-803-reference.md).
+  [`firmware-image.md`](../docs/reverse-engineering/firmware/firmware-image.md) and the
+  [803 reference](../docs/reverse-engineering/firmware/firmware-803-reference.md).
 - The animated face is a **DLP projector** (DLPC3430) throwing onto a fresnel-lens faceplate — Unity
-  renders the face. See [`hardware-map.md`](../docs/reverse-engineering/hardware-map.md).
+  renders the face. See [`hardware-map.md`](../docs/reverse-engineering/hardware/hardware-map.md).
 - Body is a **"Lizard" STM32 MCU** (motors/touch/IMU/LED/battery); audio via an **XMOS** DSP. Three
-  processors total — [`perception-pipeline.md`](../docs/reverse-engineering/perception-pipeline.md).
+  processors total — [`perception-pipeline.md`](../docs/reverse-engineering/runtime/perception-pipeline.md).
 - **Wi-Fi/BT is an `AmPak AP6335`** combo module (Broadcom **`BCM4339`** inside; DTB `wifi_chip_type="ap6335"`). Wi-Fi over
-  SDIO, BT over UART0. See [`device-tree.md`](../docs/reverse-engineering/device-tree.md).
+  SDIO, BT over UART0. See [`device-tree.md`](../docs/reverse-engineering/hardware/device-tree.md).
 - Lantronix (ex-Intrinsyc) provided **Secure Boot + AVB + a camera auto-exposure library** as
   engineering services ([case study](https://www.lantronix.com/resources/case-studies/moxie/); mapped
   in [`external-sources.md`](../docs/reverse-engineering/external-sources.md)).
@@ -31,8 +31,8 @@ We map and revive Moxie across **every tier** — non-invasive *and* invasive:
 
 Tier 1 first only because it's cheapest for the owner — **teardown, USB, TTL, and flashing are planned
 and fully in scope**. The physical/flashing surface is in
-[`hardware-access.md`](../docs/reverse-engineering/hardware-access.md); build & sign in
-[`firmware-image.md`](../docs/reverse-engineering/firmware-image.md).
+[`hardware-access.md`](../docs/reverse-engineering/hardware/hardware-access.md); build & sign in
+[`firmware-image.md`](../docs/reverse-engineering/firmware/firmware-image.md).
 
 ## Files here
 - [`firmware-and-older-robots.md`](firmware-and-older-robots.md) — the pre-801 / older-robot revival

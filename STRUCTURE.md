@@ -48,7 +48,7 @@ Today the backend the robot + phone talk to is **two folders**, split by *who co
 - **[`server/`](server/)** — what the **parent app** expects (`client-service-api.embodied.com`): account,
   pairing, REST, the web UI. Named `server/` because it *is* the server the phone hits.
 - **[`mqtt/`](mqtt/)** — what the **robot** connects to: the MQTT broker + supervisor + SDK
-  ([`cloud-protocol.md`](docs/reverse-engineering/cloud-protocol.md)).
+  ([`cloud-protocol.md`](docs/reverse-engineering/protocol/cloud-protocol.md)).
 
 These are the two faces of **one server app**. The obvious growth path is to keep them as clear,
 independently-runnable components under the server-app domain, and — as they mature — unify their
@@ -63,7 +63,7 @@ states its scope so nothing is ambiguous.
 - **Every folder has a `README.md`** so it's browsable in the GitHub UI (generated proto trees carry a
   single root README rather than one per package).
 - **Robot-side docs are version-stamped** to the analyzed firmware
-  **v3.6.4-Zephyr / OTA v24.10.803** ([`firmware-803-reference.md`](docs/reverse-engineering/firmware-803-reference.md)).
+  **v3.6.4-Zephyr / OTA v24.10.803** ([`firmware-803-reference.md`](docs/reverse-engineering/firmware/firmware-803-reference.md)).
 - Run [`scripts/check-doc-links.py`](scripts/check-doc-links.py) before committing docs.
 
 ---

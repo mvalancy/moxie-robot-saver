@@ -25,7 +25,7 @@ Open `http://<ip>:8080` from a phone on the same LAN/Tailscale.
 | `static/` | The mobile web client (vanilla JS, no build step) |
 
 ## Endpoints
-- **Faithful REST API** (see [`../docs/reverse-engineering/rest-api.md`](../docs/reverse-engineering/rest-api.md)):
+- **Faithful REST API** (see [`../docs/reverse-engineering/rest-api.md`](../docs/reverse-engineering/phone/rest-api.md)):
   `login/start`, `login/finish`, `oauth/token`, `users/me`, `children`, `robots/{id}`,
   `pairing-info`, `secret-key-collection`, …
 - **`/local/*` conveniences** (not in the original API): `quicklogin`, `pairing/prepare`,

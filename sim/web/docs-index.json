@@ -1,12 +1,12 @@
 {
- "generated": "docs-507023ca1108",
+ "generated": "docs-b941761b735d",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 9989,
+   "bytes": 10019,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
@@ -53,7 +53,7 @@
    "path": "architecture/overview.md",
    "title": "Architecture overview",
    "section": "architecture",
-   "bytes": 3944,
+   "bytes": 3950,
    "mermaid": 1,
    "headings": [
     "The problem",
@@ -70,7 +70,7 @@
    "path": "architecture/revival-path.md",
    "title": "The revival path",
    "section": "architecture",
-   "bytes": 4384,
+   "bytes": 4390,
    "mermaid": 2,
    "headings": [
     "1. Check the firmware gate first",
@@ -147,7 +147,7 @@
    "path": "architecture/static-experience.md",
    "title": "The Moxie experience as one static site",
    "section": "architecture",
-   "bytes": 5556,
+   "bytes": 5565,
    "mermaid": 1,
    "headings": [
     "The three surfaces",
@@ -161,7 +161,7 @@
    "path": "architecture/moxie-ecosystem.md",
    "title": "The Moxie ecosystem — master build plan (~1 week)",
    "section": "architecture",
-   "bytes": 6579,
+   "bytes": 6620,
    "mermaid": 1,
    "headings": [
     "The stack (one backend, two robots)",
@@ -181,7 +181,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 18784,
+   "bytes": 18846,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -250,7 +250,7 @@
    "path": "debugging/qr-command-findings.md",
    "title": "QR command discovery — findings log",
    "section": "debugging",
-   "bytes": 9364,
+   "bytes": 9373,
    "mermaid": 0,
    "headings": [
     "Consistent reactors (the interesting ones)",
@@ -277,7 +277,7 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 6063,
+   "bytes": 6252,
    "mermaid": 0,
    "headings": [
     "Start here",
@@ -367,7 +367,7 @@
    "path": "features/robot-capabilities.md",
    "title": "Robot capability catalog",
    "section": "features",
-   "bytes": 6070,
+   "bytes": 6388,
    "mermaid": 0,
    "headings": [
     "Conversation",
@@ -479,7 +479,7 @@
    "path": "guides/revive-your-moxie.md",
    "title": "Revive your Moxie — the full path",
    "section": "guides",
-   "bytes": 7018,
+   "bytes": 7125,
    "mermaid": 1,
    "headings": [
     "Which path are you on?",
@@ -496,7 +496,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploying the SIL to Cloudflare Pages",
    "section": "guides",
-   "bytes": 9902,
+   "bytes": 9919,
    "mermaid": 0,
    "headings": [
     "TL;DR",
@@ -517,18 +517,22 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 14257,
+   "bytes": 14910,
    "mermaid": 1,
    "headings": [
-    "Phone side — the parent app",
-    "Robot side — the firmware (for running custom software on the device)"
+    "Phone side — the parent app (`phone/`)",
+    "Protocol — the robot↔server & on-device wire (`protocol/`)",
+    "Runtime — the on-device brain, behavior & face engine (`runtime/`)",
+    "Firmware — the OS image, boot, security & flashing (`firmware/`)",
+    "Hardware — the physical board & teardown (`hardware/`)",
+    "External research"
    ]
   },
   {
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 8371,
+   "bytes": 8837,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -541,7 +545,7 @@
    "path": "reverse-engineering/EXPLORATION-MAP.md",
    "title": "Exploration map — what's been examined, what's open",
    "section": "reverse-engineering",
-   "bytes": 8246,
+   "bytes": 8803,
    "mermaid": 0,
    "headings": [
     "Protocol — the `embodied.*` proto namespaces",
@@ -555,7 +559,7 @@
    "path": "reverse-engineering/architecture-diagrams.md",
    "title": "Architecture diagrams — the whole system, top to bottom",
    "section": "reverse-engineering",
-   "bytes": 11116,
+   "bytes": 11296,
    "mermaid": 9,
    "headings": [
     "L0 — Product ecosystem",
@@ -569,10 +573,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/firmware-803-reference.md",
+   "path": "reverse-engineering/firmware/firmware-803-reference.md",
    "title": "Firmware reference — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 9203,
+   "bytes": 9353,
    "mermaid": 0,
    "headings": [
     "Version identity",
@@ -594,7 +598,7 @@
    "path": "reverse-engineering/FIELD-GUIDE.md",
    "title": "Moxie field guide — revive it, run it, rebuild it",
    "section": "reverse-engineering",
-   "bytes": 7508,
+   "bytes": 7718,
    "mermaid": 1,
    "headings": [
     "The system at a glance",
@@ -606,10 +610,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/rest-api.md",
+   "path": "reverse-engineering/phone/rest-api.md",
    "title": "Moxie Parent App — Authentication & REST API Protocol Map",
    "section": "reverse-engineering",
-   "bytes": 37808,
+   "bytes": 37817,
    "mermaid": 0,
    "headings": [
     "1. Transport, base URLs, build mode",
@@ -647,10 +651,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/crypto-and-keys.md",
+   "path": "reverse-engineering/phone/crypto-and-keys.md",
    "title": "Moxie Parent App — Cryptography & Key Management (subsystem map)",
    "section": "reverse-engineering",
-   "bytes": 35345,
+   "bytes": 35366,
    "mermaid": 0,
    "headings": [
     "0. The master secret: one seed to rule them all",
@@ -674,10 +678,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/pairing-and-robot.md",
+   "path": "reverse-engineering/phone/pairing-and-robot.md",
    "title": "03 — Pairing, WiFi Provisioning, QR Generation & Robot Control",
    "section": "reverse-engineering",
-   "bytes": 51891,
+   "bytes": 51900,
    "mermaid": 0,
    "headings": [
     "0. Executive summary (what a replacement server must do)",
@@ -716,10 +720,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/qr-format.md",
+   "path": "reverse-engineering/phone/qr-format.md",
    "title": "Moxie Pairing QR Code Format",
    "section": "reverse-engineering",
-   "bytes": 5089,
+   "bytes": 5111,
    "mermaid": 0,
    "headings": [
     "What the QR is for",
@@ -731,10 +735,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/app-structure.md",
+   "path": "reverse-engineering/phone/app-structure.md",
    "title": "04 — Manifest, Components, SDKs & Package Inventory",
    "section": "reverse-engineering",
-   "bytes": 24915,
+   "bytes": 24924,
    "mermaid": 0,
    "headings": [
     "1. AndroidManifest",
@@ -755,161 +759,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/firmware-image.md",
-   "title": "Moxie firmware image — the robot's own Android system",
-   "section": "reverse-engineering",
-   "bytes": 18980,
-   "mermaid": 0,
-   "headings": [
-    "TL;DR for going custom",
-    "Partition set",
-    "SELinux confinement — the apps run in **stock** domains (v24.10.803)",
-    "oem.img` — one telling leftover (`/oem/etc/package_performance.xml`)",
-    "boot.img kernel cmdline (verbatim)",
-    "fstab (`/vendor/etc/fstab.rk30board`)",
-    "The verified-boot chain (and how to break it for custom code)",
-    "Flashing (Rockchip)",
-    "What's installed (`/system/priv-app`, `/system/app`)",
-    "Embodied system daemons & hardware hooks (`init.rockchip.rc` / `init.rk3288.rc`)",
-    "TEE / secure world (OP-TEE + RPMB)",
-    "Key `build.prop` / `prop.default` values",
-    "Code signing & app trust",
-    "Custom-firmware roadmap (pragmatic)"
-   ]
-  },
-  {
-   "path": "reverse-engineering/firmware-inventory.md",
-   "title": "Firmware inventory — apps & binaries",
-   "section": "reverse-engineering",
-   "bytes": 9604,
-   "mermaid": 0,
-   "headings": [
-    "Embodied apps (the ones that make it a Moxie)",
-    "Full priv-app list (50)",
-    "Full app list (29)",
-    "Native binaries",
-    "Embodied native libraries (`bo-android`, `armeabi-v7a`)",
-    "The on-device ML stack — four frameworks",
-    "Observations"
-   ]
-  },
-  {
-   "path": "reverse-engineering/unity-assets.md",
-   "title": "Unity assets & boot animation",
-   "section": "reverse-engineering",
-   "bytes": 4463,
-   "mermaid": 0,
-   "headings": [
-    "Engine & layout",
-    "sharedassets1.assets` inventory (the UI / HUD / effects layer)",
-    "Notable named assets (maps to features)",
-    "Boot animation"
-   ]
-  },
-  {
-   "path": "reverse-engineering/firmware-manifest.md",
-   "title": "Firmware manifest — every file, by the numbers",
-   "section": "reverse-engineering",
-   "bytes": 2458,
-   "mermaid": 0,
-   "headings": [
-    "Totals",
-    "system` by top directory",
-    "Largest files (system)",
-    "File-type breakdown (system)",
-    "Embodied file hashes"
-   ]
-  },
-  {
-   "path": "reverse-engineering/hardware-access.md",
-   "title": "Hardware access & flashing — the physical surface",
-   "section": "reverse-engineering",
-   "bytes": 9685,
-   "mermaid": 1,
-   "headings": [
-    "Access tiers",
-    "The Rockchip boot / download modes (RK3288)",
-    "Boot-mode entry (reboot reasons & keys)",
-    "Software: `reboot <mode>` → magic (`0x5242c3xx` = \"BRc\")",
-    "Hardware: a key at power-on (no shell needed)",
-    "Flashing a partition (the reliable path)",
-    "Partition table (flash targets)",
-    "Serial console (UART / TTL)",
-    "ADB / USB (when booted normally)",
-    "JTAG / SWD & chip-off (deep tier)",
-    "In-scope checklist (as we open a unit)"
-   ]
-  },
-  {
-   "path": "reverse-engineering/flashing-runbook.md",
-   "title": "Flashing runbook — custom firmware & flash-based revival",
-   "section": "reverse-engineering",
-   "bytes": 5352,
-   "mermaid": 0,
-   "headings": [
-    "What you need",
-    "A. Enter a flashing mode (USB)",
-    "B. Read the partition table & back up ⚙️",
-    "C. Disable AVB verification (to run modified images)",
-    "D. Flash your images",
-    "E. First boot & verify",
-    "Reviving a stranded robot by flashing"
-   ]
-  },
-  {
-   "path": "reverse-engineering/ota-and-recovery.md",
-   "title": "OTA & recovery — can a robot be upgraded without opening it?",
-   "section": "reverse-engineering",
-   "bytes": 9705,
-   "mermaid": 1,
-   "headings": [
-    "How OTA actually works (803 firmware)",
-    "Recovery mode (sideload)",
-    "The catch: recovery verifies the package signature",
-    "The signing gate (this is what stops arbitrary custom firmware)",
-    "Tier-1 (no-disassembly) vectors — honest status",
-    "Where this leaves pre-801 revival",
-    "Open leads worth chasing (tracked for the loop)",
-    "Building custom firmware (once you have a foothold)"
-   ]
-  },
-  {
-   "path": "reverse-engineering/boot-and-launcher.md",
-   "title": "Boot & lifecycle — the Launcher state machine",
-   "section": "reverse-engineering",
-   "bytes": 9022,
-   "mermaid": 1,
-   "headings": [
-    "Components (`BOComponent`)",
-    "States (`LauncherState`)",
-    "Two facts that matter for revival",
-    "User-data recovery (`UserDataRecoveryMode`)",
-    "Factory test entry (`FactoryTest`)",
-    "Init service graph (native daemons)",
-    "For custom firmware"
-   ]
-  },
-  {
-   "path": "reverse-engineering/power-and-system-events.md",
-   "title": "Power & system events — the lifecycle protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 8567,
-   "mermaid": 1,
-   "headings": [
-    "The power state — `PowerStatePB`",
-    "Suspend / resume",
-    "Recovery — `SystemRecoverRequest`",
-    "System status events — `embodied.sys`",
-    "Unpair / disengage — `UnpairUserRequest`",
-    "Time, timezone & alarms — `embodied.sys` (`TimeEvents.proto`)",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/robot-ipc-protocol.md",
+   "path": "reverse-engineering/protocol/robot-ipc-protocol.md",
    "title": "On-robot IPC — the ZeroMQ + protobuf message bus",
    "section": "reverse-engineering",
-   "bytes": 7831,
+   "bytes": 7867,
    "mermaid": 1,
    "headings": [
     "Where this came from",
@@ -921,49 +774,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/unity-mainapp-interface.md",
-   "title": "MAINAPP interface — the Unity front-end protocol (`embodied.unity`) (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 10725,
-   "mermaid": 1,
-   "headings": [
-    "App lifecycle & version",
-    "The virtual camera — Moxie's self-view",
-    "Audio out — TTS, SFX, playback control",
-    "Engagement & physical orientation",
-    "Asset bundles — runtime face/HUD assets",
-    "Pairing (MAINAPP side) — `UserPairingRequest`",
-    "Perf & network telemetry — `Stats`, `NetworkState`",
-    "Dev / authoring tools",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/unity-face-animation.md",
-   "title": "The face-animation engine — how Moxie's face actually renders (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 13255,
-   "mermaid": 1,
-   "headings": [
-    "Architecture",
-    "1. The face rig — `Rig3Robot`, blendshapes",
-    "2. The animation controller — the `EBAnimGrinder`",
-    "3. The runtime players",
-    "4. The blackboard bridge — `StateVariables`",
-    "5. The eyes — Eyeseme + blink",
-    "6. The mouth — visemes (lip-sync)",
-    "7. Gaze / look-at",
-    "8. The sensory / idle layer — `SensoryMode`",
-    "9. Accessibility & global gates",
-    "10. The per-frame picture",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/cloud-protocol.md",
+   "path": "reverse-engineering/protocol/cloud-protocol.md",
    "title": "Robot ↔ cloud protocol — REST, MQTT, STT",
    "section": "reverse-engineering",
-   "bytes": 17726,
+   "bytes": 17828,
    "mermaid": 1,
    "headings": [
     "Three channels",
@@ -983,10 +797,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/remote-chat-protocol.md",
+   "path": "reverse-engineering/protocol/remote-chat-protocol.md",
    "title": "RemoteChat — the robot ↔ brain conversation protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 9538,
+   "bytes": 9596,
    "mermaid": 1,
    "headings": [
     "One turn",
@@ -1001,25 +815,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/offline-and-brain-state.md",
-   "title": "Offline behavior & on-device brain state (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 6895,
-   "mermaid": 1,
-   "headings": [
-    "Online vs offline",
-    "The fallback content tree — `FallbackInfo`",
-    "The server controls offline behavior — `upgrade_fallbacks`",
-    "The resume point — `CSData`",
-    "The recommender's memory — `UserRecommendationData`",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/device-config-and-telemetry.md",
+   "path": "reverse-engineering/protocol/device-config-and-telemetry.md",
    "title": "Device config & telemetry — the `embodied.logging` data-model (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 10560,
+   "bytes": 10628,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -1035,29 +834,10 @@
    ]
   },
   {
-   "path": "reverse-engineering/settings-schema.md",
-   "title": "SettingSchema — the robot's configuration surface",
-   "section": "reverse-engineering",
-   "bytes": 6926,
-   "mermaid": 0,
-   "headings": [
-    "Cloud / brain / content",
-    "LLM / multi-party chat (MP)",
-    "TTS (speech out)",
-    "STT / ASR (speech in)",
-    "Audio DSP · VAD · wake (XMOS / WebRTC / Trill)",
-    "Vision · fusion · tracking · face ID",
-    "Wake · sleep · session",
-    "Parent-app-controlled",
-    "System · power · logging · recovery · feature flags",
-    "For revival (goal #2)"
-   ]
-  },
-  {
-   "path": "reverse-engineering/runtime-control.md",
+   "path": "reverse-engineering/protocol/runtime-control.md",
    "title": "Runtime control — imperative commands to a running brain (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 5392,
+   "bytes": 5452,
    "mermaid": 0,
    "headings": [
     "Audio volume — `SystemVolume*`",
@@ -1069,268 +849,26 @@
    ]
   },
   {
-   "path": "reverse-engineering/security-policy.md",
-   "title": "Android permissions & SELinux policy — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
+   "path": "reverse-engineering/protocol/power-and-system-events.md",
+   "title": "Power & system events — the lifecycle protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 9630,
+   "bytes": 8676,
    "mermaid": 1,
    "headings": [
-    "TL;DR",
-    "1. Android permission surface (`/system/etc/permissions`, `/system/etc/sysconfig`)",
-    "Declared hardware features (what a custom ROM must advertise)",
-    "2. SELinux — the embodied additions",
-    "Custom daemon domains",
-    "Custom device / file / property types (label → hardware)",
-    "App domains & properties",
-    "3. What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/hal-and-drivers.md",
-   "title": "Vendor HALs, kernel drivers & co-processor firmware — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 8967,
-   "mermaid": 0,
-   "headings": [
-    "TL;DR",
-    "1. HAL interfaces declared (VINTF `manifest.xml`)",
-    "2. HAL implementations & services",
-    "3. Kernel drivers",
-    "4. Co-processor & radio firmware blobs (`/vendor/etc/firmware`)",
-    "XMOS voice DSP — the \"second processor\" (re-flashable, in the image)",
-    "Radio (BCM4339 / AP6335)",
-    "5. What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/network-trust.md",
-   "title": "Network trust — TLS, CA validation, and what a server needs",
-   "section": "reverse-engineering",
-   "bytes": 7055,
-   "mermaid": 0,
-   "headings": [
-    "The stack",
-    "No public-key pinning",
-    "What this means for running your own server (goal #2)",
-    "The proven recipe (OpenMoxie)",
-    "The `disable_verify` escape hatch (and its catch)",
-    "Why pre-801 is still stuck (goal #3) — precisely",
-    "Time sync (clock skew breaks auth) — and it's fine",
-    "Corrections to earlier docs"
-   ]
-  },
-  {
-   "path": "reverse-engineering/behavior-markup.md",
-   "title": "Behavior markup — making Moxie move & emote while it talks",
-   "section": "reverse-engineering",
-   "bytes": 12915,
-   "mermaid": 0,
-   "headings": [
-    "Shape",
-    "Speech markup (SSML / CereVoice)",
-    "The command verbs (24)",
-    "Data schemas (verified from production markup)",
-    "Enumerated vocabularies (recovered)",
-    "Emotion / mood — `EmotionState` (`embodied.robotbrain`, `RemoteChat.proto`)",
-    "Conversational signals — `RemoteSignals.Signal` (`RemoteChat.proto`)",
-    "Gestures — `Gesture_*` (hardcoded in `bo-android`)",
-    "Behaviour trees — `Bht_*` (hardcoded in `bo-android`)",
-    "Perception side — detected human emotion (`Face.proto`)",
-    "Toolkit — build marks programmatically"
-   ]
-  },
-  {
-   "path": "reverse-engineering/behavior-input-events.md",
-   "title": "Behavior input events — the robot's perception vocabulary (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 8953,
-   "mermaid": 1,
-   "headings": [
-    "How events reach the behavior tree — the Farmer pattern",
-    "The event vocabulary (163 types, by domain)",
-    "Physical / sensor (from the Lizard MCU)",
-    "Vision / people (from `libbo-vision` / fusion)",
-    "Audio & speech (percepts + playback)",
-    "STT / TTS",
-    "Chat / conversation",
-    "Behavior-tree control & turn-taking",
-    "System / power / network",
-    "Timers, assets, logging, debug",
-    "The bus-serializable subset — the external contract (24 events)",
+    "The power state — `PowerStatePB`",
+    "Suspend / resume",
+    "Recovery — `SystemRecoverRequest`",
+    "System status events — `embodied.sys`",
+    "Unpair / disengage — `UnpairUserRequest`",
+    "Time, timezone & alarms — `embodied.sys` (`TimeEvents.proto`)",
     "What this means for the three goals"
    ]
   },
   {
-   "path": "reverse-engineering/robot-actions.md",
-   "title": "Robot actions — the top-level behavior arbiter (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 7969,
-   "mermaid": 1,
-   "headings": [
-    "The stack",
-    "The arbiter — `RobotActionManager`",
-    "The score ladder — `RobotActionScores`",
-    "Reactions — the `RobotActionMicroExpBase` pattern",
-    "Content — `RobotActionActivity`",
-    "Worked example — a drawing activity, interrupted",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/behavior-tree-engine.md",
-   "title": "Behavior-tree engine — the decision layer (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 10027,
-   "mermaid": 1,
-   "headings": [
-    "TL;DR",
-    "The engine — NodeCanvas",
-    "Behaviour-tree node taxonomy (authoritative descriptions from the binary)",
-    "The embodied `Robot*` layer",
-    "The 45 named behavior trees (`Bht_*`)",
-    "DialogueTrees — scripted conversation",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/task-scheduler.md",
-   "title": "The task scheduler — how concurrent behaviors share Moxie's outputs (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 10227,
-   "mermaid": 1,
-   "headings": [
-    "The problem",
-    "The task — `EBGameTask`",
-    "The manager — `EBGTManager`",
-    "The arbitration (`UpdateTaskActivations`)",
-    "The outputs — `RobotResourceFlags`",
-    "The priority ladder — `RobotTaskPriority`",
-    "Worked example — Moxie greets a child",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/gaze-and-attention.md",
-   "title": "Gaze & attention — how Moxie decides where to look (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 9657,
-   "mermaid": 1,
-   "headings": [
-    "TL;DR",
-    "The attention model",
-    "The published attention state — `robotbrain.Attention`",
-    "GazeBehavior — the controller",
-    "Motion tuning (constants from the binary)",
-    "Control from content / behavior trees",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/turn-taking.md",
-   "title": "Turn-taking & engagement — the conversation state machine (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 6176,
-   "mermaid": 1,
-   "headings": [
-    "The state model — `TurnTakingState`",
-    "Derived predicates (from `TurnTakingBehavior` / `EventTurnOwner`)",
-    "Barge-in / interruption",
-    "Who is speaking — DOA person scoring",
-    "Response timing",
-    "Content / behavior-tree control",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/telehealth.md",
-   "title": "Telehealth / remote-puppet — the \"TeleBrain\" protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 6391,
-   "mermaid": 1,
-   "headings": [
-    "TL;DR",
-    "The launcher state",
-    "The protocol — `embodied.telehealth.TeleHealth.proto`",
-    "Session flow",
-    "Transport (MQTT)",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/content-and-conversation.md",
-   "title": "Content & conversation — ChatScript, content modules, the volley API",
-   "section": "reverse-engineering",
-   "bytes": 26037,
-   "mermaid": 1,
-   "headings": [
-    "Two dialog engines",
-    "Content-module format (what a server serves)",
-    "conversations[]` — LLM-driven chats",
-    "globals[]` — regex-triggered commands (always on)",
-    "schedules[]` — what to offer when",
-    "TTS & dialog engine internals (formats & data)",
-    "CereVoice TTS (`libcerevoice_eng.so`, ~44 MB)",
-    "ChatScript (`libchatscript.so`, ~27 MB)",
-    "ChatScript authoring — the real format & pipeline",
-    "Where the data lives",
-    "Context assembly & topical awareness",
-    "Session & sleep lifecycle",
-    "Embodiment & activity runtime (PlaySpace, turn-taking, orientation)",
-    "PlaySpace` — the activity/turn-taking state machine (`embodied.playspace`, 15 msgs)",
-    "Spatial orientation & handling (`embodied.unity`)",
-    "Scheduling, progression & rewards (what to offer next)",
-    "Content days & schedule (`ContentSchedule`, `DailySchedule`)",
-    "The recommender",
-    "STAR goals (the SEL curriculum)",
-    "Rewards & history",
-    "Telehealth / remote puppet mode",
-    "The `volley` / `session` API (server-side hooks)",
-    "Execution actions (content → robot bridge)",
-    "QR inside content (ties to the QR toolkit)",
-    "Revival implications"
-   ]
-  },
-  {
-   "path": "reverse-engineering/content-delivery.md",
-   "title": "Content delivery — dynamic AssetBundles (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 6534,
-   "mermaid": 1,
-   "headings": [
-    "TL;DR",
-    "Where bundles come from — `RobotAssetBundleSource`",
-    "The bundle manifest — `EBAssetBundleFileManifest`",
-    "The load lifecycle",
-    "Content types — the 24 processors",
-    "Markup + selection",
-    "What this means for the three goals"
-   ]
-  },
-  {
-   "path": "reverse-engineering/perception-pipeline.md",
-   "title": "Perception pipeline — audio & vision",
-   "section": "reverse-engineering",
-   "bytes": 15468,
-   "mermaid": 1,
-   "headings": [
-    "Audio: hear → understand → speak",
-    "Input side (`embodied.perception.audio`)",
-    "Wake-word & VAD (fully on-device)",
-    "Output side — TTS (`embodied.unity`)",
-    "Vision (`embodied.perception.vision`)",
-    "Face recognition & enrollment data model",
-    "Camera-driven activities (content activates these)",
-    "XMOS firmware (DFU)",
-    "Shipped DSP images (`xmosdfu.apk`) — decode the naming",
-    "The three embedded processors (firmware map)",
-    "For custom firmware (goal #1)"
-   ]
-  },
-  {
-   "path": "reverse-engineering/perception-fusion.md",
+   "path": "reverse-engineering/protocol/perception-fusion.md",
    "title": "Perception fusion — the world-model of people (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 7604,
+   "bytes": 7750,
    "mermaid": 1,
    "headings": [
     "Where it sits",
@@ -1345,10 +883,40 @@
    ]
   },
   {
-   "path": "reverse-engineering/qr-commands.md",
+   "path": "reverse-engineering/protocol/offline-and-brain-state.md",
+   "title": "Offline behavior & on-device brain state (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 6942,
+   "mermaid": 1,
+   "headings": [
+    "Online vs offline",
+    "The fallback content tree — `FallbackInfo`",
+    "The server controls offline behavior — `upgrade_fallbacks`",
+    "The resume point — `CSData`",
+    "The recommender's memory — `UserRecommendationData`",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/protocol/telehealth.md",
+   "title": "Telehealth / remote-puppet — the \"TeleBrain\" protocol (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 6465,
+   "mermaid": 1,
+   "headings": [
+    "TL;DR",
+    "The launcher state",
+    "The protocol — `embodied.telehealth.TeleHealth.proto`",
+    "Session flow",
+    "Transport (MQTT)",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/protocol/qr-commands.md",
    "title": "QR command grammar — what the robot actually scans",
    "section": "reverse-engineering",
-   "bytes": 13452,
+   "bytes": 13581,
    "mermaid": 0,
    "headings": [
     "The dispatcher",
@@ -1367,74 +935,45 @@
    ]
   },
   {
-   "path": "reverse-engineering/hardware-map.md",
-   "title": "Hardware map — motors, sensors, LEDs, power",
+   "path": "reverse-engineering/protocol/network-trust.md",
+   "title": "Network trust — TLS, CA validation, and what a server needs",
    "section": "reverse-engineering",
-   "bytes": 18754,
+   "bytes": 7085,
    "mermaid": 0,
    "headings": [
-    "Hardware revisions (`Revision_Level`)",
-    "Motors / degrees of freedom (`Motor`)",
-    "Arm anatomy — what `ARM_IN_OUT` actually is",
-    "Driving a motor",
-    "Native motion API (factory `libmotionlib` / `liblizardJNI`)",
-    "Touch & switches",
-    "IMU / motion (`MpuEventID`)",
-    "Semantic handling events (`embodied.unity`)",
-    "LEDs & the face",
-    "Power rails (`PowerRail`)",
-    "Lizard MCU firmware update (bootloader \"GOBY\")",
-    "Version handshake",
-    "Flash sequence",
-    "Shipped MCU firmware images (in `bo-firmwareUpdate.apk` `res/raw/`)",
-    "MCU firmware & health (`LizardErrorEventPB.LizardErrorEventID`)",
-    "Raw UART command set (`Lizzerface.Commands`)"
+    "The stack",
+    "No public-key pinning",
+    "What this means for running your own server (goal #2)",
+    "The proven recipe (OpenMoxie)",
+    "The `disable_verify` escape hatch (and its catch)",
+    "Why pre-801 is still stuck (goal #3) — precisely",
+    "Time sync (clock skew breaks auth) — and it's fine",
+    "Corrections to earlier docs"
    ]
   },
   {
-   "path": "reverse-engineering/device-tree.md",
-   "title": "Device tree — board-level hardware wiring",
+   "path": "reverse-engineering/protocol/unity-mainapp-interface.md",
+   "title": "MAINAPP interface — the Unity front-end protocol (`embodied.unity`) (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 7383,
-   "mermaid": 0,
+   "bytes": 10962,
+   "mermaid": 1,
    "headings": [
-    "I²C buses & devices",
-    "UARTs",
-    "Display & camera",
-    "Audio",
-    "Inputs & controls",
-    "Power, storage, misc",
-    "Connectivity (Wi-Fi / Bluetooth)",
-    "Power tree (RK808 PMIC → rails)",
-    "For custom firmware (goal #1)"
+    "App lifecycle & version",
+    "The virtual camera — Moxie's self-view",
+    "Audio out — TTS, SFX, playback control",
+    "Engagement & physical orientation",
+    "Asset bundles — runtime face/HUD assets",
+    "Pairing (MAINAPP side) — `UserPairingRequest`",
+    "Perf & network telemetry — `Stats`, `NetworkState`",
+    "Dev / authoring tools",
+    "What this means for the three goals"
    ]
   },
   {
-   "path": "reverse-engineering/factory-provisioning.md",
-   "title": "Factory provisioning — production apps, serials & secrets",
-   "section": "reverse-engineering",
-   "bytes": 13228,
-   "mermaid": 0,
-   "headings": [
-    "The factory apps (shipped on every robot)",
-    "Serial-number / barcode grammar (`SerialNumber.java`)",
-    "Manufacturing part hierarchy (`assy/Part.java`)",
-    "Factory-DB schema (ORMLite → MySQL, v24.10.803)",
-    "Factory test catalog (`finaltest` — end of line)",
-    "Native test primitives (JNI)",
-    "internalassytest` — sub-assembly bring-up (`InternalAssyTest.DoTest()`)",
-    "lifetest` — a **550-hour reliability soak** (`ActivityLifeTest.DoTest()`)",
-    "The secrets (`Secrets` / `libsecrets.so`)",
-    "The obfuscation is repeating-XOR (cracked)",
-    "Recovering the secret values",
-    "Why this matters for revival / custom"
-   ]
-  },
-  {
-   "path": "reverse-engineering/proto-catalog.md",
+   "path": "reverse-engineering/protocol/proto-catalog.md",
    "title": "Protocol message catalog — every message & enum",
    "section": "reverse-engineering",
-   "bytes": 99515,
+   "bytes": 99521,
    "mermaid": 0,
    "headings": [
     "embodied.Robot`",
@@ -1480,31 +1019,475 @@
    ]
   },
   {
-   "path": "reverse-engineering/external-sources.md",
-   "title": "External & community research map",
+   "path": "reverse-engineering/runtime/behavior-input-events.md",
+   "title": "Behavior input events — the robot's perception vocabulary (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
    "section": "reverse-engineering",
-   "bytes": 16370,
-   "mermaid": 0,
+   "bytes": 9052,
+   "mermaid": 1,
    "headings": [
-    "Contents",
-    "Provenance & the law (can we use this?)",
-    "Self-sufficiency doctrine — assume every link dies tomorrow",
-    "SoC adjudication: RK3288 vs. the \"Qualcomm\" assumption",
-    "Regulatory / official sources",
-    "FCC ID `2AV9N-EMBODIEDMOXIEA` (grantee Embodied, Inc.)",
-    "FCC ID `2AV9N-EMBMOXIEVTWO` (Moxie **V2**)",
-    "Lantronix \"Moxie\" case study",
-    "Teardowns",
-    "Community revival projects",
-    "Press / context",
-    "What external work resolves vs. what still needs our bench"
+    "How events reach the behavior tree — the Farmer pattern",
+    "The event vocabulary (163 types, by domain)",
+    "Physical / sensor (from the Lizard MCU)",
+    "Vision / people (from `libbo-vision` / fusion)",
+    "Audio & speech (percepts + playback)",
+    "STT / TTS",
+    "Chat / conversation",
+    "Behavior-tree control & turn-taking",
+    "System / power / network",
+    "Timers, assets, logging, debug",
+    "The bus-serializable subset — the external contract (24 events)",
+    "What this means for the three goals"
    ]
   },
   {
-   "path": "reverse-engineering/fcc-teardown.md",
+   "path": "reverse-engineering/runtime/behavior-tree-engine.md",
+   "title": "Behavior-tree engine — the decision layer (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 10066,
+   "mermaid": 1,
+   "headings": [
+    "TL;DR",
+    "The engine — NodeCanvas",
+    "Behaviour-tree node taxonomy (authoritative descriptions from the binary)",
+    "The embodied `Robot*` layer",
+    "The 45 named behavior trees (`Bht_*`)",
+    "DialogueTrees — scripted conversation",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/robot-actions.md",
+   "title": "Robot actions — the top-level behavior arbiter (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 8008,
+   "mermaid": 1,
+   "headings": [
+    "The stack",
+    "The arbiter — `RobotActionManager`",
+    "The score ladder — `RobotActionScores`",
+    "Reactions — the `RobotActionMicroExpBase` pattern",
+    "Content — `RobotActionActivity`",
+    "Worked example — a drawing activity, interrupted",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/task-scheduler.md",
+   "title": "The task scheduler — how concurrent behaviors share Moxie's outputs (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 10266,
+   "mermaid": 1,
+   "headings": [
+    "The problem",
+    "The task — `EBGameTask`",
+    "The manager — `EBGTManager`",
+    "The arbitration (`UpdateTaskActivations`)",
+    "The outputs — `RobotResourceFlags`",
+    "The priority ladder — `RobotTaskPriority`",
+    "Worked example — Moxie greets a child",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/behavior-markup.md",
+   "title": "Behavior markup — making Moxie move & emote while it talks",
+   "section": "reverse-engineering",
+   "bytes": 12996,
+   "mermaid": 0,
+   "headings": [
+    "Shape",
+    "Speech markup (SSML / CereVoice)",
+    "The command verbs (24)",
+    "Data schemas (verified from production markup)",
+    "Enumerated vocabularies (recovered)",
+    "Emotion / mood — `EmotionState` (`embodied.robotbrain`, `RemoteChat.proto`)",
+    "Conversational signals — `RemoteSignals.Signal` (`RemoteChat.proto`)",
+    "Gestures — `Gesture_*` (hardcoded in `bo-android`)",
+    "Behaviour trees — `Bht_*` (hardcoded in `bo-android`)",
+    "Perception side — detected human emotion (`Face.proto`)",
+    "Toolkit — build marks programmatically"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/content-and-conversation.md",
+   "title": "Content & conversation — ChatScript, content modules, the volley API",
+   "section": "reverse-engineering",
+   "bytes": 26268,
+   "mermaid": 1,
+   "headings": [
+    "Two dialog engines",
+    "Content-module format (what a server serves)",
+    "conversations[]` — LLM-driven chats",
+    "globals[]` — regex-triggered commands (always on)",
+    "schedules[]` — what to offer when",
+    "TTS & dialog engine internals (formats & data)",
+    "CereVoice TTS (`libcerevoice_eng.so`, ~44 MB)",
+    "ChatScript (`libchatscript.so`, ~27 MB)",
+    "ChatScript authoring — the real format & pipeline",
+    "Where the data lives",
+    "Context assembly & topical awareness",
+    "Session & sleep lifecycle",
+    "Embodiment & activity runtime (PlaySpace, turn-taking, orientation)",
+    "PlaySpace` — the activity/turn-taking state machine (`embodied.playspace`, 15 msgs)",
+    "Spatial orientation & handling (`embodied.unity`)",
+    "Scheduling, progression & rewards (what to offer next)",
+    "Content days & schedule (`ContentSchedule`, `DailySchedule`)",
+    "The recommender",
+    "STAR goals (the SEL curriculum)",
+    "Rewards & history",
+    "Telehealth / remote puppet mode",
+    "The `volley` / `session` API (server-side hooks)",
+    "Execution actions (content → robot bridge)",
+    "QR inside content (ties to the QR toolkit)",
+    "Revival implications"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/content-delivery.md",
+   "title": "Content delivery — dynamic AssetBundles (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 6561,
+   "mermaid": 1,
+   "headings": [
+    "TL;DR",
+    "Where bundles come from — `RobotAssetBundleSource`",
+    "The bundle manifest — `EBAssetBundleFileManifest`",
+    "The load lifecycle",
+    "Content types — the 24 processors",
+    "Markup + selection",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/perception-pipeline.md",
+   "title": "Perception pipeline — audio & vision",
+   "section": "reverse-engineering",
+   "bytes": 15651,
+   "mermaid": 1,
+   "headings": [
+    "Audio: hear → understand → speak",
+    "Input side (`embodied.perception.audio`)",
+    "Wake-word & VAD (fully on-device)",
+    "Output side — TTS (`embodied.unity`)",
+    "Vision (`embodied.perception.vision`)",
+    "Face recognition & enrollment data model",
+    "Camera-driven activities (content activates these)",
+    "XMOS firmware (DFU)",
+    "Shipped DSP images (`xmosdfu.apk`) — decode the naming",
+    "The three embedded processors (firmware map)",
+    "For custom firmware (goal #1)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/gaze-and-attention.md",
+   "title": "Gaze & attention — how Moxie decides where to look (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 9771,
+   "mermaid": 1,
+   "headings": [
+    "TL;DR",
+    "The attention model",
+    "The published attention state — `robotbrain.Attention`",
+    "GazeBehavior — the controller",
+    "Motion tuning (constants from the binary)",
+    "Control from content / behavior trees",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/turn-taking.md",
+   "title": "Turn-taking & engagement — the conversation state machine (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 6191,
+   "mermaid": 1,
+   "headings": [
+    "The state model — `TurnTakingState`",
+    "Derived predicates (from `TurnTakingBehavior` / `EventTurnOwner`)",
+    "Barge-in / interruption",
+    "Who is speaking — DOA person scoring",
+    "Response timing",
+    "Content / behavior-tree control",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/runtime/unity-face-animation.md",
+   "title": "The face-animation engine — how Moxie's face actually renders (`v3.6.4-Zephyr` / OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 13357,
+   "mermaid": 1,
+   "headings": [
+    "Architecture",
+    "1. The face rig — `Rig3Robot`, blendshapes",
+    "2. The animation controller — the `EBAnimGrinder`",
+    "3. The runtime players",
+    "4. The blackboard bridge — `StateVariables`",
+    "5. The eyes — Eyeseme + blink",
+    "6. The mouth — visemes (lip-sync)",
+    "7. Gaze / look-at",
+    "8. The sensory / idle layer — `SensoryMode`",
+    "9. Accessibility & global gates",
+    "10. The per-frame picture",
+    "What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/firmware-image.md",
+   "title": "Moxie firmware image — the robot's own Android system",
+   "section": "reverse-engineering",
+   "bytes": 19052,
+   "mermaid": 0,
+   "headings": [
+    "TL;DR for going custom",
+    "Partition set",
+    "SELinux confinement — the apps run in **stock** domains (v24.10.803)",
+    "oem.img` — one telling leftover (`/oem/etc/package_performance.xml`)",
+    "boot.img kernel cmdline (verbatim)",
+    "fstab (`/vendor/etc/fstab.rk30board`)",
+    "The verified-boot chain (and how to break it for custom code)",
+    "Flashing (Rockchip)",
+    "What's installed (`/system/priv-app`, `/system/app`)",
+    "Embodied system daemons & hardware hooks (`init.rockchip.rc` / `init.rk3288.rc`)",
+    "TEE / secure world (OP-TEE + RPMB)",
+    "Key `build.prop` / `prop.default` values",
+    "Code signing & app trust",
+    "Custom-firmware roadmap (pragmatic)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/firmware-inventory.md",
+   "title": "Firmware inventory — apps & binaries",
+   "section": "reverse-engineering",
+   "bytes": 9691,
+   "mermaid": 0,
+   "headings": [
+    "Embodied apps (the ones that make it a Moxie)",
+    "Full priv-app list (50)",
+    "Full app list (29)",
+    "Native binaries",
+    "Embodied native libraries (`bo-android`, `armeabi-v7a`)",
+    "The on-device ML stack — four frameworks",
+    "Observations"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/firmware-manifest.md",
+   "title": "Firmware manifest — every file, by the numbers",
+   "section": "reverse-engineering",
+   "bytes": 2476,
+   "mermaid": 0,
+   "headings": [
+    "Totals",
+    "system` by top directory",
+    "Largest files (system)",
+    "File-type breakdown (system)",
+    "Embodied file hashes"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/boot-and-launcher.md",
+   "title": "Boot & lifecycle — the Launcher state machine",
+   "section": "reverse-engineering",
+   "bytes": 9052,
+   "mermaid": 1,
+   "headings": [
+    "Components (`BOComponent`)",
+    "States (`LauncherState`)",
+    "Two facts that matter for revival",
+    "User-data recovery (`UserDataRecoveryMode`)",
+    "Factory test entry (`FactoryTest`)",
+    "Init service graph (native daemons)",
+    "For custom firmware"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/security-policy.md",
+   "title": "Android permissions & SELinux policy — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 9719,
+   "mermaid": 1,
+   "headings": [
+    "TL;DR",
+    "1. Android permission surface (`/system/etc/permissions`, `/system/etc/sysconfig`)",
+    "Declared hardware features (what a custom ROM must advertise)",
+    "2. SELinux — the embodied additions",
+    "Custom daemon domains",
+    "Custom device / file / property types (label → hardware)",
+    "App domains & properties",
+    "3. What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/hal-and-drivers.md",
+   "title": "Vendor HALs, kernel drivers & co-processor firmware — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 9077,
+   "mermaid": 0,
+   "headings": [
+    "TL;DR",
+    "1. HAL interfaces declared (VINTF `manifest.xml`)",
+    "2. HAL implementations & services",
+    "3. Kernel drivers",
+    "4. Co-processor & radio firmware blobs (`/vendor/etc/firmware`)",
+    "XMOS voice DSP — the \"second processor\" (re-flashable, in the image)",
+    "Radio (BCM4339 / AP6335)",
+    "5. What this means for the three goals"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/settings-schema.md",
+   "title": "SettingSchema — the robot's configuration surface",
+   "section": "reverse-engineering",
+   "bytes": 7003,
+   "mermaid": 0,
+   "headings": [
+    "Cloud / brain / content",
+    "LLM / multi-party chat (MP)",
+    "TTS (speech out)",
+    "STT / ASR (speech in)",
+    "Audio DSP · VAD · wake (XMOS / WebRTC / Trill)",
+    "Vision · fusion · tracking · face ID",
+    "Wake · sleep · session",
+    "Parent-app-controlled",
+    "System · power · logging · recovery · feature flags",
+    "For revival (goal #2)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/ota-and-recovery.md",
+   "title": "OTA & recovery — can a robot be upgraded without opening it?",
+   "section": "reverse-engineering",
+   "bytes": 9822,
+   "mermaid": 1,
+   "headings": [
+    "How OTA actually works (803 firmware)",
+    "Recovery mode (sideload)",
+    "The catch: recovery verifies the package signature",
+    "The signing gate (this is what stops arbitrary custom firmware)",
+    "Tier-1 (no-disassembly) vectors — honest status",
+    "Where this leaves pre-801 revival",
+    "Open leads worth chasing (tracked for the loop)",
+    "Building custom firmware (once you have a foothold)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/flashing-runbook.md",
+   "title": "Flashing runbook — custom firmware & flash-based revival",
+   "section": "reverse-engineering",
+   "bytes": 5445,
+   "mermaid": 0,
+   "headings": [
+    "What you need",
+    "A. Enter a flashing mode (USB)",
+    "B. Read the partition table & back up ⚙️",
+    "C. Disable AVB verification (to run modified images)",
+    "D. Flash your images",
+    "E. First boot & verify",
+    "Reviving a stranded robot by flashing"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/unity-assets.md",
+   "title": "Unity assets & boot animation",
+   "section": "reverse-engineering",
+   "bytes": 4539,
+   "mermaid": 0,
+   "headings": [
+    "Engine & layout",
+    "sharedassets1.assets` inventory (the UI / HUD / effects layer)",
+    "Notable named assets (maps to features)",
+    "Boot animation"
+   ]
+  },
+  {
+   "path": "reverse-engineering/firmware/factory-provisioning.md",
+   "title": "Factory provisioning — production apps, serials & secrets",
+   "section": "reverse-engineering",
+   "bytes": 13243,
+   "mermaid": 0,
+   "headings": [
+    "The factory apps (shipped on every robot)",
+    "Serial-number / barcode grammar (`SerialNumber.java`)",
+    "Manufacturing part hierarchy (`assy/Part.java`)",
+    "Factory-DB schema (ORMLite → MySQL, v24.10.803)",
+    "Factory test catalog (`finaltest` — end of line)",
+    "Native test primitives (JNI)",
+    "internalassytest` — sub-assembly bring-up (`InternalAssyTest.DoTest()`)",
+    "lifetest` — a **550-hour reliability soak** (`ActivityLifeTest.DoTest()`)",
+    "The secrets (`Secrets` / `libsecrets.so`)",
+    "The obfuscation is repeating-XOR (cracked)",
+    "Recovering the secret values",
+    "Why this matters for revival / custom"
+   ]
+  },
+  {
+   "path": "reverse-engineering/hardware/hardware-map.md",
+   "title": "Hardware map — motors, sensors, LEDs, power",
+   "section": "reverse-engineering",
+   "bytes": 18852,
+   "mermaid": 0,
+   "headings": [
+    "Hardware revisions (`Revision_Level`)",
+    "Motors / degrees of freedom (`Motor`)",
+    "Arm anatomy — what `ARM_IN_OUT` actually is",
+    "Driving a motor",
+    "Native motion API (factory `libmotionlib` / `liblizardJNI`)",
+    "Touch & switches",
+    "IMU / motion (`MpuEventID`)",
+    "Semantic handling events (`embodied.unity`)",
+    "LEDs & the face",
+    "Power rails (`PowerRail`)",
+    "Lizard MCU firmware update (bootloader \"GOBY\")",
+    "Version handshake",
+    "Flash sequence",
+    "Shipped MCU firmware images (in `bo-firmwareUpdate.apk` `res/raw/`)",
+    "MCU firmware & health (`LizardErrorEventPB.LizardErrorEventID`)",
+    "Raw UART command set (`Lizzerface.Commands`)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/hardware/device-tree.md",
+   "title": "Device tree — board-level hardware wiring",
+   "section": "reverse-engineering",
+   "bytes": 7432,
+   "mermaid": 0,
+   "headings": [
+    "I²C buses & devices",
+    "UARTs",
+    "Display & camera",
+    "Audio",
+    "Inputs & controls",
+    "Power, storage, misc",
+    "Connectivity (Wi-Fi / Bluetooth)",
+    "Power tree (RK808 PMIC → rails)",
+    "For custom firmware (goal #1)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/hardware/hardware-access.md",
+   "title": "Hardware access & flashing — the physical surface",
+   "section": "reverse-engineering",
+   "bytes": 9835,
+   "mermaid": 1,
+   "headings": [
+    "Access tiers",
+    "The Rockchip boot / download modes (RK3288)",
+    "Boot-mode entry (reboot reasons & keys)",
+    "Software: `reboot <mode>` → magic (`0x5242c3xx` = \"BRc\")",
+    "Hardware: a key at power-on (no shell needed)",
+    "Flashing a partition (the reliable path)",
+    "Partition table (flash targets)",
+    "Serial console (UART / TTL)",
+    "ADB / USB (when booted normally)",
+    "JTAG / SWD & chip-off (deep tier)",
+    "In-scope checklist (as we open a unit)"
+   ]
+  },
+  {
+   "path": "reverse-engineering/hardware/fcc-teardown.md",
    "title": "FCC filings — board-level hardware map (rev1 vs rev2)",
    "section": "reverse-engineering",
-   "bytes": 23629,
+   "bytes": 23752,
    "mermaid": 0,
    "headings": [
     "The two filings at a glance",
@@ -1528,15 +1511,28 @@
    ]
   },
   {
-   "path": "reverse-engineering/keys/README.md",
-   "title": "Recovered public keys",
+   "path": "reverse-engineering/external-sources.md",
+   "title": "External & community research map",
    "section": "reverse-engineering",
-   "bytes": 765,
+   "bytes": 16512,
    "mermaid": 0,
-   "headings": []
+   "headings": [
+    "Contents",
+    "Provenance & the law (can we use this?)",
+    "Self-sufficiency doctrine — assume every link dies tomorrow",
+    "SoC adjudication: RK3288 vs. the \"Qualcomm\" assumption",
+    "Regulatory / official sources",
+    "FCC ID `2AV9N-EMBODIEDMOXIEA` (grantee Embodied, Inc.)",
+    "FCC ID `2AV9N-EMBMOXIEVTWO` (Moxie **V2**)",
+    "Lantronix \"Moxie\" case study",
+    "Teardowns",
+    "Community revival projects",
+    "Press / context",
+    "What external work resolves vs. what still needs our bench"
+   ]
   },
   {
-   "path": "reverse-engineering/manifests/README.md",
+   "path": "reverse-engineering/firmware/manifests/README.md",
    "title": "Firmware manifests (v3.6.4-Zephyr / OTA v24.10.803)",
    "section": "reverse-engineering",
    "bytes": 1111,
@@ -1544,10 +1540,18 @@
    "headings": []
   },
   {
-   "path": "reverse-engineering/recovered-proto/README.md",
+   "path": "reverse-engineering/phone/keys/README.md",
+   "title": "Recovered public keys",
+   "section": "reverse-engineering",
+   "bytes": 789,
+   "mermaid": 0,
+   "headings": []
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/README.md",
    "title": "Recovered protobuf schemas",
    "section": "reverse-engineering",
-   "bytes": 3217,
+   "bytes": 3232,
    "mermaid": 0,
    "headings": [
     "Provenance",

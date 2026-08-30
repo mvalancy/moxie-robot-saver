@@ -42,7 +42,7 @@ flowchart TB
     class child,parent a;
 ```
 
-Deep docs: [`cloud-protocol.md`](cloud-protocol.md) · [`qr-format.md`](qr-format.md) · [`rest-api.md`](rest-api.md)
+Deep docs: [`cloud-protocol.md`](protocol/cloud-protocol.md) · [`qr-format.md`](phone/qr-format.md) · [`rest-api.md`](phone/rest-api.md)
 
 ---
 
@@ -80,7 +80,7 @@ flowchart TB
     class boa,bwf,osu,lch,led,fan,xmos,fw,cam,aud,gfx,wifi,km,init,art d;
 ```
 
-Deep docs: [`firmware-803-reference.md`](firmware-803-reference.md) · [`firmware-image.md`](firmware-image.md) · [`boot-and-launcher.md`](boot-and-launcher.md)
+Deep docs: [`firmware-803-reference.md`](firmware/firmware-803-reference.md) · [`firmware-image.md`](firmware/firmware-image.md) · [`boot-and-launcher.md`](firmware/boot-and-launcher.md)
 
 ---
 
@@ -125,7 +125,7 @@ flowchart LR
     class broker b;
 ```
 
-Deep docs: [`robot-ipc-protocol.md`](robot-ipc-protocol.md) · [`recovered-proto/`](recovered-proto/)
+Deep docs: [`robot-ipc-protocol.md`](protocol/robot-ipc-protocol.md) · [`recovered-proto/`](protocol/recovered-proto/)
 
 ---
 
@@ -155,7 +155,7 @@ sequenceDiagram
     M-->>C: speak + move + emote (lip-sync to marks)
 ```
 
-Deep docs: [`perception-pipeline.md`](perception-pipeline.md) · [`content-and-conversation.md`](content-and-conversation.md) · [`behavior-markup.md`](behavior-markup.md)
+Deep docs: [`perception-pipeline.md`](runtime/perception-pipeline.md) · [`content-and-conversation.md`](runtime/content-and-conversation.md) · [`behavior-markup.md`](runtime/behavior-markup.md)
 
 ---
 
@@ -191,13 +191,13 @@ flowchart TB
     class ev,st,cfg,cmd,zmq,server,keys d;
 ```
 
-Deep docs: [`cloud-protocol.md`](cloud-protocol.md) · [`network-trust.md`](network-trust.md)
+Deep docs: [`cloud-protocol.md`](protocol/cloud-protocol.md) · [`network-trust.md`](protocol/network-trust.md)
 
 ---
 
 ## L5 — Hardware topology
 
-The RK3288 SoC and every peripheral, from the device tree (`rk3288-robot`, see [`device-tree.md`](device-tree.md)).
+The RK3288 SoC and every peripheral, from the device tree (`rk3288-robot`, see [`device-tree.md`](hardware/device-tree.md)).
 
 ```mermaid
 flowchart TB
@@ -244,7 +244,7 @@ flowchart TB
     class rk808,cams,pca,dlpc,rt5640,lizard,con,xmos,mics,spk,face h;
 ```
 
-Deep docs: [`hardware-map.md`](hardware-map.md) · [`firmware-803-reference.md`](firmware-803-reference.md)
+Deep docs: [`hardware-map.md`](hardware/hardware-map.md) · [`firmware-803-reference.md`](firmware/firmware-803-reference.md)
 
 ---
 
@@ -285,7 +285,7 @@ flowchart LR
 ```
 
 Motor PID params (`ConfigParam`): `KP KI KD MAX_PWM KI_LEAK LIMIT ADJ MOTOR_FWD/RWD WRITE`.
-Deep doc: [`hardware-map.md`](hardware-map.md)
+Deep doc: [`hardware-map.md`](hardware/hardware-map.md)
 
 ---
 
@@ -321,8 +321,8 @@ stateDiagram-v2
     STATE_RUNNING --> STATE_SHUTDOWN
 ```
 
-Deep docs: [`boot-and-launcher.md`](boot-and-launcher.md) · [`firmware-image.md`](firmware-image.md) · [`ota-and-recovery.md`](ota-and-recovery.md)
+Deep docs: [`boot-and-launcher.md`](firmware/boot-and-launcher.md) · [`firmware-image.md`](firmware/firmware-image.md) · [`ota-and-recovery.md`](firmware/ota-and-recovery.md)
 
 ---
 
-📖 [Reverse-engineering index](README.md) · [Field guide](FIELD-GUIDE.md) · [Firmware reference](firmware-803-reference.md) · [Docs index](../README.md)
+📖 [Reverse-engineering index](README.md) · [Field guide](FIELD-GUIDE.md) · [Firmware reference](firmware/firmware-803-reference.md) · [Docs index](../README.md)

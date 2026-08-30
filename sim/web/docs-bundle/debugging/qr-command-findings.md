@@ -6,7 +6,7 @@ history of this file is the record of what's been tried.*
 > ✅ **The QR grammar is now known from the binary.** This acoustic log was reverse-engineering
 > the command set from the *outside*. The definitive grammar (pairing / VPN / debug-factory
 > commands, the `QRCommand` protobuf, and the `IOTEndpoint` selector) has since been read
-> directly from `bo-wifi` — see [`../reverse-engineering/qr-commands.md`](../reverse-engineering/qr-commands.md).
+> directly from `bo-wifi` — see [`../reverse-engineering/qr-commands.md`](../reverse-engineering/protocol/qr-commands.md).
 > Treat that as source of truth; keep this log only as the record of what the *bench robot* physically reacted to.
 
 

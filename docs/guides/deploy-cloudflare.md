@@ -127,10 +127,10 @@ If you want more than a canned demo without self-hosting:
 - **TTS on demand** → a **Cloudflare Worker** calling a hosted TTS API, or Workers AI. (Piper itself is a
   native binary; it does **not** run in a Worker — that's why build-time pre-rendering is the clean path.)
 - **STT** → a Worker proxying a speech API, returning the robot's
-  [`DeepgramResponse`](../reverse-engineering/perception-pipeline.md#stt-response-wire-format-deepgramresponse)
+  [`DeepgramResponse`](../reverse-engineering/runtime/perception-pipeline.md#stt-response-wire-format-deepgramresponse)
   shape so no client change is needed.
 - **LLM** → a Worker in front of your model, speaking the same
-  [`RemoteChat`](../reverse-engineering/cloud-protocol.md) envelope.
+  [`RemoteChat`](../reverse-engineering/protocol/cloud-protocol.md) envelope.
 - **Live bus** → Cloudflare **Durable Objects** can hold WebSocket state, but the robot speaks **MQTT**;
   a real robot needs a reachable MQTT broker, which Pages/Workers don't provide. **Self-host the broker.**
 

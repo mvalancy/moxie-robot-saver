@@ -92,16 +92,16 @@ mis-statement.
 - **The authoritative fact.** Our firmware analysis is unambiguous and multiply-sourced: U-Boot,
   kernel cmdline, the device tree (`rk3288-robot-gen1p5`), the Rockchip vendor HALs, and the
   Rockchip-specific boot/flash chain all identify a **Rockchip RK3288** (ARMv7 Cortex-A17, Android 9).
-  See [`firmware-803-reference.md`](firmware-803-reference.md), [`device-tree.md`](device-tree.md),
-  [`firmware-image.md`](firmware-image.md).
+  See [`firmware-803-reference.md`](firmware/firmware-803-reference.md), [`device-tree.md`](hardware/device-tree.md),
+  [`firmware-image.md`](firmware/firmware-image.md).
 - **Independent public confirmation available.** The **FCC internal photos** (below) show the actual
   production PCB and its markings — the cleanest *public* way to independently confirm the SoC and the
   Wi-Fi module without opening a robot. Extracting those facts (carefully, per the policy above) is the
   highest-value next step this map points to.
 - **What Lantronix's case study *does* confirm.** Its three named deliverables map **exactly** onto
-  our RE: Secure Boot + AVB → [`firmware-image.md`](firmware-image.md) (AVB 1.1, verity-enforcing,
+  our RE: Secure Boot + AVB → [`firmware-image.md`](firmware/firmware-image.md) (AVB 1.1, verity-enforcing,
   ATX attestation); camera auto-exposure → the OV2710 imaging path in
-  [`perception-pipeline.md`](perception-pipeline.md). So the case study is a **genuine corroboration of
+  [`perception-pipeline.md`](runtime/perception-pipeline.md). So the case study is a **genuine corroboration of
   the security model**, just not of the silicon.
 
 ---
@@ -115,10 +115,10 @@ Grantee code **`2AV9N`** = Embodied, Inc. A **public user/quick-start guide PDF*
 exhibits for us are the **internal photos** (PCB, SoC/module markings, antenna, connectors — the
 independent SoC/Wi-Fi confirmation, and possibly **UART/test-point pads visible on the board**) and
 the **RF test report** (confirms bands: 2.4 GHz Wi-Fi/BT and, if present, 5 GHz — a BCM4339 is 1×1
-802.11ac, so 5 GHz support in the report would corroborate [`device-tree.md`](device-tree.md)). Block
+802.11ac, so 5 GHz support in the report would corroborate [`device-tree.md`](hardware/device-tree.md)). Block
 diagram/schematics may be confidentiality-withheld. **✅ Substance captured in-repo** — the internal/
 external photos + test report (both rev1 `EMBODIEDMOXIEA` and rev2 `EMBMOXIEVTWO`) have been analysed
-and their facts extracted into **[`fcc-teardown.md`](fcc-teardown.md)**: full chip inventory, the
+and their facts extracted into **[`fcc-teardown.md`](hardware/fcc-teardown.md)**: full chip inventory, the
 `LOAD`/`RESET`/`POWER` buttons, the STM32F071VBT6 MCU + `ISP & DEBUG` SWD/UART header, XMOS `VSM02C`,
 motor connectors, and a per-chip programmer/IDE map — all cited to exhibit pages. (The mirrors block
 automated fetch behind Cloudflare; these were pulled manually and analysed locally.)
@@ -143,11 +143,11 @@ security-model RE; does not settle silicon.
 
 - **"Moxie Robot Teardown"** — YouTube [`aRK9Al7RGtc`](https://www.youtube.com/watch?v=aRK9Al7RGtc).
   Shows the shell coming off and the **mechatronics**: the compute board, the **projector beaming onto
-  the fresnel-lens faceplate** (our [DLP face](hardware-map.md) / [DLPC3430 in the DTB](device-tree.md)),
-  and arm/torso motion with the shell removed (the arm/head/base DOF in [`hardware-map.md`](hardware-map.md)).
+  the fresnel-lens faceplate** (our [DLP face](hardware/hardware-map.md) / [DLPC3430 in the DTB](hardware/device-tree.md)),
+  and arm/torso motion with the shell removed (the arm/head/base DOF in [`hardware-map.md`](hardware/hardware-map.md)).
 - **"Moxie Teardown (contd) & Battery Replacement"** — YouTube [`tQyRjc678rk`](https://www.youtube.com/watch?v=tQyRjc678rk).
   Continues into the **lower body/base and battery**, noting the **battery is hard to reach**. Useful
-  for the physical-access sequencing in the [`hardware-access.md`](hardware-access.md) teardown checklist.
+  for the physical-access sequencing in the [`hardware-access.md`](hardware/hardware-access.md) teardown checklist.
 - **robotsaroundthehouse "Moxie tear down"** — [forum thread](https://robotsaroundthehouse.com/threads/moxie-tear-down.419/).
   Community discussion of the videos; the notable *fact* is that **older Moxie lack touch sensors**,
   which **independently corroborates the hardware generation variance** we infer from firmware.
@@ -161,15 +161,15 @@ security-model RE; does not settle silicon.
 
 - **`jbeghtol/openmoxie`** — [GitHub](https://github.com/jbeghtol/openmoxie). The de-facto community
   **robot-facing server**: a local MQTT hub (Dockerized, self-signed-cert broker) that a re-homed robot
-  connects to after a QR endpoint change. Our [`cloud-protocol.md`](cloud-protocol.md),
-  [`network-trust.md`](network-trust.md), and the 120 recovered `.proto` files were **cross-validated
+  connects to after a QR endpoint change. Our [`cloud-protocol.md`](protocol/cloud-protocol.md),
+  [`network-trust.md`](protocol/network-trust.md), and the 120 recovered `.proto` files were **cross-validated
   against OpenMoxie with zero diffs**, which is strong mutual confirmation of the protocol. It's the
   reference our own [`mqtt/`](../../mqtt/) + [`server/`](../../server/) aim to match and extend.
   **✅ Substance captured in-repo** (self-sufficiency): its concrete server surface —
   the MQTT subscribe/publish topic set (`/devices/+/events/#`, `/devices/+/state`,
   `$SYS/broker/clients/#` + `$SYS/broker/log/#` for **presence**, and `/devices/{id}/config|commands/{cmd}|commands/zmq`)
   and its RS256-JWT/`RS256.key` device-auth flow — is now documented in
-  [`cloud-protocol.md`](cloud-protocol.md) (topic map + auth), so a server is buildable from this repo
+  [`cloud-protocol.md`](protocol/cloud-protocol.md) (topic map + auth), so a server is buildable from this repo
   even if the OpenMoxie repo disappears. Source files: `site/hive/mqtt/moxie_server.py`,
   `robot_credentials.py`, `site/openmoxie/urls.py`.
 - **`nhertanto/Embodied-Moxie`** — [GitHub](https://github.com/nhertanto/Embodied-Moxie). **ChatScript +
@@ -178,7 +178,7 @@ security-model RE; does not settle silicon.
   captured in-repo** (self-sufficiency): the three-layer authoring pipeline (Python node classes →
   Jinja2 templates → generated `.top`), the ChatScript `.top` syntax/operators, and the named **global
   command** set are now in
-  [`content-and-conversation.md`](content-and-conversation.md#chatscript-authoring-the-real-format-pipeline)
+  [`content-and-conversation.md`](runtime/content-and-conversation.md#chatscript-authoring-the-real-format-pipeline)
   (ChatScript runs cloud/server-side, so this is what a revival *server* authors).
 - **robotsaroundthehouse OpenMoxie setup guide** — [thread](https://robotsaroundthehouse.com/threads/setting-up-openmoxie-for-your-moxie-robot-a-detailed-step-by-step-guide.827/).
   A step-by-step owner walkthrough of the QR re-home + OpenMoxie stand-up — the real-world instance of
@@ -215,4 +215,4 @@ tier remains original work for this project — and the **FCC internal photos** 
 (or child `.md`) as each source is deeply extracted.
 
 ---
-📖 [Field guide](FIELD-GUIDE.md) · [Coverage](COVERAGE.md) · [Hardware access](hardware-access.md) · [Reverse-engineering index](README.md) · [Docs index](../README.md)
+📖 [Field guide](FIELD-GUIDE.md) · [Coverage](COVERAGE.md) · [Hardware access](hardware/hardware-access.md) · [Reverse-engineering index](README.md) · [Docs index](../README.md)

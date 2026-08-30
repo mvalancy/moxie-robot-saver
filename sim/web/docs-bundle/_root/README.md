@@ -171,7 +171,7 @@ flowchart TD
 
 Start at **[`docs/README.md`](docs/README.md)**. Highlights:
 - 🏗️ **Architecture** — [overview](docs/architecture/overview.md) · [revival path](docs/architecture/revival-path.md) · [Moxie as a platform (SDK)](docs/architecture/moxie-as-a-platform.md) · [MQTT & conversation](docs/architecture/mqtt-and-conversation.md) · [vision](docs/architecture/vision.md)
-- 🔬 **Reverse-engineering** (source of truth) — [REST API](docs/reverse-engineering/rest-api.md) · [crypto & keys](docs/reverse-engineering/crypto-and-keys.md) · [pairing & robot](docs/reverse-engineering/pairing-and-robot.md) · [QR format](docs/reverse-engineering/qr-format.md) · [app structure](docs/reverse-engineering/app-structure.md)
+- 🔬 **Reverse-engineering** (source of truth) — [REST API](docs/reverse-engineering/phone/rest-api.md) · [crypto & keys](docs/reverse-engineering/phone/crypto-and-keys.md) · [pairing & robot](docs/reverse-engineering/phone/pairing-and-robot.md) · [QR format](docs/reverse-engineering/phone/qr-format.md) · [app structure](docs/reverse-engineering/phone/app-structure.md)
 - 🎛️ **Features** — the complete parent-app [feature catalog](docs/features/)
 - 🧭 **Guides** — [first-time setup](docs/guides/first-time-setup.md) · [factory reset](docs/guides/factory-reset-a-paired-moxie.md) · [find Moxie on the LAN](docs/guides/find-moxie-on-lan.md)
 - 🔬 **Research tracks** — [Moxie sees (vision)](docs/architecture/vision.md) · [older robots & firmware](hardware/firmware-and-older-robots.md)

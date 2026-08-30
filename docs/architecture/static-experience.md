@@ -32,7 +32,7 @@ flowchart LR
 The dividing line is simple and worth stating plainly:
 
 - **Anything that produces a QR, animates the avatar, or replays a canned session is static.** The
-  revival QRs are plain JSON ([`qr-commands.md`](../reverse-engineering/qr-commands.md)); the avatar is
+  revival QRs are plain JSON ([`qr-commands.md`](../reverse-engineering/protocol/qr-commands.md)); the avatar is
   WebGL; the demo conversation is scripted and pre-rendered ([`deploy-cloudflare.md`](../guides/deploy-cloudflare.md)).
 - **Anything that talks to a *live robot*, does real STT/LLM/TTS, or stores a real account needs a
   server.** A real robot speaks **MQTT over TLS** — a CDN can't be its broker. Full pairing (the `PA`
