@@ -56,11 +56,13 @@ The brain + MAINAPP. Major subsystems and their exploration status:
 | ✅ | Offline fallback + persisted brain state | [offline-and-brain-state](offline-and-brain-state.md) |
 | ✅ | Crypto & pairing | [crypto-and-keys](crypto-and-keys.md), [pairing-and-robot](pairing-and-robot.md) |
 | ✅ | The `EB*` game-task / GT-manager runtime scheduler (priority + resource arbitration) | [task-scheduler](task-scheduler.md) |
-| 🟡 | Content-module runtime (activity execution, volley) | [content-and-conversation](content-and-conversation.md) — concepts covered; execution-engine internals open |
+| ✅ | Top-level action/activity arbiter (RobotAction scored selection) | [robot-actions](robot-actions.md) |
+| ✅ | Content-module runtime: on-device activity shells + server-side execution (no on-device Python) | [robot-actions](robot-actions.md), [content-and-conversation](content-and-conversation.md), [remote-chat-protocol](remote-chat-protocol.md) |
 | ⬜ | `libbo-brain` native ML models (sentiment/intent/NLU on-device) | format unmapped (low priority) |
 
-**Next C# threads:** the content-module *execution engine* internals (activity/volley runtime beyond the
-documented format), then the `libbo-brain` native ML model formats (low priority).
+**Next C# threads:** the on-device C# subsystems are now mapped end-to-end (decision → action arbiter →
+task scheduler → face engine). Remaining: `libbo-brain` native ML model formats (⬜ low priority) and the
+proto residue below (lizzerface MCU I/O, perception.audio STT).
 
 ## Disk images
 
