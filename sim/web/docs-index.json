@@ -1,5 +1,5 @@
 {
- "generated": "docs-a670657d6e51",
+ "generated": "docs-9ec50e75d74c",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -528,7 +528,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 7409,
+   "bytes": 7496,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",
@@ -1174,7 +1174,7 @@
    "path": "reverse-engineering/content-and-conversation.md",
    "title": "Content & conversation — ChatScript, content modules, the volley API",
    "section": "reverse-engineering",
-   "bytes": 23619,
+   "bytes": 26053,
    "mermaid": 1,
    "headings": [
     "Two dialog engines",

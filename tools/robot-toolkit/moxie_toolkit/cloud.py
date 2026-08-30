@@ -226,3 +226,19 @@ def parse_user_recommendation_data(payload):
     random_tag_state) that decides what content to offer next."""
     from embodied.robotbrain.serialized import UserRecommendationData_pb2 as U
     m = U.UserRecommendationData(); m.ParseFromString(payload); return m
+
+
+# ---- SEL content taxonomy (embodied.robotbrain.tags / ModuleTag) ----
+# See docs/reverse-engineering/content-and-conversation.md (The SEL taxonomy structure)
+
+def parse_sel_tag_info(payload):
+    """Parse a SELTagInfo — the four-level SEL curriculum taxonomy
+    (Pillars→Skills→Goals→Levels + weighted edges) the recommender ranks over."""
+    from embodied.robotbrain import Tags_pb2 as T
+    m = T.SELTagInfo(); m.ParseFromString(payload); return m
+
+def parse_module_tag_info(payload):
+    """Parse a ModuleTagInfo — the catalog of ModuleTagData records placing each
+    content module in the SEL taxonomy (its _sel_tags / _content_tags)."""
+    from embodied.robotbrain import ModuleTag_pb2 as M
+    m = M.ModuleTagInfo(); m.ParseFromString(payload); return m

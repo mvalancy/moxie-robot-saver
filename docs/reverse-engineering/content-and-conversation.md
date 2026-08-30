@@ -265,6 +265,46 @@ Moxie's socio-emotional-learning goals: **`STARGoalStateChange{goal, goal_level,
 activated}`** with **`STARGoalSuccess`/`STARGoalFailure`**. Content targets a `goal` at a `goal_level`;
 success advances levels (`RECOMMENDATION_BY_SEL` weights recommendations by SEL goal).
 
+#### The SEL taxonomy structure — `SELTagInfo`
+The curriculum those goals live in is an explicit **four-level hierarchy** (`embodied.robotbrain.tags`),
+each level a set of `Tag{uuid, name}`, connected by weighted edges:
+
+```proto
+message Tag       { string uuid; string name; }
+message Weight    { string parentUUID; string childUUID; float weighting; }   // a weighted parent→child edge
+message GoalLevel { string goal; string level; }                              // a goal at a level
+message SELTagInfo {
+  repeated Tag allPillars;  repeated Tag allSkills;  repeated Tag allGoals;  repeated Tag allLevels;
+  repeated Weight pillarsToSkills;   // Pillar  → Skill
+  repeated Weight skillsToGoals;     // Skill   → Goal
+  repeated Weight goalsToLevels;     // Goal    → Level
+}
+```
+
+So the taxonomy is **Pillars → Skills → Goals → Levels**, and the `*To*` `Weight` lists are the weighted
+edges between adjacent levels. A child's engagement recorded per-tag (`UserRecommendationData.tag_history`,
+[`offline-and-brain-state`](offline-and-brain-state.md#the-recommenders-memory--userrecommendationdata)) and
+the parent's `ContentPreferences.SELPreference{sel_tag, weight}`
+([`device-config-and-telemetry`](device-config-and-telemetry.md#robotcloudconfig--the-master-config-document-cloud--robot))
+both index into *this* tree, and the weighted edges are how a signal on one Goal propagates up to its Skill
+and Pillar when the recommender scores content (`RECOMMENDATION_BY_SEL`).
+
+#### How a module is tagged — `ModuleTagData`
+Each content module carries a **`ModuleTagData`** record placing it in the taxonomy:
+
+| Field | Meaning |
+|---|---|
+| `_module_id`, `_module_name`, `_uuid` | which module |
+| `_sel_tags` (`GoalLevel[]`) | the SEL goals-at-levels this module teaches |
+| `_content_tags` (`ModuleTag[]` = `{tag_uuid, source_uuid}`) | topic/genre tags applied to it |
+| `_index_table` (`ContentInfo[]`) | its per-content-id tag map (the `ContentData{content_tags, sel_tags}` above) |
+| `_does_report_completion` | whether finishing it advances STAR progress |
+
+`ModuleTagInfo{ module_tags[] }` is the whole catalog. **For a revival server (goal ②):** to make the
+recommender rank your own modules correctly you ship a `SELTagInfo` (or reuse the stock one) and a
+`ModuleTagData` per module — that's the complete tagging contract, from the four-level taxonomy down to
+each module's goals and per-content tags.
+
 ### Rewards & history
 - **`StarBitsEarned{earned, total, latest_unlocked}`** — **StarBits**, the reward currency a child
   earns to unlock content (the `RewardStar`/`reward-star` animation + markup, [`unity-assets.md`](unity-assets.md)).

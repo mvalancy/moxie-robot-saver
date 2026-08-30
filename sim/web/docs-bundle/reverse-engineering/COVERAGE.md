@@ -38,7 +38,7 @@
 | Config/telemetry data-model (RobotCloudConfig down · RobotStatus/Packet up · LoggingPolicy) | ✅ + tool | [device-config-and-telemetry](device-config-and-telemetry.md) · `cloud.py` |
 | REST `client-service` (sessions, OTA, backups) + endpoints | ✅ | [cloud-protocol](cloud-protocol.md) |
 | Repointing (`ServiceConfiguration`, `EndpointStore`, QR) | ✅ + tool | [cloud-protocol](cloud-protocol.md) · [qr-commands](qr-commands.md) · `moxie-qr` |
-| Conversation: ChatScript + LLM + module format + volley API | ✅ | [content-and-conversation](content-and-conversation.md) |
+| Conversation: ChatScript + LLM + module format + volley API + SEL taxonomy (Pillars→Skills→Goals→Levels, ModuleTagData) | ✅ + tool | [content-and-conversation](content-and-conversation.md) · `cloud.py` |
 | RemoteChat robot↔brain RPC (full response: output/actions/safety/metrics/ResultCodes) | ✅ + tool | [remote-chat-protocol](remote-chat-protocol.md) · `cloud.py` |
 | Offline fallback + persisted brain state (FallbackInfo, CSData resume, recommender history) | ✅ + tool | [offline-and-brain-state](offline-and-brain-state.md) · `cloud.py` |
 | Content delivery (dynamic AssetBundles: remote fetch, manifest, processors) | ✅ | [content-delivery](content-delivery.md) |
