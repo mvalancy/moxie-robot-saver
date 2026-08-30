@@ -1,5 +1,5 @@
 {
- "generated": "docs-273fb5d46f2d",
+ "generated": "docs-e232c9d3a028",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -250,7 +250,7 @@
    "path": "debugging/qr-command-findings.md",
    "title": "QR command discovery — findings log",
    "section": "debugging",
-   "bytes": 9373,
+   "bytes": 10102,
    "mermaid": 0,
    "headings": [
     "Consistent reactors (the interesting ones)",
@@ -1015,7 +1015,7 @@
    "path": "reverse-engineering/protocol/qr-commands.md",
    "title": "QR command grammar — what the robot actually scans",
    "section": "reverse-engineering",
-   "bytes": 13581,
+   "bytes": 14719,
    "mermaid": 0,
    "headings": [
     "The dispatcher",

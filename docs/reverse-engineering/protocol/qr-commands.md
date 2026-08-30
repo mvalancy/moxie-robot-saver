@@ -73,10 +73,24 @@ Codes handled directly in `bo-wifi` (`WifiMain`):
 | `bluetooth_pair` | Fire an Android intent to **Bluetooth-pair** the device in `param`. |
 | *(any other code)* | Show `State.QRDiagnostic` and forward `QRCommand{code,param}` to `bo-android`. |
 
-Because unrecognized codes are forwarded verbatim to the brain over ZMQ, the **effective** command
-set is whatever `bo-android`/`libbo-dispatch` handles for `embodied.unity.QRCommand` — a broader,
-extensible surface. Confirmed forwarded control codes include **`endpoint_update`** (with an
-`IOTEndpoint`), used to move the robot between clouds.
+**The scan grammar is closed — this is the whole set.** `QRData.ParseFromString` is a single
+function with exactly three branches: `PA` (pairing), `VN` (VPN), else JSON `{wifi?, pair?, debug?}`.
+The `debug.command` string is matched against **exactly four** literals above; every other value hits a
+literal `else → SetAppState(State.QRDiagnostic)`. There is **no fifth app-side handler** anywhere in
+`bo-wifi`, so "undocumented factory QR codes the setup app acts on" is a provably-bounded set: it is
+these four plus the pairing/VPN/Wi-Fi forms — nothing else.
+
+Every debug command is *also* published to the ZMQ bus as `QRCommand{Code, Param}` (via `QRDebug()`),
+recognized or not. **But the managed brain does not consume it:** `Assembly-CSharp` (the 7 MB
+`bo-android` decompile) has **zero** references to `QRCommand`, `endpoint_update`, or `QRDebug`. So the
+only place an *unknown* effect could hide is a **native** bus consumer (launcher/logger) — a targeted
+native-RE question (`nm`/`strings` on the consumer), not a QR-fuzzing one.
+
+> ⚠️ **`endpoint_update` is not a debug command.** It is emitted *internally* by the Wifi App
+> (`RequestEndpoint`) when a **pairing QR's** `Endpoint` field differs from the current cloud — it
+> carries an `IOTEndpoint` enum, not a string `param`. You move a robot between clouds with the
+> **endpoint field of the `PA` pairing QR**, not by scanning a `{"debug":{"command":"endpoint_update"}}`
+> code (that string has no handler).
 
 ### `QRCommand` protobuf (`embodied.unity`)
 
