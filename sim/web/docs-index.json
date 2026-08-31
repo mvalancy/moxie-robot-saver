@@ -1,5 +1,5 @@
 {
- "generated": "docs-915d4867a13f",
+ "generated": "docs-1201d523821a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -60,7 +60,7 @@
    "path": "architecture/overview.md",
    "title": "Architecture overview",
    "section": "architecture",
-   "bytes": 3950,
+   "bytes": 5436,
    "mermaid": 1,
    "headings": [
     "The problem",
@@ -69,6 +69,7 @@
     "Channel 2 — Robot cloud (the \"experience\")",
     "Data flow at a glance",
     "Components (all on one machine)",
+    "The build contracts — what to implement, in order",
     "The appliance",
     "Data & privacy"
    ],

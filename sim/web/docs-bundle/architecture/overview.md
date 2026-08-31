@@ -60,6 +60,24 @@ flowchart LR
 | Conversation engine | `mqtt/` | Turns robot audio → text → LLM → behavior markup → speech |
 | Local AI | `ai/` | STT (Whisper), LLM (any OpenAI-compatible endpoint), TTS — local first |
 
+## The build contracts — what to implement, in order
+
+Those components are built from **six versioned, standalone specs** (this folder). They chain in
+runtime order — build them roughly in this sequence, each usable once the ones above it exist:
+
+| # | Contract | Builds | Chains to |
+|--:|---|---|---|
+| 1 | [`rest-api-contract.md`](rest-api-contract.md) | Channel 1: account/child/pairing REST → issues the pairing QR | sets `iot-endpoint` → #2 |
+| 2 | [`mqtt-and-conversation.md`](mqtt-and-conversation.md) | Channel 2: the broker, endpoint QR, topics, the turn loop | carries #3–#5 |
+| 3 | [`config-and-telemetry-contract.md`](config-and-telemetry-contract.md) | `/config` down + `/state`/telemetry up (the parent console's data model) | the robot is now managed |
+| 4 | [`ai-seam.md`](ai-seam.md) | the STT / brain-RemoteChat / TTS interface any AI fills | answers each turn on #2 |
+| 5 | [`content-module-contract.md`](content-module-contract.md) | the activity/volley format — what Moxie *does* | the brain's per-turn logic, on #4 |
+| 6 | [`sim-as-a-client.md`](sim-as-a-client.md) | the SIM as a drop-in client of #1–#5 | test surface = production surface |
+
+Minimum talking loop = **#1 → #2 → #4** (pair, connect, answer a turn). Add #3 for the parent
+console, #5 for real activities, #6 to develop against the sim instead of hardware. Each contract
+reads standalone and cites the [reverse-engineering study](../reverse-engineering/README.md) for its facts.
+
 ## The appliance
 The whole stack targets **one machine with a CUDA GPU** — a gaming PC, a home server, or a Jetson
 Orin. The control plane (parent-app server + web UI) is light and cross-platform; the AI layer wants
