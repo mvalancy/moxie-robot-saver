@@ -1,5 +1,5 @@
 {
- "generated": "docs-09239b12d8bc",
+ "generated": "docs-5b60080186e6",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -111,9 +111,9 @@
   },
   {
    "path": "architecture/mqtt-and-conversation.md",
-   "title": "12 — MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
+   "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 35600,
+   "bytes": 35752,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",

@@ -1,8 +1,11 @@
-# 12 — MQTT / "Talking" Layer Spec (the Robot Cloud half)
+# MQTT / "Talking" Layer Spec (the Robot Cloud half)
+
+> **Spec version 1 · robot side stamped to firmware v3.6.4-Zephyr / OTA v24.10.803.**
+> One of the six [build contracts](README.md); reads standalone.
 
 **Scope.** This is the *robot cloud* half of the Moxie saver: the MQTT/IoT service that
 makes a paired Moxie actually **wake, listen, think, and talk**. The REST parent-app half
-(this repo's `server/`) is already built and is covered in maps 01–04. This spec is a
+(this repo's `server/`) is the [REST services contract](rest-api-contract.md). This spec is a
 clean, implementation-ready description of what OpenMoxie
 (`github.com/jbeghtol/openmoxie`, MIT) does, verified first-hand against a clone of the
 source, plus a concrete plan to build our own **fully local** equivalent on a single
