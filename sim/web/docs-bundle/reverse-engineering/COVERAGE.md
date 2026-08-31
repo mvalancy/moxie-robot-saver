@@ -105,6 +105,12 @@ So the **in-scope** clean-room backlog is now down to the streamed **`rig3animat
 /viseme clips + `Bht_*` graphs — the base-APK Unity assets have been UnityPy-inventoried) plus the native
 settings defaults. Everything else is either captured or is content a revival replaces by design.
 
+> **The study is now distilled into a build spec.** The self-sufficient facts above have been
+> consolidated into the [`docs/architecture/`](../architecture/README.md) **build-contract layer** — six
+> versioned, standalone specs (REST · MQTT/conversation · AI seam · config & telemetry · content modules
+> · SIM-as-a-client). A clean-room backend + Sim can be built from those directly, without re-deriving
+> from this study each time; this study stays as the cited source of truth beneath them.
+
 ## Open items (need a bench unit or an external artifact)
 
 - [ ] **USB data port reachable without opening?** — decides whether the download-mode/ADB/MTP paths are truly "no-open".
