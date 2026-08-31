@@ -22,6 +22,8 @@ The end goal is not just to *revive* old robots but to make Moxie's body host **
 
 > 🗺️ **See the [architecture diagrams](architecture-diagrams.md)** — the whole system as a hierarchy of mermaid diagrams, product level down to motor drivers.
 
+> 🏗️ **Building from this? The [architecture spec layer](../architecture/README.md)** distills these facts into standalone implementation specs — the [REST services contract](../architecture/rest-api-contract.md) (Channel 1), the [MQTT/conversation contract](../architecture/mqtt-and-conversation.md) (Channel 2), and the [AI seam](../architecture/ai-seam.md) (LLM/STT/TTS) — so a clean-room build reads the spec, not the raw study.
+
 > 📇 **Firmware analyzed: [`v3.6.4-Zephyr` / OTA `v24.10.803`](firmware/firmware-803-reference.md)** — the version-stamped reference (identifiers, partition hashes, app + native-lib inventory). All robot-side docs describe this build.
 
 > 🧭 **New here? Start with the [FIELD-GUIDE](FIELD-GUIDE.md)** — everything below, organized by what you want to do (revive an old robot · run your own server · custom firmware).

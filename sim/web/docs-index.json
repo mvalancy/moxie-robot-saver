@@ -1,5 +1,5 @@
 {
- "generated": "docs-e009b6ec740e",
+ "generated": "docs-368d6b469016",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -592,7 +592,7 @@
    "path": "reverse-engineering/README.md",
    "title": "Reverse-engineering (source of truth)",
    "section": "reverse-engineering",
-   "bytes": 16851,
+   "bytes": 17294,
    "mermaid": 1,
    "headings": [
     "Phone side — the parent app ([`phone/`](phone/README.md))",
@@ -726,45 +726,6 @@
    "kind": "md"
   },
   {
-   "path": "reverse-engineering/firmware/firmware-803-reference.md",
-   "title": "Firmware reference — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
-   "section": "reverse-engineering",
-   "bytes": 9501,
-   "mermaid": 0,
-   "headings": [
-    "Version identity",
-    "Platform",
-    "Partition images (this build)",
-    "boot.img kernel cmdline (verbatim)",
-    "fstab (`/vendor/etc/fstab.rk30board`)",
-    "Installed apps (this build)",
-    "Embodied apps (`/system/priv-app`)",
-    "bo-android native libraries (the \"brain\", `lib/armeabi-v7a/`)",
-    "Managed assemblies (cleartext .NET IL)",
-    "Key properties (`build.prop` / `prop.default`)",
-    "Embodied daemons & hardware hooks (init)",
-    "What's notable in THIS build",
-    "Deep dives (all measured from this build unless noted)"
-   ],
-   "kind": "md"
-  },
-  {
-   "path": "reverse-engineering/FIELD-GUIDE.md",
-   "title": "Moxie field guide — revive it, re-brain it, rebuild it",
-   "section": "reverse-engineering",
-   "bytes": 9172,
-   "mermaid": 1,
-   "headings": [
-    "The system at a glance",
-    "Scope: the entire machine, end to end",
-    "① Revive an old robot",
-    "② Put your own AI inside Moxie — the *ghost in the shell*",
-    "③ Custom software / firmware on the robot",
-    "The toolkit"
-   ],
-   "kind": "md"
-  },
-  {
    "path": "reverse-engineering/firmware/README.md",
    "title": "Firmware — the OS image, boot, security & flashing",
    "section": "reverse-engineering",
@@ -839,6 +800,45 @@
    "bytes": 5024,
    "mermaid": 0,
    "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/firmware/firmware-803-reference.md",
+   "title": "Firmware reference — Moxie `v3.6.4-Zephyr` (OTA `v24.10.803`)",
+   "section": "reverse-engineering",
+   "bytes": 9501,
+   "mermaid": 0,
+   "headings": [
+    "Version identity",
+    "Platform",
+    "Partition images (this build)",
+    "boot.img kernel cmdline (verbatim)",
+    "fstab (`/vendor/etc/fstab.rk30board`)",
+    "Installed apps (this build)",
+    "Embodied apps (`/system/priv-app`)",
+    "bo-android native libraries (the \"brain\", `lib/armeabi-v7a/`)",
+    "Managed assemblies (cleartext .NET IL)",
+    "Key properties (`build.prop` / `prop.default`)",
+    "Embodied daemons & hardware hooks (init)",
+    "What's notable in THIS build",
+    "Deep dives (all measured from this build unless noted)"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/FIELD-GUIDE.md",
+   "title": "Moxie field guide — revive it, re-brain it, rebuild it",
+   "section": "reverse-engineering",
+   "bytes": 9172,
+   "mermaid": 1,
+   "headings": [
+    "The system at a glance",
+    "Scope: the entire machine, end to end",
+    "① Revive an old robot",
+    "② Put your own AI inside Moxie — the *ghost in the shell*",
+    "③ Custom software / firmware on the robot",
+    "The toolkit"
+   ],
    "kind": "md"
   },
   {
