@@ -5,6 +5,8 @@ protocol, and the **Moxie SDK** — the clean interface any AI uses to drive Mox
 
 See the vision: [`../docs/architecture/moxie-as-a-platform.md`](../docs/architecture/moxie-as-a-platform.md) ·
 protocol detail: [`../docs/architecture/mqtt-and-conversation.md`](../docs/architecture/mqtt-and-conversation.md).
+The implementation contracts this half fills: the [AI seam](../docs/architecture/ai-seam.md) (LLM/STT/TTS)
+and the [config & telemetry contract](../docs/architecture/config-and-telemetry-contract.md) (`/config` + `/state`).
 
 ```mermaid
 flowchart LR
