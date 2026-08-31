@@ -1,5 +1,5 @@
 {
- "generated": "docs-8b007edbaf01",
+ "generated": "docs-95f77b93b7c8",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 2189,
+   "bytes": 2397,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -262,6 +262,21 @@
     "7 · Packaging & docs ✅ (core)",
     "Phases (rough week)",
     "Immediate queue (Phase 1)"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/sim-as-a-client.md",
+   "title": "The SIM as a backend client — interchangeable with a real robot",
+   "section": "architecture",
+   "bytes": 5155,
+   "mermaid": 1,
+   "headings": [
+    "The interchangeability guarantee",
+    "What the SIM substitutes vs what's identical",
+    "The one divergence a spec must call out: TTS",
+    "How the SIM connects",
+    "Conformance"
    ],
    "kind": "md"
   },

@@ -20,6 +20,8 @@ How all the pieces fit together.
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
 - [`moxie-ecosystem.md`](moxie-ecosystem.md) — the full self-hostable stack: brain, voice, ears, liveness.
+- [`sim-as-a-client.md`](sim-as-a-client.md) — **the SIM is just another backend client**: interchangeable
+  with a real robot, what it substitutes vs what's contract-identical, and the one TTS divergence.
 - [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.
 - [`vision.md`](vision.md) — can Moxie *see*? Camera access reality + a local OpenCV/VLM vision stack (research).
 
