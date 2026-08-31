@@ -1,7 +1,9 @@
 # 🧠 `ai/` — local AI adapters (Phase 3)
 
 Pluggable **speech-to-text** and **LLM** for the conversation engine. Not built yet; this is the plan,
-now grounded in the [MQTT & conversation spec](../docs/architecture/mqtt-and-conversation.md).
+grounded in the [MQTT & conversation spec](../docs/architecture/mqtt-and-conversation.md). The precise
+interface these adapters fill — the LLM/STT/TTS boundaries as request/response contracts — is the
+[**AI seam** spec](../docs/architecture/ai-seam.md); build each adapter to that.
 
 ## Principles
 - **Local first.** Default to models running on this machine's GPU — no internet at runtime.
