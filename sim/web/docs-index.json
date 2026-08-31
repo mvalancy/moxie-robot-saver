@@ -1,5 +1,5 @@
 {
- "generated": "docs-95f77b93b7c8",
+ "generated": "docs-84f1f7ed60a4",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,9 +47,13 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 2397,
+   "bytes": 2879,
    "mermaid": 0,
-   "headings": [],
+   "headings": [
+    "Orientation",
+    "The build contracts — *what to implement*",
+    "Vision, plans & research"
+   ],
    "kind": "md"
   },
   {
@@ -215,6 +219,21 @@
    "kind": "md"
   },
   {
+   "path": "architecture/sim-as-a-client.md",
+   "title": "The SIM as a backend client — interchangeable with a real robot",
+   "section": "architecture",
+   "bytes": 5155,
+   "mermaid": 1,
+   "headings": [
+    "The interchangeability guarantee",
+    "What the SIM substitutes vs what's identical",
+    "The one divergence a spec must call out: TTS",
+    "How the SIM connects",
+    "Conformance"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/moxie-as-a-platform.md",
    "title": "Moxie as a platform — the SDK",
    "section": "architecture",
@@ -226,21 +245,6 @@
     "Driving Moxie from an external app (the avatar bridge)",
     "Why this shape",
     "Where it lives"
-   ],
-   "kind": "md"
-  },
-  {
-   "path": "architecture/static-experience.md",
-   "title": "The Moxie experience as one static site",
-   "section": "architecture",
-   "bytes": 5565,
-   "mermaid": 1,
-   "headings": [
-    "The three surfaces",
-    "What's static vs. what needs a server",
-    "The \"basics online\" scope (this milestone)",
-    "Growing into the end-to-end system",
-    "Deploy"
    ],
    "kind": "md"
   },
@@ -266,17 +270,17 @@
    "kind": "md"
   },
   {
-   "path": "architecture/sim-as-a-client.md",
-   "title": "The SIM as a backend client — interchangeable with a real robot",
+   "path": "architecture/static-experience.md",
+   "title": "The Moxie experience as one static site",
    "section": "architecture",
-   "bytes": 5155,
+   "bytes": 5565,
    "mermaid": 1,
    "headings": [
-    "The interchangeability guarantee",
-    "What the SIM substitutes vs what's identical",
-    "The one divergence a spec must call out: TTS",
-    "How the SIM connects",
-    "Conformance"
+    "The three surfaces",
+    "What's static vs. what needs a server",
+    "The \"basics online\" scope (this milestone)",
+    "Growing into the end-to-end system",
+    "Deploy"
    ],
    "kind": "md"
   },
