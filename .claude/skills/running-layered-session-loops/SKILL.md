@@ -21,7 +21,7 @@ The exact tiers depend on the project — the principle is **separation of conce
 
 ## The rules that make it safe to run unattended
 1. **Smallest shippable slice.** Each fire does one bounded thing and leaves the tree green. Never a big risky change autonomously.
-2. **Don't manufacture work.** If a fire finds nothing genuinely new, it says so and stops — it does not pad a commit to look busy. (This one rule prevents most autonomous drift.)
+2. **Don't manufacture work.** If a fire finds nothing genuinely new, it says so and stops — it does not pad a commit to look busy. (This one rule prevents most autonomous drift.) At **convergence** (the sweep has no open work), a fire is still productive: rotate through a *different* verification dimension each time — structure/indexes, cross-doc number consistency, stale-vs-shipped claims, content integrity — and record the clean result. A verified honest no-op keeps the tree trustworthy and is a valid fire outcome; a manufactured edit is not.
 3. **Verify before commit, every time.** Reproducible artifacts + mechanical guards (tests, link/consistency checkers, headless "no console errors") catch what no reviewer is watching for. A loop with no guards is a loop that quietly rots.
 4. **Honesty over green.** If something is red and can't be fixed this fire, record it in **Blockers** with the exact error — don't hide it. Report outcomes faithfully.
 5. **Idempotent + interruptible.** A fire must be safe to run again and safe to interrupt; use a busy-port override / re-check state rather than assume a clean slate.
