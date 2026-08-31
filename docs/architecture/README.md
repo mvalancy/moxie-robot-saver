@@ -13,6 +13,9 @@ How all the pieces fit together.
 - [`config-and-telemetry-contract.md`](config-and-telemetry-contract.md) — the robot's **remotely-managed
   state**: the `/config` (`RobotCloudConfig`) the server pushes down, the `/state` it reports up, and the
   telemetry + `LoggingPolicy` privacy gate — the data model behind the parent console.
+- [`content-module-contract.md`](content-module-contract.md) — the **content layer**: the activity/module
+  JSON format (conversations/globals/schedules), the per-turn `volley`/`session` API, and execution
+  actions — how a server defines what Moxie *does*, on top of the AI seam.
 - [`moxie-as-a-platform.md`](moxie-as-a-platform.md) — **the SDK**: how any AI/game drives Moxie as an avatar.
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.

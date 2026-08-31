@@ -1,5 +1,5 @@
 {
- "generated": "docs-23c8c2415553",
+ "generated": "docs-8b007edbaf01",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 1904,
+   "bytes": 2189,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -188,6 +188,27 @@
     "③ Telemetry — `Packet` envelope + the privacy gate",
     "LoggingPolicy` — the privacy contract a server MUST honor",
     "What the parent console reads/writes (feature → field map)",
+    "Minimum viable vs full",
+    "Conformance checklist"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/content-module-contract.md",
+   "title": "Content-module contract — activities, the volley API, execution actions",
+   "section": "architecture",
+   "bytes": 7726,
+   "mermaid": 1,
+   "headings": [
+    "Where this fits",
+    "The module format (what a server serves)",
+    "conversations[]` — LLM-driven chats",
+    "globals[]` — regex-triggered commands (always on)",
+    "schedules[]` — what to offer when",
+    "The `volley` / `session` API (per-turn hooks)",
+    "Execution actions (content → robot bridge)",
+    "QR inside content",
+    "Content delivery (assets)",
     "Minimum viable vs full",
     "Conformance checklist"
    ],
