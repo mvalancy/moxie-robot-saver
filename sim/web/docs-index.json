@@ -1,5 +1,5 @@
 {
- "generated": "docs-3b6414084598",
+ "generated": "docs-cce47f722cef",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 1601,
+   "bytes": 1904,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -170,6 +170,26 @@
     "Response out — `CloudTTSResponse`",
     "Conformance checklist",
     "Where each seam is implemented in this repo"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/config-and-telemetry-contract.md",
+   "title": "Config & telemetry contract — what the server manages on the robot",
+   "section": "architecture",
+   "bytes": 8477,
+   "mermaid": 1,
+   "headings": [
+    "The loop",
+    "① `/config` down — `RobotCloudConfig` (the thing the server must produce)",
+    "The child-PII encryption boundary — and the revival shortcut",
+    "② `/state` up — `RobotStatus` (the robot's self-report)",
+    "CloudStatus.UserState` — the pairing/OTA lifecycle the console shows",
+    "③ Telemetry — `Packet` envelope + the privacy gate",
+    "LoggingPolicy` — the privacy contract a server MUST honor",
+    "What the parent console reads/writes (feature → field map)",
+    "Minimum viable vs full",
+    "Conformance checklist"
    ],
    "kind": "md"
   },

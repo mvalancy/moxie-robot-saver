@@ -10,6 +10,9 @@ How all the pieces fit together.
   topics, conversation flow, and the local-AI plug-in points (Phases 2–3).
 - [`ai-seam.md`](ai-seam.md) — **the interface contract** for the three seams a backend fills (STT in /
   brain-RemoteChat / TTS out): exact wire shapes + a conformance checklist. Build any AI into Moxie from this.
+- [`config-and-telemetry-contract.md`](config-and-telemetry-contract.md) — the robot's **remotely-managed
+  state**: the `/config` (`RobotCloudConfig`) the server pushes down, the `/state` it reports up, and the
+  telemetry + `LoggingPolicy` privacy gate — the data model behind the parent console.
 - [`moxie-as-a-platform.md`](moxie-as-a-platform.md) — **the SDK**: how any AI/game drives Moxie as an avatar.
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
