@@ -1,5 +1,5 @@
 {
- "generated": "docs-1201d523821a",
+ "generated": "docs-8d2b123afd41",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -742,7 +742,7 @@
    "path": "reverse-engineering/COVERAGE.md",
    "title": "Coverage matrix — how complete is the deconstruction?",
    "section": "reverse-engineering",
-   "bytes": 13656,
+   "bytes": 13759,
    "mermaid": 0,
    "headings": [
     "Goal ① — Build custom firmware / run custom software on the robot",

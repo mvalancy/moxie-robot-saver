@@ -2,7 +2,9 @@
 
 > A single view of what's documented for each goal, and the honest remaining gaps (mostly things that
 > need a **bench unit**). Firmware under analysis: **v3.6.4-Zephyr / OTA v24.10.803** (RK3288, Android 9).
-> 40 reverse-engineering docs + a validated toolkit; the map below is the table of contents by outcome.
+> 60+ reverse-engineering docs + a validated toolkit — now distilled into the
+> [`docs/architecture/`](../architecture/README.md) build-contract layer; the map below is the table of
+> contents by outcome.
 
 ## Goal ① — Build custom firmware / run custom software on the robot
 
