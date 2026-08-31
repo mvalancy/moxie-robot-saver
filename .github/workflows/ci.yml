@@ -1,0 +1,72 @@
+# Moxie CI workflow — INSTALL: copy to .github/workflows/ci.yml
+# (pushing under .github/workflows/ needs a token with 'workflow' scope;
+#  kept here as a template so it version-controls without that scope).
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+
+jobs:
+  docs:
+    name: Docs & protocol integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Internal doc links resolve
+        run: python3 scripts/check-doc-links.py
+      - name: Doc-tree consistency (no stale claims, version-stamped)
+        run: python3 scripts/check-doc-consistency.py
+      - name: Recovered protos compile
+        run: |
+          pip install protobuf grpcio-tools >/dev/null
+          python3 tools/robot-toolkit/moxie_toolkit/validate_protos.py || true
+      - name: Toolkit protocol round-trip tests (cloud.py / bus.py encoders vs the recovered protos)
+        run: python3 tools/robot-toolkit/run_tests.py
+
+  sil:
+    name: SIL — virtual robot ⇄ server round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install broker + client deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y mosquitto
+          sudo systemctl stop mosquitto || true
+          pip install "paho-mqtt>=2.0"
+      - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
+        run: bash sim/run_smoke.sh
+      - name: Bridge markup→avatar unit test
+        run: node sim/test_bridge.mjs
+      - name: Voice-loop tests (TTS/STT shapes; skips if services absent)
+        run: node sim/test_voice.mjs
+      - name: Revival-QR parity (browser encoder == python toolkit)
+        run: |
+          pip install protobuf
+          node sim/test_qr.mjs
+      - name: Cloud-console fixture + wiring test
+        run: node sim/test_cloud.mjs
+      - name: Build docs bundle for the explorer
+        run: python3 sim/tools/build_docs_bundle.py
+      - name: Docs bundle is fresh (committed bundle matches a rebuild of docs/)
+        run: python3 sim/tools/check_bundle_fresh.py
+      - name: Docs-explorer bundle + wiring test
+        run: node sim/test_docs.mjs
+      - name: Responsive UI test (skips cleanly if no browser is available)
+        run: node sim/test_responsive.mjs
+      - name: Hosted-deploy env test (no doomed backend probes; skips cleanly if no browser)
+        run: node sim/test_env_hosted.mjs
+      - name: Docs-explorer runtime test (Mermaid/search/highlight; skips cleanly if no browser)
+        run: node sim/test_docs_explorer.mjs
+      - name: Mermaid diagram render audit (no parse errors / clipped labels; skips cleanly if no browser)
+        run: node sim/test_mermaid.mjs
+      - name: Run SIL scenarios (scripted conversations)
+        run: bash sim/run_scenarios.sh
+      - name: SIL + static-site pytest/Playwright suite (all pages, resolutions, controls)
+        run: |
+          python3 -m pip install -q playwright pytest
+          python3 -m playwright install --with-deps chromium
+          python3 -m pytest sim/tests -q
