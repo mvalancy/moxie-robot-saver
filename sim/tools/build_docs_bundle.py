@@ -65,6 +65,7 @@ def collect():
     TEXT_EXT = (".tsv", ".dts")
     for base, prefix in roots:
         for dirpath, _dirs, names in os.walk(base):
+            _dirs.sort()  # deterministic traversal order (os.walk yields dirs in FS order)
             for n in sorted(names):
                 if not (n.endswith(".md") or n.endswith(TEXT_EXT)):
                     continue
@@ -154,7 +155,7 @@ def main():
                   fh, indent=1, ensure_ascii=False)
     # Separate, lazily-fetched full-text index (only loaded when the user searches).
     with open(SEARCH, "w", encoding="utf-8") as fh:
-        json.dump(search, fh, ensure_ascii=False, separators=(",", ":"))
+        json.dump(search, fh, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
     total_mermaid = sum(e["mermaid"] for e in entries)
     print(f"[docs-bundle] {len(entries)} markdown files, "
