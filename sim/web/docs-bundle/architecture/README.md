@@ -4,7 +4,9 @@ How all the pieces fit together.
 
 - [`overview.md`](overview.md) — the two-channel model, the components, the appliance vision, privacy.
 - [`revival-path.md`](revival-path.md) — the exact steps + firmware gate to revive a robot (the 3-QR sequence).
-- [`mqtt-and-conversation.md`](mqtt-and-conversation.md) — the robot-cloud spec: endpoint QR, MQTT broker,
+- [`rest-api-contract.md`](rest-api-contract.md) — **Channel 1, the control plane**: the REST services
+  our parent-app server exposes (auth, children, pairing, robot settings) + the minimum-viable-server path.
+- [`mqtt-and-conversation.md`](mqtt-and-conversation.md) — **Channel 2, the robot cloud**: endpoint QR, MQTT broker,
   topics, conversation flow, and the local-AI plug-in points (Phases 2–3).
 - [`ai-seam.md`](ai-seam.md) — **the interface contract** for the three seams a backend fills (STT in /
   brain-RemoteChat / TTS out): exact wire shapes + a conformance checklist. Build any AI into Moxie from this.

@@ -1,5 +1,5 @@
 {
- "generated": "docs-8aa7fd508b0f",
+ "generated": "docs-e009b6ec740e",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 1378,
+   "bytes": 1601,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -84,6 +84,24 @@
     "Step 3 — Connect & talk 🔨",
     "If you're on 24.10.801",
     "No teardown required"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/rest-api-contract.md",
+   "title": "Parent-app server — REST services contract",
+   "section": "architecture",
+   "bytes": 9071,
+   "mermaid": 0,
+   "headings": [
+    "What this server is",
+    "Transport & auth",
+    "The zero-knowledge principle (must preserve)",
+    "Minimum viable server (the pairing-critical path)",
+    "Full endpoint surface (distilled)",
+    "The `users/me` document shape (JSON:API)",
+    "What a clean-room server can simplify",
+    "Conformance checklist"
    ],
    "kind": "md"
   },
@@ -321,7 +339,7 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 8517,
+   "bytes": 8629,
    "mermaid": 0,
    "headings": [
     "Start here",
