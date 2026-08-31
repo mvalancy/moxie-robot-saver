@@ -97,12 +97,32 @@ def browser():
         b.close()
 
 
+# Console errors that are benign for the STATIC site running with no backend.
+# The sim is designed to run bus-free (hand-control mode); when served from
+# localhost it probes the optional local sidecar/broker, and if nothing is
+# listening the browser's network layer emits `net::ERR_CONNECTION_REFUSED`
+# (unsuppressable from JS). That is expected here — CI runs the static server
+# only, no broker — so it is not a page defect. A genuinely missing asset is a
+# 404 ("...status of 404"), a different string, so real regressions still fail.
+_BENIGN_CONSOLE = ("favicon", "ERR_CONNECTION_REFUSED")
+
+
+def _is_benign(msg: str) -> bool:
+    return any(tok in msg for tok in _BENIGN_CONSOLE)
+
+
 @pytest.fixture
 def page(browser):
-    """A fresh page that records console errors on `page.console_errors`."""
+    """A fresh page that records real console errors on `page.console_errors`.
+
+    Benign 'optional backend absent' errors (see `_BENIGN_CONSOLE`) are filtered
+    at capture, so the suite is hermetic — it passes with OR without a broker up.
+    """
     page = browser.new_page()
     errors = []
-    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("console",
+            lambda m: errors.append(m.text)
+            if m.type == "error" and not _is_benign(m.text) else None)
     page.on("pageerror", lambda e: errors.append(f"PAGEERR {e}"))
     page.console_errors = errors
     yield page
