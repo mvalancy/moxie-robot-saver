@@ -39,7 +39,7 @@ Field numbers are preserved, so the generated bindings serialize/parse **identic
 - **Catalog** them: one browsable page listing every message with its fields + every enum with its values. This is the protocol source-of-truth and is trivially clean-room-complete (the `.proto` *is* the data).
 
 ## Worked example (Moxie)
-Recovered **120 `.proto` files** (376 messages, 84 enums, 17 namespaces) from the base64 descriptors in
+Recovered **120 `.proto` files** (382 messages, 84 enums, 17 namespaces) from the base64 descriptors in
 `Embodied.Protos.dll` / `WifiApp.Protos.dll` / `Assembly-CSharp.dll`. All compile under `protoc`; a
 round-trip cross-check against the community **OpenMoxie** server matched byte-for-byte. Output:
 `docs/reverse-engineering/protocol/recovered-proto/**` + `proto-catalog.md`, queryable via the toolkit's
