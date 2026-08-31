@@ -60,7 +60,8 @@ The docs below are the reverse-engineered **facts**; the [`architecture/`](archi
 - [`../tools/robot-toolkit/`](../tools/robot-toolkit/) — the toolkit (QR, ZMQ bus, cloud helpers, protoref, secrets).
 
 ## Guides & context
-- [`guides/`](guides/) — owner how-tos: first-time setup, factory reset, find Moxie on LAN.
+- [`guides/`](guides/) — owner how-tos. **Start with [revive-your-moxie](guides/revive-your-moxie.md)**
+  (the end-to-end path); then first-time setup, factory reset, find Moxie on LAN, and Cloudflare deploy.
 - [`debugging/`](debugging/) — live hardware-debug notes, QR-command findings.
 - [`community-research.md`](community-research.md) — the revival community (OpenMoxie & friends) and where we fit.
 

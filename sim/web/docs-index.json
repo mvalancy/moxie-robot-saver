@@ -1,5 +1,5 @@
 {
- "generated": "docs-b321d54b5c6f",
+ "generated": "docs-b1393e847247",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -399,7 +399,7 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 8629,
+   "bytes": 8746,
    "mermaid": 0,
    "headings": [
     "Start here",
@@ -560,9 +560,27 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 849,
+   "bytes": 848,
    "mermaid": 0,
    "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "guides/revive-your-moxie.md",
+   "title": "Revive your Moxie — the full path",
+   "section": "guides",
+   "bytes": 7125,
+   "mermaid": 1,
+   "headings": [
+    "Which path are you on?",
+    "1. Stand up the backend (everyone)",
+    "Give it a brain (LLM)",
+    "Give it a voice and ears (optional but fun)",
+    "Path A — no robot: run the simulator",
+    "Path B — you have an 801/803 robot: re-home it with a QR",
+    "Path C — a pre-801 robot: flash it first",
+    "Going further"
+   ],
    "kind": "md"
   },
   {
@@ -605,24 +623,6 @@
     "Quick method — ARP scan by vendor",
     "Confirming it's Moxie",
     "Worked example"
-   ],
-   "kind": "md"
-  },
-  {
-   "path": "guides/revive-your-moxie.md",
-   "title": "Revive your Moxie — the full path",
-   "section": "guides",
-   "bytes": 7125,
-   "mermaid": 1,
-   "headings": [
-    "Which path are you on?",
-    "1. Stand up the backend (everyone)",
-    "Give it a brain (LLM)",
-    "Give it a voice and ears (optional but fun)",
-    "Path A — no robot: run the simulator",
-    "Path B — you have an 801/803 robot: re-home it with a QR",
-    "Path C — a pre-801 robot: flash it first",
-    "Going further"
    ],
    "kind": "md"
   },
