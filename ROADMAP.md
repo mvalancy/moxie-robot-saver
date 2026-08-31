@@ -12,9 +12,9 @@ Legend: ✅ done · 🔨 in progress · ⬜ planned · 🔬 research
 Completely map the parent app so nothing is guessed.
 - ✅ Decompile + map the REST API, auth, crypto, pairing, QR formats, app structure.
 - ✅ Survey the community (OpenMoxie) so we build the gap, not a duplicate.
-- 🔨 **Exhaustive feature catalog** — every user-facing *and* hidden/developer feature.
-- 🔨 **Robot lifecycle** — pairing, unpair, **factory reset**, restore/backup, reboot, OTA.
-- 🔨 **MQTT + conversation protocol** spec (from OpenMoxie's real Embodied protobufs).
+- ✅ **Exhaustive feature catalog** — every user-facing *and* hidden/developer feature.
+- ✅ **Robot lifecycle** — pairing, unpair, **factory reset**, restore/backup, reboot, OTA.
+- ✅ **MQTT + conversation protocol** spec — distilled into the `docs/architecture/` contracts (MQTT topics, the AI seam, config & telemetry).
 
 ## Phase 1 — Parent app (control plane)  ✅ working
 Recreate the app owners used to set up Moxie — client + server, local, account-free.
