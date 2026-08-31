@@ -1,0 +1,16 @@
+dir	package	versionName	versionCode	targetSdk	signer
+BluetoothSpeaker	com.embodied.bluetoothtest	1.0	1	32	Embodied
+BurnInTest	me.embodied.productiontesting.burnintest	3005004-PP	3005004	28	Embodied Inc
+FabTestSoftware	me.embodied.fab.fabtestsoftware	1.0	1	25	Android Debug
+Launcher3Robot	com.android.launcher3	9	28	23	Embodied
+OSUpdate	com.embodied.osupdate	1.1	2	29	Embodied
+bo-android	com.embodied.bo_unity	24.10.803	1	30	Android Debug
+bo-firmwareUpdate	me.embodied.bo_firmwareupdate	GOBY	7	28	Embodied Inc
+bo-wifi	com.embodied.bo_unity_wifi	24.6.100	1	30	Android Debug
+bo_motor_test	com.embodied.bo_motor_test	1.0	1	27	Embodied Inc
+bo_xmosupdate	me.embodied.bo_xmosupdate	2.0	2	26	Embodied Inc
+me.embodied.productiontesting.finaltest	me.embodied.productiontesting.finaltest	3005004-PP	3005004	28	Embodied Inc
+me.embodied.productiontesting.internalassytest	me.embodied.productiontesting.internalassytest	3005004-PP	3005004	28	Embodied Inc
+me.embodied.productiontesting.lifetest	me.embodied.productiontesting.lifetest	3005004-PP	3005004	28	Embodied Inc
+qcapp	me.embodied.productiontesting.qc	3005004-PP	3005004	28	Embodied Inc
+xmosdfu	me.embodied.xmosdfu	1.1	2	28	Embodied Inc

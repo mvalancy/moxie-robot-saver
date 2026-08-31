@@ -1,0 +1,16 @@
+36bb1d3e7eb38326e9084fffc8dba384	20300	system/bin/ledctrld
+1a7006055ce59cd4f4a17ca0a159a159	24740	system/bin/projectorfanpid
+04d6aa6745a8e629728cb95819fdb3fd	1008593926	system/priv-app/bo-android/bo-android.apk
+564d06fa6daafb1da9e8f58e4361460c	15628175	system/priv-app/bo_xmosupdate/bo_xmosupdate.apk
+36d941b0790b8d7040a2230ef0bb4153	6257311	system/priv-app/xmosdfu/xmosdfu.apk
+510ec7432c1d5f5e07fd53c6577ed7fc	2778599	system/priv-app/OSUpdate/OSUpdate.apk
+2fc6f8865dadbe0768ef604a604aa1b4	151475740	system/priv-app/bo-wifi/bo-wifi.apk
+5efc742e4d47dab817d3f5e83c222695	4748342	system/priv-app/bo-firmwareUpdate/bo-firmwareUpdate.apk
+9d0278742aaf6771afd1f5e29bfbdbf2	28297114	system/priv-app/me.embodied.productiontesting.internalassytest/me.embodied.productiontesting.internalassytest.apk
+e12f09200ec0f859afd9c7ad8badaa18	29713776	system/priv-app/me.embodied.productiontesting.finaltest/me.embodied.productiontesting.finaltest.apk
+18dd756c9e69b0204cc8790a9b31ce3d	28154471	system/priv-app/me.embodied.productiontesting.lifetest/me.embodied.productiontesting.lifetest.apk
+0502e25495beb8f3fc3e91161fa07a2e	4485212	system/priv-app/bo_motor_test/bo_motor_test.apk
+bc9b2dc29c810b074dd322f59c6dfb8d	2994708	system/priv-app/Launcher3Robot/Launcher3Robot.apk
+e5db831be766fa2280bbf66b056fce85	22998812	system/priv-app/qcapp/qcapp.apk
+20c2011571d9503defd614dfbd1dec76	139533493	system/priv-app/FabTestSoftware/FabTestSoftware.apk
+52cceff5662a4dd55f79c7058cafd31c	37570	system/app/OSControl/OSControl.apk

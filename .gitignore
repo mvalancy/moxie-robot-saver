@@ -35,7 +35,10 @@ mqtt/broker/keys/
 mqtt/broker/log/
 
 # large / proprietary firmware images (never commit)
-firmware/
+# NOTE: anchored to the repo root — an unanchored `firmware/` also matched
+# docs/reverse-engineering/firmware/ and the docs-bundle mirror, silently
+# dropping tracked docs (broke CI: missing firmware/README.md + stale bundle).
+/firmware/
 *.img
 
 # qr-rig runtime
