@@ -50,7 +50,7 @@ honest and prioritized:
 3. **The firmware teardown.** Unpacked the images; inventoried apps/libs/init/permissions; decompiled the
    Unity **brain** (`Assembly-CSharp`) — the richest artifact by far — and the native `libbo-*` libs.
 4. **The protocol, recovered exactly.** Extracted the embedded protobuf `FileDescriptorProto`s → **120
-   `.proto` files** (376 messages), compile-clean and byte-parity-verified against a community server. This
+   `.proto` files** (382 messages), compile-clean and byte-parity-verified against a community server. This
    is the wire source-of-truth and powers the toolkit + simulator.
 5. **Depth, layer by layer.** ~40 focused passes over the brain: behavior tree + markup, face animation,
    perception/gaze/turn-taking, task scheduler + action arbiter, the native boundary, the multi-processor

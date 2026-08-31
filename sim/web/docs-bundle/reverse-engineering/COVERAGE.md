@@ -82,7 +82,7 @@ this piece from the doc alone?** A doc that only *points at* Moxie data isn't do
 
 | Piece | Captured in |
 |---|---|
-| Wire protocol — all 376 messages + fields, + the `.proto` IDL | [proto-catalog](protocol/proto-catalog.md) · [recovered-proto/](protocol/recovered-proto/) |
+| Wire protocol — all 382 messages + fields, + the `.proto` IDL | [proto-catalog](protocol/proto-catalog.md) · [recovered-proto/](protocol/recovered-proto/) |
 | Cloud/REST/MQTT — endpoints, topics, auth, [built-in hosts](protocol/cloud-protocol.md#the-built-in-endpoint-hosts-baked-into-libbo-logger), [full session sequence](protocol/cloud-protocol.md#the-full-session-power-on-to-first-spoken-line) | [cloud-protocol](protocol/cloud-protocol.md) |
 | QR command space — the closed grammar + native dispatch (`report`/`endpoint_update`/`om`) | [qr-commands](protocol/qr-commands.md) |
 | Crypto & pairing — the one-seed key system, algorithms | [crypto-and-keys](phone/crypto-and-keys.md) |
