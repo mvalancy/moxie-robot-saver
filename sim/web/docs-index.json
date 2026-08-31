@@ -1,5 +1,5 @@
 {
- "generated": "docs-b1393e847247",
+ "generated": "docs-915d4867a13f",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -330,10 +330,10 @@
    "path": "debugging/README.md",
    "title": "Debugging",
    "section": "debugging",
-   "bytes": 1948,
+   "bytes": 2489,
    "mermaid": 0,
    "headings": [
-    "How the QR-command hunt works"
+    "How the QR-command hunt worked (historical — now closed)"
    ],
    "kind": "md"
   },
