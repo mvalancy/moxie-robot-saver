@@ -60,6 +60,13 @@ honest and prioritized:
 7. **Publish + keep it coherent.** A static docs explorer over a reproducible bundle, with mechanical guards
    (links + anchors, consistency, mermaid, headless), a README hierarchy, and a top-down consistency SOP so
    the message stays consistent root-to-leaf.
+8. **Distill the study into a build spec.** The reverse-engineering docs are the *source of truth* — but
+   they're sprawling (dozens of deep passes), and an implementer shouldn't re-derive the build from them
+   each time. So we distilled the study into a small **[spec layer](../architecture/README.md)** — a handful
+   of versioned, **standalone** implementation contracts (REST, MQTT, the AI seam, config/telemetry,
+   content, the sim-as-client) each citing the study but readable on its own, plus a build-order spine.
+   Separation of concerns: the study stays as reference; the contracts are what you build from. This is the
+   bridge from "we understand it" to "someone can rebuild it" — do it explicitly, don't leave it implied.
 
 ## The method, step by step (each is a skill)
 | Phase | Skill | Output |

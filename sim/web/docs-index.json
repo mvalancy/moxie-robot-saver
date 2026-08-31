@@ -1,5 +1,5 @@
 {
- "generated": "docs-8d2b123afd41",
+ "generated": "docs-fb0c73bfb5aa",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -712,7 +712,7 @@
    "path": "reverse-engineering/PLAYBOOK.md",
    "title": "The Android-robot revival playbook",
    "section": "reverse-engineering",
-   "bytes": 7417,
+   "bytes": 8161,
    "mermaid": 1,
    "headings": [
     "Why this generalizes",
