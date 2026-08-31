@@ -1,5 +1,5 @@
 {
- "generated": "docs-d2d10469181b",
+ "generated": "docs-151211749339",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -26,7 +26,7 @@
    "path": "_root/ROADMAP.md",
    "title": "Roadmap — end-to-end Moxie revival",
    "section": "_root",
-   "bytes": 8386,
+   "bytes": 8385,
    "mermaid": 0,
    "headings": [
     "Phase 0 — Reverse engineering  ✅",
@@ -35,7 +35,7 @@
     "Phase 3 — Make Moxie talk  ⬜",
     "Phase 4 — The full experience  ⬜",
     "Phase 5 — Packaging  ⬜",
-    "Milestone — the experience, hosted online (static) 🔨",
+    "Milestone — the experience, hosted online (static) ✅",
     "Parallel research tracks 🔬",
     "Track A — Moxie sees (camera + vision)",
     "Track B — Older robots (firmware)",

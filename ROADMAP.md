@@ -59,7 +59,7 @@ Make it something a non-engineer can run.
 - ⬜ Optional hosted deployment for owners who can't self-host (multi-tenant, still zero-knowledge).
 - ⬜ Setup wizard, health dashboard, backup/restore of the whole appliance.
 
-## Milestone — the experience, hosted online (static) 🔨
+## Milestone — the experience, hosted online (static) ✅
 A **combined parent app + simulator + example cloud UI** on **Cloudflare Pages** — "just the basics
 online," growing into the real end-to-end system. Deploy root is `sim/web/` (shared vendored deps).
 Full map: [`docs/architecture/static-experience.md`](docs/architecture/static-experience.md).
