@@ -124,8 +124,10 @@ and the live log in **[`docs/debugging/`](docs/debugging/)**.
 - ✅ Clean-room pairing-QR tooling + deterministic recovery-key crypto, matched to the decompiled app.
 - ✅ A hardware-free test path (`simulate-robot-scan`) that completes pairing with no robot.
 
-**Phases 2–3 — the MQTT broker, conversation engine, and local AI — are being specced and built now.**
-See the **[Roadmap](ROADMAP.md)**.
+**Phases 2–3 — the MQTT broker, conversation engine, and local AI — are now fully specified:** the
+[build contracts](docs/architecture/README.md) (REST · MQTT · AI seam · config/telemetry · content ·
+SIM-as-a-client) define exactly what to build, ready for a clean-room implementation. See the
+**[Roadmap](ROADMAP.md)**.
 
 ---
 

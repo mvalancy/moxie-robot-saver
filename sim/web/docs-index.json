@@ -1,12 +1,12 @@
 {
- "generated": "docs-fb0c73bfb5aa",
+ "generated": "docs-d2d10469181b",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 10934,
+   "bytes": 11122,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
