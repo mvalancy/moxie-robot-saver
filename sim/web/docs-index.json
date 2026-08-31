@@ -1,5 +1,5 @@
 {
- "generated": "docs-b850cbb0baab",
+ "generated": "docs-8aa7fd508b0f",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -321,7 +321,7 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 8164,
+   "bytes": 8517,
    "mermaid": 0,
    "headings": [
     "Start here",

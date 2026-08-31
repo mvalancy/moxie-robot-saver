@@ -43,6 +43,10 @@ Clean-room maps of the original phone app, so we can rebuild its behavior.
 
 ## ③ The Server app — the backend we run
 What a self-hosted replacement backend must implement (this repo's [`../server/`](../server/) + [`../mqtt/`](../mqtt/)).
+The docs below are the reverse-engineered **facts**; the [`architecture/`](architecture/README.md) folder
+**distills them into the build spec** — the [overview](architecture/overview.md), the
+[MQTT/conversation contract](architecture/mqtt-and-conversation.md), and the [AI seam](architecture/ai-seam.md)
+(the LLM/STT/TTS interface any backend fills).
 - [`reverse-engineering/cloud-protocol.md`](reverse-engineering/protocol/cloud-protocol.md) — REST `client-service`, MQTT topics + envelope, device auth, STT.
 - [`reverse-engineering/network-trust.md`](reverse-engineering/protocol/network-trust.md) — TLS trust model; the cert a server needs.
 - [`reverse-engineering/content-and-conversation.md`](reverse-engineering/runtime/content-and-conversation.md) — ChatScript + LLM, content-module format, the `volley` API.
