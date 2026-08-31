@@ -176,7 +176,7 @@ flowchart TD
 ## 📚 Documentation
 
 Start at **[`docs/README.md`](docs/README.md)**. Highlights:
-- 🏗️ **Architecture** — [overview](docs/architecture/overview.md) · [revival path](docs/architecture/revival-path.md) · [Moxie as a platform (SDK)](docs/architecture/moxie-as-a-platform.md) · [MQTT & conversation](docs/architecture/mqtt-and-conversation.md) · [vision](docs/architecture/vision.md)
+- 🏗️ **Architecture** — [overview](docs/architecture/overview.md) · [revival path](docs/architecture/revival-path.md), and the **[build contracts](docs/architecture/README.md)** a clean-room backend is built from: [REST services](docs/architecture/rest-api-contract.md) · [MQTT & conversation](docs/architecture/mqtt-and-conversation.md) · [AI seam (LLM/STT/TTS)](docs/architecture/ai-seam.md) · [config & telemetry](docs/architecture/config-and-telemetry-contract.md) · [content modules](docs/architecture/content-module-contract.md) · [SIM as a client](docs/architecture/sim-as-a-client.md)
 - 🔬 **Reverse-engineering** (source of truth) — [REST API](docs/reverse-engineering/phone/rest-api.md) · [crypto & keys](docs/reverse-engineering/phone/crypto-and-keys.md) · [pairing & robot](docs/reverse-engineering/phone/pairing-and-robot.md) · [QR format](docs/reverse-engineering/phone/qr-format.md) · [app structure](docs/reverse-engineering/phone/app-structure.md)
 - 🎛️ **Features** — the complete parent-app [feature catalog](docs/features/)
 - 🧭 **Guides** — [first-time setup](docs/guides/first-time-setup.md) · [factory reset](docs/guides/factory-reset-a-paired-moxie.md) · [find Moxie on the LAN](docs/guides/find-moxie-on-lan.md)
