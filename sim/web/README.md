@@ -3,7 +3,8 @@
 A self-contained WebGL (three.js) model of the Moxie robot: teal teardrop shell,
 tilted oval face-screen with an animated canvas face, two-segment paddle arms,
 and a 7-DOF rig matching the real robot's motors. This is the visual half of the
-simulator; a future bridge will drive it over MQTT via the `window.moxie` API.
+simulator; [`bridge.js`](bridge.js) drives it live over MQTT via the `window.moxie` API
+(and the by-hand control panel works with no bus at all).
 
 ## Viewing it
 
@@ -16,7 +17,8 @@ python3 -m http.server 8080
 Any static server works, **fully offline** — three.js (r160) and MQTT.js (5.10.1)
 are vendored in [`vendor/`](vendor/) (no CDN).
 Drag to orbit the camera, scroll to zoom. The right-hand panel drives every
-API call by hand, so the model is demonstrable before any MQTT wiring exists.
+API call by hand, so the model is demonstrable with no bus running; `bridge.js`
+drives the same API live from MQTT when a broker + supervisor are connected.
 
 ## Files
 
@@ -24,6 +26,7 @@ API call by hand, so the model is demonstrable before any MQTT wiring exists.
 |---|---|
 | `index.html` | page shell, importmap (three@0.160.0), HUD rail markup, bus-status→HUD glue script |
 | `moxie.js` | model, rig, face renderer, animation loop, `window.moxie` API |
+| `bridge.js` | MQTT→avatar bridge: subscribes to the bus and drives `window.moxie` from live `remote-chat`/markup/motor traffic |
 | `style.css` | mission-control HUD skin (dark void + cyan telemetry, per [docs/design/style-guide.md](../../docs/design/style-guide.md)) |
 
 ## JS control API (`window.moxie`)
