@@ -31,7 +31,7 @@ flowchart TB
 
 | Path | Domain | What it is |
 |---|---|---|
-| [`docs/`](docs/) | all | The documentation. `docs/reverse-engineering/` is split phone-side vs robot-side; see [`docs/README.md`](docs/README.md) for the 3-domain index. |
+| [`docs/`](docs/) | all | The documentation. `docs/reverse-engineering/` is the clean-room study (split phone-side vs robot-side); [`docs/architecture/`](docs/architecture/README.md) distills it into the **build-spec contracts** a clean-room backend is built from. See [`docs/README.md`](docs/README.md) for the 3-domain index. |
 | [`tools/robot-toolkit/`](tools/robot-toolkit/) | ① robot / shared | QR codec, ZMQ bus client, cloud helpers, protoref, secrets extractor, 120 proto bindings. |
 | [`tools/pairing/`](tools/pairing/) | ② parent app | The phone-side pairing-QR encoder (`moxie_qr.py`). |
 | [`tools/qr-rig/`](tools/qr-rig/) | ① robot | Camera QR validation rig. |
