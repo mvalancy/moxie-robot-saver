@@ -77,20 +77,21 @@ def test_all_expression_buttons(page, server):
 def test_alive_toggle(page, server):
     page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(f"{server}/sim.html", wait_until="domcontentloaded")
-    page.wait_for_function("window.moxie && window.moxieLife")
-    # ON by default
+    # ON by default — wait for the alive state to actually initialize, not just for
+    # the objects to exist (a slow CI runner can assert before init → flake).
+    page.wait_for_function("window.moxie && window.moxieLife && window.moxie.isAlive()")
     assert page.evaluate("() => window.moxie.isAlive()") is True
     assert "alive-on" in page.get_attribute("#alive-toggle", "class")
-    # toggle OFF
+    # toggle OFF — wait on the condition, not a fixed timeout
     page.click("#alive-toggle")
-    page.wait_for_timeout(300)
+    page.wait_for_function("() => window.moxie.isAlive() === false")
     assert page.evaluate("() => window.moxie.isAlive()") is False
     assert "alive-off" in page.get_attribute("#alive-toggle", "class")
     assert page.is_checked("#idle-on") is False          # panel checkbox mirrors
     assert page.evaluate("() => window.moxieLife.isRunning()") is False
     # toggle back ON
     page.click("#alive-toggle")
-    page.wait_for_timeout(200)
+    page.wait_for_function("() => window.moxie.isAlive() === true")
     assert page.evaluate("() => window.moxie.isAlive()") is True
     assert page.is_checked("#idle-on") is True
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
