@@ -78,7 +78,9 @@ class LLMApp(MoxieApp):
                  temperature: float = 0.8, max_history: int = 12,
                  expressive: bool = True):
         from openai import OpenAI          # lazy import so the SDK has no hard dep
-        self._client = OpenAI(base_url=base_url, api_key=api_key or "sk-local")
+        from ..chat import Pacer
+        self._client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
+        self._pacer = Pacer()             # adaptive backoff owns retries, not openai
         self._model = model
         self._persona = persona
         self._max_tokens = max_tokens
@@ -138,16 +140,24 @@ class LLMApp(MoxieApp):
         messages += turn.history[-self._max_history:]
         messages.append({"role": "user", "content": turn.speech})
         try:
-            resp = self._client.chat.completions.create(
-                model=self._model, messages=messages,
-                max_tokens=self._max_tokens, temperature=self._temperature)
-            raw = (resp.choices[0].message.content or "").strip()
+            from ..chat import call_with_backoff
+            def _once():
+                r = self._client.chat.completions.create(
+                    model=self._model, messages=messages,
+                    max_tokens=self._max_tokens, temperature=self._temperature)
+                return (r.choices[0].message.content or "").strip()
+            raw = call_with_backoff(_once, pacer=self._pacer)
         except Exception as e:
             # Endpoint unreachable → signal ERROR_OFFLINE so the robot degrades to its
             # on-device fallback (ai-seam.md §2) instead of us faking a line. Any other
             # (soft) error → keep the robot talking with a friendly retry.
             if _is_offline_error(e):
                 return Reply.offline()
+            from ..chat import is_rate_limit_error
+            if is_rate_limit_error(e):
+                text = "Give me one tiny second to think... okay, go on!"
+                return Reply(text=text, markup=build_markup(text, "neutral", "think"),
+                             end_turn=False)
             text = "Hmm, my brain got a little fuzzy. Can you say that again?"
             return Reply(text=text, markup=build_markup(text, "oops", "self"),
                          end_turn=False)

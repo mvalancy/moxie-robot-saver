@@ -89,7 +89,9 @@ git-ignored `mqtt/.env`, never committed); voice via `MOXIE_VOICE_BASE_URL` when
 
 Per [`running-layered-session-loops`](../../.claude/skills/running-layered-session-loops/SKILL.md):
 smallest shippable slice; a test with every feature; **verify before commit** (local guards + keep CI
-green — a build that reddens CI is not done); honesty over green; don't manufacture. Clean-room: build
+green — a build that reddens CI is not done); honesty over green; don't manufacture. **Gateway resilience:**
+the AI seam backs off + paces on rate-limits (429/5xx) instead of failing — a busy gateway slows us down,
+the child hears a gentle "one moment", the operator sees a clean status (`moxie_sdk/chat.py`). Clean-room: build
 only from these specs + `docs/reverse-engineering/`, never the vendor app. Never commit keys/endpoints
 (git-ignored `.env` only).
 

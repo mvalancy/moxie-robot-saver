@@ -104,11 +104,14 @@ class ContentApp(MoxieApp):
         try:
             text = (self._chat(messages) or "").strip()
         except Exception as e:
-            # unreachable endpoint → ERROR_OFFLINE (robot local-fallback); soft error →
-            # keep the child engaged. Mirrors LLMApp (ai-seam.md §2).
-            from ..chat import is_offline_error
+            # Graceful degradation (ai-seam.md §2): unreachable → ERROR_OFFLINE (robot
+            # local-fallback); still rate-limited after backoff → a gentle "one moment"
+            # so the child isn't dropped; other soft error → keep them engaged.
+            from ..chat import is_offline_error, is_rate_limit_error
             if is_offline_error(e):
                 return Reply.offline()
+            if is_rate_limit_error(e):
+                return Reply(text="Give me one tiny second to think... okay, what were you saying?")
             return Reply(text="Hmm, my brain got fuzzy — say that again?")
         if not text:
             return Reply(text="Tell me more!")
