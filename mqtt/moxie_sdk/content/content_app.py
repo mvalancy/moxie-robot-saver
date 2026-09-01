@@ -68,9 +68,9 @@ class ContentApp(MoxieApp):
     def greeting(self, robot: RobotContext) -> Optional[Reply]:
         conv = self._active_conversation(Turn(robot=robot, speech=""))
         if conv and conv.opener:
-            line = conv.opener.split("|")[0].strip()
-            # strip inline tags like <opener>
-            line = line.replace("<opener>", "").strip()
+            v = self._volley(Turn(robot=robot, speech=""))
+            line = render_prompt(conv.opener.split("|")[0], {"volley": v, "session": Session()})
+            line = line.replace("<opener>", "").strip()   # strip inline tags
             if line:
                 return Reply(text=line)
         return None
@@ -101,7 +101,15 @@ class ContentApp(MoxieApp):
         messages = [{"role": "system", "content": system}]
         messages += turn.history[-conv.max_history:]
         messages.append({"role": "user", "content": turn.speech})
-        text = (self._chat(messages) or "").strip()
+        try:
+            text = (self._chat(messages) or "").strip()
+        except Exception as e:
+            # unreachable endpoint → ERROR_OFFLINE (robot local-fallback); soft error →
+            # keep the child engaged. Mirrors LLMApp (ai-seam.md §2).
+            from ..chat import is_offline_error
+            if is_offline_error(e):
+                return Reply.offline()
+            return Reply(text="Hmm, my brain got fuzzy — say that again?")
         if not text:
             return Reply(text="Tell me more!")
         return Reply(text=text)

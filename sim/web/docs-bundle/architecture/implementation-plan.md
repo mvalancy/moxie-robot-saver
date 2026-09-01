@@ -30,7 +30,7 @@ Ours is built to the full recovered protocol with clean seams:
 | AI seam — LLM brain | [ai-seam](ai-seam.md) §2 | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback | `mqtt/moxie_sdk/apps/llm_app.py` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🔴 stub (`handle_zmq`) | `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🔴 not built (sim/tts exists standalone) | — |
-| Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp runs conversations/globals through the AI seam (exec-code + action-plumbing deferred) | `mqtt/moxie_sdk/content/` |
+| Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
 | Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟡 minimal config push; no telemetry | `moxie_runtime.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 

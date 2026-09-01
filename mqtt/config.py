@@ -34,8 +34,11 @@ BROKER_PUBLIC_HOST = os.environ.get("MOXIE_BROKER_HOST", "192.168.1.9")
 BROKER_PUBLIC_PORT = int(os.environ.get("MOXIE_BROKER_PORT", "8883"))
 
 # --- which MoxieApp drives the robot ---
-# "llm" (default), "echo", or "webhook"
+# "llm" (default), "echo", "webhook", or "content"
 MOXIE_APP = os.environ.get("MOXIE_APP", "llm")
+
+# Content app: a data-driven module (conversations/globals) run through the AI seam.
+CONTENT_MODULE = os.environ.get("MOXIE_CONTENT_MODULE", "content_modules/starter.json")
 
 # LLM app (OpenAI-compatible; local-first)
 LLM_BASE_URL = os.environ.get("MOXIE_LLM_BASE_URL", "https://vps-gateway.chocolate-perch.ts.net/v1")
@@ -60,4 +63,21 @@ def build_app():
         if not WEBHOOK_ENDPOINT:
             raise SystemExit("MOXIE_APP=webhook requires MOXIE_WEBHOOK_ENDPOINT")
         return WebhookApp(WEBHOOK_ENDPOINT)
+    if MOXIE_APP == "content":
+        return build_content_app()
     return LLMApp(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, model=LLM_MODEL)
+
+
+def build_content_app():
+    """A ContentApp running the configured module through the AI seam."""
+    import json
+    from moxie_sdk.content import load_modules, ContentApp
+    from moxie_sdk.chat import make_openai_chat
+    from moxie_sdk.apps.llm_app import DEFAULT_PERSONA
+    path = CONTENT_MODULE
+    if not os.path.isabs(path):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
+    with open(path) as fh:
+        module = load_modules(json.load(fh))
+    chat = make_openai_chat(LLM_BASE_URL, LLM_API_KEY, LLM_MODEL)
+    return ContentApp(module, chat, persona=DEFAULT_PERSONA)

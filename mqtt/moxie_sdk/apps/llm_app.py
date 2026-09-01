@@ -15,15 +15,7 @@ import re
 
 from ..app import MoxieApp
 from ..types import Turn, Reply, RobotContext
-
-
-def _is_offline_error(e: Exception) -> bool:
-    """True when the LLM endpoint is unreachable (connection/timeout), as opposed to
-    a soft error (bad response, rate limit). Matched by type-name so the SDK keeps no
-    hard dependency on the openai package's exception classes."""
-    names = {type(e).__name__} | {b.__name__ for b in type(e).__mro__}
-    return bool(names & {"APIConnectionError", "APITimeoutError", "ConnectionError",
-                         "ConnectError", "Timeout", "TimeoutError"})
+from ..chat import is_offline_error as _is_offline_error
 
 # Moxie's character. The real persona was cloud-authored and is NOT in the firmware
 # (see content-and-conversation.md "Where Moxie's personality lives"), so a revival
