@@ -21,7 +21,8 @@ from moxie_sdk.types import Turn, Reply, RobotContext, ChildProfile, Action, Res
 from moxie_sdk.wire import build_chat_response  # pure RemoteChat response encoder
 from markup import make_markup  # simple passthrough markup (automarkup pluggable)
 
-import paho.mqtt.client as mqtt
+# paho is imported lazily in _build_client() so the runtime + turn pipeline can be
+# imported and integration-tested without the broker client installed.
 
 CONNECT_RE = re.compile(r"connected from (.*) as (d_[a-f0-9-]+)", re.I)
 DISCONNECT_RE = re.compile(r"Client (d_[a-f0-9-]+) (?:closed its connection|disconnected)", re.I)
@@ -62,9 +63,16 @@ class MoxieRuntime:
         self._pool = ThreadPoolExecutor(max_workers=8)
         self.recent = deque(maxlen=120)          # rolling broker/runtime activity for the UI
         self.started_at = time.time()
+        # The MQTT client is created lazily in run() so the runtime can be constructed
+        # + integration-tested with an injected fake transport (no broker required).
+        self.client = None
+
+    def _build_client(self):
+        import paho.mqtt.client as mqtt
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="supervisor")
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
+        return self.client
 
     # ---- conversation memory (survives restarts) ----
     def _memory_path(self, device_id: str) -> str:
@@ -105,6 +113,8 @@ class MoxieRuntime:
 
     # ---- lifecycle ----
     def run(self, status_port: int = 8930):
+        if self.client is None:
+            self._build_client()
         self._start_status_server(status_port)
         print(f"[runtime] connecting to broker {self.host}:{self.port} · app={self.app.name}")
         self._note("info", f"supervisor started (app={self.app.name})")
