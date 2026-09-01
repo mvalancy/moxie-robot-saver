@@ -66,6 +66,21 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 - **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); the remaining wire step is decoding the real **zmqSTTRequest protobuf** off events/zmq (needs the compiled proto) + a live faster-whisper test. TTS out (§3) not built (M4). Input safety/moderation (§2) unbuilt.
 - **config/telemetry:** only a minimal config push exists; no `RobotStatus`/`Packet`/`LoggingPolicy` (M5).
 
+## DoD progress (audited 2026-09-01) — ≈ 45%
+
+| # | Criterion | Status | Notes |
+|--:|---|---|---|
+| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~50% | brain live-validated 🟢; STT + TTS **seams** wired but not a full live chain (needs voice server + SIM-audio wiring + real zmqSTT protobuf decode) |
+| 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
+| 3 | Cloud management (console + config/telemetry) | 🔴→🟡 ~30% | config push minimal; telemetry unbuilt; console = pairing only — **weakest, next focus** |
+| 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
+| 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command unverified (M7) |
+| 6 | Green + live-tested | 🟡 | CI green + live LLM turn 🟢; live voice + a full e2e scenario pending |
+
+**Most valuable next slice:** criterion 3 is weakest and fully unblocked → **M5 config/telemetry**
+(RobotCloudConfig round-trip + /state ingest + LoggingPolicy). Criterion 1 (talk-e2e) is gated on the
+voice-server creds for live TTS; the CloudTTSRequest runtime handler can still land with a stub.
+
 ## Definition of done — the complete end-to-end system
 
 The build is DONE when all of the below hold together, not milestone-by-milestone:
