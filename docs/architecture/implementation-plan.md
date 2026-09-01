@@ -55,6 +55,17 @@ Following the [build-order spine](overview.md); the parent app
 - **M7 — One-command stack + docs.** `docker compose up` runs broker + supervisor + brain + STT/TTS; the
   SIM and a real robot connect identically; deploy/config guides.
 
+## Known gaps (audited, honest)
+
+Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
+
+- **content-module:** `session.summarize()` (the contract's volley/session API) is **not implemented**
+  — it needs the brain wired in for LLM transcript-summarization; every other volley/session call exists.
+  Arbitrary module `code`-string execution is deliberately deferred (sandboxing); `volley.execution_actions`
+  (e.g. `eb_timer_request`) are captured but **not yet plumbed** into `RemoteChatAction` on the wire.
+- **ai-seam:** STT in (§1) and TTS out (§3) are not built (M3/M4). Input safety/moderation (§2) unbuilt.
+- **config/telemetry:** only a minimal config push exists; no `RobotStatus`/`Packet`/`LoggingPolicy` (M5).
+
 ## Working rules (build loops)
 
 Per [`running-layered-session-loops`](../../.claude/skills/running-layered-session-loops/SKILL.md):
