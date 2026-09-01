@@ -10,6 +10,8 @@ runs a module through the AI seam.
 from .module import ContentModule, Conversation, Global, Schedule, load_module, load_modules
 from .volley import Volley, Session
 from .render import render_prompt
+from .content_app import ContentApp
 
 __all__ = ["ContentModule", "Conversation", "Global", "Schedule",
-           "load_module", "load_modules", "Volley", "Session", "render_prompt"]
+           "load_module", "load_modules", "Volley", "Session", "render_prompt",
+           "ContentApp"]
