@@ -40,10 +40,18 @@ MOXIE_APP = os.environ.get("MOXIE_APP", "llm")
 # Content app: a data-driven module (conversations/globals) run through the AI seam.
 CONTENT_MODULE = os.environ.get("MOXIE_CONTENT_MODULE", "content_modules/starter.json")
 
-# LLM app (OpenAI-compatible; local-first)
-LLM_BASE_URL = os.environ.get("MOXIE_LLM_BASE_URL", "https://vps-gateway.chocolate-perch.ts.net/v1")
+# LLM brain — any OpenAI-compatible endpoint. Default: our LiteLLM gateway (public
+# host; the API KEY is never committed — set MOXIE_LLM_API_KEY in a git-ignored .env).
+LLM_BASE_URL = os.environ.get("MOXIE_LLM_BASE_URL", "https://gateway.graphlings.net/v1")
 LLM_API_KEY  = os.environ.get("MOXIE_LLM_API_KEY", os.environ.get("LITELLM_MASTER_KEY", ""))
-LLM_MODEL    = os.environ.get("MOXIE_LLM_MODEL", "qwen3.8-27b")
+LLM_MODEL    = os.environ.get("MOXIE_LLM_MODEL", "gpt-4o-mini")
+
+# AI voice server (optional) — server-side STT/TTS for the SIM + a server voice.
+# OpenAI-compatible audio endpoints assumed (/audio/transcriptions, /audio/speech);
+# key from MOXIE_VOICE_API_KEY (falls back to the LLM key). Empty → not configured.
+VOICE_BASE_URL = os.environ.get("MOXIE_VOICE_BASE_URL", "")
+VOICE_API_KEY  = os.environ.get("MOXIE_VOICE_API_KEY", LLM_API_KEY)
+TTS_VOICE      = os.environ.get("MOXIE_TTS_VOICE", "alloy")
 
 # Webhook app (external avatar bridge)
 WEBHOOK_ENDPOINT = os.environ.get("MOXIE_WEBHOOK_ENDPOINT", "")

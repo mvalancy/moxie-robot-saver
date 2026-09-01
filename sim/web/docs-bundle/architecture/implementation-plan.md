@@ -66,6 +66,25 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 - **ai-seam:** STT in (§1) and TTS out (§3) are not built (M3/M4). Input safety/moderation (§2) unbuilt.
 - **config/telemetry:** only a minimal config push exists; no `RobotStatus`/`Packet`/`LoggingPolicy` (M5).
 
+## Definition of done — the complete end-to-end system
+
+The build is DONE when all of the below hold together, not milestone-by-milestone:
+
+1. **A child can talk to Moxie end to end** — mic → STT → brain (our LiteLLM gateway,
+   `gateway.graphlings.net`) → behavior markup + text → TTS/voice → the SIM (and a real robot) speaks,
+   emotes, and moves. Proven by a live scenario, not a mock.
+2. **Data-driven content** — activities are authored modules (conversations/globals/schedules) the brain runs.
+3. **Cloud management** — the parent console (server/) shows robot state + edits config (bedtime/volume/
+   wake/OTA) via `RobotCloudConfig`; telemetry/insights flow up; LoggingPolicy honored.
+4. **Interchangeable clients** — the SIM and a re-homed robot connect to the same backend identically.
+5. **One command** — `docker compose up` runs broker + supervisor + brain + STT/TTS; config via `.env`.
+6. **Green + tested** — every feature has a test; CI green; a live end-to-end test passes against the
+   gateway (and the voice server) when keys are present (skips cleanly in CI).
+
+**Live testing:** the brain uses our LiteLLM gateway `https://gateway.graphlings.net/v1` (key in a
+git-ignored `mqtt/.env`, never committed); voice via `MOXIE_VOICE_BASE_URL` when available.
+`sim/tests/test_live_gateway.py` exercises a real turn when the key is set.
+
 ## Working rules (build loops)
 
 Per [`running-layered-session-loops`](../../.claude/skills/running-layered-session-loops/SKILL.md):
