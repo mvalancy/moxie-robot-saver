@@ -79,6 +79,28 @@ def test_offline_brain_signals_error_offline_over_the_wire():
     assert resp["result"] == "ERROR_OFFLINE"              # robot uses local fallback
 
 
+def test_content_module_runs_through_the_runtime():
+    """End-to-end: a shipped content module, driven by ContentApp inside the real
+    runtime, produces the module's reply on the wire (event→runtime→ContentApp→publish)."""
+    from moxie_sdk.content import load_modules, ContentApp
+    starter = os.path.join(REPO, "mqtt", "content_modules", "starter.json")
+    with open(starter) as fh:
+        module = load_modules(json.load(fh))
+    app = ContentApp(module, lambda messages: "Dinosaurs are amazing!")
+    rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname="Sam"))
+    rt.client = _FakeClient()
+    did = "d_content"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child,
+                                  module_id="FREE_CHAT", content_id="default")
+    rt._on_remote_chat(did, rt.robots[did],
+                       json.dumps({"command": "prompt", "event_id": "e",
+                                   "speech": "tell me about dinosaurs"}))
+    rt._pool.shutdown(wait=True)
+    resp = _chat(rt.client.published, did)
+    assert resp["result"] == "SUCCESS"
+    assert resp["output"]["text"] == "Dinosaurs are amazing!"
+
+
 def test_history_accumulates_across_the_pipeline():
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
     rt.client = _FakeClient()
