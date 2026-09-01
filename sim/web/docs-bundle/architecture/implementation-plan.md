@@ -30,7 +30,7 @@ Ours is built to the full recovered protocol with clean seams:
 | AI seam — LLM brain | [ai-seam](ai-seam.md) §2 | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback | `mqtt/moxie_sdk/apps/llm_app.py` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🔴 stub (`handle_zmq`) | `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🔴 not built (sim/tts exists standalone) | — |
-| Content-module engine | [content-module](content-module-contract.md) | 🔴 not built | — |
+| Content-module engine | [content-module](content-module-contract.md) | 🟡 engine foundation (model/loader/volley/render/globals); ContentApp next | `mqtt/moxie_sdk/content/` |
 | Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟡 minimal config push; no telemetry | `moxie_runtime.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 
@@ -42,7 +42,7 @@ Following the [build-order spine](overview.md); the parent app
 - **M1 — Spec-conformant turn. ✅ (2026-08-31)** Made the RemoteChat response carry the full contract: ResultCodes
   (REPLY / ERROR_OFFLINE / NOREPLY), the scored output (mood/dialog-act/emotion), and action passthrough
   (launch/exit/sleep/execute) from `Reply.actions`. *(the turn already flows; make it correct)*
-- **M2 — Content-module engine.** Load module JSON (conversations/globals/schedules); run a
+- **M2 — Content-module engine. 🟡 (foundation shipped 2026-08-31)** Load module JSON (conversations/globals/schedules); run a
   `conversations[]` module (Jinja prompt over the volley + persona) through the AI seam; wire `globals[]`
   regex commands; the `volley`/`session` API (set_output, persist_data, add_execution_action).
 - **M3 — AI seam: STT in.** Turn `handle_zmq` into a real STT path — accumulate `zmqSTT` audio →
