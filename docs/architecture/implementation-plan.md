@@ -51,7 +51,7 @@ Following the [build-order spine](overview.md); the parent app
   SIM (and optionally a robot) speaks with a server voice + viseme marks.
 - **M5 — Config & telemetry. 🟡 (config+state 2026-09-01)** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
   ingest, the `Packet` telemetry envelope, and the LoggingPolicy gate.
-- **M6 — Parent console wiring.** Surface robot state + config editing + insights in `server/`'s web UI.
+- **M6 — Parent console wiring. 🟡 (backend 2026-09-01)** Surface robot state + config editing + insights in `server/`'s web UI.
 - **M7 — One-command stack + docs.** `docker compose up` runs broker + supervisor + brain + STT/TTS; the
   SIM and a real robot connect identically; deploy/config guides.
 
@@ -72,7 +72,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 |--:|---|---|---|
 | 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~50% | brain live-validated 🟢; STT + TTS **seams** wired but not a full live chain (needs voice server + SIM-audio wiring + real zmqSTT protobuf decode) |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
-| 3 | Cloud management (console + config/telemetry) | 🟡 ~45% | spec RobotCloudConfig + RobotStatus ingest built; Packet telemetry + console robot-state/config-editing next |
+| 3 | Cloud management (console + config/telemetry) | 🟡 ~55% | RobotCloudConfig + RobotStatus + **config-editing (update_config) + status snapshot** built; Packet telemetry + server/ UI wiring next |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
 | 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command unverified (M7) |
 | 6 | Green + live-tested | 🟡 | CI green + live LLM turn 🟢; live voice + a full e2e scenario pending |

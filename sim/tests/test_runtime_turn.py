@@ -191,3 +191,43 @@ def test_state_ingest_stores_robot_status():
                                   "battery_level": 0.9, "wifi_ssid": "home"}))
     assert rt.robots[did].firmware == "v24.10.803"
     assert rt.robots[did].extra["status"]["battery_level"] == 0.9
+
+
+def test_update_config_republishes_with_merged_overrides():
+    """M6 parent-console: update_config edits the RobotCloudConfig and re-publishes;
+    overrides merge + persist across pushes."""
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"))
+    rt.client = _FakeClient()
+    did = "d_upd"
+    rt.update_config(did, audio_volume=0.9, timezone_id="America/New_York")
+    cfg = [p for (t, p) in rt.client.published if t == f"/devices/{did}/config"][-1]
+    assert cfg["audio_volume"] == 0.9 and cfg["timezone_id"] == "America/New_York"
+    assert cfg["child_pii"]["nickname"] == "Sam"          # base config intact
+    rt.update_config(did, screen_brightness=0.5)           # a second edit merges
+    cfg2 = [p for (t, p) in rt.client.published if t == f"/devices/{did}/config"][-1]
+    assert cfg2["audio_volume"] == 0.9 and cfg2["screen_brightness"] == 0.5
+
+
+def test_update_config_bedtime_window():
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    cfg = rt.update_config("d_bt", weekday_bedtime=("20:00", "07:00"))
+    assert cfg["weekday_bedtime_enabled"] is True
+    assert cfg["weekday_bedtime_starts_at"] == "20:00"
+
+
+def test_status_snapshot_surfaces_robot_state():
+    """M6: the console snapshot carries each robot's live state from /state."""
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"))
+    rt.client = _FakeClient()
+    did = "d_snap"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    rt._on_state(did, json.dumps({"robot_firmware_version": "v24.10.803",
+                                  "battery_level": 0.77, "wifi_ssid": "home", "mode": "idle"}))
+    rt.update_config(did, audio_volume=0.8)
+    snap = rt.status_snapshot()
+    assert snap["ok"] and snap["app"]
+    r = [x for x in snap["robots"] if x["device_id"] == did][0]
+    assert r["battery_level"] == 0.77 and r["wifi_ssid"] == "home" and r["mode"] == "idle"
+    assert r["firmware"] == "v24.10.803"
+    assert r["config_overrides"]["audio_volume"] == 0.8

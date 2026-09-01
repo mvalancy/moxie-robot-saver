@@ -51,6 +51,8 @@ class MoxieRuntime:
         self._transcriber = None
         self._stt_sessions = {}
         self._stt_uuid = {}      # utterance uuid per device (set on any frame that has one)
+        # Parent-console config editing: per-device RobotCloudConfig overrides.
+        self._config_overrides = {}
 
     def _build_client(self):
         import paho.mqtt.client as mqtt
@@ -96,6 +98,25 @@ class MoxieRuntime:
         except Exception as e:
             print(f"[runtime] memory save failed: {e}")
 
+    def status_snapshot(self) -> dict:
+        """The supervisor + robots snapshot the parent console reads (JSON). Each robot
+        carries its live state (battery/volume/wifi/mode/firmware) from the last /state."""
+        robots = []
+        for r in self.robots.values():
+            st = r.extra.get("status", {})
+            robots.append({
+                "device_id": r.device_id, "child": r.child.nickname,
+                "firmware": r.firmware or st.get("robot_firmware_version"),
+                "battery_level": st.get("battery_level"),
+                "audio_volume": st.get("audio_volume"),
+                "wifi_ssid": st.get("wifi_ssid"), "mode": st.get("mode"),
+                "ota_reboot_required": st.get("ota_reboot_required"),
+                "config_overrides": self._config_overrides.get(r.device_id, {}),
+            })
+        return {"ok": True, "app": self.app.name,
+                "uptime_s": int(time.time() - self.started_at),
+                "robots": robots, "recent": list(self.recent)[-60:]}
+
     # ---- lifecycle ----
     def run(self, status_port: int = 8930):
         if self.client is None:
@@ -119,13 +140,7 @@ class MoxieRuntime:
             def do_GET(self):
                 if self.path.split("?")[0] != "/status":
                     self.send_response(404); self.end_headers(); return
-                body = _json.dumps({
-                    "ok": True, "app": rt.app.name,
-                    "uptime_s": int(time.time() - rt.started_at),
-                    "robots": [{"device_id": r.device_id, "firmware": r.firmware,
-                                "child": r.child.nickname} for r in rt.robots.values()],
-                    "recent": list(rt.recent)[-60:],
-                }).encode()
+                body = _json.dumps(rt.status_snapshot()).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(body)
@@ -219,12 +234,22 @@ class MoxieRuntime:
         except Exception:
             pass
 
-    # ---- config push ----
+    # ---- config push / edit (parent console) ----
     def _push_config(self, device_id):
         from moxie_sdk.cloud_config import build_robot_cloud_config
-        cfg = build_robot_cloud_config(self.child)
-        self.client.publish(f"/devices/{device_id}/config", json.dumps(cfg))
+        cfg = build_robot_cloud_config(self.child, **self._config_overrides.get(device_id, {}))
+        if self.client:
+            self.client.publish(f"/devices/{device_id}/config", json.dumps(cfg))
         print(f"[runtime] → pushed config to {device_id} (pairing_status=paired)")
+        return cfg
+
+    def update_config(self, device_id, **overrides):
+        """Parent-console config edit: merge overrides (audio_volume, screen_brightness,
+        timezone_id, logging_policy, weekday_bedtime, wake toggles, …) into this device's
+        RobotCloudConfig and re-publish it. Overrides persist across re-pushes."""
+        self._config_overrides.setdefault(device_id, {}).update(overrides)
+        self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
+        return self._push_config(device_id)
 
     # ---- events ----
     def _on_event(self, device_id, name, payload):
