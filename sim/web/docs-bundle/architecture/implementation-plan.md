@@ -28,7 +28,7 @@ Ours is built to the full recovered protocol with clean seams:
 | Parent-app REST (Channel 1) | [rest-api](rest-api-contract.md) | 🟢 substantially built | `server/` (main.py, crypto, db) |
 | MQTT runtime (connect/config/state/turn) | [mqtt](mqtt-and-conversation.md) · [config](config-and-telemetry-contract.md) | 🟡 core works + end-to-end turn test (lazy client → integration-testable, no broker) | `mqtt/supervisor/moxie_runtime.py` |
 | AI seam — LLM brain | [ai-seam](ai-seam.md) §2 | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback | `mqtt/moxie_sdk/apps/llm_app.py` |
-| AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟡 seam built (VAD accumulator + pluggable transcriber + Whisper backend); handle_zmq wiring next | `mqtt/moxie_sdk/stt.py` |
+| AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟡 seam + wired into runtime (feed_stt → publishes zmqSTTResponse; JSON-frame bridge e2e-tested); real zmqSTTRequest protobuf decode + live whisper remain | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🔴 not built (sim/tts exists standalone) | — |
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
 | Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟡 minimal config push; no telemetry | `moxie_runtime.py` |
@@ -63,7 +63,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   — it needs the brain wired in for LLM transcript-summarization; every other volley/session call exists.
   Arbitrary module `code`-string execution is deliberately deferred (sandboxing); `volley.execution_actions`
   (e.g. `eb_timer_request`) are captured but **not yet plumbed** into `RemoteChatAction` on the wire.
-- **ai-seam:** STT in (§1) and TTS out (§3) are not built (M3/M4). Input safety/moderation (§2) unbuilt.
+- **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); the remaining wire step is decoding the real **zmqSTTRequest protobuf** off events/zmq (needs the compiled proto) + a live faster-whisper test. TTS out (§3) not built (M4). Input safety/moderation (§2) unbuilt.
 - **config/telemetry:** only a minimal config push exists; no `RobotStatus`/`Packet`/`LoggingPolicy` (M5).
 
 ## Definition of done — the complete end-to-end system

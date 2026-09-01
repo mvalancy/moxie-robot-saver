@@ -112,3 +112,54 @@ def test_history_accumulates_across_the_pipeline():
     h = rt.history.get(did, [])
     assert {"role": "user", "content": "hi"} in h
     assert any(m["role"] == "assistant" for m in h)
+
+
+def test_stt_frames_through_runtime_publish_transcript():
+    """AI seam §1 integration: VAD audio frames fed to the runtime accumulate and,
+    on END_OF_SPEECH, publish a zmqSTTResponse with the transcript (fake transcriber)."""
+    from moxie_sdk.stt import Transcriber
+
+    class _Fake(Transcriber):
+        def transcribe(self, pcm, sample_rate=16000):
+            return f"heard {len(pcm)}b"
+
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    rt.set_transcriber(_Fake())
+    did = "d_stt"
+    assert rt.feed_stt(did, 1, b"aa", uuid="u1") is None        # START_OF_SPEECH
+    assert rt.feed_stt(did, 2, b"bb") is None                    # SPEECH
+    out = rt.feed_stt(did, 3, b"cc")                             # END_OF_SPEECH
+    assert out == "heard 6b"
+    topic = f"/devices/{did}/commands/zmq"
+    msgs = [p for (t, p) in rt.client.published if t == topic]
+    assert msgs and msgs[-1]["type"] == "FINAL"
+    assert msgs[-1]["speech"] == "heard 6b" and msgs[-1]["uuid"] == "u1"
+
+
+def test_handle_zmq_json_audio_frame_drives_stt():
+    """events/zmq → handle_zmq JSON bridge → feed_stt → published transcript."""
+    import base64
+    from moxie_sdk.stt import Transcriber
+
+    class _Fake(Transcriber):
+        def transcribe(self, pcm, sample_rate=16000):
+            return "hello moxie"
+
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    rt.set_transcriber(_Fake())
+    did = "d_zmq"
+    a = base64.b64encode(b"xy").decode()
+    rt.handle_zmq(did, json.dumps({"vad": 1, "audio_content": a, "uuid": "u9"}))
+    got = rt.handle_zmq(did, json.dumps({"vad": 3, "audio_content": a, "uuid": "u9"}))
+    assert got == "hello moxie"
+    msgs = [p for (t, p) in rt.client.published if t == f"/devices/{did}/commands/zmq"]
+    assert msgs[-1]["speech"] == "hello moxie"
+
+
+def test_no_transcriber_ignores_audio():
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    assert rt.feed_stt("d", 3, b"aa") is None            # no transcriber → no-op
+    assert rt.client.published == []

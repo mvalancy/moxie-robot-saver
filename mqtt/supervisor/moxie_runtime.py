@@ -66,6 +66,10 @@ class MoxieRuntime:
         # The MQTT client is created lazily in run() so the runtime can be constructed
         # + integration-tested with an injected fake transport (no broker required).
         self.client = None
+        # STT (AI seam §1): an optional transcriber + a per-device VAD accumulator.
+        self._transcriber = None
+        self._stt_sessions = {}
+        self._stt_uuid = {}      # utterance uuid per device (set on any frame that has one)
 
     def _build_client(self):
         import paho.mqtt.client as mqtt
@@ -331,15 +335,62 @@ class MoxieRuntime:
                                             "result": result}))
 
     # ---- STT extension point ----
+    # ---- STT (AI seam §1) ----
+    def set_transcriber(self, transcriber):
+        """Install an STT engine (moxie_sdk.stt.Transcriber). Without one, audio
+        frames are ignored (text turns still work)."""
+        self._transcriber = transcriber
+
+    def _stt_session(self, device_id):
+        from moxie_sdk.stt import SttSession
+        s = self._stt_sessions.get(device_id)
+        if s is None:
+            s = SttSession(self._transcriber)
+            self._stt_sessions[device_id] = s
+        return s
+
+    def feed_stt(self, device_id, vad, audio: bytes = b"", uuid: str = ""):
+        """Feed one VAD-tagged audio frame; on END_OF_SPEECH, transcribe and publish a
+        zmqSTTResponse back to the robot (/devices/{id}/commands/zmq). Returns the
+        transcript when final, else None. No transcriber → no-op."""
+        if self._transcriber is None:
+            return None
+        from moxie_sdk.stt import build_stt_response
+        if uuid:
+            self._stt_uuid[device_id] = uuid          # frames of one utterance share it
+        transcript = self._stt_session(device_id).feed(vad, audio)
+        if transcript is None:
+            return None
+        resp = build_stt_response(self._stt_uuid.pop(device_id, device_id), transcript)
+        if self.client:
+            self.client.publish(f"/devices/{device_id}/commands/zmq", json.dumps(resp))
+        self._note("stt", f"👂 heard: '{transcript[:40]}'")
+        return transcript
+
     def handle_zmq(self, device_id, payload):
-        """STT audio (embodied.perception.audio.zmqSTTRequest) arrives here as
-        `b'<proto.full_name>:' + protobuf_bytes`. Wiring faster-whisper here (decode
-        the proto, accumulate audio_content until END_OF_SPEECH, transcribe, publish
-        a zmqSTTResponse to /devices/{id}/commands/zmq) is the next build step —
-        see docs/architecture/mqtt-and-conversation.md §4.3/§5.2. Not yet implemented."""
+        """STT audio arrives on events/zmq. The real robot sends
+        `b'<proto.full_name>:' + zmqSTTRequest_bytes` (needs the compiled proto to
+        decode — the remaining wire step). A JSON frame
+        `{vad, audio_content(base64), uuid}` is accepted here too, so the STT pipeline
+        (accumulate → transcribe → publish zmqSTTResponse) is exercised end-to-end."""
+        try:
+            data = json.loads(payload)
+        except Exception:
+            data = None
+        if isinstance(data, dict) and "vad" in data:
+            import base64
+            audio = b""
+            if data.get("audio_content"):
+                try:
+                    audio = base64.b64decode(data["audio_content"])
+                except Exception:
+                    audio = b""
+            return self.feed_stt(device_id, data["vad"], audio, data.get("uuid", ""))
         if not getattr(self, "_warned_stt", False):
-            print("[runtime] ⚠️  received STT audio (events/zmq) — faster-whisper STT "
-                  "not yet wired; see handle_zmq(). Text turns still work.")
+            note = ("received protobuf STT audio (events/zmq) — decoding zmqSTTRequest "
+                    "needs the compiled proto (remaining wire step)") if self._transcriber \
+                else "received STT audio but no transcriber is set (text turns still work)"
+            print(f"[runtime] ⚠️  {note}; see handle_zmq().")
             self._warned_stt = True
 
     # ---- publish a chat response ----
