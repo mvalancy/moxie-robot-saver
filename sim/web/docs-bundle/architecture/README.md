@@ -10,7 +10,8 @@ for the bigger picture.
 
 ## The build contracts — *what to implement*
 Versioned, standalone specs distilled from the [reverse-engineering study](../reverse-engineering/README.md).
-A future backend + Sim can be built from these directly; each cites the study but reads on its own.
+A backend + Sim are built from these directly; each cites the study but reads on its own.
+**Now building:** see [`implementation-plan.md`](implementation-plan.md) — the roadmap + honest status.
 - [`rest-api-contract.md`](rest-api-contract.md) — **Channel 1, the control plane**: the REST services the
   parent-app server exposes (auth, children, pairing, robot settings) + the minimum-viable-server path.
 - [`mqtt-and-conversation.md`](mqtt-and-conversation.md) — **Channel 2, the robot cloud**: endpoint QR, the

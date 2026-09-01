@@ -1,5 +1,5 @@
 {
- "generated": "docs-151211749339",
+ "generated": "docs-ec769a9e477b",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 2879,
+   "bytes": 2975,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -89,6 +89,20 @@
     "Step 3 — Connect & talk 🔨",
     "If you're on 24.10.801",
     "No teardown required"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/implementation-plan.md",
+   "title": "Implementation plan — building our cloud server",
+   "section": "architecture",
+   "bytes": 4961,
+   "mermaid": 0,
+   "headings": [
+    "What \"beyond OpenMoxie\" means here",
+    "Current state (honest)",
+    "Build order (each milestone = a shippable, CI-green slice)",
+    "Working rules (build loops)"
    ],
    "kind": "md"
   },

@@ -17,7 +17,8 @@ from __future__ import annotations
 import json, re, sys, os, threading, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from moxie_sdk.types import Turn, Reply, RobotContext, ChildProfile, Action  # noqa
+from moxie_sdk.types import Turn, Reply, RobotContext, ChildProfile, Action, ResultCode  # noqa
+from moxie_sdk.wire import build_chat_response  # pure RemoteChat response encoder
 from markup import make_markup  # simple passthrough markup (automarkup pluggable)
 
 import paho.mqtt.client as mqtt
@@ -259,7 +260,7 @@ class MoxieRuntime:
         # module list query (backend:data / query:modules) → empty list for v1
         if backend == "data" and rcr.get("query") == "modules":
             return self._publish_chat(device_id, event_id, backend, "", markup="",
-                                      result="OK", modules=[])
+                                      result=ResultCode.SUCCESS, modules=[])
 
         # rebuild history from notify events (Moxie is authoritative about what it said)
         if command == "notify":
@@ -289,7 +290,9 @@ class MoxieRuntime:
         self._note("chat", f"💬 '{speech[:30]}' → '{reply.text[:40]}'")
         print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{reply.text[:60]}'", flush=True)
         self._publish_chat(device_id, event_id, "router", reply.text, markup,
-                           actions=reply.actions, end_turn=reply.end_turn)
+                           actions=reply.actions, end_turn=reply.end_turn,
+                           result=reply.result_code, mood=reply.mood,
+                           dialog_act=reply.dialog_act)
 
     def _ingest_notify(self, device_id, rcr):
         h = self.history.setdefault(device_id, [])
@@ -331,15 +334,9 @@ class MoxieRuntime:
 
     # ---- publish a chat response ----
     def _publish_chat(self, device_id, event_id, backend, text, markup="",
-                      actions=None, end_turn=False, result="OK", modules=None):
-        resp = {"command": "remote_chat", "result": result, "backend": backend,
-                "event_id": event_id, "output": {"text": text, "markup": markup or text}}
-        ra = []
-        for a in (actions or []):
-            ra.append({"output_type": "GLOBAL", "action": a.type.value,
-                       "module_id": a.module_id, "content_id": a.content_id})
-        if ra:
-            resp["response_actions"] = ra
-        if modules is not None:
-            resp["modules"] = modules
+                      actions=None, end_turn=False, result=ResultCode.SUCCESS,
+                      modules=None, mood=None, dialog_act=None):
+        resp = build_chat_response(event_id, text, markup, backend=backend,
+                                   result=result, actions=actions, end_turn=end_turn,
+                                   mood=mood, dialog_act=dialog_act, modules=modules)
         self.client.publish(f"/devices/{device_id}/commands/remote_chat", json.dumps(resp))

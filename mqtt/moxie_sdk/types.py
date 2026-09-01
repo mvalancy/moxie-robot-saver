@@ -33,6 +33,23 @@ class RobotContext:
     extra: dict = field(default_factory=dict)
 
 
+class ResultCode(int, Enum):
+    """The RemoteChat response outcome — `RemoteChatResponse.result` (uint32), values
+    verbatim from embodied/robotbrain/RemoteChat.proto. The robot acts on these:
+    SUCCESS renders the output; ERROR_OFFLINE makes it fall back to its on-device brain
+    (see docs/architecture/ai-seam.md §2). Emitted on the wire as the enum NAME."""
+    SUCCESS = 0
+    ERROR_TIMEOUT = 1
+    ERROR_STATE = 2
+    ERROR_SERVICE = 3
+    ERROR_OFFLINE = 4          # no brain/connectivity → robot uses its local fallback
+    NOREPLY_INTERRUPT = 5      # deliberately say nothing (barge-in)
+    NOREPLY_ACK = 6            # acknowledged, no spoken reply
+    REPLY_FORCE_ANCHOR = 7
+    REPLY_FORCE_QUIT = 8
+    REPLY_PENDING = 9          # streaming: more chunks to come
+
+
 class ActionType(str, Enum):
     """Structured things a Reply can ask Moxie to do beyond speaking."""
     LAUNCH = "launch"      # launch a module/experience (module_id[/content_id])
@@ -69,3 +86,12 @@ class Reply:
     markup: Optional[str] = None
     actions: list = field(default_factory=list)   # list[Action]
     end_turn: bool = False               # True → Moxie stops listening after this
+    result_code: ResultCode = ResultCode.SUCCESS  # the RemoteChat outcome (see ResultCode)
+    mood: Optional[str] = None           # optional scored output: emotional performance
+    dialog_act: Optional[str] = None     # optional scored output: what the line does
+
+    @classmethod
+    def offline(cls, text: str = "") -> "Reply":
+        """A brain that can't answer (endpoint unreachable) → ERROR_OFFLINE, so the
+        robot degrades to its on-device fallback instead of hanging."""
+        return cls(text=text, result_code=ResultCode.ERROR_OFFLINE)
