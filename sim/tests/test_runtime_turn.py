@@ -163,3 +163,31 @@ def test_no_transcriber_ignores_audio():
     rt.client = _FakeClient()
     assert rt.feed_stt("d", 3, b"aa") is None            # no transcriber → no-op
     assert rt.client.published == []
+
+
+def test_push_config_publishes_spec_robot_cloud_config():
+    """M5 integration: _push_config emits a spec-conformant RobotCloudConfig on /config."""
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"))
+    rt.client = _FakeClient()
+    did = "d_cfg"
+    rt._push_config(did)
+    msgs = [p for (t, p) in rt.client.published if t == f"/devices/{did}/config"]
+    assert msgs, "no config published"
+    cfg = msgs[-1]
+    assert cfg["pairing_status"] == "paired"                 # the wrapper the robot needs
+    assert cfg["child_pii"]["nickname"] == "Sam"
+    assert cfg["data_sharing"] == "NO_DATA"                  # LoggingPolicy default
+    assert "timezone_id" in cfg and "audio_volume" in cfg and "moxie_mode" in cfg
+    assert cfg["settings"]["props"]["stt"] == "4"            # stream audio to our STT
+
+
+def test_state_ingest_stores_robot_status():
+    """M5 integration: a /state RobotStatus updates firmware + is stored for the UI."""
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    did = "d_state"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    rt._on_state(did, json.dumps({"robot_firmware_version": "v24.10.803",
+                                  "battery_level": 0.9, "wifi_ssid": "home"}))
+    assert rt.robots[did].firmware == "v24.10.803"
+    assert rt.robots[did].extra["status"]["battery_level"] == 0.9

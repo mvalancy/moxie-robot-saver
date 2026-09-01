@@ -63,3 +63,41 @@ def test_content_module_turn_against_gateway():
                          module_id="FREE_CHAT", content_id="default")
     reply = app.respond(Turn(robot=robot, speech="What's your favorite color?"))
     assert reply.text.strip(), "content module produced no reply from the gateway"
+
+
+def test_live_turn_through_the_runtime():
+    """The closest thing to talk-end-to-end (minus audio): a spoken-text turn through
+    the REAL MoxieRuntime driven by a live ContentApp on the gateway → a spec response."""
+    try:
+        from moxie_sdk.chat import make_openai_chat
+        from moxie_sdk.content import load_modules, ContentApp
+    except Exception as e:
+        pytest.skip(f"SDK/openai unavailable: {e}")
+    import json
+    sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
+    import moxie_runtime
+    from moxie_sdk.types import RobotContext, ChildProfile
+
+    class _FakeClient:
+        def __init__(self):
+            self.published = []
+
+        def publish(self, topic, payload):
+            self.published.append((topic, json.loads(payload)))
+
+    with open(os.path.join(REPO, "mqtt", "content_modules", "starter.json")) as fh:
+        module = load_modules(json.load(fh))
+    app = ContentApp(module, make_openai_chat(BASE, KEY, MODEL, max_tokens=48))
+    rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname="Sam"))
+    rt.client = _FakeClient()
+    did = "d_live_rt"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child,
+                                  module_id="FREE_CHAT", content_id="default")
+    rt._on_remote_chat(did, rt.robots[did], json.dumps(
+        {"command": "prompt", "event_id": "e1", "speech": "What's your favorite animal?"}))
+    rt._pool.shutdown(wait=True)
+    msgs = [p for (t, p) in rt.client.published
+            if t == f"/devices/{did}/commands/remote_chat"]
+    assert msgs, "no remote_chat published"
+    assert msgs[-1]["result"] == "SUCCESS"
+    assert msgs[-1]["output"]["text"].strip(), "empty reply from the live gateway turn"
