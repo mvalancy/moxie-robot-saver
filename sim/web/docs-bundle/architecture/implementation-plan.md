@@ -31,7 +31,7 @@ Ours is built to the full recovered protocol with clean seams:
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟡 seam + wired into runtime (feed_stt → publishes zmqSTTResponse; JSON-frame bridge e2e-tested); real zmqSTTRequest protobuf decode + live whisper remain | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟡 seam built (Synthesizer + strip_markup + CloudTTSResponse encoder + OpenAI-voice backend); runtime wiring + live voice next | `mqtt/moxie_sdk/tts.py` |
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
-| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟡 minimal config push; no telemetry | `moxie_runtime.py` |
+| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟡 spec RobotCloudConfig builder (bedtime/wake/volume/timezone/child_pii/LoggingPolicy) + RobotStatus /state ingest; Packet telemetry upload next | `mqtt/moxie_sdk/cloud_config.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 
 ## Build order (each milestone = a shippable, CI-green slice)
@@ -49,7 +49,7 @@ Following the [build-order spine](overview.md); the parent app
   transcribe (faster-whisper local, or a Deepgram-shaped proxy) → emit the recognized turn.
 - **M4 — AI seam: TTS out for the SIM. 🟡 (seam 2026-09-01)** Server-side Piper → `CloudTTSResponse{audio, marks}` so the
   SIM (and optionally a robot) speaks with a server voice + viseme marks.
-- **M5 — Config & telemetry.** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
+- **M5 — Config & telemetry. 🟡 (config+state 2026-09-01)** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
   ingest, the `Packet` telemetry envelope, and the LoggingPolicy gate.
 - **M6 — Parent console wiring.** Surface robot state + config editing + insights in `server/`'s web UI.
 - **M7 — One-command stack + docs.** `docker compose up` runs broker + supervisor + brain + STT/TTS; the
@@ -72,7 +72,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 |--:|---|---|---|
 | 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~50% | brain live-validated 🟢; STT + TTS **seams** wired but not a full live chain (needs voice server + SIM-audio wiring + real zmqSTT protobuf decode) |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
-| 3 | Cloud management (console + config/telemetry) | 🔴→🟡 ~30% | config push minimal; telemetry unbuilt; console = pairing only — **weakest, next focus** |
+| 3 | Cloud management (console + config/telemetry) | 🟡 ~45% | spec RobotCloudConfig + RobotStatus ingest built; Packet telemetry + console robot-state/config-editing next |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
 | 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command unverified (M7) |
 | 6 | Green + live-tested | 🟡 | CI green + live LLM turn 🟢; live voice + a full e2e scenario pending |

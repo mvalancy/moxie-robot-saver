@@ -28,25 +28,6 @@ CONNECT_RE = re.compile(r"connected from (.*) as (d_[a-f0-9-]+)", re.I)
 DISCONNECT_RE = re.compile(r"Client (d_[a-f0-9-]+) (?:closed its connection|disconnected)", re.I)
 
 
-def default_config(child: ChildProfile) -> dict:
-    """The config pushed to a robot on connect. pairing_status MUST stay 'paired'."""
-    return {
-        "pairing_status": "paired",
-        "audio_volume": "0.6",
-        "screen_brightness": "1.0",
-        "audio_wake_set": "off",
-        "timezone_id": "America/Los_Angeles",
-        "child_pii": {"nickname": child.nickname, "input_speed": child.input_speed},
-        "settings": {"props": {
-            "touch_wake": "1", "wake_alarms": "1", "wake_button": "1", "doa_range": "80",
-            "target_all": "1", "gcp_upload_disable": "1", "local_stt": "on",
-            "max_enroll": "2", "audio_wake": "1", "cloud_schedule_reset_threshold": "5",
-            "brain_entrances_available": "1", "default_loglevel": "warning",
-            # stt "4" = stream audio to us over ZMQ (our STT path); needs handle_zmq wired.
-            "stt": "4",
-        }},
-    }
-
 
 class MoxieRuntime:
     def __init__(self, app, host="127.0.0.1", port=1883, child: ChildProfile | None = None):
@@ -228,16 +209,20 @@ class MoxieRuntime:
         if device_id not in self.robots:
             self._device_connect(device_id)      # fallback if we missed the log line
         try:
-            state = json.loads(payload)
-            fw = state.get("software_version") or state.get("version")
-            if fw and self.robots.get(device_id):
-                self.robots[device_id].firmware = fw
+            from moxie_sdk.cloud_config import parse_robot_status
+            status = parse_robot_status(payload)
+            robot = self.robots.get(device_id)
+            if robot:
+                if status.get("robot_firmware_version"):
+                    robot.firmware = status["robot_firmware_version"]
+                robot.extra["status"] = status      # battery/volume/wifi/mode for the UI
         except Exception:
             pass
 
     # ---- config push ----
     def _push_config(self, device_id):
-        cfg = default_config(self.child)
+        from moxie_sdk.cloud_config import build_robot_cloud_config
+        cfg = build_robot_cloud_config(self.child)
         self.client.publish(f"/devices/{device_id}/config", json.dumps(cfg))
         print(f"[runtime] → pushed config to {device_id} (pairing_status=paired)")
 
