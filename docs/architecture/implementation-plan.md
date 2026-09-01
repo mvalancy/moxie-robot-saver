@@ -29,7 +29,7 @@ Ours is built to the full recovered protocol with clean seams:
 | MQTT runtime (connect/config/state/turn) | [mqtt](mqtt-and-conversation.md) · [config](config-and-telemetry-contract.md) | 🟡 core works + end-to-end turn test (lazy client → integration-testable, no broker) | `mqtt/supervisor/moxie_runtime.py` |
 | AI seam — LLM brain | [ai-seam](ai-seam.md) §2 | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback | `mqtt/moxie_sdk/apps/llm_app.py` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟡 seam + wired into runtime (feed_stt → publishes zmqSTTResponse; JSON-frame bridge e2e-tested); real zmqSTTRequest protobuf decode + live whisper remain | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
-| AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🔴 not built (sim/tts exists standalone) | — |
+| AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟡 seam built (Synthesizer + strip_markup + CloudTTSResponse encoder + OpenAI-voice backend); runtime wiring + live voice next | `mqtt/moxie_sdk/tts.py` |
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
 | Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟡 minimal config push; no telemetry | `moxie_runtime.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
@@ -47,7 +47,7 @@ Following the [build-order spine](overview.md); the parent app
   regex commands; the `volley`/`session` API (set_output, persist_data, add_execution_action).
 - **M3 — AI seam: STT in. 🟡 (seam 2026-09-01)** Turn `handle_zmq` into a real STT path — accumulate `zmqSTT` audio →
   transcribe (faster-whisper local, or a Deepgram-shaped proxy) → emit the recognized turn.
-- **M4 — AI seam: TTS out for the SIM.** Server-side Piper → `CloudTTSResponse{audio, marks}` so the
+- **M4 — AI seam: TTS out for the SIM. 🟡 (seam 2026-09-01)** Server-side Piper → `CloudTTSResponse{audio, marks}` so the
   SIM (and optionally a robot) speaks with a server voice + viseme marks.
 - **M5 — Config & telemetry.** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
   ingest, the `Packet` telemetry envelope, and the LoggingPolicy gate.
