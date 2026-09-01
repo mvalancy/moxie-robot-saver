@@ -44,7 +44,7 @@ CONTENT_MODULE = os.environ.get("MOXIE_CONTENT_MODULE", "content_modules/starter
 # host; the API KEY is never committed — set MOXIE_LLM_API_KEY in a git-ignored .env).
 LLM_BASE_URL = os.environ.get("MOXIE_LLM_BASE_URL", "https://gateway.graphlings.net/v1")
 LLM_API_KEY  = os.environ.get("MOXIE_LLM_API_KEY", os.environ.get("LITELLM_MASTER_KEY", ""))
-LLM_MODEL    = os.environ.get("MOXIE_LLM_MODEL", "gpt-4o-mini")
+LLM_MODEL    = os.environ.get("MOXIE_LLM_MODEL", "graphling-medium")
 
 # AI voice server (optional) — server-side STT/TTS for the SIM + a server voice.
 # OpenAI-compatible audio endpoints assumed (/audio/transcriptions, /audio/speech);

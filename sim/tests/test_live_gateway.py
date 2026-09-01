@@ -30,7 +30,7 @@ def _load_dotenv():
 _load_dotenv()
 KEY = os.environ.get("MOXIE_LLM_API_KEY") or os.environ.get("LITELLM_MASTER_KEY") or ""
 BASE = os.environ.get("MOXIE_LLM_BASE_URL", "https://gateway.graphlings.net/v1")
-MODEL = os.environ.get("MOXIE_LLM_MODEL", "gpt-4o-mini")
+MODEL = os.environ.get("MOXIE_LLM_MODEL", "graphling-medium")
 
 pytestmark = pytest.mark.skipif(
     not KEY, reason="no gateway key (set MOXIE_LLM_API_KEY in mqtt/.env for live LLM tests)")
