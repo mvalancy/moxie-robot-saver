@@ -42,10 +42,15 @@ MAX_MENTOR_BEHAVIORS = 500
 # default leaves room for a filler + the real answer inside one window. 0 disables it.
 DEFAULT_BRAIN_BUDGET_S = 6.0
 
+# How many filler lines one turn may spend. One buys a ~20 s window; a 45 s brain
+# outlives it, so a stalled stream may re-arm exactly once more. Past that the child is
+# better served by silence than by a robot that only ever says it is thinking.
+MAX_FILLERS_PER_TURN = 2
+
 
 class MoxieRuntime:
     def __init__(self, app, host="127.0.0.1", port=1883, child: ChildProfile | None = None,
-                 store: JsonStore | None = None, brain_budget_s=None):
+                 store: JsonStore | None = None, brain_budget_s=None, streaming=None):
         self.app = app
         self.child = child or ChildProfile()
         self.host, self.port = host, port
@@ -65,6 +70,11 @@ class MoxieRuntime:
                 else os.environ.get("MOXIE_BRAIN_BUDGET_S") or DEFAULT_BRAIN_BUDGET_S)
         except (TypeError, ValueError):
             self.brain_budget_s = DEFAULT_BRAIN_BUDGET_S
+        # Streaming: publish an answer sentence by sentence when the app can produce one
+        # (MoxieApp.respond_stream). Constructor arg wins, then MOXIE_STREAMING, then on.
+        if streaming is None:
+            streaming = (os.environ.get("MOXIE_STREAMING") or "1").strip().lower()
+        self.streaming = streaming not in (False, 0, "0", "off", "false", "no", "")
         self._turn_seq: dict[str, int] = {}      # newest turn per robot (stale guard)
         self._last_filler: dict[str, str] = {}   # last filler spoken (never repeat it)
         from concurrent.futures import ThreadPoolExecutor
@@ -426,10 +436,24 @@ class MoxieRuntime:
         (RemoteChat.proto fields 22/18). Without this a 45 s brain overruns the robot's
         ~20 s reprompt window (openmoxie-feature-audit.md:347) and Moxie just goes quiet.
 
+        **Streaming brain** (`MOXIE_STREAMING`, default on) → if the app offers a
+        `respond_stream`, each finished sentence goes out as its own chunk the moment the
+        model writes it, so the child hears real words at first-token latency instead of
+        at whole-completion latency. See `_handle_stream_turn`.
+
         Pattern credit: OpenMoxie Fork A's `ReasoningChatSession` runs the long inference
         on a pool and speaks rotating interludes meanwhile; the idea is theirs, this code
         and the multi-chunk wire shape are ours.
         """
+        if self.streaming:
+            stream = None
+            try:
+                stream = self.app.respond_stream(turn)
+            except Exception as e:
+                print(f"[runtime] app.respond_stream error: {e}", flush=True)
+            if stream is not None:
+                return self._handle_stream_turn(device_id, event_id, speech, turn,
+                                                seq, stream)
         state = {"lock": threading.Lock(), "done": False, "filler": None}
         timer = None
         if self.brain_budget_s > 0:
@@ -456,11 +480,7 @@ class MoxieRuntime:
             print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; "
                   f"dropping '{reply.text[:40]}'", flush=True)
             return
-        h = self.history.setdefault(device_id, [])
-        if speech:
-            h.append({"role": "user", "content": speech})
-        h.append({"role": "assistant", "content": reply.text})
-        self._save_memory(device_id)
+        self._remember(device_id, speech, reply.text)
         markup = reply.markup if reply.markup is not None else make_markup(reply.text)
         self._note("chat", f"💬 '{speech[:30]}' → '{reply.text[:40]}'")
         print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{reply.text[:60]}'", flush=True)
@@ -497,6 +517,172 @@ class MoxieRuntime:
                                is_completed=False)
             self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
             return text
+
+    # ---- one turn, streamed sentence by sentence ----
+    def _handle_stream_turn(self, device_id, event_id, speech, turn, seq, stream):
+        """Answer a turn from an `Iterator[ReplyChunk]`, publishing as the model writes.
+
+        Each finished sentence goes out immediately as `result=REPLY_PENDING` with its
+        `chunk_num` (RemoteChat.proto field 22); the chunk the app marks `final` closes
+        the sequence with `result=SUCCESS` + `consistency_control.is_completed`
+        (field 18) — the contract's own "one event_id, several responses" shape
+        (docs/reverse-engineering/protocol/remote-chat-protocol.md:26,:63). A turn that
+        fits in ONE chunk is published exactly as it always was: no `chunk_num`, no
+        `consistency_control`, so nothing downstream has to know about streaming.
+
+        Latency cover: the filler timer is (re-)armed after every chunk, so a brain whose
+        FIRST token is late gets a "let me think" line, and a stream that stalls
+        mid-answer gets at most one more (`MAX_FILLERS_PER_TURN`). Fillers take the next
+        `chunk_num` like any other chunk, so ordering on the wire is still total.
+
+        Stale guard: a newer turn for this robot cancels the stream — we stop consuming
+        it, close it, and publish nothing further for the old `event_id`.
+        """
+        state = {"lock": threading.Lock(), "done": False, "chunk": 0,
+                 "fillers": 0, "gen": 0, "timer": None}
+        said, closed, failed = [], False, None
+        self._arm_filler(device_id, event_id, seq, state)
+        try:
+            for chunk in stream:
+                final = bool(getattr(chunk, "final", False))
+                with state["lock"]:
+                    state["gen"] += 1                 # invalidate any in-flight timer
+                    self._cancel_filler(state)
+                    stale = self._is_stale(device_id, seq)
+                    if not stale:
+                        if final:
+                            state["done"] = True
+                        n = state["chunk"]
+                        state["chunk"] = n + 1
+                        self._publish_stream_chunk(device_id, event_id, chunk, n, final)
+                        if chunk.text:
+                            said.append(chunk.text)
+                if stale:
+                    self._note("chat", f"⏭️  cancelled a stale stream for {device_id}")
+                    print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; "
+                          f"cancelling the stream mid-answer", flush=True)
+                    return
+                if final:
+                    closed = True
+                    break
+                self._arm_filler(device_id, event_id, seq, state)
+        except Exception as e:
+            failed = e
+            print(f"[runtime] app.respond_stream error: {e}", flush=True)
+        finally:
+            with state["lock"]:
+                state["done"] = True
+                self._cancel_filler(state)
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        if self._is_stale(device_id, seq):
+            self._note("chat", f"⏭️  dropped a stale answer for {device_id}")
+            return
+        if not closed:
+            # The stream ended (or died) without a final chunk. Nothing spoken yet →
+            # the whole answer is still recoverable on the ordinary non-streaming path;
+            # otherwise close the sequence so the robot is not left waiting.
+            with state["lock"]:
+                n = state["chunk"]
+            if n == 0:
+                reply = self._safe_respond(turn) if failed is not None else Reply(text="")
+                said.append(reply.text)
+                self._publish_stream_chunk(device_id, event_id, reply, 0, True)
+            else:
+                self._publish_stream_chunk(
+                    device_id, event_id, Reply(text=""), n, True, synthesize=False)
+        text = " ".join(t for t in said if t).strip()
+        self._remember(device_id, speech, text)
+        self._note("chat", f"💬 '{speech[:30]}' → '{text[:40]}'")
+        print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{text[:60]}' "
+              f"({state['chunk']} chunk(s))", flush=True)
+
+    def _safe_respond(self, turn):
+        try:
+            return self.app.respond(turn)
+        except Exception as e:
+            print(f"[runtime] app.respond error: {e}", flush=True)
+            return Reply(text="Hmm, let me think about that.")
+
+    def _publish_stream_chunk(self, device_id, event_id, chunk, n, final, synthesize=True):
+        """One `ReplyChunk` (or `Reply`) onto the wire, with its chunk bookkeeping."""
+        markup = chunk.markup if chunk.markup is not None else make_markup(chunk.text)
+        result = getattr(chunk, "result_code", None)
+        if result is None:
+            result = ResultCode.SUCCESS if final else ResultCode.REPLY_PENDING
+        # A one-chunk answer keeps the exact wire shape we have always sent: chunk 0 /
+        # not-streaming is the proto default, so both fields stay off.
+        solo = final and n == 0
+        self._publish_chat(device_id, event_id, "router", chunk.text, markup,
+                           actions=chunk.actions, end_turn=chunk.end_turn,
+                           result=result,
+                           chunk_num=None if solo else n,
+                           is_completed=None if solo else bool(final))
+        if synthesize:
+            self._maybe_synthesize(device_id, markup, event_id, chunk_num=n)
+
+    def _remember(self, device_id, speech, text):
+        """Fold one finished turn into the robot's conversation history."""
+        h = self.history.setdefault(device_id, [])
+        if speech:
+            h.append({"role": "user", "content": speech})
+        h.append({"role": "assistant", "content": text})
+        self._save_memory(device_id)
+
+    # ---- filler timer (shared by the streaming path) ----
+    def _cancel_filler(self, state):
+        timer = state.get("timer")
+        state["timer"] = None
+        if timer is not None:
+            timer.cancel()
+
+    def _arm_filler(self, device_id, event_id, seq, state):
+        """(Re)start the latency timer for a streaming turn. No-op once the turn is done
+        or the per-turn filler budget is spent."""
+        if self.brain_budget_s <= 0:
+            return
+        with state["lock"]:
+            if state["done"] or state["fillers"] >= MAX_FILLERS_PER_TURN:
+                return
+            timer = threading.Timer(self.brain_budget_s, self._speak_stream_filler,
+                                    args=(device_id, event_id, seq, state, state["gen"]))
+            timer.daemon = True
+            state["timer"] = timer
+        timer.start()
+
+    def _speak_stream_filler(self, device_id, event_id, seq, state, gen):
+        """The stream produced nothing for a whole budget → say something kind now.
+
+        Fires for a late FIRST token and, once more at most, for a mid-answer stall.
+        `gen` is the chunk counter this timer was armed against: if a chunk landed in the
+        meantime the timer is stale and says nothing."""
+        with state["lock"]:
+            if state["done"] or state["gen"] != gen:
+                return None                       # a chunk arrived — nothing to cover
+            if state["fillers"] >= MAX_FILLERS_PER_TURN:
+                return None
+            if self._is_stale(device_id, seq):
+                return None
+            text, markup = pick_filler(self._last_filler.get(device_id, ""))
+            self._last_filler[device_id] = text
+            state["fillers"] += 1
+            state["gen"] += 1
+            state["timer"] = None
+            n = state["chunk"]
+            state["chunk"] = n + 1
+            self._note("chat", f"⏳ '{text[:40]}'")
+            print(f"[runtime] ⏳ stream quiet for {self.brain_budget_s:g}s on "
+                  f"{device_id} → filler {state['fillers']}: '{text}'", flush=True)
+            self._publish_chat(device_id, event_id, "router", text, markup,
+                               result=ResultCode.REPLY_PENDING, chunk_num=n,
+                               is_completed=False)
+            self._maybe_synthesize(device_id, markup, event_id, chunk_num=n)
+        self._arm_filler(device_id, event_id, seq, state)   # another stall? one more line
+        return text
 
     # ---- TTS (AI seam §3) — server voice for the SIM ----
     def set_synthesizer(self, synth):
