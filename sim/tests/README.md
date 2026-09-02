@@ -38,6 +38,20 @@ browser at all and carry the hermetic suite CI actually runs.
   CI stays green with no key. `test_live_action_tags.py` asserts a *rate* (2 of 3
   sampled turns) rather than a single sample, because the brain runs at temperature
   0.8 — see its docstring for the measured numbers.
+- **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper
+  speech in, real Piper speech out, read back by real faster-whisper. Tier 1 round-trips
+  Moxie's own voice through Whisper (and proves the built-in `ToneSynthesizer` would
+  fail the same check, so the suite can never pass on the placeholder); tier 2 plays a
+  child with a second voice, frames the audio as `zmqSTTRequest` protobuf and drives the
+  whole loop through the real `MoxieRuntime` — `events/zmq` → transcript →
+  `RemoteChatResponse` → `CloudTTSResponse` → transcribed back. `helpers_audio.py` holds
+  the PCM maths (resample, spectral flatness, ZCR), the word-overlap scorer and the
+  frame encoder. **Deliberately not in `requirements.txt`**: `piper-tts` and
+  `faster-whisper` are heavy, so the file skips at collection when they (or the
+  git-ignored `sim/tts/voices/*.onnx`, or a gateway key) are absent. To run it:
+  `pip install piper-tts faster-whisper numpy`, then
+  `python -m pytest sim/tests/test_live_talk_e2e.py -q -s` — add `MOXIE_VOICES_DIR=…`
+  if the voices live outside this checkout (a git worktree starts without them).
 
 ## Run
 

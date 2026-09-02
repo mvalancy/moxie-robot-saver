@@ -72,8 +72,13 @@ def test_build_transcriber_off_is_none():
 
 def test_build_transcriber_auto_is_none_without_whisper():
     c = _fresh_config({"MOXIE_APP": "echo", "MOXIE_STT": "auto"})
-    # faster-whisper isn't installed in CI/test → auto yields None (text turns still work)
-    assert c.build_transcriber() is None
+    # "auto" yields None only when faster-whisper isn't installed (CI); with it installed
+    # (a dev box with the voice extras) auto legitimately builds a transcriber.
+    from moxie_sdk.stt import WhisperTranscriber
+    if not WhisperTranscriber.available():
+        assert c.build_transcriber() is None
+    else:
+        assert c.build_transcriber() is not None
 
 
 def test_assemble_builds_runtime_with_configured_app():
