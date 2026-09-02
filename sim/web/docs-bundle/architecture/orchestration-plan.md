@@ -75,5 +75,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   `feat/openmoxie-audit` (the feature audit doc) and `feat/m6-insights` (telemetry/insights view, the last
   M6 gap). DoD ≈ criterion 1 ~70%, 2 🟢, 3 ~85%, 4 🟢, 5 🟡, 6 ~70%.
 
+- **2026-09-02** — Integrated `feat/m6-insights` (PR #3 → dev, squash `ecdaff6`): telemetry/insights view
+  — the last M6 gap. **M6 🟢, DoD criterion 3 🟢, DoD ≈ 57%.** Opus agent built it in an isolated
+  worktree (+13 tests, 105→118; SIL smoke incl. TTS; live-verified through a real broker); the
+  orchestrator merged forward onto dev (regenerated the docs bundle to resolve the only conflict), opened
+  the PR, waited for green, merged. Honest gaps recorded: telemetry is in-memory (last 50/robot), typed
+  `event_data` decoding deferred. Still in flight: `feat/openmoxie-audit`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
