@@ -300,8 +300,7 @@ reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` i
 **Most valuable next slice:** the memory floor (`persist_data` + `summarize`, PR #25) and the config
 contract (PR #24) are in; in flight are a **device allowlist / pairing gate** (a real exposure: today any
 device reaching the broker is pushed `pairing_status:"paired"` with the child's PII) and **published
-multi-arch images** (ADOPT #10's remainder). Next after those, in value order: the audit's remaining ADOPT items (memory erase/edit/decay landed in PR #33 — BEYOND #4 🟢), **vision events in
-the turn loop** (BEYOND #9 — the robot already emits `eb-found-face`/`eb-lost-target`; nobody listens), the
+multi-arch images** (ADOPT #10's remainder). Next after those, in value order: the audit's remaining ADOPT items (memory erase/edit/decay landed in PR #33 — BEYOND #4 🟢), the
 remaining ADOPT items (content packs export/import, puppet / telehealth, face customization), and the
 BEYOND #1 behavior planner (spec in [`backlog/expressiveness.md`](backlog/expressiveness.md) §2). The
 physical-robot gap stays the honest ceiling on criteria 1 and 6.

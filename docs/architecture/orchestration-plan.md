@@ -398,5 +398,13 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   briefs for broker authentication (the permits gap) and puppet/telehealth (ADOPT #7). In flight:
   `feat/vision-events`, `feat/face-customization`, `feat/backlog-security-telehealth`.
 
+- **2026-09-02** — Integrated `feat/vision-events` (PR #35 → dev, BEYOND #9): Moxie notices you walked in. Key
+  finding: the vision events are not topics — they arrive as the `speech` of a `RemoteChatRequest` only after
+  the brain sends `EventSubscription`, which is why nobody had ever seen one; we now subscribe, keep a
+  hysteresis-filtered presence model, put presence in the turn context, and greet a returning child on the
+  arrival event's own `event_id` (no unsolicited publish — recorded assumption). +70 tests (→820 fast /
+  875 full); live: "There you are, friend!" with TTS at 5.04 s, rate-limited. Merge combined with PR #33's
+  decay clock in `content_app.py`. In flight: `feat/face-customization`, `feat/backlog-security-telehealth`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
