@@ -21,6 +21,7 @@ from moxie_sdk.types import Turn, Reply, RobotContext, ChildProfile, Action, Res
 from moxie_sdk.wire import (build_chat_response, build_activity_response,  # pure encoders
                             parse_mentor_behavior)
 from moxie_sdk.store import JsonStore                    # durable per-robot JSON store
+from moxie_sdk.filler import pick_filler                 # "let me think" lines + markup
 from markup import make_markup  # simple passthrough markup (automarkup pluggable)
 
 # paho is imported lazily in _build_client() so the runtime + turn pipeline can be
@@ -35,10 +36,16 @@ DISCONNECT_RE = re.compile(r"Client (d_[a-f0-9-]+) (?:closed its connection|disc
 # rolling window, not an archive — the recommender/FTUE checks only need recent activity.
 MAX_MENTOR_BEHAVIORS = 500
 
+# How long a turn's brain call may run before we say *something*. The robot re-prompts
+# if the cloud stays silent for ~20 s (openmoxie-feature-audit.md:347) and a live gateway
+# turn was measured at 45 s healthy / 18 s degraded (implementation-plan.md:138), so the
+# default leaves room for a filler + the real answer inside one window. 0 disables it.
+DEFAULT_BRAIN_BUDGET_S = 6.0
+
 
 class MoxieRuntime:
     def __init__(self, app, host="127.0.0.1", port=1883, child: ChildProfile | None = None,
-                 store: JsonStore | None = None):
+                 store: JsonStore | None = None, brain_budget_s=None):
         self.app = app
         self.child = child or ChildProfile()
         self.host, self.port = host, port
@@ -50,6 +57,16 @@ class MoxieRuntime:
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
         self._max_memory = int(os.environ.get("MOXIE_MEMORY_TURNS", "40"))
         self._load_memory()
+        # Brain latency: how long app.respond() may run before we speak a filler.
+        # Constructor arg wins, then MOXIE_BRAIN_BUDGET_S, then the default.
+        try:
+            self.brain_budget_s = float(
+                brain_budget_s if brain_budget_s is not None
+                else os.environ.get("MOXIE_BRAIN_BUDGET_S") or DEFAULT_BRAIN_BUDGET_S)
+        except (TypeError, ValueError):
+            self.brain_budget_s = DEFAULT_BRAIN_BUDGET_S
+        self._turn_seq: dict[str, int] = {}      # newest turn per robot (stale guard)
+        self._last_filler: dict[str, str] = {}   # last filler spoken (never repeat it)
         from concurrent.futures import ThreadPoolExecutor
         from collections import deque
         self._pool = ThreadPoolExecutor(max_workers=8)
@@ -385,15 +402,60 @@ class MoxieRuntime:
                 speech = ln["text"]
         turn = Turn(robot=robot, speech=speech, history=list(self.history.get(device_id, [])),
                     command=command, input_vars=rcr.get("input_vars", {}))
+        # Number the turn so a slow brain's answer can be recognized as stale if the
+        # child has moved on by the time it lands (_is_stale). The MQTT loop is the only
+        # writer here, so a plain increment is enough.
+        seq = self._turn_seq[device_id] = self._turn_seq.get(device_id, 0) + 1
         # Run the (possibly slow) app + LLM off the MQTT loop so we never block it.
-        self._pool.submit(self._handle_turn, device_id, event_id, speech, turn)
+        self._pool.submit(self._handle_turn, device_id, event_id, speech, turn, seq)
 
-    def _handle_turn(self, device_id, event_id, speech, turn):
+    # ---- one turn, with a latency budget ----
+    def _is_stale(self, device_id, seq) -> bool:
+        """True when a newer turn for this robot started after `seq` — its answer must
+        never be spoken: the child asked something else in the meantime."""
+        return seq is not None and self._turn_seq.get(device_id, seq) != seq
+
+    def _handle_turn(self, device_id, event_id, speech, turn, seq=None):
+        """Answer one turn. Fast brain → exactly one SUCCESS reply, as always.
+
+        **Slow brain (over `brain_budget_s`)** → the child hears a short filler *now*
+        instead of silence: chunk 0 with `result=REPLY_PENDING` ("more chunks to come",
+        RemoteChat.proto ResultCode 9 — remote-chat-protocol.md:63), the inference keeps
+        running on this worker, and the real line follows as chunk 1 with
+        `result=SUCCESS` + `consistency_control.is_completed` to close the sequence
+        (RemoteChat.proto fields 22/18). Without this a 45 s brain overruns the robot's
+        ~20 s reprompt window (openmoxie-feature-audit.md:347) and Moxie just goes quiet.
+
+        Pattern credit: OpenMoxie Fork A's `ReasoningChatSession` runs the long inference
+        on a pool and speaks rotating interludes meanwhile; the idea is theirs, this code
+        and the multi-chunk wire shape are ours.
+        """
+        state = {"lock": threading.Lock(), "done": False, "filler": None}
+        timer = None
+        if self.brain_budget_s > 0:
+            timer = threading.Timer(self.brain_budget_s, self._speak_filler,
+                                    args=(device_id, event_id, seq, state))
+            timer.daemon = True
+            timer.start()
         try:
             reply = self.app.respond(turn)
         except Exception as e:
             print(f"[runtime] app.respond error: {e}", flush=True)
             reply = Reply(text="Hmm, let me think about that.")
+        finally:
+            if timer is not None:
+                timer.cancel()
+        # Closing the door on the filler and reading it back is one atomic step: the
+        # timer holds this same lock while it publishes, so chunk 0 can never land after
+        # chunk 1.
+        with state["lock"]:
+            state["done"] = True
+            filler = state["filler"]
+        if self._is_stale(device_id, seq):
+            self._note("chat", f"⏭️  dropped a stale answer for {device_id}")
+            print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; "
+                  f"dropping '{reply.text[:40]}'", flush=True)
+            return
         h = self.history.setdefault(device_id, [])
         if speech:
             h.append({"role": "user", "content": speech})
@@ -402,11 +464,39 @@ class MoxieRuntime:
         markup = reply.markup if reply.markup is not None else make_markup(reply.text)
         self._note("chat", f"💬 '{speech[:30]}' → '{reply.text[:40]}'")
         print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{reply.text[:60]}'", flush=True)
+        # A filler already went out → this is chunk 1 and it ends the sequence. No
+        # filler → the single-chunk reply we have always sent, unchanged on the wire.
+        chunk = 1 if filler is not None else None
         self._publish_chat(device_id, event_id, "router", reply.text, markup,
                            actions=reply.actions, end_turn=reply.end_turn,
                            result=reply.result_code, mood=reply.mood,
-                           dialog_act=reply.dialog_act)
-        self._maybe_synthesize(device_id, markup, event_id)
+                           dialog_act=reply.dialog_act, chunk_num=chunk,
+                           is_completed=None if chunk is None else True)
+        self._maybe_synthesize(device_id, markup, event_id, chunk_num=chunk or 0)
+
+    def _speak_filler(self, device_id, event_id, seq, state):
+        """The budget expired with the brain still thinking → say something kind now.
+
+        Published as chunk 0 / REPLY_PENDING, and synthesized like any other line so the
+        SIM (and a robot without on-device TTS) actually hears it. Never the same line
+        twice in a row for one robot. Returns the filler text, or None if the brain beat
+        the budget or the turn is already stale."""
+        with state["lock"]:
+            if state["done"]:
+                return None                       # brain won the race — say nothing
+            if self._is_stale(device_id, seq):
+                return None
+            text, markup = pick_filler(self._last_filler.get(device_id, ""))
+            state["filler"] = text
+            self._last_filler[device_id] = text
+            self._note("chat", f"⏳ '{text[:40]}'")
+            print(f"[runtime] ⏳ brain over budget ({self.brain_budget_s:g}s) on "
+                  f"{device_id} → filler: '{text}'", flush=True)
+            self._publish_chat(device_id, event_id, "router", text, markup,
+                               result=ResultCode.REPLY_PENDING, chunk_num=0,
+                               is_completed=False)
+            self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
+            return text
 
     # ---- TTS (AI seam §3) — server voice for the SIM ----
     def set_synthesizer(self, synth):
@@ -414,14 +504,16 @@ class MoxieRuntime:
         the resulting audio; a real robot self-synthesizes so this is SIM-only."""
         self._synth = synth
 
-    def _maybe_synthesize(self, device_id, markup, event_id=""):
+    def _maybe_synthesize(self, device_id, markup, event_id="", chunk_num=0):
         """If a synthesizer is set, render the line and publish a CloudTTSResponse to
-        /devices/{id}/commands/tts. TTS failure never breaks the turn."""
+        /devices/{id}/commands/tts. TTS failure never breaks the turn. `chunk_num` keeps
+        a multi-chunk turn (filler then answer) in playback order for the client."""
         if self._synth is None:
             return None
         try:
             from moxie_sdk.tts import synthesize_cloud_tts
-            resp = synthesize_cloud_tts(self._synth, markup, event_id=event_id)
+            resp = synthesize_cloud_tts(self._synth, markup, event_id=event_id,
+                                        chunk_num=chunk_num)
             if self.client:
                 self.client.publish(f"/devices/{device_id}/commands/tts", json.dumps(resp))
             return resp
@@ -584,8 +676,10 @@ class MoxieRuntime:
     # ---- publish a chat response ----
     def _publish_chat(self, device_id, event_id, backend, text, markup="",
                       actions=None, end_turn=False, result=ResultCode.SUCCESS,
-                      modules=None, mood=None, dialog_act=None):
+                      modules=None, mood=None, dialog_act=None,
+                      chunk_num=None, is_completed=None):
         resp = build_chat_response(event_id, text, markup, backend=backend,
                                    result=result, actions=actions, end_turn=end_turn,
-                                   mood=mood, dialog_act=dialog_act, modules=modules)
+                                   mood=mood, dialog_act=dialog_act, modules=modules,
+                                   chunk_num=chunk_num, is_completed=is_completed)
         self.client.publish(f"/devices/{device_id}/commands/remote_chat", json.dumps(resp))
