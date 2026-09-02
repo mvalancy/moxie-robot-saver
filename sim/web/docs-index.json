@@ -1,12 +1,12 @@
 {
- "generated": "docs-31ec93f33f2f",
+ "generated": "docs-666ea46269dc",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 11331,
+   "bytes": 11378,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
@@ -96,7 +96,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 25338,
+   "bytes": 28506,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -148,7 +148,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 44036,
+   "bytes": 47592,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -197,7 +197,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 10401,
+   "bytes": 16638,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -310,7 +310,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 55792,
+   "bytes": 56333,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -637,7 +637,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1172,
+   "bytes": 1456,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -681,6 +681,22 @@
     "Updating",
     "Troubleshooting",
     "Running it a different way"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/child-safety.md",
+   "title": "Child safety — what Moxie checks, and where you review it",
+   "section": "guides",
+   "bytes": 6095,
+   "mermaid": 0,
+   "headings": [
+    "What actually happens in a turn",
+    "What is checked",
+    "What a flag means (and what it does not)",
+    "Where to review it",
+    "Privacy",
+    "Changing what is checked"
    ],
    "kind": "md"
   },

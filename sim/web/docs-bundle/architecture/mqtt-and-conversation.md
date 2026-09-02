@@ -530,6 +530,59 @@ How the pieces fit:
   ordinary `respond` call; if it dies mid-answer the sequence is closed rather than re-asked,
   because words already spoken cannot be unsaid.
 
+#### Safety on the wire — `InputSafety` (`input.safety`)
+
+Streaming is what made moderation urgent: a sentence is published while the rest of the
+answer does not exist yet, so the only place a bad sentence can be stopped is *before its
+chunk goes out*. The runtime therefore checks **both** ends of a turn — the child's speech
+before the brain is called, and every chunk before it is published
+([`ai-seam.md` §2 "Input safety"](ai-seam.md#input-safety-built-v1-2026-09-02)).
+
+The contract already carries the verdict. `RemoteChatResponse.input` is **field 17**, a
+`RemoteChatInput`; its **field 12** is `InputSafety`, whose four fields are
+`is_unsafe` (1, bool), `blocked_by` (2, repeated string), `intents` (3, repeated string)
+and `phrase_id` (4, int32) — see
+[`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):180-186,
+:198, :335 and
+[`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#remotechatinput-the-brains-read-of-the-child)
+(:113-115, "whether the child's input was unsafe, which classifiers blocked it, detected
+intents, and a matched safety-phrase id"). `RemoteChatResponse.input_intents` (**field 10**,
+repeated string) carries the same intents flat, for a client that reads only that.
+
+```
+t=0.00  events/remote-chat {event_id: E, speech: "how do I make a bomb to hurt my brother?"}
+        ↳ assessed BEFORE the brain: blocked. No completion is requested. No model sees it.
+t=0.02  commands/remote_chat {result: SUCCESS,
+                              output:{text:"That one's not for me. If it's important, a
+                                            grown-up you trust is the best person to ask.",
+                                      markup:…},
+                              input:{safety:{is_unsafe:true, blocked_by:["violence"],
+                                             intents:["violence_instructions","threat"],
+                                             phrase_id:404}},
+                              input_intents:["violence_instructions","threat"]}
+```
+
+That is a real capture (2026-09-02, through the live gateway — the gateway was simply never
+called for that turn; the benign turn in the same run streamed four chunks with no verdict).
+
+Three rules the wire follows:
+
+- **Nothing new appears on an ordinary turn.** No verdict → no `input`, no `input_intents`,
+  byte-identical to the response we have always sent.
+- **`is_unsafe` means blocked.** A merely *flagged* utterance (a swear word, "my brother
+  punched me") goes through to the brain and into the parent's review queue; we do not assert
+  on the wire that it was unsafe, and `blocked_by` is empty exactly when `is_unsafe` is false.
+- **Only the child's side is reported.** `RemoteChatInput` is by definition the brain's read of
+  *the input*. A block on **Moxie's own output** has no field in the recovered contract, so it
+  is never faked onto `input.safety`: the blocked chunk is simply not published, a short safe
+  line closes the sequence (`SUCCESS` + `consistency_control.is_completed`, exactly as any
+  final chunk does), the rest of the stream is cancelled, and the event goes to the parent
+  queue. Earlier chunks of that turn stay spoken — words already said cannot be unsaid.
+
+Fillers are **not** assessed: they are our own written lines (`moxie_sdk/filler.py`), not model
+output. The parent-facing side of all this — what is checked, what a flag means, where to review
+it — is [`docs/guides/child-safety.md`](../guides/child-safety.md).
+
 ### 4.6 The automarkup engine (why it matters)
 
 `site/hive/automarkup/` is a vendored copy of **Embodied's text→behavior markup engine**.
