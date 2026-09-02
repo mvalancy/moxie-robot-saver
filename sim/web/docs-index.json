@@ -1,5 +1,5 @@
 {
- "generated": "docs-c3c62fbf4b81",
+ "generated": "docs-5898ce9194f2",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 4108,
+   "bytes": 4271,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 3000,
+   "bytes": 3305,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,14 +109,14 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 50010,
+   "bytes": 49594,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-02, at v0.6.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)",
+    "DoD progress (audited 2026-09-02, at v0.7.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 39262,
+   "bytes": 40548,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -465,6 +465,27 @@
     "4. Acceptance criteria",
     "5. Effort, files, risks",
     "6. What only a physical robot can settle"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/voice-picker.md",
+   "title": "Voice picker — choose the speech and listening models from the console",
+   "section": "architecture",
+   "bytes": 8542,
+   "mermaid": 0,
+   "headings": [
+    "What the user asked for (verbatim intent)",
+    "What \"available\" means (no invention)",
+    "Defaults (the \"when possible\" rule)",
+    "Design",
+    "A settings record, persisted",
+    "Runtime (`moxie_runtime.py`)",
+    "Console",
+    "Compose / env",
+    "Tests (a test for every feature)",
+    "Acceptance",
+    "Files"
    ],
    "kind": "md"
   },

@@ -267,15 +267,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   `provide_mentor_behaviors` / `ingest_mentor_behavior`. **Still gaps:** `license` answers empty (we hold
   no license blobs); `response_code` (field 99) is not emitted (the docs give the enum but not its JSON
   spelling); the other queries (`idf`, `contexts`, `context_store`, `remote_lines`) answer empty.
-- **the day plan is deterministic, not intelligent.** `build_schedule` seeds on `(device_id, day)`, so a
-  robot gets a stable plan that changes tomorrow — it does **not** read telemetry, mood, time of day or
-  parent preference, and it cannot explain *why this activity today*. That recommender is BEYOND #7
-  ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2). Two smaller honesties: the
-  "already done → don't schedule again" rule applies to the generated rotation and to first-time-user
-  onboarding, **not** to fixtures an author pins in `provided_schedule` (e.g. `DM`, which is meant to
-  recur daily); and the FTUE completion thresholds (`TNT`=9, `SYSTEMSCHECK`=4 content ids) are
-  **OpenMoxie's field-proven constants**, not something our RE docs establish — see the note in
-  `mqtt/moxie_sdk/schedule.py`.
+- **day plan:** the deterministic rotation was replaced by the explainable recommender in PR #39 (see the adaptive-schedule bullet below); what remains inferred is listed there.
 - **the store is JSON files, not a database.** `mqtt/moxie_sdk/store.py` persists per-robot
   `mentor_behaviors` under `MOXIE_DATA_DIR` with atomic-ish writes and a 500-record cap. It has no
   indexes, no queries, no migrations, and no concurrent-writer story beyond a single process's lock —
@@ -305,7 +297,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   a child finishes every time is demoted below one they have never seen — variety by design, but it means
   "what they love" cannot currently come back the same week.
 
-## DoD progress (audited 2026-09-02, at v0.6.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
+## DoD progress (audited 2026-09-02, at v0.7.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
@@ -353,7 +345,7 @@ webhook apps stopped speaking flat, and `LLMApp` stopped being a second, diverge
 p95 **0.23 ms** per line against a 1 ms budget, no model call, no new dependency; eight byte-exact goldens
 reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` is the one-variable rollback.
 
-**Most valuable next slice (2026-09-02, after v0.7.0):** the pairing gate, published images, memory erase/edit/decay, vision events, face customization, the adaptive schedule and the gateway voice have all landed. In value order now: **puppet / telehealth (ADOPT #7)** — the build-ready brief is `backlog/telehealth.md` (pure `telehealth.py` cross-checked against the recovered `TeleHealth_pb2`, `GET/POST /telehealth`, a 🎭 console card, a SIM handler); **broker authentication P0** (`backlog/security-broker-auth.md`: pattern ACLs on `%c`, a per-appliance supervisor credential, 1883 loopback-bound — containment first, since a stock robot can carry no secret by QR); then a console card for the schedule's *why this activity today* lines (`GET /schedule` serves them, `server/` does not read them yet); then content packs export/import (ADOPT #5). Gateway STT waits for the gateway (WIP).
+**Most valuable next slice (2026-09-02, after v0.7.0):** the pairing gate, published images, memory erase/edit/decay, vision events, face customization, the adaptive schedule and the gateway voice have all landed. In value order now: **the voice picker** (`backlog/voice-picker.md`: Speech + Listening dropdowns fed by live gateway discovery + installed local engines, default `piper-amy`/`stt-whisper`, explicit local wins — launches when the STT and telehealth slices land); **puppet / telehealth (ADOPT #7)** — the build-ready brief is `backlog/telehealth.md` (pure `telehealth.py` cross-checked against the recovered `TeleHealth_pb2`, `GET/POST /telehealth`, a 🎭 console card, a SIM handler); **broker authentication P0** (`backlog/security-broker-auth.md`: pattern ACLs on `%c`, a per-appliance supervisor credential, 1883 loopback-bound — containment first, since a stock robot can carry no secret by QR); then a console card for the schedule's *why this activity today* lines (`GET /schedule` serves them, `server/` does not read them yet); then content packs export/import (ADOPT #5). Gateway STT waits for the gateway (WIP).
 
 ## TTS strategy (2026-09-01)
 
