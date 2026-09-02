@@ -1,5 +1,5 @@
 {
- "generated": "docs-895d3a3ffd28",
+ "generated": "docs-881c5919f697",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 33884,
+   "bytes": 34646,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 26476,
+   "bytes": 28203,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -252,7 +252,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 10557,
+   "bytes": 16748,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -261,6 +261,12 @@
     "globals[]` — regex-triggered commands (always on)",
     "schedules[]` — what to offer when",
     "The `volley` / `session` API (per-turn hooks)",
+    "Memory — `persist_data` + `session.summarize()`",
+    "The store",
+    "session.summarize(...)`",
+    "Declaring it (the `memory` block)",
+    "What a parent can do",
+    "Honest limits",
     "Execution actions (content → robot bridge)",
     "QR inside content",
     "Content delivery (assets)",
@@ -325,7 +331,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 61302,
+   "bytes": 62276,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
