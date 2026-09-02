@@ -365,5 +365,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   integration-time smoke of the *combined* tree, not just each branch's own — the orchestrator now runs the
   images-mode compose smoke at merge whenever compose/deploy files changed. Promotion resumes on a green gate.
 
+- **2026-09-02** — **Released v0.6.0 "a real appliance"** (dev → main squash `9ca5c95`, tag `v0.6.0`). Standing PR
+  recreated as #32; dev reconciled (zero-content merge). Over v0.5.0: the config contract completed + fleet
+  defaults, the memory floor + parent browser, the closed-by-default pairing gate, published multi-arch images
+  (this tag is the first real GHCR publish — the packages start **private**; the owner flips them public
+  once), the chunk-order fix. Six releases today (v0.2.0 → v0.6.0); 23 delegated slices integrated. In flight:
+  `feat/vision-events`, `feat/memory-item-erase`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
