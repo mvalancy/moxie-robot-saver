@@ -76,6 +76,16 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
    worktree, so a plain full-suite run spends gateway calls. Agents run the hermetic suite as
    `MOXIE_LLM_API_KEY= .venv/bin/python -m pytest …` and make live calls only in an explicit, budgeted step
    (state the cap in the brief; ≤ 6 is the default).
+9. **The fast tier runs the WHOLE suite with the fast tier's deps.** A test that constructs a class which
+   talks to a real service must inject a fake through a `client=`-style seam (never rely on `importorskip`
+   to hide a hard import), and the tiers' hermetic test deps stay in parity (`sim/ci/ci.yml` ↔ `ci-deep.yml`).
+   Verify a fix in a *fast-shaped* venv (no optional deps) before pushing.
+10. **Concurrency by disjoint file sets, not by turns.** A second slice may run while one is in flight
+    only when its files are provably disjoint: the brief carries the in-flight agent's files as a
+    RESERVED list, plan edits stay on distinct rows, and no two agents touch the same runtime region
+    (turn/streaming loop + safety gates, `_push_config`, the status HTTP handlers). Cap two BUILD slices
+    plus one INTEGRATION/RESEARCH task. Same-file-different-region edits merge cleanly; same-region
+    edits don't — plan the split before launching, not at merge time.
 
 ## The layered session loops (24/7 continuity)
 
@@ -223,6 +233,55 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   RELEASING.md's stale "workflows can't be pushed from the session" section replaced; playbook note — the
   generated *bundle copies* of docs conflict too, regenerate them (orchestrator's exclusion pattern fixed).
   Bumping to **0.4.0** for promotion (streaming + live CI + browser-audio fix + brain-latency filler).
+
+- **2026-09-02** — **Released v0.4.0** (dev → main squash `ebeda0d`, tag `v0.4.0`, release tier green, wheel +
+  sdist published). Standing PR recreated as #18; dev reconciled (zero-content merge). Since v0.3.0: streamed
+  sentence chunks (first sentence at first-token latency), the slow-brain filler, live CI proven on GitHub
+  Actions (10 + 4 live tests passed on the runner incl. real speech), the browser-audio flake fixed at the
+  root. Hermetic suite 281. Three releases today (v0.2.0 → v0.4.0); 12 delegated slices integrated (PRs
+  #3–#9, #11, #12, #14–#17). No agents in flight.
+
+- **2026-09-02 (RESEARCH)** — Integrated `feat/backlog-expressiveness` (PR #19 → dev): the audit now carries
+  honest status marks per item (PR numbers; JSON store ≠ database; `TTSMark[]` still empty), and
+  `docs/architecture/backlog/expressiveness.md` holds a build-ready brief for ADOPT #3 (the automarkup floor —
+  pure deterministic `annotate()` behind the unchanged seam, 0 unknown asset ids, one mood per streamed
+  answer, byte-exact goldens) plus a phased contract spec for BEYOND #1 (the behavior planner). Caveats from
+  our recovered docs: no gaze verb among the 24 markup commands; only two confirmed SFX ids; no physical
+  Moxie has played our markup. This is BUILD's next slice after safety. In flight: `feat/input-safety-contract`.
+
+- **2026-09-02** — Integrated `feat/input-safety-contract` (PR #20 → dev, BEYOND #2): child safety is an
+  enforced contract — `InputSafety` on the wire (proto-cited), a transparent local rule engine behind a
+  `Classifier` seam, gates at input / per streamed chunk / whole reply, a parent review queue + 🛡️ console
+  panel. Live: an unsafe request cost 0 gateway calls and the child heard a caring redirect. +84 tests
+  (→361 hermetic creds-free). Honest limits recorded (regex floor; a spoken chunk can't be unsaid). Audit
+  rows reconciled with the concurrent research branch. Next: ADOPT #3, the automarkup floor (brief in
+  `backlog/expressiveness.md`).
+
+- **2026-09-02** — Integrated `fix/fast-tier-openai-and-mouth-peak` (PR #21 → dev): the fast tier is green
+  again. Root causes: `LLMApp.__init__` hard-imported `openai` even with an injected fake (fast tier installs
+  fewer deps than deep and runs the whole suite), and a Playwright test sampled the mouth live in a 5 s window.
+  Now a `client=` seam, tier dependency parity in `ci.yml`, and a recorded mouth peak (0 muted / ~1.0 rendering).
+  412 pass in both venv shapes. Playbook rule 9 added. In flight: `feat/automarkup-floor`.
+
+- **2026-09-02 (AUDIT)** — All green: guards + 0-diff bundle, standing PR #18 CLEAN (six checks), fast tier green
+  on dev again, package 0.4.0 builds and the wheel ships `safety_rules.json`, no secrets in tree/history,
+  `.env`/data dirs ignored, token works, zero stale branches, CI templates in parity, four loops armed.
+  Spec check (content-module contract): `set_output`/`add_execution_action`/`local_data` exist, but
+  **`persist_data` and `summarize` are listed on the volley/session API and are not implemented** → WS-A
+  slice (it unlocks the MemoryChat pattern; audit ADOPT "session.summarize() + persist_data"). Contradiction
+  filed: the plan's Current-state "MQTT runtime" row still reads 🟡 "core works" after streaming, filler,
+  safety gates, schedule serving, telemetry and config editing landed — fix at the next merge (two agents
+  edit that file now). Self-improvement: playbook rule 10 + the BUILD loop now allow a second provably
+  disjoint slice (the last three concurrent pairs merged cleanly). In flight: `feat/automarkup-floor`,
+  `feat/config-alarms-fleet-defaults`. Release v0.5.0 queued behind the automarkup floor.
+
+- **2026-09-02** — Integrated `feat/automarkup-floor` (PR #22 → dev, ADOPT #3): every line Moxie speaks now
+  performs — mood + gestures from our recovered vocabularies (11 moods / 12 gestures / 50 trees / 52 spurts,
+  cited by line), a deterministic blake2b-gated `annotate()` behind the unchanged seam, 8/8 goldens, 0 unknown
+  ids, p95 0.23 ms, +280 tests (→641), and the browser SIM rendering six distinct faces with arms moving.
+  Honest gaps: SFX/icons/spurts gated off (thin catalogs); the model's own mood reaches only the closing
+  chunk on a streamed turn until `ReplyChunk` carries scored fields (planner phase); no hardware has played
+  it. In flight: `feat/config-alarms-fleet-defaults`. **Next: promote v0.5.0** ("safe and alive").
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

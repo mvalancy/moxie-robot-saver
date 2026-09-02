@@ -1,12 +1,12 @@
 {
- "generated": "docs-59548959652e",
+ "generated": "docs-5d63297e66be",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 11331,
+   "bytes": 11378,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 3496,
+   "bytes": 3839,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -93,17 +93,30 @@
    "kind": "md"
   },
   {
+   "path": "architecture/backlog/README.md",
+   "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
+   "section": "architecture",
+   "bytes": 2646,
+   "mermaid": 0,
+   "headings": [
+    "What a brief contains",
+    "The briefs",
+    "House rules"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 25338,
+   "bytes": 32840,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-02, after v0.2.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)",
+    "DoD progress (audited 2026-09-02, at v0.5.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
@@ -114,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 19724,
+   "bytes": 25183,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -148,7 +161,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 44036,
+   "bytes": 53597,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -177,7 +190,7 @@
     "4.3 STT audio over ZMQ-over-MQTT",
     "4.4 Full turn, end to end",
     "4.5 Slow brain → a filler now, the real answer next (`REPLY_PENDING`)",
-    "4.6 The automarkup engine (why it matters)",
+    "4.6 The markup floor — **built**, v1 2026-09-02",
     "5. Local AI integration points (the part we change)",
     "5.1 LLM — `ai_factory.py` + `conversations.py`",
     "5.2 STT — `zmq_stt_handler.py`",
@@ -197,7 +210,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 10401,
+   "bytes": 18013,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -310,7 +323,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 55792,
+   "bytes": 60902,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -338,10 +351,43 @@
     "4. The ranked backlog",
     "4.1 Top 10 ADOPT — port the idea, credit the source",
     "4.2 Top 10 BEYOND — what we should build instead",
+    "4.3 Backlog — the build briefs",
     "5. The honest ledger",
     "Where OpenMoxie (and its forks) are genuinely ahead of us",
     "Where we are already ahead",
     "6. How this feeds the build"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/expressiveness.md",
+   "title": "Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)",
+   "section": "architecture",
+   "bytes": 44578,
+   "mermaid": 1,
+   "headings": [
+    "Why this is the next slice",
+    "0. The seam as it stands today",
+    "The two gaps this file closes",
+    "1. ADOPT #3 — the markup floor · 🟢 **SHIPPED 2026-09-02**",
+    "1.1 Goal",
+    "1.2 The seam it plugs into",
+    "1.3 The vocabularies we may emit",
+    "1.4 What OpenMoxie's engine does — and which behaviors to port",
+    "1.5 Design — a pure function",
+    "1.6 Golden examples",
+    "1.7 Tests",
+    "1.8 Acceptance criteria",
+    "1.9 Files to touch · effort",
+    "1.10 Risks and honest limits",
+    "2. BEYOND #1 — the behavior planner",
+    "2.1 What \"10×\" means, from the child's side",
+    "2.2 The `Performance` object — one structured thing, one renderer",
+    "2.3 Contract changes — exactly what is added",
+    "2.4 The SIM as the preview client",
+    "2.5 How it is tested",
+    "2.6 Degradation — always down to the floor",
+    "2.7 Phases"
    ],
    "kind": "md"
   },
@@ -476,7 +522,7 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 9043,
+   "bytes": 9271,
    "mermaid": 0,
    "headings": [
     "Start here",
@@ -637,7 +683,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1172,
+   "bytes": 1456,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -681,6 +727,22 @@
     "Updating",
     "Troubleshooting",
     "Running it a different way"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/child-safety.md",
+   "title": "Child safety — what Moxie checks, and where you review it",
+   "section": "guides",
+   "bytes": 6095,
+   "mermaid": 0,
+   "headings": [
+    "What actually happens in a turn",
+    "What is checked",
+    "What a flag means (and what it does not)",
+    "Where to review it",
+    "Privacy",
+    "Changing what is checked"
    ],
    "kind": "md"
   },

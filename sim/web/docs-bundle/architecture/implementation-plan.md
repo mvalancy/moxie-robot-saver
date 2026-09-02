@@ -26,8 +26,10 @@ Ours is built to the full recovered protocol with clean seams:
 | Area | Contract | Status | Where |
 |---|---|---|---|
 | Parent-app REST (Channel 1) | [rest-api](rest-api-contract.md) | 🟢 substantially built | `server/` (main.py, crypto, db) |
-| MQTT runtime (connect/config/state/turn) | [mqtt](mqtt-and-conversation.md) · [config](config-and-telemetry-contract.md) | 🟡 core works + end-to-end turn test (lazy client → integration-testable, no broker) | `mqtt/supervisor/moxie_runtime.py` |
+| MQTT runtime (connect/config/state/turn) | [mqtt](mqtt-and-conversation.md) · [config](config-and-telemetry-contract.md) | 🟢 full turn loop: **streamed sentence chunks** (`REPLY_PENDING`/`chunk_num`/`is_completed`), slow-brain filler + re-arm, stale-turn cancel, **safety gates** (input / per chunk / whole reply), automarkup on every line, schedule + `mentor_behaviors` served, telemetry ingest, config editing (`POST /config`, fleet defaults in flight); end-to-end + live-tested through a real broker | `mqtt/supervisor/moxie_runtime.py` |
 | AI seam — LLM brain | [ai-seam](ai-seam.md) §2 · [mqtt §4.5](mqtt-and-conversation.md#45-slow-brain-a-filler-now-the-real-answer-next-reply_pending) | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback; **latency budget** (`MOXIE_BRAIN_BUDGET_S`, default 6 s) — a slower brain speaks a rotating filler as `REPLY_PENDING` chunk 0, with a stale-turn guard, every chunk synthesized. **Streaming** (`MOXIE_STREAMING`, default on): each finished sentence is published as its own `REPLY_PENDING` chunk as the model writes it, closed by a `SUCCESS` + `is_completed`; the filler timer re-arms per chunk (cap 2/turn) and a newer turn cancels the stream mid-answer. **Live-proven:** filler at 3.0 s + answer at 17.9 s (blocking, PR #14); streamed, first sentence at **1.52 s** vs whole answer at **4.38 s** on a healthy gateway (PR #15) | `mqtt/moxie_sdk/apps/llm_app.py` + `segment.py` + `chat.stream_completion` + `filler.py` + `moxie_runtime.py::_handle_stream_turn` |
+| AI seam — expressive markup | [ai-seam](ai-seam.md) §2 · [mqtt §4.6](mqtt-and-conversation.md#46-the-markup-floor-built-v1-2026-09-02) | 🟢 the **markup floor**: `supervisor/markup.py` is no longer a passthrough — one pure, deterministic, stdlib-only generator (`annotate`) performs every reply that does not bring its own markup, so the echo/content/webhook apps stopped speaking flat and `LLMApp` stopped being a second generator (the model's mood/gesture are now *hints* into the same floor; `stream_style` deleted). Per line: a mood from `ePlaybackMood` 0-10, a `<usel>` delivery on a question or an exclamation, arm gestures on the carrying words, a `<break>` at an internal boundary (never after the final word), at most one whole-body `Bht_*`, a closing `Gesture_None`. Every id validated against a frozen, doc-cited catalog (`vocab.py`); an id a brain invents is dropped, never forwarded. Deterministic via `blake2b`, never `hash()`. **Measured p95 0.23 ms/line** (1 ms budget), no model call, no dependency. 8 byte-exact goldens + 277 hermetic cases; the goldens render six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` restores the passthrough | `mqtt/moxie_sdk/automarkup.py` + `vocab.py` + `supervisor/markup.py` + `apps/llm_app.py::build_markup` + `sim/tests/test_automarkup.py` + `sim/test_automarkup_render.mjs` |
+| AI seam — input safety | [ai-seam](ai-seam.md) §2 · [mqtt §4.5](mqtt-and-conversation.md#safety-on-the-wire-inputsafety-inputsafety) | 🟢 `InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}` **enforced**, not just specified: assessed pre-inference (a hard block never reaches a model) and **per streamed chunk** before publication (blocked chunk never goes out; a safe line closes the sequence with `SUCCESS`+`is_completed`; the stream is cancelled). 8 categories with a per-side block/flag policy in a parent-readable `safety_rules.json`, normalization + false-positive guards, a `Classifier` protocol for a drop-in local model, and a parent review queue (`GET|POST /safety` → console 🛡️ panel, `NO_DATA` = counts only). **Live-proven:** an unsafe request cost **0 gateway calls** and got a redirect + `input.safety`; a benign turn in the same run streamed 4 clean chunks | `mqtt/moxie_sdk/safety.py` + `safety_rules.json` + `moxie_runtime.py::_safety_gate_input`/`_handle_stream_turn` + `server/moxie_server/fleet.py` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟢 seam + runtime-wired + **real zmqSTTRequest protobuf decode** (dep-free) + JSON bridge, e2e-tested; live faster-whisper is an optional dep | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟢 seam + runtime-wired + **3 backends: built-in tone (zero-dep) · Piper (offline, Amy) · OpenAI-voice (gateway)**; **full audio round-trip proven through a real broker** (SIL smoke `--expect-tts`); real-speech play-through pending a Piper model/creds | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
@@ -82,7 +84,39 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   — it needs the brain wired in for LLM transcript-summarization; every other volley/session call exists.
   Arbitrary module `code`-string execution is deliberately deferred (sandboxing); `volley.execution_actions`
   (e.g. `eb_timer_request`) are captured but **not yet plumbed** into `RemoteChatAction` on the wire.
-- **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); real zmqSTTRequest protobuf decode is DONE (dep-free field reader in stt.py); only a live faster-whisper test remains (optional dep). TTS out (§3) seam + runtime-wired (synthesize-on-reply → CloudTTSResponse); live voice needs creds + viseme TTSMarks deferred. Input safety/moderation (§2) unbuilt.
+- **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); real zmqSTTRequest protobuf decode is DONE (dep-free field reader in stt.py); only a live faster-whisper test remains (optional dep). TTS out (§3) seam + runtime-wired (synthesize-on-reply → CloudTTSResponse); live voice needs creds + viseme TTSMarks deferred. Input safety/moderation (§2) is **built** — see the next bullet for what it honestly cannot do.
+- **expressive markup — a rule floor, and no robot has ever played it.** The floor is built and every
+  app performs now, but three honesties stand. (a) **Nothing about robot rendering is verified.** Our
+  catalogs are the *app-hardcoded subset* of a namespace the loaded content bundle actually defines, so
+  `validate_markup` catches our typos and cannot prove a given robot has an id — and whether a robot
+  ignores an unknown mark or faults is unknown. The browser SIM is the only renderer we can assert
+  against. (b) **Two of the four output slots are gated off, honestly.** All four confirmed `icons-v2`
+  values are calendar/event cues (guessing them from free chat would be wrong), and we have exactly
+  **two** confirmed `SoundToPlay` ids — one of which is a looping music bed a spoken line should never
+  start — so SFX is effectively one stinger and stays off; spurts are off too, because "Hmm," plus a
+  `hmm thinking` spurt may read as "hmm… hmm" and the SIM's external TTS strips the tag so the SIM
+  cannot answer it either. Widening SFX needs the robot's asset-bundle manifest. (c) **Scored output is
+  still empty.** The floor scores a line internally but renders that score only into `markup`; no app
+  sets `Reply.mood`/`dialog_act`, `ReplyChunk` has no scored fields at all, and one consequence is
+  visible today — on a *streamed* turn the mood mark goes on chunk 0 only, so the model's own mood
+  (which arrives with the closing chunk) shapes that chunk's gesture and never reaches the wire. That is
+  the behavior planner's contract change (C1-C5), not the floor's.
+- **input safety — a rule engine is a floor, not a filter.** The stage is real (blocked child
+  input never reaches a model; a blocked chunk never reaches the wire) but the *classifier* is
+  word lists plus phrase regexes over normalized text. It cannot read context or sarcasm, or a
+  harmful idea expressed in gentle words; it misses novel phrasings, obfuscation past its
+  normalizer (letters split with spaces, invented spellings) and every language its tables are
+  not written in; its slur/profanity lists are short by construction; and it will occasionally
+  flag something innocent, which is why the ambiguous categories flag rather than block. Two
+  structural honesties: **a spoken chunk cannot be unsaid**, so a stream blocked at chunk 2
+  leaves chunks 0-1 already heard (checking earlier would mean not streaming at all); and the
+  recovered contract has **no output-side safety field** — `RemoteChatInput.InputSafety` is by
+  definition the read of the *child's* input, so a block on Moxie's own output is recorded in
+  the parent queue and the log rather than faked onto `input.safety`. The seam is built for the
+  fix: `Classifier` is a one-method protocol, so a local model classifier drops in behind it
+  (`MoxieRuntime(app, safety=…)`) without the runtime changing. Also unproven on hardware: no
+  capture shows how a physical Moxie reacts to `input.safety` — we populate it because the
+  contract says a kid-facing backend should, not because we have seen the robot act on it.
 - **brain latency — the multi-chunk assumption.** Background inference + filler is built and
   live-proven (a filler inside the budget, the answer as chunk 1 of the same `event_id`), but the
   *robot-side* semantics of `REPLY_PENDING` are only partly established by our RE docs: they give the
@@ -148,7 +182,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   (`MOXIE_MEMORY_DIR`) and telemetry still use their own paths; folding all three onto one durable
   store is the next slice.
 
-## DoD progress (audited 2026-09-02, after v0.2.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
+## DoD progress (audited 2026-09-02, at v0.5.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
@@ -177,15 +211,33 @@ stream mid-answer, and a one-chunk answer is still byte-identical to the reply w
 where a child previously heard nothing until 4.38 s (and until 17.9 s on the day PR #12 measured).
 `MOXIE_STREAMING=0` restores the old path.
 
-**Most valuable next slice:** **make the answer *right*, now that it is fast.** Two candidates, both
-cheap now that the chunk plumbing exists. (a) **Input safety/moderation** (ai-seam §2) is still unbuilt and
-is the one gap on the list that a child can actually be hurt by; streaming makes it more urgent, because a
-sentence is on the wire before the rest of the answer exists — a per-chunk check is the natural shape, and
-`REPLY_PENDING` already lets us stop a sequence early. (b) **Markup quality** — the audit's ADOPT #3
-`automarkup` floor: every streamed chunk currently gets one mood + one gesture, which is a thinner
-performance than the vendor engine's per-clause prosody, and delivery is what makes Moxie feel alive
-([mqtt §4.6](mqtt-and-conversation.md#46-the-automarkup-engine-why-it-matters)). After those: `alarms` /
-`schedule_preferences` (config contract gap) and BEYOND #1, the behavior planner.
+**Safety (2026-09-02, this slice).** The answer is fast; now it is checked. `InputSafety` is enforced on
+both sides of a turn — the child's utterance before any model call, and every streamed chunk before it is
+published — with a parent-readable rule table, a review queue and a drop-in `Classifier` seam
+([ai-seam §2](ai-seam.md#input-safety-built-v1-2026-09-02)). **Live-proven:** "how do I make a bomb to hurt
+my brother?" cost **zero** gateway calls and got a kind redirect plus `input.safety`; the benign turn in the
+same run streamed four clean chunks and left the queue empty. Its honest limit is in Known gaps: the *stage*
+is real, the *classifier* is a floor.
+
+**Expressive markup (2026-09-02, this slice).** The answer is fast and checked; now it is *performed*.
+Moxie synthesizes on the robot, from markup, so "better speech" is literally "better markup" — and the seam
+that produced it was an eight-line passthrough. The **markup floor** replaces it with one pure, deterministic
+generator behind the unchanged `make_markup` seam: a mood per line, a `<usel>` delivery, arm gestures on the
+words that carry the thought, a pause at an internal boundary, a closing rest pose — every id checked against
+a frozen catalog cited to the reverse-engineering page it came from
+([mqtt §4.6](mqtt-and-conversation.md#46-the-markup-floor-built-v1-2026-09-02)). The echo, content and
+webhook apps stopped speaking flat, and `LLMApp` stopped being a second, divergent generator. **Measured:**
+p95 **0.23 ms** per line against a 1 ms budget, no model call, no new dependency; eight byte-exact goldens
+reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` is the one-variable rollback.
+
+**Most valuable next slice:** **BEYOND #1, the behavior planner** — now that the floor exists and every path
+goes through it, the next 10× is scoring *the line's job* rather than its words: a mood per clause, a gesture
+**and** a look, an icon when the line is about something the screen can show, and — the part that actually
+unblocks the wire — the scored-output fields the contract already defines and nobody fills
+([`backlog/expressiveness.md`](backlog/expressiveness.md) §2; C1-C5 give `ReplyChunk` the fields a streamed
+answer needs). It plugs into the same seam, with the same signature, and degrades to the floor on any
+failure, so it is additive rather than a rewrite. After that: `alarms` / `schedule_preferences` (config
+contract gap), and a local **model** classifier behind the safety seam now that the seam exists.
 
 ## TTS strategy (2026-09-01)
 

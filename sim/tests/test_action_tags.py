@@ -164,11 +164,13 @@ class _FakeCompletion:
 
 
 def _llm_app(canned):
-    pytest.importorskip("openai")            # LLMApp constructs a real client object
     from moxie_sdk.apps import LLMApp
-    app = LLMApp(base_url="http://127.0.0.1:1/v1", api_key="sk-not-used", model="test")
     fake = _FakeCompletion(canned)
-    app._client = fake                        # inject the brain, no network
+    # The fake IS the client (no network, and no openai import — LLMApp only builds a
+    # real one when no client is handed to it), so these tag rules are checked on a
+    # bare interpreter instead of being skipped wherever openai is not installed.
+    app = LLMApp(base_url="http://127.0.0.1:1/v1", api_key="sk-not-used", model="test",
+                 client=fake)
     return app, fake
 
 

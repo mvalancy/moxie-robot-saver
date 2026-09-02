@@ -12,7 +12,7 @@ from .types import ResultCode
 def build_chat_response(event_id, text, markup="", *, backend="router",
                         result=ResultCode.SUCCESS, actions=None, end_turn=False,
                         mood=None, dialog_act=None, modules=None,
-                        chunk_num=None, is_completed=None) -> dict:
+                        chunk_num=None, is_completed=None, safety=None) -> dict:
     """Build the RemoteChatResponse JSON.
 
     Matches embodied/robotbrain/RemoteChat.proto: `result` is the ResultCode enum
@@ -27,7 +27,17 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     (`RemoteConsistencyControl`, field 18 — RemoteChat.proto:201-205), which marks the
     last chunk of the sequence. Both are omitted unless a caller asks for them, so a
     plain single-chunk reply stays byte-identical to what we sent before (chunk 0 /
-    not-streaming is the proto default anyway)."""
+    not-streaming is the proto default anyway).
+
+    **Moderation.** `safety` (a `moxie_sdk.safety.InputSafety`) fills
+    `RemoteChatResponse.input.safety` — `input` is field 17, a `RemoteChatInput`, whose
+    field 12 is the `InputSafety{is_unsafe, blocked_by, intents, phrase_id}` message
+    (RemoteChat.proto:180-186,:198,:335). Its `intents` are also mirrored onto
+    `RemoteChatResponse.input_intents` (field 10, `repeated string`) so a client that
+    reads only the flat field still sees the verdict. `RemoteChatInput` is by definition
+    the brain's read of *the child's input*, so only a pre-inference (child-side) verdict
+    is published here; a block on Moxie's own output has no field in the contract and is
+    recorded in the parent review queue instead (docs/architecture/ai-seam.md §2)."""
     rc = result if isinstance(result, ResultCode) else ResultCode(result)
     output = {"text": text, "markup": markup or text}
     if mood:
@@ -48,6 +58,11 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
         resp["chunk_num"] = int(chunk_num)
     if is_completed is not None:
         resp["consistency_control"] = {"is_completed": bool(is_completed)}
+    if safety is not None:
+        wire = safety.to_wire() if hasattr(safety, "to_wire") else dict(safety)
+        resp["input"] = {"safety": wire}
+        if wire.get("intents"):
+            resp["input_intents"] = list(wire["intents"])
     return resp
 
 

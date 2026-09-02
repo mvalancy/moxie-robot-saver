@@ -303,6 +303,17 @@
   var ttsQueue = [], ttsPlaying = null, speaking = false, speakingInfo = null;
   var gestureArmed = false, cloudVoice = false;
 
+  /* Loudest mouth-open reached during the CURRENT cloud-TTS utterance, reset when one
+   * starts and left standing after it ends (so it can be read afterwards).
+   *
+   * The mouth is a live ~1 s animation driven by the audio envelope, so *sampling* it
+   * is a race an observer loses on a loaded machine: the utterance can begin and end
+   * between two polls and the peak is gone with it. Remembering the peak turns "did the
+   * face move while it spoke?" from a question about timing into a question about the
+   * whole utterance, which is what anyone actually wants to know. Used by
+   * sim/tests/test_sil.py's cloud-TTS tests. */
+  var mouthPeak = 0;
+
   function mouth(v) {
     try { if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(v); } catch (e) {}
   }
@@ -355,6 +366,7 @@
   }
 
   function setSpeaking(on, info) {
+    if (on && !speaking) mouthPeak = 0;    // a NEW utterance; chunks of one accumulate
     speaking = !!on;
     speakingInfo = speaking ? ttsSummary(info) : null;
     try {
@@ -433,6 +445,13 @@
         if (track[mi] && track[mi].t <= ms) open = Math.max(open, track[mi].open);
       }
       mouth(open);
+      // Read the value back off the avatar, not the one we computed: the peak then
+      // witnesses that the face really was driven, which is what the test asserts.
+      var shown = open;
+      try {
+        if (window.moxie && window.moxie.getMouthOpen) shown = window.moxie.getMouthOpen();
+      } catch (e) {}
+      if (shown > mouthPeak) mouthPeak = shown;
       raf = requestAnimationFrame(frame);
     }
     function finish() {
@@ -488,6 +507,9 @@
     hasCloudVoice: function () { return cloudVoice; },    // a CloudTTSResponse has arrived
     setTtsHint: setTtsHint,           // resting text of #tts-status (never clobbers speaking)
     ttsPending: function () { return ttsQueue.length; },
+    // Peak mouth-open of the current/most recent cloud-TTS utterance (0..1). Survives
+    // the end of playback, so "the mouth moved" is assertable without racing it.
+    lastMouthPeak: function () { return mouthPeak; },
     setEnabled: function (v) { enabled = !!v; if (!enabled) stop(); },
     isEnabled: function () { return enabled; },
     setTtsBase: function (u) { TTS_BASE = u; try { localStorage.setItem("moxie.ttsBase", u); } catch (e) {} },

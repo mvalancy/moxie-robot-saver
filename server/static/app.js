@@ -146,6 +146,7 @@ async function refreshLive(){
     box.innerHTML = `<div class="live-off">● Live state: ${f.ok?'no robot connected':'supervisor offline'}</div>`;
     if(cfgBox) cfgBox.style.display='none';
     refreshInsights(null);
+    refreshSafety(null);
     return;
   }
   if(cfgBox) cfgBox.style.display='';
@@ -166,6 +167,7 @@ async function refreshLive(){
             <div class="livegrid">${rows}${ovHtml}</div>`;
   }).join('');
   refreshInsights(liveDevice);
+  refreshSafety(liveDevice);
 }
 
 // telemetry insights (M6): the Packet events the runtime stored for this robot
@@ -191,6 +193,59 @@ async function refreshInsights(deviceId){
     return `<div class="ev"><span>${escapeHtml(when)}</span> <b>${escapeHtml(e.event_name)}</b></div>`;
   }).join('');
   box.innerHTML=`${hd}<div class="livegrid">${counts}</div><div class="evlog">${rows}</div>`;
+}
+// safety review queue (ai-seam §2 InputSafety): what the classifier blocked or flagged,
+// on either side of a turn. Excerpts arrive already redacted by the runtime.
+async function refreshSafety(deviceId){
+  const box=$('#robot-safety'); if(!box) return;
+  if(!deviceId){ box.innerHTML='<div class="live-off">🛡️ Safety: no robot connected</div>'; return; }
+  let s;
+  try{ s=await api(`/local/robots/${encodeURIComponent(deviceId)}/safety`,{auth:false}); }
+  catch(e){ box.innerHTML='<div class="live-off">🛡️ Safety: supervisor offline</div>'; return; }
+  if(!s.ok){
+    box.innerHTML=`<div class="live-off">🛡️ Safety: ${escapeHtml(s.error||'unavailable')}</div>`;
+    return;
+  }
+  const unrev = s.unreviewed
+    ? `<span class="warn">${s.unreviewed} to review</span>` : '<span>all reviewed</span>';
+  const ack = s.unreviewed
+    ? '<button id="btn-safety-ack" class="ghost tiny">Mark all reviewed</button>' : '';
+  const hd=`<div class="safety-hd">🛡️ Safety · ${s.total} event${s.total===1?'':'s'}
+              <span class="grow">${unrev}</span>${ack}</div>`;
+  if(!s.enabled){
+    box.innerHTML=hd+'<div class="live-off">Safety checking is OFF (MOXIE_SAFETY=0).</div>';
+    return;
+  }
+  if(!s.total){
+    box.innerHTML=hd+'<div class="live-off">Nothing flagged yet. Moxie checks every turn, '
+      +'both what your child says and what Moxie is about to say.</div>';
+    return;
+  }
+  const counts=(s.by_category||[]).map(c=>
+    `<div class="k"><span>${escapeHtml(c.label)}</span><b>${c.count}</b></div>`).join('');
+  const rows=(s.events||[]).map(e=>{
+    const when=e.ts?new Date(e.ts*1000).toLocaleString():'—';
+    const who=e.side==='moxie'?'Moxie':'child';
+    const what=(e.labels||[]).join(', ')||'flagged';
+    const ex=e.excerpt?`<span class="ex">“${escapeHtml(e.excerpt)}”</span>`:'';
+    const seen=e.reviewed?'<span class="tag">reviewed</span>':'';
+    return `<div class="ev${e.action==='block'?' blocked':''}">
+              <span>${escapeHtml(when)}</span>
+              <span class="tag">${escapeHtml(e.action)} · ${escapeHtml(who)}</span>
+              <b>${escapeHtml(what)}</b> ${ex} ${seen}</div>`;
+  }).join('');
+  const note = s.detail
+    ? 'Blocked turns never reached the AI (or were never spoken). Excerpts are redacted.'
+    : `Data sharing is ${escapeHtml(s.policy||'NO_DATA')}, so only counts are kept — no excerpts, no event list.`;
+  box.innerHTML=`${hd}<div class="livegrid">${counts}</div><div class="evlog">${rows}</div>`
+    +`<p class="safety-note">${note}</p>`;
+  const b=$('#btn-safety-ack');
+  if(b) b.onclick=async()=>{
+    b.disabled=true;
+    try{ await api(`/local/robots/${encodeURIComponent(deviceId)}/safety`,
+                   {method:'POST',auth:false,body:{}}); }catch(e){}
+    refreshSafety(deviceId);
+  };
 }
 function prefillConfig(r){
   const ov=r.config_overrides||{};

@@ -33,7 +33,11 @@ A backend + Sim are built from these directly; each cites the study but reads on
 - [`moxie-ecosystem.md`](moxie-ecosystem.md) — the full self-hostable stack build plan: brain, voice, ears, liveness.
 - [`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) — **measured against the state of the art**: a
   cited, feature-by-feature audit of [OpenMoxie](https://github.com/jbeghtol/openmoxie) (MIT) and its active
-  forks, classified HAVE / ADOPT / BEYOND, with a ranked backlog and an honest list of where they're ahead.
+  forks, classified HAVE / ADOPT / BEYOND, with a ranked backlog, a per-item **status** column, and an
+  honest list of where they're ahead.
+- [`backlog/`](backlog/README.md) — **the build briefs**: a ranked audit line turned into something an agent
+  can execute — seam, cited vocabularies, design, tests, acceptance criteria, risks. Currently
+  [`backlog/expressiveness.md`](backlog/expressiveness.md) (the markup floor + the behavior planner).
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
 - [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.

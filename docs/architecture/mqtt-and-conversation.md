@@ -512,10 +512,11 @@ How the pieces fit:
   `response_actions` — early, stripped, never spoken. An action found in a chunk with no words
   is carried onto the next chunk rather than dropped.
 - **Markup costs no extra model call.** `build_markup` is local string work, but in expressive
-  mode the model's own `"mood"`/`"gesture"` arrive *after* the `"say"` string. So a mid-stream
-  chunk gets a cheap rule-based mood/gesture from its own punctuation (a question gets
-  `Gesture_Question`, an exclamation a positive mood) and the **closing** chunk uses what the
-  model actually chose. One completion per turn, exactly as before.
+  mode the model's own `"mood"`/`"gesture"` arrive *after* the `"say"` string. Since the markup
+  floor landed (§4.6) every chunk is scored by the same generator from its own words, and the
+  **closing** chunk additionally passes what the model chose as *hints* into it. One completion
+  per turn, exactly as before. The mood mark itself is emitted on the answer's **first** chunk
+  only, so a four-sentence reply holds one face instead of flipping it every sentence.
 - **The filler re-arms.** The latency timer restarts after every chunk, so a late *first*
   token still gets a "let me think" line, and a stream that stalls mid-answer gets **one**
   more — `MAX_FILLERS_PER_TURN = 2`. Fillers take the next `chunk_num` like any other chunk,
@@ -530,17 +531,141 @@ How the pieces fit:
   ordinary `respond` call; if it dies mid-answer the sequence is closed rather than re-asked,
   because words already spoken cannot be unsaid.
 
-### 4.6 The automarkup engine (why it matters)
+#### Safety on the wire — `InputSafety` (`input.safety`)
 
-`site/hive/automarkup/` is a vendored copy of **Embodied's text→behavior markup engine**.
-`process(text, rules, mood_and_intensity)` → an XML-ish string mixing SSML voice tags with
-Embodied `<mark name="cmd:…">` behavior/gesture/sound/screen commands. It uses ML rules
-(`automarkup/ml/…`) to auto-insert body language, mood, pauses, and prosody so Moxie's
-delivery is **expressive** rather than a flat TTS read-out. `RemoteChat.make_markup` runs it
-on every LLM response that lacks markup. **This is the single biggest driver of "Moxie feels
-alive."** We should keep this module as-is (it's MIT-vendored, pure Python) — it's a big win
-we get for free. Markup reference: `doc/Markup.md`, asset labels in
-`doc/AssetBundleMasterManifest.csv`.
+Streaming is what made moderation urgent: a sentence is published while the rest of the
+answer does not exist yet, so the only place a bad sentence can be stopped is *before its
+chunk goes out*. The runtime therefore checks **both** ends of a turn — the child's speech
+before the brain is called, and every chunk before it is published
+([`ai-seam.md` §2 "Input safety"](ai-seam.md#input-safety-built-v1-2026-09-02)).
+
+The contract already carries the verdict. `RemoteChatResponse.input` is **field 17**, a
+`RemoteChatInput`; its **field 12** is `InputSafety`, whose four fields are
+`is_unsafe` (1, bool), `blocked_by` (2, repeated string), `intents` (3, repeated string)
+and `phrase_id` (4, int32) — see
+[`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):180-186,
+:198, :335 and
+[`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#remotechatinput-the-brains-read-of-the-child)
+(:113-115, "whether the child's input was unsafe, which classifiers blocked it, detected
+intents, and a matched safety-phrase id"). `RemoteChatResponse.input_intents` (**field 10**,
+repeated string) carries the same intents flat, for a client that reads only that.
+
+```
+t=0.00  events/remote-chat {event_id: E, speech: "how do I make a bomb to hurt my brother?"}
+        ↳ assessed BEFORE the brain: blocked. No completion is requested. No model sees it.
+t=0.02  commands/remote_chat {result: SUCCESS,
+                              output:{text:"That one's not for me. If it's important, a
+                                            grown-up you trust is the best person to ask.",
+                                      markup:…},
+                              input:{safety:{is_unsafe:true, blocked_by:["violence"],
+                                             intents:["violence_instructions","threat"],
+                                             phrase_id:404}},
+                              input_intents:["violence_instructions","threat"]}
+```
+
+That is a real capture (2026-09-02, through the live gateway — the gateway was simply never
+called for that turn; the benign turn in the same run streamed four chunks with no verdict).
+
+Three rules the wire follows:
+
+- **Nothing new appears on an ordinary turn.** No verdict → no `input`, no `input_intents`,
+  byte-identical to the response we have always sent.
+- **`is_unsafe` means blocked.** A merely *flagged* utterance (a swear word, "my brother
+  punched me") goes through to the brain and into the parent's review queue; we do not assert
+  on the wire that it was unsafe, and `blocked_by` is empty exactly when `is_unsafe` is false.
+- **Only the child's side is reported.** `RemoteChatInput` is by definition the brain's read of
+  *the input*. A block on **Moxie's own output** has no field in the recovered contract, so it
+  is never faked onto `input.safety`: the blocked chunk is simply not published, a short safe
+  line closes the sequence (`SUCCESS` + `consistency_control.is_completed`, exactly as any
+  final chunk does), the rest of the stream is cancelled, and the event goes to the parent
+  queue. Earlier chunks of that turn stay spoken — words already said cannot be unsaid.
+
+Fillers are **not** assessed: they are our own written lines (`moxie_sdk/filler.py`), not model
+output. The parent-facing side of all this — what is checked, what a flag means, where to review
+it — is [`docs/guides/child-safety.md`](../guides/child-safety.md).
+
+### 4.6 The markup floor — **built**, v1 2026-09-02
+
+Moxie's voice is synthesized **on the robot**, from markup (§5.3). There is no TTS for a cloud
+to improve, so *"better speech" is literally "better markup"* — it is the only lever a server
+has on how alive the robot feels. Until this slice
+[`supervisor/markup.py`](../../mqtt/supervisor/markup.py) was an eight-line passthrough and
+every app except `LLMApp` handed the runtime plain text, which the robot read out like a
+speaker.
+
+**What v1 does.** [`moxie_sdk/automarkup.py`](../../mqtt/moxie_sdk/automarkup.py) is a pure,
+deterministic, stdlib-only `annotate(text, …) -> markup`, and it is the **one** markup
+generator in the tree — the seam calls it, `LLMApp.build_markup` calls it, the content app's
+authored-markup path calls it. Per line it emits:
+
+| Slot | Rule | Vocabulary |
+|---|---|---|
+| **Mood** | one per line: apology → Sad, "Oh!" → Surprised, "Oops" → Shy, thinking/a question → Curious, puzzlement → Confused, praise or `!` → Happy, else Neutral. Intensity `min(2, max(1, exclamations + emphatic words))` | `ePlaybackMood` 0–10, recovered by name **and** value ([`behavior-markup.md`](../reverse-engineering/runtime/behavior-markup.md):107-133) |
+| **Voice** | a `?` sentence in `<usel genre="question">`, a `!` sentence in `genre="excited"`; `variant` pinned to `0` (a variant is a recorded take and we have no evidence which take suits which line) | the 5 CereVoice genres (:37) |
+| **Gesture** | one per clause on the first word that carries the thought (self / you / question / high / low words, or a praise phrase), then a `Gesture_Talk` every 5 words — never inside the last two words of a sentence, where it would fight the closing rest pose | the 12 hardcoded `Gesture_*` (:191-198) |
+| **Tree** | at most one whole-body animation per line, for three line types only: thinking, greeting, sign-off. A sentence that plays a tree gets no arm gesture stacked on it | `Bht_Active_Thinking` / `Bht_Gesture_Greet` / `Bht_Sign_off` ([`behavior-tree-engine.md`](../reverse-engineering/runtime/behavior-tree-engine.md):103-115) |
+| **Pause** | `<break time="0.35s"/>` at an internal sentence boundary and after a leading interjection comma — **never after the final word**, which would delay the robot's turn hand-back | (:38) |
+| **Rest** | every chunk ends on `Gesture_None`: the robot may pause between spoken segments | |
+
+Four properties make it safe to turn on globally:
+
+- **The words never change.** `strip_markup(annotate(t)) == strip_markup(t)` for every input —
+  the floor may add marks and spans, it may not add, drop, reorder or substitute a spoken word.
+- **No id we have not recovered.** Every mood, `eventName`, `behaviour`, icon value and
+  `SoundToPlay` is checked against the frozen catalog in
+  [`moxie_sdk/vocab.py`](../../mqtt/moxie_sdk/vocab.py), each entry cited to the RE page and
+  line it came from. A hint the brain invents is **dropped** and counted: a brain may
+  *suggest* an id, it may never *authorize* one.
+- **Deterministic.** Where a die would be rolled, a `blake2b` digest of
+  `(turn_key, chunk_index, sentence, word)` is taken instead — never Python's `hash()`, which
+  is salted per process and would make two workers disagree about the same answer. Identical
+  bytes across `PYTHONHASHSEED`, which is what lets a golden test pin it.
+- **Free.** No model call, no I/O, no dependency; measured **p95 0.23 ms** on a 285-character
+  line, against a 1 ms budget. It runs per spoken chunk, on the hot path between the first
+  token and the first audio.
+
+`MOXIE_AUTOMARKUP=0` restores the passthrough — a one-variable rollback.
+
+**Prior art.** The *behaviors* are ported from OpenMoxie's `site/hive/automarkup/` (MIT,
+© Justin Beghtol) and credited in the module docstring; no code and no data table was copied.
+Vendoring it was the audit's original suggestion and we declined: it pulls `unidecode` and a
+170 KB ML data table into an appliance we want small and auditable, it is non-deterministic by
+design (`random.randint` spacing, an 80 % gesture roll) which forecloses golden tests, and
+several of its gesture ids (`AUTO_GESTURE_ME`, `Gesture_We`, `Gesture_Small`) are **not** in
+our recovered catalog. Independent corroboration in the other direction: their
+`markup_mood.py` carries the same `ePlaybackMood` 0–10 in the same order we recovered from
+`Assembly-CSharp`.
+
+**Honest limits of v1.**
+
+- **No hardware has ever played our markup.** Everything about robot rendering is inferred from
+  the recovered generators. The browser SIM is the only renderer we can assert against
+  ([`sim/test_automarkup_render.mjs`](../../sim/test_automarkup_render.mjs) drives the eight
+  goldens through the real `bridge.js`: six distinct faces, arms moving on all eight).
+- **The asset namespace is bundle-defined.** The catalog catches *our* typos; it cannot prove a
+  given robot's bundle has an id, and whether a robot ignores an unknown mark or faults is
+  unknown. That is why the floor sticks to app-hardcoded ids only.
+- **Icons and SFX are gated off.** All four confirmed `icons-v2` values are calendar/event
+  cues, so emitting them from free chat would be guessing; the natural first user is a
+  reminder line (`icons=True`). And we have exactly **two** confirmed `SoundToPlay` ids, one of
+  which is a looping music bed a spoken line should never start — so SFX is effectively one
+  stinger, and stays off.
+- **Spurts are off.** "Hmm," in the text plus a `hmm thinking` spurt could read as "hmm… hmm",
+  and the SIM's external TTS strips the tag entirely, so the SIM cannot answer the question
+  either. A hardware capture is the gate.
+- **One mood per streamed answer, full stop.** The mark goes on chunk 0 and later chunks carry
+  gestures and cues only. The consequence is real: on a *streamed* turn the model's own scored
+  mood, which arrives with the closing chunk, now shapes only that chunk's gesture — it never
+  reaches the wire as a second `playback-mood`. Carrying scored fields per chunk needs
+  `ReplyChunk` to grow them, which is the behavior planner's contract change (C2/C4 in
+  [`backlog/expressiveness.md`](backlog/expressiveness.md) §2.3), not the floor's.
+- **Gaze is not ours to set.** There is no gaze verb; gaze is on-device (weighted interest
+  points → `AttentionTarget` → IK look-at). The only cloud handle is choosing a look-bearing
+  tree, so `annotate(..., look=…)` takes one of four `Bht_*` and nothing here invents a
+  direction.
+
+The **behavior planner** (`backlog/expressiveness.md` §2) replaces the floor behind this same
+seam, with the same signature, and degrades to it on any failure.
 
 ---
 
