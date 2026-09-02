@@ -95,6 +95,57 @@ class WhisperTranscriber(Transcriber):
         return " ".join(s.text for s in segments).strip()
 
 
+def _read_varint(b: bytes, i: int):
+    shift = 0
+    val = 0
+    while True:
+        byte = b[i]
+        i += 1
+        val |= (byte & 0x7F) << shift
+        if not (byte & 0x80):
+            return val, i
+        shift += 7
+
+
+def decode_zmq_stt_frame(payload):
+    """Decode a real robot's events/zmq frame `b'<full_name>:' + zmqSTTRequest_bytes`
+    into {vad, audio, uuid}. Minimal, dependency-free protobuf reader for the three
+    fields we need (vad=2 varint, audio_content=3 bytes, uuid=4 string); returns None
+    if it isn't a zmqSTTRequest frame. Field numbers per zmqSTT.proto."""
+    if isinstance(payload, str):
+        payload = payload.encode("utf-8", "replace")
+    sep = payload.find(b":")
+    if sep < 0 or not payload[:sep].endswith(b"zmqSTTRequest"):
+        return None
+    data = payload[sep + 1:]
+    out = {"vad": 0, "audio": b"", "uuid": ""}
+    i, n = 0, len(data)
+    try:
+        while i < n:
+            tag, i = _read_varint(data, i)
+            field, wt = tag >> 3, tag & 7
+            if wt == 0:                        # varint
+                val, i = _read_varint(data, i)
+                if field == 2:
+                    out["vad"] = val
+            elif wt == 2:                      # length-delimited
+                ln, i = _read_varint(data, i)
+                chunk, i = data[i:i + ln], i + ln
+                if field == 3:
+                    out["audio"] = chunk
+                elif field == 4:
+                    out["uuid"] = chunk.decode("utf-8", "replace")
+            elif wt == 1:                      # 64-bit
+                i += 8
+            elif wt == 5:                      # 32-bit
+                i += 4
+            else:
+                return None                    # unknown wire type
+    except (IndexError, ValueError):
+        return None
+    return out
+
+
 def build_stt_response(uuid: str, speech: str, *, final: bool = True,
                        confidence: float = 1.0) -> dict:
     """A zmqSTTResponse (JSON) a revival server publishes back after transcription."""

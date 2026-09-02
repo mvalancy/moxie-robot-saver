@@ -71,3 +71,34 @@ def test_response_encoder_shape():
 def test_whisper_availability_is_boolean():
     # no hard dep — just reports whether faster-whisper is installed
     assert isinstance(WhisperTranscriber.available(), bool)
+
+
+def _pb_zmq_frame(vad, audio, uuid):
+    """Hand-encode a zmqSTTRequest protobuf frame (fields: vad=2, audio=3, uuid=4)."""
+    def varint(n):
+        out = bytearray()
+        while True:
+            b = n & 0x7F
+            n >>= 7
+            out.append(b | (0x80 if n else 0))
+            if not n:
+                return bytes(out)
+    body = b""
+    body += bytes([0x10]) + varint(vad)                      # field 2, varint
+    body += bytes([0x1A]) + varint(len(audio)) + audio       # field 3, len-delim
+    u = uuid.encode()
+    body += bytes([0x22]) + varint(len(u)) + u               # field 4, len-delim
+    return b"embodied.perception.audio.zmqSTTRequest:" + body
+
+
+def test_decode_zmq_stt_frame():
+    from moxie_sdk.stt import decode_zmq_stt_frame
+    frame = _pb_zmq_frame(3, b"audiobytes", "utt-7")
+    got = decode_zmq_stt_frame(frame)
+    assert got == {"vad": 3, "audio": b"audiobytes", "uuid": "utt-7"}
+
+
+def test_decode_ignores_non_stt_frames():
+    from moxie_sdk.stt import decode_zmq_stt_frame
+    assert decode_zmq_stt_frame(b"embodied.other.Thing:\x08\x01") is None
+    assert decode_zmq_stt_frame(b"no-colon-here") is None

@@ -440,10 +440,15 @@ class MoxieRuntime:
                 except Exception:
                     audio = b""
             return self.feed_stt(device_id, data["vad"], audio, data.get("uuid", ""))
+        # real robot: `b'<full_name>:' + zmqSTTRequest` protobuf
+        raw = payload if isinstance(payload, (bytes, bytearray)) else str(payload).encode()
+        from moxie_sdk.stt import decode_zmq_stt_frame
+        frame = decode_zmq_stt_frame(raw)
+        if frame is not None:
+            return self.feed_stt(device_id, frame["vad"], frame["audio"], frame["uuid"])
         if not getattr(self, "_warned_stt", False):
-            note = ("received protobuf STT audio (events/zmq) — decoding zmqSTTRequest "
-                    "needs the compiled proto (remaining wire step)") if self._transcriber \
-                else "received STT audio but no transcriber is set (text turns still work)"
+            note = ("STT audio but no transcriber is set (text turns still work)"
+                    if not self._transcriber else "unrecognized events/zmq frame")
             print(f"[runtime] ⚠️  {note}; see handle_zmq().")
             self._warned_stt = True
 

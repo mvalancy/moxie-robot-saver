@@ -286,3 +286,36 @@ def test_telemetry_ingest_stores_and_counts():
     assert len(rt.robots[did].extra["telemetry"]) == 2
     snap = [r for r in rt.status_snapshot()["robots"] if r["device_id"] == did][0]
     assert snap["telemetry_count"] == 2
+
+
+def test_handle_zmq_real_protobuf_frame_drives_stt():
+    """A real robot's protobuf zmqSTTRequest frame off events/zmq → feed_stt → transcript."""
+    from moxie_sdk.stt import Transcriber
+
+    def _varint(n):
+        out = bytearray()
+        while True:
+            b = n & 0x7F; n >>= 7
+            out.append(b | (0x80 if n else 0))
+            if not n:
+                return bytes(out)
+
+    def _frame(vad, audio, uuid):
+        body = bytes([0x10]) + _varint(vad)
+        body += bytes([0x1A]) + _varint(len(audio)) + audio
+        u = uuid.encode(); body += bytes([0x22]) + _varint(len(u)) + u
+        return b"embodied.perception.audio.zmqSTTRequest:" + body
+
+    class _Fake(Transcriber):
+        def transcribe(self, pcm, sample_rate=16000):
+            return f"pb {len(pcm)}b"
+
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    rt.set_transcriber(_Fake())
+    did = "d_pb"
+    rt.handle_zmq(did, _frame(1, b"aa", "u5"))         # START
+    got = rt.handle_zmq(did, _frame(3, b"bb", "u5"))    # END → transcribe
+    assert got == "pb 4b"
+    msgs = [pl for (t, pl) in rt.client.published if t == f"/devices/{did}/commands/zmq"]
+    assert msgs[-1]["speech"] == "pb 4b" and msgs[-1]["uuid"] == "u5"
