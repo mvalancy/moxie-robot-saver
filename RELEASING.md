@@ -40,7 +40,9 @@ feat/*  ──PR──▶  dev  ──PR──▶  main  ──tag v X.Y.Z──
 | Tier | Workflow | Trigger | Runs |
 |---|---|---|---|
 | **Fast** (dev) | `.github/workflows/ci.yml` | push `dev`, PR → `dev` | docs/protocol guards + SIL smoke + unit/cloud tests (~5 min) |
-| **Deep** (main) | `.github/workflows/ci-deep.yml` | PR → `main`, manual | full suite + **HIL sim** (hardware-in-the-loop: a virtual robot end-to-end, later a real robot + real gateway/voice via repo secrets) |
+| **Deep** (main) | `.github/workflows/ci-deep.yml` | PR → `main` | full suite + **HIL sim** (hardware-in-the-loop: a virtual robot end-to-end, later a real robot on a self-hosted runner) |
+| **Deep — live** | same, `workflow_dispatch` | `gh workflow run ci-deep.yml --ref dev` | the above **+ the live gateway suites** (`test_live_gateway` · `test_live_action_tags` · `test_live_content_e2e`) on the real brain via repo secrets. **Spends ≈12–13 real gateway completions** — hence manual, never on a PR. Fails (not skips) if the secret is empty. |
+| **Deep — live voice** | same, dispatch input | `gh workflow run ci-deep.yml --ref dev -f voice=true` | the above **+ `test_live_talk_e2e`**: real Piper speech ⇄ real faster-whisper. Installs the voice deps and fetches 2 × 63 MB pinned Piper voices (cached); ~1 more completion. Fails if fewer than 3 of its 4 tests actually ran. |
 | **Release** | `.github/workflows/release.yml` | tag `v*` | build sdist+wheel, verify version==tag, GitHub Release (+ index publish when configured) |
 
 ## Version numbering (semver)

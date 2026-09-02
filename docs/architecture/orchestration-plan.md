@@ -196,7 +196,18 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   handling of chunk 0 is inferred from the fields, proven only on the SIM. Gaps → next: the filler fires once
   (a 45 s turn goes quiet at ~26 s) → re-arm + token streaming; playbook rule 8 added (creds-free suite runs).
 
-- **2026-09-02** — Integrated `feat/streamed-reply-chunks` (PR #15 → dev): the answer itself now streams.
+- **2026-09-02** — Integrated `fix/cloud-tts-status-race` (PR #15 → dev): the fast-tier flake that reddened
+  two dev pushes (the env probe's late "no TTS server" write clobbering the 🔊 speaking indicator) is fixed at
+  the root — `audio.js` owns `#tts-status`, `env.js` routes through `setTtsHint()`, the Playwright test asserts
+  one atomic snapshot then waits for teardown. 5× green locally; CI SIL green on the PR. In flight:
+  `feat/streamed-reply-chunks`, `feat/ci-live-dispatch`.
+
+- **2026-09-02** — Integrated `feat/ci-live-dispatch` (PR #16 → dev): the deep tier's manual dispatch now runs
+  every creds-only live suite with a fail-loud gate, plus an opt-in `voice=true` tier (pinned, sha256-verified
+  Piper voices + cached Whisper) that runs the real-speech talk loop — "live-tested" is reproducible on demand.
+  actionlint clean; docs (sil-and-cicd "Live CI", RELEASING CI table). Proof dispatch run on dev after merge.
+  In flight: `feat/streamed-reply-chunks`.
+- **2026-09-02** — Integrated `feat/streamed-reply-chunks` (PR #17 → dev): the answer itself now streams.
   `MoxieApp.respond_stream` yields one `ReplyChunk` per finished sentence (pure segmenter in
   `moxie_sdk/segment.py`; `chat.stream_completion` opens `stream=True` through the same backoff/`Pacer`),
   and the runtime publishes each as `REPLY_PENDING` + `chunk_num`, closed by `SUCCESS` + `is_completed`.

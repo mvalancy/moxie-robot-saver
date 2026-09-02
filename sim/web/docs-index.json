@@ -1,5 +1,5 @@
 {
- "generated": "docs-c3a0ce2b7229",
+ "generated": "docs-baa1c9b77d47",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -114,7 +114,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 18090,
+   "bytes": 19081,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -364,7 +364,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 18886,
+   "bytes": 22066,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -373,6 +373,7 @@
     "Design language",
     "The 1-week roadmap (drives the build timer)",
     "The layered session timers",
+    "Live CI — proving it against the real gateway and real speech, on demand",
     "Run it now"
    ],
    "kind": "md"
