@@ -241,10 +241,12 @@ def normalize_safety(payload: Optional[dict]) -> dict:
 # learn that, and from which activity". So this flattens each namespace into dated rows
 # and counts them. Pure, so it unit-tests in the hermetic suite.
 #
-# Honest limit, visible in the shape: provenance is recorded **per merge** (one entry per
-# summarized conversation), not per item, so every item in a namespace carries that
-# namespace's newest provenance. A dict item with its own `_provenance` is accepted too,
-# so a runtime that later attributes item by item renders here without a console change.
+# Every row carries the item's **id** (what the per-item erase and the inline edit act
+# on), its own provenance (stamped at merge time, so two conversations' facts in one
+# activity no longer share one date), whether a parent has `pinned` it by correcting it,
+# and how often a prompt has actually rendered it. A bare string is still accepted — a
+# `memory.json` written before ids existed — and comes through with an empty id and the
+# namespace's newest provenance as its fallback date.
 
 #: The lists a namespace may hold, in the order a parent reads them, and the singular
 #: noun the UI puts on one row. Mirrors `content/memory.py::LIST_KEYS` + `summaries`.
@@ -288,8 +290,13 @@ def _memory_block(block) -> tuple:
 
 
 def _memory_item(value, kind: str, fallback: dict) -> dict:
-    """One remembered value → a console row (`{kind, text, provenance}`)."""
-    prov = fallback
+    """One remembered value → a console row.
+
+    `{kind, text, id, pinned, use_count, last_used, provenance}`. A bare string is still
+    accepted (a `memory.json` written before ids existed, read straight off disk) and
+    simply has no id — the card then offers the activity-level erase and no per-item ✕,
+    which is honest: without an id there is nothing for the runtime to delete."""
+    prov, item_id, pinned, uses, used_at = fallback, "", False, 0, None
     if isinstance(value, dict):
         text = value.get("text") or value.get("value") or ""
         own = value.get("_provenance") or value.get("provenance")
@@ -297,9 +304,15 @@ def _memory_item(value, kind: str, fallback: dict) -> dict:
             own = own[0] if own else None
         if isinstance(own, dict):
             prov = own
+        item_id = str(value.get("id") or "")
+        pinned = bool(value.get("pinned"))
+        uses = int(_num(value.get("use_count")) or 0)
+        used_at = _num(value.get("last_used_at"))
     else:
         text = value
-    return {"kind": kind, "text": str(text), "provenance": memory_provenance(prov)}
+    return {"kind": kind, "text": str(text), "id": item_id, "pinned": pinned,
+            "use_count": uses, "last_used": used_at,
+            "provenance": memory_provenance(prov)}
 
 
 def _memory_sort_key(item: dict) -> tuple:
@@ -377,7 +390,12 @@ def normalize_memory(raw: Optional[dict]) -> dict:
         "summarized_through": max(through) if through else None,
         "error": None if ok else (p.get("error") or "supervisor not reachable"),
     }
-    if "erased" in p:                     # an erase reply carries its own confirmation
-        out["erased"] = bool(p.get("erased"))
+    if "erased" in p or "edited" in p:    # an erase/edit reply carries its confirmation
+        if "erased" in p:
+            out["erased"] = bool(p.get("erased"))
+        if "edited" in p:
+            out["edited"] = bool(p.get("edited"))
         out["namespace"] = str(p.get("namespace") or "all")
+        if p.get("item"):
+            out["item"] = str(p.get("item"))
     return out

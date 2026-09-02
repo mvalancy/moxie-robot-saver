@@ -1,5 +1,5 @@
 {
- "generated": "docs-cd68ac84a95d",
+ "generated": "docs-306f5854892d",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 39982,
+   "bytes": 40557,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -254,7 +254,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 16988,
+   "bytes": 21030,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -266,6 +266,7 @@
     "Memory — `persist_data` + `session.summarize()`",
     "The store",
     "session.summarize(...)`",
+    "Decay (`MOXIE_MEMORY_MAX_AGE_DAYS`)",
     "Declaring it (the `memory` block)",
     "What a parent can do",
     "Honest limits",
@@ -333,7 +334,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 64061,
+   "bytes": 64627,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -778,12 +779,14 @@
    "path": "guides/what-moxie-remembers.md",
    "title": "What Moxie remembers — and how to erase it",
    "section": "guides",
-   "bytes": 4211,
+   "bytes": 5807,
    "mermaid": 0,
    "headings": [
     "What is written down",
     "What is *never* written down",
-    "Erasing it",
+    "Fixing one line",
+    "Erasing more of it",
+    "Old facts fade on their own",
     "Summaries can be wrong"
    ],
    "kind": "md"

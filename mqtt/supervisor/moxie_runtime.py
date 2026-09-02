@@ -196,8 +196,9 @@ class MoxieRuntime:
     #
     # BEYOND #4 (openmoxie-feature-audit.md §4.2) says a memory a parent cannot read or
     # erase is not acceptable on a child's device. `/memory` is that floor: GET to read
-    # what Moxie remembers with its provenance, DELETE/POST to erase a namespace or all
-    # of it. A browser UI over it is still open work.
+    # what Moxie remembers (every item with its id and provenance), DELETE to forget one
+    # item, one namespace or all of it, POST to erase the same way or to **correct** one
+    # item in place. The console's 🧠 card is the browser over exactly these.
 
     def memory_policy(self, device_id) -> LoggingPolicy:
         """The LoggingPolicy governing what may be *remembered* about this child — the
@@ -246,19 +247,51 @@ class MoxieRuntime:
                      "policy": self.memory_policy(device_id).name})
         return view
 
-    def erase_memory(self, device_id, namespace=None) -> dict:
-        """Forget one namespace, or everything for this robot. Never policy-gated: a
-        parent must always be able to delete."""
-        removed = self.memory_store().erase(device_id, namespace)
-        self._note("memory", f"🧽 erased memory: {namespace or 'all'}")
-        print(f"[runtime] 🧽 erased memory for {device_id} "
-              f"({namespace or 'everything'}): {removed}", flush=True)
+    def erase_memory(self, device_id, namespace=None, item=None) -> dict:
+        """Forget one item, one namespace, or everything for this robot.
+
+        Never policy-gated: a parent must always be able to delete. `item` is the finest
+        cut — one wrong line goes without costing the rest of what that activity learned
+        (BEYOND #4's other half)."""
+        if item:
+            removed = self.memory_store().erase_item(device_id, namespace, item)
+            what = f"{namespace}/{item}"
+        else:
+            removed = self.memory_store().erase(device_id, namespace)
+            what = namespace or "all"
+        self._note("memory", f"🧽 erased memory: {what}")
+        print(f"[runtime] 🧽 erased memory for {device_id} ({what}): {removed}",
+              flush=True)
         out = self.memory_view(device_id)
         if not out.get("ok"):                     # erasing the last of it is still a hit
             out = {"ok": True, "device_id": device_id, "namespaces": {}, "bytes": 0,
                    "policy": self.memory_policy(device_id).name}
         out["erased"] = bool(removed)
         out["namespace"] = namespace or "all"
+        if item:
+            out["item"] = str(item)
+        return out
+
+    def edit_memory_item(self, device_id, namespace, item, text) -> dict:
+        """Correct one remembered item — the other thing a parent needs when a summary is
+        wrong but not worthless ("Puppy sleeps on **his** bed" → "…my bed").
+
+        The store keeps the item's id, **pins** it (a human decision outranks decay) and
+        re-runs the two rules that decide what may live in a prompt: the safety
+        classifier, and the no-verbatim check against this robot's recent conversation —
+        so a parent cannot paste the child's own words back in. A refusal raises, and the
+        handler turns it into a 400 with the reason. Not policy-gated: fixing a wrong line
+        must work even on a `NO_DATA` robot, where the only alternative is deleting it."""
+        edited = self.memory_store().edit_item(
+            device_id, namespace, item, text,
+            history=list(self.history.get(device_id) or []))
+        self._note("memory", f"✏️ corrected memory: {namespace}/{item}")
+        print(f"[runtime] ✏️ corrected memory for {device_id} ({namespace}/{item})",
+              flush=True)
+        out = self.memory_view(device_id)
+        out["edited"] = True
+        out["namespace"] = str(namespace)
+        out["item"] = str(item)
         return out
 
     # ---- end of a conversation (the contract's complete_handler moment) ----
@@ -410,36 +443,55 @@ class MoxieRuntime:
                     return self._json_out(out, 200 if out.get("ok") else 404)
                 self.send_response(404); self.end_headers()
 
-            def _erase_memory(self, query):
-                """Erase one memory namespace (or all of it) for a device. Shared by
-                DELETE /memory and POST /memory — localhost-only like every handler."""
+            def _memory_write(self, query):
+                """A parent's erase or correction. Shared by DELETE /memory and
+                POST /memory — localhost-only like every handler.
+
+                Three cuts, finest first: `item` (one wrong line), `namespace` (one
+                activity), neither (everything for that robot). A POST body may carry
+                `{"edit": {"namespace", "item", "text"}}` instead, which corrects the
+                item in place rather than deleting it."""
                 from urllib.parse import parse_qs
                 q = parse_qs(query)
                 device_id = (q.get("device_id") or [""])[0]
                 namespace = (q.get("namespace") or [""])[0]
-                if not namespace:
+                item = (q.get("item") or [""])[0]
+                body = {}
+                if not namespace or not item:
                     length = int(self.headers.get("Content-Length") or 0)
                     raw = self.rfile.read(length) if length else b"{}"
                     try:
                         body = _json.loads(raw or b"{}") or {}
                     except Exception:
                         body = {}
-                    namespace = body.get("namespace") or body.get("erase") or ""
+                    if not isinstance(body, dict):
+                        body = {}
+                edit = body.get("edit") if isinstance(body.get("edit"), dict) else None
+                if edit is None:
+                    namespace = namespace or body.get("namespace") or body.get("erase") or ""
+                    item = item or body.get("item") or ""
                 try:
-                    out = rt.erase_memory(device_id, namespace or None)
+                    if edit is not None:
+                        out = rt.edit_memory_item(device_id,
+                                                  edit.get("namespace") or namespace,
+                                                  edit.get("item") or item,
+                                                  edit.get("text"))
+                    else:
+                        out = rt.erase_memory(device_id, namespace or None, item or None)
                     code = 200 if out.get("ok") else 404
                 except Exception as e:
                     out, code = {"ok": False, "error": str(e)}, 400
                 return self._json_out(out, code)
 
             def do_DELETE(self):
-                """`DELETE /memory?device_id=…[&namespace=…]` — a parent erasing what
-                Moxie remembers. No namespace erases everything for that robot."""
+                """`DELETE /memory?device_id=…[&namespace=…[&item=…]]` — a parent erasing
+                what Moxie remembers. With `item`, exactly that one line goes; with only
+                a namespace, one activity; with neither, everything for that robot."""
                 from urllib.parse import urlparse
                 u = urlparse(self.path)
                 if u.path != "/memory":
                     self.send_response(404); self.end_headers(); return
-                return self._erase_memory(u.query)
+                return self._memory_write(u.query)
 
             def do_POST(self):
                 """Parent-console writes.
@@ -464,8 +516,10 @@ class MoxieRuntime:
                 path = urlparse(self.path).path
                 if path == "/memory":
                     # `POST /memory?device_id=…` `{"erase": "<namespace>"|"all"}` —
-                    # the same erase as DELETE, for clients that cannot send one.
-                    return self._erase_memory(urlparse(self.path).query)
+                    # the same erase as DELETE, for clients that cannot send one — or
+                    # `{"edit": {"namespace", "item", "text"}}`, a parent correcting one
+                    # remembered line instead of losing the whole activity to it.
+                    return self._memory_write(urlparse(self.path).query)
                 if path not in ("/config", "/safety", "/permits"):
                     self.send_response(404); self.end_headers(); return
                 if path == "/permits":
