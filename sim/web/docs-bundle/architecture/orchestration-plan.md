@@ -125,5 +125,11 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   the honest gap. Shared `sim/tests/helpers_runtime.py`. No agents in flight; all six delegated slices
   landed today (PRs #3–#9). **Next: promote dev → main as v0.2.0.**
 
+- **2026-09-02** — **Released v0.2.0** (dev → main squash `7e2fc35`, tag `v0.2.0`, release tier green, wheel +
+  sdist published). Standing PR recreated as #10; dev reconciled with a zero-content merge. Day one of
+  orchestrator mode: six delegated slices (PRs #3–#9), hermetic suite 105 → 224, DoD ≈ 1 ~70% · 2 🟢 · 3 🟢 ·
+  4 🟢 · 5 🟢 · 6 ~80%. Next (per implementation-plan): browser Web-Audio playback of `CloudTTSResponse`
+  (criterion 1's last client-side link), then a live talk-through with real speech.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
