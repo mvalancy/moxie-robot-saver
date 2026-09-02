@@ -11,7 +11,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.types import Reply, Action, ActionType, ResultCode  # noqa: E402
-from moxie_sdk.wire import build_chat_response  # noqa: E402 (pure — no broker dep)
+from moxie_sdk.wire import build_chat_response, build_activity_response  # noqa: E402 (pure)
 
 
 def test_resultcode_values_match_recovered_proto():
@@ -59,3 +59,60 @@ def test_int_result_is_coerced_to_name():
     # a caller passing the raw proto int still serializes to the enum name
     resp = build_chat_response("e", "hi", result=4)
     assert resp["result"] == "ERROR_OFFLINE"
+
+
+# ---- build_activity_response (the `query_result` / CloudQueryResponse encoder) ----
+
+def test_activity_response_echoes_request_id_and_keys_schedule():
+    # CloudQueryResponse: request_id (field 3) echoed from the request, the day's plan
+    # under `schedule` (field 6) — NOT a generic `result` key.
+    resp = build_activity_response("schedule", request_id="req-42")
+    assert resp["command"] == "query_result"
+    assert resp["query"] == "schedule"
+    assert resp["request_id"] == "req-42"
+    assert resp["schedule"] == {}
+    assert "result" not in resp
+
+
+def test_activity_response_keys_mentor_behaviors_as_a_list():
+    resp = build_activity_response("mentor_behaviors", request_id="req-7")
+    assert resp["request_id"] == "req-7"
+    assert resp["mentor_behaviors"] == []      # field 10, repeated MentorBehavior
+    assert "result" not in resp
+
+
+def test_activity_response_license_uses_license_values():
+    # field 5 is `license_values` (repeated LicenseRecord), not `license`
+    resp = build_activity_response("license", request_id="r")
+    assert resp["license_values"] == []
+    assert "license" not in resp
+
+
+def test_activity_response_carries_a_real_payload():
+    plan = {"provided_schedule": [{"module_id": "DM", "content_id": "default"}]}
+    resp = build_activity_response("schedule", plan, "req-1")
+    assert resp["schedule"] is plan
+
+
+def test_activity_response_omits_request_id_when_absent():
+    # nothing to correlate → no null request_id on the wire
+    assert "request_id" not in build_activity_response("schedule")
+
+
+def test_activity_response_empty_defaults_are_not_shared():
+    a = build_activity_response("mentor_behaviors")
+    a["mentor_behaviors"].append({"module_id": "X"})
+    assert build_activity_response("mentor_behaviors")["mentor_behaviors"] == []
+
+
+def test_activity_response_response_code_optional():
+    assert "response_code" not in build_activity_response("schedule", request_id="r")
+    coded = build_activity_response("schedule", request_id="r",
+                                    response_code="QUERY_NO_CHANGE")
+    assert coded["response_code"] == "QUERY_NO_CHANGE"
+
+
+def test_activity_response_rejects_unknown_query():
+    import pytest
+    with pytest.raises(ValueError):
+        build_activity_response("not_a_cloud_query")

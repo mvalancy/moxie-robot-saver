@@ -76,6 +76,19 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   stored events (M6 🟢). Remaining (not blocking): telemetry is **in-memory only** — the runtime keeps the last 50
   events per robot and loses them on restart or robot disconnect; durable per-session persistence + typed
   `event_data` decoding (LogDevice/LogUser wrappers) are a later slice.
+- **cloud queries (`query_result`):** the **wire shape is now spec-conformant** — `_on_activity` answers a
+  `client-service-activity-log` / `subtopic:"query"` request via `build_activity_response`
+  (`mqtt/moxie_sdk/wire.py`), which echoes `request_id` and keys the payload by its own
+  `CloudQueryResponse` field (`schedule` / `mentor_behaviors` / `license_values`) instead of a generic
+  `result`. Citations: [`cloud-protocol.md`](../reverse-engineering/protocol/cloud-protocol.md):147 (the
+  `commands/{command}` JSON topic), :172 + [`mqtt-and-conversation.md`](mqtt-and-conversation.md):274/:296
+  (the `subtopic` multiplex and the `query_result` command), :229 + `CloudQueryResponse` in
+  [`recovered-proto/embodied/logging/Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto)
+  (`request_id`=3, `schedule`=6, `license_values`=5, `mentor_behaviors`=10). Corroborated by OpenMoxie's
+  `moxie_server.py::provide_schedule` / `provide_mentor_behaviors`. **Still a gap:** the *values* are empty
+  (`{}` / `[]`) — there is no schedule generator or mentor-behavior store yet, so a real robot gets a
+  well-formed but empty day plan. `response_code` (field 99) is not emitted: the docs give the enum but not
+  its JSON spelling.
 
 ## DoD progress (audited 2026-09-02) — ≈ 57%
 
