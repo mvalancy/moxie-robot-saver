@@ -128,23 +128,25 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
-| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~70% | brain live-validated 🟢; STT incl. **real zmqSTT protobuf decode** 🟢; **full audio round-trip proven through a real broker** — supervisor synthesizes → `CloudTTSResponse` on `/commands/tts` → SIM decodes audio (SIL smoke asserts it via `--expect-tts`) 🟢. Three voices: built-in **tone** (zero-dep), **Piper/Amy** (offline), gateway. Remaining: browser Web-Audio playback + one live talk-through with real speech (Piper model / gateway) |
+| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~85% | brain live-validated 🟢; STT incl. **real zmqSTT protobuf decode** 🟢; **full audio round-trip proven through a real broker** — supervisor synthesizes → `CloudTTSResponse` on `/commands/tts` → SIM decodes audio (SIL smoke asserts it via `--expect-tts`) 🟢. **The browser SIM now SPEAKS it** 🟢: `sim/web/audio.js::playCloudTTS` decodes the base64 raw 16-bit PCM itself (no server SDK, like firmware), plays it on the shared Web Audio context in `chunk_num` order, and lip-syncs the face from `marks[]` (envelope-driven when a voice sends none) — `bridge.js` routes `/commands/tts` in; **live-observed** against a real broker + supervisor (`MOXIE_TTS=tone`): 4.0 s @ 22050 Hz mono played in Chromium, mouth animating, zero console errors. Three voices: built-in **tone** (zero-dep), **Piper/Amy** (offline), gateway. Remaining: one live talk-through with **real speech** (mic → Piper/gateway voice), which needs a Piper model or a gateway TTS model, not new code |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
 | 3 | Cloud management (console + config/telemetry) | 🟢 | RobotCloudConfig + RobotStatus + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. The console surfaces **live state** (`/local/fleet`), **edits config** (Settings form → `POST /local/robots/{id}/config` → runtime `POST /config` → `update_config` re-pushes `RobotCloudConfig`), and shows **telemetry insights** (`summarize_events` → runtime `GET /telemetry` → `GET /local/robots/{id}/telemetry` → the 📈 Insights panel) — all three live-verified against a real broker. Caveat: telemetry is in-memory (last 50 events/robot), not persisted |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
 | 5 | One-command stack | 🟢 | `docker compose up` (repo root) = broker + supervisor + parent console, one `.env`, healthchecks + named volumes. **Proven** by [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh): build → health → `virtual_moxie --expect-tts` round-trip through the composed broker → the robot visible in the console's `/local/fleet` → `down -v`; shape asserted hermetically by `sim/tests/test_compose.py`. Guide: [`../guides/one-command-stack.md`](../guides/one-command-stack.md). Caveats (documented, not hidden): the `content`/`llm` brains still need a gateway key to say anything real (keyless → the "brain got fuzzy" fallback, which is why the smoke uses `echo`), and the `voice`/`stt` profiles each need one `.env` line + `up --build` rather than the profile flag alone |
 | 6 | Green + live-tested | 🟡 ~80% | **three-tier CI installed + green** (fast on dev · deep+HIL on PR-to-main · release on tags); hermetic suite green (210 pass · 6 live tests skipped without a key). **Live-proven against the real gateway** (`sim/tests/test_live_action_tags.py`, `test_live_content_e2e.py`; skip cleanly with no key): LLM **action tags** now emitted by graphling-medium — 4/4 goodbye→`<exit>`, 3/3 activity→`<launch:DRAW>` after prompt-only work in `LLMApp._system` (baseline was 0/3 and 0/2; the fix is writing the tag **before** the sentence, not after), and the action reaches the wire as `response_actions` 🟢; the shipped `content_modules/starter.json` through the **real** `MoxieRuntime` returns a spec-conformant `RemoteChatResponse` (SUCCESS, 123-char `output.text` + `markup`) with a `globals[]` short-circuit costing 0 LLM calls 🟢. Console↔runtime contract e2e (`test_console_roundtrip.py`): fleet / config (incl. 400 on bad input) / telemetry round-trip in-process against a status-server double that is **key-diffed against the real runtime** 🟢. SIL smoke + both scenarios + `python -m build` green. Remaining (NOT live-proven): live **voice** (real STT/TTS speech, not the tone synth) and a single full talk-e2e scenario; live tests need creds so CI still runs them skipped |
 
-**Most valuable next slice:** criterion 1's **browser Web-Audio playback of the `CloudTTSResponse`** — the
-supervisor already synthesizes and publishes decodable audio (proven through a real broker by the SIL smoke's
-`--expect-tts`), so the remaining gap is the SIM's browser client actually *playing* it: decode the base64 PCM
-in `sim/web/`, feed it to Web Audio, and the "a child can talk to Moxie end to end" criterion has its last
-client-side link. It is unblocked (no creds needed — the built-in tone voice already produces audio) and it is
-the only criterion still below 🟢 that isn't gated on someone else. After that: a live talk-through with real
-speech — the `--profile voice` path now downloads Piper/Amy and speaks through the composed stack, so this is
-just a matter of doing it with a microphone (the gateway alternative still needs a TTS model registered —
-handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)). M7's one-command stack
-(criterion 5) is done.
+**Most valuable next slice:** criterion 1's **one live talk-through with real speech**. Browser Web-Audio
+playback of the `CloudTTSResponse` is now **done** — the SIM decodes the server's PCM and speaks it, with the
+mouth animating, observed live against a real broker + supervisor — so the last client-side link is closed and
+every hop of `mic → STT → brain → markup → TTS → SIM` exists in code and is tested. What is *not* yet proven is
+the same loop end to end **with a microphone and a real voice** rather than the zero-dependency tone synth: run
+the `--profile voice` stack (it downloads Piper/Amy), speak into the SIM's mic, and confirm a child could hold
+the conversation. That is a *doing* task, not a building one — the only gated alternative is the gateway voice,
+which still needs a TTS model registered (handoff doc:
+[`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)). Honest caveat on what was just built: the
+tone voice is a placeholder sound, not speech, and `marks[]`-driven visemes are implemented but untested against
+a synthesizer that actually emits marks (neither Piper nor the tone synth does yet) — the mouth falls back to
+the audio envelope, which is what the live run exercised. M7's one-command stack (criterion 5) is done.
 
 ## TTS strategy (2026-09-01)
 

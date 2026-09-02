@@ -6,6 +6,11 @@
  * animates the avatar from the behavior markup — the exact `<mark cmd:…>` verbs
  * documented in docs/reverse-engineering/behavior-markup.md.
  *
+ * It also consumes the SERVER VOICE on `/devices/+/commands/tts`: a
+ * `CloudTTSResponse` (AI seam ③) whose base64 PCM audio.js decodes and plays,
+ * lip-syncing the face from `marks[]`. When real audio arrives the local
+ * browser/Piper voice stands down, so Moxie never speaks the line twice.
+ *
  * Classic script (uses the global `mqtt` from mqtt.js). No build step.
  */
 (function () {
@@ -154,6 +159,36 @@
     }
   }
 
+  // --- voice arbitration -----------------------------------------------------
+  // A live backend sends the reply text first and the rendered audio
+  // (CloudTTSResponse) a beat later. Speak locally only while we have no server
+  // voice: hold the local voice for a short grace window on a live link, and drop
+  // it the moment real audio lands. Off the bus (static site / stub brain) there
+  // is no server voice at all, so speak immediately as before.
+  const TTS_GRACE_MS = 900;
+  let cloudVoice = false, pendingSpeak = 0;
+
+  function speakLocally(text) {
+    if (!window.moxieAudio || cloudVoice) return;
+    if (!(client && client.connected)) { window.moxieAudio.speak(text); return; }
+    clearTimeout(pendingSpeak);
+    pendingSpeak = setTimeout(() => {
+      pendingSpeak = 0;
+      if (!cloudVoice) window.moxieAudio.speak(text);
+    }, TTS_GRACE_MS);
+  }
+
+  // A CloudTTSResponse from the server: `{audio:{buffer(base64 PCM),channels,
+  // sample_rate}, marks[], event_id, chunk_num}`. audio.js decodes the wire
+  // itself (like firmware) and plays it; we only route + arbitrate here.
+  function handleTts(payload) {
+    let msg; try { msg = JSON.parse(payload); } catch { return; }
+    cloudVoice = true;                       // server voice wins from now on
+    if (pendingSpeak) { clearTimeout(pendingSpeak); pendingSpeak = 0; }
+    if (!window.moxieAudio || !window.moxieAudio.playCloudTTS) return;
+    window.moxieAudio.playCloudTTS(msg);     // resolves when playback ends
+  }
+
   function handleRemoteChat(payload) {
     let msg; try { msg = JSON.parse(payload); } catch { return; }
     const out = msg.output || {};
@@ -165,7 +200,7 @@
     applyMarkup(out.markup || "");
     if (text) {
       status(`💬 "${text.slice(0, 48)}"`); addTranscript("moxie", text);
-      if (window.moxieAudio) window.moxieAudio.speak(text);   // Piper TTS out
+      speakLocally(text);            // stands down if the server sends real audio
     }
   }
 
@@ -183,6 +218,7 @@
       status(`● live on ${url}`);
       if (window.moxieAudio) window.moxieAudio.sfx("connect");
       client.subscribe("/devices/+/commands/remote_chat");   // Moxie's replies
+      client.subscribe("/devices/+/commands/tts");           // the server voice (CloudTTSResponse)
       client.subscribe("/devices/+/events/remote-chat");     // the child's utterances
       client.subscribe("/devices/+/config");
       client.subscribe("/devices/+/commands/motor");         // SIL-only: drive motors directly
@@ -199,6 +235,7 @@
   function route(topic, s) {
     if (recording && !replaying) recorded.push({ t: nowMs(), topic, payload: s });
     if (topic.endsWith("/commands/remote_chat")) handleRemoteChat(s);
+    else if (topic.endsWith("/commands/tts")) handleTts(s);
     else if (topic.endsWith("/events/remote-chat")) handleUserTurn(s);
     else if (topic.endsWith("/commands/motor")) handleMotor(s);
     else if (topic.endsWith("/config")) {
@@ -286,6 +323,8 @@
       }
     },
     isLive: function () { return !!(client && client.connected); },
+    // true once a CloudTTSResponse has arrived — the server voice has taken over
+    hasCloudVoice: function () { return cloudVoice; },
   };
 
   // ---- wire the panel once moxie + DOM are ready ----
