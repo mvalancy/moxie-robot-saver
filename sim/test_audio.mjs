@@ -111,7 +111,8 @@ new Function(audioSrc)();
 const A = globalThis.window.moxieAudio;
 ok(!!A, "audio.js must expose window.moxieAudio");
 if (!A) { console.log("❌ audio tests FAILED:\n   - " + fails.join("\n   - ")); process.exit(1); }
-for (const fn of ["playCloudTTS", "decodeCloudTTS", "isSpeaking", "ttsPending"])
+for (const fn of ["playCloudTTS", "decodeCloudTTS", "isSpeaking", "ttsPending",
+                  "lastMouthPeak", "lastPlaybackStats"])
   ok(typeof A[fn] === "function", `moxieAudio.${fn} must exist`);
 
 // ---- helper: build a CloudTTSResponse from int16 samples ---------------------
@@ -220,10 +221,17 @@ ok(A.ttsPending() === 1, `suspended context must QUEUE the audio, pending=${A.tt
 ok(A.isSpeaking() === false, "nothing may be 'speaking' while the context is suspended");
 ok(CTX.made.sources.length === 0, "no source may start before the context is running");
 
+const gated2 = A.playCloudTTS(wire(tone(32), { eventId: "gate", chunk: 1 }));
+ok(A.ttsPending() === 2, `both chunks must wait for the gesture, pending=${A.ttsPending()}`);
+
 CTX.allowResume = true;               // the next user gesture unlocks audio
 fire("pointerdown");
 ok(A.isSpeaking() === true, "the queued audio must start on the first user gesture");
 ok(CTX.made.sources.length === 1, "exactly one source should be playing");
+// The playback record is reset on the speaking edge — which happens AFTER the queue
+// filled up, so it is seeded from what is already waiting rather than from zero.
+ok(A.lastPlaybackStats().max_pending >= 1,
+   `a queue built while suspended must survive the stats reset, got ${A.lastPlaybackStats().max_pending}`);
 ok(bodyClasses.has("tts-speaking"), "body.tts-speaking must be set while speaking");
 ok(/speaking/.test(el.textContent), `#tts-status should show the speaking indicator, got ${el.textContent}`);
 ok(ttsEvents.includes("moxie-tts-start"), "a moxie-tts-start event must fire");
@@ -233,6 +241,8 @@ ok(mouthCalls.some((v) => v > 0.2), `the mouth must animate while speaking, saw 
 
 CTX.made.sources[0].onended();         // the buffer finished
 const res = await queued;
+CTX.made.sources[CTX.made.sources.length - 1].onended();   // ...and the second chunk
+await gated2;
 ok(res.played === true, `playCloudTTS must resolve {played:true}, got ${JSON.stringify(res)}`);
 ok(res.decoded.frames === 64, "the resolution carries the decoded payload");
 ok(A.isSpeaking() === false, "speaking must clear when playback ends");
@@ -263,6 +273,19 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
   ok(order.join(",") === "4,8,12", `chunks must play in chunk_num order, got ${order.join(",")}`);
   ok(A.isSpeaking() === false, "speaking clears after the last chunk");
   ok(A.ttsPending() === 0, "the queue must drain");
+
+  /* ...and the page's RECORD of that playback, which outlives it. `ttsPending()` is a
+   * live gauge: by the time an outside observer asks, a short chunk has drained and the
+   * queue that proves the chunks were pipelined is gone (that raced ~50% in CI run
+   * 33629395950). `lastPlaybackStats()` is the same fact, frozen — sim/tests/test_sil.py
+   * asserts on it instead of sampling. */
+  const st = A.lastPlaybackStats();
+  ok(st && st.event_id === "chunky", `stats must name the event, got ${JSON.stringify(st)}`);
+  ok(st.chunks_played === 3, `stats must count every chunk, got ${st.chunks_played}`);
+  ok(st.order.join(",") === "0,1,2", `stats must record chunk_num order, got ${st.order}`);
+  ok(st.max_pending >= 2, `stats must remember the deepest queue, got ${st.max_pending}`);
+  st.order.push(99);                              // the getter must hand out a COPY
+  ok(A.lastPlaybackStats().order.join(",") === "0,1,2", "lastPlaybackStats() must not alias its array");
 }
 
 // --------------------------------------------------------------------------- //
@@ -278,6 +301,10 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
   ok(muted.played === false && muted.reason === "muted", "muting must suppress server audio");
   ok(A.isSpeaking() === false, "muted audio never speaks");
   A.setEnabled(true);
+  // Neither of those played, so the last real playback's record must still stand: the
+  // stats are frozen when an utterance ends and only a NEW utterance may reset them.
+  ok(A.lastPlaybackStats().event_id === "chunky" && A.lastPlaybackStats().chunks_played === 3,
+     `empty/muted payloads must not disturb the record, got ${JSON.stringify(A.lastPlaybackStats())}`);
 
   // viseme marks: an open vowel ('a') must open the mouth further than silence
   mouthCalls.length = 0;

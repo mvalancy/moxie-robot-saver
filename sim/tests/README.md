@@ -105,6 +105,19 @@ the *code under test*, not of the assertions:
   fails loudly if the Web Audio graph breaks. Same idea as reading the whole speaking
   state from one atomic `wait_for_function` snapshot instead of several round-trips.
 
+  The **queue** is the same kind of live thing, and cost a second flake (run
+  `33629395950`, ~50% on `dev`): `test_cloud_tts_chunks_play_in_order_then_stop` sampled
+  `moxieAudio.ttsPending()` at the instant `isSpeaking()` first went true, and on a fast
+  runner four tenths of a second of audio had already drained into the gap, so the chunks
+  that demonstrably *had* queued read as `pending: 0`. The cure is the same shape:
+  `moxieAudio.lastPlaybackStats()` → `{event_id, chunks_played, order, max_pending}`,
+  recorded as playback happens and frozen when it ends, so the test waits for the
+  utterance to finish and then asserts three stronger facts (all three chunks played,
+  in `chunk_num` order, having queued at least one deep). The test proves the assertion
+  no longer depends on timing by repeating it with 10 ms chunks injected in one
+  synchronous round trip — they drain faster than any observer could look, and the
+  recorded stats still report the same thing.
+
 - **A test that drives a brain with a fake must not need the real SDK.** `LLMApp` (like
   `OpenAIVoiceSynthesizer`) takes the OpenAI-compatible `client=` seam and only imports
   `openai` when it has to build one itself, so the tag/streaming tests construct it with
