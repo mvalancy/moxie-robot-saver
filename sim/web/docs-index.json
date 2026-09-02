@@ -1,5 +1,5 @@
 {
- "generated": "docs-609850e58ce4",
+ "generated": "docs-c236eec26a44",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 49594,
+   "bytes": 51046,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -161,7 +161,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 61455,
+   "bytes": 67523,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -177,7 +177,7 @@
     "2.3 Checking a robot's firmware + the OTA lever",
     "2.4 What our appliance must present",
     "3. MQTT broker setup",
-    "3.1 mosquitto config (verbatim from `site/data/openmoxie.conf`)",
+    "3.1 mosquitto config — the hardened broker *(P0 shipped 2026-09-02)*",
     "3.2 Topic structure (Google-Cloud-IoT shaped)",
     "3.3 Event names (robot → cloud, `/devices/{id}/events/{name}`)",
     "3.4 Connect/disconnect detection (regex on broker log)",
@@ -232,7 +232,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 23871,
+   "bytes": 24437,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -408,7 +408,7 @@
    "path": "architecture/backlog/security-broker-auth.md",
    "title": "Broker authentication — from service refusal to identity, in three phases",
    "section": "architecture",
-   "bytes": 38988,
+   "bytes": 44448,
    "mermaid": 2,
    "headings": [
     "Why this is the next slice",
@@ -814,7 +814,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 18115,
+   "bytes": 20924,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -823,6 +823,7 @@
     "Path B: the one command, from a clone",
     "Configure it — one `.env`",
     "Ports",
+    "Who may talk on the bus",
     "Where your data lives",
     "Optional profiles (best-effort)",
     "voice` — Moxie's real (offline) voice",

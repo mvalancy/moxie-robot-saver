@@ -119,6 +119,7 @@ the tracked copy and documents every `MOXIE_*` knob. The ones that matter most:
 |---|---|---|
 | `MOXIE_BROKER_HOST` | `127.0.0.1` | The IP a **real robot** uses to reach your broker. Goes into the endpoint QR *and* the broker cert — set it to this machine's LAN IP **before the first `up`**. |
 | `MOXIE_BIND_HOST` | `0.0.0.0` | Which host interface the published ports bind to. `127.0.0.1` = this machine only. |
+| `MOXIE_BIND_HOST_PLAIN` | `127.0.0.1` | The **plain** MQTT listener (`1883`) binds separately, and to loopback: it is the one door with a fleet-wide identity behind it. A robot never uses it. Set to `0.0.0.0` only to drive the SIM or the tests from another machine. |
 | `MOXIE_APP` | `content` | The brain: `content` (data-driven modules) · `llm` (free-form companion) · `echo` (no LLM, for testing the plumbing) · `webhook` (hand turns to your own service). |
 | `MOXIE_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | our LiteLLM gateway | Any OpenAI-compatible endpoint — the gateway, Ollama, vLLM, LM Studio. **Without a key the stack still runs**; Moxie just answers with a "my brain got fuzzy" fallback instead of real conversation. |
 | `MOXIE_TTS` | `tone` | The server voice. `tone` is the built-in zero-dependency placeholder — audio arrives with no model and no key. Real speech: the `voice` profile below. |
@@ -133,7 +134,7 @@ your machine already owns it.
 | `.env` | Default | Who connects |
 |---|---|---|
 | `MOXIE_PORT_MQTT_TLS` | `8883` | **The robot** (MQTT over TLS). |
-| `MOXIE_PORT_MQTT` | `1883` | The SIM, `sim/virtual_moxie.py`, the tests. |
+| `MOXIE_PORT_MQTT` | `1883` | The SIM, `sim/virtual_moxie.py`, the tests. **Loopback-only** unless you set `MOXIE_BIND_HOST_PLAIN`. |
 | `MOXIE_PORT_WS` | `9001` | The browser UI (MQTT over WebSocket). |
 | `MOXIE_PORT_CONSOLE` | `8080` | Your phone / browser → the parent console. |
 | `MOXIE_PORT_STATUS` | `8931` | The supervisor's `/status`, `/telemetry`, `/config`. Bound to `127.0.0.1` unless you change `MOXIE_BIND_HOST` — it is an unauthenticated admin surface. |
@@ -143,13 +144,52 @@ your machine already owns it.
 > forwarder ([`status_proxy.py`](../../mqtt/status_proxy.py)) on `8931` — an explicit,
 > opt-in `MOXIE_STATUS_PROXY_PORT`, not a change to the runtime's default posture.
 
+## Who may talk on the bus
+
+*(Broker hardening P0, 2026-09-02 — the full reasoning is
+[`mqtt-and-conversation.md` §3.1](../architecture/mqtt-and-conversation.md).)*
+
+**Nothing to configure. `docker compose up` is still the whole install.** The `certs`
+one-shot that already mints your broker's TLS material now also mints a **per-appliance
+password for the supervisor** and leaves it in the same volume, at `0600`, owned by the
+supervisor's user. Nothing is printed, nothing is committed, and the password is never a
+compose `environment:` value (which `docker inspect` would show).
+
+What that buys you:
+
+| Before | Now |
+|---|---|
+| Any device on your LAN could subscribe `$SYS/broker/log/#` and read every robot id on your appliance | `$SYS` is the supervisor's alone |
+| Any device could subscribe `/devices/+/config` and watch your child's name and birthday go past | every client sees only `/devices/<its own client id>/…` |
+| Any device could publish into another robot's topics | same confinement, in the write direction |
+| The plain `1883` port was published to the LAN | published to `127.0.0.1` (`MOXIE_BIND_HOST_PLAIN`) |
+
+**And what it does not buy you, stated plainly: this is containment, not authentication.**
+A robot still connects anonymously — that is the only thing a stock Moxie can do — so a
+device that copies a robot's id is still served as that robot. The
+[🔐 Robot access card](permitting-a-robot.md) is what decides whether a robot is served
+your child's data; the broker ACL only decides how far it can reach if it gets on the bus.
+
+Things worth knowing:
+
+- **An appliance installed before this** grows a credential on its next `up`; no action.
+- **`docker compose down -v` rolls the credential** along with the certs, automatically.
+- **Running the broker bare metal?** [`mqtt/broker/mosquitto.conf`](../../mqtt/broker/mosquitto.conf)
+  now needs `keys/passwd` to exist or mosquitto will not start. Run
+  `mqtt/broker/gen-passwd.sh mqtt/broker/keys` once, then point the supervisor at the
+  plaintext with `MOXIE_MQTT_USER=supervisor` and
+  `MOXIE_MQTT_PASSWORD_FILE=…/keys/supervisor.pass` in `mqtt/.env`.
+- **Proving it on your own machine:** `sim/run_acl_proof.sh` starts a throwaway broker
+  from these exact config files and asserts, by message delivery, that a second client
+  cannot read your robot's config or the fleet roster.
+
 ## Where your data lives
 
 Named Docker volumes, so `docker compose down` (without `-v`) keeps everything:
 
 | Volume | Holds | Losing it means |
 |---|---|---|
-| `moxie_moxie-certs` | Broker CA + server cert | The robot must be re-shown an endpoint QR after regeneration. |
+| `moxie_moxie-certs` | Broker CA + server cert, **and the supervisor's broker password** | The robot must be re-shown an endpoint QR after regeneration. The credential is re-minted automatically on the next `up`. |
 | `moxie_moxie-console-data` | `moxie.db` — children, robots, encrypted key blobs | Re-pair; restore the child with the recovery phrase. |
 | `moxie_moxie-supervisor-data` | Conversation memory (`MOXIE_MEMORY_DIR`, `MOXIE_DATA_DIR`) | Moxie forgets past conversations. |
 | `moxie_moxie-broker-data` | mosquitto persistence | Nothing important. |

@@ -316,12 +316,13 @@ def test_images_compose_stands_alone(images, images_raw):
 
 
 def test_broker_gets_its_config_both_ways(compose, images):
-    """Same file, two delivery mechanisms, same container path."""
+    """Same file, two delivery mechanisms, same container path. (The two ACL files
+    beside it get the same treatment — test_broker_gets_its_acls_both_ways.)"""
     mounts = [m for m in compose["services"]["broker"]["volumes"]
               if "compose-mosquitto.conf" in m]
     assert mounts == ["./mqtt/broker/compose-mosquitto.conf:/mosquitto/config/mosquitto.conf:ro"]
-    assert images["services"]["broker"]["configs"] == \
-        [{"source": "mosquitto-conf", "target": "/mosquitto/config/mosquitto.conf"}]
+    assert images["services"]["broker"]["configs"][0] == \
+        {"source": "mosquitto-conf", "target": "/mosquitto/config/mosquitto.conf"}
 
 
 # ---- service / healthcheck / port / volume parity ----------------------------------
@@ -562,3 +563,108 @@ def test_shape_parity_guard_bites(label, body, expected):
 def test_shape_parity_passes_when_identical():
     assert shape_parity(_doc(_SHAPE_A), _doc(_SHAPE_A), ("broker", "console"),
                         a_name=CLONE, b_name=IMAGES) == []
+
+
+# ====================================================================================
+# BROKER HARDENING — security-broker-auth.md §2 (P0), row T8.
+#
+# The slice is three lines of broker config, two ACL files and one credential, and
+# every one of them has to reach BOTH stacks or the prebuilt-image appliance quietly
+# ships the open broker while the clone ships the closed one. That is exactly the
+# v0.6.0 shape of bug the parity guards above exist for, so these name it directly.
+# ====================================================================================
+
+ACL_CONFIGS = (("mosquitto-acl", "acl"), ("mosquitto-acl-robot", "acl-robot"))
+
+
+@pytest.mark.parametrize("config_name,filename", ACL_CONFIGS)
+def test_inlined_acls_match_the_files(images, config_name, filename):
+    """Same guard as the broker config, for the two ACLs the images file must also
+    inline — it cannot bind-mount them, and an owner downloads that one file."""
+    with open(os.path.join(REPO, "mqtt", "broker", filename)) as fh:
+        drift = broker_conf_drift(images, fh.read(), inline_name=IMAGES,
+                                  file_name=f"mqtt/broker/{filename}",
+                                  config_name=config_name)
+    assert not drift, f"the inlined {filename} has DRIFTED:\n" + drift
+
+
+@pytest.mark.parametrize("config_name,_f", ACL_CONFIGS)
+def test_inlined_acls_escape_every_literal_dollar(images, config_name, _f):
+    """`acl` grants `topic read $SYS/#`. Written `$SYS` inside a compose `content:`
+    block, docker substitutes an empty variable and the supervisor silently loses the
+    connect watch — while the drift guard above, which normalizes `$$`, sees nothing."""
+    offenders = unescaped_dollars(images, config_name)
+    assert not offenders, \
+        f"inlined {config_name} has an un-escaped `$` (write it `$$`):\n  " + \
+        "\n  ".join(offenders)
+
+
+def test_broker_gets_its_acls_both_ways(compose, images):
+    """Same two files, two delivery mechanisms, same container paths."""
+    mounts = [m for m in compose["services"]["broker"]["volumes"] if "/broker/acl" in m]
+    assert mounts == ["./mqtt/broker/acl:/mosquitto/config/acl:ro",
+                      "./mqtt/broker/acl-robot:/mosquitto/config/acl-robot:ro"]
+    assert images["services"]["broker"]["configs"] == [
+        {"source": "mosquitto-conf", "target": "/mosquitto/config/mosquitto.conf"},
+        {"source": "mosquitto-acl", "target": "/mosquitto/config/acl"},
+        {"source": "mosquitto-acl-robot", "target": "/mosquitto/config/acl-robot"},
+    ]
+
+
+def test_the_inlined_broker_config_actually_loads_the_acls(images):
+    """Belt and braces: the drift guard proves the copy matches the file, this proves
+    the file being copied is the hardened one. A revert that removed `acl_file` from
+    both would otherwise pass every parity check in this module."""
+    body = "\n".join(inlined_broker_conf(images))
+    for directive in ("per_listener_settings true",
+                      "acl_file /mosquitto/config/acl-robot",
+                      "acl_file /mosquitto/config/acl",
+                      "password_file /mosquitto/config/keys/passwd"):
+        assert directive in body, f"the inlined broker config lost `{directive}`"
+
+
+def test_the_supervisor_credential_reaches_both_stacks(compose, images):
+    """Named regression, in the shape of `test_pairing_gate_knob_reaches_both_stacks`:
+    a supervisor that cannot authenticate loses `$SYS/broker/log` and stops noticing
+    robots connecting — on the stack whose compose file missed the line, only."""
+    for name, doc in ((CLONE, compose), (IMAGES, images)):
+        env = moxie_env(doc, "supervisor")
+        assert env.get("MOXIE_MQTT_USER") == "${MOXIE_MQTT_USER:-supervisor}", name
+        assert env.get("MOXIE_MQTT_PASSWORD_FILE") == \
+            "${MOXIE_MQTT_PASSWORD_FILE:-/certs/supervisor.pass}", name
+        mounts = [m for m in doc["services"]["supervisor"]["volumes"]
+                  if m.startswith("moxie-certs:")]
+        assert mounts == ["moxie-certs:/certs:ro"], \
+            f"{name}: the supervisor cannot read the minted credential"
+
+
+def test_the_password_is_never_a_compose_literal(raw, images_raw):
+    """The secret is handed over as a FILE on purpose: an `environment:` value is
+    visible to `docker inspect` and to anything that can read the container's /proc."""
+    for name, text in ((CLONE, raw), (IMAGES, images_raw)):
+        assert "MOXIE_MQTT_PASSWORD:" not in text, \
+            f"{name} forwards the password itself — hand over the FILE instead"
+
+
+def test_the_plain_listener_is_loopback_by_default(compose, images):
+    """§2.4. 1883 is the one listener with a fleet-wide identity behind it, so it is not
+    a LAN door unless an owner says so. 8883 (the robot) and 9001 (the browser UI) keep
+    MOXIE_BIND_HOST — a robot and a phone are on the LAN by definition."""
+    for name, doc in ((CLONE, compose), (IMAGES, images)):
+        ports = doc["services"]["broker"]["ports"]
+        plain = [p for p in ports if p.endswith(":1883")]
+        assert plain == ["${MOXIE_BIND_HOST_PLAIN:-127.0.0.1}:${MOXIE_PORT_MQTT:-1883}:1883"], \
+            f"{name}: the plain listener is not loopback-bound by default"
+        for suffix in (":8883", ":9001"):
+            assert [p for p in ports if p.endswith(suffix)][0].startswith(
+                "${MOXIE_BIND_HOST:-0.0.0.0}"), f"{name}: {suffix} moved off MOXIE_BIND_HOST"
+
+
+def test_the_certs_one_shot_still_owns_the_shared_volume(compose, images):
+    """The credential is minted by the service that already mints the certs, into the
+    volume both the broker and the supervisor already mount — which is what keeps
+    `docker compose up` the whole install."""
+    for name, doc in ((CLONE, compose), (IMAGES, images)):
+        assert "moxie-certs:/certs" in (doc["services"]["certs"]["volumes"] or []), name
+        assert "moxie-certs:/mosquitto/config/keys:ro" in \
+            doc["services"]["broker"]["volumes"], name

@@ -10,6 +10,14 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`schedule.py`](schedule.py) — builds the day plan (`ContentSchedule`) the robot pulls at session
   start: onboarding, a rotation of on-board activities that skips what the child already finished,
   and interleaved chats. Pure + deterministic.
+- [`broker_acl.py`](broker_acl.py) — 🔐 renders a mosquitto ACL from the pairing gate's
+  `fleet/permits.json`: the `%c` device floor plus one `user d_<uuid>` block per permitted
+  robot. **Generated now and inert until P1** — no robot authenticates yet, so no `user`
+  block can match, and a `user` block is exactly what a broker matches only on a *verified*
+  username. It exists so that when the broker gains a way to verify a device, the permit
+  list stays the one place that says which robots are ours. Pure, stdlib only, byte-stable;
+  `python3 -m moxie_sdk.broker_acl <permits.json>` prints it.
+  ([`security-broker-auth.md`](../../docs/architecture/backlog/security-broker-auth.md) §2.3)
 - [`store.py`](store.py) — the durable per-robot store (JSON under `MOXIE_DATA_DIR`, default
   [`../data/`](../data/)) that remembers reported `mentor_behaviors` across restarts.
 - [`faces.py`](faces.py) — 🎨 **Moxie's look**: the frozen appearance catalog and how a

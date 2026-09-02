@@ -1,8 +1,11 @@
 #!/bin/sh
-# Generate the broker's TLS material into /certs (a docker volume) unless it is already
-# there. Idempotent: `docker compose up` can run this every time. Delete the volume
-# (`docker compose down -v`, or `docker volume rm moxie_moxie-certs`) to regenerate —
-# e.g. after your broker's LAN IP changes.
+# Generate the broker's per-appliance material into /certs (a docker volume) unless it is
+# already there: the TLS CA + server cert, and the SUPERVISOR's broker credential
+# (security-broker-auth.md §2.2). Both steps are independent and idempotent, so
+# `docker compose up` can run this every time — including on a volume that predates the
+# credential, which is how an existing appliance grows one without any owner action.
+# Delete the volume (`docker compose down -v`, or `docker volume rm moxie_moxie-certs`)
+# to regenerate everything — e.g. after your broker's LAN IP changes.
 set -eu
 
 CERT_DIR=/certs
@@ -10,8 +13,16 @@ HOST="${MOXIE_BROKER_HOST:-127.0.0.1}"
 
 mkdir -p "$CERT_DIR"
 
+# ── step 2 of 2 runs either way ─────────────────────────────────────────────────────
+# The credential step is deliberately NOT behind the cert check: an appliance that was
+# installed before broker auth existed already has certs, and must still get a password.
+mint_credential() {
+    /opt/moxie/gen-passwd.sh "$CERT_DIR" "${MOXIE_MQTT_USER:-supervisor}"
+}
+
 if [ -s "$CERT_DIR/ca.crt" ] && [ -s "$CERT_DIR/mosquitto.crt" ] && [ -s "$CERT_DIR/mosquitto.key" ]; then
     echo "[certs] broker certs already present in $CERT_DIR — keeping them"
+    mint_credential
     exit 0
 fi
 
@@ -28,4 +39,5 @@ fi
 echo "[certs] generating a self-signed CA + broker cert for $HOST"
 /opt/moxie/gen-certs.sh "$HOST"
 chmod 0644 "$CERT_DIR/ca.crt" "$CERT_DIR/mosquitto.crt" "$CERT_DIR/mosquitto.key"
+mint_credential
 echo "[certs] done — $CERT_DIR"

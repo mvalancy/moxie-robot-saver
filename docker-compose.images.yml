@@ -28,21 +28,29 @@
 # without losing your certs, your DB or Moxie's memory.
 name: moxie
 
-# The broker's config, inlined so this file needs nothing beside it. Byte-for-byte the
-# repo's mqtt/broker/compose-mosquitto.conf, except `$` doubled for compose (the guard in
-# sim/run_compose_smoke.sh fails if the two ever drift).
+# The broker's config AND its two ACL files, inlined so this file needs nothing beside
+# it. Byte-for-byte the repo's mqtt/broker/{compose-mosquitto.conf,acl,acl-robot}, except
+# `$` doubled for compose (the guards in sim/run_compose_smoke.sh and
+# sim/tests/test_compose.py fail if any of the three ever drifts).
 configs:
   mosquitto-conf:
     content: |
       # Broker config for the ONE-COMMAND STACK (the repo-root docker-compose.yml).
       #
-      # Same trust model as mosquitto.conf (LAN-only, anonymous, TLS for the robot), with one
-      # deliberate difference: the plain listener binds every *container* interface instead of
-      # 127.0.0.1, because in compose the supervisor is a different container. The compose
-      # network is the boundary; port 1883 reaches the host only if you publish it (the stack
-      # does, for the SIM and the tests — bind it to 127.0.0.1 on an untrusted LAN).
+      # Same trust model as mosquitto.conf (LAN-only, anonymous for the robot, TLS on 8883),
+      # hardened by security-broker-auth.md §2 (P0): every anonymous client is confined to its
+      # own device subtree by a `%c` ACL, and the supervisor authenticates with a per-appliance
+      # credential the `certs` one-shot mints into the shared volume. **P0 is containment, not
+      # authentication** — a spoofed `d_<uuid>` is still served as that robot; the pairing gate
+      # is what decides whether it is served anything real.
       #
       # 8883 = the robot (TLS) · 1883 = supervisor/SIM/tests · 9001 = the browser UI over WS.
+
+      # Security is PER LISTENER, and it has to be: a real robot presents an RS256 JWT as its
+      # MQTT password (cloud-protocol.md E3/E4), so a `password_file` on 8883 would refuse the
+      # robot this appliance exists for. The supervisor's credential therefore lives only on
+      # the listeners the supervisor and the console use.
+      per_listener_settings true
 
       listener 8883
       cafile   /mosquitto/config/keys/ca.crt
@@ -50,13 +58,21 @@ configs:
       keyfile  /mosquitto/config/keys/mosquitto.key
       tls_version tlsv1.2
       allow_anonymous true
+      acl_file /mosquitto/config/acl-robot
 
+      # The plain listener binds every *container* interface, because in compose the supervisor
+      # is a different container. The compose network is the boundary; on the HOST this port is
+      # published to 127.0.0.1 by default (MOXIE_BIND_HOST_PLAIN).
       listener 1883
       allow_anonymous true
+      password_file /mosquitto/config/keys/passwd
+      acl_file /mosquitto/config/acl
 
       listener 9001
       protocol websockets
       allow_anonymous true
+      password_file /mosquitto/config/keys/passwd
+      acl_file /mosquitto/config/acl
 
       # The supervisor detects robot connect/disconnect by watching $$SYS/broker/log, so the
       # broker must republish its log to that topic (see supervisor/moxie_runtime.py).
@@ -68,7 +84,71 @@ configs:
 
       persistence true
       persistence_location /mosquitto/data/
+  # The %c ACLs, inlined for the same reason (security-broker-auth.md §2.1). Two files
+  # because the robot listener cannot carry a password_file, and a `user` block on a
+  # listener without one matches an unverified username.
+  mosquitto-acl:
+    content: |
+      # ACL for the CONSOLE-SIDE listeners — plain 1883 and websockets 9001.
+      # Ships with docs/architecture/backlog/security-broker-auth.md §2.1 (P0).
+      #
+      # READ THIS FIRST: **P0 is containment, not authentication.** Nothing here checks that a
+      # client calling itself `d_1234…` is that robot. What it does is confine every anonymous
+      # client to its own device subtree, so a spoofed or hostile client on the LAN can no
+      # longer enumerate the fleet from $$SYS or read another child's config.
+      #
+      # `%c` substitutes the CLIENT ID, which every client has whether or not it authenticates
+      # — that is the whole reason a per-device confinement is available before device auth is.
+      # There is deliberately NO bare `topic` grant for the robot subtree: an anonymous client
+      # gets nothing but the patterns below.
+      #
+      # Loaded ONLY by listeners that also load `password_file` (see compose-mosquitto.conf).
+      # A `user` block matches on a username the broker did not verify when no password file is
+      # configured for that listener — so a listener without one gets `acl-robot` instead.
 
+      pattern write /devices/%c/events/#
+      pattern write /devices/%c/state
+      pattern read  /devices/%c/config
+      pattern read  /devices/%c/commands/#
+
+      # The browser SIM (sim/web/bridge.js) is a console-side OBSERVER as much as a robot
+      # double: it renders whichever robot is talking, so it subscribes `/devices/+/…`. A page
+      # served to a browser cannot hold a secret, so this grant is anonymous and read-only, and
+      # it is why 9001 stays the appliance's one LAN-visible bus door. It writes as the fixed
+      # SIM device id `d_sim` and never as a real robot.
+      topic read  /devices/#
+      topic write /devices/d_sim/events/#
+      topic write /devices/d_sim/state
+
+      # The supervisor is the one fleet-wide identity, and it must authenticate to get here:
+      # the per-appliance credential the `certs` one-shot mints (§2.2). $$SYS is supervisor-only
+      # because $$SYS/broker/log is where every `d_<uuid>` on the appliance is announced.
+      user supervisor
+      topic readwrite /devices/#
+      topic read      $$SYS/#
+  mosquitto-acl-robot:
+    content: |
+      # ACL for the ROBOT listener — TLS 8883.
+      # Ships with docs/architecture/backlog/security-broker-auth.md §2.1 (P0).
+      #
+      # Same `%c` floor as `acl`, and NOTHING else. Two things are deliberately absent:
+      #
+      #   * no `user` block. A real robot presents an RS256 JWT as its MQTT password and an
+      #     unspecified username (cloud-protocol.md E3/E4), so this listener cannot carry a
+      #     `password_file` without refusing the robot it exists for. On a listener with no
+      #     password file mosquitto accepts ANY username unchecked — a `user supervisor` block
+      #     here would hand the fleet to anyone who typed the word. Verified against
+      #     eclipse-mosquitto 2.0.20 before this file was written.
+      #   * no fleet-wide `topic read`. This is the listener a real robot connects on, so the
+      #     cross-device read this closes is one child's `child_pii` reaching another's robot.
+      #
+      # **P0 is containment, not authentication.** A spoofed `d_<uuid>` is confined to that
+      # robot's subtree — which is the subtree it wanted. Refusing the CONNECT is P2.
+
+      pattern write /devices/%c/events/#
+      pattern write /devices/%c/state
+      pattern read  /devices/%c/config
+      pattern read  /devices/%c/commands/#
 services:
 
   # ── one-shot: the broker's TLS material ────────────────────────────────────────────
@@ -89,13 +169,20 @@ services:
         condition: service_completed_successfully
     ports:
       - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_MQTT_TLS:-8883}:8883"   # robot (TLS)
-      - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_MQTT:-1883}:1883"       # SIM / tests
+      # The plain listener is LOOPBACK-ONLY by default (security-broker-auth.md §2.4):
+      # it is the one door with a fleet-wide identity behind it. Set
+      # MOXIE_BIND_HOST_PLAIN=0.0.0.0 to drive it from another machine.
+      - "${MOXIE_BIND_HOST_PLAIN:-127.0.0.1}:${MOXIE_PORT_MQTT:-1883}:1883"   # SIM / tests
       - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_WS:-9001}:9001"         # browser UI (MQTT over WS)
     configs:
       - source: mosquitto-conf
         target: /mosquitto/config/mosquitto.conf
+      - source: mosquitto-acl
+        target: /mosquitto/config/acl
+      - source: mosquitto-acl-robot
+        target: /mosquitto/config/acl-robot
     volumes:
-      - moxie-certs:/mosquitto/config/keys:ro
+      - moxie-certs:/mosquitto/config/keys:ro   # + the minted `passwd` (§2.2)
       - moxie-broker-data:/mosquitto/data
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 1883 -t healthcheck -m up -q 0"]
@@ -119,6 +206,11 @@ services:
       MOXIE_ALLOW_UNVERIFIED_BOTS: ${MOXIE_ALLOW_UNVERIFIED_BOTS:-}
       MOXIE_MQTT_HOST: broker
       MOXIE_MQTT_PORT: "1883"
+      # The supervisor's broker credential (security-broker-auth.md §2.2). The password
+      # is handed over as a FILE, never as a value here: an `environment:` literal shows
+      # up in `docker inspect`. The `certs` one-shot mints both into moxie-certs.
+      MOXIE_MQTT_USER: ${MOXIE_MQTT_USER:-supervisor}
+      MOXIE_MQTT_PASSWORD_FILE: ${MOXIE_MQTT_PASSWORD_FILE:-/certs/supervisor.pass}
       MOXIE_STATUS_PORT: "8930"
       MOXIE_STATUS_PROXY_PORT: "8931"        # deploy-layer shim → the console can read /status
       MOXIE_DATA_DIR: /data                  # the moxie-supervisor-data volume
@@ -155,6 +247,7 @@ services:
       - "${MOXIE_BIND_HOST:-127.0.0.1}:${MOXIE_PORT_STATUS:-8931}:8931"
     volumes:
       - moxie-supervisor-data:/data          # conversation memory + MOXIE_DATA_DIR
+      - moxie-certs:/certs:ro                # supervisor.pass — the broker credential
       - moxie-models:/models:ro              # Piper voices (build-from-clone `voice` profile)
       - moxie-whisper-cache:/cache           # faster-whisper model cache
     restart: unless-stopped

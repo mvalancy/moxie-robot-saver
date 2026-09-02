@@ -223,25 +223,115 @@ that the pairing QR carries a single `iot_endpoint` byte. `OPEN_MOXIE = 11` = `0
 
 ## 3. MQTT broker setup
 
-### 3.1 mosquitto config (verbatim from `site/data/openmoxie.conf`)
+### 3.1 mosquitto config — the hardened broker *(P0 shipped 2026-09-02)*
+
+Where we started, and it is worth keeping on the page: OpenMoxie's `site/data/openmoxie.conf`
+is ten lines — one TLS listener, `allow_anonymous true`, `log_dest topic` — with the
+maintainer's own comment above it, *"Anyone can login, beware!"*. We ran the same model
+until this slice. What ships now is
+[`mqtt/broker/compose-mosquitto.conf`](../../mqtt/broker/compose-mosquitto.conf) plus two
+ACL files, built to [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) §2.
+
+**Say the limit first, because the rest of this section is only honest with it in view:
+P0 is containment, not authentication.** Nothing below checks that a client calling itself
+`d_1234…` *is* that robot. A spoofed `d_<uuid>` still connects and is still served as that
+robot — §3.7's permit list is what decides whether it is served anything real. What P0
+removes is the *reach* an unknown client has once it is on the bus.
 
 ```conf
-listener 8883
+# Security is PER LISTENER, and it has to be — see the table below.
+per_listener_settings true
+
+listener 8883                                     # the robot, TLS
 cafile   /mosquitto/config/keys/ca.crt
 certfile /mosquitto/config/keys/mosquitto.crt
 keyfile  /mosquitto/config/keys/mosquitto.key
+tls_version tlsv1.2
+allow_anonymous true                              # the robot's JWT — see §3b
+acl_file /mosquitto/config/acl-robot
+
+listener 1883                                     # supervisor · SIM · tests
 allow_anonymous true
-log_dest file /mosquitto/log/mosquitto.log
+password_file /mosquitto/config/keys/passwd       # the supervisor's credential
+acl_file /mosquitto/config/acl
+
+listener 9001                                     # the browser UI, MQTT-over-WS
+protocol websockets
+allow_anonymous true
+password_file /mosquitto/config/keys/passwd
+acl_file /mosquitto/config/acl
+
+log_dest stdout
 log_dest topic          # <-- publishes broker log lines to $SYS/broker/log/#
+log_type all
 ```
 
-- Keys live in the repo `keys/` (`ca.crt`, `mosquitto.crt`, `mosquitto.key`, plus `.csr`).
-  These are **self-signed** and shipped for convenience — we should generate our own CA per
-  appliance.
-- `mqtt.Dockerfile` = `eclipse-mosquitto:latest` + copy keys + copy conf. Exposes 8883.
+**The `%c` ACL.** mosquitto substitutes `%c` (client id) into a `pattern` line, and every
+client has a client id whether or not it authenticated — which is why a per-device
+confinement is available *now*, years before device auth is. Both ACL files share the
+same floor, and nothing else is granted globally:
+
+```conf
+pattern write /devices/%c/events/#
+pattern write /devices/%c/state
+pattern read  /devices/%c/config
+pattern read  /devices/%c/commands/#
+```
+
+Two real exposures close, and one does not:
+
+1. **Fleet enumeration.** `$SYS/broker/log` is where every `d_<uuid>` on the appliance is
+   announced (that is the trick this section is built on). It is now supervisor-only, so a
+   LAN client can no longer harvest the device ids a spoof needs.
+2. **Cross-device reads and writes.** A device can no longer subscribe `/devices/+/config`
+   and watch another child's `child_pii` go by, nor publish into another robot's subtree.
+3. **Not identity.** A spoofed `d_<uuid>` is confined to *that robot's* subtree — which is
+   the subtree it wanted. Refusing the CONNECT is P2, and P2 needs a robot's public key.
+
+**Why the security settings are per listener, and why there are two ACL files.** A real
+robot's MQTT password is an RS256 JWT and its username is unspecified (§3b) — so a
+`password_file` on 8883 would refuse the robot the appliance exists for. But on a listener
+with *no* password file, mosquitto accepts any username unchecked and then matches it
+against the ACL's `user` blocks: a `user supervisor` block on 8883 would hand the fleet to
+anyone who typed the word. (Verified against `eclipse-mosquitto:2.0.20` while this was
+built; `sim/run_acl_proof.sh` re-proves it.) So the supervisor's identity lives only in
+`acl`, and `acl` is loaded only where `password_file` is:
+
+| listener | who | `password_file` | `acl_file` | may read `$SYS` |
+|---|---|---|---|---|
+| `8883` TLS | a real robot | ✗ (it presents a JWT) | `acl-robot` — the `%c` floor, nothing else | ✗ |
+| `1883` plain | supervisor · SIM · tests | ✓ | `acl` | supervisor only |
+| `9001` websockets | the browser UI | ✓ | `acl` | supervisor only |
+
+**The browser SIM is the one client that needs more than its own subtree.**
+[`sim/web/bridge.js`](../../sim/web/bridge.js) is a console-side *observer* as much as a
+robot double: it renders whichever robot is talking, so it subscribes `/devices/+/…`. A
+page served to a browser cannot hold a secret, so `acl` grants that read **anonymously and
+read-only**, plus writes as the fixed SIM device id `d_sim` — and nothing else. It cannot
+publish into a real robot's `commands/` subtree, so it cannot make a robot speak, and it
+cannot read `$SYS`. That is the honest cost of a live view in a browser, written down.
+
+**The supervisor's credential** is per-appliance and minted by the `certs` one-shot that
+already mints the TLS material ([`gen-passwd.sh`](../../mqtt/broker/gen-passwd.sh)): 32
+bytes of kernel randomness, hashed into `passwd` with `mosquitto_passwd`, with the
+plaintext dropped beside it as `supervisor.pass` (0600, owned by the supervisor's uid) in
+the volume both services already mount. The supervisor reads it through
+`MOXIE_MQTT_PASSWORD_FILE`; it is never a compose `environment:` literal, because that is
+visible to `docker inspect`. `docker compose up` is still the whole install, and an
+appliance installed before this slice grows a credential on its next `up`.
+
+**Ports.** `1883` is published on `127.0.0.1` by default (`MOXIE_BIND_HOST_PLAIN`) — it is
+the one listener with a fleet-wide identity behind it. `8883` and `9001` keep
+`MOXIE_BIND_HOST`: a robot and a phone are on the LAN by definition.
+
+- Keys live in `mqtt/broker/keys/` — **generated per appliance**, never committed
+  ([`gen-certs.sh`](../../mqtt/broker/gen-certs.sh)); the `passwd` file lands beside them.
+- The broker is still **upstream `eclipse-mosquitto:2.0.20` plus config** — no image of
+  ours, which is the property P1 has to fight for (`RELEASING.md`).
 - **`log_dest topic` is the connect/disconnect trick:** mosquitto mirrors its log to
   `$SYS/broker/log/#`. The supervisor subscribes to `$SYS/broker/log/#` and `$SYS/broker/
   clients/#` and regex-scans the **N** (notice) log lines for connects/disconnects (§3.4).
+  After P0 it must authenticate to do so.
 
 ### 3.2 Topic structure (Google-Cloud-IoT shaped)
 
@@ -421,12 +511,20 @@ Surfacing that line in the **parent console** is a follow-up: `server/` renders
   connects `username="unknown", password="supervisor"` and subscribes to all devices. The
   non-fake path (pulling `uuid.txt`/`RS256.key` off a robot via `adb`, or from
   `MOXIE_CREDENTIALS` env) exists only for impersonating a *specific* robot in tests.
-- **Our takeaway:** we replicate the anonymous LAN model. We don't need real JWT
-  verification for v1. If we later want per-robot ACLs we can turn on mosquitto password/ACL
-  and verify the JWT against each robot's public key (robot exposes `rsa_pub` in
-  `QRDiagnosticData`). **What we do have** is §3.7's application-layer permit list: it does
-  not stop a device *connecting* to the broker, it stops an unpermitted one being *served*
-  — no child data, no brain, no schedule. Broker-level auth is still the deeper fix.
+- **Our takeaway** *(revised 2026-09-02 — P0 shipped)*: we still accept the robot's
+  unverified JWT, because nothing else would let a stock robot connect. What is no longer
+  true is that the broker is otherwise open. **Enforced today:** every anonymous client is
+  confined by a `%c` ACL to `/devices/<its own client id>/…`; `$SYS/broker/log` — the fleet
+  roster — is readable only by the supervisor, which authenticates with a per-appliance
+  credential (§3.1). **Still not enforced:** identity. A spoofed `d_<uuid>` connects and is
+  served as that robot, and because MQTT evicts an existing session on a client-id
+  collision, a spoof can still knock the real robot off the bus. Only refusing the CONNECT
+  fixes that, and refusing it means verifying the JWT against that robot's public key —
+  which we can only get from the robot (`rsa_pub` in `QRDiagnosticData`, or `adb`). That is
+  P1/P2 of [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md), and it is
+  blocked on questions only a physical robot answers. **Alongside it** stands §3.7's
+  application-layer permit list: it does not stop a device *connecting*, it stops an
+  unpermitted one being *served* — no child data, no brain, no schedule.
 
 ---
 

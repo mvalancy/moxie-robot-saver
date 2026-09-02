@@ -1,0 +1,37 @@
+# ACL for the CONSOLE-SIDE listeners — plain 1883 and websockets 9001.
+# Ships with docs/architecture/backlog/security-broker-auth.md §2.1 (P0).
+#
+# READ THIS FIRST: **P0 is containment, not authentication.** Nothing here checks that a
+# client calling itself `d_1234…` is that robot. What it does is confine every anonymous
+# client to its own device subtree, so a spoofed or hostile client on the LAN can no
+# longer enumerate the fleet from $SYS or read another child's config.
+#
+# `%c` substitutes the CLIENT ID, which every client has whether or not it authenticates
+# — that is the whole reason a per-device confinement is available before device auth is.
+# There is deliberately NO bare `topic` grant for the robot subtree: an anonymous client
+# gets nothing but the patterns below.
+#
+# Loaded ONLY by listeners that also load `password_file` (see compose-mosquitto.conf).
+# A `user` block matches on a username the broker did not verify when no password file is
+# configured for that listener — so a listener without one gets `acl-robot` instead.
+
+pattern write /devices/%c/events/#
+pattern write /devices/%c/state
+pattern read  /devices/%c/config
+pattern read  /devices/%c/commands/#
+
+# The browser SIM (sim/web/bridge.js) is a console-side OBSERVER as much as a robot
+# double: it renders whichever robot is talking, so it subscribes `/devices/+/…`. A page
+# served to a browser cannot hold a secret, so this grant is anonymous and read-only, and
+# it is why 9001 stays the appliance's one LAN-visible bus door. It writes as the fixed
+# SIM device id `d_sim` and never as a real robot.
+topic read  /devices/#
+topic write /devices/d_sim/events/#
+topic write /devices/d_sim/state
+
+# The supervisor is the one fleet-wide identity, and it must authenticate to get here:
+# the per-appliance credential the `certs` one-shot mints (§2.2). $SYS is supervisor-only
+# because $SYS/broker/log is where every `d_<uuid>` on the appliance is announced.
+user supervisor
+topic readwrite /devices/#
+topic read      $SYS/#
