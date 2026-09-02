@@ -131,17 +131,26 @@ SIM-as-a-client) define exactly what to build, ready for a clean-room implementa
 
 ---
 
-## 🚀 Quick start (Phase 1)
+## 🚀 Quick start
+
+**The whole backend, one command** — MQTT broker + robot supervisor + parent console:
 
 ```bash
 git clone https://github.com/mvalancy/moxie-robot-saver.git
 cd moxie-robot-saver
-pip install -r server/requirements.txt
-python server/run.py                 # serves on 0.0.0.0:8080
+docker compose up
 ```
 
 Open **`http://<this-computer-ip>:8080`** from your phone (same LAN, or Tailscale), enter Wi-Fi,
-generate the QR, hold it to Moxie. → **[Full setup guide](docs/guides/first-time-setup.md)**
+generate the QR, hold it to Moxie. → **[One-command stack](docs/guides/one-command-stack.md)** ·
+**[Full setup guide](docs/guides/first-time-setup.md)**
+
+Just the parent-app half, no Docker:
+
+```bash
+pip install -r server/requirements.txt
+python server/run.py                 # serves on 0.0.0.0:8080
+```
 
 ---
 

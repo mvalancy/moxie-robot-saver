@@ -31,6 +31,7 @@ flowchart TB
 
 | Path | Domain | What it is |
 |---|---|---|
+| [`docker-compose.yml`](docker-compose.yml) + [`.env.example`](.env.example) | ③ server app | The **one-command stack**: `docker compose up` = broker + supervisor + parent console, configured by one root `.env`. Guide: [`docs/guides/one-command-stack.md`](docs/guides/one-command-stack.md). |
 | [`docs/`](docs/) | all | The documentation. `docs/reverse-engineering/` is the clean-room study (split phone-side vs robot-side); [`docs/architecture/`](docs/architecture/README.md) distills it into the **build-spec contracts** a clean-room backend is built from. See [`docs/README.md`](docs/README.md) for the 3-domain index. |
 | [`tools/robot-toolkit/`](tools/robot-toolkit/) | ① robot / shared | QR codec, ZMQ bus client, cloud helpers, protoref, secrets extractor, 120 proto bindings. |
 | [`tools/pairing/`](tools/pairing/) | ② parent app | The phone-side pairing-QR encoder (`moxie_qr.py`). |
