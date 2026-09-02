@@ -39,8 +39,8 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
 
 ## Workstreams (the backlog agents draw from)
 
-- **WS-A · Cloud service (outcome 1).** The DoD, slice by slice: the remaining criterion-1 finishers
-  (browser Web-Audio playback of `CloudTTSResponse`; a live talk-through with real speech), criterion 3's
+- **WS-A · Cloud service (outcome 1).** The DoD, slice by slice: the remaining criterion-1 finisher
+  (a live talk-through with real speech — *in flight*; browser Web-Audio playback landed in PR #11), criterion 3's
   last gap (telemetry/insights view — *in flight*), criterion 5 (one-command stack verified end to end),
   criterion 6 (a full live e2e scenario). Source of truth: the DoD table.
 - **WS-B · OpenMoxie ADOPT (outcome 2).** Burn down the audit's ranked ADOPT list, best-first. Each item:
@@ -161,6 +161,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   1 ~70% · 2–5 🟢 · 6 ~80% (4/6 🟢; simple mean ≈ 90%, but "done" means all six 🟢) — header fixed at the
   next merge (both in-flight agents edit that table). Hygiene: removed six merged remote `feat/*` branches;
   playbook above codified. In flight: `feat/web-sim-audio-playback`, `feat/live-talk-e2e`.
+
+- **2026-09-02** — Integrated `feat/web-sim-audio-playback` (PR #11 → dev): the browser SIM decodes the wire
+  itself and **plays the server's `CloudTTSResponse`** (chunk queue, autoplay handling, mute, mouth animation
+  from marks/envelope); live-observed 4.0 s of cloud TTS in the browser with zero console errors. New
+  `sim/test_audio.mjs` (encoder-parity + mutation-checked) in the fast tier; +3 Playwright tests. Criterion 1's
+  last client-side link is done; what remains is real speech (`feat/live-talk-e2e`, in flight).
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
