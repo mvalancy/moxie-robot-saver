@@ -57,10 +57,19 @@ values win over everything, including a fully configured gateway — that is the
 `MOXIE_STT_MODEL` names a model on **whichever engine you selected** (`stt-whisper` for the gateway,
 `base.en` for local whisper); left unset, each engine uses its own default.
 
-> Note: on the voice side the symmetric override does not exist yet — `build_synthesizer` reads only
-> `MOXIE_TTS=off` and `=tone`, so forcing the local Piper voice today means leaving
-> `MOXIE_VOICE_BASE_URL` unset rather than setting `MOXIE_TTS=piper`. Pinned by
-> `sim/tests/test_stt_gateway.py::test_local_piper_is_selectable_the_same_way_for_the_voice`.
+The voice side now has the symmetric override: `MOXIE_TTS=piper` (alias `local`) forces the local
+Piper voice even with a gateway fully configured, exactly as `MOXIE_STT=whisper` does for the ears.
+Pinned by `sim/tests/test_stt_gateway.py::test_local_piper_is_selectable_the_same_way_for_the_voice`.
+
+### Pick it in the console
+
+The console's 🎚️ **Voice** card has a **Listening** dropdown beside the Speech one: the gateway's
+ears (`stt-whisper`, `graphling-stt`, `stt-whisper-base`, discovered from `GET /v1/models`), the
+local whisper sizes that are actually installed, and `off`. `stt-whisper` is marked as the default.
+A pick takes effect on the **next** utterance without a restart and is remembered in
+`fleet/voice.json` across one; an explicit **local whisper** pick is honoured even with a gateway
+URL set, which is the whole point of the home-appliance row in the matrix above. Design:
+[ai-seam §③ *Choosing an engine*](../architecture/ai-seam.md).
 
 ### What we measured (live, 2026-09-02)
 

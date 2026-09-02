@@ -1,5 +1,5 @@
 {
- "generated": "docs-ba5259543b63",
+ "generated": "docs-48f1c91c804b",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 55847,
+   "bytes": 56909,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 47045,
+   "bytes": 48376,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -211,7 +211,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 24038,
+   "bytes": 28020,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -224,6 +224,7 @@
     "Request in — `CloudTTSRequest`",
     "Response out — `CloudTTSResponse`",
     "Backends in this repo — and what happens when one fails",
+    "Choosing an engine — the 🎚️ picker (BUILT, 2026-09-02)",
     "Conformance checklist",
     "Where each seam is implemented in this repo"
    ],
@@ -233,7 +234,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 24437,
+   "bytes": 25733,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -337,7 +338,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 69520,
+   "bytes": 70684,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -473,7 +474,7 @@
    "path": "architecture/backlog/voice-picker.md",
    "title": "Voice picker — choose the speech and listening models from the console",
    "section": "architecture",
-   "bytes": 8542,
+   "bytes": 9570,
    "mermaid": 0,
    "headings": [
     "What the user asked for (verbatim intent)",
@@ -891,11 +892,12 @@
    "path": "guides/moxies-look.md",
    "title": "Moxie's look — letting your child style the face",
    "section": "guides",
-   "bytes": 4436,
+   "bytes": 7430,
    "mermaid": 0,
    "headings": [
     "What you can change today",
-    "Why the other twelve layers are greyed out",
+    "Where these choices come from — and why it matters",
+    "Two warnings that come with the artwork",
     "One robot, or all of them",
     "What actually happens when you press Save",
     "An honest caveat"
@@ -949,11 +951,12 @@
    "path": "guides/litellm-tts-setup.md",
    "title": "TTS on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 9912,
+   "bytes": 10820,
    "mermaid": 0,
    "headings": [
     "Live since 2026-09-02",
     "Turning it on — one variable",
+    "Pick it in the console",
     "What we measured (live, 2026-09-02)",
     "Four quirks worth knowing",
     "If the gateway hiccups, a child still hears a voice",
@@ -974,12 +977,13 @@
    "path": "guides/litellm-stt-setup.md",
    "title": "STT on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 10698,
+   "bytes": 11304,
    "mermaid": 0,
    "headings": [
     "Live since 2026-09-02",
     "Turning it on — one variable",
     "Deployment matrix — pick the ears that match the box",
+    "Pick it in the console",
     "What we measured (live, 2026-09-02)",
     "Four quirks worth knowing",
     "If the gateway hiccups, a child is still heard",

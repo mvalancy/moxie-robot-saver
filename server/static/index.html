@@ -295,6 +295,33 @@
         <button id="btn-mem-forget-all" class="ghost hidden">Erase everything</button>
         <div id="memory-status" class="muted"></div>
       </div>
+      <!-- 🎚️ The voice picker (docs/architecture/backlog/voice-picker.md). Two dropdowns
+           over what this appliance can GENUINELY use: the gateway's audio models,
+           discovered live and classified by name, the local Piper voices and whisper
+           sizes actually installed on the box, and the two built-ins. Defaults to
+           piper-amy / stt-whisper when the gateway serves them; an explicit local pick
+           wins even with a gateway configured; a gateway that is down leaves the local
+           options rather than blanking the card. A pick takes effect on the next turn. -->
+      <div class="card hidden" id="voice-card">
+        <h2>🎚️ Voice</h2>
+        <p class="muted">Which voice Moxie speaks with, and which ears she listens with.
+          These are the engines this appliance can actually use right now — pick one and
+          press Test to hear it. The change applies to the next thing Moxie says; no
+          restart, and it is remembered across one.</p>
+        <div class="voicegrid">
+          <label class="voicepick"><span>Speech</span>
+            <select id="voice-speech"></select></label>
+          <label class="voicepick"><span>Listening</span>
+            <select id="voice-listening"></select></label>
+        </div>
+        <div id="voice-note" class="muted"></div>
+        <div class="voice-actions">
+          <button id="btn-voice-save">Save</button>
+          <button id="btn-voice-test" class="ghost">Test</button>
+          <button id="btn-voice-refresh" class="ghost">Refresh</button>
+        </div>
+        <div id="voice-status" class="muted"></div>
+      </div>
     </section>
   </div>
 </main>
