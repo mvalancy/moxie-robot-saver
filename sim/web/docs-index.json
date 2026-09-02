@@ -1,5 +1,5 @@
 {
- "generated": "docs-2f8dc817ff5b",
+ "generated": "docs-f50adeccf6ab",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 36831,
+   "bytes": 38575,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -254,7 +254,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 16748,
+   "bytes": 16988,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -333,7 +333,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 62723,
+   "bytes": 63412,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -693,7 +693,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1814,
+   "bytes": 2141,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -770,6 +770,20 @@
     "The \"let any robot in\" switch",
     "Where the list is kept",
     "If something is not working"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/what-moxie-remembers.md",
+   "title": "What Moxie remembers — and how to erase it",
+   "section": "guides",
+   "bytes": 4211,
+   "mermaid": 0,
+   "headings": [
+    "What is written down",
+    "What is *never* written down",
+    "Erasing it",
+    "Summaries can be wrong"
    ],
    "kind": "md"
   },

@@ -10,9 +10,10 @@ string it appends, the method and body it forwards, and what it does with a 400 
 
 So: stand a tiny status server on a free port that speaks exactly what
 `mqtt/supervisor/moxie_runtime.py`'s `_start_status_server` speaks (GET /status,
-GET /telemetry, GET+POST /safety, POST /config — same payload shapes, same status codes,
-and the REAL `sanitize_config_overrides` behind /config so validation is not mocked away
-and the REAL `MoxieRuntime.safety_view`/`acknowledge_safety` behind /safety), point
+GET /telemetry, GET+POST /safety, GET+DELETE /memory, POST /config — same payload
+shapes, same status codes, and the REAL `sanitize_config_overrides` behind /config so
+validation is not mocked away, the REAL `MoxieRuntime.safety_view`/`acknowledge_safety`
+behind /safety and the REAL `memory_view`/`erase_memory` behind /memory), point
 `MOXIE_SUPERVISOR_STATUS` at it, and drive the FastAPI app in-process. No broker, no
 robot, no gateway — but a genuine two-process contract.
 
@@ -114,6 +115,25 @@ def _safety_runtime(root: str):
     return rt
 
 
+def _seed_memory(rt):
+    """Write two activities' worth of durable facts through the REAL `MemoryStore` the
+    runtime serves `/memory` from — so the console reads the shape the store actually
+    writes (namespaced lists + a `_provenance` log), never a hand-drawn copy of it."""
+    from moxie_sdk.content.memory import provenance
+    mem = rt.memory_store()
+    mem.merge(DEVICE, "mchat",
+              {"facts": ["Sam has a beagle named Pepper", "Sam is in year 2"],
+               "preferences": ["Likes drawing"],
+               "summaries": ["They talked about pets."]},
+              provenance=provenance(module_id="MCHAT", content_id="default",
+                                    turns=4, reason="exit", clock=lambda: 1788352646.0),
+              meta={"summarized_through": 6})
+    mem.merge(DEVICE, "free_chat", {"facts": ["Sam's favourite colour is red"]},
+              provenance=provenance(module_id="FREE_CHAT", turns=2, reason="switch",
+                                    clock=lambda: 1788352000.0))
+    return mem
+
+
 class FakeSupervisor:
     """Serves the endpoints the console proxies, on a free ephemeral port."""
 
@@ -129,7 +149,10 @@ class FakeSupervisor:
         self.config_posts: list = []
         self.telemetry_queries: list = []
         self.safety_queries: list = []
+        self.memory_queries: list = []
+        self.memory_erases: list = []
         self.runtime = _safety_runtime(safety_root)
+        self.memory = _seed_memory(self.runtime)
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -183,8 +206,30 @@ class FakeSupervisor:
                     outer.safety_queries.append((device_id, limit))
                     out = outer.runtime.safety_view(device_id, limit=limit)
                     return self._out(out, 200 if out.get("ok") else 404)
+                if u.path == "/memory":
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    outer.memory_queries.append(device_id)
+                    out = outer.runtime.memory_view(device_id)
+                    return self._out(out, 200 if out.get("ok") else 404)
                 self.send_response(404)
                 self.end_headers()
+
+            def do_DELETE(self):
+                """`DELETE /memory?device_id=…[&namespace=…]` — the parent's erase. No
+                namespace means everything for that robot; there is no per-item delete on
+                this side, which is why the console offers none."""
+                u = urlparse(self.path)
+                if u.path != "/memory":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                q = parse_qs(u.query)
+                device_id = (q.get("device_id") or [""])[0]
+                namespace = (q.get("namespace") or [""])[0]
+                outer.memory_erases.append((device_id, namespace or "all"))
+                out = outer.runtime.erase_memory(device_id, namespace or None)
+                return self._out(out, 200 if out.get("ok") else 404)
 
             def do_POST(self):
                 u = urlparse(self.path)
@@ -607,6 +652,88 @@ def test_pairing_without_a_device_id_still_pairs(client, supervisor):
 
 
 # --------------------------------------------------------------------------- #
+# GET / DELETE /local/robots/{id}/memory — 🧠 what Moxie remembers (BEYOND #4)
+# --------------------------------------------------------------------------- #
+
+def test_memory_reaches_the_console_as_dated_rows(client, supervisor):
+    """The floor: a parent can *read* every durable fact, with the day and the activity
+    it came from, without a shell."""
+    r = client.get(f"/local/robots/{DEVICE}/memory")
+    assert r.status_code == 200, r.text
+    m = r.json()
+    assert m["ok"] is True and m["device_id"] == DEVICE
+    assert m["policy"] == "NO_MEDIA" and m["writes_allowed"] is True and m["bytes"] > 0
+    assert m["namespace_count"] == 2 and m["total"] == 5
+    ns = {n["namespace"]: n for n in m["namespaces"]}
+    assert set(ns) == {"mchat", "free_chat"}
+    assert ns["mchat"]["counts"] == {"facts": 2, "preferences": 1, "open_threads": 0,
+                                     "summaries": 1, "total": 4}
+    texts = [i["text"] for i in ns["mchat"]["items"]]
+    assert "Sam has a beagle named Pepper" in texts
+    assert "They talked about pets." in texts
+    top = ns["mchat"]["items"][0]
+    assert top["provenance"]["module_id"] == "MCHAT" and top["provenance"]["turns"] == 4
+    assert top["provenance"]["date"] and top["provenance"]["reason"] == "exit"
+    # newest activity first (mchat's provenance is later than free_chat's)
+    assert [n["namespace"] for n in m["namespaces"]] == ["mchat", "free_chat"]
+    assert supervisor.memory_queries[-1] == DEVICE
+    # `_meta.summarized_through` is stripped by the runtime's parent view, so the console
+    # has nothing to show — see the Known gaps note in the implementation plan.
+    assert m["summarized_through"] is None
+
+
+def test_erasing_one_activity_forwards_and_the_next_read_reflects_it(client, supervisor):
+    r = client.delete(f"/local/robots/{DEVICE}/memory/mchat")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True and body["erased"] is True and body["namespace"] == "mchat"
+    assert supervisor.memory_erases[-1] == (DEVICE, "mchat")
+    # the console really erased it on the other side, not just in its own reply
+    after = client.get(f"/local/robots/{DEVICE}/memory").json()
+    assert [n["namespace"] for n in after["namespaces"]] == ["free_chat"]
+    assert after["total"] == 1
+    assert supervisor.memory.load(DEVICE).get("mchat") is None
+
+
+def test_erasing_everything_empties_the_store(client, supervisor):
+    r = client.delete(f"/local/robots/{DEVICE}/memory")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True and body["erased"] is True and body["namespace"] == "all"
+    assert body["namespaces"] == [] and body["total"] == 0
+    assert supervisor.memory_erases[-1] == (DEVICE, "all")
+    assert supervisor.memory.load(DEVICE) == {}
+    # ...and the empty state is an empty view, not an error
+    again = client.get(f"/local/robots/{DEVICE}/memory").json()
+    assert again["ok"] is True and again["total"] == 0 and again["error"] is None
+    _seed_memory(supervisor.runtime)          # leave the fixture as we found it
+
+
+def test_memory_for_an_unknown_device_is_a_404(client):
+    r = client.get("/local/robots/d_nope/memory")
+    assert r.status_code == 404, r.text
+    m = r.json()
+    assert m["ok"] is False and m["namespaces"] == [] and m["total"] == 0 and m["error"]
+
+
+def test_memory_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    """Reading *or* erasing with the supervisor stopped must be a readable ok:false —
+    never a 500, and never a UI that silently claims the memory is gone."""
+    from moxie_server import main
+    dead = socket.socket()
+    dead.bind(("127.0.0.1", 0))
+    port = dead.getsockname()[1]
+    dead.close()
+    monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
+    r = client.get(f"/local/robots/{DEVICE}/memory")
+    assert r.status_code == 503
+    assert r.json()["ok"] is False and r.json()["namespaces"] == [] and r.json()["error"]
+    d = client.delete(f"/local/robots/{DEVICE}/memory/mchat")
+    assert d.status_code == 503 and d.json()["ok"] is False
+    assert "erased" not in d.json()           # nothing was erased, so nothing is claimed
+
+
+# --------------------------------------------------------------------------- #
 # the double is honest
 # --------------------------------------------------------------------------- #
 
@@ -646,7 +773,13 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     assert set(rt.effective_config(DEVICE)) == set(
         merge_config_layers(rt.fleet_config(), {}))
 
-    # /safety is not doubled at all — the fake supervisor runs a REAL MoxieRuntime behind
-    # it — so the only thing to guard is that its unknown-device shape still 404s.
+    # /safety and /memory are not doubled at all — the fake supervisor runs a REAL
+    # MoxieRuntime behind both — so the only thing to guard is the unknown-device shape
+    # (still a 404) and that the memory view keeps the keys the console reads.
     assert rt.safety_view("d_nope")["ok"] is False
     assert rt.acknowledge_safety("d_nope", "sfe-nope")["ok"] is False
+    assert rt.memory_view("d_nope")["ok"] is False
+    assert set(rt.memory_view(DEVICE)) == {"ok", "device_id", "namespaces", "bytes",
+                                           "writes_allowed", "policy"}
+    erased = rt.erase_memory(DEVICE)
+    assert erased["ok"] is True and set(erased) >= {"erased", "namespace", "namespaces"}

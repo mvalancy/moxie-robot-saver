@@ -651,6 +651,64 @@ async def acknowledge_robot_safety(device_id: str, request: Request):
              "detail": str(e)}))
 
 
+# --- 🧠 What Moxie remembers (audit BEYOND #4) ---------------------------------------
+# The runtime stores durable, provenance-carrying facts per robot
+# (`robots/<id>/memory.json`, moxie_sdk/store.py::MemoryStore) and serves them on its
+# localhost status server. A memory a parent cannot read or erase is not acceptable on a
+# child's device, so the console proxies all three verbs here rather than leaving them to
+# `curl`. Erase granularity is exactly what the runtime offers: **one namespace, or all
+# of it** — there is no per-item delete on the other side, so there is none here.
+
+def _memory_request(device_id: str, method: str = "GET", namespace: str = ""):
+    """Call the supervisor's `/memory` for one robot and normalize the reply.
+
+    Same server-side-call shape as the telemetry/safety proxies (no CORS problem in the
+    browser, no supervisor port exposed to it). A supervisor that is down is a 503 whose
+    body is still the console's memory shape with `ok:false` — never a 500."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_memory
+    url = STATUS_URL.rsplit("/status", 1)[0] + f"/memory?device_id={quote(device_id)}"
+    if namespace:
+        url += f"&namespace={quote(namespace)}"
+    try:
+        req = urllib.request.Request(url, method=method)
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return normalize_memory(json.loads(r.read().decode())), 200
+    except urllib.error.HTTPError as e:
+        return normalize_memory(json.loads(e.read().decode() or "{}")), e.code
+    except Exception as e:
+        return normalize_memory({"ok": False, "device_id": device_id,
+                                 "error": "supervisor not reachable",
+                                 "detail": str(e)}), 503
+
+
+@app.get("/local/robots/{device_id}/memory")
+def robot_memory(device_id: str):
+    """What Moxie remembers about this child, by activity, with the date and the module
+    each item came from — plus whether writing new memories is currently allowed
+    (`LoggingPolicy.NO_DATA` stops writes; reads and erase always work)."""
+    out, code = _memory_request(device_id)
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
+@app.delete("/local/robots/{device_id}/memory")
+def forget_all_memory(device_id: str):
+    """Erase **everything** Moxie remembers about this child. Never policy-gated: a
+    parent must always be able to delete. Returns the (now empty) memory view."""
+    out, code = _memory_request(device_id, method="DELETE")
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
+@app.delete("/local/robots/{device_id}/memory/{namespace}")
+def forget_memory_namespace(device_id: str, namespace: str):
+    """Erase one activity's memory (one namespace). The finest granularity the runtime
+    offers — see docs/guides/what-moxie-remembers.md for what that means for one wrong
+    fact (today: erase the activity, and Moxie relearns the rest)."""
+    out, code = _memory_request(device_id, method="DELETE", namespace=namespace)
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
 @app.get("/local/pairing/qr.png")
 def pairing_qr_png(payload: str, ec: str = "l"):
     # The original app rendered with ZXing EC level L (low density) because Moxie's

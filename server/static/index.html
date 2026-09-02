@@ -191,6 +191,18 @@
           <button id="btn-reboot" class="ghost grow">Reboot</button>
         </div>
       </div>
+      <!-- What Moxie remembers (audit BEYOND #4). The runtime keeps a few durable facts
+           per activity, each stamped with the day and the module that learned it. A
+           memory a parent cannot read or erase is not acceptable on a child's device, so
+           every item is listed and every list is erasable. -->
+      <div class="card hidden" id="memory-card">
+        <h2>🧠 What Moxie remembers</h2>
+        <p class="muted">A few durable facts per activity, written down at the end of a
+          conversation. Moxie reads them back the next time you talk.</p>
+        <div id="memory-box"></div>
+        <button id="btn-mem-forget-all" class="ghost hidden">Erase everything</button>
+        <div id="memory-status" class="muted"></div>
+      </div>
     </section>
   </div>
 </main>

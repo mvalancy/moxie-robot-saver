@@ -131,7 +131,8 @@ async function refreshMoxie(){
   try{
     const st=await api('/local/state');
     if(st.robots && st.robots.length){ renderRobot(st.robots[0]); }
-    else { $('#moxie-none').classList.remove('hidden'); $('#moxie-card').classList.add('hidden'); }
+    else { $('#moxie-none').classList.remove('hidden'); $('#moxie-card').classList.add('hidden');
+           $('#memory-card').classList.add('hidden'); }
   }catch(e){}
   refreshLive();
 }
@@ -155,6 +156,7 @@ async function refreshLive(){
     if(cfgBox) cfgBox.style.display='none';
     refreshInsights(null);
     refreshSafety(null);
+    refreshMemory(null);
     return;
   }
   if(cfgBox) cfgBox.style.display='';
@@ -177,6 +179,7 @@ async function refreshLive(){
   }).join('');
   refreshInsights(liveDevice);
   refreshSafety(liveDevice);
+  refreshMemory(liveDevice);
 }
 
 // ---- 🔐 Robot access (the device allowlist / pairing gate) ----
@@ -312,6 +315,109 @@ async function refreshSafety(deviceId){
     refreshSafety(deviceId);
   };
 }
+// ---- 🧠 what Moxie remembers (audit BEYOND #4) ----
+// The runtime writes a few durable facts per activity at the end of a conversation
+// (moxie_sdk/store.py::MemoryStore), each stamped with the day, the module and how many
+// turns it came from, and reads them back into the next prompt. A memory a parent cannot
+// read or erase is not acceptable on a child's device, so every item is listed here and
+// every list is erasable. Erase granularity is exactly the runtime's: one activity, or
+// everything — there is no per-item delete on the other side yet.
+const MEM_KINDS={'fact':'Fact','preference':'Likes','open thread':'Follow-up','summary':'Summary'};
+let memDevice=null;
+
+// A destructive button that asks twice: the first click arms it (and disarms any other),
+// the second one runs. Cheaper than a modal and impossible to hit by accident.
+function armErase(btn, armedLabel, run){
+  const original=btn.textContent;
+  btn.onclick=()=>{
+    if(btn.dataset.armed==='1'){ btn.dataset.armed=''; btn.textContent=original;
+                                 btn.classList.remove('mem-arm'); run(); return; }
+    document.querySelectorAll('#memory-card button[data-armed="1"]').forEach(o=>{
+      o.dataset.armed=''; o.classList.remove('mem-arm');
+      if(o.dataset.label) o.textContent=o.dataset.label;
+    });
+    btn.dataset.armed='1'; btn.dataset.label=original;
+    btn.textContent=armedLabel; btn.classList.add('mem-arm');
+    setTimeout(()=>{ if(btn.dataset.armed==='1'){ btn.dataset.armed='';
+      btn.textContent=original; btn.classList.remove('mem-arm'); } }, 6000);
+  };
+}
+
+async function refreshMemory(deviceId){
+  const card=$('#memory-card'), box=$('#memory-box'), all=$('#btn-mem-forget-all');
+  if(!card||!box) return;
+  memDevice=deviceId;
+  const hideAll=()=>{ if(all){ all.classList.add('hidden'); all.dataset.armed='';
+                               all.classList.remove('mem-arm'); } };
+  if(!deviceId){
+    box.innerHTML='<div class="live-off">No robot connected — nothing is being remembered.</div>';
+    hideAll(); return;
+  }
+  let m;
+  try{ m=await api('/local/robots/'+encodeURIComponent(deviceId)+'/memory',{auth:false}); }
+  catch(e){ box.innerHTML='<div class="live-off">Supervisor offline — memory unavailable.</div>';
+            hideAll(); return; }
+  if(!m.ok){
+    box.innerHTML='<div class="live-off">'+escapeHtml(m.error||'unavailable')+'</div>';
+    hideAll(); return;
+  }
+  // The privacy switch (LoggingPolicy). NO_DATA stops new memories being written; what
+  // was stored before the switch was flipped is still shown, and still erasable.
+  const off = m.writes_allowed===false
+    ? '<p class="mem-note off">⛔ Remembering is OFF for this robot (data sharing is '
+      + escapeHtml(m.policy||'NO_DATA') + '). Nothing new is written — anything '
+      + 'listed here was stored before that, and can still be erased.</p>'
+    : '';
+  if(!m.total){
+    box.innerHTML='<div class="live-off">Moxie hasn’t remembered anything yet.</div>'+off;
+    hideAll(); return;
+  }
+  const sections=(m.namespaces||[]).map(ns=>{
+    const p=ns.last_learned||{};
+    const sub=[p.date?('last learned '+p.date):'', p.module_id?('activity '+p.module_id):'',
+               p.turns?(p.turns+' turn'+(p.turns===1?'':'s')):''].filter(Boolean).join(' · ');
+    const rows=(ns.items||[]).map(it=>{
+      const q=it.provenance||{};
+      const when=[q.date||'', q.module_id||''].filter(Boolean).join(' · ');
+      return '<div class="ev"><span class="kind">'+escapeHtml(MEM_KINDS[it.kind]||it.kind)+'</span>'
+           + '<b>'+escapeHtml(it.text)+'</b>'
+           + '<span class="when">'+escapeHtml(when||'no date')+'</span></div>';
+    }).join('');
+    return '<div class="mem-ns"><div class="insights-hd">'+escapeHtml(ns.namespace)
+      + ' · '+ns.counts.total+' item'+(ns.counts.total===1?'':'s')+'</div>'
+      + (sub?'<div class="muted mem-sub">'+escapeHtml(sub)+'</div>':'')
+      + '<div class="evlog">'+rows+'</div>'
+      + '<button class="ghost tiny mem-forget" data-ns="'+escapeHtml(ns.namespace)+'">'
+      + 'Erase this activity’s memory</button></div>';
+  }).join('');
+  const through = m.summarized_through
+    ? '<p class="mem-note">Summarized through turn '+m.summarized_through
+      +' — later turns have not been written down.</p>' : '';
+  box.innerHTML=sections+off+through
+    +'<p class="mem-note">Moxie writes these itself, so one can be wrong — and a wrong '
+    +'one sticks until you erase it.</p>';
+  box.querySelectorAll('.mem-forget').forEach(b=>armErase(
+    b, 'Click again to erase', ()=>eraseMemory(deviceId, b.dataset.ns)));
+  if(all){
+    all.classList.remove('hidden');
+    armErase(all, 'Click again to erase EVERYTHING', ()=>eraseMemory(deviceId, ''));
+  }
+}
+
+async function eraseMemory(deviceId, namespace){
+  const s=$('#memory-status'); if(s) s.textContent='Erasing…';
+  const base='/local/robots/'+encodeURIComponent(deviceId)+'/memory';
+  const url=namespace? base+'/'+encodeURIComponent(namespace) : base;
+  try{
+    const r=await api(url,{method:'DELETE',auth:false});
+    const what=namespace?('“'+namespace+'”'):'everything';
+    if(s) s.textContent = r.erased
+      ? '🧽 Erased '+what+' — Moxie no longer remembers it.'
+      : 'Nothing was stored to erase.';
+  }catch(e){ if(s) s.textContent='⚠️ '+(e.message||'erase failed'); }
+  refreshMemory(deviceId);
+}
+
 // Wake alarms (RobotCloudConfig.alarms = WakeSchedule). The index of each label IS the
 // `WakeEntry.days` uint32 we send — it must stay in step with
 // moxie_sdk/cloud_config.py::WAKE_DAY_NAMES (0 = Monday … 6 = Sunday).
@@ -396,6 +502,7 @@ async function saveConfig(){
 function renderRobot(r){
   $('#moxie-none').classList.add('hidden');
   $('#moxie-card').classList.remove('hidden');
+  $('#memory-card').classList.remove('hidden');
   $('#robot-card').innerHTML =
     `<div><strong>${r.name||'Moxie'}</strong></div>
      <div class="k">Serial: ${r.serial||r['embodied-robot-id']||'—'}</div>

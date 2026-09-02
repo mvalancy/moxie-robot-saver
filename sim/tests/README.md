@@ -54,6 +54,11 @@ browser at all and carry the hermetic suite CI actually runs.
 - **`test_console_roundtrip.py`** — the parent console ⇄ supervisor contract, driven
   in-process against a status-server double whose payload keys are diffed against the
   real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).
+- **`test_memory_view.py`** — the pure transform behind the console's 🧠 What Moxie
+  remembers card (`moxie_server/fleet.py::normalize_memory`): the runtime's namespaced
+  `/memory` payload flattened into dated rows per activity, newest first, with counts —
+  plus the tolerance that matters on a parent's screen (a partial namespace, a list a
+  module invented, a raw `memory.json` off disk, and a supervisor that is down).
 - **Live tests** (`test_live_gateway.py`, `test_live_action_tags.py`,
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the
