@@ -76,6 +76,10 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
    worktree, so a plain full-suite run spends gateway calls. Agents run the hermetic suite as
    `MOXIE_LLM_API_KEY= .venv/bin/python -m pytest …` and make live calls only in an explicit, budgeted step
    (state the cap in the brief; ≤ 6 is the default).
+9. **The fast tier runs the WHOLE suite with the fast tier's deps.** A test that constructs a class which
+   talks to a real service must inject a fake through a `client=`-style seam (never rely on `importorskip`
+   to hide a hard import), and the tiers' hermetic test deps stay in parity (`sim/ci/ci.yml` ↔ `ci-deep.yml`).
+   Verify a fix in a *fast-shaped* venv (no optional deps) before pushing.
 
 ## The layered session loops (24/7 continuity)
 
@@ -246,6 +250,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   (→361 hermetic creds-free). Honest limits recorded (regex floor; a spoken chunk can't be unsaid). Audit
   rows reconciled with the concurrent research branch. Next: ADOPT #3, the automarkup floor (brief in
   `backlog/expressiveness.md`).
+
+- **2026-09-02** — Integrated `fix/fast-tier-openai-and-mouth-peak` (PR #21 → dev): the fast tier is green
+  again. Root causes: `LLMApp.__init__` hard-imported `openai` even with an injected fake (fast tier installs
+  fewer deps than deep and runs the whole suite), and a Playwright test sampled the mouth live in a 5 s window.
+  Now a `client=` seam, tier dependency parity in `ci.yml`, and a recorded mouth peak (0 muted / ~1.0 rendering).
+  412 pass in both venv shapes. Playbook rule 9 added. In flight: `feat/automarkup-floor`.
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
