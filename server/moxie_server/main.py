@@ -715,6 +715,46 @@ async def drive_robot_telehealth(device_id: str, request: Request):
              "detail": str(e)}))
 
 
+# --- 📅 Today's plan — "why this activity today" (audit BEYOND #7) --------------------
+# The supervisor plans the day the robot pulls (`moxie_sdk/schedule.py::plan_day`) and
+# keeps a parallel, parent-readable audit trail of *why* every entry is on it, served at
+# `GET /schedule?device_id=…`. Until now nothing but `curl` read it. This is the same thin
+# proxy shape as the 🎨 look and 🎭 Be Moxie cards: the runtime owns the planning, this
+# layer only forwards and normalizes, and a supervisor that is down is a 503 carrying the
+# card's own shape rather than a 500.
+#
+# Read-only on purpose. `GET /schedule` re-plans when nothing is stored yet, so a poll
+# from the console can show a parent tomorrow's reasoning *before* the robot wakes — but
+# the card must never look like a control, because nothing here changes the day. Editing a
+# plan is `POST /config` (bedtime, `schedule_preferences.parent_requests`), which the
+# ⚙️ Settings form already owns.
+
+@app.get("/local/robots/{device_id}/schedule")
+def robot_schedule(device_id: str, refresh: bool = False):
+    """The 📅 card's poll: today's plan for one robot, one *why* line per entry, and the
+    constraints the planner reported (bedtime window, pinned parent requests, and whether
+    telemetry carries any module signal — it does not). Server-side call so the browser
+    has no CORS issue; graceful {ok:false} when the supervisor is down or the device is
+    unknown."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_schedule_view
+    url = (STATUS_URL.rsplit("/status", 1)[0] +
+           f"/schedule?device_id={quote(device_id)}")
+    if refresh:
+        url += "&refresh=1"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return normalize_schedule_view(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode() or "{}")
+        return JSONResponse(status_code=e.code, content=normalize_schedule_view(body))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_schedule_view(
+            {"ok": False, "device_id": device_id, "error": "supervisor not reachable",
+             "detail": str(e)}))
+
+
 # --- 🧠 What Moxie remembers (audit BEYOND #4) ---------------------------------------
 # The runtime stores durable, provenance-carrying facts per robot
 # (`robots/<id>/memory.json`, moxie_sdk/store.py::MemoryStore) and serves them on its

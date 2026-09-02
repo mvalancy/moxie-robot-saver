@@ -102,6 +102,83 @@ def _telemetry(device_id: str, limit: int) -> tuple:
             "summary": summary, "events": summary["latest"]}, 200
 
 
+#: 📅 A REAL `GET /schedule?device_id=…` body, captured 2026-09-02 from a real mosquitto +
+#: `mqtt/run.py` + `sim/virtual_moxie.py --query schedule` on free ports, with a fleet
+#: bedtime an hour out and one `ParentRequest` — then re-keyed to this file's device and
+#: trimmed to the entries that carry a distinct case (an FTUE spine with no clock time, a
+#: daily fixture, a parent request that drifted to a later slot, a scored pick, a chat
+#: breather). `test_fake_status_server_matches_the_real_runtime_shapes` diffs its keys
+#: against the live `MoxieRuntime.schedule_view`, so runtime drift fails there.
+#:
+#: Recorded rather than computed on purpose: `schedule_view` re-plans against the wall
+#: clock, so a live call here would make these assertions depend on the hour CI runs at.
+_SCHEDULE = {
+    "ok": True, "device_id": DEVICE, "day": "2026-09-02",
+    "planned_at": "2026-09-02T08:23:20", "served": True,
+    "schedule": {
+        "provided_schedule": [
+            {"module_id": "WELCOME"},
+            {"module_id": "DM"},
+            {"module_id": "STORYTELLING"},
+            {"module_id": "FREE_CHAT", "content_id": "default"},
+            {"module_id": "SCAVENGERHUNT"},
+        ],
+        "chat_request": {"module_id": "FREE_CHAT", "content_id": "default"},
+    },
+    "explanations": [
+        {"module_id": "WELCOME", "slot": None, "at": None, "reason_codes": ["ftue"],
+         "line": "Welcome is part of Moxie's first-week onboarding, which is still "
+                 "running.", "score": None, "factors": {}},
+        {"module_id": "DM", "slot": None, "at": None, "reason_codes": ["fixture"],
+         "line": "Daily Missions is a daily fixture \u2014 it runs every day.",
+         "score": None, "factors": {}},
+        {"module_id": "STORYTELLING", "slot": 4, "at": "09:03",
+         "reason_codes": ["parent_request", "unseen"],
+         "line": "Requested by a parent for 8:43 am \u2014 this session starts later than "
+                 "that, so Storytelling is queued at 9:03 am instead.",
+         "score": 4164,
+         "factors": {"affinity": 100, "category_spread": 0, "coverage": 0,
+                     "parent_request": 4000, "recency": 0, "tiebreak": 4,
+                     "time_of_day": 60}},
+        {"module_id": "FREE_CHAT", "slot": None, "at": None, "reason_codes": ["chat"],
+         "line": "A free chat, so friend gets a breather between activities.",
+         "score": None, "factors": {}},
+        {"module_id": "SCAVENGERHUNT", "slot": 5, "at": "09:13",
+         "reason_codes": ["unseen", "time_of_day", "variety"],
+         "line": "Friend has not tried Scavenger hunt yet \u2014 new for today in the "
+                 "morning slot.", "score": 242,
+         "factors": {"affinity": 100, "category_spread": 0, "coverage": 0, "recency": 0,
+                     "tiebreak": 22, "time_of_day": 120}},
+    ],
+    "inputs": {
+        "device_id": DEVICE, "day": "2026-09-02", "now": "2026-09-02T08:23:20",
+        "bucket": "morning", "slot_minutes": 10, "child_name": "friend",
+        "bedtime": {"enabled": True, "kind": "weekday", "starts_at": "09:23",
+                    "ends_at": "17:23"},
+        "slots": [{"index": 0, "at": "09:03", "bucket": "morning", "in_bedtime": False},
+                  {"index": 1, "at": "09:13", "bucket": "morning", "in_bedtime": False},
+                  {"index": 2, "at": "09:23", "bucket": "morning", "in_bedtime": True}],
+        "parent_requests": [{"module_id": "STORYTELLING", "scheduled_at": 1788363799,
+                             "at": "08:43", "due_today": True, "slot": 0}],
+        "ftue_skips": [], "history": {},
+        "telemetry": {"count": 0, "by_event": {}, "sessions": 0, "active_buckets": {},
+                      "carries_module_signal": False,
+                      "note": "Packet.event_name is a free string in the recovered "
+                              "proto; no module launch/exit vocabulary is established, "
+                              "so completion affinity comes from mentor_behaviors only."},
+        "planned": {"entries": 5, "activities": 2, "requested": 6,
+                    "dropped_for_bedtime": 4},
+    },
+}
+
+
+def _schedule(device_id: str) -> tuple:
+    """MoxieRuntime.schedule_view() + the status code its HTTP layer answers with."""
+    if device_id != DEVICE:
+        return {"ok": False, "error": f"unknown device_id {device_id!r}"}, 404
+    return dict(_SCHEDULE), 200
+
+
 class _RecordingClient:
     """The supervisor's MQTT seam, recorded. `/config` and `commands/telehealth` publishes
     are what the 🎭 round-trip proves reached the wire; nothing here talks to a broker."""
@@ -198,6 +275,7 @@ class FakeSupervisor:
         self.memory_erases: list = []
         self.memory_edits: list = []
         self.telehealth_queries: list = []
+        self.schedule_queries: list = []
         self.telehealth_posts: list = []
         self.runtime = _safety_runtime(safety_root)
         self.memory = _seed_memory(self.runtime)
@@ -266,6 +344,16 @@ class FakeSupervisor:
                     outer.telehealth_queries.append(device_id)
                     out = outer.runtime.telehealth_view(device_id)
                     return self._out(out, 200 if out.get("ok") else 404)
+                if u.path == "/schedule":
+                    # 📅 Recorded, not re-planned: `schedule_view` reads the wall clock,
+                    # and a live call would make the console's assertions depend on the
+                    # hour CI runs at. The keys are diffed against the real runtime in
+                    # `test_fake_status_server_matches_the_real_runtime_shapes`.
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    outer.schedule_queries.append(
+                        (device_id, (q.get("refresh") or [""])[0]))
+                    return self._out(*_schedule(device_id))
                 self.send_response(404)
                 self.end_headers()
 
@@ -976,6 +1064,82 @@ def test_memory_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# 📅 Today's plan — the recommender's "why this activity today" (audit BEYOND #7)
+# --------------------------------------------------------------------------- #
+# The supervisor plans the day and keeps one parent-readable sentence per entry. This is
+# the seam that finally reads it: the URL the console builds, the `refresh` flag it
+# forwards, and the claim the card is worth anything for — that the rows a parent reads
+# are the entries the ROBOT was served, in that order, each with its own reason.
+
+def test_todays_plan_reaches_the_console_with_a_reason_per_entry(client, supervisor):
+    before = len(supervisor.schedule_queries)
+    r = client.get(f"/local/robots/{DEVICE}/schedule")
+    assert r.status_code == 200, r.text
+    s = r.json()
+    assert supervisor.schedule_queries[before:] == [(DEVICE, "")]
+    assert s["ok"] is True and s["error"] is None
+    assert s["device_id"] == DEVICE and s["day"] == "2026-09-02"
+    assert s["child_name"] == "friend" and s["served"] is True
+    # the rows ARE the served day, in order — the whole point of the card
+    assert [e["module_id"] for e in s["entries"]] == [
+        e["module_id"] for e in _SCHEDULE["schedule"]["provided_schedule"]]
+    assert all(e["why"] for e in s["entries"])
+
+
+def test_untimed_fixtures_show_no_clock_time_and_scored_picks_do(client):
+    rows = {e["module_id"]: e for e in
+            client.get(f"/local/robots/{DEVICE}/schedule").json()["entries"]}
+    assert rows["DM"]["time_local"] is None and rows["DM"]["fixture"] is True
+    assert rows["FREE_CHAT"]["time_local"] is None
+    assert rows["WELCOME"]["time_local"] is None
+    assert rows["STORYTELLING"]["time_local"] == "09:03"
+    assert rows["SCAVENGERHUNT"]["time_local"] == "09:13"
+    assert rows["SCAVENGERHUNT"]["fixture"] is False
+
+
+def test_the_constraints_the_planner_reported_reach_the_footer(client):
+    c = client.get(f"/local/robots/{DEVICE}/schedule").json()
+    assert c["constraints"]["bedtime"] == {"enabled": True, "kind": "weekday",
+                                           "starts_at": "09:23", "ends_at": "17:23"}
+    assert c["dropped_for_bedtime"] == 4
+    assert c["constraints"]["parent_request"] == {
+        "count": 1, "pinned": [{"module_id": "STORYTELLING", "at": "08:43"}]}
+    assert [e["module_id"] for e in c["entries"] if e["pinned"]] == ["STORYTELLING"]
+    # the runtime says telemetry carries no module signal; the console must not lose it
+    assert c["constraints"]["telemetry_signal"] is False
+
+
+def test_refresh_is_forwarded_so_a_parent_can_re_plan_the_day(client, supervisor):
+    before = len(supervisor.schedule_queries)
+    r = client.get(f"/local/robots/{DEVICE}/schedule", params={"refresh": "true"})
+    assert r.status_code == 200
+    assert supervisor.schedule_queries[before:] == [(DEVICE, "1")]
+
+
+def test_schedule_for_an_unknown_device_is_a_404(client):
+    r = client.get("/local/robots/d_nope/schedule")
+    assert r.status_code == 404, r.text
+    s = r.json()
+    assert s["ok"] is False and s["entries"] == [] and "d_nope" in s["error"]
+
+
+def test_schedule_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    """A plan nobody can fetch must read as "supervisor unreachable", never as an empty
+    day — a parent would take a blank list for "Moxie has nothing planned"."""
+    from moxie_server import main
+    dead = socket.socket()
+    dead.bind(("127.0.0.1", 0))
+    port = dead.getsockname()[1]
+    dead.close()
+    monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
+    r = client.get(f"/local/robots/{DEVICE}/schedule")
+    assert r.status_code == 503
+    s = r.json()
+    assert s["ok"] is False and s["entries"] == [] and s["error"]
+    assert s["constraints"]["bedtime"] == {"enabled": False, "kind": ""}
+
+
+# --------------------------------------------------------------------------- #
 # the double is honest
 # --------------------------------------------------------------------------- #
 
@@ -1176,3 +1340,20 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
             dropped["namespaces"]["mchat"]["data"]["facts"]] == ["has a beagle"]
     erased = rt.erase_memory(DEVICE)
     assert erased["ok"] is True and set(erased) >= {"erased", "namespace", "namespaces"}
+
+    # 📅 /schedule IS doubled (recorded — see `_SCHEDULE`), so its keys are diffed against
+    # the live planner: the view, one explanation, and the inputs summary the card's
+    # footer reads. `schedule_view` re-plans when nothing is stored, which is exactly the
+    # path a parent hits before the robot has pulled its day.
+    real_s = rt.schedule_view(DEVICE)
+    fake_s, code = _schedule(DEVICE)
+    assert code == 200 and set(fake_s) == set(real_s), "schedule view keys drifted"
+    assert set(fake_s["schedule"]) <= set(real_s["schedule"])
+    assert set(fake_s["explanations"][0]) == set(real_s["explanations"][0])
+    assert set(fake_s["inputs"]) == set(real_s["inputs"]), "inputs summary keys drifted"
+    assert set(fake_s["inputs"]["telemetry"]) == set(real_s["inputs"]["telemetry"])
+    assert real_s["inputs"]["telemetry"]["carries_module_signal"] is False
+    assert set(fake_s["inputs"]["planned"]) == set(real_s["inputs"]["planned"])
+    real_missing = rt.schedule_view("d_nope")
+    fake_missing, code = _schedule("d_nope")
+    assert code == 404 and set(fake_missing) == set(real_missing)
