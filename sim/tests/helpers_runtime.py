@@ -31,6 +31,72 @@ for _p in (MQTT_DIR, SUPERVISOR_DIR):
 CHAT_TOPIC = "/devices/{device_id}/commands/remote_chat"
 
 
+# ---------------------------------------------------------------------------
+# Credentials for the live tests: mqtt/.env, found from ANY worktree
+# ---------------------------------------------------------------------------
+# `mqtt/.env` is git-ignored, so it exists only in the main checkout. Every live test
+# used to look for it beside its own file — which is right in the main tree and wrong in
+# a `git worktree`, where the whole creds-gated tier silently skipped (PR #12 finding).
+# These helpers look in this tree first and then in the MAIN worktree, so a live test
+# run from a feature worktree finds the same key the main checkout uses.
+
+def main_worktree(tree: str) -> str:
+    """The main checkout's root, given any worktree root.
+
+    A linked worktree's `.git` is a FILE holding `gitdir: <main>/.git/worktrees/<name>`;
+    in the main checkout it is a directory. Pure path work — no subprocess, and any
+    surprise (no .git at all, a bare/odd layout) just returns `tree`."""
+    dotgit = os.path.join(tree, ".git")
+    if os.path.isfile(dotgit):
+        try:
+            line = open(dotgit).read().strip()
+        except OSError:
+            return tree
+        if line.startswith("gitdir:"):
+            gitdir = os.path.abspath(line.split(":", 1)[1].strip())
+            marker = os.sep + ".git" + os.sep + "worktrees" + os.sep
+            head = gitdir.split(marker)[0]
+            if head != gitdir and os.path.isdir(head):
+                return head
+    return tree
+
+
+def find_repo_dotenv(start: str = REPO) -> str | None:
+    """Path to `mqtt/.env` — this tree's if present, else the main worktree's, else None."""
+    for root in (start, main_worktree(start)):
+        path = os.path.join(root, "mqtt", ".env")
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def dotenv_values(path: str) -> dict:
+    """`KEY=VALUE` lines of a .env file as a dict (blank lines + `#` comments skipped)."""
+    values = {}
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    values[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return values
+
+
+def load_repo_dotenv(path: str | None = None) -> str | None:
+    """Best-effort: load the repo's git-ignored `mqtt/.env` into `os.environ` (existing
+    environment wins, exactly like the supervisor's own `config._load_env`). Returns the
+    file it used, or None when there is none. Values are never printed."""
+    path = path or find_repo_dotenv()
+    if not path:
+        return None
+    for k, v in dotenv_values(path).items():
+        os.environ.setdefault(k, v)
+    return path
+
+
 class FakeClient:
     """Stands in for the paho client: records `(topic, decoded_payload)` publishes."""
 

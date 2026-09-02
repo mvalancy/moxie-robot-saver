@@ -411,7 +411,60 @@ robot renders markup → [on-device TTS + animation] → speaks
 robot sends notify RCRs of what it said → history updated
 ```
 
-### 4.5 The automarkup engine (why it matters)
+### 4.5 Slow brain → a filler now, the real answer next (`REPLY_PENDING`)
+
+The robot does not wait forever. If the cloud stays silent it **re-prompts after roughly
+20 s** ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md):347), and a live turn
+through our LLM gateway was measured at **45 s healthy / 18 s degraded** while the voice
+legs cost ≈1.5 s (PR #12). A brain slower than the window leaves a child listening to
+nothing — so one `event_id` may be answered by **more than one response**.
+
+The contract already carries this: `RemoteChatResponse.result = REPLY_PENDING` (ResultCode
+**9**) means *"more chunks to come"*, `chunk_num` (field 22) orders them, and
+`consistency_control` (`RemoteConsistencyControl{prefix, is_completed}`, field 18) marks the
+last one — see
+[`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#the-response-remotechatresponse)
+(:26 streaming, :63 the ResultCode table) and
+[`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):201-205,:317,:336-340.
+
+What our runtime does (`moxie_runtime.py::_handle_turn` / `_speak_filler`,
+`MOXIE_BRAIN_BUDGET_S`, default 6 s):
+
+```
+t=0.0   events/remote-chat {event_id: E, speech: "why does the moon change shape?"}
+t=6.0   commands/remote_chat {result: REPLY_PENDING, chunk_num: 0,     ← a filler, spoken now
+                              consistency_control:{is_completed:false},
+                              output:{text:"Hmm, let me think about that one.", markup:…}}
+        commands/tts         {event_id: E, chunk_num: 0}                ← and synthesized
+t=17.9  commands/remote_chat {result: SUCCESS, chunk_num: 1,            ← the real line
+                              consistency_control:{is_completed:true}, output:{…}}
+        commands/tts         {event_id: E, chunk_num: 1}
+```
+
+- **Under budget nothing changes** — one `SUCCESS` response, no `chunk_num` on the wire
+  (chunk 0 / non-streaming is the proto default), so a client that knows nothing about
+  chunking is unaffected.
+- **Chunks are ordered, not interleaved:** a client queues the chunks of one `event_id` by
+  `chunk_num` ([`sim-as-a-client.md`](sim-as-a-client.md):77), and the server publishes chunk
+  0 to completion before chunk 1.
+- **Stale answers are dropped.** If a newer turn for the same robot starts while the old one
+  is still thinking, the old result is never published — a child who gave up and asked
+  something else must not be answered about the abandoned question.
+- The filler lines rotate (never the same one twice running) and carry thinking markup, so
+  Moxie *looks* like it is thinking: [`moxie_sdk/filler.py`](../../mqtt/moxie_sdk/filler.py).
+
+> **Honest limit — what the robot does with chunk 0.** Our RE docs establish the *fields*
+> (`REPLY_PENDING`, `chunk_num`, `is_completed`) and that the robot "can start speaking a
+> stable prefix before the full reply lands", but not the on-device behavior in detail: we
+> have no capture proving a real Moxie speaks chunk 0 and keeps the turn open for chunk 1
+> rather than, say, waiting for `is_completed`. The SIM does exactly what we need
+> ([`sim-as-a-client.md`](sim-as-a-client.md):77). The field-proven fallback, if a real
+> robot disagrees, is OpenMoxie Fork A's shape: answer the *current* request with the filler
+> and deliver the finished answer on the robot's next (re)prompt — same background
+> inference, no second unsolicited publish. Tracked in
+> [`implementation-plan.md`](implementation-plan.md) → Known gaps.
+
+### 4.6 The automarkup engine (why it matters)
 
 `site/hive/automarkup/` is a vendored copy of **Embodied's text→behavior markup engine**.
 `process(text, rules, mood_and_intensity)` → an XML-ish string mixing SSML voice tags with

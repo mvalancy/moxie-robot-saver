@@ -28,6 +28,12 @@ browser at all and carry the hermetic suite CI actually runs.
   `make_runtime` / `drive_turn` / `drive_once`, and `assert_spec_response` (the
   RemoteChatResponse conformance check). Import this rather than growing a fifth
   private copy of it.
+- **`test_brain_latency.py`** — the background-inference + filler behavior: a fast brain
+  still answers in exactly one `SUCCESS` chunk, a slow one speaks a filler
+  (`REPLY_PENDING`, chunk 0) inside the budget and delivers the real line as chunk 1, a
+  superseded turn's answer is dropped, fillers never repeat back-to-back, and both chunks
+  get their own `CloudTTSResponse`. No sleeps: the fake brain blocks on an `Event` the
+  test releases and the fake transport is a `Condition` the test waits on.
 - **`test_console_roundtrip.py`** — the parent console ⇄ supervisor contract, driven
   in-process against a status-server double whose payload keys are diffed against the
   real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).
@@ -35,7 +41,11 @@ browser at all and carry the hermetic suite CI actually runs.
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the
   git-ignored `mqtt/.env`, and **skip** otherwise, so the hermetic run stays fast and
-  CI stays green with no key. `test_live_action_tags.py` asserts a *rate* (2 of 3
+  CI stays green with no key. They find that file through
+  `helpers_runtime.load_repo_dotenv()`, which looks in this tree and then in the **main
+  checkout**, so the live tier runs from a `git worktree` too (before that it silently
+  skipped there). To force the creds-free behavior locally — exactly what CI does — run
+  the suite with `MOXIE_LLM_API_KEY= `. `test_live_action_tags.py` asserts a *rate* (2 of 3
   sampled turns) rather than a single sample, because the brain runs at temperature
   0.8 — see its docstring for the measured numbers.
 - **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper

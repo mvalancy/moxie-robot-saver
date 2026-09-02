@@ -11,12 +11,23 @@ from .types import ResultCode
 
 def build_chat_response(event_id, text, markup="", *, backend="router",
                         result=ResultCode.SUCCESS, actions=None, end_turn=False,
-                        mood=None, dialog_act=None, modules=None) -> dict:
+                        mood=None, dialog_act=None, modules=None,
+                        chunk_num=None, is_completed=None) -> dict:
     """Build the RemoteChatResponse JSON.
 
     Matches embodied/robotbrain/RemoteChat.proto: `result` is the ResultCode enum
     NAME, `output` is a RemoteChatOutput (text/markup + optional scored fields),
-    `response_actions` are RemoteChatActions."""
+    `response_actions` are RemoteChatActions.
+
+    **Multi-chunk (streaming) turns.** One `event_id` may be answered by several
+    responses: `result=REPLY_PENDING` (ResultCode 9) means "more chunks to come" and
+    `chunk_num` (RemoteChat.proto field 22) orders them; the robot/SIM plays the chunks
+    of an event_id in `chunk_num` order (docs/architecture/sim-as-a-client.md:77).
+    `is_completed` sets `consistency_control.is_completed`
+    (`RemoteConsistencyControl`, field 18 — RemoteChat.proto:201-205), which marks the
+    last chunk of the sequence. Both are omitted unless a caller asks for them, so a
+    plain single-chunk reply stays byte-identical to what we sent before (chunk 0 /
+    not-streaming is the proto default anyway)."""
     rc = result if isinstance(result, ResultCode) else ResultCode(result)
     output = {"text": text, "markup": markup or text}
     if mood:
@@ -33,6 +44,10 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
         resp["response_actions"] = ra
     if modules is not None:
         resp["modules"] = modules
+    if chunk_num is not None:
+        resp["chunk_num"] = int(chunk_num)
+    if is_completed is not None:
+        resp["consistency_control"] = {"is_completed": bool(is_completed)}
     return resp
 
 

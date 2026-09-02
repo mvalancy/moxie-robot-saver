@@ -24,24 +24,12 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from helpers_runtime import assert_spec_response, drive_once  # noqa: E402
+from helpers_runtime import assert_spec_response, drive_once, load_repo_dotenv  # noqa: E402
 
 STARTER = os.path.join(REPO, "mqtt", "content_modules", "starter.json")
 
 
-def _load_dotenv():
-    """Best-effort load of mqtt/.env (git-ignored) so a local key is picked up."""
-    try:
-        for line in open(os.path.join(REPO, "mqtt", ".env")):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
-    except FileNotFoundError:
-        pass
-
-
-_load_dotenv()
+load_repo_dotenv()          # mqtt/.env from this tree or the main checkout
 KEY = os.environ.get("MOXIE_LLM_API_KEY") or os.environ.get("LITELLM_MASTER_KEY") or ""
 BASE = os.environ.get("MOXIE_LLM_BASE_URL", "https://gateway.graphlings.net/v1")
 MODEL = os.environ.get("MOXIE_LLM_MODEL", "graphling-medium")
