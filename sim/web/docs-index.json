@@ -1,5 +1,5 @@
 {
- "generated": "docs-47e0a061d926",
+ "generated": "docs-b7826ee128c4",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 42558,
+   "bytes": 42965,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 31851,
+   "bytes": 35544,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -254,7 +254,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 16988,
+   "bytes": 21030,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -266,6 +266,7 @@
     "Memory — `persist_data` + `session.summarize()`",
     "The store",
     "session.summarize(...)`",
+    "Decay (`MOXIE_MEMORY_MAX_AGE_DAYS`)",
     "Declaring it (the `memory` block)",
     "What a parent can do",
     "Honest limits",
@@ -333,7 +334,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 64564,
+   "bytes": 65126,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -726,7 +727,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 16744,
+   "bytes": 18115,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -741,6 +742,7 @@
     "stt` — local speech-to-text",
     "Point a real robot at it",
     "Prove it works",
+    "How the two compose files stay in sync",
     "Updating",
     "Troubleshooting",
     "Running it a different way"
@@ -784,12 +786,14 @@
    "path": "guides/what-moxie-remembers.md",
    "title": "What Moxie remembers — and how to erase it",
    "section": "guides",
-   "bytes": 4211,
+   "bytes": 5807,
    "mermaid": 0,
    "headings": [
     "What is written down",
     "What is *never* written down",
-    "Erasing it",
+    "Fixing one line",
+    "Erasing more of it",
+    "Old facts fade on their own",
     "Summaries can be wrong"
    ],
    "kind": "md"

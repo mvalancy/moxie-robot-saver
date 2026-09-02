@@ -131,3 +131,13 @@ button.tiny{font-size:12px;padding:4px 10px}
 .mem-note.off{color:#c0392b;font-weight:600}
 button.mem-arm{border-color:#c0392b;color:#c0392b}
 #memory-status{margin-top:8px;min-height:18px}
+/* Per-item tools: an ✕ that forgets one line and a ✏️ that corrects it. Quiet until
+   the row is hovered, so a wall of facts stays readable, but always in the tab order. */
+.evlog .ev .pin{font-size:11px}
+button.linkish{background:none;border:0;padding:0 2px;font-size:12px;line-height:1;
+  color:var(--muted);cursor:pointer;opacity:.45;transition:opacity .12s}
+.evlog .ev:hover button.linkish,button.linkish:focus{opacity:1}
+button.linkish.mem-arm{opacity:1;color:#c0392b;font-weight:700}
+.mem-edit-box{display:flex;gap:6px;align-items:center;margin:4px 0 8px}
+.mem-edit-input{flex:1;min-width:0;font-size:13px;padding:5px 8px;
+  border:1px solid var(--line);border-radius:6px}

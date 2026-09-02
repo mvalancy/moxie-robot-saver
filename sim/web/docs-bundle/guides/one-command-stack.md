@@ -234,6 +234,25 @@ healthchecks, round-trips [`sim/virtual_moxie.py`](../../sim/virtual_moxie.py) t
 composed broker (`state → config → remote-chat → reply → TTS audio`), checks the console's
 `/local/fleet` sees that robot, then tears everything down. Non-zero exit on any failure.
 
+### How the two compose files stay in sync
+
+`docker-compose.images.yml` must stand alone — an owner `curl`s that one file and never
+clones — so it cannot reference anything here: it **repeats** the supervisor's whole
+`environment:` block and **inlines** `compose-mosquitto.conf`. Copies drift, and this one
+did: the PR that closed the pairing gate added `MOXIE_ALLOW_UNVERIFIED_BOTS` to
+`docker-compose.yml` while the images file was being written in parallel, so the
+prebuilt-image stack shipped refusing to pair — and each branch's own smoke was green,
+because a smoke only runs the file that branch touched. The fix is one line; the guard is
+[`sim/tests/test_compose.py`](../../sim/tests/test_compose.py), which now diffs the two
+files with PyYAML and no Docker: identical `MOXIE_*` environment for `supervisor`,
+`console` and `certs` (same keys, same `${VAR:-default}`), the inlined broker config
+byte-for-byte against the file, and the same services, healthchecks, `depends_on`
+conditions, published-port defaults and volume paths. Knobs that legitimately live in one
+file only (`MOXIE_SUPERVISOR_EXTRAS` is build-time, `MOXIE_IMAGE_*` are registry-only) sit
+on a short allowlist the tests re-verify rather than mute. **So: edit both files, or the
+hermetic suite fails in milliseconds on your PR** instead of the deep tier finding it days
+later at promotion.
+
 ```
 ── 2. waiting for healthchecks (broker · supervisor · console)
    ✅ broker healthy

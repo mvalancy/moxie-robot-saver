@@ -115,10 +115,24 @@ def _safety_runtime(root: str):
     return rt
 
 
+#: The fixed instant the seeded memory was "learned". Passed to `merge(now=…)` as well as
+#: to the provenance clock, so decay judges these items against the day they were written
+#: rather than against whatever today is — otherwise this fixture would quietly age out
+#: 90 days from now and take the whole memory section of this file with it.
+_SEED_AT = 1788352646.0
+
+
+def _reseed(supervisor):
+    """Put the shared fixture back the way the other tests expect to find it."""
+    supervisor.runtime.erase_memory(DEVICE)
+    _seed_memory(supervisor.runtime)
+
+
 def _seed_memory(rt):
     """Write two activities' worth of durable facts through the REAL `MemoryStore` the
     runtime serves `/memory` from — so the console reads the shape the store actually
-    writes (namespaced lists + a `_provenance` log), never a hand-drawn copy of it."""
+    writes (namespaced lists of `{id, text, _provenance}` items + a `_provenance` log),
+    never a hand-drawn copy of it."""
     from moxie_sdk.content.memory import provenance
     mem = rt.memory_store()
     mem.merge(DEVICE, "mchat",
@@ -126,11 +140,12 @@ def _seed_memory(rt):
                "preferences": ["Likes drawing"],
                "summaries": ["They talked about pets."]},
               provenance=provenance(module_id="MCHAT", content_id="default",
-                                    turns=4, reason="exit", clock=lambda: 1788352646.0),
-              meta={"summarized_through": 6})
+                                    turns=4, reason="exit", clock=lambda: _SEED_AT),
+              meta={"summarized_through": 6}, now=_SEED_AT)
     mem.merge(DEVICE, "free_chat", {"facts": ["Sam's favourite colour is red"]},
               provenance=provenance(module_id="FREE_CHAT", turns=2, reason="switch",
-                                    clock=lambda: 1788352000.0))
+                                    clock=lambda: _SEED_AT - 646.0),
+              now=_SEED_AT)
     return mem
 
 
@@ -151,6 +166,7 @@ class FakeSupervisor:
         self.safety_queries: list = []
         self.memory_queries: list = []
         self.memory_erases: list = []
+        self.memory_edits: list = []
         self.runtime = _safety_runtime(safety_root)
         self.memory = _seed_memory(self.runtime)
         outer = self
@@ -216,9 +232,8 @@ class FakeSupervisor:
                 self.end_headers()
 
             def do_DELETE(self):
-                """`DELETE /memory?device_id=…[&namespace=…]` — the parent's erase. No
-                namespace means everything for that robot; there is no per-item delete on
-                this side, which is why the console offers none."""
+                """`DELETE /memory?device_id=…[&namespace=…[&item=…]]` — the parent's
+                erase, finest cut first: one item, one activity, or everything."""
                 u = urlparse(self.path)
                 if u.path != "/memory":
                     self.send_response(404)
@@ -227,18 +242,35 @@ class FakeSupervisor:
                 q = parse_qs(u.query)
                 device_id = (q.get("device_id") or [""])[0]
                 namespace = (q.get("namespace") or [""])[0]
-                outer.memory_erases.append((device_id, namespace or "all"))
-                out = outer.runtime.erase_memory(device_id, namespace or None)
+                item = (q.get("item") or [""])[0]
+                outer.memory_erases.append(
+                    (device_id, f"{namespace}/{item}" if item else (namespace or "all")))
+                out = outer.runtime.erase_memory(device_id, namespace or None,
+                                                 item or None)
                 return self._out(out, 200 if out.get("ok") else 404)
 
             def do_POST(self):
                 u = urlparse(self.path)
-                if u.path not in ("/config", "/safety", "/permits"):
+                if u.path not in ("/config", "/safety", "/permits", "/memory"):
                     self.send_response(404)
                     self.end_headers()
                     return
                 device_id = (parse_qs(u.query).get("device_id") or [""])[0]
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"
+                if u.path == "/memory":
+                    # `{"edit": {namespace, item, text}}` — a parent correcting one line.
+                    # The REAL runtime does the work (and the safety re-check), like GET.
+                    edit = (json.loads(raw or b"{}") or {}).get("edit") or {}
+                    outer.memory_edits.append((device_id, edit.get("namespace"),
+                                               edit.get("item"), edit.get("text")))
+                    try:
+                        out = outer.runtime.edit_memory_item(
+                            device_id, edit.get("namespace"), edit.get("item"),
+                            edit.get("text"))
+                        code = 200 if out.get("ok") else 404
+                    except Exception as e:
+                        out, code = {"ok": False, "error": str(e)}, 400
+                    return self._out(out, code)
                 if u.path == "/permits":
                     body = json.loads(raw or b"{}") or {}
                     outer.permit_posts.append(body)
@@ -677,9 +709,14 @@ def test_memory_reaches_the_console_as_dated_rows(client, supervisor):
     # newest activity first (mchat's provenance is later than free_chat's)
     assert [n["namespace"] for n in m["namespaces"]] == ["mchat", "free_chat"]
     assert supervisor.memory_queries[-1] == DEVICE
-    # `_meta.summarized_through` is stripped by the runtime's parent view, so the console
-    # has nothing to show — see the Known gaps note in the implementation plan.
-    assert m["summarized_through"] is None
+    # `view()` carries `_meta` now, so the card can say how far the transcript was written
+    # down instead of silently implying it was all of it.
+    assert m["summarized_through"] == 6
+    assert ns["mchat"]["summarized_through"] == 6
+    # ...and every row carries the id the per-item ✕ and the inline ✏️ act on
+    assert all(i["id"] for i in ns["mchat"]["items"])
+    assert len({i["id"] for i in ns["mchat"]["items"]}) == len(ns["mchat"]["items"])
+    assert all(i["pinned"] is False for i in ns["mchat"]["items"])
 
 
 def test_erasing_one_activity_forwards_and_the_next_read_reflects_it(client, supervisor):
@@ -707,6 +744,63 @@ def test_erasing_everything_empties_the_store(client, supervisor):
     again = client.get(f"/local/robots/{DEVICE}/memory").json()
     assert again["ok"] is True and again["total"] == 0 and again["error"] is None
     _seed_memory(supervisor.runtime)          # leave the fixture as we found it
+
+
+def test_correcting_one_line_forwards_and_pins_it(client, supervisor):
+    """The other half of BEYOND #4: our own live run stored "Puppy sleeps on **his** bed"
+    for "my bed". A parent fixes the pronoun from the card instead of erasing the
+    activity — and the correction is pinned, so decay never takes it."""
+    m = client.get(f"/local/robots/{DEVICE}/memory").json()
+    ns = {n["namespace"]: n for n in m["namespaces"]}["mchat"]
+    row = [i for i in ns["items"] if i["text"].startswith("Sam has a beagle")][0]
+    r = client.post(f"/local/robots/{DEVICE}/memory/mchat/{row['id']}",
+                    json={"text": "Sam has a beagle named Peppa"})
+    assert r.status_code == 200, r.text
+    assert r.json()["edited"] is True and r.json()["item"] == row["id"]
+    assert supervisor.memory_edits[-1] == (DEVICE, "mchat", row["id"],
+                                           "Sam has a beagle named Peppa")
+    after = client.get(f"/local/robots/{DEVICE}/memory").json()
+    fixed = [i for i in {n["namespace"]: n for n in after["namespaces"]}["mchat"]["items"]
+             if i["id"] == row["id"]][0]
+    assert fixed["text"] == "Sam has a beagle named Peppa" and fixed["pinned"] is True
+    assert after["total"] == m["total"]              # nothing else was touched
+    _reseed(supervisor)
+
+
+def test_a_correction_the_safety_check_refuses_is_a_400_with_a_reason(client, supervisor):
+    """A text box that writes into every later prompt must not be a way around the safety
+    filter — and the card has to be able to say why, not just fail silently."""
+    m = client.get(f"/local/robots/{DEVICE}/memory").json()
+    row = {n["namespace"]: n for n in m["namespaces"]}["mchat"]["items"][0]
+    r = client.post(f"/local/robots/{DEVICE}/memory/mchat/{row['id']}",
+                    json={"text": "I want to kill myself"})
+    assert r.status_code == 400, r.text
+    assert r.json()["ok"] is False and r.json()["error"]
+    unchanged = client.get(f"/local/robots/{DEVICE}/memory").json()
+    assert unchanged["total"] == m["total"]
+    texts = {i["text"] for n in unchanged["namespaces"] for i in n["items"]}
+    assert "I want to kill myself" not in texts
+
+
+def test_forgetting_one_item_leaves_the_rest_of_the_activity(client, supervisor):
+    m = client.get(f"/local/robots/{DEVICE}/memory").json()
+    ns = {n["namespace"]: n for n in m["namespaces"]}["mchat"]
+    row, kept = ns["items"][0], ns["counts"]["total"] - 1
+    r = client.delete(f"/local/robots/{DEVICE}/memory/mchat/{row['id']}")
+    assert r.status_code == 200, r.text
+    assert r.json()["erased"] is True and r.json()["item"] == row["id"]
+    assert supervisor.memory_erases[-1] == (DEVICE, f"mchat/{row['id']}")
+    after = {n["namespace"]: n
+             for n in client.get(f"/local/robots/{DEVICE}/memory").json()["namespaces"]}
+    assert after["mchat"]["counts"]["total"] == kept
+    assert row["id"] not in {i["id"] for i in after["mchat"]["items"]}
+    assert "free_chat" in after                     # the other activity is untouched
+    # ...and the store really lost that one line, not just the console's copy
+    stored = supervisor.memory.load(DEVICE)["mchat"]
+    assert row["id"] not in {i.get("id") for v in stored.values()
+                             if isinstance(v, list) for i in v if isinstance(i, dict)}
+    assert stored["_meta"] == {"summarized_through": 6}   # not re-summarized after
+    _reseed(supervisor)
 
 
 def test_memory_for_an_unknown_device_is_a_404(client):
@@ -781,5 +875,26 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     assert rt.memory_view("d_nope")["ok"] is False
     assert set(rt.memory_view(DEVICE)) == {"ok", "device_id", "namespaces", "bytes",
                                            "writes_allowed", "policy"}
+    # The per-item seam the console now drives: an id-carrying view, an erase that takes
+    # an `item`, and an edit. Doubling any of these would let the card claim a control the
+    # runtime does not have, which on this card is the whole promise.
+    import tempfile
+    from moxie_sdk.store import JsonStore as _JS
+    rt.store = _JS(root=tempfile.mkdtemp())
+    rt.memory_store().merge(DEVICE, "mchat", {"facts": ["has a dog", "likes red"]},
+                            provenance={"module_id": "MCHAT", "turns": 2,
+                                        "at": _SEED_AT},
+                            meta={"summarized_through": 4}, now=_SEED_AT)
+    view_ns = rt.memory_view(DEVICE)["namespaces"]["mchat"]
+    assert set(view_ns) == {"data", "provenance", "meta"}
+    one, two = [f["id"] for f in view_ns["data"]["facts"]]
+    assert view_ns["meta"] == {"summarized_through": 4}
+    edited = rt.edit_memory_item(DEVICE, "mchat", one, "has a beagle")
+    assert set(edited) >= {"edited", "namespace", "item", "namespaces"}
+    assert edited["namespaces"]["mchat"]["data"]["facts"][0]["pinned"] is True
+    dropped = rt.erase_memory(DEVICE, "mchat", two)
+    assert set(dropped) >= {"erased", "namespace", "item", "namespaces"}
+    assert [f["text"] for f in
+            dropped["namespaces"]["mchat"]["data"]["facts"]] == ["has a beagle"]
     erased = rt.erase_memory(DEVICE)
     assert erased["ok"] is True and set(erased) >= {"erased", "namespace", "namespaces"}
