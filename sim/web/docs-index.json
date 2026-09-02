@@ -1,5 +1,5 @@
 {
- "generated": "docs-04546cfb6ed7",
+ "generated": "docs-d09860324a0e",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 3000,
+   "bytes": 3305,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 47784,
+   "bytes": 48029,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 39878,
+   "bytes": 40548,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -529,6 +529,27 @@
     "7.4 The greeting rule — and the unsolicited-reply assumption",
     "7.5 What is still not true",
     "Sources"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/voice-picker.md",
+   "title": "Voice picker — choose the speech and listening models from the console",
+   "section": "architecture",
+   "bytes": 8533,
+   "mermaid": 0,
+   "headings": [
+    "What the user asked for (verbatim intent)",
+    "What \"available\" means (no invention)",
+    "Defaults (the \"when possible\" rule)",
+    "Design",
+    "A settings record, persisted",
+    "Runtime (`moxie_runtime.py`)",
+    "Console",
+    "Compose / env",
+    "Tests (a test for every feature)",
+    "Acceptance",
+    "Files"
    ],
    "kind": "md"
   },

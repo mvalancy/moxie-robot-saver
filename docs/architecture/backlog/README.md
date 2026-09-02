@@ -28,6 +28,7 @@ work down:
 | [`expressiveness.md`](expressiveness.md) | **ADOPT #3** — the markup floor (§1) · **BEYOND #1** — the behavior planner (§2) | M → L | §1 shipped · §2 ready to build |
 | [`security-broker-auth.md`](security-broker-auth.md) | **§3.1 Robot identity / JWT** — broker ACL (P0), device credentials (P1), spoof-proofing (P2) | M · M · S | ready to build |
 | [`telehealth.md`](telehealth.md) | **ADOPT #7** — puppet / telehealth: the command path and the "Be Moxie" console panel | M | ready to build |
+| [`voice-picker.md`](voice-picker.md) | 🎚️ Speech + Listening dropdowns in the console — pick from the gateway's real audio models and the installed local engines; default `piper-amy` / `stt-whisper`; explicit local always wins | build-ready (2026-09-02); after the STT + telehealth slices land |
 
 ## House rules
 
