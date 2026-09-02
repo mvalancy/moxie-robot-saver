@@ -357,5 +357,13 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   784 full). Gaps: no per-item erase/edit (runtime has none), `summarized_through` needs a one-line runtime
   change, nothing decays. BEYOND #4 stays 🟡 until decay/edit.
 
+- **2026-09-02 (orchestrator)** — v0.6.0 promotion paused by a red deep gate: since PR #28 the prebuilt-image
+  compose smoke failed because `docker-compose.images.yml` (built in parallel with PR #27) never forwarded the
+  now-closed pairing gate's `MOXIE_ALLOW_UNVERIFIED_BOTS`; the robot got `pairing_status='unpairing'`. Fixed in
+  `fix/images-compose-gate-env` (PR #31 → dev, one-line passthrough; images-mode smoke green locally).
+  Playbook lesson (rule 10 corollary): two concurrent slices that both touch *deploy config* need an
+  integration-time smoke of the *combined* tree, not just each branch's own — the orchestrator now runs the
+  images-mode compose smoke at merge whenever compose/deploy files changed. Promotion resumes on a green gate.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
