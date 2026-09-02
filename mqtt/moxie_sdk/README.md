@@ -21,6 +21,13 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`filler.py`](filler.py) — the short "let me think" lines, with thinking markup, that the
   runtime speaks when the brain outlives its latency budget (see
   [`../supervisor/`](../supervisor/)).
+- [`presence.py`](presence.py) — what Moxie's own eyes tell the server. The robot runs vision
+  on-device and emits semantic events only (`eb-found-face`, `eb-lost-target`, QR/ArUco/book —
+  **no pixels, no bounding box, no identity**), delivered as the `speech` of a chat request once
+  the brain subscribes. This is the pure state machine that folds them into a per-robot presence
+  record + derived `arrived`/`left` signals, with hysteresis so a face flickering at the edge of
+  the frame cannot spam the brain, plus the short prompt line and the greeting lines the runtime
+  speaks. Design + honesty: [vision.md §7](../../docs/architecture/vision.md).
 - [`segment.py`](segment.py) — the sentence segmenter a streaming brain talks through:
   dependency-free, pure, and careful about decimals, abbreviations, ellipses and lines too
   short to speak alone. Each finished sentence becomes one `RemoteChatResponse` chunk, so a

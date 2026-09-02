@@ -76,6 +76,17 @@ class Turn:
     history: list = field(default_factory=list)   # [{role, content}, ...] prior turns
     command: str = "prompt"              # prompt | continue | notify
     input_vars: dict = field(default_factory=dict)  # e.g. scanned QR value
+    presence: dict = field(default_factory=dict)
+    """What Moxie's own eyes have told the server — `moxie_sdk.presence.snapshot()`:
+    `{known, face_present, present_s, away_s, faces_seen, last_qr/marker/book, line}`.
+
+    The robot emits `eb-found-face` / `eb-lost-target` / QR / ArUco / book events and
+    nothing else — no pixels, no bounding boxes, no identity
+    (docs/architecture/vision.md §1.1) — so this is presence, not vision. `line` is a
+    short, kid-safe sentence for the system prompt, and is `""` unless something
+    actually changed. Empty dict = a robot whose vision events we have never seen.
+    The same snapshot is on `robot.extra["presence"]` for apps that only get a
+    `RobotContext` (`greeting`, `on_event`)."""
 
 
 @dataclass

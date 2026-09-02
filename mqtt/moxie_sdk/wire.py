@@ -12,7 +12,8 @@ from .types import ResultCode
 def build_chat_response(event_id, text, markup="", *, backend="router",
                         result=ResultCode.SUCCESS, actions=None, end_turn=False,
                         mood=None, dialog_act=None, modules=None,
-                        chunk_num=None, is_completed=None, safety=None) -> dict:
+                        chunk_num=None, is_completed=None, safety=None,
+                        subscribe_events=None) -> dict:
     """Build the RemoteChatResponse JSON.
 
     Matches embodied/robotbrain/RemoteChat.proto: `result` is the ResultCode enum
@@ -37,7 +38,20 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     reads only the flat field still sees the verdict. `RemoteChatInput` is by definition
     the brain's read of *the child's input*, so only a pre-inference (child-side) verdict
     is published here; a block on Moxie's own output has no field in the contract and is
-    recorded in the parent review queue instead (docs/architecture/ai-seam.md §2)."""
+    recorded in the parent review queue instead (docs/architecture/ai-seam.md §2).
+
+    **Event subscription.** `subscribe_events` (robot event names, e.g.
+    `["eb-found-face", "eb-lost-target"]`) fills
+    `RemoteChatAction.EventSubscription{clear, active[]}` — the contract's own way for a
+    brain to ask the robot to *push* it perception events (remote-chat-protocol.md:103-106;
+    ai-seam.md §2(b); the record's `clear`/`active` field names per OpenMoxie
+    `doc/RemoteModuleAPI.md` §"Event subscription record", MIT). Without it the robot
+    discards its own vision events — they are "internal events that are discarded by the
+    application stack unless the active module is specifically interested". It rides an
+    *action-less* `response_actions[0]` (a bare `{output_type}` entry is the shape a
+    field-proven server sends) and is mirrored onto the legacy singular `response_action`
+    (mqtt-and-conversation.md §4.1). Omitted when empty/None, so every reply that does not
+    ask for events is byte-identical to what we sent before."""
     rc = result if isinstance(result, ResultCode) else ResultCode(result)
     output = {"text": text, "markup": markup or text}
     if mood:
@@ -50,6 +64,13 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     for a in (actions or []):
         ra.append({"output_type": "GLOBAL", "action": a.type.value,
                    "module_id": a.module_id, "content_id": a.content_id})
+    if subscribe_events:
+        # An action-less entry carrying only the subscription: we are not asking the
+        # robot to launch/exit anything, only to start pushing us these events.
+        if not ra:
+            ra.append({"output_type": "GLOBAL"})
+        ra[0]["event_subscription"] = {"active": list(subscribe_events), "clear": False}
+        resp["response_action"] = ra[0]          # legacy singular, kept in sync
     if ra:
         resp["response_actions"] = ra
     if modules is not None:
