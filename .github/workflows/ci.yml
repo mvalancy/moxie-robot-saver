@@ -38,6 +38,21 @@ jobs:
           sudo apt-get update && sudo apt-get install -y mosquitto
           sudo systemctl stop mosquitto || true
           pip install "paho-mqtt>=2.0"
+      - name: Hermetic pytest, EARLY (a red suite has to beat the merge gate)
+        run: |
+          # WHY THIS RUNS HERE and not only at the end of the job: the whole-suite step
+          # below sits behind a ~3-minute browser install, so a plain unit-test failure
+          # first reports ~4½ minutes into the job. On 2026-09-02 four PRs (#43–#46) were
+          # merged 2m22s–2m28s after opening, while the only check that could fail had
+          # not concluded — every one of them was red. The same tests, minus the ones
+          # that need a broker or a browser, run here in ~15 s, inside that window.
+          # protobuf is installed on purpose: the QR-parity step below installs it
+          # anyway, and WITHOUT it the compiled-proto oracle silently `importorskip`s —
+          # which is precisely the test that was red. Guarded by
+          # sim/tests/test_ci_workflows.py.
+          python3 -m pip install -q pytest openai jinja2 pyyaml protobuf
+          python3 -m pytest sim/tests -q -k "not test_sil and not test_docs" \
+            --ignore=sim/tests/test_live_gateway.py
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
       - name: Bridge markup→avatar unit test
