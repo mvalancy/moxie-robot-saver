@@ -37,7 +37,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   honest list of where they're ahead.
 - [`backlog/`](backlog/README.md) — **the build briefs**: a ranked audit line turned into something an agent
   can execute — seam, cited vocabularies, design, tests, acceptance criteria, risks. Currently
-  [`backlog/expressiveness.md`](backlog/expressiveness.md) (the markup floor + the behavior planner).
+  [`backlog/expressiveness.md`](backlog/expressiveness.md) (the markup floor + the behavior planner),
+  [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) (broker ACL → device credentials →
+  spoof-proofing, phased) and [`backlog/telehealth.md`](backlog/telehealth.md) (puppet mode: the
+  `commands/telehealth` path + the "Be Moxie" console panel).
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
 - [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.
