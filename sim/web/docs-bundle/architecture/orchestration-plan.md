@@ -202,5 +202,11 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   one atomic snapshot then waits for teardown. 5× green locally; CI SIL green on the PR. In flight:
   `feat/streamed-reply-chunks`, `feat/ci-live-dispatch`.
 
+- **2026-09-02** — Integrated `feat/ci-live-dispatch` (PR #16 → dev): the deep tier's manual dispatch now runs
+  every creds-only live suite with a fail-loud gate, plus an opt-in `voice=true` tier (pinned, sha256-verified
+  Piper voices + cached Whisper) that runs the real-speech talk loop — "live-tested" is reproducible on demand.
+  actionlint clean; docs (sil-and-cicd "Live CI", RELEASING CI table). Proof dispatch run on dev after merge.
+  In flight: `feat/streamed-reply-chunks`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
