@@ -86,6 +86,10 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     (turn/streaming loop + safety gates, `_push_config`, the status HTTP handlers). Cap two BUILD slices
     plus one INTEGRATION/RESEARCH task. Same-file-different-region edits merge cleanly; same-region
     edits don't — plan the split before launching, not at merge time.
+11. **Browser tests assert recorded state, never live samples.** Three fast-tier flakes came from one test
+    family sampling a live value inside a short window (`#tts-status` text, `getMouthOpen()`, `ttsPending()`)
+    on a loaded runner. The page records what happened (peak, order, counts, per event) and the test waits
+    for completion, then asserts the record. Briefs for any SIM/Playwright work must say so explicitly.
 
 ## The layered session loops (24/7 continuity)
 
@@ -296,6 +300,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   epoch seconds) are isolated behind single constants and recorded as assumptions. +31 tests (→666 in the
   fast-shaped venv). Live: two robots inherited a fleet alarm while a per-robot volume override won. Next
   disjoint slice: device allowlist / pairing gate. In flight: `feat/session-memory-persist-summarize`.
+
+- **2026-09-02 (orchestrator)** — Fast tier flaked again on `8b7fb0a`/`9470e6c` (~50%): the chunked cloud-TTS
+  Playwright test sampled `ttsPending()` live and fast runners had already drained the queue. Same disease as
+  PR #15/#21, same cure — `fix/cloud-tts-queue-stats` (in flight, disjoint files) records per-playback stats
+  and asserts them after completion. Playbook rule 11 added. In flight: `feat/session-memory-persist-summarize`,
+  `feat/device-allowlist`, `fix/cloud-tts-queue-stats`.
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
