@@ -208,6 +208,13 @@
     const out = msg.output || {};
     const text = out.text || "";
     const eid = msg.event_id || "";
+    if (eid && pendingFaceEvents.has(eid)) {
+      // The server answered a vision event. A hello has words; a NOREPLY_ACK ("heard
+      // you, saying nothing") has none. Only the hello is recorded as a greeting.
+      pendingFaceEvents.delete(eid);
+      if (text) { presence.greetings.push({ text: text, event_id: eid, t: nowMs() });
+                  status(`greeting: "${text.slice(0, 40)}"`); }
+    }
     const more = typeof msg.chunk_num === "number" && msg.chunk_num > 0 &&
                  eid !== "" && eid === chatEvent;
     chatEvent = eid;
@@ -222,6 +229,66 @@
       addTranscript("moxie", text, more);
       speakLocally(text);            // stands down if the server sends real audio
     }
+  }
+
+  // ---- presence: the robot's own eyes -----------------------------------------
+  // The stock robot runs vision ON-DEVICE and sends only semantic events — no pixels, no
+  // bounding boxes (docs/architecture/vision.md §1.1). A subscribed event is delivered to
+  // the brain as the `speech` of an ordinary RemoteChatRequest ("instead of ... something
+  // the user said, it receives a special event string like `eb-found-face`"), so the SIM
+  // emits it on exactly the topic and envelope a child's utterance uses. Everything the
+  // page RECORDS about it lives in `presence` and is read back by tests — never sampled
+  // live from an animation.
+  const FOUND = "eb-found-face", LOST = "eb-lost-target";
+  const VISION_EVENTS = [FOUND, LOST, "eb-lost-face", "eb-qr-event", "eb-dr-event", "eb-br-event"];
+  const presence = {
+    present: null,          // null = never told, true/false = told
+    events: [],             // [{name, t}] bounded
+    arrivals: 0, departures: 0,
+    greetings: [],          // replies the server sent in answer to a face event
+    lastEvent: "", lastEventId: "",
+  };
+  const pendingFaceEvents = new Set();   // event_ids we are waiting on a reply for
+
+  function presenceBadge() {
+    const el = document.getElementById("presence-badge");
+    const label = document.getElementById("presence-state");
+    const state = presence.present === null ? "unknown" : (presence.present ? "here" : "away");
+    if (el && el.setAttribute) el.setAttribute("data-presence", state);
+    if (label) label.textContent = state.toUpperCase();
+    const btn = document.getElementById("presence-toggle");
+    if (btn) btn.textContent = presence.present ? "Walk away" : "Walk in";
+    const st = document.getElementById("presence-status");
+    if (st) st.textContent = presence.present === null ? "no face events yet"
+      : `${presence.lastEvent} · ${presence.arrivals} in / ${presence.departures} out`;
+  }
+
+  function notePresence(name) {
+    if (VISION_EVENTS.indexOf(name) < 0) return false;
+    presence.events.push({ name: name, t: nowMs() });
+    if (presence.events.length > 40) presence.events.shift();
+    presence.lastEvent = name;
+    if (name === FOUND) { presence.present = true; presence.arrivals++; }
+    else if (name === LOST || name === "eb-lost-face") { presence.present = false; presence.departures++; }
+    presenceBadge();
+    status(`vision: ${name}`);
+    return true;
+  }
+
+  // Publish one vision event the way the robot does, and remember its event_id so the
+  // reply (a hello, or a silent NOREPLY_ACK) can be attributed to it. Returns the id.
+  function faceEvent(kind) {
+    const name = kind === "lost" ? LOST : (kind === "found" ? FOUND : kind);
+    const eventId = "sim-face-" + Math.random().toString(36).slice(2, 10);
+    const payload = JSON.stringify({
+      event_id: eventId, command: "prompt", backend: "router",
+      speech: name, module_name: "sim-web",
+    });
+    pendingFaceEvents.add(eventId);
+    if (client && client.connected) client.publish("/devices/d_sim/events/remote-chat", payload);
+    route("/devices/d_sim/events/remote-chat", payload);   // always record it locally
+    presence.lastEventId = eventId;
+    return eventId;
   }
 
   // ---- connection ----
@@ -326,6 +393,9 @@
     let speech = msg.speech || "";
     for (const ln of msg.extra_lines || [])
       if (ln.context_type === "input" && ln.text) speech = ln.text;
+    // A perception event rides the `speech` slot — it is Moxie's eye, not the child's
+    // voice, so it updates presence and never enters the comms log.
+    if (notePresence(speech)) { if (msg.event_id) pendingFaceEvents.add(msg.event_id); return; }
     if (speech) { addTranscript("user", speech);
       if (window.moxieAudio) window.moxieAudio.sfx("listen"); }
   }
@@ -349,6 +419,15 @@
       }
     },
     isLive: function () { return !!(client && client.connected); },
+    // "Someone walked in / walked away" — publish the recovered vision event.
+    faceEvent: faceEvent,
+    // Everything the page RECORDED about presence (tests read this, never a live sample).
+    presenceStats: function () {
+      return { present: presence.present, arrivals: presence.arrivals,
+               departures: presence.departures, last_event: presence.lastEvent,
+               events: presence.events.map((e) => e.name),
+               greetings: presence.greetings.map((g) => g.text) };
+    },
     // true once a CloudTTSResponse has arrived — the server voice has taken over
     hasCloudVoice: function () { return cloudVoice; },
   };
@@ -360,6 +439,9 @@
     const btn = document.getElementById("bus-connect");
     if (host && !host.value) host.value = location.hostname || "127.0.0.1";
     if (btn) btn.addEventListener("click", () => connect(host.value.trim() || "127.0.0.1", 9001));
+    // presence: one button that walks a child in and out of frame
+    wire("presence-toggle", () => faceEvent(presence.present ? "lost" : "found"));
+    presenceBadge();
     // record / replay controls
     wire("rec-toggle", () => setRecording(!recording));
     wire("rec-save", () => exportSession());
