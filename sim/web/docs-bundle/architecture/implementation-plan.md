@@ -212,6 +212,14 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   `days` as **0 = Monday … 6 = Sunday**, `time` as `"HH:MM"` local wall clock, `scheduled_at` as epoch
   **seconds**. Each sits behind one constant, so a contradicting capture is a one-line fix — but until a
   physical Moxie is seen to *ring*, "built" here means "well-formed and pushed", not "field-proven".
+- **broker hardening is containment, and one door stays open on purpose.** P0's ACL
+  closes `$SYS` enumeration and cross-device reads/writes on every listener, but the
+  websocket listener (`9001`) still grants an **anonymous, read-only** `/devices/#` — that
+  is how the browser SIM renders a live robot, and a page served to a browser cannot hold a
+  secret. So a client on your LAN that reaches `9001` can still *watch* a config push go
+  by. Closing it means routing the SIM's live view through the console's HTTP API instead
+  of the bus (`security-broker-auth.md` §2.5 option (b)); until then the honest mitigation
+  is that `9001` is only worth publishing when you actually use the browser SIM.
 - **the pairing gate — an application-layer permit list, and the un-paired value is not
   capture-proven.** The allowlist is built, closed by default and enforced on the transport
   boundary, but three honesties stand. (a) **It is not authentication.** The broker still
@@ -219,8 +227,16 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   so an unpermitted device can still *connect*, publish, and see its own topics; what the
   gate stops is our server *serving* it — no `child_pii`, no brain, no schedule, no
   telemetry ingest. A device that spoofs a permitted robot's `d_<uuid>` is served as that
-  robot. Broker-level password/ACL + real JWT verification is the deeper fix and is still
-  deferred. (b) **`pairing_status:"unpairing"` is field-proven, not capture-proven.** No
+  robot. **Broker hardening P0 landed 2026-09-02** and narrows the blast radius without
+  claiming to fix this: a `%c` ACL confines every anonymous client to its own
+  `/devices/<client id>/…` subtree, `$SYS/broker/log` (the fleet roster) is readable only
+  by a supervisor that now authenticates with a per-appliance credential, and the plain
+  listener is loopback-bound ([mqtt §3.1](mqtt-and-conversation.md),
+  [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) §2, proven by
+  `sim/run_acl_proof.sh`). **It is containment, not authentication** — the spoof above is
+  unchanged, and so is the client-id-collision eviction that lets a spoof knock the real
+  robot off the bus. Real JWT verification (P1) and refusing the CONNECT (P2) remain
+  deferred, blocked on the brief's A1–A4, all of which need a physical robot. (b) **`pairing_status:"unpairing"` is field-proven, not capture-proven.** No
   capture of Embodied's cloud pushing a non-`paired` status survives in our corpus; the
   value comes from OpenMoxie's own device form, and **no physical robot has been observed
   receiving it** — what a real Moxie shows on screen for a pending config is unknown (it

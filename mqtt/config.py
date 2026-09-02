@@ -25,6 +25,42 @@ _load_env()
 MQTT_HOST = os.environ.get("MOXIE_MQTT_HOST", "127.0.0.1")   # supervisor→broker (loopback)
 MQTT_PORT = int(os.environ.get("MOXIE_MQTT_PORT", "1883"))   # plain listener for the supervisor
 
+# --- broker credential (security-broker-auth.md §2.2) ---
+# The supervisor is the appliance's ONE fleet-wide MQTT identity — the only client that
+# may read `$SYS/broker/log` (where every d_<uuid> is announced) and write into another
+# device's subtree. Unset = today's behaviour exactly: an anonymous supervisor on an
+# open broker, which is what a bare-metal dev broker and the SIL harness still run.
+MQTT_USERNAME = os.environ.get("MOXIE_MQTT_USER", "")
+# Two ways in, because a secret in `environment:` is visible to `docker inspect` and to
+# anything that can read /proc: MOXIE_MQTT_PASSWORD is the literal (fine for a hand-run
+# supervisor), MOXIE_MQTT_PASSWORD_FILE is a path the compose one-shot minted at 0600
+# inside the shared volume. An explicit literal wins; otherwise the file is read.
+MQTT_PASSWORD = os.environ.get("MOXIE_MQTT_PASSWORD", "")
+MQTT_PASSWORD_FILE = os.environ.get("MOXIE_MQTT_PASSWORD_FILE", "")
+
+
+def broker_credentials():
+    """`(username, password)` for the supervisor's MQTT client — `("", "")` when unset.
+
+    Read at CONNECT time rather than baked in at import, because in compose the `certs`
+    one-shot may mint the secret after this module was first imported. A missing or
+    unreadable password file is not fatal: it degrades to anonymous, which is exactly
+    what a broker with no `password_file` expects, and the connection failure it would
+    otherwise cause is far harder to diagnose than a log line.
+    """
+    password = MQTT_PASSWORD
+    if not password and MQTT_PASSWORD_FILE:
+        try:
+            with open(MQTT_PASSWORD_FILE) as fh:
+                password = fh.read().strip()
+        except OSError as e:
+            print(f"[config] MOXIE_MQTT_PASSWORD_FILE unreadable ({e.strerror}) — "
+                  f"connecting anonymously", flush=True)
+            password = ""
+    if MQTT_USERNAME and password:
+        return MQTT_USERNAME, password
+    return "", ""
+
 # Best-effort HTTP status endpoint (http://127.0.0.1:STATUS_PORT/status). Env-overridable
 # so repeated/parallel SIL runs (or a leftover supervisor) don't collide on one fixed port.
 STATUS_PORT = int(os.environ.get("MOXIE_STATUS_PORT", "8930"))

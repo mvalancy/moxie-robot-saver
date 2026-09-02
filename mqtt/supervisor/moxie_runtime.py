@@ -175,6 +175,18 @@ class MoxieRuntime:
     def _build_client(self):
         import paho.mqtt.client as mqtt
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="supervisor")
+        # The supervisor's broker credential (security-broker-auth.md §2.2). It is the
+        # ONE fleet-wide identity: `$SYS/broker/log` — the connect watch below — and any
+        # write outside a client's own device subtree are supervisor-only once the ACL
+        # is loaded. Unset (a bare-metal dev broker, the SIL harness, CI) leaves this an
+        # anonymous client, byte-for-byte what it was before.
+        try:
+            from config import broker_credentials
+            username, password = broker_credentials()
+        except Exception:                      # config not importable → anonymous
+            username, password = "", ""
+        if username and password:
+            self.client.username_pw_set(username, password)
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
         return self.client

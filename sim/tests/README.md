@@ -68,6 +68,19 @@ browser at all and carry the hermetic suite CI actually runs.
   `/memory` payload flattened into dated rows per activity, newest first, with counts —
   plus the tolerance that matters on a parent's screen (a partial namespace, a list a
   module invented, a raw `memory.json` off disk, and a supervisor that is down).
+- **`test_broker_acl.py`** — broker hardening P0
+  ([`security-broker-auth.md`](../../docs/architecture/backlog/security-broker-auth.md) §2), pure: no
+  broker, no Docker. Half is `mqtt/moxie_sdk/broker_acl.py::render_acl` — the permit-derived ACL that is
+  generated now and **inert until P1** — asserted for a byte-stable golden shape, one `user d_<uuid>`
+  block per permitted device, and the property the whole floor rests on: **no bare `topic` grant before
+  the first `user` block**, so an anonymous client's only reach is its own `%c` subtree (plus the
+  injection case: a device id carrying a newline cannot forge an ACL line). Half reads the **shipped**
+  `mqtt/broker/` files, and catches the two ways this slice can silently become a no-op — an ACL that
+  stops being loaded, and a `user` block on a listener with no `password_file`, where mosquitto matches a
+  username nobody verified. The rest is the supervisor credential: `config.broker_credentials()`
+  precedence (literal > file > anonymous, and a username without a password is *not* credentials) and
+  `MoxieRuntime._build_client` actually calling `username_pw_set`. The end-to-end proof against a real
+  broker is [`../run_acl_proof.sh`](../run_acl_proof.sh).
 - **`test_compose.py` + `helpers_compose.py`** — the one-command stack, asserted with
   PyYAML and never Docker. Half is shape (`docker-compose.yml` declares the three
   services plus the cert one-shot, healthchecks, restart policies, named volumes,

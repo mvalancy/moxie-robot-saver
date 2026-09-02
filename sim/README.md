@@ -26,11 +26,13 @@ needed), or use `--profile demo` to watch a scripted conversation play out — t
 | [`broker/ci-mosquitto.conf`](broker/) | Mosquitto with `:1883` (MQTT) + `:9001` (WebSocket for the browser). |
 | [`scenarios/`](scenarios/) | Scripted conversations (JSON) for the demo + tests. |
 | [`run_compose_smoke.sh`](run_compose_smoke.sh) + [`compose-smoke.env`](compose-smoke.env) | Proof for the **[one-command stack](../docs/guides/one-command-stack.md)**: brings the repo-root `docker-compose.yml` up under a throwaway project on unused ports, round-trips the virtual robot (incl. TTS audio) through it, checks the console's `/local/fleet`, tears it down. |
+| [`run_acl_proof.sh`](run_acl_proof.sh) + [`tools/prove_broker_acl.py`](tools/) | Proof for **[broker hardening P0](../docs/architecture/backlog/security-broker-auth.md)**: starts a throwaway mosquitto from `mqtt/broker/{compose-mosquitto.conf,acl,acl-robot}` with a scratch credential, then asserts **by message delivery** (MQTT 3.1.1 acks an authorization failure as success) that the supervisor authenticates, that a robot cannot read another robot's config or `$SYS/broker/log`, and that the browser SIM keeps its observer view. |
 | `run_smoke.sh` / `run_scenarios.sh` / `test_bridge.mjs` / `test_automarkup_render.mjs` / `test_voice.mjs` / `test_qr.mjs` / `test_cloud.mjs` / `test_audio.mjs` | The eight test layers, all in the CI workflow ([`ci/ci.yml`](ci/) — a template; install to `.github/workflows/` to run on GitHub). `test_voice` exercises the real TTS/STT services and skips cleanly if they aren't running; `test_qr` asserts the browser QR encoder is byte-identical to the python toolkit; `test_cloud` asserts the cloud-console fixture keeps the real REST/MQTT shapes; `test_audio` asserts the browser decodes and plays a `CloudTTSResponse` (PCM maths, chunk order, lip-sync) and round-trips that decoder against the real server encoder; `test_automarkup_render` drives the eight byte-exact markup-floor goldens ([`sim/tests/goldens/annotate.json`](tests/goldens/annotate.json)) through the real `bridge.js` and asserts the avatar reaches six distinct faces and moves its arms — the SIM is the **only renderer we can assert against**, since no hardware has ever played our markup. |
 
 ## Without Docker
 ```sh
 bash sim/run_smoke.sh          # broker + supervisor + one round-trip (needs mosquitto or docker)
+bash sim/run_acl_proof.sh      # the broker ACL, against a real mosquitto (needs docker)
 cd sim/web && python3 -m http.server 8080   # serve the UI, then run a broker+supervisor separately
 ```
 
