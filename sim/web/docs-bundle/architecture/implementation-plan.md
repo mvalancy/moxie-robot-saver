@@ -81,8 +81,7 @@ Following the [build-order spine](overview.md); the parent app
   [`docker-compose.images.yml`](../../docker-compose.images.yml) turns the install into *download one
   file, `docker compose up`*, with **no clone**. Proven locally end to end by
   `MOXIE_SMOKE_MODE=images sim/run_compose_smoke.sh` (that exact file, `pull_policy: never`, against
-  locally built images under the published names). **Unverified in the registry until the first tag
-  cut after this merges** — nothing has been pushed to GHCR yet, so the pull path is asserted by
+  locally built images under the published names). **Verified at v0.6.0: all three multi-arch images published to GHCR by the release tier.** — nothing has been pushed to GHCR yet, so the pull path is asserted by
   construction, not observed.
 
 ## Known gaps (audited, honest)
