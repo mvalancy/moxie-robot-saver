@@ -95,5 +95,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   the next WS-B slices; they are what turns "connects" into "works" on a real robot. In flight:
   `feat/llm-action-tags` (ADOPT #4).
 
+- **2026-09-02** — Integrated `feat/llm-action-tags` (PR #6 → dev, ADOPT #4): the brain can now steer the
+  robot with `<exit>` / `<sleep>` / `<launch:MOD[:CID]>` tags parsed out of its own text into real
+  `Reply.actions` (both LLM and content apps); malformed own-tags are always stripped so a child never
+  hears one. +29 tests (131→160). Caveats recorded: `launch_if_confirmed` is lossy (→ LAUNCH) until
+  `ActionType` gains a confirm member; live model compliance is prompt work. In flight:
+  `feat/schedule-mentor-behaviors` (ADOPT #1+#2).
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
