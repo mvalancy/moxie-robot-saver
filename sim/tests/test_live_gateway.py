@@ -101,3 +101,44 @@ def test_live_turn_through_the_runtime():
     assert msgs, "no remote_chat published"
     assert msgs[-1]["result"] == "SUCCESS"
     assert msgs[-1]["output"]["text"].strip(), "empty reply from the live gateway turn"
+
+
+def test_live_assembled_stack_end_to_end():
+    """The real production path: config(MOXIE_APP=content) → run.assemble() → runtime →
+    a live turn on the gateway → spec response. As close to `python run.py` as a test
+    gets (config + assembly + runtime + live brain), minus the broker."""
+    try:
+        import importlib
+        import json
+        mqtt_dir = os.path.join(REPO, "mqtt")
+        sys.path.insert(0, mqtt_dir)
+        sys.path.insert(0, os.path.join(mqtt_dir, "supervisor"))
+        os.environ["MOXIE_APP"] = "content"
+        os.environ["MOXIE_STT"] = "off"
+        import config as cfg
+        importlib.reload(cfg)
+        import run
+        importlib.reload(run)
+        from moxie_sdk.types import RobotContext, ChildProfile  # noqa: F401
+    except Exception as e:
+        pytest.skip(f"assembly/openai unavailable: {e}")
+
+    class _FakeClient:
+        def __init__(self):
+            self.published = []
+
+        def publish(self, topic, payload):
+            self.published.append((topic, json.loads(payload)))
+
+    rt = run.assemble(cfg)
+    rt.client = _FakeClient()
+    did = "d_asm"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child,
+                                  module_id="FREE_CHAT", content_id="default")
+    rt._on_remote_chat(did, rt.robots[did], json.dumps(
+        {"command": "prompt", "event_id": "e", "speech": "Tell me a fun fact about the moon."}))
+    rt._pool.shutdown(wait=True)
+    msgs = [p for (t, p) in rt.client.published if t.endswith("/commands/remote_chat")]
+    assert msgs, "assembled stack published no remote_chat"
+    assert msgs[-1]["result"] == "SUCCESS"
+    assert msgs[-1]["output"]["text"].strip(), "empty reply from the assembled live stack"
