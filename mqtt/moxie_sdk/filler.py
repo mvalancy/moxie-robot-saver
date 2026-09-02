@@ -23,31 +23,30 @@ takes the marks back off before TTS, so the spoken audio is just the words.
 """
 from __future__ import annotations
 
-import json
 import random
 
+from . import vocab
+
 # `ePlaybackMood` values (behavior-markup.md, recovered from Assembly-CSharp).
-MOOD_NEUTRAL, MOOD_HAPPY, MOOD_CURIOUS = 0, 1, 9
-
-
-def _mark(verb: str, data: dict | None = None) -> str:
-    """One `<mark name="cmd:…"/>` behavior tag. The `data:{…}` object is JSON with `+`
-    standing in for `"`, because the mark lives inside an XML attribute
-    (behavior-markup.md §Shape)."""
-    if not data:
-        return f'<mark name="cmd:{verb}"/>'
-    body = json.dumps(data, separators=(",", ":")).replace('"', "+")
-    return f'<mark name="cmd:{verb},data:{body}"/>'
+MOOD_NEUTRAL, MOOD_HAPPY, MOOD_CURIOUS = (
+    vocab.MOODS["neutral"], vocab.MOODS["happy"], vocab.MOODS["curious"])
 
 
 def _thinking_markup(text: str, mood: int, behaviour: str, event_name: str,
                      category: str = "BehaviourTree") -> str:
-    """`<playback-mood/><behaviour-tree/> text` — the performed form of one filler."""
-    return (_mark("playback-mood", {"mood": mood, "intensity": 1})
-            + _mark("behaviour-tree", {
-                "transition": 0.5, "duration": 1.0, "repeat": 1, "blocking": False,
-                "action": 0, "eventName": event_name, "category": category,
-                "behaviour": behaviour})
+    """`<playback-mood/><behaviour-tree/> text` — the performed form of one filler.
+
+    Deliberately **not** run through the markup floor (`moxie_sdk.automarkup`), which is
+    what generates markup for every line nobody wrote by hand. These eight lines *are*
+    written by hand: the mood/tree/gesture triple below is what makes a filler read as
+    *thinking* rather than as an answer, and `sim/tests/test_brain_latency.py` pins the
+    spoken line as one contiguous run inside its markup — a floor pass would thread a
+    `<break>` through it. Marks are still minted in the one place everything else uses
+    (`moxie_sdk.vocab`), so a filler is validated against the same frozen catalog; see
+    docs/architecture/backlog/expressiveness.md §1.2 ("filler.py — unchanged").
+    """
+    return (vocab.mood_mark(mood, 1)
+            + vocab.tree_mark(event_name, behaviour, category=category, track=None)
             + " " + text)
 
 

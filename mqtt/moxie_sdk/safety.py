@@ -48,6 +48,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
+from . import vocab
+
 # ---------------------------------------------------------------------------
 # the verdict
 # ---------------------------------------------------------------------------
@@ -412,23 +414,17 @@ def redact(text: str, triggers=(), limit: int = MAX_EXCERPT) -> str:
 # markup (mirrors moxie_sdk/filler.py — the redirect is performed, not read)
 # ---------------------------------------------------------------------------
 
-def _mark(verb: str, data: Optional[dict] = None) -> str:
-    """One `<mark name="cmd:…"/>` behavior tag; `+` stands in for `"` inside the XML
-    attribute (docs/reverse-engineering/runtime/behavior-markup.md §Shape)."""
-    if not data:
-        return f'<mark name="cmd:{verb}"/>'
-    body = json.dumps(data, separators=(",", ":")).replace('"', "+")
-    return f'<mark name="cmd:{verb},data:{body}"/>'
-
-
 def _performed(text: str, mood: int, gesture: str) -> str:
-    """`<playback-mood/><behaviour-tree/> text` — the redirect, with a face and a body."""
-    out = [_mark("playback-mood", {"mood": int(mood), "intensity": 1})]
+    """`<playback-mood/><behaviour-tree/> text` — the redirect, with a face and a body.
+
+    Hand-authored like `moxie_sdk/filler.py`, and deliberately NOT run through the markup
+    floor: a redirect is the one line that must stay exactly as a person wrote it. Marks
+    are minted through `moxie_sdk.vocab`, the one place a mark is built, so a redirect is
+    validated against the same frozen catalog as everything else.
+    """
+    out = [vocab.mood_mark(int(mood), 1)]
     if gesture:
-        out.append(_mark("behaviour-tree", {
-            "transition": 0.5, "duration": 1.0, "repeat": 1, "blocking": False,
-            "action": 0, "eventName": gesture, "category": "BehaviourTree",
-            "behaviour": "", "Track": ""}))
+        out.append(vocab.tree_mark(gesture))
     out.append(text)
     return "".join(out)
 
