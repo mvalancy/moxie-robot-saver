@@ -9,7 +9,11 @@ dependencies** (works fully offline). Served at `/` by the FastAPI server.
   🎭 Be Moxie (drive the robot as a remote grown-up),
   📅 Today's plan (the day the robot is served, with the recommender's *"why this activity today"*
   line under each entry — read-only; the plan is changed from ⚙️ Settings),
-  🧠 What Moxie remembers (browse + erase long-term memory).
+  🧠 What Moxie remembers (browse + erase long-term memory),
+  🎚️ Voice (pick the Speech and Listening engines from what this appliance can really use —
+  the gateway's models discovered live, the local Piper voices and whisper sizes installed on the
+  box, and the built-ins; see the [TTS guide](../../docs/guides/litellm-tts-setup.md) and the
+  [STT guide](../../docs/guides/litellm-stt-setup.md)).
 - `app.js` — talks to the server's `/local/*` and `/api/*` endpoints.
 - `style.css` — mobile-first, light/dark aware.
 

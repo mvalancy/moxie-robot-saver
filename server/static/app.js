@@ -160,6 +160,7 @@ async function refreshLive(){
     refreshMemory(null);
     refreshTelehealth(null);
     refreshSchedule(null);
+    refreshVoice(null);
     return;
   }
   if(cfgBox) cfgBox.style.display='';
@@ -186,6 +187,7 @@ async function refreshLive(){
   refreshMemory(liveDevice);
   refreshTelehealth(liveDevice);
   refreshSchedule(liveDevice);
+  refreshVoice(liveDevice);
 }
 
 // ---- 🔐 Robot access (the device allowlist / pairing gate) ----
@@ -896,6 +898,117 @@ $('#btn-sim').onclick = async () => {
             {method:'POST',auth:false,body:{qr_payload:LAST.qr_payload, device_id}});
   setTimeout(refreshMoxie,500);
 };
+
+// ---- 🎚️ Voice (which voice speaks, which ears listen) ----
+// The two dropdowns are populated from the SUPERVISOR, never from a list kept here: the
+// gateway's audio models are discovered live and classified by name, and the local
+// entries exist only when the engine that would run them is genuinely installed. So the
+// card can never offer something that would fail on the way to a child's ears.
+//
+// Three honesty rules it keeps:
+//   * "Discovering gateway models…" while the first listing is still in flight — the
+//     local options render immediately rather than waiting on someone else's box;
+//   * a gateway that is down says so beside the options it still has, and never blanks;
+//   * the status line names the engine ACTUALLY installed, which is not always the pick
+//     (a chosen engine that could not be built keeps the one already speaking).
+let voiceDevice=null, voiceDirty=false;
+const VOICE_GROUPS=['Gateway','Local','Built-in'];
+async function refreshVoice(deviceId){
+  const card=$('#voice-card'); if(!card) return;
+  voiceDevice=deviceId;
+  if(!deviceId){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  let v;
+  try{ v=await api(`/local/robots/${encodeURIComponent(deviceId)}/voice`,{auth:false}); }
+  catch(e){ renderVoiceCard({ok:false,error:'Supervisor unreachable'}); return; }
+  renderVoiceCard(v);
+}
+function voiceOptions(sel, entries, selected){
+  if(!sel) return;
+  const by={};
+  (entries||[]).forEach(e=>{ (by[e.group]=by[e.group]||[]).push(e); });
+  const groups=VOICE_GROUPS.filter(g=>by[g]).concat(
+    Object.keys(by).filter(g=>VOICE_GROUPS.indexOf(g)<0));
+  sel.innerHTML=groups.map(g=>
+    `<optgroup label="${escapeHtml(g)}">`
+    + by[g].map(e=>`<option value="${escapeHtml(e.id)}"${e.id===selected?' selected':''}>`
+        + `${escapeHtml(e.label||e.id)}${e.default?' — default':''}</option>`).join('')
+    + '</optgroup>').join('');
+  if(selected && !sel.querySelector(`option[value="${CSS.escape(selected)}"]`)){
+    // A stored pick the gateway can no longer confirm stays in force — show it rather
+    // than silently snapping the dropdown to something the parent never chose.
+    sel.insertAdjacentHTML('afterbegin',
+      `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}`
+      + ' (not offered right now)</option>');
+  }
+  sel.value=selected||sel.value;
+}
+function renderVoiceCard(v){
+  const note=$('#voice-note'), status=$('#voice-status');
+  const speech=$('#voice-speech'), listening=$('#voice-listening');
+  if(!speech||!listening) return;
+  v=v||{};
+  if(!v.ok){
+    const why=(v.error==='supervisor not reachable')?'Supervisor unreachable':(v.error||'unavailable');
+    speech.innerHTML=''; listening.innerHTML='';
+    if(note) note.innerHTML=`<span class="live-off">${escapeHtml(why)}</span>`;
+    if(status) status.textContent='';
+    return;
+  }
+  if(!voiceDirty){
+    voiceOptions(speech,(v.available||{}).speech,(v.selected||{}).speech);
+    voiceOptions(listening,(v.available||{}).listening,(v.selected||{}).listening);
+  }
+  if(note){
+    const bits=[];
+    if(v.discovering) bits.push('Discovering gateway models…');
+    else if(v.gateway_error) bits.push('Gateway unreachable ('
+      + escapeHtml(v.gateway_error)+') — local options only');
+    const inst=v.installed||{};
+    if(inst.speech) bits.push('Speaking with <b>'+escapeHtml(inst.speech)+'</b>');
+    if(inst.listening) bits.push('Listening with <b>'+escapeHtml(inst.listening)+'</b>');
+    else bits.push('Not listening (text turns still work)');
+    note.innerHTML=bits.join(' · ');
+  }
+  if(status && !voiceDirty && !status.dataset.sticky) status.textContent='';
+}
+async function saveVoice(){
+  const s=$('#voice-status'); if(!s) return;
+  const body={speech:$('#voice-speech').value, listening:$('#voice-listening').value};
+  s.dataset.sticky='1'; s.textContent='Saving…';
+  try{
+    const r=await api(`/local/robots/${encodeURIComponent(voiceDevice||liveDevice)}/voice`,
+                      {method:'POST',auth:false,body});
+    voiceDirty=false;
+    if(r.ok){
+      s.textContent='✅ Saved — the next thing Moxie says uses it.';
+      renderVoiceCard(r);
+    } else s.textContent='⚠️ '+(r.reason||r.error||'could not save');
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not save'); }
+}
+async function testVoice(){
+  const s=$('#voice-status'); if(!s) return;
+  s.dataset.sticky='1'; s.textContent='Speaking…';
+  try{
+    const r=await api(`/local/robots/${encodeURIComponent(voiceDevice||liveDevice)}/voice/test`,
+                      {method:'POST',auth:false,body:{}});
+    s.textContent=r.ok
+      ? `✅ Played on ${String(voiceDevice||liveDevice).slice(0,16)}…: "${r.spoke||''}"`
+      : '⚠️ '+(r.reason||r.error||'could not play');
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not play'); }
+}
+{
+  const sp=$('#voice-speech'), ls=$('#voice-listening');
+  if(sp) sp.onchange=()=>{ voiceDirty=true; };
+  if(ls) ls.onchange=()=>{ voiceDirty=true; };
+  const b=$('#btn-voice-save'); if(b) b.onclick=saveVoice;
+  const t=$('#btn-voice-test'); if(t) t.onclick=testVoice;
+  const r=$('#btn-voice-refresh'); if(r) r.onclick=()=>{
+    voiceDirty=false;
+    const s=$('#voice-status'); if(s){ delete s.dataset.sticky; s.textContent=''; }
+    refreshVoice(voiceDevice||liveDevice);
+  };
+}
 
 // boot
 if(TOKEN){ api('/local/state').then(()=>{$('#who').textContent='';enterApp();}).catch(()=>{}); }

@@ -755,6 +755,90 @@ def robot_schedule(device_id: str, refresh: bool = False):
              "detail": str(e)}))
 
 
+# --- 🎚️ The voice picker (backlog/voice-picker.md) -----------------------------------
+# Which voice Moxie speaks with and which ears she listens with, chosen from what this
+# appliance can genuinely use — the gateway's audio models (discovered live), the local
+# Piper voices and whisper sizes installed on the box, and the two built-ins. Three thin
+# proxies in the shape every other card uses: the supervisor owns discovery, validation,
+# persistence and the engine swap; this layer forwards and normalizes.
+#
+# The record is **fleet-level** — a voice is a property of the house, not of one robot —
+# so `GET`/`POST` ignore `device_id` beyond the console's URL convention. `POST …/voice/test`
+# is the one that needs it: it names the robot that should play the sample line.
+
+@app.get("/local/robots/{device_id}/voice")
+def robot_voice(device_id: str, refresh: bool = False):
+    """The 🎚️ card's poll: every speech/listening option this appliance can use, which one
+    is in force, which one is the default, what is actually installed, and whether the
+    gateway listing is still on its way. Server-side call so the browser has no CORS
+    issue; a supervisor that is down is a 503 carrying the card's own shape."""
+    import urllib.request, urllib.error
+    from .fleet import normalize_voice
+    url = STATUS_URL.rsplit("/status", 1)[0] + "/voice"
+    if refresh:
+        url += "?refresh=1"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return normalize_voice(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode() or "{}")
+        return JSONResponse(status_code=e.code, content=normalize_voice(body))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_voice(
+            {"ok": False, "error": "supervisor not reachable", "detail": str(e)}))
+
+
+@app.post("/local/robots/{device_id}/voice")
+async def set_robot_voice(device_id: str, request: Request):
+    """A parent's pick — `{"speech": "gateway:piper-amy", "listening": "whisper:base.en"}`,
+    either side optional, `null` to go back to the default. Forwarded to the supervisor's
+    `POST /voice`, which checks it against what is available *right now*, persists it to
+    `fleet/voice.json` and swaps the live engines.
+
+    A pick the supervisor refuses keeps its status code — **400 with `reason`** — so the
+    card can tell a parent their page was stale instead of silently doing nothing."""
+    import urllib.request, urllib.error
+    from .fleet import normalize_voice
+    body = await request.body()
+    url = STATUS_URL.rsplit("/status", 1)[0] + "/voice"
+    req = urllib.request.Request(url, data=body or b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return normalize_voice(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code,
+                            content=normalize_voice(json.loads(e.read().decode() or "{}")))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_voice(
+            {"ok": False, "error": "supervisor not reachable", "detail": str(e)}))
+
+
+@app.post("/local/robots/{device_id}/voice/test")
+async def test_robot_voice(device_id: str, request: Request):
+    """The **Test** button: speak one line through the engine that is actually installed
+    and send it to this robot, which the SIM plays. The only honest answer to "did my pick
+    work" — it exercises the live engine rather than echoing the record back."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_voice
+    body = await request.body()
+    url = (STATUS_URL.rsplit("/status", 1)[0] +
+           f"/voice/test?device_id={quote(device_id)}")
+    req = urllib.request.Request(url, data=body or b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return normalize_voice(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code,
+                            content=normalize_voice(json.loads(e.read().decode() or "{}")))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_voice(
+            {"ok": False, "device_id": device_id, "error": "supervisor not reachable",
+             "detail": str(e)}))
+
+
 # --- 🧠 What Moxie remembers (audit BEYOND #4) ---------------------------------------
 # The runtime stores durable, provenance-carrying facts per robot
 # (`robots/<id>/memory.json`, moxie_sdk/store.py::MemoryStore) and serves them on its

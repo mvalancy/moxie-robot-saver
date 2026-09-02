@@ -643,3 +643,81 @@ def normalize_schedule_view(payload: Optional[dict]) -> dict:
         }
     except Exception as e:                      # a card must never be a 500
         return {**empty, "error": f"unreadable schedule payload: {e}"}
+
+
+# --- 🎚️ the voice picker (docs/architecture/backlog/voice-picker.md) -----------------
+#: The two sides of the picker, named once (mirrors `moxie_sdk.voice_settings.KINDS` —
+#: this module stays dependency-free of the supervisor package, so it re-states the two
+#: strings rather than importing them across the process boundary).
+VOICE_KINDS = ("speech", "listening")
+
+
+def normalize_voice_option(entry: Optional[dict]) -> dict:
+    """One dropdown `<option>`: `{id, label, group, engine, model, default}`."""
+    e = entry if isinstance(entry, dict) else {}
+    return {"id": str(e.get("id") or ""), "label": str(e.get("label") or ""),
+            "group": str(e.get("group") or ""), "engine": str(e.get("engine") or ""),
+            "model": str(e.get("model") or ""), "default": bool(e.get("default"))}
+
+
+def normalize_voice(payload: Optional[dict]) -> dict:
+    """Runtime `/voice` (or `/voice/test`) response → the console's 🎚️ card shape.
+
+    Tolerates anything: a None payload (supervisor down), a refusal, a truncated body. It
+    never raises and it never returns *empty* lists silently — an unreadable payload comes
+    back with `error` set so the card prints the reason instead of two blank dropdowns
+    that look like "this appliance cannot speak".
+
+    A `POST` response is the same shape plus `applied` / the test's `spoke`, so one
+    normalizer serves all three routes and the card re-renders from whatever came back.
+    """
+    empty = {"ok": False, "available": {k: [] for k in VOICE_KINDS},
+             "selected": {k: "" for k in VOICE_KINDS},
+             "labels": {k: "" for k in VOICE_KINDS},
+             "installed": {k: "" for k in VOICE_KINDS},
+             "chosen": {k: False for k in VOICE_KINDS},
+             "discovering": False, "gateway_error": "", "updated_at": 0,
+             "robots": [], "applied": None, "spoke": "", "reason": "",
+             "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        avail = p.get("available") if isinstance(p.get("available"), dict) else {}
+        options = {}
+        for kind in VOICE_KINDS:
+            raw = avail.get(kind)
+            options[kind] = [normalize_voice_option(e)
+                             for e in (raw if isinstance(raw, (list, tuple)) else [])
+                             if isinstance(e, dict) and e.get("id")]
+        ok = bool(p.get("ok"))
+
+        def _side(field, cast):
+            src = p.get(field) if isinstance(p.get(field), dict) else {}
+            return {k: cast(src.get(k)) for k in VOICE_KINDS}
+
+        applied = p.get("applied") if isinstance(p.get("applied"), dict) else None
+        robots = p.get("robots")
+        return {
+            "ok": ok,
+            "available": options,
+            "selected": _side("selected", lambda v: str(v or "")),
+            "labels": _side("labels", lambda v: str(v or "")),
+            "installed": _side("installed", lambda v: str(v or "")),
+            "chosen": _side("chosen", bool),
+            # True only until the first listing lands; the card says "Discovering…" and
+            # keeps whatever entries it already has rather than blanking.
+            "discovering": bool(p.get("discovering")),
+            # The exception CLASS the supervisor saw, e.g. "APIConnectionError". Present
+            # AND `ok` is normal: the local options still work.
+            "gateway_error": str(p.get("gateway_error") or ""),
+            "updated_at": int(_num(p.get("updated_at")) or 0),
+            "robots": [str(r) for r in robots] if isinstance(robots, (list, tuple)) else [],
+            "applied": applied,
+            "spoke": str(p.get("spoke") or ""),
+            "reason": str(p.get("reason") or ""),
+            "error": None if ok else (p.get("error") or p.get("reason")
+                                      or "no voice settings available"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable voice payload: {e}"}

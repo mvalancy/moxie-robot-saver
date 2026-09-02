@@ -195,3 +195,13 @@ button.linkish.mem-arm{opacity:1;color:#c0392b;font-weight:700}
 .sched-pin{margin-left:6px;color:var(--brand);font-size:12px}
 .sched-why{color:var(--muted);font-size:12px;margin-top:2px}
 .sched-foot{font-size:12px;margin:0 0 8px}
+
+/* --- 🎚️ Voice (Speech + Listening pickers, backlog/voice-picker.md) --- */
+.voicegrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0}
+@media (max-width:560px){.voicegrid{grid-template-columns:1fr}}
+.voicepick{display:flex;flex-direction:column;gap:4px;min-width:0}
+.voicepick>span{color:var(--muted);font-size:12px}
+.voicepick select{width:100%;max-width:100%}
+#voice-note{font-size:12px;margin:2px 0 8px;word-break:break-word}
+.voice-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+#voice-status{font-size:12px;min-height:16px}
