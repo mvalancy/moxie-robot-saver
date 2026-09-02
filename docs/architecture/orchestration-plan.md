@@ -97,6 +97,10 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
 13. **Gate every push on the guards' success lines.** `tail -1` of a guard is not a verdict — capture the
     line and require its ✅ before committing (`check-doc-links` prints a broken-link list above its tail;
     `test_docs.mjs` warns about README orphans). Two red docs pushes on 2026-09-02 were the orchestrator's.
+14. **Promote freely, tag rarely.** dev → main promotion is the end-to-end exercise (the deep gate builds
+    the package, runs compose + HIL, builds the images multi-arch without pushing). A `v*` tag publishes a
+    Release + three GHCR versions — cut one only on the owner's word or at a plan-named milestone, and mark
+    pre-1.0 tags pre-release. Owner rule 2026-09-02; v0.1.0–v0.7.0 relabelled pre-release.
 
 ## The layered session loops (24/7 continuity)
 
@@ -107,7 +111,7 @@ limit, queued fires resume as the limit resets. They are **session-scoped and au
 | Tier | Cadence | Each fire (orchestrator, delegating) |
 |---|---|---|
 | **BUILD** | 30 min | pick the next WS-A/WS-B slice from this plan + the DoD → brief an Opus agent → integrate → CI green → update plan |
-| **INTEGRATION** | 1 h | brief an agent to exercise the whole stack + live infra, chase real e2e gaps, harden the harness → integrate |
+| **INTEGRATION** | 1 h | brief an agent to exercise the whole stack + live infra, chase real e2e gaps, harden the harness → integrate — promote when green; **do not tag** (rule 14) |
 | **AUDIT** | 2 h | DoD scoring, spec conformance, guards/CI, secrets, contradictions, loop self-improvement, release promotion |
 | **RESEARCH** | 3 h | WS-B/WS-C grooming: refresh the OpenMoxie audit vs upstream + forks, rank the next ADOPT/BEYOND items, draft agent briefs |
 
@@ -427,6 +431,7 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
 - **2026-09-02** — **Promoted v0.7.0**: standing PR #32 squash-merged with the deep gate all green (10/10) → main `1e427bc`, tag `v0.7.0` pushed (release workflow green (sdist/wheel + 3 GHCR images)); new standing PR #41; dev reconciled content-free (`3242654`). In this release: vision events in the turn loop (#35), face customization (#36), memory erase/edit/decay (#33), hermetic parity guards (#34), two build-ready briefs (#38), the adaptive explainable schedule (#39), the gateway voice with latched fallback (#40). In flight: telehealth (ADOPT #7), broker-auth P0, integration live-validation of the RC.
 - **2026-09-02** — Gateway **STT verified live** (`stt-whisper` 3.4 s, `graphling-stt` 4.4 s, word-for-word on a 6 s clip); `feat/gateway-stt-live` launched (transcriber behind the seam, `MOXIE_STT=auto|gateway|whisper|off`, latched fallback, live proof, `litellm-stt-setup.md`; compose env forwarding deferred to integration because broker-auth owns the compose files). User rules recorded: local engines stay first-class; and a **console voice picker** (Speech + Listening dropdowns, default `piper-amy`) — brief written at `backlog/voice-picker.md`, queued behind the STT + telehealth slices. In flight: telehealth, broker-auth P0, integration v0.7, gateway STT.
 - **2026-09-02** — Integrated `feat/integration-v07-live` (PR #42 → dev): the v0.7.0 RC validated through the real built backend — `test_schedule_sil_e2e.py` (13: the schedule the robot got == the schedule the parent is shown, bedtime/pin/FTUE/quit/feedback), `test_live_gateway_turn_e2e.py` + `helpers_stack.py` (one real turn on the assembled appliance: gateway brain → gateway voice, 22050 Hz real speech), `test_package_contents.py` (6), shared runtime/test helpers. Fold-ins: live turn e2e in the deep dispatch tier, package-data covers `apps/`+`content/` JSON, scenarios derive a status port. Fast-shaped 989 / 10. Lesson (rule 13): a docs push gates on the guards' ✅ lines, not on their tail — two red doc pushes today were mine.
+- **2026-09-02** — **Owner rule: no per-promotion releases.** Promotions continue as the end-to-end exercise; tags only on the owner's word or a named milestone (playbook rule 14; RELEASING.md "Release cadence"). The seven existing releases (v0.1.0–v0.7.0) were relabelled pre-release; nothing deleted. Also folded: the loop-tier table's INTEGRATION row now says "promote when green; do not tag".
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
