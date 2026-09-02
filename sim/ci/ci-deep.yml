@@ -1,0 +1,68 @@
+# Moxie DEEP CI (main tier + HIL) — INSTALL: copy to .github/workflows/ci-deep.yml
+# (needs a workflow-scoped token to push under .github/workflows/; see RELEASING.md).
+# Runs on PRs INTO main (the promotion gate) + manual dispatch: the full suite, the
+# packaged build, scenarios, and a hardware-in-the-loop stage — a virtual robot
+# end-to-end now; a REAL robot + real gateway/voice via repo secrets + a self-hosted
+# runner later.
+name: CI (deep · main + HIL)
+on:
+  pull_request: { branches: [main] }
+  workflow_dispatch:
+
+jobs:
+  docs:
+    name: Docs & protocol integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: python3 scripts/check-doc-links.py
+      - run: python3 scripts/check-doc-consistency.py
+      - name: Recovered protos compile
+        run: |
+          pip install --quiet protobuf grpcio-tools
+          python3 tools/robot-toolkit/run_tests.py
+
+  package:
+    name: Package builds (moxie-cloud-sdk sdist+wheel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Build the SDK package
+        run: |
+          python -m pip install --quiet build
+          cd mqtt && python -m build --outdir ../dist
+      - uses: actions/upload-artifact@v4
+        with: { name: moxie-cloud-sdk, path: dist/* }
+
+  hil-sim:
+    name: HIL — full end-to-end (virtual robot; real infra when secrets present)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install deps (broker client + brain/test)
+        run: |
+          pip install --quiet "paho-mqtt>=2.0" pytest openai jinja2
+      - name: SIL smoke (state→config→remote-chat→reply)
+        run: bash sim/run_smoke.sh
+      - name: SIL scenarios (scripted conversations)
+        run: bash sim/run_scenarios.sh
+      - name: Cloud SDK unit + integration tests
+        run: python -m pytest sim/tests -q -k "not test_sil and not test_docs" \
+          --ignore=sim/tests/test_live_gateway.py
+      # HIL against real infra: a live end-to-end turn through the runtime + gateway,
+      # gated on repo secrets (never committed). Skips cleanly if unset.
+      - name: Live gateway HIL turn (skips without secrets)
+        env:
+          MOXIE_LLM_API_KEY: ${{ secrets.MOXIE_LLM_API_KEY }}
+          MOXIE_LLM_BASE_URL: ${{ secrets.MOXIE_LLM_BASE_URL }}
+          MOXIE_LLM_MODEL: ${{ secrets.MOXIE_LLM_MODEL }}
+          MOXIE_VOICE_BASE_URL: ${{ secrets.MOXIE_VOICE_BASE_URL }}
+        run: python -m pytest sim/tests/test_live_gateway.py -q
+      # Future: a `real-robot` job on a self-hosted runner wired to physical hardware
+      # + the live gateway/voice, promoted from this virtual HIL stage.

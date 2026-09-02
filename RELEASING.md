@@ -1,59 +1,65 @@
-# 🚀 Branching & releases
+# 🚀 Branching, CI tiers & releases
+
+A three-tier flow: fast feedback on `dev`, deep validation into `main`, versioned packages out.
+
+```
+feat/*  ──PR──▶  dev  ──PR──▶  main  ──tag v X.Y.Z──▶  release (package)
+          fast CI      deep CI + HIL sim          release workflow
+     (unit·docs·SIL)  (full suite · sim-in-the-loop ·
+                       eventually real hardware/servers)
+```
 
 ## Branches
 
-| Branch | Role |
-|---|---|
-| **`main`** | Release-quality. Every commit is CI-green and tag-able. Protected in spirit — changes arrive via PR from `dev`. |
-| **`dev`** | Active development / integration. The autonomous build loops commit here. |
+| Branch | Role | Gate |
+|---|---|---|
+| **`feat/*`** | One feature/slice. Short-lived. | PR → `dev` runs **fast CI**. |
+| **`dev`** | Rolling **release candidate** — integrated, always-green. Autonomous build loops land here. | PR → `main` runs **deep CI**. |
+| **`main`** | Released, tag-able, deploy-quality. | Tag `vX.Y.Z` → release workflow. |
 
-**Flow:** loops build on `dev` → when an increment is stable, a **PR `dev → main`** runs CI (the
-`pull_request` trigger) → merge on green → optionally **tag** `main` to cut a release.
+- **Features / contributors:** branch `feat/<name>` off `dev`, PR into `dev` (fast CI gates it).
+- **Build loops:** commit to `dev` (the integration RC branch); the standing PR **#1 `dev → main`**
+  shows rolling CI. Larger/riskier work still uses a `feat/*` → `dev` PR.
+- **Promotion:** when `dev` is a stable RC, merge PR #1 into `main` (deep CI must pass), then tag.
 
-> Feature work can branch off `dev` (`feat/…`) and PR back into `dev`; `dev → main` is the promotion gate.
+## CI tiers
 
-## Versioning
+| Tier | Workflow | Trigger | Runs |
+|---|---|---|---|
+| **Fast** (dev) | `.github/workflows/ci.yml` | push `dev`, PR → `dev` | docs/protocol guards + SIL smoke + unit/cloud tests (~5 min) |
+| **Deep** (main) | `.github/workflows/ci-deep.yml` | PR → `main`, manual | full suite + **HIL sim** (hardware-in-the-loop: a virtual robot end-to-end, later a real robot + real gateway/voice via repo secrets) |
+| **Release** | `.github/workflows/release.yml` | tag `v*` | build sdist+wheel, verify version==tag, GitHub Release (+ index publish when configured) |
 
-Single source of truth: `mqtt/moxie_sdk/__init__.py` `__version__` (semver). `mqtt/pyproject.toml`
-reads it dynamically. Bump it in the `dev → main` release PR.
+## Version numbering (semver)
 
-## The package
+Single source: `mqtt/moxie_sdk/__init__.py` `__version__`; `pyproject.toml` reads it.
 
-`mqtt/` is an installable package — **`moxie-cloud-sdk`** (the clean-room robot-cloud SDK):
-
-```sh
-cd mqtt && python -m build          # → dist/moxie_cloud_sdk-<version>.{tar.gz,whl}
-pip install "moxie-cloud-sdk[all]"  # extras: llm / stt / content / all
-```
-
-Optional backends are extras so the SDK imports + unit-tests with no heavy deps:
-`llm` (openai), `stt` (faster-whisper + numpy), `content` (jinja2).
+- **`X.Y.Z`** — MAJOR.MINOR.PATCH. Pre-1.0 (`0.Y.Z`): `Y` = features (breaking allowed), `Z` = fixes.
+- **Release candidates** on `dev`: `X.Y.Z-rc.N` (tag `vX.Y.Z-rc.N` for a pre-release).
+- **Release** on `main`: `X.Y.Z` (tag `vX.Y.Z`). The release workflow **fails if `__version__` ≠ the tag**.
+- Bump `__version__` in the `dev → main` promotion PR: `Z` for fixes, `Y` for a milestone (e.g. M-set complete).
 
 ## Cutting a release
 
-1. Open a PR `dev → main`; bump `__version__` in it; let CI go green; merge.
-2. Tag `main`: `git tag v<version> && git push origin v<version>`.
-3. The **release workflow** (`.github/workflows/release.yml`) fires on the tag: builds the sdist+wheel,
-   attaches them to a GitHub Release, and (when configured) publishes to the package index.
+1. `dev` green as an RC → open/refresh PR `dev → main` → **deep CI passes**.
+2. Bump `__version__` (in the PR); merge to `main`.
+3. `git tag vX.Y.Z && git push origin vX.Y.Z` → the release workflow builds + publishes.
+4. Recreate the standing `dev → main` PR (`gh pr create --base main --head dev`).
+
+Build a package locally anytime: `cd mqtt && python -m build` → `dist/moxie_cloud_sdk-<version>.*`.
 
 ## ⚠️ Workflow install (owner, one-time — needs a `workflow`-scoped token)
 
-`.github/workflows/` can't be pushed from the build session (the token lacks `workflow` scope). Two
-install-ready templates live in [`sim/ci/`](sim/ci/):
-
-- **`sim/ci/ci.yml`** — the current CI, **plus** it should trigger on `push: [dev]` so dev work runs CI
-  directly (the installed copy currently only triggers on `main` + PRs). Re-copy to
-  `.github/workflows/ci.yml` after adding the `dev` trigger.
-- **`sim/ci/release.yml`** — the release workflow (build + attach on a `v*` tag). Copy to
-  `.github/workflows/release.yml`.
-
-Install with a `workflow`-scoped token:
+`.github/workflows/` can't be pushed from the build session (token lacks `workflow` scope). Install-ready
+templates live in [`sim/ci/`](sim/ci/): **`ci.yml`** (fast, dev tier), **`ci-deep.yml`** (deep + HIL, main
+tier), **`release.yml`** (tags). Install:
 ```sh
-cp sim/ci/ci.yml sim/ci/release.yml .github/workflows/ && \
-git add .github/workflows/ && git commit -m "ci: dev trigger + release workflow" && \
-git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:TOKEN' | base64 -w0)" push
+cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml .github/workflows/ && \
+git add .github/workflows/ && git commit -m "ci: fast(dev)+deep(main,HIL)+release tiers" && \
+git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:TOKEN' | base64 -w0)" push   # then revoke
 ```
-(then revoke the token). Until installed, releases can still be built locally (`python -m build`).
+HIL against real hardware/servers uses repo **secrets** (gateway key, voice URL, robot host) the deep
+workflow reads — never committed. Until installed, the live `ci.yml` gates PRs to `main` and locals build packages.
 
 ---
 📖 [Repo structure](STRUCTURE.md) · [Implementation plan](docs/architecture/implementation-plan.md)
