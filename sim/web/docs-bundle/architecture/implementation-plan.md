@@ -49,8 +49,9 @@ Following the [build-order spine](overview.md); the parent app
   transcribe (faster-whisper local, or a Deepgram-shaped proxy) → emit the recognized turn.
 - **M4 — AI seam: TTS out for the SIM. 🟡 (seam 2026-09-01)** Server-side Piper → `CloudTTSResponse{audio, marks}` so the
   SIM (and optionally a robot) speaks with a server voice + viseme marks.
-- **M5 — Config & telemetry. 🟡 (config+state 2026-09-01)** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
-  ingest, the `Packet` telemetry envelope, and the LoggingPolicy gate.
+- **M5 — Config & telemetry. 🟢 (2026-09-02)** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
+  ingest, the `Packet` telemetry envelope, and the LoggingPolicy upload-gate — all built + tested. Surfacing the
+  stored state/telemetry in the console is M6.
 - **M6 — Parent console wiring. 🟡 (backend 2026-09-01)** Surface robot state + config editing + insights in `server/`'s web UI.
 - **M7 — One-command stack + docs. 🟡 (assembly 2026-09-01)** `docker compose up` runs broker + supervisor + brain + STT/TTS; the
   SIM and a real robot connect identically; deploy/config guides.
@@ -66,20 +67,22 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 - **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); real zmqSTTRequest protobuf decode is DONE (dep-free field reader in stt.py); only a live faster-whisper test remains (optional dep). TTS out (§3) seam + runtime-wired (synthesize-on-reply → CloudTTSResponse); live voice needs creds + viseme TTSMarks deferred. Input safety/moderation (§2) unbuilt.
 - **config/telemetry:** RobotCloudConfig + RobotStatus ingest + Packet telemetry (build/parse/runtime-ingest) + the LoggingPolicy upload-gate are built (M5 🟢). Remaining: server-side insights UI (M6) surfaces the stored telemetry.
 
-## DoD progress (audited 2026-09-01) — ≈ 45%
+## DoD progress (audited 2026-09-02) — ≈ 52%
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
-| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~50% | brain live-validated 🟢; STT + TTS **seams** wired but not a full live chain (needs voice server + SIM-audio wiring + real zmqSTT protobuf decode) |
+| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~55% | brain live-validated 🟢; STT path complete incl. **real zmqSTT protobuf decode** 🟢; TTS **wired into runtime** (synthesize-on-reply → `CloudTTSResponse` on `/commands/tts`) 🟡. Remaining for a full live chain: a working synthesizer (local Piper, or gateway TTS model once registered) + SIM audio playback |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
-| 3 | Cloud management (console + config/telemetry) | 🟡 ~55% | RobotCloudConfig + RobotStatus + **config-editing (update_config) + status snapshot** built; Packet telemetry + server/ UI wiring next |
+| 3 | Cloud management (console + config/telemetry) | 🟡 ~65% | RobotCloudConfig + RobotStatus + config-editing (`update_config`) + status snapshot + **Packet telemetry (build/parse/ingest) + LoggingPolicy gate** built 🟢. Remaining: `server/` web UI surfaces the stored state/telemetry (M6) |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
-| 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command unverified (M7) |
-| 6 | Green + live-tested | 🟡 | CI green + live LLM turn 🟢; live voice + a full e2e scenario pending |
+| 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command run unverified (M7) |
+| 6 | Green + live-tested | 🟡 ~70% | **three-tier CI installed + green** (fast on dev · deep+HIL on PR-to-main · release on tags); live LLM turn 🟢. Remaining: live voice + a full talk-e2e scenario (skips in CI without creds) |
 
-**Most valuable next slice:** criterion 3 is weakest and fully unblocked → **M5 config/telemetry**
-(RobotCloudConfig round-trip + /state ingest + LoggingPolicy). Criterion 1 (talk-e2e) is gated on the
-voice-server creds for live TTS; the CloudTTSRequest runtime handler can still land with a stub.
+**Most valuable next slice:** a **local `PiperSynthesizer` in the SDK** (Piper-Amy default, offline) —
+this unblocks criterion 1's talk-e2e chain *without* waiting on the gateway TTS model or voice creds,
+and matches the TTS strategy (Piper/Amy primary). Criterion 3's remaining work (server UI, M6) is the
+other fully-unblocked track. The live-voice path stays gated on the gateway TTS model registration
+(handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)).
 
 ## TTS strategy (2026-09-01)
 
