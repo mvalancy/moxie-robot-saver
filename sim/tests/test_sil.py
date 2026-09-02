@@ -324,7 +324,9 @@ def test_cloud_tts_chunks_play_in_order_then_stop(page, server):
     # tenths of a second of audio can drain entirely inside one polling gap, and then
     # "the chunks queued" is unprovable even though they did. audio.js now remembers the
     # shape of each playback — chunk order and the deepest the queue got — so the same
-    # three facts are asserted once the utterance is safely over.
+    # three facts are asserted once the utterance is safely over. The ORDER itself is no
+    # longer a matter of timing either: audio.js holds a chunk until its turn comes
+    # (see the chunk-ordering note there, and the jitter test below).
     done = page.wait_for_function(_PLAYED, arg={"event": "evt-chunks", "want": 3},
                                   timeout=20000).json_value()
     stats = done["stats"]
@@ -367,6 +369,48 @@ def test_cloud_tts_chunks_play_in_order_then_stop(page, server):
     assert fast["chunks_played"] == 3 and fast["order"] == [0, 1, 2], fast
     assert fast["max_pending"] >= 1, f"the queue depth must survive a fast drain ({fast})"
 
+    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
+
+
+def test_cloud_tts_chunks_stay_in_order_across_a_silent_gap(page, server):
+    """The out-of-order arrival a sorted queue cannot fix — the real regression.
+
+    Sorting the queue orders only what is WAITING in it. Here chunk 0 is over and the
+    queue is EMPTY before chunk 2 arrives, so there is nothing to sort it against: the
+    old player started chunk 2 (order [0,2,1]) and the child heard the end of the
+    sentence before its middle. It was pure timing — the identical code passed on a
+    slower box the day before (CI 33632125915 vs 33629395950) — so the fix makes the
+    order structural: a chunk waits for its turn however idle the player is.
+    """
+    _sim_ready(page, server)
+    # 50 ms of audio: chunk 0 is finished long before the next round trip lands.
+    page.evaluate(_INJECT_TTS, {"frames": 1102, "rate": 22050, "eventId": "evt-jitter",
+                               "chunk": 0, "marks": []})
+    page.wait_for_function(
+        """() => { const a = window.moxieAudio;
+                   return !a.isSpeaking() && a.lastPlaybackStats().chunks_played >= 1; }""",
+        timeout=15000)
+
+    page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-jitter",
+                               "chunk": 2, "marks": []})
+    page.wait_for_timeout(150)
+    held = page.evaluate(
+        """() => ({speaking: window.moxieAudio.isSpeaking(),
+                   pending: window.moxieAudio.ttsPending(),
+                   stats: window.moxieAudio.lastPlaybackStats()})""")
+    assert held["speaking"] is False, f"chunk 2 must not play out of turn ({held})"
+    assert held["pending"] == 1, f"chunk 2 must be held, not dropped ({held})"
+    assert held["stats"]["order"] == [0], f"only chunk 0 may have played so far ({held})"
+
+    page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-jitter",
+                               "chunk": 1, "marks": []})
+    done = page.wait_for_function(_PLAYED, arg={"event": "evt-jitter", "want": 3},
+                                  timeout=20000).json_value()
+    stats = done["stats"]
+    assert stats["chunks_played"] == 3, f"all three chunks must play ({stats})"
+    assert stats["order"] == [0, 1, 2], f"chunks must play in chunk_num order ({stats})"
+    assert stats["max_pending"] >= 1, f"chunk 2 must have waited behind chunk 1 ({stats})"
+    assert done["pending"] == 0, done
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
 
 
