@@ -330,5 +330,13 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   Until it lands, dev's fast tier is intermittently red for that one assertion. In flight:
   `feat/device-allowlist`, `feat/published-images`, `fix/cloud-tts-chunk-order`.
 
+- **2026-09-02** — Integrated `feat/device-allowlist` (PR #27 → dev): the pairing gate is **closed by default** —
+  an unpermitted robot is pending, gets an un-paired config with no `child_pii`, and no brain; permitting it
+  (console 🔐 card, one click; auto-permit on the console pairing path) re-pushes the full config at once.
+  Gate on the transport boundary; `"unpairing"` recorded as an assumption behind one constant. +34 tests
+  (→765 full / 739 fast-shaped); smoke, scenarios, compose smoke green; two-robot live proof. Honest gap:
+  service refusal, not authentication — broker ACL/JWT still deferred. In flight: `feat/published-images`,
+  `fix/cloud-tts-chunk-order`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
