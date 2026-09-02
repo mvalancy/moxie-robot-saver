@@ -263,14 +263,15 @@ webhook apps stopped speaking flat, and `LLMApp` stopped being a second, diverge
 p95 **0.23 ms** per line against a 1 ms budget, no model call, no new dependency; eight byte-exact goldens
 reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` is the one-variable rollback.
 
-**Most valuable next slice:** with safety, the automarkup floor, and the config contract (`alarms` /
-`schedule_preferences` + fleet defaults, PR #24) all landed, the open items are: the **memory floor**
-(`persist_data` + `summarize`, *in flight*); a **device allowlist / pairing gate** (audit ADOPT quick win —
-today anything that reaches the broker is pushed `pairing_status:"paired"`; a home appliance needs a permit
-list + a console toggle, S); then the audit's remaining ADOPT items (content packs export/import, puppet /
-telehealth, face customization, published images) and the BEYOND #1 behavior planner (spec in
-[`backlog/expressiveness.md`](backlog/expressiveness.md) §2). The physical-robot gap stays the honest
-ceiling on criteria 1 and 6.
+**Most valuable next slice:** the memory floor (`persist_data` + `summarize`, PR #25) and the config
+contract (PR #24) are in; in flight are a **device allowlist / pairing gate** (a real exposure: today any
+device reaching the broker is pushed `pairing_status:"paired"` with the child's PII) and **published
+multi-arch images** (ADOPT #10's remainder). Next after those, in value order: a **parent memory browser**
+in the console (read/erase per item — the endpoints exist, the UI doesn't; BEYOND #4), **vision events in
+the turn loop** (BEYOND #9 — the robot already emits `eb-found-face`/`eb-lost-target`; nobody listens), the
+remaining ADOPT items (content packs export/import, puppet / telehealth, face customization), and the
+BEYOND #1 behavior planner (spec in [`backlog/expressiveness.md`](backlog/expressiveness.md) §2). The
+physical-robot gap stays the honest ceiling on criteria 1 and 6.
 
 ## TTS strategy (2026-09-01)
 
