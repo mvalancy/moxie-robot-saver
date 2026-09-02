@@ -72,6 +72,10 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
    did not reliably remove remote `feat/*` branches; delete any whose PR is MERGED.
 7. **Honest gaps are the backlog.** Every agent report's "gaps" paragraph goes into the plan's status
    log verbatim-ish; the RESEARCH/BUILD loops draw the next slices from there, not from guesses.
+8. **Run the suite creds-free unless you mean to go live.** Live tests now find `mqtt/.env` from any
+   worktree, so a plain full-suite run spends gateway calls. Agents run the hermetic suite as
+   `MOXIE_LLM_API_KEY= .venv/bin/python -m pytest …` and make live calls only in an explicit, budgeted step
+   (state the cap in the brief; ≤ 6 is the default).
 
 ## The layered session loops (24/7 continuity)
 
@@ -183,6 +187,14 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   **4/6 🟢, criteria 1 and 6 at ~90%** (remaining: a physical Moxie in the loop; creds-gated live tests in CI).
   Eight delegated slices landed today (PRs #3–#9, #11, #12). Next slice delegated: **background inference +
   filler** for brain latency (`feat/brain-latency-filler`).
+
+- **2026-09-02** — Integrated `feat/brain-latency-filler` (PR #14 → dev): a slow brain is no longer silence —
+  past `MOXIE_BRAIN_BUDGET_S` (default 6 s) the runtime speaks a kid-appropriate filler as chunk 0
+  (`REPLY_PENDING`), keeps inferring, and delivers the real line as chunk 1 (`is_completed=true`); stale-turn
+  guard; both chunks synthesized. Live: filler at 3.0 s, reply at 17.9 s (was 17.9 s of silence). Also emoji-free
+  TTS text and `.env` discovery from worktrees. +18 tests (→233). Recorded assumption: the physical robot's
+  handling of chunk 0 is inferred from the fields, proven only on the SIM. Gaps → next: the filler fires once
+  (a 45 s turn goes quiet at ~26 s) → re-arm + token streaming; playbook rule 8 added (creds-free suite runs).
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
