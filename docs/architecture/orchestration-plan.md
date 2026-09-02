@@ -88,5 +88,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   `_on_activity` answers `schedule`/`mentor_behaviors` with the wrong wire shape (no `request_id` echo,
   generic `result` key) — delegated immediately as `feat/activity-wire-shape` (in flight).
 
+- **2026-09-02** — Integrated `feat/activity-wire-shape` (PR #5 → dev): the `query_result` envelope is now
+  spec-conformant (`request_id` echoed; payload keyed `schedule` / `mentor_behaviors` per the recovered
+  `CloudQueryResponse` proto; OpenMoxie corroborates). +13 tests (118→131). Content is still empty — the
+  audit's ADOPT #1 (schedule serving + generative day plan) and #2 (`mentor_behaviors` ingest/serve) are
+  the next WS-B slices; they are what turns "connects" into "works" on a real robot. In flight:
+  `feat/llm-action-tags` (ADOPT #4).
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

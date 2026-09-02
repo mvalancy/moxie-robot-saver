@@ -404,3 +404,58 @@ def test_status_server_serves_status_and_telemetry():
     except urllib.error.HTTPError as e:
         assert e.code == 404
         assert json.loads(e.read().decode())["ok"] is False
+
+
+# ---- activity-log queries (client-service-activity-log → commands/query_result) ----
+
+def _drive_activity(payload, device_id="d_test"):
+    """Push one client-service-activity-log event through the REAL event router."""
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    rt.robots[device_id] = RobotContext(device_id=device_id, child=rt.child)
+    rt._on_event(device_id, "client-service-activity-log", json.dumps(payload))
+    return rt.client.published
+
+
+def test_schedule_query_echoes_request_id_and_keys_schedule(device_id="d_test"):
+    pub = _drive_activity({"subtopic": "query", "query": "schedule",
+                           "request_id": "req-abc"}, device_id)
+    assert len(pub) == 1
+    topic, msg = pub[0]
+    assert topic == f"/devices/{device_id}/commands/query_result"
+    assert msg["command"] == "query_result"
+    assert msg["query"] == "schedule"
+    assert msg["request_id"] == "req-abc"          # the robot correlates on this
+    assert msg["schedule"] == {}                   # honestly empty, correctly keyed
+    assert "result" not in msg                     # the old generic key is gone
+
+
+def test_mentor_behaviors_query_echoes_request_id_and_keys_the_list(device_id="d_test"):
+    pub = _drive_activity({"subtopic": "query", "query": "mentor_behaviors",
+                           "request_id": "req-mbh-1"}, device_id)
+    topic, msg = pub[0]
+    assert topic == f"/devices/{device_id}/commands/query_result"
+    assert msg["query"] == "mentor_behaviors"
+    assert msg["request_id"] == "req-mbh-1"
+    assert msg["mentor_behaviors"] == []
+    assert "result" not in msg
+
+
+def test_license_query_uses_license_values():
+    _, msg = _drive_activity({"subtopic": "query", "query": "license",
+                              "request_id": "req-lic"})[0]
+    assert msg["request_id"] == "req-lic"
+    assert msg["license_values"] == []
+
+
+def test_query_without_subtopic_is_still_answered():
+    # looser senders omit `subtopic`; a bare `query` must not go unanswered
+    _, msg = _drive_activity({"query": "schedule", "request_id": "req-bare"})[0]
+    assert msg["query"] == "schedule" and msg["request_id"] == "req-bare"
+
+
+def test_non_query_activity_subtopics_publish_nothing():
+    # a mentor_behavior *report* and telehealth state are not query_result traffic
+    assert _drive_activity({"mentor_behavior": {"module_id": "DM"}}) == []
+    assert _drive_activity({"subtopic": "telehealth",
+                            "message": {"state": "idle"}}) == []

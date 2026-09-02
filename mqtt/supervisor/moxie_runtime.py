@@ -18,7 +18,7 @@ import json, re, sys, os, threading, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from moxie_sdk.types import Turn, Reply, RobotContext, ChildProfile, Action, ResultCode  # noqa
-from moxie_sdk.wire import build_chat_response  # pure RemoteChat response encoder
+from moxie_sdk.wire import build_chat_response, build_activity_response  # pure encoders
 from markup import make_markup  # simple passthrough markup (automarkup pluggable)
 
 # paho is imported lazily in _build_client() so the runtime + turn pipeline can be
@@ -437,12 +437,19 @@ class MoxieRuntime:
             return
         query = data.get("query")
         subtopic = data.get("subtopic")
-        # answer schedule / mentor_behaviors / license queries minimally
-        if query in ("schedule", "mentor_behaviors", "license"):
-            result = {"schedule": {}, "mentor_behaviors": [], "license": {}}.get(query, {})
+        # `client-service-activity-log` is multiplexed by `subtopic`; the pull queries
+        # ride subtopic="query" (mqtt-and-conversation.md:274). Older/looser senders omit
+        # it, so a bare `query` still counts.
+        if subtopic in (None, "", "query") and query in ("schedule", "mentor_behaviors",
+                                                         "license"):
+            # Answer as a CloudQueryResponse: echo `request_id` and key the payload by its
+            # own proto field (schedule / mentor_behaviors / license_values) — see
+            # build_activity_response. Values are still empty (no schedule store yet);
+            # the *shape* is now the one the robot can correlate and parse.
+            resp = build_activity_response(query, request_id=data.get("request_id"))
             self.client.publish(f"/devices/{device_id}/commands/query_result",
-                                json.dumps({"command": "query_result", "query": query,
-                                            "result": result}))
+                                json.dumps(resp))
+            return resp
 
     # ---- STT extension point ----
     # ---- STT (AI seam §1) ----
