@@ -1,0 +1,209 @@
+"""
+Boot the REAL stack — broker + `mqtt/run.py` supervisor — from a test, on free ports.
+
+`sim/run_smoke.sh` already does this for the shell; a pytest that wants to prove
+something about the *assembled appliance* (which voice `config.build_synthesizer()`
+actually picked, what the supervisor logged at startup, what a real robot heard back)
+had no way to say so without re-implementing the boot each time.
+
+Everything here picks its own free port (never 1883/8930 — a lab machine has stale
+supervisors and sibling agents on those), keeps its data in a caller-supplied scratch
+dir, and tears down only the processes it started. Nothing kills a process it did not
+create; a leftover broker on the default port is stepped around, never over.
+
+Used by `test_live_gateway_turn_e2e.py`. It is deliberately NOT imported by the hermetic
+tier: booting a broker is seconds, not milliseconds, and hermetic tests get the
+in-process loopback in `helpers_runtime.loopback()` instead.
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+BROKER_CONF = os.path.join(REPO, "sim", "broker", "ci-mosquitto.conf")
+
+
+def free_port() -> int:
+    import socket
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def broker_available() -> bool:
+    """A mosquitto we can actually start: the binary, or docker with an image we can run."""
+    if shutil.which("mosquitto"):
+        return True
+    if not shutil.which("docker"):
+        return False
+    return subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+
+
+class Broker:
+    """An anonymous mosquitto on a free port, exactly the one CI/SIL uses.
+
+    Binary first (that is what CI installs); docker `eclipse-mosquitto:2` otherwise. The
+    docker path mounts the conf UNCHANGED and publishes `host:free → container:1883` —
+    rewriting the listener inside the container while mapping to 1883 is the trap
+    `run_smoke.sh` avoids by mounting the original file, and so do we.
+    """
+
+    def __init__(self, log_dir: str):
+        self.port = free_port()
+        self.log = os.path.join(log_dir, "broker.log")
+        self._proc = None
+        self._cid = ""
+
+    def start(self, timeout: float = 15.0) -> "Broker":
+        if shutil.which("mosquitto"):
+            conf = os.path.join(os.path.dirname(self.log), "mosquitto.conf")
+            with open(BROKER_CONF) as fh:
+                text = fh.read()
+            # the binary listens directly on the host port; the websocket listener is
+            # dropped so two concurrent runs cannot collide on 9001
+            text = text.replace("listener 1883", f"listener {self.port}")
+            text = text.split("# WebSocket listener")[0]
+            with open(conf, "w") as fh:
+                fh.write(text)
+            self._proc = subprocess.Popen(["mosquitto", "-c", conf],
+                                          stdout=open(self.log, "wb"),
+                                          stderr=subprocess.STDOUT)
+        else:
+            out = subprocess.run(
+                ["docker", "run", "-d", "-p", f"127.0.0.1:{self.port}:1883",
+                 "-v", f"{BROKER_CONF}:/mosquitto/config/mosquitto.conf:ro",
+                 "eclipse-mosquitto:2"], capture_output=True, text=True)
+            if out.returncode:
+                raise RuntimeError(f"docker broker failed: {out.stderr.strip()}")
+            self._cid = out.stdout.strip()
+        self.wait_ready(timeout)
+        return self
+
+    def wait_ready(self, timeout: float = 15.0):
+        import socket
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                socket.create_connection(("127.0.0.1", self.port), 1.0).close()
+                return
+            except OSError:
+                time.sleep(0.2)
+        raise RuntimeError(f"broker never listened on :{self.port}")
+
+    def stop(self):
+        if self._proc:
+            self._proc.terminate()
+            try:
+                self._proc.wait(5)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+            self._proc = None
+        if self._cid:
+            subprocess.run(["docker", "rm", "-f", self._cid], capture_output=True)
+            self._cid = ""
+
+
+class Supervisor:
+    """`mqtt/run.py` in a subprocess — the shipped entry point, not an in-test assembly.
+
+    That matters for anything asserted about `config.build_app()` /
+    `config.build_synthesizer()`: those precedence rules are only really exercised when
+    the process reads its own environment, which is what an appliance does.
+    """
+
+    def __init__(self, log_dir: str, *, broker_port: int, data_dir: str, env=None):
+        self.status_port = free_port()
+        self.log = os.path.join(log_dir, "supervisor.log")
+        self.env = dict(os.environ)
+        self.env.update(
+            PYTHONUNBUFFERED="1",                   # or the log is block-buffered + empty
+            MOXIE_MQTT_HOST="127.0.0.1", MOXIE_MQTT_PORT=str(broker_port),
+            MOXIE_STATUS_PORT=str(self.status_port),
+            MOXIE_ALLOW_UNVERIFIED_BOTS="1",        # throwaway d_<uuid> per run, as in run_smoke.sh
+            MOXIE_DATA_DIR=data_dir,
+            MOXIE_STT="off",                        # nothing here speaks TO the robot
+        )
+        self.env.update(env or {})
+        self._proc = None
+
+    def start(self, timeout: float = 60.0) -> "Supervisor":
+        self._proc = subprocess.Popen([sys.executable, os.path.join(REPO, "mqtt", "run.py")],
+                                      cwd=REPO, env=self.env,
+                                      stdout=open(self.log, "wb"),
+                                      stderr=subprocess.STDOUT)
+        self.wait_for("[runtime] broker connected", timeout)
+        return self
+
+    def text(self) -> str:
+        try:
+            with open(self.log) as fh:
+                return fh.read()
+        except OSError:
+            return ""
+
+    def wait_for(self, needle: str, timeout: float = 30.0) -> str:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            body = self.text()
+            if needle in body:
+                return body
+            if self._proc and self._proc.poll() is not None:
+                raise RuntimeError(f"supervisor exited rc={self._proc.returncode}\n{body}")
+            time.sleep(0.2)
+        raise RuntimeError(f"supervisor never logged {needle!r}\n{self.text()}")
+
+    def line_with(self, needle: str) -> str:
+        for line in self.text().splitlines():
+            if needle in line:
+                return line
+        return ""
+
+    def stop(self):
+        if self._proc:
+            self._proc.terminate()
+            try:
+                self._proc.wait(5)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+            self._proc = None
+
+
+class Stack:
+    """Broker + supervisor together, as a context manager."""
+
+    def __init__(self, log_dir: str, *, env=None, data_dir: str | None = None):
+        self.log_dir = str(log_dir)
+        os.makedirs(self.log_dir, exist_ok=True)
+        self.data_dir = data_dir or os.path.join(self.log_dir, "data")
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.env = env or {}
+        self.broker = None
+        self.supervisor = None
+
+    def __enter__(self) -> "Stack":
+        self.broker = Broker(self.log_dir).start()
+        try:
+            self.supervisor = Supervisor(self.log_dir, broker_port=self.broker.port,
+                                         data_dir=self.data_dir, env=self.env).start()
+        except Exception:
+            self.broker.stop()
+            raise
+        return self
+
+    def __exit__(self, *exc):
+        if self.supervisor:
+            self.supervisor.stop()
+        if self.broker:
+            self.broker.stop()
+        return False
+
+    @property
+    def port(self) -> int:
+        return self.broker.port

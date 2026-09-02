@@ -104,7 +104,8 @@ jobs:
           python -m pytest sim/tests/test_live_gateway.py \
                            sim/tests/test_live_action_tags.py \
                            sim/tests/test_live_content_e2e.py \
-                           sim/tests/test_live_gateway_tts.py -q -ra -s | tee live-gateway.log
+                           sim/tests/test_live_gateway_tts.py \
+                           sim/tests/test_live_gateway_turn_e2e.py -q -ra -s | tee live-gateway.log
           {
             echo "### Live gateway tier (creds-only)"
             echo ""
