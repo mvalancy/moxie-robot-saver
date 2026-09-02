@@ -178,5 +178,11 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   (2) Piper reads emoji aloud → `strip_markup` should drop them (S); (3) live tests read `mqtt/.env` from their
   own tree → skip in worktrees (harness S). No agents in flight.
 
+- **2026-09-02** — **Released v0.3.0** (dev → main squash `3cfb7d4`, tag `v0.3.0`, release tier green, wheel +
+  sdist published). Standing PR recreated as #13; dev reconciled (zero-content merge). DoD rescored honestly:
+  **4/6 🟢, criteria 1 and 6 at ~90%** (remaining: a physical Moxie in the loop; creds-gated live tests in CI).
+  Eight delegated slices landed today (PRs #3–#9, #11, #12). Next slice delegated: **background inference +
+  filler** for brain latency (`feat/brain-latency-filler`).
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
