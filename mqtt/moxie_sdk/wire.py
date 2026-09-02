@@ -86,3 +86,37 @@ def build_activity_response(query, payload=None, request_id=None, *,
     if response_code is not None:
         resp["response_code"] = response_code
     return resp
+
+
+# `embodied.robotbrain.MentorBehavior` fields 1-7 — one record of "what the child did"
+# (docs/reverse-engineering/protocol/recovered-proto/embodied/robotbrain/
+# MentorBehavior.proto:26-36). `action` is a MentorAction (UNKNOWN/QUIT/REFUSED/COMPLETED/
+# REQUESTED/PRESENTED/SCHEDULED/SUGGESTED) and `ended_reason` an EndedReason; the docs give
+# the enums but not their JSON spelling, so we keep whatever the robot sent verbatim.
+# Envelope fields 100 (`software_version`) / 101 (`module_name`) are per-report metadata,
+# not history, and are dropped — as OpenMoxie's field-proven `MentorBehavior` model does.
+MENTOR_BEHAVIOR_FIELDS = ("module_id", "content_id", "content_day", "timestamp",
+                          "action", "instance_id", "ended_reason")
+
+
+def parse_mentor_behavior(report):
+    """Extract one MentorBehavior record from a robot's activity-log report.
+
+    The robot reports a completed/abandoned activity on
+    `/devices/{id}/events/client-service-activity-log` — the same topic as the pull
+    queries, multiplexed by content rather than `subtopic`
+    (docs/reverse-engineering/protocol/cloud-protocol.md:172, "…or a `mentor_behavior`
+    report"). The carrier is an `embodied.logging.ActivityUpdate`, whose field 14 *is*
+    `mentor_behavior` (Cloud.proto:241) — so the record arrives under that key.
+
+    Accepts either the whole envelope (`{"mentor_behavior": {...}, "timestamp": …}`) or a
+    bare record. Returns the record reduced to `MENTOR_BEHAVIOR_FIELDS`, or None if there
+    is no usable record (no `module_id` → nothing a schedule could ever act on).
+    """
+    if isinstance(report, dict) and isinstance(report.get("mentor_behavior"), dict):
+        report = report["mentor_behavior"]
+    if not isinstance(report, dict):
+        return None
+    rec = {k: report[k] for k in MENTOR_BEHAVIOR_FIELDS
+           if k in report and report[k] not in (None, "")}
+    return rec if rec.get("module_id") else None
