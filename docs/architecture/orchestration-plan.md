@@ -316,5 +316,11 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   no decay/per-item edit; summarization holds a pool thread. In flight: `feat/device-allowlist`,
   `fix/cloud-tts-queue-stats`.
 
+- **2026-09-02** — Integrated `fix/cloud-tts-queue-stats` (PR #26 → dev): the chunked cloud-TTS test asserts
+  recorded playback stats (`lastPlaybackStats()`: chunks played, order, max queue depth — seeded at the
+  speaking edge) after completion instead of sampling the queue live; a synchronous fast-drain case makes the
+  assertion structural. Third and last member of this flake family; playbook rule 11 governs. In flight:
+  `feat/device-allowlist`; delegating `feat/published-images` (ADOPT #10 remainder).
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
