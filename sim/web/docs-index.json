@@ -1,5 +1,5 @@
 {
- "generated": "docs-890744c43f91",
+ "generated": "docs-bd9ff57d208a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 2975,
+   "bytes": 3169,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -107,6 +107,21 @@
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/orchestration-plan.md",
+   "title": "Orchestration plan — delivering the top-level Moxie outcomes",
+   "section": "architecture",
+   "bytes": 6408,
+   "mermaid": 0,
+   "headings": [
+    "The three top-level outcomes",
+    "How work happens",
+    "Workstreams (the backlog agents draw from)",
+    "The layered session loops (24/7 continuity)",
+    "Status log (append-only, absolute dates)"
    ],
    "kind": "md"
   },
