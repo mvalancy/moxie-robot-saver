@@ -1,0 +1,38 @@
+# Moxie release workflow — INSTALL: copy to .github/workflows/release.yml
+# (needs a workflow-scoped token to push under .github/workflows/; see RELEASING.md).
+# Fires on a v* tag on main: builds the moxie-cloud-sdk sdist+wheel and attaches them
+# to a GitHub Release.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write        # create the GitHub Release + upload assets
+
+jobs:
+  build-and-release:
+    name: Build + publish moxie-cloud-sdk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --quiet build
+          cd mqtt && python -m build --outdir ../dist
+      - name: Verify version matches the tag
+        run: |
+          PKG=$(python -c "import sys; sys.path.insert(0,'mqtt'); import moxie_sdk; print(moxie_sdk.__version__)")
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package=$PKG tag=$TAG"
+          test "$PKG" = "$TAG" || { echo "::error::__version__ ($PKG) != tag ($TAG)"; exit 1; }
+      - name: Create GitHub Release with the built artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+      # To publish to PyPI, add a trusted-publisher step here:
+      #   - uses: pypa/gh-action-pypi-publish@release/v1
