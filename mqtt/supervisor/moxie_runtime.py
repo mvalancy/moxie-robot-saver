@@ -114,6 +114,7 @@ class MoxieRuntime:
                 "wifi_ssid": st.get("wifi_ssid"), "mode": st.get("mode"),
                 "ota_reboot_required": st.get("ota_reboot_required"),
                 "config_overrides": self._config_overrides.get(r.device_id, {}),
+                "telemetry_count": len(r.extra.get("telemetry", [])),
             })
         return {"ok": True, "app": self.app.name,
                 "uptime_s": int(time.time() - self.started_at),
@@ -245,6 +246,23 @@ class MoxieRuntime:
         print(f"[runtime] → pushed config to {device_id} (pairing_status=paired)")
         return cfg
 
+    # ---- telemetry ingest (parent-console insights) ----
+    def ingest_telemetry(self, device_id, payload):
+        """Parse an incoming telemetry Packet and store it per-device for insights.
+        Returns the parsed packet (or None on parse failure)."""
+        try:
+            from moxie_sdk.telemetry import parse_packet
+            pkt = parse_packet(payload)
+        except Exception:
+            return None
+        robot = self.robots.get(device_id)
+        if robot is not None:
+            buf = robot.extra.setdefault("telemetry", [])
+            buf.append(pkt)
+            del buf[:-50]                       # keep the last 50 events
+        self._note("telemetry", f"📈 {pkt.get('event_name', 'event')}")
+        return pkt
+
     def update_config(self, device_id, **overrides):
         """Parent-console config edit: merge overrides (audio_volume, screen_brightness,
         timezone_id, logging_policy, weekday_bedtime, wake toggles, …) into this device's
@@ -262,6 +280,8 @@ class MoxieRuntime:
             return self.handle_zmq(device_id, payload)
         if name == "client-service-activity-log":
             return self._on_activity(device_id, payload)
+        if name in ("telemetry", "analytics") or name.startswith("packet"):
+            return self.ingest_telemetry(device_id, payload)
         # everything else → surface to the app as an event (vision, module lifecycle…)
         try:
             data = json.loads(payload)

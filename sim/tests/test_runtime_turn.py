@@ -270,3 +270,19 @@ def test_no_synthesizer_no_tts_published():
                        json.dumps({"command": "prompt", "event_id": "e", "speech": "hi"}))
     rt._pool.shutdown(wait=True)
     assert not [t for (t, p) in rt.client.published if t.endswith("/commands/tts")]
+
+
+def test_telemetry_ingest_stores_and_counts():
+    """M5 telemetry integration: an incoming Packet is stored per-device + counted in
+    the console status snapshot."""
+    from moxie_sdk.telemetry import build_packet
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    did = "d_tel"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    pkt = build_packet("wake", b"x", moxie_id=did)
+    rt._on_event(did, "telemetry", json.dumps(pkt))
+    rt._on_event(did, "telemetry", json.dumps(build_packet("said", "hi", moxie_id=did)))
+    assert len(rt.robots[did].extra["telemetry"]) == 2
+    snap = [r for r in rt.status_snapshot()["robots"] if r["device_id"] == did][0]
+    assert snap["telemetry_count"] == 2

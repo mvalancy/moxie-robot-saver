@@ -31,7 +31,7 @@ Ours is built to the full recovered protocol with clean seams:
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟡 seam + wired into runtime (feed_stt → publishes zmqSTTResponse; JSON-frame bridge e2e-tested); real zmqSTTRequest protobuf decode + live whisper remain | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟡 seam + **wired into runtime** (set_synthesizer → synthesize-on-reply → CloudTTSResponse on /commands/tts); live voice needs creds | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
-| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟡 spec RobotCloudConfig builder (bedtime/wake/volume/timezone/child_pii/LoggingPolicy) + RobotStatus /state ingest; Packet telemetry upload next | `mqtt/moxie_sdk/cloud_config.py` |
+| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig + RobotStatus ingest + **Packet telemetry (build/parse/ingest) + LoggingPolicy upload-gate** | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 
 ## Build order (each milestone = a shippable, CI-green slice)
@@ -64,7 +64,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   Arbitrary module `code`-string execution is deliberately deferred (sandboxing); `volley.execution_actions`
   (e.g. `eb_timer_request`) are captured but **not yet plumbed** into `RemoteChatAction` on the wire.
 - **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); the remaining wire step is decoding the real **zmqSTTRequest protobuf** off events/zmq (needs the compiled proto) + a live faster-whisper test. TTS out (§3) seam + runtime-wired (synthesize-on-reply → CloudTTSResponse); live voice needs creds + viseme TTSMarks deferred. Input safety/moderation (§2) unbuilt.
-- **config/telemetry:** spec `RobotCloudConfig` builder + `RobotStatus` /state ingest + `LoggingPolicy` config are built (M5); the **`Packet` telemetry upload** envelope + the LoggingPolicy *upload-gate* (data actually leaving the device) are not yet built.
+- **config/telemetry:** RobotCloudConfig + RobotStatus ingest + Packet telemetry (build/parse/runtime-ingest) + the LoggingPolicy upload-gate are built (M5 🟢). Remaining: server-side insights UI (M6) surfaces the stored telemetry.
 
 ## DoD progress (audited 2026-09-01) — ≈ 45%
 
