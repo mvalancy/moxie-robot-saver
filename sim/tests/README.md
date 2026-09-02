@@ -86,6 +86,26 @@ browser at all and carry the hermetic suite CI actually runs.
   tests really passed — only the live-brain one may legitimately skip, when the gateway
   degrades to its canned fallback.
 
+## Two rules that keep this suite hermetic and green
+
+Both were learned from a red `dev` push (CI run 33624718428), and both are properties of
+the *code under test*, not of the assertions:
+
+- **Never assert on a live animation; assert on what the page recorded.** The mouth is
+  driven by the audio envelope for the ~1 s an utterance lasts, so a test that samples
+  `getMouthOpen()` has to catch it mid-open and loses that race on a loaded runner.
+  `audio.js` therefore remembers the loudest frame of each cloud-TTS utterance and keeps
+  it after playback ends — `moxieAudio.lastMouthPeak()` — so the assertion happens once
+  the utterance is *over*. It is 0 when no PCM rendered and ~1.0 when it did, so it still
+  fails loudly if the Web Audio graph breaks. Same idea as reading the whole speaking
+  state from one atomic `wait_for_function` snapshot instead of several round-trips.
+
+- **A test that drives a brain with a fake must not need the real SDK.** `LLMApp` (like
+  `OpenAIVoiceSynthesizer`) takes the OpenAI-compatible `client=` seam and only imports
+  `openai` when it has to build one itself, so the tag/streaming tests construct it with
+  a fake and run on a bare interpreter. Reserve `pytest.importorskip("openai")` for tests
+  that genuinely talk to a gateway (`test_live_*.py`).
+
 ## Run
 
 

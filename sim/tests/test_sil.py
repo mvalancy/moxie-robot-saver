@@ -254,16 +254,14 @@ def test_cloud_tts_plays_and_animates_the_mouth(page, server):
     # from ONE atomic snapshot taken while the utterance is live.
     live = page.wait_for_function(
         """() => {
-             const a = window.moxieAudio, m = window.moxie;
+             const a = window.moxieAudio;
              if (!a || !a.isSpeaking()) return null;
              const info = a.speakingInfo();
              if (!info) return null;
-             const open = m.getMouthOpen();               // the face visibly speaks
-             if (!(open > 0.05)) return null;
              const st = document.getElementById("tts-status");
              const status = st ? (st.textContent || "") : "";
              if (!status.includes("speaking")) return null;
-             return {speaking: a.isSpeaking(), status: status, open: open,
+             return {speaking: a.isSpeaking(), status: status,
                      sampleRate: info.sampleRate, channels: info.channels,
                      duration: info.duration,
                      body: document.body.classList.contains("tts-speaking")};
@@ -272,11 +270,15 @@ def test_cloud_tts_plays_and_animates_the_mouth(page, server):
     assert live["speaking"] is True, live
     assert live["sampleRate"] == 22050 and live["channels"] == 1, live
     assert abs(live["duration"] - 1.2) < 0.01, live
-    assert live["open"] > 0.05, live
     assert "speaking" in live["status"], live
     assert live["body"] is True, live
     # ...and everything clears when the buffer ends
     page.wait_for_function("() => window.moxieAudio.isSpeaking() === false", timeout=15000)
+    # The face visibly spoke. Asserted on the peak the PAGE recorded across the whole
+    # utterance, not on a live sample: a mouth that is open for ~1.2 s is not reliably
+    # caught mid-open by an observer sharing a loaded CI box with the audio thread.
+    peak = page.evaluate("() => window.moxieAudio.lastMouthPeak()")
+    assert peak > 0.05, f"the mouth never opened while speaking (peak {peak})"
     page.wait_for_function(
         """() => {
              const st = document.getElementById("tts-status");
@@ -294,13 +296,24 @@ def test_cloud_tts_chunks_play_in_order_then_stop(page, server):
     for chunk in (0, 2, 1):
         page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-chunks",
                                     "chunk": chunk, "marks": []})
-    page.wait_for_function("() => window.moxieAudio.isSpeaking()", timeout=5000)
-    assert page.evaluate("() => window.moxieAudio.ttsPending()") >= 1, "later chunks must queue"
-    # no marks here: the mouth must move from the AUDIO ENVELOPE alone, which only
-    # happens if the PCM really is rendering through the Web Audio graph.
-    page.wait_for_function("() => window.moxie.getMouthOpen() > 0.05", timeout=5000)
+    # One atomic snapshot: `pending` is read at the instant `speaking` was true, so the
+    # two cannot straddle a chunk boundary the way two separate round-trips can.
+    started = page.wait_for_function(
+        """() => {
+             const a = window.moxieAudio;
+             if (!a || !a.isSpeaking()) return null;
+             return {pending: a.ttsPending()};
+           }""",
+        timeout=5000).json_value()
+    assert started["pending"] >= 1, f"later chunks must queue ({started})"
     page.wait_for_function("() => window.moxieAudio.isSpeaking() === false", timeout=20000)
     assert page.evaluate("() => window.moxieAudio.ttsPending()") == 0
+    # no marks here: the mouth must have moved from the AUDIO ENVELOPE alone, which only
+    # happens if the PCM really rendered through the Web Audio graph. Read as the peak
+    # the page recorded over the utterance — the old live `getMouthOpen() > 0.05` wait
+    # had to catch a ~1.2 s animation mid-open and lost that race on a loaded runner.
+    peak = page.evaluate("() => window.moxieAudio.lastMouthPeak()")
+    assert peak > 0.05, f"the envelope never drove the mouth (peak {peak})"
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
 
 
