@@ -1,19 +1,19 @@
 {
- "generated": "docs-08c1501afad3",
+ "generated": "docs-1aa828897976",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 11122,
+   "bytes": 11331,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
     "Two channels, three steps",
     "How you get there depends on the robot's firmware — read this first",
     "Status",
-    "Quick start (Phase 1)",
+    "Quick start",
     "Repository map",
     "Documentation",
     "Built with the community",
@@ -96,7 +96,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 15193,
+   "bytes": 17092,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -472,7 +472,7 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 8945,
+   "bytes": 9043,
    "mermaid": 0,
    "headings": [
     "Start here",
@@ -633,7 +633,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 970,
+   "bytes": 1172,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -653,6 +653,30 @@
     "Path B — you have an 801/803 robot: re-home it with a QR",
     "Path C — a pre-801 robot: flash it first",
     "Going further"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/one-command-stack.md",
+   "title": "The one-command stack",
+   "section": "guides",
+   "bytes": 12042,
+   "mermaid": 1,
+   "headings": [
+    "What comes up",
+    "Prerequisites",
+    "The one command",
+    "Configure it — one `.env`",
+    "Ports",
+    "Where your data lives",
+    "Optional profiles (best-effort)",
+    "voice` — Moxie's real (offline) voice",
+    "stt` — local speech-to-text",
+    "Point a real robot at it",
+    "Prove it works",
+    "Updating",
+    "Troubleshooting",
+    "Running it a different way"
    ],
    "kind": "md"
   },

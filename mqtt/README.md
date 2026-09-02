@@ -27,7 +27,8 @@ flowchart LR
 | `supervisor/moxie_runtime.py` | MQTT runtime — connect detection, config push, conversation routing |
 | `broker/` | mosquitto config + `gen-certs.sh` (self-signed CA per appliance; keys are gitignored) |
 | `config.py` / `run.py` | configuration (env-overridable) + entrypoint |
-| `docker-compose.yml` / `Dockerfile` | run broker + supervisor together |
+| `docker-compose.yml` / `Dockerfile` | run broker + supervisor together (the whole stack incl. the console: [`../docker-compose.yml`](../docker-compose.yml)) |
+| `docker-entrypoint.sh` / `status_proxy.py` | container entrypoint + an opt-in forwarder so the console (another container) can reach the runtime's loopback-only `/status` |
 
 ## Run it
 
@@ -41,6 +42,8 @@ flowchart LR
 cp .env.example .env      # set MOXIE_LLM_BASE_URL / _API_KEY / _MODEL and MOXIE_BROKER_HOST
 docker compose up -d
 ```
+> Want the parent console too, and one `.env` for everything? Run the repo-root stack
+> instead: `docker compose up` — [`docs/guides/one-command-stack.md`](../docs/guides/one-command-stack.md).
 Or run them directly:
 ```bash
 docker run -d --name moxie-mqtt --network host \

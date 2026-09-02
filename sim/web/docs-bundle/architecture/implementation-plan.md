@@ -59,8 +59,18 @@ Following the [build-order spine](overview.md); the parent app
   `RobotCloudConfig`), and **telemetry/insights** — the runtime's stored `Packet` events rolled up by
   `summarize_events` and served as `GET /telemetry` → `GET /local/robots/{id}/telemetry` → an 📈 Insights
   panel (counts by event + a recent-events list). All three live-verified end to end.
-- **M7 — One-command stack + docs. 🟡 (assembly 2026-09-01)** `docker compose up` runs broker + supervisor + brain + STT/TTS; the
-  SIM and a real robot connect identically; deploy/config guides.
+- **M7 — One-command stack + docs. 🟢 (proven 2026-09-02)** `docker compose up` at the repo root brings up
+  broker (TLS + WS + plain) → supervisor (brain + `tone` voice, zero extra deps) → parent console, configured
+  by one root `.env` ([`.env.example`](../../.env.example)), with healthchecks, `restart: unless-stopped` and
+  named volumes for certs / console DB / conversation memory. Proven end to end by
+  [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh) — it builds the real compose file under a
+  throwaway project on unused ports, waits for all three healthchecks, round-trips `virtual_moxie.py
+  --expect-tts` (state → config → remote-chat → reply → `CloudTTSResponse` audio) through the composed broker,
+  reads the robot back out of the console's `/local/fleet`, then `down -v`. Guide:
+  [`../guides/one-command-stack.md`](../guides/one-command-stack.md). Opt-in profiles: `--profile voice`
+  (Piper/Amy — verified speaking through the stack) and `--profile stt` (faster-whisper — model fetched and
+  the supervisor reports `STT enabled`, no live speech transcribed yet); both need one `.env` line
+  (`MOXIE_SUPERVISOR_EXTRAS`) plus `up --build`, which is the honest cost of keeping the default image small.
 
 ## Known gaps (audited, honest)
 
@@ -99,7 +109,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
 | 3 | Cloud management (console + config/telemetry) | 🟢 | RobotCloudConfig + RobotStatus + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. The console surfaces **live state** (`/local/fleet`), **edits config** (Settings form → `POST /local/robots/{id}/config` → runtime `POST /config` → `update_config` re-pushes `RobotCloudConfig`), and shows **telemetry insights** (`summarize_events` → runtime `GET /telemetry` → `GET /local/robots/{id}/telemetry` → the 📈 Insights panel) — all three live-verified against a real broker. Caveat: telemetry is in-memory (last 50 events/robot), not persisted |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
-| 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command run unverified (M7) |
+| 5 | One-command stack | 🟢 | `docker compose up` (repo root) = broker + supervisor + parent console, one `.env`, healthchecks + named volumes. **Proven** by [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh): build → health → `virtual_moxie --expect-tts` round-trip through the composed broker → the robot visible in the console's `/local/fleet` → `down -v`; shape asserted hermetically by `sim/tests/test_compose.py`. Guide: [`../guides/one-command-stack.md`](../guides/one-command-stack.md). Caveats (documented, not hidden): the `content`/`llm` brains still need a gateway key to say anything real (keyless → the "brain got fuzzy" fallback, which is why the smoke uses `echo`), and the `voice`/`stt` profiles each need one `.env` line + `up --build` rather than the profile flag alone |
 | 6 | Green + live-tested | 🟡 ~70% | **three-tier CI installed + green** (fast on dev · deep+HIL on PR-to-main · release on tags); live LLM turn 🟢. Remaining: live voice + a full talk-e2e scenario (skips in CI without creds) |
 
 **Most valuable next slice:** criterion 1's **browser Web-Audio playback of the `CloudTTSResponse`** — the
@@ -108,8 +118,10 @@ supervisor already synthesizes and publishes decodable audio (proven through a r
 in `sim/web/`, feed it to Web Audio, and the "a child can talk to Moxie end to end" criterion has its last
 client-side link. It is unblocked (no creds needed — the built-in tone voice already produces audio) and it is
 the only criterion still below 🟢 that isn't gated on someone else. After that: a live talk-through with real
-speech (needs a downloaded Piper model, or the gateway once a TTS model is registered — handoff doc:
-[`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)), then M7's one-command stack (criterion 5).
+speech — the `--profile voice` path now downloads Piper/Amy and speaks through the composed stack, so this is
+just a matter of doing it with a microphone (the gateway alternative still needs a TTS model registered —
+handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)). M7's one-command stack
+(criterion 5) is done.
 
 ## TTS strategy (2026-09-01)
 
