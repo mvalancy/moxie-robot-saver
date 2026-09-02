@@ -39,8 +39,10 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "server"))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
-sanitize_config_overrides = pytest.importorskip(
-    "moxie_sdk.cloud_config", reason="SDK not importable").sanitize_config_overrides
+_cloud_config = pytest.importorskip("moxie_sdk.cloud_config", reason="SDK not importable")
+sanitize_config_overrides = _cloud_config.sanitize_config_overrides
+merge_config_layers = _cloud_config.merge_config_layers
+schedulable_module_ids = _cloud_config.schedulable_module_ids
 
 DEVICE = "d_console_rt"
 
@@ -49,15 +51,20 @@ DEVICE = "d_console_rt"
 # The fake supervisor: MoxieRuntime._start_status_server's contract, no broker.
 # --------------------------------------------------------------------------- #
 
-def _snapshot(overrides: dict) -> dict:
+def _snapshot(overrides: dict, fleet: dict = None) -> dict:
     """MoxieRuntime.status_snapshot() for one connected robot."""
+    fleet = dict(fleet or {})
     return {
         "ok": True, "app": "content", "uptime_s": 12,
+        "fleet_config": fleet,
+        "schedule_modules": list(schedulable_module_ids()),
         "robots": [{
             "device_id": DEVICE, "child": "Sam", "firmware": "3.6.4",
             "battery_level": 91, "audio_volume": 0.4, "wifi_ssid": "Home",
             "mode": "normal", "ota_reboot_required": False,
-            "config_overrides": dict(overrides), "telemetry_count": 2,
+            "config_overrides": dict(overrides),
+            "config_effective": merge_config_layers(fleet, overrides),
+            "telemetry_count": 2,
             "safety_total": 2, "safety_unreviewed": 1,
         }],
         "recent": [{"t": 1, "kind": "chat", "text": "hi"}],
@@ -111,6 +118,7 @@ class FakeSupervisor:
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         from urllib.parse import parse_qs, urlparse
         self.overrides: dict = {}
+        self.fleet: dict = {}
         self.config_posts: list = []
         self.telemetry_queries: list = []
         self.safety_queries: list = []
@@ -131,7 +139,22 @@ class FakeSupervisor:
             def do_GET(self):
                 u = urlparse(self.path)
                 if u.path == "/status":
-                    return self._out(_snapshot(outer.overrides))
+                    return self._out(_snapshot(outer.overrides, outer.fleet))
+                if u.path == "/config":
+                    q = parse_qs(u.query)
+                    if (q.get("scope") or ["robot"])[0] == "fleet":
+                        return self._out({"ok": True, "scope": "fleet",
+                                          "fleet_config": dict(outer.fleet)})
+                    device_id = (q.get("device_id") or [""])[0]
+                    if device_id != DEVICE:
+                        return self._out(
+                            {"ok": False, "error": f"unknown device_id {device_id!r}"}, 404)
+                    return self._out({
+                        "ok": True, "scope": "robot", "device_id": device_id,
+                        "fleet_config": dict(outer.fleet),
+                        "config_overrides": dict(outer.overrides),
+                        "config_effective": merge_config_layers(outer.fleet,
+                                                                outer.overrides)})
                 if u.path == "/telemetry":
                     q = parse_qs(u.query)
                     device_id = (q.get("device_id") or [""])[0]
@@ -166,15 +189,25 @@ class FakeSupervisor:
                     body = json.loads(raw or b"{}") or {}
                     out = outer.runtime.acknowledge_safety(device_id, body.get("event_id"))
                     return self._out(out, 200 if out.get("ok") else 404)
-                outer.config_posts.append((device_id, raw.decode()))
+                scope = (parse_qs(u.query).get("scope") or ["robot"])[0]
+                outer.config_posts.append((device_id or f"scope={scope}", raw.decode()))
                 try:
                     applied = sanitize_config_overrides(json.loads(raw))
+                    if scope == "fleet":
+                        outer.fleet.update(applied)
+                        return self._out({"ok": True, "scope": "fleet",
+                                          "applied": applied,
+                                          "fleet_config": dict(outer.fleet),
+                                          "robots": [DEVICE]}, 200)
                     if device_id != DEVICE:
                         raise ValueError(f"unknown device_id {device_id!r}")
                     outer.overrides.update(applied)
-                    return self._out({"ok": True, "device_id": device_id,
+                    return self._out({"ok": True, "scope": "robot",
+                                      "device_id": device_id,
                                       "applied": applied,
-                                      "config_overrides": dict(outer.overrides)}, 200)
+                                      "config_overrides": dict(outer.overrides),
+                                      "config_effective": merge_config_layers(
+                                          outer.fleet, outer.overrides)}, 200)
                 except Exception as e:
                     return self._out({"ok": False, "error": str(e)}, 400)
 
@@ -300,6 +333,67 @@ def test_config_for_an_unknown_device_is_a_400(client):
     assert r.json()["ok"] is False
 
 
+def test_an_alarm_edit_round_trips_in_the_recovered_wakeschedule_shape(client, supervisor):
+    """The console's weekday checkboxes + time → `WakeSchedule` on the wire, and back out
+    of the next fleet read in the same shape the robot was pushed."""
+    r = client.post(f"/local/robots/{DEVICE}/config",
+                    json={"alarms": {"wakes": [{"days": ["mon", 6], "time": "07:15"}],
+                                     "enabled": True}})
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"]["alarms"] == {
+        "wakes": [{"days": [0, 6], "time": "07:15"}], "enabled": True}
+    f = client.get("/local/fleet").json()
+    assert f["robots"][0]["config_effective"]["alarms"]["wakes"][0]["days"] == [0, 6]
+
+
+# --------------------------------------------------------------------------- #
+# POST /local/fleet/config — appliance-wide defaults (audit ADOPT #6)
+# --------------------------------------------------------------------------- #
+
+def test_fleet_config_edit_forwards_with_scope_fleet(client, supervisor):
+    r = client.post("/local/fleet/config", json={"timezone_id": "America/Chicago"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True and body["scope"] == "fleet"
+    assert body["fleet_config"]["timezone_id"] == "America/Chicago"
+    # the console forwarded the raw body to the *fleet* scope, not to a device
+    where, raw = supervisor.config_posts[-1]
+    assert where == "scope=fleet"
+    assert json.loads(raw) == {"timezone_id": "America/Chicago"}
+
+
+def test_the_fleet_default_shows_up_in_every_robots_effective_config(client):
+    f = client.get("/local/fleet").json()
+    assert f["fleet_config"]["timezone_id"] == "America/Chicago"
+    robot = f["robots"][0]
+    assert robot["config_effective"]["timezone_id"] == "America/Chicago"
+    assert "timezone_id" not in robot["config_overrides"]        # inherited, not local
+    assert robot["config_sources"]["timezone_id"] == "fleet"
+    assert robot["config_sources"]["audio_volume"] == "robot"    # set per robot earlier
+
+
+def test_a_per_robot_override_beats_the_fleet_default_through_the_console(client):
+    client.post("/local/fleet/config", json={"audio_volume": 20})
+    client.post(f"/local/robots/{DEVICE}/config", json={"audio_volume": 90})
+    f = client.get("/local/fleet").json()
+    assert f["fleet_config"]["audio_volume"] == pytest.approx(0.2)
+    assert f["robots"][0]["config_effective"]["audio_volume"] == pytest.approx(0.9)
+
+
+def test_bad_fleet_config_input_is_a_400(client):
+    r = client.post("/local/fleet/config",
+                    json={"alarms": [{"days": ["funday"], "time": "07:00"}]})
+    assert r.status_code == 400, r.text
+    assert r.json()["ok"] is False
+
+
+def test_the_console_learns_the_module_catalog_from_the_supervisor(client):
+    """The activity picker's options come from the one on-board catalog, never a copy."""
+    f = client.get("/local/fleet").json()
+    assert "JOKE" in f["schedule_modules"]
+    assert set(f["schedule_modules"]) == set(schedulable_module_ids())
+
+
 # --------------------------------------------------------------------------- #
 # GET /local/robots/{id}/telemetry
 # --------------------------------------------------------------------------- #
@@ -401,7 +495,7 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     rt.robots[DEVICE].extra["telemetry"] = list(_PACKETS)
 
     real = rt.status_snapshot()
-    fake = _snapshot({})
+    fake = _snapshot({}, {})
     assert set(fake) == set(real), "status snapshot top-level keys drifted"
     assert set(fake["robots"][0]) == set(real["robots"][0]), "robot record keys drifted"
 
@@ -414,6 +508,11 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     real_missing = rt.telemetry_view("d_nope")
     fake_missing, code = _telemetry("d_nope", 20)
     assert code == 404 and set(fake_missing) == set(real_missing)
+
+    # the fleet-config seam: same endpoint, `scope=fleet`, same sanitizer
+    assert rt.fleet_config() == {} or isinstance(rt.fleet_config(), dict)
+    assert set(rt.effective_config(DEVICE)) == set(
+        merge_config_layers(rt.fleet_config(), {}))
 
     # /safety is not doubled at all — the fake supervisor runs a REAL MoxieRuntime behind
     # it — so the only thing to guard is that its unknown-device shape still 404s.

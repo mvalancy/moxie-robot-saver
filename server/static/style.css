@@ -88,6 +88,15 @@ footer a{color:var(--brand)}
 .cfgbox .check{display:flex;align-items:center;gap:8px}
 .cfgbox .check input{width:auto}
 #cfg-status{margin-top:8px;min-height:18px}
+#cfg-layers{margin-top:4px;font-size:12px}
+/* wake alarms + scheduled activity (RobotCloudConfig alarms / schedule_preferences) */
+.cfgbox .cfgset{border:1px solid var(--line);border-radius:10px;padding:4px 12px 10px;margin:12px 0}
+.cfgbox .cfgset legend{font-size:12px;font-weight:700;color:var(--muted);padding:0 6px}
+.cfgbox .cfg-days{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.cfgbox .cfg-days .day{display:flex;align-items:center;gap:4px;margin:0;font-size:13px;
+  border:1px solid var(--line);border-radius:8px;padding:4px 8px}
+.cfgbox .cfg-days .day input{width:auto;margin:0}
+.cfgbox select{width:100%;padding:8px;border-radius:8px}
 
 /* --- insights / telemetry (M6 parent console) --- */
 .insightsbox{margin:14px 0}

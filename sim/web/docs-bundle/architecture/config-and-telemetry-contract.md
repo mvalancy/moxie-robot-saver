@@ -38,11 +38,72 @@ One document is the robot's entire remotely-managed runtime state. Change any kn
 |---|---|
 | **Child / user** | `child` (`ChildEncrypted` ciphertext), `child_pii` (`ChildDecrypted` plaintext), `secret_key` (pairing seed), `num_children`, `max_children`, `switch_user_config` |
 | **Quiet hours** | `privacy_mode_enabled`, `weekday_bedtime_enabled` + `…_starts_at`/`…_ends_at`, `weekend_bedtime_*` |
-| **Wake / alarms** | `alarms` (`WakeSchedule{ WakeEntry{days[], time}…, enabled }`), `wake_button_enabled`, `audio_wake_set`, `touch_wake_enabled`, `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) |
+| **Wake / alarms** | `alarms` (`WakeSchedule{ WakeEntry{days[], time}…, enabled }`), `wake_button_enabled`, `audio_wake_set`, `touch_wake_enabled`, `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — **all built**, see [§Wake alarms & scheduled activities](#wake-alarms-scheduled-activities-the-json-we-emit) |
 | **Device** | `audio_volume`, `screen_brightness`, `timezone_id`, `settings` (`DeviceSettings` k/v) |
 | **OTA** | `ota_update {id, version}`, `forbid_otaver` |
 | **Mode / privacy** | `moxie_mode` (`DEFAULT_MODE`/`TELEHEALTH`), `data_sharing`, `grl_connected`, `rc_topic` |
 | **Meta** | `last_updated_at`, `timestamp` |
+
+### Wake alarms & scheduled activities — the JSON we emit
+
+Two of the parent's most visible settings — *"wake Moxie at 7:15 on school days"* and *"do the
+drawing activity after school"* — are the config's `alarms` and `schedule_preferences`. Both are
+**built** (`mqtt/moxie_sdk/cloud_config.py`: `build_robot_cloud_config(alarms=…,
+schedule_preferences=…)`, `normalize_wake_schedule`, `normalize_schedule_preferences`) and both are
+parent-editable through the console's ⚙️ Settings form.
+
+The shapes are ours, from the recovered protos —
+[`Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto):113-127
+(catalogued in [`proto-catalog.md`](../reverse-engineering/protocol/proto-catalog.md):286-296),
+carried by `RobotCloudConfig.alarms = 24` and `RobotCloudConfig.schedule_preferences = 28`:
+
+```proto
+message WakeSchedule {
+  message WakeEntry { repeated uint32 days = 1; optional string time = 2; }
+  repeated WakeEntry wakes = 1;  optional bool enabled = 2;
+}
+message SchedulePreferences {
+  message ParentRequest { optional string module_id = 1; optional uint64 scheduled_at = 2; }
+  repeated ParentRequest parent_requests = 1;
+}
+```
+
+so the JSON on `/devices/{id}/config` is:
+
+```json
+"alarms": { "wakes": [ { "days": [0, 2, 4], "time": "07:15" } ], "enabled": true },
+"schedule_preferences": { "parent_requests": [ { "module_id": "DRAW", "scheduled_at": 1788422400 } ] }
+```
+
+> **Three honest assumptions.** The protos give the *types*, not the *encodings*, and no capture of a
+> real alarms push survives in our corpus (OpenMoxie never implemented these fields either, so there is
+> no field-proven shape to follow). We chose, and isolated each choice behind one constant so it is a
+> one-line change if a capture ever contradicts it:
+> - **`days`** is `repeated uint32`, so 0-6 — we emit **0 = Monday … 6 = Sunday** (`datetime.weekday()`,
+>   the convention the rest of this repo dates by). The single source is `cloud_config.WAKE_DAY_NAMES`;
+>   the console's day checkboxes are ordered to match it.
+> - **`time`** is a `string` beside the config's other wall-clock strings
+>   (`weekday_bedtime_starts_at`, …), so **`"HH:MM"` local time**, validated by the same regex. The robot
+>   resolves it against `timezone_id` — `TimeZoneInfo` → `UserAlarmRequest`
+>   ([power & system events](../reverse-engineering/protocol/power-and-system-events.md)).
+> - **`scheduled_at`** is a `uint64` with no stated unit — we emit **epoch seconds**, the unit this repo
+>   already renders timestamps in (`Packet.recorded_at`). A value that is plainly milliseconds is divided
+>   down rather than accepted at face value.
+>
+> `module_id` is *not* assumed: it is validated against the one on-board activity catalog
+> (`moxie_sdk/schedule.py::ONBOARD_MODULES`), so a parent can only ask for an activity the robot has.
+
+### Fleet defaults ⊕ per-robot overrides
+
+One appliance can drive several robots, so the config the server pushes is layered
+**`builder defaults ⊕ fleet ⊕ per-robot`** (`cloud_config.merge_config_layers`, a pure function):
+nested objects merge key-by-key (`settings.props`, `alarms.enabled`), scalars and lists replace, and an
+explicit `null` from the robot layer clears an inherited value. The fleet layer is one durable record,
+`$MOXIE_DATA_DIR/fleet/config.json` (`store.py::read_shared`/`write_shared`), written by
+`POST /config?scope=fleet` on the supervisor (the console's `POST /local/fleet/config`, the ⚙️ form's
+*"Apply to all robots"*) and re-pushed to every connected robot at once. With no fleet record the push
+is byte-for-byte what it was before the layer existed. *Credit:* the idea is OpenMoxie's
+`HiveConfiguration` + `robot_data.py::build_config` deep-merge (MIT) — see `ATTRIBUTION.md`.
 
 ### The child-PII encryption boundary — and the revival shortcut
 The child appears twice: **`child`** = `ChildEncrypted` (every field a `*_encrypted` blob +
@@ -115,9 +176,10 @@ via `LoggingStateChangeRequest{state, path}`, reporting back the effective `uplo
 |---|---|
 | Bedtime / quiet hours | `RobotCloudConfig` weekday/weekend bedtime windows + `privacy_mode_enabled` |
 | Volume / brightness | `audio_volume`, `screen_brightness` (down); echoed in `RobotStatus` (up) |
-| Wake alarms & wake toggles | `alarms` (`WakeSchedule`) + `wake_button_enabled`/`touch_wake_enabled`/`audio_wake_set` |
+| Wake alarms & wake toggles | `alarms` (`WakeSchedule`) + `wake_button_enabled`/`touch_wake_enabled`/`audio_wake_set` — weekday checkboxes + a time in the ⚙️ form |
 | Timezone | `timezone_id` |
-| Scheduled activities | `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) |
+| Scheduled activities | `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — module picker fed by the on-board catalog |
+| House rules for every robot | the **fleet** layer: `POST /config?scope=fleet` → `fleet/config.json`, merged under each robot's own overrides |
 | OTA target / hold | `ota_update{id,version}`, `forbid_otaver`; status via `ota_reboot_required` + `OTA_LOCK` |
 | Privacy / data sharing | `data_sharing` → `LoggingPolicy` gate |
 | Pairing status | `CloudStatus.UserState` |
@@ -138,6 +200,7 @@ writes become a `RobotCloudConfig` push, and the status it shows comes from `/st
 
 - [ ] Publishes a well-formed `RobotCloudConfig` on `/devices/{id}/config` (populates `child_pii` directly as the key-holder).
 - [ ] Re-publishes the config to change any managed setting (bedtime, volume, alarms, OTA, timezone).
+- [ ] Emits `alarms` / `schedule_preferences` in the shapes above when a parent sets them (and omits them when unset).
 - [ ] Consumes `RobotStatus` + `SystemState` from `/devices/{id}/state`.
 - [ ] Tracks `CloudStatus.UserState` for pairing/OTA lifecycle.
 - [ ] Honors `LoggingPolicy` (`NO_DATA`/`NO_MEDIA`/`FULL`) before uploading or staging any telemetry.

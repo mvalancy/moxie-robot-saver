@@ -15,6 +15,9 @@ robot-cloud layer builds on its groundwork:
 - the **`automarkup`** text→behavior (expressiveness) engine,
 - the **endpoint/migration QR** relocation mechanism and mosquitto TLS setup,
 - the conversation **volley** model, scheduler, and content-module concepts,
+- the **two-level config merge** — one appliance-wide default config layered under each robot's own
+  overrides (`models.py::HiveConfiguration` + `robot_data.py::build_config`'s `deepmerge`); ours is
+  [`mqtt/moxie_sdk/cloud_config.py`](mqtt/moxie_sdk/cloud_config.py)`::merge_config_layers`,
 - the **response action-tag** convention — `<exit>` / `<sleep>` / `<launch:MOD:CID>` written inline by the
   model and lifted into real robot actions (`volley.py::ingest_action_tags`); our own implementation lives
   in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py).

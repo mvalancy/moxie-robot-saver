@@ -14,6 +14,7 @@ so it can be re-implemented over SQLite without touching a caller.
 Layout::
 
     $MOXIE_DATA_DIR/robots/<device>/<collection>.json     # default: mqtt/data/
+    $MOXIE_DATA_DIR/fleet/<collection>.json               # appliance-wide, no device
 
 Properties we actually rely on:
   * **robust to a missing directory** — reads return the default, writes create it;
@@ -72,18 +73,32 @@ class JsonStore:
     def path(self, device_id: str, collection: str) -> str:
         return os.path.join(self.device_dir(device_id), f"{safe_name(collection)}.json")
 
+    def shared_path(self, collection: str) -> str:
+        """Path of a **fleet-wide** record — one appliance, several robots, one place to
+        set house rules (`fleet/<collection>.json`). Never under `robots/`, so it can
+        never collide with a device id."""
+        return os.path.join(self.root, "fleet", f"{safe_name(collection)}.json")
+
     # ---- reads ----
-    def read(self, device_id: str, collection: str, default=None):
-        """Return the stored value, or `default` when nothing is stored (or the file is
-        unreadable/corrupt — a store that raises on a bad file would take the robot's
-        whole session down for one damaged record)."""
+    def _read_path(self, path: str, default=None):
+        """Read one JSON file, or `default` when it is missing/unreadable/corrupt — a
+        store that raises on a bad file would take the robot's whole session down for one
+        damaged record."""
         try:
-            with open(self.path(device_id, collection)) as fh:
+            with open(path) as fh:
                 return json.load(fh)
         except (FileNotFoundError, NotADirectoryError):
             return default
         except (OSError, ValueError):
             return default
+
+    def read(self, device_id: str, collection: str, default=None):
+        """Return the stored value, or `default` when nothing is stored."""
+        return self._read_path(self.path(device_id, collection), default)
+
+    def read_shared(self, collection: str, default=None):
+        """Return the fleet-wide value (`fleet/<collection>.json`), or `default`."""
+        return self._read_path(self.shared_path(collection), default)
 
     def devices(self) -> list:
         """Directory names of every robot with stored data (sorted)."""
@@ -96,7 +111,13 @@ class JsonStore:
     # ---- writes ----
     def write(self, device_id: str, collection: str, value) -> bool:
         """Store `value` (any JSON-serializable object). Returns True on success."""
-        path = self.path(device_id, collection)
+        return self._write_path(self.path(device_id, collection), value)
+
+    def write_shared(self, collection: str, value) -> bool:
+        """Store a fleet-wide `value` (`fleet/<collection>.json`). True on success."""
+        return self._write_path(self.shared_path(collection), value)
+
+    def _write_path(self, path: str, value) -> bool:
         with self._lock:
             try:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -132,9 +153,16 @@ class JsonStore:
 
     def delete(self, device_id: str, collection: str) -> bool:
         """Remove one collection. True if a file was removed."""
+        return self._delete_path(self.path(device_id, collection))
+
+    def delete_shared(self, collection: str) -> bool:
+        """Remove one fleet-wide collection. True if a file was removed."""
+        return self._delete_path(self.shared_path(collection))
+
+    def _delete_path(self, path: str) -> bool:
         with self._lock:
             try:
-                os.unlink(self.path(device_id, collection))
+                os.unlink(path)
                 return True
             except OSError:
                 return False
