@@ -224,5 +224,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   generated *bundle copies* of docs conflict too, regenerate them (orchestrator's exclusion pattern fixed).
   Bumping to **0.4.0** for promotion (streaming + live CI + browser-audio fix + brain-latency filler).
 
+- **2026-09-02** — **Released v0.4.0** (dev → main squash `ebeda0d`, tag `v0.4.0`, release tier green, wheel +
+  sdist published). Standing PR recreated as #18; dev reconciled (zero-content merge). Since v0.3.0: streamed
+  sentence chunks (first sentence at first-token latency), the slow-brain filler, live CI proven on GitHub
+  Actions (10 + 4 live tests passed on the runner incl. real speech), the browser-audio flake fixed at the
+  root. Hermetic suite 281. Three releases today (v0.2.0 → v0.4.0); 12 delegated slices integrated (PRs
+  #3–#9, #11, #12, #14–#17). No agents in flight.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
