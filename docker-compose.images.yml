@@ -116,6 +116,7 @@ services:
       - path: .env
         required: false
     environment:
+      MOXIE_ALLOW_UNVERIFIED_BOTS: ${MOXIE_ALLOW_UNVERIFIED_BOTS:-}
       MOXIE_MQTT_HOST: broker
       MOXIE_MQTT_PORT: "1883"
       MOXIE_STATUS_PORT: "8930"
