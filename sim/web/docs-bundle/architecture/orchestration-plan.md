@@ -102,5 +102,13 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   `ActionType` gains a confirm member; live model compliance is prompt work. In flight:
   `feat/schedule-mentor-behaviors` (ADOPT #1+#2).
 
+- **2026-09-02** — Integrated `feat/schedule-mentor-behaviors` (PR #7 → dev, ADOPT #1+#2): a real robot now
+  receives a real day plan (`ContentSchedule` built from our content modules' `schedules[]` + the 23-module
+  catalog) and its `mentor_behaviors` are ingested + served, so sessions start, missions don't repeat, and
+  FTUE completes — "connects" → "works". Durable JSON store (`store.py`, stepping stone to a DB). +41 tests
+  (160→201). Live-verified: 12-entry plan; a reported behavior round-trips; `WELCOME` retires. Gaps: plan is
+  deterministic (BEYOND #7 adaptive), store is JSON (ADOPT #8), `response_code` not emitted. In flight:
+  `feat/one-command-stack` (M7), `feat/live-e2e-validation` (criterion 6).
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

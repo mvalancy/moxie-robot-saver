@@ -47,3 +47,9 @@ tools/qr-rig/__pycache__/
 sim/.env
 sim/tts/voices/*.onnx
 mqtt/.env
+
+# supervisor durable store (per-robot JSON: mentor behaviors, …) — runtime state,
+# not source. Override the location with MOXIE_DATA_DIR. The README stays tracked so
+# the folder is still navigable.
+mqtt/data/*
+!mqtt/data/README.md

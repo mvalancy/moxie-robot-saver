@@ -408,13 +408,24 @@ def test_status_server_serves_status_and_telemetry():
 
 # ---- activity-log queries (client-service-activity-log → commands/query_result) ----
 
-def _drive_activity(payload, device_id="d_test"):
-    """Push one client-service-activity-log event through the REAL event router."""
-    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+def _activity_runtime(device_id="d_test", tmp_path=None):
+    """A runtime with a fake transport and (optionally) its own on-disk store."""
+    from moxie_sdk.store import JsonStore
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(),
+                                    store=JsonStore(str(tmp_path)) if tmp_path else None)
     rt.client = _FakeClient()
     rt.robots[device_id] = RobotContext(device_id=device_id, child=rt.child)
+    return rt
+
+
+def _activity(rt, payload, device_id="d_test"):
+    """Push one client-service-activity-log event through the REAL event router."""
     rt._on_event(device_id, "client-service-activity-log", json.dumps(payload))
     return rt.client.published
+
+
+def _drive_activity(payload, device_id="d_test"):
+    return _activity(_activity_runtime(device_id), payload, device_id)
 
 
 def test_schedule_query_echoes_request_id_and_keys_schedule(device_id="d_test"):
@@ -426,8 +437,21 @@ def test_schedule_query_echoes_request_id_and_keys_schedule(device_id="d_test"):
     assert msg["command"] == "query_result"
     assert msg["query"] == "schedule"
     assert msg["request_id"] == "req-abc"          # the robot correlates on this
-    assert msg["schedule"] == {}                   # honestly empty, correctly keyed
     assert "result" not in msg                     # the old generic key is gone
+
+
+def test_schedule_query_serves_a_real_nonempty_day_plan(device_id="d_plan"):
+    """ADOPT #1: the robot will not enter a session without a schedule — so the payload
+    has to be a well-formed, non-empty ContentSchedule, not `{}`."""
+    from moxie_sdk.schedule import validate_schedule
+    _, msg = _activity(_activity_runtime(device_id),
+                       {"subtopic": "query", "query": "schedule", "request_id": "r"},
+                       device_id)[0]
+    sched = msg["schedule"]
+    assert validate_schedule(sched) == []
+    ids = [r["module_id"] for r in sched["provided_schedule"]]
+    assert len(ids) >= 8 and "DM" in ids
+    assert "generate" not in sched                 # authoring key never hits the wire
 
 
 def test_mentor_behaviors_query_echoes_request_id_and_keys_the_list(device_id="d_test"):
@@ -437,7 +461,7 @@ def test_mentor_behaviors_query_echoes_request_id_and_keys_the_list(device_id="d
     assert topic == f"/devices/{device_id}/commands/query_result"
     assert msg["query"] == "mentor_behaviors"
     assert msg["request_id"] == "req-mbh-1"
-    assert msg["mentor_behaviors"] == []
+    assert msg["mentor_behaviors"] == []           # nothing reported yet
     assert "result" not in msg
 
 
@@ -459,3 +483,87 @@ def test_non_query_activity_subtopics_publish_nothing():
     assert _drive_activity({"mentor_behavior": {"module_id": "DM"}}) == []
     assert _drive_activity({"subtopic": "telehealth",
                             "message": {"state": "idle"}}) == []
+
+
+# ---- mentor behaviors: report → store → serve (ADOPT #2) ----
+
+_REPORT = {"timestamp": 1725000000000, "software_version": "24.10.803",
+           "module_name": "robotbrain",
+           "mentor_behavior": {"module_id": "DM", "content_id": "mission_1",
+                               "content_day": "3", "timestamp": 1725000000000,
+                               "action": "COMPLETED", "instance_id": 41,
+                               "ended_reason": "MOXIE_ENDED"}}
+
+
+def test_mentor_behavior_report_is_stored_and_served_back(tmp_path, device_id="d_mbh"):
+    """The full ADOPT #2 loop through the real handlers: the robot reports a finished
+    activity on client-service-activity-log (ActivityUpdate.mentor_behavior, Cloud.proto
+    :241), the runtime stores it, and the next `mentor_behaviors` query serves it."""
+    rt = _activity_runtime(device_id, tmp_path)
+    assert _activity(rt, _REPORT, device_id) == []          # a report answers nothing
+    _, msg = _activity(rt, {"subtopic": "query", "query": "mentor_behaviors",
+                            "request_id": "r2"}, device_id)[0]
+    assert msg["mentor_behaviors"] == [_REPORT["mentor_behavior"]]
+    # envelope fields (100/101) are report metadata, not history
+    assert "software_version" not in msg["mentor_behaviors"][0]
+
+
+def test_stored_behaviors_survive_a_supervisor_restart(tmp_path, device_id="d_restart"):
+    """The point of the durable store: a new runtime over the same data dir still knows
+    what the child did."""
+    _activity(_activity_runtime(device_id, tmp_path), _REPORT, device_id)
+    rt2 = _activity_runtime(device_id, tmp_path)            # "restart"
+    assert rt2.mentor_behaviors(device_id) == [_REPORT["mentor_behavior"]]
+
+
+def test_reported_behaviors_are_served_newest_first(tmp_path, device_id="d_order"):
+    rt = _activity_runtime(device_id, tmp_path)
+    for ts in (100, 300, 200):
+        _activity(rt, {"mentor_behavior": {"module_id": f"M{ts}", "timestamp": ts,
+                                           "action": "COMPLETED"}}, device_id)
+    assert [r["module_id"] for r in rt.mentor_behaviors(device_id)] == \
+        ["M300", "M200", "M100"]
+
+
+def test_a_useless_report_is_ignored(tmp_path, device_id="d_junk"):
+    rt = _activity_runtime(device_id, tmp_path)
+    assert rt.ingest_mentor_behavior(device_id, {"mentor_behavior": {}}) is None
+    assert rt.ingest_mentor_behavior(device_id, {"mentor_behavior": {"action": "QUIT"}}) \
+        is None                                             # no module_id → unusable
+    assert rt.mentor_behaviors(device_id) == []
+
+
+def test_reported_behaviors_shape_the_next_days_schedule(tmp_path, device_id="d_ftue"):
+    """The two features meet: once onboarding is reported complete the schedule stops
+    serving it, so FTUE actually ends (audit §4.1 row 2)."""
+    rt = _activity_runtime(device_id, tmp_path)
+    for i in range(9):
+        _activity(rt, {"mentor_behavior": {"module_id": "TNT", "content_id": f"c{i}",
+                                           "timestamp": 1000 + i,
+                                           "action": "COMPLETED"}}, device_id)
+    for i in range(4):
+        _activity(rt, {"mentor_behavior": {"module_id": "SYSTEMSCHECK",
+                                           "content_id": f"c{i}", "timestamp": 2000 + i,
+                                           "action": "COMPLETED"}}, device_id)
+    rt.client.published.clear()
+    _, msg = _activity(rt, {"subtopic": "query", "query": "schedule",
+                            "request_id": "r"}, device_id)[0]
+    ids = [r["module_id"] for r in msg["schedule"]["provided_schedule"]]
+    assert not ({"TNT", "SYSTEMSCHECK", "WELCOME"} & set(ids)), ids
+    assert ids, "the day must not be empty once onboarding is done"
+
+
+def test_schedule_uses_the_running_content_modules_schedules_block(tmp_path):
+    """A ContentApp's `schedules[]` is the authoring surface the served plan comes from."""
+    from moxie_sdk.content import load_modules, ContentApp
+    from moxie_sdk.store import JsonStore
+    module = load_modules({"schedules": [
+        {"name": "quiet", "schedule": {"provided_schedule": [{"module_id": "AUDMED"}]}}]})
+    rt = moxie_runtime.MoxieRuntime(app=ContentApp(module, lambda m: "hi"),
+                                    child=ChildProfile(), store=JsonStore(str(tmp_path)))
+    rt.client = _FakeClient()
+    did = "d_authored"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    _, msg = _activity(rt, {"subtopic": "query", "query": "schedule",
+                            "request_id": "r"}, did)[0]
+    assert [r["module_id"] for r in msg["schedule"]["provided_schedule"]] == ["AUDMED"]

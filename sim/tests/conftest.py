@@ -51,6 +51,22 @@ def _free_port():
     return port
 
 
+@pytest.fixture(autouse=True, scope="session")
+def isolated_data_dir(tmp_path_factory):
+    """Keep the runtime's durable store (`moxie_sdk/store.py`) out of the working tree.
+
+    The supervisor persists per-robot state (mentor behaviors) under `MOXIE_DATA_DIR`,
+    default `mqtt/data/`. Point it at a throwaway directory for the whole test session so
+    the suite stays hermetic and never leaves files in the repo."""
+    prev = os.environ.get("MOXIE_DATA_DIR")
+    os.environ["MOXIE_DATA_DIR"] = str(tmp_path_factory.mktemp("moxie-data"))
+    yield os.environ["MOXIE_DATA_DIR"]
+    if prev is None:
+        os.environ.pop("MOXIE_DATA_DIR", None)
+    else:
+        os.environ["MOXIE_DATA_DIR"] = prev
+
+
 @pytest.fixture(scope="session")
 def server():
     """Start sim/serve.py on a free port for the whole session."""

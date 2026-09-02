@@ -18,7 +18,9 @@ import json, re, sys, os, threading, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from moxie_sdk.types import Turn, Reply, RobotContext, ChildProfile, Action, ResultCode  # noqa
-from moxie_sdk.wire import build_chat_response, build_activity_response  # pure encoders
+from moxie_sdk.wire import (build_chat_response, build_activity_response,  # pure encoders
+                            parse_mentor_behavior)
+from moxie_sdk.store import JsonStore                    # durable per-robot JSON store
 from markup import make_markup  # simple passthrough markup (automarkup pluggable)
 
 # paho is imported lazily in _build_client() so the runtime + turn pipeline can be
@@ -29,11 +31,20 @@ DISCONNECT_RE = re.compile(r"Client (d_[a-f0-9-]+) (?:closed its connection|disc
 
 
 
+# How many MentorBehavior records we keep (and serve back) per robot. The history is a
+# rolling window, not an archive — the recommender/FTUE checks only need recent activity.
+MAX_MENTOR_BEHAVIORS = 500
+
+
 class MoxieRuntime:
-    def __init__(self, app, host="127.0.0.1", port=1883, child: ChildProfile | None = None):
+    def __init__(self, app, host="127.0.0.1", port=1883, child: ChildProfile | None = None,
+                 store: JsonStore | None = None):
         self.app = app
         self.child = child or ChildProfile()
         self.host, self.port = host, port
+        # Durable per-robot state (mentor behaviors today). JSON files under
+        # MOXIE_DATA_DIR — a stepping stone toward a real DB (audit ADOPT #8).
+        self.store = store if store is not None else JsonStore()
         self.robots: dict[str, RobotContext] = {}
         self.history: dict[str, list] = {}
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
@@ -430,6 +441,56 @@ class MoxieRuntime:
                 h.append({"role": "assistant", "content": spoken.strip()})
         self._save_memory(device_id)
 
+    # ---- mentor behaviors (what the child has already done) ----
+    def mentor_behaviors(self, device_id) -> list:
+        """This robot's stored MentorBehavior history, newest first.
+
+        Newest-first mirrors OpenMoxie's field-proven server (`robot_data.py::get_mbh`
+        orders by `-timestamp`); our docs record the record shape but not an ordering."""
+        records = self.store.read(device_id, "mentor_behaviors", []) or []
+        if not isinstance(records, list):
+            return []
+        return sorted(records, key=lambda r: (r or {}).get("timestamp") or 0, reverse=True)
+
+    def ingest_mentor_behavior(self, device_id, report):
+        """Store one reported MentorBehavior (`ActivityUpdate.mentor_behavior`, Cloud.proto
+        :241 — see wire.parse_mentor_behavior). Returns the stored record, or None if the
+        report carried nothing usable. Publishes nothing: a report is not a query."""
+        rec = parse_mentor_behavior(report)
+        if rec is None:
+            return None
+        self.store.append(device_id, "mentor_behaviors", rec, cap=MAX_MENTOR_BEHAVIORS)
+        self._note("behavior", f"🏁 {rec.get('module_id')}"
+                               f"{'/' + rec['content_id'] if rec.get('content_id') else ''}"
+                               f" {rec.get('action', '')}".rstrip())
+        return rec
+
+    # ---- the day plan ----
+    def build_schedule_for(self, device_id) -> dict:
+        """The ContentSchedule this robot gets for this session: the running content
+        module's `schedules[]` template (read-only) planned against what this robot has
+        already completed. See moxie_sdk/schedule.py for the shape + citations."""
+        from moxie_sdk.schedule import build_schedule, schedule_template
+        try:
+            template = schedule_template(getattr(self.app, "module", None))
+        except Exception as e:
+            print(f"[runtime] schedule template unavailable ({e}); using the default")
+            template = None
+        return build_schedule(template, mentor_behaviors=self.mentor_behaviors(device_id),
+                              device_id=device_id)
+
+    def _query_payload(self, device_id, query):
+        """The value for a CloudQuery — None means "send this field's empty value"."""
+        if query == "schedule":
+            try:
+                return self.build_schedule_for(device_id)
+            except Exception as e:
+                print(f"[runtime] schedule build failed: {e}", flush=True)
+                return None
+        if query == "mentor_behaviors":
+            return self.mentor_behaviors(device_id)
+        return None                       # license: no license blobs to share (yet)
+
     def _on_activity(self, device_id, payload):
         try:
             data = json.loads(payload)
@@ -444,12 +505,17 @@ class MoxieRuntime:
                                                          "license"):
             # Answer as a CloudQueryResponse: echo `request_id` and key the payload by its
             # own proto field (schedule / mentor_behaviors / license_values) — see
-            # build_activity_response. Values are still empty (no schedule store yet);
-            # the *shape* is now the one the robot can correlate and parse.
-            resp = build_activity_response(query, request_id=data.get("request_id"))
+            # build_activity_response.
+            resp = build_activity_response(query, self._query_payload(device_id, query),
+                                           request_id=data.get("request_id"))
             self.client.publish(f"/devices/{device_id}/commands/query_result",
                                 json.dumps(resp))
             return resp
+        # The same topic also carries *reports*: `mentor_behavior` is what the child just
+        # finished (or quit). Ingest it — that history is what stops the robot repeating
+        # the same missions forever and lets FTUE end.
+        if isinstance(data.get("mentor_behavior"), dict):
+            return self.ingest_mentor_behavior(device_id, data)
 
     # ---- STT extension point ----
     # ---- STT (AI seam §1) ----
