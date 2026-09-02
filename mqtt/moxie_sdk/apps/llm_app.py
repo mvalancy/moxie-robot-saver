@@ -15,9 +15,11 @@ import re
 
 from ..app import MoxieApp
 from ..actions import ACTION_TAG_PROMPT, parse_action_tags
+from ..automarkup import annotate, enabled as _automarkup_enabled
 from ..segment import SentenceSegmenter
 from ..types import Turn, Reply, ReplyChunk, RobotContext
 from ..chat import is_offline_error as _is_offline_error
+from .. import vocab
 
 # Moxie's character. The real persona was cloud-authored and is NOT in the firmware
 # (see content-and-conversation.md "Where Moxie's personality lives"), so a revival
@@ -49,18 +51,27 @@ DEFAULT_PERSONA = (
     "grown-ups. You never swear."
 )
 
-# The robot's real vocabularies (behavior-markup.md).
-# EmotionState-ish mood ints understood by cmd:playback-mood (inferred from content):
+# The robot's real vocabularies live in one frozen, cited catalog now
+# (moxie_sdk/vocab.py, from docs/reverse-engineering/runtime/behavior-markup.md). These
+# two names are kept as the *menu the prompt offers the model* — the short labels it may
+# write — and both resolve through `vocab`, so the model can never authorize an id we
+# have not recovered. `MOODS` is the pre-floor 5-value menu, retained for the knob-off
+# path; the live prompt now offers the real 11-value `ePlaybackMood` by name.
 MOODS = {"neutral": 0, "positive": 1, "concerned": 2, "oops": 4, "surprised": 5}
-# Gesture_* set hardcoded in bo-android:
-GESTURES = {
-    "none": "Gesture_None", "talk": "Gesture_Talk", "think": "Gesture_Think",
-    "question": "Gesture_Question", "point": "Gesture_Point", "self": "Gesture_Self",
-    "big": "Gesture_Large", "up": "Gesture_Higher", "down": "Gesture_Lower",
-    "celebrate": "Gesture_Celebrate",
-}
+GESTURES = {k: v for k, v in vocab.GESTURE_ALIASES.items() if not k.startswith("Gesture_")}
 
 _MARK = '<mark name="cmd:{verb},data:{body}"/>'
+
+
+def _turn_key(turn) -> str:
+    """A stable per-turn seed for the floor's deterministic gesture spacing.
+
+    `Turn` carries no `event_id` (the runtime owns that), and adding one is the
+    planner's contract change, not the floor's — so the key is built from what the
+    app already has. Same turn -> same markup; a different turn paces differently.
+    """
+    robot = getattr(turn, "robot", None)
+    return f"{getattr(robot, 'device_id', '')}|{getattr(turn, 'speech', '')}"
 
 # The single most load-bearing line of the tag prompt: graphling-medium writes a warm
 # goodbye and simply stops, so the rule is restated as the last thing it reads.
@@ -77,10 +88,25 @@ def _mark(verb: str, data: dict) -> str:
     return _MARK.format(verb=verb, body=json.dumps(data, separators=(",", ":")).replace('"', "+"))
 
 
-def build_markup(text: str, mood: str = "neutral", gesture: str = "none") -> str:
-    """Wrap a spoken line in the robot's behavior markup (mood + gesture)."""
-    out = [_mark("playback-mood", {"mood": MOODS.get(mood, 0), "intensity": 1})]
-    g = GESTURES.get(gesture)
+def build_markup(text: str, mood=None, gesture=None, *,
+                 turn_key: str = "", chunk_index: int = 0) -> str:
+    """Perform one spoken line — the model's choice as a *hint* into the shared floor.
+
+    There is exactly **one** markup generator in the tree: `moxie_sdk.automarkup.annotate`
+    (docs/architecture/backlog/expressiveness.md §1). What the model chose is handed to it
+    as `mood_hint`/`gesture_hint`; the rules fill in everything the model does not say —
+    delivery, per-clause gestures, pauses, the closing rest pose — and an id the model
+    invents is dropped rather than passed to the wire.
+
+    Costs nothing: pure local string work, no second model call, no I/O.
+    `MOXIE_AUTOMARKUP=0` falls back to the previous two-mark output.
+    """
+    if _automarkup_enabled():
+        return annotate(text, mood_hint=mood, gesture_hint=gesture,
+                        turn_key=turn_key, chunk_index=chunk_index)
+    # -- knob off: the pre-floor behavior, one mood mark + at most one gesture --
+    out = [_mark("playback-mood", {"mood": MOODS.get(mood or "neutral", 0), "intensity": 1})]
+    g = GESTURES.get(gesture or "none")
     if g and g != "Gesture_None":
         out.append(_mark("behaviour-tree", {
             "transition": 0.5, "duration": 1.0, "repeat": 1, "blocking": False,
@@ -90,24 +116,19 @@ def build_markup(text: str, mood: str = "neutral", gesture: str = "none") -> str
     return "".join(out)
 
 
-# --- streaming helpers ------------------------------------------------------ #
+# --- streaming ------------------------------------------------------------- #
 # The expressive prompt asks for `{"say": …, "mood": …, "gesture": …}`, and the model
 # writes that object left to right — so while a reply is still streaming we have the
 # spoken words but NOT yet the mood/gesture, which arrive after the closing quote of
 # "say". Rather than spend a second model call per chunk (the whole point of streaming is
-# to be faster, not more expensive), each in-flight chunk gets a **rule-based** mood +
-# gesture from its own punctuation, and the FINAL chunk uses the mood/gesture the model
-# actually chose, parsed off the completed JSON. `build_markup` itself is pure local
-# string work, so markup costs nothing either way.
-
-def stream_style(text: str) -> tuple:
-    """A cheap (mood, gesture) for a mid-stream chunk — no model call."""
-    t = (text or "").strip()
-    if t.endswith("?"):
-        return "neutral", "question"
-    if t.endswith("!"):
-        return "positive", "talk"
-    return "neutral", "talk"
+# to be faster, not more expensive), an in-flight chunk is scored by the floor's own
+# rules, and the closing chunk additionally passes the mood/gesture the model actually
+# chose as hints. `stream_style()` — the old punctuation-only guess, a second and
+# divergent generator — is gone: the floor reads punctuation better than it did.
+#
+# One mood per answer: `chunk_index` is the chunk's index within the answer, and the
+# floor emits `cmd:playback-mood` on index 0 only, so a four-sentence reply holds one
+# face instead of flipping it every sentence.
 
 
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f",
@@ -286,11 +307,15 @@ class LLMApp(MoxieApp):
             fmt = (
                 "\n\nAlways reply with ONLY a JSON object, no other text:\n"
                 '{"say": "<robot-control tag, if one applies><what you say out loud>", '
-                '"mood": "neutral|positive|concerned|oops|surprised", '
+                '"mood": "neutral|happy|sad|angry|shy|surprised|afraid|concerned|'
+                'confused|curious|embarrassed", '
                 '"gesture": "none|talk|think|question|point|self|big|up|down|celebrate"}\n'
                 "Pick the mood and gesture that genuinely fit your line — you are a robot "
                 "with a face and arms, so move and emote naturally (e.g. celebrate good news, "
-                "think when pondering, question when asking, self when talking about yourself).\n"
+                "think when pondering, question when asking, self when talking about yourself). "
+                "Your face has these eleven expressions and no others; anything else is "
+                "ignored. Leave a field out if none fits — the server performs the line "
+                "either way.\n"
                 'Any robot-control tag goes inside the "say" string, nowhere else. '
                 "Writing JSON never excuses you from the tag."
             )
@@ -299,28 +324,36 @@ class LLMApp(MoxieApp):
     # ---- parsing ----
     @staticmethod
     def _parse(raw: str):
-        """Pull {say, mood, gesture} out of the model's reply, tolerating stray prose."""
+        """Pull {say, mood, gesture} out of the model's reply, tolerating stray prose.
+
+        A field the model did not write comes back as **None**, not a default: the markup
+        floor treats a hint as "the brain made a choice here", so handing it a
+        manufactured `"neutral"` would pin every line to a blank face and silence the
+        rules. No choice -> no hint -> the rules score the line.
+        """
         raw = (raw or "").strip()
         if not raw:
-            return "", "neutral", "none"
+            return "", None, None
         m = re.search(r"\{.*\}", raw, re.S)
         if m:
             try:
                 obj = json.loads(m.group(0))
                 say = str(obj.get("say") or obj.get("text") or "").strip()
                 if say:
+                    mood = obj.get("mood")
+                    gesture = obj.get("gesture")
                     return (say,
-                            str(obj.get("mood", "neutral")).lower(),
-                            str(obj.get("gesture", "none")).lower())
+                            str(mood).lower() if mood else None,
+                            str(gesture).lower() if gesture else None)
             except Exception:
                 pass
         # model ignored the format — treat the whole thing as the spoken line
-        return raw, "neutral", "talk"
+        return raw, None, None
 
     # ---- MoxieApp ----
     def greeting(self, robot: RobotContext) -> Reply:
         text = f"Hi {robot.child.nickname}! It's so good to see you. What's on your mind today?"
-        return Reply(text=text, markup=build_markup(text, "positive", "celebrate"))
+        return Reply(text=text, markup=build_markup(text, "happy", "celebrate"))
 
     def _messages(self, turn: Turn) -> list:
         messages = [{"role": "system", "content": self._system(turn.robot)}]
@@ -363,11 +396,15 @@ class LLMApp(MoxieApp):
                         carry = actions          # action, wait for words to attach it to
                         continue
                     carry = []
+                    # The floor scores this chunk from its own words; `spoken` is its
+                    # index within the answer, so only the first one carries the mood.
+                    # (Markup built here is inert until the runtime publishes it, and the
+                    # runtime's per-chunk safety gate runs first — a blocked chunk is
+                    # dropped with its markup and never reaches the wire.)
+                    markup = build_markup(text, turn_key=_turn_key(turn),
+                                          chunk_index=spoken) if self._expressive else None
                     spoken += 1
-                    mood, gesture = stream_style(text)
-                    yield ReplyChunk(
-                        text=text, actions=actions,
-                        markup=build_markup(text, mood, gesture) if self._expressive else None)
+                    yield ReplyChunk(text=text, actions=actions, markup=markup)
         except GeneratorExit:                    # the runtime cancelled a stale turn
             raise
         except Exception as e:
@@ -391,8 +428,12 @@ class LLMApp(MoxieApp):
         text, actions = parse_action_tags(tail)
         actions = carry + actions
         if not text and not actions and spoken == 0:
-            text, mood, gesture = "Tell me more!", "positive", "question"
-        markup = build_markup(text, mood, gesture) if (self._expressive and text) else None
+            text, mood, gesture = "Tell me more!", "happy", "question"
+        # The model's own mood/gesture have arrived by now — they become hints into the
+        # same floor the earlier chunks used, never a second generator.
+        markup = (build_markup(text, mood, gesture, turn_key=_turn_key(turn),
+                               chunk_index=spoken)
+                  if (self._expressive and text) else None)
         yield ReplyChunk(text=text, markup=markup, actions=actions, final=True)
 
     def respond(self, turn: Turn) -> Reply:
@@ -414,10 +455,10 @@ class LLMApp(MoxieApp):
             from ..chat import is_rate_limit_error
             if is_rate_limit_error(e):
                 text = "Give me one tiny second to think... okay, go on!"
-                return Reply(text=text, markup=build_markup(text, "neutral", "think"),
+                return Reply(text=text, markup=build_markup(text, "curious", "think"),
                              end_turn=False)
             text = "Hmm, my brain got a little fuzzy. Can you say that again?"
-            return Reply(text=text, markup=build_markup(text, "oops", "self"),
+            return Reply(text=text, markup=build_markup(text, "shy", "self"),
                          end_turn=False)
         text, mood, gesture = self._parse(raw)
         # The model may have written robot-control tags into its line — lift them out
@@ -425,6 +466,7 @@ class LLMApp(MoxieApp):
         text, actions = parse_action_tags(text)
         if not text and not actions:
             text = "Tell me more!"
-            mood, gesture = "positive", "question"
-        markup = build_markup(text, mood, gesture) if (self._expressive and text) else None
+            mood, gesture = "happy", "question"
+        markup = (build_markup(text, mood, gesture, turn_key=_turn_key(turn))
+                  if (self._expressive and text) else None)
         return Reply(text=text, markup=markup, actions=actions)

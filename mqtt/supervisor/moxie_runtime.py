@@ -25,7 +25,7 @@ from moxie_sdk.store import JsonStore                    # durable per-robot JSO
 from moxie_sdk.filler import pick_filler                 # "let me think" lines + markup
 from moxie_sdk import safety as safety_seam              # InputSafety classifier (ai-seam §2)
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
-from markup import make_markup  # simple passthrough markup (automarkup pluggable)
+from markup import make_markup  # the markup floor (moxie_sdk.automarkup) behind the seam
 
 # paho is imported lazily in _build_client() so the runtime + turn pipeline can be
 # imported and integration-tested without the broker client installed.
@@ -689,7 +689,8 @@ class MoxieRuntime:
             else:
                 self._record_safety(device_id, out_verdict)
         self._remember(device_id, speech, reply.text)
-        markup = reply.markup if reply.markup is not None else make_markup(reply.text)
+        markup = (reply.markup if reply.markup is not None
+                  else make_markup(reply.text, turn_key=event_id, chunk_index=0))
         self._note("chat", f"💬 '{speech[:30]}' → '{reply.text[:40]}'")
         print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{reply.text[:60]}'", flush=True)
         # A filler already went out → this is chunk 1 and it ends the sequence. No
@@ -746,7 +747,7 @@ class MoxieRuntime:
         Stale guard: a newer turn for this robot cancels the stream — we stop consuming
         it, close it, and publish nothing further for the old `event_id`.
         """
-        state = {"lock": threading.Lock(), "done": False, "chunk": 0,
+        state = {"lock": threading.Lock(), "done": False, "chunk": 0, "ans": 0,
                  "fillers": 0, "gen": 0, "timer": None}
         said, closed, failed = [], False, None
         self._arm_filler(device_id, event_id, seq, state)
@@ -773,12 +774,16 @@ class MoxieRuntime:
                             state["done"] = True
                         n = state["chunk"]
                         state["chunk"] = n + 1
+                        a = state["ans"]
+                        state["ans"] = a + 1
                         if blocked:
                             safe = ReplyChunk(text=red.text, markup=red.markup, final=True)
-                            self._publish_stream_chunk(device_id, event_id, safe, n, True)
+                            self._publish_stream_chunk(device_id, event_id, safe, n, True,
+                                                       ann=a)
                             said.append(red.text)
                         else:
-                            self._publish_stream_chunk(device_id, event_id, chunk, n, final)
+                            self._publish_stream_chunk(device_id, event_id, chunk, n,
+                                                       final, ann=a)
                             if chunk.text:
                                 said.append(chunk.text)
                 if stale:
@@ -815,7 +820,7 @@ class MoxieRuntime:
             if n == 0:
                 reply = self._safe_respond(turn) if failed is not None else Reply(text="")
                 said.append(reply.text)
-                self._publish_stream_chunk(device_id, event_id, reply, 0, True)
+                self._publish_stream_chunk(device_id, event_id, reply, 0, True, ann=0)
             else:
                 self._publish_stream_chunk(
                     device_id, event_id, Reply(text=""), n, True, synthesize=False)
@@ -832,9 +837,18 @@ class MoxieRuntime:
             print(f"[runtime] app.respond error: {e}", flush=True)
             return Reply(text="Hmm, let me think about that.")
 
-    def _publish_stream_chunk(self, device_id, event_id, chunk, n, final, synthesize=True):
-        """One `ReplyChunk` (or `Reply`) onto the wire, with its chunk bookkeeping."""
-        markup = chunk.markup if chunk.markup is not None else make_markup(chunk.text)
+    def _publish_stream_chunk(self, device_id, event_id, chunk, n, final,
+                              synthesize=True, ann=None):
+        """One `ReplyChunk` (or `Reply`) onto the wire, with its chunk bookkeeping.
+
+        `ann` is the chunk's index *within the answer* (fillers excluded). The markup
+        floor emits the mood on index 0 only, so a streamed answer holds one face all
+        the way through instead of flipping it every sentence — and a "let me think"
+        line ahead of the answer does not cost the answer its mood.
+        """
+        markup = (chunk.markup if chunk.markup is not None else
+                  make_markup(chunk.text, turn_key=event_id,
+                              chunk_index=n if ann is None else ann))
         result = getattr(chunk, "result_code", None)
         if result is None:
             result = ResultCode.SUCCESS if final else ResultCode.REPLY_PENDING

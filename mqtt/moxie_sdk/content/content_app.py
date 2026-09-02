@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 from ..app import MoxieApp
 from ..actions import parse_action_tags
+from ..automarkup import annotate, enabled as _automarkup_enabled
 from ..types import Turn, Reply, RobotContext
 from .module import ContentModule
 from .volley import Volley, Session
@@ -67,6 +68,13 @@ class ContentApp(MoxieApp):
         # can end a session by writing "<exit>" into set_output (moxie_sdk/actions.py).
         text, actions = parse_action_tags(v.output_text or "")
         markup = parse_action_tags(v.output_markup)[0] if v.output_markup else None
+        # A module may author its own markup — that is honoured as written. But a handler
+        # that only set `output_markup` to a plain line would bypass the runtime's markup
+        # seam (which fires on `markup is None`) and speak flat, so the markup floor runs
+        # here for that one path. `annotate` returns anything already carrying a `<mark`
+        # or `<usel` unchanged, so authored markup is never touched.
+        if markup and _automarkup_enabled():
+            markup = annotate(markup)
         return Reply(text=text, markup=markup, actions=actions)
 
     # ---- MoxieApp ----
