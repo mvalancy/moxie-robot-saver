@@ -1,5 +1,5 @@
 {
- "generated": "docs-31ec93f33f2f",
+ "generated": "docs-22faaf448b34",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 3496,
+   "bytes": 3839,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -89,6 +89,19 @@
     "Step 3 — Connect & talk 🔨",
     "If you're on 24.10.801",
     "No teardown required"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/README.md",
+   "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
+   "section": "architecture",
+   "bytes": 2646,
+   "mermaid": 0,
+   "headings": [
+    "What a brief contains",
+    "The briefs",
+    "House rules"
    ],
    "kind": "md"
   },
@@ -310,7 +323,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 55792,
+   "bytes": 59928,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -338,10 +351,43 @@
     "4. The ranked backlog",
     "4.1 Top 10 ADOPT — port the idea, credit the source",
     "4.2 Top 10 BEYOND — what we should build instead",
+    "4.3 Backlog — the build briefs",
     "5. The honest ledger",
     "Where OpenMoxie (and its forks) are genuinely ahead of us",
     "Where we are already ahead",
     "6. How this feeds the build"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/expressiveness.md",
+   "title": "Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)",
+   "section": "architecture",
+   "bytes": 41423,
+   "mermaid": 1,
+   "headings": [
+    "Why this is the next slice",
+    "0. The seam as it stands today",
+    "The two gaps this file closes",
+    "1. ADOPT #3 — the markup floor",
+    "1.1 Goal",
+    "1.2 The seam it plugs into",
+    "1.3 The vocabularies we may emit",
+    "1.4 What OpenMoxie's engine does — and which behaviors to port",
+    "1.5 Design — a pure function",
+    "1.6 Golden examples",
+    "1.7 Tests",
+    "1.8 Acceptance criteria",
+    "1.9 Files to touch · effort",
+    "1.10 Risks and honest limits",
+    "2. BEYOND #1 — the behavior planner",
+    "2.1 What \"10×\" means, from the child's side",
+    "2.2 The `Performance` object — one structured thing, one renderer",
+    "2.3 Contract changes — exactly what is added",
+    "2.4 The SIM as the preview client",
+    "2.5 How it is tested",
+    "2.6 Degradation — always down to the floor",
+    "2.7 Phases"
    ],
    "kind": "md"
   },
@@ -476,7 +522,7 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 9043,
+   "bytes": 9271,
    "mermaid": 0,
    "headings": [
     "Start here",
