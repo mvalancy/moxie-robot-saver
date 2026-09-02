@@ -759,11 +759,14 @@ def test_the_console_learns_the_face_catalog_from_the_supervisor(client):
     assert [s["id"] for s in f["face_catalog"]] == [s["id"] for s in face_catalog()]
     eyes = next(s for s in f["face_catalog"] if s["id"] == "eye_color")
     assert eyes["cited"] is True
-    assert {o["id"] for o in eyes["options"]} == {"green", "blue", "purple",
-                                                 "brown", "gold", "teal"}
-    assert all(o["hex"].startswith("#") for o in eyes["options"])   # swatch-able
-    # the twelve slots our docs name but list no options for say so rather than lying
-    assert next(s for s in f["face_catalog"] if s["id"] == "hair")["cited"] is False
+    assert {"green", "blue", "purple", "brown", "gold", "teal"} <= {
+        o["id"] for o in eyes["options"]}          # the recovered enum, still offered
+    swatchable = [o for o in eyes["options"] if "hex" in o]
+    assert len(swatchable) == 6                    # …and still the only previewable six
+    assert all(o["hex"].startswith("#") for o in swatchable)
+    # a slot neither source lists an id for says so rather than lying (three are left:
+    # stickers / extras / misc — the rest were widened by the ingested asset manifest)
+    assert next(s for s in f["face_catalog"] if s["id"] == "stickers")["cited"] is False
 
 
 def test_a_face_edit_round_trips_and_changes_the_texture_key(client, supervisor):

@@ -31,10 +31,20 @@ robot-cloud layer builds on its groundwork:
   Our corpus never captured that; theirs is a server that drives real robots, so we take the mechanism
   as **field-proven** and say so in the code. Ours is deterministic rather than random —
   [`mqtt/moxie_sdk/faces.py`](mqtt/moxie_sdk/faces.py)`::face_child_id`, a UUIDv5 over the chosen
-  layers, so an idempotent re-push does not churn the child's identity. **Their ~60-entry asset table
-  (`content/data.py::MOXIE_CUSTOMIZATIONS`) was deliberately not copied**: our catalog carries only the
-  options our own recovered documents cite (the 14 `MoxieCustomizationType` slots, and the
-  `EyeColor`/`FaceColor` enums), so we ship twelve options and no invented ids,
+  layers, so an idempotent re-push does not churn the child's identity,
+- the **face-customization asset table, ingested as data** — `site/hive/content/data.py::MOXIE_CUSTOMIZATIONS`,
+  60 `MX_<nnn>_<Group>_<Detail>` asset ids their authors harvested from a robot they could run. Our own
+  corpus structurally *cannot* supply these (the art streams from `REMOTE_ASSETBUNDLES`, never the APK),
+  so on 2026-09-02 we transcribed **the id strings and nothing else** — no code, no comments, no function
+  bodies — into [`mqtt/moxie_sdk/face_assets.json`](mqtt/moxie_sdk/face_assets.json), which carries the
+  full citation inline: repo URL, file path, symbol, commit `c8c2d380efd37d2e83761957587f5d08f73b3a63`,
+  MIT (© 2025 Justin Beghtol), ingest date, entry count and a sha256 of the id list. The slot mapping
+  (each group prefix → exactly one recovered `MoxieCustomizationType`) and every human-readable label
+  are ours; an id we could not place would be parked in `unmapped` rather than guessed, and all 60
+  placed. Each entry is tagged `origin: "openmoxie-manifest"` and `caution: true`, because upstream's
+  own note beside the list records that some of these crashed Unity without saying which. The twelve
+  hex colour options our documents cite keep `origin: "recovered-enum"` and stay separable —
+  72 options across 11 of the 14 slots, and still no invented ids,
 - the **day-plan shape** — a `schedules[]` template with a `generate` block, FTUE pruning, chats
   distributed between activities, and the goal of *avoiding two same-category activities in a row*
   (`mqtt/scheduler.py::expand_schedule`/`ftue_remove`/`ransac_select`/`distribute_elements`, plus the
