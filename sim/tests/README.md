@@ -46,9 +46,19 @@ browser at all and carry the hermetic suite CI actually runs.
   superseded turn's answer is dropped, fillers never repeat back-to-back, and both chunks
   get their own `CloudTTSResponse`. No sleeps: the fake brain blocks on an `Event` the
   test releases and the fake transport is a `Condition` the test waits on.
+- **`test_fleet_config.py`** — the fleet-level default config (audit ADOPT #6): the pure
+  precedence + deep-merge rule of `cloud_config.merge_config_layers`, the store's
+  `fleet/config.json` record (and that a robot literally named `config` cannot collide
+  with it), and the runtime seam — one fleet edit re-pushes **every** connected robot, a
+  per-robot override still wins, and the status snapshot stays JSON-safe.
 - **`test_console_roundtrip.py`** — the parent console ⇄ supervisor contract, driven
   in-process against a status-server double whose payload keys are diffed against the
   real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).
+- **`test_memory_view.py`** — the pure transform behind the console's 🧠 What Moxie
+  remembers card (`moxie_server/fleet.py::normalize_memory`): the runtime's namespaced
+  `/memory` payload flattened into dated rows per activity, newest first, with counts —
+  plus the tolerance that matters on a parent's screen (a partial namespace, a list a
+  module invented, a raw `memory.json` off disk, and a supervisor that is down).
 - **Live tests** (`test_live_gateway.py`, `test_live_action_tags.py`,
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the
@@ -99,6 +109,19 @@ the *code under test*, not of the assertions:
   the utterance is *over*. It is 0 when no PCM rendered and ~1.0 when it did, so it still
   fails loudly if the Web Audio graph breaks. Same idea as reading the whole speaking
   state from one atomic `wait_for_function` snapshot instead of several round-trips.
+
+  The **queue** is the same kind of live thing, and cost a second flake (run
+  `33629395950`, ~50% on `dev`): `test_cloud_tts_chunks_play_in_order_then_stop` sampled
+  `moxieAudio.ttsPending()` at the instant `isSpeaking()` first went true, and on a fast
+  runner four tenths of a second of audio had already drained into the gap, so the chunks
+  that demonstrably *had* queued read as `pending: 0`. The cure is the same shape:
+  `moxieAudio.lastPlaybackStats()` → `{event_id, chunks_played, order, max_pending}`,
+  recorded as playback happens and frozen when it ends, so the test waits for the
+  utterance to finish and then asserts three stronger facts (all three chunks played,
+  in `chunk_num` order, having queued at least one deep). The test proves the assertion
+  no longer depends on timing by repeating it with 10 ms chunks injected in one
+  synchronous round trip — they drain faster than any observer could look, and the
+  recorded stats still report the same thing.
 
 - **A test that drives a brain with a fake must not need the real SDK.** `LLMApp` (like
   `OpenAIVoiceSynthesizer`) takes the OpenAI-compatible `client=` seam and only imports

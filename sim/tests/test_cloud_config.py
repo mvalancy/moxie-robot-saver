@@ -10,8 +10,9 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.cloud_config import (  # noqa: E402
-    LoggingPolicy, MoxieMode, build_robot_cloud_config, parse_robot_status,
-    child_pii_from_profile, sanitize_config_overrides,
+    LoggingPolicy, MoxieMode, WAKE_DAY_NAMES, build_robot_cloud_config, parse_robot_status,
+    child_pii_from_profile, merge_config_layers, normalize_schedule_preferences,
+    normalize_wake_schedule, sanitize_config_overrides, schedulable_module_ids,
 )
 from moxie_sdk.types import ChildProfile  # noqa: E402
 
@@ -120,3 +121,99 @@ def test_sanitize_rejects_bad_values():
         sanitize_config_overrides({"audio_wake_set": "maybe"})
     with pytest.raises(ValueError):
         sanitize_config_overrides([1, 2, 3])          # not an object
+
+
+# --------------------------------------------------------------------------- #
+# alarms (WakeSchedule, field 24) + schedule_preferences (SchedulePreferences, 28)
+# Cloud.proto:113-127 · proto-catalog.md:286-296.
+# --------------------------------------------------------------------------- #
+
+def test_builder_emits_alarms_in_the_recovered_wakeschedule_shape():
+    cfg = build_robot_cloud_config(
+        ChildProfile(nickname="Sam"),
+        alarms={"wakes": [{"days": ["monday", "Wed", 6], "time": "07:15"}],
+                "enabled": True})
+    # WakeSchedule { wakes = 1 (WakeEntry{days = 1, time = 2}), enabled = 2 }
+    assert cfg["alarms"] == {"wakes": [{"days": [0, 2, 6], "time": "07:15"}],
+                             "enabled": True}
+    assert WAKE_DAY_NAMES[0] == "monday" and WAKE_DAY_NAMES[6] == "sunday"
+    json.dumps(cfg)                                   # JSON-safe: it goes on the wire
+
+
+def test_builder_emits_schedule_preferences_as_parent_requests():
+    module = schedulable_module_ids()[0]
+    cfg = build_robot_cloud_config(
+        ChildProfile(nickname="Sam"),
+        schedule_preferences=[{"module_id": module, "scheduled_at": 1780000000}])
+    # SchedulePreferences { parent_requests = 1 (ParentRequest{module_id, scheduled_at}) }
+    assert cfg["schedule_preferences"] == {
+        "parent_requests": [{"module_id": module, "scheduled_at": 1780000000}]}
+    json.dumps(cfg)
+
+
+def test_builder_omits_both_fields_when_unset():
+    """Pre-existing behavior is untouched: no alarms edit ⇒ no `alarms` key."""
+    cfg = build_robot_cloud_config(ChildProfile(nickname="Sam"))
+    assert "alarms" not in cfg and "schedule_preferences" not in cfg
+
+
+def test_sanitize_accepts_alarms_and_schedule_preferences():
+    module = schedulable_module_ids()[1]
+    out = sanitize_config_overrides({
+        "alarms": [{"days": [0, 1, 2, 3, 4], "time": "06:45"}],
+        "schedule_preferences": {"module_id": module.lower(),
+                                 "scheduled_at": "2026-09-03T08:00:00+00:00"},
+    })
+    json.dumps(out)                                   # echoed in the status snapshot
+    assert out["alarms"] == {"wakes": [{"days": [0, 1, 2, 3, 4], "time": "06:45"}],
+                             "enabled": True}
+    assert out["schedule_preferences"]["parent_requests"][0]["module_id"] == module
+    assert out["schedule_preferences"]["parent_requests"][0]["scheduled_at"] == 1788422400
+
+
+def test_sanitize_clears_alarms_with_null():
+    out = sanitize_config_overrides({"alarms": None, "schedule_preferences": []})
+    assert out["alarms"] is None and out["schedule_preferences"] is None
+    cfg = build_robot_cloud_config(ChildProfile(nickname="Sam"), **out)
+    assert "alarms" not in cfg and "schedule_preferences" not in cfg
+
+
+def test_scheduled_at_accepts_milliseconds_and_epoch_seconds():
+    a = normalize_schedule_preferences([{"module_id": "JOKE", "scheduled_at": 1780000000}])
+    b = normalize_schedule_preferences([{"module_id": "JOKE", "scheduled_at": 1780000000123}])
+    assert a["parent_requests"][0]["scheduled_at"] == 1780000000
+    assert b["parent_requests"][0]["scheduled_at"] == 1780000000
+
+
+def test_sanitize_rejects_bad_alarms_and_preferences():
+    with pytest.raises(ValueError):                   # bad day
+        sanitize_config_overrides({"alarms": [{"days": ["funday"], "time": "07:00"}]})
+    with pytest.raises(ValueError):                   # day out of the 0-6 range
+        sanitize_config_overrides({"alarms": [{"days": [9], "time": "07:00"}]})
+    with pytest.raises(ValueError):                   # bad time
+        sanitize_config_overrides({"alarms": [{"days": [0], "time": "25:00"}]})
+    with pytest.raises(ValueError):                   # a wake entry with no days
+        sanitize_config_overrides({"alarms": [{"days": [], "time": "07:00"}]})
+    with pytest.raises(ValueError):                   # oversized list
+        sanitize_config_overrides({"alarms": [{"days": [0], "time": "07:00"}] * 99})
+    with pytest.raises(ValueError):                   # not in the on-board catalog
+        sanitize_config_overrides({"schedule_preferences": [
+            {"module_id": "NOT_A_MODULE", "scheduled_at": 1780000000}]})
+    with pytest.raises(ValueError):                   # unparseable time
+        sanitize_config_overrides({"schedule_preferences": [
+            {"module_id": "JOKE", "scheduled_at": "tomorrow-ish"}]})
+    with pytest.raises(ValueError):                   # oversized list
+        sanitize_config_overrides({"schedule_preferences": [
+            {"module_id": "JOKE", "scheduled_at": 1780000000}] * 99})
+
+
+def test_schedulable_modules_are_the_one_onboard_catalog():
+    """No second copy of the catalog: the ids come from moxie_sdk.schedule itself."""
+    from moxie_sdk.schedule import ONBOARD_MODULES
+    assert set(schedulable_module_ids()) == {m["module_id"] for m in ONBOARD_MODULES}
+
+
+def test_normalize_wake_schedule_accepts_a_single_entry_object():
+    assert normalize_wake_schedule({"days": "sat", "time": "09:00"}) == {
+        "wakes": [{"days": [5], "time": "09:00"}], "enabled": True}
+    assert normalize_wake_schedule({"wakes": [], "enabled": True}) is None

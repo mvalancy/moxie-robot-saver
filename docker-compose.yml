@@ -13,9 +13,16 @@
 #   docker compose --profile voice up     # fetch the offline Piper voice (Amy) into a volume
 #   docker compose --profile stt   up     # pre-fetch the faster-whisper speech-to-text model
 #
+# This file BUILDS the three images from this clone — the path for hacking on it, for
+# 32-bit ARM, and for the `voice` / `stt` profiles. Owners who just want to run Moxie
+# want the sibling `docker-compose.images.yml` instead: it is self-contained and pulls
+# our published multi-arch images, so it needs no clone at all.
+#
 # Guide: docs/guides/one-command-stack.md
 # (Install-UX cross-checked against OpenMoxie's docker-compose.yml (MIT) — one root
 #  compose file, one .env, named volumes for state. No code taken; this is our own.)
+#
+# Same project name as docker-compose.images.yml → both share the same named volumes.
 name: moxie
 
 services:
@@ -89,6 +96,10 @@ services:
       MOXIE_LLM_MODEL: ${MOXIE_LLM_MODEL:-graphling-medium}
       MOXIE_BRAIN_BUDGET_S: ${MOXIE_BRAIN_BUDGET_S:-6}   # slow brain → a filler line, then the answer
       MOXIE_STREAMING: ${MOXIE_STREAMING:-1}             # speak each sentence as the model writes it
+      # Device allowlist (pairing gate). Empty = CLOSED: a robot that connects is
+      # "pending" and gets a minimal config with no child data until a parent permits it
+      # in the console. Set to 1 to serve any robot that connects (pre-gate behavior).
+      MOXIE_ALLOW_UNVERIFIED_BOTS: ${MOXIE_ALLOW_UNVERIFIED_BOTS:-}
       MOXIE_VOICE_BASE_URL: ${MOXIE_VOICE_BASE_URL:-}
       MOXIE_VOICE_API_KEY: ${MOXIE_VOICE_API_KEY:-}
       MOXIE_WEBHOOK_ENDPOINT: ${MOXIE_WEBHOOK_ENDPOINT:-}

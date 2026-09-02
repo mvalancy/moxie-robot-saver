@@ -10,9 +10,10 @@ string it appends, the method and body it forwards, and what it does with a 400 
 
 So: stand a tiny status server on a free port that speaks exactly what
 `mqtt/supervisor/moxie_runtime.py`'s `_start_status_server` speaks (GET /status,
-GET /telemetry, GET+POST /safety, POST /config — same payload shapes, same status codes,
-and the REAL `sanitize_config_overrides` behind /config so validation is not mocked away
-and the REAL `MoxieRuntime.safety_view`/`acknowledge_safety` behind /safety), point
+GET /telemetry, GET+POST /safety, GET+DELETE /memory, POST /config — same payload
+shapes, same status codes, and the REAL `sanitize_config_overrides` behind /config so
+validation is not mocked away, the REAL `MoxieRuntime.safety_view`/`acknowledge_safety`
+behind /safety and the REAL `memory_view`/`erase_memory` behind /memory), point
 `MOXIE_SUPERVISOR_STATUS` at it, and drive the FastAPI app in-process. No broker, no
 robot, no gateway — but a genuine two-process contract.
 
@@ -39,8 +40,10 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "server"))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
-sanitize_config_overrides = pytest.importorskip(
-    "moxie_sdk.cloud_config", reason="SDK not importable").sanitize_config_overrides
+_cloud_config = pytest.importorskip("moxie_sdk.cloud_config", reason="SDK not importable")
+sanitize_config_overrides = _cloud_config.sanitize_config_overrides
+merge_config_layers = _cloud_config.merge_config_layers
+schedulable_module_ids = _cloud_config.schedulable_module_ids
 
 DEVICE = "d_console_rt"
 
@@ -49,15 +52,23 @@ DEVICE = "d_console_rt"
 # The fake supervisor: MoxieRuntime._start_status_server's contract, no broker.
 # --------------------------------------------------------------------------- #
 
-def _snapshot(overrides: dict) -> dict:
+def _snapshot(overrides: dict, fleet: dict = None) -> dict:
     """MoxieRuntime.status_snapshot() for one connected robot."""
+    fleet = dict(fleet or {})
     return {
         "ok": True, "app": "content", "uptime_s": 12,
+        "fleet_config": fleet,
+        "allow_unverified_bots": False,
+        "pending_count": 0,
+        "schedule_modules": list(schedulable_module_ids()),
         "robots": [{
             "device_id": DEVICE, "child": "Sam", "firmware": "3.6.4",
+            "permitted": True, "pending": False, "permit_label": "",
             "battery_level": 91, "audio_volume": 0.4, "wifi_ssid": "Home",
             "mode": "normal", "ota_reboot_required": False,
-            "config_overrides": dict(overrides), "telemetry_count": 2,
+            "config_overrides": dict(overrides),
+            "config_effective": merge_config_layers(fleet, overrides),
+            "telemetry_count": 2,
             "safety_total": 2, "safety_unreviewed": 1,
         }],
         "recent": [{"t": 1, "kind": "chat", "text": "hi"}],
@@ -104,6 +115,25 @@ def _safety_runtime(root: str):
     return rt
 
 
+def _seed_memory(rt):
+    """Write two activities' worth of durable facts through the REAL `MemoryStore` the
+    runtime serves `/memory` from — so the console reads the shape the store actually
+    writes (namespaced lists + a `_provenance` log), never a hand-drawn copy of it."""
+    from moxie_sdk.content.memory import provenance
+    mem = rt.memory_store()
+    mem.merge(DEVICE, "mchat",
+              {"facts": ["Sam has a beagle named Pepper", "Sam is in year 2"],
+               "preferences": ["Likes drawing"],
+               "summaries": ["They talked about pets."]},
+              provenance=provenance(module_id="MCHAT", content_id="default",
+                                    turns=4, reason="exit", clock=lambda: 1788352646.0),
+              meta={"summarized_through": 6})
+    mem.merge(DEVICE, "free_chat", {"facts": ["Sam's favourite colour is red"]},
+              provenance=provenance(module_id="FREE_CHAT", turns=2, reason="switch",
+                                    clock=lambda: 1788352000.0))
+    return mem
+
+
 class FakeSupervisor:
     """Serves the endpoints the console proxies, on a free ephemeral port."""
 
@@ -111,10 +141,18 @@ class FakeSupervisor:
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         from urllib.parse import parse_qs, urlparse
         self.overrides: dict = {}
+        self.fleet: dict = {}
+        # The device allowlist the console's 🔐 Robot access card drives — the same
+        # `{allow_unverified_bots, devices}` record MoxieRuntime.permits() normalizes.
+        self.permits: dict = {"allow_unverified_bots": False, "devices": {}}
+        self.permit_posts: list = []
         self.config_posts: list = []
         self.telemetry_queries: list = []
         self.safety_queries: list = []
+        self.memory_queries: list = []
+        self.memory_erases: list = []
         self.runtime = _safety_runtime(safety_root)
+        self.memory = _seed_memory(self.runtime)
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -131,7 +169,24 @@ class FakeSupervisor:
             def do_GET(self):
                 u = urlparse(self.path)
                 if u.path == "/status":
-                    return self._out(_snapshot(outer.overrides))
+                    return self._out(_snapshot(outer.overrides, outer.fleet))
+                if u.path == "/permits":
+                    return self._out(outer.permits_view())
+                if u.path == "/config":
+                    q = parse_qs(u.query)
+                    if (q.get("scope") or ["robot"])[0] == "fleet":
+                        return self._out({"ok": True, "scope": "fleet",
+                                          "fleet_config": dict(outer.fleet)})
+                    device_id = (q.get("device_id") or [""])[0]
+                    if device_id != DEVICE:
+                        return self._out(
+                            {"ok": False, "error": f"unknown device_id {device_id!r}"}, 404)
+                    return self._out({
+                        "ok": True, "scope": "robot", "device_id": device_id,
+                        "fleet_config": dict(outer.fleet),
+                        "config_overrides": dict(outer.overrides),
+                        "config_effective": merge_config_layers(outer.fleet,
+                                                                outer.overrides)})
                 if u.path == "/telemetry":
                     q = parse_qs(u.query)
                     device_id = (q.get("device_id") or [""])[0]
@@ -151,30 +206,81 @@ class FakeSupervisor:
                     outer.safety_queries.append((device_id, limit))
                     out = outer.runtime.safety_view(device_id, limit=limit)
                     return self._out(out, 200 if out.get("ok") else 404)
+                if u.path == "/memory":
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    outer.memory_queries.append(device_id)
+                    out = outer.runtime.memory_view(device_id)
+                    return self._out(out, 200 if out.get("ok") else 404)
                 self.send_response(404)
                 self.end_headers()
 
+            def do_DELETE(self):
+                """`DELETE /memory?device_id=…[&namespace=…]` — the parent's erase. No
+                namespace means everything for that robot; there is no per-item delete on
+                this side, which is why the console offers none."""
+                u = urlparse(self.path)
+                if u.path != "/memory":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                q = parse_qs(u.query)
+                device_id = (q.get("device_id") or [""])[0]
+                namespace = (q.get("namespace") or [""])[0]
+                outer.memory_erases.append((device_id, namespace or "all"))
+                out = outer.runtime.erase_memory(device_id, namespace or None)
+                return self._out(out, 200 if out.get("ok") else 404)
+
             def do_POST(self):
                 u = urlparse(self.path)
-                if u.path not in ("/config", "/safety"):
+                if u.path not in ("/config", "/safety", "/permits"):
                     self.send_response(404)
                     self.end_headers()
                     return
                 device_id = (parse_qs(u.query).get("device_id") or [""])[0]
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"
+                if u.path == "/permits":
+                    body = json.loads(raw or b"{}") or {}
+                    outer.permit_posts.append(body)
+                    try:
+                        if "allow_unverified_bots" in body:
+                            outer.permits["allow_unverified_bots"] = bool(
+                                body["allow_unverified_bots"])
+                        elif body.get("device_id"):
+                            if body.get("permitted", True):
+                                outer.permits["devices"][body["device_id"]] = {
+                                    "permitted_at": 1, "label": body.get("label") or ""}
+                            else:
+                                outer.permits["devices"].pop(body["device_id"], None)
+                        else:
+                            raise ValueError("expected {device_id, permitted, label} "
+                                             "or {allow_unverified_bots}")
+                        return self._out(outer.permits_view(), 200)
+                    except Exception as e:
+                        return self._out({"ok": False, "error": str(e)}, 400)
                 if u.path == "/safety":
                     body = json.loads(raw or b"{}") or {}
                     out = outer.runtime.acknowledge_safety(device_id, body.get("event_id"))
                     return self._out(out, 200 if out.get("ok") else 404)
-                outer.config_posts.append((device_id, raw.decode()))
+                scope = (parse_qs(u.query).get("scope") or ["robot"])[0]
+                outer.config_posts.append((device_id or f"scope={scope}", raw.decode()))
                 try:
                     applied = sanitize_config_overrides(json.loads(raw))
+                    if scope == "fleet":
+                        outer.fleet.update(applied)
+                        return self._out({"ok": True, "scope": "fleet",
+                                          "applied": applied,
+                                          "fleet_config": dict(outer.fleet),
+                                          "robots": [DEVICE]}, 200)
                     if device_id != DEVICE:
                         raise ValueError(f"unknown device_id {device_id!r}")
                     outer.overrides.update(applied)
-                    return self._out({"ok": True, "device_id": device_id,
+                    return self._out({"ok": True, "scope": "robot",
+                                      "device_id": device_id,
                                       "applied": applied,
-                                      "config_overrides": dict(outer.overrides)}, 200)
+                                      "config_overrides": dict(outer.overrides),
+                                      "config_effective": merge_config_layers(
+                                          outer.fleet, outer.overrides)}, 200)
                 except Exception as e:
                     return self._out({"ok": False, "error": str(e)}, 400)
 
@@ -184,6 +290,18 @@ class FakeSupervisor:
         sock.close()
         self._srv = ThreadingHTTPServer(("127.0.0.1", self.port), H)
         threading.Thread(target=self._srv.serve_forever, daemon=True).start()
+
+    def permits_view(self) -> dict:
+        """MoxieRuntime.permits_view() for this fake's state."""
+        return {"ok": True,
+                "allow_unverified_bots": self.permits["allow_unverified_bots"],
+                "allow_unverified_bots_stored": self.permits["allow_unverified_bots"],
+                "permits": [{"device_id": d, "permitted_at": v.get("permitted_at"),
+                             "label": v.get("label") or ""}
+                            for d, v in sorted(self.permits["devices"].items())],
+                "pending": [] if (self.permits["allow_unverified_bots"]
+                                  or DEVICE in self.permits["devices"]) else [DEVICE],
+                "connected": [DEVICE]}
 
     @property
     def status_url(self) -> str:
@@ -300,6 +418,67 @@ def test_config_for_an_unknown_device_is_a_400(client):
     assert r.json()["ok"] is False
 
 
+def test_an_alarm_edit_round_trips_in_the_recovered_wakeschedule_shape(client, supervisor):
+    """The console's weekday checkboxes + time → `WakeSchedule` on the wire, and back out
+    of the next fleet read in the same shape the robot was pushed."""
+    r = client.post(f"/local/robots/{DEVICE}/config",
+                    json={"alarms": {"wakes": [{"days": ["mon", 6], "time": "07:15"}],
+                                     "enabled": True}})
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"]["alarms"] == {
+        "wakes": [{"days": [0, 6], "time": "07:15"}], "enabled": True}
+    f = client.get("/local/fleet").json()
+    assert f["robots"][0]["config_effective"]["alarms"]["wakes"][0]["days"] == [0, 6]
+
+
+# --------------------------------------------------------------------------- #
+# POST /local/fleet/config — appliance-wide defaults (audit ADOPT #6)
+# --------------------------------------------------------------------------- #
+
+def test_fleet_config_edit_forwards_with_scope_fleet(client, supervisor):
+    r = client.post("/local/fleet/config", json={"timezone_id": "America/Chicago"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True and body["scope"] == "fleet"
+    assert body["fleet_config"]["timezone_id"] == "America/Chicago"
+    # the console forwarded the raw body to the *fleet* scope, not to a device
+    where, raw = supervisor.config_posts[-1]
+    assert where == "scope=fleet"
+    assert json.loads(raw) == {"timezone_id": "America/Chicago"}
+
+
+def test_the_fleet_default_shows_up_in_every_robots_effective_config(client):
+    f = client.get("/local/fleet").json()
+    assert f["fleet_config"]["timezone_id"] == "America/Chicago"
+    robot = f["robots"][0]
+    assert robot["config_effective"]["timezone_id"] == "America/Chicago"
+    assert "timezone_id" not in robot["config_overrides"]        # inherited, not local
+    assert robot["config_sources"]["timezone_id"] == "fleet"
+    assert robot["config_sources"]["audio_volume"] == "robot"    # set per robot earlier
+
+
+def test_a_per_robot_override_beats_the_fleet_default_through_the_console(client):
+    client.post("/local/fleet/config", json={"audio_volume": 20})
+    client.post(f"/local/robots/{DEVICE}/config", json={"audio_volume": 90})
+    f = client.get("/local/fleet").json()
+    assert f["fleet_config"]["audio_volume"] == pytest.approx(0.2)
+    assert f["robots"][0]["config_effective"]["audio_volume"] == pytest.approx(0.9)
+
+
+def test_bad_fleet_config_input_is_a_400(client):
+    r = client.post("/local/fleet/config",
+                    json={"alarms": [{"days": ["funday"], "time": "07:00"}]})
+    assert r.status_code == 400, r.text
+    assert r.json()["ok"] is False
+
+
+def test_the_console_learns_the_module_catalog_from_the_supervisor(client):
+    """The activity picker's options come from the one on-board catalog, never a copy."""
+    f = client.get("/local/fleet").json()
+    assert "JOKE" in f["schedule_modules"]
+    assert set(f["schedule_modules"]) == set(schedulable_module_ids())
+
+
 # --------------------------------------------------------------------------- #
 # GET /local/robots/{id}/telemetry
 # --------------------------------------------------------------------------- #
@@ -381,6 +560,180 @@ def test_safety_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# the device allowlist (pairing gate) — 🔐 Robot access
+# --------------------------------------------------------------------------- #
+
+def test_permitting_a_pending_robot_reaches_the_supervisor(client, supervisor):
+    """The console's one-click Permit: `POST /local/robots/{id}/permit` → the
+    supervisor's `POST /permits`, which stores it and re-pushes that robot's config."""
+    supervisor.permits["devices"].clear()
+    r = client.post(f"/local/robots/{DEVICE}/permit", json={"label": "Sam's Moxie"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert supervisor.permit_posts[-1] == {
+        "device_id": DEVICE, "permitted": True, "label": "Sam's Moxie"}
+    assert DEVICE in supervisor.permits["devices"]
+    assert [p["device_id"] for p in r.json()["permits"]] == [DEVICE]
+
+
+def test_revoking_forwards_permitted_false(client, supervisor):
+    supervisor.permits["devices"][DEVICE] = {"permitted_at": 1, "label": ""}
+    r = client.post(f"/local/robots/{DEVICE}/permit", json={"permitted": False})
+    assert r.status_code == 200
+    assert supervisor.permit_posts[-1]["permitted"] is False
+    assert DEVICE not in supervisor.permits["devices"]
+
+
+def test_the_open_toggle_round_trips(client, supervisor):
+    r = client.post("/local/fleet/permits", json={"allow_unverified_bots": True})
+    assert r.status_code == 200 and r.json()["allow_unverified_bots"] is True
+    assert supervisor.permits["allow_unverified_bots"] is True
+    client.post("/local/fleet/permits", json={"allow_unverified_bots": False})
+    assert supervisor.permits["allow_unverified_bots"] is False
+
+
+def test_permit_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    """A parent clicking Permit with the supervisor stopped must get a readable answer,
+    not a stack trace — the same 503-with-a-body contract as the config endpoints."""
+    from moxie_server import main
+    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.post(f"/local/robots/{DEVICE}/permit", json={})
+    assert r.status_code == 503 and r.json()["ok"] is False
+    r = client.get("/local/permits")
+    assert r.status_code == 503 and r.json()["pending"] == []
+
+
+def test_the_console_lists_the_allowlist(client, supervisor):
+    supervisor.permits["devices"][DEVICE] = {"permitted_at": 7, "label": "Sam's Moxie"}
+    r = client.get("/local/permits")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["permits"][0]["label"] == "Sam's Moxie"
+    supervisor.permits["devices"].clear()
+
+
+def test_pairing_through_the_console_auto_permits_the_robot(client, supervisor):
+    """The parent app's own pairing flow already IS the parent saying "this robot is
+    mine", so completing it must not leave the robot sitting in the pending list. The
+    QR carries Wi-Fi + the pairing seed and no device id, so the caller supplies the
+    robot's MQTT `d_<uuid>`; `simulate-robot-scan` then permits it as part of pairing."""
+    supervisor.permits["devices"].clear()
+    tok = client.post("/local/quicklogin",
+                      json={"email": "permit-test@local"}).json()["token"]
+    auth = {"Authorization": f"Bearer {tok}"}
+    prep = client.post("/local/pairing/prepare",
+                       json={"ssid": "Home", "password": "hunter2"}, headers=auth)
+    assert prep.status_code == 200, prep.text
+    payload = prep.json()["qr_payload"]
+
+    r = client.post("/local/simulate-robot-scan",
+                    json={"qr_payload": payload, "device_id": "d_just_paired"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["permitted"] is True and body["permit_error"] is None
+    assert "d_just_paired" in supervisor.permits["devices"]
+    assert supervisor.permits["devices"]["d_just_paired"]["label"] == "paired via console"
+
+
+def test_pairing_without_a_device_id_still_pairs(client, supervisor):
+    """A robot whose MQTT id we do not know yet is paired in the REST database and shows
+    up as pending on the MQTT side — the honest path for a real robot, which only
+    reveals its `d_<uuid>` when it connects to the broker."""
+    before = dict(supervisor.permits["devices"])
+    tok = client.post("/local/quicklogin",
+                      json={"email": "permit-test2@local"}).json()["token"]
+    prep = client.post("/local/pairing/prepare", json={"ssid": "Home", "password": "x"},
+                       headers={"Authorization": f"Bearer {tok}"})
+    r = client.post("/local/simulate-robot-scan",
+                    json={"qr_payload": prep.json()["qr_payload"]})
+    assert r.status_code == 200
+    assert r.json()["permitted"] is False and r.json()["robot_id"]
+    assert supervisor.permits["devices"] == before      # nothing was permitted blindly
+
+
+# --------------------------------------------------------------------------- #
+# GET / DELETE /local/robots/{id}/memory — 🧠 what Moxie remembers (BEYOND #4)
+# --------------------------------------------------------------------------- #
+
+def test_memory_reaches_the_console_as_dated_rows(client, supervisor):
+    """The floor: a parent can *read* every durable fact, with the day and the activity
+    it came from, without a shell."""
+    r = client.get(f"/local/robots/{DEVICE}/memory")
+    assert r.status_code == 200, r.text
+    m = r.json()
+    assert m["ok"] is True and m["device_id"] == DEVICE
+    assert m["policy"] == "NO_MEDIA" and m["writes_allowed"] is True and m["bytes"] > 0
+    assert m["namespace_count"] == 2 and m["total"] == 5
+    ns = {n["namespace"]: n for n in m["namespaces"]}
+    assert set(ns) == {"mchat", "free_chat"}
+    assert ns["mchat"]["counts"] == {"facts": 2, "preferences": 1, "open_threads": 0,
+                                     "summaries": 1, "total": 4}
+    texts = [i["text"] for i in ns["mchat"]["items"]]
+    assert "Sam has a beagle named Pepper" in texts
+    assert "They talked about pets." in texts
+    top = ns["mchat"]["items"][0]
+    assert top["provenance"]["module_id"] == "MCHAT" and top["provenance"]["turns"] == 4
+    assert top["provenance"]["date"] and top["provenance"]["reason"] == "exit"
+    # newest activity first (mchat's provenance is later than free_chat's)
+    assert [n["namespace"] for n in m["namespaces"]] == ["mchat", "free_chat"]
+    assert supervisor.memory_queries[-1] == DEVICE
+    # `_meta.summarized_through` is stripped by the runtime's parent view, so the console
+    # has nothing to show — see the Known gaps note in the implementation plan.
+    assert m["summarized_through"] is None
+
+
+def test_erasing_one_activity_forwards_and_the_next_read_reflects_it(client, supervisor):
+    r = client.delete(f"/local/robots/{DEVICE}/memory/mchat")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True and body["erased"] is True and body["namespace"] == "mchat"
+    assert supervisor.memory_erases[-1] == (DEVICE, "mchat")
+    # the console really erased it on the other side, not just in its own reply
+    after = client.get(f"/local/robots/{DEVICE}/memory").json()
+    assert [n["namespace"] for n in after["namespaces"]] == ["free_chat"]
+    assert after["total"] == 1
+    assert supervisor.memory.load(DEVICE).get("mchat") is None
+
+
+def test_erasing_everything_empties_the_store(client, supervisor):
+    r = client.delete(f"/local/robots/{DEVICE}/memory")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True and body["erased"] is True and body["namespace"] == "all"
+    assert body["namespaces"] == [] and body["total"] == 0
+    assert supervisor.memory_erases[-1] == (DEVICE, "all")
+    assert supervisor.memory.load(DEVICE) == {}
+    # ...and the empty state is an empty view, not an error
+    again = client.get(f"/local/robots/{DEVICE}/memory").json()
+    assert again["ok"] is True and again["total"] == 0 and again["error"] is None
+    _seed_memory(supervisor.runtime)          # leave the fixture as we found it
+
+
+def test_memory_for_an_unknown_device_is_a_404(client):
+    r = client.get("/local/robots/d_nope/memory")
+    assert r.status_code == 404, r.text
+    m = r.json()
+    assert m["ok"] is False and m["namespaces"] == [] and m["total"] == 0 and m["error"]
+
+
+def test_memory_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    """Reading *or* erasing with the supervisor stopped must be a readable ok:false —
+    never a 500, and never a UI that silently claims the memory is gone."""
+    from moxie_server import main
+    dead = socket.socket()
+    dead.bind(("127.0.0.1", 0))
+    port = dead.getsockname()[1]
+    dead.close()
+    monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
+    r = client.get(f"/local/robots/{DEVICE}/memory")
+    assert r.status_code == 503
+    assert r.json()["ok"] is False and r.json()["namespaces"] == [] and r.json()["error"]
+    d = client.delete(f"/local/robots/{DEVICE}/memory/mchat")
+    assert d.status_code == 503 and d.json()["ok"] is False
+    assert "erased" not in d.json()           # nothing was erased, so nothing is claimed
+
+
+# --------------------------------------------------------------------------- #
 # the double is honest
 # --------------------------------------------------------------------------- #
 
@@ -401,7 +754,7 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     rt.robots[DEVICE].extra["telemetry"] = list(_PACKETS)
 
     real = rt.status_snapshot()
-    fake = _snapshot({})
+    fake = _snapshot({}, {})
     assert set(fake) == set(real), "status snapshot top-level keys drifted"
     assert set(fake["robots"][0]) == set(real["robots"][0]), "robot record keys drifted"
 
@@ -415,7 +768,18 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     fake_missing, code = _telemetry("d_nope", 20)
     assert code == 404 and set(fake_missing) == set(real_missing)
 
-    # /safety is not doubled at all — the fake supervisor runs a REAL MoxieRuntime behind
-    # it — so the only thing to guard is that its unknown-device shape still 404s.
+    # the fleet-config seam: same endpoint, `scope=fleet`, same sanitizer
+    assert rt.fleet_config() == {} or isinstance(rt.fleet_config(), dict)
+    assert set(rt.effective_config(DEVICE)) == set(
+        merge_config_layers(rt.fleet_config(), {}))
+
+    # /safety and /memory are not doubled at all — the fake supervisor runs a REAL
+    # MoxieRuntime behind both — so the only thing to guard is the unknown-device shape
+    # (still a 404) and that the memory view keeps the keys the console reads.
     assert rt.safety_view("d_nope")["ok"] is False
     assert rt.acknowledge_safety("d_nope", "sfe-nope")["ok"] is False
+    assert rt.memory_view("d_nope")["ok"] is False
+    assert set(rt.memory_view(DEVICE)) == {"ok", "device_id", "namespaces", "bytes",
+                                           "writes_allowed", "policy"}
+    erased = rt.erase_memory(DEVICE)
+    assert erased["ok"] is True and set(erased) >= {"erased", "namespace", "namespaces"}

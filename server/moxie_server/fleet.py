@@ -27,6 +27,10 @@ def _num(v):
 def robot_summary(r: dict) -> str:
     """A one-line human summary of a robot's live state for the console card."""
     bits = []
+    # The pairing gate leads, because it changes what every other line means: a pending
+    # robot's config is the minimal child-free one, and nothing else is being served to it.
+    if r.get("pending"):
+        bits.append("pending — not permitted")
     bat = r.get("battery_level")
     if bat is not None:
         bits.append(f"battery {bat}%" if isinstance(bat, (int, float)) and bat <= 100
@@ -47,18 +51,40 @@ def robot_summary(r: dict) -> str:
     return " · ".join(bits) or "connected"
 
 
+def config_sources(fleet_config: Optional[dict], overrides: Optional[dict]) -> dict:
+    """`{key: "robot" | "fleet"}` — which layer each effective override came from.
+
+    The console renders it as a "set for every robot" hint next to a field, so a parent
+    can tell a house rule from a per-robot exception without opening two screens. Pure:
+    the layering itself lives in `moxie_sdk.cloud_config.merge_config_layers`; this only
+    labels it, top-level key by top-level key (a per-robot key wins the label even when
+    the layers deep-merged, because that is the field the parent last touched here)."""
+    out = {k: "fleet" for k in (fleet_config or {})}
+    out.update({k: "robot" for k in (overrides or {})})
+    return out
+
+
 def normalize_robot(r: dict) -> dict:
     """One robot record from the snapshot → the console-facing shape (live + online)."""
     return {
         "device_id": r.get("device_id"),
         "child": r.get("child"),
         "firmware": r.get("firmware"),
+        # Device allowlist. A snapshot from a supervisor that predates the gate carries
+        # neither key — it served everything, so it reads back as permitted.
+        "permitted": bool(r.get("permitted", True)),
+        "pending": bool(r.get("pending", False)),
+        "permit_label": str(r.get("permit_label") or ""),
         "battery_level": _num(r.get("battery_level")),
         "audio_volume": _num(r.get("audio_volume")),
         "wifi_ssid": r.get("wifi_ssid"),
         "mode": r.get("mode"),
         "ota_reboot_required": bool(r.get("ota_reboot_required")),
         "config_overrides": dict(r.get("config_overrides") or {}),
+        # fleet ⊕ per-robot, as the supervisor computed it (falls back to the per-robot
+        # layer for a pre-fleet snapshot, so an older supervisor still renders).
+        "config_effective": dict(r.get("config_effective")
+                                 or r.get("config_overrides") or {}),
         "telemetry_count": int(r.get("telemetry_count") or 0),
         "safety_total": int(r.get("safety_total") or 0),
         "safety_unreviewed": int(r.get("safety_unreviewed") or 0),
@@ -73,11 +99,25 @@ def normalize_fleet(snapshot: Optional[dict]) -> dict:
     snap = snapshot or {}
     ok = bool(snap.get("ok"))
     robots = [normalize_robot(r) for r in (snap.get("robots") or [])] if ok else []
+    fleet_config = dict(snap.get("fleet_config") or {}) if ok else {}
+    for r in robots:
+        r["config_sources"] = config_sources(fleet_config, r["config_overrides"])
     return {
         "ok": ok,
         "app": snap.get("app"),
         "uptime_s": int(snap.get("uptime_s") or 0),
         "robot_count": len(robots),
+        # appliance-wide defaults every robot inherits (audit ADOPT #6) + the on-board
+        # module ids a parent may schedule, so the console never copies the catalog.
+        "fleet_config": fleet_config,
+        # The pairing gate (audit §3.1): the appliance-wide "serve anything that
+        # connects" switch as the supervisor ENFORCES it (env included), plus the robots
+        # waiting for a parent to click Permit. `pending` is the console's whole to-do
+        # list, so it is lifted out of `robots` rather than left to be filtered client-side.
+        "allow_unverified_bots": bool(snap.get("allow_unverified_bots")) if ok else False,
+        "pending": [r["device_id"] for r in robots if r["pending"]],
+        "pending_count": sum(1 for r in robots if r["pending"]),
+        "schedule_modules": [str(m) for m in (snap.get("schedule_modules") or [])] if ok else [],
         "robots": robots,
         "recent": list(snap.get("recent") or [])[-60:],
         "error": None if ok else (snap.get("error") or "supervisor not reachable"),
@@ -191,3 +231,153 @@ def normalize_safety(payload: Optional[dict]) -> dict:
         "events": events,
         "error": None if ok else (p.get("error") or "supervisor not reachable"),
     }
+
+
+# --- long-term memory: "What Moxie remembers" (audit BEYOND #4) ----------------------
+# The runtime's `GET /memory` returns
+# `{ok, device_id, policy, writes_allowed, bytes, namespaces:{ns:{data:{facts,…},
+# provenance:[…]}}}` (moxie_sdk/store.py::MemoryStore.view). A parent does not think in
+# namespaces-of-lists; they think "what does Moxie believe about my kid, when did it
+# learn that, and from which activity". So this flattens each namespace into dated rows
+# and counts them. Pure, so it unit-tests in the hermetic suite.
+#
+# Honest limit, visible in the shape: provenance is recorded **per merge** (one entry per
+# summarized conversation), not per item, so every item in a namespace carries that
+# namespace's newest provenance. A dict item with its own `_provenance` is accepted too,
+# so a runtime that later attributes item by item renders here without a console change.
+
+#: The lists a namespace may hold, in the order a parent reads them, and the singular
+#: noun the UI puts on one row. Mirrors `content/memory.py::LIST_KEYS` + `summaries`.
+MEMORY_KINDS = (
+    ("facts", "fact"),
+    ("preferences", "preference"),
+    ("open_threads", "open thread"),
+    ("summaries", "summary"),
+)
+
+
+def memory_provenance(p: Optional[dict]) -> dict:
+    """One `_provenance` entry → the fields a parent row shows (never raises)."""
+    p = p if isinstance(p, dict) else {}
+    return {
+        "date": str(p.get("date") or ""),
+        "at": _num(p.get("at")),
+        "module_id": str(p.get("module_id") or ""),
+        "content_id": str(p.get("content_id") or ""),
+        "turns": int(_num(p.get("turns")) or 0),
+        "reason": str(p.get("reason") or ""),
+    }
+
+
+def _memory_block(block) -> tuple:
+    """One stored namespace → `(data, provenance, meta)`, for either shape it arrives in.
+
+    The parent view wraps a namespace as `{data, provenance}`; the raw `memory.json`
+    block keeps the lists at the top level with `_provenance` / `_meta` beside them.
+    Accepting both means this also renders a file read straight off disk."""
+    if not isinstance(block, dict):
+        return {}, [], {}
+    if isinstance(block.get("data"), dict) and isinstance(block.get("provenance"), list):
+        data, prov = block["data"], block["provenance"]
+        meta = block.get("meta") if isinstance(block.get("meta"), dict) else {}
+    else:
+        data = {k: v for k, v in block.items() if not str(k).startswith("_")}
+        prov = block.get("_provenance")
+        meta = block.get("_meta") if isinstance(block.get("_meta"), dict) else {}
+    return data, [p for p in (prov or []) if isinstance(p, dict)], meta
+
+
+def _memory_item(value, kind: str, fallback: dict) -> dict:
+    """One remembered value → a console row (`{kind, text, provenance}`)."""
+    prov = fallback
+    if isinstance(value, dict):
+        text = value.get("text") or value.get("value") or ""
+        own = value.get("_provenance") or value.get("provenance")
+        if isinstance(own, list):
+            own = own[0] if own else None
+        if isinstance(own, dict):
+            prov = own
+    else:
+        text = value
+    return {"kind": kind, "text": str(text), "provenance": memory_provenance(prov)}
+
+
+def _memory_sort_key(item: dict) -> tuple:
+    """Newest first: the provenance timestamp, then its date string."""
+    p = item.get("provenance") or {}
+    return (p.get("at") if isinstance(p.get("at"), (int, float)) else 0.0,
+            p.get("date") or "")
+
+
+def normalize_namespace(namespace: str, block) -> dict:
+    """One namespace (one activity's memory) → `{namespace, counts, items, …}`."""
+    data, prov, meta = _memory_block(block)
+    newest = prov[0] if prov else {}
+    items, counts = [], {}
+    for key, kind in MEMORY_KINDS:
+        values = data.get(key)
+        values = values if isinstance(values, list) else ([values] if values else [])
+        rows = [_memory_item(v, kind, newest) for v in values if v not in (None, "")]
+        counts[key] = len(rows)
+        items.extend(rows)
+    # …plus anything a module stored under a name we do not know about, so a parent is
+    # never shown a count that hides rows they cannot see.
+    known = {k for k, _ in MEMORY_KINDS}
+    for key in sorted(k for k in data if k not in known):
+        values = data[key]
+        values = values if isinstance(values, list) else [values]
+        rows = [_memory_item(v, str(key), newest) for v in values if v not in (None, "")]
+        if rows:
+            counts[str(key)] = len(rows)
+            items.extend(rows)
+    items.sort(key=_memory_sort_key, reverse=True)
+    counts["total"] = len(items)
+    through = _num(meta.get("summarized_through")) if isinstance(meta, dict) else None
+    return {
+        "namespace": str(namespace),
+        "counts": counts,
+        # the newest attribution for the namespace, so a card header can say
+        # "learned 2026-09-02 from MEMORY_CHAT" without walking the rows
+        "last_learned": memory_provenance(newest),
+        "conversations": len(prov),
+        "summarized_through": int(through) if through is not None else None,
+        "items": items,
+    }
+
+
+def normalize_memory(raw: Optional[dict]) -> dict:
+    """Runtime `/memory` response → the console's 🧠 "What Moxie remembers" shape.
+
+    Tolerates a None/error payload (supervisor down, unknown device) with `ok:false` and
+    an empty view, a partial namespace, and a bare `memory.json` dict. JSON-safe: every
+    value out of here is a str/int/float/bool/list/dict.
+    """
+    p = raw if isinstance(raw, dict) else {}
+    if "namespaces" in p or "ok" in p or "error" in p or not p:
+        ok = bool(p.get("ok"))
+        blocks = p.get("namespaces") if isinstance(p.get("namespaces"), dict) else {}
+    else:
+        ok, blocks = True, p              # a raw robots/<id>/memory.json off disk
+    rows = [normalize_namespace(ns, blocks[ns])
+            for ns in sorted(blocks) if not str(ns).startswith("_")] if ok else []
+    rows.sort(key=lambda r: (r["last_learned"].get("at") or 0.0,
+                             r["last_learned"].get("date") or ""), reverse=True)
+    through = [r["summarized_through"] for r in rows if r["summarized_through"]]
+    out = {
+        "ok": ok,
+        "device_id": p.get("device_id"),
+        # the parent's privacy switch as the runtime resolved it (fleet ⊕ per-robot):
+        # NO_DATA means nothing new is written, while reads and erase still work.
+        "policy": p.get("policy") if ok else None,
+        "writes_allowed": bool(p.get("writes_allowed", True)) if ok else False,
+        "bytes": int(_num(p.get("bytes")) or 0) if ok else 0,
+        "namespaces": rows,
+        "namespace_count": len(rows),
+        "total": sum(r["counts"]["total"] for r in rows),
+        "summarized_through": max(through) if through else None,
+        "error": None if ok else (p.get("error") or "supervisor not reachable"),
+    }
+    if "erased" in p:                     # an erase reply carries its own confirmation
+        out["erased"] = bool(p.get("erased"))
+        out["namespace"] = str(p.get("namespace") or "all")
+    return out

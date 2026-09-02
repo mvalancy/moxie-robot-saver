@@ -1,8 +1,9 @@
 # 🚀 The one-command stack
 
-> **Goal.** Go from a fresh clone to a running Moxie cloud — broker, robot supervisor and
-> parent console — with **one command**, on any machine with Docker. This is the fastest
-> way to get a backend that a real robot (or the [simulator](../../sim/)) can talk to.
+> **Goal.** Get a running Moxie cloud — broker, robot supervisor and parent console — with
+> **one command**, on any machine with Docker. Two ways in: **pull our published images**
+> (no clone, no build) or **build from a clone**. This is the fastest way to get a backend
+> that a real robot (or the [simulator](../../sim/)) can talk to.
 >
 > Already have a robot on Wi-Fi and just want the whole revival story?
 > Start at [`revive-your-moxie.md`](revive-your-moxie.md) — this guide is its "stand up
@@ -21,21 +22,60 @@ flowchart LR
   class moxie,broker,sup,console,phone,certs d;
 ```
 
-| Service | Image built from | What it does |
-|---|---|---|
-| `certs` | [`mqtt/broker/Dockerfile`](../../mqtt/broker/Dockerfile) | Runs [`gen-certs.sh`](../../mqtt/broker/gen-certs.sh) **once** into a volume: the broker's self-signed CA + server cert. Exits. |
-| `broker` | `eclipse-mosquitto:2.0.20` | The MQTT broker the robot homes to. TLS `8883` (robot) · plain `1883` (SIM/tests) · WebSocket `9001` (browser UI). Config: [`compose-mosquitto.conf`](../../mqtt/broker/compose-mosquitto.conf). |
-| `supervisor` | [`mqtt/Dockerfile`](../../mqtt/Dockerfile) | [`mqtt/run.py`](../../mqtt/run.py) — speaks Moxie's protocol, pushes each robot its config, routes turns to the brain, synthesizes the server voice. |
-| `console` | [`server/Dockerfile`](../../server/Dockerfile) | [`server/run.py`](../../server/run.py) — the account-free parent-app REST API, the mobile web client, and the fleet / config / telemetry views. |
+| Service | Published image | Built from | What it does |
+|---|---|---|---|
+| `certs` | `ghcr.io/mvalancy/moxie-robot-saver/broker-certs` | [`mqtt/broker/Dockerfile`](../../mqtt/broker/Dockerfile) | Runs [`gen-certs.sh`](../../mqtt/broker/gen-certs.sh) **once** into a volume: the broker's self-signed CA + server cert. Exits. |
+| `broker` | *upstream* `eclipse-mosquitto:2.0.20` | — | The MQTT broker the robot homes to. TLS `8883` (robot) · plain `1883` (SIM/tests) · WebSocket `9001` (browser UI). Config: [`compose-mosquitto.conf`](../../mqtt/broker/compose-mosquitto.conf), inlined into `docker-compose.images.yml` so that file stands alone. |
+| `supervisor` | `ghcr.io/mvalancy/moxie-robot-saver/supervisor` | [`mqtt/Dockerfile`](../../mqtt/Dockerfile) | [`mqtt/run.py`](../../mqtt/run.py) — speaks Moxie's protocol, pushes each robot its config, routes turns to the brain, synthesizes the server voice. |
+| `console` | `ghcr.io/mvalancy/moxie-robot-saver/console` | [`server/Dockerfile`](../../server/Dockerfile) | [`server/run.py`](../../server/run.py) — the account-free parent-app REST API, the mobile web client, and the fleet / config / telemetry views. |
+
+We publish three images, not four: the broker **is** upstream mosquitto — we ship its
+config, not a fork of it — so the third image is honestly named `broker-certs` (the
+one-shot that mints your appliance's own CA) rather than `broker`.
 
 ## Prerequisites
 
 - **Docker Engine 24+** with the Compose plugin (`docker compose version`). Nothing else —
-  no Python, no Node, no cloud account.
+  no Python, no Node, no cloud account, and (on the prebuilt path) no git.
 - ~1 GB of disk for the images, and free TCP ports `1883 / 8080 / 8883 / 8931 / 9001`
   (all changeable — see [Ports](#ports)).
+- **CPU architecture:** the images are multi-arch — `linux/amd64` (any PC, an Intel NAS)
+  and `linux/arm64` (Raspberry Pi 4/5 on a 64-bit OS, Apple silicon under Docker Desktop).
+  Docker picks the right one for you. 32-bit ARM (`armv7`, a Pi Zero/2/3 on a 32-bit OS)
+  is **not** published — build from the clone there.
 
-## The one command
+## Path A: prebuilt images (two commands, no clone)
+
+The way most owners should install it. Nothing is compiled on your machine; Docker pulls
+three small images and starts them.
+
+```sh
+curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/docker-compose.images.yml
+docker compose -f docker-compose.images.yml up            # add -d for the background
+```
+
+That file is deliberately **self-contained** — it references nothing else in the repo, so
+those two commands are the entire install. Want to configure it? Grab the documented
+example env beside it (optional — every value has a working default):
+
+```sh
+curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/.env.example
+cp .env.example .env && $EDITOR .env
+docker compose -f docker-compose.images.yml up -d
+```
+
+> **Honest status.** The release workflow publishes these images on every `v*` tag
+> ([RELEASING.md](../../RELEASING.md)). Until the **first tag cut after this landed**,
+> `ghcr.io/mvalancy/moxie-robot-saver/*` is empty and the pull will 404 — use Path B, or
+> check the repo's Packages page. The wiring itself is proven: `MOXIE_SMOKE_MODE=images
+> sim/run_compose_smoke.sh` runs this exact file, with `pull_policy: never`, against
+> locally built images carrying those names, and takes it through the full robot
+> round-trip.
+
+## Path B: the one command, from a clone
+
+For hacking on it, for 32-bit ARM, and for the `voice` / `stt` profiles (they change the
+supervisor *image*, so a prebuilt one cannot enable them).
 
 ```sh
 git clone https://github.com/mvalancy/moxie-robot-saver.git
@@ -44,8 +84,12 @@ docker compose up            # add -d to run it in the background
 ```
 
 That is the whole thing. First run builds the images and generates the broker certs
-(~2 minutes); later runs start in seconds. Then open **`http://<this-machine-ip>:8080`**
-from a phone on the same LAN.
+(~2 minutes); later runs start in seconds.
+
+Both paths use the compose project name `moxie` and therefore the **same named volumes**,
+so you can switch between them without losing your certs, your DB or Moxie's memory.
+
+Either way, open **`http://<this-machine-ip>:8080`** from a phone on the same LAN.
 
 Check it from the terminal:
 
@@ -63,6 +107,10 @@ them, so the stack starts with no `.env` at all:
 cp .env.example .env         # then edit
 docker compose up -d         # picks it up automatically
 ```
+
+(On Path A the same `.env` is read by `docker compose -f docker-compose.images.yml up -d`,
+plus three extra knobs only that file uses: `MOXIE_IMAGE_REGISTRY`, `MOXIE_IMAGE_TAG` and
+`MOXIE_IMAGE_PULL_POLICY`.)
 
 `.env` is git-ignored — **never commit a key**. [`.env.example`](../../.env.example) is
 the tracked copy and documents every `MOXIE_*` knob. The ones that matter most:
@@ -115,6 +163,11 @@ docker volume rm moxie_moxie-certs   # regenerate just the broker certs on next 
 
 ## Optional profiles (best-effort)
 
+> These profiles need **Path B (the clone)**. Both bake extra Python wheels into the
+> supervisor image, and a prebuilt image cannot grow them — the published `supervisor` is
+> the small, zero-dependency one, exactly as `docker compose up` builds it by default.
+> (A prebuilt `supervisor-voice` variant is not published today; it is on the list.)
+
 The default stack is deliberately small: no ML wheels, no model downloads. The profiles
 add them, and both need **two steps** — the profile fetches the model, and one `.env`
 line puts the matching runtime in the supervisor image. Honest status: `voice` is
@@ -165,8 +218,15 @@ to the image, and the first transcription is slow while the model warms.
 ## Prove it works
 
 ```sh
-bash sim/run_compose_smoke.sh
+bash sim/run_compose_smoke.sh                          # Path B: build from the clone
+MOXIE_SMOKE_MODE=images bash sim/run_compose_smoke.sh  # Path A: the published-image file
 ```
+
+Both modes make the *same* assertions; `images` mode builds the three images locally,
+tags them with the exact names `docker-compose.images.yml` references, and sets
+`pull_policy: never` — so a green run proves that file's wiring, not a registry. It also
+checks the broker config inlined in `docker-compose.images.yml` still matches
+[`compose-mosquitto.conf`](../../mqtt/broker/compose-mosquitto.conf) line for line.
 
 Brings the **real** compose file up under a throwaway project name on ports nothing else
 uses (so it can never disturb a stack you already have running), waits for all three
@@ -189,6 +249,19 @@ composed broker (`state → config → remote-chat → reply → TTS audio`), ch
 
 ## Updating
 
+**Path A — prebuilt images.** Two commands, and your volumes are untouched:
+
+```sh
+docker compose -f docker-compose.images.yml pull      # fetch the newer images
+docker compose -f docker-compose.images.yml up -d     # recreate only what changed
+```
+
+`MOXIE_IMAGE_TAG=latest` (the default) follows every stable release. Pin `0.6` to take
+patch releases only, or `0.6.2` to freeze. Roll back by setting the old tag and running
+`up -d` again — the images are immutable, so the previous version is still there.
+
+**Path B — from the clone:**
+
 ```sh
 git pull
 docker compose up -d --build      # rebuild changed images, keep every volume
@@ -204,6 +277,8 @@ docker compose up -d --build      # rebuild changed images, keep every volume
 | No audio in the SIM | `MOXIE_TTS=tone` gives you a placeholder tone immediately; real speech needs the `voice` profile. |
 | Robot cannot complete the TLS handshake | The cert's SAN must match the address the robot dials. Set `MOXIE_BROKER_HOST` to the LAN IP, delete the certs volume, `up` again. Firmware 24.10.803 also honours `disable_verify` in the endpoint QR. |
 | `certs` container keeps re-running | It is a one-shot; `Exited (0)` is success. |
+| `manifest unknown` / `denied` pulling `ghcr.io/mvalancy/…` | No release has been tagged yet (see the honest status under [Path A](#path-a-prebuilt-images-two-commands-no-clone)), or you asked for a `MOXIE_IMAGE_TAG` that was never published. Use Path B, or pick a tag from the repo's Packages page. |
+| `no matching manifest for linux/arm/v7` | 32-bit ARM is not published — use Path B on that machine. |
 | Changed `.env` but nothing happened | `docker compose up -d` again — compose re-creates the containers whose environment changed. Build-time knobs (`MOXIE_SUPERVISOR_EXTRAS`) also need `--build`. |
 
 ## Running it a different way

@@ -498,6 +498,87 @@ async def set_robot_config(device_id: str, request: Request):
             "ok": False, "error": "supervisor not reachable", "detail": str(e)})
 
 
+@app.post("/local/fleet/config")
+async def set_fleet_config(request: Request):
+    """Parent-console **fleet** config edit (audit ADOPT #6): forward the same whitelisted
+    overrides to the supervisor's `POST /config?scope=fleet`, which validates them, stores
+    them as the appliance-wide defaults and re-pushes every connected robot. A per-robot
+    override still wins. Server-side call so the browser has no CORS issue."""
+    import urllib.request, urllib.error
+    body = await request.body()
+    url = STATUS_URL.rsplit("/status", 1)[0] + "/config?scope=fleet"
+    req = urllib.request.Request(url, data=body or b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code, content=json.loads(e.read().decode() or "{}"))
+    except Exception as e:
+        return JSONResponse(status_code=503, content={
+            "ok": False, "error": "supervisor not reachable", "detail": str(e)})
+
+
+def _supervisor_post(path: str, payload: dict):
+    """POST one JSON body to the supervisor's little status server and return its reply.
+
+    Same server-side-call pattern as the config endpoints above (no CORS problem in the
+    browser, no supervisor port exposed to it). Returns `(dict, status_code)`; a
+    supervisor that is down is a 503 with a readable body rather than an exception."""
+    import urllib.request, urllib.error
+    url = STATUS_URL.rsplit("/status", 1)[0] + path
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return json.loads(r.read().decode()), 200
+    except urllib.error.HTTPError as e:
+        return json.loads(e.read().decode() or "{}"), e.code
+    except Exception as e:
+        return {"ok": False, "error": "supervisor not reachable", "detail": str(e)}, 503
+
+
+@app.get("/local/permits")
+def get_permits():
+    """The device allowlist (audit §3.1 pairing gate): who is permitted, who is pending,
+    and whether the appliance is currently serving unverified robots."""
+    import urllib.request
+    url = STATUS_URL.rsplit("/status", 1)[0] + "/permits"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        return JSONResponse(status_code=503, content={
+            "ok": False, "error": "supervisor not reachable", "detail": str(e),
+            "permits": [], "pending": []})
+
+
+@app.post("/local/robots/{device_id}/permit")
+async def permit_robot(device_id: str, request: Request):
+    """Let one pending robot in — the console's one-click **Permit** (body
+    `{"permitted": false}` revokes it, `{"label": "…"}` names it). The supervisor stores
+    the permit in `fleet/permits.json` and re-pushes that robot's config on the spot, so
+    a robot that was pending becomes paired without a reconnect."""
+    body = await _json(request)
+    out, code = _supervisor_post("/permits", {
+        "device_id": device_id,
+        "permitted": bool(body.get("permitted", True)),
+        "label": body.get("label") or ""})
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
+@app.post("/local/fleet/permits")
+async def set_fleet_permits(request: Request):
+    """The appliance-wide **"serve any robot that connects"** switch
+    (`{"allow_unverified_bots": true|false}`). Off is the safe default; on restores the
+    pre-gate behavior for a deployment that was running before the allowlist existed.
+    Flipping it re-pushes every connected robot's config."""
+    body = await _json(request)
+    out, code = _supervisor_post(
+        "/permits", {"allow_unverified_bots": bool(body.get("allow_unverified_bots"))})
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
 @app.get("/local/robots/{device_id}/telemetry")
 def robot_telemetry(device_id: str, limit: int = 20):
     """Parent-console insights (M6): the robot's stored telemetry Packets, fetched from
@@ -570,6 +651,64 @@ async def acknowledge_robot_safety(device_id: str, request: Request):
              "detail": str(e)}))
 
 
+# --- 🧠 What Moxie remembers (audit BEYOND #4) ---------------------------------------
+# The runtime stores durable, provenance-carrying facts per robot
+# (`robots/<id>/memory.json`, moxie_sdk/store.py::MemoryStore) and serves them on its
+# localhost status server. A memory a parent cannot read or erase is not acceptable on a
+# child's device, so the console proxies all three verbs here rather than leaving them to
+# `curl`. Erase granularity is exactly what the runtime offers: **one namespace, or all
+# of it** — there is no per-item delete on the other side, so there is none here.
+
+def _memory_request(device_id: str, method: str = "GET", namespace: str = ""):
+    """Call the supervisor's `/memory` for one robot and normalize the reply.
+
+    Same server-side-call shape as the telemetry/safety proxies (no CORS problem in the
+    browser, no supervisor port exposed to it). A supervisor that is down is a 503 whose
+    body is still the console's memory shape with `ok:false` — never a 500."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_memory
+    url = STATUS_URL.rsplit("/status", 1)[0] + f"/memory?device_id={quote(device_id)}"
+    if namespace:
+        url += f"&namespace={quote(namespace)}"
+    try:
+        req = urllib.request.Request(url, method=method)
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return normalize_memory(json.loads(r.read().decode())), 200
+    except urllib.error.HTTPError as e:
+        return normalize_memory(json.loads(e.read().decode() or "{}")), e.code
+    except Exception as e:
+        return normalize_memory({"ok": False, "device_id": device_id,
+                                 "error": "supervisor not reachable",
+                                 "detail": str(e)}), 503
+
+
+@app.get("/local/robots/{device_id}/memory")
+def robot_memory(device_id: str):
+    """What Moxie remembers about this child, by activity, with the date and the module
+    each item came from — plus whether writing new memories is currently allowed
+    (`LoggingPolicy.NO_DATA` stops writes; reads and erase always work)."""
+    out, code = _memory_request(device_id)
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
+@app.delete("/local/robots/{device_id}/memory")
+def forget_all_memory(device_id: str):
+    """Erase **everything** Moxie remembers about this child. Never policy-gated: a
+    parent must always be able to delete. Returns the (now empty) memory view."""
+    out, code = _memory_request(device_id, method="DELETE")
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
+@app.delete("/local/robots/{device_id}/memory/{namespace}")
+def forget_memory_namespace(device_id: str, namespace: str):
+    """Erase one activity's memory (one namespace). The finest granularity the runtime
+    offers — see docs/guides/what-moxie-remembers.md for what that means for one wrong
+    fact (today: erase the activity, and Moxie relearns the rest)."""
+    out, code = _memory_request(device_id, method="DELETE", namespace=namespace)
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
 @app.get("/local/pairing/qr.png")
 def pairing_qr_png(payload: str, ec: str = "l"):
     # The original app rendered with ZXing EC level L (low density) because Moxie's
@@ -585,7 +724,21 @@ async def simulate_robot_scan(request: Request):
     """Pretend a robot scanned the QR: decode it, recompute SHA256(seed), find the
     pending pairing, and create the robot record bound to the user/child — exactly
     what a real Moxie does when it phones home. Lets you test the full flow with no
-    hardware. Body: {qr_payload}"""
+    hardware. Body: `{qr_payload, device_id?}`.
+
+    **Auto-permit (the pairing gate, audit §3.1).** Pairing *is* the parent saying "this
+    robot is mine", so a robot that completes pairing here should not then need a second
+    click in the fleet panel. When `device_id` (the MQTT client id, `d_<uuid>`) is given,
+    this permits it on the supervisor as part of completing the pairing, and reports the
+    outcome as `permitted` / `permit_error`. It is best-effort: a supervisor that is down
+    never fails the pairing itself — the robot simply shows up as pending, which the
+    console's Permit button handles.
+
+    `device_id` is optional because the QR carries no device id (it carries Wi-Fi + the
+    pairing seed), so the *pairing* half of the system genuinely does not learn the
+    robot's MQTT identity until the robot connects to the broker. The console's Simulate
+    button passes the pending robot's id when there is exactly one; a real robot's path is
+    still "connects → pending → Permit". See docs/guides/permitting-a-robot.md."""
     body = await _json(request)
     payload = body.get("qr_payload", "")
     decoded = moxie_qr.decode_proto(payload)
@@ -609,8 +762,18 @@ async def simulate_robot_scan(request: Request):
           (rid, pairing["user_id"], pairing["child_id"], json.dumps(robot_attrs),
            json.dumps({"volume": 0.7, "screen-brightness": 0.8}), db.now_s(), db.now_s()))
     db.ex("UPDATE pairings SET consumed=1 WHERE id_hash=?", (id_hash,))
-    return {"robot_id": rid, "bound_user": pairing["user_id"], "bound_child": pairing["child_id"],
-            "ssid": decoded.get("ssid")}
+    out = {"robot_id": rid, "bound_user": pairing["user_id"],
+           "bound_child": pairing["child_id"], "ssid": decoded.get("ssid"),
+           "permitted": False, "permit_error": None}
+    device_id = (body.get("device_id") or "").strip()
+    if device_id:
+        res, code = _supervisor_post("/permits", {
+            "device_id": device_id, "permitted": True, "label": "paired via console"})
+        out["device_id"] = device_id
+        out["permitted"] = bool(code == 200 and res.get("ok"))
+        if not out["permitted"]:
+            out["permit_error"] = res.get("error") or f"supervisor returned {code}"
+    return out
 
 
 @app.get("/local/state")

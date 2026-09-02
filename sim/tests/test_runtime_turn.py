@@ -186,8 +186,13 @@ def test_no_transcriber_ignores_audio():
 
 
 def test_push_config_publishes_spec_robot_cloud_config():
-    """M5 integration: _push_config emits a spec-conformant RobotCloudConfig on /config."""
-    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"))
+    """M5 integration: _push_config emits a spec-conformant RobotCloudConfig on /config.
+
+    `allow_unverified_bots=True` is the pre-gate policy: this asserts the shape a
+    **permitted** robot gets. What a device that is *not* on the permit list receives
+    (no `child_pii`, `pairing_status:"unpairing"`) is `test_device_permits.py`."""
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"),
+                                    allow_unverified_bots=True)
     rt.client = _FakeClient()
     did = "d_cfg"
     rt._push_config(did)
@@ -216,7 +221,8 @@ def test_state_ingest_stores_robot_status():
 def test_update_config_republishes_with_merged_overrides():
     """M6 parent-console: update_config edits the RobotCloudConfig and re-publishes;
     overrides merge + persist across pushes."""
-    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"))
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"),
+                                    allow_unverified_bots=True)
     rt.client = _FakeClient()
     did = "d_upd"
     rt.update_config(did, audio_volume=0.9, timezone_id="America/New_York")
@@ -229,7 +235,8 @@ def test_update_config_republishes_with_merged_overrides():
 
 
 def test_update_config_bedtime_window():
-    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(),
+                                    allow_unverified_bots=True)
     rt.client = _FakeClient()
     cfg = rt.update_config("d_bt", weekday_bedtime=("20:00", "07:00"))
     assert cfg["weekday_bedtime_enabled"] is True

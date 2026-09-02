@@ -131,7 +131,8 @@ async function refreshMoxie(){
   try{
     const st=await api('/local/state');
     if(st.robots && st.robots.length){ renderRobot(st.robots[0]); }
-    else { $('#moxie-none').classList.remove('hidden'); $('#moxie-card').classList.add('hidden'); }
+    else { $('#moxie-none').classList.remove('hidden'); $('#moxie-card').classList.add('hidden');
+           $('#memory-card').classList.add('hidden'); }
   }catch(e){}
   refreshLive();
 }
@@ -140,19 +141,29 @@ let liveDevice=null;
 async function refreshLive(){
   const box=$('#robot-live'); if(!box) return;
   let f; try{ f=await api('/local/fleet',{auth:false}); }catch(e){ return; }
+  renderPermits(f);
+  // A *pending* robot (reached the broker, not on the permit list) is deliberately NOT
+  // the live robot: it has no child config to show and no settings to edit. It lives in
+  // the 🔐 Robot access card until a grown-up permits it.
+  const served=(f.robots||[]).filter(r=>!r.pending);
   const cfgBox=$('#cfg-box');
-  if(!f.ok || !f.robot_count){
+  if(!f.ok || !served.length){
     liveDevice=null;
-    box.innerHTML = `<div class="live-off">● Live state: ${f.ok?'no robot connected':'supervisor offline'}</div>`;
+    const why = !f.ok ? 'supervisor offline'
+              : (f.pending_count ? `${f.pending_count} robot${f.pending_count===1?'':'s'} waiting to be permitted`
+                                 : 'no robot connected');
+    box.innerHTML = `<div class="live-off">● Live state: ${escapeHtml(why)}</div>`;
     if(cfgBox) cfgBox.style.display='none';
     refreshInsights(null);
     refreshSafety(null);
+    refreshMemory(null);
     return;
   }
   if(cfgBox) cfgBox.style.display='';
-  liveDevice=f.robots[0].device_id;
-  if(cfgBox && !cfgBox.open) prefillConfig(f.robots[0]);   // don't clobber active edits
-  box.innerHTML = f.robots.map(r=>{
+  liveDevice=served[0].device_id;
+  fillModulePicker(f.schedule_modules);
+  if(cfgBox && !cfgBox.open) prefillConfig(served[0], f);  // don't clobber active edits
+  box.innerHTML = served.map(r=>{
     const rows=[
       ['Battery', r.battery_level==null?'—':`${r.battery_level}%`],
       ['Volume',  r.audio_volume==null?'—':r.audio_volume],
@@ -168,7 +179,64 @@ async function refreshLive(){
   }).join('');
   refreshInsights(liveDevice);
   refreshSafety(liveDevice);
+  refreshMemory(liveDevice);
 }
+
+// ---- 🔐 Robot access (the device allowlist / pairing gate) ----
+// Our broker accepts anonymous connections, so "reached the port" must not mean "is my
+// child's robot". A robot that is not on the permit list is PENDING: it gets a minimal
+// config with no child_pii and is served nothing else. One click here lets it in.
+function renderPermits(f){
+  const card=$('#permits-card'), box=$('#permits-box'); if(!card||!box) return;
+  const toggle=$('#permit-allowall'), warn=$('#permit-warn');
+  const robots=(f&&f.robots)||[];
+  const pending=robots.filter(r=>r.pending), permitted=robots.filter(r=>!r.pending);
+  const open=!!(f&&f.allow_unverified_bots);
+  // Hidden only when there is nothing to say: supervisor up, gate closed, nobody waiting.
+  card.classList.toggle('hidden', !(f&&f.ok) || (!pending.length && !open && !permitted.length));
+  if(toggle && document.activeElement!==toggle) toggle.checked=open;
+  if(warn) warn.innerHTML = open
+    ? '⚠️ <b>Open:</b> any robot that reaches this server is paired and receives your '
+      + 'child\u2019s name and birthday. Leave this off unless you are testing.'
+    : 'Off (recommended). New robots wait here until you permit them.';
+  const row=(r,act)=>
+    `<div class="ev"><span>${escapeHtml(r.device_id||'')}</span> `
+    + `<b>${escapeHtml(r.permit_label||r.summary||'')}</b> ${act}</div>`;
+  const parts=[];
+  if(pending.length) parts.push('<div class="insights-hd">Waiting for you</div>'
+    + pending.map(r=>row(r,
+        `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="1">Permit</button>`)).join(''));
+  if(permitted.length) parts.push('<div class="insights-hd">Allowed</div>'
+    + permitted.map(r=>row(r,
+        `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="0">Revoke</button>`)).join(''));
+  if(!parts.length) parts.push('<div class="live-off">No robot has connected yet.</div>');
+  box.innerHTML=parts.join('');
+  box.querySelectorAll('.permit-btn').forEach(b=>{ b.onclick=()=>setPermit(b.dataset.id, b.dataset.permit==='1'); });
+}
+async function setPermit(deviceId, permitted){
+  const s=$('#permit-status'); if(s) s.textContent = permitted?'Permitting…':'Revoking…';
+  try{
+    const r=await api(`/local/robots/${encodeURIComponent(deviceId)}/permit`,
+                      {method:'POST',auth:false,body:{permitted}});
+    if(s) s.textContent = r.ok
+      ? (permitted?'✅ Permitted — Moxie is paired and has its settings.'
+                  :'⛔ Revoked — that robot no longer receives your child\u2019s settings.')
+      : `⚠️ ${r.error||'failed'}`;
+  }catch(e){ if(s) s.textContent='⚠️ '+(e.message||'failed'); }
+  refreshLive();
+}
+{ const t=$('#permit-allowall'); if(t) t.onchange=async()=>{
+    const s=$('#permit-status'); if(s) s.textContent='Saving…';
+    try{
+      const r=await api('/local/fleet/permits',
+                        {method:'POST',auth:false,body:{allow_unverified_bots:t.checked}});
+      if(s) s.textContent = r.ok
+        ? (t.checked?'⚠️ Open — any robot that connects is now served.'
+                    :'🔒 Closed — new robots wait for your approval.')
+        : `⚠️ ${r.error||'failed'}`;
+    }catch(e){ if(s) s.textContent='⚠️ '+(e.message||'failed'); }
+    refreshLive();
+  }; }
 
 // telemetry insights (M6): the Packet events the runtime stored for this robot
 async function refreshInsights(deviceId){
@@ -247,34 +315,194 @@ async function refreshSafety(deviceId){
     refreshSafety(deviceId);
   };
 }
-function prefillConfig(r){
-  const ov=r.config_overrides||{};
+// ---- 🧠 what Moxie remembers (audit BEYOND #4) ----
+// The runtime writes a few durable facts per activity at the end of a conversation
+// (moxie_sdk/store.py::MemoryStore), each stamped with the day, the module and how many
+// turns it came from, and reads them back into the next prompt. A memory a parent cannot
+// read or erase is not acceptable on a child's device, so every item is listed here and
+// every list is erasable. Erase granularity is exactly the runtime's: one activity, or
+// everything — there is no per-item delete on the other side yet.
+const MEM_KINDS={'fact':'Fact','preference':'Likes','open thread':'Follow-up','summary':'Summary'};
+let memDevice=null;
+
+// A destructive button that asks twice: the first click arms it (and disarms any other),
+// the second one runs. Cheaper than a modal and impossible to hit by accident.
+function armErase(btn, armedLabel, run){
+  const original=btn.textContent;
+  btn.onclick=()=>{
+    if(btn.dataset.armed==='1'){ btn.dataset.armed=''; btn.textContent=original;
+                                 btn.classList.remove('mem-arm'); run(); return; }
+    document.querySelectorAll('#memory-card button[data-armed="1"]').forEach(o=>{
+      o.dataset.armed=''; o.classList.remove('mem-arm');
+      if(o.dataset.label) o.textContent=o.dataset.label;
+    });
+    btn.dataset.armed='1'; btn.dataset.label=original;
+    btn.textContent=armedLabel; btn.classList.add('mem-arm');
+    setTimeout(()=>{ if(btn.dataset.armed==='1'){ btn.dataset.armed='';
+      btn.textContent=original; btn.classList.remove('mem-arm'); } }, 6000);
+  };
+}
+
+async function refreshMemory(deviceId){
+  const card=$('#memory-card'), box=$('#memory-box'), all=$('#btn-mem-forget-all');
+  if(!card||!box) return;
+  memDevice=deviceId;
+  const hideAll=()=>{ if(all){ all.classList.add('hidden'); all.dataset.armed='';
+                               all.classList.remove('mem-arm'); } };
+  if(!deviceId){
+    box.innerHTML='<div class="live-off">No robot connected — nothing is being remembered.</div>';
+    hideAll(); return;
+  }
+  let m;
+  try{ m=await api('/local/robots/'+encodeURIComponent(deviceId)+'/memory',{auth:false}); }
+  catch(e){ box.innerHTML='<div class="live-off">Supervisor offline — memory unavailable.</div>';
+            hideAll(); return; }
+  if(!m.ok){
+    box.innerHTML='<div class="live-off">'+escapeHtml(m.error||'unavailable')+'</div>';
+    hideAll(); return;
+  }
+  // The privacy switch (LoggingPolicy). NO_DATA stops new memories being written; what
+  // was stored before the switch was flipped is still shown, and still erasable.
+  const off = m.writes_allowed===false
+    ? '<p class="mem-note off">⛔ Remembering is OFF for this robot (data sharing is '
+      + escapeHtml(m.policy||'NO_DATA') + '). Nothing new is written — anything '
+      + 'listed here was stored before that, and can still be erased.</p>'
+    : '';
+  if(!m.total){
+    box.innerHTML='<div class="live-off">Moxie hasn’t remembered anything yet.</div>'+off;
+    hideAll(); return;
+  }
+  const sections=(m.namespaces||[]).map(ns=>{
+    const p=ns.last_learned||{};
+    const sub=[p.date?('last learned '+p.date):'', p.module_id?('activity '+p.module_id):'',
+               p.turns?(p.turns+' turn'+(p.turns===1?'':'s')):''].filter(Boolean).join(' · ');
+    const rows=(ns.items||[]).map(it=>{
+      const q=it.provenance||{};
+      const when=[q.date||'', q.module_id||''].filter(Boolean).join(' · ');
+      return '<div class="ev"><span class="kind">'+escapeHtml(MEM_KINDS[it.kind]||it.kind)+'</span>'
+           + '<b>'+escapeHtml(it.text)+'</b>'
+           + '<span class="when">'+escapeHtml(when||'no date')+'</span></div>';
+    }).join('');
+    return '<div class="mem-ns"><div class="insights-hd">'+escapeHtml(ns.namespace)
+      + ' · '+ns.counts.total+' item'+(ns.counts.total===1?'':'s')+'</div>'
+      + (sub?'<div class="muted mem-sub">'+escapeHtml(sub)+'</div>':'')
+      + '<div class="evlog">'+rows+'</div>'
+      + '<button class="ghost tiny mem-forget" data-ns="'+escapeHtml(ns.namespace)+'">'
+      + 'Erase this activity’s memory</button></div>';
+  }).join('');
+  const through = m.summarized_through
+    ? '<p class="mem-note">Summarized through turn '+m.summarized_through
+      +' — later turns have not been written down.</p>' : '';
+  box.innerHTML=sections+off+through
+    +'<p class="mem-note">Moxie writes these itself, so one can be wrong — and a wrong '
+    +'one sticks until you erase it.</p>';
+  box.querySelectorAll('.mem-forget').forEach(b=>armErase(
+    b, 'Click again to erase', ()=>eraseMemory(deviceId, b.dataset.ns)));
+  if(all){
+    all.classList.remove('hidden');
+    armErase(all, 'Click again to erase EVERYTHING', ()=>eraseMemory(deviceId, ''));
+  }
+}
+
+async function eraseMemory(deviceId, namespace){
+  const s=$('#memory-status'); if(s) s.textContent='Erasing…';
+  const base='/local/robots/'+encodeURIComponent(deviceId)+'/memory';
+  const url=namespace? base+'/'+encodeURIComponent(namespace) : base;
+  try{
+    const r=await api(url,{method:'DELETE',auth:false});
+    const what=namespace?('“'+namespace+'”'):'everything';
+    if(s) s.textContent = r.erased
+      ? '🧽 Erased '+what+' — Moxie no longer remembers it.'
+      : 'Nothing was stored to erase.';
+  }catch(e){ if(s) s.textContent='⚠️ '+(e.message||'erase failed'); }
+  refreshMemory(deviceId);
+}
+
+// Wake alarms (RobotCloudConfig.alarms = WakeSchedule). The index of each label IS the
+// `WakeEntry.days` uint32 we send — it must stay in step with
+// moxie_sdk/cloud_config.py::WAKE_DAY_NAMES (0 = Monday … 6 = Sunday).
+const CFG_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+function buildDayBoxes(){
+  const box=$('#cfg-alarm-days'); if(!box || box.dataset.built) return;
+  box.dataset.built='1';
+  box.innerHTML=CFG_DAYS.map((d,i)=>
+    `<label class="day"><input type="checkbox" class="cfg-day" value="${i}"> ${d}</label>`).join('');
+}
+function fillModulePicker(modules){
+  const sel=$('#cfg-pref-module'); if(!sel) return;
+  const ids=(modules||[]);
+  if(sel.dataset.filled===ids.join(',')) return;      // don't clobber a live selection
+  sel.dataset.filled=ids.join(',');
+  const keep=sel.value;
+  sel.innerHTML='<option value="">— none —</option>'+
+    ids.map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+  if(keep) sel.value=keep;
+}
+function prefillConfig(r,f){
+  buildDayBoxes();
+  const ov=r.config_effective||r.config_overrides||{};   // fleet ⊕ per-robot
   if(r.audio_volume!=null) $('#cfg-vol').value=Math.round(r.audio_volume*100);
+  if(ov.audio_volume!=null) $('#cfg-vol').value=Math.round(ov.audio_volume*100);
   const bt=ov.weekday_bedtime;
   $('#cfg-bed-start').value = (bt&&bt[0])||'';
   $('#cfg-bed-end').value   = (bt&&bt[1])||'';
   $('#cfg-wake-btn').checked   = ov.wake_button_enabled!==false;
   $('#cfg-touch-wake').checked = ov.touch_wake_enabled!==false;
+  const wake=(ov.alarms&&(ov.alarms.wakes||[])[0])||null;
+  $('#cfg-alarm-time').value = (wake&&wake.time)||'';
+  $('#cfg-alarm-on').checked = !!(ov.alarms&&ov.alarms.enabled!==false&&wake);
+  const days=(wake&&wake.days)||[];
+  document.querySelectorAll('.cfg-day').forEach(c=>{ c.checked=days.includes(Number(c.value)); });
+  const pref=((ov.schedule_preferences||{}).parent_requests||[])[0]||null;
+  $('#cfg-pref-module').value = (pref&&pref.module_id)||'';
+  $('#cfg-pref-at').value = pref&&pref.scheduled_at ? isoLocal(pref.scheduled_at) : '';
+  const src=r.config_sources||{};
+  const house=Object.keys(src).filter(k=>src[k]==='fleet');
+  const box=$('#cfg-layers');
+  if(box) box.textContent = house.length
+    ? `🏠 From the house rules (all robots): ${house.join(', ')}` : '';
+}
+// epoch seconds → the "YYYY-MM-DDTHH:MM" a datetime-local input wants, in local time
+function isoLocal(sec){
+  const d=new Date(sec*1000), p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 async function saveConfig(){
-  if(!liveDevice){ return; }
+  const fleet=!!($('#cfg-fleet')&&$('#cfg-fleet').checked);
+  if(!liveDevice && !fleet){ return; }
   const s=$('#cfg-status'); s.textContent='Saving…';
   const start=$('#cfg-bed-start').value, end=$('#cfg-bed-end').value;
+  const days=Array.from(document.querySelectorAll('.cfg-day'))
+                  .filter(c=>c.checked).map(c=>Number(c.value));
+  const atime=$('#cfg-alarm-time').value;
+  const mod=$('#cfg-pref-module').value, at=$('#cfg-pref-at').value;
   const body={
     audio_volume: Number($('#cfg-vol').value),      // 0–100 → server clamps to 0–1
     wake_button_enabled: $('#cfg-wake-btn').checked,
     touch_wake_enabled: $('#cfg-touch-wake').checked,
     weekday_bedtime: (start&&end)? [start,end] : null,
+    // WakeSchedule: one entry for now; null clears the field
+    alarms: (atime&&days.length)
+      ? {wakes:[{days,time:atime}], enabled:$('#cfg-alarm-on').checked} : null,
+    // SchedulePreferences.ParentRequest — epoch SECONDS from the local wall clock
+    schedule_preferences: (mod&&at)
+      ? [{module_id:mod, scheduled_at:Math.floor(new Date(at).getTime()/1000)}] : null,
   };
+  const url = fleet ? '/local/fleet/config'
+                    : `/local/robots/${encodeURIComponent(liveDevice)}/config`;
   try{
-    const r=await api(`/local/robots/${encodeURIComponent(liveDevice)}/config`,
-                      {method:'POST',auth:false,body});
-    s.textContent = r.ok ? '✅ Saved — pushed to Moxie.' : `⚠️ ${r.error||'failed'}`;
+    const r=await api(url,{method:'POST',auth:false,body});
+    s.textContent = r.ok
+      ? (fleet ? '✅ Saved as house rules — pushed to every robot.'
+               : '✅ Saved — pushed to Moxie.')
+      : `⚠️ ${r.error||'failed'}`;
+    refreshLive();
   }catch(e){ s.textContent='⚠️ '+(e.message||'save failed'); }
 }
 function renderRobot(r){
   $('#moxie-none').classList.add('hidden');
   $('#moxie-card').classList.remove('hidden');
+  $('#memory-card').classList.remove('hidden');
   $('#robot-card').innerHTML =
     `<div><strong>${r.name||'Moxie'}</strong></div>
      <div class="k">Serial: ${r.serial||r['embodied-robot-id']||'—'}</div>
@@ -291,7 +519,16 @@ function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTime
 // ---- dev: simulate ----
 $('#btn-sim').onclick = async () => {
   if(!LAST.qr_payload){ alert('Generate a Wi-Fi pairing QR first (Wi-Fi tab).'); return; }
-  await api('/local/simulate-robot-scan',{method:'POST',auth:false,body:{qr_payload:LAST.qr_payload}});
+  // Pairing IS the parent saying "this robot is mine", so hand the pairing call the
+  // robot's MQTT id when it is unambiguous (exactly one robot pending) — the server then
+  // permits it as part of completing the pairing and no second click is needed.
+  let device_id='';
+  try{
+    const f=await api('/local/fleet',{auth:false});
+    if(f.ok && (f.pending||[]).length===1) device_id=f.pending[0];
+  }catch(e){}
+  await api('/local/simulate-robot-scan',
+            {method:'POST',auth:false,body:{qr_payload:LAST.qr_payload, device_id}});
   setTimeout(refreshMoxie,500);
 };
 

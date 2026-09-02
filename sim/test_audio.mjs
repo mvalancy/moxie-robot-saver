@@ -111,7 +111,8 @@ new Function(audioSrc)();
 const A = globalThis.window.moxieAudio;
 ok(!!A, "audio.js must expose window.moxieAudio");
 if (!A) { console.log("❌ audio tests FAILED:\n   - " + fails.join("\n   - ")); process.exit(1); }
-for (const fn of ["playCloudTTS", "decodeCloudTTS", "isSpeaking", "ttsPending"])
+for (const fn of ["playCloudTTS", "decodeCloudTTS", "isSpeaking", "ttsPending",
+                  "lastMouthPeak", "lastPlaybackStats"])
   ok(typeof A[fn] === "function", `moxieAudio.${fn} must exist`);
 
 // ---- helper: build a CloudTTSResponse from int16 samples ---------------------
@@ -220,10 +221,17 @@ ok(A.ttsPending() === 1, `suspended context must QUEUE the audio, pending=${A.tt
 ok(A.isSpeaking() === false, "nothing may be 'speaking' while the context is suspended");
 ok(CTX.made.sources.length === 0, "no source may start before the context is running");
 
+const gated2 = A.playCloudTTS(wire(tone(32), { eventId: "gate", chunk: 1 }));
+ok(A.ttsPending() === 2, `both chunks must wait for the gesture, pending=${A.ttsPending()}`);
+
 CTX.allowResume = true;               // the next user gesture unlocks audio
 fire("pointerdown");
 ok(A.isSpeaking() === true, "the queued audio must start on the first user gesture");
 ok(CTX.made.sources.length === 1, "exactly one source should be playing");
+// The playback record is reset on the speaking edge — which happens AFTER the queue
+// filled up, so it is seeded from what is already waiting rather than from zero.
+ok(A.lastPlaybackStats().max_pending >= 1,
+   `a queue built while suspended must survive the stats reset, got ${A.lastPlaybackStats().max_pending}`);
 ok(bodyClasses.has("tts-speaking"), "body.tts-speaking must be set while speaking");
 ok(/speaking/.test(el.textContent), `#tts-status should show the speaking indicator, got ${el.textContent}`);
 ok(ttsEvents.includes("moxie-tts-start"), "a moxie-tts-start event must fire");
@@ -233,6 +241,8 @@ ok(mouthCalls.some((v) => v > 0.2), `the mouth must animate while speaking, saw 
 
 CTX.made.sources[0].onended();         // the buffer finished
 const res = await queued;
+CTX.made.sources[CTX.made.sources.length - 1].onended();   // ...and the second chunk
+await gated2;
 ok(res.played === true, `playCloudTTS must resolve {played:true}, got ${JSON.stringify(res)}`);
 ok(res.decoded.frames === 64, "the resolution carries the decoded payload");
 ok(A.isSpeaking() === false, "speaking must clear when playback ends");
@@ -263,6 +273,19 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
   ok(order.join(",") === "4,8,12", `chunks must play in chunk_num order, got ${order.join(",")}`);
   ok(A.isSpeaking() === false, "speaking clears after the last chunk");
   ok(A.ttsPending() === 0, "the queue must drain");
+
+  /* ...and the page's RECORD of that playback, which outlives it. `ttsPending()` is a
+   * live gauge: by the time an outside observer asks, a short chunk has drained and the
+   * queue that proves the chunks were pipelined is gone (that raced ~50% in CI run
+   * 33629395950). `lastPlaybackStats()` is the same fact, frozen — sim/tests/test_sil.py
+   * asserts on it instead of sampling. */
+  const st = A.lastPlaybackStats();
+  ok(st && st.event_id === "chunky", `stats must name the event, got ${JSON.stringify(st)}`);
+  ok(st.chunks_played === 3, `stats must count every chunk, got ${st.chunks_played}`);
+  ok(st.order.join(",") === "0,1,2", `stats must record chunk_num order, got ${st.order}`);
+  ok(st.max_pending >= 2, `stats must remember the deepest queue, got ${st.max_pending}`);
+  st.order.push(99);                              // the getter must hand out a COPY
+  ok(A.lastPlaybackStats().order.join(",") === "0,1,2", "lastPlaybackStats() must not alias its array");
 }
 
 // --------------------------------------------------------------------------- //
@@ -278,6 +301,10 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
   ok(muted.played === false && muted.reason === "muted", "muting must suppress server audio");
   ok(A.isSpeaking() === false, "muted audio never speaks");
   A.setEnabled(true);
+  // Neither of those played, so the last real playback's record must still stand: the
+  // stats are frozen when an utterance ends and only a NEW utterance may reset them.
+  ok(A.lastPlaybackStats().event_id === "chunky" && A.lastPlaybackStats().chunks_played === 3,
+     `empty/muted payloads must not disturb the record, got ${JSON.stringify(A.lastPlaybackStats())}`);
 
   // viseme marks: an open vowel ('a') must open the mouth further than silence
   mouthCalls.length = 0;
@@ -293,7 +320,132 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 }
 
 // --------------------------------------------------------------------------- //
-// 6. #tts-status ownership — one line, two writers. env.js probes the optional
+// 6. Chunk order is STRUCTURAL — the same three chunks, however they are timed
+//
+// Sorting the queue orders only what is WAITING in it, which is a fact about timing:
+// with short chunks and one message per round trip, chunk 0 finishes and empties the
+// queue before chunk 1 lands, and chunk 2 — alone in the queue, therefore "first" —
+// starts ahead of it (recorded order [0,2,1], CI run 33632125915; the identical code
+// passed on a slower box the day before). The player now holds a chunk until its turn
+// has come, so these cases are about the DESIGN, not about who wins a race: in order,
+// out of order while the player is idle, a shuffled burst, and a chunk that never
+// arrives at all. In every one of them the recorded order must be ascending.
+// --------------------------------------------------------------------------- //
+{
+  const TTS_GAP_MS = 1200;                    // audio.js's bounded wait for a lost chunk
+  ok(new RegExp("TTS_GAP_MS = " + TTS_GAP_MS + ";").test(audioSrc),
+     `this section's gap timings must match audio.js's TTS_GAP_MS (${TTS_GAP_MS})`);
+
+  const lastSrc = () => CTX.made.sources[CTX.made.sources.length - 1];
+  const endLast = async () => { lastSrc().onended(); await sleep(3); };
+  const orderOf = () => A.lastPlaybackStats().order.join(",");
+
+  // There is no async decode for a chunk to overtake another in: decodeCloudTTS is
+  // pure synchronous maths, so a payload is queued (or playing) before playCloudTTS
+  // returns. Nothing can reorder between the wire and the queue — which is why the
+  // ordering gate is the only thing that has to be right.
+  const settled = () => A.ttsPending() + (A.isSpeaking() ? 1 : 0);
+  const before = settled();
+  const sync = A.playCloudTTS(wire(tone(4), { eventId: "ord-sync", chunk: 0 }));
+  ok(settled() === before + 1,
+     "playCloudTTS must decode and enqueue synchronously (no await between wire and queue)");
+  await endLast(); await sync;
+
+  // (i) chunks that arrive in order play in order (and pipeline behind chunk 0)
+  {
+    const p = [0, 1, 2].map((c) =>
+      A.playCloudTTS(wire(tone(4 + c * 4), { eventId: "ord-i", chunk: c })));
+    ok(A.ttsPending() === 2, `chunks 1 and 2 must queue behind chunk 0, got ${A.ttsPending()}`);
+    const lens = [];
+    for (let i = 0; i < 3; i++) { lens.push(lastSrc().buffer.length); await endLast(); }
+    await Promise.all(p);
+    ok(lens.join(",") === "4,8,12", `in-order chunks must play in order, got ${lens.join(",")}`);
+    ok(orderOf() === "0,1,2", `recorded order must be ascending, got ${orderOf()}`);
+  }
+
+  // (ii) THE REGRESSION: chunk 0 has already FINISHED when chunk 2 arrives, so the
+  //      queue has nothing to sort it against. Chunk 2 must still wait for chunk 1.
+  {
+    const p0 = A.playCloudTTS(wire(tone(4), { eventId: "ord-ii", chunk: 0 }));
+    ok(A.isSpeaking() === true && A.ttsPending() === 0, "chunk 0 starts at once");
+    await endLast(); await p0;
+    ok(A.isSpeaking() === false, "the player is IDLE between the chunks — the state the bug needed");
+
+    const p2 = A.playCloudTTS(wire(tone(12), { eventId: "ord-ii", chunk: 2 }));
+    await sleep(20);
+    ok(A.isSpeaking() === false,
+       "chunk 2 must WAIT for chunk 1 even with the player idle and the queue empty");
+    ok(A.ttsPending() === 1, `chunk 2 must be held, not dropped or played, got ${A.ttsPending()}`);
+
+    const p1 = A.playCloudTTS(wire(tone(8), { eventId: "ord-ii", chunk: 1 }));
+    ok(A.isSpeaking() === true, "chunk 1 must start the moment it lands");
+    ok(lastSrc().buffer.length === 8, "chunk 1, not chunk 2, must be the one playing");
+    await endLast(); await p1;
+    ok(lastSrc().buffer.length === 12, "chunk 2 must follow chunk 1");
+    await endLast(); await p2;
+
+    const st = A.lastPlaybackStats();
+    ok(st.event_id === "ord-ii" && st.chunks_played === 3 && st.order.join(",") === "0,1,2",
+       `one utterance, in chunk_num order, across the silent gap — got ${JSON.stringify(st)}`);
+  }
+
+  // (iii) a shuffled BURST arriving while chunk 0 plays (one task: nothing can drain)
+  {
+    const p = {};
+    p[0] = A.playCloudTTS(wire(tone(4), { eventId: "ord-iii", chunk: 0 }));
+    for (const c of [3, 1, 4, 2])
+      p[c] = A.playCloudTTS(wire(tone(4 + c * 4), { eventId: "ord-iii", chunk: c }));
+    ok(A.ttsPending() === 4, `four chunks must pipeline, got ${A.ttsPending()}`);
+    const lens = [lastSrc().buffer.length];
+    for (let i = 0; i < 4; i++) { await endLast(); lens.push(lastSrc().buffer.length); }
+    await endLast();
+    await Promise.all(Object.values(p));
+    ok(lens.join(",") === "4,8,12,16,20", `a shuffled burst must sort itself, got ${lens.join(",")}`);
+    ok(orderOf() === "0,1,2,3,4", `recorded order must be ascending, got ${orderOf()}`);
+    ok(A.lastPlaybackStats().max_pending >= 4,
+       `the record must remember the burst, got ${A.lastPlaybackStats().max_pending}`);
+  }
+
+  // (iv) the GAP RULE: a chunk that never arrives is waited for, then written off —
+  //      and the chunk that turns up too late is dropped, never played out of turn.
+  {
+    const p0 = A.playCloudTTS(wire(tone(4), { eventId: "ord-iv", chunk: 0 }));
+    await endLast(); await p0;
+    const p2 = A.playCloudTTS(wire(tone(12), { eventId: "ord-iv", chunk: 2 }));   // 1 never sent
+    await sleep(60);
+    ok(A.isSpeaking() === false, "the player waits for the chunk it is missing");
+    await sleep(TTS_GAP_MS + 150);
+    ok(A.isSpeaking() === true,
+       "after TTS_GAP_MS the lost chunk must be written off and playback continue");
+    ok(lastSrc().buffer.length === 12, "…starting the lowest chunk still in hand");
+
+    const late = await A.playCloudTTS(wire(tone(8), { eventId: "ord-iv", chunk: 1 }));
+    ok(late.played === false && late.reason === "late",
+       `a chunk past its slot must be dropped, got ${JSON.stringify(late)}`);
+    await endLast(); await p2;
+    ok(orderOf() === "0,2", `a gap must still leave the order ascending, got ${orderOf()}`);
+  }
+
+  // (v) a NEW event never waits behind the leftovers of the old one — events are FIFO,
+  //     and a chunk still held for the finished utterance is stale.
+  {
+    const p0 = A.playCloudTTS(wire(tone(4), { eventId: "ord-v-old", chunk: 0 }));
+    await endLast(); await p0;
+    const stale = A.playCloudTTS(wire(tone(12), { eventId: "ord-v-old", chunk: 2 }));  // held
+    const fresh = A.playCloudTTS(wire(tone(8), { eventId: "ord-v-new", chunk: 0 }));
+    ok(A.isSpeaking() === true, "a new event must start at once, not behind a held chunk");
+    ok(lastSrc().buffer.length === 8, "…and it is the new event that plays");
+    const dropped = await stale;
+    ok(dropped.played === false && dropped.reason === "superseded",
+       `the old event's leftovers must be released, got ${JSON.stringify(dropped)}`);
+    ok(A.lastPlaybackStats().event_id === "ord-v-new" && orderOf() === "0",
+       `the record must follow the new utterance, got ${JSON.stringify(A.lastPlaybackStats())}`);
+    await endLast(); await fresh;
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// 7. #tts-status ownership — one line, two writers. env.js probes the optional
 //    Piper sidecar asynchronously and used to write this element directly, so a
 //    slow probe landing mid-utterance wiped the live "speaking" indicator (and
 //    was itself wiped when playback restored the pre-probe text). audio.js owns
@@ -335,7 +487,7 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 }
 
 // --------------------------------------------------------------------------- //
-// 7. Wiring — the bridge routes /commands/tts here, and the SIM stays SDK-free
+// 8. Wiring — the bridge routes /commands/tts here, and the SIM stays SDK-free
 // --------------------------------------------------------------------------- //
 {
   const bridge = readFileSync(join(here, "web", "bridge.js"), "utf8");
@@ -373,4 +525,5 @@ if (fails.length) {
 }
 console.log("✅ audio tests OK — CloudTTSResponse decode (LE int16 → Float32, mono + stereo," +
             " odd/junk input)" + (parity ? ", parity with the real moxie_sdk encoder" : " (parity skipped)") +
-            ", autoplay queueing, chunk_num ordering, mouth/marks lip-sync, mute, #tts-status ownership, bridge wiring");
+            ", autoplay queueing, strict chunk_num ordering (idle gaps, shuffled bursts, the" +
+            " lost-chunk gap rule), mouth/marks lip-sync, mute, #tts-status ownership, bridge wiring");

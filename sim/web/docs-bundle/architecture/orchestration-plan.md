@@ -86,6 +86,10 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     (turn/streaming loop + safety gates, `_push_config`, the status HTTP handlers). Cap two BUILD slices
     plus one INTEGRATION/RESEARCH task. Same-file-different-region edits merge cleanly; same-region
     edits don't — plan the split before launching, not at merge time.
+11. **Browser tests assert recorded state, never live samples.** Three fast-tier flakes came from one test
+    family sampling a live value inside a short window (`#tts-status` text, `getMouthOpen()`, `ttsPending()`)
+    on a loaded runner. The page records what happened (peak, order, counts, per event) and the test waits
+    for completion, then asserts the record. Briefs for any SIM/Playwright work must say so explicitly.
 
 ## The layered session loops (24/7 continuity)
 
@@ -282,6 +286,84 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   Honest gaps: SFX/icons/spurts gated off (thin catalogs); the model's own mood reaches only the closing
   chunk on a streamed turn until `ReplyChunk` carries scored fields (planner phase); no hardware has played
   it. In flight: `feat/config-alarms-fleet-defaults`. **Next: promote v0.5.0** ("safe and alive").
+
+- **2026-09-02** — **Released v0.5.0 "safe and alive"** (dev → main squash `f0d1663`, tag `v0.5.0`, release tier
+  green, wheel + sdist published). Standing PR recreated as #23; dev reconciled (zero-content merge). Over
+  v0.4.0: the enforced child-safety contract, the automarkup floor, the fast tier fixed at the root, the audit
+  with per-item status + an expressiveness backlog. Hermetic suite 281 → 641. Four releases today
+  (v0.2.0 → v0.5.0), 16 delegated slices integrated. In flight: `feat/config-alarms-fleet-defaults`;
+  delegating `feat/session-memory-persist-summarize` (contract gap: `persist_data` + `summarize`).
+
+- **2026-09-02** — Integrated `feat/config-alarms-fleet-defaults` (PR #24 → dev): the config contract's `alarms`
+  (`WakeSchedule`) and `schedule_preferences` (`ParentRequest`) are built + editable, and a fleet-level default
+  config layers under per-robot overrides (ADOPT #6). Encodings the protos don't pin (day numbering, HH:MM,
+  epoch seconds) are isolated behind single constants and recorded as assumptions. +31 tests (→666 in the
+  fast-shaped venv). Live: two robots inherited a fleet alarm while a per-robot volume override won. Next
+  disjoint slice: device allowlist / pairing gate. In flight: `feat/session-memory-persist-summarize`.
+
+- **2026-09-02 (orchestrator)** — Fast tier flaked again on `8b7fb0a`/`9470e6c` (~50%): the chunked cloud-TTS
+  Playwright test sampled `ttsPending()` live and fast runners had already drained the queue. Same disease as
+  PR #15/#21, same cure — `fix/cloud-tts-queue-stats` (in flight, disjoint files) records per-playback stats
+  and asserts them after completion. Playbook rule 11 added. In flight: `feat/session-memory-persist-summarize`,
+  `feat/device-allowlist`, `fix/cloud-tts-queue-stats`.
+
+- **2026-09-02** — Integrated `feat/session-memory-persist-summarize` (PR #25 → dev): the content contract's
+  `persist_data` + `session.summarize` are built as a structured, provenance-carrying, parent-erasable memory
+  floor (BEYOND #4 floor) — `LoggingPolicy` honored from the effective config, module-declared memory, safety +
+  verbatim filters, `on_session_end` hook, `GET/DELETE/POST /memory`, `memory_chat.json` shipped. +42 tests
+  (→712). Live: Moxie greeted a returning child with "I remember you have a beagle named Pepper!". Honest gaps
+  → backlog: parent memory UI in the console; summaries are sticky and can be wrong (an invented pronoun);
+  no decay/per-item edit; summarization holds a pool thread. In flight: `feat/device-allowlist`,
+  `fix/cloud-tts-queue-stats`.
+
+- **2026-09-02** — Integrated `fix/cloud-tts-queue-stats` (PR #26 → dev): the chunked cloud-TTS test asserts
+  recorded playback stats (`lastPlaybackStats()`: chunks played, order, max queue depth — seeded at the
+  speaking edge) after completion instead of sampling the queue live; a synchronous fast-drain case makes the
+  assertion structural. Third and last member of this flake family; playbook rule 11 governs. In flight:
+  `feat/device-allowlist`; delegating `feat/published-images` (ADOPT #10 remainder).
+
+- **2026-09-02 (orchestrator)** — Rule 11 paid off immediately: with recorded stats in place, the fast tier
+  on `ce0e0c6` reported `order: [0, 2, 1]` — a **real** ordering bug in the browser SIM's chunk queue (chunk 2
+  can start before chunk 1 in a burst; identical code passed on `bd00268`, so it's a race in the queue, not
+  the observer). `fix/cloud-tts-chunk-order` in flight (allowlist: audio.js/bridge.js + tests): ordering
+  becomes a property of the design — dequeue strictly by expected `chunk_num` with a documented gap rule.
+  Until it lands, dev's fast tier is intermittently red for that one assertion. In flight:
+  `feat/device-allowlist`, `feat/published-images`, `fix/cloud-tts-chunk-order`.
+
+- **2026-09-02** — Integrated `feat/device-allowlist` (PR #27 → dev): the pairing gate is **closed by default** —
+  an unpermitted robot is pending, gets an un-paired config with no `child_pii`, and no brain; permitting it
+  (console 🔐 card, one click; auto-permit on the console pairing path) re-pushes the full config at once.
+  Gate on the transport boundary; `"unpairing"` recorded as an assumption behind one constant. +34 tests
+  (→765 full / 739 fast-shaped); smoke, scenarios, compose smoke green; two-robot live proof. Honest gap:
+  service refusal, not authentication — broker ACL/JWT still deferred. In flight: `feat/published-images`,
+  `fix/cloud-tts-chunk-order`.
+
+- **2026-09-02** — Integrated `feat/published-images` (PR #28 → dev, ADOPT #10): the release tier now publishes
+  multi-arch (amd64 + arm64) images to GHCR on every `v*` tag (`supervisor`, `console`, `broker-certs`; the
+  broker is upstream mosquitto), and a self-contained `docker-compose.images.yml` gives owners the
+  two-command install with no clone. Proven locally (real OCI manifest lists; images-mode smoke green;
+  drift guard on the inlined broker config); actionlint clean. **First real publish happens at the next tag
+  — and the packages start private (one-time flip to public on the repo's Packages page).** In flight:
+  `fix/cloud-tts-chunk-order`, `feat/parent-memory-browser`.
+
+- **2026-09-02** — Integrated `fix/cloud-tts-chunk-order` (PR #30 → dev): the real `[0, 2, 1]` bug is fixed at the
+  root — ordering was a property of the *queue* (what's still waiting); with short chunks and one message per
+  round trip, chunk 0 drained before chunk 1 landed and chunk 2 started alone. Now the *player* enforces it
+  (n+1 only after n; 1.2 s gap rule; late chunks dropped; 5 s event window), with tests that fail
+  deterministically on the old code. Fast tier should be steadily green again.
+- **2026-09-02** — Integrated `feat/parent-memory-browser` (PR #29 → dev): 🧠 "What Moxie remembers" in the
+  console — facts/preferences/open threads per activity with provenance, erase per activity or everything,
+  empty + policy states; the double's honesty guard covers the memory handlers. +19 tests (→753 fast /
+  784 full). Gaps: no per-item erase/edit (runtime has none), `summarized_through` needs a one-line runtime
+  change, nothing decays. BEYOND #4 stays 🟡 until decay/edit.
+
+- **2026-09-02 (orchestrator)** — v0.6.0 promotion paused by a red deep gate: since PR #28 the prebuilt-image
+  compose smoke failed because `docker-compose.images.yml` (built in parallel with PR #27) never forwarded the
+  now-closed pairing gate's `MOXIE_ALLOW_UNVERIFIED_BOTS`; the robot got `pairing_status='unpairing'`. Fixed in
+  `fix/images-compose-gate-env` (PR #31 → dev, one-line passthrough; images-mode smoke green locally).
+  Playbook lesson (rule 10 corollary): two concurrent slices that both touch *deploy config* need an
+  integration-time smoke of the *combined* tree, not just each branch's own — the orchestrator now runs the
+  images-mode compose smoke at merge whenever compose/deploy files changed. Promotion resumes on a green gate.
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

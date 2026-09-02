@@ -59,3 +59,17 @@ class MoxieApp:
     def greeting(self, robot: RobotContext) -> Optional[Reply]:
         """Optional opening line when a session starts."""
         return None
+
+    def on_session_end(self, robot: RobotContext, history: list,
+                       reason: str = "") -> None:
+        """Called when a conversation *finishes* — the module exited (`<exit>` / an EXIT
+        action), the robot switched to another module, or it went offline.
+
+        This is the contract's `complete_handler` moment
+        (docs/architecture/content-module-contract.md → the `code` hooks): the last point
+        at which the whole transcript still exists, and therefore where long-term memory
+        is written (`ContentApp` summarizes it into `volley.persist_data`).
+
+        `reason` is one of "exit" / "module_switch" / "disconnect". Called off the MQTT
+        loop; it may take as long as a brain call, and anything it raises is swallowed by
+        the runtime — a failed summary must never end a child's session badly."""

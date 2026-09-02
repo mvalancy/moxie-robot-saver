@@ -1,12 +1,12 @@
 {
- "generated": "docs-5d63297e66be",
+ "generated": "docs-286281ff3b3c",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 11378,
+   "bytes": 12051,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
@@ -109,14 +109,14 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 32840,
+   "bytes": 39950,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-02, at v0.5.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)",
+    "DoD progress (audited 2026-09-02, at v0.6.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 25183,
+   "bytes": 32614,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -161,7 +161,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 53597,
+   "bytes": 56704,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -183,6 +183,7 @@
     "3.4 Connect/disconnect detection (regex on broker log)",
     "3.5 Command names (cloud → robot, `/devices/{id}/commands/{name}`)",
     "3.6 The robot config JSON pushed on connect",
+    "3.7 The pairing gate — which robots we actually serve *(built, v1 2026-09-02)*",
     "3b. Robot identity / auth",
     "4. Conversation flow (end to end)",
     "4.1 The turn objects",
@@ -230,11 +231,14 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 8477,
+   "bytes": 16503,
    "mermaid": 1,
    "headings": [
     "The loop",
     "① `/config` down — `RobotCloudConfig` (the thing the server must produce)",
+    "Wake alarms & scheduled activities — the JSON we emit",
+    "Fleet defaults ⊕ per-robot overrides",
+    "The pairing gate — permits, and what a *pending* robot is sent",
     "The child-PII encryption boundary — and the revival shortcut",
     "② `/state` up — `RobotStatus` (the robot's self-report)",
     "CloudStatus.UserState` — the pairing/OTA lifecycle the console shows",
@@ -250,7 +254,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 10557,
+   "bytes": 16988,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -259,6 +263,12 @@
     "globals[]` — regex-triggered commands (always on)",
     "schedules[]` — what to offer when",
     "The `volley` / `session` API (per-turn hooks)",
+    "Memory — `persist_data` + `session.summarize()`",
+    "The store",
+    "session.summarize(...)`",
+    "Declaring it (the `memory` block)",
+    "What a parent can do",
+    "Honest limits",
     "Execution actions (content → robot bridge)",
     "QR inside content",
     "Content delivery (assets)",
@@ -323,7 +333,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 60902,
+   "bytes": 64065,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -683,7 +693,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1456,
+   "bytes": 2141,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -710,12 +720,13 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 12042,
+   "bytes": 16744,
    "mermaid": 1,
    "headings": [
     "What comes up",
     "Prerequisites",
-    "The one command",
+    "Path A: prebuilt images (two commands, no clone)",
+    "Path B: the one command, from a clone",
     "Configure it — one `.env`",
     "Ports",
     "Where your data lives",
@@ -743,6 +754,37 @@
     "Where to review it",
     "Privacy",
     "Changing what is checked"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/permitting-a-robot.md",
+   "title": "Letting a robot in — \"pending\" and how to permit it",
+   "section": "guides",
+   "bytes": 5150,
+   "mermaid": 0,
+   "headings": [
+    "The one-paragraph version",
+    "Will I ever see this?",
+    "Permitting a robot",
+    "What a pending robot actually gets",
+    "The \"let any robot in\" switch",
+    "Where the list is kept",
+    "If something is not working"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/what-moxie-remembers.md",
+   "title": "What Moxie remembers — and how to erase it",
+   "section": "guides",
+   "bytes": 4211,
+   "mermaid": 0,
+   "headings": [
+    "What is written down",
+    "What is *never* written down",
+    "Erasing it",
+    "Summaries can be wrong"
    ],
    "kind": "md"
   },

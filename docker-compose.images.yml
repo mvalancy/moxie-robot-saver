@@ -1,0 +1,182 @@
+# 🤖 The Moxie stack from PUBLISHED images — no clone, no build, two commands.
+#
+#     curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/docker-compose.images.yml
+#     docker compose -f docker-compose.images.yml up
+#
+# This file is SELF-CONTAINED on purpose: it references no other file in the repo, so an
+# owner who downloads only this (plus an optional .env) gets the whole appliance. Every
+# service either uses an upstream image or one of ours from GHCR:
+#
+#   certs       ghcr.io/mvalancy/moxie-robot-saver/broker-certs   (mqtt/broker/Dockerfile)
+#   broker      eclipse-mosquitto:2.0.20 + the config inlined below
+#   supervisor  ghcr.io/mvalancy/moxie-robot-saver/supervisor     (mqtt/Dockerfile)
+#   console     ghcr.io/mvalancy/moxie-robot-saver/console        (server/Dockerfile)
+#
+# Images are multi-arch (linux/amd64 + linux/arm64) and published by the release
+# workflow on every `v*` tag — see RELEASING.md. Pin a version with MOXIE_IMAGE_TAG.
+#
+# Building from a clone instead? That is the sibling `docker-compose.yml`, which is
+# unchanged and still the path for the `voice` / `stt` profiles (they bake extra wheels
+# into the supervisor IMAGE, so a prebuilt one cannot enable them).
+#
+# Guide: docs/guides/one-command-stack.md
+# (Install-UX cross-checked against OpenMoxie's prebuilt-image compose (MIT): one
+#  downloadable file, one .env, named volumes. No code taken; this is our own.)
+#
+# Same project name as docker-compose.yml, so both paths share the SAME named volumes
+# (moxie_moxie-certs, moxie_moxie-console-data, …) and you can switch between them
+# without losing your certs, your DB or Moxie's memory.
+name: moxie
+
+# The broker's config, inlined so this file needs nothing beside it. Byte-for-byte the
+# repo's mqtt/broker/compose-mosquitto.conf, except `$` doubled for compose (the guard in
+# sim/run_compose_smoke.sh fails if the two ever drift).
+configs:
+  mosquitto-conf:
+    content: |
+      # Broker config for the ONE-COMMAND STACK (the repo-root docker-compose.yml).
+      #
+      # Same trust model as mosquitto.conf (LAN-only, anonymous, TLS for the robot), with one
+      # deliberate difference: the plain listener binds every *container* interface instead of
+      # 127.0.0.1, because in compose the supervisor is a different container. The compose
+      # network is the boundary; port 1883 reaches the host only if you publish it (the stack
+      # does, for the SIM and the tests — bind it to 127.0.0.1 on an untrusted LAN).
+      #
+      # 8883 = the robot (TLS) · 1883 = supervisor/SIM/tests · 9001 = the browser UI over WS.
+
+      listener 8883
+      cafile   /mosquitto/config/keys/ca.crt
+      certfile /mosquitto/config/keys/mosquitto.crt
+      keyfile  /mosquitto/config/keys/mosquitto.key
+      tls_version tlsv1.2
+      allow_anonymous true
+
+      listener 1883
+      allow_anonymous true
+
+      listener 9001
+      protocol websockets
+      allow_anonymous true
+
+      # The supervisor detects robot connect/disconnect by watching $$SYS/broker/log, so the
+      # broker must republish its log to that topic (see supervisor/moxie_runtime.py).
+      log_dest stdout
+      log_dest topic
+      log_type all
+      connection_messages true
+      sys_interval 10
+
+      persistence true
+      persistence_location /mosquitto/data/
+
+services:
+
+  # ── one-shot: the broker's TLS material ────────────────────────────────────────────
+  certs:
+    image: ${MOXIE_IMAGE_REGISTRY:-ghcr.io/mvalancy/moxie-robot-saver}/broker-certs:${MOXIE_IMAGE_TAG:-latest}
+    pull_policy: ${MOXIE_IMAGE_PULL_POLICY:-missing}
+    environment:
+      MOXIE_BROKER_HOST: ${MOXIE_BROKER_HOST:-127.0.0.1}   # LAN IP a robot uses → cert SAN
+    volumes:
+      - moxie-certs:/certs
+    restart: "no"
+
+  # ── the MQTT broker the robot (or the SIM) connects to ────────────────────────────
+  broker:
+    image: eclipse-mosquitto:2.0.20
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    ports:
+      - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_MQTT_TLS:-8883}:8883"   # robot (TLS)
+      - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_MQTT:-1883}:1883"       # SIM / tests
+      - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_WS:-9001}:9001"         # browser UI (MQTT over WS)
+    configs:
+      - source: mosquitto-conf
+        target: /mosquitto/config/mosquitto.conf
+    volumes:
+      - moxie-certs:/mosquitto/config/keys:ro
+      - moxie-broker-data:/mosquitto/data
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 1883 -t healthcheck -m up -q 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    restart: unless-stopped
+
+  # ── the robot cloud: protocol + config + brain + voice ────────────────────────────
+  supervisor:
+    image: ${MOXIE_IMAGE_REGISTRY:-ghcr.io/mvalancy/moxie-robot-saver}/supervisor:${MOXIE_IMAGE_TAG:-latest}
+    pull_policy: ${MOXIE_IMAGE_PULL_POLICY:-missing}
+    depends_on:
+      broker:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MOXIE_ALLOW_UNVERIFIED_BOTS: ${MOXIE_ALLOW_UNVERIFIED_BOTS:-}
+      MOXIE_MQTT_HOST: broker
+      MOXIE_MQTT_PORT: "1883"
+      MOXIE_STATUS_PORT: "8930"
+      MOXIE_STATUS_PROXY_PORT: "8931"        # deploy-layer shim → the console can read /status
+      MOXIE_DATA_DIR: /data                  # the moxie-supervisor-data volume
+      MOXIE_MEMORY_DIR: /data/memory         # conversation memory, survives restarts
+      MOXIE_APP: ${MOXIE_APP:-content}       # content | llm | echo | webhook
+      MOXIE_CONTENT_MODULE: ${MOXIE_CONTENT_MODULE:-content_modules/starter.json}
+      MOXIE_CHILD_NICKNAME: ${MOXIE_CHILD_NICKNAME:-friend}
+      MOXIE_TTS: ${MOXIE_TTS:-tone}          # tone = the built-in zero-dependency voice
+      MOXIE_TTS_VOICE: ${MOXIE_TTS_VOICE:-alloy}
+      MOXIE_PIPER_MODEL: ${MOXIE_PIPER_MODEL:-}      # published images ship no Piper — see the guide
+      MOXIE_PIPER_CONFIG: ${MOXIE_PIPER_CONFIG:-}
+      MOXIE_STT: ${MOXIE_STT:-auto}          # auto = on when faster-whisper is installed
+      MOXIE_STT_MODEL: ${MOXIE_STT_MODEL:-base.en}
+      MOXIE_LLM_BASE_URL: ${MOXIE_LLM_BASE_URL:-https://gateway.graphlings.net/v1}
+      MOXIE_LLM_API_KEY: ${MOXIE_LLM_API_KEY:-}
+      MOXIE_LLM_MODEL: ${MOXIE_LLM_MODEL:-graphling-medium}
+      MOXIE_BRAIN_BUDGET_S: ${MOXIE_BRAIN_BUDGET_S:-6}   # slow brain → a filler line, then the answer
+      MOXIE_STREAMING: ${MOXIE_STREAMING:-1}             # speak each sentence as the model writes it
+      MOXIE_VOICE_BASE_URL: ${MOXIE_VOICE_BASE_URL:-}
+      MOXIE_VOICE_API_KEY: ${MOXIE_VOICE_API_KEY:-}
+      MOXIE_WEBHOOK_ENDPOINT: ${MOXIE_WEBHOOK_ENDPOINT:-}
+      MOXIE_BROKER_HOST: ${MOXIE_BROKER_HOST:-127.0.0.1}
+      MOXIE_BROKER_PORT: ${MOXIE_PORT_MQTT_TLS:-8883}
+      HF_HOME: /cache/huggingface
+    ports:
+      # The runtime's own status server stays loopback-only inside the container; this
+      # publishes the proxy. Bind it to 127.0.0.1 unless you trust the network.
+      - "${MOXIE_BIND_HOST:-127.0.0.1}:${MOXIE_PORT_STATUS:-8931}:8931"
+    volumes:
+      - moxie-supervisor-data:/data          # conversation memory + MOXIE_DATA_DIR
+      - moxie-models:/models:ro              # Piper voices (build-from-clone `voice` profile)
+      - moxie-whisper-cache:/cache           # faster-whisper model cache
+    restart: unless-stopped
+
+  # ── the parent console: web app + REST API ────────────────────────────────────────
+  console:
+    image: ${MOXIE_IMAGE_REGISTRY:-ghcr.io/mvalancy/moxie-robot-saver}/console:${MOXIE_IMAGE_TAG:-latest}
+    pull_policy: ${MOXIE_IMAGE_PULL_POLICY:-missing}
+    depends_on:
+      supervisor:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MOXIE_SUPERVISOR_STATUS: http://supervisor:8931/status
+      MOXIE_BROKER_HOST: ${MOXIE_BROKER_HOST:-127.0.0.1}
+      MOXIE_DB: /data/moxie.db
+    ports:
+      - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_CONSOLE:-8080}:8080"
+    volumes:
+      - moxie-console-data:/data             # moxie.db — children, robots, keys
+    restart: unless-stopped
+
+volumes:
+  moxie-certs:           # broker CA + server cert (regenerate: docker compose down -v)
+  moxie-broker-data:     # mosquitto persistence
+  moxie-supervisor-data: # conversation memory / MOXIE_DATA_DIR
+  moxie-console-data:    # the console's SQLite DB
+  moxie-models:          # Piper voices
+  moxie-whisper-cache:   # faster-whisper model cache

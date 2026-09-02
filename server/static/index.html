@@ -128,6 +128,17 @@
 
     <!-- TAB: Moxie status -->
     <section class="tabpanel" id="tab-moxie">
+      <!-- Device allowlist (pairing gate). A robot that reaches the broker but is not
+           permitted is "pending": it gets a minimal config with no child data and is
+           served nothing else until a grown-up lets it in here. -->
+      <div class="card hidden" id="permits-card">
+        <h2>🔐 Robot access</h2>
+        <div id="permits-box"></div>
+        <label class="check"><input id="permit-allowall" type="checkbox">
+          Let any robot that connects use this server</label>
+        <div id="permit-warn" class="muted"></div>
+        <div id="permit-status" class="muted"></div>
+      </div>
       <div class="card" id="moxie-none">
         <h2>No Moxie paired yet</h2>
         <p class="muted">Finish Wi-Fi + Server pairing, then your robot appears here.</p>
@@ -150,15 +161,47 @@
           </div>
           <label class="check"><input id="cfg-wake-btn" type="checkbox"> Wake button enabled</label>
           <label class="check"><input id="cfg-touch-wake" type="checkbox"> Touch to wake</label>
+          <fieldset class="cfgset">
+            <legend>⏰ Wake alarm</legend>
+            <div class="cfg-days" id="cfg-alarm-days"></div>
+            <div class="cfg-row">
+              <label>Wake at <input id="cfg-alarm-time" type="time"></label>
+              <label class="check"><input id="cfg-alarm-on" type="checkbox"> Alarm on</label>
+            </div>
+          </fieldset>
+          <fieldset class="cfgset">
+            <legend>📅 Scheduled activity</legend>
+            <div class="cfg-row">
+              <label>Activity
+                <select id="cfg-pref-module"><option value="">— none —</option></select>
+              </label>
+              <label>At <input id="cfg-pref-at" type="datetime-local"></label>
+            </div>
+          </fieldset>
+          <label class="check"><input id="cfg-fleet" type="checkbox">
+            Apply to all robots (house rules)</label>
           <div class="row">
             <button id="btn-cfg-save" class="primary grow">Save settings</button>
           </div>
           <div id="cfg-status" class="muted"></div>
+          <div id="cfg-layers" class="muted"></div>
         </details>
         <div class="row">
           <button id="btn-wake" class="primary grow">Wake up</button>
           <button id="btn-reboot" class="ghost grow">Reboot</button>
         </div>
+      </div>
+      <!-- What Moxie remembers (audit BEYOND #4). The runtime keeps a few durable facts
+           per activity, each stamped with the day and the module that learned it. A
+           memory a parent cannot read or erase is not acceptable on a child's device, so
+           every item is listed and every list is erasable. -->
+      <div class="card hidden" id="memory-card">
+        <h2>🧠 What Moxie remembers</h2>
+        <p class="muted">A few durable facts per activity, written down at the end of a
+          conversation. Moxie reads them back the next time you talk.</p>
+        <div id="memory-box"></div>
+        <button id="btn-mem-forget-all" class="ghost hidden">Erase everything</button>
+        <div id="memory-status" class="muted"></div>
       </div>
     </section>
   </div>
