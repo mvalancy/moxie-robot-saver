@@ -133,7 +133,20 @@ SIM-as-a-client) define exactly what to build, ready for a clean-room implementa
 
 ## 🚀 Quick start
 
-**The whole backend, one command** — MQTT broker + robot supervisor + parent console:
+**The whole backend, two commands, no clone** — MQTT broker + robot supervisor + parent console,
+pulled as prebuilt multi-arch images (`linux/amd64` + `linux/arm64`, so a Raspberry Pi 4/5 works):
+
+```bash
+curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/docker-compose.images.yml
+docker compose -f docker-compose.images.yml up
+```
+
+That file is self-contained — it is the entire install. *(The images are published by the release
+workflow on every `v*` tag; until the **first tag after this landed** the registry is empty and the
+pull will 404 — use the clone below until then.)*
+
+**From a clone instead** — one command, builds the images locally. Needed for hacking on it, for
+32-bit ARM, and for the `voice` / `stt` profiles:
 
 ```bash
 git clone https://github.com/mvalancy/moxie-robot-saver.git

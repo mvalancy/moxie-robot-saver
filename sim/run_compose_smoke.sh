@@ -11,19 +11,42 @@
 #   5. the console's /local/fleet shows that robot while it is connected
 #   6. `docker compose down -v` — no containers, images-only, no volumes left behind
 #
+# TWO MODES, same assertions:
+#
+#   build  (default)  docker-compose.yml       — build the three images from this clone
+#   images            docker-compose.images.yml — the PUBLISHED-image path an owner uses.
+#                     The images are built locally first and tagged with the exact names
+#                     that file references, then compose runs with pull_policy=never, so
+#                     the wiring is proven end to end without needing a published tag.
+#
 # Exits non-zero on any failure. Never touches the default ports (1883/8080/8930), so
 # it is safe to run beside a stack you already have up.
 #
-#   sim/run_compose_smoke.sh                # build + run + tear down
+#   sim/run_compose_smoke.sh                       # build + run + tear down
+#   MOXIE_SMOKE_MODE=images sim/run_compose_smoke.sh   # the prebuilt-image path
 #   MOXIE_SMOKE_KEEP=1 sim/run_compose_smoke.sh    # leave it running for debugging
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-PROJECT="${MOXIE_SMOKE_PROJECT:-moxie-smoke}"
+MODE="${MOXIE_SMOKE_MODE:-build}"
+case "$MODE" in
+  build)  COMPOSE_FILE="$ROOT/docker-compose.yml";        DEFAULT_PROJECT=moxie-smoke ;;
+  images) COMPOSE_FILE="$ROOT/docker-compose.images.yml"; DEFAULT_PROJECT=moxie-smoke-img ;;
+  *) echo "❌ MOXIE_SMOKE_MODE must be 'build' or 'images' (got '$MODE')"; exit 2 ;;
+esac
+
+PROJECT="${MOXIE_SMOKE_PROJECT:-$DEFAULT_PROJECT}"
 ENV_FILE="${MOXIE_SMOKE_ENV:-$ROOT/sim/compose-smoke.env}"
-COMPOSE=(docker compose -p "$PROJECT" -f "$ROOT/docker-compose.yml" --env-file "$ENV_FILE")
+COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
+
+# Image mode: build locally, tag with the names docker-compose.images.yml expects, and
+# forbid a pull — so a green run can only mean the LOCAL bits were wired up correctly.
+# (Shell env beats --env-file in compose interpolation, which is what makes this work.)
+export MOXIE_IMAGE_REGISTRY="${MOXIE_IMAGE_REGISTRY:-ghcr.io/mvalancy/moxie-robot-saver}"
+export MOXIE_IMAGE_TAG="${MOXIE_IMAGE_TAG:-smoke-local}"
+export MOXIE_IMAGE_PULL_POLICY="${MOXIE_IMAGE_PULL_POLICY:-never}"
 
 # Ports come from the env file so the script and the stack can never disagree.
 port() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2; }
@@ -66,15 +89,66 @@ for p in "$MQTT_PORT" "$CONSOLE_PORT" "$STATUS_PORT"; do
   fi
 done
 
-step "0. compose file parses"
+step "0. compose file parses ($MODE mode: $(basename "$COMPOSE_FILE"))"
 if "${COMPOSE[@]}" config -q; then ok "docker compose config"; else bad "compose config failed"; exit 1; fi
 
-step "1. bringing the stack up (build + up -d)"
+# docker-compose.images.yml has to stand alone (an owner downloads that ONE file), so it
+# inlines the broker config instead of bind-mounting mqtt/broker/compose-mosquitto.conf.
+# That is a copy, and copies drift — so assert they still say the same thing, in BOTH
+# modes, before anything else runs.
+step "0b. inlined broker config still matches mqtt/broker/compose-mosquitto.conf"
+if "$PY" - "$ROOT" <<'PYEOF'
+# Dependency-free on purpose (a CI runner may have no PyYAML): pull the literal block
+# scalar out by indentation, exactly as the YAML spec folds it.
+import sys, pathlib, difflib
+root = pathlib.Path(sys.argv[1])
+lines = (root / "docker-compose.images.yml").read_text().splitlines()
+start = next(i for i, l in enumerate(lines)
+             if l.startswith("    content: |") and lines[i - 1].strip() == "mosquitto-conf:") + 1
+block, indent = [], "      "
+for l in lines[start:]:
+    if l.strip() and not l.startswith(indent):
+        break
+    block.append(l[len(indent):] if l.startswith(indent) else "")
+onfile = (root / "mqtt" / "broker" / "compose-mosquitto.conf").read_text()
+def norm(seq):   # "$$" is compose's escape for a literal "$"
+    out = [l.replace("$$", "$").rstrip() for l in seq]
+    while out and not out[-1]:
+        out.pop()
+    return out
+a, b = norm(block), norm(onfile.splitlines())
+if a != b:
+    print("   " + "\n   ".join(list(difflib.unified_diff(b, a, "compose-mosquitto.conf",
+                                                          "docker-compose.images.yml", lineterm=""))[:20]))
+    sys.exit(1)
+print(f"   {len(b)} lines identical")
+PYEOF
+then ok "inlined broker config is in sync"; else bad "the inlined broker config has DRIFTED"; exit 1; fi
+
+if [ "$MODE" = "images" ]; then
+  step "0c. building the three images locally under their published names"
+  # Same Dockerfiles and contexts the release workflow's matrix uses.
+  for spec in "supervisor|$ROOT/mqtt|$ROOT/mqtt/Dockerfile" \
+              "console|$ROOT|$ROOT/server/Dockerfile" \
+              "broker-certs|$ROOT/mqtt/broker|$ROOT/mqtt/broker/Dockerfile"; do
+    IFS='|' read -r name ctx dfile <<<"$spec"
+    tag="$MOXIE_IMAGE_REGISTRY/$name:$MOXIE_IMAGE_TAG"
+    if docker build -q -t "$tag" -f "$dfile" "$ctx" >"$WORK/build-$name.log" 2>&1; then
+      ok "$tag  (~$(docker image inspect -f '{{.Size}}' "$tag" | awk '{printf "%.0f", $1/1048576}') MB)"
+    else
+      bad "docker build failed for $name"; tail -30 "$WORK/build-$name.log"; exit 1
+    fi
+  done
+fi
+
+step "1. bringing the stack up (up -d)"
 # Build/pull chatter goes to a log; it is only interesting when something breaks.
-if ! "${COMPOSE[@]}" up -d --build >"$WORK/up.log" 2>&1; then
+UP=("${COMPOSE[@]}" up -d)
+[ "$MODE" = "build" ] && UP+=(--build)
+if ! "${UP[@]}" >"$WORK/up.log" 2>&1; then
   bad "docker compose up failed"; tail -60 "$WORK/up.log"; "${COMPOSE[@]}" logs --tail 40; exit 1
 fi
-ok "built + started: $("${COMPOSE[@]}" ps --services --filter status=running | sort | tr '\n' ' ')"
+ok "started: $("${COMPOSE[@]}" ps --services --filter status=running | sort | tr '\n' ' ')"
 
 step "2. waiting for healthchecks (broker · supervisor · console)"
 health() {
@@ -146,7 +220,7 @@ fi
 
 step "result"
 if [ "$FAILED" = "0" ]; then
-  echo "   ✅ one-command stack PROVEN: broker + supervisor + console, robot round-trip, TTS audio, fleet view"
+  echo "   ✅ one-command stack PROVEN ($MODE mode): broker + supervisor + console, robot round-trip, TTS audio, fleet view"
   exit 0
 fi
 echo "   ❌ compose smoke FAILED"
