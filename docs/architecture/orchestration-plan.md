@@ -357,5 +357,25 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   784 full). Gaps: no per-item erase/edit (runtime has none), `summarized_through` needs a one-line runtime
   change, nothing decays. BEYOND #4 stays 🟡 until decay/edit.
 
+- **2026-09-02 (orchestrator)** — v0.6.0 promotion paused by a red deep gate: since PR #28 the prebuilt-image
+  compose smoke failed because `docker-compose.images.yml` (built in parallel with PR #27) never forwarded the
+  now-closed pairing gate's `MOXIE_ALLOW_UNVERIFIED_BOTS`; the robot got `pairing_status='unpairing'`. Fixed in
+  `fix/images-compose-gate-env` (PR #31 → dev, one-line passthrough; images-mode smoke green locally).
+  Playbook lesson (rule 10 corollary): two concurrent slices that both touch *deploy config* need an
+  integration-time smoke of the *combined* tree, not just each branch's own — the orchestrator now runs the
+  images-mode compose smoke at merge whenever compose/deploy files changed. Promotion resumes on a green gate.
+
+- **2026-09-02** — **Released v0.6.0 "a real appliance"** (dev → main squash `9ca5c95`, tag `v0.6.0`). Standing PR
+  recreated as #32; dev reconciled (zero-content merge). Over v0.5.0: the config contract completed + fleet
+  defaults, the memory floor + parent browser, the closed-by-default pairing gate, published multi-arch images
+  (this tag is the first real GHCR publish — the packages start **private**; the owner flips them public
+  once), the chunk-order fix. Six releases today (v0.2.0 → v0.6.0); 23 delegated slices integrated. In flight:
+  `feat/vision-events`, `feat/memory-item-erase`.
+
+- **2026-09-02** — **First real image publish succeeded:** the v0.6.0 release run built + pushed all three
+  multi-arch images (supervisor, console, broker-certs; amd64 + arm64) to GHCR alongside the sdist/wheel —
+  the two-command install is now real. Owner action outstanding: flip the three packages **public** on the
+  repo's Packages page (no API for it). "Pending first tag" wording retired where found.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
