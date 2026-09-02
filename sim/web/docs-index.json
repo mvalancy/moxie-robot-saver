@@ -1,5 +1,5 @@
 {
- "generated": "docs-890744c43f91",
+ "generated": "docs-c4c51dbfad93",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 2975,
+   "bytes": 3302,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -289,6 +289,45 @@
    "kind": "md"
   },
   {
+   "path": "architecture/openmoxie-feature-audit.md",
+   "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
+   "section": "architecture",
+   "bytes": 55792,
+   "mermaid": 1,
+   "headings": [
+    "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
+    "How this audit was done",
+    "1. Feature inventory — upstream OpenMoxie",
+    "1.1 Web UI — pages and flows",
+    "1.2 Robot onboarding — the two QR codes",
+    "1.3 Robot configuration & settings",
+    "1.4 Schedules and the session model",
+    "1.5 Content — conversations, globals, packs",
+    "1.6 `automarkup` — text → behavior (the crown jewel)",
+    "1.7 AI — LLM in, STT in, and the TTS non-story",
+    "1.8 Telemetry, logging, insights",
+    "1.9 Multi-robot, storage, deployment, quality",
+    "2. The active forks",
+    "2.1 `Noonster77/openmoxie` — \"OpenMoxie Family Edition\"",
+    "2.2 `vapors/openmoxie-ollama`",
+    "2.3 What the forks tell us",
+    "3. The scorecard — HAVE / ADOPT / BEYOND",
+    "3.1 Onboarding & transport",
+    "3.2 The turn — brain, memory, expressiveness",
+    "3.3 Content & the session",
+    "3.4 Fleet, config, console",
+    "3.5 Engineering & operations",
+    "4. The ranked backlog",
+    "4.1 Top 10 ADOPT — port the idea, credit the source",
+    "4.2 Top 10 BEYOND — what we should build instead",
+    "5. The honest ledger",
+    "Where OpenMoxie (and its forks) are genuinely ahead of us",
+    "Where we are already ahead",
+    "6. How this feeds the build"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/static-experience.md",
    "title": "The Moxie experience as one static site",
    "section": "architecture",
@@ -418,7 +457,7 @@
    "path": "README.md",
    "title": "Documentation",
    "section": "docs",
-   "bytes": 8746,
+   "bytes": 8945,
    "mermaid": 0,
    "headings": [
     "Start here",

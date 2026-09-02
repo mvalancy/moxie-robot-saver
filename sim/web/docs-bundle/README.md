@@ -64,6 +64,8 @@ The docs below are the reverse-engineered **facts**; the [`architecture/`](archi
   (the end-to-end path); then first-time setup, factory reset, find Moxie on LAN, and Cloudflare deploy.
 - [`debugging/`](debugging/) — live hardware-debug notes, QR-command findings.
 - [`community-research.md`](community-research.md) — the revival community (OpenMoxie & friends) and where we fit.
+- [`architecture/openmoxie-feature-audit.md`](architecture/openmoxie-feature-audit.md) — the deep, cited
+  feature-by-feature audit of OpenMoxie + its forks: what to adopt, and where to go beyond.
 
 ## 🌳 How this documentation tree is maintained (SOP)
 
