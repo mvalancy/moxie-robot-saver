@@ -239,5 +239,13 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   our recovered docs: no gaze verb among the 24 markup commands; only two confirmed SFX ids; no physical
   Moxie has played our markup. This is BUILD's next slice after safety. In flight: `feat/input-safety-contract`.
 
+- **2026-09-02** — Integrated `feat/input-safety-contract` (PR #20 → dev, BEYOND #2): child safety is an
+  enforced contract — `InputSafety` on the wire (proto-cited), a transparent local rule engine behind a
+  `Classifier` seam, gates at input / per streamed chunk / whole reply, a parent review queue + 🛡️ console
+  panel. Live: an unsafe request cost 0 gateway calls and the child heard a caring redirect. +84 tests
+  (→361 hermetic creds-free). Honest limits recorded (regex floor; a spoken chunk can't be unsaid). Audit
+  rows reconciled with the concurrent research branch. Next: ADOPT #3, the automarkup floor (brief in
+  `backlog/expressiveness.md`).
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

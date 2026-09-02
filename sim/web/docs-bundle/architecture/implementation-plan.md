@@ -165,7 +165,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   (`MOXIE_MEMORY_DIR`) and telemetry still use their own paths; folding all three onto one durable
   store is the next slice.
 
-## DoD progress (audited 2026-09-02, after v0.2.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
+## DoD progress (audited 2026-09-02, after v0.4.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
