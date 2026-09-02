@@ -686,8 +686,9 @@ def test_the_console_learns_the_face_catalog_from_the_supervisor(client):
     assert {o["id"] for o in eyes["options"]} == {"green", "blue", "purple",
                                                  "brown", "gold", "teal"}
     assert all(o["hex"].startswith("#") for o in eyes["options"])   # swatch-able
-    # the twelve slots our docs name but list no options for say so rather than lying
-    assert next(s for s in f["face_catalog"] if s["id"] == "hair")["cited"] is False
+    # a slot neither source lists an id for says so rather than lying (three are left:
+    # stickers / extras / misc — the rest were widened by the ingested asset manifest)
+    assert next(s for s in f["face_catalog"] if s["id"] == "stickers")["cited"] is False
 
 
 def test_a_face_edit_round_trips_and_changes_the_texture_key(client, supervisor):
