@@ -382,5 +382,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   edits re-checked for safety and verbatim child speech (unsafe correction → 400). +23 tests (→807 full / 773
   fast-shaped). **Audit BEYOND #4 → 🟢.** In flight: `feat/vision-events`, `test/compose-parity-guards`.
 
+- **2026-09-02 (INTEGRATION)** — Integrated `test/compose-parity-guards` (PR #34 → dev): hermetic PyYAML guards keep
+  the clone and prebuilt compose files in sync — env passthrough + defaults per service, the inlined broker
+  config diffed (plus a `$$`-escaping check the runtime smoke couldn't see), service/healthcheck/port/volume
+  parity, doc parity; 20 negative cases prove each guard names the key and file. The v0.6.0 pause would have
+  been caught in 0.2 s on the feature PR. `test_compose.py` 14→47; suite → 806. In flight: `feat/vision-events`,
+  `feat/face-customization`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
