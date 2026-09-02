@@ -193,6 +193,51 @@ class _RecordingClient:
         return [p for (t, p) in self.published if t == topic]
 
 
+#: 🎚️ What `GET /v1/models` really served on 2026-09-02 — the list the picker classifies.
+_GATEWAY_MODELS = ["piper-amy", "piper-ryan", "graphling-tts-narrator", "stt-whisper",
+                   "graphling-stt", "tts-piper-amy", "graphling-medium"]
+
+
+class _ConsoleVoiceSynth:
+    """A voice for the 🎚️ Test button: 22050 Hz, one channel, remembers what it said."""
+    name = "console-fake"
+    channels = 1
+    sample_rate = 22050
+
+    def __init__(self, choice):
+        self.choice = dict(choice)
+        self.spoken = []
+
+    def describe(self):
+        return "fake-voice (%s:%s)" % (self.choice["engine"], self.choice["model"])
+
+    def synthesize(self, text, voice=None):
+        self.spoken.append(text)
+        return b"\x21\x43" * 64
+
+
+class _ConsoleVoiceEngines:
+    """`config.VoiceEngines` for the console seam: a scripted listing + recorder builders.
+
+    Only the *builders* and the *listing* are fake — the runtime verbs behind them are the
+    real ones, so this proves the console's URL, body and status codes against genuine
+    validation rather than a hand-drawn double.
+    """
+
+    def available(self, *, refresh=False):
+        from moxie_sdk import voice_settings as _vs
+        return {"available": _vs.build_available(_GATEWAY_MODELS,
+                                                 piper_voices=["en_US-amy-medium"],
+                                                 whisper_models=["base.en"]),
+                "discovering": False, "gateway_error": ""}
+
+    def build_speech(self, choice):
+        return None if choice["engine"] == "off" else _ConsoleVoiceSynth(choice)
+
+    def build_listening(self, choice):
+        return None
+
+
 def _safety_runtime(root: str):
     """A REAL `MoxieRuntime` with a couple of recorded verdicts, used as the /safety
     backend of the fake supervisor — so the queue the console reads is the queue the
@@ -217,6 +262,10 @@ def _safety_runtime(root: str):
     rt.store = JsonStore(root=root)
     rt.robots[DEVICE] = RobotContext(device_id=DEVICE, child=rt.child)
     rt.client = _RecordingClient()
+    # 🎚️ The voice picker's engines. The runtime is real, so `voice_view`/`voice_update`/
+    # `voice_test` are the genuine ones; only the appliance's *builders* are faked, which
+    # is the seam `set_voice_engines` exists for — no gateway, no piper, no whisper.
+    rt.set_voice_engines(_ConsoleVoiceEngines())
     rt._record_safety(DEVICE, S.assess("I want to kill myself"))
     rt._record_safety(DEVICE, S.assess("this is bullshit"))
     return rt
@@ -276,6 +325,8 @@ class FakeSupervisor:
         self.memory_edits: list = []
         self.telehealth_queries: list = []
         self.schedule_queries: list = []
+        self.voice_queries: list = []
+        self.voice_posts: list = []
         self.telehealth_posts: list = []
         self.runtime = _safety_runtime(safety_root)
         self.memory = _seed_memory(self.runtime)
@@ -344,6 +395,13 @@ class FakeSupervisor:
                     outer.telehealth_queries.append(device_id)
                     out = outer.runtime.telehealth_view(device_id)
                     return self._out(out, 200 if out.get("ok") else 404)
+                if u.path == "/voice":
+                    # 🎚️ The REAL `voice_view` — discovery, defaults and what is
+                    # installed all come from the runtime under test.
+                    q = parse_qs(u.query)
+                    refresh = (q.get("refresh") or ["0"])[0] not in ("", "0", "false")
+                    outer.voice_queries.append((q.get("refresh") or [""])[0])
+                    return self._out(outer.runtime.voice_view(refresh=refresh))
                 if u.path == "/schedule":
                     # 📅 Recorded, not re-planned: `schedule_view` reads the wall clock,
                     # and a live call would make the console's assertions depend on the
@@ -377,6 +435,24 @@ class FakeSupervisor:
 
             def do_POST(self):
                 u = urlparse(self.path)
+                if u.path in ("/voice", "/voice/test"):
+                    # 🎚️ Dispatched exactly the way the real `_start_status_server`
+                    # dispatches it, onto the REAL runtime verbs: a pick that is not on
+                    # offer is refused by `normalize_voice_settings`, not by this double.
+                    raw = self.rfile.read(
+                        int(self.headers.get("Content-Length") or 0)) or b"{}"
+                    body = json.loads(raw or b"{}") or {}
+                    outer.voice_posts.append((u.path, body))
+                    if u.path == "/voice/test":
+                        device_id = (parse_qs(u.query).get("device_id") or [""])[0]
+                        out = outer.runtime.voice_test(device_id, body.get("text") or "")
+                        code = (200 if out.get("ok")
+                                else (404 if "unknown device_id" in str(out.get("error"))
+                                      else 400))
+                    else:
+                        out = outer.runtime.voice_update(body)
+                        code = 200 if out.get("ok") else 400
+                    return self._out(out, code)
                 if u.path == "/telehealth":
                     # 🎭 One operator verb, dispatched exactly the way the real
                     # `_start_status_server` dispatches it — the REAL runtime does the
@@ -1357,3 +1433,109 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     real_missing = rt.schedule_view("d_nope")
     fake_missing, code = _schedule("d_nope")
     assert code == 404 and set(fake_missing) == set(real_missing)
+
+
+# --------------------------------------------------------------------------- #
+# 🎚️ Voice — the Speech and Listening pickers (backlog/voice-picker.md)
+# --------------------------------------------------------------------------- #
+# The console never keeps a list of voices: it renders what the supervisor says this
+# appliance can genuinely use. This is that seam — the URL the card builds, the body it
+# posts, and what it does with the 400 a stale page earns. The runtime behind the fake
+# status server is REAL, so the validation, the persistence and the engine swap under
+# these assertions are the ones that ship.
+
+def test_the_voice_card_gets_every_option_grouped_for_its_dropdowns(client, supervisor):
+    before = len(supervisor.voice_queries)
+    r = client.get(f"/local/robots/{DEVICE}/voice")
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert supervisor.voice_queries[before:] == [""]
+    assert v["ok"] is True and v["error"] is None
+    speech = [e["id"] for e in v["available"]["speech"]]
+    assert "gateway:piper-amy" in speech and "piper:en_US-amy-medium" in speech
+    assert speech[-1] == "tone"
+    assert [e["id"] for e in v["available"]["listening"]][-1] == "off"
+    assert {e["group"] for e in v["available"]["speech"]} == {"Gateway", "Local",
+                                                              "Built-in"}
+    # chat models never leak into a voice picker
+    assert not any("graphling-medium" in e for e in speech)
+
+
+def test_the_default_is_piper_amy_and_it_is_marked_for_the_card(client):
+    v = client.get(f"/local/robots/{DEVICE}/voice").json()
+    assert v["selected"]["speech"] == "gateway:piper-amy"
+    assert v["selected"]["listening"] == "gateway:stt-whisper"
+    assert [e["id"] for e in v["available"]["speech"] if e["default"]] == \
+        ["gateway:piper-amy"]
+    assert v["chosen"] == {"speech": False, "listening": False}
+
+
+def test_a_refresh_is_forwarded_to_the_supervisor(client, supervisor):
+    before = len(supervisor.voice_queries)
+    client.get(f"/local/robots/{DEVICE}/voice?refresh=true")
+    assert supervisor.voice_queries[before:] == ["1"]
+
+
+def test_picking_a_voice_round_trips_and_sticks(client, supervisor):
+    r = client.post(f"/local/robots/{DEVICE}/voice",
+                    json={"speech": "gateway:piper-ryan"})
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert v["ok"] is True and v["selected"]["speech"] == "gateway:piper-ryan"
+    assert supervisor.voice_posts[-1] == ("/voice", {"speech": "gateway:piper-ryan"})
+    # …and the next poll agrees, because it was persisted, not held in the page
+    assert client.get(f"/local/robots/{DEVICE}/voice").json()["selected"]["speech"] == \
+        "gateway:piper-ryan"
+    # the engine actually installed is the one that was picked
+    assert supervisor.runtime._synth.choice["model"] == "piper-ryan"
+    client.post(f"/local/robots/{DEVICE}/voice", json={"speech": None})
+
+
+def test_a_local_pick_is_honoured_with_a_gateway_configured(client, supervisor):
+    r = client.post(f"/local/robots/{DEVICE}/voice",
+                    json={"speech": "piper:en_US-amy-medium"})
+    assert r.status_code == 200 and r.json()["selected"]["speech"] == \
+        "piper:en_US-amy-medium"
+    assert supervisor.runtime._synth.choice["engine"] == "piper"
+    client.post(f"/local/robots/{DEVICE}/voice", json={"speech": None})
+
+
+def test_a_stale_page_gets_a_400_with_the_reason_not_a_silent_no_op(client):
+    r = client.post(f"/local/robots/{DEVICE}/voice",
+                    json={"speech": "gateway:piper-bob"})
+    assert r.status_code == 400, r.text
+    v = r.json()
+    assert v["ok"] is False and "piper-bob" in (v["reason"] or "")
+    assert "gateway:piper-amy" in v["reason"], "the refusal must say what IS available"
+
+
+def test_the_test_button_plays_a_line_on_the_named_robot(client, supervisor):
+    client.post(f"/local/robots/{DEVICE}/voice", json={"speech": "gateway:piper-amy"})
+    before = len(supervisor.runtime.client.on(f"/devices/{DEVICE}/commands/tts"))
+    r = client.post(f"/local/robots/{DEVICE}/voice/test",
+                    json={"text": "Hello from the console."})
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True and r.json()["spoke"] == "Hello from the console."
+    published = supervisor.runtime.client.on(f"/devices/{DEVICE}/commands/tts")
+    assert len(published) == before + 1
+    assert published[-1]["audio"]["sample_rate"] == 22050
+    assert published[-1]["audio"]["buffer"], "the Test button published no audio"
+    client.post(f"/local/robots/{DEVICE}/voice", json={"speech": None})
+
+
+def test_testing_a_robot_that_is_not_connected_is_a_404(client):
+    r = client.post("/local/robots/d_nobody/voice/test", json={})
+    assert r.status_code == 404, r.text
+    assert r.json()["ok"] is False
+
+
+def test_a_supervisor_that_is_down_is_a_503_in_the_cards_own_shape(client, monkeypatch):
+    """The card must be able to render the failure, so a 503 still carries both empty
+    dropdowns and an error sentence rather than a FastAPI 500 page."""
+    from moxie_server import main as console_main
+    monkeypatch.setattr(console_main, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.get(f"/local/robots/{DEVICE}/voice")
+    assert r.status_code == 503
+    v = r.json()
+    assert v["ok"] is False and v["available"] == {"speech": [], "listening": []}
+    assert v["error"]
