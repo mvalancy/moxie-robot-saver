@@ -15,6 +15,17 @@ robot-cloud layer builds on its groundwork:
 - the **`automarkup`** text→behavior (expressiveness) engine,
 - the **endpoint/migration QR** relocation mechanism and mosquitto TLS setup,
 - the conversation **volley** model, scheduler, and content-module concepts,
+- the **shareable content pack and its `source_version` upgrade rule** — the idea that authored content
+  (conversations, globals, schedules) travels as one JSON file, that each record carries an
+  author-owned integer version, and that an import is a *two-step review then apply* rather than a
+  blind overwrite (`site/hive/views.py::export_data` + `upload_import_data` + `import_data`,
+  `site/hive/data_import.py::update_import_status`/`import_content`, and the same version comparison
+  reused to upgrade their own shipped defaults in
+  `site/hive/management/commands/init_data.py`). The behaviour is theirs and we credit it; the design
+  we build on top — a versioned self-describing envelope with a content digest, a positive field
+  allowlist so no child data can leave, selection by key rather than array index, and a review that
+  also detects **local edits** so an upstream re-import cannot silently destroy them — is ours, and is
+  specified in [`docs/architecture/backlog/content-packs.md`](docs/architecture/backlog/content-packs.md),
 - the **two-level config merge** — one appliance-wide default config layered under each robot's own
   overrides (`models.py::HiveConfiguration` + `robot_data.py::build_config`'s `deepmerge`); ours is
   [`mqtt/moxie_sdk/cloud_config.py`](mqtt/moxie_sdk/cloud_config.py)`::merge_config_layers`,
