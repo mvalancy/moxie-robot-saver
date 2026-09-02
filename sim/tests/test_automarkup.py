@@ -428,6 +428,54 @@ def test_the_filler_lines_stay_hand_authored_and_pinned():
 
 
 # --------------------------------------------------------------------------- #
+# the three gated slots — icons, SFX, gaze — and why they are gated
+# --------------------------------------------------------------------------- #
+def test_icons_are_off_by_default_and_paired_when_asked_for():
+    """All four confirmed `icons-v2` values are calendar/event assets, so emitting them
+    from free chat would be guessing. On request, a turn shows before the line and clears
+    after it, exactly as shipped content does (behavior-markup.md:155-157)."""
+    line = "Your birthday is on Friday."
+    assert "icons-v2" not in annotate(line)
+    with_icons = annotate(line, icons=True)
+    assert with_icons.count("cmd:icons-v2") == 2
+    assert with_icons.index("+command+:0") < with_icons.index("+command+:2")
+    assert "+value+:+Birthday+" in with_icons
+    # a line with no calendar cue gets no badge even when asked
+    assert "icons-v2" not in annotate("The moon is a rock.", icons=True)
+    for cue, value in (("I have school tomorrow.", "School"),
+                       ("We are going to the doctor.", "Medical"),
+                       ("Tell me about your family.",
+                        "Learning_About_Family_03_Heart_Family")):
+        assert f"+value+:+{value}+" in annotate(cue, icons=True), cue
+
+
+def test_sfx_is_one_stinger_and_stays_off():
+    """We have exactly TWO confirmed `SoundToPlay` ids, and one of them is a looping
+    music bed for a cast segment — not something a spoken line should ever start. So SFX
+    is effectively one stinger on a celebration, and it is off by default."""
+    line = "You did it! I am so proud of you!"
+    assert "playaudio" not in annotate(line)
+    loud = annotate(line, sfx=True)
+    assert vocab.SFX_STINGER in loud and f"+channel+:{vocab.CHANNEL_STINGER}" in loud
+    assert vocab.SFX_MUSIC_LOOP not in loud, "the music loop must never come from chat"
+    assert "playaudio" not in annotate("The moon is a rock.", sfx=True)
+    assert not vocab.validate_markup(loud)
+
+
+def test_gaze_is_a_closed_set_of_look_bearing_trees_not_a_direction():
+    """There is no gaze verb in the 24 recovered markup commands: gaze is on-device
+    (weighted interest points -> AttentionTarget -> IK look-at). The only cloud-side handle
+    is choosing a look-bearing tree, so `look=` takes one of four and invents nothing."""
+    out = annotate("Where did it go?", look="Bht_Search")
+    assert "+behaviour+:+Bht_Search+" in out
+    assert not vocab.validate_markup(out)
+    automarkup.reset_dropped()
+    invented = annotate("Where did it go?", look="Bht_Look_Left")
+    assert "Bht_Look_Left" not in invented and automarkup.dropped_ids() == 1
+    assert not vocab.validate_markup(invented)
+
+
+# --------------------------------------------------------------------------- #
 # the knob — a one-variable rollback
 # --------------------------------------------------------------------------- #
 def test_the_knob_off_restores_the_previous_behaviour(monkeypatch):
