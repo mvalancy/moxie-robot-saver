@@ -331,6 +331,43 @@ audio to us over ZMQ (our STT path); `"0"` uses an on-device Google service acco
 is the decrypted child record (nickname, birthday ISO8601, `volume_preference`,
 `face_options`, `input_speed`). **This is where our `server/` child profile feeds in.**
 
+### 3.7 The pairing gate — which robots we actually serve *(built, v1 2026-09-02)*
+
+§3b below is honest that our broker, like the original, accepts **anonymous** connections:
+the robot's RS256 JWT is never verified. So "reached the port" must not be allowed to mean
+"is my child's robot" — otherwise every device on the network that announces itself on
+`/devices/{id}/state` is pushed `pairing_status:"paired"` **and the child's `child_pii`**
+(nickname, birthday). That is the exposure the audit files as
+[Device allowlist / pairing gate](openmoxie-feature-audit.md) §3.1.
+
+The appliance therefore keeps a **permit list, closed by default**:
+
+| | permitted (or `allow_unverified_bots`) | **not permitted** — *pending* |
+|---|---|---|
+| `/config` push | the full `RobotCloudConfig` — `pairing_status:"paired"`, `child_pii`, the parent's settings | `build_unpaired_cloud_config()`: `pairing_status:"unpairing"`, `data_sharing:"NO_DATA"`, the bare `settings` envelope — **no `child_pii`, no `stt` prop** |
+| `events/remote-chat` | the brain answers, history is kept | one fixed line ("I'm not connected to a family yet…"); the brain is never called, no history, nothing stored |
+| `client-service-activity-log` queries | the real `schedule` / `mentor_behaviors` | the `CloudQueryResponse` envelope with its **empty** value, so the robot's pull resolves |
+| reports · telemetry · `zmq` audio | ingested | dropped |
+| `/devices/{id}/state` | ingested | **ingested** — this is the one thing a pending device is still heard on, because it is how it becomes visible in the console at all |
+
+The gate lives on the transport boundary (`MoxieRuntime._on_message`), so there is exactly
+one place a device can be refused and no handler can forget it.
+
+**`pairing_status` values.** `"paired"` is the operating value (§3.6: *"MUST stay `paired`
+or robot won't run"*). The not-paired value we push is **`"unpairing"`** — see the
+[config contract](config-and-telemetry-contract.md#the-pairing-gate-permits-and-what-a-pending-robot-is-sent)
+for the citation and the standing assumption (no capture of a real cloud pushing a
+non-`paired` status survives in our corpus; the value is field-proven from OpenMoxie, not
+capture-proven, and no physical robot has been observed receiving it).
+
+**Where it lives.** `fleet/permits.json` beside `fleet/config.json`
+(`{"allow_unverified_bots": bool, "devices": {device_id: {permitted_at, label}}}`);
+`GET /permits` + `POST /permits` on the supervisor's status server; the console's 🔐 Robot
+access card (`GET /local/fleet` → `pending`, `POST /local/robots/{id}/permit`). A parent
+who pairs through the console never sees this: `POST /local/simulate-robot-scan` permits
+the device id it is given as part of completing the pairing. Owner guide:
+[`../guides/permitting-a-robot.md`](../guides/permitting-a-robot.md).
+
 ---
 
 ## 3b. Robot identity / auth
@@ -352,7 +389,9 @@ is the decrypted child record (nickname, birthday ISO8601, `volume_preference`,
 - **Our takeaway:** we replicate the anonymous LAN model. We don't need real JWT
   verification for v1. If we later want per-robot ACLs we can turn on mosquitto password/ACL
   and verify the JWT against each robot's public key (robot exposes `rsa_pub` in
-  `QRDiagnosticData`).
+  `QRDiagnosticData`). **What we do have** is §3.7's application-layer permit list: it does
+  not stop a device *connecting* to the broker, it stops an unpermitted one being *served*
+  — no child data, no brain, no schedule. Broker-level auth is still the deeper fix.
 
 ---
 

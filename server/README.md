@@ -30,7 +30,12 @@ Open `http://<ip>:8080` from a phone on the same LAN/Tailscale.
   [`rest-api.md`](../docs/reverse-engineering/phone/rest-api.md): `login/start`, `login/finish`,
   `oauth/token`, `users/me`, `children`, `robots/{id}`, `pairing-info`, `secret-key-collection`, …
 - **`/local/*` conveniences** (not in the original API): `quicklogin`, `pairing/prepare`,
-  `pairing/qr.png`, and **`simulate-robot-scan`** — completes pairing with no physical robot, for testing.
+  `pairing/qr.png`, and **`simulate-robot-scan`** — completes pairing with no physical robot, for testing
+  (pass `device_id` and it also permits that robot on the supervisor, so pairing needs no second click).
+- **`/local/*` fleet + access** (proxied to the MQTT supervisor): `fleet`, `broker/status`,
+  `robots/{id}/config`, `fleet/config`, `robots/{id}/telemetry`, `robots/{id}/safety`, and the
+  **device allowlist** — `permits`, `robots/{id}/permit`, `fleet/permits`
+  ([guide](../docs/guides/permitting-a-robot.md)).
 
 ## Notes
 - The DB (`moxie.db`) is gitignored. Delete it to reset all state.

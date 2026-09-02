@@ -35,7 +35,7 @@ Ours is built to the full recovered protocol with clean seams:
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example modules, e2e-tested through the runtime. **Memory built (2026-09-02):** `volley.persist_data` (durable, module-namespaced, bounded, `NO_DATA`-gated) + `session.summarize()` at end-of-conversation with provenance, served to a parent over `GET`/`DELETE /memory`; ships as `content_modules/memory_chat.json`. exec-code + action-plumbing still deferred | `mqtt/moxie_sdk/content/` + `mqtt/moxie_sdk/store.py` + `mqtt/content_modules/` |
 | Cloud queries — schedule + `mentor_behaviors` | [mqtt](mqtt-and-conversation.md) · [content-module](content-module-contract.md) | 🟢 the robot gets a **real day plan** and its **own history back**: `build_schedule` plans onboarding + a variety rotation of on-board activities, skipping what this robot already completed (so FTUE ends and nothing repeats); reported `mentor_behavior`s are ingested and served. Deterministic (day+device seeded), not yet LLM-planned | `mqtt/moxie_sdk/schedule.py` + `wire.py` + `moxie_runtime.py::_on_activity` |
 | Durable per-robot state | — | 🟡 JSON files under `MOXIE_DATA_DIR` (default `mqtt/data/`), atomic-ish writes, survives restarts — a **stepping stone**, not the database the audit asks for (ADOPT #8) | `mqtt/moxie_sdk/store.py` + [`mqtt/data/`](../../mqtt/data/) |
-| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig (now incl. **`alarms` + `schedule_preferences`**, contract gap closed) + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry`. Config is layered **`defaults ⊕ fleet ⊕ per-robot`** (audit ADOPT #6) — one `fleet/config.json`, `POST /config?scope=fleet` | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` + `store.py` |
+| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig (now incl. **`alarms` + `schedule_preferences`**, contract gap closed) + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry`. Config is layered **`defaults ⊕ fleet ⊕ per-robot`** (audit ADOPT #6) — one `fleet/config.json`, `POST /config?scope=fleet`. **Gated by a device allowlist** (audit §3.1, closed by default): only a permitted robot is pushed `child_pii`; an unknown one is *pending* and gets `build_unpaired_cloud_config()` — `fleet/permits.json`, `GET`/`POST /permits`, the console's 🔐 Robot access card, `MOXIE_ALLOW_UNVERIFIED_BOTS` to migrate | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` + `store.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 
 ## Build order (each milestone = a shippable, CI-green slice)
@@ -131,6 +131,25 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   `days` as **0 = Monday … 6 = Sunday**, `time` as `"HH:MM"` local wall clock, `scheduled_at` as epoch
   **seconds**. Each sits behind one constant, so a contradicting capture is a one-line fix — but until a
   physical Moxie is seen to *ring*, "built" here means "well-formed and pushed", not "field-proven".
+- **the pairing gate — an application-layer permit list, and the un-paired value is not
+  capture-proven.** The allowlist is built, closed by default and enforced on the transport
+  boundary, but three honesties stand. (a) **It is not authentication.** The broker still
+  accepts anonymous connections (the robot's RS256 JWT is never verified — [mqtt §3b](mqtt-and-conversation.md)),
+  so an unpermitted device can still *connect*, publish, and see its own topics; what the
+  gate stops is our server *serving* it — no `child_pii`, no brain, no schedule, no
+  telemetry ingest. A device that spoofs a permitted robot's `d_<uuid>` is served as that
+  robot. Broker-level password/ACL + real JWT verification is the deeper fix and is still
+  deferred. (b) **`pairing_status:"unpairing"` is field-proven, not capture-proven.** No
+  capture of Embodied's cloud pushing a non-`paired` status survives in our corpus; the
+  value comes from OpenMoxie's own device form, and **no physical robot has been observed
+  receiving it** — what a real Moxie shows on screen for a pending config is unknown (it
+  sits behind one constant, `UNPAIRED_PAIRING_STATUS`). (c) **The auto-permit covers one
+  path.** Pairing through the console permits the robot when the caller supplies its MQTT
+  `d_<uuid>` — the console does that when exactly one robot is pending. The QR itself
+  carries Wi-Fi + the pairing seed and no device id, so a robot that arrives any other way
+  (endpoint-QR re-home, factory reset, a second robot) is genuinely *pending* and needs the
+  one click. Binding a pairing to a device id before the robot connects would need the
+  robot to present the pairing key over MQTT, which is not in the recovered contract.
 - **brain latency — the multi-chunk assumption.** Background inference + filler is built and
   live-proven (a filler inside the budget, the answer as chunk 1 of the same `event_id`), but the
   *robot-side* semantics of `REPLY_PENDING` are only partly established by our RE docs: they give the

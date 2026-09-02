@@ -57,9 +57,12 @@ def _snapshot(overrides: dict, fleet: dict = None) -> dict:
     return {
         "ok": True, "app": "content", "uptime_s": 12,
         "fleet_config": fleet,
+        "allow_unverified_bots": False,
+        "pending_count": 0,
         "schedule_modules": list(schedulable_module_ids()),
         "robots": [{
             "device_id": DEVICE, "child": "Sam", "firmware": "3.6.4",
+            "permitted": True, "pending": False, "permit_label": "",
             "battery_level": 91, "audio_volume": 0.4, "wifi_ssid": "Home",
             "mode": "normal", "ota_reboot_required": False,
             "config_overrides": dict(overrides),
@@ -119,6 +122,10 @@ class FakeSupervisor:
         from urllib.parse import parse_qs, urlparse
         self.overrides: dict = {}
         self.fleet: dict = {}
+        # The device allowlist the console's 🔐 Robot access card drives — the same
+        # `{allow_unverified_bots, devices}` record MoxieRuntime.permits() normalizes.
+        self.permits: dict = {"allow_unverified_bots": False, "devices": {}}
+        self.permit_posts: list = []
         self.config_posts: list = []
         self.telemetry_queries: list = []
         self.safety_queries: list = []
@@ -140,6 +147,8 @@ class FakeSupervisor:
                 u = urlparse(self.path)
                 if u.path == "/status":
                     return self._out(_snapshot(outer.overrides, outer.fleet))
+                if u.path == "/permits":
+                    return self._out(outer.permits_view())
                 if u.path == "/config":
                     q = parse_qs(u.query)
                     if (q.get("scope") or ["robot"])[0] == "fleet":
@@ -179,12 +188,31 @@ class FakeSupervisor:
 
             def do_POST(self):
                 u = urlparse(self.path)
-                if u.path not in ("/config", "/safety"):
+                if u.path not in ("/config", "/safety", "/permits"):
                     self.send_response(404)
                     self.end_headers()
                     return
                 device_id = (parse_qs(u.query).get("device_id") or [""])[0]
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"
+                if u.path == "/permits":
+                    body = json.loads(raw or b"{}") or {}
+                    outer.permit_posts.append(body)
+                    try:
+                        if "allow_unverified_bots" in body:
+                            outer.permits["allow_unverified_bots"] = bool(
+                                body["allow_unverified_bots"])
+                        elif body.get("device_id"):
+                            if body.get("permitted", True):
+                                outer.permits["devices"][body["device_id"]] = {
+                                    "permitted_at": 1, "label": body.get("label") or ""}
+                            else:
+                                outer.permits["devices"].pop(body["device_id"], None)
+                        else:
+                            raise ValueError("expected {device_id, permitted, label} "
+                                             "or {allow_unverified_bots}")
+                        return self._out(outer.permits_view(), 200)
+                    except Exception as e:
+                        return self._out({"ok": False, "error": str(e)}, 400)
                 if u.path == "/safety":
                     body = json.loads(raw or b"{}") or {}
                     out = outer.runtime.acknowledge_safety(device_id, body.get("event_id"))
@@ -217,6 +245,18 @@ class FakeSupervisor:
         sock.close()
         self._srv = ThreadingHTTPServer(("127.0.0.1", self.port), H)
         threading.Thread(target=self._srv.serve_forever, daemon=True).start()
+
+    def permits_view(self) -> dict:
+        """MoxieRuntime.permits_view() for this fake's state."""
+        return {"ok": True,
+                "allow_unverified_bots": self.permits["allow_unverified_bots"],
+                "allow_unverified_bots_stored": self.permits["allow_unverified_bots"],
+                "permits": [{"device_id": d, "permitted_at": v.get("permitted_at"),
+                             "label": v.get("label") or ""}
+                            for d, v in sorted(self.permits["devices"].items())],
+                "pending": [] if (self.permits["allow_unverified_bots"]
+                                  or DEVICE in self.permits["devices"]) else [DEVICE],
+                "connected": [DEVICE]}
 
     @property
     def status_url(self) -> str:
@@ -472,6 +512,98 @@ def test_safety_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
     monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
     s = client.get(f"/local/robots/{DEVICE}/safety").json()
     assert s["ok"] is False and s["events"] == [] and s["error"]
+
+
+# --------------------------------------------------------------------------- #
+# the device allowlist (pairing gate) — 🔐 Robot access
+# --------------------------------------------------------------------------- #
+
+def test_permitting_a_pending_robot_reaches_the_supervisor(client, supervisor):
+    """The console's one-click Permit: `POST /local/robots/{id}/permit` → the
+    supervisor's `POST /permits`, which stores it and re-pushes that robot's config."""
+    supervisor.permits["devices"].clear()
+    r = client.post(f"/local/robots/{DEVICE}/permit", json={"label": "Sam's Moxie"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert supervisor.permit_posts[-1] == {
+        "device_id": DEVICE, "permitted": True, "label": "Sam's Moxie"}
+    assert DEVICE in supervisor.permits["devices"]
+    assert [p["device_id"] for p in r.json()["permits"]] == [DEVICE]
+
+
+def test_revoking_forwards_permitted_false(client, supervisor):
+    supervisor.permits["devices"][DEVICE] = {"permitted_at": 1, "label": ""}
+    r = client.post(f"/local/robots/{DEVICE}/permit", json={"permitted": False})
+    assert r.status_code == 200
+    assert supervisor.permit_posts[-1]["permitted"] is False
+    assert DEVICE not in supervisor.permits["devices"]
+
+
+def test_the_open_toggle_round_trips(client, supervisor):
+    r = client.post("/local/fleet/permits", json={"allow_unverified_bots": True})
+    assert r.status_code == 200 and r.json()["allow_unverified_bots"] is True
+    assert supervisor.permits["allow_unverified_bots"] is True
+    client.post("/local/fleet/permits", json={"allow_unverified_bots": False})
+    assert supervisor.permits["allow_unverified_bots"] is False
+
+
+def test_permit_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    """A parent clicking Permit with the supervisor stopped must get a readable answer,
+    not a stack trace — the same 503-with-a-body contract as the config endpoints."""
+    from moxie_server import main
+    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.post(f"/local/robots/{DEVICE}/permit", json={})
+    assert r.status_code == 503 and r.json()["ok"] is False
+    r = client.get("/local/permits")
+    assert r.status_code == 503 and r.json()["pending"] == []
+
+
+def test_the_console_lists_the_allowlist(client, supervisor):
+    supervisor.permits["devices"][DEVICE] = {"permitted_at": 7, "label": "Sam's Moxie"}
+    r = client.get("/local/permits")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["permits"][0]["label"] == "Sam's Moxie"
+    supervisor.permits["devices"].clear()
+
+
+def test_pairing_through_the_console_auto_permits_the_robot(client, supervisor):
+    """The parent app's own pairing flow already IS the parent saying "this robot is
+    mine", so completing it must not leave the robot sitting in the pending list. The
+    QR carries Wi-Fi + the pairing seed and no device id, so the caller supplies the
+    robot's MQTT `d_<uuid>`; `simulate-robot-scan` then permits it as part of pairing."""
+    supervisor.permits["devices"].clear()
+    tok = client.post("/local/quicklogin",
+                      json={"email": "permit-test@local"}).json()["token"]
+    auth = {"Authorization": f"Bearer {tok}"}
+    prep = client.post("/local/pairing/prepare",
+                       json={"ssid": "Home", "password": "hunter2"}, headers=auth)
+    assert prep.status_code == 200, prep.text
+    payload = prep.json()["qr_payload"]
+
+    r = client.post("/local/simulate-robot-scan",
+                    json={"qr_payload": payload, "device_id": "d_just_paired"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["permitted"] is True and body["permit_error"] is None
+    assert "d_just_paired" in supervisor.permits["devices"]
+    assert supervisor.permits["devices"]["d_just_paired"]["label"] == "paired via console"
+
+
+def test_pairing_without_a_device_id_still_pairs(client, supervisor):
+    """A robot whose MQTT id we do not know yet is paired in the REST database and shows
+    up as pending on the MQTT side — the honest path for a real robot, which only
+    reveals its `d_<uuid>` when it connects to the broker."""
+    before = dict(supervisor.permits["devices"])
+    tok = client.post("/local/quicklogin",
+                      json={"email": "permit-test2@local"}).json()["token"]
+    prep = client.post("/local/pairing/prepare", json={"ssid": "Home", "password": "x"},
+                       headers={"Authorization": f"Bearer {tok}"})
+    r = client.post("/local/simulate-robot-scan",
+                    json={"qr_payload": prep.json()["qr_payload"]})
+    assert r.status_code == 200
+    assert r.json()["permitted"] is False and r.json()["robot_id"]
+    assert supervisor.permits["devices"] == before      # nothing was permitted blindly
 
 
 # --------------------------------------------------------------------------- #

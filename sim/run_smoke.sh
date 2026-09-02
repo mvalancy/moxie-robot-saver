@@ -30,8 +30,14 @@ STATUS_PORT=$((7000 + (PORT % 2000)))
 # round-trip (supervisor synthesizes → CloudTTSResponse → SIM decodes it). MOXIE_TTS=off
 # to skip; MOXIE_TTS=tone|piper|… otherwise honored.
 TTS_ENGINE="${MOXIE_TTS:-tone}"
+# The device allowlist is CLOSED by default (a robot must be permitted before it is
+# served the child's config). This harness mints a throwaway `d_<uuid>` on every run, so
+# there is nothing to pre-permit; and the subject under test here is the conversation
+# round-trip, not the gate. So the lab runs in the documented open mode — exactly the
+# migration switch a pre-gate deployment uses. The gate itself has its own hermetic
+# tests (sim/tests/test_device_permits.py) and `virtual_moxie.py --expect-unpaired`.
 MOXIE_APP=echo MOXIE_TTS="$TTS_ENGINE" MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT \
-  MOXIE_STATUS_PORT=$STATUS_PORT \
+  MOXIE_STATUS_PORT=$STATUS_PORT MOXIE_ALLOW_UNVERIFIED_BOTS=1 \
   python3 mqtt/run.py >/tmp/moxie-supervisor.log 2>&1 & PIDS+=($!)
 sleep 3
 

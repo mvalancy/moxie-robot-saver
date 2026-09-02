@@ -1,5 +1,5 @@
 {
- "generated": "docs-af3689e61c6f",
+ "generated": "docs-d44ff1243193",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 34795,
+   "bytes": 36831,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -161,7 +161,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 53597,
+   "bytes": 56704,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -183,6 +183,7 @@
     "3.4 Connect/disconnect detection (regex on broker log)",
     "3.5 Command names (cloud → robot, `/devices/{id}/commands/{name}`)",
     "3.6 The robot config JSON pushed on connect",
+    "3.7 The pairing gate — which robots we actually serve *(built, v1 2026-09-02)*",
     "3b. Robot identity / auth",
     "4. Conversation flow (end to end)",
     "4.1 The turn objects",
@@ -230,13 +231,14 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 12744,
+   "bytes": 16503,
    "mermaid": 1,
    "headings": [
     "The loop",
     "① `/config` down — `RobotCloudConfig` (the thing the server must produce)",
     "Wake alarms & scheduled activities — the JSON we emit",
     "Fleet defaults ⊕ per-robot overrides",
+    "The pairing gate — permits, and what a *pending* robot is sent",
     "The child-PII encryption boundary — and the revival shortcut",
     "② `/state` up — `RobotStatus` (the robot's self-report)",
     "CloudStatus.UserState` — the pairing/OTA lifecycle the console shows",
@@ -331,7 +333,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 62276,
+   "bytes": 62723,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -691,7 +693,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 1456,
+   "bytes": 1814,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -751,6 +753,23 @@
     "Where to review it",
     "Privacy",
     "Changing what is checked"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/permitting-a-robot.md",
+   "title": "Letting a robot in — \"pending\" and how to permit it",
+   "section": "guides",
+   "bytes": 5150,
+   "mermaid": 0,
+   "headings": [
+    "The one-paragraph version",
+    "Will I ever see this?",
+    "Permitting a robot",
+    "What a pending robot actually gets",
+    "The \"let any robot in\" switch",
+    "Where the list is kept",
+    "If something is not working"
    ],
    "kind": "md"
   },

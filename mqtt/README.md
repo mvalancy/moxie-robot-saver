@@ -24,7 +24,7 @@ flowchart LR
 | Path | What |
 |------|------|
 | `moxie_sdk/` | the SDK: `MoxieApp`, `Turn`/`Reply`/`Action`, and built-in apps (`LLMApp`, `WebhookApp`, `EchoApp`) |
-| `supervisor/moxie_runtime.py` | MQTT runtime — connect detection, config push, conversation routing |
+| `supervisor/moxie_runtime.py` | MQTT runtime — connect detection, config push, conversation routing, and the **device permit list** (closed by default: an unpermitted robot is *pending* and is served a minimal child-free config — [guide](../docs/guides/permitting-a-robot.md)) |
 | `broker/` | mosquitto config + `gen-certs.sh` (self-signed CA per appliance; keys are gitignored) |
 | `config.py` / `run.py` | configuration (env-overridable) + entrypoint |
 | `docker-compose.yml` / `Dockerfile` | run broker + supervisor together (the whole stack incl. the console: [`../docker-compose.yml`](../docker-compose.yml)) |

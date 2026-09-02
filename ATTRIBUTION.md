@@ -18,6 +18,13 @@ robot-cloud layer builds on its groundwork:
 - the **two-level config merge** — one appliance-wide default config layered under each robot's own
   overrides (`models.py::HiveConfiguration` + `robot_data.py::build_config`'s `deepmerge`); ours is
   [`mqtt/moxie_sdk/cloud_config.py`](mqtt/moxie_sdk/cloud_config.py)`::merge_config_layers`,
+- the **device permit list** — the idea that a self-hosted robot cloud keeps an allowlist and a
+  "serve anything that connects" escape hatch (`models.py::MoxieDevice.permit`,
+  `HiveConfiguration.allow_unverified_bots`) and that `pairing_status:"unpairing"` is the value a
+  *not-paired* robot is sent (`models.py::MoxieDevice.is_paired`). Upstream stores the flag without
+  enforcing it on the MQTT path; our enforcement, the pending state and the minimal child-free config
+  are ours — [`mqtt/supervisor/moxie_runtime.py`](mqtt/supervisor/moxie_runtime.py)`::permits` +
+  [`mqtt/moxie_sdk/cloud_config.py`](mqtt/moxie_sdk/cloud_config.py)`::build_unpaired_cloud_config`,
 - the **response action-tag** convention — `<exit>` / `<sleep>` / `<launch:MOD:CID>` written inline by the
   model and lifted into real robot actions (`volley.py::ingest_action_tags`); our own implementation lives
   in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py).

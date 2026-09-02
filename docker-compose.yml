@@ -89,6 +89,10 @@ services:
       MOXIE_LLM_MODEL: ${MOXIE_LLM_MODEL:-graphling-medium}
       MOXIE_BRAIN_BUDGET_S: ${MOXIE_BRAIN_BUDGET_S:-6}   # slow brain → a filler line, then the answer
       MOXIE_STREAMING: ${MOXIE_STREAMING:-1}             # speak each sentence as the model writes it
+      # Device allowlist (pairing gate). Empty = CLOSED: a robot that connects is
+      # "pending" and gets a minimal config with no child data until a parent permits it
+      # in the console. Set to 1 to serve any robot that connects (pre-gate behavior).
+      MOXIE_ALLOW_UNVERIFIED_BOTS: ${MOXIE_ALLOW_UNVERIFIED_BOTS:-}
       MOXIE_VOICE_BASE_URL: ${MOXIE_VOICE_BASE_URL:-}
       MOXIE_VOICE_API_KEY: ${MOXIE_VOICE_API_KEY:-}
       MOXIE_WEBHOOK_ENDPOINT: ${MOXIE_WEBHOOK_ENDPOINT:-}

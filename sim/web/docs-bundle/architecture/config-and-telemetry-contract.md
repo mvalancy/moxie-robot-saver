@@ -105,6 +105,59 @@ explicit `null` from the robot layer clears an inherited value. The fleet layer 
 is byte-for-byte what it was before the layer existed. *Credit:* the idea is OpenMoxie's
 `HiveConfiguration` + `robot_data.py::build_config` deep-merge (MIT) — see `ATTRIBUTION.md`.
 
+### The pairing gate — permits, and what a *pending* robot is sent
+
+Our broker accepts anonymous connections ([mqtt §3b](mqtt-and-conversation.md)), so the
+config push needs its own answer to *"is this my child's robot?"*. It is a **permit list,
+closed by default** — `$MOXIE_DATA_DIR/fleet/permits.json`, beside `fleet/config.json`:
+
+```jsonc
+{ "allow_unverified_bots": false,                       // the appliance-wide switch
+  "devices": { "d_<uuid>": { "permitted_at": 1788353318, "label": "Sam's Moxie" } } }
+```
+
+* **Permitted** (or `allow_unverified_bots`) → the full `RobotCloudConfig` above, exactly
+  as it was before the gate: `pairing_status:"paired"` + `child_pii` + the parent's layers.
+* **Not permitted** → the robot is *pending* and gets `build_unpaired_cloud_config()`:
+
+```jsonc
+{ "pairing_status": "unpairing",       // not "paired" ⇒ the robot does not run a session
+  "data_sharing": "NO_DATA",           // LoggingPolicy shut: it may upload nothing to us
+  "settings": { "props": { "gcp_upload_disable": "1", "default_loglevel": "warning" } } }
+```
+
+  **No `child_pii`, no `child`, no household settings, and no `stt` prop** (we never ask a
+  device we do not know for its microphone). The document is written out in full in
+  `cloud_config.py` rather than built by deleting keys from the paired one — a subtractive
+  build is one forgotten key away from a leak. Everything else a pending robot asks for is
+  refused or answered empty ([mqtt §3.7](mqtt-and-conversation.md)).
+
+> **ASSUMPTION — the un-paired value is field-proven, not capture-proven.** Our corpus
+> gives `CloudStatus.UserState` (`NONE`=1 = unpaired) for the robot's *upward* report, and
+> §3.6's note that `pairing_status` must stay `"paired"` for the robot to run — but **no
+> capture of Embodied's cloud pushing a non-`paired` `pairing_status`**. We push
+> `"unpairing"` because that is the value OpenMoxie's device form writes and reads back as
+> "Unpaired/Blocked" (`site/hive/models.py::MoxieDevice.is_paired`) in a server that drives
+> real robots. What a *physical* Moxie displays on receiving it is **not verified** — we
+> have no robot to observe. It sits behind one constant (`UNPAIRED_PAIRING_STATUS`), so a
+> contradicting capture is a one-line fix.
+
+*Credit:* the idea is OpenMoxie's `MoxieDevice.permit` + `HiveConfiguration.allow_unverified_bots`
+(MIT — see `ATTRIBUTION.md`); no code was copied, and note that upstream stores the flag but
+never enforces it on the MQTT path, so the enforcement here is ours.
+
+**Switches.** `MOXIE_ALLOW_UNVERIFIED_BOTS=1` (env) restores the pre-gate behavior for a
+deployment that was already running; `0` pins it shut. Precedence: constructor argument →
+env → the stored fleet flag → **closed**. The console shows the flag *as enforced*
+alongside the stored one, so an appliance opened by the environment cannot look closed.
+
+**Surface.** Supervisor: `GET /permits`, `POST /permits {device_id, permitted, label}` or
+`{allow_unverified_bots}`. Console: `GET /local/permits`, `POST /local/robots/{id}/permit`,
+`POST /local/fleet/permits`; `GET /local/fleet` gains `allow_unverified_bots`, `pending[]`,
+`pending_count`, and `permitted`/`pending`/`permit_label` per robot. Permitting a pending
+robot re-pushes its full config immediately — no reconnect, no restart. Owner guide:
+[`../guides/permitting-a-robot.md`](../guides/permitting-a-robot.md).
+
 ### The child-PII encryption boundary — and the revival shortcut
 The child appears twice: **`child`** = `ChildEncrypted` (every field a `*_encrypted` blob +
 `checksum`), **`child_pii`** = `ChildDecrypted` (plaintext `first_name`, `birthday`, `therapy_needs[]`,
@@ -183,6 +236,7 @@ via `LoggingStateChangeRequest{state, path}`, reporting back the effective `uplo
 | OTA target / hold | `ota_update{id,version}`, `forbid_otaver`; status via `ota_reboot_required` + `OTA_LOCK` |
 | Privacy / data sharing | `data_sharing` → `LoggingPolicy` gate |
 | Pairing status | `CloudStatus.UserState` |
+| Which robots may be served | the **permit list** — `fleet/permits.json` + `allow_unverified_bots`; the 🔐 Robot access card lists pending robots and permits them in one click |
 | Robot health | `RobotStatus` + `SystemState` |
 | Insights / activity history | persisted `Packet` telemetry |
 
@@ -203,6 +257,8 @@ writes become a `RobotCloudConfig` push, and the status it shows comes from `/st
 - [ ] Emits `alarms` / `schedule_preferences` in the shapes above when a parent sets them (and omits them when unset).
 - [ ] Consumes `RobotStatus` + `SystemState` from `/devices/{id}/state`.
 - [ ] Tracks `CloudStatus.UserState` for pairing/OTA lifecycle.
+- [ ] **Serves the child's config only to a permitted device** — an unknown robot gets the
+      un-paired document with no `child_pii`, and nothing else.
 - [ ] Honors `LoggingPolicy` (`NO_DATA`/`NO_MEDIA`/`FULL`) before uploading or staging any telemetry.
 
 Where it lives: [`../../mqtt/`](../../mqtt/) (publishes config, consumes state/telemetry) +
