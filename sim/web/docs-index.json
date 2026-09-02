@@ -1,5 +1,5 @@
 {
- "generated": "docs-9d95ce4faa44",
+ "generated": "docs-19885fc339e3",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 55847,
+   "bytes": 56530,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -211,7 +211,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 24038,
+   "bytes": 27642,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -224,6 +224,7 @@
     "Request in — `CloudTTSRequest`",
     "Response out — `CloudTTSResponse`",
     "Backends in this repo — and what happens when one fails",
+    "Choosing an engine — the 🎚️ picker (BUILT, 2026-09-02)",
     "Conformance checklist",
     "Where each seam is implemented in this repo"
    ],
@@ -337,7 +338,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 69520,
+   "bytes": 69991,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -473,7 +474,7 @@
    "path": "architecture/backlog/voice-picker.md",
    "title": "Voice picker — choose the speech and listening models from the console",
    "section": "architecture",
-   "bytes": 8542,
+   "bytes": 9239,
    "mermaid": 0,
    "headings": [
     "What the user asked for (verbatim intent)",
@@ -949,11 +950,12 @@
    "path": "guides/litellm-tts-setup.md",
    "title": "TTS on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 9912,
+   "bytes": 10820,
    "mermaid": 0,
    "headings": [
     "Live since 2026-09-02",
     "Turning it on — one variable",
+    "Pick it in the console",
     "What we measured (live, 2026-09-02)",
     "Four quirks worth knowing",
     "If the gateway hiccups, a child still hears a voice",
@@ -974,12 +976,13 @@
    "path": "guides/litellm-stt-setup.md",
    "title": "STT on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 10698,
+   "bytes": 11304,
    "mermaid": 0,
    "headings": [
     "Live since 2026-09-02",
     "Turning it on — one variable",
     "Deployment matrix — pick the ears that match the box",
+    "Pick it in the console",
     "What we measured (live, 2026-09-02)",
     "Four quirks worth knowing",
     "If the gateway hiccups, a child is still heard",

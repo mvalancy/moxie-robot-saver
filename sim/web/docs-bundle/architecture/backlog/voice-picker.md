@@ -1,6 +1,13 @@
 # 🎚️ Voice picker — choose the speech and listening models from the console
 
-**Status:** build-ready brief (2026-09-02). **Depends on:** the gateway STT slice (`feat/gateway-stt-live`)
+**Status: ✅ Shipped 2026-09-02** (`feat/voice-picker`) — built as specified: `moxie_sdk/voice_settings.py`,
+`config.build_synthesizer/build_transcriber(override=)`, the runtime's 🎚️ region with
+`GET /voice` · `POST /voice` · `POST /voice/test`, the console card, and 88 new tests. One deviation
+worth naming: **`MOXIE_TTS=off` / `MOXIE_STT=off` still win over a pick** (a deployment that declared
+itself voiceless is not talked back into speaking by a dropdown), and a pick that cannot be built on
+this box falls through to the env path rather than leaving a child in silence. Local Piper/whisper
+entries were exercised with fakes — neither package is installed on the build machine.
+Originally: build-ready brief (2026-09-02). **Depends on:** the gateway STT slice (`feat/gateway-stt-live`)
 and the telehealth slice (it owns `server/` and the status-HTTP region until it lands).
 **Owner outcome:** *full cloud service* — a parent picks Moxie's voice and ears from what is actually
 available, in one place, without env edits or restarts.
