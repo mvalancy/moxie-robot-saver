@@ -11,8 +11,14 @@
  * This mirrors the real robot's CloudTTSResponse -> PCM path
  * (docs/reverse-engineering/perception-pipeline.md) as closely as a web page can.
  *
+ * THE SERVER VOICE (the real thing, not a mirror): `playCloudTTS(payload)` plays an
+ * actual `CloudTTSResponse` the supervisor published on `/devices/{id}/commands/tts`
+ * — base64 raw 16-bit PCM decoded HERE, in the client, like robot firmware does
+ * (no server SDK). bridge.js routes it in. See the section near the bottom.
+ *
  * SFX: short synthesized cues (WebAudio oscillators) — no asset files needed.
- * Exposes window.moxieAudio = { speak, sfx, setEnabled, setTtsBase, getClipPhrases }.
+ * Exposes window.moxieAudio = { speak, sfx, setEnabled, setTtsBase, getClipPhrases,
+ *                               playCloudTTS, decodeCloudTTS, isSpeaking }.
  */
 (function () {
   "use strict";
@@ -55,6 +61,7 @@
 
   // ---- speech (Piper) with mouth sync ----
   function stop() {
+    stopCloudTTS();          // cancel any queued/playing server audio too
     if (current) { try { current.pause ? current.pause() : current.stop(); } catch (e) {} current = null; }
   }
 
@@ -207,8 +214,242 @@
     });
   }
 
+  // ------------------------------------------------------------------------
+  // CloudTTSResponse playback — the SERVER voice (AI seam ③).
+  //
+  // The supervisor synthesizes a turn and publishes a CloudTTSResponse on
+  // `/devices/{id}/commands/tts`; bridge.js hands it here. The SIM decodes the
+  // WIRE ITSELF — exactly like robot firmware, never importing the server SDK
+  // (docs/architecture/sim-as-a-client.md). Shape, from the recovered proto
+  // (embodied/unity/CloudTTS.proto · docs/architecture/ai-seam.md §3):
+  //
+  //   AudioBuffer      { bytes buffer; int32 channels; int32 sample_rate }
+  //   TTSMark          { uint32 time; uint32 start; uint32 end; string type; string value }
+  //   CloudTTSResponse { audio; repeated marks; event_id; chunk_num; ... }
+  //
+  // `buffer` is base64 of RAW little-endian signed 16-bit PCM — it is NOT a
+  // container (no RIFF/OGG header), so `decodeAudioData()` cannot read it; we
+  // build the AudioBuffer by hand. Chunked responses (`chunk_num`) for one
+  // `event_id` are played in order through a small serial queue.
+  // ------------------------------------------------------------------------
+
+  var TTS_DEFAULT_RATE = 24000;      // CloudTTSResponse default when unset
+  var TTS_MIN_RATE = 3000, TTS_MAX_RATE = 384000;   // Web Audio createBuffer limits
+
+  // Viseme → how far the mouth opens. The mark `value`s our synthesizers emit
+  // follow the common Polly/Piper viseme alphabet; anything unknown gets a
+  // mid-open default, so an unfamiliar mark set still animates.
+  var VISEME_OPEN = {
+    sil: 0.02, p: 0.06, t: 0.20, S: 0.30, T: 0.24, f: 0.16, k: 0.26, i: 0.30,
+    r: 0.30, s: 0.20, u: 0.45, "@": 0.50, a: 0.80, e: 0.55, E: 0.62, o: 0.70, O: 0.76,
+  };
+
+  function b64ToBytes(b64) {
+    if (!b64) return new Uint8Array(0);
+    var bin;
+    try { bin = atob(String(b64)); } catch (e) { return new Uint8Array(0); }
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xff;
+    return out;
+  }
+
+  /* PURE decode: CloudTTSResponse (object or JSON string) → planar Float32 audio
+   * + metadata. No AudioContext, no DOM — so `node sim/test_audio.mjs` can test
+   * the maths directly. Tolerant of every missing/partial field (a real client
+   * never crashes on a short frame). */
+  function decodeCloudTTS(resp) {
+    if (typeof resp === "string") { try { resp = JSON.parse(resp); } catch (e) { resp = null; } }
+    resp = resp || {};
+    var a = resp.audio || {};
+    var rate = Math.round(+a.sample_rate) || TTS_DEFAULT_RATE;
+    rate = Math.min(TTS_MAX_RATE, Math.max(TTS_MIN_RATE, rate));
+    var channels = Math.max(1, Math.min(8, Math.round(+a.channels) || 1));
+    var bytes = b64ToBytes(a.buffer);
+    var samples = bytes.length >> 1;                 // 16-bit → 2 bytes/sample
+    var frames = Math.floor(samples / channels);     // odd tail byte/frame ignored
+    var view = new DataView(bytes.buffer, bytes.byteOffset, samples * 2);
+    var data = [], c;
+    for (c = 0; c < channels; c++) data.push(new Float32Array(frames));
+    for (var f = 0; f < frames; f++) {
+      for (c = 0; c < channels; c++)
+        data[c][f] = view.getInt16(((f * channels + c) << 1), true) / 32768;
+    }
+    return {
+      data: data, channels: channels, sampleRate: rate, frames: frames,
+      duration: frames / rate, bytes: bytes.length,
+      marks: Array.isArray(resp.marks) ? resp.marks : [],
+      eventId: resp.event_id || "", chunkNum: Math.round(+resp.chunk_num) || 0,
+    };
+  }
+
+  /* TTSMark[] → a time-sorted mouth track: {t: ms from utterance start, open}. */
+  function markTrack(marks) {
+    var out = [];
+    for (var i = 0; i < (marks || []).length; i++) {
+      var m = marks[i] || {};
+      var type = String(m.type || "").toLowerCase();
+      var open;
+      if (type.indexOf("viseme") !== -1) {
+        var v = VISEME_OPEN[m.value];
+        open = (v === undefined) ? 0.35 : v;
+      } else if (type.indexOf("word") !== -1 || type.indexOf("sentence") !== -1) {
+        open = 0.45;                       // no viseme detail → a per-word pulse
+      } else continue;                     // ssml/gesture marks don't move the mouth
+      out.push({ t: Math.max(0, +m.time || 0), open: open });
+    }
+    return out.sort(function (x, y) { return x.t - y.t; });
+  }
+
+  var ttsQueue = [], ttsPlaying = null, speaking = false, speakingInfo = null;
+  var ttsStatusPrev = null, gestureArmed = false;
+
+  function mouth(v) {
+    try { if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(v); } catch (e) {}
+  }
+
+  // A light, JSON-friendly summary of what is being spoken — deliberately WITHOUT
+  // the decoded PCM, so a UI (or a test) can read it without copying megabytes.
+  function ttsSummary(d) {
+    return { sampleRate: d.sampleRate, channels: d.channels, frames: d.frames,
+             duration: d.duration, bytes: d.bytes, marks: d.marks.length,
+             eventId: d.eventId, chunkNum: d.chunkNum };
+  }
+
+  function setSpeaking(on, info) {
+    speaking = !!on;
+    speakingInfo = speaking ? ttsSummary(info) : null;
+    try {
+      if (document.body && document.body.classList)
+        document.body.classList.toggle("tts-speaking", speaking);
+      var el = document.getElementById("tts-status");
+      if (el) {
+        if (speaking) {
+          if (ttsStatusPrev === null) ttsStatusPrev = el.textContent;
+          el.textContent = "🔊 speaking — cloud TTS " + info.sampleRate + " Hz · " +
+                           info.duration.toFixed(1) + "s";
+        } else if (ttsStatusPrev !== null) { el.textContent = ttsStatusPrev; ttsStatusPrev = null; }
+      }
+    } catch (e) {}
+    try {
+      window.dispatchEvent(new CustomEvent(speaking ? "moxie-tts-start" : "moxie-tts-end",
+                                           { detail: speakingInfo }));
+    } catch (e) {}
+  }
+
+  // Same event_id → play chunk_num in order; different events stay FIFO.
+  function ttsEnqueue(item) {
+    var i = ttsQueue.length;
+    while (i > 0 && ttsQueue[i - 1].dec.eventId === item.dec.eventId &&
+           ttsQueue[i - 1].dec.chunkNum > item.dec.chunkNum) i--;
+    ttsQueue.splice(i, 0, item);
+  }
+
+  // Autoplay policy: a page that never got a gesture has a suspended context.
+  // Keep the audio queued and play it on the next real gesture (nothing is lost).
+  function armGesture() {
+    if (gestureArmed) return;
+    gestureArmed = true;
+    var go = function () { gestureArmed = false; actx(); ttsPump(); };
+    ["pointerdown", "click", "keydown", "touchstart"].forEach(function (ev) {
+      window.addEventListener(ev, go, { once: true, passive: true });
+    });
+  }
+
+  function ttsPump() {
+    if (ttsPlaying || !ttsQueue.length) return;
+    var a = actx();
+    if (!a) {                                   // no Web Audio at all → drain honestly
+      while (ttsQueue.length) ttsQueue.shift().resolve({ played: false, reason: "no-audio-context" });
+      return;
+    }
+    if (a.state !== "running") {                // suspended → resume, else wait for a gesture
+      armGesture();
+      try { var p = a.resume(); if (p && p.then) p.then(ttsPump, function () {}); } catch (e) {}
+      return;
+    }
+    var item = ttsQueue.shift(), d = item.dec;
+    var buf, src, analyser;
+    try {
+      buf = a.createBuffer(d.channels, d.frames, d.sampleRate);
+      for (var c = 0; c < d.channels; c++) {
+        if (buf.copyToChannel) buf.copyToChannel(d.data[c], c);
+        else buf.getChannelData(c).set(d.data[c]);
+      }
+      src = a.createBufferSource(); src.buffer = buf;
+      analyser = a.createAnalyser(); analyser.fftSize = 256;
+      src.connect(analyser); analyser.connect(a.destination);
+    } catch (e) {
+      item.resolve({ played: false, reason: "decode-error: " + (e && e.message), decoded: d });
+      return ttsPump();
+    }
+    ttsPlaying = item; current = src;
+    setSpeaking(true, d);
+
+    // Mouth: driven by the audio envelope (the physical truth of the buffer),
+    // raised to the viseme/word track from marks[] when the server sent one.
+    var track = markTrack(d.marks), mi = 0;
+    var probe = new Uint8Array(analyser.frequencyBinCount);
+    var t0 = a.currentTime, raf = 0, guard = 0, done = false;
+    function frame() {
+      analyser.getByteTimeDomainData(probe);
+      var peak = 0;
+      for (var i = 0; i < probe.length; i++) peak = Math.max(peak, Math.abs(probe[i] - 128));
+      var open = Math.min(1, peak / 40);
+      if (track.length) {
+        var ms = (a.currentTime - t0) * 1000;
+        while (mi + 1 < track.length && track[mi + 1].t <= ms) mi++;
+        if (track[mi] && track[mi].t <= ms) open = Math.max(open, track[mi].open);
+      }
+      mouth(open);
+      raf = requestAnimationFrame(frame);
+    }
+    function finish() {
+      if (done) return;
+      done = true;
+      clearTimeout(guard);
+      cancelAnimationFrame(raf);
+      if (current === src) current = null;
+      ttsPlaying = null;
+      mouth(0);
+      item.resolve({ played: true, decoded: d });
+      ttsPump();                                  // next chunk (keeps `speaking` true)
+      if (!ttsPlaying) setSpeaking(false);
+    }
+    src.onended = finish;
+    // Belt-and-braces: if `onended` never fires (a sink that doesn't advance),
+    // never strand the SIM in the speaking state.
+    guard = setTimeout(finish, d.duration * 1000 + 1500);
+    try { src.start(0); } catch (e) { return finish(); }
+    frame();
+  }
+
+  /* Play one CloudTTSResponse. Resolves when THIS payload finished playing:
+   * {played, decoded, reason?}. Never rejects — a client that throws on bad
+   * audio is a client that goes mute. */
+  function playCloudTTS(payload) {
+    var dec = decodeCloudTTS(payload);
+    if (!enabled) return Promise.resolve({ played: false, reason: "muted", decoded: dec });
+    if (!dec.frames) return Promise.resolve({ played: false, reason: "empty", decoded: dec });
+    var item = { dec: dec, resolve: null };
+    var p = new Promise(function (res) { item.resolve = res; });
+    ttsEnqueue(item);
+    ttsPump();
+    return p;
+  }
+
+  function stopCloudTTS() {
+    while (ttsQueue.length) ttsQueue.shift().resolve({ played: false, reason: "stopped" });
+    if (ttsPlaying) { try { current && current.stop && current.stop(); } catch (e) {} }
+  }
+
   window.moxieAudio = {
     speak: speak, sfx: sfx, stop: stop,
+    // --- server voice (CloudTTSResponse on /devices/{id}/commands/tts) ---
+    playCloudTTS: playCloudTTS,       // decode + play; resolves when it finished
+    decodeCloudTTS: decodeCloudTTS,   // pure wire decode (unit-tested in node)
+    isSpeaking: function () { return speaking; },
+    speakingInfo: function () { return speakingInfo; },   // summary, no PCM
+    ttsPending: function () { return ttsQueue.length; },
     setEnabled: function (v) { enabled = !!v; if (!enabled) stop(); },
     isEnabled: function () { return enabled; },
     setTtsBase: function (u) { TTS_BASE = u; try { localStorage.setItem("moxie.ttsBase", u); } catch (e) {} },

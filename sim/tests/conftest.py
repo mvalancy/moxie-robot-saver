@@ -103,7 +103,11 @@ def browser():
         pytest.skip("playwright not installed (pip install playwright)")
     chrome = _find_chrome()
     with sync_playwright() as pw:
-        launch = dict(args=["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"])
+        # --autoplay-policy: the SIM plays the server's CloudTTSResponse through Web
+        # Audio; without this the context stays suspended until a user gesture and the
+        # TTS-playback tests would be testing the gesture path, not the audio path.
+        launch = dict(args=["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
+                            "--autoplay-policy=no-user-gesture-required"])
         try:
             b = pw.chromium.launch(executable_path=chrome, **launch) if chrome \
                 else pw.chromium.launch(**launch)

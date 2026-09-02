@@ -1,5 +1,5 @@
 {
- "generated": "docs-3dd879075f4b",
+ "generated": "docs-a4176993faa7",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,14 +96,14 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 20893,
+   "bytes": 20142,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-02) — ≈ 57%",
+    "DoD progress (audited 2026-09-02, after v0.2.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
@@ -114,12 +114,13 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 10748,
+   "bytes": 15514,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
     "How work happens",
     "Workstreams (the backlog agents draw from)",
+    "Integration playbook (learned 2026-09-02, day one — apply every time)",
     "The layered session loops (24/7 continuity)",
     "Status log (append-only, absolute dates)"
    ],
@@ -256,12 +257,13 @@
    "path": "architecture/sim-as-a-client.md",
    "title": "The SIM as a backend client — interchangeable with a real robot",
    "section": "architecture",
-   "bytes": 5155,
+   "bytes": 7907,
    "mermaid": 1,
    "headings": [
     "The interchangeability guarantee",
     "What the SIM substitutes vs what's identical",
     "The one divergence a spec must call out: TTS",
+    "What each SIM client does with a `CloudTTSResponse`",
     "How the SIM connects",
     "Conformance"
    ],

@@ -1,8 +1,8 @@
 // Moxie robot simulator — visual front-end.
 // three.js r160, pinned via the importmap in index.html.
 // Exposes window.moxie = { setMotor, getMotor, setFace, setSpeech, setHeartLED,
-//                           showIcons, clearIcons, centerAll, setIdle,
-//                           setSceneLight }.
+//                           setMouthOpen, getMouthOpen, showIcons, clearIcons,
+//                           centerAll, setIdle, setSceneLight }.
 //
 // Anatomy (docs/architecture/sil-and-cicd.md "Visual reference"): a two-part
 // robot — a large rounded egg-shaped HEAD sitting directly on a pear-shaped
@@ -1675,6 +1675,10 @@ const api = {
     if (!Number.isFinite(v)) return;
     mouthDrive.v = Math.min(1, Math.max(0, v));
   },
+
+  // Current lip-sync drive (0..1). Lets the audio layer and the automated tests
+  // observe that the mouth really is moving while Moxie speaks.
+  getMouthOpen() { return mouthDrive.v; },
 
   setHeartLED(on, colorHex) {
     heartState.on = !!on;

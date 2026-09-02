@@ -124,27 +124,25 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   (`MOXIE_MEMORY_DIR`) and telemetry still use their own paths; folding all three onto one durable
   store is the next slice.
 
-## DoD progress (audited 2026-09-02) — ≈ 57%
+## DoD progress (audited 2026-09-02, after v0.2.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
-| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~70% | brain live-validated 🟢; STT incl. **real zmqSTT protobuf decode** 🟢; **full audio round-trip proven through a real broker** — supervisor synthesizes → `CloudTTSResponse` on `/commands/tts` → SIM decodes audio (SIL smoke asserts it via `--expect-tts`) 🟢. Three voices: built-in **tone** (zero-dep), **Piper/Amy** (offline), gateway. Remaining: browser Web-Audio playback + one live talk-through with real speech (Piper model / gateway) |
+| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~90% | **Every link is built and live-proven with real speech through the real runtime** (PR #12): Piper "child" audio → zmqSTT protobuf frames → faster-whisper → brain (gateway, live) → spec `RemoteChatResponse` → Piper Amy `CloudTTSResponse` → re-heard at overlap 1.00; the browser SIM decodes and **plays** it with mouth animation (PR #11); markup/actions reach the client. Remaining: the same loop on a **physical Moxie** (needs the operator's robot; the SIM stands in), and brain latency (45 s healthy / 18 s degraded vs the ~20 s reprompt window — see next slice) |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
 | 3 | Cloud management (console + config/telemetry) | 🟢 | RobotCloudConfig + RobotStatus + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. The console surfaces **live state** (`/local/fleet`), **edits config** (Settings form → `POST /local/robots/{id}/config` → runtime `POST /config` → `update_config` re-pushes `RobotCloudConfig`), and shows **telemetry insights** (`summarize_events` → runtime `GET /telemetry` → `GET /local/robots/{id}/telemetry` → the 📈 Insights panel) — all three live-verified against a real broker. Caveat: telemetry is in-memory (last 50 events/robot), not persisted |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
 | 5 | One-command stack | 🟢 | `docker compose up` (repo root) = broker + supervisor + parent console, one `.env`, healthchecks + named volumes. **Proven** by [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh): build → health → `virtual_moxie --expect-tts` round-trip through the composed broker → the robot visible in the console's `/local/fleet` → `down -v`; shape asserted hermetically by `sim/tests/test_compose.py`. Guide: [`../guides/one-command-stack.md`](../guides/one-command-stack.md). Caveats (documented, not hidden): the `content`/`llm` brains still need a gateway key to say anything real (keyless → the "brain got fuzzy" fallback, which is why the smoke uses `echo`), and the `voice`/`stt` profiles each need one `.env` line + `up --build` rather than the profile flag alone |
-| 6 | Green + live-tested | 🟡 ~80% | **three-tier CI installed + green** (fast on dev · deep+HIL on PR-to-main · release on tags); hermetic suite green (210 pass · 6 live tests skipped without a key). **Live-proven against the real gateway** (`sim/tests/test_live_action_tags.py`, `test_live_content_e2e.py`; skip cleanly with no key): LLM **action tags** now emitted by graphling-medium — 4/4 goodbye→`<exit>`, 3/3 activity→`<launch:DRAW>` after prompt-only work in `LLMApp._system` (baseline was 0/3 and 0/2; the fix is writing the tag **before** the sentence, not after), and the action reaches the wire as `response_actions` 🟢; the shipped `content_modules/starter.json` through the **real** `MoxieRuntime` returns a spec-conformant `RemoteChatResponse` (SUCCESS, 123-char `output.text` + `markup`) with a `globals[]` short-circuit costing 0 LLM calls 🟢. Console↔runtime contract e2e (`test_console_roundtrip.py`): fleet / config (incl. 400 on bad input) / telemetry round-trip in-process against a status-server double that is **key-diffed against the real runtime** 🟢. SIL smoke + both scenarios + `python -m build` green. Remaining (NOT live-proven): live **voice** (real STT/TTS speech, not the tone synth) and a single full talk-e2e scenario; live tests need creds so CI still runs them skipped |
+| 6 | Green + live-tested | 🟡 ~90% | Three-tier CI green incl. the compose-stack deep job; hermetic suite ≈220; **live-proven against real infra:** LLM turn, action tags 3/3, content module e2e, console↔runtime round-trip, and **real speech end to end** (Piper→whisper 1.00; full talk loop with 0 gateway calls and with a live completion; degraded gateway skips, never false-greens). Remaining: live tests need creds so CI runs them skipped (a secrets-gated dispatch exists for the LLM path); a physical-robot HIL job on a self-hosted runner |
 
-**Most valuable next slice:** criterion 1's **browser Web-Audio playback of the `CloudTTSResponse`** — the
-supervisor already synthesizes and publishes decodable audio (proven through a real broker by the SIL smoke's
-`--expect-tts`), so the remaining gap is the SIM's browser client actually *playing* it: decode the base64 PCM
-in `sim/web/`, feed it to Web Audio, and the "a child can talk to Moxie end to end" criterion has its last
-client-side link. It is unblocked (no creds needed — the built-in tone voice already produces audio) and it is
-the only criterion still below 🟢 that isn't gated on someone else. After that: a live talk-through with real
-speech — the `--profile voice` path now downloads Piper/Amy and speaks through the composed stack, so this is
-just a matter of doing it with a microphone (the gateway alternative still needs a TTS model registered —
-handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)). M7's one-command stack
-(criterion 5) is done.
+**Most valuable next slice:** **brain latency — background inference + filler.** PR #12 measured the live
+gateway turn at 45 s (healthy) / 18 s (degraded) against the robot's ~20 s reprompt window, while the voice
+legs total ≈1.5 s — the brain, not speech, is the bottleneck. Build the audit's Fork-A pattern behind our
+seam: on a slow completion, reply within the window with a short spoken filler + `REPLY_PENDING`, keep
+inferring in the background, then deliver the real line (streaming/`chunk_num` is already specified in the
+RemoteChat contract). Quick wins in the same pass (S): `strip_markup` drops emoji (Piper reads them aloud);
+live tests load `mqtt/.env` from the repo root so they run in worktrees. Then: `alarms`/`schedule_preferences`
+(config contract gap), and the audit's ADOPT #3 `automarkup` floor / BEYOND #1 behavior planner.
 
 ## TTS strategy (2026-09-01)
 
