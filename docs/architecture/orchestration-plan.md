@@ -372,5 +372,10 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   once), the chunk-order fix. Six releases today (v0.2.0 → v0.6.0); 23 delegated slices integrated. In flight:
   `feat/vision-events`, `feat/memory-item-erase`.
 
+- **2026-09-02** — **First real image publish succeeded:** the v0.6.0 release run built + pushed all three
+  multi-arch images (supervisor, console, broker-certs; amd64 + arm64) to GHCR alongside the sdist/wheel —
+  the two-command install is now real. Owner action outstanding: flip the three packages **public** on the
+  repo's Packages page (no API for it). "Pending first tag" wording retired where found.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
