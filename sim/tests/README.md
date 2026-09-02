@@ -59,6 +59,23 @@ browser at all and carry the hermetic suite CI actually runs.
   `/memory` payload flattened into dated rows per activity, newest first, with counts —
   plus the tolerance that matters on a parent's screen (a partial namespace, a list a
   module invented, a raw `memory.json` off disk, and a supervisor that is down).
+- **`test_compose.py` + `helpers_compose.py`** — the one-command stack, asserted with
+  PyYAML and never Docker. Half is shape (`docker-compose.yml` declares the three
+  services plus the cert one-shot, healthchecks, restart policies, named volumes,
+  strictly opt-in profiles, a documented and secret-free `.env.example`); half is
+  **parity** between `docker-compose.yml` and the self-contained
+  `docker-compose.images.yml`. The images file cannot reference this repo — an owner
+  downloads it alone — so it repeats the supervisor's `environment:` block and inlines
+  `mqtt/broker/compose-mosquitto.conf`, and both copies have to be re-proven copies:
+  identical `MOXIE_*` env for `supervisor`/`console`/`certs` (same keys, same
+  `${VAR:-default}`), the inlined broker config diffed against the file *and* checked for
+  the un-escaped `$` that a pure diff is blind to, and the same services, healthchecks,
+  `depends_on` conditions, published-port defaults and volume paths. This is a regression
+  suite: v0.6.0's promotion stalled because the pairing-gate knob
+  `MOXIE_ALLOW_UNVERIFIED_BOTS` reached only one of the two files, and until now only the
+  deep tier's PR-to-main docker smokes could see that. Every guard is paired with
+  **negative tests** — tiny in-memory compose pairs carrying exactly one injected drift —
+  so the suite proves the guards still bite, not merely that they pass.
 - **Live tests** (`test_live_gateway.py`, `test_live_action_tags.py`,
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the
