@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moxie-cloud-sdk"
+description = "Clean-room Moxie robot-cloud SDK — drive a Moxie (or the SIL) as an avatar for any AI."
+readme = "moxie_sdk/README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "moxie-robot-saver contributors" }]
+keywords = ["moxie", "robot", "mqtt", "llm", "stt", "tts", "companion"]
+dynamic = ["version"]
+
+# Runtime deps are intentionally minimal; optional backends are extras so the SDK
+# imports (and unit-tests) with no heavy dependencies.
+dependencies = [
+    "paho-mqtt>=2.0",
+]
+
+[project.optional-dependencies]
+llm = ["openai>=1.0"]                 # OpenAI-compatible brain + TTS (make_openai_chat / voice)
+stt = ["faster-whisper>=1.0", "numpy>=1.24"]   # local speech-to-text
+content = ["jinja2>=3.0"]             # full templating for content-module prompts
+all = ["openai>=1.0", "faster-whisper>=1.0", "numpy>=1.24", "jinja2>=3.0"]
+
+[project.urls]
+Homepage = "https://github.com/mvalancy/moxie-robot-saver"
+Documentation = "https://github.com/mvalancy/moxie-robot-saver/tree/main/docs/architecture"
+
+[tool.setuptools]
+packages = ["moxie_sdk", "moxie_sdk.apps", "moxie_sdk.content"]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = { attr = "moxie_sdk.__version__" }

@@ -3,7 +3,7 @@
 #  kept here as a template so it version-controls without that scope).
 name: CI
 on:
-  push: { branches: [main] }
+  push: { branches: [main, dev] }
   pull_request: { branches: [main] }
 
 jobs:
