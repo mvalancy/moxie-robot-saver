@@ -53,13 +53,12 @@ jobs:
       - name: SIL scenarios (scripted conversations)
         run: bash sim/run_scenarios.sh
       - name: Cloud SDK unit + integration tests
-        run: python -m pytest sim/tests -q -k "not test_sil and not test_docs" \
-          --ignore=sim/tests/test_live_gateway.py
+        run: python -m pytest sim/tests -q -k "not test_sil and not test_docs" --ignore=sim/tests/test_live_gateway.py
       # HIL against real infra: a live end-to-end turn through the runtime + gateway,
       # gated on repo secrets (never committed). Skips cleanly if unset. SECURITY: only
       # runs on SAME-REPO PRs / manual dispatch — GitHub withholds secrets from fork PRs,
       # and this guard makes that explicit so a fork PR can never reach the secret step.
-      - name: Live gateway HIL turn (skips without secrets)
+      - name: Live gateway HIL turn (manual dispatch only)
         if: ${{ github.event_name == 'workflow_dispatch' }}   # live gateway on-demand only (protects rate limits; also fork-safe)
         env:
           MOXIE_LLM_API_KEY: ${{ secrets.MOXIE_LLM_API_KEY }}
