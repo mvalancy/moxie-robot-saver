@@ -48,6 +48,11 @@ browser at all and carry the hermetic suite CI actually runs.
   the suite with `MOXIE_LLM_API_KEY= `. `test_live_action_tags.py` asserts a *rate* (2 of 3
   sampled turns) rather than a single sample, because the brain runs at temperature
   0.8 — see its docstring for the measured numbers.
+  **In CI** all three run together in the deep tier's dispatch-only step
+  (`gh workflow run ci-deep.yml --ref dev`) as one `pytest -q -ra` invocation against the
+  repo secrets — see [`../ci/README.md`](../ci/README.md). That step *fails* on an empty
+  `MOXIE_LLM_API_KEY` rather than skipping, because a green live run that tested nothing is
+  the exact gap it exists to close. It is manual because it spends ≈12–13 real completions.
 - **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper
   speech in, real Piper speech out, read back by real faster-whisper. Tier 1 round-trips
   Moxie's own voice through Whisper (and proves the built-in `ToneSynthesizer` would
@@ -62,6 +67,12 @@ browser at all and carry the hermetic suite CI actually runs.
   `pip install piper-tts faster-whisper numpy`, then
   `python -m pytest sim/tests/test_live_talk_e2e.py -q -s` — add `MOXIE_VOICES_DIR=…`
   if the voices live outside this checkout (a git worktree starts without them).
+  **In CI** it is opt-in on the same dispatch: `gh workflow run ci-deep.yml --ref dev -f
+  voice=true` installs those three packages and fetches the voices with
+  [`../ci/fetch_piper_voices.py`](../ci/fetch_piper_voices.py) (pinned `rhasspy/piper-voices`
+  `v1.0.0` URLs, sha256-verified, cached, idempotent). That step fails unless ≥3 of its 4
+  tests really passed — only the live-brain one may legitimately skip, when the gateway
+  degrades to its canned fallback.
 
 ## Run
 
