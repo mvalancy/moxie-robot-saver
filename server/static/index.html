@@ -222,6 +222,48 @@
         <div id="face-status" class="muted"></div>
         <div id="face-layers" class="muted"></div>
       </div>
+      <!-- 🎭 "Be Moxie" — puppet / telehealth mode (audit ADOPT #7). The recovered
+           TeleHealth protocol lets a remote grown-up drive the body: Moxie's own brain is
+           switched off (STATE_TELEBRAIN runs perception + MAINAPP but no BRAIN) and every
+           line comes from the person at this keyboard. Text only — no audio and no video
+           from the child's room reaches the operator in this phase, and the docs say so.
+           Every line is checked by the same safety classifier that guards Moxie's own
+           speech and lands in the parent's safety journal; a blocked line is refused back
+           to the operator with the reason rather than silently rewritten. -->
+      <div class="card hidden" id="telehealth-card">
+        <h2>🎭 Be Moxie</h2>
+        <p class="muted">Speak through Moxie from anywhere. While this is on, Moxie stops
+          thinking for herself and says only what you type — so there is never a second
+          voice talking over you.</p>
+        <label class="check"><input id="th-enable" type="checkbox">
+          Be Moxie (puppet mode)</label>
+        <div id="th-state" class="muted"></div>
+        <div id="th-warn" class="th-warn hidden"></div>
+        <div id="th-controls" class="th-controls">
+          <div class="row">
+            <select id="th-mood" aria-label="Mood"></select>
+            <select id="th-intensity" aria-label="How strongly">
+              <option value="0">gentle</option>
+              <option value="1" selected>normal</option>
+              <option value="2">strong</option>
+            </select>
+          </div>
+          <div class="row">
+            <input id="th-text" class="grow" type="text" autocomplete="off"
+                   placeholder="Say something as Moxie…" aria-label="What Moxie says">
+            <button id="btn-th-speak" class="primary">Speak</button>
+          </div>
+          <div class="row">
+            <button id="btn-th-session" class="ghost grow">Start session</button>
+            <button id="btn-th-interrupt" class="ghost grow">Interrupt</button>
+          </div>
+        </div>
+        <div id="th-transcript" class="th-log"></div>
+        <div id="th-status" class="muted"></div>
+        <p class="muted th-note">Everything typed here is said to your child in Moxie's
+          voice and is recorded in the Safety card. What your child says back appears above
+          as text only — no microphone or camera is streamed to whoever is driving.</p>
+      </div>
       <!-- What Moxie remembers (audit BEYOND #4). The runtime keeps a few durable facts
            per activity, each stamped with a stable id, the day and the module that
            learned it. A memory a parent cannot read or erase is not acceptable on a
