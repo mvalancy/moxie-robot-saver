@@ -419,6 +419,7 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   keys; P2 spoof refusal at CONNECT — decisive finding: `ServiceConfiguration2` carries no broker credential, so
   nothing reaches a stock robot by QR) and puppet/telehealth (ADOPT #7). **Gateway TTS went live** (`piper-amy`,
   `piper-ryan`) — `feat/gateway-tts-live` delegated to wire + prove it. STT on the gateway still WIP.
+- **2026-09-02** — Integrated `feat/adaptive-schedule` (PR #39 → dev): the fixed rotation behind `schedule` is now a deterministic, explainable recommender (`plan_inputs`/`plan_day`; parent request → FTUE → coverage → recency → affinity → time-of-day by recovered `ModuleCategory` → spread → blake2b tiebreak; never into bedtime), each entry with a plain-English *why* line on `GET /schedule`. +45 tests (`test_schedule_planner.py`). Filed honestly: telemetry `Packet` carries no module signal (finish/abandon from `mentor_behaviors` only), the 10-min slot is ours, times resolve in the server's timezone. **Gap → next:** a console card for the *why* lines (`server/` was reserved by the face slice). Audit BEYOND #7 → 🟢.
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
