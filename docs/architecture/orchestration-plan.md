@@ -80,6 +80,12 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
    talks to a real service must inject a fake through a `client=`-style seam (never rely on `importorskip`
    to hide a hard import), and the tiers' hermetic test deps stay in parity (`sim/ci/ci.yml` ↔ `ci-deep.yml`).
    Verify a fix in a *fast-shaped* venv (no optional deps) before pushing.
+10. **Concurrency by disjoint file sets, not by turns.** A second slice may run while one is in flight
+    only when its files are provably disjoint: the brief carries the in-flight agent's files as a
+    RESERVED list, plan edits stay on distinct rows, and no two agents touch the same runtime region
+    (turn/streaming loop + safety gates, `_push_config`, the status HTTP handlers). Cap two BUILD slices
+    plus one INTEGRATION/RESEARCH task. Same-file-different-region edits merge cleanly; same-region
+    edits don't — plan the split before launching, not at merge time.
 
 ## The layered session loops (24/7 continuity)
 
@@ -256,6 +262,18 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   fewer deps than deep and runs the whole suite), and a Playwright test sampled the mouth live in a 5 s window.
   Now a `client=` seam, tier dependency parity in `ci.yml`, and a recorded mouth peak (0 muted / ~1.0 rendering).
   412 pass in both venv shapes. Playbook rule 9 added. In flight: `feat/automarkup-floor`.
+
+- **2026-09-02 (AUDIT)** — All green: guards + 0-diff bundle, standing PR #18 CLEAN (six checks), fast tier green
+  on dev again, package 0.4.0 builds and the wheel ships `safety_rules.json`, no secrets in tree/history,
+  `.env`/data dirs ignored, token works, zero stale branches, CI templates in parity, four loops armed.
+  Spec check (content-module contract): `set_output`/`add_execution_action`/`local_data` exist, but
+  **`persist_data` and `summarize` are listed on the volley/session API and are not implemented** → WS-A
+  slice (it unlocks the MemoryChat pattern; audit ADOPT "session.summarize() + persist_data"). Contradiction
+  filed: the plan's Current-state "MQTT runtime" row still reads 🟡 "core works" after streaming, filler,
+  safety gates, schedule serving, telemetry and config editing landed — fix at the next merge (two agents
+  edit that file now). Self-improvement: playbook rule 10 + the BUILD loop now allow a second provably
+  disjoint slice (the last three concurrent pairs merged cleanly). In flight: `feat/automarkup-floor`,
+  `feat/config-alarms-fleet-defaults`. Release v0.5.0 queued behind the automarkup floor.
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
