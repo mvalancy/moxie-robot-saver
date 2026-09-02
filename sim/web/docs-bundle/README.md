@@ -66,7 +66,10 @@ The docs below are the reverse-engineered **facts**; the [`architecture/`](archi
 - [`debugging/`](debugging/) — live hardware-debug notes, QR-command findings.
 - [`community-research.md`](community-research.md) — the revival community (OpenMoxie & friends) and where we fit.
 - [`architecture/openmoxie-feature-audit.md`](architecture/openmoxie-feature-audit.md) — the deep, cited
-  feature-by-feature audit of OpenMoxie + its forks: what to adopt, and where to go beyond.
+  feature-by-feature audit of OpenMoxie + its forks: what to adopt, where to go beyond, and the **status**
+  of every ranked item.
+- [`architecture/backlog/`](architecture/backlog/README.md) — the **build briefs** behind the audit's
+  ranked items: seam, cited vocabularies, design, tests, acceptance criteria, risks.
 
 ## 🌳 How this documentation tree is maintained (SOP)
 
