@@ -217,5 +217,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   turn, not a reply. +48 tests (→281). Knob: `MOXIE_STREAMING=0` restores the single-reply path. Recorded
   assumption (unchanged but leaned on harder): no capture proves a physical Moxie plays chunk 2.
 
+- **2026-09-02 (orchestrator)** — **Live CI proven in GitHub Actions:** dispatch run 33622345297 on dev with
+  `voice=true` → all four deep jobs green, i.e. the creds-only live suites AND the real-speech talk loop
+  (piper/whisper installed on the runner, pinned voices fetched) passed under the fail-loud gates. Also:
+  RELEASING.md's stale "workflows can't be pushed from the session" section replaced; playbook note — the
+  generated *bundle copies* of docs conflict too, regenerate them (orchestrator's exclusion pattern fixed).
+  Bumping to **0.4.0** for promotion (streaming + live CI + browser-audio fix + brain-latency filler).
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
