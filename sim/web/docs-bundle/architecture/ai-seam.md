@@ -357,7 +357,11 @@ Five properties are load-bearing, and each is pinned by a test in
    `MOXIE_STT=whisper` make on the command line.
 3. **Discovery never blocks a turn.** `voice_settings.GatewayCatalog` caches one listing for
    `MOXIE_VOICE_DISCOVERY_TTL_S` (default 300 s) and refreshes it on a background thread; the first
-   ask after boot answers with the local entries and `discovering: true`.
+   ask after boot answers with the local entries and `discovering: true`. The one bounded exception
+   is a console **write**: `POST /voice` waits up to `VOICE_SETTLE_S` (10 s) for the *first* listing,
+   because a supervisor three seconds old would otherwise refuse a perfectly good `gateway:piper-amy`
+   with *"choose one of: tone"* — which is exactly what the live run hit on 2026-09-02. A write is
+   never on a turn's path; a read never waits.
 4. **An outage never blanks the card.** A failed listing keeps the last good one and reports
    `gateway_error: "<ExceptionClass>"`; a stored pick the gateway can no longer confirm stays in
    force rather than silently reverting.

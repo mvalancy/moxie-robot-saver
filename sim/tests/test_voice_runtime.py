@@ -83,9 +83,11 @@ class _Engines:
         self.fail = set(fail)
         self.asked = []                  # every choice a builder was handed
         self.refreshes = 0
+        self.settles = []                # the settle budget each caller asked for
 
-    def available(self, *, refresh=False):
+    def available(self, *, refresh=False, settle_s=0.0):
         self.refreshes += int(bool(refresh))
+        self.settles.append(settle_s)
         return {"available": vs.build_available(self.gateway,
                                                 piper_voices=self.piper,
                                                 whisper_models=self.whisper),
@@ -160,7 +162,7 @@ def test_discovery_still_running_is_said_out_loud(tmp_path):
 
 def test_an_engine_adapter_that_throws_degrades_to_the_builtins(tmp_path):
     class _Broken:
-        def available(self, *, refresh=False):
+        def available(self, *, refresh=False, settle_s=0.0):
             raise RuntimeError("the adapter itself blew up")
 
     rt, _ = _runtime(tmp_path, _Broken())
@@ -391,3 +393,53 @@ def test_post_voice_test_for_a_robot_that_is_not_there_is_a_404(served):
     with pytest.raises(urllib.error.HTTPError) as e:
         http_json(base + "/voice/test?device_id=d_nobody", method="POST", body={})
     assert e.value.code == 404
+
+
+# ------------------------------ the cold-supervisor race (found live 2026-09-02) ------
+def test_a_save_asks_discovery_to_settle_but_the_card_never_does():
+    """The live run's bug, pinned: three seconds after boot the gateway list is still in
+    flight, and a `POST /voice` judged against it refused `gateway:piper-amy` with
+    "choose one of: tone". A write gets a bounded wait; a read gets whatever is cached."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        engines = _Engines()
+        rt, _ = _runtime(tmp, engines)
+        rt.voice_view()
+        assert engines.settles == [0.0], "the card's poll must never wait"
+        rt.voice_update({"speech": "gateway:piper-ryan"})
+        # the WRITE's own lookup waits; the view it renders afterwards does not
+        assert engines.settles[1] == rt.VOICE_SETTLE_S > 0
+        assert engines.settles[2] == 0.0
+
+
+def test_a_cold_catalog_does_not_refuse_a_good_pick():
+    """End to end through the real `GatewayCatalog`: the listing is still on its way when
+    the Save arrives, and the pick is accepted rather than refused."""
+    import tempfile, threading
+    started, release = threading.Event(), threading.Event()
+
+    def _slow():
+        started.set()
+        release.wait(5)
+        return GATEWAY_MODELS
+
+    class _ColdEngines(_Engines):
+        def __init__(self):
+            super().__init__()
+            self.catalog = vs.GatewayCatalog(_slow, ttl_s=300)
+
+        def available(self, *, refresh=False, settle_s=0.0):
+            snap = self.catalog.snapshot(refresh=refresh, settle_s=settle_s)
+            return {"available": vs.build_available(snap["ids"]),
+                    "discovering": snap["discovering"],
+                    "gateway_error": snap["gateway_error"]}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rt, _ = _runtime(tmp, _ColdEngines())
+        cold = rt.voice_view()                       # the card renders immediately…
+        assert cold["discovering"] is True
+        assert vs.option_ids(cold["available"][vs.SPEECH]) == ["tone"]
+        threading.Timer(0.2, release.set).start()    # …the listing lands a moment later
+        out = rt.voice_update({"speech": "gateway:piper-ryan"})
+        assert out["ok"] is True, out.get("reason")
+        assert out["selected"][vs.SPEECH] == "gateway:piper-ryan"

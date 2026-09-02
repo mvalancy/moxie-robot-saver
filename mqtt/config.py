@@ -460,10 +460,15 @@ class VoiceEngines:
             gateway_model_ids if VOICE_BASE_URL else None,
             ttl_s=VOICE_DISCOVERY_TTL_S)
 
-    def available(self, *, refresh: bool = False) -> dict:
-        """`{available: {speech, listening}, discovering, gateway_error}`."""
+    def available(self, *, refresh: bool = False, settle_s: float = 0.0) -> dict:
+        """`{available: {speech, listening}, discovering, gateway_error}`.
+
+        `settle_s` is the bounded wait a console WRITE may ask for so a cold supervisor
+        validates a pick against the real list rather than against `tone` alone. A read
+        passes 0 and never waits.
+        """
         from moxie_sdk import voice_settings
-        snap = self.catalog.snapshot(refresh=refresh)
+        snap = self.catalog.snapshot(refresh=refresh, settle_s=settle_s)
         return {"available": voice_settings.build_available(
                     snap["ids"], piper_voices=local_piper_voices(),
                     whisper_models=local_whisper_models()),

@@ -482,6 +482,11 @@ class GatewayCatalog:
     `list_models` is the only seam: any `() -> [ids]` callable, so every test here runs
     with a fake and spends no request. `submit=lambda fn: fn()` makes it synchronous,
     which is how the TTL is asserted with a fake clock.
+
+    `snapshot(settle_s=…)` is the one place a caller may WAIT — bounded, and only for the
+    very first listing. A console *write* has to be validated against a real list (a cold
+    supervisor would otherwise refuse a perfectly good pick with "choose one of: tone"),
+    and a write is never on a turn's path. Reads always pass `0`.
     """
 
     def __init__(self, list_models: Optional[Callable[[], Sequence[str]]] = None, *,
@@ -496,6 +501,7 @@ class GatewayCatalog:
         self._fetched_at = 0.0
         self._inflight = False
         self._ever = False
+        self._settled = threading.Event()   # set once a first listing has finished
         self.calls = 0                      # how many listings were actually spent
 
     @property
@@ -503,9 +509,16 @@ class GatewayCatalog:
         """True when there is a gateway to ask at all."""
         return self._list is not None
 
-    def snapshot(self, *, refresh: bool = False) -> dict:
-        """`{ids, gateway_error, discovering, fetched_at}` — immediately, always."""
+    def snapshot(self, *, refresh: bool = False, settle_s: float = 0.0) -> dict:
+        """`{ids, gateway_error, discovering, fetched_at}` — immediately, always.
+
+        `settle_s > 0` waits up to that many seconds for the FIRST listing to land (and
+        only the first: a stale-cache refresh never blocks anyone, because the last good
+        list is already an answer). Pass it from a console write, never from a read.
+        """
         self._maybe_start(refresh)
+        if settle_s > 0 and self._list is not None and not self._ever:
+            self._settled.wait(settle_s)
         return self._read()
 
     # -- internals ----------------------------------------------------------
@@ -545,3 +558,4 @@ class GatewayCatalog:
             self._fetched_at = self._clock()
             self._ever = True
             self._inflight = False
+        self._settled.set()

@@ -663,3 +663,62 @@ def test_the_boot_line_says_what_was_installed_and_why():
         "speech: tone (built-in, default — gateway unreachable)"
     assert vs.boot_line("listening", {"engine": "whisper", "model": "base.en"},
                         chosen=True) == "listening: base.en (local whisper, chosen)"
+
+
+# --------------------------------- the cold-supervisor race (found live 2026-09-02) ---
+# `GET /voice` deliberately answers before the first listing lands. `POST /voice` must
+# NOT: judged against a catalog that is still empty, a perfectly good `gateway:piper-amy`
+# is refused with "choose one of: tone". That is exactly what the live run hit three
+# seconds after boot, so `snapshot(settle_s=…)` gives a WRITE a bounded wait.
+
+def test_a_write_may_wait_for_the_first_listing_a_read_never_does():
+    import threading
+    started, release = threading.Event(), threading.Event()
+
+    def _slow():
+        started.set()
+        release.wait(5)
+        return GATEWAY_MODELS
+
+    cat = vs.GatewayCatalog(_slow, ttl_s=300)
+    assert cat.snapshot()["ids"] == [], "a read must not wait on the network"
+    assert started.wait(5)
+    release.set()
+    assert cat.snapshot(settle_s=5)["ids"] == GATEWAY_MODELS
+
+
+def test_settling_gives_up_rather_than_hanging_on_a_dead_gateway():
+    """Bounded, always: a gateway that never answers costs a parent one slow Save, not a
+    wedged supervisor."""
+    import threading, time as _t
+    release = threading.Event()
+    cat = vs.GatewayCatalog(lambda: (release.wait(30), GATEWAY_MODELS)[1], ttl_s=300)
+    t0 = _t.perf_counter()
+    snap = cat.snapshot(settle_s=0.3)
+    elapsed = _t.perf_counter() - t0
+    assert snap["ids"] == [] and 0.25 < elapsed < 3.0
+    release.set()
+
+
+def test_settling_never_waits_twice_for_a_stale_refresh():
+    """Only the FIRST listing is worth waiting for — after that the last good list is
+    already an answer, so a background refresh must not stall a Save."""
+    import threading, time as _t
+    clock = _Clock()
+    gate = threading.Event()
+    calls = []
+
+    def _list():
+        calls.append(1)
+        if len(calls) > 1:
+            gate.wait(30)
+        return GATEWAY_MODELS
+
+    cat = vs.GatewayCatalog(_list, ttl_s=10, clock=clock)
+    assert cat.snapshot(settle_s=5)["ids"] == GATEWAY_MODELS
+    clock.t += 60                                     # the cache is stale now
+    t0 = _t.perf_counter()
+    snap = cat.snapshot(settle_s=5)
+    assert (_t.perf_counter() - t0) < 1.0, "a stale refresh must not block the caller"
+    assert snap["ids"] == GATEWAY_MODELS
+    gate.set()

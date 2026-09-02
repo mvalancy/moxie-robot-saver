@@ -1957,6 +1957,10 @@ class MoxieRuntime:
     #     below serializes concurrent *swaps*, nothing else.
 
     DEFAULT_VOICE_TEST_LINE = "Hi, I'm Moxie."
+    #: How long a console WRITE may wait for the first gateway listing (seconds). Only
+    #: `voice_update` uses it — see `_voice_discovery`. Generous because it is paid once,
+    #: by a parent who just pressed Save, and the alternative is refusing their pick.
+    VOICE_SETTLE_S = 10.0
 
     def set_voice_engines(self, engines):
         """Install the appliance's engine builders + discovery (`config.voice_engines()`).
@@ -1965,19 +1969,26 @@ class MoxieRuntime:
         rather than a card that claims models this box cannot build."""
         self._voice_engines = engines
 
-    def _voice_discovery(self, *, refresh: bool = False) -> dict:
-        """`{available, discovering, gateway_error}` — never raises, never blocks.
+    def _voice_discovery(self, *, refresh: bool = False,
+                         settle_s: float = 0.0) -> dict:
+        """`{available, discovering, gateway_error}` — never raises.
 
         A discovery that throws is reported as `gateway_error` beside the local entries,
         because a card that empties itself when a proxy hiccups is worse than one that
         says the gateway is unreachable next to the options it already had.
+
+        `settle_s` is the only way this waits, it is bounded, and only `voice_update`
+        passes it: a WRITE has to be judged against the real list, or a supervisor that
+        booted three seconds ago refuses a perfectly good pick with "choose one of: tone"
+        (seen live on 2026-09-02). Reads — the card's poll, and anything a turn touches —
+        pass 0 and get whatever is cached, instantly.
         """
         engines = self._voice_engines
         if engines is None:
             return {"available": voice_seam.build_available(), "discovering": False,
                     "gateway_error": ""}
         try:
-            out = engines.available(refresh=refresh)
+            out = engines.available(refresh=refresh, settle_s=settle_s)
         except Exception as e:              # noqa: BLE001 — any failure is local-only
             return {"available": voice_seam.build_available(), "discovering": False,
                     "gateway_error": type(e).__name__}
@@ -2031,7 +2042,7 @@ class MoxieRuntime:
         the choice a parent was told was saved.
         """
         with self._voice_lock:
-            disc = self._voice_discovery()
+            disc = self._voice_discovery(settle_s=self.VOICE_SETTLE_S)
             stored = voice_seam.read_settings(self.store)
             try:
                 settings = voice_seam.normalize_voice_settings(

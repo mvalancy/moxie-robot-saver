@@ -1,5 +1,5 @@
 {
- "generated": "docs-d6ed014f6314",
+ "generated": "docs-b80d7dabad6a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -211,7 +211,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 27642,
+   "bytes": 28020,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -474,7 +474,7 @@
    "path": "architecture/backlog/voice-picker.md",
    "title": "Voice picker — choose the speech and listening models from the console",
    "section": "architecture",
-   "bytes": 9239,
+   "bytes": 9570,
    "mermaid": 0,
    "headings": [
     "What the user asked for (verbatim intent)",

@@ -6,7 +6,11 @@
 worth naming: **`MOXIE_TTS=off` / `MOXIE_STT=off` still win over a pick** (a deployment that declared
 itself voiceless is not talked back into speaking by a dropdown), and a pick that cannot be built on
 this box falls through to the env path rather than leaving a child in silence. Local Piper/whisper
-entries were exercised with fakes — neither package is installed on the build machine.
+entries were exercised with fakes — neither package is installed on the build machine. The live run
+also found (and this branch fixed) a cold-start race the brief did not anticipate: a `POST /voice`
+issued before the first `GET /v1/models` returns was judged against an empty catalog and refused a
+good pick, so a console **write** now waits up to 10 s for that first listing while every read still
+answers instantly.
 Originally: build-ready brief (2026-09-02). **Depends on:** the gateway STT slice (`feat/gateway-stt-live`)
 and the telehealth slice (it owns `server/` and the status-HTTP region until it lands).
 **Owner outcome:** *full cloud service* — a parent picks Moxie's voice and ears from what is actually

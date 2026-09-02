@@ -224,7 +224,7 @@ class _ConsoleVoiceEngines:
     validation rather than a hand-drawn double.
     """
 
-    def available(self, *, refresh=False):
+    def available(self, *, refresh=False, settle_s=0.0):
         from moxie_sdk import voice_settings as _vs
         return {"available": _vs.build_available(_GATEWAY_MODELS,
                                                  piper_voices=["en_US-amy-medium"],
