@@ -104,15 +104,116 @@ Each turn hands the module's `code` a **`volley`** (this exchange) and **`sessio
 |---|---|
 | `volley.set_output(text, markup)` | Set spoken text + optional `<mark cmd:…>` markup ([behavior-markup](../reverse-engineering/runtime/behavior-markup.md)) → the RemoteChatResponse output |
 | `volley.entities` | Regex capture groups (for globals) |
-| `volley.persist_data` / `volley.local_data` | Cross-session / this-turn scratch storage |
+| `volley.persist_data` | **Cross-session storage** — durable, module-namespaced, bounded, erasable. See [Memory](#memory-persist_data-sessionsummarize) below |
+| `volley.local_data` | This-turn scratch. Never written anywhere |
 | `volley.request.get("input_vars", {})` | Inbound vars (maps to `RemoteChatRequest.input_vars`) |
 | `volley.add_execution_action(name, args)` | Ask the robot to *do* something (bridge to native) |
 | `volley.update_subscriptions([...])` | Subscribe to robot events for later turns |
-| `session.summarize(...)` | LLM-summarize the transcript (memory) |
+| `session.summarize(...)` | LLM-summarize the transcript into structured, kid-safe facts (memory). See below |
 | `session.total_volleys`, `session.is_empty()`, `session.overflow` | Turn accounting |
 
 `volley.config.child_pii` is the decrypted child profile from the
 [config contract](config-and-telemetry-contract.md) — the personalization source for the prompt.
+
+## Memory — `persist_data` + `session.summarize()`
+
+**Built 2026-09-02.** A conversation that ends is summarized into a few durable facts; the
+next conversation reads them back. Where it lives:
+[`moxie_sdk/store.py`](../../mqtt/moxie_sdk/store.py) (`MemoryStore` — the storage),
+[`moxie_sdk/content/memory.py`](../../mqtt/moxie_sdk/content/memory.py) (the summarizer),
+[`content_app.py`](../../mqtt/moxie_sdk/content/content_app.py) (the wiring).
+
+### The store
+
+One `memory.json` per robot under the data dir (`robots/<device_id>/memory.json`), a dict
+of **namespaces** — one per content module, so two activities never overwrite each other:
+
+```json
+{ "memory_chat": {
+    "facts": ["Has a beagle named Pepper", "In second grade"],
+    "preferences": ["Likes drawing"], "open_threads": ["Ask how the play went"],
+    "summaries": ["Conversation about Sam's new puppy"],
+    "_meta": {"summarized_through": 4},
+    "_provenance": [{"at": 1788352646.864, "date": "2026-09-02",
+                     "module_id": "MEMORY_CHAT", "content_id": "default",
+                     "conversation_id": "", "turns": 2, "reason": "exit",
+                     "source": "session.summarize"}] } }
+```
+
+- **Bounded** — caps on namespaces (32), items per list (25), item length (240 chars) and
+  total file size (16 KB). An unbounded memory is both a prompt-cost bug and a privacy one.
+- **Provenance on every merge** — `_provenance` records which module, which day, how many
+  turns and *why* the conversation ended. `_`-prefixed keys are the engine's; they never
+  appear in the parent-facing `data`.
+- **JSON-safe** — anything a module or a model produces that will not serialize is dropped,
+  never stored as junk.
+- **List merges prepend and de-duplicate** (newest first, case-insensitive), so a second
+  conversation adds to what the first learned instead of replacing it. Scalars overwrite.
+- **`LoggingPolicy.NO_DATA` means no memory is written.** Reads and erase always work, so a
+  parent can still inspect and delete what was stored before the switch was flipped. The
+  default is `NO_MEDIA` (writing allowed) for the same reason the safety journal's is: the
+  `RobotCloudConfig` default of `NO_DATA` governs what the *robot uploads*, and memory is
+  text our own server derives from turns that already reached it. Setting a device's
+  `logging_policy` to `NO_DATA` is an explicit parent choice and it switches writing off.
+
+### `session.summarize(...)`
+
+At the end of a conversation the brain is asked — through the same injected
+`chat(messages)` seam as any turn, wrapped in `call_with_backoff` — for a short
+**structured** account:
+
+```json
+{"facts": [], "preferences": [], "open_threads": [], "summary": ""}
+```
+
+Structured, not OpenMoxie's summary string, because a parent has to be able to read *and
+delete one item*. Parsing is tolerant (fenced JSON, JSON with prose around it, or a plain
+sentence all work). Two things are never remembered: anything the
+[safety classifier](ai-seam.md) would **block** (a memory file is the one place an unsafe
+line would live forever and be re-injected into every later prompt), and the **child's own
+words** — the prompt forbids quoting and a shingle check enforces it. A brain failure
+returns `None` and **nothing is written**: a missing fact is recoverable, a wrong one is not.
+
+### Declaring it (the `memory` block)
+
+Module `code` strings are deliberately never executed (sandboxing — see
+[`content_app.py`](../../mqtt/moxie_sdk/content/content_app.py)), so what OpenMoxie's
+MemoryChat expresses as a `complete_handler` is **declared** here instead:
+
+```json
+"memory": {"namespace": "memory_chat", "summarize": true, "min_volleys": 2,
+           "max_items": 5, "prompt": "<optional instruction override>"}
+```
+
+`namespace` alone makes `{{ volley.persist_data.<namespace>.* }}` resolve in the prompt (a
+list of facts renders as `- ` bullets in both the Jinja2 and the dependency-free renderer).
+The **end of a conversation** — an `<exit>`/EXIT action, a module switch, or the robot going
+offline — fires `MoxieApp.on_session_end(robot, history, reason)`, which summarizes the part
+of the transcript not yet summarized (`_meta.summarized_through`, so a switch back and forth
+never re-summarizes, or re-pays for, the same turns) and merges it in.
+
+### What a parent can do
+
+The supervisor's localhost status server serves the memory
+([`moxie_runtime.py`](../../mqtt/supervisor/moxie_runtime.py), the memory region):
+
+| Endpoint | Effect |
+|---|---|
+| `GET /memory?device_id=…` | Everything Moxie remembers, by namespace, with provenance, the byte size, and whether writing is currently allowed |
+| `DELETE /memory?device_id=…[&namespace=…]` | Forget one namespace, or all of it |
+| `POST /memory?device_id=…` `{"erase":"<ns>"\|"all"}` | The same erase, for clients that cannot send DELETE |
+
+Erasure is never policy-gated — a parent must always be able to delete. **A browser UI over
+these endpoints is not built yet**: today it is `curl`, which is why
+[`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 BEYOND #4 stays open.
+
+### Honest limits
+
+The model can be wrong, and a wrong fact is **sticky** — it goes back into every later
+prompt until someone erases it (our own live run turned "sleeps on my bed" into "Puppy
+sleeps on **his** bed", inventing a pronoun). The verbatim check is a floor, not a
+guarantee: a *paraphrase* can still carry something private. That is exactly why the facts
+are few, bounded, attributed, and erasable.
 
 ## Execution actions (content → robot bridge)
 
@@ -149,8 +250,9 @@ references; a text-only activity needs none. Detail:
 
 - **Minimum:** one `conversations[]` module (a prompt + an LLM call) answered through the AI seam — a
   working open-ended chat, no schedules, no assets, no execution actions.
-- **Full:** globals (timers/commands), a daily `schedules[]` plan, `persist_data` memory,
-  execution actions (timers/QR), and hosted asset bundles for rich activities.
+- **Full:** globals (timers/commands), a daily `schedules[]` plan, `persist_data` memory
+  (built — see [Memory](#memory-persist_data-sessionsummarize)), execution actions
+  (timers/QR), and hosted asset bundles for rich activities.
 
 ## Conformance checklist
 
@@ -158,7 +260,10 @@ references; a text-only activity needs none. Detail:
 - [ ] Runs the `code` hooks (`pre_process`/`post_process`/`handle_volley`) and returns the result via `volley.set_output(text, markup)`.
 - [ ] Answers through the [AI seam](ai-seam.md) as a `RemoteChatResponse` (text + markup + optional actions).
 - [ ] Supports `globals[]` regex commands alongside the active activity.
-- [ ] (Full) honors `schedules[]`, `persist_data`, execution actions, and hosts referenced asset bundles.
+- [ ] (Full) honors `schedules[]`, execution actions, and hosts referenced asset bundles.
+- [x] `persist_data` + `session.summarize()`: durable module-namespaced memory, summarized at
+      the end of a conversation with provenance, `NO_DATA`-gated, and readable/erasable by a
+      parent over `/memory`.
 
 Where it lives: [`../../mqtt/`](../../mqtt/) (the `MoxieApp` brain that loads modules + answers turns);
 new activities are pure server-side modules — no firmware change.
