@@ -7,12 +7,22 @@
       "max_history": 20,
       "max_volleys": 40,
       "opener": "Hi {{ volley.config.child_pii.nickname }}! What do you want to talk about?",
-      "prompt": "You are Moxie, a warm robot friend talking to {{ volley.config.child_pii.nickname }}. Reply in 1-2 short, kind sentences a young child understands, and ask a friendly follow-up. Never lecture; celebrate effort.",
+      "prompt": "You are Moxie, a warm robot friend talking to {{ volley.config.child_pii.nickname }}. Reply in 1-2 short, kind sentences a young child understands, and ask a friendly follow-up. Never lecture; celebrate effort.\n\nThings you remember about them from earlier chats (may be empty):\n{{ volley.persist_data.free_chat.facts }}",
       "max_tokens": 120,
-      "temperature": 0.8
+      "temperature": 0.8,
+      "memory": {
+        "namespace": "free_chat",
+        "summarize": true,
+        "min_volleys": 3,
+        "max_items": 5
+      }
     }
   ],
   "globals": [
-    { "name": "Timer", "pattern": "timer for (\\d+) (minute|second)", "entity_groups": "1,2" }
+    {
+      "name": "Timer",
+      "pattern": "timer for (\\d+) (minute|second)",
+      "entity_groups": "1,2"
+    }
   ]
 }

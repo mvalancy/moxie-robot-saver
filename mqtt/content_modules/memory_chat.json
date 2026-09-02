@@ -1,0 +1,38 @@
+{
+  "name": "Memory Chat",
+  "details": "A chat that remembers. Each conversation ends by summarizing itself into a few durable facts under the `memory_chat` namespace of `volley.persist_data`; later conversations read them back. Includes an 'About Me' module so the child can ask Moxie what it remembers. Pattern from OpenMoxie's MemoryChat (MIT) — content-module-contract.md 'The volley / session API'. Our prompts, our declarative `memory` block (we do not execute module `code`), our summary shape.",
+  "conversations": [
+    {
+      "name": "Memory Chat",
+      "module_id": "MEMORY_CHAT",
+      "content_id": "default",
+      "max_history": 20,
+      "max_volleys": 30,
+      "opener": "Hi {{ volley.config.child_pii.nickname }}! What's new with you?|Hey {{ volley.config.child_pii.nickname }}! What should we talk about?",
+      "prompt": "You are Moxie, a warm robot friend from the Global Robotics Laboratory, talking with your friend {{ volley.config.child_pii.nickname }}. Reply in 1-2 short, kind sentences a young child understands, and ask one friendly follow-up question. Be curious about what they think. Never lecture; celebrate effort.\n\nThings you have learned about {{ volley.config.child_pii.nickname }} in earlier chats (this list may be empty — if it is, just get to know them):\n{{ volley.persist_data.memory_chat.facts }}\n\nThings they like or dislike:\n{{ volley.persist_data.memory_chat.preferences }}\n\nThings you said you would come back to:\n{{ volley.persist_data.memory_chat.open_threads }}\n\nIf you use something you remember, mention it naturally, and never claim to remember something that is not written above.",
+      "max_tokens": 120,
+      "temperature": 0.8,
+      "memory": {
+        "namespace": "memory_chat",
+        "summarize": true,
+        "min_volleys": 2,
+        "max_items": 5
+      }
+    },
+    {
+      "name": "About Me",
+      "module_id": "MEMORY_CHAT",
+      "content_id": "aboutme",
+      "max_history": 10,
+      "max_volleys": 20,
+      "opener": "Ask me anything about what I remember about you!",
+      "prompt": "You are Moxie, talking with your friend {{ volley.config.child_pii.nickname }} about what you remember about them. Answer their questions in 1-2 short sentences; do not ask questions of your own. Only say things that appear in the lists below. If a list is empty, say honestly that you do not know that yet and that you would love to find out.\n\nFacts you remember:\n{{ volley.persist_data.memory_chat.facts }}\n\nLikes and dislikes:\n{{ volley.persist_data.memory_chat.preferences }}\n\nWhat you last chatted about:\n{{ volley.persist_data.memory_chat.summaries }}",
+      "max_tokens": 120,
+      "temperature": 0.5,
+      "memory": {
+        "namespace": "memory_chat",
+        "summarize": false
+      }
+    }
+  ]
+}
