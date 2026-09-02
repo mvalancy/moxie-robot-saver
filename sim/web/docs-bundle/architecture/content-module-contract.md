@@ -188,6 +188,26 @@ entry only `Recommendation` fields. It is stored at `robots/<device_id>/schedule
 served by `GET /schedule?device_id=…`
 ([`mqtt-and-conversation.md` §3.8](mqtt-and-conversation.md#38-the-schedule-query-the-day-plan-and-the-parents-read-of-it-adaptive-2026-09-02)).
 
+##### In the console
+
+The parent reads it on the **📅 Today's plan** card: `GET /local/robots/{device_id}/schedule` is a
+thin proxy of the runtime's `GET /schedule` ([`../../server/moxie_server/main.py`](../../server/moxie_server/main.py)),
+normalized by the pure `normalize_schedule_view`
+([`../../server/moxie_server/fleet.py`](../../server/moxie_server/fleet.py)) into one row per served
+entry — clock time, name, and the `line` above it in muted text — plus a footer carrying the
+constraints the payload reports: the bedtime window and how many slots it cost, each pinned parent
+request, and *"no telemetry module signal — finish/abandon comes from the robot's reports"* whenever
+`inputs.telemetry.carries_module_signal` is `false`. Rows are paired to `provided_schedule` by
+position (the contract above) and re-paired by `module_id` if a payload ever breaks that order.
+Three things the card refuses to invent: a **name** (`Recommendation.module_name` when the template
+supplies one, else the id verbatim — the plain-English table lives in the SDK and is not copied
+across the seam), a **clock time** (the authored spine is ordered, not timed, and shows `—`), and a
+**telemetry signal**. The card is **read-only**: a day is changed from ⚙️ Settings (bedtime,
+`schedule_preferences.parent_requests`), never from here. Tested pure in
+[`../../sim/tests/test_schedule_view.py`](../../sim/tests/test_schedule_view.py) against a recorded
+real payload, and across the seam in
+[`../../sim/tests/test_console_roundtrip.py`](../../sim/tests/test_console_roundtrip.py).
+
 ## The `volley` / `session` API (per-turn hooks)
 
 Each turn hands the module's `code` a **`volley`** (this exchange) and **`session`** (the conversation):

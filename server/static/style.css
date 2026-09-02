@@ -179,3 +179,19 @@ button.linkish.mem-arm{opacity:1;color:#c0392b;font-weight:700}
 .th-log .thln.child{color:var(--muted)}
 .th-log .thln.child b{font-weight:400;font-style:italic}
 .th-note{font-size:11px;margin-top:8px}
+
+/* --- 📅 Today's plan (the schedule's "why this activity today", BEYOND #7) --- */
+#sched-head{margin:2px 0 8px}
+#sched-list{display:flex;flex-direction:column;border:1px solid var(--line);
+  border-radius:8px;margin:8px 0}
+#sched-list:empty{display:none}
+.sched-row{display:flex;gap:10px;padding:7px 10px;border-bottom:1px solid var(--line)}
+.sched-row:last-child{border-bottom:0}
+.sched-at{flex:0 0 44px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;
+  padding-top:1px}
+.sched-row.fixture .sched-at{opacity:.6}
+.sched-body{min-width:0}
+.sched-body b{font-weight:600;font-size:13px;word-break:break-word}
+.sched-pin{margin-left:6px;color:var(--brand);font-size:12px}
+.sched-why{color:var(--muted);font-size:12px;margin-top:2px}
+.sched-foot{font-size:12px;margin:0 0 8px}
