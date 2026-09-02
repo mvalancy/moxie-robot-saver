@@ -1,5 +1,5 @@
 {
- "generated": "docs-febce1d42771",
+ "generated": "docs-1ec8095487ed",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 4209,
+   "bytes": 4271,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -472,7 +472,7 @@
    "path": "architecture/backlog/voice-picker.md",
    "title": "Voice picker — choose the speech and listening models from the console",
    "section": "architecture",
-   "bytes": 8559,
+   "bytes": 8542,
    "mermaid": 0,
    "headings": [
     "What the user asked for (verbatim intent)",

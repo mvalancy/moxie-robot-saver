@@ -18,7 +18,7 @@ appliance can really use right now, defaulting to `piper-amy` when the gateway l
 
 | Source | How we know it is available | Entries |
 |---|---|---|
-| Gateway (LiteLLM) | `GET {MOXIE_VOICE_BASE_URL}/models` through the OpenAI client (`client.models.list()`), classified by [`moxie_sdk/audio_models.py`](../../../mqtt/moxie_sdk/audio_models.py) `classify_audio_models` (pure, golden-tested against the verified list) | `piper-amy`, `piper-ryan`, `tts-piper-*`, `graphling-tts-*` · `stt-whisper`, `graphling-stt`, `stt-whisper-base` |
+| Gateway (LiteLLM) | `GET {MOXIE_VOICE_BASE_URL}/models` through the OpenAI client (`client.models.list()`), classified by `moxie_sdk/audio_models.py::classify_audio_models` (lands with the STT slice) (pure, golden-tested against the verified list) | `piper-amy`, `piper-ryan`, `tts-piper-*`, `graphling-tts-*` · `stt-whisper`, `graphling-stt`, `stt-whisper-base` |
 | Local Piper | `PiperSynthesizer.available()` + the voices present under `sim/tts/voices/` (or `MOXIE_PIPER_MODEL`) | `local:piper:<voice>` |
 | Local whisper | `WhisperTranscriber.available()` | `local:whisper:<size>` |
 | Built-in | always | `tone` (speech) · `off` (listening) |
