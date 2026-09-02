@@ -192,9 +192,13 @@ class MoxieRuntime:
 
     def memory_policy(self, device_id) -> LoggingPolicy:
         """The LoggingPolicy governing what may be *remembered* about this child — the
-        parent's explicit `logging_policy` override if set, else `MEMORY_POLICY`.
-        `NO_DATA` means no memory is written at all (reads and erase still work)."""
-        raw = (self._config_overrides.get(device_id) or {}).get("logging_policy")
+        parent's explicit `logging_policy` if there is one, else `MEMORY_POLICY`.
+        `NO_DATA` means no memory is written at all (reads and erase still work).
+
+        Read from the **effective** config (fleet ⊕ per-robot), so a house rule set once
+        for the appliance turns memory off for every robot on it, and a single robot can
+        still be set apart."""
+        raw = (self.effective_config(device_id) or {}).get("logging_policy")
         if raw is None:
             return MEMORY_POLICY
         try:

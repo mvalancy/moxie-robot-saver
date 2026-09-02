@@ -153,8 +153,11 @@ of **namespaces** — one per content module, so two activities never overwrite 
   parent can still inspect and delete what was stored before the switch was flipped. The
   default is `NO_MEDIA` (writing allowed) for the same reason the safety journal's is: the
   `RobotCloudConfig` default of `NO_DATA` governs what the *robot uploads*, and memory is
-  text our own server derives from turns that already reached it. Setting a device's
-  `logging_policy` to `NO_DATA` is an explicit parent choice and it switches writing off.
+  text our own server derives from turns that already reached it. Setting `logging_policy`
+  to `NO_DATA` is an explicit parent choice and it switches writing off — read from the
+  **effective** config (`fleet ⊕ per-robot`, see the
+  [config contract](config-and-telemetry-contract.md)), so one house rule covers every
+  robot on the appliance and a single robot can still be set apart.
 
 ### `session.summarize(...)`
 

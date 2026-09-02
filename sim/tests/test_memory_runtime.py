@@ -212,6 +212,19 @@ def test_no_data_policy_from_the_parent_stops_memory_being_written(tmp_path):
 # the parent's read + erase
 # ---------------------------------------------------------------------------
 
+def test_a_fleet_wide_no_data_rule_also_stops_memory(tmp_path):
+    """A house rule set once for the appliance (fleet config) turns memory off for every
+    robot on it — `memory_policy` reads the effective `fleet ⊕ per-robot` layer."""
+    rt, did, app = _content_runtime(tmp_path)
+    rt.store = JsonStore(str(tmp_path / "fleet"))
+    rt.update_fleet_config(logging_policy=int(LoggingPolicy.NO_DATA))
+    assert rt.memory_policy(did) == LoggingPolicy.NO_DATA
+    assert app.memory.writes_allowed(did) is False
+    # ...and one robot can still be set apart from the house rule
+    rt._config_overrides[did] = {"logging_policy": int(LoggingPolicy.NO_MEDIA)}
+    assert rt.memory_policy(did) == LoggingPolicy.NO_MEDIA
+
+
 def test_memory_view_and_erase_by_namespace(tmp_path):
     rt, did, app = _content_runtime(tmp_path)
     app.memory.merge(did, "mchat", {"facts": ["has a dog"]},
