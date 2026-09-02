@@ -331,13 +331,7 @@ webhook apps stopped speaking flat, and `LLMApp` stopped being a second, diverge
 p95 **0.23 ms** per line against a 1 ms budget, no model call, no new dependency; eight byte-exact goldens
 reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` is the one-variable rollback.
 
-**Most valuable next slice:** the memory floor (`persist_data` + `summarize`, PR #25) and the config
-contract (PR #24) are in; in flight are a **device allowlist / pairing gate** (a real exposure: today any
-device reaching the broker is pushed `pairing_status:"paired"` with the child's PII) and **published
-multi-arch images** (ADOPT #10's remainder). Next after those, in value order: the audit's remaining ADOPT items (memory erase/edit/decay landed in PR #33 — BEYOND #4 🟢), the
-remaining ADOPT items (content packs export/import, puppet / telehealth, face customization), and the
-BEYOND #1 behavior planner (spec in [`backlog/expressiveness.md`](backlog/expressiveness.md) §2). The
-physical-robot gap stays the honest ceiling on criteria 1 and 6.
+**Most valuable next slice (2026-09-02, after v0.7.0):** the pairing gate, published images, memory erase/edit/decay, vision events, face customization, the adaptive schedule and the gateway voice have all landed. In value order now: **puppet / telehealth (ADOPT #7)** — the build-ready brief is `backlog/telehealth.md` (pure `telehealth.py` cross-checked against the recovered `TeleHealth_pb2`, `GET/POST /telehealth`, a 🎭 console card, a SIM handler); **broker authentication P0** (`backlog/security-broker-auth.md`: pattern ACLs on `%c`, a per-appliance supervisor credential, 1883 loopback-bound — containment first, since a stock robot can carry no secret by QR); then a console card for the schedule's *why this activity today* lines (`GET /schedule` serves them, `server/` does not read them yet); then content packs export/import (ADOPT #5). Gateway STT waits for the gateway (WIP).
 
 ## TTS strategy (2026-09-01)
 
