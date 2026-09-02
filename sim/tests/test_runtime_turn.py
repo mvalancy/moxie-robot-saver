@@ -231,3 +231,91 @@ def test_status_snapshot_surfaces_robot_state():
     assert r["battery_level"] == 0.77 and r["wifi_ssid"] == "home" and r["mode"] == "idle"
     assert r["firmware"] == "v24.10.803"
     assert r["config_overrides"]["audio_volume"] == 0.8
+
+
+def test_tts_synthesizes_and_publishes_on_a_turn():
+    """M4 integration: with a synthesizer set, a turn also publishes a CloudTTSResponse
+    (server voice for the SIM); the real robot self-synthesizes so it's opt-in."""
+    from moxie_sdk.tts import Synthesizer
+
+    class _FakeSynth(Synthesizer):
+        sample_rate = 16000
+        channels = 1
+
+        def synthesize(self, text, voice=None):
+            return b"PCM:" + text.encode()
+
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"))
+    rt.client = _FakeClient()
+    rt.set_synthesizer(_FakeSynth())
+    did = "d_tts"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    rt._on_remote_chat(did, rt.robots[did],
+                       json.dumps({"command": "prompt", "event_id": "e", "speech": "hi"}))
+    rt._pool.shutdown(wait=True)
+    import base64
+    tts = [p for (t, p) in rt.client.published if t == f"/devices/{did}/commands/tts"]
+    assert tts, "no CloudTTSResponse published"
+    audio = base64.b64decode(tts[-1]["audio"]["buffer"])
+    assert audio.startswith(b"PCM:")                     # synthesized from the reply text
+    assert tts[-1]["audio"]["sample_rate"] == 16000
+
+
+def test_no_synthesizer_no_tts_published():
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    did = "d_notts"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    rt._on_remote_chat(did, rt.robots[did],
+                       json.dumps({"command": "prompt", "event_id": "e", "speech": "hi"}))
+    rt._pool.shutdown(wait=True)
+    assert not [t for (t, p) in rt.client.published if t.endswith("/commands/tts")]
+
+
+def test_telemetry_ingest_stores_and_counts():
+    """M5 telemetry integration: an incoming Packet is stored per-device + counted in
+    the console status snapshot."""
+    from moxie_sdk.telemetry import build_packet
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    did = "d_tel"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    pkt = build_packet("wake", b"x", moxie_id=did)
+    rt._on_event(did, "telemetry", json.dumps(pkt))
+    rt._on_event(did, "telemetry", json.dumps(build_packet("said", "hi", moxie_id=did)))
+    assert len(rt.robots[did].extra["telemetry"]) == 2
+    snap = [r for r in rt.status_snapshot()["robots"] if r["device_id"] == did][0]
+    assert snap["telemetry_count"] == 2
+
+
+def test_handle_zmq_real_protobuf_frame_drives_stt():
+    """A real robot's protobuf zmqSTTRequest frame off events/zmq → feed_stt → transcript."""
+    from moxie_sdk.stt import Transcriber
+
+    def _varint(n):
+        out = bytearray()
+        while True:
+            b = n & 0x7F; n >>= 7
+            out.append(b | (0x80 if n else 0))
+            if not n:
+                return bytes(out)
+
+    def _frame(vad, audio, uuid):
+        body = bytes([0x10]) + _varint(vad)
+        body += bytes([0x1A]) + _varint(len(audio)) + audio
+        u = uuid.encode(); body += bytes([0x22]) + _varint(len(u)) + u
+        return b"embodied.perception.audio.zmqSTTRequest:" + body
+
+    class _Fake(Transcriber):
+        def transcribe(self, pcm, sample_rate=16000):
+            return f"pb {len(pcm)}b"
+
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    rt.set_transcriber(_Fake())
+    did = "d_pb"
+    rt.handle_zmq(did, _frame(1, b"aa", "u5"))         # START
+    got = rt.handle_zmq(did, _frame(3, b"bb", "u5"))    # END → transcribe
+    assert got == "pb 4b"
+    msgs = [pl for (t, pl) in rt.client.published if t == f"/devices/{did}/commands/zmq"]
+    assert msgs[-1]["speech"] == "pb 4b" and msgs[-1]["uuid"] == "u5"

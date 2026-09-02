@@ -61,3 +61,39 @@ def test_empty_markup_yields_no_audio_no_call():
 
 def test_make_voice_synthesizer_needs_a_base_url():
     assert make_voice_synthesizer("", "key") is None           # not configured → None
+
+
+def test_voice_synth_backs_off_on_rate_limit():
+    """A busy voice server (429) is retried with backoff, not failed — same resilience
+    as the LLM gateway."""
+    from moxie_sdk.tts import OpenAIVoiceSynthesizer
+
+    class _RateLimit(Exception):
+        status_code = 429
+
+    class _Resp:
+        content = b"PCMOK"
+
+    class _FakeClient:
+        def __init__(self):
+            self.calls = 0
+            self.audio = self
+            self.speech = self
+
+        def create(self, **kw):
+            self.calls += 1
+            if self.calls < 3:
+                raise _RateLimit()
+            return _Resp()
+
+    fake = _FakeClient()
+    synth = OpenAIVoiceSynthesizer("", "", client=fake, response_format="pcm")
+    # patch the backoff sleep so the test is instant
+    import moxie_sdk.chat as chat
+    orig = chat.time.sleep
+    chat.time.sleep = lambda s: None
+    try:
+        out = synth.synthesize("hello")
+    finally:
+        chat.time.sleep = orig
+    assert out == b"PCMOK" and fake.calls == 3      # retried through 2 rate-limits

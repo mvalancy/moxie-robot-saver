@@ -53,6 +53,8 @@ class MoxieRuntime:
         self._stt_uuid = {}      # utterance uuid per device (set on any frame that has one)
         # Parent-console config editing: per-device RobotCloudConfig overrides.
         self._config_overrides = {}
+        # TTS (AI seam §3): an optional server voice (for the SIM; a real robot self-synthesizes).
+        self._synth = None
 
     def _build_client(self):
         import paho.mqtt.client as mqtt
@@ -112,6 +114,7 @@ class MoxieRuntime:
                 "wifi_ssid": st.get("wifi_ssid"), "mode": st.get("mode"),
                 "ota_reboot_required": st.get("ota_reboot_required"),
                 "config_overrides": self._config_overrides.get(r.device_id, {}),
+                "telemetry_count": len(r.extra.get("telemetry", [])),
             })
         return {"ok": True, "app": self.app.name,
                 "uptime_s": int(time.time() - self.started_at),
@@ -243,6 +246,23 @@ class MoxieRuntime:
         print(f"[runtime] → pushed config to {device_id} (pairing_status=paired)")
         return cfg
 
+    # ---- telemetry ingest (parent-console insights) ----
+    def ingest_telemetry(self, device_id, payload):
+        """Parse an incoming telemetry Packet and store it per-device for insights.
+        Returns the parsed packet (or None on parse failure)."""
+        try:
+            from moxie_sdk.telemetry import parse_packet
+            pkt = parse_packet(payload)
+        except Exception:
+            return None
+        robot = self.robots.get(device_id)
+        if robot is not None:
+            buf = robot.extra.setdefault("telemetry", [])
+            buf.append(pkt)
+            del buf[:-50]                       # keep the last 50 events
+        self._note("telemetry", f"📈 {pkt.get('event_name', 'event')}")
+        return pkt
+
     def update_config(self, device_id, **overrides):
         """Parent-console config edit: merge overrides (audio_volume, screen_brightness,
         timezone_id, logging_policy, weekday_bedtime, wake toggles, …) into this device's
@@ -260,6 +280,8 @@ class MoxieRuntime:
             return self.handle_zmq(device_id, payload)
         if name == "client-service-activity-log":
             return self._on_activity(device_id, payload)
+        if name in ("telemetry", "analytics") or name.startswith("packet"):
+            return self.ingest_telemetry(device_id, payload)
         # everything else → surface to the app as an event (vision, module lifecycle…)
         try:
             data = json.loads(payload)
@@ -317,6 +339,28 @@ class MoxieRuntime:
                            actions=reply.actions, end_turn=reply.end_turn,
                            result=reply.result_code, mood=reply.mood,
                            dialog_act=reply.dialog_act)
+        self._maybe_synthesize(device_id, markup, event_id)
+
+    # ---- TTS (AI seam §3) — server voice for the SIM ----
+    def set_synthesizer(self, synth):
+        """Install a server-side TTS engine (moxie_sdk.tts.Synthesizer). The SIM plays
+        the resulting audio; a real robot self-synthesizes so this is SIM-only."""
+        self._synth = synth
+
+    def _maybe_synthesize(self, device_id, markup, event_id=""):
+        """If a synthesizer is set, render the line and publish a CloudTTSResponse to
+        /devices/{id}/commands/tts. TTS failure never breaks the turn."""
+        if self._synth is None:
+            return None
+        try:
+            from moxie_sdk.tts import synthesize_cloud_tts
+            resp = synthesize_cloud_tts(self._synth, markup, event_id=event_id)
+            if self.client:
+                self.client.publish(f"/devices/{device_id}/commands/tts", json.dumps(resp))
+            return resp
+        except Exception as e:
+            print(f"[runtime] TTS synth failed (non-fatal): {e}", flush=True)
+            return None
 
     def _ingest_notify(self, device_id, rcr):
         h = self.history.setdefault(device_id, [])
@@ -396,10 +440,15 @@ class MoxieRuntime:
                 except Exception:
                     audio = b""
             return self.feed_stt(device_id, data["vad"], audio, data.get("uuid", ""))
+        # real robot: `b'<full_name>:' + zmqSTTRequest` protobuf
+        raw = payload if isinstance(payload, (bytes, bytearray)) else str(payload).encode()
+        from moxie_sdk.stt import decode_zmq_stt_frame
+        frame = decode_zmq_stt_frame(raw)
+        if frame is not None:
+            return self.feed_stt(device_id, frame["vad"], frame["audio"], frame["uuid"])
         if not getattr(self, "_warned_stt", False):
-            note = ("received protobuf STT audio (events/zmq) — decoding zmqSTTRequest "
-                    "needs the compiled proto (remaining wire step)") if self._transcriber \
-                else "received STT audio but no transcriber is set (text turns still work)"
+            note = ("STT audio but no transcriber is set (text turns still work)"
+                    if not self._transcriber else "unrecognized events/zmq frame")
             print(f"[runtime] ⚠️  {note}; see handle_zmq().")
             self._warned_stt = True
 

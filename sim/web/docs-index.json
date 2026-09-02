@@ -1,5 +1,5 @@
 {
- "generated": "docs-d8b1292b94c2",
+ "generated": "docs-1c034c3b732b",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,14 +96,15 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 9673,
+   "bytes": 11076,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-01) — ≈ 45%",
+    "DoD progress (audited 2026-09-02) — ≈ 52%",
+    "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
    ],
@@ -578,7 +579,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 848,
+   "bytes": 970,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -641,6 +642,24 @@
     "Quick method — ARP scan by vendor",
     "Confirming it's Moxie",
     "Worked example"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/litellm-tts-setup.md",
+   "title": "TTS on the LiteLLM gateway — setup handoff",
+   "section": "guides",
+   "bytes": 5500,
+   "mermaid": 0,
+   "headings": [
+    "What we already confirmed",
+    "What we need (the contract)",
+    "How to register it (LiteLLM `config.yaml`)",
+    "Option A — Piper via an OpenAI-compatible shim (recommended)",
+    "Option B — a hosted OpenAI-compatible TTS (simplest)",
+    "Option C — any OpenAI-`/audio/speech` server you already run",
+    "Verify it works",
+    "What to send back to us"
    ],
    "kind": "md"
   },
