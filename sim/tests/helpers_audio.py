@@ -166,6 +166,24 @@ def spectral_flatness(pcm: bytes) -> float:
     return float(np.exp(np.mean(np.log(spec))) / np.mean(spec))
 
 
+#: The line between REAL SPEECH and the built-in placeholder, in spectral flatness.
+#:
+#: `ToneSynthesizer` emits 22050 Hz mono PCM16 exactly like the gateway voice does, so a
+#: sample rate proves nothing about who spoke — every live audio assertion has to clear
+#: this instead. Observed on this gateway: tone ~3.1e-12, piper-amy ~5.2e-02, i.e. ten
+#: orders of magnitude apart; 1e-6 sits between them and is tuned to neither.
+#:
+#: Lives here rather than in one test file because more than one live suite needs it
+#: (the turn e2e and the telehealth voice), and a floor that drifts per-file is a floor
+#: that stops meaning anything.
+SPEECH_FLATNESS_FLOOR = 1e-6
+
+
+def is_real_speech(pcm: bytes) -> bool:
+    """True when this audio is broadband enough to be a voice rather than the tone."""
+    return spectral_flatness(pcm) > SPEECH_FLATNESS_FLOOR
+
+
 def zcr_series(pcm: bytes, sample_rate: int = ROBOT_SAMPLE_RATE,
                frame_ms: int = 25) -> List[float]:
     """Per-frame zero-crossing rate. A steady tone gives a flat series; speech does
