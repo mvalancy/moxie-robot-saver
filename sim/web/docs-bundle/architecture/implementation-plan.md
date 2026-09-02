@@ -239,14 +239,14 @@ webhook apps stopped speaking flat, and `LLMApp` stopped being a second, diverge
 p95 **0.23 ms** per line against a 1 ms budget, no model call, no new dependency; eight byte-exact goldens
 reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` is the one-variable rollback.
 
-**Most valuable next slice:** **BEYOND #1, the behavior planner** — now that the floor exists and every path
-goes through it, the next 10× is scoring *the line's job* rather than its words: a mood per clause, a gesture
-**and** a look, an icon when the line is about something the screen can show, and — the part that actually
-unblocks the wire — the scored-output fields the contract already defines and nobody fills
-([`backlog/expressiveness.md`](backlog/expressiveness.md) §2; C1-C5 give `ReplyChunk` the fields a streamed
-answer needs). It plugs into the same seam, with the same signature, and degrades to the floor on any
-failure, so it is additive rather than a rewrite. After that: `alarms` / `schedule_preferences` (config
-contract gap), and a local **model** classifier behind the safety seam now that the seam exists.
+**Most valuable next slice:** with safety, the automarkup floor, and the config contract (`alarms` /
+`schedule_preferences` + fleet defaults, PR #24) all landed, the open items are: the **memory floor**
+(`persist_data` + `summarize`, *in flight*); a **device allowlist / pairing gate** (audit ADOPT quick win —
+today anything that reaches the broker is pushed `pairing_status:"paired"`; a home appliance needs a permit
+list + a console toggle, S); then the audit's remaining ADOPT items (content packs export/import, puppet /
+telehealth, face customization, published images) and the BEYOND #1 behavior planner (spec in
+[`backlog/expressiveness.md`](backlog/expressiveness.md) §2). The physical-robot gap stays the honest
+ceiling on criteria 1 and 6.
 
 ## TTS strategy (2026-09-01)
 

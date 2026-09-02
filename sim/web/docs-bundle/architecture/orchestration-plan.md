@@ -290,5 +290,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   (v0.2.0 → v0.5.0), 16 delegated slices integrated. In flight: `feat/config-alarms-fleet-defaults`;
   delegating `feat/session-memory-persist-summarize` (contract gap: `persist_data` + `summarize`).
 
+- **2026-09-02** — Integrated `feat/config-alarms-fleet-defaults` (PR #24 → dev): the config contract's `alarms`
+  (`WakeSchedule`) and `schedule_preferences` (`ParentRequest`) are built + editable, and a fleet-level default
+  config layers under per-robot overrides (ADOPT #6). Encodings the protos don't pin (day numbering, HH:MM,
+  epoch seconds) are isolated behind single constants and recorded as assumptions. +31 tests (→666 in the
+  fast-shaped venv). Live: two robots inherited a fleet alarm while a per-robot volume override won. Next
+  disjoint slice: device allowlist / pairing gate. In flight: `feat/session-memory-persist-summarize`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
