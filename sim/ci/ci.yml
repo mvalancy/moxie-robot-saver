@@ -70,6 +70,9 @@ jobs:
         run: bash sim/run_scenarios.sh
       - name: SIL + static-site pytest/Playwright suite (all pages, resolutions, controls)
         run: |
-          python3 -m pip install -q playwright pytest
+          # This step runs the WHOLE sim/tests suite, so it needs the same hermetic test
+          # deps as the deep tier (sim/ci/ci-deep.yml) — a dep only that tier installs is
+          # a tier drift that shows up here as a red push, not as a caught bug.
+          python3 -m pip install -q "paho-mqtt>=2.0" pytest openai jinja2 pyyaml playwright
           python3 -m playwright install --with-deps chromium
           python3 -m pytest sim/tests -q

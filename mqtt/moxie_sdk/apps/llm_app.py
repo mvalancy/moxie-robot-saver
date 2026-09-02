@@ -241,10 +241,18 @@ class LLMApp(MoxieApp):
     def __init__(self, base_url: str, api_key: str, model: str = "gpt-4o-mini",
                  persona: str = DEFAULT_PERSONA, max_tokens: int = 200,
                  temperature: float = 0.8, max_history: int = 12,
-                 expressive: bool = True):
-        from openai import OpenAI          # lazy import so the SDK has no hard dep
+                 expressive: bool = True, *, client=None):
+        # `client` is the OpenAI-compatible seam, exactly as OpenAIVoiceSynthesizer
+        # takes one (moxie_sdk/tts.py): inject a client and openai is never imported,
+        # so a test driving this brain with a fake runs on a bare interpreter. Only
+        # the real path pays for the dependency — everything below (chat.py's
+        # stream_completion / call_with_backoff / Pacer) is pure Python either way.
+        if client is None:
+            from openai import OpenAI      # lazy import so the SDK has no hard dep
+            client = OpenAI(base_url=base_url, api_key=api_key or "sk-local",
+                            max_retries=0)
         from ..chat import Pacer
-        self._client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
+        self._client = client
         self._pacer = Pacer()             # adaptive backoff owns retries, not openai
         self._model = model
         self._persona = persona
