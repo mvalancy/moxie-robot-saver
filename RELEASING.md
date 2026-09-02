@@ -63,18 +63,14 @@ Single source: `mqtt/moxie_sdk/__init__.py` `__version__`; `pyproject.toml` read
 
 Build a package locally anytime: `cd mqtt && python -m build` → `dist/moxie_cloud_sdk-<version>.*`.
 
-## ⚠️ Workflow install (owner, one-time — needs a `workflow`-scoped token)
+## Workflow files — templates and the installed copies
 
-`.github/workflows/` can't be pushed from the build session (token lacks `workflow` scope). Install-ready
-templates live in [`sim/ci/`](sim/ci/): **`ci.yml`** (fast, dev tier), **`ci-deep.yml`** (deep + HIL, main
-tier), **`release.yml`** (tags). Install:
-```sh
-cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml .github/workflows/ && \
-git add .github/workflows/ && git commit -m "ci: fast(dev)+deep(main,HIL)+release tiers" && \
-git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:TOKEN' | base64 -w0)" push   # then revoke
-```
-HIL against real hardware/servers uses repo **secrets** (gateway key, voice URL, robot host) the deep
-workflow reads — never committed. Until installed, the live `ci.yml` gates PRs to `main` and locals build packages.
+The three workflows are **installed** in `.github/workflows/` and mirrored as templates in
+[`sim/ci/`](sim/ci/) (`ci.yml`, `ci-deep.yml`, `release.yml`). Edit the template, then sync the installed
+copy in the same change (`cp sim/ci/<file> .github/workflows/<file>`); the AUDIT loop checks they're
+identical. Pushing `.github/workflows/` needs a `workflow`-scoped token (the orchestrator session has one;
+revoke it when the session ends). HIL against real infra uses repo **secrets** (gateway key, voice URL,
+robot host) that the deep workflow reads — never committed.
 
 ---
 📖 [Repo structure](STRUCTURE.md) · [Implementation plan](docs/architecture/implementation-plan.md)
