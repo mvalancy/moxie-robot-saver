@@ -1,5 +1,5 @@
 {
- "generated": "docs-d8c730984090",
+ "generated": "docs-a2530a27ad18",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 3839,
+   "bytes": 4108,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 2646,
+   "bytes": 3000,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -334,7 +334,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 64627,
+   "bytes": 66393,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -399,6 +399,70 @@
     "2.5 How it is tested",
     "2.6 Degradation — always down to the floor",
     "2.7 Phases"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/security-broker-auth.md",
+   "title": "Broker authentication — from service refusal to identity, in three phases",
+   "section": "architecture",
+   "bytes": 38988,
+   "mermaid": 2,
+   "headings": [
+    "Why this is the next slice",
+    "0. What our own corpus establishes — and what it leaves open",
+    "0.1 The robot's connect handshake",
+    "0.2 What the endpoint QR can carry — and what it cannot",
+    "0.3 The one route to a robot's public key that is not a hardware step",
+    "0.4 The ledger — proven / assumed / unknown",
+    "1. The seam as it stands today",
+    "Prior art — what OpenMoxie does, and what it does not",
+    "2. P0 — hardening we can ship now, with no robot change",
+    "2.1 A `pattern` ACL keyed on the client id",
+    "2.2 A supervisor credential",
+    "2.3 The permit-derived ACL — generated now, inert until P1",
+    "2.4 Bind the plain listener to loopback by default",
+    "2.5 What breaks, and how it adapts",
+    "2.6 P0 contract touchpoints",
+    "3. P1 — device credentials the broker actually verifies",
+    "3.1 Rejected options, and why (each rejection is evidence-backed)",
+    "3.2 The design: mosquitto asks the supervisor",
+    "3.3 Getting the public key — three routes, ranked by honesty",
+    "3.4 P1 is strictly additive — it cannot brick a fleet",
+    "4. P2 — spoof-proofing: `d_<uuid>` bound to a credential",
+    "5. Tests",
+    "6. Acceptance criteria",
+    "7. Effort, files, risks",
+    "8. What cannot be done without touching a physical robot"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/telehealth.md",
+   "title": "Telehealth — \"Be Moxie\": the operator drives the body (ADOPT #7)",
+   "section": "architecture",
+   "bytes": 33651,
+   "mermaid": 1,
+   "headings": [
+    "Why this is worth building",
+    "0. What our corpus establishes",
+    "0.1 The mode",
+    "0.2 The protocol — verbatim from the recovered `.proto`",
+    "0.3 We already have wire-tested builders — for the *proto* form",
+    "0.4 Observed vs. inferred — the robot's behavior in this mode",
+    "1. The seam it plugs into",
+    "Prior art — OpenMoxie's puppet page",
+    "2. The design",
+    "2.1 A pure wire module",
+    "2.2 Runtime methods (`moxie_runtime.py`)",
+    "2.3 The speak path, in order",
+    "2.4 How it interacts with everything already shipped",
+    "2.5 What the child says, and how it reaches the operator",
+    "2.6 The console page — 🎭 \"Be Moxie\"",
+    "3. Tests",
+    "4. Acceptance criteria",
+    "5. Effort, files, risks",
+    "6. What only a physical robot can settle"
    ],
    "kind": "md"
   },
