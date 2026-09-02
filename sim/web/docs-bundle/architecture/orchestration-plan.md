@@ -196,5 +196,15 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   handling of chunk 0 is inferred from the fields, proven only on the SIM. Gaps → next: the filler fires once
   (a 45 s turn goes quiet at ~26 s) → re-arm + token streaming; playbook rule 8 added (creds-free suite runs).
 
+- **2026-09-02** — Integrated `feat/streamed-reply-chunks` (PR #15 → dev): the answer itself now streams.
+  `MoxieApp.respond_stream` yields one `ReplyChunk` per finished sentence (pure segmenter in
+  `moxie_sdk/segment.py`; `chat.stream_completion` opens `stream=True` through the same backoff/`Pacer`),
+  and the runtime publishes each as `REPLY_PENDING` + `chunk_num`, closed by `SUCCESS` + `is_completed`.
+  The filler timer re-arms per chunk (cap 2/turn), a newer turn cancels the stream mid-answer, and a
+  one-chunk answer stays byte-identical to the old wire. Live: **first sentence at 1.52 s, whole answer at
+  4.38 s** (4 chunks, one `event_id`) on a healthy gateway day. Both SIM clients now treat a turn as a
+  turn, not a reply. +48 tests (→281). Knob: `MOXIE_STREAMING=0` restores the single-reply path. Recorded
+  assumption (unchanged but leaned on harder): no capture proves a physical Moxie plays chunk 2.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

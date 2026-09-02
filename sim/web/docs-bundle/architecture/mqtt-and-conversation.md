@@ -463,6 +463,72 @@ t=17.9  commands/remote_chat {result: SUCCESS, chunk_num: 1,            ← the 
 > and deliver the finished answer on the robot's next (re)prompt — same background
 > inference, no second unsolicited publish. Tracked in
 > [`implementation-plan.md`](implementation-plan.md) → Known gaps.
+>
+> **Streaming leans on the same assumption harder**, and says so: a filler turn publishes two
+> responses, a streamed turn publishes three to five, and we have no capture of a physical
+> Moxie playing chunk 2 of an `event_id`. `MOXIE_STREAMING=0` is the switch back to the
+> one-reply wire, and it is one environment variable, not a code change.
+
+#### Streaming the answer — one chunk per sentence (`MOXIE_STREAMING`, default on)
+
+A filler stops the *silence*; it does not shorten the wait for **words**. One filler buys one
+~20 s window, so a 45 s turn goes quiet again around 26 s. The fix uses the same three
+contract fields, only more of them: when the app can answer incrementally
+(`MoxieApp.respond_stream(turn) -> Iterator[ReplyChunk]`), the runtime publishes **each
+finished sentence as its own chunk** the moment the model writes it. The first sentence of an
+answer is done after a handful of tokens, so real content arrives at *first-token* latency
+instead of *whole-completion* latency.
+
+```
+t=0.00  events/remote-chat {event_id: E, speech: "why does the moon change shape?"}
+t=1.52  commands/remote_chat {result: REPLY_PENDING, chunk_num: 0,      ← first sentence,
+                              consistency_control:{is_completed:false},   spoken already
+                              output:{text:"The moon looks different because of how the
+                                            sun lights it up.", markup:…}}
+        commands/tts         {event_id: E, chunk_num: 0}
+t=2.22  commands/remote_chat {result: REPLY_PENDING, chunk_num: 1, …}
+t=2.86  commands/remote_chat {result: REPLY_PENDING, chunk_num: 2, …}
+t=4.38  commands/remote_chat {result: SUCCESS,       chunk_num: 3,      ← closes the turn
+                              consistency_control:{is_completed:true}, output:{…}}
+```
+
+That is a real capture (2026-09-02, `graphling-medium` through our gateway on a healthy day):
+**first words at 1.52 s, whole answer at 4.38 s.** The same turn before this slice published
+nothing until 4.38 s; on the degraded day PR #12 measured, the same 2.9× ratio is the
+difference between a child waiting ~6 s and waiting 18 s.
+
+How the pieces fit:
+
+- **Where a sentence ends** — [`moxie_sdk/segment.py`](../../mqtt/moxie_sdk/segment.py), pure and
+  dependency-free. `. ! ?` (plus any closing quote) followed by whitespace **and more real
+  text**. It will not split a decimal ("30.5 metres"), a known abbreviation or a capital
+  initial ("Dr.", "8 p.m.", "J. R. R."), an ellipsis (`...` / `…`), or a sentence shorter than
+  ~24 characters — a lone "Hi." followed by a pause reads as a broken robot. Requiring *real
+  text* after the boundary is load-bearing: it guarantees the last sentence of an answer is
+  still buffered when the stream ends, so there is always a chunk left to carry
+  `is_completed` instead of an empty `SUCCESS`.
+- **Action tags** stay a front-of-answer convention, so `parse_action_tags` runs on **each**
+  chunk and the `<exit>` / `<launch:MOD>` the model wrote lands on chunk 0 as
+  `response_actions` — early, stripped, never spoken. An action found in a chunk with no words
+  is carried onto the next chunk rather than dropped.
+- **Markup costs no extra model call.** `build_markup` is local string work, but in expressive
+  mode the model's own `"mood"`/`"gesture"` arrive *after* the `"say"` string. So a mid-stream
+  chunk gets a cheap rule-based mood/gesture from its own punctuation (a question gets
+  `Gesture_Question`, an exclamation a positive mood) and the **closing** chunk uses what the
+  model actually chose. One completion per turn, exactly as before.
+- **The filler re-arms.** The latency timer restarts after every chunk, so a late *first*
+  token still gets a "let me think" line, and a stream that stalls mid-answer gets **one**
+  more — `MAX_FILLERS_PER_TURN = 2`. Fillers take the next `chunk_num` like any other chunk,
+  so ordering stays total; `filler.pick_filler(last)` still never repeats a line back to back.
+- **A stale turn cancels the stream.** A newer turn for the same robot stops the consumer,
+  closes the generator (releasing the HTTP response) and publishes nothing more for the
+  abandoned `event_id`.
+- **Nothing regresses.** A one-sentence answer, a non-streaming app (echo / content / webhook,
+  which inherit `respond_stream -> None`) and `MOXIE_STREAMING=0` all publish the single
+  `SUCCESS` with no `chunk_num` and no `consistency_control` — chunk 0 / not-streaming is the
+  proto default. If the stream fails before a word is spoken the runtime falls back to the
+  ordinary `respond` call; if it dies mid-answer the sequence is closed rather than re-asked,
+  because words already spoken cannot be unsaid.
 
 ### 4.6 The automarkup engine (why it matters)
 
@@ -550,7 +616,7 @@ built-in synth (an SSML-subset voice engine baked into firmware). Implications:
   by the robot itself, for free, and it's the *correct* Moxie voice (kids recognize it).
 - **The voice Moxie "expects" is its own** — you cannot swap it from the cloud; you can only
   shape delivery via **markup/SSML** (`<prosody>`, mood/intensity, behavior marks). So our
-  "TTS" investment is really **markup quality** (§4.5), not audio synthesis.
+  "TTS" investment is really **markup quality** (§4.6), not audio synthesis.
 - (If someone ever wanted a *different* voice, that'd require sending pre-rendered audio via
   the telehealth/asset path — out of scope, and it loses Moxie's expressive animation sync.)
 
