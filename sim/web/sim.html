@@ -343,15 +343,22 @@
     if (on) on.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setEnabled(on.checked); });
     if (base && window.moxieAudio) base.value = window.moxieAudio.getTtsBase();
     if (base) base.addEventListener("change", function () { window.moxieAudio && window.moxieAudio.setTtsBase(base.value.trim()); });
+    // #tts-status is owned by audio.js (the cloud-voice indicator lives there too),
+    // so hand it a resting hint rather than writing the element: an async probe
+    // result can then never wipe a live "speaking" line, or be wiped by one.
+    function ttsHint(t) {
+      if (window.moxieAudio && window.moxieAudio.setTtsHint) window.moxieAudio.setTtsHint(t);
+      else if (st) st.textContent = t;
+    }
     if (test) test.addEventListener("click", function () {
       if (!window.moxieAudio) return;
       // Always plays a real pre-cached clip; separately probe for an optional Piper.
       window.moxieAudio.speak("Hi! I am Moxie. It is nice to meet you.");
-      if (st) st.textContent = "checking for local Piper…";
+      ttsHint("checking for local Piper…");
       fetch(window.moxieAudio.getTtsBase().replace(/\/$/, "") + "/health")
         .then(function (r) { return r.json(); })
-        .then(function (j) { if (st) st.textContent = j.ok ? ("local Piper: " + j.voice) : "no Piper (using pre-cached + browser voice)"; })
-        .catch(function () { if (st) st.textContent = "no Piper (using pre-cached + browser voice)"; });
+        .then(function (j) { ttsHint(j.ok ? ("local Piper: " + j.voice) : "no Piper (using pre-cached + browser voice)"); })
+        .catch(function () { ttsHint("no Piper (using pre-cached + browser voice)"); });
     });
   })();
 

@@ -301,7 +301,7 @@
   }
 
   var ttsQueue = [], ttsPlaying = null, speaking = false, speakingInfo = null;
-  var ttsStatusPrev = null, gestureArmed = false;
+  var gestureArmed = false, cloudVoice = false;
 
   function mouth(v) {
     try { if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(v); } catch (e) {}
@@ -315,20 +315,52 @@
              eventId: d.eventId, chunkNum: d.chunkNum };
   }
 
+  /* ---- #tts-status: one line, two writers -------------------------------
+   * The live "speaking" indicator below and the async service probe in env.js
+   * ("no TTS server — run …") both want this element. They used to write it
+   * directly, so whichever landed last won: a probe resolving mid-playback
+   * wiped the speaking indicator, and the end of playback then restored the
+   * pre-probe text and swallowed the probe's result. audio.js now OWNS the
+   * element — other code hands it a resting hint via `setTtsHint()`, which is
+   * stored and painted only while nothing is speaking.
+   */
+  var ttsHint = null;        // {html|text, warn} — the resting line (env.js / the Test button)
+  var ttsStatusRest = null;  // the line the markup shipped, captured before any override
+
+  function paintTtsStatus() {
+    var el = document.getElementById("tts-status");
+    if (!el) return;
+    if (ttsStatusRest === null) ttsStatusRest = el.textContent;
+    if (speaking && speakingInfo) {                       // the override wins, always
+      el.textContent = "🔊 speaking — cloud TTS " + speakingInfo.sampleRate + " Hz · " +
+                       speakingInfo.duration.toFixed(1) + "s";
+      if (el.classList) el.classList.remove("warn");
+      return;
+    }
+    if (ttsHint && ttsHint.html !== undefined && ("innerHTML" in el)) el.innerHTML = ttsHint.html;
+    else if (ttsHint) el.textContent = ttsHint.text !== undefined ? ttsHint.text : ttsHint.html;
+    else el.textContent = ttsStatusRest;
+    if (el.classList) el.classList.toggle("warn", !!(ttsHint && ttsHint.warn));
+  }
+
+  /* Set the resting text of #tts-status. `hint` is a plain string, or
+   * {text} / {html} plus an optional `warn` flag; null clears it. Safe to call
+   * at any time — it never paints over a live speaking indicator. */
+  function setTtsHint(hint, warn) {
+    if (hint === null || hint === undefined) ttsHint = null;
+    else if (typeof hint === "string") ttsHint = { text: hint, warn: !!warn };
+    else ttsHint = { html: hint.html, text: hint.text,
+                     warn: hint.warn === undefined ? !!warn : !!hint.warn };
+    try { paintTtsStatus(); } catch (e) {}
+  }
+
   function setSpeaking(on, info) {
     speaking = !!on;
     speakingInfo = speaking ? ttsSummary(info) : null;
     try {
       if (document.body && document.body.classList)
         document.body.classList.toggle("tts-speaking", speaking);
-      var el = document.getElementById("tts-status");
-      if (el) {
-        if (speaking) {
-          if (ttsStatusPrev === null) ttsStatusPrev = el.textContent;
-          el.textContent = "🔊 speaking — cloud TTS " + info.sampleRate + " Hz · " +
-                           info.duration.toFixed(1) + "s";
-        } else if (ttsStatusPrev !== null) { el.textContent = ttsStatusPrev; ttsStatusPrev = null; }
-      }
+      paintTtsStatus();
     } catch (e) {}
     try {
       window.dispatchEvent(new CustomEvent(speaking ? "moxie-tts-start" : "moxie-tts-end",
@@ -428,6 +460,10 @@
    * audio is a client that goes mute. */
   function playCloudTTS(payload) {
     var dec = decodeCloudTTS(payload);
+    // A decodable payload proves a server voice exists, whatever happens to it
+    // next (muted, queued, no audio context) — env.js reads this so it stops
+    // claiming "no TTS server" while the cloud voice is doing the talking.
+    if (dec.frames) cloudVoice = true;
     if (!enabled) return Promise.resolve({ played: false, reason: "muted", decoded: dec });
     if (!dec.frames) return Promise.resolve({ played: false, reason: "empty", decoded: dec });
     var item = { dec: dec, resolve: null };
@@ -449,6 +485,8 @@
     decodeCloudTTS: decodeCloudTTS,   // pure wire decode (unit-tested in node)
     isSpeaking: function () { return speaking; },
     speakingInfo: function () { return speakingInfo; },   // summary, no PCM
+    hasCloudVoice: function () { return cloudVoice; },    // a CloudTTSResponse has arrived
+    setTtsHint: setTtsHint,           // resting text of #tts-status (never clobbers speaking)
     ttsPending: function () { return ttsQueue.length; },
     setEnabled: function (v) { enabled = !!v; if (!enabled) stop(); },
     isEnabled: function () { return enabled; },
