@@ -198,3 +198,94 @@ def test_docs_explorer(page, server):
     page.wait_for_function("document.querySelectorAll('article svg').length > 0", timeout=8000)
     assert page.evaluate("() => document.querySelectorAll('article svg').length") > 0
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
+
+
+# --------------------------------------------------------------------------- #
+# SIL: the SERVER voice — a CloudTTSResponse on /commands/tts actually plays.
+#
+# This is the browser half of AI seam ③ and the last client-side link in DoD
+# criterion 1. The supervisor publishes `{audio:{buffer(base64 raw 16-bit PCM),
+# channels, sample_rate}, marks[], event_id, chunk_num}`; we inject a synthetic
+# one through the REAL bridge route (the same call the MQTT client makes) and
+# assert the SIM decodes it, speaks it, animates the mouth, and stops cleanly.
+# --------------------------------------------------------------------------- #
+
+# Build a tone-shaped CloudTTSResponse IN THE PAGE and route it like the broker would.
+_INJECT_TTS = """
+(args) => {
+  const {frames, rate, eventId, chunk, marks} = args;
+  const buf = new ArrayBuffer(frames * 2);
+  const dv = new DataView(buf);
+  for (let i = 0; i < frames; i++)
+    dv.setInt16(i * 2, Math.round(11000 * Math.sin(i / 6)), true);   // little-endian, like the wire
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  const payload = {
+    request_source: "ROBOT_TTS_REQUEST",
+    audio: {buffer: btoa(bin), channels: 1, sample_rate: rate},
+    marks: marks, event_id: eventId, chunk_num: chunk,
+  };
+  window.moxieBridge.route("/devices/d_sim/commands/tts", JSON.stringify(payload));
+  return window.moxieAudio.decodeCloudTTS(payload).frames;
+}
+"""
+
+
+def _sim_ready(page, server):
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.goto(f"{server}/sim.html", wait_until="domcontentloaded")
+    page.wait_for_function("window.moxie && window.moxieAudio && window.moxieBridge")
+    page.keyboard.press("Shift")       # a real user gesture (unlocks audio if the policy needs one)
+
+
+def test_cloud_tts_plays_and_animates_the_mouth(page, server):
+    _sim_ready(page, server)
+    assert page.evaluate("() => window.moxieAudio.isSpeaking()") is False
+    # ~1.2 s of audio so there is time to observe the speaking state and the mouth
+    frames = page.evaluate(_INJECT_TTS, {"frames": 26460, "rate": 22050, "eventId": "evt-sil",
+                                         "chunk": 0,
+                                         "marks": [{"time": 0, "start": 0, "end": 5,
+                                                    "type": "viseme", "value": "a"}]})
+    assert frames == 26460, f"the page decoded {frames} frames, expected 26460"
+    page.wait_for_function("() => window.moxieAudio.isSpeaking()", timeout=5000)
+    info = page.evaluate("() => window.moxieAudio.speakingInfo()")
+    assert info["sampleRate"] == 22050 and info["channels"] == 1
+    assert abs(info["duration"] - 1.2) < 0.01, info
+    # the face visibly speaks while the audio plays
+    page.wait_for_function("() => window.moxie.getMouthOpen() > 0.05", timeout=5000)
+    assert "speaking" in page.text_content("#tts-status")
+    assert page.evaluate("() => document.body.classList.contains('tts-speaking')")
+    # ...and everything clears when the buffer ends
+    page.wait_for_function("() => window.moxieAudio.isSpeaking() === false", timeout=15000)
+    assert page.evaluate("() => window.moxie.getMouthOpen()") == 0
+    assert not page.evaluate("() => document.body.classList.contains('tts-speaking')")
+    assert "speaking" not in page.text_content("#tts-status")
+    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
+
+
+def test_cloud_tts_chunks_play_in_order_then_stop(page, server):
+    """Chunked responses: same event_id, out-of-order arrival, one continuous utterance."""
+    _sim_ready(page, server)
+    for chunk in (0, 2, 1):
+        page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-chunks",
+                                    "chunk": chunk, "marks": []})
+    page.wait_for_function("() => window.moxieAudio.isSpeaking()", timeout=5000)
+    assert page.evaluate("() => window.moxieAudio.ttsPending()") >= 1, "later chunks must queue"
+    # no marks here: the mouth must move from the AUDIO ENVELOPE alone, which only
+    # happens if the PCM really is rendering through the Web Audio graph.
+    page.wait_for_function("() => window.moxie.getMouthOpen() > 0.05", timeout=5000)
+    page.wait_for_function("() => window.moxieAudio.isSpeaking() === false", timeout=20000)
+    assert page.evaluate("() => window.moxieAudio.ttsPending()") == 0
+    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
+
+
+def test_cloud_tts_respects_the_mute_toggle(page, server):
+    _sim_ready(page, server)
+    page.uncheck("#audio-on")          # the SIM's existing sound switch
+    page.evaluate(_INJECT_TTS, {"frames": 4410, "rate": 22050, "eventId": "evt-mute",
+                                "chunk": 0, "marks": []})
+    page.wait_for_timeout(400)
+    assert page.evaluate("() => window.moxieAudio.isSpeaking()") is False, "muted audio must not play"
+    page.check("#audio-on")
+    assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]

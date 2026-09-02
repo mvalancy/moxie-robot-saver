@@ -26,8 +26,23 @@ drives the same API live from MQTT when a broker + supervisor are connected.
 |---|---|
 | `index.html` | page shell, importmap (three@0.160.0), HUD rail markup, bus-status→HUD glue script |
 | `moxie.js` | model, rig, face renderer, animation loop, `window.moxie` API |
-| `bridge.js` | MQTT→avatar bridge: subscribes to the bus and drives `window.moxie` from live `remote-chat`/markup/motor traffic |
+| `bridge.js` | MQTT→avatar bridge: subscribes to the bus and drives `window.moxie` from live `remote-chat`/markup/motor traffic — including `/commands/tts` (the server voice) |
+| `audio.js` | sound: UI SFX, the pre-cached/Piper/browser voices, and **`playCloudTTS`** — decodes the server's `CloudTTSResponse` (base64 raw 16-bit PCM) and plays it with mouth lip-sync |
 | `style.css` | mission-control HUD skin (dark void + cyan telemetry, per [docs/design/style-guide.md](../../docs/design/style-guide.md)) |
+
+## The server voice (`CloudTTSResponse`)
+
+When a supervisor is linked, it publishes rendered audio on
+`/devices/{id}/commands/tts`. `bridge.js` routes it to
+`window.moxieAudio.playCloudTTS(payload)`, which **decodes the wire itself** — base64 →
+little-endian signed 16-bit PCM → Float32 → an `AudioBuffer` at the payload's
+`sample_rate`/`channels` (raw PCM has no container header, so `decodeAudioData` cannot be
+used) — plays chunks of one `event_id` in `chunk_num` order, and animates the mouth from
+`marks[]` (or the audio envelope when a voice sends none). No server SDK is imported: the
+browser is a protocol client, exactly like robot firmware. If the browser's autoplay policy
+has the audio context suspended, the audio is queued and plays on the next user gesture.
+Contract: [docs/architecture/sim-as-a-client.md](../../docs/architecture/sim-as-a-client.md);
+tests: `sim/test_audio.mjs` + `sim/tests/test_sil.py`.
 
 ## JS control API (`window.moxie`)
 
@@ -39,6 +54,8 @@ moxie.setMotor(index, value)     // value 0..32767, animates smoothly to target
 moxie.getMotor(index)            // current (smoothed) position, rounded int
 moxie.setFace(expression)        // "neutral" | "happy" | "sad" | "surprised" | "thinking" | "blink"
 moxie.setSpeech(text)            // speech bubble + mouth "talking" animation
+moxie.setMouthOpen(0..1)         // external lip-sync drive (audio.js calls this while speaking)
+moxie.getMouthOpen()             // current lip-sync drive (0..1)
 moxie.setHeartLED(on, "#ff5577") // chest LED on/off, optional color
 moxie.centerAll()                // every motor back to 16384 (extra convenience)
 ```
