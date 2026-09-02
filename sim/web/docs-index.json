@@ -1,5 +1,5 @@
 {
- "generated": "docs-01932370323e",
+ "generated": "docs-67eee06a15d2",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -337,7 +337,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 70213,
+   "bytes": 83537,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -366,6 +366,7 @@
     "4.1 Top 10 ADOPT — port the idea, credit the source",
     "4.2 Top 10 BEYOND — what we should build instead",
     "4.3 Backlog — the build briefs",
+    "4.4 The open backlog, re-ranked — 2026-09-02 (evening)",
     "5. The honest ledger",
     "Where OpenMoxie (and its forks) are genuinely ahead of us",
     "Where we are already ahead",
