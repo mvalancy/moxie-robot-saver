@@ -99,7 +99,95 @@ moves the child between activities and reacts to perception.
 
 **(c) `RemoteChatInput` — the brain's read of the child (optional).** `emotion`/`dialog_act`/`sentiment`
 + **`InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}`** — the content-moderation verdict.
-**This is the moderation hook**: a kid-facing backend SHOULD populate it.
+**This is the moderation hook**: a kid-facing backend SHOULD populate it. **We do — see below.**
+
+#### Input safety — BUILT (v1, 2026-09-02)
+
+`InputSafety` is the only moderation field the contract has, and it is now enforced rather
+than merely specified. Where it sits in a turn:
+
+```
+child speech ──▶ ① assess(role="child") ──block──▶ redirect line + input.safety, brain NEVER called
+                          │flag/allow                  (recorded in the parent review queue)
+                          ▼
+                    ② the brain
+                          │
+                 per chunk ▼
+                 assess(role="moxie") ──block──▶ chunk NOT published; a short safe line
+                          │allow                  closes the sequence (SUCCESS + is_completed)
+                          ▼                       and the rest of the stream is cancelled
+                    published to the robot
+```
+
+**Wire shape.** A pre-inference block publishes an ordinary `RemoteChatResponse` whose
+`input.safety` is the verdict — `RemoteChatResponse.input` is field 17, a `RemoteChatInput`,
+whose field 12 is `InputSafety` ([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):180-186,:198,:335):
+
+```json
+{"command":"remote_chat","result":"SUCCESS","event_id":"…",
+ "output":{"text":"That one's not for me. If it's important, a grown-up you trust is the best person to ask.","markup":"…"},
+ "input":{"safety":{"is_unsafe":true,"blocked_by":["violence"],
+                    "intents":["violence_instructions","threat"],"phrase_id":404}},
+ "input_intents":["violence_instructions","threat"]}
+```
+
+`phrase_id` is the id of the safety line Moxie actually spoke (the proto calls it "a matched
+safety-phrase id"); `input_intents` (field 10) mirrors `intents` for a client that reads only
+the flat field. A response with **no** verdict is byte-identical to what we have always sent.
+`is_unsafe` is asserted only when something **blocked** — a merely-flagged turn goes through to
+the brain and is recorded for a parent, not declared unsafe to the robot. `RemoteChatInput` is
+by definition the brain's read of *the child's input*, so a block on **Moxie's own output** has
+no field in the contract: it is recorded in the parent queue and logged, never faked onto
+`input.safety`.
+
+**What v1 is.** A transparent, local rule engine — [`mqtt/moxie_sdk/safety.py`](../../mqtt/moxie_sdk/safety.py)
+applying [`safety_rules.json`](../../mqtt/moxie_sdk/safety_rules.json), which *is* the whole
+table and is meant to be read by a parent. Eight categories with a **per-side** policy, because
+the two sides of a conversation are not symmetric:
+
+| Category | Child says it | Moxie about to say it |
+|---|---|---|
+| `self_harm` (escalated) | **block** | **block** |
+| `violence` — weapon/harm instructions, threats | **block** | **block** |
+| `sexual` | **block** | **block** |
+| `hate` — slurs, hate speech | **block** | **block** |
+| `personal_info` — address / school / password / "don't tell your mom" | flag | **block** |
+| `dangerous` — bleach, roofs, matches, alcohol/drugs | flag | **block** |
+| `profanity` | flag | **block** |
+| `violence_talk` — "kill", "gun", "punched" in ordinary kid talk | flag | flag |
+
+**Block** means the text is never spoken and never reaches a model; **flag** means it is allowed
+through and recorded for a parent. Hard blocks are reserved for the clearly harmful; the
+ambiguous middle is flagged, because a robot that refuses a child over the word "kill" in
+"I killed the boss in Minecraft" teaches a child that talking to it is not worth it. Matching is
+word-boundary only, over text normalized for case, accents, full-width forms, leet spellings and
+elongation, and each category carries **false-positive guards** whose spans are removed before it
+is matched — "shoot a photo", "kill the lights", "my feet are killing me", "a nerf gun", "flag
+football", "shiitake mushrooms", "murder mystery", "killing myself laughing". A guard subtracts
+its own span only: a second, unexcused use of the same word in the same sentence still counts.
+
+**Honest limits — a rule engine is a floor, not a filter.** It cannot read context, sarcasm, or a
+harmful idea expressed in gentle words. It misses novel phrasings, deliberate obfuscation past its
+normalizer (letters split with spaces, invented spellings), and every language its tables are not
+written in. Its slur and profanity lists are short by construction. It is one layer *under* the
+model's own alignment and the persona's safety instructions — not a replacement for either, and
+not a substitute for a parent, which is why every block and flag goes to a review queue instead
+of quietly disappearing.
+
+**The plug-in rule.** `Classifier` is a protocol shaped exactly like `Transcriber` (§1) and
+`Synthesizer` (§3) — one method, `assess(text, *, role) -> InputSafety`. A local model classifier
+drops in with `MoxieRuntime(app, safety=MyClassifier())` and the runtime does not change. It must
+be **local** (this runs on a child's device), fast enough per streamed chunk, and total: a
+classifier that raises is treated as *allow*, because a broken safety stage must never silence
+Moxie. `MOXIE_SAFETY=0` disables the stage; `MOXIE_SAFETY_RULES` points at your own table.
+
+**Parent review queue.** Every block and flag is stored per robot (rolling 200) with a *redacted*
+excerpt — matched words masked, and no excerpt at all if masking could not be verified — plus
+category, side, timestamp and the spoken `phrase_id`. Served by the runtime (`GET /safety`,
+`POST /safety` to acknowledge), forwarded by the console (`/local/robots/{id}/safety`) and shown
+as the 🛡️ Safety panel. Under LoggingPolicy `NO_DATA` the journal keeps **counts only** — no rows,
+no excerpts — and the block still happens, because blocking is not recording. Parent-facing
+walkthrough: [child-safety guide](../guides/child-safety.md).
 
 **Result codes (`ResultCode`, required):** `REPLY` on success; `ERROR_OFFLINE` triggers the robot's
 **local fallback** (see [`offline-and-brain-state.md`](../reverse-engineering/protocol/offline-and-brain-state.md)) —
@@ -157,7 +245,8 @@ A backend is a valid Moxie mind when it satisfies **one plug point per seam**:
 - [ ] **③ TTS** — returns `CloudTTSResponse{audio, event_id}` for each `CloudTTSRequest`.
 
 Recommended for a *good* experience (not required to function): `markup`+`mood` on the brain output,
-`marks[]` on TTS (lip-sync), `InputSafety` (moderation), and partial STT (barge-in).
+`marks[]` on TTS (lip-sync) and partial STT (barge-in). **`InputSafety` (moderation) is built** —
+see §2 "Input safety"; a kid-facing backend should not ship without something in that slot.
 
 ## Where each seam is implemented in this repo
 
@@ -165,6 +254,7 @@ Recommended for a *good* experience (not required to function): `markup`+`mood` 
 |---|---|---|
 | ① STT in | `ai/` + `mqtt/` | local Whisper/Vosk → `DeepgramResponse` shape; the sim uses `sim/stt/` |
 | ② Brain | `mqtt/` (the `MoxieApp`/`LLMApp` agent) | any OpenAI-compatible LLM (Ollama/LiteLLM), env-configured; emits markup |
+| ②b Input safety | `mqtt/moxie_sdk/safety.py` + `supervisor/moxie_runtime.py` | local rule engine (`safety_rules.json`) enforced pre-inference and per streamed chunk; parent review queue |
 | ③ TTS out | `ai/` + `mqtt/` | Piper (offline) → `CloudTTSResponse` PCM; the sim uses `sim/tts/` |
 
 Keys/endpoints live only in a git-ignored `.env`; the repo ships placeholders. The

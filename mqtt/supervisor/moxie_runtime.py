@@ -17,11 +17,14 @@ from __future__ import annotations
 import json, re, sys, os, threading, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from moxie_sdk.types import Turn, Reply, RobotContext, ChildProfile, Action, ResultCode  # noqa
+from moxie_sdk.types import (Turn, Reply, ReplyChunk, RobotContext,  # noqa
+                             ChildProfile, Action, ResultCode)
 from moxie_sdk.wire import (build_chat_response, build_activity_response,  # pure encoders
                             parse_mentor_behavior)
 from moxie_sdk.store import JsonStore                    # durable per-robot JSON store
 from moxie_sdk.filler import pick_filler                 # "let me think" lines + markup
+from moxie_sdk import safety as safety_seam              # InputSafety classifier (ai-seam §2)
+from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
 from markup import make_markup  # simple passthrough markup (automarkup pluggable)
 
 # paho is imported lazily in _build_client() so the runtime + turn pipeline can be
@@ -47,10 +50,18 @@ DEFAULT_BRAIN_BUDGET_S = 6.0
 # better served by silence than by a robot that only ever says it is thinking.
 MAX_FILLERS_PER_TURN = 2
 
+# The safety journal's own LoggingPolicy default. The RobotCloudConfig we push defaults to
+# `NO_DATA` (cloud_config.py), but that gate is about what the *robot uploads to us*; the
+# review queue is a record our own server keeps about turns that already reached it. So the
+# journal keeps rows (category + timestamp + a redacted excerpt) unless a parent explicitly
+# sets data sharing to NO_DATA, which switches it to counts only.
+SAFETY_JOURNAL_POLICY = LoggingPolicy.NO_MEDIA
+
 
 class MoxieRuntime:
     def __init__(self, app, host="127.0.0.1", port=1883, child: ChildProfile | None = None,
-                 store: JsonStore | None = None, brain_budget_s=None, streaming=None):
+                 store: JsonStore | None = None, brain_budget_s=None, streaming=None,
+                 safety=None):
         self.app = app
         self.child = child or ChildProfile()
         self.host, self.port = host, port
@@ -93,6 +104,21 @@ class MoxieRuntime:
         self._config_overrides = {}
         # TTS (AI seam §3): an optional server voice (for the SIM; a real robot self-synthesizes).
         self._synth = None
+        # Child safety (AI seam §2): the InputSafety classifier applied to BOTH sides of a
+        # turn — the child's utterance before the brain is called, and every chunk the
+        # brain produces before it is published. Constructor arg wins (a local-model
+        # `Classifier` drops in here); `MOXIE_SAFETY=0` turns the stage off entirely.
+        if safety is None and (os.environ.get("MOXIE_SAFETY") or "1").strip().lower() \
+                not in ("0", "off", "false", "no"):
+            try:
+                safety = safety_seam.default_classifier()
+            except Exception as e:                # a broken rules file must be LOUD
+                print(f"[runtime] ⚠️  safety rules failed to load: {e}", flush=True)
+                safety = None
+        self.safety = safety or None
+        self._last_redirect: dict[str, str] = {}   # never the same redirect twice running
+        if self.safety is None:
+            print("[runtime] ⚠️  input safety is OFF (MOXIE_SAFETY=0)", flush=True)
 
     def _build_client(self):
         import paho.mqtt.client as mqtt
@@ -153,6 +179,12 @@ class MoxieRuntime:
                 "ota_reboot_required": st.get("ota_reboot_required"),
                 "config_overrides": self._config_overrides.get(r.device_id, {}),
                 "telemetry_count": len(r.extra.get("telemetry", [])),
+                "safety_total": int((self.store.read(
+                    r.device_id, safety_seam.COUNTS_COLLECTION, {}) or {}).get("total", 0)),
+                "safety_unreviewed": sum(
+                    1 for e in (self.store.read(
+                        r.device_id, safety_seam.EVENTS_COLLECTION, []) or [])
+                    if isinstance(e, dict) and not e.get("reviewed")),
             })
         return {"ok": True, "app": self.app.name,
                 "uptime_s": int(time.time() - self.started_at),
@@ -201,19 +233,43 @@ class MoxieRuntime:
                         limit = 20
                     out = rt.telemetry_view(device_id, limit=limit)
                     return self._json_out(out, 200 if out.get("ok") else 404)
+                if u.path == "/safety":
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    try:
+                        limit = int((q.get("limit") or ["20"])[0])
+                    except ValueError:
+                        limit = 20
+                    out = rt.safety_view(device_id, limit=limit)
+                    return self._json_out(out, 200 if out.get("ok") else 404)
                 self.send_response(404); self.end_headers()
 
             def do_POST(self):
-                """Parent-console config edit: POST /config?device_id=… with a JSON body
-                of overrides (audio_volume, weekday_bedtime, wake toggles, …). Validated
-                by sanitize_config_overrides, then update_config re-pushes RobotCloudConfig.
+                """Parent-console writes.
+
+                `POST /config?device_id=…` with a JSON body of overrides (audio_volume,
+                weekday_bedtime, wake toggles, …), validated by sanitize_config_overrides,
+                then update_config re-pushes RobotCloudConfig.
+
+                `POST /safety?device_id=…` with `{"event_id": "sfe-…"}` (or `{}` / `"all"`)
+                marks queued safety events reviewed — the parent's "I have seen this".
+
                 Localhost-only (the server binds 127.0.0.1)."""
                 from urllib.parse import urlparse, parse_qs
-                if urlparse(self.path).path != "/config":
+                path = urlparse(self.path).path
+                if path not in ("/config", "/safety"):
                     self.send_response(404); self.end_headers(); return
                 device_id = (parse_qs(urlparse(self.path).query).get("device_id") or [""])[0]
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length else b"{}"
+                if path == "/safety":
+                    try:
+                        body = _json.loads(raw or b"{}") or {}
+                        out = rt.acknowledge_safety(device_id, body.get("event_id"))
+                        code = 200 if out.get("ok") else 404
+                    except Exception as e:
+                        out, code = {"ok": False, "error": str(e)}, 400
+                    return self._json_out(out, code)
                 try:
                     from moxie_sdk.cloud_config import sanitize_config_overrides
                     overrides = sanitize_config_overrides(_json.loads(raw or b"{}"))
@@ -326,6 +382,141 @@ class MoxieRuntime:
             self.client.publish(f"/devices/{device_id}/config", json.dumps(cfg))
         print(f"[runtime] → pushed config to {device_id} (pairing_status=paired)")
         return cfg
+
+    # ---- child safety (AI seam §2 — InputSafety) ----
+    def safety_policy(self, device_id) -> LoggingPolicy:
+        """The LoggingPolicy governing this robot's safety journal — the parent's explicit
+        `logging_policy` override if there is one, else `SAFETY_JOURNAL_POLICY`."""
+        raw = (self._config_overrides.get(device_id) or {}).get("logging_policy")
+        if raw is None:
+            return SAFETY_JOURNAL_POLICY
+        try:
+            return LoggingPolicy(int(raw))
+        except (TypeError, ValueError):
+            return SAFETY_JOURNAL_POLICY
+
+    def _safety_keeps_rows(self, device_id) -> bool:
+        """False under `NO_DATA`: the journal then keeps counts and nothing else — no
+        excerpt, no per-event row, so none of the child's words are stored at all."""
+        return self.safety_policy(device_id) != LoggingPolicy.NO_DATA
+
+    def _assess(self, text, role):
+        """Run the classifier, or None when it is off / the text is empty. A classifier
+        that raises is treated as "allow": a broken safety stage must never silence Moxie
+        (it is a layer under the model's own alignment, not the only one)."""
+        if self.safety is None or not (text or "").strip():
+            return None
+        try:
+            return self.safety.assess(text, role=role)
+        except Exception as e:
+            print(f"[runtime] safety classifier failed (allowing): {e}", flush=True)
+            return None
+
+    def _record_safety(self, device_id, verdict) -> dict | None:
+        """Put one verdict in the parent review queue. Returns the stored row (or None
+        when the policy keeps counts only)."""
+        row = None
+        try:
+            counts = self.store.read(device_id, safety_seam.COUNTS_COLLECTION, {})
+            self.store.write(device_id, safety_seam.COUNTS_COLLECTION,
+                             safety_seam.roll_up(counts if isinstance(counts, dict) else {},
+                                                 verdict))
+            if self._safety_keeps_rows(device_id):
+                row = safety_seam.event_from(verdict)
+                self.store.append(device_id, safety_seam.EVENTS_COLLECTION, row,
+                                  cap=safety_seam.MAX_EVENTS)
+        except Exception as e:
+            print(f"[runtime] safety journal write failed: {e}", flush=True)
+        side = "Moxie" if verdict.role == safety_seam.MOXIE else "child"
+        cats = ", ".join(verdict.categories) or "?"
+        icon = "🛑" if verdict.action == safety_seam.BLOCK else "⚠️"
+        self._note("safety", f"{icon} {verdict.action} ({side}): {cats}")
+        print(f"[runtime] {icon} safety {verdict.action} on {device_id} "
+              f"[{side}]: {cats}", flush=True)
+        return row
+
+    def _safety_redirect(self, device_id, verdict):
+        """The line Moxie says instead of blocked text: pick it, stamp its id onto the
+        verdict as `InputSafety.phrase_id`, and record the block for a parent."""
+        red = safety_seam.redirect_for(verdict,
+                                       last=self._last_redirect.get(device_id, ""),
+                                       classifier=self.safety)
+        verdict.phrase_id = red.phrase_id
+        self._last_redirect[device_id] = red.text
+        self._record_safety(device_id, verdict)
+        return red
+
+    def _safety_gate_input(self, device_id, event_id, speech, seq) -> bool:
+        """Pre-inference gate: assess what the CHILD said before any brain call.
+
+        Hard-blocked → the brain is never called; Moxie speaks a gentle, kid-appropriate
+        redirect as a spec-conformant `RemoteChatResponse` carrying
+        `input.safety` (`RemoteChatInput.InputSafety`, RemoteChat.proto:180-186/:198/:335).
+        Flagged → allowed through to the brain and recorded for a parent.
+        Returns True when the turn was answered here and the caller must stop.
+        """
+        verdict = self._assess(speech, safety_seam.CHILD)
+        if not verdict:
+            return False
+        if verdict.action != safety_seam.BLOCK:
+            self._record_safety(device_id, verdict)
+            return False
+        red = self._safety_redirect(device_id, verdict)
+        if self._is_stale(device_id, seq):
+            return True
+        # Deliberately remember only OUR line: putting the blocked utterance in the
+        # history would feed it to the brain as context on the very next turn.
+        self._remember(device_id, "", red.text)
+        self._publish_chat(device_id, event_id, "router", red.text, red.markup,
+                           result=ResultCode.SUCCESS, safety=verdict)
+        self._maybe_synthesize(device_id, red.markup, event_id, chunk_num=0)
+        return True
+
+    def safety_view(self, device_id, limit: int = 20) -> dict:
+        """The parent console's review queue for one robot: counts by category plus the
+        newest events, newest first. Unknown device with nothing stored → ok:false."""
+        counts = self.store.read(device_id, safety_seam.COUNTS_COLLECTION, None)
+        if device_id not in self.robots and counts is None:
+            return {"ok": False, "device_id": device_id,
+                    "error": f"unknown device_id {device_id!r}"}
+        rows = self.store.read(device_id, safety_seam.EVENTS_COLLECTION, []) or []
+        if not isinstance(rows, list):
+            rows = []
+        newest = list(reversed(rows))[:max(0, int(limit))]
+        return {
+            "ok": True, "device_id": device_id,
+            "policy": self.safety_policy(device_id).name,
+            "detail": self._safety_keeps_rows(device_id),
+            "enabled": self.safety is not None,
+            "classifier": getattr(self.safety, "name", None),
+            "counts": counts if isinstance(counts, dict) else {},
+            "unreviewed": sum(1 for r in rows if not r.get("reviewed")),
+            "labels": safety_seam.category_labels(self.safety) if self.safety else {},
+            "events": newest,
+        }
+
+    def acknowledge_safety(self, device_id, event_id=None, limit: int = 20) -> dict:
+        """Mark one queued event reviewed (or every one when `event_id` is None/"all") —
+        the parent's "I have seen this". Returns the refreshed view."""
+        rows = self.store.read(device_id, safety_seam.EVENTS_COLLECTION, []) or []
+        if not isinstance(rows, list):
+            rows = []
+        want_all = event_id in (None, "", "all", "*")
+        hit = 0
+        for r in rows:
+            if want_all or r.get("id") == event_id:
+                if not r.get("reviewed"):
+                    r["reviewed"] = True
+                    r["reviewed_at"] = time.time()
+                hit += 1
+        if not hit and not want_all:
+            return {"ok": False, "device_id": device_id,
+                    "error": f"unknown safety event {event_id!r}"}
+        self.store.write(device_id, safety_seam.EVENTS_COLLECTION, rows)
+        self._note("safety", f"✅ reviewed {hit} safety event(s)")
+        out = self.safety_view(device_id, limit=limit)
+        out["acknowledged"] = hit
+        return out
 
     # ---- telemetry ingest (parent-console insights) ----
     def ingest_telemetry(self, device_id, payload):
@@ -441,10 +632,17 @@ class MoxieRuntime:
         model writes it, so the child hears real words at first-token latency instead of
         at whole-completion latency. See `_handle_stream_turn`.
 
+        **Safety (ai-seam §2)** wraps both ends and is app-agnostic, because it lives here
+        rather than in any `MoxieApp`: the child's utterance is assessed BEFORE the brain
+        is called (`_safety_gate_input` — a hard block never reaches a model), and the
+        brain's answer is assessed before it is published (per chunk when streaming).
+
         Pattern credit: OpenMoxie Fork A's `ReasoningChatSession` runs the long inference
         on a pool and speaks rotating interludes meanwhile; the idea is theirs, this code
         and the multi-chunk wire shape are ours.
         """
+        if self._safety_gate_input(device_id, event_id, speech, seq):
+            return
         if self.streaming:
             stream = None
             try:
@@ -480,6 +678,16 @@ class MoxieRuntime:
             print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; "
                   f"dropping '{reply.text[:40]}'", flush=True)
             return
+        # Post-inference: a non-streamed answer is assessed whole. A blocked answer is
+        # never published — the child hears a safe line instead and it goes in the queue.
+        out_verdict = self._assess(reply.text, safety_seam.MOXIE)
+        if out_verdict:
+            if out_verdict.action == safety_seam.BLOCK:
+                red = self._safety_redirect(device_id, out_verdict)
+                reply = Reply(text=red.text, markup=red.markup,
+                              result_code=reply.result_code)
+            else:
+                self._record_safety(device_id, out_verdict)
         self._remember(device_id, speech, reply.text)
         markup = reply.markup if reply.markup is not None else make_markup(reply.text)
         self._note("chat", f"💬 '{speech[:30]}' → '{reply.text[:40]}'")
@@ -545,24 +753,40 @@ class MoxieRuntime:
         try:
             for chunk in stream:
                 final = bool(getattr(chunk, "final", False))
+                # Post-inference, per chunk: assessed BEFORE it is published, because a
+                # streamed sentence is on the wire while the rest of the answer does not
+                # exist yet. A blocked chunk is never spoken; the sequence closes on a
+                # short safe line and the rest of the stream is cancelled.
+                verdict = self._assess(chunk.text, safety_seam.MOXIE)
+                blocked = bool(verdict) and verdict.action == safety_seam.BLOCK
+                red = None
+                if blocked:
+                    red = self._safety_redirect(device_id, verdict)
+                elif verdict:
+                    self._record_safety(device_id, verdict)
                 with state["lock"]:
                     state["gen"] += 1                 # invalidate any in-flight timer
                     self._cancel_filler(state)
                     stale = self._is_stale(device_id, seq)
                     if not stale:
-                        if final:
+                        if final or blocked:
                             state["done"] = True
                         n = state["chunk"]
                         state["chunk"] = n + 1
-                        self._publish_stream_chunk(device_id, event_id, chunk, n, final)
-                        if chunk.text:
-                            said.append(chunk.text)
+                        if blocked:
+                            safe = ReplyChunk(text=red.text, markup=red.markup, final=True)
+                            self._publish_stream_chunk(device_id, event_id, safe, n, True)
+                            said.append(red.text)
+                        else:
+                            self._publish_stream_chunk(device_id, event_id, chunk, n, final)
+                            if chunk.text:
+                                said.append(chunk.text)
                 if stale:
                     self._note("chat", f"⏭️  cancelled a stale stream for {device_id}")
                     print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; "
                           f"cancelling the stream mid-answer", flush=True)
                     return
-                if final:
+                if final or blocked:
                     closed = True
                     break
                 self._arm_filler(device_id, event_id, seq, state)
@@ -863,9 +1087,10 @@ class MoxieRuntime:
     def _publish_chat(self, device_id, event_id, backend, text, markup="",
                       actions=None, end_turn=False, result=ResultCode.SUCCESS,
                       modules=None, mood=None, dialog_act=None,
-                      chunk_num=None, is_completed=None):
+                      chunk_num=None, is_completed=None, safety=None):
         resp = build_chat_response(event_id, text, markup, backend=backend,
                                    result=result, actions=actions, end_turn=end_turn,
                                    mood=mood, dialog_act=dialog_act, modules=modules,
-                                   chunk_num=chunk_num, is_completed=is_completed)
+                                   chunk_num=chunk_num, is_completed=is_completed,
+                                   safety=safety)
         self.client.publish(f"/devices/{device_id}/commands/remote_chat", json.dumps(resp))

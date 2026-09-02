@@ -1,0 +1,243 @@
+{
+  "_readme": [
+    "Moxie's safety rules — the whole table, in one file a parent can read.",
+    "",
+    "This file IS the v1 classifier: moxie_sdk/safety.py only compiles and applies it.",
+    "Nothing is hidden in code, nothing is sent to a cloud service, and you can edit this",
+    "file (or point MOXIE_SAFETY_RULES at your own copy) to change what Moxie checks.",
+    "",
+    "WARNING: to filter offensive words a filter has to list them. The `words` arrays",
+    "below contain slurs and profanity on purpose. That is the only reason they are here.",
+    "",
+    "Each category has:",
+    "  id          - the string that appears in InputSafety.blocked_by on the wire",
+    "  label       - what the parent console calls it",
+    "  action      - what happens, per side: 'block' (never spoken, redirect instead),",
+    "                'flag' (allowed through, recorded for a parent to review), 'allow'",
+    "                'child' = something the child said; 'moxie' = something Moxie is about to say",
+    "  escalate    - true for the categories a parent should look at first",
+    "  intents     - InputSafety.intents on the wire",
+    "  phrase_set  - which redirect line Moxie speaks when this category blocks",
+    "  words       - matched whole-word only (\\b...\\b), case/accent/leet-insensitive",
+    "  phrases     - regular expressions, matched on the same normalized text",
+    "  allow       - false-positive guards: these spans are REMOVED before this category",
+    "                is matched, so 'shoot a photo' never counts as violence",
+    "",
+    "Order matters: the first blocking category in this list picks the spoken redirect."
+  ],
+  "version": 1,
+  "categories": [
+    {
+      "id": "self_harm",
+      "label": "Self-harm",
+      "action": { "child": "block", "moxie": "block" },
+      "escalate": true,
+      "intents": ["self_harm_disclosure"],
+      "phrase_set": "self_harm",
+      "words": ["suicide", "suicidal", "selfharm"],
+      "phrases": [
+        "\\b(?:kill|hurt|harm|cut|starve|burn)(?:ing)?\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\b",
+        "\\bi\\s+(?:want|wanna|need|am going|'m going|plan)\\s+to\\s+(?:die|disappear|end it|not (?:be|exist))\\b",
+        "\\bi\\s+(?:wish|hope)\\s+i\\s+(?:was|were)\\s+dead\\b",
+        "\\b(?:end|take)\\s+(?:my|his|her|their)\\s+(?:own\\s+)?life\\b",
+        "\\bnobody\\s+would\\s+(?:miss|care about)\\s+me\\b",
+        "\\bhow\\s+(?:do i|to|can i)\\s+(?:kill|hurt|cut)\\s+(?:my ?self|myself)\\b"
+      ],
+      "allow": [
+        "\\bkill(?:ing)?\\s+myself\\s+laughing\\b",
+        "\\bdying\\s+(?:of|to)\\b"
+      ]
+    },
+    {
+      "id": "violence",
+      "label": "Violence & weapons",
+      "action": { "child": "block", "moxie": "block" },
+      "escalate": true,
+      "intents": ["violence_instructions", "threat"],
+      "phrase_set": "generic",
+      "words": ["behead", "molotov", "napalm", "thermite", "pipebomb"],
+      "phrases": [
+        "\\bhow\\s+(?:do (?:i|you)|to|can (?:i|you))\\s+\\w{0,12}\\s?(?:make|build|get|buy|use|fire|load|shoot)\\s+(?:a|an|the|my)?\\s?(?:bomb|gun|rifle|pistol|shotgun|weapon|explosive|grenade|poison|knife)\\b",
+        "\\bhow\\s+(?:do (?:i|you)|to|can (?:i|you))\\s+(?:kill|murder|stab|shoot|strangle|poison|hurt|beat up)\\s+(?:a |an |the |my |some ?)?(?:one|body|person|people|kid|girl|boy|man|woman|teacher|mom|dad|brother|sister)\\b",
+        "\\b(?:i(?:'m| am)? (?:going to|gonna|want to|wanna)|let'?s)\\s+(?:kill|shoot|stab|strangle|murder|blow up)\\s+(?:you|him|her|them|everyone|my|the)\\b",
+        "\\b(?:bring|take|sneak)\\s+(?:a|my|the)\\s+(?:gun|knife|weapon|bomb)\\s+to\\s+(?:school|class)\\b",
+        "\\bschool\\s+shoot(?:ing|er)\\b",
+        "\\bhow\\s+(?:do i|to)\\s+(?:mix|make)\\s+(?:bleach|chlorine)\\s+(?:and|with)\\s+ammonia\\b"
+      ],
+      "allow": []
+    },
+    {
+      "id": "sexual",
+      "label": "Sexual content",
+      "action": { "child": "block", "moxie": "block" },
+      "escalate": true,
+      "intents": ["sexual_content"],
+      "phrase_set": "generic",
+      "words": [
+        "porn", "pornhub", "blowjob", "handjob", "cum", "creampie", "orgasm",
+        "masturbate", "masturbating", "jerkoff", "boner", "dildo", "vibrator",
+        "titties", "boobs", "nudes", "sexting", "horny", "erection", "genitals",
+        "penis", "vagina"
+      ],
+      "phrases": [
+        "\\bsend\\s+(?:me\\s+)?(?:a\\s+)?(?:nude|naked|sexy)\\b",
+        "\\b(?:take|show)\\s+(?:off\\s+)?(?:your|my)\\s+clothes\\b",
+        "\\bhave\\s+sex\\b",
+        "\\bsex(?:ual)?\\s+(?:with|position|video|story|stuff)\\b",
+        "\\bmake\\s+out\\s+with\\s+me\\b"
+      ],
+      "allow": [
+        "\\bsex\\s+education\\b",
+        "\\bopposite\\s+sex\\b",
+        "\\bwhat\\s+sex\\s+is\\s+(?:the|my|a)\\s+(?:baby|dog|cat|puppy|kitten|hamster)\\b"
+      ]
+    },
+    {
+      "id": "hate",
+      "label": "Hate speech & slurs",
+      "action": { "child": "block", "moxie": "block" },
+      "escalate": true,
+      "intents": ["hate_speech"],
+      "phrase_set": "hate",
+      "words": [
+        "nigger", "nigga", "faggot", "fag", "tranny", "chink", "spic", "kike",
+        "wetback", "gook", "coon", "raghead", "retard", "retarded", "spastic"
+      ],
+      "phrases": [
+        "\\bgo\\s+back\\s+to\\s+(?:your|their)\\s+(?:own\\s+)?country\\b",
+        "\\bi\\s+hate\\s+(?:all\\s+)?(?:black|white|brown|asian|jewish|muslim|mexican|gay|trans)\\s+(?:people|kids|folks)\\b",
+        "\\b(?:black|white|asian|jewish|muslim|mexican|gay|trans)\\s+people\\s+(?:are|should)\\s+(?:all\\s+)?(?:stupid|dirty|die|leave|evil)\\b"
+      ],
+      "allow": ["\\bflag\\s+football\\b"]
+    },
+    {
+      "id": "personal_info",
+      "label": "Personal information",
+      "action": { "child": "flag", "moxie": "block" },
+      "escalate": false,
+      "intents": ["pii_solicitation"],
+      "phrase_set": "privacy",
+      "words": [],
+      "phrases": [
+        "\\bwhat(?:'s| is)\\s+your\\s+(?:home\\s+)?(?:address|street|password|phone number|last name|full name|credit card|social security)\\b",
+        "\\btell\\s+me\\s+(?:your|the)\\s+(?:home\\s+)?(?:address|street|password|phone number|last name|full name|credit card)\\b",
+        "\\bwhere\\s+do\\s+you\\s+live\\b",
+        "\\bwhat\\s+(?:school|street)\\s+do\\s+you\\s+(?:go\\s+to|live\\s+on)\\b",
+        "\\bwhat(?:'s| is)\\s+(?:the\\s+name\\s+of\\s+)?your\\s+school\\b",
+        "\\bmy\\s+(?:home\\s+)?address\\s+is\\b",
+        "\\bmy\\s+password\\s+is\\b",
+        "\\bi\\s+live\\s+at\\s+\\d",
+        "\\bdon'?t\\s+tell\\s+(?:your\\s+)?(?:mom|dad|mum|parents|grown-?ups?)\\b"
+      ],
+      "allow": [
+        "\\bwhere\\s+do\\s+you\\s+live\\s+in\\s+(?:the\\s+)?(?:story|game|book|lab)\\b"
+      ]
+    },
+    {
+      "id": "dangerous",
+      "label": "Dangerous activities",
+      "action": { "child": "flag", "moxie": "block" },
+      "escalate": false,
+      "intents": ["dangerous_activity"],
+      "phrase_set": "generic",
+      "words": ["huffing", "vaping", "overdose"],
+      "phrases": [
+        "\\b(?:drink|swallow|eat|taste|sniff)\\s+(?:some\\s+)?(?:bleach|poison|detergent|gasoline|antifreeze|pills|medicine)\\b",
+        "\\bplay(?:ing)?\\s+with\\s+(?:matches|a lighter|fire|knives|the stove)\\b",
+        "\\b(?:climb|jump)(?:ing)?\\s+(?:on|off|from)\\s+(?:the\\s+)?(?:roof|balcony|window|bridge)\\b",
+        "\\bstick\\s+(?:a|my|something)\\s+\\w{0,10}\\s?in(?:to)?\\s+(?:the\\s+)?(?:outlet|socket|plug)\\b",
+        "\\b(?:how\\s+(?:do i|to)\\s+)?(?:get|buy|smoke|drink)\\s+(?:some\\s+)?(?:beer|vodka|alcohol|weed|marijuana|cigarettes|drugs)\\b",
+        "\\bhold\\s+my\\s+breath\\s+until\\b",
+        "\\bhome\\s+alone\\s+and\\s+the\\s+door\\s+is\\s+open\\b"
+      ],
+      "allow": [
+        "\\bfire\\s+drill\\b",
+        "\\bplay(?:ing)?\\s+with\\s+fire\\s+(?:in|from)\\s+(?:the\\s+)?(?:game|story|book|movie)\\b"
+      ]
+    },
+    {
+      "id": "violence_talk",
+      "label": "Violent talk",
+      "action": { "child": "flag", "moxie": "flag" },
+      "escalate": false,
+      "intents": ["violent_language"],
+      "phrase_set": "generic",
+      "words": ["kill", "kills", "killed", "killing", "gun", "guns", "shoot",
+                 "shooting", "stab", "stabbed", "murder", "weapon", "bomb",
+                 "punch", "punched", "strangle", "knife"],
+      "phrases": [
+        "\\bi\\s+hate\\s+(?:you|him|her|them|my\\s+\\w+)\\b",
+        "\\bbeat\\s+(?:him|her|them|me)\\s+up\\b"
+      ],
+      "allow": [
+        "\\bshoot(?:ing)?\\s+(?:a|some|the|my|another)?\\s?(?:photo|picture|pic|video|hoops|basket|star|arrow|for the (?:stars|moon))",
+        "\\bshoot\\s+(?:me\\s+)?(?:a\\s+)?(?:message|text|email)\\b",
+        "\\bkill(?:ing)?\\s+(?:the\\s+)?(?:lights|time|engine|music|mood)\\b",
+        "\\bkill(?:ing)?\\s+myself\\s+laughing\\b",
+        "\\bkilling\\s+it\\b",
+        "\\bkilled\\s+it\\b",
+        "\\bmy\\s+(?:feet|legs|head|back|arm|tooth|stomach)\\s+(?:is|are)\\s+killing\\s+me\\b",
+        "\\bkill(?:ed|ing)?\\s+(?:a\\s+|the\\s+|some\\s+)?(?:boss|zombie|creeper|monster|dragon|goblin|slime|mob)s?\\b",
+        "\\bglue\\s+gun\\b",
+        "\\bwater\\s+gun\\b",
+        "\\bnerf\\s+gun\\b",
+        "\\bsqueeze\\s+gun\\b",
+        "\\bbutter\\s+knife\\b",
+        "\\b(?:is|was|are|were)\\s+(?:the\\s+)?bomb\\b",
+        "\\bbomb(?:ed)?\\s+(?:the\\s+)?(?:test|quiz|audition)\\b",
+        "\\bbath\\s+bomb\\b",
+        "\\bpunch(?:ed|ing)?\\s+(?:a\\s+|the\\s+)?(?:hole|card|line|buggy)\\b",
+        "\\bmurder\\s+mystery\\b",
+        "\\bshooting\\s+star\\b"
+      ]
+    },
+    {
+      "id": "profanity",
+      "label": "Profanity",
+      "action": { "child": "flag", "moxie": "block" },
+      "escalate": false,
+      "intents": ["profanity"],
+      "phrase_set": "generic",
+      "words": [
+        "fuck", "fucks", "fucked", "fucking", "fucker", "motherfucker", "shit",
+        "shits", "shitty", "bullshit", "bitch", "bitches", "asshole", "cunt",
+        "bastard", "dumbass", "jackass", "whore", "slut", "wanker", "twat",
+        "pissed", "goddamn"
+      ],
+      "phrases": ["\\bwtf\\b", "\\bstfu\\b", "\\bshut\\s+the\\s+f\\w*\\s+up\\b"],
+      "allow": ["\\bshiitake\\b", "\\bscunthorpe\\b", "\\bassassin\\b"]
+    }
+  ],
+  "phrases": {
+    "self_harm": [
+      { "id": 101, "mood": 2, "gesture": "Gesture_Self",
+        "text": "That sounds really heavy, and I'm so glad you told me. I'm not the right one to help with this, but a grown-up you trust is. Can we go find one together?" },
+      { "id": 102, "mood": 2, "gesture": "Gesture_Self",
+        "text": "Thank you for telling me. Feelings this big need a grown-up who loves you, not a robot. Will you talk to one right now?" },
+      { "id": 103, "mood": 2, "gesture": "Gesture_Self",
+        "text": "I care about you a lot. This is too important for me to help with by myself, so please tell a grown-up you trust today." }
+    ],
+    "hate": [
+      { "id": 201, "mood": 2, "gesture": "Gesture_Self",
+        "text": "Ooh, those words can really hurt people. Let's not use them. What else is going on today?" },
+      { "id": 202, "mood": 2, "gesture": "Gesture_Self",
+        "text": "I don't want to say things that hurt anybody. Can we talk about something kinder?" }
+    ],
+    "privacy": [
+      { "id": 301, "mood": 0, "gesture": "Gesture_Think",
+        "text": "Whoops, that's private stuff and I shouldn't ask about it. Let's talk about something else!" },
+      { "id": 302, "mood": 0, "gesture": "Gesture_Think",
+        "text": "Private things like that are for your grown-ups, not for me. What else is on your mind?" }
+    ],
+    "generic": [
+      { "id": 401, "mood": 2, "gesture": "Gesture_Think",
+        "text": "Hmm, that's not something I can talk about. Want to tell me about your day instead?" },
+      { "id": 402, "mood": 2, "gesture": "Gesture_Think",
+        "text": "Ooh, let's pick a different thing. What's the best part of today so far?" },
+      { "id": 403, "mood": 2, "gesture": "Gesture_Question",
+        "text": "I'd rather not go there. Can you ask me something else? I love a good question." },
+      { "id": 404, "mood": 2, "gesture": "Gesture_Think",
+        "text": "That one's not for me. If it's important, a grown-up you trust is the best person to ask." }
+    ]
+  }
+}

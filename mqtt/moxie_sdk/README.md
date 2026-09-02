@@ -25,6 +25,13 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   dependency-free, pure, and careful about decimals, abbreviations, ellipses and lines too
   short to speak alone. Each finished sentence becomes one `RemoteChatResponse` chunk, so a
   child hears the first line at first-token latency instead of at whole-answer latency.
+- [`safety.py`](safety.py) + [`safety_rules.json`](safety_rules.json) — the child-safety seam
+  (`InputSafety`, [ai-seam](../../docs/architecture/ai-seam.md) §2): `assess(text, role=…)`
+  returns the moderation verdict the runtime enforces **before** the brain is called and
+  **before** every streamed chunk is published. v1 is a transparent local rule engine — the
+  whole table is the JSON file, which a parent can read — behind a `Classifier` protocol a
+  local model classifier can drop into. Parent-facing summary:
+  [child-safety guide](../../docs/guides/child-safety.md).
 - [`chat.py`](chat.py) — the LLM boundary: `make_openai_chat` (a whole completion),
   `make_openai_stream` / `stream_completion` (text deltas), plus the rate-limit
   classification, `Pacer` and `call_with_backoff` both share.

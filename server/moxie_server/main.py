@@ -521,6 +521,55 @@ def robot_telemetry(device_id: str, limit: int = 20):
              "detail": str(e)}))
 
 
+@app.get("/local/robots/{device_id}/safety")
+def robot_safety(device_id: str, limit: int = 20):
+    """Parent-console safety review queue (ai-seam §2): every block/flag the runtime's
+    `InputSafety` classifier recorded for this robot, fetched from the supervisor's
+    GET /safety and normalized for the UI (counts by category + the newest events).
+    Server-side call so the browser has no CORS issue; graceful {ok:false} when the
+    supervisor is down or the device is unknown."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_safety
+    url = (STATUS_URL.rsplit("/status", 1)[0] +
+           f"/safety?device_id={quote(device_id)}&limit={int(limit)}")
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return normalize_safety(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode() or "{}")
+        return JSONResponse(status_code=e.code, content=normalize_safety(body))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_safety(
+            {"ok": False, "device_id": device_id, "error": "supervisor not reachable",
+             "detail": str(e)}))
+
+
+@app.post("/local/robots/{device_id}/safety")
+async def acknowledge_robot_safety(device_id: str, request: Request):
+    """Parent acknowledges safety events — `{"event_id": "sfe-…"}` for one, `{}` for all.
+    Forwarded to the supervisor's POST /safety, which marks them reviewed and returns the
+    refreshed queue."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_safety
+    body = await request.body()
+    url = (STATUS_URL.rsplit("/status", 1)[0] +
+           f"/safety?device_id={quote(device_id)}")
+    req = urllib.request.Request(url, data=body or b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return normalize_safety(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code,
+                            content=normalize_safety(json.loads(e.read().decode() or "{}")))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_safety(
+            {"ok": False, "device_id": device_id, "error": "supervisor not reachable",
+             "detail": str(e)}))
+
+
 @app.get("/local/pairing/qr.png")
 def pairing_qr_png(payload: str, ec: str = "l"):
     # The original app rendered with ZXing EC level L (low density) because Moxie's

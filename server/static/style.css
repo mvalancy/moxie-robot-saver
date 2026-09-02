@@ -99,3 +99,14 @@ footer a{color:var(--brand)}
 .evlog .ev:last-child{border-bottom:0}
 .evlog .ev span{color:var(--muted);white-space:nowrap}
 .evlog .ev b{font-weight:600;word-break:break-word}
+
+/* --- safety review queue (ai-seam §2 InputSafety) --- */
+.safety-hd{font-weight:700;font-size:13px;margin-bottom:8px;color:var(--brand);
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.safety-hd .grow{flex:1}
+.safety-note{color:var(--muted);font-size:12px;margin:6px 0 0}
+.evlog .ev.blocked b{color:#c0392b}
+.evlog .ev .tag{border:1px solid var(--line);border-radius:6px;padding:0 5px;
+  font-size:11px;color:var(--muted);white-space:nowrap}
+.evlog .ev .ex{color:var(--muted);font-style:italic;word-break:break-word}
+button.tiny{font-size:12px;padding:4px 10px}

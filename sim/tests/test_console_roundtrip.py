@@ -10,8 +10,9 @@ string it appends, the method and body it forwards, and what it does with a 400 
 
 So: stand a tiny status server on a free port that speaks exactly what
 `mqtt/supervisor/moxie_runtime.py`'s `_start_status_server` speaks (GET /status,
-GET /telemetry, POST /config — same payload shapes, same status codes, and the REAL
-`sanitize_config_overrides` behind /config so validation is not mocked away), point
+GET /telemetry, GET+POST /safety, POST /config — same payload shapes, same status codes,
+and the REAL `sanitize_config_overrides` behind /config so validation is not mocked away
+and the REAL `MoxieRuntime.safety_view`/`acknowledge_safety` behind /safety), point
 `MOXIE_SUPERVISOR_STATUS` at it, and drive the FastAPI app in-process. No broker, no
 robot, no gateway — but a genuine two-process contract.
 
@@ -57,6 +58,7 @@ def _snapshot(overrides: dict) -> dict:
             "battery_level": 91, "audio_volume": 0.4, "wifi_ssid": "Home",
             "mode": "normal", "ota_reboot_required": False,
             "config_overrides": dict(overrides), "telemetry_count": 2,
+            "safety_total": 2, "safety_unreviewed": 1,
         }],
         "recent": [{"t": 1, "kind": "chat", "text": "hi"}],
     }
@@ -80,15 +82,39 @@ def _telemetry(device_id: str, limit: int) -> tuple:
             "summary": summary, "events": summary["latest"]}, 200
 
 
-class FakeSupervisor:
-    """Serves the three endpoints the console proxies, on a free ephemeral port."""
+def _safety_runtime(root: str):
+    """A REAL `MoxieRuntime` with a couple of recorded verdicts, used as the /safety
+    backend of the fake supervisor — so the queue the console reads is the queue the
+    runtime actually writes, not a hand-drawn copy of it."""
+    sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
+    import moxie_runtime
+    from moxie_sdk import safety as S
+    from moxie_sdk.app import MoxieApp
+    from moxie_sdk.store import JsonStore
+    from moxie_sdk.types import ChildProfile, RobotContext
 
-    def __init__(self):
+    class _App(MoxieApp):
+        name = "content"
+
+    rt = moxie_runtime.MoxieRuntime(app=_App(), child=ChildProfile(nickname="Sam"))
+    rt.store = JsonStore(root=root)
+    rt.robots[DEVICE] = RobotContext(device_id=DEVICE, child=rt.child)
+    rt._record_safety(DEVICE, S.assess("I want to kill myself"))
+    rt._record_safety(DEVICE, S.assess("this is bullshit"))
+    return rt
+
+
+class FakeSupervisor:
+    """Serves the endpoints the console proxies, on a free ephemeral port."""
+
+    def __init__(self, safety_root: str):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         from urllib.parse import parse_qs, urlparse
         self.overrides: dict = {}
         self.config_posts: list = []
         self.telemetry_queries: list = []
+        self.safety_queries: list = []
+        self.runtime = _safety_runtime(safety_root)
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -115,17 +141,31 @@ class FakeSupervisor:
                         limit = 20
                     outer.telemetry_queries.append((device_id, limit))
                     return self._out(*_telemetry(device_id, limit))
+                if u.path == "/safety":
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    try:
+                        limit = int((q.get("limit") or ["20"])[0])
+                    except ValueError:
+                        limit = 20
+                    outer.safety_queries.append((device_id, limit))
+                    out = outer.runtime.safety_view(device_id, limit=limit)
+                    return self._out(out, 200 if out.get("ok") else 404)
                 self.send_response(404)
                 self.end_headers()
 
             def do_POST(self):
                 u = urlparse(self.path)
-                if u.path != "/config":
+                if u.path not in ("/config", "/safety"):
                     self.send_response(404)
                     self.end_headers()
                     return
                 device_id = (parse_qs(u.query).get("device_id") or [""])[0]
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"
+                if u.path == "/safety":
+                    body = json.loads(raw or b"{}") or {}
+                    out = outer.runtime.acknowledge_safety(device_id, body.get("event_id"))
+                    return self._out(out, 200 if out.get("ok") else 404)
                 outer.config_posts.append((device_id, raw.decode()))
                 try:
                     applied = sanitize_config_overrides(json.loads(raw))
@@ -159,8 +199,8 @@ class FakeSupervisor:
 # --------------------------------------------------------------------------- #
 
 @pytest.fixture(scope="module")
-def supervisor():
-    s = FakeSupervisor()
+def supervisor(tmp_path_factory):
+    s = FakeSupervisor(str(tmp_path_factory.mktemp("safety-journal")))
     yield s
     s.close()
 
@@ -290,6 +330,57 @@ def test_telemetry_for_an_unknown_device_is_a_404(client):
 
 
 # --------------------------------------------------------------------------- #
+# GET / POST /local/robots/{id}/safety — the parent review queue
+# --------------------------------------------------------------------------- #
+
+def test_safety_queue_reaches_the_console(client, supervisor):
+    r = client.get(f"/local/robots/{DEVICE}/safety?limit=5")
+    assert r.status_code == 200, r.text
+    s = r.json()
+    assert s["ok"] is True and s["device_id"] == DEVICE and s["enabled"] is True
+    assert s["classifier"] == "rules" and s["total"] == 2
+    assert s["blocked"] == 1 and s["flagged"] == 1 and s["unreviewed"] == 2
+    # counts carry the human labels straight from the rules file
+    assert {row["label"] for row in s["by_category"]} >= {"Self-harm", "Profanity"}
+    # newest first, and the child's words are masked before they ever leave the runtime
+    top = s["events"][0]
+    assert top["side"] == "child" and top["excerpt"] and "***" in top["excerpt"]
+    assert "bullshit" not in json.dumps(s)
+    assert supervisor.safety_queries[-1] == (DEVICE, 5)
+
+
+def test_acknowledging_one_event_clears_it_for_the_parent(client):
+    before = client.get(f"/local/robots/{DEVICE}/safety").json()
+    target = [e for e in before["events"] if e["action"] == "block"][0]
+    r = client.post(f"/local/robots/{DEVICE}/safety", json={"event_id": target["id"]})
+    assert r.status_code == 200, r.text
+    after = r.json()
+    assert after["ok"] is True and after["unreviewed"] == before["unreviewed"] - 1
+    assert [e for e in after["events"] if e["id"] == target["id"]][0]["reviewed"] is True
+    # ...and the empty body acknowledges the rest
+    every = client.post(f"/local/robots/{DEVICE}/safety", json={}).json()
+    assert every["unreviewed"] == 0
+
+
+def test_safety_for_an_unknown_device_is_a_404(client):
+    r = client.get("/local/robots/d_nope/safety")
+    assert r.status_code == 404, r.text
+    s = r.json()
+    assert s["ok"] is False and s["events"] == [] and s["total"] == 0 and s["error"]
+
+
+def test_safety_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    from moxie_server import main
+    dead = socket.socket()
+    dead.bind(("127.0.0.1", 0))
+    port = dead.getsockname()[1]
+    dead.close()
+    monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
+    s = client.get(f"/local/robots/{DEVICE}/safety").json()
+    assert s["ok"] is False and s["events"] == [] and s["error"]
+
+
+# --------------------------------------------------------------------------- #
 # the double is honest
 # --------------------------------------------------------------------------- #
 
@@ -323,3 +414,8 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     real_missing = rt.telemetry_view("d_nope")
     fake_missing, code = _telemetry("d_nope", 20)
     assert code == 404 and set(fake_missing) == set(real_missing)
+
+    # /safety is not doubled at all — the fake supervisor runs a REAL MoxieRuntime behind
+    # it — so the only thing to guard is that its unknown-device shape still 404s.
+    assert rt.safety_view("d_nope")["ok"] is False
+    assert rt.acknowledge_safety("d_nope", "sfe-nope")["ok"] is False
