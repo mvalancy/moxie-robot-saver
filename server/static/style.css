@@ -159,3 +159,23 @@ button.linkish.mem-arm{opacity:1;color:#c0392b;font-weight:700}
 #face-custom{width:100%;padding:8px;border-radius:8px;border:1px solid var(--line);
   background:var(--bg);color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-size:12px}
+
+/* --- 🎭 Be Moxie (puppet / telehealth, audit ADOPT #7) --- */
+.th-controls{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.th-controls.off{opacity:.45;pointer-events:none}
+.th-controls select{padding:8px;border-radius:8px;border:1px solid var(--line);
+  background:var(--bg);color:var(--ink)}
+.th-controls #th-mood{flex:1 1 auto;min-width:0}
+.th-controls #th-text{min-width:0;padding:8px;border-radius:8px;
+  border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.th-warn{border:1px solid #e0b000;background:rgba(224,176,0,.10);border-radius:8px;
+  padding:6px 9px;font-size:12px;margin:6px 0}
+.th-log{max-height:190px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;
+  padding:6px 8px;margin:8px 0;font-size:13px;display:flex;flex-direction:column;gap:3px}
+.th-log:empty{display:none}
+.th-log .thln{display:flex;gap:6px;align-items:baseline}
+.th-log .thln span{color:var(--muted);font-size:11px;flex:0 0 auto}
+.th-log .thln.op b{font-weight:600}
+.th-log .thln.child{color:var(--muted)}
+.th-log .thln.child b{font-weight:400;font-style:italic}
+.th-note{font-size:11px;margin-top:8px}

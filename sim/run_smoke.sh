@@ -2,9 +2,16 @@
 # Local SIL smoke test: broker + supervisor(echo app) + virtual robot round-trip.
 # Mirrors CI. Uses the mosquitto binary if present, else docker.
 #   PORT override:  MOXIE_SIL_PORT=18831 sim/run_smoke.sh
+#   TELEHEALTH:     sim/run_smoke.sh --telehealth   (🎭 puppet round-trip instead)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 PORT="${MOXIE_SIL_PORT:-1883}"
+# 🎭 --telehealth swaps the conversation round-trip for the puppet one: an operator drives
+# the SIL robot over the supervisor's own status HTTP (the seam the console proxies), and
+# the robot asserts the recovered TeleHealth wire at every step. Same broker, same
+# supervisor, same harness — only the subject under test changes.
+MODE="smoke"
+for arg in "$@"; do case "$arg" in --telehealth) MODE="telehealth";; esac; done
 PIDS=(); BROKER_CID=""
 cleanup(){ for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
            [ -n "$BROKER_CID" ] && docker rm -f "$BROKER_CID" >/dev/null 2>&1 || true; }
@@ -41,9 +48,16 @@ MOXIE_APP=echo MOXIE_TTS="$TTS_ENGINE" MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT
   python3 mqtt/run.py >/tmp/moxie-supervisor.log 2>&1 & PIDS+=($!)
 sleep 3
 
-EXPECT_TTS=""; [ "$TTS_ENGINE" != "off" ] && EXPECT_TTS="--expect-tts"
-echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}) ──"
-python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout 20 $EXPECT_TTS
-rc=$?
+if [ "$MODE" = "telehealth" ]; then
+  echo "── virtual Moxie (🎭 telehealth: operator → PLAY_OUTPUT → robot) ──"
+  python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout 20 \
+    --telehealth --status-url "http://127.0.0.1:$STATUS_PORT"
+  rc=$?
+else
+  EXPECT_TTS=""; [ "$TTS_ENGINE" != "off" ] && EXPECT_TTS="--expect-tts"
+  echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}) ──"
+  python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout 20 $EXPECT_TTS
+  rc=$?
+fi
 echo "── supervisor log tail ──"; tail -6 /tmp/moxie-supervisor.log || true
 exit $rc

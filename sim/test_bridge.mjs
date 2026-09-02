@@ -29,6 +29,10 @@ const fakeEl = (id) => ({
   querySelector: () => ({ set textContent(v) {}, get textContent() { return ""; } }),
 });
 globalThis.window = { moxie, addEventListener: () => {} };
+// A no-op audio stub: bridge.js only *calls* these (local TTS on connect, and
+// stop() on a telehealth INTERRUPT); nothing here is asserted, so it stays silent.
+globalThis.window.moxieAudio = { speak: () => {}, stop: () => {}, sfx: () => {},
+                                 playCloudTTS: () => {} };
 globalThis.location = { hostname: "127.0.0.1" };
 globalThis.document = {
   getElementById: (id) => (els[id] ||= fakeEl(id)),
@@ -82,6 +86,25 @@ mqttClient._emit("message", "/devices/d_test/events/remote-chat",
 mqttClient._emit("message", "/devices/d_test/commands/motor",
   Buffer.from(JSON.stringify({ motors: { "0": 30000, "4": 24000 } })));  // SIL motor channel
 
+// ---- 🎭 telehealth: the operator's line must drive the avatar exactly like a brain
+// reply, because `Output.markup` IS the same behavior language (telehealth.md:16-17).
+// Same markup as the "Hmm?" reply above, delivered on the puppet channel instead.
+const puppetMarkup =
+  '<mark name="cmd:playback-mood,data:{+mood+:2,+intensity+:2}"/>' +
+  '<mark name="cmd:behaviour-tree,data:{+behaviour+:+Bht_Spin_360+,+eventName+:+Gesture_None+}"/>' +
+  'I missed you.';
+mqttClient._emit("message", "/devices/d_test/commands/telehealth",
+  Buffer.from(JSON.stringify({ command: "telehealth", message: {
+    action: "START_SESSION", session_id: "ths-1" } })));
+mqttClient._emit("message", "/devices/d_test/commands/telehealth",
+  Buffer.from(JSON.stringify({ command: "telehealth", message: {
+    action: "PLAY_OUTPUT", session_id: "ths-1",
+    output: { text: "I missed you.", markup: puppetMarkup } } })));
+mqttClient._emit("message", "/devices/d_test/commands/telehealth",
+  Buffer.from(JSON.stringify({ command: "telehealth", message: {
+    action: "INTERRUPT", session_id: "ths-1" } })));
+const th = window.moxieBridge.telehealthStats();
+
 // ---- assertions ----
 const fails = [];
 const ok = (cond, msg) => { if (!cond) fails.push(msg); };
@@ -97,9 +120,20 @@ ok(calls.transcript.includes("Happy birthday!"), "Moxie reply → transcript");
 ok(calls.setMotor.some(([i, v]) => i === 0 && v === 30000) && calls.setMotor.some(([i, v]) => i === 4 && v === 24000),
    `commands/motor → setMotor(0,30000)+setMotor(4,24000); got ${JSON.stringify(calls.setMotor)}`);
 
+ok(calls.setSpeech.includes("I missed you."), "telehealth PLAY_OUTPUT → setSpeech('I missed you.')");
+ok(calls.setFace.includes("sad"), `telehealth mood 2 → setFace('sad'); got ${JSON.stringify(calls.setFace)}`);
+ok(calls.transcript.includes("I missed you."), "telehealth line → transcript, like any Moxie reply");
+ok(th.lines.length === 1 && th.lines[0].text === "I missed you." && !!th.lines[0].markup,
+   `telehealth recorded one line with markup; got ${JSON.stringify(th.lines)}`);
+ok(th.session_id === "ths-1", `telehealth session_id recorded; got ${th.session_id}`);
+ok(th.interrupts === 1 && th.last_action === "INTERRUPT",
+   `INTERRUPT recorded; got ${th.interrupts}/${th.last_action}`);
+ok(calls.setSpeech[calls.setSpeech.length - 1] === "",
+   `INTERRUPT clears the speech bubble; got ${JSON.stringify(calls.setSpeech.slice(-2))}`);
+
 if (fails.length) {
   console.log("❌ bridge unit test FAILED:");
   for (const f of fails) console.log("   -", f);
   process.exit(1);
 }
-console.log(`✅ bridge unit test OK — ${Object.values(calls).reduce((a, c) => a + c.length, 0)} avatar calls asserted (mood→face, gesture→motor, icons-v2→badges, transcript, notify-skip)`);
+console.log(`✅ bridge unit test OK — ${Object.values(calls).reduce((a, c) => a + c.length, 0)} avatar calls asserted (mood→face, gesture→motor, icons-v2→badges, transcript, notify-skip, 🎭 telehealth)`);

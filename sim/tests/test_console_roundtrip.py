@@ -102,6 +102,20 @@ def _telemetry(device_id: str, limit: int) -> tuple:
             "summary": summary, "events": summary["latest"]}, 200
 
 
+class _RecordingClient:
+    """The supervisor's MQTT seam, recorded. `/config` and `commands/telehealth` publishes
+    are what the 🎭 round-trip proves reached the wire; nothing here talks to a broker."""
+
+    def __init__(self):
+        self.published = []
+
+    def publish(self, topic, payload):
+        self.published.append((topic, json.loads(payload)))
+
+    def on(self, topic):
+        return [p for (t, p) in self.published if t == topic]
+
+
 def _safety_runtime(root: str):
     """A REAL `MoxieRuntime` with a couple of recorded verdicts, used as the /safety
     backend of the fake supervisor — so the queue the console reads is the queue the
@@ -116,9 +130,16 @@ def _safety_runtime(root: str):
     class _App(MoxieApp):
         name = "content"
 
-    rt = moxie_runtime.MoxieRuntime(app=_App(), child=ChildProfile(nickname="Sam"))
+    # `allow_unverified_bots=True` for the same reason `helpers_runtime.make_runtime`
+    # pins it: this file's robot is hand-placed rather than let in through the allowlist,
+    # and the 🎭 telehealth verbs (which DO check the gate) would otherwise refuse it.
+    # The gate has its own tests — `test_device_permits.py`, and the pending-robot cases
+    # in `test_telehealth_runtime.py`.
+    rt = moxie_runtime.MoxieRuntime(app=_App(), child=ChildProfile(nickname="Sam"),
+                                    allow_unverified_bots=True)
     rt.store = JsonStore(root=root)
     rt.robots[DEVICE] = RobotContext(device_id=DEVICE, child=rt.child)
+    rt.client = _RecordingClient()
     rt._record_safety(DEVICE, S.assess("I want to kill myself"))
     rt._record_safety(DEVICE, S.assess("this is bullshit"))
     return rt
@@ -176,6 +197,8 @@ class FakeSupervisor:
         self.memory_queries: list = []
         self.memory_erases: list = []
         self.memory_edits: list = []
+        self.telehealth_queries: list = []
+        self.telehealth_posts: list = []
         self.runtime = _safety_runtime(safety_root)
         self.memory = _seed_memory(self.runtime)
         outer = self
@@ -237,6 +260,12 @@ class FakeSupervisor:
                     outer.memory_queries.append(device_id)
                     out = outer.runtime.memory_view(device_id)
                     return self._out(out, 200 if out.get("ok") else 404)
+                if u.path == "/telehealth":
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    outer.telehealth_queries.append(device_id)
+                    out = outer.runtime.telehealth_view(device_id)
+                    return self._out(out, 200 if out.get("ok") else 404)
                 self.send_response(404)
                 self.end_headers()
 
@@ -260,6 +289,41 @@ class FakeSupervisor:
 
             def do_POST(self):
                 u = urlparse(self.path)
+                if u.path == "/telehealth":
+                    # 🎭 One operator verb, dispatched exactly the way the real
+                    # `_start_status_server` dispatches it — the REAL runtime does the
+                    # permit check, the mode gate, the safety classifier and the publish.
+                    device_id = (parse_qs(u.query).get("device_id") or [""])[0]
+                    raw = self.rfile.read(
+                        int(self.headers.get("Content-Length") or 0)) or b"{}"
+                    body = json.loads(raw or b"{}") or {}
+                    outer.telehealth_posts.append((device_id, body))
+                    action = str(body.get("action") or "").strip().lower()
+                    rt = outer.runtime
+                    try:
+                        if action in ("enable", "disable"):
+                            out = rt.telehealth_enable(device_id, action == "enable")
+                        elif action in ("start", "start_session"):
+                            out = rt.telehealth_session(device_id, "START_SESSION")
+                        elif action in ("end", "end_session"):
+                            out = rt.telehealth_session(device_id, "END_SESSION")
+                        elif action in ("state", "update_state"):
+                            out = rt.telehealth_session(device_id, "UPDATE_STATE")
+                        elif action in ("speak", "play_output", "say"):
+                            out = rt.telehealth_speak(
+                                device_id, body.get("text") or "", mood=body.get("mood"),
+                                intensity=body.get("intensity"))
+                        elif action == "interrupt":
+                            out = rt.telehealth_interrupt(device_id)
+                        else:
+                            raise ValueError("expected action: enable, disable, start, "
+                                             "end, state, speak or interrupt")
+                        code = (200 if out.get("ok") else
+                                404 if "unknown device_id" in str(out.get("error"))
+                                else 400)
+                    except Exception as e:
+                        out, code = {"ok": False, "error": str(e), "reason": str(e)}, 400
+                    return self._out(out, code)
                 if u.path not in ("/config", "/safety", "/permits", "/memory"):
                     self.send_response(404)
                     self.end_headers()
@@ -915,6 +979,129 @@ def test_memory_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
 # the double is honest
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# 🎭 "Be Moxie" — puppet / telehealth (audit ADOPT #7)
+# --------------------------------------------------------------------------- #
+# The console↔runtime seam for the one card where a mistake is *audible in a child's
+# room*: the URL, the verb, the body, and — the part worth the whole file — what the
+# console does with the supervisor's 400 when the safety classifier refuses a line.
+
+@pytest.fixture()
+def puppet(client, supervisor):
+    """Puppet mode on and a session open, torn back down afterwards."""
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "enable"})
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "start"})
+    supervisor.runtime.client.published.clear()
+    yield
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "disable"})
+
+
+def _telehealth_wire(supervisor):
+    return [p["message"] for p in supervisor.runtime.client.on(
+        f"/devices/{DEVICE}/commands/telehealth")]
+
+
+def test_the_card_reads_the_supervisors_telehealth_view(client, supervisor):
+    r = client.get(f"/local/robots/{DEVICE}/telehealth")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["device_id"] == DEVICE
+    assert len(body["moods"]) == 11 and body["max_intensity"] == 2
+    # nothing has been reported by the robot, and the card must not invent a state
+    assert body["reported"] is False and body["state"] == ""
+    assert supervisor.telehealth_queries[-1] == DEVICE
+
+
+def test_enable_speak_interrupt_disable_round_trips(client, supervisor, puppet):
+    say = client.post(f"/local/robots/{DEVICE}/telehealth",
+                      json={"action": "speak", "text": "Hello from Grandma.",
+                            "mood": "happy", "intensity": 2})
+    assert say.status_code == 200
+    body = say.json()
+    assert body["ok"] is True and body["spoke"] == "Hello from Grandma."
+    assert body["in_session"] is True
+    cut = client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "interrupt"})
+    assert cut.status_code == 200 and cut.json()["ok"] is True
+
+    wire = _telehealth_wire(supervisor)
+    assert [m["action"] for m in wire] == ["PLAY_OUTPUT", "INTERRUPT"]
+    assert wire[0]["output"]["text"] == "Hello from Grandma."
+    assert "+mood+:1" in wire[0]["output"]["markup"]
+    assert "+intensity+:2" in wire[0]["output"]["markup"]
+    assert "output" not in wire[1]          # INTERRUPT carries no line
+
+
+def test_the_operators_line_comes_back_in_the_transcript(client, supervisor, puppet):
+    client.post(f"/local/robots/{DEVICE}/telehealth",
+                json={"action": "speak", "text": "Time to brush your teeth."})
+    body = client.get(f"/local/robots/{DEVICE}/telehealth").json()
+    assert [(l["who"], l["text"]) for l in body["transcript"]][-1] == (
+        "operator", "Time to brush your teeth.")
+
+
+def test_a_line_the_safety_check_refuses_is_a_400_with_a_reason_and_is_never_spoken(
+        client, supervisor, puppet):
+    """The acceptance criterion, through the console's own seam: the operator is told
+    why, and the robot hears nothing."""
+    r = client.post(f"/local/robots/{DEVICE}/telehealth",
+                    json={"action": "speak", "text": "you are a fucking idiot"})
+    assert r.status_code == 400
+    body = r.json()
+    assert body["ok"] is False and body["blocked"] is True
+    assert body["categories"] == ["profanity"]
+    assert "Profanity" in body["reason"]
+    assert _telehealth_wire(supervisor) == []
+
+
+def test_speaking_with_the_mode_off_is_a_400_the_card_can_act_on(client, supervisor):
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "disable"})
+    supervisor.runtime.client.published.clear()
+    r = client.post(f"/local/robots/{DEVICE}/telehealth",
+                    json={"action": "speak", "text": "Hello."})
+    assert r.status_code == 400 and "Be Moxie" in r.json()["reason"]
+    assert _telehealth_wire(supervisor) == []
+
+
+def test_enable_re_pushes_the_config_with_the_mode_set(client, supervisor):
+    supervisor.runtime.client.published.clear()
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "enable"})
+    cfg = supervisor.runtime.client.on(f"/devices/{DEVICE}/config")[-1]
+    assert cfg["moxie_mode"] == "TELEHEALTH"
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "disable"})
+    cfg = supervisor.runtime.client.on(f"/devices/{DEVICE}/config")[-1]
+    assert cfg["moxie_mode"] == "DEFAULT_MODE"
+
+
+def test_the_robots_own_reported_state_reaches_the_card(client, supervisor, puppet):
+    supervisor.runtime._on_activity(DEVICE, json.dumps(
+        {"subtopic": "telehealth",
+         "message": {"state": "IN_SESSION", "timestamp": 1700000000000}}))
+    body = client.get(f"/local/robots/{DEVICE}/telehealth").json()
+    assert body["state"] == "IN_SESSION" and body["state_known"] is True
+    assert body["state_at"] == 1700000000.0
+
+
+def test_telehealth_for_an_unknown_device_is_a_404(client):
+    r = client.get("/local/robots/d_nope/telehealth")
+    assert r.status_code == 404 and r.json()["ok"] is False
+
+
+def test_an_unknown_verb_is_a_400(client):
+    r = client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "dance"})
+    assert r.status_code == 400 and r.json()["ok"] is False
+
+
+def test_telehealth_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    import moxie_server.main as main
+    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.get(f"/local/robots/{DEVICE}/telehealth")
+    assert r.status_code == 503
+    body = r.json()
+    assert body["ok"] is False and body["transcript"] == []
+    assert body["max_intensity"] == 2
+
+
 def test_fake_status_server_matches_the_real_runtime_shapes():
     """Diff the fake's payloads against the REAL MoxieRuntime, so runtime drift fails
     here rather than quietly turning this file into a test of itself."""
@@ -957,6 +1144,13 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     assert rt.safety_view("d_nope")["ok"] is False
     assert rt.acknowledge_safety("d_nope", "sfe-nope")["ok"] is False
     assert rt.memory_view("d_nope")["ok"] is False
+    # 🎭 /telehealth is not doubled either — the fake runs the REAL runtime behind both
+    # verbs — so what is guarded is the unknown-device shape and the keys the card reads.
+    assert rt.telehealth_view("d_nope")["ok"] is False
+    rt._allow_unverified_bots = True     # every telehealth verb checks the permit gate
+    assert set(rt.telehealth_view(DEVICE)) == {
+        "ok", "device_id", "enabled", "online", "session_id", "in_session",
+        "state", "state_at", "in_bedtime", "transcript", "moods", "max_intensity"}
     assert set(rt.memory_view(DEVICE)) == {"ok", "device_id", "namespaces", "bytes",
                                            "writes_allowed", "policy"}
     # The per-item seam the console now drives: an id-carrying view, an erase that takes

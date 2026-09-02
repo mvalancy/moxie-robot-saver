@@ -438,3 +438,78 @@ def normalize_memory(raw: Optional[dict]) -> dict:
         if p.get("item"):
             out["item"] = str(p.get("item"))
     return out
+
+
+# --- 🎭 "Be Moxie" — puppet / telehealth mode (audit ADOPT #7) ------------------------
+# The runtime's `GET /telehealth` returns `{ok, device_id, enabled, online, session_id,
+# in_session, state, state_at, in_bedtime, transcript[], moods[], max_intensity}` and a
+# `POST` returns the same view plus what just happened (`spoke`, `markup`, `flagged`) or a
+# refusal (`error`, `reason`, `categories`). The card needs one shape for both, and it
+# needs to be honest about two things the runtime is careful about: a state the robot has
+# never reported is NOT "READY", and a bedtime window is a warning, not a claim that the
+# line was dropped.
+#
+# Pure, so it unit-tests in the hermetic suite (`sim/tests/test_telehealth_view.py`).
+
+#: `TeleHealth.RobotState`, recovered — the only state names we recognise
+#: (docs/reverse-engineering/protocol/telehealth.md:36).
+TELEHEALTH_STATES = ("UNKNOWN_STATE", "READY", "IN_SESSION", "EXITING")
+
+
+def normalize_transcript_line(e: Optional[dict]) -> dict:
+    """One `{who, text, at}` transcript entry → the console's row. Text only: no audio
+    and no video path exists in this phase, by design (backlog/telehealth.md §2.5)."""
+    e = e or {}
+    who = "operator" if e.get("who") == "operator" else "child"
+    return {"who": who, "text": str(e.get("text") or ""), "at": _num(e.get("at"))}
+
+
+def normalize_telehealth(payload: Optional[dict]) -> dict:
+    """Runtime `/telehealth` response → the console's 🎭 "Be Moxie" card shape.
+
+    Tolerates a None/error payload (supervisor down, unknown device, a robot that is not
+    permitted) with `ok:false` and an empty-but-renderable view — the card then shows the
+    reason instead of a dead control.
+
+    `state_known` is false for a name outside the recovered `RobotState` enum, so the card
+    can show what the robot actually said without pretending to understand it; `reported`
+    is false when the robot has said nothing at all, which the card renders as *"never
+    reported"* rather than inventing a state.
+    """
+    p = payload if isinstance(payload, dict) else {}
+    ok = bool(p.get("ok"))
+    state = str(p.get("state") or "")
+    moods = [{"id": str(m.get("id") or ""), "label": str(m.get("label") or ""),
+              "value": int(_num(m.get("value")) or 0)}
+             for m in (p.get("moods") or []) if isinstance(m, dict)]
+    lines = [normalize_transcript_line(e) for e in (p.get("transcript") or [])
+             if isinstance(e, dict)]
+    out = {
+        "ok": ok,
+        "device_id": p.get("device_id"),
+        "enabled": bool(p.get("enabled")) if ok else False,
+        "online": bool(p.get("online")),
+        "session_id": str(p.get("session_id") or "") if ok else "",
+        "in_session": bool(p.get("in_session")) if ok else False,
+        "state": state,
+        "reported": bool(state),
+        "state_known": state in TELEHEALTH_STATES,
+        "state_at": _num(p.get("state_at")),
+        "in_bedtime": bool(p.get("in_bedtime")) if ok else False,
+        "transcript": lines,
+        "moods": moods,
+        "max_intensity": int(_num(p.get("max_intensity")) or 2),
+        "error": None if ok else (p.get("error") or "supervisor not reachable"),
+        "reason": p.get("reason") or None,
+    }
+    # A write's receipt: what was said (or why nothing was), carried through so the card
+    # can confirm the line rather than infer it from the transcript refreshing.
+    if p.get("spoke"):
+        out["spoke"] = str(p["spoke"])
+    if p.get("flagged"):
+        out["flagged"] = [str(c) for c in p["flagged"]]
+    if p.get("blocked") or p.get("categories"):
+        out["blocked"] = bool(p.get("blocked"))
+        out["categories"] = [str(c) for c in (p.get("categories") or [])]
+        out["labels"] = [str(c) for c in (p.get("labels") or [])]
+    return out

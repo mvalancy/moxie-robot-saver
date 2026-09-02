@@ -231,6 +231,49 @@
     }
   }
 
+  // ---- 🎭 telehealth ("Be Moxie"): the operator drives the body ------------------
+  // The recovered TeleHealth protocol (docs/reverse-engineering/protocol/telehealth.md)
+  // is a peer of the chat channel, not a special case: a remote human's line arrives as a
+  // `TelehealthRobotCommand` — `{command, message:{action, output:{text, markup}}}` — and
+  // `Output.markup` is *the same behavior language* a brain reply carries (:16-17, :89-91).
+  // So PLAY_OUTPUT routes straight into `handleRemoteChat`'s rendering path (setSpeech →
+  // applyMarkup → gesture/tree/face) and the avatar cannot tell the two apart, which is
+  // exactly what makes the SIM a faithful double for this channel.
+  //
+  // INTERRUPT is the one verb with no equivalent on the chat side: barge-in from the
+  // operator, cutting a line already in the air. What a REAL robot does physically has
+  // never been observed (backlog/telehealth.md B2); here it stops the voice and clears the
+  // bubble, which is the reading our own protocol page gives it.
+  var telehealth = { lines: [], interrupts: 0, session_id: "", last_action: "" };
+
+  function handleTelehealth(payload) {
+    let msg; try { msg = JSON.parse(payload); } catch { return; }
+    const m = (msg && msg.message) || msg || {};
+    const action = String(m.action || "");
+    telehealth.last_action = action;
+    if (m.session_id) telehealth.session_id = m.session_id;
+    if (action === "INTERRUPT") {
+      telehealth.interrupts += 1;
+      if (window.moxieAudio && window.moxieAudio.stop) window.moxieAudio.stop();
+      if (pendingSpeak) { clearTimeout(pendingSpeak); pendingSpeak = 0; pendingText = ""; }
+      window.moxie && window.moxie.setSpeech("");
+      status("🎭 interrupted");
+      return;
+    }
+    if (action !== "PLAY_OUTPUT") {
+      status(`🎭 ${action.toLowerCase().replace(/_/g, " ")}`);
+      return;
+    }
+    const out = m.output || {};
+    telehealth.lines.push({ text: out.text || "", markup: out.markup || "",
+                            session_id: m.session_id || "", t: nowMs() });
+    // Deliberately reuses the chat renderer rather than duplicating it. `session_id`
+    // stands in for `event_id` so consecutive operator lines are separate utterances
+    // (one PLAY_OUTPUT per line — telehealth never streams).
+    handleRemoteChat(JSON.stringify({
+      command: "remote_chat", event_id: m.session_id || "", output: out }));
+  }
+
   // ---- presence: the robot's own eyes -----------------------------------------
   // The stock robot runs vision ON-DEVICE and sends only semantic events — no pixels, no
   // bounding boxes (docs/architecture/vision.md §1.1). A subscribed event is delivered to
@@ -308,6 +351,7 @@
       client.subscribe("/devices/+/commands/tts");           // the server voice (CloudTTSResponse)
       client.subscribe("/devices/+/events/remote-chat");     // the child's utterances
       client.subscribe("/devices/+/config");
+      client.subscribe("/devices/+/commands/telehealth");     // 🎭 the operator's lines
       client.subscribe("/devices/+/commands/motor");         // SIL-only: drive motors directly
     });
     client.on("reconnect", () => status(`reconnecting ${url}…`));
@@ -323,6 +367,7 @@
     if (recording && !replaying) recorded.push({ t: nowMs(), topic, payload: s });
     if (topic.endsWith("/commands/remote_chat")) handleRemoteChat(s);
     else if (topic.endsWith("/commands/tts")) handleTts(s);
+    else if (topic.endsWith("/commands/telehealth")) handleTelehealth(s);
     else if (topic.endsWith("/events/remote-chat")) handleUserTurn(s);
     else if (topic.endsWith("/commands/motor")) handleMotor(s);
     else if (topic.endsWith("/config")) {
@@ -427,6 +472,13 @@
                departures: presence.departures, last_event: presence.lastEvent,
                events: presence.events.map((e) => e.name),
                greetings: presence.greetings.map((g) => g.text) };
+    },
+    /* What the 🎭 telehealth channel actually delivered, recorded as it happened and
+     * still readable afterwards: {lines:[{text,markup,session_id,t}], interrupts,
+     * session_id, last_action}. Tests assert this, never a live sample. */
+    telehealthStats: function () {
+      return { lines: telehealth.lines.slice(), interrupts: telehealth.interrupts,
+               session_id: telehealth.session_id, last_action: telehealth.last_action };
     },
     // true once a CloudTTSResponse has arrived — the server voice has taken over
     hasCloudVoice: function () { return cloudVoice; },

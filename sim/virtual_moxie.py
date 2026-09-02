@@ -58,6 +58,11 @@ class VirtualMoxie:
         self.query_results: dict = {}       # CloudQuery name -> last CloudQueryResponse
         self.spoke: dict | None = None      # last decoded CloudTTSResponse (audio playback)
         self.face_replies: list = []        # what the server answered each vision event
+        # 🎭 telehealth: every TelehealthRobotCommand this robot was sent, in order, plus
+        # the state we have told the cloud we are in (READY → IN_SESSION → EXITING).
+        self.got_telehealth = threading.Event()
+        self.telehealth: list = []
+        self.telehealth_state: str = ""
         self.errors: list[str] = []
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.device_id)
         self.client.on_connect = self._on_connect
@@ -97,6 +102,8 @@ class VirtualMoxie:
             self._play_tts(payload)
         elif topic.endswith("/commands/query_result"):
             self._on_query_result(payload)
+        elif topic.endswith("/commands/telehealth"):
+            self._on_telehealth(payload)
         elif "/commands/" in topic:
             self.log(f"← {topic.split('/commands/')[-1]}: {str(payload)[:60]}")
 
@@ -331,6 +338,166 @@ class VirtualMoxie:
             self.client.loop_stop()
             self.client.disconnect()
 
+    # -- 🎭 telehealth / "Be Moxie": the operator drives the body --
+    #
+    # The recovered `embodied.telehealth.TeleHealth.proto`
+    # (docs/reverse-engineering/protocol/telehealth.md) puts a remote human where the
+    # on-device BRAIN normally is: the cloud sends `TelehealthRobotCommand` on
+    # `commands/telehealth` and the robot reports its `RobotState` back on the
+    # `client-service-activity-log` `telehealth` subtopic. This SIL robot plays both
+    # halves of that faithfully — it decodes the JSON itself, like firmware, and never
+    # imports the server SDK it is testing — while a *third* half, the operator, is driven
+    # over the supervisor's localhost status HTTP, which is exactly what the console does.
+
+    def _on_telehealth(self, payload):
+        """Consume one `TelehealthRobotCommand` and answer the way the protocol says."""
+        message = (payload or {}).get("message") or {}
+        action = str(message.get("action") or "")
+        output = message.get("output") or {}
+        self.telehealth.append({"action": action, "session_id": message.get("session_id", ""),
+                                "text": output.get("text", ""),
+                                "markup": output.get("markup", ""),
+                                "output": "output" in message})
+        if action == "START_SESSION":
+            self.report_telehealth_state("IN_SESSION", message.get("session_id", ""))
+        elif action == "END_SESSION":
+            # EXITING then READY — the teardown the protocol page draws (:66-79).
+            self.report_telehealth_state("EXITING", message.get("session_id", ""))
+            self.report_telehealth_state("READY", "")
+        elif action == "PLAY_OUTPUT":
+            self.log(f"🎭 speaks the operator's line: {output.get('text', '')[:60]!r}")
+        self.log(f"← telehealth {action}"
+                 + (f" session={message.get('session_id')}" if message.get("session_id") else ""))
+        self.got_telehealth.set()
+
+    def report_telehealth_state(self, state: str, session_id: str = ""):
+        """Publish a `TelehealthRobotEvent` on the activity log's `telehealth` subtopic."""
+        self.telehealth_state = state
+        self.client.publish(self.t_event("client-service-activity-log"), json.dumps(
+            {"subtopic": "telehealth",
+             "message": {"timestamp": int(time.time() * 1000), "state": state,
+                         "session_id": session_id, "action": "UPDATE_STATE",
+                         "software_version": FIRMWARE, "module_name": "virtual-moxie"}}))
+        self.log(f"→ telehealth state {state}")
+
+    def _await_telehealth(self, action: str, timeout: float | None = None):
+        """Wait for one action to arrive on `commands/telehealth`. Returns it or None."""
+        deadline = time.time() + (timeout if timeout is not None else self.timeout)
+        while time.time() < deadline:
+            for rec in self.telehealth:
+                if rec["action"] == action:
+                    return rec
+            self.got_telehealth.wait(0.25)
+            self.got_telehealth.clear()
+        self.errors.append(f"no telehealth {action} within timeout")
+        return None
+
+    def run_telehealth(self, status_url: str, line: str = "Hello from the operator.",
+                       mood: str = "happy", intensity: int = 2) -> bool:
+        """The end-to-end puppet check: an operator drives this robot from the console's
+        own seam and the robot speaks their line.
+
+        `status_url` is the supervisor's localhost status server (`http://127.0.0.1:PORT`)
+        — the same endpoint `server/moxie_server/main.py` proxies, so this exercises the
+        real verb chain rather than a test double:
+
+            enable → start → speak(mood, intensity) → GET → interrupt → end
+
+        Asserts the recovered wire at every step: `PLAY_OUTPUT` carries the operator's text
+        AND markup; `INTERRUPT` carries **no** `output` at all; the pushed `/config` really
+        did flip `moxie_mode` to `TELEHEALTH`; and the supervisor's own `/telehealth` view
+        shows the state THIS robot reported plus the operator's line in the transcript.
+        """
+        import urllib.error
+        import urllib.request
+        from urllib.parse import quote
+
+        base = status_url.rstrip("/")
+
+        def call(payload=None):
+            url = f"{base}/telehealth?device_id={quote(self.device_id)}"
+            data = json.dumps(payload).encode() if payload is not None else None
+            req = urllib.request.Request(
+                url, data=data, method="POST" if data else "GET",
+                headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    return json.loads(r.read().decode()), 200
+            except urllib.error.HTTPError as e:
+                return json.loads(e.read().decode() or "{}"), e.code
+
+        self.client.connect(self.host, self.port, 30)
+        self.client.loop_start()
+        try:
+            self.client.publish(self.t_state, json.dumps(
+                {"software_version": FIRMWARE, "state": "config"}))
+            if not self.got_config.wait(self.timeout):
+                self.errors.append("no config pushed within timeout")
+                return False
+            self.report_telehealth_state("READY")
+
+            # ASSUMPTION B1 made observable: the re-pushed config really carries the mode.
+            # Armed BEFORE the call — the supervisor publishes the new config before its
+            # HTTP reply comes back, so clearing afterwards would drop the very push we
+            # are waiting for.
+            self.got_config.clear()
+            out, code = call({"action": "enable"})
+            if code != 200 or not out.get("ok"):
+                self.errors.append(f"enable failed ({code}): {out.get('reason') or out}")
+                return False
+            if not self.got_config.wait(5.0):
+                self.errors.append("enable did not re-push /config")
+            elif (self.config_payload or {}).get("moxie_mode") != "TELEHEALTH":
+                self.errors.append(
+                    f"config moxie_mode={(self.config_payload or {}).get('moxie_mode')!r}, "
+                    "expected 'TELEHEALTH'")
+
+            out, code = call({"action": "start"})
+            started = self._await_telehealth("START_SESSION")
+            if not started:
+                return False
+            session_id = started["session_id"]
+            if not session_id:
+                self.errors.append("START_SESSION carried no session_id")
+
+            out, code = call({"action": "speak", "text": line, "mood": mood,
+                              "intensity": intensity})
+            if code != 200 or not out.get("ok"):
+                self.errors.append(f"speak failed ({code}): {out.get('reason') or out}")
+                return False
+            spoken = self._await_telehealth("PLAY_OUTPUT")
+            if not spoken:
+                return False
+            if spoken["text"] != line:
+                self.errors.append(f"PLAY_OUTPUT text {spoken['text']!r} != {line!r}")
+            if not spoken["markup"]:
+                self.errors.append("PLAY_OUTPUT carried no markup")
+            if spoken["session_id"] != session_id:
+                self.errors.append("PLAY_OUTPUT session_id does not match the session")
+
+            view, code = call()
+            if code != 200 or view.get("state") != "IN_SESSION":
+                self.errors.append(
+                    f"supervisor /telehealth state={view.get('state')!r}, expected IN_SESSION")
+            said = [t for t in (view.get("transcript") or []) if t.get("who") == "operator"]
+            if not any(t.get("text") == line for t in said):
+                self.errors.append("the operator's line is not in the supervisor transcript")
+
+            call({"action": "interrupt"})
+            cut = self._await_telehealth("INTERRUPT")
+            if cut and cut["output"]:
+                self.errors.append("INTERRUPT must carry no output")
+
+            call({"action": "end"})
+            if not self._await_telehealth("END_SESSION"):
+                return False
+            time.sleep(0.5)                     # let our EXITING → READY reports land
+            call({"action": "disable"})
+            return not self.errors
+        finally:
+            self.client.loop_stop()
+            self.client.disconnect()
+
     # -- the scripted round-trip --
     def run_smoke(self) -> bool:
         self.client.connect(self.host, self.port, 30)
@@ -450,6 +617,15 @@ def main():
                          "subscribed perception event (docs/architecture/vision.md).")
     ap.add_argument("--face-gap", type=float, default=0.0,
                     help="with --face-event: seconds to wait between events")
+    ap.add_argument("--telehealth", action="store_true",
+                    help="🎭 drive the puppet/telehealth round-trip instead of the smoke "
+                         "test: an operator enables Be Moxie over the supervisor's status "
+                         "HTTP (--status-url), starts a session, speaks a line, interrupts "
+                         "and ends — and this robot asserts the recovered wire at each step")
+    ap.add_argument("--status-url", default="http://127.0.0.1:8930",
+                    help="with --telehealth: the supervisor's localhost status server")
+    ap.add_argument("--telehealth-line", default="Hello from the operator.",
+                    help="with --telehealth: the line the operator types")
     ap.add_argument("--query", default=None,
                     help="comma-separated CloudQuery names to pull instead of the smoke "
                          "round-trip (e.g. 'schedule,mentor_behaviors')")
@@ -489,6 +665,24 @@ def main():
         for e in vm.errors:
             print("   -", e)
         sys.exit(0 if ok else 1)
+
+    if args.telehealth:
+        ok = False
+        try:
+            ok = vm.run_telehealth(args.status_url, line=args.telehealth_line)
+        except Exception as e:
+            vm.errors.append(f"exception: {e}")
+        for rec in vm.telehealth:
+            extra = f" {rec['text']!r}" if rec["text"] else ""
+            print(f"   🎭 {rec['action']}{extra}")
+        if ok:
+            print("✅ telehealth SIL OK — enable→start→speak→interrupt→end; the robot "
+                  f"spoke the operator's line and reported {vm.telehealth_state}")
+            sys.exit(0)
+        print("❌ telehealth SIL FAILED:")
+        for e in vm.errors:
+            print("   -", e)
+        sys.exit(1)
 
     if args.query:
         names = [q.strip() for q in args.query.split(",") if q.strip()]
