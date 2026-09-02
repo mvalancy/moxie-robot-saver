@@ -118,5 +118,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   `stt` profile unverified live; profiles need `MOXIE_SUPERVISOR_EXTRAS` + `--build`. In flight:
   `feat/live-e2e-validation` (criterion 6) — then promote **v0.2.0**.
 
+- **2026-09-02** — Integrated `feat/live-e2e-validation` (PR #9 → dev): today's merges are now **live-proven**
+  against the real gateway — action tags 0/3 → 3/3 (prompt-only; the tag goes *before* the sentence), the
+  shipped content module through the real runtime, and a 9-test console↔runtime round-trip with a
+  runtime-key-diffed double. **DoD criterion 6 → ~80%.** Real speech + one full talk-e2e scenario remain
+  the honest gap. Shared `sim/tests/helpers_runtime.py`. No agents in flight; all six delegated slices
+  landed today (PRs #3–#9). **Next: promote dev → main as v0.2.0.**
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
