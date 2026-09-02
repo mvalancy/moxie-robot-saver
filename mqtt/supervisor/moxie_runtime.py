@@ -140,13 +140,30 @@ class MoxieRuntime:
             def log_message(self, *a):  # silence
                 pass
 
-            def do_GET(self):
-                if self.path.split("?")[0] != "/status":
-                    self.send_response(404); self.end_headers(); return
-                body = _json.dumps(rt.status_snapshot()).encode()
-                self.send_response(200)
+            def _json_out(self, payload, code=200):
+                body = _json.dumps(payload).encode()
+                self.send_response(code)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(body)
+
+            def do_GET(self):
+                """GET /status → the console snapshot; GET /telemetry?device_id=…&limit=N
+                → that robot's stored telemetry Packets rolled up for the insights view.
+                Localhost-only (the server binds 127.0.0.1)."""
+                from urllib.parse import urlparse, parse_qs
+                u = urlparse(self.path)
+                if u.path == "/status":
+                    return self._json_out(rt.status_snapshot())
+                if u.path == "/telemetry":
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    try:
+                        limit = int((q.get("limit") or ["20"])[0])
+                    except ValueError:
+                        limit = 20
+                    out = rt.telemetry_view(device_id, limit=limit)
+                    return self._json_out(out, 200 if out.get("ok") else 404)
+                self.send_response(404); self.end_headers()
 
             def do_POST(self):
                 """Parent-console config edit: POST /config?device_id=… with a JSON body
@@ -288,6 +305,19 @@ class MoxieRuntime:
             del buf[:-50]                       # keep the last 50 events
         self._note("telemetry", f"📈 {pkt.get('event_name', 'event')}")
         return pkt
+
+    def telemetry_view(self, device_id, limit: int = 20) -> dict:
+        """The parent console's per-robot insights view (M6): the stored Packets for
+        one device, rolled up by summarize_events + the newest `limit` events.
+        Unknown device → {ok:false, error} (the HTTP layer answers 404)."""
+        robot = self.robots.get(device_id)
+        if robot is None:
+            return {"ok": False, "device_id": device_id,
+                    "error": f"unknown device_id {device_id!r}"}
+        from moxie_sdk.telemetry import summarize_events
+        summary = summarize_events(robot.extra.get("telemetry", []), limit=limit)
+        return {"ok": True, "device_id": device_id,
+                "summary": summary, "events": summary["latest"]}
 
     def update_config(self, device_id, **overrides):
         """Parent-console config edit: merge overrides (audio_volume, screen_brightness,

@@ -145,6 +145,7 @@ async function refreshLive(){
     liveDevice=null;
     box.innerHTML = `<div class="live-off">● Live state: ${f.ok?'no robot connected':'supervisor offline'}</div>`;
     if(cfgBox) cfgBox.style.display='none';
+    refreshInsights(null);
     return;
   }
   if(cfgBox) cfgBox.style.display='';
@@ -164,6 +165,32 @@ async function refreshLive(){
     return `<div class="live-hd">● Live${r.ota_reboot_required?' · <span class="warn">OTA reboot pending</span>':''}</div>
             <div class="livegrid">${rows}${ovHtml}</div>`;
   }).join('');
+  refreshInsights(liveDevice);
+}
+
+// telemetry insights (M6): the Packet events the runtime stored for this robot
+async function refreshInsights(deviceId){
+  const box=$('#robot-insights'); if(!box) return;
+  if(!deviceId){ box.innerHTML='<div class="live-off">📈 Insights: no robot connected</div>'; return; }
+  let t;
+  try{ t=await api(`/local/robots/${encodeURIComponent(deviceId)}/telemetry`,{auth:false}); }
+  catch(e){ box.innerHTML='<div class="live-off">📈 Insights: supervisor offline</div>'; return; }
+  if(!t.ok){
+    box.innerHTML=`<div class="live-off">📈 Insights: ${escapeHtml(t.error||'unavailable')}</div>`;
+    return;
+  }
+  const hd=`<div class="insights-hd">📈 Insights · ${t.count} event${t.count===1?'':'s'}</div>`;
+  if(!t.count){
+    box.innerHTML=hd+'<div class="live-off">No events yet — Moxie hasn\'t reported any activity.</div>';
+    return;
+  }
+  const counts=(t.by_event||[]).map(c=>
+    `<div class="k"><span>${escapeHtml(c.event)}</span><b>${c.count}</b></div>`).join('');
+  const rows=(t.events||[]).map(e=>{
+    const when=e.recorded_at?new Date(e.recorded_at*1000).toLocaleString():'—';
+    return `<div class="ev"><span>${escapeHtml(when)}</span> <b>${escapeHtml(e.event_name)}</b></div>`;
+  }).join('');
+  box.innerHTML=`${hd}<div class="livegrid">${counts}</div><div class="evlog">${rows}</div>`;
 }
 function prefillConfig(r){
   const ov=r.config_overrides||{};

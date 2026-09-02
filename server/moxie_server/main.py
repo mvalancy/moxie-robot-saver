@@ -498,6 +498,29 @@ async def set_robot_config(device_id: str, request: Request):
             "ok": False, "error": "supervisor not reachable", "detail": str(e)})
 
 
+@app.get("/local/robots/{device_id}/telemetry")
+def robot_telemetry(device_id: str, limit: int = 20):
+    """Parent-console insights (M6): the robot's stored telemetry Packets, fetched from
+    the supervisor's GET /telemetry and normalized for the UI (counts by event + the
+    newest events). Server-side call so the browser has no CORS issue; graceful
+    {ok:false} when the supervisor is down or the device is unknown."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_telemetry
+    url = (STATUS_URL.rsplit("/status", 1)[0] +
+           f"/telemetry?device_id={quote(device_id)}&limit={int(limit)}")
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return normalize_telemetry(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode() or "{}")
+        return JSONResponse(status_code=e.code, content=normalize_telemetry(body))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_telemetry(
+            {"ok": False, "device_id": device_id, "error": "supervisor not reachable",
+             "detail": str(e)}))
+
+
 @app.get("/local/pairing/qr.png")
 def pairing_qr_png(payload: str, ec: str = "l"):
     # The original app rendered with ZXing EC level L (low density) because Moxie's

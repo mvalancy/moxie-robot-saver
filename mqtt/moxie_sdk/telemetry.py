@@ -62,3 +62,42 @@ def parse_packet(payload) -> dict:
     import json
     data = payload if isinstance(payload, dict) else json.loads(payload)
     return {k: data[k] for k in _PACKET_FIELDS if k in data}
+
+
+def _recorded_at(value):
+    """Coerce a Packet's `recorded_at` to a number; None when absent/unparseable."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def summarize_events(packets, limit: int = 20) -> dict:
+    """Roll a robot's stored Packets up into the parent console's insights view.
+
+    Pure + tolerant of partial packets (a Packet may be missing `event_name` or
+    `recorded_at`; anything that isn't a dict is skipped). Returns:
+      count     — how many packets were summarized
+      by_event  — {event_name: how many}
+      last_seen — {event_name: newest recorded_at seen} (absent when never stamped)
+      latest    — the newest `limit` packets, newest-first
+
+    "Newest" is arrival order (the runtime appends as packets land), not a sort on
+    `recorded_at` — device clocks lie and the field is optional.
+    """
+    items = [p for p in (packets or []) if isinstance(p, dict)]
+    by_event: dict[str, int] = {}
+    last_seen: dict[str, float] = {}
+    for p in items:
+        name = str(p.get("event_name") or "event")
+        by_event[name] = by_event.get(name, 0) + 1
+        ts = _recorded_at(p.get("recorded_at"))
+        if ts is not None and (name not in last_seen or ts > last_seen[name]):
+            last_seen[name] = ts
+    n = max(0, int(limit))
+    return {"count": len(items), "by_event": by_event, "last_seen": last_seen,
+            "latest": list(reversed(items))[:n]}

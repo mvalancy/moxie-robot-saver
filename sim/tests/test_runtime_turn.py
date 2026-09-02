@@ -339,3 +339,68 @@ def test_handle_zmq_real_protobuf_frame_drives_stt():
     assert got == "pb 4b"
     msgs = [pl for (t, pl) in rt.client.published if t == f"/devices/{did}/commands/zmq"]
     assert msgs[-1]["speech"] == "pb 4b" and msgs[-1]["uuid"] == "u5"
+
+
+def test_telemetry_view_summarizes_stored_packets():
+    """M6 insights: the runtime's per-robot telemetry view (what GET /telemetry serves)
+    rolls the ingested Packets up by event and returns them newest-first."""
+    from moxie_sdk.telemetry import build_packet
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    did = "d_view"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    for name, ts in (("wake", 100), ("said", 200), ("wake", 300)):
+        rt.ingest_telemetry(did, json.dumps(
+            build_packet(name, b"", moxie_id=did, recorded_at=ts)))
+    view = rt.telemetry_view(did)
+    assert view["ok"] and view["device_id"] == did
+    assert view["summary"]["count"] == 3
+    assert view["summary"]["by_event"] == {"wake": 2, "said": 1}
+    assert view["summary"]["last_seen"]["wake"] == 300
+    assert [e["event_name"] for e in view["events"]] == ["wake", "said", "wake"]
+
+
+def test_telemetry_view_honors_limit_and_unknown_device():
+    from moxie_sdk.telemetry import build_packet
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    did = "d_lim"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    for i in range(4):
+        rt.ingest_telemetry(did, json.dumps(build_packet(f"e{i}", b"", moxie_id=did)))
+    assert len(rt.telemetry_view(did, limit=2)["events"]) == 2
+    missing = rt.telemetry_view("d_nope")
+    assert missing["ok"] is False and "unknown device_id" in missing["error"]
+
+
+def test_status_server_serves_status_and_telemetry():
+    """The localhost status server answers GET /status and GET /telemetry (404 for an
+    unknown device) — the endpoints the parent console reads."""
+    import socket
+    import urllib.error
+    import urllib.request
+    from moxie_sdk.telemetry import build_packet
+
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    did = "d_http"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    rt.ingest_telemetry(did, json.dumps(build_packet("wake", b"", moxie_id=did,
+                                                     recorded_at=42)))
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+    rt._start_status_server(port)
+
+    def _get(path):
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as r:
+            return json.loads(r.read().decode())
+
+    assert _get("/status")["ok"] is True
+    view = _get(f"/telemetry?device_id={did}&limit=5")
+    assert view["ok"] and view["summary"]["by_event"] == {"wake": 1}
+    assert view["events"][0]["recorded_at"] == 42
+    try:
+        _get("/telemetry?device_id=d_missing")
+        assert False, "unknown device should 404"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
+        assert json.loads(e.read().decode())["ok"] is False
