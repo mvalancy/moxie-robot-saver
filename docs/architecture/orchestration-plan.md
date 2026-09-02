@@ -168,5 +168,15 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   `sim/test_audio.mjs` (encoder-parity + mutation-checked) in the fast tier; +3 Playwright tests. Criterion 1's
   last client-side link is done; what remains is real speech (`feat/live-talk-e2e`, in flight).
 
+- **2026-09-02** — Integrated `feat/live-talk-e2e` (PR #12 → dev): **real speech is live-proven end to end
+  through the real runtime** — Piper "child" audio → zmqSTT protobuf frames → whisper → turn → spec
+  `RemoteChatResponse` → Piper Amy `CloudTTSResponse` → whisper re-hears it (overlap 1.00), with 0 gateway
+  calls (a global) and with a real completion. Anti-tone guard makes the placeholder voice fail it. A degraded
+  gateway now skips rather than false-greens. Also fixed a latent env-dependent test. **Findings filed as
+  slices:** (1) **the brain is the bottleneck** — 45 s healthy / 18 s degraded vs the robot's ~20 s reprompt
+  window, voice legs ≈1.5 s → background inference + filler (audit, Fork A pattern) is now the top WS-B item;
+  (2) Piper reads emoji aloud → `strip_markup` should drop them (S); (3) live tests read `mqtt/.env` from their
+  own tree → skip in worktrees (harness S). No agents in flight.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
