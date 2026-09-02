@@ -25,6 +25,16 @@ robot-cloud layer builds on its groundwork:
   enforcing it on the MQTT path; our enforcement, the pending state and the minimal child-free config
   are ours — [`mqtt/supervisor/moxie_runtime.py`](mqtt/supervisor/moxie_runtime.py)`::permits` +
   [`mqtt/moxie_sdk/cloud_config.py`](mqtt/moxie_sdk/cloud_config.py)`::build_unpaired_cloud_config`,
+- the **face cache-buster** — the observation that Moxie's Unity layer keeps a *composited face
+  texture keyed on the child's `id`*, so changing a child's appearance must also change that id or the
+  robot serves a stale picture (`views.py::face_edit`, which writes a fresh `uuid4` there on save).
+  Our corpus never captured that; theirs is a server that drives real robots, so we take the mechanism
+  as **field-proven** and say so in the code. Ours is deterministic rather than random —
+  [`mqtt/moxie_sdk/faces.py`](mqtt/moxie_sdk/faces.py)`::face_child_id`, a UUIDv5 over the chosen
+  layers, so an idempotent re-push does not churn the child's identity. **Their ~60-entry asset table
+  (`content/data.py::MOXIE_CUSTOMIZATIONS`) was deliberately not copied**: our catalog carries only the
+  options our own recovered documents cite (the 14 `MoxieCustomizationType` slots, and the
+  `EyeColor`/`FaceColor` enums), so we ship twelve options and no invented ids,
 - the **response action-tag** convention — `<exit>` / `<sleep>` / `<launch:MOD:CID>` written inline by the
   model and lifted into real robot actions (`volley.py::ingest_action_tags`); our own implementation lives
   in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py).
