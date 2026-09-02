@@ -28,6 +28,28 @@ class Conversation:
     max_history: int = 40
     max_volleys: int = 40
     code: str = ""                       # optional Python hooks (pre/post_process, …)
+    memory: dict = field(default_factory=dict)   # see `memory_namespace` below
+
+    # ---- long-term memory (the contract's persist_data / session.summarize) ----
+    # OpenMoxie's MemoryChat drives this from a `code` string
+    # (`complete_handler` → `session.summarize()` → `volley.persist_data`). We do not
+    # execute module `code` (sandboxing, see content_app.py), so the same behaviour is
+    # declared instead:
+    #
+    #     "memory": {"namespace": "memory_chat", "summarize": true, "min_volleys": 2,
+    #                "max_items": 5, "prompt": "<optional override instruction>"}
+    #
+    # `namespace` alone is enough to make `{{ volley.persist_data.<ns>.* }}` resolve.
+
+    @property
+    def memory_namespace(self) -> str:
+        """The `persist_data` namespace this conversation reads/writes ("" = none)."""
+        return str((self.memory or {}).get("namespace") or "")
+
+    @property
+    def summarizes(self) -> bool:
+        """True when this conversation writes a summary when it ends."""
+        return bool(self.memory_namespace) and bool((self.memory or {}).get("summarize", True))
 
     @classmethod
     def from_dict(cls, d: dict) -> "Conversation":
@@ -43,6 +65,7 @@ class Conversation:
             max_history=int(d.get("max_history", 40)),
             max_volleys=int(d.get("max_volleys", 40)),
             code=str(d.get("code", "")),
+            memory=dict(d.get("memory") or {}),
         )
 
 

@@ -18,10 +18,10 @@ import json, re, sys, os, threading, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from moxie_sdk.types import (Turn, Reply, ReplyChunk, RobotContext,  # noqa
-                             ChildProfile, Action, ResultCode)
+                             ChildProfile, Action, ActionType, ResultCode)
 from moxie_sdk.wire import (build_chat_response, build_activity_response,  # pure encoders
                             parse_mentor_behavior)
-from moxie_sdk.store import JsonStore                    # durable per-robot JSON store
+from moxie_sdk.store import JsonStore, MemoryStore       # durable per-robot JSON store
 from moxie_sdk.filler import pick_filler                 # "let me think" lines + markup
 from moxie_sdk import safety as safety_seam              # InputSafety classifier (ai-seam §2)
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
@@ -56,6 +56,13 @@ MAX_FILLERS_PER_TURN = 2
 # journal keeps rows (category + timestamp + a redacted excerpt) unless a parent explicitly
 # sets data sharing to NO_DATA, which switches it to counts only.
 SAFETY_JOURNAL_POLICY = LoggingPolicy.NO_MEDIA
+
+# Long-term memory's own LoggingPolicy default, for the same reason as the safety
+# journal's: the RobotCloudConfig we push defaults to NO_DATA, which is about what the
+# *robot uploads*. Memory is text our own server derives from turns that already reached
+# it, so it defaults to NO_MEDIA (allowed) — and a parent who explicitly sets
+# `logging_policy=NO_DATA` turns writing off entirely (reads and erase still work).
+MEMORY_POLICY = LoggingPolicy.NO_MEDIA
 
 
 class MoxieRuntime:
@@ -119,6 +126,10 @@ class MoxieRuntime:
         self._last_redirect: dict[str, str] = {}   # never the same redirect twice running
         if self.safety is None:
             print("[runtime] ⚠️  input safety is OFF (MOXIE_SAFETY=0)", flush=True)
+        # Long-term memory (content-module-contract.md → `volley.persist_data`): the app
+        # owns the store; the runtime owns the parent's privacy switch. See the memory
+        # region below.
+        self._wire_memory_policy()
 
     def _build_client(self):
         import paho.mqtt.client as mqtt
@@ -163,6 +174,110 @@ class MoxieRuntime:
             os.replace(tmp, self._memory_path(device_id))
         except Exception as e:
             print(f"[runtime] memory save failed: {e}")
+
+    # ---- long-term memory (persist_data + what a parent may read/erase) ----
+    # The *conversation history* above is the rolling transcript. This is the other
+    # memory: the durable facts a content module keeps between conversations
+    # (docs/architecture/content-module-contract.md → `volley.persist_data` /
+    # `session.summarize()`), stored by `moxie_sdk/store.py::MemoryStore`.
+    #
+    # The app owns the store (ContentApp builds one); the runtime owns two things the
+    # app cannot know: the parent's per-device privacy switch, and *when a conversation
+    # ended* — which is the only moment the whole transcript still exists.
+    #
+    # BEYOND #4 (openmoxie-feature-audit.md §4.2) says a memory a parent cannot read or
+    # erase is not acceptable on a child's device. `/memory` is that floor: GET to read
+    # what Moxie remembers with its provenance, DELETE/POST to erase a namespace or all
+    # of it. A browser UI over it is still open work.
+
+    def memory_policy(self, device_id) -> LoggingPolicy:
+        """The LoggingPolicy governing what may be *remembered* about this child — the
+        parent's explicit `logging_policy` override if set, else `MEMORY_POLICY`.
+        `NO_DATA` means no memory is written at all (reads and erase still work)."""
+        raw = (self._config_overrides.get(device_id) or {}).get("logging_policy")
+        if raw is None:
+            return MEMORY_POLICY
+        try:
+            return LoggingPolicy(int(raw))
+        except (TypeError, ValueError):
+            return MEMORY_POLICY
+
+    def _wire_memory_policy(self):
+        """Hand the app's memory store this runtime's per-device privacy gate.
+
+        Done here rather than at construction so an app built by `config.build_app()`
+        (which knows nothing about a device's config overrides) still honours them."""
+        mem = getattr(self.app, "memory", None)
+        if mem is not None and getattr(mem, "policy", None) is None:
+            try:
+                mem.policy = self.memory_policy
+            except Exception:
+                pass
+
+    def memory_store(self):
+        """The app's memory store, or a read-only view of the same files for an app
+        that has none (so `/memory` answers for any app)."""
+        mem = getattr(self.app, "memory", None)
+        if mem is not None:
+            return mem
+        return MemoryStore(self.store, policy=self.memory_policy)
+
+    def memory_view(self, device_id) -> dict:
+        """What Moxie remembers about one child, by namespace, with provenance."""
+        mem = self.memory_store()
+        view = mem.view(device_id)
+        if device_id not in self.robots and not view.get("namespaces"):
+            return {"ok": False, "device_id": device_id,
+                    "error": f"unknown device_id {device_id!r}"}
+        view.update({"ok": True, "device_id": device_id,
+                     "policy": self.memory_policy(device_id).name})
+        return view
+
+    def erase_memory(self, device_id, namespace=None) -> dict:
+        """Forget one namespace, or everything for this robot. Never policy-gated: a
+        parent must always be able to delete."""
+        removed = self.memory_store().erase(device_id, namespace)
+        self._note("memory", f"🧽 erased memory: {namespace or 'all'}")
+        print(f"[runtime] 🧽 erased memory for {device_id} "
+              f"({namespace or 'everything'}): {removed}", flush=True)
+        out = self.memory_view(device_id)
+        if not out.get("ok"):                     # erasing the last of it is still a hit
+            out = {"ok": True, "device_id": device_id, "namespaces": {}, "bytes": 0,
+                   "policy": self.memory_policy(device_id).name}
+        out["erased"] = bool(removed)
+        out["namespace"] = namespace or "all"
+        return out
+
+    # ---- end of a conversation (the contract's complete_handler moment) ----
+    def _maybe_end_conversation(self, device_id, actions):
+        """End the conversation if the answer carried an EXIT action (`<exit>`)."""
+        for a in actions or []:
+            if getattr(a, "type", None) == ActionType.EXIT:
+                return self._end_conversation(device_id, "exit", inline=True)
+        return None
+
+    def _end_conversation(self, device_id, reason: str, *, robot=None, inline=False):
+        """Tell the app a conversation finished, so it can write long-term memory.
+
+        `inline=True` when we are already on a worker thread (the turn path); otherwise
+        the work is submitted to the pool, because this can make a brain call and the
+        MQTT loop must never block on one. A failure here is logged and dropped: a
+        summary is a nice-to-have, and a child's session must not end badly for it."""
+        robot = robot or self.robots.get(device_id)
+        history = list(self.history.get(device_id) or [])
+        if robot is None or not history:
+            return None
+        def _run():
+            try:
+                self.app.on_session_end(robot, history, reason)
+            except Exception as e:
+                print(f"[runtime] app.on_session_end error: {e}", flush=True)
+        if inline:
+            return _run()
+        try:
+            return self._pool.submit(_run)
+        except RuntimeError:                      # pool already shutting down
+            return _run()
 
     def status_snapshot(self) -> dict:
         """The supervisor + robots snapshot the parent console reads (JSON). Each robot
@@ -261,7 +376,44 @@ class MoxieRuntime:
                         "fleet_config": rt.fleet_config(),
                         "config_overrides": rt._config_overrides.get(device_id, {}),
                         "config_effective": rt.effective_config(device_id)})
+                if u.path == "/memory":
+                    # BEYOND #4's floor: what Moxie remembers about this child, by
+                    # namespace, with the provenance of every entry.
+                    q = parse_qs(u.query)
+                    out = rt.memory_view((q.get("device_id") or [""])[0])
+                    return self._json_out(out, 200 if out.get("ok") else 404)
                 self.send_response(404); self.end_headers()
+
+            def _erase_memory(self, query):
+                """Erase one memory namespace (or all of it) for a device. Shared by
+                DELETE /memory and POST /memory — localhost-only like every handler."""
+                from urllib.parse import parse_qs
+                q = parse_qs(query)
+                device_id = (q.get("device_id") or [""])[0]
+                namespace = (q.get("namespace") or [""])[0]
+                if not namespace:
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length) if length else b"{}"
+                    try:
+                        body = _json.loads(raw or b"{}") or {}
+                    except Exception:
+                        body = {}
+                    namespace = body.get("namespace") or body.get("erase") or ""
+                try:
+                    out = rt.erase_memory(device_id, namespace or None)
+                    code = 200 if out.get("ok") else 404
+                except Exception as e:
+                    out, code = {"ok": False, "error": str(e)}, 400
+                return self._json_out(out, code)
+
+            def do_DELETE(self):
+                """`DELETE /memory?device_id=…[&namespace=…]` — a parent erasing what
+                Moxie remembers. No namespace erases everything for that robot."""
+                from urllib.parse import urlparse
+                u = urlparse(self.path)
+                if u.path != "/memory":
+                    self.send_response(404); self.end_headers(); return
+                return self._erase_memory(u.query)
 
             def do_POST(self):
                 """Parent-console writes.
@@ -279,6 +431,10 @@ class MoxieRuntime:
                 Localhost-only (the server binds 127.0.0.1)."""
                 from urllib.parse import urlparse, parse_qs
                 path = urlparse(self.path).path
+                if path == "/memory":
+                    # `POST /memory?device_id=…` `{"erase": "<namespace>"|"all"}` —
+                    # the same erase as DELETE, for clients that cannot send one.
+                    return self._erase_memory(urlparse(self.path).query)
                 if path not in ("/config", "/safety"):
                     self.send_response(404); self.end_headers(); return
                 device_id = (parse_qs(urlparse(self.path).query).get("device_id") or [""])[0]
@@ -387,6 +543,7 @@ class MoxieRuntime:
         robot = self.robots.pop(device_id, None)
         if robot:
             print(f"[runtime] robot disconnected: {device_id}")
+            self._end_conversation(device_id, "disconnect", robot=robot)
             try:
                 self.app.on_disconnect(robot)
             except Exception:
@@ -646,6 +803,11 @@ class MoxieRuntime:
         command = rcr.get("command", "prompt")
         backend = rcr.get("backend", "router")
         event_id = rcr.get("event_id")
+        # A module switch ends the previous conversation — the `complete_handler`
+        # moment for whatever was running before (see `_end_conversation`).
+        new_module = rcr.get("module_id")
+        if new_module and robot.module_id and new_module != robot.module_id:
+            self._end_conversation(device_id, "module_switch", robot=robot)
         robot.module_id = rcr.get("module_id") or robot.module_id
         robot.content_id = rcr.get("content_id") or robot.content_id
 
@@ -763,6 +925,9 @@ class MoxieRuntime:
                            dialog_act=reply.dialog_act, chunk_num=chunk,
                            is_completed=None if chunk is None else True)
         self._maybe_synthesize(device_id, markup, event_id, chunk_num=chunk or 0)
+        # `<exit>` in the model's own line (or a handler's) ended the activity: this
+        # worker is already off the MQTT loop, so summarize inline.
+        self._maybe_end_conversation(device_id, reply.actions)
 
     def _speak_filler(self, device_id, event_id, seq, state):
         """The budget expired with the brain still thinking → say something kind now.
@@ -811,6 +976,7 @@ class MoxieRuntime:
         state = {"lock": threading.Lock(), "done": False, "chunk": 0, "ans": 0,
                  "fillers": 0, "gen": 0, "timer": None}
         said, closed, failed = [], False, None
+        acts: list = []                 # every action the stream asked for (e.g. <exit>)
         self._arm_filler(device_id, event_id, seq, state)
         try:
             for chunk in stream:
@@ -847,6 +1013,7 @@ class MoxieRuntime:
                                                        final, ann=a)
                             if chunk.text:
                                 said.append(chunk.text)
+                            acts += list(getattr(chunk, "actions", None) or [])
                 if stale:
                     self._note("chat", f"⏭️  cancelled a stale stream for {device_id}")
                     print(f"[runtime] ⏭️  turn {seq} superseded on {device_id}; "
@@ -890,6 +1057,7 @@ class MoxieRuntime:
         self._note("chat", f"💬 '{speech[:30]}' → '{text[:40]}'")
         print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{text[:60]}' "
               f"({state['chunk']} chunk(s))", flush=True)
+        self._maybe_end_conversation(device_id, acts)
 
     def _safe_respond(self, turn):
         try:
