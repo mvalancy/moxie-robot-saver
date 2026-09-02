@@ -132,6 +132,37 @@ browser at all and carry the hermetic suite CI actually runs.
   buy a second voice call). The audio assertion is spectral flatness, not sample rate:
   `ToneSynthesizer` also emits 22050 Hz mono, and the creds-free guard in the same file
   proves the tone fails the check, so a green cannot mean "the standby spoke".
+- **`test_e2e_actions_to_robot.py`** — the last hop of the action contract, which nothing
+  had asserted: `test_action_tags.py` reads `response_actions` back off the `FakeClient`
+  that recorded the *publish*, so it proves the server's half. Here the real
+  `MoxieRuntime` and the real `sim/virtual_moxie.py` are wired through
+  `helpers_runtime.loopback()`, the ROBOT starts the turn, and the assertions are on what
+  the robot's own `_on_message` decoded — a `launch` with `output_type`/`module_id`/
+  `content_id`, an `exit`, no stray action on an ordinary answer, and the same through
+  `WebhookApp` (whose bogus action type is dropped, not forwarded). Hermetic and instant:
+  `LLMApp`'s `client=` seam takes a canned completion, so there is no broker, no network
+  and no `openai` import. Its docstring records what it deliberately does **not** claim —
+  no SIM client *acts* on an action yet (neither `virtual_moxie.py` nor `sim/web/bridge.js`
+  reads `response_actions`), which is a live DoD criterion-4 gap.
+- **`test_ci_workflows.py`** — the CI harness, guarded as code. Written after four PRs
+  (#43–#46) were merged on checks that had not concluded, leaving `dev` red for hours while
+  the PR-side runs — which had failed identically — were believed green. It asserts that
+  `sim/ci/*.yml` is byte-identical to `.github/workflows/*.yml` in both directions, that
+  the fast tier's push and pull_request cover the same branches and carry **no** `if:`, no
+  `paths:` filter and no cancelling `concurrency` (so a green PR and a red push can never
+  be legitimate), that at least one fast-tier pytest runs the WHOLE suite (playbook rule
+  9), that the hermetic suite runs *before* the browser install so a failure beats a
+  two-minute merge gate, and that both tiers install the same hermetic test deps —
+  including the console's own `server/requirements.txt`, without which all 55
+  `test_console_roundtrip.py` tests silently `importorskip` in CI, as they had been doing.
+- **`test_live_telehealth_voice.py`** — 🎭 the operator's line in Moxie's *real* mouth.
+  `run_smoke.sh --telehealth` proves the recovered wire but speaks with the zero-dep tone,
+  so what the robot played was a beep. This boots the same appliance `helpers_stack.py`
+  builds with the gateway voice, runs one session through the supervisor's status HTTP (the
+  seam the console proxies), and asserts the `CloudTTSResponse` the robot received is real
+  22050 Hz speech — `helpers_audio.SPEECH_FLATNESS_FLOOR`, the shared tone/speech line —
+  and that the session spent **exactly one** gateway call (no brain, no ears, and
+  `INTERRUPT` must not re-synthesize).
 - **Live tests** (`test_live_gateway.py`, `test_live_action_tags.py`,
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the

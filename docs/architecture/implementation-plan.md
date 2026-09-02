@@ -344,6 +344,26 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   a child finishes every time is demoted below one they have never seen — variety by design, but it means
   "what they love" cannot currently come back the same week.
 
+- **Integration evidence (2026-09-02, post-merges).** The whole stack exercised on `dev` after PRs
+  #43–#48 through the real built backend. Green: `sim/run_smoke.sh` (`✅ SIL round-trip OK`, 🔊 50934 B
+  @ 22050 Hz), `--telehealth` (`✅ telehealth SIL OK — enable→start→speak→interrupt→end`),
+  `sim/run_scenarios.sh` (`✅ SIL scenarios OK — 2/2`), `sim/run_acl_proof.sh` (18/18 against real
+  `eclipse-mosquitto:2.0.20`), `python -m build` (0.7.0 sdist+wheel, the wheel carrying the new
+  `moxie_sdk/face_assets.json`). **Live, 5 gateway calls:** one child turn on all three gateway paths —
+  ears `openai-stt (stt-whisper)` heard `"Hi Moxie, can you tell me a joke about a robot?"` at overlap
+  **1.00**, brain `graphling-medium` answered, voice `openai-voice` spoke 213852 B @ 22050 Hz — and one
+  telehealth operator line spoken by `piper-amy` at spectral flatness **2.32e-02** (tone ≈ 3e-12).
+  **Four gaps this pass found and did not fix:** (a) *no SIM client acts on `response_actions`* —
+  the actions now provably reach the robot (`sim/tests/test_e2e_actions_to_robot.py`), but neither
+  `sim/virtual_moxie.py` nor `sim/web/bridge.js` reads the field, so nothing launches a module or exits on
+  a cloud action; (b) *the browser SIM never publishes `client-service-activity-log` at all* — no
+  `subtopic` appears in `bridge.js`, so it reports no telehealth `RobotState` (§3.9's robot→cloud half),
+  no `query`, no `mentor_behaviors`, and the two SIM clients are therefore **not** interchangeable in the
+  robot→cloud direction that DoD criterion 4 claims; (c) *`WebhookApp` does not strip own-tags* — an
+  external brain that writes `<launch:…>` in its `text` has it spoken aloud, because tag parsing lives in
+  `LLMApp`/`ContentApp` and not on the `Reply` boundary; (d) *the brain took 33.8 s* on the live turn
+  (filler + streaming cover it, but the gateway's own latency remains the ceiling on criterion 1).
+
 ## DoD progress (audited 2026-09-02, at v0.7.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
 
 | # | Criterion | Status | Notes |
