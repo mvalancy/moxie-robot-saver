@@ -9,7 +9,10 @@ import sys
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "server"))
 
-from moxie_server.fleet import normalize_fleet, normalize_robot, robot_summary  # noqa: E402
+from moxie_server.fleet import (  # noqa: E402
+    event_counts, normalize_event, normalize_fleet, normalize_robot,
+    normalize_telemetry, robot_summary,
+)
 
 
 def _snapshot():
@@ -60,3 +63,55 @@ def test_normalize_robot_coerces_and_defaults():
 def test_robot_summary_flags_ota_and_falls_back():
     assert "OTA reboot pending" in robot_summary({"ota_reboot_required": True})
     assert robot_summary({}) == "connected"         # nothing known → a sane default
+
+
+# --- telemetry / insights view (M6) ---
+
+def _telemetry():
+    return {
+        "ok": True, "device_id": "d_abc",
+        "summary": {"count": 3, "by_event": {"wake": 2, "said": 1},
+                    "last_seen": {"wake": 300, "said": 200}},
+        "events": [
+            {"event_name": "wake", "recorded_at": 300, "moxie_session_id": "s1",
+             "model": "Event"},
+            {"event_name": "said", "recorded_at": 200, "moxie_session_id": "s1"},
+        ],
+    }
+
+
+def test_normalize_telemetry_full_payload():
+    t = normalize_telemetry(_telemetry())
+    assert t["ok"] and t["device_id"] == "d_abc" and t["count"] == 3 and t["error"] is None
+    assert t["by_event"] == [{"event": "wake", "count": 2, "last_seen": 300},
+                             {"event": "said", "count": 1, "last_seen": 200}]
+    assert t["events"][0] == {"event_name": "wake", "recorded_at": 300,
+                              "session_id": "s1", "model": "Event"}
+
+
+def test_normalize_telemetry_no_events_yet():
+    t = normalize_telemetry({"ok": True, "device_id": "d1",
+                             "summary": {"count": 0, "by_event": {}, "last_seen": {}},
+                             "events": []})
+    assert t["ok"] and t["count"] == 0 and t["by_event"] == [] and t["events"] == []
+
+
+def test_normalize_telemetry_error_and_none_are_safe():
+    down = normalize_telemetry(None)
+    assert down["ok"] is False and down["count"] == 0 and down["error"]
+    unknown = normalize_telemetry({"ok": False, "device_id": "d_x",
+                                   "error": "unknown device_id 'd_x'"})
+    assert unknown["ok"] is False and unknown["error"] == "unknown device_id 'd_x'"
+    assert unknown["events"] == [] and unknown["by_event"] == []
+
+
+def test_event_counts_sorted_by_frequency_then_name():
+    rows = event_counts({"by_event": {"b": 1, "a": 1, "c": 5}, "last_seen": {"c": 9}})
+    assert [r["event"] for r in rows] == ["c", "a", "b"]     # count desc, then name
+    assert rows[0]["last_seen"] == 9 and rows[1]["last_seen"] is None
+
+
+def test_normalize_event_tolerates_a_partial_packet():
+    e = normalize_event({})
+    assert e["event_name"] == "event" and e["recorded_at"] is None and e["session_id"] == ""
+    assert normalize_event({"recorded_at": "77"})["recorded_at"] == 77

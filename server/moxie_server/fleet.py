@@ -77,3 +77,46 @@ def normalize_fleet(snapshot: Optional[dict]) -> dict:
         "recent": list(snap.get("recent") or [])[-60:],
         "error": None if ok else (snap.get("error") or "supervisor not reachable"),
     }
+
+
+# --- telemetry / insights view (M6) -------------------------------------------------
+# The runtime's GET /telemetry returns {ok, device_id, summary, events}; the console
+# wants a sorted count table + tidy event rows. Pure, so it unit-tests here.
+
+def event_counts(summary: Optional[dict]) -> list:
+    """summary{by_event,last_seen} → render-ready rows, most frequent first
+    (ties broken by name so the table doesn't jitter between refreshes)."""
+    s = summary or {}
+    by = s.get("by_event") or {}
+    seen = s.get("last_seen") or {}
+    rows = [{"event": str(k), "count": int(v or 0), "last_seen": _num(seen.get(k))}
+            for k, v in by.items()]
+    rows.sort(key=lambda r: (-r["count"], r["event"]))
+    return rows
+
+
+def normalize_event(e: Optional[dict]) -> dict:
+    """One stored Packet → the console's event row (tolerates a partial packet)."""
+    e = e or {}
+    return {
+        "event_name": str(e.get("event_name") or "event"),
+        "recorded_at": _num(e.get("recorded_at")),
+        "session_id": e.get("moxie_session_id") or "",
+        "model": e.get("model"),
+    }
+
+
+def normalize_telemetry(payload: Optional[dict]) -> dict:
+    """Runtime `/telemetry` response → the console insights shape. Tolerates a
+    None/error payload (supervisor down, unknown device) with ok=False + an empty view."""
+    p = payload or {}
+    ok = bool(p.get("ok"))
+    summary = p.get("summary") or {}
+    return {
+        "ok": ok,
+        "device_id": p.get("device_id"),
+        "count": int(summary.get("count") or 0) if ok else 0,
+        "by_event": event_counts(summary) if ok else [],
+        "events": [normalize_event(e) for e in (p.get("events") or [])] if ok else [],
+        "error": None if ok else (p.get("error") or "supervisor not reachable"),
+    }
