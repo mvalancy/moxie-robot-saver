@@ -156,3 +156,30 @@ def test_decode_cloud_tts_accepts_json_string_and_partial():
     assert got["audio"] == b"abc" and got["event_id"] == "e6"
     empty = decode_cloud_tts_response({})                 # missing fields → safe defaults
     assert empty["audio"] == b"" and empty["sample_rate"] == 24000 and empty["marks"] == []
+
+
+# --- built-in zero-dep tone voice ---
+
+def test_tone_synth_produces_deterministic_pcm():
+    from moxie_sdk.tts import ToneSynthesizer
+    s = ToneSynthesizer(sample_rate=22050)
+    a = s.synthesize("hello there friend")
+    assert isinstance(a, bytes) and len(a) > 0 and len(a) % 2 == 0   # 16-bit PCM
+    assert s.synthesize("hello there friend") == a                  # deterministic
+    assert s.name == "tone" and s.sample_rate == 22050
+
+
+def test_tone_synth_length_scales_with_text_and_is_bounded():
+    from moxie_sdk.tts import ToneSynthesizer
+    s = ToneSynthesizer()
+    short, long = len(s.synthesize("hi")), len(s.synthesize("hi " * 50))
+    assert long > short                                             # longer text → more audio
+    huge = len(s.synthesize("word " * 10000))
+    assert huge <= 2 * int(s.sample_rate * s._max_ms / 1000)        # capped at max_ms
+
+
+def test_tone_synth_through_cloud_tts():
+    from moxie_sdk.tts import ToneSynthesizer
+    resp = synthesize_cloud_tts(ToneSynthesizer(), '<mark name="cmd:x"/>Hi', event_id="t1")
+    got = decode_cloud_tts_response(resp)
+    assert got["audio"] and got["sample_rate"] == 22050 and got["event_id"] == "t1"

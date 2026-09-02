@@ -36,10 +36,11 @@ FIRMWARE = "24.10.803"           # the analyzed build; robot reports this in /st
 
 class VirtualMoxie:
     def __init__(self, host: str, port: int, device_id: str | None = None,
-                 timeout: float = 15.0, verbose: bool = True):
+                 timeout: float = 15.0, verbose: bool = True, expect_tts: bool = False):
         self.host, self.port, self.timeout = host, port, timeout
         self.device_id = device_id or f"d_{uuid.uuid4()}"
         self.verbose = verbose
+        self.expect_tts = expect_tts        # also assert a CloudTTSResponse (audio) arrives
         self.got_config = threading.Event()
         self.got_reply = threading.Event()
         self.got_tts = threading.Event()
@@ -145,6 +146,15 @@ class VirtualMoxie:
             if not text:
                 self.errors.append("remote_chat reply had empty output.text")
                 return False
+
+            # 5) (optional) assert the server voice reached us as audio on /commands/tts
+            if self.expect_tts:
+                if not self.got_tts.wait(self.timeout):
+                    self.errors.append("expected a CloudTTSResponse (tts) but none arrived")
+                    return False
+                if not (self.spoke and self.spoke.get("audio")):
+                    self.errors.append("tts arrived but carried no audio")
+                    return False
             return True
         finally:
             self.client.loop_stop()
@@ -208,9 +218,12 @@ def main():
     ap.add_argument("--loop-seconds", type=float, default=0.0,
                     help="with --scenario: replay every N seconds (0 = once, for the demo stack)")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--expect-tts", action="store_true",
+                    help="also assert a CloudTTSResponse (server voice audio) arrives")
     args = ap.parse_args()
 
-    vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet)
+    vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet,
+                      expect_tts=args.expect_tts)
 
     if args.scenario:
         with open(args.scenario) as fh:

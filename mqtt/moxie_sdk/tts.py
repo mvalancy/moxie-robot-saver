@@ -136,6 +136,34 @@ class PiperSynthesizer(Synthesizer):
             return False
 
 
+class ToneSynthesizer(Synthesizer):
+    """A built-in, zero-dependency placeholder 'voice': a deterministic 16-bit PCM tone
+    shaped to the text length (short fade in/out, no clicks). NOT speech — it lets the
+    SIM's audio path work out of the box with no model, network, or extra deps (demos,
+    CI, the default before Piper/gateway is configured). Real speech is `PiperSynthesizer`
+    (offline) or `OpenAIVoiceSynthesizer` (gateway). Selected with MOXIE_TTS=tone."""
+    name = "tone"
+
+    def __init__(self, sample_rate: int = 22050, freq: float = 330.0,
+                 ms_per_char: int = 55, min_ms: int = 200, max_ms: int = 4000):
+        self.sample_rate = sample_rate
+        self._freq, self._ms_per_char = freq, ms_per_char
+        self._min_ms, self._max_ms = min_ms, max_ms
+
+    def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
+        import math
+        from array import array
+        ms = min(self._max_ms, max(self._min_ms, len(text or "") * self._ms_per_char))
+        n = int(self.sample_rate * ms / 1000)
+        buf = array("h", bytes(2 * n))
+        amp, fade = 12000, 200
+        w = 2 * math.pi * self._freq / self.sample_rate
+        for i in range(n):
+            env = min(1.0, i / fade, (n - i) / fade)     # fade edges to avoid clicks
+            buf[i] = int(amp * env * math.sin(w * i))
+        return buf.tobytes()
+
+
 def make_piper_synthesizer(model_path: str, config_path: Optional[str] = None,
                            *, voice_fn=None, **kw) -> Optional[Synthesizer]:
     """A PiperSynthesizer when a model is configured and Piper is installed (or a
