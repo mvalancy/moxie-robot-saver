@@ -303,6 +303,80 @@
   var ttsQueue = [], ttsPlaying = null, speaking = false, speakingInfo = null;
   var gestureArmed = false, cloudVoice = false;
 
+  /* ---- chunk ordering: a property of the design, not of the timing ----------
+   * One streamed turn arrives as several CloudTTSResponses sharing an `event_id`,
+   * numbered by `chunk_num`, and a client MUST start them in that order — a child who
+   * hears the end of a sentence before its middle is holding a broken toy
+   * (docs/architecture/sim-as-a-client.md §"chunks").
+   *
+   * Sorting the QUEUE is not enough, and that was the bug: the queue only holds what is
+   * *waiting*. With ~0.4 s chunks and one message per round trip, chunk 0 could finish
+   * and empty the queue before chunk 1 landed; chunk 2 — alone in the queue and so
+   * "first" — then started ahead of it (recorded order [0,2,1], CI run 33632125915).
+   * Whether that happened was pure timing: the same code passed on a slower box.
+   *
+   * So the PLAYER owns the order, not the queue. It remembers the utterance being
+   * assembled — which event it is and which chunk_num must come next — and starts a
+   * chunk only when its turn has come, even while sitting completely idle:
+   *
+   *   ORDERING RULE  within one `event_id`, chunk n+1 starts only after chunk n has
+   *                  started, and an event's first chunk is chunk_num 0. A chunk that
+   *                  arrives ahead of its turn WAITS, however idle the player is.
+   *   GAP RULE       the wait is bounded. If the chunk it is waiting for has not
+   *                  arrived TTS_GAP_MS later, that chunk is written off as lost and
+   *                  the lowest chunk in hand starts instead — a skipped sentence beats
+   *                  a robot that stops talking. A chunk that turns up after its slot
+   *                  has passed (a duplicate, or one already written off) is dropped as
+   *                  `late` rather than played out of turn, so the order chunks are
+   *                  STARTED in is always ascending, by construction.
+   *   EVENT RULE     an event stays current for TTS_EVENT_MS after its last chunk
+   *                  drained, then closes: the same event_id seen later is a NEW
+   *                  utterance (a replayed session re-sends the very same ids and must
+   *                  not be silenced by the rule above). A chunk of a DIFFERENT event
+   *                  closes the current utterance at once — events stay FIFO, and
+   *                  whatever is still queued for the old one is stale.
+   *
+   * A payload with no `event_id` is not part of a stream at all: it is its own
+   * one-off utterance and plays FIFO, under no ordering constraint. */
+  var TTS_GAP_MS = 1200;        // how long a missing chunk is waited for
+  var TTS_EVENT_MS = 5000;      // how long an idle event stays the current utterance
+  var utter = null;             // {eventId, next, idle} — the utterance being assembled
+  var gapTimer = 0, gapFilled = false;
+
+  function clearGap() { if (gapTimer) { clearTimeout(gapTimer); gapTimer = 0; } }
+
+  // The utterance still being assembled, or null once it has gone stale (EVENT RULE).
+  function openUtterance() {
+    if (utter && utter.idle && (Date.now() - utter.idle) > TTS_EVENT_MS) utter = null;
+    return utter;
+  }
+
+  // Has this queued chunk's turn come? (ORDERING RULE)
+  function startable(item) {
+    var d = item.dec, u = openUtterance();
+    if (!d.eventId) return true;                       // unlabelled → not part of a stream
+    if (u && u.eventId === d.eventId) return d.chunkNum <= u.next;
+    return d.chunkNum === 0;                           // a new event starts at its first chunk
+  }
+
+  // The utterance is over; anything still queued for it is stale (EVENT RULE).
+  function flushEvent(eventId) {
+    for (var i = ttsQueue.length - 1; i >= 0; i--)
+      if (ttsQueue[i].dec.eventId === eventId)
+        ttsQueue.splice(i, 1)[0].resolve({ played: false, reason: "superseded" });
+  }
+
+  // Nothing may start yet: wait a bounded moment for the chunk we are missing, then
+  // give up on it and play what we hold (GAP RULE). Armed only while chunks are queued.
+  function armGap() {
+    if (gapTimer || !ttsQueue.length) return;
+    gapTimer = setTimeout(function () {
+      gapTimer = 0;
+      if (!ttsPlaying) gapFilled = true;
+      ttsPump();
+    }, TTS_GAP_MS);
+  }
+
   /* Loudest mouth-open reached during the CURRENT cloud-TTS utterance, reset when one
    * starts and left standing after it ends (so it can be read afterwards).
    *
@@ -322,14 +396,17 @@
    * playback instead: which event it was, how many chunks it played and in what
    * chunk_num order, and the deepest the queue ever got behind the chunk playing.
    *
-   * Reset on the false->true speaking edge (seeded with whatever is already waiting,
-   * so chunks that piled up while the audio context was still suspended still count),
-   * updated as chunks are enqueued and started, and left frozen when playback ends —
-   * nothing outside a live utterance touches it. Read via `lastPlaybackStats()`. */
+   * Reset when a NEW utterance starts — a chunk of a different event — and NOT merely
+   * on the false->true `speaking` edge: a chunked utterance legitimately falls silent
+   * between chunks while it waits for the next one to arrive, and the record has to
+   * survive that gap or the three chunks look like three utterances. Seeded with
+   * whatever is already waiting, so chunks that piled up while the audio context was
+   * still suspended still count; updated as chunks are enqueued and started; left
+   * frozen when playback ends. Read via `lastPlaybackStats()`. */
   var stats = { event_id: null, chunks_played: 0, order: [], max_pending: 0 };
 
-  function notePending() {                       // deepest queue seen during THIS playback
-    if (speaking && ttsQueue.length > stats.max_pending) stats.max_pending = ttsQueue.length;
+  function notePending() {                       // deepest queue seen during THIS utterance
+    if (utter && ttsQueue.length > stats.max_pending) stats.max_pending = ttsQueue.length;
   }
 
   function mouth(v) {
@@ -383,14 +460,27 @@
     try { paintTtsStatus(); } catch (e) {}
   }
 
-  function setSpeaking(on, info) {
-    if (on && !speaking) {                 // a NEW utterance; chunks of one accumulate
+  /* Which utterance does the chunk about to start belong to? A chunk of a different
+   * event (or an unlabelled one-off) begins a NEW utterance, which is the only thing
+   * that resets the record — see the note on `stats` above for why the speaking edge
+   * cannot be the trigger. Also advances the chunk_num the event now expects. */
+  function beginUtterance(d) {
+    var u = openUtterance();
+    if (!u || !d.eventId || u.eventId !== d.eventId) {
+      if (u && u.eventId && u.eventId !== d.eventId) flushEvent(u.eventId);
       mouthPeak = 0;
       // `ttsQueue` here is what is waiting BEHIND the chunk about to start, so a burst
       // that queued up before the context could run is not lost by the reset.
-      stats = { event_id: info ? info.eventId : null, chunks_played: 0, order: [],
+      stats = { event_id: d.eventId, chunks_played: 0, order: [],
                 max_pending: ttsQueue.length };
+      utter = u = { eventId: d.eventId, next: 0, idle: 0 };
     }
+    u.idle = 0;
+    u.next = d.chunkNum + 1;             // the only chunk that may follow this one
+    if (!d.eventId) utter = null;        // an unlabelled payload is a one-off, not a stream
+  }
+
+  function setSpeaking(on, info) {
     speaking = !!on;
     speakingInfo = speaking ? ttsSummary(info) : null;
     try {
@@ -404,7 +494,9 @@
     } catch (e) {}
   }
 
-  // Same event_id → play chunk_num in order; different events stay FIFO.
+  // Same event_id → keep the queue sorted by chunk_num; different events stay FIFO.
+  // Sorting alone does NOT order playback (the queue only holds what is still waiting)
+  // — the gate in ttsPump does. It just keeps the lowest chunk in hand at the front.
   function ttsEnqueue(item) {
     var i = ttsQueue.length;
     while (i > 0 && ttsQueue[i - 1].dec.eventId === item.dec.eventId &&
@@ -425,7 +517,12 @@
   }
 
   function ttsPump() {
-    if (ttsPlaying || !ttsQueue.length) return;
+    if (ttsPlaying) return;
+    if (!ttsQueue.length) {                     // nothing in hand: start the EVENT RULE clock
+      clearGap(); gapFilled = false;
+      if (utter && !utter.idle) utter.idle = Date.now();
+      return;
+    }
     var a = actx();
     if (!a) {                                   // no Web Audio at all → drain honestly
       while (ttsQueue.length) ttsQueue.shift().resolve({ played: false, reason: "no-audio-context" });
@@ -436,7 +533,16 @@
       try { var p = a.resume(); if (p && p.then) p.then(ttsPump, function () {}); } catch (e) {}
       return;
     }
-    var item = ttsQueue.shift(), d = item.dec;
+    // THE ORDERING GATE: start the first chunk whose turn has come — never simply the
+    // head of the queue, which only means "first to arrive" (see the note above).
+    var qi = 0;
+    while (qi < ttsQueue.length && !startable(ttsQueue[qi])) qi++;
+    if (qi >= ttsQueue.length) {
+      if (!gapFilled) { armGap(); return; }     // wait a bounded moment for the missing chunk
+      qi = 0;                                   // …it never came: play the lowest we hold
+    }
+    gapFilled = false; clearGap();
+    var item = ttsQueue.splice(qi, 1)[0], d = item.dec;
     var buf, src, analyser;
     try {
       buf = a.createBuffer(d.channels, d.frames, d.sampleRate);
@@ -452,7 +558,8 @@
       return ttsPump();
     }
     ttsPlaying = item; current = src;
-    setSpeaking(true, d);                  // resets the stats below on a NEW utterance
+    beginUtterance(d);                     // a NEW event resets the stats below
+    setSpeaking(true, d);
     stats.chunks_played++;
     stats.order.push(d.chunkNum);
     notePending();
@@ -513,6 +620,11 @@
     if (dec.frames) cloudVoice = true;
     if (!enabled) return Promise.resolve({ played: false, reason: "muted", decoded: dec });
     if (!dec.frames) return Promise.resolve({ played: false, reason: "empty", decoded: dec });
+    // A chunk whose slot has already passed — a duplicate, or one the GAP RULE wrote off
+    // — is dropped rather than played out of turn, so `order` stays ascending (GAP RULE).
+    var cur = openUtterance();
+    if (dec.eventId && cur && cur.eventId === dec.eventId && dec.chunkNum < cur.next)
+      return Promise.resolve({ played: false, reason: "late", decoded: dec });
     var item = { dec: dec, resolve: null };
     var p = new Promise(function (res) { item.resolve = res; });
     ttsEnqueue(item);
@@ -521,6 +633,7 @@
   }
 
   function stopCloudTTS() {
+    clearGap(); gapFilled = false; utter = null;      // the utterance is over; ordering resets
     while (ttsQueue.length) ttsQueue.shift().resolve({ played: false, reason: "stopped" });
     if (ttsPlaying) { try { current && current.stop && current.stop(); } catch (e) {} }
   }
@@ -541,8 +654,8 @@
     /* What the current/most recent cloud-TTS playback actually did, recorded as it
      * happened and still readable once it is over:
      *   {event_id, chunks_played, order:[chunk_num…], max_pending}
-     * `order` is the sequence chunks were STARTED in (so a chunked utterance proves
-     * it played in chunk_num order) and `max_pending` is the deepest the queue got,
+     * `order` is the sequence chunks were STARTED in — ascending by construction, see
+     * the ORDERING/GAP rules above — and `max_pending` is the deepest the queue got,
      * which proves the later chunks really were pipelined rather than dropped. */
     lastPlaybackStats: function () {
       return { event_id: stats.event_id, chunks_played: stats.chunks_played,

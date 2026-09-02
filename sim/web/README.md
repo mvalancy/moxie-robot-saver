@@ -44,13 +44,38 @@ has the audio context suspended, the audio is queued and plays on the next user 
 Contract: [docs/architecture/sim-as-a-client.md](../../docs/architecture/sim-as-a-client.md);
 tests: `sim/test_audio.mjs` + `sim/tests/test_sil.py`.
 
+### Chunk order (and what happens when a chunk is lost)
+
+A streamed turn arrives as several `CloudTTSResponse`s sharing one `event_id`, numbered by
+`chunk_num`, and they must be *started* in that order — a child who hears the end of a
+sentence before its middle is holding a broken toy. Keeping the queue sorted is not enough,
+because the queue only holds what is still **waiting**: with short chunks and one MQTT
+message per round trip, chunk 0 can finish and empty the queue before chunk 1 lands, and
+chunk 2 — alone in the queue, therefore "first" — starts ahead of it. That is what the SIL
+test caught (recorded order `[0,2,1]`), and it was pure timing: the identical code had
+passed on a slower box the day before. So the **player** owns the order, not the queue:
+
+| rule | what `audio.js` does |
+|---|---|
+| **ordering** | Within one `event_id`, chunk *n+1* starts only after chunk *n* has started, and an event's first chunk is `chunk_num` 0. A chunk that arrives ahead of its turn **waits**, however idle the player is. |
+| **gap** | The wait is bounded by `TTS_GAP_MS` (1.2 s, measured from the moment the player ran dry). If the chunk it is waiting for has not arrived by then it is written off as lost and the lowest chunk in hand starts instead — a skipped sentence beats a robot that stops talking. A chunk that turns up *after* its slot has passed (a duplicate, or one already written off) is dropped as `{played:false, reason:"late"}` rather than played out of turn. |
+| **event** | An event stays current for `TTS_EVENT_MS` (5 s) after its last chunk drained, then closes — the same `event_id` seen later is a **new** utterance, because a replayed session re-sends the very same ids and must not be silenced by the ordering rule. A chunk of a *different* event closes the current utterance at once (events stay FIFO) and releases anything still held for it as `{reason:"superseded"}`. A payload with **no** `event_id` is not part of a stream at all: it is a one-off and plays FIFO, unordered. |
+
+The consequence worth remembering: the order chunks are STARTED in is ascending **by
+construction**, not by luck, so `lastPlaybackStats().order` is a real assertion and not a
+timing bet. `sim/test_audio.mjs` §6 drives all four arrival shapes (in order, out of order
+across a silent gap, a shuffled burst, and a chunk that never arrives).
+
 Playback is a live pipeline, so `audio.js` also **records** each utterance for anyone who
 has to reason about it after the fact: `moxieAudio.lastMouthPeak()` is the loudest mouth
 frame, and `moxieAudio.lastPlaybackStats()` returns
 `{event_id, chunks_played, order:[chunk_num…], max_pending}` — the chunks that played, the
-order they started in, and the deepest the queue ever got. Both reset on the false→true
-speaking edge (`max_pending` seeded from whatever is already queued, so a burst that piled
-up while the context was still suspended still counts) and are frozen once playback ends.
+order they started in, and the deepest the queue ever got. Both reset when a **new
+utterance** starts — a chunk of a different `event_id`, not merely the false→true `speaking`
+edge, because a chunked utterance legitimately falls silent between chunks while it waits
+for the next one, and the record has to survive that gap (`max_pending` is seeded from
+whatever is already queued, so a burst that piled up while the context was still suspended
+still counts) — and are frozen once playback ends.
 `moxieAudio.ttsPending()` is the live gauge; the recorded stats are what the tests assert
 on, because a short chunk drains before an outside observer can sample it.
 
