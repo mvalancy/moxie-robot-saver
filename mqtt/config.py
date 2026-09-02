@@ -53,6 +53,10 @@ VOICE_BASE_URL = os.environ.get("MOXIE_VOICE_BASE_URL", "")
 VOICE_API_KEY  = os.environ.get("MOXIE_VOICE_API_KEY", LLM_API_KEY)
 TTS_VOICE      = os.environ.get("MOXIE_TTS_VOICE", "alloy")
 
+# STT: local faster-whisper. "auto" = enable when installed; "off" to disable.
+STT_ENABLED = os.environ.get("MOXIE_STT", "auto").lower()
+STT_MODEL   = os.environ.get("MOXIE_STT_MODEL", "base.en")
+
 # Webhook app (external avatar bridge)
 WEBHOOK_ENDPOINT = os.environ.get("MOXIE_WEBHOOK_ENDPOINT", "")
 
@@ -89,3 +93,21 @@ def build_content_app():
         module = load_modules(json.load(fh))
     chat = make_openai_chat(LLM_BASE_URL, LLM_API_KEY, LLM_MODEL)
     return ContentApp(module, chat, persona=DEFAULT_PERSONA)
+
+
+def build_synthesizer():
+    """A server voice (moxie_sdk.tts.Synthesizer) if MOXIE_VOICE_BASE_URL is set, else
+    None (a real robot self-synthesizes; the SIM needs this for audio)."""
+    from moxie_sdk.tts import make_voice_synthesizer
+    return make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE)
+
+
+def build_transcriber():
+    """A local STT engine (moxie_sdk.stt.WhisperTranscriber) when enabled + installed,
+    else None (text turns still work; audio frames are ignored)."""
+    if STT_ENABLED == "off":
+        return None
+    from moxie_sdk.stt import WhisperTranscriber
+    if not WhisperTranscriber.available():
+        return None
+    return WhisperTranscriber(model=STT_MODEL)

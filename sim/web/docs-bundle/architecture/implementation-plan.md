@@ -52,7 +52,7 @@ Following the [build-order spine](overview.md); the parent app
 - **M5 — Config & telemetry. 🟡 (config+state 2026-09-01)** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
   ingest, the `Packet` telemetry envelope, and the LoggingPolicy gate.
 - **M6 — Parent console wiring. 🟡 (backend 2026-09-01)** Surface robot state + config editing + insights in `server/`'s web UI.
-- **M7 — One-command stack + docs.** `docker compose up` runs broker + supervisor + brain + STT/TTS; the
+- **M7 — One-command stack + docs. 🟡 (assembly 2026-09-01)** `docker compose up` runs broker + supervisor + brain + STT/TTS; the
   SIM and a real robot connect identically; deploy/config guides.
 
 ## Known gaps (audited, honest)

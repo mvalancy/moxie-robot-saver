@@ -7,9 +7,23 @@ import config
 from moxie_sdk.types import ChildProfile
 from supervisor.moxie_runtime import MoxieRuntime
 
-if __name__ == "__main__":
-    app = config.build_app()
+def assemble(config):
+    """Build the full runtime from config: the brain + optional STT + optional voice."""
     child = ChildProfile(nickname=config.CHILD_NICKNAME)
-    print(f"[run] Moxie runtime · app={app.name} · broker={config.MQTT_HOST}:{config.MQTT_PORT}")
-    MoxieRuntime(app, host=config.MQTT_HOST, port=config.MQTT_PORT, child=child).run(
-        status_port=config.STATUS_PORT)
+    rt = MoxieRuntime(config.build_app(), host=config.MQTT_HOST,
+                      port=config.MQTT_PORT, child=child)
+    synth = config.build_synthesizer()
+    if synth:
+        rt.set_synthesizer(synth)
+        print(f"[run] server voice enabled: {synth.name}")
+    trans = config.build_transcriber()
+    if trans:
+        rt.set_transcriber(trans)
+        print(f"[run] STT enabled: {trans.name}")
+    return rt
+
+
+if __name__ == "__main__":
+    rt = assemble(config)
+    print(f"[run] Moxie runtime · app={rt.app.name} · broker={config.MQTT_HOST}:{config.MQTT_PORT}")
+    rt.run(status_port=config.STATUS_PORT)
