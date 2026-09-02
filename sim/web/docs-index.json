@@ -1,5 +1,5 @@
 {
- "generated": "docs-17aaf0fa96f9",
+ "generated": "docs-3132649f3fda",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 42840,
+   "bytes": 44653,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -231,12 +231,13 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 16503,
+   "bytes": 23871,
    "mermaid": 1,
    "headings": [
     "The loop",
     "① `/config` down — `RobotCloudConfig` (the thing the server must produce)",
     "Wake alarms & scheduled activities — the JSON we emit",
+    "Appearance — the child's chosen face",
     "Fleet defaults ⊕ per-robot overrides",
     "The pairing gate — permits, and what a *pending* robot is sent",
     "The child-PII encryption boundary — and the revival shortcut",
@@ -334,7 +335,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 65126,
+   "bytes": 66340,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -700,7 +701,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 2141,
+   "bytes": 2480,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -795,6 +796,21 @@
     "Erasing more of it",
     "Old facts fade on their own",
     "Summaries can be wrong"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/moxies-look.md",
+   "title": "Moxie's look — letting your child style the face",
+   "section": "guides",
+   "bytes": 4436,
+   "mermaid": 0,
+   "headings": [
+    "What you can change today",
+    "Why the other twelve layers are greyed out",
+    "One robot, or all of them",
+    "What actually happens when you press Save",
+    "An honest caveat"
    ],
    "kind": "md"
   },

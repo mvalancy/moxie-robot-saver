@@ -36,7 +36,7 @@ Ours is built to the full recovered protocol with clean seams:
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example modules, e2e-tested through the runtime. **Memory built (2026-09-02):** `volley.persist_data` (durable, module-namespaced, bounded, `NO_DATA`-gated) + `session.summarize()` at end-of-conversation, served to a parent over `/memory`; ships as `content_modules/memory_chat.json`. **Per-item control (2026-09-02):** every remembered thing carries a stable id and its own provenance, so a parent can **erase or correct one line** (`DELETE …&item=` / `POST {"edit":…}` → the console's ✕/✏️), a correction is pinned, and unused items age out after `MOXIE_MEMORY_MAX_AGE_DAYS` (90). exec-code + action-plumbing still deferred | `mqtt/moxie_sdk/content/` + `mqtt/moxie_sdk/store.py` + `mqtt/content_modules/` |
 | Cloud queries — schedule + `mentor_behaviors` | [mqtt](mqtt-and-conversation.md) · [content-module](content-module-contract.md) | 🟢 the robot gets a **real day plan** and its **own history back**: `build_schedule` plans onboarding + a variety rotation of on-board activities, skipping what this robot already completed (so FTUE ends and nothing repeats); reported `mentor_behavior`s are ingested and served. Deterministic (day+device seeded), not yet LLM-planned | `mqtt/moxie_sdk/schedule.py` + `wire.py` + `moxie_runtime.py::_on_activity` |
 | Durable per-robot state | — | 🟡 JSON files under `MOXIE_DATA_DIR` (default `mqtt/data/`), atomic-ish writes, survives restarts — a **stepping stone**, not the database the audit asks for (ADOPT #8) | `mqtt/moxie_sdk/store.py` + [`mqtt/data/`](../../mqtt/data/) |
-| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig (now incl. **`alarms` + `schedule_preferences`**, contract gap closed) + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry`. Config is layered **`defaults ⊕ fleet ⊕ per-robot`** (audit ADOPT #6) — one `fleet/config.json`, `POST /config?scope=fleet`. **Gated by a device allowlist** (audit §3.1, closed by default): only a permitted robot is pushed `child_pii`; an unknown one is *pending* and gets `build_unpaired_cloud_config()` — `fleet/permits.json`, `GET`/`POST /permits`, the console's 🔐 Robot access card, `MOXIE_ALLOW_UNVERIFIED_BOTS` to migrate | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` + `store.py` |
+| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig (now incl. **`alarms` + `schedule_preferences`**, contract gap closed) + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry`. Config is layered **`defaults ⊕ fleet ⊕ per-robot`** (audit ADOPT #6) — one `fleet/config.json`, `POST /config?scope=fleet`. **Gated by a device allowlist** (audit §3.1, closed by default): only a permitted robot is pushed `child_pii`; an unknown one is *pending* and gets `build_unpaired_cloud_config()` — `fleet/permits.json`, `GET`/`POST /permits`, the console's 🔐 Robot access card, `MOXIE_ALLOW_UNVERIFIED_BOTS` to migrate. **Appearance built (2026-09-02, audit ADOPT #9):** the child's chosen face rides in `child_pii.face_options` and the pushed `child_pii.id` is a deterministic UUIDv5 over the chosen layers, so a look change re-keys the robot's face-texture cache and an idempotent re-push does not — a frozen 14-slot catalog (`MoxieCustomizationType`) with the **12 doc-cited colour options and zero invented asset ids**, layered fleet ⊕ per-robot like every other override, and the console's 🎨 Moxie's look card | `mqtt/moxie_sdk/cloud_config.py` + `faces.py` + `telemetry.py` + `store.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 
 ## Build order (each milestone = a shippable, CI-green slice)
@@ -89,6 +89,20 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **face customization — the plumbing is complete, the vocabulary is 12 of ~60 (2026-09-02).**
+  `moxie_sdk/faces.py` ships every slot our docs name (14, `MoxieCustomizationType`) but concrete
+  options for only **two** of them — the `EyeColor`/`FaceColor` enums with hex
+  (`robot-lifecycle.md`:281-282). The other twelve slots' art loads from a **streamed** bundle
+  (`content-delivery.md`:79, `REMOTE_ASSETBUNDLES`) that our corpus has never opened, and
+  `behavior-markup.md`:161-163 records that the generators accept *any* id the loaded bundle
+  defines — so the id space is bundle-defined and cannot be inferred. We ship no invented ids; a
+  parent supplies their own through `face.custom` (shape-checked only, and
+  `mqtt-and-conversation.md`:824 warns some assets crash Unity). Two flagged assumptions sit
+  behind one function each: the wire spelling of a layer label, and that the texture cache is
+  keyed on `child_pii.id` (field-proven via OpenMoxie, not capture-proven). **No physical Moxie
+  has rendered any of it** — the whole path is proven against the simulator only. The cheapest
+  way to widen the vocabulary is the precedent `backlog/expressiveness.md`:336 already sets for
+  SFX: ingest OpenMoxie's asset manifest as *data*, cite it, copy no code — not done here.
 - **content-module:** `session.summarize()` + `volley.persist_data` are **built** (2026-09-02) — the
   brain is wired in through the same injected chat seam, a finished conversation is summarized into a
   few durable facts with provenance, and a parent can read/erase them over `/memory`. The parent-facing
