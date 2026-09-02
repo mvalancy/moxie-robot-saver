@@ -120,4 +120,4 @@ docs: `ai-seam.md` (§1 + §3 "choosing an engine"), `guides/litellm-tts-setup.m
 (a "Pick it in the console" paragraph), `implementation-plan.md` (TTS/STT rows), this file's status line.
 
 ---
-📖 [Backlog index](README.md) · [AI seam](../ai-seam.md) · [TTS guide](../../guides/litellm-tts-setup.md) · [STT guide](../../guides/litellm-stt-setup.md)
+📖 [Backlog index](README.md) · [AI seam](../ai-seam.md) · [TTS guide](../../guides/litellm-tts-setup.md) · STT guide (`docs/guides/litellm-stt-setup.md`, lands with the STT slice)

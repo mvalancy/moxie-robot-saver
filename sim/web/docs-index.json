@@ -1,5 +1,5 @@
 {
- "generated": "docs-d09860324a0e",
+ "generated": "docs-febce1d42771",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 4108,
+   "bytes": 4209,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -469,6 +469,27 @@
    "kind": "md"
   },
   {
+   "path": "architecture/backlog/voice-picker.md",
+   "title": "Voice picker — choose the speech and listening models from the console",
+   "section": "architecture",
+   "bytes": 8559,
+   "mermaid": 0,
+   "headings": [
+    "What the user asked for (verbatim intent)",
+    "What \"available\" means (no invention)",
+    "Defaults (the \"when possible\" rule)",
+    "Design",
+    "A settings record, persisted",
+    "Runtime (`moxie_runtime.py`)",
+    "Console",
+    "Compose / env",
+    "Tests (a test for every feature)",
+    "Acceptance",
+    "Files"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/static-experience.md",
    "title": "The Moxie experience as one static site",
    "section": "architecture",
@@ -529,27 +550,6 @@
     "7.4 The greeting rule — and the unsolicited-reply assumption",
     "7.5 What is still not true",
     "Sources"
-   ],
-   "kind": "md"
-  },
-  {
-   "path": "architecture/backlog/voice-picker.md",
-   "title": "Voice picker — choose the speech and listening models from the console",
-   "section": "architecture",
-   "bytes": 8533,
-   "mermaid": 0,
-   "headings": [
-    "What the user asked for (verbatim intent)",
-    "What \"available\" means (no invention)",
-    "Defaults (the \"when possible\" rule)",
-    "Design",
-    "A settings record, persisted",
-    "Runtime (`moxie_runtime.py`)",
-    "Console",
-    "Compose / env",
-    "Tests (a test for every feature)",
-    "Acceptance",
-    "Files"
    ],
    "kind": "md"
   },

@@ -40,6 +40,7 @@ A backend + Sim are built from these directly; each cites the study but reads on
   [`backlog/expressiveness.md`](backlog/expressiveness.md) (the markup floor + the behavior planner),
   [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) (broker ACL → device credentials →
   spoof-proofing, phased) and [`backlog/telehealth.md`](backlog/telehealth.md) (puppet mode: the
+  spoof-proofing, phased) and [`backlog/voice-picker.md`](backlog/voice-picker.md) (puppet mode: the
   `commands/telehealth` path + the "Be Moxie" console panel).
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
