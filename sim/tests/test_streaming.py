@@ -471,10 +471,13 @@ class _FakeStream:
 
 
 def _llm_app(fake, **kw):
+    # The fake IS the client — LLMApp takes the OpenAI-compatible seam (like
+    # OpenAIVoiceSynthesizer does), so constructing it here imports no openai and
+    # these tests run on a bare interpreter. That is the whole point of the fake:
+    # assembling one must not need the package it is standing in for.
     from moxie_sdk.apps.llm_app import LLMApp
-    app = LLMApp(base_url="http://127.0.0.1:1/v1", api_key="k", model="m", **kw)
-    app._client = fake
-    return app
+    return LLMApp(base_url="http://127.0.0.1:1/v1", api_key="k", model="m",
+                  client=fake, **kw)
 
 
 def _turn(speech="why does the moon change shape?"):
