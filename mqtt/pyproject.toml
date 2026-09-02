@@ -21,8 +21,9 @@ dependencies = [
 [project.optional-dependencies]
 llm = ["openai>=1.0"]                 # OpenAI-compatible brain + TTS (make_openai_chat / voice)
 stt = ["faster-whisper>=1.0", "numpy>=1.24"]   # local speech-to-text
+tts = ["piper-tts>=1.2"]              # local offline voice (Piper — Amy default)
 content = ["jinja2>=3.0"]             # full templating for content-module prompts
-all = ["openai>=1.0", "faster-whisper>=1.0", "numpy>=1.24", "jinja2>=3.0"]
+all = ["openai>=1.0", "faster-whisper>=1.0", "numpy>=1.24", "piper-tts>=1.2", "jinja2>=3.0"]
 
 [project.urls]
 Homepage = "https://github.com/mvalancy/moxie-robot-saver"

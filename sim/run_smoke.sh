@@ -26,12 +26,18 @@ echo "── supervisor (echo app) ──"
 # Derive the status port from the broker port so a leftover supervisor on the default
 # 8930 doesn't make this run's status endpoint fail to bind (it's best-effort either way).
 STATUS_PORT=$((7000 + (PORT % 2000)))
-MOXIE_APP=echo MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT MOXIE_STATUS_PORT=$STATUS_PORT \
+# The built-in zero-dep "tone" voice by default → the smoke proves the full audio
+# round-trip (supervisor synthesizes → CloudTTSResponse → SIM decodes it). MOXIE_TTS=off
+# to skip; MOXIE_TTS=tone|piper|… otherwise honored.
+TTS_ENGINE="${MOXIE_TTS:-tone}"
+MOXIE_APP=echo MOXIE_TTS="$TTS_ENGINE" MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT \
+  MOXIE_STATUS_PORT=$STATUS_PORT \
   python3 mqtt/run.py >/tmp/moxie-supervisor.log 2>&1 & PIDS+=($!)
 sleep 3
 
-echo "── virtual Moxie (SIL round-trip) ──"
-python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout 20
+EXPECT_TTS=""; [ "$TTS_ENGINE" != "off" ] && EXPECT_TTS="--expect-tts"
+echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}) ──"
+python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout 20 $EXPECT_TTS
 rc=$?
 echo "── supervisor log tail ──"; tail -6 /tmp/moxie-supervisor.log || true
 exit $rc

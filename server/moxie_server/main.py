@@ -451,10 +451,8 @@ def direct_wifi_qr(ec: str = "l"):
     return Response(content=buf.getvalue(), media_type="image/png")
 
 
-@app.get("/local/broker/status")
-def broker_status():
-    """Proxy the MQTT supervisor's status (connection monitor). Server-side fetch so
-    the browser has no CORS issue. Returns {ok:false} if the supervisor isn't running."""
+def _fetch_status() -> dict:
+    """Fetch the MQTT supervisor's status snapshot; {ok:false,...} if unreachable."""
     import urllib.request
     try:
         with urllib.request.urlopen(STATUS_URL, timeout=2) as r:
@@ -462,6 +460,65 @@ def broker_status():
     except Exception as e:
         return {"ok": False, "error": "supervisor not reachable", "detail": str(e),
                 "robots": [], "recent": []}
+
+
+@app.get("/local/broker/status")
+def broker_status():
+    """Proxy the MQTT supervisor's status (connection monitor). Server-side fetch so
+    the browser has no CORS issue. Returns {ok:false} if the supervisor isn't running."""
+    return _fetch_status()
+
+
+@app.get("/local/fleet")
+def fleet():
+    """Parent-console fleet view (M6): the supervisor snapshot normalized into one tidy
+    record per connected robot — live state (battery/volume/Wi-Fi/mode/firmware), config
+    overrides, telemetry count, and a one-line summary. Graceful {ok:false} when down."""
+    from .fleet import normalize_fleet
+    return normalize_fleet(_fetch_status())
+
+
+@app.post("/local/robots/{device_id}/config")
+async def set_robot_config(device_id: str, request: Request):
+    """Parent-console config edit (M6): forward whitelisted overrides (volume/bedtime/wake
+    …) to the supervisor's POST /config, which validates + re-pushes RobotCloudConfig to
+    the robot. Server-side call so the browser has no CORS issue."""
+    import urllib.request, urllib.error
+    body = await request.body()
+    url = STATUS_URL.rsplit("/status", 1)[0] + f"/config?device_id={device_id}"
+    req = urllib.request.Request(url, data=body or b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code, content=json.loads(e.read().decode() or "{}"))
+    except Exception as e:
+        return JSONResponse(status_code=503, content={
+            "ok": False, "error": "supervisor not reachable", "detail": str(e)})
+
+
+@app.get("/local/robots/{device_id}/telemetry")
+def robot_telemetry(device_id: str, limit: int = 20):
+    """Parent-console insights (M6): the robot's stored telemetry Packets, fetched from
+    the supervisor's GET /telemetry and normalized for the UI (counts by event + the
+    newest events). Server-side call so the browser has no CORS issue; graceful
+    {ok:false} when the supervisor is down or the device is unknown."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_telemetry
+    url = (STATUS_URL.rsplit("/status", 1)[0] +
+           f"/telemetry?device_id={quote(device_id)}&limit={int(limit)}")
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return normalize_telemetry(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode() or "{}")
+        return JSONResponse(status_code=e.code, content=normalize_telemetry(body))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_telemetry(
+            {"ok": False, "device_id": device_id, "error": "supervisor not reachable",
+             "detail": str(e)}))
 
 
 @app.get("/local/pairing/qr.png")

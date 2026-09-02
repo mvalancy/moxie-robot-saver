@@ -27,7 +27,42 @@ def _fresh_config(env):
 
 def test_build_synthesizer_none_without_voice_url():
     c = _fresh_config({"MOXIE_APP": "echo", "MOXIE_STT": "off"})
-    assert c.build_synthesizer() is None            # no MOXIE_VOICE_BASE_URL → off
+    assert c.build_synthesizer() is None            # no voice url, no piper model → off
+
+
+def test_build_synthesizer_tone_engine():
+    # MOXIE_TTS=tone → the built-in zero-dep voice (no server, no piper model)
+    os.environ["MOXIE_TTS"] = "tone"
+    try:
+        c = _fresh_config({"MOXIE_APP": "echo", "MOXIE_STT": "off"})
+        synth = c.build_synthesizer()
+        assert synth is not None and synth.name == "tone"
+        assert synth.synthesize("hi")            # actually produces audio bytes
+    finally:
+        os.environ.pop("MOXIE_TTS", None)
+
+
+def test_build_synthesizer_tts_off_forces_none():
+    os.environ["MOXIE_TTS"] = "off"
+    os.environ["MOXIE_PIPER_MODEL"] = "/models/amy.onnx"   # even with a model configured
+    try:
+        c = _fresh_config({"MOXIE_APP": "echo", "MOXIE_STT": "off"})
+        assert c.build_synthesizer() is None
+    finally:
+        os.environ.pop("MOXIE_TTS", None)
+        os.environ.pop("MOXIE_PIPER_MODEL", None)
+
+
+def test_build_synthesizer_piper_model_when_piper_absent_is_none():
+    # MOXIE_PIPER_MODEL set but piper isn't installed (CI) → clean None, no raise
+    os.environ["MOXIE_PIPER_MODEL"] = "/models/en_US-amy-medium.onnx"
+    try:
+        c = _fresh_config({"MOXIE_APP": "echo", "MOXIE_STT": "off"})
+        from moxie_sdk.tts import PiperSynthesizer
+        if not PiperSynthesizer.available():
+            assert c.build_synthesizer() is None
+    finally:
+        os.environ.pop("MOXIE_PIPER_MODEL", None)
 
 
 def test_build_transcriber_off_is_none():

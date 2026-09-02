@@ -1,0 +1,13 @@
+# Build context for the parent-console image (server/Dockerfile builds from the repo
+# root because the console imports the pairing-QR codec from tools/pairing/).
+# Allowlist: ship nothing but those two trees.
+*
+!server/
+!tools/pairing/
+
+# …and never the runtime/secret bits inside them.
+server/moxie.db
+server/moxie.db-*
+**/.env
+**/__pycache__/
+**/*.pyc

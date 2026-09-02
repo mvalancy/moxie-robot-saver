@@ -18,9 +18,22 @@ feat/*  ──PR──▶  dev  ──PR──▶  main  ──tag v X.Y.Z──
 | **`main`** | Released, tag-able, deploy-quality. | Tag `vX.Y.Z` → release workflow. |
 
 - **Features / contributors:** branch `feat/<name>` off `dev`, PR into `dev` (fast CI gates it).
-- **Build loops:** commit to `dev` (the integration RC branch); the standing PR **#1 `dev → main`**
-  shows rolling CI. Larger/riskier work still uses a `feat/*` → `dev` PR.
-- **Promotion:** when `dev` is a stable RC, merge PR #1 into `main` (deep CI must pass), then tag.
+- **Build loops:** commit to `dev` (the integration RC branch); a standing **`dev → main`** PR shows
+  rolling CI. Larger/riskier work still uses a `feat/*` → `dev` PR.
+- **Promotion:** when `dev` is a stable RC, merge the standing dev→main PR into `main` (deep CI must
+  pass), then tag. **Resolve its number dynamically** — it changes on every promotion — with
+  `bash scripts/standing-pr.sh` (never hardcode `#1`).
+- **After a promotion (squash) — reconcile `dev`:** a squash-merge gives `main` one commit that shares
+  **no ancestry** with `dev`'s granular history, so both branches look like they independently "added"
+  the same files — the recreated standing PR reads **CONFLICTING**, not empty. Fix it in two steps,
+  right after the squash:
+  1. `gh pr create --base main --head dev` — recreate the standing PR.
+  2. On `dev`: `git fetch origin && git merge origin/main -X ours --no-edit` then push. `dev` is a
+     superset of `main`'s squash, so this changes **no content** (verify: `git diff <pre> HEAD` is
+     empty) — it only re-links history. The standing PR then diffs cleanly (only genuinely-new work).
+
+  (Alternative: promote with a **merge commit** instead of squash — `main` keeps full history and no
+  reconcile is needed. We use squash for a clean one-commit-per-release `main`, and pay the reconcile.)
 
 ## CI tiers
 

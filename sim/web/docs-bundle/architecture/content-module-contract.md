@@ -68,6 +68,34 @@ activity (timers, "stop", wake words for commands).
 Mirrors `embodied.robotbrain.ContentSchedule` (`ScheduleConfig.day_one_schedule`, `promoted_content`,
 `MissionConfig`, `RewardsConfig`, `EndOfSessionConfig`) — the day's plan of activities.
 
+#### How a `schedules[]` entry becomes the day the robot runs
+
+The robot **pulls** its plan at the start of every session — `client-service-activity-log` with
+`subtopic:"query"`, `query:"schedule"` — and will not enter a session without an answer
+([`mqtt-and-conversation.md`](mqtt-and-conversation.md) §`client-service-activity-log`). The answer is a
+`CloudQueryResponse` whose field 6 is a `ContentSchedule`
+([`Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto):343). A
+`schedules[]` entry here is the **authoring template** for that answer, not the answer itself:
+
+| In the module JSON | What the server does with it |
+|---|---|
+| `provided_schedule[]` | the pinned spine of the day, in order. Kept as authored — a fixture like `DM` (Daily Missions) is *meant* to recur. First-time-user modules (`WELCOME`, `TNT`, `SYSTEMSCHECK`) are the exception: they drop out once the child's `mentor_behaviors` say they're done, so onboarding ends |
+| `generate{chat_count, module_count, chat_modules[], extra_modules[], excluded_module_ids[]}` | a **server-side authoring key**, not a `ContentSchedule` field. The server expands it into extra `provided_schedule` entries — a variety rotation of on-board activities that prefers ones this robot has **not** completed, with `chat_modules` interleaved between them — then **strips it**. It never goes on the wire |
+| `chat_request`, `wake_module`, `alarm_module`, `hub_config`, `end_of_session`, `config`, `rewards`, `mission_config`, `tags`, `restricted_modules` | passed through as the matching `ContentSchedule` field |
+| anything else | dropped — the served object contains only `ContentSchedule` fields, and each entry only `Recommendation` fields (`module_id`, `content_id`, `entry_line`, `module_name`, `module_description`, `seen`, `skip_hub`) |
+
+Progress comes back the other way: the robot **reports** each finished or abandoned activity as a
+`mentor_behavior` on that same topic (an `ActivityUpdate`, `Cloud.proto`:241, carrying a
+[`MentorBehavior`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/MentorBehavior.proto)
+`{module_id, content_id, content_day, timestamp, action, instance_id, ended_reason}`). The server stores
+that history per robot and answers `query:"mentor_behaviors"` with it — which is what lets the next day's
+plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py)
+(the builder) and [`../../mqtt/moxie_sdk/store.py`](../../mqtt/moxie_sdk/store.py) (the history).
+
+Today's builder is **deterministic** — seeded on `(device_id, day)` — so a plan is stable for a day and
+different tomorrow. An adaptive, explainable recommender is a later slice
+([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 row 7).
+
 ## The `volley` / `session` API (per-turn hooks)
 
 Each turn hands the module's `code` a **`volley`** (this exchange) and **`session`** (the conversation):

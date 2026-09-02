@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.tts import (  # noqa: E402
     strip_markup, Synthesizer, build_cloud_tts_response, synthesize_cloud_tts,
-    make_voice_synthesizer,
+    make_voice_synthesizer, decode_cloud_tts_response,
 )
 
 
@@ -97,3 +97,89 @@ def test_voice_synth_backs_off_on_rate_limit():
     finally:
         chat.time.sleep = orig
     assert out == b"PCMOK" and fake.calls == 3      # retried through 2 rate-limits
+
+
+# --- local Piper voice (our default/primary, offline) ---
+
+def test_piper_available_is_bool():
+    from moxie_sdk.tts import PiperSynthesizer
+    # piper isn't installed in CI → available() is a clean False (never raises)
+    assert PiperSynthesizer.available() in (True, False)
+
+
+def test_piper_synth_full_path_with_injected_voice_fn():
+    """The whole strip→synthesize→CloudTTSResponse path works with an injected voice_fn,
+    so we exercise it hermetically without Piper installed."""
+    from moxie_sdk.tts import PiperSynthesizer
+    seen = {}
+
+    def fake_voice(text):
+        seen["text"] = text
+        return b"\x00\x01" * 8                      # 16 bytes of raw PCM
+    synth = PiperSynthesizer("en_US-amy-medium.onnx", voice_fn=fake_voice,
+                             sample_rate=22050)
+    assert synth.name == "piper" and synth.sample_rate == 22050 and synth.channels == 1
+    resp = synthesize_cloud_tts(synth, '<mark name="cmd:x"/>Hi Amy', event_id="p1")
+    assert seen["text"] == "Hi Amy"                 # markup stripped before synthesis
+    assert base64.b64decode(resp["audio"]["buffer"]) == b"\x00\x01" * 8
+    assert resp["audio"]["sample_rate"] == 22050 and resp["event_id"] == "p1"
+
+
+def test_make_piper_synthesizer_selection():
+    from moxie_sdk.tts import make_piper_synthesizer, PiperSynthesizer
+    # no model path → None (nothing to load)
+    assert make_piper_synthesizer("") is None
+    # a model path but Piper not installed → None (unless a voice_fn is injected)
+    if not PiperSynthesizer.available():
+        assert make_piper_synthesizer("some.onnx") is None
+    # injected voice_fn always builds (test/custom backend)
+    s = make_piper_synthesizer("some.onnx", voice_fn=lambda t: b"x")
+    assert isinstance(s, PiperSynthesizer) and s.synthesize("hi") == b"x"
+
+
+# --- SIM-side playback: decode CloudTTSResponse back to audio ---
+
+def test_decode_cloud_tts_round_trips_build():
+    marks = [{"time": 0, "start": 0, "end": 2, "type": "word", "value": "Hi"}]
+    wire = build_cloud_tts_response(b"\x10\x20\x30\x40", event_id="e5", channels=1,
+                                    sample_rate=22050, marks=marks)
+    got = decode_cloud_tts_response(wire)
+    assert got["audio"] == b"\x10\x20\x30\x40"          # base64 buffer → raw PCM
+    assert got["sample_rate"] == 22050 and got["channels"] == 1
+    assert got["event_id"] == "e5" and got["marks"] == marks
+
+
+def test_decode_cloud_tts_accepts_json_string_and_partial():
+    import json
+    wire = build_cloud_tts_response(b"abc", event_id="e6")
+    got = decode_cloud_tts_response(json.dumps(wire))     # tolerates a JSON string
+    assert got["audio"] == b"abc" and got["event_id"] == "e6"
+    empty = decode_cloud_tts_response({})                 # missing fields → safe defaults
+    assert empty["audio"] == b"" and empty["sample_rate"] == 24000 and empty["marks"] == []
+
+
+# --- built-in zero-dep tone voice ---
+
+def test_tone_synth_produces_deterministic_pcm():
+    from moxie_sdk.tts import ToneSynthesizer
+    s = ToneSynthesizer(sample_rate=22050)
+    a = s.synthesize("hello there friend")
+    assert isinstance(a, bytes) and len(a) > 0 and len(a) % 2 == 0   # 16-bit PCM
+    assert s.synthesize("hello there friend") == a                  # deterministic
+    assert s.name == "tone" and s.sample_rate == 22050
+
+
+def test_tone_synth_length_scales_with_text_and_is_bounded():
+    from moxie_sdk.tts import ToneSynthesizer
+    s = ToneSynthesizer()
+    short, long = len(s.synthesize("hi")), len(s.synthesize("hi " * 50))
+    assert long > short                                             # longer text → more audio
+    huge = len(s.synthesize("word " * 10000))
+    assert huge <= 2 * int(s.sample_rate * s._max_ms / 1000)        # capped at max_ms
+
+
+def test_tone_synth_through_cloud_tts():
+    from moxie_sdk.tts import ToneSynthesizer
+    resp = synthesize_cloud_tts(ToneSynthesizer(), '<mark name="cmd:x"/>Hi', event_id="t1")
+    got = decode_cloud_tts_response(resp)
+    assert got["audio"] and got["sample_rate"] == 22050 and got["event_id"] == "t1"

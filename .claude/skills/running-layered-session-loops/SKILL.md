@@ -26,6 +26,7 @@ The exact tiers depend on the project — the principle is **separation of conce
 4. **Honesty over green.** If something is red and can't be fixed this fire, record it in **Blockers** with the exact error — don't hide it. Report outcomes faithfully.
 5. **Idempotent + interruptible.** A fire must be safe to run again and safe to interrupt; use a busy-port override / re-check state rather than assume a clean slate.
 6. **One thing at a time; don't stomp.** Don't edit files another running loop owns; prefer append-only shared state.
+7. **Discover mutable IDs; never hardcode them.** A promotion closes the standing dev→main PR and the next one gets a *new* number — so a fire must resolve it at runtime, never assume "PR #1". Use `bash scripts/standing-pr.sh` (prints the open dev→main PR number, or `none`); then `gh pr checks "$(bash scripts/standing-pr.sh)"`. Same rule for run IDs, tags, SHAs: read them from `gh`/`git`, don't bake a literal into loop state.
 
 ## The shared state (the coordination substrate)
 A single **plan file** (here `work/firmware-re/progress/PLAN.md`) is how loops hand off across days:

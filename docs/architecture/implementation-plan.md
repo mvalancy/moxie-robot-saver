@@ -29,9 +29,11 @@ Ours is built to the full recovered protocol with clean seams:
 | MQTT runtime (connect/config/state/turn) | [mqtt](mqtt-and-conversation.md) · [config](config-and-telemetry-contract.md) | 🟡 core works + end-to-end turn test (lazy client → integration-testable, no broker) | `mqtt/supervisor/moxie_runtime.py` |
 | AI seam — LLM brain | [ai-seam](ai-seam.md) §2 | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback | `mqtt/moxie_sdk/apps/llm_app.py` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟢 seam + runtime-wired + **real zmqSTTRequest protobuf decode** (dep-free) + JSON bridge, e2e-tested; live faster-whisper is an optional dep | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
-| AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟡 seam + **wired into runtime** (set_synthesizer → synthesize-on-reply → CloudTTSResponse on /commands/tts); live voice needs creds | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
+| AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟢 seam + runtime-wired + **3 backends: built-in tone (zero-dep) · Piper (offline, Amy) · OpenAI-voice (gateway)**; **full audio round-trip proven through a real broker** (SIL smoke `--expect-tts`); real-speech play-through pending a Piper model/creds | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
-| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig + RobotStatus ingest + **Packet telemetry (build/parse/ingest) + LoggingPolicy upload-gate** | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` |
+| Cloud queries — schedule + `mentor_behaviors` | [mqtt](mqtt-and-conversation.md) · [content-module](content-module-contract.md) | 🟢 the robot gets a **real day plan** and its **own history back**: `build_schedule` plans onboarding + a variety rotation of on-board activities, skipping what this robot already completed (so FTUE ends and nothing repeats); reported `mentor_behavior`s are ingested and served. Deterministic (day+device seeded), not yet LLM-planned | `mqtt/moxie_sdk/schedule.py` + `wire.py` + `moxie_runtime.py::_on_activity` |
+| Durable per-robot state | — | 🟡 JSON files under `MOXIE_DATA_DIR` (default `mqtt/data/`), atomic-ish writes, survives restarts — a **stepping stone**, not the database the audit asks for (ADOPT #8) | `mqtt/moxie_sdk/store.py` + [`mqtt/data/`](../../mqtt/data/) |
+| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry` | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 
 ## Build order (each milestone = a shippable, CI-green slice)
@@ -47,14 +49,30 @@ Following the [build-order spine](overview.md); the parent app
   regex commands; the `volley`/`session` API (set_output, persist_data, add_execution_action).
 - **M3 — AI seam: STT in. 🟢 (2026-09-01)** Turn `handle_zmq` into a real STT path — accumulate `zmqSTT` audio →
   transcribe (faster-whisper local, or a Deepgram-shaped proxy) → emit the recognized turn.
-- **M4 — AI seam: TTS out for the SIM. 🟡 (seam 2026-09-01)** Server-side Piper → `CloudTTSResponse{audio, marks}` so the
+- **M4 — AI seam: TTS out for the SIM. 🟢 (backends 2026-09-02)** Server-side Piper (`PiperSynthesizer`, offline, Amy)
+  + OpenAI-voice backend → `CloudTTSResponse{audio, marks}` so the
   SIM (and optionally a robot) speaks with a server voice + viseme marks.
 - **M5 — Config & telemetry. 🟢 (2026-09-02)** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
   ingest, the `Packet` telemetry envelope, and the LoggingPolicy upload-gate — all built + tested. Surfacing the
   stored state/telemetry in the console is M6.
-- **M6 — Parent console wiring. 🟡 (backend 2026-09-01)** Surface robot state + config editing + insights in `server/`'s web UI.
-- **M7 — One-command stack + docs. 🟡 (assembly 2026-09-01)** `docker compose up` runs broker + supervisor + brain + STT/TTS; the
-  SIM and a real robot connect identically; deploy/config guides.
+- **M6 — Parent console wiring. 🟢 (2026-09-02)** All three console surfaces are live: robot **state**
+  (`/local/fleet` + live-state card), **config editing** (a Settings form → `POST /local/robots/{id}/config` →
+  runtime `POST /config` (`sanitize_config_overrides` whitelist/validate) → `update_config` re-pushes
+  `RobotCloudConfig`), and **telemetry/insights** — the runtime's stored `Packet` events rolled up by
+  `summarize_events` and served as `GET /telemetry` → `GET /local/robots/{id}/telemetry` → an 📈 Insights
+  panel (counts by event + a recent-events list). All three live-verified end to end.
+- **M7 — One-command stack + docs. 🟢 (proven 2026-09-02)** `docker compose up` at the repo root brings up
+  broker (TLS + WS + plain) → supervisor (brain + `tone` voice, zero extra deps) → parent console, configured
+  by one root `.env` ([`.env.example`](../../.env.example)), with healthchecks, `restart: unless-stopped` and
+  named volumes for certs / console DB / conversation memory. Proven end to end by
+  [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh) — it builds the real compose file under a
+  throwaway project on unused ports, waits for all three healthchecks, round-trips `virtual_moxie.py
+  --expect-tts` (state → config → remote-chat → reply → `CloudTTSResponse` audio) through the composed broker,
+  reads the robot back out of the console's `/local/fleet`, then `down -v`. Guide:
+  [`../guides/one-command-stack.md`](../guides/one-command-stack.md). Opt-in profiles: `--profile voice`
+  (Piper/Amy — verified speaking through the stack) and `--profile stt` (faster-whisper — model fetched and
+  the supervisor reports `STT enabled`, no live speech transcribed yet); both need one `.env` line
+  (`MOXIE_SUPERVISOR_EXTRAS`) plus `up --build`, which is the honest cost of keeping the default image small.
 
 ## Known gaps (audited, honest)
 
@@ -65,29 +83,74 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   Arbitrary module `code`-string execution is deliberately deferred (sandboxing); `volley.execution_actions`
   (e.g. `eb_timer_request`) are captured but **not yet plumbed** into `RemoteChatAction` on the wire.
 - **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); real zmqSTTRequest protobuf decode is DONE (dep-free field reader in stt.py); only a live faster-whisper test remains (optional dep). TTS out (§3) seam + runtime-wired (synthesize-on-reply → CloudTTSResponse); live voice needs creds + viseme TTSMarks deferred. Input safety/moderation (§2) unbuilt.
-- **config/telemetry:** RobotCloudConfig + RobotStatus ingest + Packet telemetry (build/parse/runtime-ingest) + the LoggingPolicy upload-gate are built (M5 🟢). Remaining: server-side insights UI (M6) surfaces the stored telemetry.
+- **ai-seam → response-tag actions: BUILT.** The brain can now drive the robot from inside its own line — `moxie_sdk/actions.py::parse_action_tags` lifts `<exit>` / `<sleep>` / `<launch:MOD[:CID]>` / `<launch_if_confirmed:MOD[:CID]>` out of model text into real `Reply.actions` (stripped before speaking), applied in `LLMApp.respond` and `ContentApp` (model + global-handler paths) and taught to the model via `ACTION_TAG_PROMPT`; tests in `sim/tests/test_action_tags.py`. **Caveat:** our recovered contract defines `RemoteChatAction.ActionID.launch_if_confirmed`, but `ActionType` has no confirm member, so that tag maps to `LAUNCH` — the robot launches immediately instead of asking first (one-line fix at `actions.py::LAUNCH_IF_CONFIRMED_AS` once the enum gains one). Pattern from OpenMoxie (MIT), audit §4.1 row 4.
+- **config/telemetry:** RobotCloudConfig + RobotStatus ingest + Packet telemetry (build/parse/runtime-ingest/
+  summarize) + the LoggingPolicy upload-gate are built (M5 🟢) and the console's 📈 Insights panel now surfaces the
+  stored events (M6 🟢). Remaining (not blocking): telemetry is **in-memory only** — the runtime keeps the last 50
+  events per robot and loses them on restart or robot disconnect; durable per-session persistence + typed
+  `event_data` decoding (LogDevice/LogUser wrappers) are a later slice.
+- **cloud queries (`query_result`):** shape **and content** are now real. `_on_activity` answers a
+  `client-service-activity-log` / `subtopic:"query"` request via `build_activity_response`
+  (`mqtt/moxie_sdk/wire.py`), echoing `request_id` and keying the payload by its own
+  `CloudQueryResponse` field. `schedule` carries a built `ContentSchedule` and `mentor_behaviors`
+  carries this robot's reported history. Citations:
+  [`cloud-protocol.md`](../reverse-engineering/protocol/cloud-protocol.md):147 (the
+  `commands/{command}` JSON topic), :172 + [`mqtt-and-conversation.md`](mqtt-and-conversation.md):274/:296
+  (the `subtopic` multiplex and the `query_result` command), :229 + `CloudQueryResponse` in
+  [`recovered-proto/embodied/logging/Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto)
+  (`request_id`=3, `schedule`=6, `license_values`=5, `mentor_behaviors`=10);
+  [`ContentSchedule.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/ContentSchedule.proto)
+  and `RecommendationContext.Recommendation` in
+  [`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):26-34
+  for the plan itself; `ActivityUpdate.mentor_behavior`=14 (Cloud.proto:241) +
+  [`MentorBehavior.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/MentorBehavior.proto):26-36
+  for the report. Corroborated by OpenMoxie's `moxie_server.py::provide_schedule` /
+  `provide_mentor_behaviors` / `ingest_mentor_behavior`. **Still gaps:** `license` answers empty (we hold
+  no license blobs); `response_code` (field 99) is not emitted (the docs give the enum but not its JSON
+  spelling); the other queries (`idf`, `contexts`, `context_store`, `remote_lines`) answer empty.
+- **the day plan is deterministic, not intelligent.** `build_schedule` seeds on `(device_id, day)`, so a
+  robot gets a stable plan that changes tomorrow — it does **not** read telemetry, mood, time of day or
+  parent preference, and it cannot explain *why this activity today*. That recommender is BEYOND #7
+  ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2). Two smaller honesties: the
+  "already done → don't schedule again" rule applies to the generated rotation and to first-time-user
+  onboarding, **not** to fixtures an author pins in `provided_schedule` (e.g. `DM`, which is meant to
+  recur daily); and the FTUE completion thresholds (`TNT`=9, `SYSTEMSCHECK`=4 content ids) are
+  **OpenMoxie's field-proven constants**, not something our RE docs establish — see the note in
+  `mqtt/moxie_sdk/schedule.py`.
+- **the store is JSON files, not a database.** `mqtt/moxie_sdk/store.py` persists per-robot
+  `mentor_behaviors` under `MOXIE_DATA_DIR` with atomic-ish writes and a 500-record cap. It has no
+  indexes, no queries, no migrations, and no concurrent-writer story beyond a single process's lock —
+  it exists so ADOPT #1/#2 could ship without blocking on ADOPT #8's real database. Conversation memory
+  (`MOXIE_MEMORY_DIR`) and telemetry still use their own paths; folding all three onto one durable
+  store is the next slice.
 
-## DoD progress (audited 2026-09-02) — ≈ 52%
+## DoD progress (audited 2026-09-02) — ≈ 57%
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
-| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~55% | brain live-validated 🟢; STT path complete incl. **real zmqSTT protobuf decode** 🟢; TTS **wired into runtime** (synthesize-on-reply → `CloudTTSResponse` on `/commands/tts`) 🟡. Remaining for a full live chain: a working synthesizer (local Piper, or gateway TTS model once registered) + SIM audio playback |
+| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~70% | brain live-validated 🟢; STT incl. **real zmqSTT protobuf decode** 🟢; **full audio round-trip proven through a real broker** — supervisor synthesizes → `CloudTTSResponse` on `/commands/tts` → SIM decodes audio (SIL smoke asserts it via `--expect-tts`) 🟢. Three voices: built-in **tone** (zero-dep), **Piper/Amy** (offline), gateway. Remaining: browser Web-Audio playback + one live talk-through with real speech (Piper model / gateway) |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
-| 3 | Cloud management (console + config/telemetry) | 🟡 ~65% | RobotCloudConfig + RobotStatus + config-editing (`update_config`) + status snapshot + **Packet telemetry (build/parse/ingest) + LoggingPolicy gate** built 🟢. Remaining: `server/` web UI surfaces the stored state/telemetry (M6) |
+| 3 | Cloud management (console + config/telemetry) | 🟢 | RobotCloudConfig + RobotStatus + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. The console surfaces **live state** (`/local/fleet`), **edits config** (Settings form → `POST /local/robots/{id}/config` → runtime `POST /config` → `update_config` re-pushes `RobotCloudConfig`), and shows **telemetry insights** (`summarize_events` → runtime `GET /telemetry` → `GET /local/robots/{id}/telemetry` → the 📈 Insights panel) — all three live-verified against a real broker. Caveat: telemetry is in-memory (last 50 events/robot), not persisted |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
-| 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command run unverified (M7) |
-| 6 | Green + live-tested | 🟡 ~70% | **three-tier CI installed + green** (fast on dev · deep+HIL on PR-to-main · release on tags); live LLM turn 🟢. Remaining: live voice + a full talk-e2e scenario (skips in CI without creds) |
+| 5 | One-command stack | 🟢 | `docker compose up` (repo root) = broker + supervisor + parent console, one `.env`, healthchecks + named volumes. **Proven** by [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh): build → health → `virtual_moxie --expect-tts` round-trip through the composed broker → the robot visible in the console's `/local/fleet` → `down -v`; shape asserted hermetically by `sim/tests/test_compose.py`. Guide: [`../guides/one-command-stack.md`](../guides/one-command-stack.md). Caveats (documented, not hidden): the `content`/`llm` brains still need a gateway key to say anything real (keyless → the "brain got fuzzy" fallback, which is why the smoke uses `echo`), and the `voice`/`stt` profiles each need one `.env` line + `up --build` rather than the profile flag alone |
+| 6 | Green + live-tested | 🟡 ~80% | **three-tier CI installed + green** (fast on dev · deep+HIL on PR-to-main · release on tags); hermetic suite green (210 pass · 6 live tests skipped without a key). **Live-proven against the real gateway** (`sim/tests/test_live_action_tags.py`, `test_live_content_e2e.py`; skip cleanly with no key): LLM **action tags** now emitted by graphling-medium — 4/4 goodbye→`<exit>`, 3/3 activity→`<launch:DRAW>` after prompt-only work in `LLMApp._system` (baseline was 0/3 and 0/2; the fix is writing the tag **before** the sentence, not after), and the action reaches the wire as `response_actions` 🟢; the shipped `content_modules/starter.json` through the **real** `MoxieRuntime` returns a spec-conformant `RemoteChatResponse` (SUCCESS, 123-char `output.text` + `markup`) with a `globals[]` short-circuit costing 0 LLM calls 🟢. Console↔runtime contract e2e (`test_console_roundtrip.py`): fleet / config (incl. 400 on bad input) / telemetry round-trip in-process against a status-server double that is **key-diffed against the real runtime** 🟢. SIL smoke + both scenarios + `python -m build` green. Remaining (NOT live-proven): live **voice** (real STT/TTS speech, not the tone synth) and a single full talk-e2e scenario; live tests need creds so CI still runs them skipped |
 
-**Most valuable next slice:** a **local `PiperSynthesizer` in the SDK** (Piper-Amy default, offline) —
-this unblocks criterion 1's talk-e2e chain *without* waiting on the gateway TTS model or voice creds,
-and matches the TTS strategy (Piper/Amy primary). Criterion 3's remaining work (server UI, M6) is the
-other fully-unblocked track. The live-voice path stays gated on the gateway TTS model registration
-(handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)).
+**Most valuable next slice:** criterion 1's **browser Web-Audio playback of the `CloudTTSResponse`** — the
+supervisor already synthesizes and publishes decodable audio (proven through a real broker by the SIL smoke's
+`--expect-tts`), so the remaining gap is the SIM's browser client actually *playing* it: decode the base64 PCM
+in `sim/web/`, feed it to Web Audio, and the "a child can talk to Moxie end to end" criterion has its last
+client-side link. It is unblocked (no creds needed — the built-in tone voice already produces audio) and it is
+the only criterion still below 🟢 that isn't gated on someone else. After that: a live talk-through with real
+speech — the `--profile voice` path now downloads Piper/Amy and speaks through the composed stack, so this is
+just a matter of doing it with a microphone (the gateway alternative still needs a TTS model registered —
+handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)). M7's one-command stack
+(criterion 5) is done.
 
 ## TTS strategy (2026-09-01)
 
-- **Default server voice = Piper (Amy)** — local, free, no rate limits (a `sim/tts/` Piper service already
-  exists). A `PiperSynthesizer` in the SDK is the next TTS slice.
+- **Default server voice = Piper (Amy)** — local, free, no rate limits. **Built:** `PiperSynthesizer` in
+  the SDK (`moxie_sdk.tts`, offline, Amy default), selected by `MOXIE_PIPER_MODEL` when no voice server is
+  set; install with `pip install 'moxie-cloud-sdk[tts]'`. Needs a downloaded Piper `.onnx` model to speak.
 - **Gateway TTS is possible now-ish:** `gateway.graphlings.net/v1/audio/speech` route EXISTS (returns 400
   "invalid model", not 404) → LiteLLM supports the TTS payload; it just needs a TTS model registered in the
   gateway config. Then set `MOXIE_VOICE_BASE_URL=<gateway>/v1` + a model name and `OpenAIVoiceSynthesizer`

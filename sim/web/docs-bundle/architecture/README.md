@@ -12,6 +12,7 @@ for the bigger picture.
 Versioned, standalone specs distilled from the [reverse-engineering study](../reverse-engineering/README.md).
 A backend + Sim are built from these directly; each cites the study but reads on its own.
 **Now building:** see [`implementation-plan.md`](implementation-plan.md) — the roadmap + honest status.
+- [`orchestration-plan.md`](orchestration-plan.md) — **how the work gets done**: the three top-level outcomes, the orchestrator + Opus-agent protocol, workstreams, and the 24/7 layered loops.
 - [`rest-api-contract.md`](rest-api-contract.md) — **Channel 1, the control plane**: the REST services the
   parent-app server exposes (auth, children, pairing, robot settings) + the minimum-viable-server path.
 - [`mqtt-and-conversation.md`](mqtt-and-conversation.md) — **Channel 2, the robot cloud**: endpoint QR, the
@@ -30,6 +31,9 @@ A backend + Sim are built from these directly; each cites the study but reads on
 ## Vision, plans & research
 - [`moxie-as-a-platform.md`](moxie-as-a-platform.md) — **the SDK**: how any AI/game drives Moxie as an avatar.
 - [`moxie-ecosystem.md`](moxie-ecosystem.md) — the full self-hostable stack build plan: brain, voice, ears, liveness.
+- [`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) — **measured against the state of the art**: a
+  cited, feature-by-feature audit of [OpenMoxie](https://github.com/jbeghtol/openmoxie) (MIT) and its active
+  forks, classified HAVE / ADOPT / BEYOND, with a ranked backlog and an honest list of where they're ahead.
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
 - [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.

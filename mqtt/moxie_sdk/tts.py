@@ -86,6 +86,102 @@ def make_voice_synthesizer(base_url: str, api_key: str, voice: str = "alloy",
     return OpenAIVoiceSynthesizer(base_url, api_key, voice=voice, **kw)
 
 
+class PiperSynthesizer(Synthesizer):
+    """Local, offline server voice via Piper (https://github.com/rhasspy/piper) — our
+    default/primary TTS (Amy). No network, no gateway TTS model, no voice creds needed:
+    it synthesizes on the box that runs the supervisor, so the SIM can speak even before
+    the gateway registers a TTS model (see docs/guides/litellm-tts-setup.md).
+
+    Piper is imported lazily (no hard dep); `available()` is False when it isn't
+    installed. Output is raw 16-bit mono PCM at the voice's own sample rate (Amy-medium
+    is 22050 Hz), matching the CloudTTSResponse AudioBuffer convention. Tests inject
+    `voice_fn` to exercise the whole path without Piper (like the OpenAI backend's
+    `client=`)."""
+    name = "piper"
+    channels = 1
+
+    def __init__(self, model_path: str = "", config_path: Optional[str] = None,
+                 sample_rate: int = 22050, *, voice_fn=None):
+        self._model_path = model_path
+        if voice_fn is not None:                 # test / custom injection
+            self._voice_fn = voice_fn
+            self.sample_rate = sample_rate
+            return
+        from piper import PiperVoice              # lazy — real backend
+        voice = PiperVoice.load(model_path, config_path=config_path)
+        cfg = getattr(voice, "config", None)
+        self.sample_rate = int(getattr(cfg, "sample_rate", sample_rate) or sample_rate)
+        # piper yields raw PCM chunks; join to one buffer (version-tolerant)
+        def _fn(text: str) -> bytes:
+            if hasattr(voice, "synthesize_stream_raw"):     # piper-tts <= 1.2
+                return b"".join(voice.synthesize_stream_raw(text))
+            import io, wave                        # fallback: capture WAV, return PCM
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                # piper-tts >= 1.3 renamed the WAV writer; its `synthesize` became a
+                # chunk generator, so calling it with a wave writer raises
+                # "# channels not specified" (seen with piper-tts 1.3 in the compose
+                # `voice` profile). Prefer the explicit WAV entry point when present.
+                if hasattr(voice, "synthesize_wav"):
+                    voice.synthesize_wav(text, w)
+                else:
+                    voice.synthesize(text, w)
+            buf.seek(0)
+            with wave.open(buf, "rb") as r:
+                return r.readframes(r.getnframes())
+        self._voice_fn = _fn
+
+    def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
+        return self._voice_fn(text)
+
+    @classmethod
+    def available(cls) -> bool:
+        try:
+            import piper  # noqa: F401
+            return True
+        except Exception:
+            return False
+
+
+class ToneSynthesizer(Synthesizer):
+    """A built-in, zero-dependency placeholder 'voice': a deterministic 16-bit PCM tone
+    shaped to the text length (short fade in/out, no clicks). NOT speech — it lets the
+    SIM's audio path work out of the box with no model, network, or extra deps (demos,
+    CI, the default before Piper/gateway is configured). Real speech is `PiperSynthesizer`
+    (offline) or `OpenAIVoiceSynthesizer` (gateway). Selected with MOXIE_TTS=tone."""
+    name = "tone"
+
+    def __init__(self, sample_rate: int = 22050, freq: float = 330.0,
+                 ms_per_char: int = 55, min_ms: int = 200, max_ms: int = 4000):
+        self.sample_rate = sample_rate
+        self._freq, self._ms_per_char = freq, ms_per_char
+        self._min_ms, self._max_ms = min_ms, max_ms
+
+    def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
+        import math
+        from array import array
+        ms = min(self._max_ms, max(self._min_ms, len(text or "") * self._ms_per_char))
+        n = int(self.sample_rate * ms / 1000)
+        buf = array("h", bytes(2 * n))
+        amp, fade = 12000, 200
+        w = 2 * math.pi * self._freq / self.sample_rate
+        for i in range(n):
+            env = min(1.0, i / fade, (n - i) / fade)     # fade edges to avoid clicks
+            buf[i] = int(amp * env * math.sin(w * i))
+        return buf.tobytes()
+
+
+def make_piper_synthesizer(model_path: str, config_path: Optional[str] = None,
+                           *, voice_fn=None, **kw) -> Optional[Synthesizer]:
+    """A PiperSynthesizer when a model is configured and Piper is installed (or a
+    `voice_fn` is injected), else None."""
+    if voice_fn is not None:
+        return PiperSynthesizer(model_path, config_path, voice_fn=voice_fn, **kw)
+    if not model_path or not PiperSynthesizer.available():
+        return None
+    return PiperSynthesizer(model_path, config_path, **kw)
+
+
 def build_cloud_tts_response(audio: bytes, *, event_id: str = "", channels: int = 1,
                              sample_rate: int = 24000, marks: Optional[list] = None,
                              chunk_num: int = 0, request_source: str = "ROBOT_TTS_REQUEST"
@@ -98,6 +194,30 @@ def build_cloud_tts_response(audio: bytes, *, event_id: str = "", channels: int 
         "marks": list(marks or []),
         "event_id": event_id,
         "chunk_num": chunk_num,
+    }
+
+
+def decode_cloud_tts_response(resp: dict) -> dict:
+    """SIM-side counterpart to build_cloud_tts_response: a CloudTTSResponse (dict or JSON
+    string) → `{audio: bytes, sample_rate, channels, marks, event_id, chunk_num}`. This
+    is what a client (the SIM's audio playback, a robot) needs to actually speak — it
+    base64-decodes the AudioBuffer back to raw PCM. Tolerant of missing/partial fields."""
+    if isinstance(resp, (str, bytes)):
+        import json as _json
+        resp = _json.loads(resp)
+    audio_obj = resp.get("audio") or {}
+    buf = audio_obj.get("buffer") or ""
+    try:
+        audio = base64.b64decode(buf) if buf else b""
+    except Exception:
+        audio = b""
+    return {
+        "audio": audio,
+        "sample_rate": int(audio_obj.get("sample_rate", 24000) or 24000),
+        "channels": int(audio_obj.get("channels", 1) or 1),
+        "marks": list(resp.get("marks") or []),
+        "event_id": resp.get("event_id", ""),
+        "chunk_num": int(resp.get("chunk_num", 0) or 0),
     }
 
 

@@ -133,6 +133,89 @@ async function refreshMoxie(){
     if(st.robots && st.robots.length){ renderRobot(st.robots[0]); }
     else { $('#moxie-none').classList.remove('hidden'); $('#moxie-card').classList.add('hidden'); }
   }catch(e){}
+  refreshLive();
+}
+// live runtime state (battery/volume/Wi-Fi/mode/telemetry) from the MQTT supervisor
+let liveDevice=null;
+async function refreshLive(){
+  const box=$('#robot-live'); if(!box) return;
+  let f; try{ f=await api('/local/fleet',{auth:false}); }catch(e){ return; }
+  const cfgBox=$('#cfg-box');
+  if(!f.ok || !f.robot_count){
+    liveDevice=null;
+    box.innerHTML = `<div class="live-off">● Live state: ${f.ok?'no robot connected':'supervisor offline'}</div>`;
+    if(cfgBox) cfgBox.style.display='none';
+    refreshInsights(null);
+    return;
+  }
+  if(cfgBox) cfgBox.style.display='';
+  liveDevice=f.robots[0].device_id;
+  if(cfgBox && !cfgBox.open) prefillConfig(f.robots[0]);   // don't clobber active edits
+  box.innerHTML = f.robots.map(r=>{
+    const rows=[
+      ['Battery', r.battery_level==null?'—':`${r.battery_level}%`],
+      ['Volume',  r.audio_volume==null?'—':r.audio_volume],
+      ['Wi-Fi',   r.wifi_ssid||'—'],
+      ['Mode',    r.mode||'—'],
+      ['Firmware',r.firmware||'—'],
+      ['Telemetry', `${r.telemetry_count} events`],
+    ].map(([k,v])=>`<div class="k"><span>${k}</span><b>${escapeHtml(String(v))}</b></div>`).join('');
+    const ov=Object.keys(r.config_overrides||{});
+    const ovHtml = ov.length? `<div class="k"><span>Config overrides</span><b>${escapeHtml(ov.join(', '))}</b></div>`:'';
+    return `<div class="live-hd">● Live${r.ota_reboot_required?' · <span class="warn">OTA reboot pending</span>':''}</div>
+            <div class="livegrid">${rows}${ovHtml}</div>`;
+  }).join('');
+  refreshInsights(liveDevice);
+}
+
+// telemetry insights (M6): the Packet events the runtime stored for this robot
+async function refreshInsights(deviceId){
+  const box=$('#robot-insights'); if(!box) return;
+  if(!deviceId){ box.innerHTML='<div class="live-off">📈 Insights: no robot connected</div>'; return; }
+  let t;
+  try{ t=await api(`/local/robots/${encodeURIComponent(deviceId)}/telemetry`,{auth:false}); }
+  catch(e){ box.innerHTML='<div class="live-off">📈 Insights: supervisor offline</div>'; return; }
+  if(!t.ok){
+    box.innerHTML=`<div class="live-off">📈 Insights: ${escapeHtml(t.error||'unavailable')}</div>`;
+    return;
+  }
+  const hd=`<div class="insights-hd">📈 Insights · ${t.count} event${t.count===1?'':'s'}</div>`;
+  if(!t.count){
+    box.innerHTML=hd+'<div class="live-off">No events yet — Moxie hasn\'t reported any activity.</div>';
+    return;
+  }
+  const counts=(t.by_event||[]).map(c=>
+    `<div class="k"><span>${escapeHtml(c.event)}</span><b>${c.count}</b></div>`).join('');
+  const rows=(t.events||[]).map(e=>{
+    const when=e.recorded_at?new Date(e.recorded_at*1000).toLocaleString():'—';
+    return `<div class="ev"><span>${escapeHtml(when)}</span> <b>${escapeHtml(e.event_name)}</b></div>`;
+  }).join('');
+  box.innerHTML=`${hd}<div class="livegrid">${counts}</div><div class="evlog">${rows}</div>`;
+}
+function prefillConfig(r){
+  const ov=r.config_overrides||{};
+  if(r.audio_volume!=null) $('#cfg-vol').value=Math.round(r.audio_volume*100);
+  const bt=ov.weekday_bedtime;
+  $('#cfg-bed-start').value = (bt&&bt[0])||'';
+  $('#cfg-bed-end').value   = (bt&&bt[1])||'';
+  $('#cfg-wake-btn').checked   = ov.wake_button_enabled!==false;
+  $('#cfg-touch-wake').checked = ov.touch_wake_enabled!==false;
+}
+async function saveConfig(){
+  if(!liveDevice){ return; }
+  const s=$('#cfg-status'); s.textContent='Saving…';
+  const start=$('#cfg-bed-start').value, end=$('#cfg-bed-end').value;
+  const body={
+    audio_volume: Number($('#cfg-vol').value),      // 0–100 → server clamps to 0–1
+    wake_button_enabled: $('#cfg-wake-btn').checked,
+    touch_wake_enabled: $('#cfg-touch-wake').checked,
+    weekday_bedtime: (start&&end)? [start,end] : null,
+  };
+  try{
+    const r=await api(`/local/robots/${encodeURIComponent(liveDevice)}/config`,
+                      {method:'POST',auth:false,body});
+    s.textContent = r.ok ? '✅ Saved — pushed to Moxie.' : `⚠️ ${r.error||'failed'}`;
+  }catch(e){ s.textContent='⚠️ '+(e.message||'save failed'); }
 }
 function renderRobot(r){
   $('#moxie-none').classList.add('hidden');
@@ -146,6 +229,9 @@ function renderRobot(r){
   $('#btn-reboot').onclick=()=>api(`/api/robots/${r.id}/reboot`,{method:'POST'}).then(()=>flash('#btn-reboot','Sent!'));
 }
 function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTimeout(()=>b.textContent=o,1200);}
+
+// ---- settings ----
+{ const b=$('#btn-cfg-save'); if(b) b.onclick=saveConfig; }
 
 // ---- dev: simulate ----
 $('#btn-sim').onclick = async () => {

@@ -1,0 +1,12 @@
+# Keep the supervisor build context small + secret-free.
+.env
+.env.*
+!.env.example
+broker/keys/
+broker/log/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/

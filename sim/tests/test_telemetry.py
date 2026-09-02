@@ -11,7 +11,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.telemetry import (  # noqa: E402
-    PacketModel, build_packet, parse_packet, should_upload,
+    PacketModel, build_packet, parse_packet, should_upload, summarize_events,
 )
 from moxie_sdk.cloud_config import LoggingPolicy  # noqa: E402
 
@@ -51,3 +51,46 @@ def test_parse_packet_round_trip():
 def test_parse_packet_ignores_unknown_fields():
     got = parse_packet(json.dumps({"event_name": "e", "moxie_id": "d", "junk": 1}))
     assert "junk" not in got and got["event_name"] == "e"
+
+
+# --- summarize_events (M6 insights view) ---
+
+def _pkts():
+    return [build_packet("wake", b"", moxie_id="d1", recorded_at=100),
+            build_packet("said", "hi", moxie_id="d1", recorded_at=200),
+            build_packet("wake", b"", moxie_id="d1", recorded_at=300)]
+
+
+def test_summarize_events_counts_and_last_seen():
+    s = summarize_events(_pkts())
+    assert s["count"] == 3
+    assert s["by_event"] == {"wake": 2, "said": 1}
+    assert s["last_seen"] == {"wake": 300, "said": 200}
+
+
+def test_summarize_events_latest_is_newest_first_and_capped():
+    s = summarize_events(_pkts(), limit=2)
+    assert [p["event_name"] for p in s["latest"]] == ["wake", "said"]   # newest first
+    assert len(s["latest"]) == 2 and s["count"] == 3                    # count is total
+
+
+def test_summarize_events_empty_and_none_are_safe():
+    for empty in ([], None):
+        s = summarize_events(empty)
+        assert s == {"count": 0, "by_event": {}, "last_seen": {}, "latest": []}
+
+
+def test_summarize_events_tolerates_partial_packets():
+    """Packets may arrive without event_name/recorded_at; non-dicts are skipped."""
+    s = summarize_events([{"moxie_id": "d1"},                      # no event_name
+                          {"event_name": "said"},                  # no recorded_at
+                          {"event_name": "said", "recorded_at": "77"},  # stringy ts
+                          "not-a-packet", None])
+    assert s["count"] == 3                                  # the two non-dicts dropped
+    assert s["by_event"] == {"event": 1, "said": 2}         # unnamed → "event"
+    assert s["last_seen"] == {"said": 77}                   # only stamped events appear
+
+
+def test_summarize_events_limit_zero_returns_no_rows():
+    s = summarize_events(_pkts(), limit=0)
+    assert s["latest"] == [] and s["count"] == 3
