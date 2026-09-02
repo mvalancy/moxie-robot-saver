@@ -70,6 +70,10 @@ MOXIE_LINE = "Hi Sam, I am Moxie. Do you want to hear a story about a brave litt
 CHILD_TIMER = "Hey Moxie, please set a timer for 5 minutes."
 CHILD_JOKE = "Hi Moxie, tell me a joke!"
 
+#: What ContentApp says when the gateway never answers (content_app.py) — a live
+#: turn that lands on this line proves the plumbing, not the brain.
+_DEGRADED = "Give me one tiny second to think"
+
 # Acceptance floors (see the module docstring for why these are ratios).
 STT_FLOOR = 0.7          # tier 1: Piper speech recovered by Whisper
 TURN_FLOOR = 0.6         # tier 2: the child's utterance as the runtime heard it
@@ -297,5 +301,13 @@ def test_full_talk_loop_through_the_live_brain():
                      make_openai_chat(BASE, KEY, MODEL, max_tokens=96))
     resp = _talk(app, CHILD_JOKE, device_id="d_talk_live",
                  event_id="evt-talk-live", label="live")
-    assert len(resp["output"]["text"]) > 10, f"suspiciously short live reply: {resp}"
-    assert "<" not in resp["output"]["text"], "markup leaked into the spoken text"
+    text = resp["output"]["text"]
+    assert len(text) > 10, f"suspiciously short live reply: {resp}"
+    assert "<" not in text, "markup leaked into the spoken text"
+    # A gateway that 429s past the SDK's backoff makes ContentApp answer with its canned
+    # degradation line. The voice loop above still proved itself on that line, but the
+    # words did not come from the model — so say so rather than bank a green that only
+    # means "the fallback works" (same honesty rule as the tag-rate tests).
+    if text.startswith(_DEGRADED):
+        pytest.skip("gateway degraded to the canned fallback (429s past backoff); the "
+                    "voice loop passed but no real completion reached it")
