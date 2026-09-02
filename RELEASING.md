@@ -18,9 +18,15 @@ feat/*  ──PR──▶  dev  ──PR──▶  main  ──tag v X.Y.Z──
 | **`main`** | Released, tag-able, deploy-quality. | Tag `vX.Y.Z` → release workflow. |
 
 - **Features / contributors:** branch `feat/<name>` off `dev`, PR into `dev` (fast CI gates it).
-- **Build loops:** commit to `dev` (the integration RC branch); the standing PR **#1 `dev → main`**
-  shows rolling CI. Larger/riskier work still uses a `feat/*` → `dev` PR.
-- **Promotion:** when `dev` is a stable RC, merge PR #1 into `main` (deep CI must pass), then tag.
+- **Build loops:** commit to `dev` (the integration RC branch); a standing **`dev → main`** PR shows
+  rolling CI. Larger/riskier work still uses a `feat/*` → `dev` PR.
+- **Promotion:** when `dev` is a stable RC, merge the standing dev→main PR into `main` (deep CI must
+  pass), then tag. **Resolve its number dynamically** — it changes on every promotion — with
+  `bash scripts/standing-pr.sh` (never hardcode `#1`).
+- **After a promotion (squash):** the squash-merge closes the PR and leaves `main`'s tree equal to
+  `dev`, so the freshly-recreated standing PR sits **empty** (and `dev` may read as "N commits ahead" —
+  a cosmetic squash artifact) until the next `dev` work lands. Its diff is tree-based, so it stays
+  accurate. Recreate it with `gh pr create --base main --head dev`.
 
 ## CI tiers
 
