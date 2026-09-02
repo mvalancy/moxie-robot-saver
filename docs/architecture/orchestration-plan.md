@@ -389,5 +389,14 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   been caught in 0.2 s on the feature PR. `test_compose.py` 14→47; suite → 806. In flight: `feat/vision-events`,
   `feat/face-customization`.
 
+- **2026-09-02 (AUDIT)** — All green after v0.6.0: guards + 0-diff bundle, standing PR #32 MERGEABLE (no-push
+  multi-arch builds + docs + package pass; HIL/compose/SIL running), fast tier green on the last pushes, package
+  0.6.0 builds, no secrets in tree/history, `.env` files ignored, token works, zero stale branches, all three
+  workflow templates in parity with `.github/`, four loops armed. Spec check (ai-seam §2): `InputSafety`
+  fields `is_unsafe`/`blocked_by`/`intents`/`phrase_id` present in `safety.py` + `wire.py` as specified. DoD
+  unchanged at 4/6 🟢 (criteria 1 + 6 ~90%; the physical robot is the ceiling). RESEARCH delegated build-ready
+  briefs for broker authentication (the permits gap) and puppet/telehealth (ADOPT #7). In flight:
+  `feat/vision-events`, `feat/face-customization`, `feat/backlog-security-telehealth`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
