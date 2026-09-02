@@ -1,12 +1,12 @@
 {
- "generated": "docs-3abed406f5a6",
+ "generated": "docs-0d4de3ed2db8",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 11378,
+   "bytes": 12051,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 34646,
+   "bytes": 36046,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -331,7 +331,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 62276,
+   "bytes": 62929,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -718,12 +718,13 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 12042,
+   "bytes": 16744,
    "mermaid": 1,
    "headings": [
     "What comes up",
     "Prerequisites",
-    "The one command",
+    "Path A: prebuilt images (two commands, no clone)",
+    "Path B: the one command, from a clone",
     "Configure it — one `.env`",
     "Ports",
     "Where your data lives",
