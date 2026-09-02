@@ -44,6 +44,8 @@ jobs:
         run: node sim/test_bridge.mjs
       - name: Voice-loop tests (TTS/STT shapes; skips if services absent)
         run: node sim/test_voice.mjs
+      - name: Cloud-TTS playback test (CloudTTSResponse decode + queue + lip-sync)
+        run: node sim/test_audio.mjs
       - name: Revival-QR parity (browser encoder == python toolkit)
         run: |
           pip install protobuf

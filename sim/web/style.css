@@ -1051,6 +1051,8 @@ button.needs-backend { opacity: 0.5; cursor: help; }
 button.needs-backend::after {
   content: "\2298"; margin-left: 5px; font-size: 0.9em; opacity: 0.8;   /* ⊘ = needs server */
 }
+/* server voice (CloudTTSResponse) playing — the Voice panel's status line lights up */
+body.tts-speaking #tts-status { color: var(--cyan); }
 .hint.warn, #bus-status.warn { color: var(--amber); }
 .hint.warn code { color: var(--cyan); }
 #env-banner {
