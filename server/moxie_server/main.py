@@ -451,10 +451,8 @@ def direct_wifi_qr(ec: str = "l"):
     return Response(content=buf.getvalue(), media_type="image/png")
 
 
-@app.get("/local/broker/status")
-def broker_status():
-    """Proxy the MQTT supervisor's status (connection monitor). Server-side fetch so
-    the browser has no CORS issue. Returns {ok:false} if the supervisor isn't running."""
+def _fetch_status() -> dict:
+    """Fetch the MQTT supervisor's status snapshot; {ok:false,...} if unreachable."""
     import urllib.request
     try:
         with urllib.request.urlopen(STATUS_URL, timeout=2) as r:
@@ -462,6 +460,22 @@ def broker_status():
     except Exception as e:
         return {"ok": False, "error": "supervisor not reachable", "detail": str(e),
                 "robots": [], "recent": []}
+
+
+@app.get("/local/broker/status")
+def broker_status():
+    """Proxy the MQTT supervisor's status (connection monitor). Server-side fetch so
+    the browser has no CORS issue. Returns {ok:false} if the supervisor isn't running."""
+    return _fetch_status()
+
+
+@app.get("/local/fleet")
+def fleet():
+    """Parent-console fleet view (M6): the supervisor snapshot normalized into one tidy
+    record per connected robot — live state (battery/volume/Wi-Fi/mode/firmware), config
+    overrides, telemetry count, and a one-line summary. Graceful {ok:false} when down."""
+    from .fleet import normalize_fleet
+    return normalize_fleet(_fetch_status())
 
 
 @app.get("/local/pairing/qr.png")

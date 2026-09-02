@@ -66,3 +66,14 @@ footer a{color:var(--brand)}
 .monlog .ln{padding:6px 10px;border-bottom:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
 .monlog .ln span{color:var(--muted);margin-right:8px}
 .monlog .ln.e{color:#c62828}.monlog .ln.r{color:var(--ok);font-weight:700}.monlog .ln.c{color:var(--brand)}
+
+/* --- live robot state (M6 parent console) --- */
+.livebox{margin:12px 0}
+.live-hd{font-weight:700;color:var(--ok);font-size:13px;margin-bottom:8px}
+.live-off{color:var(--muted);font-size:13px;padding:8px 0}
+.warn{color:#c0392b;font-weight:700}
+.livegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.livegrid .k{display:flex;flex-direction:column;gap:2px;background:var(--bg);
+  border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.livegrid .k span{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+.livegrid .k b{font-size:15px}

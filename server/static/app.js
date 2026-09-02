@@ -133,6 +133,30 @@ async function refreshMoxie(){
     if(st.robots && st.robots.length){ renderRobot(st.robots[0]); }
     else { $('#moxie-none').classList.remove('hidden'); $('#moxie-card').classList.add('hidden'); }
   }catch(e){}
+  refreshLive();
+}
+// live runtime state (battery/volume/Wi-Fi/mode/telemetry) from the MQTT supervisor
+async function refreshLive(){
+  const box=$('#robot-live'); if(!box) return;
+  let f; try{ f=await api('/local/fleet',{auth:false}); }catch(e){ return; }
+  if(!f.ok || !f.robot_count){
+    box.innerHTML = `<div class="live-off">● Live state: ${f.ok?'no robot connected':'supervisor offline'}</div>`;
+    return;
+  }
+  box.innerHTML = f.robots.map(r=>{
+    const rows=[
+      ['Battery', r.battery_level==null?'—':`${r.battery_level}%`],
+      ['Volume',  r.audio_volume==null?'—':r.audio_volume],
+      ['Wi-Fi',   r.wifi_ssid||'—'],
+      ['Mode',    r.mode||'—'],
+      ['Firmware',r.firmware||'—'],
+      ['Telemetry', `${r.telemetry_count} events`],
+    ].map(([k,v])=>`<div class="k"><span>${k}</span><b>${escapeHtml(String(v))}</b></div>`).join('');
+    const ov=Object.keys(r.config_overrides||{});
+    const ovHtml = ov.length? `<div class="k"><span>Config overrides</span><b>${escapeHtml(ov.join(', '))}</b></div>`:'';
+    return `<div class="live-hd">● Live${r.ota_reboot_required?' · <span class="warn">OTA reboot pending</span>':''}</div>
+            <div class="livegrid">${rows}${ovHtml}</div>`;
+  }).join('');
 }
 function renderRobot(r){
   $('#moxie-none').classList.add('hidden');
