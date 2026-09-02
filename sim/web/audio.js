@@ -314,6 +314,24 @@
    * sim/tests/test_sil.py's cloud-TTS tests. */
   var mouthPeak = 0;
 
+  /* The same trick for the QUEUE. A chunked utterance is a live pipeline — chunks
+   * arrive, wait behind the one playing, and drain — so `ttsPending()` sampled from
+   * outside is a race an observer loses whenever the chunks are short or the box is
+   * loaded: by the time "is it speaking yet?" comes back, the queue that proves the
+   * chunks were pipelined has already emptied. So the page RECORDS the shape of each
+   * playback instead: which event it was, how many chunks it played and in what
+   * chunk_num order, and the deepest the queue ever got behind the chunk playing.
+   *
+   * Reset on the false->true speaking edge (seeded with whatever is already waiting,
+   * so chunks that piled up while the audio context was still suspended still count),
+   * updated as chunks are enqueued and started, and left frozen when playback ends —
+   * nothing outside a live utterance touches it. Read via `lastPlaybackStats()`. */
+  var stats = { event_id: null, chunks_played: 0, order: [], max_pending: 0 };
+
+  function notePending() {                       // deepest queue seen during THIS playback
+    if (speaking && ttsQueue.length > stats.max_pending) stats.max_pending = ttsQueue.length;
+  }
+
   function mouth(v) {
     try { if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(v); } catch (e) {}
   }
@@ -366,7 +384,13 @@
   }
 
   function setSpeaking(on, info) {
-    if (on && !speaking) mouthPeak = 0;    // a NEW utterance; chunks of one accumulate
+    if (on && !speaking) {                 // a NEW utterance; chunks of one accumulate
+      mouthPeak = 0;
+      // `ttsQueue` here is what is waiting BEHIND the chunk about to start, so a burst
+      // that queued up before the context could run is not lost by the reset.
+      stats = { event_id: info ? info.eventId : null, chunks_played: 0, order: [],
+                max_pending: ttsQueue.length };
+    }
     speaking = !!on;
     speakingInfo = speaking ? ttsSummary(info) : null;
     try {
@@ -386,6 +410,7 @@
     while (i > 0 && ttsQueue[i - 1].dec.eventId === item.dec.eventId &&
            ttsQueue[i - 1].dec.chunkNum > item.dec.chunkNum) i--;
     ttsQueue.splice(i, 0, item);
+    notePending();
   }
 
   // Autoplay policy: a page that never got a gesture has a suspended context.
@@ -427,7 +452,10 @@
       return ttsPump();
     }
     ttsPlaying = item; current = src;
-    setSpeaking(true, d);
+    setSpeaking(true, d);                  // resets the stats below on a NEW utterance
+    stats.chunks_played++;
+    stats.order.push(d.chunkNum);
+    notePending();
 
     // Mouth: driven by the audio envelope (the physical truth of the buffer),
     // raised to the viseme/word track from marks[] when the server sent one.
@@ -510,6 +538,16 @@
     // Peak mouth-open of the current/most recent cloud-TTS utterance (0..1). Survives
     // the end of playback, so "the mouth moved" is assertable without racing it.
     lastMouthPeak: function () { return mouthPeak; },
+    /* What the current/most recent cloud-TTS playback actually did, recorded as it
+     * happened and still readable once it is over:
+     *   {event_id, chunks_played, order:[chunk_num…], max_pending}
+     * `order` is the sequence chunks were STARTED in (so a chunked utterance proves
+     * it played in chunk_num order) and `max_pending` is the deepest the queue got,
+     * which proves the later chunks really were pipelined rather than dropped. */
+    lastPlaybackStats: function () {
+      return { event_id: stats.event_id, chunks_played: stats.chunks_played,
+               order: stats.order.slice(), max_pending: stats.max_pending };
+    },
     setEnabled: function (v) { enabled = !!v; if (!enabled) stop(); },
     isEnabled: function () { return enabled; },
     setTtsBase: function (u) { TTS_BASE = u; try { localStorage.setItem("moxie.ttsBase", u); } catch (e) {} },

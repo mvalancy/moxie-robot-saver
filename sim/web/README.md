@@ -44,6 +44,16 @@ has the audio context suspended, the audio is queued and plays on the next user 
 Contract: [docs/architecture/sim-as-a-client.md](../../docs/architecture/sim-as-a-client.md);
 tests: `sim/test_audio.mjs` + `sim/tests/test_sil.py`.
 
+Playback is a live pipeline, so `audio.js` also **records** each utterance for anyone who
+has to reason about it after the fact: `moxieAudio.lastMouthPeak()` is the loudest mouth
+frame, and `moxieAudio.lastPlaybackStats()` returns
+`{event_id, chunks_played, order:[chunk_num…], max_pending}` — the chunks that played, the
+order they started in, and the deepest the queue ever got. Both reset on the false→true
+speaking edge (`max_pending` seeded from whatever is already queued, so a burst that piled
+up while the context was still suspended still counts) and are frozen once playback ends.
+`moxieAudio.ttsPending()` is the live gauge; the recorded stats are what the tests assert
+on, because a short chunk drains before an outside observer can sample it.
+
 **`#tts-status` has one owner: `audio.js`.** Two independent things want that line —
 the live `🔊 speaking — cloud TTS …` indicator and the async probe in `env.js` that
 reports whether the optional Piper sidecar is up. Writing it from both meant whichever

@@ -279,6 +279,13 @@ def test_cloud_tts_plays_and_animates_the_mouth(page, server):
     # caught mid-open by an observer sharing a loaded CI box with the audio thread.
     peak = page.evaluate("() => window.moxieAudio.lastMouthPeak()")
     assert peak > 0.05, f"the mouth never opened while speaking (peak {peak})"
+    # The page's own record of what it played — the same "assert on what was recorded,
+    # not on what happens to be true right now" rule. (The live snapshot above stays a
+    # snapshot on purpose: `#tts-status` and `body.tts-speaking` only EXIST while an
+    # utterance is live, and it is a wait for a ~1.2 s window, not an instant sample.)
+    stats = page.evaluate("() => window.moxieAudio.lastPlaybackStats()")
+    assert stats["event_id"] == "evt-sil", stats
+    assert stats["chunks_played"] == 1 and stats["order"] == [0], stats
     page.wait_for_function(
         """() => {
              const st = document.getElementById("tts-status");
@@ -290,30 +297,76 @@ def test_cloud_tts_plays_and_animates_the_mouth(page, server):
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
 
 
+# Wait for a chunked utterance to FINISH and hand back what the page recorded of it.
+# `chunks_played` is what tells a finished playback apart from one that never started —
+# `isSpeaking() === false` alone is also true a millisecond after injection.
+_PLAYED = """
+({event, want}) => {
+  const a = window.moxieAudio;
+  if (!a || a.isSpeaking()) return null;                 // still talking
+  const s = a.lastPlaybackStats();
+  if (!s || s.event_id !== event) return null;           // still the PREVIOUS utterance
+  if (s.chunks_played < want) return null;               // hasn't started, or not done
+  return {stats: s, pending: a.ttsPending()};
+}
+"""
+
+
 def test_cloud_tts_chunks_play_in_order_then_stop(page, server):
     """Chunked responses: same event_id, out-of-order arrival, one continuous utterance."""
     _sim_ready(page, server)
     for chunk in (0, 2, 1):
         page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-chunks",
                                     "chunk": chunk, "marks": []})
-    # One atomic snapshot: `pending` is read at the instant `speaking` was true, so the
-    # two cannot straddle a chunk boundary the way two separate round-trips can.
-    started = page.wait_for_function(
-        """() => {
-             const a = window.moxieAudio;
-             if (!a || !a.isSpeaking()) return null;
-             return {pending: a.ttsPending()};
-           }""",
-        timeout=5000).json_value()
-    assert started["pending"] >= 1, f"later chunks must queue ({started})"
-    page.wait_for_function("() => window.moxieAudio.isSpeaking() === false", timeout=20000)
-    assert page.evaluate("() => window.moxieAudio.ttsPending()") == 0
+    # Assert on what the page RECORDED, not on what is true when the question arrives.
+    # The old check sampled `ttsPending()` live at the instant `speaking` first went
+    # true, and lost that race ~50% of the time on a fast runner (CI 33629395950): four
+    # tenths of a second of audio can drain entirely inside one polling gap, and then
+    # "the chunks queued" is unprovable even though they did. audio.js now remembers the
+    # shape of each playback — chunk order and the deepest the queue got — so the same
+    # three facts are asserted once the utterance is safely over.
+    done = page.wait_for_function(_PLAYED, arg={"event": "evt-chunks", "want": 3},
+                                  timeout=20000).json_value()
+    stats = done["stats"]
+    assert stats["event_id"] == "evt-chunks", stats
+    assert stats["chunks_played"] == 3, f"all three chunks must play ({stats})"
+    assert stats["order"] == [0, 1, 2], f"chunks must play in chunk_num order ({stats})"
+    assert stats["max_pending"] >= 1, f"later chunks must queue ({stats})"
+    assert done["pending"] == 0, done
     # no marks here: the mouth must have moved from the AUDIO ENVELOPE alone, which only
     # happens if the PCM really rendered through the Web Audio graph. Read as the peak
     # the page recorded over the utterance — the old live `getMouthOpen() > 0.05` wait
     # had to catch a ~1.2 s animation mid-open and lost that race on a loaded runner.
     peak = page.evaluate("() => window.moxieAudio.lastMouthPeak()")
     assert peak > 0.05, f"the envelope never drove the mouth (peak {peak})"
+
+    # ...and the proof that none of the above is a timing bet: do it again with 10 ms
+    # chunks injected in ONE synchronous round trip. They queue and drain far faster
+    # than any observer can look, so a live `ttsPending()` sample could not see the
+    # queue at all — the recorded stats still report exactly the same three facts.
+    burst = page.evaluate(
+        """() => {
+             const pcm = new ArrayBuffer(220 * 2), dv = new DataView(pcm);
+             for (let i = 0; i < 220; i++) dv.setInt16(i * 2, Math.round(11000 * Math.sin(i / 6)), true);
+             const bytes = new Uint8Array(pcm);
+             let bin = "";
+             for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+             const b64 = btoa(bin);
+             for (const chunk of [0, 2, 1])                    // one task: nothing can drain
+               window.moxieBridge.route("/devices/d_sim/commands/tts", JSON.stringify({
+                 request_source: "ROBOT_TTS_REQUEST",
+                 audio: {buffer: b64, channels: 1, sample_rate: 22050},
+                 marks: [], event_id: "evt-burst", chunk_num: chunk,
+               }));
+             return window.moxieAudio.ttsPending();
+           }""")
+    assert burst >= 1, f"three synchronous chunks must pipeline, pending={burst}"
+    fast = page.wait_for_function(_PLAYED, arg={"event": "evt-burst", "want": 3},
+                                  timeout=20000).json_value()["stats"]
+    assert fast["event_id"] == "evt-burst", fast
+    assert fast["chunks_played"] == 3 and fast["order"] == [0, 1, 2], fast
+    assert fast["max_pending"] >= 1, f"the queue depth must survive a fast drain ({fast})"
+
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
 
 
