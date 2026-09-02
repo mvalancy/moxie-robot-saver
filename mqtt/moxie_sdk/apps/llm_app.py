@@ -14,6 +14,7 @@ import json
 import re
 
 from ..app import MoxieApp
+from ..actions import ACTION_TAG_PROMPT, parse_action_tags
 from ..types import Turn, Reply, RobotContext
 from ..chat import is_offline_error as _is_offline_error
 
@@ -96,6 +97,9 @@ class LLMApp(MoxieApp):
             who += f" Their pronouns are {c.pronouns}."
         if c.notes:
             who += f" Context about them: {c.notes}"
+        # Model agency: the tags the brain may write inline (moxie_sdk/actions.py
+        # parses them off the line and onto the Reply as real robot actions).
+        tags = "\n\n--- Robot controls ---\n" + ACTION_TAG_PROMPT
         fmt = ""
         if self._expressive:
             fmt = (
@@ -105,9 +109,10 @@ class LLMApp(MoxieApp):
                 '"gesture": "none|talk|think|question|point|self|big|up|down|celebrate"}\n'
                 "Pick the mood and gesture that genuinely fit your line — you are a robot "
                 "with a face and arms, so move and emote naturally (e.g. celebrate good news, "
-                "think when pondering, question when asking, self when talking about yourself)."
+                "think when pondering, question when asking, self when talking about yourself).\n"
+                'Any robot-control tag goes inside the "say" string, nowhere else.'
             )
-        return self._persona + who + fmt
+        return self._persona + who + tags + fmt
 
     # ---- parsing ----
     @staticmethod
@@ -162,8 +167,11 @@ class LLMApp(MoxieApp):
             return Reply(text=text, markup=build_markup(text, "oops", "self"),
                          end_turn=False)
         text, mood, gesture = self._parse(raw)
-        if not text:
+        # The model may have written robot-control tags into its line — lift them out
+        # as real actions and speak only what is left (moxie_sdk/actions.py).
+        text, actions = parse_action_tags(text)
+        if not text and not actions:
             text = "Tell me more!"
             mood, gesture = "positive", "question"
-        return Reply(text=text,
-                     markup=build_markup(text, mood, gesture) if self._expressive else None)
+        markup = build_markup(text, mood, gesture) if (self._expressive and text) else None
+        return Reply(text=text, markup=markup, actions=actions)

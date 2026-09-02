@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from ..app import MoxieApp
+from ..actions import parse_action_tags
 from ..types import Turn, Reply, RobotContext
 from .module import ContentModule
 from .volley import Volley, Session
@@ -62,7 +63,11 @@ class ContentApp(MoxieApp):
     def _reply_from_volley(v: Volley) -> Reply:
         # M2: a global handler drives text/markup. Plumbing volley.execution_actions
         # (eb_timer_request etc.) into RemoteChatAction is a later slice.
-        return Reply(text=v.output_text or "", markup=v.output_markup)
+        # Handler output goes through the same tag parse as model output, so a module
+        # can end a session by writing "<exit>" into set_output (moxie_sdk/actions.py).
+        text, actions = parse_action_tags(v.output_text or "")
+        markup = parse_action_tags(v.output_markup)[0] if v.output_markup else None
+        return Reply(text=text, markup=markup, actions=actions)
 
     # ---- MoxieApp ----
     def greeting(self, robot: RobotContext) -> Optional[Reply]:
@@ -113,6 +118,9 @@ class ContentApp(MoxieApp):
             if is_rate_limit_error(e):
                 return Reply(text="Give me one tiny second to think... okay, what were you saying?")
             return Reply(text="Hmm, my brain got fuzzy — say that again?")
-        if not text:
+        # The model may drive the robot from inside its own line (see actions.py):
+        # lift the tags out as actions, speak only the remainder.
+        text, actions = parse_action_tags(text)
+        if not text and not actions:
             return Reply(text="Tell me more!")
-        return Reply(text=text)
+        return Reply(text=text, actions=actions)

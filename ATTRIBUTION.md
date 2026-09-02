@@ -14,7 +14,10 @@ robot-cloud layer builds on its groundwork:
 - the real Embodied **protobuf schemas** and the MQTT topic/message protocol,
 - the **`automarkup`** text→behavior (expressiveness) engine,
 - the **endpoint/migration QR** relocation mechanism and mosquitto TLS setup,
-- the conversation **volley** model, scheduler, and content-module concepts.
+- the conversation **volley** model, scheduler, and content-module concepts,
+- the **response action-tag** convention — `<exit>` / `<sleep>` / `<launch:MOD:CID>` written inline by the
+  model and lifted into real robot actions (`volley.py::ingest_action_tags`); our own implementation lives
+  in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py).
 
 > When we vendor any OpenMoxie source into this repo, its MIT `LICENSE` and copyright notice are
 > included alongside it (see `mqtt/` third-party notices as that code lands). Nothing here is a
