@@ -1,5 +1,5 @@
 {
- "generated": "docs-46f5c6d76dfb",
+ "generated": "docs-524a101ff7c5",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -364,7 +364,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 18886,
+   "bytes": 22066,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -373,6 +373,7 @@
     "Design language",
     "The 1-week roadmap (drives the build timer)",
     "The layered session timers",
+    "Live CI — proving it against the real gateway and real speech, on demand",
     "Run it now"
    ],
    "kind": "md"

@@ -223,6 +223,51 @@ truth, so they don't collide: each reads state, does the smallest useful increme
 > `/loop` prompts, or keep the session open for the week. A future option is to move the *research* tier
 > to a durable cloud schedule while keeping *build/test* local.
 
+## Live CI — proving it against the real gateway and real speech, on demand
+
+Everything above is hermetic: it runs with no key, no network brain and no voice models, which
+is what keeps the fast tier fast and green. That leaves one honest gap — a green CI run has
+never actually talked to the brain or made a sound. The **deep tier**
+([`sim/ci/ci-deep.yml`](../../sim/ci/ci-deep.yml), mirrored at `.github/workflows/ci-deep.yml`)
+closes it with two **manual-dispatch-only** steps.
+
+```sh
+gh workflow run ci-deep.yml --ref dev                  # live gateway suites
+gh workflow run ci-deep.yml --ref dev -f voice=true    # …plus the live VOICE suite
+```
+
+| Step | Runs | Needs | Costs |
+|---|---|---|---|
+| **Live gateway** (every dispatch) | `test_live_gateway.py` + `test_live_action_tags.py` + `test_live_content_e2e.py`, one `pytest -q -ra` | secrets `MOXIE_LLM_API_KEY` / `MOXIE_LLM_BASE_URL` / `MOXIE_LLM_MODEL` | **≈12–13 real gateway completions** |
+| **Live voice** (`-f voice=true`) | `test_live_talk_e2e.py` | the above + `piper-tts`, `faster-whisper`, `numpy`, and the two Piper voices | ~1 completion + ~126 MB of models on a cold cache |
+
+**Why manual.** A dispatch spends **real gateway calls against a real budget/rate limit** —
+about a dozen per run, plus one more with `voice=true`. That is the whole reason these steps
+are `workflow_dispatch` only and not part of the PR gate: CI should not bill the gateway on
+every push. (The same `if:` also makes the fork-safety explicit — GitHub withholds secrets
+from fork PRs, so a fork can never reach these steps.) Run one before promoting `dev → main`,
+or whenever a change touches the prompt, the content modules, or the voice path.
+
+**What it proves.** That the gateway answers; that the shipped prompt still makes the model
+emit `<exit>` / `<launch:…>` action tags at the asserted *rate* (the check that caught a 0/5
+baseline); that `mqtt/content_modules/starter.json` comes back on the wire as a
+spec-conformant `RemoteChatResponse`; and — with `voice=true` — that real Piper speech survives
+a real Whisper round trip and the whole `events/zmq → transcript → reply → CloudTTSResponse`
+loop works on actual audio, not the placeholder tone.
+
+**Why it fails rather than skips.** Every live test skips cleanly without credentials, which
+would make a secret-less dispatch a green run that proved nothing — the exact silent-skip gap
+this tier exists to close. So the gateway step **fails** on an empty `MOXIE_LLM_API_KEY`, and
+the voice step fails unless at least 3 of its 4 tests really passed. Both write a
+passed/skipped block (and the voice step its `[talk]` measurements) to the job summary.
+
+The two 63 MB Piper voices are git-ignored, so a runner has neither:
+[`sim/ci/fetch_piper_voices.py`](../../sim/ci/fetch_piper_voices.py) fetches them from **pinned**
+`rhasspy/piper-voices` `v1.0.0` URLs with recorded sha256 + size, is idempotent on files that
+already verify, and is paired with an `actions/cache` keyed on that same pinned release (plus
+one for `~/.cache/huggingface`, since faster-whisper downloads `base.en` itself). Details:
+[`sim/ci/README.md`](../../sim/ci/README.md).
+
 ## Run it now
 
 ```sh

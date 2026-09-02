@@ -8,6 +8,11 @@ name: CI (deep · main + HIL)
 on:
   pull_request: { branches: [main] }
   workflow_dispatch:
+    inputs:
+      voice:
+        description: "Also run the live VOICE tier (real Piper speech ⇄ real Whisper; downloads 2 × 63 MB voices)"
+        type: boolean
+        default: false
 
 jobs:
   docs:
@@ -41,6 +46,10 @@ jobs:
   hil-sim:
     name: HIL — full end-to-end (virtual robot; real infra when secrets present)
     runs-on: ubuntu-latest
+    # The live tiers below talk to a REAL gateway and (with voice=true) load two 63 MB
+    # ONNX voices plus the Whisper weights on a CPU runner, so this job is the slow one.
+    # A ceiling keeps a hung network call from burning an hour of runner time.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,14 +67,106 @@ jobs:
       # gated on repo secrets (never committed). Skips cleanly if unset. SECURITY: only
       # runs on SAME-REPO PRs / manual dispatch — GitHub withholds secrets from fork PRs,
       # and this guard makes that explicit so a fork PR can never reach the secret step.
-      - name: Live gateway HIL turn (manual dispatch only)
+      - name: Live gateway HIL turns (manual dispatch only)
         if: ${{ github.event_name == 'workflow_dispatch' }}   # live gateway on-demand only (protects rate limits; also fork-safe)
+        timeout-minutes: 15
         env:
           MOXIE_LLM_API_KEY: ${{ secrets.MOXIE_LLM_API_KEY }}
           MOXIE_LLM_BASE_URL: ${{ secrets.MOXIE_LLM_BASE_URL }}
           MOXIE_LLM_MODEL: ${{ secrets.MOXIE_LLM_MODEL }}
           MOXIE_VOICE_BASE_URL: ${{ secrets.MOXIE_VOICE_BASE_URL }}
-        run: python -m pytest sim/tests/test_live_gateway.py -q
+        run: |
+          set -o pipefail
+          # HONEST GATE. Every one of these files skips cleanly without a key — which is
+          # right for the hermetic tier and wrong here: a dispatch whose secret is empty
+          # would report a green "live" run that tested nothing. That silent-skip is the
+          # exact DoD-6 gap this step exists to close, so an absent secret FAILS.
+          if [ -z "$MOXIE_LLM_API_KEY" ]; then
+            echo "::error::MOXIE_LLM_API_KEY is empty — set the repo secret; the live tier must not pass by skipping"
+            exit 1
+          fi
+          # All three creds-only live suites in ONE invocation: the gateway/runtime turns,
+          # the action-tag RATE check (does the shipped prompt still make the model emit
+          # <exit>/<launch:…>), and the shipped starter.json end-to-end on the wire.
+          # `-ra` so any skip is printed with its reason rather than hiding behind a dot.
+          python -m pytest sim/tests/test_live_gateway.py \
+                           sim/tests/test_live_action_tags.py \
+                           sim/tests/test_live_content_e2e.py -q -ra | tee live-gateway.log
+          {
+            echo "### Live gateway tier (creds-only)"
+            echo ""
+            echo "Suites: \`test_live_gateway\` · \`test_live_action_tags\` · \`test_live_content_e2e\`"
+            echo ""
+            echo '```'
+            tail -n 1 live-gateway.log
+            echo '```'
+            echo ""
+            echo "Skips (if any) — every line is a test that did **not** prove anything:"
+            echo ""
+            echo '```'
+            grep '^SKIPPED' live-gateway.log || echo "none"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ---- live VOICE tier: dispatch + `voice: true` ---------------------------------
+      # Real speech in and out (sim/tests/test_live_talk_e2e.py). Needs piper-tts +
+      # faster-whisper and the two Piper voices, which are git-ignored (63 MB each), so a
+      # runner has neither — hence a separate opt-in input rather than always-on.
+      # Same fork-safety guard as above: `workflow_dispatch` only.
+      - name: Cache Piper voices (pinned rhasspy/piper-voices v1.0.0)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.voice }}
+        uses: actions/cache@v4
+        with:
+          path: sim/tts/voices
+          # Keyed on the pinned release + the exact voices, so a cache hit can only ever
+          # be those bytes; the fetch below re-verifies sha256 regardless.
+          key: piper-voices-rhasspy-v1.0.0-en_US-amy+lessac-medium
+      - name: Cache Whisper weights (faster-whisper base.en downloads itself)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.voice }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-faster-whisper-base.en-${{ runner.os }}
+      - name: Live VOICE HIL (real Piper speech ⇄ real Whisper)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.voice }}
+        timeout-minutes: 30
+        env:
+          MOXIE_LLM_API_KEY: ${{ secrets.MOXIE_LLM_API_KEY }}
+          MOXIE_LLM_BASE_URL: ${{ secrets.MOXIE_LLM_BASE_URL }}
+          MOXIE_LLM_MODEL: ${{ secrets.MOXIE_LLM_MODEL }}
+        run: |
+          set -euo pipefail
+          pip install --quiet piper-tts faster-whisper numpy
+          # Pinned URLs + recorded sha256, idempotent on a warm actions/cache hit.
+          python3 sim/ci/fetch_piper_voices.py
+          python -m pytest sim/tests/test_live_talk_e2e.py -q -ra -s | tee live-voice.log
+          # HONEST GATE, part two. This file `importorskip`s piper/faster-whisper/numpy and
+          # skips wholesale when the voices are absent — so "0 passed, 4 skipped" is a
+          # PASSING pytest run that proved nothing. Three of the four tests have no
+          # legitimate reason to skip once the deps and voices are here (only the
+          # live-brain one may, when the gateway degrades to its canned fallback), so
+          # anything under three passes is a failure of this tier.
+          # `|| true`: the case this gate exists for ("4 skipped", no "passed" at all)
+          # makes grep exit 1, and `set -e` would kill the step before it could say why.
+          passed=$(grep -oE '[0-9]+ passed' live-voice.log | tail -n 1 | cut -d' ' -f1 || true)
+          passed=${passed:-0}
+          {
+            echo "### Live voice tier (\`voice: true\`)"
+            echo ""
+            echo '```'
+            tail -n 1 live-voice.log
+            echo '```'
+            echo ""
+            echo "Piper→Whisper measurements (\`[talk]\` lines):"
+            echo ""
+            echo '```'
+            grep '^\[talk\]' live-voice.log || echo "none"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$passed" -lt 3 ]; then
+            echo "::error::live voice tier passed only ${passed} tests (need ≥3) — piper-tts / faster-whisper / numpy or the Piper voices did not load, so this tier skipped instead of proving the voice path"
+            exit 1
+          fi
       # Future: a `real-robot` job on a self-hosted runner wired to physical hardware
       # + the live gateway/voice, promoted from this virtual HIL stage.
 
