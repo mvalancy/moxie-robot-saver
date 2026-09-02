@@ -92,6 +92,18 @@ browser at all and carry the hermetic suite CI actually runs.
   repo secrets — see [`../ci/README.md`](../ci/README.md). That step *fails* on an empty
   `MOXIE_LLM_API_KEY` rather than skipping, because a green live run that tested nothing is
   the exact gap it exists to close. It is manual because it spends ≈12–13 real completions.
+- **`test_live_gateway_tts.py`** — the *gateway voice* live tests (live since 2026-09-02).
+  `MOXIE_VOICE_BASE_URL` + `MOXIE_VOICE_MODEL` is the whole switch, so the file builds its
+  synthesizer with `config.build_synthesizer()` and then makes the gateway prove it is
+  speaking: four `/audio/speech` calls — `piper-amy` as WAV (unwrapped to the header's own
+  22050 Hz and transcribed back at word overlap ≥ 0.7), `piper-ryan` to show the model *is*
+  the voice switch, one `pcm` call, and one deliberately-unknown model to prove the turn
+  downgrades to the standby voice instead of going silent. The tier-1 anti-tone guard is
+  the same one `test_live_talk_e2e.py` uses, so this suite cannot pass on the placeholder
+  beep either. Needs `faster-whisper` + `numpy` (not `piper-tts`, and no 63 MB voice file —
+  the gateway does the speaking); skips cleanly without them or without a voice URL. **In
+  CI** it rides in the same creds-only dispatch step as the three suites above, which also
+  fails on an empty `MOXIE_VOICE_BASE_URL`.
 - **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper
   speech in, real Piper speech out, read back by real faster-whisper. Tier 1 round-trips
   Moxie's own voice through Whisper (and proves the built-in `ToneSynthesizer` would

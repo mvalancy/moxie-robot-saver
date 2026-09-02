@@ -127,7 +127,7 @@ services:
       MOXIE_CONTENT_MODULE: ${MOXIE_CONTENT_MODULE:-content_modules/starter.json}
       MOXIE_CHILD_NICKNAME: ${MOXIE_CHILD_NICKNAME:-friend}
       MOXIE_TTS: ${MOXIE_TTS:-tone}          # tone = the built-in zero-dependency voice
-      MOXIE_TTS_VOICE: ${MOXIE_TTS_VOICE:-alloy}
+      MOXIE_TTS_VOICE: ${MOXIE_TTS_VOICE:-}   # empty = derived from the model name
       MOXIE_PIPER_MODEL: ${MOXIE_PIPER_MODEL:-}      # published images ship no Piper — see the guide
       MOXIE_PIPER_CONFIG: ${MOXIE_PIPER_CONFIG:-}
       MOXIE_STT: ${MOXIE_STT:-auto}          # auto = on when faster-whisper is installed
@@ -137,8 +137,14 @@ services:
       MOXIE_LLM_MODEL: ${MOXIE_LLM_MODEL:-graphling-medium}
       MOXIE_BRAIN_BUDGET_S: ${MOXIE_BRAIN_BUDGET_S:-6}   # slow brain → a filler line, then the answer
       MOXIE_STREAMING: ${MOXIE_STREAMING:-1}             # speak each sentence as the model writes it
+      # The gateway voice: setting the base URL is the whole switch (same key as chat).
+      # Piper — or the tone — stays behind it as the standby, so a gateway hiccup
+      # downgrades the voice instead of silencing the turn. docs/guides/litellm-tts-setup.md
       MOXIE_VOICE_BASE_URL: ${MOXIE_VOICE_BASE_URL:-}
       MOXIE_VOICE_API_KEY: ${MOXIE_VOICE_API_KEY:-}
+      MOXIE_VOICE_MODEL: ${MOXIE_VOICE_MODEL:-piper-amy}     # the model IS the voice (piper-amy | piper-ryan)
+      MOXIE_VOICE_FORMAT: ${MOXIE_VOICE_FORMAT:-wav}         # wav carries its own sample rate | pcm
+      MOXIE_VOICE_SAMPLE_RATE: ${MOXIE_VOICE_SAMPLE_RATE:-22050}   # pcm only
       MOXIE_WEBHOOK_ENDPOINT: ${MOXIE_WEBHOOK_ENDPOINT:-}
       MOXIE_BROKER_HOST: ${MOXIE_BROKER_HOST:-127.0.0.1}
       MOXIE_BROKER_PORT: ${MOXIE_PORT_MQTT_TLS:-8883}

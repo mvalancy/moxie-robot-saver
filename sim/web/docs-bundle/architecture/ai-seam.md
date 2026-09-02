@@ -280,6 +280,22 @@ message CloudTTSResponse { RequestSourceType request_source; AudioBuffer audio;
                            uint64 total_time; uint64 synthesis_time; }
 ```
 
+### Backends in this repo — and what happens when one fails
+
+Three, in a fixed precedence (`mqtt/config.py::build_synthesizer`): **voice server → Piper → tone**.
+
+| Backend | When | Notes |
+|---|---|---|
+| `OpenAIVoiceSynthesizer` | `MOXIE_VOICE_BASE_URL` set | Any OpenAI-shaped `/audio/speech`. **Live on our LiteLLM gateway since 2026-09-02** (`piper-amy` / `piper-ryan`, same host + key as chat) — proven by transcribing its audio back at word overlap **1.00** (`sim/tests/test_live_gateway_tts.py`). A `wav` reply is unwrapped here, so `AudioBuffer.sample_rate` is **the file's own header**, not a constant; `pcm` uses `MOXIE_VOICE_SAMPLE_RATE`. Setup + the gateway's quirks: [litellm-tts-setup.md](../guides/litellm-tts-setup.md) |
+| `PiperSynthesizer` | `MOXIE_PIPER_MODEL` set + piper installed | Offline, no key, ~3-5× faster than the gateway for the same sentence |
+| `ToneSynthesizer` | `MOXIE_TTS=tone` | A shaped beep. **Not speech** — it exists so the SIM's audio path works with no model, network or extra dep |
+
+The gateway voice is a network call to someone else's box, so it is wrapped in a
+`FallbackSynthesizer` whose standby is exactly the rung it displaced (Piper if configured, else the
+tone). A 400, an outage past the SDK's backoff, or a body that is JSON rather than audio is surfaced
+**once** and then latched: the turn *downgrades* to a working voice instead of handing a child
+silence. `synth.voice_name` says which one is talking.
+
 **Required:** `audio` (PCM: raw `buffer` + `channels` + `sample_rate`) and `event_id` to correlate.
 **`marks[]` (recommended):** timed events lifted from the markup — the face reads them for **viseme**
 lip-sync (mouth shapes) and to fire gestures at the right instant. Without marks the audio still
@@ -308,7 +324,7 @@ see §2 "Input safety"; a kid-facing backend should not ship without something i
 | ① STT in | `ai/` + `mqtt/` | local Whisper/Vosk → `DeepgramResponse` shape; the sim uses `sim/stt/` |
 | ② Brain | `mqtt/` (the `MoxieApp`/`LLMApp` agent) | any OpenAI-compatible LLM (Ollama/LiteLLM), env-configured; emits markup |
 | ②b Input safety | `mqtt/moxie_sdk/safety.py` + `supervisor/moxie_runtime.py` | local rule engine (`safety_rules.json`) enforced pre-inference and per streamed chunk; parent review queue |
-| ③ TTS out | `ai/` + `mqtt/` | Piper (offline) → `CloudTTSResponse` PCM; the sim uses `sim/tts/` |
+| ③ TTS out | `ai/` + `mqtt/` | gateway voice (live, `piper-amy`) → Piper (offline) → tone, with the displaced rung as a standby → `CloudTTSResponse` PCM; the sim uses `sim/tts/` |
 
 Keys/endpoints live only in a git-ignored `.env`; the repo ships placeholders. The
 [ecosystem build plan](moxie-ecosystem.md) shows how these three sit inside the one-command stack; the
