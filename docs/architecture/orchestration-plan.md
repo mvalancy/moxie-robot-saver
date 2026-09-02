@@ -346,5 +346,16 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   — and the packages start private (one-time flip to public on the repo's Packages page).** In flight:
   `fix/cloud-tts-chunk-order`, `feat/parent-memory-browser`.
 
+- **2026-09-02** — Integrated `fix/cloud-tts-chunk-order` (PR #30 → dev): the real `[0, 2, 1]` bug is fixed at the
+  root — ordering was a property of the *queue* (what's still waiting); with short chunks and one message per
+  round trip, chunk 0 drained before chunk 1 landed and chunk 2 started alone. Now the *player* enforces it
+  (n+1 only after n; 1.2 s gap rule; late chunks dropped; 5 s event window), with tests that fail
+  deterministically on the old code. Fast tier should be steadily green again.
+- **2026-09-02** — Integrated `feat/parent-memory-browser` (PR #29 → dev): 🧠 "What Moxie remembers" in the
+  console — facts/preferences/open threads per activity with provenance, erase per activity or everything,
+  empty + policy states; the double's honesty guard covers the memory handlers. +19 tests (→753 fast /
+  784 full). Gaps: no per-item erase/edit (runtime has none), `summarized_through` needs a one-line runtime
+  change, nothing decays. BEYOND #4 stays 🟡 until decay/edit.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
