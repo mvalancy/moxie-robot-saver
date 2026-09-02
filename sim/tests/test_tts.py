@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.tts import (  # noqa: E402
     strip_markup, Synthesizer, build_cloud_tts_response, synthesize_cloud_tts,
-    make_voice_synthesizer,
+    make_voice_synthesizer, decode_cloud_tts_response,
 )
 
 
@@ -135,3 +135,24 @@ def test_make_piper_synthesizer_selection():
     # injected voice_fn always builds (test/custom backend)
     s = make_piper_synthesizer("some.onnx", voice_fn=lambda t: b"x")
     assert isinstance(s, PiperSynthesizer) and s.synthesize("hi") == b"x"
+
+
+# --- SIM-side playback: decode CloudTTSResponse back to audio ---
+
+def test_decode_cloud_tts_round_trips_build():
+    marks = [{"time": 0, "start": 0, "end": 2, "type": "word", "value": "Hi"}]
+    wire = build_cloud_tts_response(b"\x10\x20\x30\x40", event_id="e5", channels=1,
+                                    sample_rate=22050, marks=marks)
+    got = decode_cloud_tts_response(wire)
+    assert got["audio"] == b"\x10\x20\x30\x40"          # base64 buffer → raw PCM
+    assert got["sample_rate"] == 22050 and got["channels"] == 1
+    assert got["event_id"] == "e5" and got["marks"] == marks
+
+
+def test_decode_cloud_tts_accepts_json_string_and_partial():
+    import json
+    wire = build_cloud_tts_response(b"abc", event_id="e6")
+    got = decode_cloud_tts_response(json.dumps(wire))     # tolerates a JSON string
+    assert got["audio"] == b"abc" and got["event_id"] == "e6"
+    empty = decode_cloud_tts_response({})                 # missing fields → safe defaults
+    assert empty["audio"] == b"" and empty["sample_rate"] == 24000 and empty["marks"] == []

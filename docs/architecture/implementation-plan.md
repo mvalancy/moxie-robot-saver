@@ -72,18 +72,19 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
-| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~60% | brain live-validated 🟢; STT path complete incl. **real zmqSTT protobuf decode** 🟢; TTS synthesize-on-reply → `CloudTTSResponse` on `/commands/tts` with **a working offline synthesizer (Piper/Amy) + gateway backend** 🟢. Remaining: SIM audio **playback** of the response + one live talk-through scenario |
+| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~65% | brain live-validated 🟢; STT path complete incl. **real zmqSTT protobuf decode** 🟢; TTS synth (Piper/Amy + gateway) → runtime publish → **headless SIM decodes + records playback** (`VirtualMoxie._play_tts`) 🟢, runtime→SIM voice contract tested. Remaining: browser-SIM audio playback (Web Audio) + one live talk-through with a real Piper model |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
 | 3 | Cloud management (console + config/telemetry) | 🟡 ~65% | RobotCloudConfig + RobotStatus + config-editing (`update_config`) + status snapshot + **Packet telemetry (build/parse/ingest) + LoggingPolicy gate** built 🟢. Remaining: `server/` web UI surfaces the stored state/telemetry (M6) |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
 | 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command run unverified (M7) |
 | 6 | Green + live-tested | 🟡 ~70% | **three-tier CI installed + green** (fast on dev · deep+HIL on PR-to-main · release on tags); live LLM turn 🟢. Remaining: live voice + a full talk-e2e scenario (skips in CI without creds) |
 
-**Most valuable next slice:** **SIM audio playback** — the SIL client consuming the `CloudTTSResponse`
-on `/devices/{id}/commands/tts` and representing/playing it, which closes criterion 1's visible loop now
-that both a synthesizer (`PiperSynthesizer` 🟢, offline Amy) and the runtime publish path exist. The
-other fully-unblocked track is criterion 3's server console UI (M6). The live-voice gateway path stays
-gated on TTS-model registration (handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)).
+**Most valuable next slice:** criterion 3's **parent-console UI (M6)** — surface robot state + config +
+telemetry in `server/`'s web UI; it's the weakest fully-unblocked track now that the talk-e2e loop is
+closed and tested end-to-end on the headless SIM. Criterion-1 finishers (browser Web-Audio playback of
+the `CloudTTSResponse`, and a live talk-through with a downloaded Piper model) remain but are heavier /
+partly gated. The live-voice gateway path stays gated on TTS-model registration
+(handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)).
 
 ## TTS strategy (2026-09-01)
 

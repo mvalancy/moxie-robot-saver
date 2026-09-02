@@ -162,6 +162,30 @@ def build_cloud_tts_response(audio: bytes, *, event_id: str = "", channels: int 
     }
 
 
+def decode_cloud_tts_response(resp: dict) -> dict:
+    """SIM-side counterpart to build_cloud_tts_response: a CloudTTSResponse (dict or JSON
+    string) → `{audio: bytes, sample_rate, channels, marks, event_id, chunk_num}`. This
+    is what a client (the SIM's audio playback, a robot) needs to actually speak — it
+    base64-decodes the AudioBuffer back to raw PCM. Tolerant of missing/partial fields."""
+    if isinstance(resp, (str, bytes)):
+        import json as _json
+        resp = _json.loads(resp)
+    audio_obj = resp.get("audio") or {}
+    buf = audio_obj.get("buffer") or ""
+    try:
+        audio = base64.b64decode(buf) if buf else b""
+    except Exception:
+        audio = b""
+    return {
+        "audio": audio,
+        "sample_rate": int(audio_obj.get("sample_rate", 24000) or 24000),
+        "channels": int(audio_obj.get("channels", 1) or 1),
+        "marks": list(resp.get("marks") or []),
+        "event_id": resp.get("event_id", ""),
+        "chunk_num": int(resp.get("chunk_num", 0) or 0),
+    }
+
+
 def synthesize_cloud_tts(synth: Synthesizer, markup: str, *, event_id: str = "",
                          voice: Optional[str] = None) -> dict:
     """CloudTTSRequest(markup) → CloudTTSResponse: strip markup → synthesize → wrap."""

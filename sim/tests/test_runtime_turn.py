@@ -43,9 +43,11 @@ class _OfflineApp(MoxieApp):
         return Reply.offline()
 
 
-def _drive(app, device_id="d_test", speech="hello"):
+def _drive(app, device_id="d_test", speech="hello", synth=None):
     rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname="Sam"))
     rt.client = _FakeClient()                             # inject fake transport
+    if synth is not None:
+        rt.set_synthesizer(synth)                         # server-side voice for the SIM
     rt.robots[device_id] = RobotContext(device_id=device_id, child=rt.child)
     event = json.dumps({"command": "prompt", "backend": "router",
                         "event_id": "evt-9", "speech": speech})
@@ -71,6 +73,24 @@ def test_turn_roundtrips_text_actions_and_success():
     ra = resp["response_actions"]
     assert len(ra) == 1 and ra[0]["action"] == "launch"
     assert ra[0]["module_id"] == "DRAW" and ra[0]["content_id"] == "default"
+
+
+def test_turn_publishes_decodable_tts_when_synth_set(device_id="d_test"):
+    """With a server voice installed, a turn also publishes a CloudTTSResponse to
+    /commands/tts that the SIM can decode back to audio — the runtime→SIM voice contract."""
+    from moxie_sdk.tts import PiperSynthesizer, decode_cloud_tts_response
+    synth = PiperSynthesizer("x.onnx", voice_fn=lambda t: b"AUDIO", sample_rate=22050)
+    published = _drive(_ActionApp(), speech="hello", synth=synth)
+    tts = [p for (t, p) in published if t == f"/devices/{device_id}/commands/tts"]
+    assert tts, f"no tts published; got topics {[t for (t, _) in published]}"
+    spoken = decode_cloud_tts_response(tts[-1])
+    assert spoken["audio"] == b"AUDIO" and spoken["sample_rate"] == 22050
+    assert spoken["event_id"] == "evt-9"                  # carries the turn's event id
+
+
+def test_turn_no_tts_without_synth():
+    published = _drive(_ActionApp(), speech="hello")      # no synthesizer configured
+    assert not [t for (t, _) in published if t.endswith("/commands/tts")]
 
 
 def test_offline_brain_signals_error_offline_over_the_wire():

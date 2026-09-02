@@ -42,8 +42,10 @@ class VirtualMoxie:
         self.verbose = verbose
         self.got_config = threading.Event()
         self.got_reply = threading.Event()
+        self.got_tts = threading.Event()
         self.config_payload: dict | None = None
         self.reply_payload: dict | None = None
+        self.spoke: dict | None = None      # last decoded CloudTTSResponse (audio playback)
         self.errors: list[str] = []
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.device_id)
         self.client.on_connect = self._on_connect
@@ -82,8 +84,32 @@ class VirtualMoxie:
             out = (payload.get("output") or {}).get("text", "")
             self.log(f"← remote_chat reply: {out[:60]!r}")
             self.got_reply.set()
+        elif topic.endswith("/commands/tts"):
+            self._play_tts(payload)
         elif "/commands/" in topic:
             self.log(f"← {topic.split('/commands/')[-1]}: {str(payload)[:60]}")
+
+    def _play_tts(self, payload):
+        """Consume a CloudTTSResponse: decode the audio buffer + marks and 'play' it.
+        A real robot renders audio to the speaker; the headless SIM records that Moxie
+        spoke (bytes + sample rate) so scenarios/tests can assert the voice reached it.
+        Decodes the wire shape directly (base64 AudioBuffer) — the SIM is a protocol
+        client and stays independent of the server SDK, like a real robot's firmware."""
+        import base64
+        audio_obj = (payload or {}).get("audio") or {}
+        try:
+            audio = base64.b64decode(audio_obj.get("buffer") or "")
+        except Exception as e:
+            self.errors.append(f"tts decode failed: {e}")
+            return
+        rate = int(audio_obj.get("sample_rate", 24000) or 24000)
+        channels = int(audio_obj.get("channels", 1) or 1)
+        marks = payload.get("marks") or []
+        self.spoke = {"audio": audio, "sample_rate": rate, "channels": channels,
+                      "marks": marks, "event_id": payload.get("event_id", "")}
+        secs = len(audio) / (2 * channels * rate) if rate else 0.0
+        self.log(f"🔊 spoke {len(audio)} B @ {rate} Hz (~{secs:.2f}s, {len(marks)} marks)")
+        self.got_tts.set()
 
     # -- the scripted round-trip --
     def run_smoke(self) -> bool:
