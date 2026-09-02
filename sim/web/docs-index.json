@@ -1,5 +1,5 @@
 {
- "generated": "docs-9e62d4523ad5",
+ "generated": "docs-b03b1a738389",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 47784,
+   "bytes": 50535,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -161,7 +161,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 61455,
+   "bytes": 67572,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -185,6 +185,7 @@
     "3.6 The robot config JSON pushed on connect",
     "3.7 The pairing gate — which robots we actually serve *(built, v1 2026-09-02)*",
     "3.8 The `schedule` query — the day plan, and the parent's read of it *(adaptive, 2026-09-02)*",
+    "3.9 `commands/telehealth` — \"Be Moxie\", the operator drives the body *(built, v1 2026-09-02)*",
     "3b. Robot identity / auth",
     "4. Conversation flow (end to end)",
     "4.1 The turn objects",
@@ -202,8 +203,7 @@
     "6. Content modules",
     "7. Integration architecture for our repo",
     "7.1 How the two halves sit on one Orin box",
-    "7.2 What we take vs rebuild from OpenMoxie",
-    "7.3 Recommended phased build order"
+    "7.2 What we take vs rebuild from OpenMoxie"
    ],
    "kind": "md"
   },
@@ -336,7 +336,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 69166,
+   "bytes": 69485,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -443,7 +443,7 @@
    "path": "architecture/backlog/telehealth.md",
    "title": "Telehealth — \"Be Moxie\": the operator drives the body (ADOPT #7)",
    "section": "architecture",
-   "bytes": 33651,
+   "bytes": 36638,
    "mermaid": 1,
    "headings": [
     "Why this is worth building",

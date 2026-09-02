@@ -289,6 +289,7 @@ def _clause_bounds(sentence: str, words: List[str]) -> List[Tuple[int, int]]:
 # --------------------------------------------------------------------------- #
 def annotate(text: str, *, mood_hint: Optional[str] = None,
              gesture_hint: Optional[str] = None, look: Optional[str] = None,
+             intensity: Optional[int] = None,
              turn_key: str = "", chunk_index: int = 0,
              icons: bool = False, sfx: bool = False, trees: bool = True) -> str:
     """One spoken line -> behavior markup. Pure: same inputs, same bytes, every time.
@@ -296,6 +297,13 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
     `mood_hint` / `gesture_hint` are what the *model* chose, when the app knows (LLMApp's
     expressive JSON). A hint wins over the rules; an **unknown** hint is dropped and
     counted, never passed through to the wire.
+
+    `intensity` overrides the punctuation-derived strength from `_score_mood` — it is what
+    a *human* chose, when there is one at the keyboard (the 🎭 telehealth card's
+    gentle/normal/strong). `None` means "let the text decide", which is what every caller
+    that predates it passes, so the goldens are byte-identical. Out-of-range clamps to
+    `vocab.MAX_INTENSITY` (`maxIntensity=2`, behavior-markup.md:107); a non-number is
+    dropped and counted like any other bad hint.
 
     `look` names a look-bearing tree from `vocab.GAZE_TREES` — the only cloud-side handle
     on where Moxie looks, because there is no gaze verb.
@@ -320,7 +328,12 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
     if not sentences:
         return text
 
-    mood, intensity = _score_mood(text)
+    mood, strength = _score_mood(text)
+    if intensity is not None:
+        try:
+            strength = max(0, min(vocab.MAX_INTENSITY, int(intensity)))
+        except (TypeError, ValueError):
+            _drop(f"intensity={intensity}")
     if mood_hint:
         hinted = vocab.MOOD_ALIASES.get(str(mood_hint).strip().lower())
         if hinted is None:
@@ -368,7 +381,7 @@ def annotate(text: str, *, mood_hint: Optional[str] = None,
         tokens.append(("m", vocab.icons_mark([icon_value], command=vocab.ICON_SHOW)))
     if chunk_index == 0:
         # S3: exactly one mood mark per streamed answer, on the first chunk.
-        tokens.append(("m", vocab.mood_mark(mood, intensity)))
+        tokens.append(("m", vocab.mood_mark(mood, strength)))
     if sfx and mood == 1 and _PRAISE.search(text):
         # The only one of our two confirmed asset ids a spoken line should ever start:
         # the other is a looping music bed for a cast segment.

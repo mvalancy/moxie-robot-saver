@@ -651,6 +651,70 @@ async def acknowledge_robot_safety(device_id: str, request: Request):
              "detail": str(e)}))
 
 
+# --- 🎭 "Be Moxie": puppet / telehealth mode (audit ADOPT #7) -------------------------
+# A remote grown-up types a line and the robot says it, in a mood they picked, with the
+# robot's own brain switched off so there is only one voice in the room. Two thin proxies,
+# exactly like the other cards: the runtime does the protocol, the safety check and the
+# journalling; this layer only forwards and normalizes.
+#
+# The one behaviour worth naming here: a line the safety classifier BLOCKS comes back as a
+# **400 with its reason**, and the card shows it to the operator so they can rephrase. It
+# is never silently rewritten — a human is at the keyboard, and substituting a redirect
+# for a clinician's sentence would be both useless and dishonest.
+
+@app.get("/local/robots/{device_id}/telehealth")
+def robot_telehealth(device_id: str):
+    """The 🎭 card's poll: is puppet mode on, is there a session, what state did the ROBOT
+    report (empty = never reported), is the robot inside its bedtime window, and the live
+    text transcript. Server-side call so the browser has no CORS issue; graceful
+    {ok:false} when the supervisor is down or the device is unknown."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_telehealth
+    url = (STATUS_URL.rsplit("/status", 1)[0] +
+           f"/telehealth?device_id={quote(device_id)}")
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return normalize_telehealth(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode() or "{}")
+        return JSONResponse(status_code=e.code, content=normalize_telehealth(body))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_telehealth(
+            {"ok": False, "device_id": device_id, "error": "supervisor not reachable",
+             "detail": str(e)}))
+
+
+@app.post("/local/robots/{device_id}/telehealth")
+async def drive_robot_telehealth(device_id: str, request: Request):
+    """One operator verb — `{"action": "enable"|"disable"|"start"|"end"|"state"|
+    "speak"|"interrupt"}`, with `{"text", "mood", "intensity"}` on a speak. Forwarded to
+    the supervisor's `POST /telehealth`, which runs the permit check, the mode gate, the
+    safety classifier and the markup, then publishes `commands/telehealth`.
+
+    A refused line keeps the supervisor's status code — **400 with `reason`** for a safety
+    block or a mode that is off, 404 for a robot that is not connected — so the card can
+    tell the operator what to do instead of silently doing nothing."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_telehealth
+    body = await request.body()
+    url = (STATUS_URL.rsplit("/status", 1)[0] +
+           f"/telehealth?device_id={quote(device_id)}")
+    req = urllib.request.Request(url, data=body or b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return normalize_telehealth(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code,
+                            content=normalize_telehealth(json.loads(e.read().decode() or "{}")))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_telehealth(
+            {"ok": False, "device_id": device_id, "error": "supervisor not reachable",
+             "detail": str(e)}))
+
+
 # --- 🧠 What Moxie remembers (audit BEYOND #4) ---------------------------------------
 # The runtime stores durable, provenance-carrying facts per robot
 # (`robots/<id>/memory.json`, moxie_sdk/store.py::MemoryStore) and serves them on its

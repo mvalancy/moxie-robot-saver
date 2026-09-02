@@ -45,7 +45,19 @@ robot-cloud layer builds on its groundwork:
   [`mqtt/moxie_sdk/schedule.py`](mqtt/moxie_sdk/schedule.py)`::plan_inputs`/`plan_day`,
 - the **response action-tag** convention — `<exit>` / `<sleep>` / `<launch:MOD:CID>` written inline by the
   model and lifted into real robot actions (`volley.py::ingest_action_tags`); our own implementation lives
-  in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py).
+  in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py),
+- the **puppet page** — the shape of a telehealth console (`views.py::puppet_api`,
+  `templates/hive/puppet.html`): four verbs (enable / disable / speak / interrupt), a mood + intensity
+  picker beside the line box, a state poll, and — the load-bearing insight — that turning puppet mode on
+  is *just a config write* (`robot_config["moxie_mode"] = "TELEHEALTH"`, then re-push). Our corpus
+  recovered the `TeleHealth.proto` and the `STATE_TELEBRAIN` launcher state but never captured what
+  *triggers* the mode, so theirs is a server driving real robots and we take that trigger as
+  **field-proven**, behind one constant that says so
+  ([`mqtt/moxie_sdk/telehealth.py`](mqtt/moxie_sdk/telehealth.py)`::TELEHEALTH_MOXIE_MODE`, assumption
+  B1). Three things are deliberately ours: intensity is an **integer 0-2** (the recovered
+  `maxIntensity=2`, not a 0.0-1.0 float), the operator's line goes through **our safety classifier and
+  the parent's journal**, and a blocked line is **refused back to the operator with its reason** rather
+  than silently rewritten. No code was copied.
 
 > When we vendor any OpenMoxie source into this repo, its MIT `LICENSE` and copyright notice are
 > included alongside it (see `mqtt/` third-party notices as that code lands). Nothing here is a

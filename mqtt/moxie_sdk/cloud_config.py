@@ -212,6 +212,34 @@ def _bedtime(v):
 WAKE_DAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday",
                   "saturday", "sunday")           # index == the `days` uint32 we emit
 
+
+def in_bedtime(cfg, now_local) -> bool:
+    """Is this *effective* config inside its bedtime window at this local wall-clock time?
+
+    Pure: `cfg` is the override layer stack (`fleet ⊕ per-robot`) and `now_local` a naive
+    local `datetime`. The window is the `["HH:MM", "HH:MM"]` pair the RobotCloudConfig
+    already carries (`weekday_bedtime` / `weekend_bedtime`); weekday vs weekend by
+    `datetime.weekday()`, the convention `WAKE_DAY_NAMES` fixes (0 = Monday). A window
+    that wraps midnight (20:30-07:00, the normal case) is handled; `start == end` is not a
+    zero-length night, it is "no window". No window configured → never bedtime.
+
+    Lives here rather than in the runtime because two callers need the same answer for
+    different reasons: the unprompted-greeting rule stays quiet inside it, and the 🎭
+    telehealth card *warns* inside it (we do not know whether a robot suppresses a puppet
+    line at bedtime — `backlog/telehealth.md` B4 — so we tell the operator instead of
+    guessing).
+    """
+    if not isinstance(cfg, dict):
+        return False
+    window = cfg.get("weekend_bedtime" if now_local.weekday() >= 5 else "weekday_bedtime")
+    if not isinstance(window, (list, tuple)) or len(window) != 2:
+        return False
+    start, end = str(window[0]), str(window[1])
+    if start == end:
+        return False
+    cur = now_local.strftime("%H:%M")
+    return (start <= cur < end) if start < end else (cur >= start or cur < end)
+
 MAX_WAKE_ENTRIES = 14          # two a day is already generous; bounds a console POST
 MAX_PARENT_REQUESTS = 16
 _MS_EPOCH_FLOOR = 10 ** 11     # >= this many "seconds" is really milliseconds

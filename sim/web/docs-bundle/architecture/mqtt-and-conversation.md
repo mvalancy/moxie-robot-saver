@@ -295,7 +295,7 @@ push config, then send a ZMQ `ProtoSubscribe` telling the robot to stream STT au
 | `remote_chat` | RemoteChatResponse — the turn's `output.text` + `output.markup` + `response_actions` |
 | `query_result` | answers to `schedule`, `mentor_behaviors`, `license` queries |
 | `http_token` | `{"command":"http_token","http_token":"notoken"}` (OTA/http; optional) |
-| `telehealth` | puppet-mode `PLAY_OUTPUT` / `INTERRUPT` / `START_SESSION` etc. |
+| `telehealth` | puppet-mode `PLAY_OUTPUT` / `INTERRUPT` / `START_SESSION` / `END_SESSION` / `UPDATE_STATE` — a `TelehealthRobotCommand` as JSON. **Built, v1 2026-09-02** — see §3.9. |
 | `wakeup` | `{"command":"wakeup"}` — wake a `wake_button_enabled` robot from screen-off |
 | `zmq` | binary; e.g. `ProtoSubscribe` (STT enable) and `zmqSTTResponse` (transcripts) |
 
@@ -402,6 +402,95 @@ on that server. Example of the `line` a parent reads:
 
 Surfacing that line in the **parent console** is a follow-up: `server/` renders
 `GET /local/robots/{id}/…` views and no console page reads this endpoint yet.
+
+### 3.9 `commands/telehealth` — "Be Moxie", the operator drives the body *(built, v1 2026-09-02)*
+
+Puppet / telehealth mode is the one channel where the cloud does not *answer* the robot —
+it **speaks through it**. A remote grown-up types a line and Moxie says it, in a mood they
+picked, with the robot's own dialog engine switched off so there is only one voice in the
+room. The whole protocol is recovered: see
+[Telehealth (RE)](../reverse-engineering/protocol/telehealth.md) for the
+`embodied.telehealth.TeleHealth.proto` and the `STATE_TELEBRAIN` launcher state, and
+[`backlog/telehealth.md`](backlog/telehealth.md) for the build document and the five
+questions only a physical robot can settle.
+
+**The wire.** Cloud → robot on `/devices/{id}/commands/telehealth`, JSON like every other
+`commands/{name}` payload (§3.5). The document is a `TelehealthRobotCommand`:
+
+```jsonc
+{"command": "telehealth",
+ "message": {"timestamp": 1788360800925,          // ms, like every other timestamp here
+             "action": "PLAY_OUTPUT",             // Action: START_SESSION | PLAY_OUTPUT |
+                                                  //   END_SESSION | UPDATE_STATE | INTERRUPT
+             "output": {"text": "Hello Sam.",     // PLAY_OUTPUT only
+                        "markup": "<mark .../>"}, //   the SAME behavior grammar §4 emits
+             "session_id": "ths-4e91e52b3f"}}
+```
+
+`output` is present **only** on `PLAY_OUTPUT` — an `INTERRUPT` carries no line at all.
+`Output.line_id` / `line_params` exist in the proto and we **never emit them**: the field
+comment calls `line_id` "the id of a pre-authored line" and we have no catalog of those
+ids. Builders and parser: [`mqtt/moxie_sdk/telehealth.py`](../../mqtt/moxie_sdk/telehealth.py),
+whose JSON keys are cross-checked in CI against the recovered `.proto` (and the compiled
+`TeleHealth_pb2` where protobuf is installed), so a typo cannot ship.
+
+**Robot → cloud.** The `client-service-activity-log` event with `subtopic:"telehealth"`
+carries a `TelehealthRobotEvent` with the robot's own `RobotState` — `READY` /
+`IN_SESSION` / `EXITING`. The runtime stores it verbatim; a name outside the recovered enum
+is kept and flagged rather than coerced, and until one arrives the console says **"never
+reported"** rather than inventing a state.
+
+**Turning it on is a config write.** `moxie_mode` (§3.6 / `RobotCloudConfig` field 21) goes
+to `"TELEHEALTH"` in that robot's own override layer and the config is re-pushed through
+the ordinary path. **That the mode is what enters `STATE_TELEBRAIN` is an assumption** —
+our corpus says the state is entered "when a telehealth session starts" and does not name
+the trigger; OpenMoxie does exactly this in a server that drives real robots, so it is
+field-proven rather than capture-proven, the same standing as `pairing_status:"unpairing"`
+(§3.7). It lives behind one constant, `telehealth.TELEHEALTH_MOXIE_MODE`.
+`sanitize_config_overrides` does not whitelist `moxie_mode`, so the ⚙️ form's *"apply to
+all robots"* cannot put a household into puppet mode: it is a per-robot act.
+
+**Session shape.** `START_SESSION → (PLAY_OUTPUT | INTERRUPT)* → END_SESSION`, and while a
+session is open the runtime **does not call the brain for that robot** — an
+`events/remote-chat` arriving mid-session is noted and dropped. Whether a brain-less robot
+still sends one is unknown; the rule makes the design correct either way and keeps a model
+reply from racing the operator's line.
+
+**Every line is checked.** The operator's text goes through the same `InputSafety`
+classifier that guards Moxie's own speech, as `role=MOXIE`, and is recorded in the parent's
+safety journal. The handling differs from the brain path on purpose: a model that produces
+an unsafe line has nobody to tell, so the runtime substitutes a redirect — here a human is
+at the keyboard, so a **block is returned to them with its reason (HTTP 400) and nothing is
+spoken**. Substituting a redirect for a clinician's sentence would be useless and
+dishonest.
+
+**What the operator can see.** A per-robot, in-memory, 200-entry transcript ring of
+`{who, text, at}` — the operator's own lines, and the child's as text, from the STT path
+that already exists (`settings.props.stt = "4"`, §3.6). **Text only: no audio and no video
+from the child's room reach the operator in this phase.** The recovered
+`TelehealthMessage` has no audio field, so a return path would be our invention rather than
+a recovered capability, and nothing in `LoggingPolicy` authorizes piping a live child
+microphone into a third party's browser. Under `LoggingPolicy.NO_DATA` the ring keeps
+operator lines only. That a clinician cannot *hear* the child is a stated non-goal with a
+named place to argue it later, not an oversight.
+
+**Bedtime is a warning, not a gate.** We do not know whether a robot suppresses a puppet
+line inside its `weekday_bedtime` / `weekend_bedtime` window, so the console says so and
+the line is sent anyway (`cloud_config.in_bedtime`). Claiming a delivery we cannot observe
+would be worse than telling the operator the truth.
+
+**Where it lives.** Six runtime verbs (`telehealth_enable` / `_session` / `_speak` /
+`_interrupt` / `_view` and the `_on_activity` branch) plus `GET`/`POST /telehealth` on the
+supervisor's status server; the console's 🎭 **Be Moxie** card
+(`GET`/`POST /local/robots/{id}/telehealth`); and `sim/web/bridge.js` +
+`sim/virtual_moxie.py --telehealth`, which is how CI proves a person can type a sentence
+and a robot-shaped thing says it — `sim/run_smoke.sh --telehealth`.
+
+> **The risk this feature carries, named rather than buried.** Whoever can reach the
+> console can speak to the child in Moxie's voice. The mitigations are the permit gate (a
+> *pending* robot can never be puppeted), the safety classifier, and the fact that **every
+> line is journalled with `who: "operator"`** so a parent can read back everything that was
+> said. That readback is the mitigation; it is not an afterthought.
 
 ---
 
