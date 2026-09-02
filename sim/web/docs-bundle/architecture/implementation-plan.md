@@ -31,6 +31,8 @@ Ours is built to the full recovered protocol with clean seams:
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟢 seam + runtime-wired + **real zmqSTTRequest protobuf decode** (dep-free) + JSON bridge, e2e-tested; live faster-whisper is an optional dep | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟢 seam + runtime-wired + **3 backends: built-in tone (zero-dep) · Piper (offline, Amy) · OpenAI-voice (gateway)**; **full audio round-trip proven through a real broker** (SIL smoke `--expect-tts`); real-speech play-through pending a Piper model/creds | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
+| Cloud queries — schedule + `mentor_behaviors` | [mqtt](mqtt-and-conversation.md) · [content-module](content-module-contract.md) | 🟢 the robot gets a **real day plan** and its **own history back**: `build_schedule` plans onboarding + a variety rotation of on-board activities, skipping what this robot already completed (so FTUE ends and nothing repeats); reported `mentor_behavior`s are ingested and served. Deterministic (day+device seeded), not yet LLM-planned | `mqtt/moxie_sdk/schedule.py` + `wire.py` + `moxie_runtime.py::_on_activity` |
+| Durable per-robot state | — | 🟡 JSON files under `MOXIE_DATA_DIR` (default `mqtt/data/`), atomic-ish writes, survives restarts — a **stepping stone**, not the database the audit asks for (ADOPT #8) | `mqtt/moxie_sdk/store.py` + [`mqtt/data/`](../../mqtt/data/) |
 | Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry` | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 
@@ -76,19 +78,40 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   stored events (M6 🟢). Remaining (not blocking): telemetry is **in-memory only** — the runtime keeps the last 50
   events per robot and loses them on restart or robot disconnect; durable per-session persistence + typed
   `event_data` decoding (LogDevice/LogUser wrappers) are a later slice.
-- **cloud queries (`query_result`):** the **wire shape is now spec-conformant** — `_on_activity` answers a
+- **cloud queries (`query_result`):** shape **and content** are now real. `_on_activity` answers a
   `client-service-activity-log` / `subtopic:"query"` request via `build_activity_response`
-  (`mqtt/moxie_sdk/wire.py`), which echoes `request_id` and keys the payload by its own
-  `CloudQueryResponse` field (`schedule` / `mentor_behaviors` / `license_values`) instead of a generic
-  `result`. Citations: [`cloud-protocol.md`](../reverse-engineering/protocol/cloud-protocol.md):147 (the
+  (`mqtt/moxie_sdk/wire.py`), echoing `request_id` and keying the payload by its own
+  `CloudQueryResponse` field. `schedule` carries a built `ContentSchedule` and `mentor_behaviors`
+  carries this robot's reported history. Citations:
+  [`cloud-protocol.md`](../reverse-engineering/protocol/cloud-protocol.md):147 (the
   `commands/{command}` JSON topic), :172 + [`mqtt-and-conversation.md`](mqtt-and-conversation.md):274/:296
   (the `subtopic` multiplex and the `query_result` command), :229 + `CloudQueryResponse` in
   [`recovered-proto/embodied/logging/Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto)
-  (`request_id`=3, `schedule`=6, `license_values`=5, `mentor_behaviors`=10). Corroborated by OpenMoxie's
-  `moxie_server.py::provide_schedule` / `provide_mentor_behaviors`. **Still a gap:** the *values* are empty
-  (`{}` / `[]`) — there is no schedule generator or mentor-behavior store yet, so a real robot gets a
-  well-formed but empty day plan. `response_code` (field 99) is not emitted: the docs give the enum but not
-  its JSON spelling.
+  (`request_id`=3, `schedule`=6, `license_values`=5, `mentor_behaviors`=10);
+  [`ContentSchedule.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/ContentSchedule.proto)
+  and `RecommendationContext.Recommendation` in
+  [`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):26-34
+  for the plan itself; `ActivityUpdate.mentor_behavior`=14 (Cloud.proto:241) +
+  [`MentorBehavior.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/MentorBehavior.proto):26-36
+  for the report. Corroborated by OpenMoxie's `moxie_server.py::provide_schedule` /
+  `provide_mentor_behaviors` / `ingest_mentor_behavior`. **Still gaps:** `license` answers empty (we hold
+  no license blobs); `response_code` (field 99) is not emitted (the docs give the enum but not its JSON
+  spelling); the other queries (`idf`, `contexts`, `context_store`, `remote_lines`) answer empty.
+- **the day plan is deterministic, not intelligent.** `build_schedule` seeds on `(device_id, day)`, so a
+  robot gets a stable plan that changes tomorrow — it does **not** read telemetry, mood, time of day or
+  parent preference, and it cannot explain *why this activity today*. That recommender is BEYOND #7
+  ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2). Two smaller honesties: the
+  "already done → don't schedule again" rule applies to the generated rotation and to first-time-user
+  onboarding, **not** to fixtures an author pins in `provided_schedule` (e.g. `DM`, which is meant to
+  recur daily); and the FTUE completion thresholds (`TNT`=9, `SYSTEMSCHECK`=4 content ids) are
+  **OpenMoxie's field-proven constants**, not something our RE docs establish — see the note in
+  `mqtt/moxie_sdk/schedule.py`.
+- **the store is JSON files, not a database.** `mqtt/moxie_sdk/store.py` persists per-robot
+  `mentor_behaviors` under `MOXIE_DATA_DIR` with atomic-ish writes and a 500-record cap. It has no
+  indexes, no queries, no migrations, and no concurrent-writer story beyond a single process's lock —
+  it exists so ADOPT #1/#2 could ship without blocking on ADOPT #8's real database. Conversation memory
+  (`MOXIE_MEMORY_DIR`) and telemetry still use their own paths; folding all three onto one durable
+  store is the next slice.
 
 ## DoD progress (audited 2026-09-02) — ≈ 57%
 
