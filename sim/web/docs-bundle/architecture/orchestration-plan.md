@@ -307,5 +307,14 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   and asserts them after completion. Playbook rule 11 added. In flight: `feat/session-memory-persist-summarize`,
   `feat/device-allowlist`, `fix/cloud-tts-queue-stats`.
 
+- **2026-09-02** — Integrated `feat/session-memory-persist-summarize` (PR #25 → dev): the content contract's
+  `persist_data` + `session.summarize` are built as a structured, provenance-carrying, parent-erasable memory
+  floor (BEYOND #4 floor) — `LoggingPolicy` honored from the effective config, module-declared memory, safety +
+  verbatim filters, `on_session_end` hook, `GET/DELETE/POST /memory`, `memory_chat.json` shipped. +42 tests
+  (→712). Live: Moxie greeted a returning child with "I remember you have a beagle named Pepper!". Honest gaps
+  → backlog: parent memory UI in the console; summaries are sticky and can be wrong (an invented pronoun);
+  no decay/per-item edit; summarization holds a pool thread. In flight: `feat/device-allowlist`,
+  `fix/cloud-tts-queue-stats`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
