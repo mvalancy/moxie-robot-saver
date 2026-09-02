@@ -90,6 +90,10 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     family sampling a live value inside a short window (`#tts-status` text, `getMouthOpen()`, `ttsPending()`)
     on a loaded runner. The page records what happened (peak, order, counts, per event) and the test waits
     for completion, then asserts the record. Briefs for any SIM/Playwright work must say so explicitly.
+12. **Verify `MERGED` before any cleanup.** `gh pr merge` can be rejected (a conflict that appeared when a
+    sibling PR merged first). Check the PR state is `MERGED` before removing the worktree or deleting the
+    branch — deleting an open PR's head branch closes the PR. Recovery, if it happens: `git fetch origin
+    refs/pull/<n>/head`, re-branch, merge forward, open a new PR. (Happened once: PR #37 → #38.)
 
 ## The layered session loops (24/7 continuity)
 
@@ -364,6 +368,59 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   Playbook lesson (rule 10 corollary): two concurrent slices that both touch *deploy config* need an
   integration-time smoke of the *combined* tree, not just each branch's own — the orchestrator now runs the
   images-mode compose smoke at merge whenever compose/deploy files changed. Promotion resumes on a green gate.
+
+- **2026-09-02** — **Released v0.6.0 "a real appliance"** (dev → main squash `9ca5c95`, tag `v0.6.0`). Standing PR
+  recreated as #32; dev reconciled (zero-content merge). Over v0.5.0: the config contract completed + fleet
+  defaults, the memory floor + parent browser, the closed-by-default pairing gate, published multi-arch images
+  (this tag is the first real GHCR publish — the packages start **private**; the owner flips them public
+  once), the chunk-order fix. Six releases today (v0.2.0 → v0.6.0); 23 delegated slices integrated. In flight:
+  `feat/vision-events`, `feat/memory-item-erase`.
+
+- **2026-09-02** — **First real image publish succeeded:** the v0.6.0 release run built + pushed all three
+  multi-arch images (supervisor, console, broker-certs; amd64 + arm64) to GHCR alongside the sdist/wheel —
+  the two-command install is now real. Owner action outstanding: flip the three packages **public** on the
+  repo's Packages page (no API for it). "Pending first tag" wording retired where found.
+
+- **2026-09-02** — Integrated `feat/memory-item-erase` (PR #33 → dev): a parent can erase or **correct** any single
+  remembered line — stable derived item ids (migration-free), per-item provenance, a use-clock decay with pinning,
+  edits re-checked for safety and verbatim child speech (unsafe correction → 400). +23 tests (→807 full / 773
+  fast-shaped). **Audit BEYOND #4 → 🟢.** In flight: `feat/vision-events`, `test/compose-parity-guards`.
+
+- **2026-09-02 (INTEGRATION)** — Integrated `test/compose-parity-guards` (PR #34 → dev): hermetic PyYAML guards keep
+  the clone and prebuilt compose files in sync — env passthrough + defaults per service, the inlined broker
+  config diffed (plus a `$$`-escaping check the runtime smoke couldn't see), service/healthcheck/port/volume
+  parity, doc parity; 20 negative cases prove each guard names the key and file. The v0.6.0 pause would have
+  been caught in 0.2 s on the feature PR. `test_compose.py` 14→47; suite → 806. In flight: `feat/vision-events`,
+  `feat/face-customization`.
+
+- **2026-09-02 (AUDIT)** — All green after v0.6.0: guards + 0-diff bundle, standing PR #32 MERGEABLE (no-push
+  multi-arch builds + docs + package pass; HIL/compose/SIL running), fast tier green on the last pushes, package
+  0.6.0 builds, no secrets in tree/history, `.env` files ignored, token works, zero stale branches, all three
+  workflow templates in parity with `.github/`, four loops armed. Spec check (ai-seam §2): `InputSafety`
+  fields `is_unsafe`/`blocked_by`/`intents`/`phrase_id` present in `safety.py` + `wire.py` as specified. DoD
+  unchanged at 4/6 🟢 (criteria 1 + 6 ~90%; the physical robot is the ceiling). RESEARCH delegated build-ready
+  briefs for broker authentication (the permits gap) and puppet/telehealth (ADOPT #7). In flight:
+  `feat/vision-events`, `feat/face-customization`, `feat/backlog-security-telehealth`.
+
+- **2026-09-02** — Integrated `feat/vision-events` (PR #35 → dev, BEYOND #9): Moxie notices you walked in. Key
+  finding: the vision events are not topics — they arrive as the `speech` of a `RemoteChatRequest` only after
+  the brain sends `EventSubscription`, which is why nobody had ever seen one; we now subscribe, keep a
+  hysteresis-filtered presence model, put presence in the turn context, and greet a returning child on the
+  arrival event's own `event_id` (no unsolicited publish — recorded assumption). +70 tests (→820 fast /
+  875 full); live: "There you are, friend!" with TTS at 5.04 s, rate-limited. Merge combined with PR #33's
+  decay clock in `content_app.py`. In flight: `feat/face-customization`, `feat/backlog-security-telehealth`.
+
+- **2026-09-02** — Integrated `feat/face-customization` (PR #36 → dev, ADOPT #9): a child can style Moxie's face —
+  `ChildDecrypted.face_options` (field 17, clear) carries the choice; the catalog is honestly 12 cited options
+  (two of 14 slots), zero invented ids, parent-supplied layers allowed; a deterministic cache-buster id
+  (field-proven, not capture-proven). +42 tests (→849 full / 810 fast). Live: face_options + id on the wire.
+- **2026-09-02 (RESEARCH)** — Integrated `feat/backlog-security-telehealth` (PR #37 → conflict with #36 → re-opened and merged as **PR #38**): build-ready briefs for
+  broker authentication (P0 containment via pattern ACLs, no robot change; P1 JWT verification against enrolled
+  keys; P2 spoof refusal at CONNECT — decisive finding: `ServiceConfiguration2` carries no broker credential, so
+  nothing reaches a stock robot by QR) and puppet/telehealth (ADOPT #7). **Gateway TTS went live** (`piper-amy`,
+  `piper-ryan`) — `feat/gateway-tts-live` delegated to wire + prove it. STT on the gateway still WIP.
+- **2026-09-02** — Integrated `feat/adaptive-schedule` (PR #39 → dev): the fixed rotation behind `schedule` is now a deterministic, explainable recommender (`plan_inputs`/`plan_day`; parent request → FTUE → coverage → recency → affinity → time-of-day by recovered `ModuleCategory` → spread → blake2b tiebreak; never into bedtime), each entry with a plain-English *why* line on `GET /schedule`. +45 tests (`test_schedule_planner.py`). Filed honestly: telemetry `Packet` carries no module signal (finish/abandon from `mentor_behaviors` only), the 10-min slot is ours, times resolve in the server's timezone. **Gap → next:** a console card for the *why* lines (`server/` was reserved by the face slice). Audit BEYOND #7 → 🟢.
+- **2026-09-02** — Integrated `feat/gateway-tts-live` (PR #40 → dev): the Graphlings gateway TTS (live today: `piper-amy`/`piper-ryan`, WAV 22050) is the default cloud voice behind `MOXIE_VOICE_BASE_URL` — `MOXIE_VOICE_MODEL`/`FORMAT`/`SAMPLE_RATE` knobs, RIFF-sniffed rate, latched fallback gateway → Piper → tone. Live proof: piper-amy → whisper overlap 1.00, 1.7 s latency; unknown model → tone in 0.38 s. +16 hermetic tests + creds-gated `test_live_gateway_tts.py` in the deep dispatch tier (repo secret `MOXIE_VOICE_BASE_URL` set). **Gateway STT still WIP** (user will say). Both compose files forward the new env (parity guard green). Next: v0.7.0 promotion; telehealth (ADOPT #7) + broker-auth P0 builds.
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

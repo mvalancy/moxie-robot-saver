@@ -8,6 +8,7 @@ the /local/fleet endpoint in main.py is just: fetch STATUS_URL → normalize_fle
 The snapshot shape comes from MoxieRuntime.status_snapshot().
 """
 from __future__ import annotations
+import re as _re
 from typing import Optional
 
 
@@ -85,12 +86,45 @@ def normalize_robot(r: dict) -> dict:
         # layer for a pre-fleet snapshot, so an older supervisor still renders).
         "config_effective": dict(r.get("config_effective")
                                  or r.get("config_overrides") or {}),
+        # The face cache-buster (`child_pii.id`) the next config push will carry — "" when
+        # no look is chosen. A pre-face supervisor omits it, which reads back as "default".
+        "face_cache_id": str(r.get("face_cache_id") or ""),
         "telemetry_count": int(r.get("telemetry_count") or 0),
         "safety_total": int(r.get("safety_total") or 0),
         "safety_unreviewed": int(r.get("safety_unreviewed") or 0),
         "online": True,                     # present in the live snapshot ⇒ connected
         "summary": robot_summary(r),
     }
+
+
+_HEX = _re.compile(r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")
+
+
+def _face_catalog(raw) -> list:
+    """The supervisor's face catalog → render-ready rows, defensively typed.
+
+    Kept tolerant on purpose: this crosses a process boundary, and a console that throws
+    on an odd catalog row would take the whole Moxie tab down with it."""
+    out = []
+    for slot in (raw or []):
+        if not isinstance(slot, dict) or not slot.get("id"):
+            continue
+        options = []
+        for opt in (slot.get("options") or []):
+            if not isinstance(opt, dict) or not opt.get("id"):
+                continue
+            row = {"id": str(opt["id"]), "label": str(opt.get("label") or opt["id"])}
+            # The swatch colour is interpolated into an inline `style=` in the console, so
+            # it is shape-checked here rather than trusted: a value that is not a plain
+            # `#rrggbb` is dropped and the option renders as a name.
+            if _HEX.match(str(opt.get("hex") or "")):
+                row["hex"] = str(opt["hex"])
+            options.append(row)
+        out.append({"id": str(slot["id"]), "type": str(slot.get("type") or ""),
+                    "label": str(slot.get("label") or slot["id"]),
+                    "note": str(slot.get("note") or ""),
+                    "options": options, "cited": bool(options)})
+    return out
 
 
 def normalize_fleet(snapshot: Optional[dict]) -> dict:
@@ -118,6 +152,11 @@ def normalize_fleet(snapshot: Optional[dict]) -> dict:
         "pending": [r["device_id"] for r in robots if r["pending"]],
         "pending_count": sum(1 for r in robots if r["pending"]),
         "schedule_modules": [str(m) for m in (snap.get("schedule_modules") or [])] if ok else [],
+        # The appearance catalog for the 🎨 card (audit ADOPT #9), straight from the
+        # supervisor's `moxie_sdk.faces` — the console never keeps its own copy, so it
+        # cannot offer a slot or an option the SDK would then reject. Empty from a
+        # supervisor that predates the card, and the card simply does not render.
+        "face_catalog": _face_catalog(snap.get("face_catalog")) if ok else [],
         "robots": robots,
         "recent": list(snap.get("recent") or [])[-60:],
         "error": None if ok else (snap.get("error") or "supervisor not reachable"),
@@ -241,10 +280,12 @@ def normalize_safety(payload: Optional[dict]) -> dict:
 # learn that, and from which activity". So this flattens each namespace into dated rows
 # and counts them. Pure, so it unit-tests in the hermetic suite.
 #
-# Honest limit, visible in the shape: provenance is recorded **per merge** (one entry per
-# summarized conversation), not per item, so every item in a namespace carries that
-# namespace's newest provenance. A dict item with its own `_provenance` is accepted too,
-# so a runtime that later attributes item by item renders here without a console change.
+# Every row carries the item's **id** (what the per-item erase and the inline edit act
+# on), its own provenance (stamped at merge time, so two conversations' facts in one
+# activity no longer share one date), whether a parent has `pinned` it by correcting it,
+# and how often a prompt has actually rendered it. A bare string is still accepted — a
+# `memory.json` written before ids existed — and comes through with an empty id and the
+# namespace's newest provenance as its fallback date.
 
 #: The lists a namespace may hold, in the order a parent reads them, and the singular
 #: noun the UI puts on one row. Mirrors `content/memory.py::LIST_KEYS` + `summaries`.
@@ -288,8 +329,13 @@ def _memory_block(block) -> tuple:
 
 
 def _memory_item(value, kind: str, fallback: dict) -> dict:
-    """One remembered value → a console row (`{kind, text, provenance}`)."""
-    prov = fallback
+    """One remembered value → a console row.
+
+    `{kind, text, id, pinned, use_count, last_used, provenance}`. A bare string is still
+    accepted (a `memory.json` written before ids existed, read straight off disk) and
+    simply has no id — the card then offers the activity-level erase and no per-item ✕,
+    which is honest: without an id there is nothing for the runtime to delete."""
+    prov, item_id, pinned, uses, used_at = fallback, "", False, 0, None
     if isinstance(value, dict):
         text = value.get("text") or value.get("value") or ""
         own = value.get("_provenance") or value.get("provenance")
@@ -297,9 +343,15 @@ def _memory_item(value, kind: str, fallback: dict) -> dict:
             own = own[0] if own else None
         if isinstance(own, dict):
             prov = own
+        item_id = str(value.get("id") or "")
+        pinned = bool(value.get("pinned"))
+        uses = int(_num(value.get("use_count")) or 0)
+        used_at = _num(value.get("last_used_at"))
     else:
         text = value
-    return {"kind": kind, "text": str(text), "provenance": memory_provenance(prov)}
+    return {"kind": kind, "text": str(text), "id": item_id, "pinned": pinned,
+            "use_count": uses, "last_used": used_at,
+            "provenance": memory_provenance(prov)}
 
 
 def _memory_sort_key(item: dict) -> tuple:
@@ -377,7 +429,12 @@ def normalize_memory(raw: Optional[dict]) -> dict:
         "summarized_through": max(through) if through else None,
         "error": None if ok else (p.get("error") or "supervisor not reachable"),
     }
-    if "erased" in p:                     # an erase reply carries its own confirmation
-        out["erased"] = bool(p.get("erased"))
+    if "erased" in p or "edited" in p:    # an erase/edit reply carries its confirmation
+        if "erased" in p:
+            out["erased"] = bool(p.get("erased"))
+        if "edited" in p:
+            out["edited"] = bool(p.get("edited"))
         out["namespace"] = str(p.get("namespace") or "all")
+        if p.get("item"):
+            out["item"] = str(p.get("item"))
     return out

@@ -17,7 +17,10 @@ def assemble(config):
     synth = config.build_synthesizer()
     if synth:
         rt.set_synthesizer(synth)
-        print(f"[run] server voice enabled: {synth.name}")
+        # `describe()` rather than `.name`: a gateway voice is wrapped in a
+        # FallbackSynthesizer, whose own name is the wrapper's — the startup log should
+        # say which voice is speaking and what stands by if it fails.
+        print(f"[run] server voice enabled: {synth.describe()}")
     trans = config.build_transcriber()
     if trans:
         rt.set_transcriber(trans)

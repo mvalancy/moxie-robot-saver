@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64, json, os, secrets
 from typing import Optional
 
-from fastapi import FastAPI, Request, Response, Header, HTTPException, Query
+from fastapi import Body, FastAPI, Request, Response, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -655,11 +655,14 @@ async def acknowledge_robot_safety(device_id: str, request: Request):
 # The runtime stores durable, provenance-carrying facts per robot
 # (`robots/<id>/memory.json`, moxie_sdk/store.py::MemoryStore) and serves them on its
 # localhost status server. A memory a parent cannot read or erase is not acceptable on a
-# child's device, so the console proxies all three verbs here rather than leaving them to
-# `curl`. Erase granularity is exactly what the runtime offers: **one namespace, or all
-# of it** — there is no per-item delete on the other side, so there is none here.
+# child's device, so the console proxies every verb here rather than leaving them to
+# `curl`. Granularity is exactly what the runtime offers, and that is now **one item, one
+# activity, or all of it** — plus an edit, because a summary is more often wrong in a word
+# than worthless ("Puppy sleeps on *his* bed" for "my bed" is a real line from our own
+# live run, and erasing the activity to fix it costs everything else Moxie learned).
 
-def _memory_request(device_id: str, method: str = "GET", namespace: str = ""):
+def _memory_request(device_id: str, method: str = "GET", namespace: str = "",
+                    item: str = "", body: dict | None = None):
     """Call the supervisor's `/memory` for one robot and normalize the reply.
 
     Same server-side-call shape as the telemetry/safety proxies (no CORS problem in the
@@ -671,12 +674,22 @@ def _memory_request(device_id: str, method: str = "GET", namespace: str = ""):
     url = STATUS_URL.rsplit("/status", 1)[0] + f"/memory?device_id={quote(device_id)}"
     if namespace:
         url += f"&namespace={quote(namespace)}"
+    if item:
+        url += f"&item={quote(item)}"
+    data = json.dumps(body).encode() if body is not None else None
     try:
-        req = urllib.request.Request(url, method=method)
+        req = urllib.request.Request(url, method=method, data=data)
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(req, timeout=3) as r:
             return normalize_memory(json.loads(r.read().decode())), 200
     except urllib.error.HTTPError as e:
-        return normalize_memory(json.loads(e.read().decode() or "{}")), e.code
+        raw = e.read().decode() or "{}"
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            payload = {"ok": False, "error": raw[:200]}
+        return normalize_memory(payload), e.code
     except Exception as e:
         return normalize_memory({"ok": False, "device_id": device_id,
                                  "error": "supervisor not reachable",
@@ -702,10 +715,33 @@ def forget_all_memory(device_id: str):
 
 @app.delete("/local/robots/{device_id}/memory/{namespace}")
 def forget_memory_namespace(device_id: str, namespace: str):
-    """Erase one activity's memory (one namespace). The finest granularity the runtime
-    offers — see docs/guides/what-moxie-remembers.md for what that means for one wrong
-    fact (today: erase the activity, and Moxie relearns the rest)."""
+    """Erase one activity's memory (one namespace) — everything it ever learned."""
     out, code = _memory_request(device_id, method="DELETE", namespace=namespace)
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
+@app.delete("/local/robots/{device_id}/memory/{namespace}/{item}")
+def forget_memory_item(device_id: str, namespace: str, item: str):
+    """Forget exactly one remembered line, by its id. The finest cut there is: everything
+    else that activity learned stays, and so does how far it had summarized."""
+    out, code = _memory_request(device_id, method="DELETE", namespace=namespace,
+                                item=item)
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
+@app.post("/local/robots/{device_id}/memory/{namespace}/{item}")
+def correct_memory_item(device_id: str, namespace: str, item: str,
+                        body: dict = Body(default=None)):
+    """Correct one remembered line — `{"text": "…"}`.
+
+    The supervisor re-runs the safety classifier and the no-verbatim check on the new
+    wording (a text box that writes into every later prompt is the one place those rules
+    matter most) and **pins** the result, which takes it out of decay. A refused edit
+    comes back as a 400 carrying the reason, not a silent no-op."""
+    text = str((body or {}).get("text") or "")
+    out, code = _memory_request(device_id, method="POST",
+                                body={"edit": {"namespace": namespace, "item": item,
+                                               "text": text}})
     return out if code == 200 else JSONResponse(status_code=code, content=out)
 
 

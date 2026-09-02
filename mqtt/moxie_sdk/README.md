@@ -12,6 +12,13 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   and interleaved chats. Pure + deterministic.
 - [`store.py`](store.py) — the durable per-robot store (JSON under `MOXIE_DATA_DIR`, default
   [`../data/`](../data/)) that remembers reported `mentor_behaviors` across restarts.
+- [`faces.py`](faces.py) — 🎨 **Moxie's look**: the frozen appearance catalog and how a
+  selection becomes `child_pii.face_options` + the `child_pii.id` texture cache-buster. Pure.
+  Our recovered docs name all 14 `MoxieCustomizationType` slots but list options for only two
+  (the eye/face colour enums, with hex), so it ships **12 cited options and no invented asset
+  ids** — a parent supplies their own through `face.custom`. Read the module docstring before
+  touching it: it carries the citation trail and the two flagged assumptions. Parent-facing
+  summary: [Moxie's look guide](../../docs/guides/moxies-look.md).
 - [`wire.py`](wire.py) — the JSON encoders/decoders for the robot-cloud bus (chat responses,
   `query_result`, mentor-behavior reports). A chat response can be one chunk of several
   (`chunk_num` + `consistency_control.is_completed`) — that is how a slow turn answers twice.
@@ -21,6 +28,13 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`filler.py`](filler.py) — the short "let me think" lines, with thinking markup, that the
   runtime speaks when the brain outlives its latency budget (see
   [`../supervisor/`](../supervisor/)).
+- [`presence.py`](presence.py) — what Moxie's own eyes tell the server. The robot runs vision
+  on-device and emits semantic events only (`eb-found-face`, `eb-lost-target`, QR/ArUco/book —
+  **no pixels, no bounding box, no identity**), delivered as the `speech` of a chat request once
+  the brain subscribes. This is the pure state machine that folds them into a per-robot presence
+  record + derived `arrived`/`left` signals, with hysteresis so a face flickering at the edge of
+  the frame cannot spam the brain, plus the short prompt line and the greeting lines the runtime
+  speaks. Design + honesty: [vision.md §7](../../docs/architecture/vision.md).
 - [`segment.py`](segment.py) — the sentence segmenter a streaming brain talks through:
   dependency-free, pure, and careful about decimals, abbreviations, ellipses and lines too
   short to speak alone. Each finished sentence becomes one `RemoteChatResponse` chunk, so a

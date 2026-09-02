@@ -368,6 +368,41 @@ who pairs through the console never sees this: `POST /local/simulate-robot-scan`
 the device id it is given as part of completing the pairing. Owner guide:
 [`../guides/permitting-a-robot.md`](../guides/permitting-a-robot.md).
 
+### 3.8 The `schedule` query — the day plan, and the parent's read of it *(adaptive, 2026-09-02)*
+
+The robot pulls its day at the start of every session — `client-service-activity-log`,
+`subtopic:"query"`, `query:"schedule"` (§3.3) — and the cloud answers on
+`/devices/{id}/commands/query_result` with a `CloudQueryResponse` whose field 6 is a
+`ContentSchedule` (§3.5). **That wire is unchanged.** What changed is what fills it:
+`build_schedule` was a `(device_id, day)` rotation and is now a scored recommender
+(audit §4.2 BEYOND #7) that plans from the robot's `mentor_behaviors`, the parent's
+`schedule_preferences`, the bedtime windows in its config, and the clock. The factors,
+their weights, the time-of-day mapping and what telemetry can honestly contribute are
+documented once, in
+[`content-module-contract.md` §How a `schedules[]` entry becomes the day the robot
+runs](content-module-contract.md#how-a-schedules-entry-becomes-the-day-the-robot-runs).
+
+Because the plan now has *reasons*, they are kept — never on the wire, only for the
+parent. Every served day is written to `robots/<device_id>/schedule_explain.json` and
+read back over the supervisor's localhost status server:
+
+| endpoint | answer |
+|---|---|
+| `GET /schedule?device_id=…` | `{ok, device_id, day, planned_at, served, schedule, explanations[], inputs}` — the exact `ContentSchedule` that went out, one `{module_id, slot, at, reason_codes[], line, score, factors}` per entry **in plan order**, and a summary of what the planner knew (`bucket`, `bedtime`, `slots`, `parent_requests`, `ftue_skips`, `telemetry`, `history`, `planned`) |
+| `GET /schedule?device_id=…&refresh=1` | re-plans on the spot instead of reading the stored answer (`served:false`) |
+
+404 for a device this appliance has never seen; localhost-only, like every other handler
+on that server. Example of the `line` a parent reads:
+
+```
+ 07:38  DRAW           Sam finished Drawing once — scheduling it in the morning slot.
+ 07:58  SCAVENGERHUNT  Requested by a parent for 8:01 am — Scavenger hunt is pinned to that slot.
+ 08:18  JUKEBOX        Sam finished Jukebox once — scheduling it in the morning slot.
+```
+
+Surfacing that line in the **parent console** is a follow-up: `server/` renders
+`GET /local/robots/{id}/…` views and no console page reads this endpoint yet.
+
 ---
 
 ## 3b. Robot identity / auth
@@ -705,6 +740,38 @@ our recovered catalog. Independent corroboration in the other direction: their
 
 The **behavior planner** (`backlog/expressiveness.md` §2) replaces the floor behind this same
 seam, with the same signature, and degrades to it on any failure.
+
+### 4.7 Vision events, and whether the cloud may speak first — **built**, v1 2026-09-02
+
+The robot's own eyes reach us on **this same topic**. A subscribed perception event
+(`eb-found-face`, `eb-lost-target`, `eb-qr-event`, `eb-dr-event`, `eb-br-event`) is delivered as the
+**`speech` of an ordinary `RemoteChatRequest`** — "instead of the modules receiving something the
+user said, it receives a special event string like `eb-found-face`" (OpenMoxie
+`doc/RemoteModuleAPI.md` §Event Handling, MIT; the same shape
+[`content-and-conversation.md`](../reverse-engineering/runtime/content-and-conversation.md) shows for
+QR). Nothing arrives until the brain asks: the events are "discarded by the application stack unless
+the active module is specifically interested", and the brain opts in with
+`RemoteChatAction.EventSubscription{clear, active[]}` on any response. So the router
+(`moxie_runtime._on_remote_chat`) recognizes the event in the `speech` slot and diverts it before
+any brain call, and one reply per `(device, module_id)` carries the subscription. Full design:
+[`vision.md`](vision.md) §7.
+
+**May the cloud publish a `remote_chat` nobody asked for?** *Not established — so we do not.* The
+contract is an **RPC**: `Volley.create_response` echoes `event_id` from the request (§4.1), and
+nothing in the recovered corpus says what a robot does with a `commands/remote_chat` whose
+`event_id` matches no outstanding request. Two consequences, and they are enough:
+
+- **A vision event is itself a request**, so a reply to it is not merely legal but **required** —
+  "the remote module must produce some response for this input to continue the interaction". Moxie's
+  unprompted hello therefore goes out as an ordinary `SUCCESS` on *that event's own* `event_id`.
+  When there is nothing to say the runtime answers `NOREPLY_ACK` (ResultCode 6, "acknowledge only,
+  no spoken line") — the contract's own field for a silent acknowledgement, and a **terminal**
+  result, so a client waiting on that `event_id` is released rather than left hanging.
+- **When there is no request to answer** (a hello earned while a turn was already streaming), the
+  line is queued and delivered as **chunk 0 / `REPLY_PENDING`** of the next turn — §4.5's wire shape
+  exactly, with the answer closing the sequence as chunk 1.
+
+This assumption is the one to revisit first if a capture from a physical robot ever appears.
 
 ---
 

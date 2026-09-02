@@ -77,6 +77,34 @@ The transcript from seam ① plus conversation context, history, the current mod
 (`Recommendation{module_id, content_id, entry_line}`, `restricted_modules`, `Urgency` casual/normal/immediate).
 Deltas over the base session are in [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md).
 
+#### Presence in the turn context — BUILT (v1, 2026-09-02)
+
+A `Turn` now also carries **`presence`** — what Moxie's own eyes have told the server. The robot
+runs vision on-device and emits semantic events only (`eb-found-face`, `eb-lost-target`, QR/ArUco/
+book) with **no pixels, no bounding box, no identity**
+([`vision.md`](vision.md) §1.1), and they arrive as the `speech` of an ordinary `RemoteChatRequest`
+once the brain subscribes with `EventSubscription.active[]` (see (b) below). The runtime folds them
+into a bounded per-robot record and hands the app a resolved snapshot:
+
+| `Turn.presence` | |
+|---|---|
+| `known` | has the robot's vision ever told us anything? (`False` ≠ "nobody there") |
+| `face_present`, `present_s`, `away_s` | someone is/was in front of the robot, and for how long |
+| `faces_seen`, `flickers` | arrivals (hysteresis-filtered) and blips |
+| `last_qr` / `last_marker` / `last_book` | `$eb_qr_value` / `$eb_dr_value` / `$eb_br_value` |
+| `line` | **one short, kid-safe sentence for the system prompt — `""` on most turns** |
+
+`line` is the whole contract with the brain: it is non-empty only when the situation actually
+changed ("A child just came back in front of you — nobody had been visible for about 15 minutes"),
+because a standing "a child is visible" would be a per-turn tax on the context window and would
+teach the model to narrate the camera. `LLMApp` renders it as *"What you can see right now: …"*;
+content modules read the same snapshot as a `presence` render variable. **No extra model call** —
+presence is derived by a pure helper (`moxie_sdk/presence.py`), never by asking a model.
+
+An `arrived` after a long enough absence can also make Moxie speak **without being asked** — the
+greeting rule, its gates, and the unsolicited-reply assumption it is designed around are in
+[`vision.md`](vision.md) §7.4.
+
 ### Response out — `RemoteChatResponse`
 Three parts:
 
@@ -114,6 +142,13 @@ Three parts:
 `sleep`, `tangent`. Plus `EventSubscription{clear, active[], passive[]}` — the brain subscribing to
 robot input events it wants pushed to it. This is why a revival server can do **more than reply**: it
 moves the child between activities and reacts to perception.
+
+> **We now send it.** The runtime attaches `event_subscription{active:[eb-found-face,
+> eb-lost-target, eb-lost-face, eb-qr-event, eb-dr-event, eb-br-event], clear:false}` once per
+> `(device, module_id)` — "events are automatically unsubscribed when the module exits" — riding a
+> plain, action-free reply so nothing that already carries a `launch`/`exit` changes shape.
+> `MOXIE_VISION=0` turns it off. Without this the robot **discards its own vision events**, which is
+> why nobody, us included, had ever seen one ([`vision.md`](vision.md) §7.1).
 
 **(c) `RemoteChatInput` — the brain's read of the child (optional).** `emotion`/`dialog_act`/`sentiment`
 + **`InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}`** — the content-moderation verdict.
@@ -245,6 +280,22 @@ message CloudTTSResponse { RequestSourceType request_source; AudioBuffer audio;
                            uint64 total_time; uint64 synthesis_time; }
 ```
 
+### Backends in this repo — and what happens when one fails
+
+Three, in a fixed precedence (`mqtt/config.py::build_synthesizer`): **voice server → Piper → tone**.
+
+| Backend | When | Notes |
+|---|---|---|
+| `OpenAIVoiceSynthesizer` | `MOXIE_VOICE_BASE_URL` set | Any OpenAI-shaped `/audio/speech`. **Live on our LiteLLM gateway since 2026-09-02** (`piper-amy` / `piper-ryan`, same host + key as chat) — proven by transcribing its audio back at word overlap **1.00** (`sim/tests/test_live_gateway_tts.py`). A `wav` reply is unwrapped here, so `AudioBuffer.sample_rate` is **the file's own header**, not a constant; `pcm` uses `MOXIE_VOICE_SAMPLE_RATE`. Setup + the gateway's quirks: [litellm-tts-setup.md](../guides/litellm-tts-setup.md) |
+| `PiperSynthesizer` | `MOXIE_PIPER_MODEL` set + piper installed | Offline, no key, ~3-5× faster than the gateway for the same sentence |
+| `ToneSynthesizer` | `MOXIE_TTS=tone` | A shaped beep. **Not speech** — it exists so the SIM's audio path works with no model, network or extra dep |
+
+The gateway voice is a network call to someone else's box, so it is wrapped in a
+`FallbackSynthesizer` whose standby is exactly the rung it displaced (Piper if configured, else the
+tone). A 400, an outage past the SDK's backoff, or a body that is JSON rather than audio is surfaced
+**once** and then latched: the turn *downgrades* to a working voice instead of handing a child
+silence. `synth.voice_name` says which one is talking.
+
 **Required:** `audio` (PCM: raw `buffer` + `channels` + `sample_rate`) and `event_id` to correlate.
 **`marks[]` (recommended):** timed events lifted from the markup — the face reads them for **viseme**
 lip-sync (mouth shapes) and to fire gestures at the right instant. Without marks the audio still
@@ -273,7 +324,7 @@ see §2 "Input safety"; a kid-facing backend should not ship without something i
 | ① STT in | `ai/` + `mqtt/` | local Whisper/Vosk → `DeepgramResponse` shape; the sim uses `sim/stt/` |
 | ② Brain | `mqtt/` (the `MoxieApp`/`LLMApp` agent) | any OpenAI-compatible LLM (Ollama/LiteLLM), env-configured; emits markup |
 | ②b Input safety | `mqtt/moxie_sdk/safety.py` + `supervisor/moxie_runtime.py` | local rule engine (`safety_rules.json`) enforced pre-inference and per streamed chunk; parent review queue |
-| ③ TTS out | `ai/` + `mqtt/` | Piper (offline) → `CloudTTSResponse` PCM; the sim uses `sim/tts/` |
+| ③ TTS out | `ai/` + `mqtt/` | gateway voice (live, `piper-amy`) → Piper (offline) → tone, with the displaced rung as a standby → `CloudTTSResponse` PCM; the sim uses `sim/tts/` |
 
 Keys/endpoints live only in a git-ignored `.env`; the repo ships placeholders. The
 [ecosystem build plan](moxie-ecosystem.md) shows how these three sit inside the one-command stack; the

@@ -92,9 +92,101 @@ that history per robot and answers `query:"mentor_behaviors"` with it — which 
 plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py)
 (the builder) and [`../../mqtt/moxie_sdk/store.py`](../../mqtt/moxie_sdk/store.py) (the history).
 
-Today's builder is **deterministic** — seeded on `(device_id, day)` — so a plan is stable for a day and
-different tomorrow. An adaptive, explainable recommender is a later slice
-([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 row 7).
+#### The recommender: history + preferences + the clock → today's plan *(2026-09-02)*
+
+The builder used to be a `(device_id, day)` rotation. It is still **deterministic** — the same
+inputs produce byte-identical bytes, in any process, under any `PYTHONHASHSEED` — but it is now a
+*scored* recommender ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 row 7).
+Two pure functions, both in [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py):
+
+- **`plan_inputs(device_id, now, …)`** gathers the signals — the `schedules[]` template, the
+  robot's `mentor_behaviors`, its effective config, its telemetry, the clock — into one JSON-safe
+  object. That object is the plan's audit trail: it is exactly what `GET /schedule` shows a parent.
+- **`plan_day(inputs) -> (ContentSchedule, explanations)`** scores, orders and explains. It reads
+  nothing but `inputs`, so a plan can be replayed from a stored one.
+
+**The signals, and where each comes from**
+
+| signal | source | how it is read |
+|---|---|---|
+| what the child has done | `mentor_behaviors` (`MentorBehavior{module_id, timestamp, action}`) | `COMPLETED` = finished, `QUIT`/`REFUSED` = abandoned, anything else = merely offered |
+| what the parent asked for | `RobotCloudConfig.schedule_preferences.parent_requests[]` (`{module_id, scheduled_at}`, field 28 — see [config contract](config-and-telemetry-contract.md)) | a request dated **today** is pinned to the slot nearest its `scheduled_at` |
+| when the child must be asleep | `weekday_bedtime` / `weekend_bedtime` in the effective config | a hard exclusion; windows may wrap midnight |
+| the time of day | the caller's `now` (injected — the planner never reads a clock of its own) | slot *i* is notionally at `now + i × SLOT_MINUTES` (10 min, **ours**: `CSData.module_started_ts` shows the robot time-boxes activities but our corpus does not recover the limit) |
+| what the module offers | the module's own `schedules[]` | an entry named after the current bucket (`morning`/`afternoon`/`evening`/`night`) is preferred, so a module can ship a wind-down day; otherwise the first entry |
+| telemetry | `Packet` (`event_name`, `recorded_at`, `moxie_session_id`) | **context only** — see the honesty note below |
+
+**Constraints** (applied before scoring): nothing is ever planned into bedtime, and a candidate
+whose `ModuleCategory` matches the previous pick is filtered out unless nothing else remains
+(the same no-two-in-a-row rule the rotation had).
+
+**Weights** (summed; every term is returned in `factors` so the arithmetic is inspectable):
+
+| factor | weight | what it does |
+|---|---|---|
+| parent request | +4000 | outranks everything, including the template's own `excluded_module_ids` |
+| FTUE still running | +2000 | unfinished onboarding goes first |
+| coverage | −1000 × times seen (capped at 5) | the "nothing repeats until the catalog is exhausted" invariant, kept as the dominant term |
+| recency | −300 today / −100 within 3 days | do not re-offer yesterday's activity |
+| completion affinity | +10 … +200 (neutral 100) | `COMPLETED ÷ (COMPLETED + QUIT/REFUSED)`. A repeatedly-abandoned module is demoted **to the floor, never to zero** — it comes back around once the rest of the catalog has had its turn |
+| time-of-day fit | −60 … +120 | the slot's clock time vs. the category's energy (below) |
+| category spread | −90 × prior uses today | keeps the day broad rather than five games in a row |
+| tiebreak | 0…31 | `blake2b(device_id\|day\|module_id)` — stable for a day, different tomorrow, and independent of the interpreter's hash salt |
+
+Because coverage outranks affinity **by design**, a favourite waits its turn behind an activity the
+child has never seen; affinity ranks modules with *equal* exposure, which after a few days is all
+of them.
+
+**Time-of-day mapping.** Buckets are `morning` 05:00-11:59, `afternoon` 12:00-16:59, `evening`
+17:00-20:59, `night` 21:00-04:59. Energy is assigned per **category**, not per module, from the
+recovered `ModuleDetail.ModuleCategory` enum
+([`ContentModule.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/ContentModule.proto):46-60
+· [`proto-catalog.md`](../reverse-engineering/protocol/proto-catalog.md):1675):
+
+| energy | categories | best slot |
+|---|---|---|
+| energetic | `MOVEMENT`, `PLAYFUL_GAME` | morning (+120), never negative except at night (−60) |
+| neutral | `CREATIVITY`, `FUN_TIDBIT`, `PUZZLE_GAME`, `MISSION`, `CONVERSATION` | afternoon (+120) |
+| calm | `REGULATION`, `LISTENING`, `READING` | evening and night (+120) |
+
+Anything unclassified (`UNASSIGNED`, `UTILITY`, `OTHER`, an authored `USER` category) is neutral.
+Nothing is *forbidden* by time of day — a child who wants to dance at 8 pm still can; it is just no
+longer the top pick.
+
+**Honesty note — what telemetry does *not* carry.** The recovered envelope is
+`embodied.logging.Packet{model, version, recorded_at, moxie_id, moxie_session_id, user_id,
+event_name, event_data}`
+([`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md)
+§"The telemetry envelope"). `event_name` is a **free string** and `event_data` is opaque serialized
+bytes: our RE corpus establishes **no module-scoped event vocabulary**, so there is no "module
+launched" or "module exited" event to count. Completion-vs-abandonment therefore comes from
+`mentor_behaviors` alone. Telemetry contributes only what the envelope really carries — a packet
+count, the event-name histogram, distinct session ids, and a `recorded_at` histogram of when this
+robot is awake — reported to the parent as context. `inputs.telemetry.carries_module_signal` is
+`false` and says why.
+
+#### The explanation — "why this activity today"
+
+`plan_day` returns a second list, one entry per `provided_schedule` entry, **in the same order**:
+
+```json
+{"module_id": "SCAVENGERHUNT", "slot": 6, "at": "07:58",
+ "reason_codes": ["parent_request", "unseen", "time_of_day"],
+ "line": "Requested by a parent for 8:01 am — Scavenger hunt is pinned to that slot.",
+ "score": 4291, "factors": {"coverage": 0, "recency": 0, "affinity": 100,
+                            "time_of_day": 120, "category_spread": 0, "tiebreak": 11,
+                            "parent_request": 4000}}
+```
+
+`reason_codes` are for machines (`parent_request`, `ftue`, `fixture`, `chat`, `unseen`, `finishes`,
+`abandons`, `just_played`, `played_recently`, `rested`, `time_of_day`, `variety`); `line` is the one
+sentence a parent reads. Labels come from `Recommendation.module_name` when the template supplies
+one, else a small table of plain-English names — a module id we have no English name for (`RDL`,
+`FF`, `AB`) is printed verbatim rather than given an invented product name. **None of this reaches
+the robot**: the served `ContentSchedule` still contains only `ContentSchedule` fields, and each
+entry only `Recommendation` fields. It is stored at `robots/<device_id>/schedule_explain.json` and
+served by `GET /schedule?device_id=…`
+([`mqtt-and-conversation.md` §3.8](mqtt-and-conversation.md#38-the-schedule-query-the-day-plan-and-the-parents-read-of-it-adaptive-2026-09-02)).
 
 ## The `volley` / `session` API (per-turn hooks)
 
@@ -130,9 +222,16 @@ of **namespaces** — one per content module, so two activities never overwrite 
 
 ```json
 { "memory_chat": {
-    "facts": ["Has a beagle named Pepper", "In second grade"],
-    "preferences": ["Likes drawing"], "open_threads": ["Ask how the play went"],
-    "summaries": ["Conversation about Sam's new puppy"],
+    "facts": [
+      {"id": "3e55e000", "text": "Puppy sleeps on my bed",
+       "_provenance": {"at": 1788352646.864, "date": "2026-09-02",
+                       "module_id": "MEMORY_CHAT", "content_id": "default",
+                       "turns": 2, "reason": "exit"},
+       "use_count": 3, "last_used_at": 1788439046.1,
+       "pinned": true, "edited_at": 1788356679.372},
+      {"id": "22960260", "text": "In second grade", "_provenance": {"...": "..."}}
+    ],
+    "preferences": [], "open_threads": [], "summaries": [],
     "_meta": {"summarized_through": 4},
     "_provenance": [{"at": 1788352646.864, "date": "2026-09-02",
                      "module_id": "MEMORY_CHAT", "content_id": "default",
@@ -140,15 +239,34 @@ of **namespaces** — one per content module, so two activities never overwrite 
                      "source": "session.summarize"}] } }
 ```
 
+Each remembered thing is a **record**, not a bare sentence, because a parent has to be
+able to act on exactly one of them:
+
+| Field | Why it is there |
+|---|---|
+| `id` | 8 hex of `blake2b(namespace \| kind \| text)`, taken at creation and then **carried** — an edit keeps it. It is what `DELETE …&item=` and the console's per-item ✕/✏️ address. Because it is derived, a `memory.json` written before ids existed reads back with exactly the ids it will be written back with (`normalize_items` on read, persisted on the next merge) |
+| `_provenance` | The merge's attribution stamped **on the item** — so two conversations' facts in one activity no longer share one date. The namespace-level `_provenance` log keeps the full record (conversation id, source) for back-compat |
+| `use_count` / `last_used_at` | Decay's clock (below) |
+| `pinned` / `edited_at` | A parent corrected this line. Pinned items are never aged out |
+
+A bare string is still read (and still renders); it simply has no id until the next merge.
+
 - **Bounded** — caps on namespaces (32), items per list (25), item length (240 chars) and
-  total file size (16 KB). An unbounded memory is both a prompt-cost bug and a privacy one.
-- **Provenance on every merge** — `_provenance` records which module, which day, how many
-  turns and *why* the conversation ended. `_`-prefixed keys are the engine's; they never
-  appear in the parent-facing `data`.
+  total file size (64 KB; it was 16 KB before items grew ids and provenance — the byte cap
+  drops whole trailing namespaces, so leaving it would have halved how many activities a
+  robot can remember). An unbounded memory is both a prompt-cost bug and a privacy one.
+- **Provenance per item *and* per merge** — which module, which day, how many turns and
+  *why* the conversation ended. `_`-prefixed keys are the engine's; they never appear in
+  the parent-facing `data`, except `_meta`, which `view()` now surfaces as `meta` so the
+  console can show how far a transcript was actually written down.
 - **JSON-safe** — anything a module or a model produces that will not serialize is dropped,
   never stored as junk.
 - **List merges prepend and de-duplicate** (newest first, case-insensitive), so a second
   conversation adds to what the first learned instead of replacing it. Scalars overwrite.
+  Re-learning something already stored keeps the newest provenance but **inherits the old
+  item's id, pin and use clock** — hearing a fact again must not undo a parent's correction.
+- **Prompts never see any of this.** `wrap_facts` renders an item as its sentence, so
+  `{{ volley.persist_data.memory_chat.facts }}` is the same `- ` bullet list it always was.
 - **`LoggingPolicy.NO_DATA` means no memory is written.** Reads and erase always work, so a
   parent can still inspect and delete what was stored before the switch was flipped. The
   default is `NO_MEDIA` (writing allowed) for the same reason the safety journal's is: the
@@ -177,6 +295,29 @@ line would live forever and be re-injected into every later prompt), and the **c
 words** — the prompt forbids quoting and a shingle check enforces it. A brain failure
 returns `None` and **nothing is written**: a missing fact is recoverable, a wrong one is not.
 
+### Decay (`MOXIE_MEMORY_MAX_AGE_DAYS`)
+
+A floor, not a product. Every time a module's prompt is rendered, the store marks the
+items whose sentence appears in it (`MemoryStore.note_used`, called in one line from
+`content_app.py`'s render path): `use_count += 1`, `last_used_at = now`. At **merge time**
+— the file's one maintenance window — items nothing has used for `MOXIE_MEMORY_MAX_AGE_DAYS`
+(default **90**, `0` = off) are dropped.
+
+Three deliberate refusals, because a memory that silently forgets the wrong thing is worse
+than one that forgets nothing:
+
+- **Pinned items never decay.** A parent's edit pins the item; a human decision outranks a
+  clock.
+- **An item we cannot date is never pruned.** No `last_used_at` and no `_provenance.at`
+  looks identical to "unused since 2019", so it is left alone.
+- **It cannot judge importance.** It knows only whether a prompt has rendered a line
+  lately, never whether "Sam's grandad died" matters more than "Sam liked the blue crayon"
+  — and the use test is a substring match, so a truncated or reworded render is missed.
+  It stops a stale fact being re-injected forever. It does not curate.
+
+Under `LoggingPolicy.NO_DATA` both halves stop: nothing is merged, so nothing is pruned,
+and the use clocks freeze.
+
 ### Declaring it (the `memory` block)
 
 Module `code` strings are deliberately never executed (sandboxing — see
@@ -202,24 +343,29 @@ The supervisor's localhost status server serves the memory
 
 | Endpoint | Effect |
 |---|---|
-| `GET /memory?device_id=…` | Everything Moxie remembers, by namespace, with provenance, the byte size, and whether writing is currently allowed |
+| `GET /memory?device_id=…` | Everything Moxie remembers, by namespace: every item with its **id**, its own provenance, its use count and whether it is pinned, plus `meta.summarized_through`, the byte size, and whether writing is currently allowed |
+| `DELETE /memory?device_id=…&namespace=…&item=…` | Forget exactly **one item** |
 | `DELETE /memory?device_id=…[&namespace=…]` | Forget one namespace, or all of it |
 | `POST /memory?device_id=…` `{"erase":"<ns>"\|"all"}` | The same erase, for clients that cannot send DELETE |
+| `POST /memory?device_id=…` `{"edit":{"namespace","item","text"}}` | **Correct** one item in place. Keeps its id, pins it, and re-runs the safety classifier + the no-verbatim check against that robot's recent transcript; a refusal is a 400 with the reason |
 
-Erasure is never policy-gated — a parent must always be able to delete. The parent console browses
-and erases all of it in the 🧠 **What Moxie remembers** card
-([`server/static/app.js`](../../server/static/app.js) `refreshMemory` → `normalize_memory` →
-`GET`/`DELETE /local/robots/{id}/memory[/{namespace}]`; the parent-facing guide is
-[`what-moxie-remembers.md`](../guides/what-moxie-remembers.md)) — erase granularity there is exactly
-this table's: one namespace, or all of it.
+Erasure is never policy-gated — a parent must always be able to delete — and neither is the
+edit: fixing a nearly-right line must work on a `NO_DATA` robot too, where the only
+alternative is deleting it. The parent console drives all of it from the
+🧠 **What Moxie remembers** card ([`server/static/app.js`](../../server/static/app.js)
+`refreshMemory` → `normalize_memory` → `GET`/`DELETE /local/robots/{id}/memory[/{namespace}[/{item}]]`
+and `POST …/memory/{namespace}/{item}`; the parent-facing guide is
+[`what-moxie-remembers.md`](../guides/what-moxie-remembers.md)).
 
 ### Honest limits
 
 The model can be wrong, and a wrong fact is **sticky** — it goes back into every later
-prompt until someone erases it (our own live run turned "sleeps on my bed" into "Puppy
-sleeps on **his** bed", inventing a pronoun). The verbatim check is a floor, not a
-guarantee: a *paraphrase* can still carry something private. That is exactly why the facts
-are few, bounded, attributed, and erasable.
+prompt until someone corrects or erases it (our own live run turned "sleeps on my bed" into
+"Puppy sleeps on **his** bed", inventing a pronoun; that exact line is now a per-item edit
+away from being right). The verbatim check is a floor, not a guarantee: a *paraphrase* can
+still carry something private. Decay is a clock, not a judgement — see above for the three
+things it deliberately will not decide. That is exactly why the facts are few, bounded,
+attributed per item, correctable and erasable one line at a time.
 
 ## Execution actions (content → robot bridge)
 

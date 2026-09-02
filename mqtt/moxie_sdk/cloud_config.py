@@ -24,12 +24,29 @@ class MoxieMode(IntEnum):
     TELEHEALTH = 1
 
 
-def child_pii_from_profile(child) -> dict:
+def child_pii_from_profile(child, face=None) -> dict:
     """A ChildDecrypted (`child_pii`) from a ChildProfile — plaintext, as the paired
-    server's own config (the encryption blinds a 3rd-party cloud, not our backend)."""
+    server's own config (the encryption blinds a 3rd-party cloud, not our backend).
+
+    `face` is the child's chosen appearance (audit ADOPT #9). It rides here because that
+    is where the recovered protos put it: `ChildDecrypted.face_options = 17` (a *clear*
+    field beside the sealed ones — see `moxie_sdk/faces.py` for the full citation trail).
+    With no face chosen the two extra keys are simply not emitted, so the document is
+    byte-for-byte what it was before appearance existed."""
     pii = {"nickname": child.nickname}
     if getattr(child, "birthday_iso", None):
         pii["birthday"] = child.birthday_iso
+    if face:
+        from moxie_sdk.faces import face_child_id, face_options_list, validate_face
+        labels = face_options_list(validate_face(face))
+        if labels:
+            pii["face_options"] = labels
+            # The cache-buster. ASSUMPTION (field-proven, not capture-proven) —
+            # `faces.py`, "the cache-buster": Unity keeps a composited face record keyed
+            # on `child_pii.id`, so a face change must change the id or the robot may
+            # serve the stale texture. Deterministic, so an unchanged face re-pushes the
+            # same id and the robot is not disturbed by an idempotent config push.
+            pii["id"] = face_child_id(labels, child_key=child.nickname)
     return pii
 
 
@@ -91,7 +108,7 @@ def build_robot_cloud_config(child, *, audio_volume: float = 0.6,
                              wake_button_enabled: bool = True,
                              touch_wake_enabled: bool = True,
                              audio_wake_set: str = "off",
-                             alarms=None, schedule_preferences=None,
+                             alarms=None, schedule_preferences=None, face=None,
                              num_children: int = 1, max_children: int = 1,
                              last_updated_at: str = "", timestamp: int = 0) -> dict:
     """The RobotCloudConfig document (JSON) pushed on /devices/{id}/config.
@@ -101,11 +118,14 @@ def build_robot_cloud_config(child, *, audio_volume: float = 0.6,
     `SchedulePreferences` (field 28) — see `normalize_wake_schedule` /
     `normalize_schedule_preferences` for the accepted parent-facing spellings; both are
     omitted from the document when empty, exactly like the other optional fields.
+    `face` is the child's chosen appearance (audit ADOPT #9) — a `{slot: option}` selection
+    validated by `moxie_sdk.faces.validate_face`; it renders into `child_pii.face_options`
+    plus the `child_pii.id` cache-buster, and is omitted entirely when nothing is chosen.
     `pairing_status:"paired"` + `settings` are the wrapper the robot's config handler
     expects (kept from the working minimal config)."""
     cfg = {
         "pairing_status": PAIRED_PAIRING_STATUS,
-        "child_pii": child_pii_from_profile(child),
+        "child_pii": child_pii_from_profile(child, face),
         "audio_volume": audio_volume,
         "screen_brightness": screen_brightness,
         "timezone_id": timezone_id,
@@ -427,6 +447,15 @@ def sanitize_config_overrides(raw: dict) -> dict:
     if "schedule_preferences" in raw:                    # SchedulePreferences (field 28)
         out["schedule_preferences"] = normalize_schedule_preferences(
             raw["schedule_preferences"])
+    if "face" in raw:                                    # ChildDecrypted.face_options (17)
+        # A dict, so `merge_config_layers` deep-merges it **per slot**: a fleet-default
+        # face ("all our robots are teal") survives a per-robot edit that only changes the
+        # eyes, and a robot-layer `null` on one slot clears just that layer. An explicit
+        # `face: null` from the console clears the whole selection back to the default look
+        # (and with it `face_options`/`id`, so the pushed document returns to what it was).
+        from moxie_sdk.faces import validate_face
+        face = validate_face(raw["face"])
+        out["face"] = face or None
     return out
 
 

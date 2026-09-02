@@ -32,7 +32,7 @@ import moxie_runtime  # noqa: E402
 from moxie_sdk.app import MoxieApp  # noqa: E402
 from moxie_sdk.cloud_config import LoggingPolicy  # noqa: E402
 from moxie_sdk.content import ContentApp, load_module  # noqa: E402
-from moxie_sdk.store import JsonStore, MemoryStore  # noqa: E402
+from moxie_sdk.store import JsonStore, MemoryStore, item_text  # noqa: E402
 from moxie_sdk.types import Reply  # noqa: E402
 
 MODULE = {
@@ -47,6 +47,11 @@ MODULE = {
 SUMMARY = json.dumps({"facts": ["Sam has a dog named Pepper"],
                       "preferences": [], "open_threads": [],
                       "summary": "They talked about pets."})
+
+
+def texts(values):
+    """The sentences of a stored list — items are `{id, text, …}` records now."""
+    return [item_text(v) for v in values or []]
 
 
 def _brain(answer="Okay!", record=None):
@@ -172,9 +177,10 @@ def test_a_finished_conversation_is_remembered(tmp_path):
     rt._pool.shutdown(wait=True)
     assert rt.client.chat_replies(did)[-1]["output"]["text"] == "That was fun!"
     block = app.memory.load(did)["mchat"]
-    assert block["facts"] == ["Sam has a dog named Pepper"]
-    assert block["summaries"] == ["They talked about pets."]
+    assert texts(block["facts"]) == ["Sam has a dog named Pepper"]
+    assert texts(block["summaries"]) == ["They talked about pets."]
     assert block["_provenance"][0]["reason"] == "exit"
+    assert block["facts"][0]["id"] and block["facts"][0]["_provenance"]["reason"] == "exit"
 
 
 def test_the_next_conversation_recalls_the_fact(tmp_path):
@@ -183,7 +189,7 @@ def test_the_next_conversation_recalls_the_fact(tmp_path):
     _drive(rt, did, "I have a dog", event_id="e1")
     _drive(rt, did, "her name is Pepper", event_id="e2")
     rt._end_conversation(did, "exit", inline=True)
-    assert app.memory.load(did)["mchat"]["facts"] == ["Sam has a dog named Pepper"]
+    assert texts(app.memory.load(did)["mchat"]["facts"]) == ["Sam has a dog named Pepper"]
 
     prompts = []
     app2 = ContentApp(load_module(MODULE), _brain("Hi again!", prompts),
@@ -232,7 +238,7 @@ def test_memory_view_and_erase_by_namespace(tmp_path):
     app.memory.merge(did, "free_chat", {"facts": ["likes red"]})
     view = rt.memory_view(did)
     assert view["ok"] and view["policy"] == "NO_MEDIA"
-    assert view["namespaces"]["mchat"]["data"]["facts"] == ["has a dog"]
+    assert texts(view["namespaces"]["mchat"]["data"]["facts"]) == ["has a dog"]
     assert view["namespaces"]["mchat"]["provenance"][0]["turns"] == 3
     assert view["bytes"] > 0 and view["writes_allowed"] is True
 
@@ -280,6 +286,86 @@ def test_memory_endpoints_over_http(tmp_path):
         assert False, "unknown device should 404"
     except urllib.error.HTTPError as e:
         assert e.code == 404
+
+
+def test_per_item_erase_and_edit_through_the_runtime(tmp_path):
+    """BEYOND #4's other half, at the runtime seam: one wrong line goes, or gets fixed,
+    without costing the rest of what that activity learned."""
+    rt, did, app = _content_runtime(tmp_path)
+    app.memory.merge(did, "mchat",
+                     {"facts": ["Puppy sleeps on his bed", "Sam is in year 2"]},
+                     provenance={"module_id": "MCHAT", "turns": 3, "at": 1788352646.0},
+                     meta={"summarized_through": 6}, now=1788352646.0)
+    wrong, other = [f["id"] for f in app.memory.load(did)["mchat"]["facts"]]
+
+    fixed = rt.edit_memory_item(did, "mchat", wrong, "Puppy sleeps on my bed")
+    assert fixed["ok"] and fixed["edited"] is True and fixed["item"] == wrong
+    stored = app.memory.load(did)["mchat"]["facts"][0]
+    assert stored["text"] == "Puppy sleeps on my bed" and stored["pinned"] is True
+    assert stored["id"] == wrong                       # the id survives a correction
+    # the parent view carries ids and `summarized_through` for the console card
+    ns = fixed["namespaces"]["mchat"]
+    assert ns["meta"] == {"summarized_through": 6}
+    assert [f["id"] for f in ns["data"]["facts"]] == [wrong, other]
+
+    gone = rt.erase_memory(did, "mchat", other)
+    assert gone["ok"] and gone["erased"] is True and gone["item"] == other
+    assert texts(app.memory.load(did)["mchat"]["facts"]) == ["Puppy sleeps on my bed"]
+    assert app.memory.load(did)["mchat"]["_meta"] == {"summarized_through": 6}
+    assert rt.erase_memory(did, "mchat", "nope")["erased"] is False
+
+
+def test_a_refused_edit_changes_nothing(tmp_path):
+    rt, did, app = _content_runtime(tmp_path)
+    app.memory.merge(did, "mchat", {"facts": ["has a dog"]}, provenance={"turns": 1})
+    one = app.memory.load(did)["mchat"]["facts"][0]["id"]
+    # the runtime hands the store this robot's own transcript, so a parent pasting the
+    # child's words back in is refused the same way a model quoting them would be
+    rt.history[did] = [{"role": "user",
+                        "content": "my grandma lives on Elm Street in the yellow house"}]
+    for bad in ("I want to kill myself",
+                "my grandma lives on Elm Street in the yellow house", ""):
+        try:
+            rt.edit_memory_item(did, "mchat", one, bad)
+            assert False, f"{bad!r} should have been refused"
+        except ValueError as e:
+            assert str(e)
+    assert texts(app.memory.load(did)["mchat"]["facts"]) == ["has a dog"]
+
+
+def test_per_item_endpoints_over_http(tmp_path):
+    """`DELETE /memory?...&item=` and `POST /memory {"edit": …}` on the real server."""
+    rt, did, app = _content_runtime(tmp_path)
+    app.memory.merge(did, "mchat", {"facts": ["Puppy sleeps on his bed", "likes red"]},
+                     provenance={"module_id": "MCHAT", "turns": 2})
+    wrong, other = [f["id"] for f in app.memory.load(did)["mchat"]["facts"]]
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+    rt._start_status_server(port)
+    base = f"http://127.0.0.1:{port}"
+
+    def _req(path, method="GET", body=None):
+        req = urllib.request.Request(base + path, method=method,
+                                     data=json.dumps(body).encode() if body else None)
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read().decode())
+
+    out = _req(f"/memory?device_id={did}", method="POST",
+               body={"edit": {"namespace": "mchat", "item": wrong,
+                              "text": "Puppy sleeps on my bed"}})
+    assert out["ok"] and out["edited"] is True
+    assert texts(app.memory.load(did)["mchat"]["facts"])[0] == "Puppy sleeps on my bed"
+
+    out = _req(f"/memory?device_id={did}&namespace=mchat&item={other}", method="DELETE")
+    assert out["erased"] is True and out["item"] == other
+    assert texts(app.memory.load(did)["mchat"]["facts"]) == ["Puppy sleeps on my bed"]
+
+    try:
+        _req(f"/memory?device_id={did}", method="POST",
+             body={"edit": {"namespace": "mchat", "item": wrong,
+                            "text": "I want to kill myself"}})
+        assert False, "an unsafe correction must be refused"
+    except urllib.error.HTTPError as e:
+        assert e.code == 400 and json.loads(e.read().decode())["ok"] is False
 
 
 def test_memory_endpoint_answers_for_an_app_without_a_memory_store(tmp_path):

@@ -59,6 +59,23 @@ browser at all and carry the hermetic suite CI actually runs.
   `/memory` payload flattened into dated rows per activity, newest first, with counts —
   plus the tolerance that matters on a parent's screen (a partial namespace, a list a
   module invented, a raw `memory.json` off disk, and a supervisor that is down).
+- **`test_compose.py` + `helpers_compose.py`** — the one-command stack, asserted with
+  PyYAML and never Docker. Half is shape (`docker-compose.yml` declares the three
+  services plus the cert one-shot, healthchecks, restart policies, named volumes,
+  strictly opt-in profiles, a documented and secret-free `.env.example`); half is
+  **parity** between `docker-compose.yml` and the self-contained
+  `docker-compose.images.yml`. The images file cannot reference this repo — an owner
+  downloads it alone — so it repeats the supervisor's `environment:` block and inlines
+  `mqtt/broker/compose-mosquitto.conf`, and both copies have to be re-proven copies:
+  identical `MOXIE_*` env for `supervisor`/`console`/`certs` (same keys, same
+  `${VAR:-default}`), the inlined broker config diffed against the file *and* checked for
+  the un-escaped `$` that a pure diff is blind to, and the same services, healthchecks,
+  `depends_on` conditions, published-port defaults and volume paths. This is a regression
+  suite: v0.6.0's promotion stalled because the pairing-gate knob
+  `MOXIE_ALLOW_UNVERIFIED_BOTS` reached only one of the two files, and until now only the
+  deep tier's PR-to-main docker smokes could see that. Every guard is paired with
+  **negative tests** — tiny in-memory compose pairs carrying exactly one injected drift —
+  so the suite proves the guards still bite, not merely that they pass.
 - **Live tests** (`test_live_gateway.py`, `test_live_action_tags.py`,
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the
@@ -75,6 +92,18 @@ browser at all and carry the hermetic suite CI actually runs.
   repo secrets — see [`../ci/README.md`](../ci/README.md). That step *fails* on an empty
   `MOXIE_LLM_API_KEY` rather than skipping, because a green live run that tested nothing is
   the exact gap it exists to close. It is manual because it spends ≈12–13 real completions.
+- **`test_live_gateway_tts.py`** — the *gateway voice* live tests (live since 2026-09-02).
+  `MOXIE_VOICE_BASE_URL` + `MOXIE_VOICE_MODEL` is the whole switch, so the file builds its
+  synthesizer with `config.build_synthesizer()` and then makes the gateway prove it is
+  speaking: four `/audio/speech` calls — `piper-amy` as WAV (unwrapped to the header's own
+  22050 Hz and transcribed back at word overlap ≥ 0.7), `piper-ryan` to show the model *is*
+  the voice switch, one `pcm` call, and one deliberately-unknown model to prove the turn
+  downgrades to the standby voice instead of going silent. The tier-1 anti-tone guard is
+  the same one `test_live_talk_e2e.py` uses, so this suite cannot pass on the placeholder
+  beep either. Needs `faster-whisper` + `numpy` (not `piper-tts`, and no 63 MB voice file —
+  the gateway does the speaking); skips cleanly without them or without a voice URL. **In
+  CI** it rides in the same creds-only dispatch step as the three suites above, which also
+  fails on an empty `MOXIE_VOICE_BASE_URL`.
 - **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper
   speech in, real Piper speech out, read back by real faster-whisper. Tier 1 round-trips
   Moxie's own voice through Whisper (and proves the built-in `ToneSynthesizer` would

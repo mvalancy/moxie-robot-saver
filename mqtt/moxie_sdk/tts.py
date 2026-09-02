@@ -58,30 +58,135 @@ class Synthesizer:
     def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
         raise NotImplementedError
 
+    def describe(self) -> str:
+        """One line for a startup log — which voice is this, really."""
+        return self.name
+
     @classmethod
     def available(cls) -> bool:
         return True
 
 
+class VoiceServerError(RuntimeError):
+    """A voice endpoint answered with something that is not audio.
+
+    Distinct from a transport failure (429/5xx/connection — those are retried by
+    `call_with_backoff`) because it is never worth retrying: an unknown model name, a
+    revoked key or a proxy that decided to explain itself in JSON will say the same
+    thing next time. `FallbackSynthesizer` catches it and speaks with the standby voice.
+    """
+
+
+def voice_for_model(model: str) -> str:
+    """The `voice` field to send for a model name — `piper-amy` → `amy`.
+
+    The LiteLLM gateway **requires** `voice` (omitting it is an HTTP 500) but **ignores**
+    its value: the model name selects the Piper voice (docs/guides/litellm-tts-setup.md,
+    "Live since 2026-09-02"). So the field only has to be present and sane. A model whose
+    suffix is not a word — `tts-1` → `1` — falls back to OpenAI's own default voice,
+    which is what an OpenAI-shaped endpoint would want anyway.
+    """
+    tail = (model or "").rsplit("-", 1)[-1].strip()
+    return tail if tail.isalpha() else "alloy"
+
+
+def _json_error(raw: bytes):
+    """A one-line summary if `raw` is a JSON error body, else None."""
+    if raw[:1] not in (b"{", b"["):
+        return None
+    import json as _json
+    try:
+        body = _json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return None
+    detail = body
+    if isinstance(body, dict):
+        detail = body.get("error", body)
+        if isinstance(detail, dict):
+            detail = detail.get("message", detail)
+    return str(detail)[:300]
+
+
+def pcm_from_audio(raw: bytes, *, sample_rate: int, channels: int = 1):
+    """`(pcm16, sample_rate, channels)` from whatever an `/audio/speech` call returned.
+
+    **Sniff the bytes, never the Content-Type.** Our gateway labels a perfectly good
+    Piper WAV `audio/mpeg` (a LiteLLM quirk, observed live 2026-09-02), so a client that
+    branched on the header would ship an MP3 decoder at a RIFF file. A RIFF/WAVE payload
+    is unwrapped with the stdlib `wave` module and the header's **own** rate/channels come
+    back with it — that is how a `CloudTTSResponse` carries the TRUE rate even when the
+    voice (and with it the rate) changes under us. Anything else is assumed to be the raw
+    PCM we asked for, at the configured rate.
+
+    An error body (a proxy answering 200-with-JSON, or an unknown-model 400 surfaced as
+    bytes) raises `VoiceServerError` rather than being handed to a child as noise.
+    """
+    if not raw:
+        raise VoiceServerError("the voice server returned an empty body (no audio)")
+    detail = _json_error(raw)
+    if detail is not None:
+        raise VoiceServerError(f"the voice server returned JSON, not audio: {detail}")
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WAVE":
+        import io
+        import wave
+        try:
+            with wave.open(io.BytesIO(raw), "rb") as w:
+                width, rate, ch = w.getsampwidth(), w.getframerate(), w.getnchannels()
+                pcm = w.readframes(w.getnframes())
+        except (wave.Error, EOFError) as exc:
+            raise VoiceServerError(f"unreadable WAV from the voice server: {exc}") from exc
+        if width != 2:
+            raise VoiceServerError(
+                f"the voice server sent {width * 8}-bit WAV; CloudTTSResponse.AudioBuffer "
+                f"is 16-bit PCM")
+        return pcm, int(rate), int(ch)
+    return raw, int(sample_rate), int(channels)
+
+
 class OpenAIVoiceSynthesizer(Synthesizer):
     """Server voice via an OpenAI-compatible audio endpoint (`/audio/speech`).
-    Lazily imports openai (no hard SDK dep); returns raw PCM by default. A busy voice
-    server backs off + paces exactly like the LLM gateway (shared chat.call_with_backoff
-    + Pacer) — 429/5xx are retried, not failed."""
+
+    Lazily imports openai (no hard SDK dep). A busy voice server backs off + paces
+    exactly like the LLM gateway (shared chat.call_with_backoff + Pacer) — 429/5xx are
+    retried, not failed.
+
+    Live against our LiteLLM gateway since 2026-09-02 (`piper-amy` / `piper-ryan`):
+
+    * `response_format="wav"` (the default) is unwrapped here, so `sample_rate` /
+      `channels` come from the **file's own header** — swap `piper-amy` for a 16 kHz
+      voice and the CloudTTSResponse follows without a config change.
+    * `response_format="pcm"` is passed straight through at the configured
+      `sample_rate` (nothing in the payload can tell us otherwise).
+    * `voice` is always sent — the gateway 500s without it — defaulting to the model's
+      suffix (`piper-amy` → `amy`) when unset. Its value is ignored there; the model is
+      the voice.
+    """
     name = "openai-voice"
 
-    def __init__(self, base_url: str, api_key: str, voice: str = "alloy",
-                 model: str = "tts-1", response_format: str = "pcm",
-                 sample_rate: int = 24000, *, client=None, max_retries: int = 4):
+    def __init__(self, base_url: str, api_key: str, voice: Optional[str] = None,
+                 model: str = "tts-1", response_format: str = "wav",
+                 sample_rate: int = 22050, *, client=None, max_retries: int = 4,
+                 channels: int = 1, pacer=None, sleep=None):
         if client is None:
             from openai import OpenAI      # lazy
             client = OpenAI(base_url=base_url, api_key=api_key or "sk-local",
                             max_retries=0)
         from .chat import Pacer
         self._client = client
-        self._voice, self._model, self._fmt = voice, model, response_format
-        self.sample_rate = sample_rate
-        self._pacer = Pacer()
+        self._model, self._fmt = model, response_format
+        self._voice = (voice or "").strip() or voice_for_model(model)
+        # The CONFIGURED shape — what a raw-PCM reply is assumed to be. `self.sample_rate`
+        # is the LAST reply's true rate (a WAV header overrides it); keep them apart so a
+        # wav-derived rate can never leak into a later pcm call.
+        self._sample_rate, self._channels = int(sample_rate), int(channels)
+        self.sample_rate, self.channels = int(sample_rate), int(channels)
+        # Injectable like make_openai_chat's — the Pacer binds `time.sleep` at
+        # construction, so a test that wants an instant backoff needs its own.
+        # Injectable like make_openai_chat's — Pacer and call_with_backoff both bind
+        # `time.sleep` at definition time, so a test that wants an instant backoff has to
+        # hand its own in rather than patch the module.
+        self._pacer = pacer if pacer is not None else Pacer()
+        self._sleep = sleep
         self._max_retries = max_retries
 
     def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
@@ -92,11 +197,16 @@ class OpenAIVoiceSynthesizer(Synthesizer):
                 model=self._model, voice=voice or self._voice, input=text,
                 response_format=self._fmt)
             return resp.content
-        return call_with_backoff(_once, max_retries=self._max_retries,
-                                 pacer=self._pacer)
+        kw = {} if self._sleep is None else {"sleep": self._sleep}
+        raw = call_with_backoff(_once, max_retries=self._max_retries,
+                                pacer=self._pacer, **kw)
+        pcm, rate, channels = pcm_from_audio(raw, sample_rate=self._sample_rate,
+                                             channels=self._channels)
+        self.sample_rate, self.channels = rate, channels
+        return pcm
 
 
-def make_voice_synthesizer(base_url: str, api_key: str, voice: str = "alloy",
+def make_voice_synthesizer(base_url: str, api_key: str, voice: Optional[str] = None,
                            **kw) -> Optional[Synthesizer]:
     """An OpenAIVoiceSynthesizer if a voice endpoint is configured, else None."""
     if not base_url:
@@ -198,6 +308,62 @@ def make_piper_synthesizer(model_path: str, config_path: Optional[str] = None,
     if not model_path or not PiperSynthesizer.available():
         return None
     return PiperSynthesizer(model_path, config_path, **kw)
+
+
+class FallbackSynthesizer(Synthesizer):
+    """A primary voice with a standby behind it — so a child never hears silence.
+
+    The gateway voice is a network call to someone else's box. An unknown model name, a
+    revoked key, a proxy that answers with JSON, an outage past the SDK's backoff: any of
+    those used to surface as an exception on the turn's synthesis path, i.e. as NO audio
+    at all in the middle of a conversation. This wrapper turns that into a downgrade —
+    the standby (`PiperSynthesizer` when a Piper model is configured, else the built-in
+    `ToneSynthesizer`) speaks the rest of the run.
+
+    Failure is reported ONCE, on the first failure, and then latched: a dead endpoint
+    must not cost every later turn its network timeout, and a parent reading the log must
+    not have to scroll past one line per sentence. `failed` and `name` say which voice is
+    actually talking, so `/status` and the tests can tell.
+    """
+    name = "fallback"
+
+    def __init__(self, primary: Synthesizer, standby: Synthesizer, *, log=None):
+        self._primary, self._standby = primary, standby
+        self._log = log if log is not None else _warn
+        self.failed = False
+        self.sample_rate, self.channels = primary.sample_rate, primary.channels
+
+    @property
+    def voice_name(self) -> str:
+        """Which backend is speaking right now."""
+        return (self._standby if self.failed else self._primary).name
+
+    def describe(self) -> str:
+        if self.failed:
+            return f"{self._standby.name} (standby — {self._primary.name} failed)"
+        return f"{self._primary.name} (standby: {self._standby.name})"
+
+    def _adopt(self, engine: Synthesizer) -> None:
+        self.sample_rate, self.channels = engine.sample_rate, engine.channels
+
+    def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
+        if not self.failed:
+            try:
+                audio = self._primary.synthesize(text, voice=voice)
+                self._adopt(self._primary)
+                return audio
+            except Exception as exc:                # noqa: BLE001 — any failure downgrades
+                self.failed = True
+                self._log(f"[voice] {self._primary.name} failed "
+                          f"({type(exc).__name__}: {exc}); speaking with "
+                          f"{self._standby.name} for the rest of this run")
+        audio = self._standby.synthesize(text, voice=voice)
+        self._adopt(self._standby)
+        return audio
+
+
+def _warn(message: str) -> None:
+    print(message, flush=True)
 
 
 def build_cloud_tts_response(audio: bytes, *, event_id: str = "", channels: int = 1,

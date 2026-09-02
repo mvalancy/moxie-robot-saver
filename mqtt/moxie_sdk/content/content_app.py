@@ -33,8 +33,15 @@ from ..store import MemoryStore
 from ..types import Turn, Reply, RobotContext
 from .module import ContentModule
 from .volley import Volley, Session
-from .memory import default_classifier, provenance, wrap_facts
+from .memory import default_classifier, note_used, provenance, wrap_facts
 from .render import render_prompt
+from .. import presence as _presence
+
+
+def _presence_vars(robot) -> dict:
+    """The presence render variable for a call that has a `RobotContext` but no `Turn`
+    (the opener). Same shape `Turn.presence` carries."""
+    return _presence.snapshot(getattr(robot, "extra", {}).get("presence") or {})
 
 ChatFn = Callable[[list], str]          # messages [{role,content}] -> assistant text
 GlobalHandler = Callable[[Volley, Session], None]   # sets volley.output / actions
@@ -147,7 +154,9 @@ class ContentApp(MoxieApp):
         conv = self._active_conversation(Turn(robot=robot, speech=""))
         if conv and conv.opener:
             v = self._volley(Turn(robot=robot, speech=""))
-            line = render_prompt(conv.opener.split("|")[0], {"volley": v, "session": Session()})
+            line = render_prompt(conv.opener.split("|")[0],
+                                 {"volley": v, "session": Session(),
+                                  "presence": _presence_vars(robot)})
             line = line.replace("<opener>", "").strip()   # strip inline tags
             if line:
                 return Reply(text=line)
@@ -179,7 +188,13 @@ class ContentApp(MoxieApp):
         v = self._volley(turn)
         session = self._session(turn, history=list(turn.history),
                                 persist_data=v.persist_data, conv=conv)
-        system = render_prompt(conv.prompt, {"volley": v, "session": session})
+        # `presence` — read-only: what Moxie's own eyes have told the server
+        # (moxie_sdk/presence.py, docs/architecture/vision.md). A module template can say
+        # `{% if presence.face_present %}` or drop `{{ presence.line }}` into its prompt.
+        system = render_prompt(conv.prompt, {"volley": v, "session": session,
+                                             "presence": (turn.presence
+                                                          or _presence_vars(turn.robot))})
+        note_used(self.memory, turn.robot.device_id, system)   # decay's clock (memory.py)
         if self._persona:
             system = f"{self._persona}\n\n{system}" if system else self._persona
         messages = [{"role": "system", "content": system}]

@@ -1,5 +1,5 @@
 {
- "generated": "docs-286281ff3b3c",
+ "generated": "docs-9e62d4523ad5",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 3839,
+   "bytes": 4108,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 2646,
+   "bytes": 3000,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 39950,
+   "bytes": 47784,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 32614,
+   "bytes": 39262,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -161,7 +161,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 56704,
+   "bytes": 61455,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -184,6 +184,7 @@
     "3.5 Command names (cloud → robot, `/devices/{id}/commands/{name}`)",
     "3.6 The robot config JSON pushed on connect",
     "3.7 The pairing gate — which robots we actually serve *(built, v1 2026-09-02)*",
+    "3.8 The `schedule` query — the day plan, and the parent's read of it *(adaptive, 2026-09-02)*",
     "3b. Robot identity / auth",
     "4. Conversation flow (end to end)",
     "4.1 The turn objects",
@@ -192,6 +193,7 @@
     "4.4 Full turn, end to end",
     "4.5 Slow brain → a filler now, the real answer next (`REPLY_PENDING`)",
     "4.6 The markup floor — **built**, v1 2026-09-02",
+    "4.7 Vision events, and whether the cloud may speak first — **built**, v1 2026-09-02",
     "5. Local AI integration points (the part we change)",
     "5.1 LLM — `ai_factory.py` + `conversations.py`",
     "5.2 STT — `zmq_stt_handler.py`",
@@ -201,9 +203,7 @@
     "7. Integration architecture for our repo",
     "7.1 How the two halves sit on one Orin box",
     "7.2 What we take vs rebuild from OpenMoxie",
-    "7.3 Recommended phased build order",
-    "Appendix A — File map (OpenMoxie, for reference)",
-    "Appendix B — Endpoint QR #2 generator (pseudocode, no protobuf runtime needed)"
+    "7.3 Recommended phased build order"
    ],
    "kind": "md"
   },
@@ -211,7 +211,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 18013,
+   "bytes": 21998,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -222,6 +222,7 @@
     "③ TTS out — markup → audio + viseme marks",
     "Request in — `CloudTTSRequest`",
     "Response out — `CloudTTSResponse`",
+    "Backends in this repo — and what happens when one fails",
     "Conformance checklist",
     "Where each seam is implemented in this repo"
    ],
@@ -231,12 +232,13 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 16503,
+   "bytes": 23871,
    "mermaid": 1,
    "headings": [
     "The loop",
     "① `/config` down — `RobotCloudConfig` (the thing the server must produce)",
     "Wake alarms & scheduled activities — the JSON we emit",
+    "Appearance — the child's chosen face",
     "Fleet defaults ⊕ per-robot overrides",
     "The pairing gate — permits, and what a *pending* robot is sent",
     "The child-PII encryption boundary — and the revival shortcut",
@@ -254,7 +256,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 16988,
+   "bytes": 27973,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -266,6 +268,7 @@
     "Memory — `persist_data` + `session.summarize()`",
     "The store",
     "session.summarize(...)`",
+    "Decay (`MOXIE_MEMORY_MAX_AGE_DAYS`)",
     "Declaring it (the `memory` block)",
     "What a parent can do",
     "Honest limits",
@@ -333,7 +336,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 64065,
+   "bytes": 69166,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -402,6 +405,70 @@
    "kind": "md"
   },
   {
+   "path": "architecture/backlog/security-broker-auth.md",
+   "title": "Broker authentication — from service refusal to identity, in three phases",
+   "section": "architecture",
+   "bytes": 38988,
+   "mermaid": 2,
+   "headings": [
+    "Why this is the next slice",
+    "0. What our own corpus establishes — and what it leaves open",
+    "0.1 The robot's connect handshake",
+    "0.2 What the endpoint QR can carry — and what it cannot",
+    "0.3 The one route to a robot's public key that is not a hardware step",
+    "0.4 The ledger — proven / assumed / unknown",
+    "1. The seam as it stands today",
+    "Prior art — what OpenMoxie does, and what it does not",
+    "2. P0 — hardening we can ship now, with no robot change",
+    "2.1 A `pattern` ACL keyed on the client id",
+    "2.2 A supervisor credential",
+    "2.3 The permit-derived ACL — generated now, inert until P1",
+    "2.4 Bind the plain listener to loopback by default",
+    "2.5 What breaks, and how it adapts",
+    "2.6 P0 contract touchpoints",
+    "3. P1 — device credentials the broker actually verifies",
+    "3.1 Rejected options, and why (each rejection is evidence-backed)",
+    "3.2 The design: mosquitto asks the supervisor",
+    "3.3 Getting the public key — three routes, ranked by honesty",
+    "3.4 P1 is strictly additive — it cannot brick a fleet",
+    "4. P2 — spoof-proofing: `d_<uuid>` bound to a credential",
+    "5. Tests",
+    "6. Acceptance criteria",
+    "7. Effort, files, risks",
+    "8. What cannot be done without touching a physical robot"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/telehealth.md",
+   "title": "Telehealth — \"Be Moxie\": the operator drives the body (ADOPT #7)",
+   "section": "architecture",
+   "bytes": 33651,
+   "mermaid": 1,
+   "headings": [
+    "Why this is worth building",
+    "0. What our corpus establishes",
+    "0.1 The mode",
+    "0.2 The protocol — verbatim from the recovered `.proto`",
+    "0.3 We already have wire-tested builders — for the *proto* form",
+    "0.4 Observed vs. inferred — the robot's behavior in this mode",
+    "1. The seam it plugs into",
+    "Prior art — OpenMoxie's puppet page",
+    "2. The design",
+    "2.1 A pure wire module",
+    "2.2 Runtime methods (`moxie_runtime.py`)",
+    "2.3 The speak path, in order",
+    "2.4 How it interacts with everything already shipped",
+    "2.5 What the child says, and how it reaches the operator",
+    "2.6 The console page — 🎭 \"Be Moxie\"",
+    "3. Tests",
+    "4. Acceptance criteria",
+    "5. Effort, files, risks",
+    "6. What only a physical robot can settle"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/static-experience.md",
    "title": "The Moxie experience as one static site",
    "section": "architecture",
@@ -438,7 +505,7 @@
    "path": "architecture/vision.md",
    "title": "13 — Camera & Vision: can we pipe Moxie's camera into a local CV/VLM stack?",
    "section": "architecture",
-   "bytes": 18451,
+   "bytes": 27071,
    "mermaid": 0,
    "headings": [
     "0. TL;DR / Verdict",
@@ -455,6 +522,12 @@
     "4. If we get frames: the local vision pipeline (recommended stack)",
     "5. Camera hardware: resolution / format / FPS / location",
     "6. Verdict — feasibility table",
+    "7. BUILT — presence in the turn loop (v1, 2026-09-02)",
+    "7.1 How the events actually reach a server",
+    "7.2 The presence model",
+    "7.3 Into the turn",
+    "7.4 The greeting rule — and the unsolicited-reply assumption",
+    "7.5 What is still not true",
     "Sources"
    ],
    "kind": "md"
@@ -693,7 +766,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 2141,
+   "bytes": 2480,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -720,7 +793,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 16744,
+   "bytes": 18115,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -735,6 +808,7 @@
     "stt` — local speech-to-text",
     "Point a real robot at it",
     "Prove it works",
+    "How the two compose files stay in sync",
     "Updating",
     "Troubleshooting",
     "Running it a different way"
@@ -778,13 +852,30 @@
    "path": "guides/what-moxie-remembers.md",
    "title": "What Moxie remembers — and how to erase it",
    "section": "guides",
-   "bytes": 4211,
+   "bytes": 5807,
    "mermaid": 0,
    "headings": [
     "What is written down",
     "What is *never* written down",
-    "Erasing it",
+    "Fixing one line",
+    "Erasing more of it",
+    "Old facts fade on their own",
     "Summaries can be wrong"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/moxies-look.md",
+   "title": "Moxie's look — letting your child style the face",
+   "section": "guides",
+   "bytes": 4436,
+   "mermaid": 0,
+   "headings": [
+    "What you can change today",
+    "Why the other twelve layers are greyed out",
+    "One robot, or all of them",
+    "What actually happens when you press Save",
+    "An honest caveat"
    ],
    "kind": "md"
   },
@@ -833,11 +924,18 @@
   },
   {
    "path": "guides/litellm-tts-setup.md",
-   "title": "TTS on the LiteLLM gateway — setup handoff",
+   "title": "TTS on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 5500,
+   "bytes": 9912,
    "mermaid": 0,
    "headings": [
+    "Live since 2026-09-02",
+    "Turning it on — one variable",
+    "What we measured (live, 2026-09-02)",
+    "Four quirks worth knowing",
+    "If the gateway hiccups, a child still hears a voice",
+    "Verify it yourself",
+    "The original handoff (the contract we asked for)",
     "What we already confirmed",
     "What we need (the contract)",
     "How to register it (LiteLLM `config.yaml`)",

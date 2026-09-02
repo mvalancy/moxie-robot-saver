@@ -26,6 +26,7 @@ from moxie_sdk.wire import (build_chat_response, build_activity_response,  # pur
 from moxie_sdk.store import JsonStore, MemoryStore       # durable per-robot JSON store
 from moxie_sdk.filler import pick_filler                 # "let me think" lines + markup
 from moxie_sdk import safety as safety_seam              # InputSafety classifier (ai-seam §2)
+from moxie_sdk import presence as presence_seam          # vision events -> presence (vision.md)
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
 from markup import make_markup  # the markup floor (moxie_sdk.automarkup) behind the seam
 
@@ -66,11 +67,18 @@ SAFETY_JOURNAL_POLICY = LoggingPolicy.NO_MEDIA
 # `logging_policy=NO_DATA` turns writing off entirely (reads and erase still work).
 MEMORY_POLICY = LoggingPolicy.NO_MEDIA
 
+# How long a child must have been out of sight before Moxie says hello on its own when
+# they walk back in front of it (`eb-found-face` after an `eb-lost-target`). Short enough
+# that leaving the room and coming back is noticed, long enough that stepping out of frame
+# for a moment is not. 0 turns the unprompted greeting off entirely; `MOXIE_GREET_AFTER_S`
+# overrides. See docs/architecture/vision.md "The greeting rule".
+DEFAULT_GREET_AFTER_S = 300.0
+
 
 class MoxieRuntime:
     def __init__(self, app, host="127.0.0.1", port=1883, child: ChildProfile | None = None,
                  store: JsonStore | None = None, brain_budget_s=None, streaming=None,
-                 safety=None, allow_unverified_bots=None):
+                 safety=None, allow_unverified_bots=None, greet_after_s=None):
         self.app = app
         self.child = child or ChildProfile()
         self.host, self.port = host, port
@@ -135,6 +143,23 @@ class MoxieRuntime:
         self._last_redirect: dict[str, str] = {}   # never the same redirect twice running
         if self.safety is None:
             print("[runtime] ⚠️  input safety is OFF (MOXIE_SAFETY=0)", flush=True)
+        # Presence (audit BEYOND #9). The robot's own eyes reach us as ordinary
+        # RemoteChatRequests whose `speech` IS the event string — but only after the brain
+        # subscribes (`EventSubscription.active[]`), which is why nobody has ever seen one.
+        # See `moxie_sdk/presence.py` and docs/architecture/vision.md.
+        self._presence_lock = threading.Lock()
+        self._busy: set = set()                    # robots with a turn in flight
+        self._last_greeting: dict[str, str] = {}   # never the same hello twice running
+        self._pending_opener: dict[str, str] = {}  # hello queued for the next turn
+        self._vision_subscribed: dict[str, str] = {}   # device -> module we subscribed for
+        try:
+            self.greet_after_s = float(
+                greet_after_s if greet_after_s is not None
+                else os.environ.get("MOXIE_GREET_AFTER_S") or DEFAULT_GREET_AFTER_S)
+        except (TypeError, ValueError):
+            self.greet_after_s = DEFAULT_GREET_AFTER_S
+        self.vision = (os.environ.get("MOXIE_VISION") or "1").strip().lower() \
+            not in ("0", "off", "false", "no")
         # Long-term memory (content-module-contract.md → `volley.persist_data`): the app
         # owns the store; the runtime owns the parent's privacy switch. See the memory
         # region below.
@@ -196,8 +221,9 @@ class MoxieRuntime:
     #
     # BEYOND #4 (openmoxie-feature-audit.md §4.2) says a memory a parent cannot read or
     # erase is not acceptable on a child's device. `/memory` is that floor: GET to read
-    # what Moxie remembers with its provenance, DELETE/POST to erase a namespace or all
-    # of it. A browser UI over it is still open work.
+    # what Moxie remembers (every item with its id and provenance), DELETE to forget one
+    # item, one namespace or all of it, POST to erase the same way or to **correct** one
+    # item in place. The console's 🧠 card is the browser over exactly these.
 
     def memory_policy(self, device_id) -> LoggingPolicy:
         """The LoggingPolicy governing what may be *remembered* about this child — the
@@ -246,19 +272,51 @@ class MoxieRuntime:
                      "policy": self.memory_policy(device_id).name})
         return view
 
-    def erase_memory(self, device_id, namespace=None) -> dict:
-        """Forget one namespace, or everything for this robot. Never policy-gated: a
-        parent must always be able to delete."""
-        removed = self.memory_store().erase(device_id, namespace)
-        self._note("memory", f"🧽 erased memory: {namespace or 'all'}")
-        print(f"[runtime] 🧽 erased memory for {device_id} "
-              f"({namespace or 'everything'}): {removed}", flush=True)
+    def erase_memory(self, device_id, namespace=None, item=None) -> dict:
+        """Forget one item, one namespace, or everything for this robot.
+
+        Never policy-gated: a parent must always be able to delete. `item` is the finest
+        cut — one wrong line goes without costing the rest of what that activity learned
+        (BEYOND #4's other half)."""
+        if item:
+            removed = self.memory_store().erase_item(device_id, namespace, item)
+            what = f"{namespace}/{item}"
+        else:
+            removed = self.memory_store().erase(device_id, namespace)
+            what = namespace or "all"
+        self._note("memory", f"🧽 erased memory: {what}")
+        print(f"[runtime] 🧽 erased memory for {device_id} ({what}): {removed}",
+              flush=True)
         out = self.memory_view(device_id)
         if not out.get("ok"):                     # erasing the last of it is still a hit
             out = {"ok": True, "device_id": device_id, "namespaces": {}, "bytes": 0,
                    "policy": self.memory_policy(device_id).name}
         out["erased"] = bool(removed)
         out["namespace"] = namespace or "all"
+        if item:
+            out["item"] = str(item)
+        return out
+
+    def edit_memory_item(self, device_id, namespace, item, text) -> dict:
+        """Correct one remembered item — the other thing a parent needs when a summary is
+        wrong but not worthless ("Puppy sleeps on **his** bed" → "…my bed").
+
+        The store keeps the item's id, **pins** it (a human decision outranks decay) and
+        re-runs the two rules that decide what may live in a prompt: the safety
+        classifier, and the no-verbatim check against this robot's recent conversation —
+        so a parent cannot paste the child's own words back in. A refusal raises, and the
+        handler turns it into a 400 with the reason. Not policy-gated: fixing a wrong line
+        must work even on a `NO_DATA` robot, where the only alternative is deleting it."""
+        edited = self.memory_store().edit_item(
+            device_id, namespace, item, text,
+            history=list(self.history.get(device_id) or []))
+        self._note("memory", f"✏️ corrected memory: {namespace}/{item}")
+        print(f"[runtime] ✏️ corrected memory for {device_id} ({namespace}/{item})",
+              flush=True)
+        out = self.memory_view(device_id)
+        out["edited"] = True
+        out["namespace"] = str(namespace)
+        out["item"] = str(item)
         return out
 
     # ---- end of a conversation (the contract's complete_handler moment) ----
@@ -315,6 +373,11 @@ class MoxieRuntime:
                 "ota_reboot_required": st.get("ota_reboot_required"),
                 "config_overrides": self._config_overrides.get(r.device_id, {}),
                 "config_effective": self.effective_config(r.device_id),
+                # The face cache-buster as this robot's next /config push will carry it
+                # (`child_pii.id`) — "" when no face is chosen and the field is omitted.
+                # Surfaced so a parent (and a test) can see that changing the look really
+                # did re-key the texture, without reading the MQTT wire.
+                "face_cache_id": self.face_cache_id(r.device_id),
                 "telemetry_count": len(r.extra.get("telemetry", [])),
                 "safety_total": int((self.store.read(
                     r.device_id, safety_seam.COUNTS_COLLECTION, {}) or {}).get("total", 0)),
@@ -324,12 +387,17 @@ class MoxieRuntime:
                     if isinstance(e, dict) and not e.get("reviewed")),
             })
         from moxie_sdk.cloud_config import schedulable_module_ids
+        from moxie_sdk.faces import face_catalog
         return {"ok": True, "app": self.app.name,
                 "uptime_s": int(time.time() - self.started_at),
                 "fleet_config": self.fleet_config(),
                 "allow_unverified_bots": open_fleet,
                 "pending_count": sum(1 for r in robots if r["pending"]),
                 "schedule_modules": list(schedulable_module_ids()),
+                # The appearance catalog the 🎨 card renders (audit ADOPT #9). Published
+                # rather than hard-coded in the console so the two can never disagree
+                # about which slots exist or which options are actually cited.
+                "face_catalog": face_catalog(),
                 "robots": robots, "recent": list(self.recent)[-60:]}
 
     # ---- lifecycle ----
@@ -361,6 +429,7 @@ class MoxieRuntime:
             def do_GET(self):
                 """GET /status → the console snapshot; GET /telemetry?device_id=…&limit=N
                 → that robot's stored telemetry Packets rolled up for the insights view;
+                GET /schedule?device_id=… → the planned day + why each activity is on it;
                 GET /permits → the device allowlist + who is pending.
                 Localhost-only (the server binds 127.0.0.1)."""
                 from urllib.parse import urlparse, parse_qs
@@ -384,6 +453,14 @@ class MoxieRuntime:
                     except ValueError:
                         limit = 20
                     out = rt.safety_view(device_id, limit=limit)
+                    return self._json_out(out, 200 if out.get("ok") else 404)
+                if u.path == "/schedule":
+                    # The day this robot was planned, with the "why this activity today"
+                    # line behind every entry (audit §4.2 BEYOND #7). Read-only.
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    refresh = (q.get("refresh") or ["0"])[0] not in ("", "0", "false")
+                    out = rt.schedule_view(device_id, refresh=refresh)
                     return self._json_out(out, 200 if out.get("ok") else 404)
                 if u.path == "/permits":
                     return self._json_out(rt.permits_view())
@@ -410,43 +487,65 @@ class MoxieRuntime:
                     return self._json_out(out, 200 if out.get("ok") else 404)
                 self.send_response(404); self.end_headers()
 
-            def _erase_memory(self, query):
-                """Erase one memory namespace (or all of it) for a device. Shared by
-                DELETE /memory and POST /memory — localhost-only like every handler."""
+            def _memory_write(self, query):
+                """A parent's erase or correction. Shared by DELETE /memory and
+                POST /memory — localhost-only like every handler.
+
+                Three cuts, finest first: `item` (one wrong line), `namespace` (one
+                activity), neither (everything for that robot). A POST body may carry
+                `{"edit": {"namespace", "item", "text"}}` instead, which corrects the
+                item in place rather than deleting it."""
                 from urllib.parse import parse_qs
                 q = parse_qs(query)
                 device_id = (q.get("device_id") or [""])[0]
                 namespace = (q.get("namespace") or [""])[0]
-                if not namespace:
+                item = (q.get("item") or [""])[0]
+                body = {}
+                if not namespace or not item:
                     length = int(self.headers.get("Content-Length") or 0)
                     raw = self.rfile.read(length) if length else b"{}"
                     try:
                         body = _json.loads(raw or b"{}") or {}
                     except Exception:
                         body = {}
-                    namespace = body.get("namespace") or body.get("erase") or ""
+                    if not isinstance(body, dict):
+                        body = {}
+                edit = body.get("edit") if isinstance(body.get("edit"), dict) else None
+                if edit is None:
+                    namespace = namespace or body.get("namespace") or body.get("erase") or ""
+                    item = item or body.get("item") or ""
                 try:
-                    out = rt.erase_memory(device_id, namespace or None)
+                    if edit is not None:
+                        out = rt.edit_memory_item(device_id,
+                                                  edit.get("namespace") or namespace,
+                                                  edit.get("item") or item,
+                                                  edit.get("text"))
+                    else:
+                        out = rt.erase_memory(device_id, namespace or None, item or None)
                     code = 200 if out.get("ok") else 404
                 except Exception as e:
                     out, code = {"ok": False, "error": str(e)}, 400
                 return self._json_out(out, code)
 
             def do_DELETE(self):
-                """`DELETE /memory?device_id=…[&namespace=…]` — a parent erasing what
-                Moxie remembers. No namespace erases everything for that robot."""
+                """`DELETE /memory?device_id=…[&namespace=…[&item=…]]` — a parent erasing
+                what Moxie remembers. With `item`, exactly that one line goes; with only
+                a namespace, one activity; with neither, everything for that robot."""
                 from urllib.parse import urlparse
                 u = urlparse(self.path)
                 if u.path != "/memory":
                     self.send_response(404); self.end_headers(); return
-                return self._erase_memory(u.query)
+                return self._memory_write(u.query)
 
             def do_POST(self):
                 """Parent-console writes.
 
                 `POST /config?device_id=…` with a JSON body of overrides (audio_volume,
-                weekday_bedtime, alarms, wake toggles, …), validated by
+                weekday_bedtime, alarms, wake toggles, `face`, …), validated by
                 sanitize_config_overrides, then update_config re-pushes RobotCloudConfig.
+                A `face` edit re-pushes like any other override, and because the pushed
+                `child_pii.id` is derived from the chosen layers, the change also re-keys
+                the robot's face-texture cache (`moxie_sdk/faces.py`).
                 `POST /config?scope=fleet` writes the same whitelisted overrides as the
                 **appliance-wide defaults** (audit ADOPT #6) and re-pushes every connected
                 robot; a per-robot override still wins over the fleet value.
@@ -464,8 +563,10 @@ class MoxieRuntime:
                 path = urlparse(self.path).path
                 if path == "/memory":
                     # `POST /memory?device_id=…` `{"erase": "<namespace>"|"all"}` —
-                    # the same erase as DELETE, for clients that cannot send one.
-                    return self._erase_memory(urlparse(self.path).query)
+                    # the same erase as DELETE, for clients that cannot send one — or
+                    # `{"edit": {"namespace", "item", "text"}}`, a parent correcting one
+                    # remembered line instead of losing the whole activity to it.
+                    return self._memory_write(urlparse(self.path).query)
                 if path not in ("/config", "/safety", "/permits"):
                     self.send_response(404); self.end_headers(); return
                 if path == "/permits":
@@ -642,6 +743,26 @@ class MoxieRuntime:
         from moxie_sdk.cloud_config import merge_config_layers
         return merge_config_layers(self.fleet_config(),
                                    self._config_overrides.get(device_id, {}))
+
+    def face_cache_id(self, device_id) -> str:
+        """The `child_pii.id` this robot's next `/config` push will carry — the face
+        cache-buster (`moxie_sdk/faces.py`, "the cache-buster"). `""` when no face is
+        chosen, which is exactly when the field is omitted from the document.
+
+        Read off the same `fleet ⊕ per-robot` layers `_push_config` builds from, so it is
+        the value that will actually go out, not a second opinion about it."""
+        face = (self.effective_config(device_id) or {}).get("face")
+        if not face:
+            return ""
+        from moxie_sdk.faces import face_child_id, face_options_list, validate_face
+        try:
+            labels = face_options_list(validate_face(face))
+        except ValueError:
+            return ""
+        if not labels:
+            return ""
+        child = (self.robots[device_id].child if device_id in self.robots else self.child)
+        return face_child_id(labels, child_key=child.nickname)
 
     def update_fleet_config(self, **overrides):
         """Parent-console *fleet* config edit: merge overrides into the appliance-wide
@@ -1028,7 +1149,224 @@ class MoxieRuntime:
         RobotCloudConfig and re-publish it. Overrides persist across re-pushes."""
         self._config_overrides.setdefault(device_id, {}).update(overrides)
         self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
+        if "face" in overrides:
+            # Worth its own line in the console's activity feed: this is the one config
+            # edit whose result a child sees on the robot's face.
+            from moxie_sdk.faces import describe_face
+            look = describe_face(overrides["face"] or {}) or "the default look"
+            self._note("config", f"🎨 look updated: {look}")
         return self._push_config(device_id)
+
+    # ---- presence: the robot's own eyes (audit BEYOND #9) ------------------------
+    #
+    # Moxie runs its vision ON-DEVICE and never sends pixels; what it can send is a
+    # handful of semantic strings — `eb-found-face`, `eb-lost-target`, `eb-qr-event`,
+    # `eb-dr-event`, `eb-br-event` — with no bounding box, no position, no identity
+    # (docs/architecture/vision.md §1.1-1.2, :47-58). Two facts shape everything here:
+    #
+    #  1. **They are not their own topic.** A subscribed event is delivered to the brain
+    #     as the `speech` of an ordinary `RemoteChatRequest` ("instead of the modules
+    #     receiving something the user said, it receives a special event string like
+    #     `eb-found-face`" — OpenMoxie `doc/RemoteModuleAPI.md` §Event Handling, MIT; the
+    #     same shape content-and-conversation.md:385-390 shows for QR). So the ingest
+    #     point is the chat router, and a reply to that request is not merely legal, it is
+    #     REQUIRED: "the remote module must produce some response for this input to
+    #     continue the interaction."
+    #  2. **Nothing arrives until we ask.** The events are "discarded by the application
+    #     stack unless the active module is specifically interested" — the brain opts in
+    #     with `RemoteChatAction.EventSubscription{clear, active[]}`
+    #     (remote-chat-protocol.md:103-106). `_vision_subscription` attaches that.
+    #
+    # Everything below is INFERRED from that recovered catalog. No physical robot has ever
+    # sent us one of these events.
+
+    def _presence_state(self, robot) -> dict:
+        """This robot's raw presence record (`moxie_sdk.presence.new_state()` shape)."""
+        st = robot.extra.get("presence")
+        return st if isinstance(st, dict) else presence_seam.new_state()
+
+    def _ingest_vision(self, device_id, robot, name, payload, now=None) -> list:
+        """Fold one vision event into the robot's presence state; return its signals.
+
+        The state lives on `RobotContext.extra["presence"]` — bounded, JSON-safe, and
+        rebuilt (never mutated) by the pure helper, so the MQTT loop only ever swaps a
+        reference. The app's `on_event` hook is called for every one of them, so a game
+        or agent can react to perception without knowing the wire at all."""
+        now = time.time() if now is None else now
+        with self._presence_lock:
+            state, signals = presence_seam.update_presence(
+                self._presence_state(robot), name, payload, now)
+            robot.extra["presence"] = state
+        for sig in signals:
+            detail = ""
+            if sig.get("away_s") is not None:
+                detail = f" after {presence_seam.human_duration(sig['away_s'])}"
+            elif sig.get("present_s") is not None:
+                detail = f" after {presence_seam.human_duration(sig['present_s'])}"
+            elif sig.get("value"):
+                detail = f": {str(sig['value'])[:32]}"
+            self._note("vision", f"eye {sig['name']}{detail} ({device_id})")
+            print(f"[runtime] eye {name} -> {sig['name']}{detail} on {device_id}",
+                  flush=True)
+        try:
+            self.app.on_event(robot, name, dict(payload) if isinstance(payload, dict) else {})
+        except Exception as e:
+            print(f"[runtime] app.on_event error: {e}", flush=True)
+        return signals
+
+    def _on_vision_turn(self, device_id, robot, rcr, name):
+        """A vision event that arrived as a chat turn — the protocol-faithful path.
+
+        We answer the request the robot is waiting on, and we never spend a brain call on
+        it: either the greeting below (`SUCCESS`) or `NOREPLY_ACK` — ResultCode 6,
+        "acknowledge only, no spoken line" (remote-chat-protocol.md:60), which is exactly
+        the contract's field for "heard you, saying nothing"."""
+        event_id = rcr.get("event_id")
+        backend = rcr.get("backend", "router")
+        signals = self._ingest_vision(device_id, robot, name, rcr.get("input_vars") or {})
+        greeting = self._greeting_for(device_id, robot, signals)
+        if greeting is None:
+            return self._publish_chat(device_id, event_id, backend, "", markup="",
+                                      result=ResultCode.NOREPLY_ACK)
+        text, markup = greeting
+        self._note("chat", f"hello (unprompted): '{text[:40]}'")
+        print(f"[runtime] 👋 {device_id} walked back in -> '{text}'", flush=True)
+        self._publish_chat(device_id, event_id, backend, text, markup,
+                           result=ResultCode.SUCCESS)
+        self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
+        return None
+
+    def _greeting_for(self, device_id, robot, signals):
+        """`(text, markup)` if this robot has earned an unprompted hello, else None.
+
+        The rule, and every gate on it:
+
+        * an **`arrived`** signal whose `away_s` is at least `greet_after_s`
+          (`MOXIE_GREET_AFTER_S`, default 300 s; **0 = off**). A first-ever sighting has
+          `away_s = None` and never greets — Moxie does not shout at a stranger.
+        * **once per absence** — `greeted_at` is stamped on the presence record and must
+          predate the next `eb-lost-target` before another hello is possible.
+        * **never over a turn** — a robot with a turn in flight gets the line *queued* for
+          the start of the next turn instead (`_speak_opener`), so Moxie never talks over
+          its own answer.
+        * **never to an unpermitted robot** — the pairing gate already refuses their
+          events upstream (`_serve_unpermitted`); this is the belt to that's braces.
+        * **never in bedtime hours** — read-only use of `effective_config`.
+        """
+        if self.greet_after_s <= 0:
+            return None
+        arrived = next((s for s in signals if s.get("name") == "arrived"), None)
+        if arrived is None:
+            return None
+        away = arrived.get("away_s")
+        if away is None or away < self.greet_after_s:
+            return None
+        if not self.is_permitted(device_id):
+            return None
+        if self._in_bedtime(device_id):
+            self._note("vision", f"hello suppressed (bedtime) for {device_id}")
+            return None
+        now = time.time()
+        with self._presence_lock:
+            state = self._presence_state(robot)
+            greeted_at = state.get("greeted_at")
+            lost_at = state.get("last_lost_at") or 0.0
+            if greeted_at is not None and greeted_at >= lost_at:
+                return None                       # already said hello for this absence
+            text = presence_seam.pick_greeting(robot.child.nickname,
+                                               self._last_greeting.get(device_id, ""))
+            self._last_greeting[device_id] = text
+            state = dict(state)
+            state["greeted_at"] = now
+            robot.extra["presence"] = state
+            busy = device_id in self._busy
+            if busy:
+                self._pending_opener[device_id] = text
+        if busy:
+            self._note("vision", f"hello queued (turn in flight) for {device_id}")
+            print(f"[runtime] 👋 queued opener for {device_id} (turn in flight)", flush=True)
+            return None
+        return text, make_markup(text, turn_key=f"greet|{device_id}|{now:.0f}",
+                                 chunk_index=0)
+
+    def _speak_opener(self, device_id, event_id, seq):
+        """Deliver a queued hello as chunk 0 of the turn that is starting.
+
+        Same wire shape a latency filler uses — `result=REPLY_PENDING` + `chunk_num=0`
+        (RemoteChat.proto ResultCode 9 / field 22) — so the real answer follows as chunk 1
+        and closes the sequence. Returns the text, or None if nothing was queued."""
+        with self._presence_lock:
+            text = self._pending_opener.pop(device_id, None)
+        if not text or self._is_stale(device_id, seq):
+            return None
+        markup = make_markup(text, turn_key=f"greet|{event_id}", chunk_index=0)
+        self._note("chat", f"hello (queued): '{text[:40]}'")
+        print(f"[runtime] 👋 delivering queued opener on {device_id}: '{text}'", flush=True)
+        self._publish_chat(device_id, event_id, "router", text, markup,
+                           result=ResultCode.REPLY_PENDING, chunk_num=0,
+                           is_completed=False)
+        self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
+        return text
+
+    def _in_bedtime(self, device_id, now=None) -> bool:
+        """True when this robot's *effective* config puts it inside its bedtime window.
+
+        Read-only use of `effective_config` (fleet ⊕ per-robot). The window is the pair of
+        `"HH:MM"` local wall-clock strings the RobotCloudConfig already carries
+        (`weekday_bedtime` / `weekend_bedtime`, cloud_config.py), weekday vs weekend by
+        `datetime.weekday()` — the convention `WAKE_DAY_NAMES` fixes (0 = Monday). A
+        window that wraps midnight (20:30-07:00, the normal case) is handled. No window
+        configured -> never bedtime, which is the pre-presence behavior exactly."""
+        import datetime
+        dt = (datetime.datetime.fromtimestamp(now) if now is not None
+              else datetime.datetime.now())
+        try:
+            cfg = self.effective_config(device_id)
+        except Exception:
+            return False
+        window = cfg.get("weekend_bedtime" if dt.weekday() >= 5 else "weekday_bedtime")
+        if not isinstance(window, (list, tuple)) or len(window) != 2:
+            return False
+        start, end = str(window[0]), str(window[1])
+        cur = dt.strftime("%H:%M")
+        if start == end:
+            return False
+        return (start <= cur < end) if start < end else (cur >= start or cur < end)
+
+    def _vision_subscription(self, device_id, robot=None):
+        """The `EventSubscription.active[]` list to attach to this response, or None.
+
+        The robot discards its own vision events unless the *active module* subscribed,
+        and "events are automatically unsubscribed when the module exits"
+        (RemoteModuleAPI §Unsubscribing) — so the subscription is (re-)sent once per
+        `(device, module_id)`, not once per process. `MOXIE_VISION=0` turns it off."""
+        if not self.vision:
+            return None
+        robot = robot or self.robots.get(device_id)
+        module = (getattr(robot, "module_id", None) or "") if robot else ""
+        with self._presence_lock:
+            if self._vision_subscribed.get(device_id) == module:
+                return None
+            if not self.is_permitted(device_id):
+                return None
+            self._vision_subscribed[device_id] = module
+        self._note("vision", f"subscribed to vision events on {device_id}")
+        print(f"[runtime] 👁️  subscribing {device_id} to "
+              f"{', '.join(presence_seam.VISION_EVENTS)}", flush=True)
+        return list(presence_seam.VISION_EVENTS)
+
+    def _turn_worker(self, device_id, event_id, speech, turn, seq):
+        """`_handle_turn` with an in-flight marker around it.
+
+        The marker is what `_greeting_for` reads to decide "queue the hello" instead of
+        "say it now" — nothing else about the turn loop changes."""
+        with self._presence_lock:
+            self._busy.add(device_id)
+        try:
+            self._handle_turn(device_id, event_id, speech, turn, seq)
+        finally:
+            with self._presence_lock:
+                self._busy.discard(device_id)
 
     # ---- events ----
     def _on_event(self, device_id, name, payload):
@@ -1041,11 +1379,26 @@ class MoxieRuntime:
             return self._on_activity(device_id, payload)
         if name in ("telemetry", "analytics") or name.startswith("packet"):
             return self.ingest_telemetry(device_id, payload)
-        # everything else → surface to the app as an event (vision, module lifecycle…)
         try:
             data = json.loads(payload)
         except Exception:
             data = {"raw": True}
+        # A vision event on its own `events/<name>` subtopic. The recovered contract
+        # delivers these inside a RemoteChatRequest instead (see the presence region), so
+        # this branch is a defensive extra rather than an observed shape: it updates
+        # presence and, because there is no request to answer, any hello it earns is
+        # QUEUED for the next turn rather than published unsolicited.
+        if presence_seam.is_vision_event(name):
+            self.robots.setdefault(device_id, robot)
+            signals = self._ingest_vision(device_id, robot, name,
+                                          data.get("input_vars") or data)
+            greeting = self._greeting_for(device_id, robot, signals)
+            if greeting is not None:
+                with self._presence_lock:
+                    self._pending_opener[device_id] = greeting[0]
+                self._note("vision", f"hello queued (no request to answer) for {device_id}")
+            return None
+        # everything else → surface to the app as an event (module lifecycle…)
         try:
             self.app.on_event(robot, name, data)
         except Exception:
@@ -1080,14 +1433,21 @@ class MoxieRuntime:
         for ln in rcr.get("extra_lines", []) or []:
             if ln.get("context_type") == "input" and ln.get("text"):
                 speech = ln["text"]
+        # The robot's own eyes: a subscribed perception event arrives in the `speech`
+        # slot, not as words a child said (RemoteModuleAPI §Event Handling). It is
+        # answered here — never handed to a brain, never written to history, never
+        # assessed as a child's utterance.
+        if presence_seam.is_vision_event(speech):
+            return self._on_vision_turn(device_id, robot, rcr, speech.strip())
         turn = Turn(robot=robot, speech=speech, history=list(self.history.get(device_id, [])),
-                    command=command, input_vars=rcr.get("input_vars", {}))
+                    command=command, input_vars=rcr.get("input_vars", {}),
+                    presence=presence_seam.snapshot(self._presence_state(robot)))
         # Number the turn so a slow brain's answer can be recognized as stale if the
         # child has moved on by the time it lands (_is_stale). The MQTT loop is the only
         # writer here, so a plain increment is enough.
         seq = self._turn_seq[device_id] = self._turn_seq.get(device_id, 0) + 1
         # Run the (possibly slow) app + LLM off the MQTT loop so we never block it.
-        self._pool.submit(self._handle_turn, device_id, event_id, speech, turn, seq)
+        self._pool.submit(self._turn_worker, device_id, event_id, speech, turn, seq)
 
     # ---- one turn, with a latency budget ----
     def _is_stale(self, device_id, seq) -> bool:
@@ -1132,6 +1492,10 @@ class MoxieRuntime:
                 return self._handle_stream_turn(device_id, event_id, speech, turn,
                                                 seq, stream)
         state = {"lock": threading.Lock(), "done": False, "filler": None}
+        # A hello queued while a previous turn was in flight (someone walked in mid-answer)
+        # rides out as this turn's chunk 0 — the filler's own wire shape, so the answer
+        # below closes the sequence as chunk 1. Nothing else about the turn changes.
+        state["filler"] = self._speak_opener(device_id, event_id, seq)
         timer = None
         if self.brain_budget_s > 0:
             timer = threading.Timer(self.brain_budget_s, self._speak_filler,
@@ -1233,6 +1597,12 @@ class MoxieRuntime:
                  "fillers": 0, "gen": 0, "timer": None}
         said, closed, failed = [], False, None
         acts: list = []                 # every action the stream asked for (e.g. <exit>)
+        # Same queued hello as the non-streaming path: it takes chunk 0, the stream's own
+        # sentences start at chunk 1. `ans` stays 0, so the answer keeps its mood.
+        opener = self._speak_opener(device_id, event_id, seq)
+        if opener:
+            state["chunk"] = 1
+            said.append(opener)
         self._arm_filler(device_id, event_id, seq, state)
         try:
             for chunk in stream:
@@ -1467,18 +1837,86 @@ class MoxieRuntime:
         return rec
 
     # ---- the day plan ----
-    def build_schedule_for(self, device_id) -> dict:
-        """The ContentSchedule this robot gets for this session: the running content
-        module's `schedules[]` template (read-only) planned against what this robot has
-        already completed. See moxie_sdk/schedule.py for the shape + citations."""
-        from moxie_sdk.schedule import build_schedule, schedule_template
+    SCHEDULE_EXPLAIN_COLLECTION = "schedule_explain"   # robots/<id>/schedule_explain.json
+
+    def plan_schedule_for(self, device_id, *, now=None) -> tuple:
+        """Plan this robot's day → `(ContentSchedule, explanations, inputs)`.
+
+        The recommender (audit §4.2 BEYOND #7) is a pure function; this method is the
+        only place that gathers its signals from live state:
+          * the running content module's `schedules[]` (read-only authoring templates),
+          * this robot's stored `mentor_behaviors` (what the child finished vs. quit),
+          * its effective config — `schedule_preferences.parent_requests[]` and the
+            bedtime windows (read-only; the config path itself is untouched),
+          * its buffered telemetry Packets (see `moxie_sdk.schedule.telemetry_signals`
+            for what those can honestly contribute — no module-scoped event vocabulary
+            is recovered, so they are context, not a score).
+        See `moxie_sdk/schedule.py` for the shape, the weights and the citations.
+        """
+        from moxie_sdk.schedule import plan
+        schedules = None
         try:
-            template = schedule_template(getattr(self.app, "module", None))
+            schedules = getattr(getattr(self.app, "module", None), "schedules", None)
         except Exception as e:
             print(f"[runtime] schedule template unavailable ({e}); using the default")
-            template = None
-        return build_schedule(template, mentor_behaviors=self.mentor_behaviors(device_id),
-                              device_id=device_id)
+        robot = self.robots.get(device_id)
+        packets = (robot.extra.get("telemetry") or []) if robot else []
+        try:
+            config = self.effective_config(device_id)
+        except Exception as e:
+            print(f"[runtime] effective config unavailable ({e}); planning without it")
+            config = {}
+        child = getattr(self.child, "nickname", "") or ""
+        return plan(device_id, content_schedules=schedules,
+                    mentor_behaviors=self.mentor_behaviors(device_id),
+                    effective_config=config, telemetry_packets=packets,
+                    child_name=child, now=now)
+
+    def build_schedule_for(self, device_id) -> dict:
+        """The ContentSchedule this robot gets for this session — the planner's output,
+        and the value of `CloudQueryResponse.schedule`. The parent-readable "why this
+        activity today" lines are stored alongside it (never on the wire) so
+        `GET /schedule` can show them after the robot has pulled its day."""
+        sched, explanations, inputs = self.plan_schedule_for(device_id)
+        try:
+            self.store.write(device_id, self.SCHEDULE_EXPLAIN_COLLECTION,
+                             {"day": inputs.get("day"), "planned_at": inputs.get("now"),
+                              "schedule": sched, "explanations": explanations,
+                              "inputs": self._schedule_inputs_summary(inputs)})
+        except Exception as e:                     # a plan must never fail on its audit
+            print(f"[runtime] could not store schedule explanations: {e}", flush=True)
+        return sched
+
+    @staticmethod
+    def _schedule_inputs_summary(inputs) -> dict:
+        """The parent-facing slice of the planner's inputs: what it knew, not the whole
+        catalog. Everything here is already JSON-safe (`plan_inputs` guarantees it)."""
+        keys = ("device_id", "day", "now", "bucket", "slot_minutes", "child_name",
+                "bedtime", "slots", "parent_requests", "ftue_skips", "telemetry",
+                "planned")
+        out = {k: inputs.get(k) for k in keys if k in inputs}
+        history = inputs.get("history") or {}
+        out["history"] = {k: history[k] for k in sorted(history)}
+        return out
+
+    def schedule_view(self, device_id, *, refresh: bool = False) -> dict:
+        """`GET /schedule?device_id=…` — the day this robot was served, the "why this
+        activity today" line behind every entry, and a summary of the signals the planner
+        had. Read-only: with nothing stored yet (the robot has not pulled a schedule this
+        run) it plans one on the spot rather than answering empty."""
+        stored = self.store.read(device_id, self.SCHEDULE_EXPLAIN_COLLECTION, None)
+        if refresh or not isinstance(stored, dict) or not stored.get("explanations"):
+            if device_id not in self.robots and not self.store.read(
+                    device_id, "mentor_behaviors", None):
+                return {"ok": False, "error": f"unknown device_id {device_id!r}"}
+            sched, explanations, inputs = self.plan_schedule_for(device_id)
+            stored = {"day": inputs.get("day"), "planned_at": inputs.get("now"),
+                      "schedule": sched, "explanations": explanations,
+                      "inputs": self._schedule_inputs_summary(inputs), "served": False}
+        else:
+            stored = dict(stored)
+            stored.setdefault("served", True)
+        return {"ok": True, "device_id": device_id, **stored}
 
     def _query_payload(self, device_id, query):
         """The value for a CloudQuery — None means "send this field's empty value"."""
@@ -1587,9 +2025,20 @@ class MoxieRuntime:
                       actions=None, end_turn=False, result=ResultCode.SUCCESS,
                       modules=None, mood=None, dialog_act=None,
                       chunk_num=None, is_completed=None, safety=None):
+        # Ask the robot to start pushing us its vision events, once per module. It rides
+        # a spoken reply because that is the only cloud→robot message the contract gives
+        # a `RemoteChatAction` to hang `EventSubscription` on — and it is attached only to
+        # a plain, action-free closing reply so no reply that already carries a
+        # launch/exit changes shape (see `_vision_subscription`).
+        subscribe = None
+        if (self.vision and modules is None and backend == "router" and not actions
+                and result == ResultCode.SUCCESS and chunk_num in (None, 0)
+                and self._vision_subscribed.get(device_id) !=
+                    (getattr(self.robots.get(device_id), "module_id", None) or "")):
+            subscribe = self._vision_subscription(device_id)
         resp = build_chat_response(event_id, text, markup, backend=backend,
                                    result=result, actions=actions, end_turn=end_turn,
                                    mood=mood, dialog_act=dialog_act, modules=modules,
                                    chunk_num=chunk_num, is_completed=is_completed,
-                                   safety=safety)
+                                   safety=safety, subscribe_events=subscribe)
         self.client.publish(f"/devices/{device_id}/commands/remote_chat", json.dumps(resp))

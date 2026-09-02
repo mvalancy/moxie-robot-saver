@@ -191,14 +191,47 @@
           <button id="btn-reboot" class="ghost grow">Reboot</button>
         </div>
       </div>
+      <!-- 🎨 Moxie's look (audit ADOPT #9). The child's chosen face rides down inside
+           child_pii as `face_options` (a list of layer labels), and the pushed
+           child_pii.id is re-derived from that list so the robot cannot serve a stale
+           composited texture. Our recovered docs name all 14 layers but list concrete
+           options for only two of them, so the card shows every layer and is honest
+           about which ones it can actually offer choices for. -->
+      <div class="card hidden" id="face-card">
+        <h2>🎨 Moxie's look</h2>
+        <p class="muted">Moxie's face is built from layers. Pick a colour and it goes down
+          with the next settings push — Moxie re-draws its face rather than reusing the
+          old picture.</p>
+        <div id="face-box"></div>
+        <details class="dev" id="face-advanced">
+          <summary>Advanced: layer names</summary>
+          <p class="muted">Our recovered documents name all fourteen layers but list the
+            actual choices for only the two colours above — the rest of the artwork lives
+            in a pack we have never read. If you know the exact names your robot uses, put
+            them here, one per line. They are sent through untouched. Some layer names are
+            known to crash Moxie's display, so add them one at a time.</p>
+          <textarea id="face-custom" rows="3" spellcheck="false"
+                    placeholder="One layer name per line"></textarea>
+        </details>
+        <label class="check"><input id="face-fleet" type="checkbox">
+          Apply to all robots (house rules)</label>
+        <div class="row">
+          <button id="btn-face-save" class="primary grow">Save look</button>
+          <button id="btn-face-reset" class="ghost grow">Reset to default</button>
+        </div>
+        <div id="face-status" class="muted"></div>
+        <div id="face-layers" class="muted"></div>
+      </div>
       <!-- What Moxie remembers (audit BEYOND #4). The runtime keeps a few durable facts
-           per activity, each stamped with the day and the module that learned it. A
-           memory a parent cannot read or erase is not acceptable on a child's device, so
-           every item is listed and every list is erasable. -->
+           per activity, each stamped with a stable id, the day and the module that
+           learned it. A memory a parent cannot read or erase is not acceptable on a
+           child's device, so every item is listed, and every one can be corrected (✏️)
+           or forgotten on its own (✕) as well as by the activity or all at once. -->
       <div class="card hidden" id="memory-card">
         <h2>🧠 What Moxie remembers</h2>
         <p class="muted">A few durable facts per activity, written down at the end of a
-          conversation. Moxie reads them back the next time you talk.</p>
+          conversation. Moxie reads them back the next time you talk. Hover a line to
+          correct it (✏️) or forget just that one (✕).</p>
         <div id="memory-box"></div>
         <button id="btn-mem-forget-all" class="ghost hidden">Erase everything</button>
         <div id="memory-status" class="muted"></div>
