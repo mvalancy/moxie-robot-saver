@@ -17,6 +17,37 @@
 > **OpenMoxie** (MIT, © Justin Beghtol) is read as prior art and cited by path; we describe what it does
 > and we credit it, we never copy its code.
 
+> ## ✅ P0 shipped — 2026-09-02
+>
+> §2 is built and merged; §3 (P1) and §4 (P2) are **unchanged** and still blocked on the
+> A1–A4 ledger below. Proven against a real `eclipse-mosquitto:2.0.20` by
+> [`sim/run_acl_proof.sh`](../../../sim/run_acl_proof.sh) (18/18 delivery-based checks) and
+> by both modes of [`sim/run_compose_smoke.sh`](../../../sim/run_compose_smoke.sh).
+> **P0 is containment, not authentication** — that sentence is now in the broker config,
+> the ACLs, the broker README, the owner guide and §3.1 of the protocol doc.
+>
+> **What differs from this brief, and why.** Every deviation is a discovery made against a
+> real broker while building, and each is also filed in the §0.4 ledger as **P1–P5**.
+>
+> | # | The brief said | What shipped | Why |
+> |---|---|---|---|
+> | **P1** | one `acl` file, all listeners | **two** files (`acl`, `acl-robot`) behind `per_listener_settings true` | On a listener with no `password_file`, mosquitto accepts **any username unchecked** and then matches it against the ACL's `user` blocks — so `user supervisor` on the robot listener hands the fleet to anyone who types the word. The robot listener cannot carry a password file (E3/E4: the robot's password is a JWT), so the supervisor's identity must live in a file only the credentialled listeners load. Measured, not assumed. |
+> | **P2** | §2.5 "the real P0 breakage": the browser SIM loses its wildcards; recommends rewriting `bridge.js` (option b) | `bridge.js` is **untouched and unbroken** — `acl` grants an anonymous, read-only `topic read /devices/#` plus writes as the fixed `d_sim`, on the console-side listeners only | This is the brief's own option **(a)**, minus the credential the brief already called "not a secret" in a page served to a browser. It keeps the robot listener strictly confined (where a *real* child's `child_pii` is at stake) and needs no change to a shipped surface. `bridge.js` was also owned by another agent this cycle. **The residual exposure is written down:** a LAN client on `9001` can read `/devices/#`. |
+> | **P3** | the plain listener gets `MOXIE_BIND_HOST_PLAIN`, and the compose smoke must opt out with `0.0.0.0` | the variable ships as specified; the smoke needs **no opt-out** | `sim/compose-smoke.env` already pins `MOXIE_BIND_HOST=127.0.0.1`, and the smoke drives the broker over loopback. It pins `MOXIE_BIND_HOST_PLAIN=127.0.0.1` explicitly so the intent is on the page. |
+> | **P4** | §2.5: add a hardened variant to `sim/run_smoke.sh` | the SIL smoke and `sim/broker/ci-mosquitto.conf` are **untouched**; the hardened path is proven by the new [`sim/run_acl_proof.sh`](../../../sim/run_acl_proof.sh) instead | A dedicated proof asserts the *negatives* (a second client receives nothing) far more directly than a round-trip smoke can, and it does not put a credential in the CI broker. `run_smoke.sh` was owned by another agent this cycle. |
+> | **P5** | `render_acl` "emits the static `pattern` floor above" | it emits the **strict** floor — the four patterns + `user supervisor` — which is `acl-robot` exactly, and `acl`'s first four lines | The shipped `acl` additionally carries the browser-SIM observer grant (P2), which is a console-listener decision, not a permit-list one. `test_the_shipped_robot_acl_is_exactly_the_rendered_floor` pins the two together. |
+>
+> **Two consequences a reader should know about**, both documented in
+> [`mqtt/broker/README.md`](../../../mqtt/broker/README.md):
+> a bare-metal `mosquitto.conf` now **will not start without `keys/passwd`** (run
+> `gen-passwd.sh` once — the compose path mints it automatically); and the SIL-only motor
+> path (`virtual_moxie.py --script` with `motors`) publishes to its own `commands/motor`,
+> which the `%c` floor grants read but not write. It runs against the unhardened SIL
+> broker, so nothing breaks today — but it is the first real evidence for risk **R6**.
+>
+> Not built, deliberately: **no JWT verification, no CONNECT refusal, no auth plugin, no
+> `/broker/auth` endpoint, no key enrollment.** Those are P1/P2 and they need A1–A4.
+
 ## Why this is the next slice
 
 Everything the appliance protects — the child's nickname and birthday, the microphone, the brain, the
@@ -99,6 +130,17 @@ is the single most valuable thing a hardware session could resolve.
 | ⚠️ **A2** | **What username does the robot actually send?** E4 says "anything"; that is a statement about what the *server* may ignore, not a capture of the string. A `password_file` keyed on username is therefore unbuildable for robots. | **assumed unusable** |
 | ⚠️ **A3** | **Where does `report` POST `QRDiagnosticData`?** If it follows `webservice_root`, key enrollment is two QR scans and no cable. | **open — highest-value hardware question** |
 | ⚠️ **A4** | **Is the robot's JWT self-describing?** A JOSE header carrying a `jwk`/`x5c` would allow trust-on-first-use. Nothing in our corpus claims one; E3 gives claims only. | **assumed absent ⇒ TOFU on the key alone is impossible** |
+
+**Assumptions the P0 build had to make** (2026-09-02 — each is a decision taken *against a
+real broker*, not a guess, and each is the "why" column of the shipped-note table above):
+
+| | Statement | Standing |
+|---|---|---|
+| ✅ **P1** | On a listener with no `password_file`, mosquitto 2.0.20 accepts any username unchecked and matches it against the ACL's `user` blocks | **measured** — the reason for two ACL files; re-proven by `sim/run_acl_proof.sh` |
+| ⚠️ **P2** | A LAN client on `9001` may read `/devices/#`. Accepted to keep the browser SIM's live view working (the brief's option (a)) | **deliberate, documented residual** — closing it needs the `bridge.js` rewrite of §2.5 option (b) |
+| ⚠️ **P3** | A real robot needs no `/devices/%c/commands/#` **write**. Our own SIL double writes `commands/motor` in its scripted motor mode | **assumed** — R6 in miniature; only a robot settles it |
+| ⚠️ **P4** | The `certs` container may `chown` the plaintext credential to uid `10001` (the supervisor image's user) | **holds today** — best-effort, falls back to root-owned `0600` if chown fails |
+| ⚠️ **P5** | The compose healthcheck (`mosquitto_pub -t healthcheck -q 0`) still exits 0 under the ACL because MQTT 3.1.1 QoS 0 has no ack | **measured** — both compose smokes are green; a future MQTT-v5 healthcheck would need a grant |
 
 ---
 

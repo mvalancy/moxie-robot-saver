@@ -37,6 +37,7 @@ Ours is built to the full recovered protocol with clean seams:
 | Cloud queries — schedule + `mentor_behaviors` | [mqtt](mqtt-and-conversation.md) · [content-module](content-module-contract.md) | 🟢 the robot gets a **real day plan** and its **own history back**: `build_schedule` plans onboarding + a variety rotation of on-board activities, skipping what this robot already completed (so FTUE ends and nothing repeats); reported `mentor_behavior`s are ingested and served. Deterministic (day+device seeded), not yet LLM-planned | `mqtt/moxie_sdk/schedule.py` + `wire.py` + `moxie_runtime.py::_on_activity` |
 | Durable per-robot state | — | 🟡 JSON files under `MOXIE_DATA_DIR` (default `mqtt/data/`), atomic-ish writes, survives restarts — a **stepping stone**, not the database the audit asks for (ADOPT #8) | `mqtt/moxie_sdk/store.py` + [`mqtt/data/`](../../mqtt/data/) |
 | Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig (now incl. **`alarms` + `schedule_preferences`**, contract gap closed) + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry`. Config is layered **`defaults ⊕ fleet ⊕ per-robot`** (audit ADOPT #6) — one `fleet/config.json`, `POST /config?scope=fleet`. **Gated by a device allowlist** (audit §3.1, closed by default): only a permitted robot is pushed `child_pii`; an unknown one is *pending* and gets `build_unpaired_cloud_config()` — `fleet/permits.json`, `GET`/`POST /permits`, the console's 🔐 Robot access card, `MOXIE_ALLOW_UNVERIFIED_BOTS` to migrate. **Appearance built (2026-09-02, audit ADOPT #9):** the child's chosen face rides in `child_pii.face_options` and the pushed `child_pii.id` is a deterministic UUIDv5 over the chosen layers, so a look change re-keys the robot's face-texture cache and an idempotent re-push does not — a frozen 14-slot catalog (`MoxieCustomizationType`) with the **12 doc-cited colour options and zero invented asset ids**, layered fleet ⊕ per-robot like every other override, and the console's 🎨 Moxie's look card | `mqtt/moxie_sdk/cloud_config.py` + `faces.py` + `telemetry.py` + `store.py` |
+| Telehealth / puppet mode ("Be Moxie") | [mqtt §3.9](mqtt-and-conversation.md) · [brief](backlog/telehealth.md) | 🟡 **built 2026-09-02, unproven against hardware** (audit ADOPT #7): the `commands/telehealth` command path a remote grown-up speaks through — six runtime verbs, `GET`/`POST /telehealth`, the console's 🎭 **Be Moxie** card (11 recovered moods, intensity **0-2** as the robot's own `maxIntensity`, interrupt, live text transcript) and a `bridge.js` handler so the SIM performs the operator's line through the same markup a brain reply uses. Every JSON key is cross-checked in CI against the recovered `TeleHealth.proto`; `line_id`/`line_params` are never emitted (no catalog of authored ids). The operator's text is classified as `role=MOXIE` and journalled — **a block is returned to them with its reason (400), never silently rewritten** — and while a session is open the brain is not called at all, so two voices can never share one mouth. `sim/run_smoke.sh --telehealth` runs the whole chain through a real broker. **Honest ceiling:** that `moxie_mode:"TELEHEALTH"` is what enters `STATE_TELEBRAIN` is field-proven (OpenMoxie), not capture-proven, and lives behind one constant | `mqtt/moxie_sdk/telehealth.py` + `moxie_runtime.py::telehealth_*` + `server/moxie_server/fleet.py::normalize_telehealth` + `server/static/app.js` + `sim/web/bridge.js` + `sim/virtual_moxie.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 
 ## Build order (each milestone = a shippable, CI-green slice)
@@ -89,6 +90,18 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **telehealth is built against the SIM, never against a robot (2026-09-02).** The whole
+  `commands/telehealth` chain is exercised through a real broker by
+  `sim/run_smoke.sh --telehealth`, and every JSON key is proven against the recovered
+  `TeleHealth.proto` — but five questions need hardware and are listed in
+  [`backlog/telehealth.md`](backlog/telehealth.md) §6: whether `moxie_mode:"TELEHEALTH"`
+  is what enters `STATE_TELEBRAIN` (B1, behind one constant), what `INTERRUPT` does to a
+  line already in the air (B2), whether a brain-less robot still emits `events/remote-chat`
+  (B3 — one `if` makes us correct either way), whether bedtime suppresses `PLAY_OUTPUT`
+  (B4 — we warn and send rather than guess), and whether `Output.line_id` resolves against
+  on-board content (B5 — we refuse to emit ids we cannot cite). The console also cannot let
+  an operator *hear* the child: the transcript is text only, which is a stated non-goal
+  (no audio field exists in the recovered message) rather than an oversight.
 - **face customization — the plumbing is complete, the vocabulary is 12 of ~60 (2026-09-02).**
   `moxie_sdk/faces.py` ships every slot our docs name (14, `MoxieCustomizationType`) but concrete
   options for only **two** of them — the `EyeColor`/`FaceColor` enums with hex
@@ -158,10 +171,10 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   hosted deployment needs. The honesties that remain: (a) the cloud is slower than local for both legs
   (voice ~1.3-1.7 s vs a few hundred ms of Piper; ears ~2.5-2.8 s for a 6 s clip vs ~1 s of local
   `base.en`), so a home appliance should still choose the local engines — `MOXIE_STT=whisper` forces
-  the local ears, while forcing the local *voice* still means unsetting `MOXIE_VOICE_BASE_URL` because
-  `MOXIE_TTS=piper` is not an override yet; (b) a 429/5xx path cannot be provoked on demand, so the
+  the local ears, and `MOXIE_TTS=piper` forces the local voice the same way (made an explicit override at
+  integration, pinned by a test); (b) a 429/5xx path cannot be provoked on demand, so the
   backoff on both audio paths is asserted against a fake rather than the live proxy; (c) the compose
-  files forward `MOXIE_STT`/`MOXIE_STT_MODEL` but **not** the new `MOXIE_STT_BASE_URL` /
+  files now forward `MOXIE_STT`/`MOXIE_STT_MODEL`/`MOXIE_STT_BASE_URL`/`MOXIE_STT_API_KEY` (done at integration; was: not the new `MOXIE_STT_BASE_URL` /
   `MOXIE_STT_API_KEY`, so a composed stack picks up the gateway ears only through the voice/LLM
   fallback; and (d) no *physical* robot has streamed a real utterance into either engine.
 - **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); real zmqSTTRequest protobuf decode is DONE (dep-free field reader in stt.py); only a live faster-whisper test remains (optional dep). TTS out (§3) seam + runtime-wired (synthesize-on-reply → CloudTTSResponse); the gateway voice is live-proven (see the bullet above), viseme TTSMarks still deferred. Input safety/moderation (§2) is **built** — see the next bullet for what it honestly cannot do.
@@ -206,6 +219,14 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   `days` as **0 = Monday … 6 = Sunday**, `time` as `"HH:MM"` local wall clock, `scheduled_at` as epoch
   **seconds**. Each sits behind one constant, so a contradicting capture is a one-line fix — but until a
   physical Moxie is seen to *ring*, "built" here means "well-formed and pushed", not "field-proven".
+- **broker hardening is containment, and one door stays open on purpose.** P0's ACL
+  closes `$SYS` enumeration and cross-device reads/writes on every listener, but the
+  websocket listener (`9001`) still grants an **anonymous, read-only** `/devices/#` — that
+  is how the browser SIM renders a live robot, and a page served to a browser cannot hold a
+  secret. So a client on your LAN that reaches `9001` can still *watch* a config push go
+  by. Closing it means routing the SIM's live view through the console's HTTP API instead
+  of the bus (`security-broker-auth.md` §2.5 option (b)); until then the honest mitigation
+  is that `9001` is only worth publishing when you actually use the browser SIM.
 - **the pairing gate — an application-layer permit list, and the un-paired value is not
   capture-proven.** The allowlist is built, closed by default and enforced on the transport
   boundary, but three honesties stand. (a) **It is not authentication.** The broker still
@@ -213,8 +234,16 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   so an unpermitted device can still *connect*, publish, and see its own topics; what the
   gate stops is our server *serving* it — no `child_pii`, no brain, no schedule, no
   telemetry ingest. A device that spoofs a permitted robot's `d_<uuid>` is served as that
-  robot. Broker-level password/ACL + real JWT verification is the deeper fix and is still
-  deferred. (b) **`pairing_status:"unpairing"` is field-proven, not capture-proven.** No
+  robot. **Broker hardening P0 landed 2026-09-02** and narrows the blast radius without
+  claiming to fix this: a `%c` ACL confines every anonymous client to its own
+  `/devices/<client id>/…` subtree, `$SYS/broker/log` (the fleet roster) is readable only
+  by a supervisor that now authenticates with a per-appliance credential, and the plain
+  listener is loopback-bound ([mqtt §3.1](mqtt-and-conversation.md),
+  [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) §2, proven by
+  `sim/run_acl_proof.sh`). **It is containment, not authentication** — the spoof above is
+  unchanged, and so is the client-id-collision eviction that lets a spoof knock the real
+  robot off the bus. Real JWT verification (P1) and refusing the CONNECT (P2) remain
+  deferred, blocked on the brief's A1–A4, all of which need a physical robot. (b) **`pairing_status:"unpairing"` is field-proven, not capture-proven.** No
   capture of Embodied's cloud pushing a non-`paired` status survives in our corpus; the
   value comes from OpenMoxie's own device form, and **no physical robot has been observed
   receiving it** — what a real Moxie shows on screen for a pending config is unknown (it
@@ -274,21 +303,35 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   `provide_mentor_behaviors` / `ingest_mentor_behavior`. **Still gaps:** `license` answers empty (we hold
   no license blobs); `response_code` (field 99) is not emitted (the docs give the enum but not its JSON
   spelling); the other queries (`idf`, `contexts`, `context_store`, `remote_lines`) answer empty.
-- **the day plan is deterministic, not intelligent.** `build_schedule` seeds on `(device_id, day)`, so a
-  robot gets a stable plan that changes tomorrow — it does **not** read telemetry, mood, time of day or
-  parent preference, and it cannot explain *why this activity today*. That recommender is BEYOND #7
-  ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2). Two smaller honesties: the
-  "already done → don't schedule again" rule applies to the generated rotation and to first-time-user
-  onboarding, **not** to fixtures an author pins in `provided_schedule` (e.g. `DM`, which is meant to
-  recur daily); and the FTUE completion thresholds (`TNT`=9, `SYSTEMSCHECK`=4 content ids) are
-  **OpenMoxie's field-proven constants**, not something our RE docs establish — see the note in
-  `mqtt/moxie_sdk/schedule.py`.
+- **day plan:** the deterministic rotation was replaced by the explainable recommender in PR #39 (see the adaptive-schedule bullet below); what remains inferred is listed there.
 - **the store is JSON files, not a database.** `mqtt/moxie_sdk/store.py` persists per-robot
   `mentor_behaviors` under `MOXIE_DATA_DIR` with atomic-ish writes and a 500-record cap. It has no
   indexes, no queries, no migrations, and no concurrent-writer story beyond a single process's lock —
   it exists so ADOPT #1/#2 could ship without blocking on ADOPT #8's real database. Conversation memory
   (`MOXIE_MEMORY_DIR`) and telemetry still use their own paths; folding all three onto one durable
   store is the next slice.
+- **Integration evidence (2026-09-02, v0.7.0 RC).** The whole stack was exercised end to end on the
+  release candidate and both paths that landed last were live-validated through the *built* backend, not
+  a mock. Creds-free: `sim/run_smoke.sh` on a free port → `✅ SIL round-trip OK` with the audio leg
+  (`🔊 spoke 50934 B @ 22050 Hz`), `sim/run_scenarios.sh` → `4/4` + `4/4`. The **adaptive schedule** was
+  driven through a real mosquitto + `mqtt/run.py` + `sim/virtual_moxie.py --query schedule` with a
+  scratch `MOXIE_DATA_DIR`: seeded `mentor_behaviors`, a bedtime and a `ParentRequest` written over
+  `POST /config?scope=fleet`, and the eight ids the robot received matched the eight `GET /schedule`
+  explains, one activity dropped for bedtime, the request pinned, every entry carrying a *why* line —
+  now a hermetic regression suite (`sim/tests/test_schedule_sil_e2e.py`, 13 tests, mutation-checked).
+  The **gateway voice** was proven on the assembled appliance in one turn (`MOXIE_APP=llm` +
+  `MOXIE_VOICE_BASE_URL`): `[run] server voice enabled: openai-voice (standby: tone)`, brain →
+  `"Hello Sam! I'm so glad you're here."`, robot → `🔊 spoke 138472 B @ 22050 Hz (~3.14s)` at spectral
+  flatness `5.09e-02` against the tone's `3.4e-14` — `sim/tests/test_live_gateway_turn_e2e.py`, budgeted
+  at one completion + one `/audio/speech`. **Three honest gaps this pass did not fix:** (a) the
+  `ToneSynthesizer` placeholder emits **22050 Hz mono, exactly like the gateway WAV**, so sample rate can
+  never be the proof a real voice spoke — only spectral flatness can, and any future test that checks the
+  rate alone is vacuous; (b) `[tool.setuptools.package-data]` maps `moxie_sdk = ["*.json"]` only, so a
+  data file added under `moxie_sdk/apps/` or `moxie_sdk/content/` would be dropped from the wheel in
+  silence — now *detected* by `sim/tests/test_package_contents.py`, not yet prevented by a wider glob;
+  (c) the recommender's coverage term (−1000 per airing) outweighs its affinity term (10–200), so a module
+  a child finishes every time is demoted below one they have never seen — variety by design, but it means
+  "what they love" cannot currently come back the same week.
 
 ## DoD progress (audited 2026-09-02, at v0.7.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
 
@@ -296,7 +339,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 |--:|---|---|---|
 | 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~90% | **Every link is built and live-proven with real speech through the real runtime** (PR #12): Piper "child" audio → zmqSTT protobuf frames → faster-whisper → brain (gateway, live) → spec `RemoteChatResponse` → Piper Amy `CloudTTSResponse` → re-heard at overlap 1.00 (and, since 2026-09-02, the same round trip through the **gateway voice** at overlap 1.00 — `piper-amy`, 22050 Hz, 1.69 s); the browser SIM decodes and **plays** it with mouth animation (PR #11); markup/actions reach the client. Remaining: the same loop on a **physical Moxie** (needs the operator's robot; the SIM stands in). Brain latency is no longer silence *or* a wait: a slow turn speaks a filler inside `MOXIE_BRAIN_BUDGET_S` (live: 3.0 s / 17.9 s) and the answer itself now **streams** a sentence at a time (live: first words at 1.52 s, whole answer at 4.38 s), with the filler timer re-arming per chunk. Remaining honesty: no capture proves a *physical* robot plays chunk 2 of an `event_id` (see Known gaps) |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
-| 3 | Cloud management (console + config/telemetry) | 🟢 | RobotCloudConfig + RobotStatus + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. The console surfaces **live state** (`/local/fleet`), **edits config** (Settings form → `POST /local/robots/{id}/config` → runtime `POST /config` → `update_config` re-pushes `RobotCloudConfig`), and shows **telemetry insights** (`summarize_events` → runtime `GET /telemetry` → `GET /local/robots/{id}/telemetry` → the 📈 Insights panel) — all three live-verified against a real broker. It also **browses and erases long-term memory** (`normalize_memory` → runtime `GET`/`DELETE /memory` → `GET /local/robots/{id}/memory` + `DELETE …/memory[/{namespace}]` → the 🧠 What Moxie remembers card), so BEYOND #4's floor is a parent-facing screen rather than `curl` — live-verified: seeded facts read back per activity with date/module provenance, a namespace erase confirmed on disk and in the next read. Caveats: telemetry is in-memory (last 50 events/robot), not persisted; memory erase or correct any single remembered line (PR #33)|
+| 3 | Cloud management (console + config/telemetry) | 🟢 | RobotCloudConfig + RobotStatus + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. The console surfaces **live state** (`/local/fleet`), **edits config** (Settings form → `POST /local/robots/{id}/config` → runtime `POST /config` → `update_config` re-pushes `RobotCloudConfig`), and shows **telemetry insights** (`summarize_events` → runtime `GET /telemetry` → `GET /local/robots/{id}/telemetry` → the 📈 Insights panel) — all three live-verified against a real broker. It also **browses and erases long-term memory** (`normalize_memory` → runtime `GET`/`DELETE /memory` → `GET /local/robots/{id}/memory` + `DELETE …/memory[/{namespace}]` → the 🧠 What Moxie remembers card), so BEYOND #4's floor is a parent-facing screen rather than `curl` — live-verified: seeded facts read back per activity with date/module provenance, a namespace erase confirmed on disk and in the next read. Caveats: telemetry is in-memory (last 50 events/robot), not persisted; memory erase or correct any single remembered line (PR #33). **Puppet mode (2026-09-02, ADOPT #7):** the 🎭 Be Moxie card drives `POST /local/robots/{id}/telehealth` → runtime `POST /telehealth` → `commands/telehealth`, so a remote grown-up speaks through the robot with a mood they picked; SIL-verified end to end (`sim/run_smoke.sh --telehealth`), never on hardware|
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
 | 5 | One-command stack | 🟢 | `docker compose up` (repo root) = broker + supervisor + parent console, one `.env`, healthchecks + named volumes. **Proven** by [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh): build → health → `virtual_moxie --expect-tts` round-trip through the composed broker → the robot visible in the console's `/local/fleet` → `down -v`; shape asserted hermetically by `sim/tests/test_compose.py`. Guide: [`../guides/one-command-stack.md`](../guides/one-command-stack.md). Prebuilt path (2026-09-02): [`docker-compose.images.yml`](../../docker-compose.images.yml) is self-contained (broker config inlined, no repo file referenced), so the documented install is *download one file + `docker compose up`*; the release workflow publishes the three multi-arch images to GHCR on every `v*` tag, and `MOXIE_SMOKE_MODE=images sim/run_compose_smoke.sh` runs the full round-trip against it with `pull_policy: never`. Caveats (documented, not hidden): the images **publish on tag and nothing has been tagged yet**, so the registry pull is verified at v0.6.0 (all three multi-arch publishes green); the `content`/`llm` brains still need a gateway key to say anything real (keyless → the "brain got fuzzy" fallback, which is why the smoke uses `echo`); and the `voice`/`stt` profiles each need one `.env` line + `up --build` on the *clone* path — a prebuilt supervisor cannot grow those wheels |
 | 6 | Green + live-tested | 🟡 ~90% | Three-tier CI green incl. the compose-stack deep job; hermetic suite ≈281; **live-proven against real infra:** LLM turn, action tags 3/3, content module e2e, console↔runtime round-trip, and **real speech end to end** (Piper→whisper 1.00; **gateway voice→whisper 1.00**, a creds-gated `test_live_gateway_tts.py`; full talk loop with 0 gateway calls and with a live completion; degraded gateway skips, never false-greens). Remaining: live tests need creds so CI runs them skipped (a secrets-gated dispatch exists for the LLM path); a physical-robot HIL job on a self-hosted runner |
@@ -338,7 +381,7 @@ webhook apps stopped speaking flat, and `LLMApp` stopped being a second, diverge
 p95 **0.23 ms** per line against a 1 ms budget, no model call, no new dependency; eight byte-exact goldens
 reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` is the one-variable rollback.
 
-**Most valuable next slice (2026-09-02, after v0.7.0):** the pairing gate, published images, memory erase/edit/decay, vision events, face customization, the adaptive schedule and the gateway voice have all landed. In value order now: **puppet / telehealth (ADOPT #7)** — the build-ready brief is `backlog/telehealth.md` (pure `telehealth.py` cross-checked against the recovered `TeleHealth_pb2`, `GET/POST /telehealth`, a 🎭 console card, a SIM handler); **broker authentication P0** (`backlog/security-broker-auth.md`: pattern ACLs on `%c`, a per-appliance supervisor credential, 1883 loopback-bound — containment first, since a stock robot can carry no secret by QR); then a console card for the schedule's *why this activity today* lines (`GET /schedule` serves them, `server/` does not read them yet); then content packs export/import (ADOPT #5). Gateway STT waits for the gateway (WIP).
+**Most valuable next slice (2026-09-02, after v0.7.0):** the pairing gate, published images, memory erase/edit/decay, vision events, face customization, the adaptive schedule and the gateway voice have all landed. In value order now: **the voice picker** (`backlog/voice-picker.md`: Speech + Listening dropdowns fed by live gateway discovery + installed local engines, default `piper-amy`/`stt-whisper`, explicit local wins — launches when the STT and telehealth slices land); **puppet / telehealth (ADOPT #7)** — the build-ready brief is `backlog/telehealth.md` (pure `telehealth.py` cross-checked against the recovered `TeleHealth_pb2`, `GET/POST /telehealth`, a 🎭 console card, a SIM handler); **broker authentication P0** (`backlog/security-broker-auth.md`: pattern ACLs on `%c`, a per-appliance supervisor credential, 1883 loopback-bound — containment first, since a stock robot can carry no secret by QR); then a console card for the schedule's *why this activity today* lines (`GET /schedule` serves them, `server/` does not read them yet); then content packs export/import (ADOPT #5). Gateway STT landed the same day (`feat/gateway-stt-live`).
 
 ## TTS strategy (2026-09-01)
 

@@ -246,6 +246,14 @@ deployment that was already running; `0` pins it shut. Precedence: constructor a
 env → the stored fleet flag → **closed**. The console shows the flag *as enforced*
 alongside the stored one, so an appliance opened by the environment cannot look closed.
 
+**The same record also renders the broker ACL.** `mqtt/moxie_sdk/broker_acl.py::render_acl`
+turns this file into a mosquitto ACL — the `%c` device floor plus one `user d_<uuid>` block
+per permitted device. It is **generated and inert** today: no robot authenticates, so no
+`user` block can match ([`backlog/security-broker-auth.md`](backlog/security-broker-auth.md)
+§2.3). It exists so that when the broker gains a way to verify a device, `permits.json`
+stays the one place that says which robots are ours — for service, for the ACL and for
+broker auth alike.
+
 **Surface.** Supervisor: `GET /permits`, `POST /permits {device_id, permitted, label}` or
 `{allow_unverified_bots}`. Console: `GET /local/permits`, `POST /local/robots/{id}/permit`,
 `POST /local/fleet/permits`; `GET /local/fleet` gains `allow_unverified_bots`, `pending[]`,

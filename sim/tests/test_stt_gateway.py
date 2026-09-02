@@ -358,13 +358,10 @@ def test_local_whisper_is_selectable_even_with_a_gateway_configured(monkeypatch)
 
 
 def test_local_piper_is_selectable_the_same_way_for_the_voice(monkeypatch):
-    """The symmetric statement for TTS, asserted rather than assumed: with no voice URL
-    a configured Piper IS the voice (precedence voice-server → Piper → tone).
-
-    Honest limit, pinned here so a later slice sees it: `MOXIE_TTS=piper` is **not** an
-    override the way `MOXIE_STT=whisper` is — `build_synthesizer` reads only `off` and
-    `tone`, so a voice URL still wins. Unsetting `MOXIE_VOICE_BASE_URL` is today's way to
-    force the local voice."""
+    """The symmetric statement for TTS, asserted rather than assumed: with no voice URL a
+    configured Piper IS the voice (auto precedence voice-server → Piper → tone), and —
+    the owner rule — an explicit `MOXIE_TTS=piper` keeps the voice local even with a
+    gateway fully configured, exactly like `MOXIE_STT=whisper` keeps the ears local."""
     import moxie_sdk.tts as tts
     monkeypatch.setattr(tts, "make_piper_synthesizer",
                         lambda *a, **kw: tts.PiperSynthesizer(
@@ -372,6 +369,14 @@ def test_local_piper_is_selectable_the_same_way_for_the_voice(monkeypatch):
     c = _fresh_config(monkeypatch, MOXIE_STT="off",
                       MOXIE_PIPER_MODEL="/models/en_US-amy-medium.onnx")
     assert c.build_synthesizer().name == "piper"
+    c = _fresh_config(monkeypatch, MOXIE_STT="off", MOXIE_TTS="piper",
+                      MOXIE_PIPER_MODEL="/models/en_US-amy-medium.onnx",
+                      MOXIE_VOICE_BASE_URL=GW, MOXIE_LLM_API_KEY="sk-test-not-a-real-key-0000")
+    assert c.build_synthesizer().name == "piper", "MOXIE_TTS=piper let the gateway win"
+    import pytest
+    c = _fresh_config(monkeypatch, MOXIE_STT="off", MOXIE_TTS="gateway")
+    with pytest.raises(SystemExit):
+        c.build_synthesizer()                       # explicit gateway with no URL exits loudly
 
 
 def test_gateway_is_forced_even_when_whisper_is_installed(monkeypatch):

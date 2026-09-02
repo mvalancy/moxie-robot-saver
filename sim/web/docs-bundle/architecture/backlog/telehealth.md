@@ -1,5 +1,46 @@
 # 🩺 Telehealth — "Be Moxie": the operator drives the body (ADOPT #7)
 
+> ## ✅ **Shipped — 2026-09-02.** Built as specified; this page stays as the design record.
+>
+> `mqtt/moxie_sdk/telehealth.py` (pure wire + vocabulary) · six runtime verbs and the
+> `_on_activity` branch in `moxie_runtime.py` · `GET`/`POST /telehealth` on the status
+> server · `fleet.normalize_telehealth` + `GET`/`POST /local/robots/{id}/telehealth` · the
+> 🎭 **Be Moxie** console card · `bridge.js`'s `commands/telehealth` handler ·
+> `virtual_moxie.py --telehealth` and `sim/run_smoke.sh --telehealth`. The built contract
+> is [`mqtt-and-conversation.md` §3.9](../mqtt-and-conversation.md).
+>
+> **What differs from the brief below, and why.**
+> 1. **Chunk bookkeeping (§2.3 step 4/6).** The brief passes `chunk_index=n` / `chunk_num=n`
+>    for the *n*-th line of a session. Both are **0**, and the *line* is numbered inside the
+>    key instead (`turn_key`/`event_id` = `"{session_id}#{n}"`). Two reasons, both hard:
+>    `annotate` emits the mood mark **on chunk 0 only**, so numbering lines as chunks would
+>    have left every line after the first with no face — and `sim/web/audio.js`'s ORDERING
+>    rule requires an utterance's first chunk to be `chunk_num` 0, so a session-as-one-event
+>    stream would stall. Telehealth never streams: one `PLAY_OUTPUT` per line, one utterance
+>    per line. Pinned by `test_every_line_is_its_own_utterance_so_each_one_carries_its_mood`.
+> 2. **`validate_mood` raises on an unknown label** instead of dropping it. A picker is a
+>    closed vocabulary and there is a human at the keyboard; silently giving them a neutral
+>    face with no explanation is the one thing worse than refusing.
+> 3. **The state ring adopts a robot-reported `session_id` only from an `IN_SESSION`
+>    report.** Found by the SIL run: an `EXITING` report arriving *after* `END_SESSION`
+>    resurrected the session, and the next `disable` published a second `END_SESSION` at a
+>    robot that had already torn down.
+> 4. **`telehealth_view` 404s for a device we have never seen** (matching `safety_view` /
+>    `memory_view`), while a robot that merely went offline keeps its transcript and reads
+>    `online: false` — an operator whose robot dropped Wi-Fi should not be handed a blank
+>    card.
+> 5. **T13 is in `sim/test_bridge.mjs`** (headless node, recorded state via
+>    `moxieBridge.telehealthStats()`), not in the Playwright suite; **T14** is
+>    `sim/run_smoke.sh --telehealth`.
+> 6. **Not done here:** the owner guide under `docs/guides/` (that folder is owned by
+>    another agent this cycle, as the brief itself says), and the audit's §3.2 scorecard row
+>    (a shared table another agent is editing this cycle — only ADOPT #7's status flipped).
+>
+> **Still unproven without a robot:** every item in §6 below. B1 (the mode is the trigger)
+> is now observable in the SIL run only in the sense that the *config* really carries
+> `moxie_mode:"TELEHEALTH"`; what the robot does with it remains field-proven, not
+> capture-proven.
+
 > **Backlog brief v1 · 2026-09-02.** The build document for
 > [OpenMoxie feature audit](../openmoxie-feature-audit.md) **§4.1 ADOPT #7** — *"`moxie_mode:\"TELEHEALTH\"`
 > + `PLAY_OUTPUT`/`INTERRUPT` makes Moxie a telepresence body — the single best demo, and a real

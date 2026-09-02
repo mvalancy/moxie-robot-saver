@@ -29,6 +29,15 @@ browser at all and carry the hermetic suite CI actually runs.
   RemoteChatResponse conformance check). Import this rather than growing a fifth
   private copy of it. It also owns `LatchClient` (a fake transport a test can *wait on*
   instead of sleeping) and `CountingSynth`.
+
+  Four more pieces landed with the v0.7.0 integration pass, each replacing a hand-rolled
+  copy: **`free_port()`** (bind `:0` — never a hard-coded 8930/1883, which a lab machine
+  and sibling agents already hold), **`status_server(rt)`** which starts the runtime's
+  *real* `_start_status_server` on one and hands back its base URL, **`http_json(url, …)`**
+  for talking to it, and **`loopback(rt, vm)`** — the two-subscriber in-process broker that
+  lets a `sim/virtual_moxie.py` robot and a real runtime exchange bytes on the real topics
+  with no mosquitto and no sleeps. `make_runtime` also takes `store=` now, so a test that
+  writes durable state points it at a `tmp_path` instead of the developer's data dir.
 - **`test_segment.py`** — the pure sentence segmenter (`moxie_sdk/segment.py`) a streaming
   brain talks through: boundaries, the same split whatever size the network cuts the
   stream into, decimals, abbreviations and initials, ellipses, the minimum chunk length,
@@ -59,6 +68,19 @@ browser at all and carry the hermetic suite CI actually runs.
   `/memory` payload flattened into dated rows per activity, newest first, with counts —
   plus the tolerance that matters on a parent's screen (a partial namespace, a list a
   module invented, a raw `memory.json` off disk, and a supervisor that is down).
+- **`test_broker_acl.py`** — broker hardening P0
+  ([`security-broker-auth.md`](../../docs/architecture/backlog/security-broker-auth.md) §2), pure: no
+  broker, no Docker. Half is `mqtt/moxie_sdk/broker_acl.py::render_acl` — the permit-derived ACL that is
+  generated now and **inert until P1** — asserted for a byte-stable golden shape, one `user d_<uuid>`
+  block per permitted device, and the property the whole floor rests on: **no bare `topic` grant before
+  the first `user` block**, so an anonymous client's only reach is its own `%c` subtree (plus the
+  injection case: a device id carrying a newline cannot forge an ACL line). Half reads the **shipped**
+  `mqtt/broker/` files, and catches the two ways this slice can silently become a no-op — an ACL that
+  stops being loaded, and a `user` block on a listener with no `password_file`, where mosquitto matches a
+  username nobody verified. The rest is the supervisor credential: `config.broker_credentials()`
+  precedence (literal > file > anonymous, and a username without a password is *not* credentials) and
+  `MoxieRuntime._build_client` actually calling `username_pw_set`. The end-to-end proof against a real
+  broker is [`../run_acl_proof.sh`](../run_acl_proof.sh).
 - **`test_compose.py` + `helpers_compose.py`** — the one-command stack, asserted with
   PyYAML and never Docker. Half is shape (`docker-compose.yml` declares the three
   services plus the cert one-shot, healthchecks, restart policies, named volumes,
@@ -76,21 +98,40 @@ browser at all and carry the hermetic suite CI actually runs.
   deep tier's PR-to-main docker smokes could see that. Every guard is paired with
   **negative tests** — tiny in-memory compose pairs carrying exactly one injected drift —
   so the suite proves the guards still bite, not merely that they pass.
-- **`test_stt_gateway.py`** — the *gateway ears* hermetic tier (`moxie_sdk/stt.py` +
-  the `MOXIE_STT` switch): the in-memory WAV wrapping parsed back out of its own header
-  (rate/channels/width/frames — a header that lied about the rate would pitch-shift the
-  audio), the request the fake client receives (model, a `("utterance.wav", …,
-  "audio/wav")` tuple, `response_format=json`), `.text` stripped, silence never costing a
-  request, a 429 retried through an injected `sleep` and re-uploading real bytes rather
-  than an exhausted stream, a hard 400 not retried, `FallbackTranscriber` latching to the
-  standby and reporting exactly once, and every `MOXIE_STT` value — including the one the
-  deployment story rests on, that **`MOXIE_STT=whisper` keeps the ears local even with a
-  gateway fully configured** (with its TTS counterpart asserted alongside), and that an
-  unset environment still builds exactly what it built before. Runs with **no `openai`
-  installed** (`client=` fake + a stubbed factory), so it carries in the fast venv too. It
-  also holds the golden test for `moxie_sdk/audio_models.py`, the pure name classifier
-  that splits a gateway's flat `/v1/models` list into voices and ears for a future console
-  picker.
+- **`test_schedule_sil_e2e.py`** — the adaptive day plan end to end: the parent writes a
+  bedtime and a `ParentRequest` over the **real** `POST /config?scope=fleet`, a SIL robot
+  pulls its day over the **real** `CloudQuery` round trip, and the parent reads the "why
+  this activity today" lines back over the **real** `GET /schedule`. The claim that binds
+  them is the one nothing else asserted: *the ids the robot was served are exactly the ids
+  the parent is shown an explanation for* — an audit trail describing a different day than
+  the robot got would be worse than none. Also: nothing is planned inside bedtime (and the
+  day really is truncated by it), the parent's request is pinned and says so, finished FTUE
+  never comes back, a module quit an hour ago is not re-offered, and a reported
+  `mentor_behavior` reaches the store and changes the next plan. Hermetic — the loopback
+  above stands in for the broker, the store is a `tmp_path`, and every clock window is
+  computed relative to *now*, so it never depends on the hour it runs at.
+- **`test_package_contents.py`** — what `pip install moxie-cloud-sdk` actually gets, which
+  no other test can see because every other test runs against the source tree: every
+  package on disk is in `[tool.setuptools] packages` (add `moxie_sdk/telehealth/`, forget
+  the line, and it ships absent), every non-code file inside a package is covered by a
+  `[tool.setuptools.package-data]` glob (`moxie_sdk = ["*.json"]` covers exactly one
+  package — a JSON under `apps/` or `content/` matches nothing and is dropped silently),
+  the version has one source, and **no module needs an optional backend to import** — that
+  last one asserted in a subprocess where `openai`/`numpy`/`jinja2`/`piper`/`faster_whisper`
+  are made unimportable, so the full-fat venv catches what playbook rule 9 says the fast
+  tier otherwise discovers as a red push.
+- **`test_live_gateway_turn_e2e.py` + `helpers_stack.py`** — ONE live turn on the
+  *assembled appliance*, which is the combination nothing else covered:
+  `test_live_gateway.py` proves the brain, `test_live_gateway_tts.py` proves the voice but
+  builds its synthesizer in-process, and `sim/run_smoke.sh` puts a real robot on a real
+  broker with the echo app and the tone beep. `helpers_stack.py` boots the real thing —
+  mosquitto on a free port (binary, else docker) and `mqtt/run.py` in a subprocess with its
+  own scratch `MOXIE_DATA_DIR` — and the SIL robot takes one turn with `MOXIE_APP=llm` +
+  `MOXIE_VOICE_BASE_URL`. Budget: **1 completion + 1 `/audio/speech`**, one module-scoped
+  fixture every test reads (the filler timer is put out of reach so a slow brain cannot
+  buy a second voice call). The audio assertion is spectral flatness, not sample rate:
+  `ToneSynthesizer` also emits 22050 Hz mono, and the creds-free guard in the same file
+  proves the tone fails the check, so a green cannot mean "the standby spoke".
 - **Live tests** (`test_live_gateway.py`, `test_live_action_tags.py`,
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the
@@ -119,17 +160,6 @@ browser at all and carry the hermetic suite CI actually runs.
   the gateway does the speaking); skips cleanly without them or without a voice URL. **In
   CI** it rides in the same creds-only dispatch step as the three suites above, which also
   fails on an empty `MOXIE_VOICE_BASE_URL`.
-- **`test_live_gateway_stt.py`** — the *gateway ears* live tests (live since 2026-09-02),
-  budgeted at **eight gateway calls total**. `piper-amy` speaks a fixed 13-word line and
-  `stt-whisper` reads it back at the WAV's own 22050 Hz *and* at the 16 kHz the perception
-  bus actually carries (resampled with the **standard library alone** — a hosted box that
-  installed only `openai` has no numpy, and that box is the whole reason cloud ears exist);
-  an unknown model proves the downgrade latches inside one call; and the last test runs one
-  child utterance through the real `MoxieRuntime` with **nothing local in the loop** —
-  gateway TTS → `zmqSTTRequest` frames → gateway STT → gateway brain → gateway voice →
-  `CloudTTSResponse`. Both floors are word overlap ≥ 0.7; the live run measured **1.00**.
-  Needs only `openai` (no `faster-whisper`, no numpy, no 63 MB voice file — the gateway does
-  all of it); skips cleanly without a base URL or key. Prints `[gw-stt]` evidence lines.
 - **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper
   speech in, real Piper speech out, read back by real faster-whisper. Tier 1 round-trips
   Moxie's own voice through Whisper (and proves the built-in `ToneSynthesizer` would

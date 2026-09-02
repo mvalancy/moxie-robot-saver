@@ -36,7 +36,7 @@ include-package-data = true
 # The safety rule table is data, not code — it must ship inside the wheel or the
 # InputSafety classifier has nothing to load (moxie_sdk/safety.py).
 [tool.setuptools.package-data]
-moxie_sdk = ["*.json"]
+moxie_sdk = ["*.json", "apps/*.json", "content/*.json"]
 
 [tool.setuptools.dynamic]
 version = { attr = "moxie_sdk.__version__" }

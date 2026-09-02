@@ -1,5 +1,5 @@
 {
- "generated": "docs-221ffb82bab6",
+ "generated": "docs-19bde43fb729",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 4108,
+   "bytes": 4271,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 3000,
+   "bytes": 3305,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 49053,
+   "bytes": 55141,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 39878,
+   "bytes": 43952,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -161,7 +161,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 61455,
+   "bytes": 73640,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -177,7 +177,7 @@
     "2.3 Checking a robot's firmware + the OTA lever",
     "2.4 What our appliance must present",
     "3. MQTT broker setup",
-    "3.1 mosquitto config (verbatim from `site/data/openmoxie.conf`)",
+    "3.1 mosquitto config — the hardened broker *(P0 shipped 2026-09-02)*",
     "3.2 Topic structure (Google-Cloud-IoT shaped)",
     "3.3 Event names (robot → cloud, `/devices/{id}/events/{name}`)",
     "3.4 Connect/disconnect detection (regex on broker log)",
@@ -185,6 +185,7 @@
     "3.6 The robot config JSON pushed on connect",
     "3.7 The pairing gate — which robots we actually serve *(built, v1 2026-09-02)*",
     "3.8 The `schedule` query — the day plan, and the parent's read of it *(adaptive, 2026-09-02)*",
+    "3.9 `commands/telehealth` — \"Be Moxie\", the operator drives the body *(built, v1 2026-09-02)*",
     "3b. Robot identity / auth",
     "4. Conversation flow (end to end)",
     "4.1 The turn objects",
@@ -202,8 +203,7 @@
     "6. Content modules",
     "7. Integration architecture for our repo",
     "7.1 How the two halves sit on one Orin box",
-    "7.2 What we take vs rebuild from OpenMoxie",
-    "7.3 Recommended phased build order"
+    "7.2 What we take vs rebuild from OpenMoxie"
    ],
    "kind": "md"
   },
@@ -233,7 +233,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 23871,
+   "bytes": 24437,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -337,7 +337,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 69166,
+   "bytes": 69520,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -409,7 +409,7 @@
    "path": "architecture/backlog/security-broker-auth.md",
    "title": "Broker authentication — from service refusal to identity, in three phases",
    "section": "architecture",
-   "bytes": 38988,
+   "bytes": 44448,
    "mermaid": 2,
    "headings": [
     "Why this is the next slice",
@@ -444,7 +444,7 @@
    "path": "architecture/backlog/telehealth.md",
    "title": "Telehealth — \"Be Moxie\": the operator drives the body (ADOPT #7)",
    "section": "architecture",
-   "bytes": 33651,
+   "bytes": 36638,
    "mermaid": 1,
    "headings": [
     "Why this is worth building",
@@ -466,6 +466,27 @@
     "4. Acceptance criteria",
     "5. Effort, files, risks",
     "6. What only a physical robot can settle"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/voice-picker.md",
+   "title": "Voice picker — choose the speech and listening models from the console",
+   "section": "architecture",
+   "bytes": 8542,
+   "mermaid": 0,
+   "headings": [
+    "What the user asked for (verbatim intent)",
+    "What \"available\" means (no invention)",
+    "Defaults (the \"when possible\" rule)",
+    "Design",
+    "A settings record, persisted",
+    "Runtime (`moxie_runtime.py`)",
+    "Console",
+    "Compose / env",
+    "Tests (a test for every feature)",
+    "Acceptance",
+    "Files"
    ],
    "kind": "md"
   },
@@ -794,7 +815,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 18115,
+   "bytes": 20924,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -803,6 +824,7 @@
     "Path B: the one command, from a clone",
     "Configure it — one `.env`",
     "Ports",
+    "Who may talk on the bus",
     "Where your data lives",
     "Optional profiles (best-effort)",
     "voice` — Moxie's real (offline) voice",

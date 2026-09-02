@@ -31,9 +31,13 @@ secrets/
 # server runtime
 server/moxie.db*
 
-# MQTT broker private keys (each appliance generates its own via gen-certs.sh)
+# MQTT broker per-appliance material — each appliance generates its own via
+# gen-certs.sh (CA + server cert) and gen-passwd.sh (passwd + supervisor.pass).
+# NEVER committed: the plaintext supervisor credential lives here.
 mqtt/broker/keys/
 mqtt/broker/log/
+mqtt/broker/passwd
+mqtt/broker/supervisor.pass
 
 # large / proprietary firmware images (never commit)
 # NOTE: anchored to the repo root — an unanchored `firmware/` also matched

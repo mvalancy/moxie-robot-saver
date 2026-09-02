@@ -46,11 +46,19 @@ services:
         condition: service_completed_successfully
     ports:
       - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_MQTT_TLS:-8883}:8883"   # robot (TLS)
-      - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_MQTT:-1883}:1883"       # SIM / tests
+      # The plain listener is LOOPBACK-ONLY by default (security-broker-auth.md §2.4):
+      # it is the one door with a fleet-wide identity behind it. Set
+      # MOXIE_BIND_HOST_PLAIN=0.0.0.0 to drive it from another machine.
+      - "${MOXIE_BIND_HOST_PLAIN:-127.0.0.1}:${MOXIE_PORT_MQTT:-1883}:1883"   # SIM / tests
       - "${MOXIE_BIND_HOST:-0.0.0.0}:${MOXIE_PORT_WS:-9001}:9001"         # browser UI (MQTT over WS)
     volumes:
       - ./mqtt/broker/compose-mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - moxie-certs:/mosquitto/config/keys:ro
+      # The %c ACLs (security-broker-auth.md §2.1). Two files because the robot listener
+      # cannot carry a password_file, and a `user` block on a listener without one
+      # matches an unverified username — see mqtt/broker/acl-robot.
+      - ./mqtt/broker/acl:/mosquitto/config/acl:ro
+      - ./mqtt/broker/acl-robot:/mosquitto/config/acl-robot:ro
+      - moxie-certs:/mosquitto/config/keys:ro   # + the minted `passwd` (§2.2)
       - moxie-broker-data:/mosquitto/data
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 1883 -t healthcheck -m up -q 0"]
@@ -78,6 +86,11 @@ services:
     environment:
       MOXIE_MQTT_HOST: broker
       MOXIE_MQTT_PORT: "1883"
+      # The supervisor's broker credential (security-broker-auth.md §2.2). The password
+      # is handed over as a FILE, never as a value here: an `environment:` literal shows
+      # up in `docker inspect`. The `certs` one-shot mints both into moxie-certs.
+      MOXIE_MQTT_USER: ${MOXIE_MQTT_USER:-supervisor}
+      MOXIE_MQTT_PASSWORD_FILE: ${MOXIE_MQTT_PASSWORD_FILE:-/certs/supervisor.pass}
       MOXIE_STATUS_PORT: "8930"
       MOXIE_STATUS_PROXY_PORT: "8931"        # deploy-layer shim → the console can read /status
       MOXIE_DATA_DIR: /data                  # the moxie-supervisor-data volume
@@ -89,8 +102,10 @@ services:
       MOXIE_TTS_VOICE: ${MOXIE_TTS_VOICE:-}   # empty = derived from the model name
       MOXIE_PIPER_MODEL: ${MOXIE_PIPER_MODEL:-}      # set with --profile voice (see the guide)
       MOXIE_PIPER_CONFIG: ${MOXIE_PIPER_CONFIG:-}
-      MOXIE_STT: ${MOXIE_STT:-auto}          # auto = on when faster-whisper is installed
-      MOXIE_STT_MODEL: ${MOXIE_STT_MODEL:-base.en}
+      MOXIE_STT: ${MOXIE_STT:-auto}          # auto = gateway ears when a voice/STT URL + key are set, else local whisper if installed, else off
+      MOXIE_STT_MODEL: ${MOXIE_STT_MODEL:-}    # unset = per-engine default (stt-whisper on the gateway, base.en locally)
+      MOXIE_STT_BASE_URL: ${MOXIE_STT_BASE_URL:-}   # falls back to MOXIE_VOICE_BASE_URL, then the LLM base URL
+      MOXIE_STT_API_KEY: ${MOXIE_STT_API_KEY:-}     # falls back to the voice key, then the LLM key
       MOXIE_LLM_BASE_URL: ${MOXIE_LLM_BASE_URL:-https://gateway.graphlings.net/v1}
       MOXIE_LLM_API_KEY: ${MOXIE_LLM_API_KEY:-}
       MOXIE_LLM_MODEL: ${MOXIE_LLM_MODEL:-graphling-medium}
@@ -118,6 +133,7 @@ services:
       - "${MOXIE_BIND_HOST:-127.0.0.1}:${MOXIE_PORT_STATUS:-8931}:8931"
     volumes:
       - moxie-supervisor-data:/data          # conversation memory + MOXIE_DATA_DIR
+      - moxie-certs:/certs:ro                # supervisor.pass — the broker credential
       - moxie-models:/models:ro              # Piper voices (--profile voice)
       - moxie-whisper-cache:/cache           # faster-whisper model cache (--profile stt)
     restart: unless-stopped
