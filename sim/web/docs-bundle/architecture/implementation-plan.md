@@ -282,6 +282,28 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   it exists so ADOPT #1/#2 could ship without blocking on ADOPT #8's real database. Conversation memory
   (`MOXIE_MEMORY_DIR`) and telemetry still use their own paths; folding all three onto one durable
   store is the next slice.
+- **Integration evidence (2026-09-02, v0.7.0 RC).** The whole stack was exercised end to end on the
+  release candidate and both paths that landed last were live-validated through the *built* backend, not
+  a mock. Creds-free: `sim/run_smoke.sh` on a free port → `✅ SIL round-trip OK` with the audio leg
+  (`🔊 spoke 50934 B @ 22050 Hz`), `sim/run_scenarios.sh` → `4/4` + `4/4`. The **adaptive schedule** was
+  driven through a real mosquitto + `mqtt/run.py` + `sim/virtual_moxie.py --query schedule` with a
+  scratch `MOXIE_DATA_DIR`: seeded `mentor_behaviors`, a bedtime and a `ParentRequest` written over
+  `POST /config?scope=fleet`, and the eight ids the robot received matched the eight `GET /schedule`
+  explains, one activity dropped for bedtime, the request pinned, every entry carrying a *why* line —
+  now a hermetic regression suite (`sim/tests/test_schedule_sil_e2e.py`, 13 tests, mutation-checked).
+  The **gateway voice** was proven on the assembled appliance in one turn (`MOXIE_APP=llm` +
+  `MOXIE_VOICE_BASE_URL`): `[run] server voice enabled: openai-voice (standby: tone)`, brain →
+  `"Hello Sam! I'm so glad you're here."`, robot → `🔊 spoke 138472 B @ 22050 Hz (~3.14s)` at spectral
+  flatness `5.09e-02` against the tone's `3.4e-14` — `sim/tests/test_live_gateway_turn_e2e.py`, budgeted
+  at one completion + one `/audio/speech`. **Three honest gaps this pass did not fix:** (a) the
+  `ToneSynthesizer` placeholder emits **22050 Hz mono, exactly like the gateway WAV**, so sample rate can
+  never be the proof a real voice spoke — only spectral flatness can, and any future test that checks the
+  rate alone is vacuous; (b) `[tool.setuptools.package-data]` maps `moxie_sdk = ["*.json"]` only, so a
+  data file added under `moxie_sdk/apps/` or `moxie_sdk/content/` would be dropped from the wheel in
+  silence — now *detected* by `sim/tests/test_package_contents.py`, not yet prevented by a wider glob;
+  (c) the recommender's coverage term (−1000 per airing) outweighs its affinity term (10–200), so a module
+  a child finishes every time is demoted below one they have never seen — variety by design, but it means
+  "what they love" cannot currently come back the same week.
 
 ## DoD progress (audited 2026-09-02, at v0.6.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
 
