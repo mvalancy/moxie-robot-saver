@@ -406,5 +406,15 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   875 full); live: "There you are, friend!" with TTS at 5.04 s, rate-limited. Merge combined with PR #33's
   decay clock in `content_app.py`. In flight: `feat/face-customization`, `feat/backlog-security-telehealth`.
 
+- **2026-09-02** — Integrated `feat/face-customization` (PR #36 → dev, ADOPT #9): a child can style Moxie's face —
+  `ChildDecrypted.face_options` (field 17, clear) carries the choice; the catalog is honestly 12 cited options
+  (two of 14 slots), zero invented ids, parent-supplied layers allowed; a deterministic cache-buster id
+  (field-proven, not capture-proven). +42 tests (→849 full / 810 fast). Live: face_options + id on the wire.
+- **2026-09-02 (RESEARCH)** — Integrated `feat/backlog-security-telehealth` (PR #37 → dev): build-ready briefs for
+  broker authentication (P0 containment via pattern ACLs, no robot change; P1 JWT verification against enrolled
+  keys; P2 spoof refusal at CONNECT — decisive finding: `ServiceConfiguration2` carries no broker credential, so
+  nothing reaches a stock robot by QR) and puppet/telehealth (ADOPT #7). **Gateway TTS went live** (`piper-amy`,
+  `piper-ryan`) — `feat/gateway-tts-live` delegated to wire + prove it. STT on the gateway still WIP.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
