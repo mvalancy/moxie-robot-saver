@@ -52,6 +52,27 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
 - **WS-D · Platform & release.** Packaging (`moxie-cloud-sdk`), the three CI tiers, semver releases,
   `docker compose up`, docs that a newcomer can follow.
 
+## Integration playbook (learned 2026-09-02, day one — apply every time)
+
+1. **Merge forward before PR.** An agent's branch base predates whatever landed while it worked; in its
+   worktree: `git fetch && git merge origin/dev --no-edit`, then verify guards + the hermetic suite on the
+   *merged* tree before pushing.
+2. **Generated docs bundle conflicts are resolved by regenerating, never by hand.** Every integration
+   so far conflicted only on `sim/web/docs-{bundle,index.json,search.json}`: `git checkout --theirs` them,
+   `python3 sim/tools/build_docs_bundle.py`, `git add`. A non-bundle conflict is a stop-and-look.
+3. **Concurrent agents edit different rows/cells of `implementation-plan.md`.** Brief each agent to
+   touch only its own DoD row / status row / one gap bullet. When two rows conflict, reconcile row-wise
+   (take each agent's newer row). The orchestrator owns the table header / % / "next slice" line.
+4. **Reserved-file lists in every brief** name exactly which files the other in-flight agents own; check
+   `git diff --name-only` against that list at review time.
+5. **Bounded commands.** Scout with targeted `ls`/`grep`, never `find /`; keep polls ≤ ~100 s per call
+   and make merge/cleanup chains idempotent (re-runnable after a timeout).
+6. **Cleanup is verified, not assumed.** After a squash-merge: `git worktree remove … --force`,
+   `git worktree prune`, delete the local branch, and check the remote — `gh pr merge --delete-branch`
+   did not reliably remove remote `feat/*` branches; delete any whose PR is MERGED.
+7. **Honest gaps are the backlog.** Every agent report's "gaps" paragraph goes into the plan's status
+   log verbatim-ish; the RESEARCH/BUILD loops draw the next slices from there, not from guesses.
+
 ## The layered session loops (24/7 continuity)
 
 Session-scheduled loops keep the project moving while the operator is away; when a session hits a usage
@@ -130,6 +151,16 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   orchestrator mode: six delegated slices (PRs #3–#9), hermetic suite 105 → 224, DoD ≈ 1 ~70% · 2 🟢 · 3 🟢 ·
   4 🟢 · 5 🟢 · 6 ~80%. Next (per implementation-plan): browser Web-Audio playback of `CloudTTSResponse`
   (criterion 1's last client-side link), then a live talk-through with real speech.
+
+- **2026-09-02 (AUDIT)** — Guards green, bundle 0-diff, standing PR #10 CLEAN with all six checks (the new
+  `compose-stack` deep job is live on `main` after v0.2.0). Package builds 0.2.0. No keys in tracked files or
+  history; `.env` files ignored; workflow token works; four loop tiers armed. Spec check (config-and-telemetry):
+  `LoggingPolicy` 0/1/2 and `RobotCloudConfig` field names match the contract; **gap filed:** `alarms`
+  (`WakeSchedule`) and `schedule_preferences` (`ParentRequest`) are contract fields the builder/sanitizer
+  don't emit yet → a WS-A slice. **Contradiction:** the DoD header still reads ≈57% while its rows are
+  1 ~70% · 2–5 🟢 · 6 ~80% (4/6 🟢; simple mean ≈ 90%, but "done" means all six 🟢) — header fixed at the
+  next merge (both in-flight agents edit that table). Hygiene: removed six merged remote `feat/*` branches;
+  playbook above codified. In flight: `feat/web-sim-audio-playback`, `feat/live-talk-e2e`.
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
