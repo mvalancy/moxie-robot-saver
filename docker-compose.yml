@@ -13,9 +13,16 @@
 #   docker compose --profile voice up     # fetch the offline Piper voice (Amy) into a volume
 #   docker compose --profile stt   up     # pre-fetch the faster-whisper speech-to-text model
 #
+# This file BUILDS the three images from this clone — the path for hacking on it, for
+# 32-bit ARM, and for the `voice` / `stt` profiles. Owners who just want to run Moxie
+# want the sibling `docker-compose.images.yml` instead: it is self-contained and pulls
+# our published multi-arch images, so it needs no clone at all.
+#
 # Guide: docs/guides/one-command-stack.md
 # (Install-UX cross-checked against OpenMoxie's docker-compose.yml (MIT) — one root
 #  compose file, one .env, named volumes for state. No code taken; this is our own.)
+#
+# Same project name as docker-compose.images.yml → both share the same named volumes.
 name: moxie
 
 services:
