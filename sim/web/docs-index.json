@@ -1,5 +1,5 @@
 {
- "generated": "docs-011b8a137563",
+ "generated": "docs-8c75b6e7d31a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 45976,
+   "bytes": 47644,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 37789,
+   "bytes": 38536,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -161,7 +161,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 59117,
+   "bytes": 61455,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -184,6 +184,7 @@
     "3.5 Command names (cloud → robot, `/devices/{id}/commands/{name}`)",
     "3.6 The robot config JSON pushed on connect",
     "3.7 The pairing gate — which robots we actually serve *(built, v1 2026-09-02)*",
+    "3.8 The `schedule` query — the day plan, and the parent's read of it *(adaptive, 2026-09-02)*",
     "3b. Robot identity / auth",
     "4. Conversation flow (end to end)",
     "4.1 The turn objects",
@@ -202,8 +203,7 @@
     "7. Integration architecture for our repo",
     "7.1 How the two halves sit on one Orin box",
     "7.2 What we take vs rebuild from OpenMoxie",
-    "7.3 Recommended phased build order",
-    "Appendix A — File map (OpenMoxie, for reference)"
+    "7.3 Recommended phased build order"
    ],
    "kind": "md"
   },
@@ -256,7 +256,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 21030,
+   "bytes": 27973,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -336,7 +336,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 68688,
+   "bytes": 69166,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",

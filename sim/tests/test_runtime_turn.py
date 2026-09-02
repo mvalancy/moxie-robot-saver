@@ -574,3 +574,96 @@ def test_schedule_uses_the_running_content_modules_schedules_block(tmp_path):
     _, msg = _activity(rt, {"subtopic": "query", "query": "schedule",
                             "request_id": "r"}, did)[0]
     assert [r["module_id"] for r in msg["schedule"]["provided_schedule"]] == ["AUDMED"]
+
+
+# ---- the adaptive day plan + its "why" (audit §4.2 BEYOND #7) ----------------------
+#
+# The wire is unchanged (the query tests above still hold); what is new is that the
+# served plan comes from a scored recommender and that the reasoning is kept for the
+# parent. See `sim/tests/test_schedule_planner.py` for the factors in isolation.
+
+def test_schedule_query_stores_the_why_behind_the_day_it_served(tmp_path,
+                                                                device_id="d_why"):
+    rt = _activity_runtime(device_id, tmp_path)
+    _, msg = _activity(rt, {"subtopic": "query", "query": "schedule",
+                            "request_id": "r"}, device_id)[0]
+    served = [r["module_id"] for r in msg["schedule"]["provided_schedule"]]
+    stored = rt.store.read(device_id, "schedule_explain")
+    assert stored, "the plan's explanations were not persisted"
+    assert [e["module_id"] for e in stored["explanations"]] == served
+    assert all(e["line"].endswith(".") for e in stored["explanations"])
+    # the reasoning is stored, never served on the wire
+    assert "explanations" not in json.dumps(msg["schedule"])
+
+
+def test_schedule_view_returns_the_served_plan_its_why_and_its_inputs(tmp_path,
+                                                                      device_id="d_view2"):
+    rt = _activity_runtime(device_id, tmp_path)
+    _activity(rt, {"subtopic": "query", "query": "schedule"}, device_id)
+    view = rt.schedule_view(device_id)
+    assert view["ok"] and view["served"] is True
+    assert view["schedule"]["provided_schedule"]
+    assert len(view["explanations"]) == len(view["schedule"]["provided_schedule"])
+    assert view["inputs"]["telemetry"]["carries_module_signal"] is False
+    assert view["inputs"]["bedtime"]["enabled"] is False
+
+
+def test_schedule_view_plans_on_demand_for_a_robot_that_has_not_pulled_one(tmp_path):
+    rt = _activity_runtime("d_ondemand", tmp_path)
+    view = rt.schedule_view("d_ondemand")
+    assert view["ok"] and view["served"] is False and view["explanations"]
+    assert rt.schedule_view("d_never_seen")["ok"] is False
+
+
+def test_a_parent_requested_activity_lands_at_the_hour_they_asked_for(tmp_path):
+    """`SchedulePreferences.parent_requests[]` (RobotCloudConfig field 28) is honored by
+    the planner, not just stored: a 16:00 request is pinned to the 16:00 slot."""
+    import datetime
+    from moxie_sdk.store import JsonStore
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"),
+                                    store=JsonStore(str(tmp_path)))
+    rt.client = _FakeClient()
+    did = "d_pref"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    at_four = datetime.datetime.combine(datetime.date.today(), datetime.time(16, 0))
+    rt._config_overrides[did] = {"schedule_preferences": {"parent_requests": [
+        {"module_id": "STORY", "scheduled_at": int(at_four.timestamp())}]}}
+    sched, expl, _ = rt.plan_schedule_for(
+        did, now=datetime.datetime.combine(datetime.date.today(), datetime.time(15, 0)))
+    pinned = [e for e in expl if "parent_request" in e["reason_codes"]]
+    assert [e["module_id"] for e in pinned] == ["STORY"]
+    assert pinned[0]["at"] == "16:00"
+    assert pinned[0]["line"] == ("Requested by a parent for 4:00 pm — "
+                                 "Story is pinned to that slot.")
+    assert "STORY" in [r["module_id"] for r in sched["provided_schedule"]]
+
+
+def test_status_server_serves_the_schedule_and_its_explanations(tmp_path):
+    """`GET /schedule?device_id=…` — the parent-facing read of the planned day."""
+    import socket
+    import urllib.error
+    import urllib.request
+    from moxie_sdk.store import JsonStore
+
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"),
+                                    store=JsonStore(str(tmp_path)))
+    rt.client = _FakeClient()
+    did = "d_httpsched"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    _activity(rt, {"subtopic": "query", "query": "schedule"}, did)
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+    rt._start_status_server(port)
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/schedule?device_id={did}",
+                                timeout=5) as r:
+        view = json.loads(r.read().decode())
+    assert view["ok"] and view["device_id"] == did
+    assert [e["module_id"] for e in view["explanations"]] == \
+        [r["module_id"] for r in view["schedule"]["provided_schedule"]]
+    assert all(e["line"] for e in view["explanations"])
+    assert view["inputs"]["child_name"] == "Sam"
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/schedule?device_id=d_nope",
+                               timeout=5)
+        assert False, "unknown device should 404"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404

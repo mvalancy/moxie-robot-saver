@@ -35,6 +35,14 @@ robot-cloud layer builds on its groundwork:
   (`content/data.py::MOXIE_CUSTOMIZATIONS`) was deliberately not copied**: our catalog carries only the
   options our own recovered documents cite (the 14 `MoxieCustomizationType` slots, and the
   `EyeColor`/`FaceColor` enums), so we ship twelve options and no invented ids,
+- the **day-plan shape** — a `schedules[]` template with a `generate` block, FTUE pruning, chats
+  distributed between activities, and the goal of *avoiding two same-category activities in a row*
+  (`mqtt/scheduler.py::expand_schedule`/`ftue_remove`/`ransac_select`/`distribute_elements`, plus the
+  field-proven FTUE thresholds `TNT_CIDS`/`SYSTEMSCHECK_CIDS` in `content/data.py`). Upstream picks by
+  drawing 20 random samples and keeping the least-clumpy one; ours is a deterministic, explainable
+  recommender over the same goal — parent requests, completion history, recency, bedtime and time of
+  day, with a "why this activity today" line per entry —
+  [`mqtt/moxie_sdk/schedule.py`](mqtt/moxie_sdk/schedule.py)`::plan_inputs`/`plan_day`,
 - the **response action-tag** convention — `<exit>` / `<sleep>` / `<launch:MOD:CID>` written inline by the
   model and lifted into real robot actions (`volley.py::ingest_action_tags`); our own implementation lives
   in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py).

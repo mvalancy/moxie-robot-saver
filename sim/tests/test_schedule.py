@@ -231,3 +231,54 @@ def test_schedule_template_picks_a_named_schedule():
         {"name": "b", "schedule": {"provided_schedule": [{"module_id": "B"}]}}]})
     assert schedule_template(module, "b")["provided_schedule"] == [{"module_id": "B"}]
     assert schedule_template(module)["provided_schedule"] == [{"module_id": "A"}]
+
+
+# ---- the wire is unchanged by the recommender (audit §4.2 BEYOND #7) ----
+#
+# `build_schedule` grew inputs (a clock, the robot's effective config, telemetry) and an
+# `explanations` sibling. None of that may reach the robot: `CloudQueryResponse.schedule`
+# is still exactly a `ContentSchedule` of `Recommendation`s. The factors themselves live
+# in `test_schedule_planner.py`; these are the shape guards, re-run with every new input
+# switched on at once.
+
+def _rich_kwargs(**over):
+    import datetime
+    now = datetime.datetime(2026, 9, 2, 18, 30)
+    kw = dict(
+        device_id="d_rich", day="2026-09-02", now=now,
+        mentor_behaviors=[_mbh("STORY"), _mbh("DANCE", "QUIT"), _mbh("JOKE", "PRESENTED")],
+        effective_config={
+            "weekday_bedtime": ["21:00", "07:00"],
+            "schedule_preferences": {"parent_requests": [
+                {"module_id": "READ",
+                 "scheduled_at": int(datetime.datetime(2026, 9, 2, 19, 0).timestamp())}]}},
+        telemetry_summary={"count": 2, "by_event": {"wake": 2},
+                           "latest": [{"event_name": "wake", "recorded_at": 1}]},
+        child_name="Sam")
+    kw.update(over)
+    return kw
+
+
+def test_the_recommenders_output_is_still_a_wellformed_content_schedule():
+    sched = build_schedule(**_rich_kwargs())
+    assert validate_schedule(sched) == []
+    assert set(sched) <= set(SCHEDULE_FIELDS)
+    for rec in sched["provided_schedule"]:
+        assert set(rec) <= set(RECOMMENDATION_FIELDS) and rec["module_id"]
+
+
+def test_no_planner_bookkeeping_leaks_onto_the_wire():
+    """Categories, scores, reason codes and the child's name are server-side only."""
+    import json
+    blob = json.dumps(build_schedule(**_rich_kwargs()))
+    for leak in ("category", "score", "factors", "reason_codes", "line", "Sam",
+                 "generate", "bedtime", "parent_request"):
+        assert leak not in blob, leak
+
+
+def test_build_schedule_keeps_its_pre_recommender_signature():
+    """PR #7's callers pass a template, mentor_behaviors, device_id and day — and still
+    get exactly a ContentSchedule back, with no new required argument."""
+    sched = build_schedule(DEFAULT_TEMPLATE, mentor_behaviors=[_mbh("TNT")],
+                           device_id="d_1", day="2026-09-02")
+    assert validate_schedule(sched) == [] and "WELCOME" not in _ids(sched)
