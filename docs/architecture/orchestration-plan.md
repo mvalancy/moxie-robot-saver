@@ -196,5 +196,11 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   handling of chunk 0 is inferred from the fields, proven only on the SIM. Gaps → next: the filler fires once
   (a 45 s turn goes quiet at ~26 s) → re-arm + token streaming; playbook rule 8 added (creds-free suite runs).
 
+- **2026-09-02** — Integrated `fix/cloud-tts-status-race` (PR #15 → dev): the fast-tier flake that reddened
+  two dev pushes (the env probe's late "no TTS server" write clobbering the 🔊 speaking indicator) is fixed at
+  the root — `audio.js` owns `#tts-status`, `env.js` routes through `setTtsHint()`, the Playwright test asserts
+  one atomic snapshot then waits for teardown. 5× green locally; CI SIL green on the PR. In flight:
+  `feat/streamed-reply-chunks`, `feat/ci-live-dispatch`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
