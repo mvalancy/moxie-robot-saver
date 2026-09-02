@@ -231,3 +231,42 @@ def test_status_snapshot_surfaces_robot_state():
     assert r["battery_level"] == 0.77 and r["wifi_ssid"] == "home" and r["mode"] == "idle"
     assert r["firmware"] == "v24.10.803"
     assert r["config_overrides"]["audio_volume"] == 0.8
+
+
+def test_tts_synthesizes_and_publishes_on_a_turn():
+    """M4 integration: with a synthesizer set, a turn also publishes a CloudTTSResponse
+    (server voice for the SIM); the real robot self-synthesizes so it's opt-in."""
+    from moxie_sdk.tts import Synthesizer
+
+    class _FakeSynth(Synthesizer):
+        sample_rate = 16000
+        channels = 1
+
+        def synthesize(self, text, voice=None):
+            return b"PCM:" + text.encode()
+
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"))
+    rt.client = _FakeClient()
+    rt.set_synthesizer(_FakeSynth())
+    did = "d_tts"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    rt._on_remote_chat(did, rt.robots[did],
+                       json.dumps({"command": "prompt", "event_id": "e", "speech": "hi"}))
+    rt._pool.shutdown(wait=True)
+    import base64
+    tts = [p for (t, p) in rt.client.published if t == f"/devices/{did}/commands/tts"]
+    assert tts, "no CloudTTSResponse published"
+    audio = base64.b64decode(tts[-1]["audio"]["buffer"])
+    assert audio.startswith(b"PCM:")                     # synthesized from the reply text
+    assert tts[-1]["audio"]["sample_rate"] == 16000
+
+
+def test_no_synthesizer_no_tts_published():
+    rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
+    rt.client = _FakeClient()
+    did = "d_notts"
+    rt.robots[did] = RobotContext(device_id=did, child=rt.child)
+    rt._on_remote_chat(did, rt.robots[did],
+                       json.dumps({"command": "prompt", "event_id": "e", "speech": "hi"}))
+    rt._pool.shutdown(wait=True)
+    assert not [t for (t, p) in rt.client.published if t.endswith("/commands/tts")]

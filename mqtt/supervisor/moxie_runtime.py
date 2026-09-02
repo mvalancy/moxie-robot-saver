@@ -53,6 +53,8 @@ class MoxieRuntime:
         self._stt_uuid = {}      # utterance uuid per device (set on any frame that has one)
         # Parent-console config editing: per-device RobotCloudConfig overrides.
         self._config_overrides = {}
+        # TTS (AI seam §3): an optional server voice (for the SIM; a real robot self-synthesizes).
+        self._synth = None
 
     def _build_client(self):
         import paho.mqtt.client as mqtt
@@ -317,6 +319,28 @@ class MoxieRuntime:
                            actions=reply.actions, end_turn=reply.end_turn,
                            result=reply.result_code, mood=reply.mood,
                            dialog_act=reply.dialog_act)
+        self._maybe_synthesize(device_id, markup, event_id)
+
+    # ---- TTS (AI seam §3) — server voice for the SIM ----
+    def set_synthesizer(self, synth):
+        """Install a server-side TTS engine (moxie_sdk.tts.Synthesizer). The SIM plays
+        the resulting audio; a real robot self-synthesizes so this is SIM-only."""
+        self._synth = synth
+
+    def _maybe_synthesize(self, device_id, markup, event_id=""):
+        """If a synthesizer is set, render the line and publish a CloudTTSResponse to
+        /devices/{id}/commands/tts. TTS failure never breaks the turn."""
+        if self._synth is None:
+            return None
+        try:
+            from moxie_sdk.tts import synthesize_cloud_tts
+            resp = synthesize_cloud_tts(self._synth, markup, event_id=event_id)
+            if self.client:
+                self.client.publish(f"/devices/{device_id}/commands/tts", json.dumps(resp))
+            return resp
+        except Exception as e:
+            print(f"[runtime] TTS synth failed (non-fatal): {e}", flush=True)
+            return None
 
     def _ingest_notify(self, device_id, rcr):
         h = self.history.setdefault(device_id, [])
