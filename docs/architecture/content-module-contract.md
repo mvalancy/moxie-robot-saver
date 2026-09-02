@@ -206,9 +206,12 @@ The supervisor's localhost status server serves the memory
 | `DELETE /memory?device_id=…[&namespace=…]` | Forget one namespace, or all of it |
 | `POST /memory?device_id=…` `{"erase":"<ns>"\|"all"}` | The same erase, for clients that cannot send DELETE |
 
-Erasure is never policy-gated — a parent must always be able to delete. **A browser UI over
-these endpoints is not built yet**: today it is `curl`, which is why
-[`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 BEYOND #4 stays open.
+Erasure is never policy-gated — a parent must always be able to delete. The parent console browses
+and erases all of it in the 🧠 **What Moxie remembers** card
+([`server/static/app.js`](../../server/static/app.js) `refreshMemory` → `normalize_memory` →
+`GET`/`DELETE /local/robots/{id}/memory[/{namespace}]`; the parent-facing guide is
+[`what-moxie-remembers.md`](../guides/what-moxie-remembers.md)) — erase granularity there is exactly
+this table's: one namespace, or all of it.
 
 ### Honest limits
 
