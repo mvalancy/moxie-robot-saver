@@ -154,6 +154,7 @@ async function refreshLive(){
                                  : 'no robot connected');
     box.innerHTML = `<div class="live-off">● Live state: ${escapeHtml(why)}</div>`;
     if(cfgBox) cfgBox.style.display='none';
+    { const fc=$('#face-card'); if(fc) fc.classList.add('hidden'); }
     refreshInsights(null);
     refreshSafety(null);
     refreshMemory(null);
@@ -163,6 +164,7 @@ async function refreshLive(){
   liveDevice=served[0].device_id;
   fillModulePicker(f.schedule_modules);
   if(cfgBox && !cfgBox.open) prefillConfig(served[0], f);  // don't clobber active edits
+  renderFaceCard(f, served[0]);
   box.innerHTML = served.map(r=>{
     const rows=[
       ['Battery', r.battery_level==null?'—':`${r.battery_level}%`],
@@ -575,6 +577,121 @@ function renderRobot(r){
   $('#btn-reboot').onclick=()=>api(`/api/robots/${r.id}/reboot`,{method:'POST'}).then(()=>flash('#btn-reboot','Sent!'));
 }
 function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTimeout(()=>b.textContent=o,1200);}
+
+// ---- 🎨 Moxie's look (face customization, audit ADOPT #9) ----
+// The child's chosen face rides down inside `child_pii` as `face_options` — a list of
+// layer labels — and the pushed `child_pii.id` is re-derived from that list, which is
+// what stops the robot compositing from a stale cached texture. The catalog is NOT kept
+// here: it comes from the supervisor's `moxie_sdk.faces`, so this card can never offer a
+// slot or an option the SDK would reject. Our recovered docs name all fourteen layers but
+// list concrete choices for only two, so a slot with no options renders as a plain,
+// honest "we don't have these" line rather than an empty picker.
+let FACE_CATALOG=[];
+function renderFaceCard(f, robot){
+  const card=$('#face-card'), box=$('#face-box'); if(!card||!box) return;
+  FACE_CATALOG=(f&&f.face_catalog)||[];
+  if(!FACE_CATALOG.length){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  const chosen=((robot&&(robot.config_effective||robot.config_overrides))||{}).face||{};
+  const sig=FACE_CATALOG.map(s=>s.id).join(',');
+  if(box.dataset.built!==sig){
+    box.dataset.built=sig;
+    box.className='facebox';
+    box.innerHTML=FACE_CATALOG.map(slot=>{
+      const opts=slot.options||[];
+      if(!opts.length){
+        return `<div class="faceslot uncited"><div class="fs-hd">${escapeHtml(slot.label)}
+          <span class="fs-note">${escapeHtml(slot.note||'')}</span></div>
+          <div class="muted" style="font-size:12px">Not in our recovered documents — see
+          “Advanced: layer names” below.</div></div>`;
+      }
+      const sel=`<select class="face-pick" data-slot="${escapeHtml(slot.id)}">`
+        + '<option value="">— default —</option>'
+        + opts.map(o=>`<option value="${escapeHtml(o.id)}">${escapeHtml(o.label)}</option>`).join('')
+        + '</select>';
+      const sw=opts.filter(o=>o.hex).map(o=>
+        `<button type="button" class="sw" data-slot="${escapeHtml(slot.id)}"`
+        + ` data-opt="${escapeHtml(o.id)}" title="${escapeHtml(o.label)}"`
+        + ` aria-label="${escapeHtml(slot.label)}: ${escapeHtml(o.label)}"`
+        + ` style="background:${escapeHtml(o.hex)}"></button>`).join('');
+      return `<div class="faceslot" data-slot="${escapeHtml(slot.id)}">
+        <div class="fs-hd"><span class="sw" data-preview="${escapeHtml(slot.id)}"></span>
+        ${escapeHtml(slot.label)}<span class="fs-note">${escapeHtml(slot.note||'')}</span></div>
+        ${sel}${sw?`<div class="faceswatches">${sw}</div>`:''}</div>`;
+    }).join('');
+    box.querySelectorAll('.face-pick').forEach(sel=>{ sel.onchange=()=>syncFacePreview(); });
+    box.querySelectorAll('.faceswatches .sw').forEach(b=>{ b.onclick=()=>{
+      const sel=box.querySelector(`.face-pick[data-slot="${b.dataset.slot}"]`);
+      if(sel){ sel.value = (sel.value===b.dataset.opt) ? '' : b.dataset.opt; syncFacePreview(); }
+    };});
+  }
+  // Don't clobber an edit in progress: only re-seed from the server when nothing is dirty.
+  if(box.dataset.dirty!=='1') prefillFace(chosen, robot);
+}
+function prefillFace(chosen, robot){
+  const box=$('#face-box'); if(!box) return;
+  box.querySelectorAll('.face-pick').forEach(sel=>{ sel.value=chosen[sel.dataset.slot]||''; });
+  const ta=$('#face-custom');
+  if(ta){ ta.value=(chosen.custom||[]).join('\n');
+          ta.oninput=()=>{ box.dataset.dirty='1'; }; }
+  const adv=$('#face-advanced'); if(adv && (chosen.custom||[]).length) adv.open=true;
+  syncFacePreview();
+  box.dataset.dirty='0';        // seeded from the server, not yet edited by a grown-up
+  const src=(robot&&robot.config_sources)||{};
+  const line=$('#face-layers');
+  if(line){
+    const bits=[];
+    if(src.face==='fleet') bits.push('🏠 This look comes from the house rules (all robots)');
+    if(robot&&robot.face_cache_id) bits.push('texture key '+robot.face_cache_id.slice(0,8));
+    line.textContent=bits.join(' · ');
+  }
+}
+function syncFacePreview(){
+  const box=$('#face-box'); if(!box) return;
+  FACE_CATALOG.forEach(slot=>{
+    const dot=box.querySelector(`.sw[data-preview="${slot.id}"]`);
+    const sel=box.querySelector(`.face-pick[data-slot="${slot.id}"]`);
+    const opt=(slot.options||[]).find(o=>sel&&o.id===sel.value);
+    if(dot) dot.style.background=(opt&&opt.hex)||'var(--bg)';
+    box.querySelectorAll(`.faceswatches .sw[data-slot="${slot.id}"]`).forEach(b=>{
+      b.setAttribute('aria-pressed', String(!!(sel&&b.dataset.opt===sel.value)));
+    });
+  });
+  box.dataset.dirty='1';
+}
+function readFaceSelection(){
+  const box=$('#face-box'), face={};
+  if(box) box.querySelectorAll('.face-pick').forEach(sel=>{
+    if(sel.value) face[sel.dataset.slot]=sel.value;
+  });
+  const ta=$('#face-custom');
+  const custom=(ta?ta.value:'').split('\n').map(x=>x.trim()).filter(Boolean);
+  if(custom.length) face.custom=custom;
+  return face;
+}
+// Saves ONLY `face`, to the very same config endpoint the ⚙️ form posts to. The
+// supervisor merges overrides, so this cannot disturb volume/bedtime/alarms — and the
+// ⚙️ form never sends `face`, so it cannot disturb the look either.
+async function saveFace(reset){
+  const fleet=!!($('#face-fleet')&&$('#face-fleet').checked);
+  if(!liveDevice && !fleet) return;
+  const s=$('#face-status'); s.textContent = reset?'Resetting…':'Saving…';
+  const body={face: reset ? null : readFaceSelection()};
+  const url = fleet ? '/local/fleet/config'
+                    : `/local/robots/${encodeURIComponent(liveDevice)}/config`;
+  try{
+    const r=await api(url,{method:'POST',auth:false,body});
+    s.textContent = r.ok
+      ? (reset ? '✅ Back to the default look.'
+               : (fleet ? '✅ Saved as house rules — every robot re-draws its face.'
+                        : '✅ Saved — Moxie re-draws its face.'))
+      : `⚠️ ${r.error||'failed'}`;
+    if(r.ok){ const b=$('#face-box'); if(b) b.dataset.dirty='0'; }
+    refreshLive();
+  }catch(e){ s.textContent='⚠️ '+(e.message||'save failed'); }
+}
+{ const b=$('#btn-face-save'); if(b) b.onclick=()=>saveFace(false); }
+{ const b=$('#btn-face-reset'); if(b) b.onclick=()=>saveFace(true); }
 
 // ---- settings ----
 { const b=$('#btn-cfg-save'); if(b) b.onclick=saveConfig; }

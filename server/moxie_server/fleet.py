@@ -8,6 +8,7 @@ the /local/fleet endpoint in main.py is just: fetch STATUS_URL → normalize_fle
 The snapshot shape comes from MoxieRuntime.status_snapshot().
 """
 from __future__ import annotations
+import re as _re
 from typing import Optional
 
 
@@ -85,12 +86,45 @@ def normalize_robot(r: dict) -> dict:
         # layer for a pre-fleet snapshot, so an older supervisor still renders).
         "config_effective": dict(r.get("config_effective")
                                  or r.get("config_overrides") or {}),
+        # The face cache-buster (`child_pii.id`) the next config push will carry — "" when
+        # no look is chosen. A pre-face supervisor omits it, which reads back as "default".
+        "face_cache_id": str(r.get("face_cache_id") or ""),
         "telemetry_count": int(r.get("telemetry_count") or 0),
         "safety_total": int(r.get("safety_total") or 0),
         "safety_unreviewed": int(r.get("safety_unreviewed") or 0),
         "online": True,                     # present in the live snapshot ⇒ connected
         "summary": robot_summary(r),
     }
+
+
+_HEX = _re.compile(r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")
+
+
+def _face_catalog(raw) -> list:
+    """The supervisor's face catalog → render-ready rows, defensively typed.
+
+    Kept tolerant on purpose: this crosses a process boundary, and a console that throws
+    on an odd catalog row would take the whole Moxie tab down with it."""
+    out = []
+    for slot in (raw or []):
+        if not isinstance(slot, dict) or not slot.get("id"):
+            continue
+        options = []
+        for opt in (slot.get("options") or []):
+            if not isinstance(opt, dict) or not opt.get("id"):
+                continue
+            row = {"id": str(opt["id"]), "label": str(opt.get("label") or opt["id"])}
+            # The swatch colour is interpolated into an inline `style=` in the console, so
+            # it is shape-checked here rather than trusted: a value that is not a plain
+            # `#rrggbb` is dropped and the option renders as a name.
+            if _HEX.match(str(opt.get("hex") or "")):
+                row["hex"] = str(opt["hex"])
+            options.append(row)
+        out.append({"id": str(slot["id"]), "type": str(slot.get("type") or ""),
+                    "label": str(slot.get("label") or slot["id"]),
+                    "note": str(slot.get("note") or ""),
+                    "options": options, "cited": bool(options)})
+    return out
 
 
 def normalize_fleet(snapshot: Optional[dict]) -> dict:
@@ -118,6 +152,11 @@ def normalize_fleet(snapshot: Optional[dict]) -> dict:
         "pending": [r["device_id"] for r in robots if r["pending"]],
         "pending_count": sum(1 for r in robots if r["pending"]),
         "schedule_modules": [str(m) for m in (snap.get("schedule_modules") or [])] if ok else [],
+        # The appearance catalog for the 🎨 card (audit ADOPT #9), straight from the
+        # supervisor's `moxie_sdk.faces` — the console never keeps its own copy, so it
+        # cannot offer a slot or an option the SDK would then reject. Empty from a
+        # supervisor that predates the card, and the card simply does not render.
+        "face_catalog": _face_catalog(snap.get("face_catalog")) if ok else [],
         "robots": robots,
         "recent": list(snap.get("recent") or [])[-60:],
         "error": None if ok else (snap.get("error") or "supervisor not reachable"),

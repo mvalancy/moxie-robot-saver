@@ -44,6 +44,10 @@ _cloud_config = pytest.importorskip("moxie_sdk.cloud_config", reason="SDK not im
 sanitize_config_overrides = _cloud_config.sanitize_config_overrides
 merge_config_layers = _cloud_config.merge_config_layers
 schedulable_module_ids = _cloud_config.schedulable_module_ids
+_faces = pytest.importorskip("moxie_sdk.faces", reason="SDK not importable")
+face_catalog = _faces.face_catalog
+face_child_id = _faces.face_child_id
+face_options_list = _faces.face_options_list
 
 DEVICE = "d_console_rt"
 
@@ -55,19 +59,24 @@ DEVICE = "d_console_rt"
 def _snapshot(overrides: dict, fleet: dict = None) -> dict:
     """MoxieRuntime.status_snapshot() for one connected robot."""
     fleet = dict(fleet or {})
+    effective = merge_config_layers(fleet, overrides)
+    face = effective.get("face")
+    cache_id = face_child_id(face_options_list(face), "Sam") if face else ""
     return {
         "ok": True, "app": "content", "uptime_s": 12,
         "fleet_config": fleet,
         "allow_unverified_bots": False,
         "pending_count": 0,
         "schedule_modules": list(schedulable_module_ids()),
+        "face_catalog": face_catalog(),
         "robots": [{
             "device_id": DEVICE, "child": "Sam", "firmware": "3.6.4",
             "permitted": True, "pending": False, "permit_label": "",
             "battery_level": 91, "audio_volume": 0.4, "wifi_ssid": "Home",
             "mode": "normal", "ota_reboot_required": False,
             "config_overrides": dict(overrides),
-            "config_effective": merge_config_layers(fleet, overrides),
+            "config_effective": effective,
+            "face_cache_id": cache_id,
             "telemetry_count": 2,
             "safety_total": 2, "safety_unreviewed": 1,
         }],
@@ -509,6 +518,81 @@ def test_the_console_learns_the_module_catalog_from_the_supervisor(client):
     f = client.get("/local/fleet").json()
     assert "JOKE" in f["schedule_modules"]
     assert set(f["schedule_modules"]) == set(schedulable_module_ids())
+
+
+# --------------------------------------------------------------------------- #
+# 🎨 Moxie's look — face customization (audit ADOPT #9)
+# --------------------------------------------------------------------------- #
+
+def test_the_console_learns_the_face_catalog_from_the_supervisor(client):
+    """Same rule as the module picker: the 🎨 card renders the SDK's catalog, so it can
+    never offer a slot or an option `validate_face` would then reject."""
+    f = client.get("/local/fleet").json()
+    assert [s["id"] for s in f["face_catalog"]] == [s["id"] for s in face_catalog()]
+    eyes = next(s for s in f["face_catalog"] if s["id"] == "eye_color")
+    assert eyes["cited"] is True
+    assert {o["id"] for o in eyes["options"]} == {"green", "blue", "purple",
+                                                 "brown", "gold", "teal"}
+    assert all(o["hex"].startswith("#") for o in eyes["options"])   # swatch-able
+    # the twelve slots our docs name but list no options for say so rather than lying
+    assert next(s for s in f["face_catalog"] if s["id"] == "hair")["cited"] is False
+
+
+def test_a_face_edit_round_trips_and_changes_the_texture_key(client, supervisor):
+    """The whole promise of the card: a picked look reaches the supervisor, comes back in
+    the effective config, and moves the cache-buster the robot keys its texture on."""
+    before = client.get("/local/fleet").json()["robots"][0]["face_cache_id"]
+    r = client.post(f"/local/robots/{DEVICE}/config",
+                    json={"face": {"eye_color": "teal", "face_color": "pink"}})
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"]["face"] == {"eye_color": "teal", "face_color": "pink"}
+    assert json.loads(supervisor.config_posts[-1][1])["face"]["eye_color"] == "teal"
+    robot = client.get("/local/fleet").json()["robots"][0]
+    assert robot["config_effective"]["face"]["face_color"] == "pink"
+    assert robot["face_cache_id"] and robot["face_cache_id"] != before
+
+    # a *different* look must not reuse the same texture key
+    client.post(f"/local/robots/{DEVICE}/config", json={"face": {"eye_color": "gold"}})
+    after = client.get("/local/fleet").json()["robots"][0]["face_cache_id"]
+    assert after != robot["face_cache_id"]
+
+
+def test_an_option_the_catalog_does_not_offer_is_a_400(client):
+    r = client.post(f"/local/robots/{DEVICE}/config",
+                    json={"face": {"eye_color": "chartreuse"}})
+    assert r.status_code == 400, r.text
+    assert "chartreuse" in r.json()["error"]
+
+
+def test_a_fleet_face_is_the_house_look_and_one_robot_can_restyle_a_layer(client):
+    """PR #24's layering, applied to appearance. The house sets teal eyes; this robot is
+    already wearing gold ones from the test above, so the robot layer wins that slot —
+    then it restyles a *different* slot and ends up wearing both layers at once, which is
+    what "each an independent layer" has to mean once two config layers exist."""
+    client.post("/local/fleet/config", json={"face": {"eye_color": "teal"}})
+    f = client.get("/local/fleet").json()
+    robot = f["robots"][0]
+    assert f["fleet_config"]["face"] == {"eye_color": "teal"}
+    assert robot["config_effective"]["face"]["eye_color"] == "gold"   # robot beats house
+    assert robot["config_sources"]["face"] == "robot"
+
+    client.post(f"/local/robots/{DEVICE}/config", json={"face": {"face_color": "pink"}})
+    robot = client.get("/local/fleet").json()["robots"][0]
+    # the robot layer replaced wholesale, so the eyes fall back through to the house look
+    assert robot["config_effective"]["face"] == {"eye_color": "teal",
+                                                "face_color": "pink"}
+
+
+def test_reset_to_default_clears_the_look_and_the_texture_key(client):
+    client.post(f"/local/robots/{DEVICE}/config", json={"face": {"eye_color": "gold"}})
+    assert client.get("/local/fleet").json()["robots"][0]["face_cache_id"]
+    r = client.post(f"/local/robots/{DEVICE}/config", json={"face": None})
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"]["face"] is None
+    client.post("/local/fleet/config", json={"face": None})
+    robot = client.get("/local/fleet").json()["robots"][0]
+    assert robot["config_effective"]["face"] is None
+    assert robot["face_cache_id"] == ""
 
 
 # --------------------------------------------------------------------------- #
