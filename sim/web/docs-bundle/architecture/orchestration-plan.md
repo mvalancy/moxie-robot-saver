@@ -322,5 +322,21 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   assertion structural. Third and last member of this flake family; playbook rule 11 governs. In flight:
   `feat/device-allowlist`; delegating `feat/published-images` (ADOPT #10 remainder).
 
+- **2026-09-02 (orchestrator)** — Rule 11 paid off immediately: with recorded stats in place, the fast tier
+  on `ce0e0c6` reported `order: [0, 2, 1]` — a **real** ordering bug in the browser SIM's chunk queue (chunk 2
+  can start before chunk 1 in a burst; identical code passed on `bd00268`, so it's a race in the queue, not
+  the observer). `fix/cloud-tts-chunk-order` in flight (allowlist: audio.js/bridge.js + tests): ordering
+  becomes a property of the design — dequeue strictly by expected `chunk_num` with a documented gap rule.
+  Until it lands, dev's fast tier is intermittently red for that one assertion. In flight:
+  `feat/device-allowlist`, `feat/published-images`, `fix/cloud-tts-chunk-order`.
+
+- **2026-09-02** — Integrated `feat/device-allowlist` (PR #27 → dev): the pairing gate is **closed by default** —
+  an unpermitted robot is pending, gets an un-paired config with no `child_pii`, and no brain; permitting it
+  (console 🔐 card, one click; auto-permit on the console pairing path) re-pushes the full config at once.
+  Gate on the transport boundary; `"unpairing"` recorded as an assumption behind one constant. +34 tests
+  (→765 full / 739 fast-shaped); smoke, scenarios, compose smoke green; two-robot live proof. Honest gap:
+  service refusal, not authentication — broker ACL/JWT still deferred. In flight: `feat/published-images`,
+  `fix/cloud-tts-chunk-order`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

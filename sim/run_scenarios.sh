@@ -15,7 +15,9 @@ else
     -v "$PWD/sim/broker/ci-mosquitto.conf":/mosquitto/config/mosquitto.conf:ro eclipse-mosquitto:2)
 fi
 sleep 2
-MOXIE_APP=echo MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT python3 mqtt/run.py >/tmp/moxie-supervisor.log 2>&1 & PIDS+=($!)
+# MOXIE_ALLOW_UNVERIFIED_BOTS=1: the scenario robots are throwaway `d_<uuid>`s, so the
+# lab runs in open mode — see the note in run_smoke.sh.
+MOXIE_APP=echo MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT MOXIE_ALLOW_UNVERIFIED_BOTS=1 python3 mqtt/run.py >/tmp/moxie-supervisor.log 2>&1 & PIDS+=($!)
 sleep 3
 rc=0
 for s in sim/scenarios/*.json; do

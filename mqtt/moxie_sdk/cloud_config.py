@@ -33,6 +33,53 @@ def child_pii_from_profile(child) -> dict:
     return pii
 
 
+# --- The pairing gate: paired vs not-yet-permitted ----------------------------------
+#
+# `pairing_status` is the string the robot's own config handler reads out of the pushed
+# RobotCloudConfig. Two values are established:
+#
+#   * **`"paired"`** — the operating value. `mqtt-and-conversation.md` §3.6 records it as
+#     "MUST stay `paired` or robot won't run": it is the wrapper that lets the robot run a
+#     session at all.
+#   * **`"unpairing"`** — the *not-paired* value. Our own RE corpus does not contain a
+#     capture of Embodied's cloud pushing a non-`paired` status (the recovered protos give
+#     `CloudStatus.UserState` — the robot's *upward* lifecycle report, `NONE`(1) = unpaired
+#     — but not the downward config string), so this one is **field-proven rather than
+#     capture-proven**: OpenMoxie (MIT) offers exactly `paired` / `unpairing` in its device
+#     form and reads the same string back as `MoxieDevice.is_paired()`
+#     (`site/hive/models.py:53-56`, `site/hive/templates/hive/moxie.html:15-16`) — a
+#     revival server that drives real robots. `ATTRIBUTION.md` credits the idea; no code
+#     was copied. **ASSUMPTION, flagged in `config-and-telemetry-contract.md`**: what a
+#     *physical* Moxie shows on screen for `"unpairing"` is not verified here — we have no
+#     robot to observe. Changing our mind is a one-line edit of this constant.
+PAIRED_PAIRING_STATUS = "paired"
+UNPAIRED_PAIRING_STATUS = "unpairing"
+
+
+def build_unpaired_cloud_config() -> dict:
+    """The **minimal** RobotCloudConfig for a device this appliance has not permitted.
+
+    A home appliance must not hand the child's nickname and birthday to whatever manages
+    to reach the broker port, so a robot that is not on the permit list gets a document
+    with *no `child_pii` at all*, the not-paired `pairing_status`, and the privacy gate
+    pinned shut (`data_sharing = NO_DATA`, so nothing may be uploaded to us either). The
+    `settings` wrapper stays because the robot's config handler expects the envelope
+    (`mqtt-and-conversation.md` §3.6); its props carry nothing about the household — in
+    particular **no `stt` prop**, so the device is never told to stream its microphone to
+    us.
+
+    This is deliberately not `build_robot_cloud_config(...)` with fields removed: a
+    subtractive build is one forgotten key away from a leak, so the un-paired document is
+    written out in full, here, where it can be read in one breath.
+    """
+    return {
+        "pairing_status": UNPAIRED_PAIRING_STATUS,
+        "data_sharing": LoggingPolicy.NO_DATA.name,
+        "settings": {"props": {"gcp_upload_disable": "1",
+                               "default_loglevel": "warning"}},
+    }
+
+
 def build_robot_cloud_config(child, *, audio_volume: float = 0.6,
                              screen_brightness: float = 1.0,
                              timezone_id: str = "America/Los_Angeles",
@@ -57,7 +104,7 @@ def build_robot_cloud_config(child, *, audio_volume: float = 0.6,
     `pairing_status:"paired"` + `settings` are the wrapper the robot's config handler
     expects (kept from the working minimal config)."""
     cfg = {
-        "pairing_status": "paired",
+        "pairing_status": PAIRED_PAIRING_STATUS,
         "child_pii": child_pii_from_profile(child),
         "audio_volume": audio_volume,
         "screen_brightness": screen_brightness,

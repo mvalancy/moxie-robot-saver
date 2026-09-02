@@ -519,6 +519,66 @@ async def set_fleet_config(request: Request):
             "ok": False, "error": "supervisor not reachable", "detail": str(e)})
 
 
+def _supervisor_post(path: str, payload: dict):
+    """POST one JSON body to the supervisor's little status server and return its reply.
+
+    Same server-side-call pattern as the config endpoints above (no CORS problem in the
+    browser, no supervisor port exposed to it). Returns `(dict, status_code)`; a
+    supervisor that is down is a 503 with a readable body rather than an exception."""
+    import urllib.request, urllib.error
+    url = STATUS_URL.rsplit("/status", 1)[0] + path
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return json.loads(r.read().decode()), 200
+    except urllib.error.HTTPError as e:
+        return json.loads(e.read().decode() or "{}"), e.code
+    except Exception as e:
+        return {"ok": False, "error": "supervisor not reachable", "detail": str(e)}, 503
+
+
+@app.get("/local/permits")
+def get_permits():
+    """The device allowlist (audit §3.1 pairing gate): who is permitted, who is pending,
+    and whether the appliance is currently serving unverified robots."""
+    import urllib.request
+    url = STATUS_URL.rsplit("/status", 1)[0] + "/permits"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        return JSONResponse(status_code=503, content={
+            "ok": False, "error": "supervisor not reachable", "detail": str(e),
+            "permits": [], "pending": []})
+
+
+@app.post("/local/robots/{device_id}/permit")
+async def permit_robot(device_id: str, request: Request):
+    """Let one pending robot in — the console's one-click **Permit** (body
+    `{"permitted": false}` revokes it, `{"label": "…"}` names it). The supervisor stores
+    the permit in `fleet/permits.json` and re-pushes that robot's config on the spot, so
+    a robot that was pending becomes paired without a reconnect."""
+    body = await _json(request)
+    out, code = _supervisor_post("/permits", {
+        "device_id": device_id,
+        "permitted": bool(body.get("permitted", True)),
+        "label": body.get("label") or ""})
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
+@app.post("/local/fleet/permits")
+async def set_fleet_permits(request: Request):
+    """The appliance-wide **"serve any robot that connects"** switch
+    (`{"allow_unverified_bots": true|false}`). Off is the safe default; on restores the
+    pre-gate behavior for a deployment that was running before the allowlist existed.
+    Flipping it re-pushes every connected robot's config."""
+    body = await _json(request)
+    out, code = _supervisor_post(
+        "/permits", {"allow_unverified_bots": bool(body.get("allow_unverified_bots"))})
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
 @app.get("/local/robots/{device_id}/telemetry")
 def robot_telemetry(device_id: str, limit: int = 20):
     """Parent-console insights (M6): the robot's stored telemetry Packets, fetched from
@@ -606,7 +666,21 @@ async def simulate_robot_scan(request: Request):
     """Pretend a robot scanned the QR: decode it, recompute SHA256(seed), find the
     pending pairing, and create the robot record bound to the user/child — exactly
     what a real Moxie does when it phones home. Lets you test the full flow with no
-    hardware. Body: {qr_payload}"""
+    hardware. Body: `{qr_payload, device_id?}`.
+
+    **Auto-permit (the pairing gate, audit §3.1).** Pairing *is* the parent saying "this
+    robot is mine", so a robot that completes pairing here should not then need a second
+    click in the fleet panel. When `device_id` (the MQTT client id, `d_<uuid>`) is given,
+    this permits it on the supervisor as part of completing the pairing, and reports the
+    outcome as `permitted` / `permit_error`. It is best-effort: a supervisor that is down
+    never fails the pairing itself — the robot simply shows up as pending, which the
+    console's Permit button handles.
+
+    `device_id` is optional because the QR carries no device id (it carries Wi-Fi + the
+    pairing seed), so the *pairing* half of the system genuinely does not learn the
+    robot's MQTT identity until the robot connects to the broker. The console's Simulate
+    button passes the pending robot's id when there is exactly one; a real robot's path is
+    still "connects → pending → Permit". See docs/guides/permitting-a-robot.md."""
     body = await _json(request)
     payload = body.get("qr_payload", "")
     decoded = moxie_qr.decode_proto(payload)
@@ -630,8 +704,18 @@ async def simulate_robot_scan(request: Request):
           (rid, pairing["user_id"], pairing["child_id"], json.dumps(robot_attrs),
            json.dumps({"volume": 0.7, "screen-brightness": 0.8}), db.now_s(), db.now_s()))
     db.ex("UPDATE pairings SET consumed=1 WHERE id_hash=?", (id_hash,))
-    return {"robot_id": rid, "bound_user": pairing["user_id"], "bound_child": pairing["child_id"],
-            "ssid": decoded.get("ssid")}
+    out = {"robot_id": rid, "bound_user": pairing["user_id"],
+           "bound_child": pairing["child_id"], "ssid": decoded.get("ssid"),
+           "permitted": False, "permit_error": None}
+    device_id = (body.get("device_id") or "").strip()
+    if device_id:
+        res, code = _supervisor_post("/permits", {
+            "device_id": device_id, "permitted": True, "label": "paired via console"})
+        out["device_id"] = device_id
+        out["permitted"] = bool(code == 200 and res.get("ok"))
+        if not out["permitted"]:
+            out["permit_error"] = res.get("error") or f"supervisor returned {code}"
+    return out
 
 
 @app.get("/local/state")

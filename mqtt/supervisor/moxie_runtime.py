@@ -6,7 +6,9 @@ docs/architecture/mqtt-and-conversation.md (verified against OpenMoxie, MIT).
 Responsibilities:
   * subscribe to all devices' events/state + the broker log
   * detect robot connect/disconnect (regex on $SYS/broker/log)
-  * push each robot its config on connect (pairing_status="paired" + child_pii)
+  * push each robot its config on connect — the full one
+    (pairing_status="paired" + child_pii) only to a **permitted** device; an
+    unpermitted one is pending and gets a minimal, child-free config
   * route `events/remote-chat` (backend:router) turns → MoxieApp.respond → reply
   * maintain per-device conversation history from `notify` events
   * STT (events/zmq) is a documented extension point (see handle_zmq)
@@ -68,7 +70,7 @@ MEMORY_POLICY = LoggingPolicy.NO_MEDIA
 class MoxieRuntime:
     def __init__(self, app, host="127.0.0.1", port=1883, child: ChildProfile | None = None,
                  store: JsonStore | None = None, brain_budget_s=None, streaming=None,
-                 safety=None):
+                 safety=None, allow_unverified_bots=None):
         self.app = app
         self.child = child or ChildProfile()
         self.host, self.port = host, port
@@ -109,6 +111,13 @@ class MoxieRuntime:
         self._stt_uuid = {}      # utterance uuid per device (set on any frame that has one)
         # Parent-console config editing: per-device RobotCloudConfig overrides.
         self._config_overrides = {}
+        # Device allowlist (the pairing gate). A robot that is not permitted is tracked
+        # as *pending* and served a minimal, child-free config — see `_push_config` and
+        # `_serve_unpermitted`. `None` = read the policy at call time (env, then the
+        # durable fleet record, then closed); True/False pins it for this process, which
+        # is what the SIL harness and the turn-loop tests use.
+        self._allow_unverified_bots = allow_unverified_bots
+        self._permits_cache = None       # ((path, mtime, size), flag, devices)
         # TTS (AI seam §3): an optional server voice (for the SIM; a real robot self-synthesizes).
         self._synth = None
         # Child safety (AI seam §2): the InputSafety classifier applied to BOTH sides of a
@@ -287,10 +296,18 @@ class MoxieRuntime:
         """The supervisor + robots snapshot the parent console reads (JSON). Each robot
         carries its live state (battery/volume/wifi/mode/firmware) from the last /state."""
         robots = []
+        permits = self.permits()
+        open_fleet = self.allow_unverified_bots()
         for r in self.robots.values():
             st = r.extra.get("status", {})
+            permitted = open_fleet or r.device_id in permits["devices"]
             robots.append({
                 "device_id": r.device_id, "child": r.child.nickname,
+                # The pairing gate, per robot: `pending` is a robot that reached the
+                # broker but is not on the permit list — it is being served the minimal
+                # child-free config and nothing else until a parent lets it in.
+                "permitted": permitted, "pending": not permitted,
+                "permit_label": (permits["devices"].get(r.device_id) or {}).get("label", ""),
                 "firmware": r.firmware or st.get("robot_firmware_version"),
                 "battery_level": st.get("battery_level"),
                 "audio_volume": st.get("audio_volume"),
@@ -310,6 +327,8 @@ class MoxieRuntime:
         return {"ok": True, "app": self.app.name,
                 "uptime_s": int(time.time() - self.started_at),
                 "fleet_config": self.fleet_config(),
+                "allow_unverified_bots": open_fleet,
+                "pending_count": sum(1 for r in robots if r["pending"]),
                 "schedule_modules": list(schedulable_module_ids()),
                 "robots": robots, "recent": list(self.recent)[-60:]}
 
@@ -341,7 +360,8 @@ class MoxieRuntime:
 
             def do_GET(self):
                 """GET /status → the console snapshot; GET /telemetry?device_id=…&limit=N
-                → that robot's stored telemetry Packets rolled up for the insights view.
+                → that robot's stored telemetry Packets rolled up for the insights view;
+                GET /permits → the device allowlist + who is pending.
                 Localhost-only (the server binds 127.0.0.1)."""
                 from urllib.parse import urlparse, parse_qs
                 u = urlparse(self.path)
@@ -365,6 +385,8 @@ class MoxieRuntime:
                         limit = 20
                     out = rt.safety_view(device_id, limit=limit)
                     return self._json_out(out, 200 if out.get("ok") else 404)
+                if u.path == "/permits":
+                    return self._json_out(rt.permits_view())
                 if u.path == "/config":
                     q = parse_qs(u.query)
                     scope = (q.get("scope") or ["robot"])[0]
@@ -432,6 +454,11 @@ class MoxieRuntime:
                 `POST /safety?device_id=…` with `{"event_id": "sfe-…"}` (or `{}` / `"all"`)
                 marks queued safety events reviewed — the parent's "I have seen this".
 
+                `POST /permits` with `{"device_id": "d_…", "permitted": true, "label": …}`
+                lets one pending robot in (or `permitted:false` to revoke it) and re-pushes
+                its config on the spot; with `{"allow_unverified_bots": true}` it flips the
+                appliance-wide "serve anything that connects" switch.
+
                 Localhost-only (the server binds 127.0.0.1)."""
                 from urllib.parse import urlparse, parse_qs
                 path = urlparse(self.path).path
@@ -439,8 +466,28 @@ class MoxieRuntime:
                     # `POST /memory?device_id=…` `{"erase": "<namespace>"|"all"}` —
                     # the same erase as DELETE, for clients that cannot send one.
                     return self._erase_memory(urlparse(self.path).query)
-                if path not in ("/config", "/safety"):
+                if path not in ("/config", "/safety", "/permits"):
                     self.send_response(404); self.end_headers(); return
+                if path == "/permits":
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length) if length else b"{}"
+                    try:
+                        body = _json.loads(raw or b"{}") or {}
+                        if "allow_unverified_bots" in body:
+                            out = rt.set_allow_unverified_bots(
+                                bool(body["allow_unverified_bots"]))
+                        elif body.get("device_id"):
+                            out = rt.set_permit(body["device_id"],
+                                                permitted=bool(body.get("permitted", True)),
+                                                label=body.get("label") or "")
+                        else:
+                            raise ValueError(
+                                "expected {device_id, permitted, label} "
+                                "or {allow_unverified_bots}")
+                        code = 200
+                    except Exception as e:
+                        out, code = {"ok": False, "error": str(e)}, 400
+                    return self._json_out(out, code)
                 device_id = (parse_qs(urlparse(self.path).query).get("device_id") or [""])[0]
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length else b"{}"
@@ -503,6 +550,12 @@ class MoxieRuntime:
                 if kind == "state":
                     return self._on_state(device_id, msg.payload)
                 if kind == "events" and len(parts) >= 5:
+                    # The pairing gate lives on the transport boundary, so there is ONE
+                    # place a device that is not permitted can be refused service — no
+                    # handler can forget it. `/state` is deliberately still processed:
+                    # it is how an unknown robot becomes visible as *pending* at all.
+                    if not self.is_permitted(device_id):
+                        return self._serve_unpermitted(device_id, parts[4], msg.payload)
                     return self._on_event(device_id, parts[4], msg.payload)
         except Exception as e:
             print(f"[runtime] error handling {topic}: {e}")
@@ -537,6 +590,11 @@ class MoxieRuntime:
         # Push config after a short settle delay, WITHOUT blocking the MQTT loop.
         def _settle():
             self._push_config(device_id)
+            # A pending (unpermitted) robot never reaches the app: the brain is a service
+            # this appliance provides to the family's robot, not to whatever connected.
+            # `set_permit` runs `on_connect` at the moment a parent lets it in.
+            if not self.is_permitted(device_id):
+                return
             try:
                 self.app.on_connect(robot)
             except Exception as e:
@@ -597,12 +655,206 @@ class MoxieRuntime:
             self._push_config(device_id)
         return cfg
 
+    # ---- the pairing gate: which devices this appliance serves --------------------
+    #
+    # The broker accepts anonymous connections (mqtt-and-conversation.md §3b — the robot's
+    # RS256 JWT is never verified, exactly as in the original LAN model), so "reached the
+    # port" must not mean "is my child's robot". Without a gate the supervisor pushes
+    # `pairing_status:"paired"` **plus the child's `child_pii`** to whatever announces
+    # itself on `/devices/{id}/state`. On a home network that is a real exposure.
+    #
+    # So: a durable permit list, closed by default. The idea is OpenMoxie's
+    # `MoxieDevice.permit` + `HiveConfiguration.allow_unverified_bots` (MIT — credited in
+    # ATTRIBUTION.md; no code copied, and note that in OpenMoxie the flag is stored but
+    # never enforced on the MQTT path, so this is the idea taken further, not a port).
+    FLEET_PERMITS_COLLECTION = "permits"        # → $MOXIE_DATA_DIR/fleet/permits.json
+
+    def permits(self) -> dict:
+        """The durable permit record, normalized:
+        `{"allow_unverified_bots": bool, "devices": {device_id: {permitted_at, label}}}`.
+
+        Like `fleet_config`, this reflects the file rather than a load-time snapshot, so a
+        permit granted in another process — or hand-edited into `fleet/permits.json` — is
+        picked up without a restart. Unlike `fleet_config` it is on a **hot** path (the
+        gate runs on every inbound message, including each audio frame), so the parse is
+        memoized against the file's `(mtime, size)`: a changed file re-reads, an unchanged
+        one costs a `stat`. A missing/corrupt file reads as "nothing permitted", which
+        fails **closed**."""
+        path = self.store.shared_path(self.FLEET_PERMITS_COLLECTION)
+        try:
+            st = os.stat(path)
+            key = (path, st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = (path, None, None)
+        cached = self._permits_cache
+        if cached is None or cached[0] != key:
+            rec = self.store.read_shared(self.FLEET_PERMITS_COLLECTION, {})
+            if not isinstance(rec, dict):
+                rec = {}
+            devices = rec.get("devices")
+            if not isinstance(devices, dict):
+                devices = {}
+            cached = (key, bool(rec.get("allow_unverified_bots")),
+                      {str(k): (v if isinstance(v, dict) else {})
+                       for k, v in devices.items()})
+            self._permits_cache = cached
+        # A fresh mapping every call: `set_permit` mutates what it gets back, and the
+        # cache must never be edited through a caller's reference.
+        return {"allow_unverified_bots": cached[1], "devices": dict(cached[2])}
+
+    def allow_unverified_bots(self) -> bool:
+        """True when this appliance serves **any** robot that connects (the pre-gate
+        behavior). Precedence, most explicit first:
+
+          1. the constructor argument (`MoxieRuntime(..., allow_unverified_bots=True)`);
+          2. `MOXIE_ALLOW_UNVERIFIED_BOTS` — the migration switch for a deployment that
+             was running before the gate existed (`1/true/on/yes` opens, `0/off/...`
+             pins it shut);
+          3. the durable fleet flag a parent toggles in the console;
+          4. **False** — the safe default."""
+        if self._allow_unverified_bots is not None:
+            return bool(self._allow_unverified_bots)
+        env = (os.environ.get("MOXIE_ALLOW_UNVERIFIED_BOTS") or "").strip().lower()
+        if env:
+            return env not in ("0", "off", "false", "no")
+        return self.permits()["allow_unverified_bots"]
+
+    def is_permitted(self, device_id) -> bool:
+        """May this device be served the child's config and the brain?"""
+        return self.allow_unverified_bots() or str(device_id) in self.permits()["devices"]
+
+    def pending_robots(self) -> list:
+        """Connected-but-unpermitted device ids — what the console's "Pending robots"
+        list shows, and the only place a parent needs to look to let a new robot in."""
+        return [d for d in self.robots if not self.is_permitted(d)]
+
+    def set_permit(self, device_id, permitted: bool = True, label: str = "") -> dict:
+        """Permit or revoke one device, durably, and make it true on the wire *now*:
+        permitting a pending robot re-pushes its full config immediately (no reconnect,
+        no restart), revoking one re-pushes the minimal un-paired document so the child's
+        data stops being served to it on the same tick."""
+        device_id = str(device_id or "").strip()
+        if not device_id:
+            raise ValueError("device_id is required")
+        rec = self.permits()
+        if permitted:
+            rec["devices"][device_id] = {"permitted_at": int(time.time()),
+                                         "label": str(label or "")}
+        else:
+            rec["devices"].pop(device_id, None)
+        self.store.write_shared(self.FLEET_PERMITS_COLLECTION, rec)
+        self._permits_cache = None      # our own write invalidates outright,
+                                        # never trusting mtime granularity
+        self._note("permit", f"{'✅ permitted' if permitted else '⛔ revoked'} {device_id}")
+        if device_id in self.robots:
+            self._push_config(device_id)
+            if permitted:
+                try:
+                    self.app.on_connect(self.robots[device_id])
+                except Exception as e:
+                    print(f"[runtime] app.on_connect error: {e}", flush=True)
+        return self.permits_view()
+
+    def set_allow_unverified_bots(self, allowed: bool) -> dict:
+        """The fleet-wide "serve any robot that connects" toggle. Flipping it re-pushes
+        every connected robot's config, so a robot that was pending starts (or stops)
+        being served without waiting for a reconnect."""
+        rec = self.permits()
+        rec["allow_unverified_bots"] = bool(allowed)
+        self.store.write_shared(self.FLEET_PERMITS_COLLECTION, rec)
+        self._permits_cache = None      # our own write invalidates outright,
+                                        # never trusting mtime granularity
+        self._note("permit", f"🔓 allow_unverified_bots={bool(allowed)}"
+                             if allowed else "🔒 allow_unverified_bots=False")
+        for device_id in list(self.robots):
+            self._push_config(device_id)
+        return self.permits_view()
+
+    def permits_view(self) -> dict:
+        """The console-facing permit view: the flag (as *enforced*, env included), the
+        stored flag, the permit list, and which connected robots are still pending."""
+        rec = self.permits()
+        return {"ok": True,
+                "allow_unverified_bots": self.allow_unverified_bots(),
+                "allow_unverified_bots_stored": rec["allow_unverified_bots"],
+                "permits": [{"device_id": d,
+                             "permitted_at": v.get("permitted_at"),
+                             "label": v.get("label") or ""}
+                            for d, v in sorted(rec["devices"].items())],
+                "pending": sorted(self.pending_robots()),
+                "connected": sorted(self.robots)}
+
+    # What a *pending* device is allowed to receive. Nothing about the child, nothing
+    # from the brain, nothing from the store — one fixed line so an owner watching their
+    # own robot hears why it is quiet instead of nothing at all. It names no one.
+    NOT_PAIRED_LINE = ("I'm not connected to a family yet. "
+                       "Ask a grown-up to add me in the Moxie console.")
+
+    def _serve_unpermitted(self, device_id, name, payload):
+        """Everything a not-permitted device gets on `/events/…`, in one place.
+
+        * `remote-chat` prompt → one fixed, child-free line; the brain is never called,
+          no history is kept, nothing is stored. `notify` (the robot telling us what it
+          said) is dropped — a pending device does not get a conversation record.
+        * `client-service-activity-log` **queries** (`schedule`, `mentor_behaviors`,
+          `license`) → the CloudQueryResponse envelope with its *empty* value, so the
+          robot's pull resolves instead of hanging; the reports on the same topic (what
+          the child finished) are dropped rather than written to the store.
+        * everything else — the microphone stream (`zmq`), telemetry, vision, module
+          lifecycle — is dropped on the floor.
+        """
+        if name.startswith("remote-chat"):
+            try:
+                rcr = json.loads(payload)
+            except Exception:
+                return
+            if rcr.get("command") == "notify":
+                return
+            backend = rcr.get("backend", "router")
+            if backend == "data" and rcr.get("query") == "modules":
+                return self._publish_chat(device_id, rcr.get("event_id"), backend, "",
+                                          markup="", result=ResultCode.SUCCESS, modules=[])
+            self._note("permit", f"⛔ turn refused — {device_id} is pending")
+            return self._publish_chat(device_id, rcr.get("event_id"), backend,
+                                      self.NOT_PAIRED_LINE,
+                                      markup=make_markup(self.NOT_PAIRED_LINE),
+                                      end_turn=True)
+        if name == "client-service-activity-log":
+            try:
+                data = json.loads(payload)
+            except Exception:
+                return
+            query = data.get("query")
+            if data.get("subtopic") in (None, "", "query") and query in (
+                    "schedule", "mentor_behaviors", "license"):
+                resp = build_activity_response(query, None,
+                                               request_id=data.get("request_id"))
+                if self.client:
+                    self.client.publish(f"/devices/{device_id}/commands/query_result",
+                                        json.dumps(resp))
+                return resp
+            return None
+        return None
+
     def _push_config(self, device_id):
-        from moxie_sdk.cloud_config import build_robot_cloud_config
-        cfg = build_robot_cloud_config(self.child, **self.effective_config(device_id))
+        """Publish this robot's `/config`.
+
+        **Permitted** (or the fleet allows unverified bots) → the full RobotCloudConfig,
+        `pairing_status:"paired"` + `child_pii` + the parent's settings, exactly as
+        before the gate existed. **Not permitted** → `build_unpaired_cloud_config()`: the
+        not-paired status, no `child_pii`, no household settings, privacy gate shut."""
+        from moxie_sdk.cloud_config import (build_robot_cloud_config,
+                                            build_unpaired_cloud_config)
+        if self.is_permitted(device_id):
+            cfg = build_robot_cloud_config(self.child, **self.effective_config(device_id))
+        else:
+            cfg = build_unpaired_cloud_config()
+            self._note("permit", f"⛔ {device_id} is not permitted — pending "
+                                 f"(minimal config, no child data)")
         if self.client:
             self.client.publish(f"/devices/{device_id}/config", json.dumps(cfg))
-        print(f"[runtime] → pushed config to {device_id} (pairing_status=paired)")
+        print(f"[runtime] → pushed config to {device_id} "
+              f"(pairing_status={cfg.get('pairing_status')})")
         return cfg
 
     # ---- child safety (AI seam §2 — InputSafety) ----

@@ -154,13 +154,21 @@ class CountingSynth(Synthesizer):
 
 
 def make_runtime(app, *, device_id: str = "d_test", nickname: str = "Sam",
-                 module_id: str = "FREE_CHAT", content_id: str = "default"):
+                 module_id: str = "FREE_CHAT", content_id: str = "default",
+                 allow_unverified_bots: bool = True):
     """A real `MoxieRuntime` wired to `app`, with a fake transport and one robot
-    already 'connected'. Returns `(runtime, device_id)`."""
+    already 'connected'. Returns `(runtime, device_id)`.
+
+    `allow_unverified_bots` defaults to **True** — this harness exists to drive the turn
+    loop, and its robot is hand-placed into `rt.robots` rather than let in through the
+    device allowlist. Tests *about* the pairing gate build their own runtime with the
+    default (closed) policy; see `sim/tests/test_device_permits.py`.
+    """
     import moxie_runtime
     from moxie_sdk.types import ChildProfile, RobotContext
 
-    rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname=nickname))
+    rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname=nickname),
+                                    allow_unverified_bots=allow_unverified_bots)
     rt.client = FakeClient()
     rt.robots[device_id] = RobotContext(device_id=device_id, child=rt.child,
                                         module_id=module_id, content_id=content_id)
