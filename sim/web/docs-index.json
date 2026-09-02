@@ -1,5 +1,5 @@
 {
- "generated": "docs-bac4ed2c1a53",
+ "generated": "docs-763cc83370f0",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -721,7 +721,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 16744,
+   "bytes": 18115,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -736,6 +736,7 @@
     "stt` — local speech-to-text",
     "Point a real robot at it",
     "Prove it works",
+    "How the two compose files stay in sync",
     "Updating",
     "Troubleshooting",
     "Running it a different way"
