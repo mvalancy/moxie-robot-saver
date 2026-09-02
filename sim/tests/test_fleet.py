@@ -115,3 +115,77 @@ def test_normalize_event_tolerates_a_partial_packet():
     e = normalize_event({})
     assert e["event_name"] == "event" and e["recorded_at"] is None and e["session_id"] == ""
     assert normalize_event({"recorded_at": "77"})["recorded_at"] == 77
+
+
+# --- 🎚️ the voice picker's normalizer (backlog/voice-picker.md) ----------------------
+# The console keeps no list of voices: it renders exactly what the supervisor offers. So
+# the only job here is to make that payload *renderable no matter what arrives* — a card
+# that 500s or blanks itself is worse than one that prints the reason.
+
+def _voice_payload():
+    return {
+        "ok": True,
+        "available": {
+            "speech": [{"id": "gateway:piper-amy", "engine": "gateway",
+                        "model": "piper-amy", "group": "Gateway",
+                        "label": "Amy (gateway, piper-amy)", "default": True},
+                       {"id": "tone", "engine": "tone", "model": "", "group": "Built-in",
+                        "label": "Tone (built-in)", "default": False}],
+            "listening": [{"id": "off", "engine": "off", "model": "", "group": "Built-in",
+                           "label": "Off (built-in)", "default": True}],
+        },
+        "selected": {"speech": "gateway:piper-amy", "listening": "off"},
+        "labels": {"speech": "Amy (gateway, piper-amy)", "listening": "Off (built-in)"},
+        "installed": {"speech": "openai-voice (standby: tone)", "listening": ""},
+        "chosen": {"speech": True, "listening": False},
+        "discovering": False, "gateway_error": "", "updated_at": 1788400000,
+        "robots": ["d_abc"],
+    }
+
+
+def test_normalize_voice_keeps_every_field_the_card_renders():
+    from moxie_server.fleet import normalize_voice
+    v = normalize_voice(_voice_payload())
+    assert v["ok"] is True and v["error"] is None
+    assert [e["id"] for e in v["available"]["speech"]] == ["gateway:piper-amy", "tone"]
+    assert v["available"]["speech"][0]["default"] is True
+    assert v["selected"] == {"speech": "gateway:piper-amy", "listening": "off"}
+    assert v["installed"]["speech"] == "openai-voice (standby: tone)"
+    assert v["chosen"] == {"speech": True, "listening": False}
+    assert v["updated_at"] == 1788400000 and v["robots"] == ["d_abc"]
+
+
+def test_normalize_voice_reports_a_gateway_outage_without_blanking_the_card():
+    from moxie_server.fleet import normalize_voice
+    payload = _voice_payload()
+    payload["gateway_error"] = "APIConnectionError"
+    v = normalize_voice(payload)
+    assert v["ok"] is True and v["gateway_error"] == "APIConnectionError"
+    assert len(v["available"]["speech"]) == 2, "an outage must not empty the dropdown"
+
+
+def test_normalize_voice_carries_a_refusals_reason():
+    from moxie_server.fleet import normalize_voice
+    v = normalize_voice({"ok": False, "error": "bad pick",
+                         "reason": "'gateway:x' is not one of this appliance's options."})
+    assert v["ok"] is False and "not one of" in v["reason"]
+    assert v["error"] == "bad pick" and v["available"] == {"speech": [], "listening": []}
+
+
+def test_normalize_voice_never_raises_on_junk():
+    from moxie_server.fleet import normalize_voice
+    for junk in (None, {}, [], "nope", {"available": "not a dict"},
+                 {"ok": True, "available": {"speech": "abc"}},
+                 {"ok": True, "selected": 7, "updated_at": "soon"}):
+        v = normalize_voice(junk)
+        assert set(v["available"]) == {"speech", "listening"}
+        assert isinstance(v["available"]["speech"], list)
+        assert isinstance(v["selected"]["speech"], str)
+        assert isinstance(v["updated_at"], int)
+
+
+def test_normalize_voice_drops_an_option_with_no_id():
+    from moxie_server.fleet import normalize_voice
+    payload = _voice_payload()
+    payload["available"]["speech"].append({"label": "a voice with no id"})
+    assert len(normalize_voice(payload)["available"]["speech"]) == 2

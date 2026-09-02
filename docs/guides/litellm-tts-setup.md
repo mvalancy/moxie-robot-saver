@@ -26,6 +26,18 @@ That is the whole switch. `MOXIE_VOICE_FORMAT` (`wav` default | `pcm`) and
 `MOXIE_VOICE_SAMPLE_RATE` (pcm only, default `22050`) are there if you need them; both compose files
 forward all four. Precedence is unchanged: **voice server → Piper → tone**.
 
+### Pick it in the console
+
+You do not have to edit `.env` to change voices. The console's 🎚️ **Voice** card has a **Speech**
+dropdown listing every voice this appliance can actually use — the gateway's (`piper-amy`,
+`piper-ryan`, `tts-piper-*`, `graphling-tts-*`, discovered from `GET /v1/models`), the local Piper
+voices installed under `sim/tts/voices/`, and the built-in tone — with `piper-amy` marked as the
+default. Pick one, press **Test** to hear it on the SIM, and the **next turn** speaks with it: no
+restart, and the choice is remembered in `fleet/voice.json` across one. An explicit *local* pick is
+honoured even with `MOXIE_VOICE_BASE_URL` set, and if the gateway is unreachable the card still
+renders the local options beside the reason. `MOXIE_VOICE_MODEL` remains the boot default for an
+appliance nobody has opened the card on. Design: [ai-seam §③](../architecture/ai-seam.md).
+
 ### What we measured (live, 2026-09-02)
 
 One 13-word sentence, `"Hi Sam, I am Moxie. Do you want to hear a story about a brave little robot?"`:

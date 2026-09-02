@@ -119,6 +119,7 @@ services:
       # Piper — or the tone — stays behind it as the standby, so a gateway hiccup
       # downgrades the voice instead of silencing the turn. docs/guides/litellm-tts-setup.md
       MOXIE_VOICE_BASE_URL: ${MOXIE_VOICE_BASE_URL:-}
+      MOXIE_VOICE_DISCOVERY_TTL_S: ${MOXIE_VOICE_DISCOVERY_TTL_S:-300}   # how long the console picker caches the gateway's model list
       MOXIE_VOICE_API_KEY: ${MOXIE_VOICE_API_KEY:-}
       MOXIE_VOICE_MODEL: ${MOXIE_VOICE_MODEL:-piper-amy}     # the model IS the voice (piper-amy | piper-ryan)
       MOXIE_VOICE_FORMAT: ${MOXIE_VOICE_FORMAT:-wav}         # wav carries its own sample rate | pcm
