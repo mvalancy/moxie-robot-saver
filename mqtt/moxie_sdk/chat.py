@@ -10,9 +10,10 @@ caller signals ERROR_OFFLINE), and how to back off when the gateway rate-limits.
 from __future__ import annotations
 import random
 import time
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 ChatFn = Callable[[list], str]      # messages [{role,content}] -> assistant text
+StreamFn = Callable[[list], Iterator[str]]   # messages -> a trickle of text deltas
 
 
 # ---- error classification ------------------------------------------------- #
@@ -146,3 +147,85 @@ def make_openai_chat(base_url: str, api_key: str, model: str = "graphling-medium
                                  on_backoff=on_backoff, pacer=_pacer)
 
     return chat
+
+
+# ---- streaming ------------------------------------------------------------ #
+# The same seam, one token at a time. A whole completion costs 18-45 s on our gateway
+# (docs/architecture/implementation-plan.md:138) but its FIRST sentence is finished after
+# a handful of tokens — so a streaming brain lets the runtime speak real words at
+# first-token latency (moxie_sdk/segment.py cuts the stream into sentences, and the
+# runtime puts each one on the wire as its own RemoteChatResponse chunk).
+
+def delta_text(event) -> str:
+    """The text carried by one streamed chunk, or "".
+
+    Accepts both the SDK's objects and plain dicts (which is what a test fake and a
+    raw SSE decode look like), so nothing here depends on the openai package."""
+    if event is None:
+        return ""
+    if isinstance(event, str):
+        return event
+    if isinstance(event, dict):
+        choices = event.get("choices") or []
+        if not choices:
+            return ""
+        first = choices[0] or {}
+        delta = first.get("delta") or {}
+        if isinstance(delta, dict):
+            return delta.get("content") or ""
+        return getattr(delta, "content", "") or ""
+    choices = getattr(event, "choices", None) or []
+    if not choices:
+        return ""
+    delta = getattr(choices[0], "delta", None)
+    return (getattr(delta, "content", None) or "") if delta is not None else ""
+
+
+def stream_completion(client, model: str, messages: list, *, max_tokens: int = 200,
+                      temperature: float = 0.8, max_retries: int = 4,
+                      on_backoff=_default_on_backoff,
+                      pacer: Optional[Pacer] = None) -> Iterator[str]:
+    """Yield the text deltas of one streaming chat completion.
+
+    `call_with_backoff` + the `Pacer` wrap **opening** the stream — that is where a 429 /
+    5xx / connection failure surfaces, and where a retry is still free. Once the response
+    is open we are committed: an error mid-stream propagates to the caller, whose job it
+    is to fall back (see `LLMApp.respond_stream`, which restarts on the non-streaming
+    path when the stream dies before it produced anything)."""
+    def _open():
+        return client.chat.completions.create(
+            model=model, messages=messages, max_tokens=max_tokens,
+            temperature=temperature, stream=True)
+
+    stream = call_with_backoff(_open, max_retries=max_retries,
+                               on_backoff=on_backoff, pacer=pacer)
+    try:
+        for event in stream:
+            text = delta_text(event)
+            if text:
+                yield text
+    finally:
+        # A cancelled turn closes the generator; let go of the HTTP response too.
+        close = getattr(stream, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
+
+def make_openai_stream(base_url: str, api_key: str, model: str = "graphling-medium",
+                       max_tokens: int = 200, temperature: float = 0.8, *,
+                       max_retries: int = 4, on_backoff=_default_on_backoff,
+                       pacer: Optional[Pacer] = None) -> StreamFn:
+    """`make_openai_chat`'s streaming twin: `stream(messages) -> Iterator[str]`."""
+    from openai import OpenAI          # lazy import so the SDK has no hard dep
+    client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
+    _pacer = pacer if pacer is not None else Pacer()
+
+    def stream(messages: list) -> Iterator[str]:
+        return stream_completion(client, model, messages, max_tokens=max_tokens,
+                                 temperature=temperature, max_retries=max_retries,
+                                 on_backoff=on_backoff, pacer=_pacer)
+
+    return stream

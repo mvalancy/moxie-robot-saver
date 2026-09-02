@@ -95,3 +95,36 @@ class Reply:
         """A brain that can't answer (endpoint unreachable) → ERROR_OFFLINE, so the
         robot degrades to its on-device fallback instead of hanging."""
         return cls(text=text, result_code=ResultCode.ERROR_OFFLINE)
+
+
+@dataclass
+class ReplyChunk:
+    """One piece of a **streamed** Reply — a finished sentence, ready to speak.
+
+    An app that can answer incrementally implements `MoxieApp.respond_stream(turn) ->
+    Iterator[ReplyChunk]`; the runtime publishes each chunk as its own
+    `RemoteChatResponse` (`result=REPLY_PENDING` + `chunk_num`) and closes the sequence
+    on the chunk marked `final`, which goes out as `SUCCESS` with
+    `consistency_control.is_completed` (RemoteChat.proto fields 22 / 18 — see
+    docs/architecture/mqtt-and-conversation.md §4.5).
+
+    `actions` are the robot-control tags found *in this chunk*. Our prompt convention puts
+    them at the very front of the answer, so in practice they ride on chunk 0 — but the
+    field is per-chunk so a tag can never be lost by arriving late.
+
+    `result_code` is normally left None: the runtime picks REPLY_PENDING for a
+    non-final chunk and SUCCESS for the final one. Set it to override the final chunk's
+    outcome (e.g. `ResultCode.ERROR_OFFLINE`).
+    """
+    text: str
+    markup: Optional[str] = None
+    actions: list = field(default_factory=list)   # list[Action]
+    final: bool = False                  # last chunk of the answer (closes the sequence)
+    end_turn: bool = False
+    result_code: Optional[ResultCode] = None
+
+    @classmethod
+    def from_reply(cls, reply: "Reply") -> "ReplyChunk":
+        """The whole of a non-streamed `Reply` as one closing chunk."""
+        return cls(text=reply.text, markup=reply.markup, actions=list(reply.actions),
+                   final=True, end_turn=reply.end_turn, result_code=reply.result_code)
