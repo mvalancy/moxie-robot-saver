@@ -283,5 +283,12 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   chunk on a streamed turn until `ReplyChunk` carries scored fields (planner phase); no hardware has played
   it. In flight: `feat/config-alarms-fleet-defaults`. **Next: promote v0.5.0** ("safe and alive").
 
+- **2026-09-02** — **Released v0.5.0 "safe and alive"** (dev → main squash `f0d1663`, tag `v0.5.0`, release tier
+  green, wheel + sdist published). Standing PR recreated as #23; dev reconciled (zero-content merge). Over
+  v0.4.0: the enforced child-safety contract, the automarkup floor, the fast tier fixed at the root, the audit
+  with per-item status + an expressiveness backlog. Hermetic suite 281 → 641. Four releases today
+  (v0.2.0 → v0.5.0), 16 delegated slices integrated. In flight: `feat/config-alarms-fleet-defaults`;
+  delegating `feat/session-memory-persist-summarize` (contract gap: `persist_data` + `summarize`).
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
