@@ -1,0 +1,501 @@
+{
+  "version": 2,
+  "note": "The face-customization vocabulary, as data. Two origins, kept apart on purpose: `recovered-enum` options come from our own recovered documents and carry hex we can preview; `openmoxie-manifest` options are asset ids OpenMoxie harvested from a robot its authors could run. Every label is ours. Nothing here has been rendered by a physical robot.",
+  "source": {
+    "recovered-enum": {
+      "what": "Robot.java EYE_COLORS / FACE_COLORS, with hex",
+      "where": [
+        "docs/features/robot-lifecycle.md:280-283",
+        "docs/features/feature-catalog.md:238-241"
+      ],
+      "slots": "the 14 MoxieCustomizationType names, docs/reverse-engineering/runtime/unity-face-animation.md:34-42"
+    },
+    "openmoxie-manifest": {
+      "project": "OpenMoxie",
+      "url": "https://github.com/jbeghtol/openmoxie",
+      "path": "site/hive/content/data.py",
+      "symbol": "MOXIE_CUSTOMIZATIONS",
+      "commit": "c8c2d380efd37d2e83761957587f5d08f73b3a63",
+      "license": "MIT (Copyright (c) 2025 Justin Beghtol)",
+      "ingested": "2026-09-02",
+      "entries": 60,
+      "sha256_of_ids": "8bcae88accb43ee4a3650ee458b2164adeb7239b0f58f779221d8c7abb3c4a78",
+      "what_we_took": "the 60 asset id strings, and nothing else - no code, no comments, no function bodies. The slot mapping below and every human-readable label in this file are ours.",
+      "how_we_mapped": {
+        "MX_010_Eyes_": "EyeColor",
+        "MX_020_Face_Colors_": "FaceColor",
+        "MX_030_Eye_Designs_": "EyeDesign",
+        "MX_040_Face_Designs_": "FaceDesign",
+        "MX_050_Eyelid_Designs_": "EyeLid",
+        "MX_060_Mouth_": "Mouth",
+        "MX_080_Head_Hair_": "Hair",
+        "MX_090_Facial_Hair_": "Mustache",
+        "MX_100_Brows_": "Brows",
+        "MX_120_Glasses_": "Glasses",
+        "MX_130_Nose_": "Nose"
+      },
+      "mapping_note": "Each id is MX_<nnn>_<Group>_<Detail>; the group prefix names the layer, and each prefix maps to exactly one recovered MoxieCustomizationType. An id whose prefix does not map with confidence goes to `unmapped`, never guessed.",
+      "upstream_caution": "Upstream's own note above the list records that some of these assets crashed Unity on a real Moxie and that problem assets should be removed once found. It does not say which, so every manifest-origin entry here carries `caution: true`. Our own corpus says the same thing independently: docs/architecture/mqtt-and-conversation.md:824 - \"some face customization assets crash Unity and are excluded\"."
+    }
+  },
+  "slots": {
+    "EyeColor": [
+      {
+        "id": "green",
+        "label": "Green",
+        "hex": "#42D02B",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "blue",
+        "label": "Blue",
+        "hex": "#8491EF",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "purple",
+        "label": "Purple",
+        "hex": "#9437DE",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "brown",
+        "label": "Brown",
+        "hex": "#443319",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "gold",
+        "label": "Gold",
+        "hex": "#F4BF03",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "teal",
+        "label": "Teal",
+        "hex": "#38ADAE",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "MX_010_Eyes_Brown",
+        "label": "Brown (bundle)",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_010_Eyes_Gold",
+        "label": "Gold (bundle)",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_010_Eyes_Grey",
+        "label": "Grey",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_010_Eyes_Hazel",
+        "label": "Hazel",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_010_Eyes_LightBlue",
+        "label": "Light blue",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_010_Eyes_Purple",
+        "label": "Purple (bundle)",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_010_Eyes_Turquoise",
+        "label": "Turquoise",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "EyeDesign": [
+      {
+        "id": "MX_030_Eye_Designs_BlueCircuits",
+        "label": "Blue circuits",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_030_Eye_Designs_BlueClouds",
+        "label": "Blue clouds",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_030_Eye_Designs_Circuits",
+        "label": "Circuits",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_030_Eye_Designs_Clouds",
+        "label": "Clouds",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_030_Eye_Designs_Gears",
+        "label": "Gears",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_030_Eye_Designs_GoldStars",
+        "label": "Gold stars",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_030_Eye_Designs_PurpleGears",
+        "label": "Purple gears",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_030_Eye_Designs_RedHearts",
+        "label": "Red hearts",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_030_Eye_Designs_Stars",
+        "label": "Stars",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "EyeLid": [
+      {
+        "id": "MX_050_Eyelid_Designs_GreenEyeShadow",
+        "label": "Green eyeshadow",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_050_Eyelid_Designs_PurpleEyeShadow",
+        "label": "Purple eyeshadow",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_050_Eyelid_Designs_RainbowStars",
+        "label": "Rainbow stars",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_050_Eyelid_Designs_RedEyeShadow",
+        "label": "Red eyeshadow",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_050_Eyelid_Designs_SmokeyLashes",
+        "label": "Smokey lashes",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "Brows": [
+      {
+        "id": "MX_100_Brows_BrownCut",
+        "label": "Brown, cut",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_100_Brows_GreyShort",
+        "label": "Grey, short",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_100_Brows_Purple",
+        "label": "Purple",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_100_Brows_WhiteBushy",
+        "label": "White, bushy",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_100_Brows_YellowThin",
+        "label": "Yellow, thin",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "Mouth": [
+      {
+        "id": "MX_060_Mouth_BlackSmall",
+        "label": "Black, small",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_060_Mouth_DarkRedMedium",
+        "label": "Dark red, medium",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_060_Mouth_PinkPointy",
+        "label": "Pink, pointy",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_060_Mouth_PurpleFull",
+        "label": "Purple, full",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_060_Mouth_RedMedium",
+        "label": "Red, medium",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "Nose": [
+      {
+        "id": "MX_130_Nose_Cat",
+        "label": "Cat",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_130_Nose_Clown",
+        "label": "Clown",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_130_Nose_Dog",
+        "label": "Dog",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_130_Nose_Human01",
+        "label": "Human",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_130_Nose_Pig",
+        "label": "Pig",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "Mustache": [
+      {
+        "id": "MX_090_Facial_Hair_BlackAngled",
+        "label": "Black, angled",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_090_Facial_Hair_BlackDali",
+        "label": "Black Dali",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_090_Facial_Hair_BrownHandlebar",
+        "label": "Brown handlebar",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_090_Facial_Hair_OrangeBatWing",
+        "label": "Orange bat-wing",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_090_Facial_Hair_YellowUpturn",
+        "label": "Yellow, upturned",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "FaceColor": [
+      {
+        "id": "blue",
+        "label": "Blue",
+        "hex": "#BBCFE1",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "yellow",
+        "label": "Yellow",
+        "hex": "#F0F055",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "green",
+        "label": "Green",
+        "hex": "#9BDB9B",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "teal",
+        "label": "Teal",
+        "hex": "#7ED6DD",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "pink",
+        "label": "Pink",
+        "hex": "#E1A2A2",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "purple",
+        "label": "Purple",
+        "hex": "#C395D4",
+        "origin": "recovered-enum"
+      },
+      {
+        "id": "MX_020_Face_Colors_Green",
+        "label": "Green (bundle)",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_020_Face_Colors_Pink",
+        "label": "Pink (bundle)",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_020_Face_Colors_Purple",
+        "label": "Purple (bundle)",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_020_Face_Colors_Teal",
+        "label": "Teal (bundle)",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_020_Face_Colors_Yellow",
+        "label": "Yellow (bundle)",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "FaceDesign": [
+      {
+        "id": "MX_040_Face_Designs_Candies",
+        "label": "Candies",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_040_Face_Designs_Flowers01",
+        "label": "Flowers",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_040_Face_Designs_Hearts",
+        "label": "Hearts",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_040_Face_Designs_Leaves01",
+        "label": "Leaves",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_040_Face_Designs_Stars",
+        "label": "Stars",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "Hair": [
+      {
+        "id": "MX_080_Head_Hair_BlackBob",
+        "label": "Black bob",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_080_Head_Hair_BlackCenter",
+        "label": "Black, centre part",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_080_Head_Hair_PinkShag",
+        "label": "Pink shag",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_080_Head_Hair_RedShag",
+        "label": "Red shag",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "Glasses": [
+      {
+        "id": "MX_120_Glasses_BlueHeart",
+        "label": "Blue hearts",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_120_Glasses_GoldHalfRound",
+        "label": "Gold half-round",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_120_Glasses_RedCat",
+        "label": "Red cat-eye",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_120_Glasses_RoundWhiteDot",
+        "label": "Round, white dots",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      },
+      {
+        "id": "MX_120_Glasses_SmallRound",
+        "label": "Small round",
+        "origin": "openmoxie-manifest",
+        "caution": true
+      }
+    ],
+    "Stickers": [],
+    "Extras": [],
+    "Misc": []
+  },
+  "unmapped": []
+}

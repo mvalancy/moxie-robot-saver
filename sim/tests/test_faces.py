@@ -6,10 +6,13 @@ The child picks layers; the layers ride down inside `child_pii` as
 pushed `child_pii.id` is re-derived from the chosen layers so the robot cannot composite
 from a stale cached texture. Four things are worth a test and they are all here:
 
-  * **the catalog is honest** — every slot and every option in `moxie_sdk/faces.py` traces
-    to a line in `docs/`, and this file re-asserts the counts and the exact ids from those
-    lines, so an id that appears here without a citation fails the build. The single
-    highest-value test in the file is `test_the_catalog_invents_nothing`;
+  * **the catalog is honest** — every slot and every option traces to one of exactly two
+    cited sources: a line in `docs/` (the hex colour enums), or the asset-id list ingested
+    as data from OpenMoxie (MIT) into `moxie_sdk/face_assets.json` under the citation that
+    file carries. This file re-asserts both halves from second, independent copies — the
+    enums id-for-id, the ingest by prefix map, per-slot counts and a fingerprint — so an
+    id that appears without provenance fails the build. The single highest-value test in
+    the file is still `test_the_catalog_invents_nothing`;
   * **validate / sanitize** — what a parent may send, and what must be refused;
   * **the render** — `face_options` + the cache-buster in the built `RobotCloudConfig`,
     and the byte-for-byte no-change when no look is chosen;
@@ -19,9 +22,12 @@ from a stale cached texture. Four things are worth a test and they are all here:
 Nothing here has been observed on a physical robot; see `faces.py` for exactly which
 parts are cited and which two are flagged assumptions.
 """
+import hashlib
 import json
 import os
+import re
 import sys
+from collections import Counter
 
 import pytest
 
@@ -56,6 +62,41 @@ CITED_EYE_COLORS = {"green": "#42D02B", "blue": "#8491EF", "purple": "#9437DE",
 CITED_FACE_COLORS = {"blue": "#BBCFE1", "yellow": "#F0F055", "green": "#9BDB9B",
                      "teal": "#7ED6DD", "pink": "#E1A2A2", "purple": "#C395D4"}
 
+_HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+# ---- the ingested half -------------------------------------------------------------- #
+# `mqtt/moxie_sdk/face_assets.json` transcribes OpenMoxie's `MOXIE_CUSTOMIZATIONS` list
+# (MIT, https://github.com/jbeghtol/openmoxie, `site/hive/content/data.py`, commit
+# c8c2d380, ingested 2026-09-02) — the ids only; the mapping and the labels are ours.
+# Everything below is a *second, independent* statement of what that ingest produced, so
+# an id quietly added to, dropped from or moved between slots fails here rather than
+# redefining "what we ingested". None of it has been rendered by a physical robot.
+MANIFEST_ENTRIES = 60
+
+#: Each upstream id is `MX_<nnn>_<Group>_<Detail>`; the group prefix names the layer, and
+#: each prefix maps to exactly one recovered `MoxieCustomizationType`.
+MANIFEST_PREFIX_SLOT = {
+    "MX_010_Eyes_": "EyeColor",
+    "MX_020_Face_Colors_": "FaceColor",
+    "MX_030_Eye_Designs_": "EyeDesign",
+    "MX_040_Face_Designs_": "FaceDesign",
+    "MX_050_Eyelid_Designs_": "EyeLid",
+    "MX_060_Mouth_": "Mouth",
+    "MX_080_Head_Hair_": "Hair",
+    "MX_090_Facial_Hair_": "Mustache",
+    "MX_100_Brows_": "Brows",
+    "MX_120_Glasses_": "Glasses",
+    "MX_130_Nose_": "Nose",
+}
+
+MANIFEST_PER_SLOT = Counter({"EyeColor": 7, "FaceColor": 5, "EyeDesign": 9,
+                             "FaceDesign": 5, "EyeLid": 5, "Mouth": 5, "Hair": 4,
+                             "Mustache": 5, "Brows": 5, "Glasses": 5, "Nose": 5})
+
+#: sha256 over the sorted `"<MoxieCustomizationType>|<asset id>"` pairs.
+MANIFEST_FINGERPRINT = (
+    "fd99dba2f60e43ee4250ee1ab36d820eb1af886c7477d80a16266dd50afa5648")
+
 
 def test_the_slots_are_the_fourteen_our_docs_name():
     assert len(faces.FACE_SLOTS) == 14
@@ -63,21 +104,131 @@ def test_the_slots_are_the_fourteen_our_docs_name():
 
 
 def test_the_catalog_invents_nothing():
-    """**The guard that matters.** Our corpus lists concrete options for exactly two of
-    the fourteen slots — the eye and face colour enums, with hex. Every other slot is
-    named and nothing more (the art lives in a streamed bundle we have never read;
-    `unity-assets.md`:19-67, `content-delivery.md`:79). So: an option id that is not in
-    one of the two cited enums does not belong in this catalog, however plausible it
-    looks. This test fails the moment somebody invents one."""
-    cited = {"eye_color": CITED_EYE_COLORS, "face_color": CITED_FACE_COLORS}
+    """**The guard that matters.** Every option in the catalog must trace to one of
+    exactly two sources, and nothing else may appear:
+
+      * `origin: "recovered-enum"` — the eye/face colour enums our own corpus lists *with
+        hex* (`docs/features/robot-lifecycle.md`:280-283). Those are re-asserted below,
+        id-for-id and hex-for-hex, from a second copy written out in this file.
+      * `origin: "openmoxie-manifest"` — the 60 asset ids ingested as data from
+        OpenMoxie (MIT), cited in `face_assets.json`'s own `source` block. Those are
+        pinned by shape, by per-slot count, and by a fingerprint over `(slot, id)` pairs.
+
+    An id that is neither — a plausible-looking one somebody typed in — fails here."""
     for slot in faces.FACE_SLOTS:
-        expected = cited.get(slot["id"], {})
-        assert {o["id"]: o["hex"] for o in slot["options"]} == expected, slot["id"]
-    assert sum(len(s["options"]) for s in faces.FACE_SLOTS) == 12
-    # exactly two slots can be previewed; the other twelve say so out loud
+        for opt in slot["options"]:
+            assert opt["origin"] in faces.OPTION_ORIGINS, (slot["id"], opt)
+
+    recovered = {s["id"]: {o["id"]: o["hex"] for o in s["options"]
+                           if o["origin"] == "recovered-enum"}
+                 for s in faces.FACE_SLOTS}
+    assert recovered.pop("eye_color") == CITED_EYE_COLORS
+    assert recovered.pop("face_color") == CITED_FACE_COLORS
+    assert not any(recovered.values()), "a recovered-enum option with no citation"
+
+    manifest = [(s["type"], o["id"]) for s in faces.FACE_SLOTS for o in s["options"]
+                if o["origin"] == "openmoxie-manifest"]
+    assert len(manifest) == MANIFEST_ENTRIES
+    # every id is upstream's `MX_<nnn>_<Group>_<Detail>` shape, and its group prefix is
+    # the one this file independently says maps to that slot
+    for stype, oid in manifest:
+        prefix = next((p for p in MANIFEST_PREFIX_SLOT if oid.startswith(p)), None)
+        assert prefix, f"{oid} matches no ingested group prefix"
+        assert MANIFEST_PREFIX_SLOT[prefix] == stype, (oid, stype)
+    assert Counter(t for t, _ in manifest) == MANIFEST_PER_SLOT
+    # …and the exact set, pinned: adding, dropping or re-slotting one id moves this
+    fingerprint = hashlib.sha256(
+        "\n".join(sorted(f"{t}|{i}" for t, i in manifest)).encode("utf-8")).hexdigest()
+    assert fingerprint == MANIFEST_FINGERPRINT, (
+        "the ingested manifest changed — re-read the citation in face_assets.json "
+        "before touching this value")
+
+    # the totals, reported out loud so the count in the docs cannot quietly drift
+    assert sum(len(s["options"]) for s in faces.FACE_SLOTS) == 12 + MANIFEST_ENTRIES == 72
     catalog = faces.face_catalog()
-    assert [s["id"] for s in catalog if s["cited"]] == ["eye_color", "face_color"]
-    assert sum(1 for s in catalog if not s["cited"]) == 12
+    assert [s["id"] for s in catalog if not s["cited"]] == ["stickers", "extras", "misc"]
+    assert sum(1 for s in catalog if s["cited"]) == 11
+
+
+def test_the_data_file_is_shaped_the_way_the_loader_promises():
+    """`face_assets.json` is the only place an asset id is written down, so its shape is
+    a first-class guard: slot names are the fourteen recovered `MoxieCustomizationType`
+    spellings, ids are unique *within* a slot, every label is non-empty and every origin
+    is one we recognise."""
+    data = faces.load_face_assets()
+    assert set(data["slots"]) <= set(CITED_SLOT_TYPES)
+    for stype, options in data["slots"].items():
+        ids = [o["id"] for o in options]
+        assert len(ids) == len(set(ids)), f"duplicate id in {stype}"
+        for opt in options:
+            assert opt["id"] and str(opt["label"]).strip(), (stype, opt)
+            assert opt["origin"] in faces.OPTION_ORIGINS, (stype, opt)
+            if opt["origin"] == "openmoxie-manifest":
+                # upstream's own note says some of these crashed Unity without saying
+                # which, so the warning rides on every one of them
+                assert opt.get("caution") is True, opt["id"]
+            else:
+                assert _HEX_RE.match(opt["hex"]), opt        # previewable, or not cited
+    # an id we could not place would be parked, not guessed into a slot
+    assert data["unmapped"] == []
+
+
+def test_the_data_file_carries_the_citation_it_was_ingested_under():
+    """Nothing in this repo may carry an id whose provenance is not written next to it.
+    `ATTRIBUTION.md` says the same thing in prose; this is the machine-checked half."""
+    src = faces.load_face_assets()["source"]["openmoxie-manifest"]
+    assert src["url"] == "https://github.com/jbeghtol/openmoxie"
+    assert src["path"] == "site/hive/content/data.py"
+    assert src["symbol"] == "MOXIE_CUSTOMIZATIONS"
+    assert re.fullmatch(r"[0-9a-f]{40}", src["commit"])
+    assert src["license"].startswith("MIT")
+    assert src["ingested"] == "2026-09-02"
+    assert src["entries"] == MANIFEST_ENTRIES
+    assert re.fullmatch(r"[0-9a-f]{64}", src["sha256_of_ids"])
+    # the two warnings that travel with the ids
+    assert "crash" in src["upstream_caution"].lower()
+    assert "mqtt-and-conversation.md:824" in src["upstream_caution"]
+    # and the promise that no code came with them
+    assert "no code" in src["what_we_took"]
+
+
+def test_the_loader_has_a_seam_and_refuses_a_table_it_cannot_trust():
+    """`build_face_slots(catalog=)` is how a test substitutes its own table — and the
+    same door a bad ingest would come through, so it is checked rather than trusted."""
+    tiny = {"slots": {"Hair": [{"id": "X_1", "label": "One",
+                                "origin": "openmoxie-manifest"}]}}
+    slots = faces.build_face_slots(tiny)
+    assert len(slots) == 14                                   # the spine is ours
+    hair = next(s for s in slots if s["id"] == "hair")
+    assert [o["id"] for o in hair["options"]] == ["X_1"]
+    assert all(not s["options"] for s in slots if s["id"] != "hair")
+
+    for bad, why in (
+        ({"slots": {"Eyebrows": []}}, "a slot name our docs do not have"),
+        ({"slots": {"Hair": [{"id": "A", "label": "a", "origin": "guessed"}]}},
+         "an option with unknown provenance"),
+        ({"slots": {"Hair": [{"id": "A", "label": "", "origin": "recovered-enum"}]}},
+         "an option with no label"),
+        ({"slots": {"Hair": [{"id": "A", "label": "a", "origin": "recovered-enum"},
+                             {"id": "A", "label": "b", "origin": "recovered-enum"}]}},
+         "a duplicate id"),
+    ):
+        with pytest.raises(ValueError):
+            faces.build_face_slots(bad)
+        assert why                                            # documents the case
+
+
+def test_the_recovered_twelve_are_untouched_by_the_widening():
+    """The hex enums are the only options a parent can *preview*, and they came first.
+    Widening the vocabulary must not have moved, relabelled or re-originated them."""
+    eyes = next(s for s in faces.FACE_SLOTS if s["id"] == "eye_color")
+    first = [o for o in eyes["options"] if o["origin"] == "recovered-enum"]
+    assert [o["id"] for o in first] == list(CITED_EYE_COLORS)      # order preserved
+    assert eyes["options"][:6] == tuple(first)                     # and still first
+    assert {o["id"]: o["hex"] for o in first} == CITED_EYE_COLORS
+    face = next(s for s in faces.FACE_SLOTS if s["id"] == "face_color")
+    assert {o["id"]: o["hex"] for o in face["options"]
+            if o["origin"] == "recovered-enum"} == CITED_FACE_COLORS
 
 
 def test_the_catalog_is_json_safe_and_stable():
@@ -131,16 +282,46 @@ def test_validate_rejects_an_option_a_cited_slot_does_not_offer():
     assert "chartreuse" in str(e.value) and "teal" in str(e.value)
 
 
-def test_an_uncited_slot_takes_an_asset_label_because_we_have_no_catalog_for_it():
-    """We cannot check a value against a catalog we do not have, so for the twelve slots
-    our docs list no options for we check only that it is a plausible asset name. Never
-    an invented id — the parent supplies it. (The placeholder below is deliberately not
-    a real Moxie asset name: we do not have any, and we do not put one in our tree.)"""
-    assert faces.validate_face({"hair": "Whatever_The_Parent_Typed"}) == {
-        "hair": "Whatever_The_Parent_Typed"}
+def test_a_slot_with_no_options_at_all_still_takes_an_asset_label():
+    """Three slots survive the widening with nothing in them — `Stickers`, `Extras`,
+    `Misc`; neither our corpus nor the ingested manifest lists an id for any of them. We
+    cannot check a value against a catalog we do not have, so there we check only that it
+    is a plausible asset name. Never an invented id — the parent supplies it. (The
+    placeholder below is deliberately not a real Moxie asset name.)"""
+    assert faces.validate_face({"stickers": "Whatever_The_Parent_Typed"}) == {
+        "stickers": "Whatever_The_Parent_Typed"}
     with pytest.raises(ValueError) as e:
-        faces.validate_face({"hair": "red shag; DROP TABLE"})
-    assert "hair" in str(e.value)
+        faces.validate_face({"stickers": "gold star; DROP TABLE"})
+    assert "stickers" in str(e.value)
+
+
+def test_a_widened_slot_takes_a_catalogued_id_and_refuses_an_uncatalogued_one():
+    """The other side of the same coin: now that `hair` has ingested options, a value
+    there is checked against them. An id we do not catalogue is not *rejected* as a
+    concept — the id space is bundle-defined, `behavior-markup.md`:161-163 — it just has
+    to come through `face.custom`, which we never rewrite, and the error says so."""
+    assert faces.validate_face({"hair": "MX_080_Head_Hair_PinkShag"}) == {
+        "hair": "MX_080_Head_Hair_PinkShag"}
+    with pytest.raises(ValueError) as e:
+        faces.validate_face({"hair": "MX_080_Head_Hair_Invented"})
+    assert "MX_080_Head_Hair_Invented" in str(e.value) and "face.custom" in str(e.value)
+    # …and here is that escape hatch working, untouched
+    assert faces.validate_face({"custom": ["MX_080_Head_Hair_Invented"]}) == {
+        "custom": ["MX_080_Head_Hair_Invented"]}
+
+
+def test_a_manifest_option_is_accepted_in_every_slot_that_has_one():
+    """One catalogued id per widened slot, end to end: validated, rendered, and back."""
+    picked = {}
+    for slot in faces.FACE_SLOTS:
+        manifest = [o for o in slot["options"] if o["origin"] == "openmoxie-manifest"]
+        if manifest:
+            picked[slot["id"]] = manifest[0]["id"]
+    assert len(picked) == 11
+    assert faces.validate_face(picked) == picked
+    labels = faces.face_options_list(picked)
+    assert labels == list(picked.values())        # every one of them verbatim
+    assert all(x.startswith("MX_") for x in labels)
 
 
 def test_custom_labels_pass_through_untouched_and_deduplicated():
@@ -170,6 +351,20 @@ def test_the_wire_label_is_two_cited_spellings_joined():
         faces.face_option_label("nope", "teal")
 
 
+def test_a_manifest_id_is_already_a_whole_label_so_it_travels_verbatim():
+    """The other half of the rule: an `openmoxie-manifest` option is not an enum member,
+    it is the asset label itself, so joining a slot name onto it would corrupt it. A
+    value we do not catalogue is still joined — there is nothing better to do with it."""
+    assert faces.face_option_label("eye_color", "MX_010_Eyes_Hazel") == "MX_010_Eyes_Hazel"
+    assert faces.face_option_label("hair", "MX_080_Head_Hair_RedShag") == (
+        "MX_080_Head_Hair_RedShag")
+    assert faces.face_option_label("stickers", "Foo") == "Stickers_Foo"
+    # a mixed look renders both spellings side by side, in slot order
+    assert faces.face_options_list({"eye_color": "MX_010_Eyes_Hazel",
+                                    "face_color": "pink"}) == ["MX_010_Eyes_Hazel",
+                                                               "FaceColor_pink"]
+
+
 def test_face_options_lists_slot_layers_first_then_customs():
     labels = faces.face_options_list(
         {"face_color": "pink", "eye_color": "teal", "custom": ["Layer_A"]})
@@ -192,6 +387,23 @@ def test_the_same_look_always_yields_the_same_texture_key():
     must not churn the child's id and make the robot recomposite for nothing."""
     a = faces.face_child_id(["EyeColor_teal"], "Sam")
     assert a == faces.face_child_id(["EyeColor_teal"], "Sam")
+
+
+def test_the_texture_key_is_pinned_to_a_recorded_value():
+    """Determinism is only worth something if it is *stable across releases*: the whole
+    point is that a household that did not change its look does not get its child id
+    churned by an SDK upgrade. So the algorithm is pinned to values recorded from the
+    catalog as it shipped — a change to `FACE_CACHE_NAMESPACE`, to the `\x1f` join, or
+    to a wire spelling moves these and has to be a deliberate, migrated decision.
+
+    Both spellings are covered: the recovered-enum join, and a mixed look carrying an
+    ingested manifest id verbatim."""
+    assert faces.face_child_id(["EyeColor_teal", "FaceColor_pink"], "Sam") == (
+        "a6f3609a-0e20-512c-ae72-a16153adf140")
+    mixed = faces.face_options_list({"eye_color": "teal",
+                                     "hair": "MX_080_Head_Hair_PinkShag"})
+    assert mixed == ["EyeColor_teal", "MX_080_Head_Hair_PinkShag"]
+    assert faces.face_child_id(mixed, "Sam") == "2922dc09-cf66-520f-8e4a-60a4187750ca"
 
 
 def test_any_change_of_any_layer_yields_a_different_texture_key():
@@ -430,3 +642,24 @@ def test_the_normalizer_drops_junk_rows_rather_than_rendering_them(tmp_path):
     assert slot["options"] == [{"id": "teal", "label": "teal", "hex": "#38ADAE"},
                                {"id": "sneaky", "label": "sneaky"}]
     assert slot["cited"] is True
+
+
+# --------------------------------------------------------------------------- #
+# ⑧ The table is data — so it has to actually ship
+# --------------------------------------------------------------------------- #
+
+def test_the_asset_table_would_ship_in_the_wheel():
+    """`face_assets.json` is loaded at import, so a wheel without it is an SDK that
+    cannot be imported at all. `sim/tests/test_package_contents.py` guards this for every
+    data file generically; this is the same check aimed at the one this slice added, so
+    the failure names the right file."""
+    tomllib = pytest.importorskip("tomllib", reason="python < 3.11 has no tomllib")
+    import fnmatch
+    with open(os.path.join(REPO, "mqtt", "pyproject.toml"), "rb") as fh:
+        globs = tomllib.load(fh)["tool"]["setuptools"]["package-data"]["moxie_sdk"]
+    assert any(fnmatch.fnmatch("face_assets.json", g) for g in globs), (
+        "moxie_sdk/face_assets.json matches no package-data glob — pip would drop it "
+        "and `import moxie_sdk.faces` would fail on an installed SDK")
+    assert os.path.isfile(os.path.join(REPO, "mqtt", "moxie_sdk", "face_assets.json"))
+    assert faces.face_assets_path().endswith(os.path.join("moxie_sdk",
+                                                          "face_assets.json"))

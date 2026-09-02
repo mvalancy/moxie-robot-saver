@@ -1,5 +1,5 @@
 {
- "generated": "docs-ba5259543b63",
+ "generated": "docs-fb486be7ce54",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 55847,
+   "bytes": 56702,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -233,7 +233,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 24437,
+   "bytes": 25733,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -337,7 +337,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 69520,
+   "bytes": 70213,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -891,11 +891,12 @@
    "path": "guides/moxies-look.md",
    "title": "Moxie's look — letting your child style the face",
    "section": "guides",
-   "bytes": 4436,
+   "bytes": 7430,
    "mermaid": 0,
    "headings": [
     "What you can change today",
-    "Why the other twelve layers are greyed out",
+    "Where these choices come from — and why it matters",
+    "Two warnings that come with the artwork",
     "One robot, or all of them",
     "What actually happens when you press Save",
     "An honest caveat"
