@@ -513,3 +513,133 @@ def normalize_telehealth(payload: Optional[dict]) -> dict:
         out["categories"] = [str(c) for c in (p.get("categories") or [])]
         out["labels"] = [str(c) for c in (p.get("labels") or [])]
     return out
+
+
+# --- 📅 Today's plan — the recommender's "why this activity today" (audit BEYOND #7) --
+# The supervisor's `GET /schedule?device_id=…` answers with the day this robot was served
+# and a parallel audit trail:
+#
+#   {ok, device_id, day, planned_at, served,
+#    schedule:{provided_schedule:[Recommendation…], chat_request, …},
+#    explanations:[{module_id, slot, at, reason_codes, line, score, factors}…],
+#    inputs:{child_name, bedtime, slots, parent_requests, telemetry, planned, history, …}}
+#
+# `explanations` is **in the same order** as `schedule.provided_schedule`
+# (`docs/architecture/content-module-contract.md` §"The explanation"), which is what lets
+# a name from the wire and a reason from the audit trail be joined without guessing.
+#
+# Three things this normalizer refuses to invent, because the card's whole promise is that
+# a parent is reading the real reason:
+#
+#   * a **name**. `Recommendation.module_name` (RemoteChat.proto:26-34) is the only name on
+#     the wire, and the planner leaves it empty for the on-board catalog. When it is empty
+#     the id goes out verbatim — the plain-English table lives in the SDK, on the other
+#     side of the seam, and copying it here would let the two drift into two different
+#     names for one module.
+#   * a **clock time**. Only the scored fill gets a slot; the authored spine (a daily
+#     fixture like `DM`, an onboarding step, a `FREE_CHAT` breather) is ordered but not
+#     timed, and `time_local` is None for those rather than a made-up hour.
+#   * a **telemetry signal**. `inputs.telemetry.carries_module_signal` is the runtime
+#     saying out loud that finish/abandon comes from the robot's `mentor_behaviors`
+#     reports and not from telemetry; it is carried through, never quietly dropped.
+#
+# Pure, so it unit-tests in the hermetic suite (`sim/tests/test_schedule_view.py`).
+
+def normalize_schedule_entry(expl: Optional[dict], rec: Optional[dict]) -> dict:
+    """One `explanations[i]` + the `provided_schedule[i]` it explains → a card row."""
+    expl = expl if isinstance(expl, dict) else {}
+    rec = rec if isinstance(rec, dict) else {}
+    codes = [str(c) for c in (expl.get("reason_codes") or []) if c is not None]
+    module_id = str(expl.get("module_id") or rec.get("module_id") or "")
+    at = expl.get("at")
+    return {
+        "time_local": str(at) if at else None,
+        "module_id": module_id,
+        # `module_name` when the template supplied one, else the id verbatim.
+        "name": str(rec.get("module_name") or "") or module_id,
+        "why": str(expl.get("line") or ""),
+        "pinned": "parent_request" in codes,
+        # No slot = the authored spine, not a scored pick: a daily fixture, an onboarding
+        # step or a breather chat. Those are the rows that show "—" instead of a time.
+        "fixture": expl.get("slot") is None,
+        "reason_codes": codes,
+    }
+
+
+def normalize_schedule_view(payload: Optional[dict]) -> dict:
+    """Runtime `/schedule` response → the console's 📅 Today's plan card shape.
+
+    Tolerates anything: a None payload (supervisor down), an unknown device's `ok:false`,
+    a truncated or mistyped body. It never raises — a payload it cannot read comes back as
+    `{"ok": False, "error": …}` with an empty-but-renderable view, so the card shows the
+    reason rather than a blank list that looks like "no plan".
+    """
+    empty = {"ok": False, "device_id": None, "day": "", "planned_at": "",
+             "child_name": "", "served": False, "entries": [],
+             "constraints": {"bedtime": {"enabled": False, "kind": ""},
+                             "parent_request": {"count": 0, "pinned": []},
+                             "telemetry_signal": False},
+             "dropped_for_bedtime": 0, "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        ok = bool(p.get("ok"))
+        inputs = p.get("inputs") if isinstance(p.get("inputs"), dict) else {}
+        sched = p.get("schedule") if isinstance(p.get("schedule"), dict) else {}
+        # `or []` is not enough: a string is iterable, and one bad field must not turn
+        # into a row per character.
+        recs = list(sched.get("provided_schedule") or []) \
+            if isinstance(sched.get("provided_schedule"), (list, tuple)) else []
+        expls = list(p.get("explanations") or []) \
+            if isinstance(p.get("explanations"), (list, tuple)) else []
+
+        # Same order, by contract — but a payload that broke the contract still renders:
+        # fall back to the first unused entry with the same module_id, then to nothing.
+        rows, used = [], set()
+        for i, expl in enumerate(expls):
+            mid = (expl or {}).get("module_id") if isinstance(expl, dict) else None
+            rec, hit = (recs[i] if i < len(recs) else None), i
+            if not (isinstance(rec, dict) and rec.get("module_id") == mid):
+                rec, hit = None, None
+                for j, r in enumerate(recs):
+                    if j not in used and isinstance(r, dict) and r.get("module_id") == mid:
+                        rec, hit = r, j
+                        break
+            if hit is not None:
+                used.add(hit)
+            rows.append(normalize_schedule_entry(expl, rec))
+
+        bed = inputs.get("bedtime") if isinstance(inputs.get("bedtime"), dict) else {}
+        bedtime = {"enabled": bool(bed.get("enabled")), "kind": str(bed.get("kind") or "")}
+        if bedtime["enabled"]:
+            bedtime["starts_at"] = str(bed.get("starts_at") or "")
+            bedtime["ends_at"] = str(bed.get("ends_at") or "")
+        reqs = inputs.get("parent_requests")
+        pinned = [{"module_id": str(r.get("module_id") or ""),
+                   "at": str(r.get("at") or "")}
+                  for r in (reqs if isinstance(reqs, (list, tuple)) else [])
+                  if isinstance(r, dict) and r.get("due_today") and r.get("slot") is not None]
+        tel = inputs.get("telemetry") if isinstance(inputs.get("telemetry"), dict) else {}
+        planned = inputs.get("planned") if isinstance(inputs.get("planned"), dict) else {}
+
+        return {
+            "ok": ok,
+            "device_id": p.get("device_id"),
+            "day": str(p.get("day") or inputs.get("day") or ""),
+            "planned_at": str(p.get("planned_at") or ""),
+            "child_name": str(inputs.get("child_name") or ""),
+            # False = this plan was built for the parent's read; the robot has not pulled
+            # its day yet this run. The card says so instead of implying Moxie ran it.
+            "served": bool(p.get("served")),
+            "entries": rows,
+            "constraints": {
+                "bedtime": bedtime,
+                "parent_request": {"count": len(pinned), "pinned": pinned},
+                "telemetry_signal": bool(tel.get("carries_module_signal")),
+            },
+            "dropped_for_bedtime": int(_num(planned.get("dropped_for_bedtime")) or 0),
+            "error": None if ok else (p.get("error") or "no plan available"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable schedule payload: {e}"}

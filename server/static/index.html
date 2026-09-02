@@ -264,6 +264,23 @@
           voice and is recorded in the Safety card. What your child says back appears above
           as text only — no microphone or camera is streamed to whoever is driving.</p>
       </div>
+      <!-- 📅 Today's plan (audit BEYOND #7). The robot asks the cloud for a schedule
+           before it will enter a session at all, and the supervisor's recommender scores
+           every candidate on what a parent asked for, unfinished onboarding, coverage,
+           recency, whether the child finishes or walks out, category variety and the time
+           of day — never planning into bedtime. It keeps a plain-sentence reason for each
+           entry, and this card is where a parent reads it. Read-only: the plan is changed
+           from Settings (bedtime, requested activities), not from here. -->
+      <div class="card hidden" id="schedule-card">
+        <h2>📅 Today's plan</h2>
+        <p class="muted">What Moxie lines up for today, and why each one is on the list.
+          Activities without a time are daily fixtures and chat breaks — they run in order,
+          not at the clock.</p>
+        <div id="sched-head" class="muted"></div>
+        <div id="sched-list"></div>
+        <div id="sched-foot" class="muted sched-foot"></div>
+        <button id="btn-sched-refresh" class="ghost">Refresh</button>
+      </div>
       <!-- What Moxie remembers (audit BEYOND #4). The runtime keeps a few durable facts
            per activity, each stamped with a stable id, the day and the module that
            learned it. A memory a parent cannot read or erase is not acceptable on a

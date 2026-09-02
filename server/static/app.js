@@ -159,6 +159,7 @@ async function refreshLive(){
     refreshSafety(null);
     refreshMemory(null);
     refreshTelehealth(null);
+    refreshSchedule(null);
     return;
   }
   if(cfgBox) cfgBox.style.display='';
@@ -184,6 +185,7 @@ async function refreshLive(){
   refreshSafety(liveDevice);
   refreshMemory(liveDevice);
   refreshTelehealth(liveDevice);
+  refreshSchedule(liveDevice);
 }
 
 // ---- 🔐 Robot access (the device allowlist / pairing gate) ----
@@ -690,6 +692,76 @@ async function thSpeak(){
 }
 { const b=$('#btn-th-speak'); if(b) b.onclick=thSpeak; }
 { const t=$('#th-text'); if(t) t.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); thSpeak(); } }; }
+
+// ---- 📅 Today's plan (the recommender's "why this activity today", BEYOND #7) ----
+// The supervisor plans the day the robot pulls and keeps one plain sentence per entry
+// explaining why it is there. This card only reads it: nothing here changes the plan (that
+// is ⚙️ Settings — bedtime and requested activities), so it offers no control it
+// cannot honour. It rides refreshLive()'s cadence like every other card, plus a Refresh
+// button because a parent who just changed a bedtime wants to see the day re-planned.
+//
+// Two honesty rules the card keeps:
+//   * an entry with no clock time is a fixture or a chat break, and shows "—", never an
+//     invented hour;
+//   * "no telemetry module signal" is stated plainly — finish/abandon comes from the
+//     robot's own reports, not from the telemetry stream.
+let schedDevice=null;
+async function refreshSchedule(deviceId){
+  const card=$('#schedule-card'); if(!card) return;
+  schedDevice=deviceId;
+  if(!deviceId){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  let s;
+  try{ s=await api(`/local/robots/${encodeURIComponent(deviceId)}/schedule`,{auth:false}); }
+  catch(e){ renderSchedule({ok:false,error:'Supervisor unreachable'}); return; }
+  renderSchedule(s);
+}
+function renderSchedule(s){
+  const head=$('#sched-head'), list=$('#sched-list'), foot=$('#sched-foot');
+  if(!list) return;
+  s=s||{};
+  if(!s.ok){
+    if(head) head.textContent='';
+    if(foot) foot.textContent='';
+    const why=(s.error==='supervisor not reachable')?'Supervisor unreachable':(s.error||'unavailable');
+    list.innerHTML=`<div class="live-off">${escapeHtml(why)}</div>`;
+    return;
+  }
+  const who=s.child_name||(s.device_id?String(s.device_id).slice(0,16)+'\u2026':'this robot');
+  if(head) head.innerHTML=`Planned for <b>${escapeHtml(who)}</b>, ${escapeHtml(s.day||'today')}`
+    + (s.served?'':' \u00b7 not pulled by the robot yet');
+  const rows=(s.entries||[]);
+  if(!rows.length){
+    list.innerHTML='<div class="live-off">No plan yet \u2014 the robot pulls its day when it '
+      + 'wakes.</div>';
+    if(foot) foot.textContent='';
+    return;
+  }
+  list.innerHTML=rows.map(e=>{
+    const t=e.time_local||'\u2014';
+    const pin=e.pinned?'<span class="sched-pin" title="A parent asked for this">\u2691</span>':'';
+    return `<div class="sched-row${e.fixture?' fixture':''}">`
+      + `<span class="sched-at">${escapeHtml(t)}</span>`
+      + `<div class="sched-body"><b>${escapeHtml(e.name||e.module_id||'')}</b>${pin}`
+      + `<div class="sched-why">${escapeHtml(e.why||'')}</div></div></div>`;
+  }).join('');
+  if(foot){
+    const c=s.constraints||{}, bed=c.bedtime||{}, pr=c.parent_request||{};
+    const bits=[];
+    if(bed.enabled){
+      const w=`${bed.starts_at||''}\u2013${bed.ends_at||''}`;
+      bits.push(`Bedtime ${escapeHtml(w)} honoured`
+        + (s.dropped_for_bedtime?` (${s.dropped_for_bedtime} later slot`
+            + `${s.dropped_for_bedtime===1?'':'s'} dropped)`:''));
+    } else bits.push('No bedtime set');
+    if(pr.count) bits.push(`${pr.count} parent request${pr.count===1?'':'s'} pinned `
+      + `(${(pr.pinned||[]).map(p=>escapeHtml(p.module_id)+(p.at?' at '+escapeHtml(p.at):'')).join(', ')})`);
+    if(!c.telemetry_signal) bits.push('No telemetry module signal \u2014 finish/abandon '
+      + "comes from the robot's reports");
+    foot.innerHTML=bits.join(' \u00b7 ');
+  }
+}
+{ const b=$('#btn-sched-refresh'); if(b) b.onclick=()=>refreshSchedule(schedDevice||liveDevice); }
 
 // ---- 🎨 Moxie's look (face customization, audit ADOPT #9) ----
 // The child's chosen face rides down inside `child_pii` as `face_options` — a list of
