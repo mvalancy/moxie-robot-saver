@@ -28,6 +28,8 @@ for _p in (MQTT_DIR, SUPERVISOR_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from moxie_sdk.tts import Synthesizer          # noqa: E402  (needs the path above)
+
 CHAT_TOPIC = "/devices/{device_id}/commands/remote_chat"
 
 
@@ -113,6 +115,42 @@ class FakeClient:
 
     def chat_replies(self, device_id: str) -> list:
         return self.on(CHAT_TOPIC.format(device_id=device_id))
+
+
+class LatchClient(FakeClient):
+    """A `FakeClient` a test can *wait on* — `wait_for(predicate)` instead of sleeping.
+
+    A streaming/filler turn publishes several times from several threads, so a test needs
+    to block until the wire looks a certain way rather than guess how long that takes.
+    (`test_brain_latency.py` has its own private copy from PR #14; new suites use this
+    one — see this module's docstring on why the old copies stay put.)"""
+
+    def __init__(self):
+        super().__init__()
+        import threading
+        self._cond = threading.Condition()
+
+    def publish(self, topic, payload):
+        with self._cond:
+            super().publish(topic, payload)
+            self._cond.notify_all()
+
+    def wait_for(self, predicate, timeout=10.0) -> bool:
+        with self._cond:
+            return self._cond.wait_for(lambda: predicate(list(self.published)), timeout)
+
+
+class CountingSynth(Synthesizer):
+    """A `moxie_sdk.tts.Synthesizer` that records every line it was asked to speak."""
+    name = "counting"
+    sample_rate = 16000
+
+    def __init__(self):
+        self.spoken = []
+
+    def synthesize(self, text, voice=None):
+        self.spoken.append(text)
+        return b"\x01\x02" * 8
 
 
 def make_runtime(app, *, device_id: str = "d_test", nickname: str = "Sam",

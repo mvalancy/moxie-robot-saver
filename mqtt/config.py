@@ -79,6 +79,15 @@ def _env_float(name, default):
 
 BRAIN_BUDGET_S = _env_float("MOXIE_BRAIN_BUDGET_S", 6.0)
 
+# --- streaming replies (a sentence at a time) ---
+# When the app can answer incrementally (MoxieApp.respond_stream), publish each finished
+# sentence as its own RemoteChatResponse chunk (result=REPLY_PENDING + chunk_num, closed
+# by consistency_control.is_completed) instead of waiting for the whole completion. The
+# child hears the first sentence at first-token latency (~3-5 s) instead of at
+# whole-answer latency (18-45 s). "0"/"off" → the old single-reply path.
+STREAMING = (os.environ.get("MOXIE_STREAMING", "1").strip().lower()
+             not in ("0", "off", "false", "no", ""))
+
 # Webhook app (external avatar bridge)
 WEBHOOK_ENDPOINT = os.environ.get("MOXIE_WEBHOOK_ENDPOINT", "")
 

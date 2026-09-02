@@ -21,6 +21,13 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`filler.py`](filler.py) — the short "let me think" lines, with thinking markup, that the
   runtime speaks when the brain outlives its latency budget (see
   [`../supervisor/`](../supervisor/)).
+- [`segment.py`](segment.py) — the sentence segmenter a streaming brain talks through:
+  dependency-free, pure, and careful about decimals, abbreviations, ellipses and lines too
+  short to speak alone. Each finished sentence becomes one `RemoteChatResponse` chunk, so a
+  child hears the first line at first-token latency instead of at whole-answer latency.
+- [`chat.py`](chat.py) — the LLM boundary: `make_openai_chat` (a whole completion),
+  `make_openai_stream` / `stream_completion` (text deltas), plus the rate-limit
+  classification, `Pacer` and `call_with_backoff` both share.
 
 ---
 📖 [Back to top](../../README.md)

@@ -88,6 +88,7 @@ services:
       MOXIE_LLM_API_KEY: ${MOXIE_LLM_API_KEY:-}
       MOXIE_LLM_MODEL: ${MOXIE_LLM_MODEL:-graphling-medium}
       MOXIE_BRAIN_BUDGET_S: ${MOXIE_BRAIN_BUDGET_S:-6}   # slow brain → a filler line, then the answer
+      MOXIE_STREAMING: ${MOXIE_STREAMING:-1}             # speak each sentence as the model writes it
       MOXIE_VOICE_BASE_URL: ${MOXIE_VOICE_BASE_URL:-}
       MOXIE_VOICE_API_KEY: ${MOXIE_VOICE_API_KEY:-}
       MOXIE_WEBHOOK_ENDPOINT: ${MOXIE_WEBHOOK_ENDPOINT:-}

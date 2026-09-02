@@ -27,7 +27,19 @@ browser at all and carry the hermetic suite CI actually runs.
   through the real `MoxieRuntime`: a `FakeClient` that records publishes,
   `make_runtime` / `drive_turn` / `drive_once`, and `assert_spec_response` (the
   RemoteChatResponse conformance check). Import this rather than growing a fifth
-  private copy of it.
+  private copy of it. It also owns `LatchClient` (a fake transport a test can *wait on*
+  instead of sleeping) and `CountingSynth`.
+- **`test_segment.py`** — the pure sentence segmenter (`moxie_sdk/segment.py`) a streaming
+  brain talks through: boundaries, the same split whatever size the network cuts the
+  stream into, decimals, abbreviations and initials, ellipses, the minimum chunk length,
+  and the flush contract (the LAST sentence must still be buffered when the stream ends,
+  so there is always a chunk left to close the turn with).
+- **`test_streaming.py`** — streamed replies end to end: chunk numbering under one
+  `event_id`, a one-sentence stream staying wire-identical to a plain reply, an action
+  riding out on chunk 0, a late first token → filler, a mid-answer stall → a second filler
+  and provably never a third, a newer turn cancelling a stream, a stream failing before a
+  word (falls back to `respond`) or mid-answer (closes the sequence), `MOXIE_STREAMING=0`,
+  LLMApp's own streaming path, and the SIL client joining the chunks of one turn.
 - **`test_brain_latency.py`** — the background-inference + filler behavior: a fast brain
   still answers in exactly one `SUCCESS` chunk, a slow one speaks a filler
   (`REPLY_PENDING`, chunk 0) inside the budget and delivers the real line as chunk 1, a

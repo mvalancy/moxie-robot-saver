@@ -1,5 +1,5 @@
 {
- "generated": "docs-2e1cb83d7931",
+ "generated": "docs-baa1c9b77d47",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 22877,
+   "bytes": 25338,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -114,7 +114,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 18151,
+   "bytes": 19081,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -148,7 +148,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 39321,
+   "bytes": 44036,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",

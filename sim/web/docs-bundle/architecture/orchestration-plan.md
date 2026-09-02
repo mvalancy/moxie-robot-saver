@@ -207,6 +207,15 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   Piper voices + cached Whisper) that runs the real-speech talk loop — "live-tested" is reproducible on demand.
   actionlint clean; docs (sil-and-cicd "Live CI", RELEASING CI table). Proof dispatch run on dev after merge.
   In flight: `feat/streamed-reply-chunks`.
+- **2026-09-02** — Integrated `feat/streamed-reply-chunks` (PR #17 → dev): the answer itself now streams.
+  `MoxieApp.respond_stream` yields one `ReplyChunk` per finished sentence (pure segmenter in
+  `moxie_sdk/segment.py`; `chat.stream_completion` opens `stream=True` through the same backoff/`Pacer`),
+  and the runtime publishes each as `REPLY_PENDING` + `chunk_num`, closed by `SUCCESS` + `is_completed`.
+  The filler timer re-arms per chunk (cap 2/turn), a newer turn cancels the stream mid-answer, and a
+  one-chunk answer stays byte-identical to the old wire. Live: **first sentence at 1.52 s, whole answer at
+  4.38 s** (4 chunks, one `event_id`) on a healthy gateway day. Both SIM clients now treat a turn as a
+  turn, not a reply. +48 tests (→281). Knob: `MOXIE_STREAMING=0` restores the single-reply path. Recorded
+  assumption (unchanged but leaned on harder): no capture proves a physical Moxie plays chunk 2.
 
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
