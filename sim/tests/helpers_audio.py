@@ -102,6 +102,46 @@ def resample_pcm16(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
     return np.clip(np.rint(out), -32768, 32767).astype(np.int16).tobytes()
 
 
+def resample_pcm16_stdlib(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
+    """`resample_pcm16` with **no numpy** — standard library only.
+
+    The gateway-STT live tier proves the robot-rate path (22050 Hz TTS audio → the
+    16 kHz the perception bus actually carries), and it must be able to do that on a box
+    that installed nothing but `openai`: the whole point of the cloud ears is that a
+    hosted deployment has no local model wheels, and numpy arrives with faster-whisper.
+
+    Prefers `audioop.ratecv` (a proper filtered converter, stdlib through 3.12) and falls
+    back to plain linear interpolation where `audioop` was removed (3.13+). Both are
+    ample for ASR — Whisper's own front end low-passes at 8 kHz.
+    """
+    if src_rate == dst_rate or not pcm:
+        return pcm
+    try:
+        import warnings
+        with warnings.catch_warnings():                 # 3.12 deprecates it; 3.13 drops it
+            warnings.simplefilter("ignore", DeprecationWarning)
+            import audioop                              # stdlib <= 3.12
+        return audioop.ratecv(pcm, 2, 1, int(src_rate), int(dst_rate), None)[0]
+    except ImportError:
+        pass
+    from array import array
+    src = array("h")
+    src.frombytes(pcm[:len(pcm) - (len(pcm) % 2)])
+    n_out = int(round(len(src) * dst_rate / float(src_rate)))
+    if n_out <= 0 or not len(src):
+        return b""
+    step = (len(src) - 1) / float(max(1, n_out - 1)) if n_out > 1 else 0.0
+    out = array("h", bytes(2 * n_out))
+    for i in range(n_out):
+        pos = i * step
+        j = int(pos)
+        frac = pos - j
+        a = src[j]
+        b = src[j + 1] if j + 1 < len(src) else a
+        out[i] = max(-32768, min(32767, int(round(a + (b - a) * frac))))
+    return out.tobytes()
+
+
 def duration_s(pcm: bytes, sample_rate: int) -> float:
     """Seconds of mono PCM16."""
     return (len(pcm) / 2.0) / float(sample_rate or 1)

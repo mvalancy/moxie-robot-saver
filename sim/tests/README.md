@@ -76,6 +76,21 @@ browser at all and carry the hermetic suite CI actually runs.
   deep tier's PR-to-main docker smokes could see that. Every guard is paired with
   **negative tests** — tiny in-memory compose pairs carrying exactly one injected drift —
   so the suite proves the guards still bite, not merely that they pass.
+- **`test_stt_gateway.py`** — the *gateway ears* hermetic tier (`moxie_sdk/stt.py` +
+  the `MOXIE_STT` switch): the in-memory WAV wrapping parsed back out of its own header
+  (rate/channels/width/frames — a header that lied about the rate would pitch-shift the
+  audio), the request the fake client receives (model, a `("utterance.wav", …,
+  "audio/wav")` tuple, `response_format=json`), `.text` stripped, silence never costing a
+  request, a 429 retried through an injected `sleep` and re-uploading real bytes rather
+  than an exhausted stream, a hard 400 not retried, `FallbackTranscriber` latching to the
+  standby and reporting exactly once, and every `MOXIE_STT` value — including the one the
+  deployment story rests on, that **`MOXIE_STT=whisper` keeps the ears local even with a
+  gateway fully configured** (with its TTS counterpart asserted alongside), and that an
+  unset environment still builds exactly what it built before. Runs with **no `openai`
+  installed** (`client=` fake + a stubbed factory), so it carries in the fast venv too. It
+  also holds the golden test for `moxie_sdk/audio_models.py`, the pure name classifier
+  that splits a gateway's flat `/v1/models` list into voices and ears for a future console
+  picker.
 - **Live tests** (`test_live_gateway.py`, `test_live_action_tags.py`,
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the
@@ -104,6 +119,17 @@ browser at all and carry the hermetic suite CI actually runs.
   the gateway does the speaking); skips cleanly without them or without a voice URL. **In
   CI** it rides in the same creds-only dispatch step as the three suites above, which also
   fails on an empty `MOXIE_VOICE_BASE_URL`.
+- **`test_live_gateway_stt.py`** — the *gateway ears* live tests (live since 2026-09-02),
+  budgeted at **eight gateway calls total**. `piper-amy` speaks a fixed 13-word line and
+  `stt-whisper` reads it back at the WAV's own 22050 Hz *and* at the 16 kHz the perception
+  bus actually carries (resampled with the **standard library alone** — a hosted box that
+  installed only `openai` has no numpy, and that box is the whole reason cloud ears exist);
+  an unknown model proves the downgrade latches inside one call; and the last test runs one
+  child utterance through the real `MoxieRuntime` with **nothing local in the loop** —
+  gateway TTS → `zmqSTTRequest` frames → gateway STT → gateway brain → gateway voice →
+  `CloudTTSResponse`. Both floors are word overlap ≥ 0.7; the live run measured **1.00**.
+  Needs only `openai` (no `faster-whisper`, no numpy, no 63 MB voice file — the gateway does
+  all of it); skips cleanly without a base URL or key. Prints `[gw-stt]` evidence lines.
 - **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper
   speech in, real Piper speech out, read back by real faster-whisper. Tier 1 round-trips
   Moxie's own voice through Whisper (and proves the built-in `ToneSynthesizer` would
