@@ -178,6 +178,7 @@ class MoxieRuntime:
                 "wifi_ssid": st.get("wifi_ssid"), "mode": st.get("mode"),
                 "ota_reboot_required": st.get("ota_reboot_required"),
                 "config_overrides": self._config_overrides.get(r.device_id, {}),
+                "config_effective": self.effective_config(r.device_id),
                 "telemetry_count": len(r.extra.get("telemetry", [])),
                 "safety_total": int((self.store.read(
                     r.device_id, safety_seam.COUNTS_COLLECTION, {}) or {}).get("total", 0)),
@@ -186,8 +187,11 @@ class MoxieRuntime:
                         r.device_id, safety_seam.EVENTS_COLLECTION, []) or [])
                     if isinstance(e, dict) and not e.get("reviewed")),
             })
+        from moxie_sdk.cloud_config import schedulable_module_ids
         return {"ok": True, "app": self.app.name,
                 "uptime_s": int(time.time() - self.started_at),
+                "fleet_config": self.fleet_config(),
+                "schedule_modules": list(schedulable_module_ids()),
                 "robots": robots, "recent": list(self.recent)[-60:]}
 
     # ---- lifecycle ----
@@ -242,14 +246,32 @@ class MoxieRuntime:
                         limit = 20
                     out = rt.safety_view(device_id, limit=limit)
                     return self._json_out(out, 200 if out.get("ok") else 404)
+                if u.path == "/config":
+                    q = parse_qs(u.query)
+                    scope = (q.get("scope") or ["robot"])[0]
+                    if scope == "fleet":
+                        return self._json_out({"ok": True, "scope": "fleet",
+                                               "fleet_config": rt.fleet_config()})
+                    device_id = (q.get("device_id") or [""])[0]
+                    if device_id not in rt.robots:
+                        return self._json_out(
+                            {"ok": False, "error": f"unknown device_id {device_id!r}"}, 404)
+                    return self._json_out({
+                        "ok": True, "scope": "robot", "device_id": device_id,
+                        "fleet_config": rt.fleet_config(),
+                        "config_overrides": rt._config_overrides.get(device_id, {}),
+                        "config_effective": rt.effective_config(device_id)})
                 self.send_response(404); self.end_headers()
 
             def do_POST(self):
                 """Parent-console writes.
 
                 `POST /config?device_id=…` with a JSON body of overrides (audio_volume,
-                weekday_bedtime, wake toggles, …), validated by sanitize_config_overrides,
-                then update_config re-pushes RobotCloudConfig.
+                weekday_bedtime, alarms, wake toggles, …), validated by
+                sanitize_config_overrides, then update_config re-pushes RobotCloudConfig.
+                `POST /config?scope=fleet` writes the same whitelisted overrides as the
+                **appliance-wide defaults** (audit ADOPT #6) and re-pushes every connected
+                robot; a per-robot override still wins over the fleet value.
 
                 `POST /safety?device_id=…` with `{"event_id": "sfe-…"}` (or `{}` / `"all"`)
                 marks queued safety events reviewed — the parent's "I have seen this".
@@ -270,14 +292,24 @@ class MoxieRuntime:
                     except Exception as e:
                         out, code = {"ok": False, "error": str(e)}, 400
                     return self._json_out(out, code)
+                scope = (parse_qs(urlparse(self.path).query).get("scope") or ["robot"])[0]
                 try:
                     from moxie_sdk.cloud_config import sanitize_config_overrides
                     overrides = sanitize_config_overrides(_json.loads(raw or b"{}"))
-                    if not device_id or device_id not in rt.robots:
-                        raise ValueError(f"unknown device_id {device_id!r}")
-                    rt.update_config(device_id, **overrides)
-                    out, code = {"ok": True, "device_id": device_id, "applied": overrides,
-                                 "config_overrides": rt._config_overrides.get(device_id, {})}, 200
+                    if scope == "fleet":
+                        fleet = rt.update_fleet_config(**overrides)
+                        out, code = {"ok": True, "scope": "fleet", "applied": overrides,
+                                     "fleet_config": fleet,
+                                     "robots": list(rt.robots)}, 200
+                    else:
+                        if not device_id or device_id not in rt.robots:
+                            raise ValueError(f"unknown device_id {device_id!r}")
+                        rt.update_config(device_id, **overrides)
+                        out, code = {
+                            "ok": True, "scope": "robot", "device_id": device_id,
+                            "applied": overrides,
+                            "config_overrides": rt._config_overrides.get(device_id, {}),
+                            "config_effective": rt.effective_config(device_id)}, 200
                 except Exception as e:
                     out, code = {"ok": False, "error": str(e)}, 400
                 body = _json.dumps(out).encode()
@@ -375,9 +407,38 @@ class MoxieRuntime:
             pass
 
     # ---- config push / edit (parent console) ----
+    FLEET_CONFIG_COLLECTION = "config"          # → $MOXIE_DATA_DIR/fleet/config.json
+
+    def fleet_config(self) -> dict:
+        """The appliance-wide default overrides — one place to set house rules for every
+        robot on this box (audit ADOPT #6). Read from the store each time so an edit from
+        another process (or a hand-edited `fleet/config.json`) is picked up on the next
+        push. `{}` when none was ever set, which is the pre-fleet behavior exactly."""
+        cfg = self.store.read_shared(self.FLEET_CONFIG_COLLECTION, {})
+        return dict(cfg) if isinstance(cfg, dict) else {}
+
+    def effective_config(self, device_id) -> dict:
+        """`fleet ⊕ per-robot` — the override layer stack this robot's config is built
+        from (the builder's own kwarg defaults are the layer underneath)."""
+        from moxie_sdk.cloud_config import merge_config_layers
+        return merge_config_layers(self.fleet_config(),
+                                   self._config_overrides.get(device_id, {}))
+
+    def update_fleet_config(self, **overrides):
+        """Parent-console *fleet* config edit: merge overrides into the appliance-wide
+        defaults, persist them, and re-push every connected robot's config so the change
+        lands everywhere at once. Per-robot overrides still win."""
+        cfg = self.fleet_config()
+        cfg.update(overrides)
+        self.store.write_shared(self.FLEET_CONFIG_COLLECTION, cfg)
+        self._note("config", f"⚙️  fleet config updated: {', '.join(overrides) or '—'}")
+        for device_id in list(self.robots):
+            self._push_config(device_id)
+        return cfg
+
     def _push_config(self, device_id):
         from moxie_sdk.cloud_config import build_robot_cloud_config
-        cfg = build_robot_cloud_config(self.child, **self._config_overrides.get(device_id, {}))
+        cfg = build_robot_cloud_config(self.child, **self.effective_config(device_id))
         if self.client:
             self.client.publish(f"/devices/{device_id}/config", json.dumps(cfg))
         print(f"[runtime] → pushed config to {device_id} (pairing_status=paired)")

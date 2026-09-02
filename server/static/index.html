@@ -150,10 +150,30 @@
           </div>
           <label class="check"><input id="cfg-wake-btn" type="checkbox"> Wake button enabled</label>
           <label class="check"><input id="cfg-touch-wake" type="checkbox"> Touch to wake</label>
+          <fieldset class="cfgset">
+            <legend>⏰ Wake alarm</legend>
+            <div class="cfg-days" id="cfg-alarm-days"></div>
+            <div class="cfg-row">
+              <label>Wake at <input id="cfg-alarm-time" type="time"></label>
+              <label class="check"><input id="cfg-alarm-on" type="checkbox"> Alarm on</label>
+            </div>
+          </fieldset>
+          <fieldset class="cfgset">
+            <legend>📅 Scheduled activity</legend>
+            <div class="cfg-row">
+              <label>Activity
+                <select id="cfg-pref-module"><option value="">— none —</option></select>
+              </label>
+              <label>At <input id="cfg-pref-at" type="datetime-local"></label>
+            </div>
+          </fieldset>
+          <label class="check"><input id="cfg-fleet" type="checkbox">
+            Apply to all robots (house rules)</label>
           <div class="row">
             <button id="btn-cfg-save" class="primary grow">Save settings</button>
           </div>
           <div id="cfg-status" class="muted"></div>
+          <div id="cfg-layers" class="muted"></div>
         </details>
         <div class="row">
           <button id="btn-wake" class="primary grow">Wake up</button>

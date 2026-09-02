@@ -46,6 +46,11 @@ browser at all and carry the hermetic suite CI actually runs.
   superseded turn's answer is dropped, fillers never repeat back-to-back, and both chunks
   get their own `CloudTTSResponse`. No sleeps: the fake brain blocks on an `Event` the
   test releases and the fake transport is a `Condition` the test waits on.
+- **`test_fleet_config.py`** — the fleet-level default config (audit ADOPT #6): the pure
+  precedence + deep-merge rule of `cloud_config.merge_config_layers`, the store's
+  `fleet/config.json` record (and that a robot literally named `config` cannot collide
+  with it), and the runtime seam — one fleet edit re-pushes **every** connected robot, a
+  per-robot override still wins, and the status snapshot stays JSON-safe.
 - **`test_console_roundtrip.py`** — the parent console ⇄ supervisor contract, driven
   in-process against a status-server double whose payload keys are diffed against the
   real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).

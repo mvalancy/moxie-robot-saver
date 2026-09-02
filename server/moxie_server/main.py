@@ -498,6 +498,27 @@ async def set_robot_config(device_id: str, request: Request):
             "ok": False, "error": "supervisor not reachable", "detail": str(e)})
 
 
+@app.post("/local/fleet/config")
+async def set_fleet_config(request: Request):
+    """Parent-console **fleet** config edit (audit ADOPT #6): forward the same whitelisted
+    overrides to the supervisor's `POST /config?scope=fleet`, which validates them, stores
+    them as the appliance-wide defaults and re-pushes every connected robot. A per-robot
+    override still wins. Server-side call so the browser has no CORS issue."""
+    import urllib.request, urllib.error
+    body = await request.body()
+    url = STATUS_URL.rsplit("/status", 1)[0] + "/config?scope=fleet"
+    req = urllib.request.Request(url, data=body or b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code, content=json.loads(e.read().decode() or "{}"))
+    except Exception as e:
+        return JSONResponse(status_code=503, content={
+            "ok": False, "error": "supervisor not reachable", "detail": str(e)})
+
+
 @app.get("/local/robots/{device_id}/telemetry")
 def robot_telemetry(device_id: str, limit: int = 20):
     """Parent-console insights (M6): the robot's stored telemetry Packets, fetched from

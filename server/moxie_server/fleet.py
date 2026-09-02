@@ -47,6 +47,19 @@ def robot_summary(r: dict) -> str:
     return " · ".join(bits) or "connected"
 
 
+def config_sources(fleet_config: Optional[dict], overrides: Optional[dict]) -> dict:
+    """`{key: "robot" | "fleet"}` — which layer each effective override came from.
+
+    The console renders it as a "set for every robot" hint next to a field, so a parent
+    can tell a house rule from a per-robot exception without opening two screens. Pure:
+    the layering itself lives in `moxie_sdk.cloud_config.merge_config_layers`; this only
+    labels it, top-level key by top-level key (a per-robot key wins the label even when
+    the layers deep-merged, because that is the field the parent last touched here)."""
+    out = {k: "fleet" for k in (fleet_config or {})}
+    out.update({k: "robot" for k in (overrides or {})})
+    return out
+
+
 def normalize_robot(r: dict) -> dict:
     """One robot record from the snapshot → the console-facing shape (live + online)."""
     return {
@@ -59,6 +72,10 @@ def normalize_robot(r: dict) -> dict:
         "mode": r.get("mode"),
         "ota_reboot_required": bool(r.get("ota_reboot_required")),
         "config_overrides": dict(r.get("config_overrides") or {}),
+        # fleet ⊕ per-robot, as the supervisor computed it (falls back to the per-robot
+        # layer for a pre-fleet snapshot, so an older supervisor still renders).
+        "config_effective": dict(r.get("config_effective")
+                                 or r.get("config_overrides") or {}),
         "telemetry_count": int(r.get("telemetry_count") or 0),
         "safety_total": int(r.get("safety_total") or 0),
         "safety_unreviewed": int(r.get("safety_unreviewed") or 0),
@@ -73,11 +90,18 @@ def normalize_fleet(snapshot: Optional[dict]) -> dict:
     snap = snapshot or {}
     ok = bool(snap.get("ok"))
     robots = [normalize_robot(r) for r in (snap.get("robots") or [])] if ok else []
+    fleet_config = dict(snap.get("fleet_config") or {}) if ok else {}
+    for r in robots:
+        r["config_sources"] = config_sources(fleet_config, r["config_overrides"])
     return {
         "ok": ok,
         "app": snap.get("app"),
         "uptime_s": int(snap.get("uptime_s") or 0),
         "robot_count": len(robots),
+        # appliance-wide defaults every robot inherits (audit ADOPT #6) + the on-board
+        # module ids a parent may schedule, so the console never copies the catalog.
+        "fleet_config": fleet_config,
+        "schedule_modules": [str(m) for m in (snap.get("schedule_modules") or [])] if ok else [],
         "robots": robots,
         "recent": list(snap.get("recent") or [])[-60:],
         "error": None if ok else (snap.get("error") or "supervisor not reachable"),

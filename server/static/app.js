@@ -151,7 +151,8 @@ async function refreshLive(){
   }
   if(cfgBox) cfgBox.style.display='';
   liveDevice=f.robots[0].device_id;
-  if(cfgBox && !cfgBox.open) prefillConfig(f.robots[0]);   // don't clobber active edits
+  fillModulePicker(f.schedule_modules);
+  if(cfgBox && !cfgBox.open) prefillConfig(f.robots[0], f);  // don't clobber active edits
   box.innerHTML = f.robots.map(r=>{
     const rows=[
       ['Battery', r.battery_level==null?'—':`${r.battery_level}%`],
@@ -247,29 +248,85 @@ async function refreshSafety(deviceId){
     refreshSafety(deviceId);
   };
 }
-function prefillConfig(r){
-  const ov=r.config_overrides||{};
+// Wake alarms (RobotCloudConfig.alarms = WakeSchedule). The index of each label IS the
+// `WakeEntry.days` uint32 we send — it must stay in step with
+// moxie_sdk/cloud_config.py::WAKE_DAY_NAMES (0 = Monday … 6 = Sunday).
+const CFG_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+function buildDayBoxes(){
+  const box=$('#cfg-alarm-days'); if(!box || box.dataset.built) return;
+  box.dataset.built='1';
+  box.innerHTML=CFG_DAYS.map((d,i)=>
+    `<label class="day"><input type="checkbox" class="cfg-day" value="${i}"> ${d}</label>`).join('');
+}
+function fillModulePicker(modules){
+  const sel=$('#cfg-pref-module'); if(!sel) return;
+  const ids=(modules||[]);
+  if(sel.dataset.filled===ids.join(',')) return;      // don't clobber a live selection
+  sel.dataset.filled=ids.join(',');
+  const keep=sel.value;
+  sel.innerHTML='<option value="">— none —</option>'+
+    ids.map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+  if(keep) sel.value=keep;
+}
+function prefillConfig(r,f){
+  buildDayBoxes();
+  const ov=r.config_effective||r.config_overrides||{};   // fleet ⊕ per-robot
   if(r.audio_volume!=null) $('#cfg-vol').value=Math.round(r.audio_volume*100);
+  if(ov.audio_volume!=null) $('#cfg-vol').value=Math.round(ov.audio_volume*100);
   const bt=ov.weekday_bedtime;
   $('#cfg-bed-start').value = (bt&&bt[0])||'';
   $('#cfg-bed-end').value   = (bt&&bt[1])||'';
   $('#cfg-wake-btn').checked   = ov.wake_button_enabled!==false;
   $('#cfg-touch-wake').checked = ov.touch_wake_enabled!==false;
+  const wake=(ov.alarms&&(ov.alarms.wakes||[])[0])||null;
+  $('#cfg-alarm-time').value = (wake&&wake.time)||'';
+  $('#cfg-alarm-on').checked = !!(ov.alarms&&ov.alarms.enabled!==false&&wake);
+  const days=(wake&&wake.days)||[];
+  document.querySelectorAll('.cfg-day').forEach(c=>{ c.checked=days.includes(Number(c.value)); });
+  const pref=((ov.schedule_preferences||{}).parent_requests||[])[0]||null;
+  $('#cfg-pref-module').value = (pref&&pref.module_id)||'';
+  $('#cfg-pref-at').value = pref&&pref.scheduled_at ? isoLocal(pref.scheduled_at) : '';
+  const src=r.config_sources||{};
+  const house=Object.keys(src).filter(k=>src[k]==='fleet');
+  const box=$('#cfg-layers');
+  if(box) box.textContent = house.length
+    ? `🏠 From the house rules (all robots): ${house.join(', ')}` : '';
+}
+// epoch seconds → the "YYYY-MM-DDTHH:MM" a datetime-local input wants, in local time
+function isoLocal(sec){
+  const d=new Date(sec*1000), p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 async function saveConfig(){
-  if(!liveDevice){ return; }
+  const fleet=!!($('#cfg-fleet')&&$('#cfg-fleet').checked);
+  if(!liveDevice && !fleet){ return; }
   const s=$('#cfg-status'); s.textContent='Saving…';
   const start=$('#cfg-bed-start').value, end=$('#cfg-bed-end').value;
+  const days=Array.from(document.querySelectorAll('.cfg-day'))
+                  .filter(c=>c.checked).map(c=>Number(c.value));
+  const atime=$('#cfg-alarm-time').value;
+  const mod=$('#cfg-pref-module').value, at=$('#cfg-pref-at').value;
   const body={
     audio_volume: Number($('#cfg-vol').value),      // 0–100 → server clamps to 0–1
     wake_button_enabled: $('#cfg-wake-btn').checked,
     touch_wake_enabled: $('#cfg-touch-wake').checked,
     weekday_bedtime: (start&&end)? [start,end] : null,
+    // WakeSchedule: one entry for now; null clears the field
+    alarms: (atime&&days.length)
+      ? {wakes:[{days,time:atime}], enabled:$('#cfg-alarm-on').checked} : null,
+    // SchedulePreferences.ParentRequest — epoch SECONDS from the local wall clock
+    schedule_preferences: (mod&&at)
+      ? [{module_id:mod, scheduled_at:Math.floor(new Date(at).getTime()/1000)}] : null,
   };
+  const url = fleet ? '/local/fleet/config'
+                    : `/local/robots/${encodeURIComponent(liveDevice)}/config`;
   try{
-    const r=await api(`/local/robots/${encodeURIComponent(liveDevice)}/config`,
-                      {method:'POST',auth:false,body});
-    s.textContent = r.ok ? '✅ Saved — pushed to Moxie.' : `⚠️ ${r.error||'failed'}`;
+    const r=await api(url,{method:'POST',auth:false,body});
+    s.textContent = r.ok
+      ? (fleet ? '✅ Saved as house rules — pushed to every robot.'
+               : '✅ Saved — pushed to Moxie.')
+      : `⚠️ ${r.error||'failed'}`;
+    refreshLive();
   }catch(e){ s.textContent='⚠️ '+(e.message||'save failed'); }
 }
 function renderRobot(r){

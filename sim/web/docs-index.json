@@ -1,5 +1,5 @@
 {
- "generated": "docs-9e130a80900a",
+ "generated": "docs-a6ec451af9a4",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 32840,
+   "bytes": 33966,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -230,11 +230,13 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 8477,
+   "bytes": 12744,
    "mermaid": 1,
    "headings": [
     "The loop",
     "① `/config` down — `RobotCloudConfig` (the thing the server must produce)",
+    "Wake alarms & scheduled activities — the JSON we emit",
+    "Fleet defaults ⊕ per-robot overrides",
     "The child-PII encryption boundary — and the revival shortcut",
     "② `/state` up — `RobotStatus` (the robot's self-report)",
     "CloudStatus.UserState` — the pairing/OTA lifecycle the console shows",
@@ -323,7 +325,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 60902,
+   "bytes": 61302,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",

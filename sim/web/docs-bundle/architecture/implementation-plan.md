@@ -35,7 +35,7 @@ Ours is built to the full recovered protocol with clean seams:
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
 | Cloud queries — schedule + `mentor_behaviors` | [mqtt](mqtt-and-conversation.md) · [content-module](content-module-contract.md) | 🟢 the robot gets a **real day plan** and its **own history back**: `build_schedule` plans onboarding + a variety rotation of on-board activities, skipping what this robot already completed (so FTUE ends and nothing repeats); reported `mentor_behavior`s are ingested and served. Deterministic (day+device seeded), not yet LLM-planned | `mqtt/moxie_sdk/schedule.py` + `wire.py` + `moxie_runtime.py::_on_activity` |
 | Durable per-robot state | — | 🟡 JSON files under `MOXIE_DATA_DIR` (default `mqtt/data/`), atomic-ish writes, survives restarts — a **stepping stone**, not the database the audit asks for (ADOPT #8) | `mqtt/moxie_sdk/store.py` + [`mqtt/data/`](../../mqtt/data/) |
-| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry` | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` |
+| Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig (now incl. **`alarms` + `schedule_preferences`**, contract gap closed) + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry`. Config is layered **`defaults ⊕ fleet ⊕ per-robot`** (audit ADOPT #6) — one `fleet/config.json`, `POST /config?scope=fleet` | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` + `store.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
 
 ## Build order (each milestone = a shippable, CI-green slice)
@@ -117,6 +117,15 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   (`MoxieRuntime(app, safety=…)`) without the runtime changing. Also unproven on hardware: no
   capture shows how a physical Moxie reacts to `input.safety` — we populate it because the
   contract says a kid-facing backend should, not because we have seen the robot act on it.
+- **wake alarms / schedule preferences — the shapes are ours, not a capture.** `alarms`
+  (`WakeSchedule`) and `schedule_preferences` (`SchedulePreferences.ParentRequest`) are now built and
+  parent-editable, but our protos give the *types* and not the *encodings*, and no capture of a real
+  alarms push survives in the corpus (OpenMoxie never implemented these fields either, so there is no
+  field-proven shape to copy). Three assumptions are therefore load-bearing and documented in the
+  [config contract](config-and-telemetry-contract.md#wake-alarms-scheduled-activities-the-json-we-emit):
+  `days` as **0 = Monday … 6 = Sunday**, `time` as `"HH:MM"` local wall clock, `scheduled_at` as epoch
+  **seconds**. Each sits behind one constant, so a contradicting capture is a one-line fix — but until a
+  physical Moxie is seen to *ring*, "built" here means "well-formed and pushed", not "field-proven".
 - **brain latency — the multi-chunk assumption.** Background inference + filler is built and
   live-proven (a filler inside the budget, the answer as chunk 1 of the same `event_id`), but the
   *robot-side* semantics of `REPLY_PENDING` are only partly established by our RE docs: they give the
