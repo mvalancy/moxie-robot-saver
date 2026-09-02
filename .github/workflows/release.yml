@@ -1,19 +1,29 @@
 # Moxie release workflow — INSTALL: copy to .github/workflows/release.yml
 # (needs a workflow-scoped token to push under .github/workflows/; see RELEASING.md).
-# Fires on a v* tag on main: builds the moxie-cloud-sdk sdist+wheel and attaches them
-# to a GitHub Release.
+#
+# Fires on a v* tag on main and does TWO independent things:
+#   1. build-and-release — the moxie-cloud-sdk sdist+wheel, attached to a GitHub Release
+#   2. publish-images    — multi-arch (amd64 + arm64) container images pushed to GHCR
+#
+# They are deliberately parallel with no `needs:` between them, so a transient buildx or
+# registry failure cannot cost you the Python release — and, because nothing is marked
+# continue-on-error, a failed image push is still a RED job on the tag. Never silent.
 name: Release
 on:
   push:
     tags: ["v*"]
 
+# Least privilege: the default for the workflow is read-only, and each job asks for
+# exactly the write scope it needs (contents for the Release, packages for GHCR).
 permissions:
-  contents: write        # create the GitHub Release + upload assets
+  contents: read
 
 jobs:
   build-and-release:
     name: Build + publish moxie-cloud-sdk
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the GitHub Release + upload assets
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,3 +46,98 @@ jobs:
           generate_release_notes: true
       # To publish to PyPI, add a trusted-publisher step here:
       #   - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # ── the appliance itself: prebuilt, multi-arch, pullable without a clone ───────────
+  # Feeds docker-compose.images.yml, which references exactly these three names. An
+  # owner never needs the repo: download that one file and `docker compose up`.
+  #
+  # Why `broker-certs` and not `broker`: the broker IS upstream eclipse-mosquitto:2.0.20
+  # (we ship its config inline in docker-compose.images.yml, not a fork of it). This
+  # image is the broker's one-shot TLS initializer — naming it `broker` would claim we
+  # publish a broker we do not.
+  publish-images:
+    name: "Image: ${{ matrix.image }} (amd64 + arm64) → GHCR"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # push to ghcr.io/<owner>/<repo>/<image>
+    strategy:
+      fail-fast: false       # one bad image must not hide the other two
+      matrix:
+        include:
+          - image: supervisor
+            context: ./mqtt
+            file: ./mqtt/Dockerfile
+            title: Moxie supervisor
+            description: "Moxie robot-cloud supervisor: MQTT protocol, per-robot config, brain and server voice"
+          - image: console
+            context: .                       # the console imports tools/pairing (see .dockerignore)
+            file: ./server/Dockerfile
+            title: Moxie parent console
+            description: "Moxie parent console: account-free REST API plus the mobile web client"
+          - image: broker-certs
+            context: ./mqtt/broker
+            file: ./mqtt/broker/Dockerfile
+            title: Moxie broker certs
+            description: "One-shot initializer that mints the broker's per-appliance self-signed CA and cert"
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU gives the amd64 runner an arm64 emulator (Raspberry Pi 4/5, Apple silicon
+      # under Docker Desktop); buildx turns the two builds into one manifest list.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # no new secret: the built-in token, scoped above
+
+      # Tag policy, from the tag that triggered us:
+      #   v0.6.2      → 0.6.2, 0.6, latest
+      #   v0.6.2-rc.1 → 0.6.2-rc.1 only  (latest=auto skips pre-releases; `0.6` would
+      #                                   otherwise move a stable channel onto an RC)
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.image }}
+          flavor: latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}/blob/main/docs/guides/one-command-stack.md
+            org.opencontainers.image.vendor=moxie-robot-saver
+          # metadata-action also stamps org.opencontainers.image.{revision,version,created}
+          # from this tag, so every published layer says exactly which commit built it.
+
+      - name: Build + push (linux/amd64, linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Summarize what was pushed
+        run: |
+          {
+            echo "### \`${{ matrix.image }}\` → GHCR (linux/amd64 + linux/arm64)"
+            echo ""
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo ""
+            echo "Pull it: \`docker pull ghcr.io/${{ github.repository }}/${{ matrix.image }}:${GITHUB_REF_NAME#v}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

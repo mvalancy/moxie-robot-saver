@@ -186,6 +186,47 @@ jobs:
       - run: pip install --quiet "paho-mqtt>=2.0"
       - name: Compose smoke (build → up → virtual robot + TTS → /local/fleet → down -v)
         run: bash sim/run_compose_smoke.sh
+      # The published-image path an owner actually installs: the same assertions against
+      # docker-compose.images.yml, with the three images built locally under their GHCR
+      # names and `pull_policy: never`, so this proves the wiring without a tag existing.
+      - name: Compose smoke — PREBUILT-IMAGE mode (docker-compose.images.yml)
+        env:
+          MOXIE_SMOKE_MODE: images
+        run: bash sim/run_compose_smoke.sh
       - name: Stack logs on failure
         if: failure()
-        run: docker compose -p moxie-smoke --env-file sim/compose-smoke.env logs --tail 100 || true
+        run: |
+          docker compose -p moxie-smoke     --env-file sim/compose-smoke.env logs --tail 100 || true
+          docker compose -p moxie-smoke-img --env-file sim/compose-smoke.env \
+            -f docker-compose.images.yml logs --tail 100 || true
+
+  # The release workflow pushes linux/amd64 + linux/arm64 on a v* tag. A broken arm64
+  # build would only surface at release time, which is exactly the wrong moment — so the
+  # promotion gate does the same multi-arch build WITHOUT pushing (no registry, no
+  # credentials, nothing published).
+  multi-arch-images:
+    name: "Multi-arch build (no push): ${{ matrix.image }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: supervisor,   context: ./mqtt,        file: ./mqtt/Dockerfile }
+          - { image: console,      context: .,             file: ./server/Dockerfile }
+          - { image: broker-certs, context: ./mqtt/broker, file: ./mqtt/broker/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - name: Build for amd64 + arm64 (cache only — never pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

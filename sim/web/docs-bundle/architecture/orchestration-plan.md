@@ -338,5 +338,13 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   service refusal, not authentication — broker ACL/JWT still deferred. In flight: `feat/published-images`,
   `fix/cloud-tts-chunk-order`.
 
+- **2026-09-02** — Integrated `feat/published-images` (PR #28 → dev, ADOPT #10): the release tier now publishes
+  multi-arch (amd64 + arm64) images to GHCR on every `v*` tag (`supervisor`, `console`, `broker-certs`; the
+  broker is upstream mosquitto), and a self-contained `docker-compose.images.yml` gives owners the
+  two-command install with no clone. Proven locally (real OCI manifest lists; images-mode smoke green;
+  drift guard on the inlined broker config); actionlint clean. **First real publish happens at the next tag
+  — and the packages start private (one-time flip to public on the repo's Packages page).** In flight:
+  `fix/cloud-tts-chunk-order`, `feat/parent-memory-browser`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
