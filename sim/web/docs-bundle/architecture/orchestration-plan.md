@@ -231,5 +231,13 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   root. Hermetic suite 281. Three releases today (v0.2.0 → v0.4.0); 12 delegated slices integrated (PRs
   #3–#9, #11, #12, #14–#17). No agents in flight.
 
+- **2026-09-02 (RESEARCH)** — Integrated `feat/backlog-expressiveness` (PR #19 → dev): the audit now carries
+  honest status marks per item (PR numbers; JSON store ≠ database; `TTSMark[]` still empty), and
+  `docs/architecture/backlog/expressiveness.md` holds a build-ready brief for ADOPT #3 (the automarkup floor —
+  pure deterministic `annotate()` behind the unchanged seam, 0 unknown asset ids, one mood per streamed
+  answer, byte-exact goldens) plus a phased contract spec for BEYOND #1 (the behavior planner). Caveats from
+  our recovered docs: no gaze verb among the 24 markup commands; only two confirmed SFX ids; no physical
+  Moxie has played our markup. This is BUILD's next slice after safety. In flight: `feat/input-safety-contract`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
