@@ -42,6 +42,8 @@ jobs:
         run: bash sim/run_smoke.sh
       - name: Bridge markup→avatar unit test
         run: node sim/test_bridge.mjs
+      - name: Markup-floor render test (the 8 goldens through the real bridge)
+        run: node sim/test_automarkup_render.mjs
       - name: Voice-loop tests (TTS/STT shapes; skips if services absent)
         run: node sim/test_voice.mjs
       - name: Cloud-TTS playback test (CloudTTSResponse decode + queue + lip-sync)
