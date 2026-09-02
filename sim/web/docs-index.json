@@ -1,5 +1,5 @@
 {
- "generated": "docs-c4c51dbfad93",
+ "generated": "docs-317a67e786c4",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 3302,
+   "bytes": 3496,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,17 +96,32 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 12219,
+   "bytes": 13097,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-02) — ≈ 52%",
+    "DoD progress (audited 2026-09-02) — ≈ 57%",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/orchestration-plan.md",
+   "title": "Orchestration plan — delivering the top-level Moxie outcomes",
+   "section": "architecture",
+   "bytes": 7025,
+   "mermaid": 0,
+   "headings": [
+    "The three top-level outcomes",
+    "How work happens",
+    "Workstreams (the backlog agents draw from)",
+    "The layered session loops (24/7 continuity)",
+    "Status log (append-only, absolute dates)"
    ],
    "kind": "md"
   },

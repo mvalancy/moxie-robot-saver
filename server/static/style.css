@@ -88,3 +88,14 @@ footer a{color:var(--brand)}
 .cfgbox .check{display:flex;align-items:center;gap:8px}
 .cfgbox .check input{width:auto}
 #cfg-status{margin-top:8px;min-height:18px}
+
+/* --- insights / telemetry (M6 parent console) --- */
+.insightsbox{margin:14px 0}
+.insights-hd{font-weight:700;font-size:13px;margin-bottom:8px;color:var(--brand)}
+.evlog{margin-top:10px;max-height:220px;overflow-y:auto;border:1px solid var(--line);
+  border-radius:10px;background:var(--bg);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12px}
+.evlog .ev{padding:6px 10px;border-bottom:1px solid var(--line);display:flex;gap:8px}
+.evlog .ev:last-child{border-bottom:0}
+.evlog .ev span{color:var(--muted);white-space:nowrap}
+.evlog .ev b{font-weight:600;word-break:break-word}
