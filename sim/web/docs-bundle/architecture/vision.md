@@ -27,6 +27,10 @@ patent-language that may not match the shipping robot).
   + Android Verified Boot + "secure external interfaces" — Lantronix, confirmed). ADB, sideloading a
   custom APK, and root are all **blocked or unverified-at-best**. A hardware camera-tap works but is
   teardown-invasive.
+- **BUILT (v1, 2026-09-02):** we now *consume* those events — see
+  [§7 Presence in the turn loop](#7-built-presence-in-the-turn-loop-v1-2026-09-02). Moxie keeps a
+  per-robot presence record, the brain's prompt is told when someone walks in or the room has been
+  empty, and a child who comes back after a real absence gets an unprompted hello. Still no pixels.
 - **Most promising NON-invasive path today:** consume the **face/QR/ArUco vision events over
   MQTT** (they ride the same `/devices/{id}/...` topics OpenMoxie already brokers) and drive
   Moxie's *reactions* from those — but understand this gives you **"a face is present / gone,"
@@ -253,6 +257,127 @@ already proposes for local STT/LLM/TTS.
   behind **root/verified-boot defeat (F)**, which has **no public method** for Moxie.
 - **Blocked:** stock frame streaming (C), custom APK (E), root (F) — all by the deliberate
   Secure-Boot / Android-Verified-Boot / secure-interfaces lockdown Lantronix built.
+
+---
+
+## 7. BUILT — presence in the turn loop (v1, 2026-09-02)
+
+Path **A/B** of §6 is no longer a recommendation, it is code. This section is what we actually
+built, what it assumes, and where the honesty is.
+
+> **The standing honesty for this whole section: no physical robot has ever sent us one of these
+> events.** Everything below is implemented against the *recovered catalog* (§1) and the module
+> API doc — the event names and `input_vars` keys are cited, the *timing* (how twitchy a real
+> tracker is) is inferred, and the on-robot behavior of an unsolicited reply is untested. Every
+> inference is a named constant or a flagged assumption rather than a magic number.
+
+### 7.1 How the events actually reach a server
+
+They are **not their own topic**. A subscribed event is delivered to the brain as the **`speech`
+of an ordinary `RemoteChatRequest`** — "instead of the modules receiving something the user said,
+it receives a special event string like `eb-found-face`" (OpenMoxie `doc/RemoteModuleAPI.md`
+§Event Handling, MIT; the same shape our
+[`content-and-conversation.md`](../reverse-engineering/runtime/content-and-conversation.md#qr-inside-content-ties-to-the-qr-toolkit)
+shows for QR). Two consequences shaped the whole design:
+
+1. **The ingest point is the chat router**, not a new subscriber. `moxie_runtime._on_remote_chat`
+   recognizes a vision event in the `speech` slot and diverts it before any brain call —
+   `eb-found-face` is never assessed as a child's utterance, never enters history, never costs a
+   model call. (A vision event on its own `events/<name>` subtopic is *also* routed, in
+   `_on_event`, as a defensive extra; that shape is not in the recovered corpus.)
+2. **Nothing arrives until we ask.** These are "internal events that are discarded by the
+   application stack unless the active module is specifically interested" — the brain opts in with
+   `RemoteChatAction.EventSubscription{clear, active[]}`
+   ([`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md) §RemoteChatAction).
+   That is precisely why nobody has ever seen one of these events, ourselves included. The runtime
+   now attaches that subscription — once per `(device, module_id)`, because "events are
+   automatically unsubscribed when the module exits" — to a plain, action-free reply, so no reply
+   that already carries a `launch`/`exit` changes shape. `MOXIE_VISION=0` turns it off.
+
+### 7.2 The presence model
+
+[`mqtt/moxie_sdk/presence.py`](../../mqtt/moxie_sdk/presence.py) is a pure state machine — events in,
+a bounded record + **derived signals** out, no clock of its own — living on
+`RobotContext.extra["presence"]`:
+
+| field | meaning |
+|---|---|
+| `face_present` | `None` = the robot has told us nothing (≠ `False` = told they left) |
+| `last_seen_at` / `last_lost_at` | the last `eb-found-face` / `eb-lost-target` |
+| `present_since` / `absent_since` | when the current run began |
+| `faces_seen`, `flickers`, `events` | counters (arrivals exclude flickers) |
+| `qr` / `marker` / `book` | last `{value, at}` from `$eb_qr_value` / `$eb_dr_value` / `$eb_br_value` |
+| `history` | the last 20 `{event, at}` — a window, not an archive |
+
+Signals: **`arrived`** (`away_s` — "returned after N seconds"; `None` on a first sighting),
+**`left`** (`present_s`), **`flicker`** (a blip deliberately not promoted), and `qr`/`marker`/`book`.
+
+**Hysteresis** is the reason this is a state machine and not a boolean, because the events carry
+found/lost only (§1.1) and a face at the edge of the frame will flap:
+
+- a `found` less than **`FLICKER_S`** (3 s, `MOXIE_PRESENCE_FLICKER_S`) after the matching `lost` is
+  a flicker — the present-run clock is *not* restarted and no `arrived` fires;
+- a `lost` ending a run shorter than **`MIN_PRESENT_S`** (2 s, `MOXIE_PRESENCE_MIN_PRESENT_S`) is a
+  flicker too — the state still goes absent, but no `left`;
+- and a departure is announced **once per presence**: only a fresh `arrived` re-arms `left`.
+
+Twenty blinks in a row therefore produce exactly one `arrived` and one `left`.
+
+### 7.3 Into the turn
+
+`Turn.presence` carries a resolved snapshot (durations, not timestamps: `face_present`,
+`present_s`, `away_s`, `faces_seen`, `last_qr/marker/book`, `line`). `LLMApp` puts `line` into the
+system prompt as *"What you can see right now: …"* — and `line` is **empty on most turns by
+design**: a standing "a child is visible" would be a per-turn tax on the context window and would
+teach the model to narrate the camera. It is non-empty only when someone just arrived after a real
+absence, or when nobody has been visible for over two minutes. Content modules get the same
+snapshot as a read-only `presence` render variable (`{% if presence.face_present %}`).
+
+### 7.4 The greeting rule — and the unsolicited-reply assumption
+
+**The rule.** On an `arrived` whose `away_s` ≥ `MOXIE_GREET_AFTER_S` (default **300 s**; `0` = off),
+Moxie says one short line from a rotating set, performed through the markup floor and synthesized
+like any other line. Gates, all of them: a first-ever sighting never greets (`away_s` is `None`);
+**once per absence** (a `greeted_at` stamp must predate the next `eb-lost-target`); never over a
+turn in flight; never to a robot the pairing gate has not permitted; never inside the effective
+config's bedtime window (read-only use of `effective_config`, weekday/weekend by
+`datetime.weekday()`, midnight-wrapping handled).
+
+**Is an unsolicited `commands/remote_chat` legal on the wire?** *We could not establish that it is,
+so we do not send one.* The recovered contract is an **RPC**: every response echoes the request's
+`event_id` (`RemoteChatResponse.event_id`,
+[`cloud-protocol.md`](../reverse-engineering/protocol/cloud-protocol.md) "JSON events carry
+`event_id`/`request_id`"), and nothing in the corpus documents what a robot does with a response
+whose `event_id` matches no outstanding request — it may be dropped, or worse. **Assumption
+recorded, and designed around:**
+
+- **The normal path needs no unsolicited publish at all**, because the arrival *is* a request. The
+  `eb-found-face` event arrives as a `RemoteChatRequest`, and the contract not merely permits but
+  **requires** an answer: "the remote module must produce some response for this input to continue
+  the interaction." So the hello is published as the ordinary `SUCCESS` reply **to that event's own
+  `event_id`** — fully inside the contract. When there is nothing to say we answer `NOREPLY_ACK`
+  (ResultCode 6, "acknowledge only, no spoken line"), which is the contract's own field for it.
+- **When there is no request to answer** — a hello earned while a turn was already streaming, or an
+  event that arrived on the defensive `events/<name>` path — the line is **queued** and delivered as
+  **chunk 0** of the next turn (`result=REPLY_PENDING`, `chunk_num=0`), exactly the wire shape the
+  latency filler already uses, so the answer closes the sequence as chunk 1.
+
+If a capture from a physical robot ever shows an unsolicited `remote_chat` being accepted, the
+queue becomes an optimization rather than a necessity; nothing else changes.
+
+### 7.5 What is still not true
+
+- **No pixels, ever.** §2 stands: the firmware defines no message that makes the robot send an
+  image. This is presence, not sight; OpenCV/VLM still needs the external camera of §6H.
+- **Unproven against hardware.** The subscription, the event delivery shape, the timing, and the
+  robot's handling of `NOREPLY_ACK` on a vision event are all inferred. The SIL robot
+  (`sim/virtual_moxie.py --face-event found|lost`) and the browser SIM emit the events so the whole
+  path is exercised end to end, but a simulator agreeing with us proves only that we are consistent.
+- **`eb_custom_face_search` is not driven yet.** The "close enough" size gate (§1.1) is catalogued
+  in `presence.py` (`CLOSE_ENOUGH_ARGS`) but the runtime never sends the `execute` action, so
+  today's presence is "any face the robot decided to target", not "someone within range".
+- **No identity.** `faces_seen` counts *arrivals*, not people. Two children take turns in front of
+  the robot and presence cannot tell them apart — the events carry no embedding (§1.1).
 
 ---
 

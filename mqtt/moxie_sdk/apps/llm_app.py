@@ -19,6 +19,7 @@ from ..automarkup import annotate, enabled as _automarkup_enabled
 from ..segment import SentenceSegmenter
 from ..types import Turn, Reply, ReplyChunk, RobotContext
 from ..chat import is_offline_error as _is_offline_error
+from .. import presence as presence_seam
 from .. import vocab
 
 # Moxie's character. The real persona was cloud-authored and is NOT in the firmware
@@ -283,13 +284,26 @@ class LLMApp(MoxieApp):
         self._expressive = expressive
 
     # ---- prompt ----
-    def _system(self, robot: RobotContext) -> str:
+    def _system(self, robot: RobotContext, turn: Turn | None = None) -> str:
         c = robot.child
         who = f"\n\nYou are talking to {c.nickname}."
         if c.pronouns:
             who += f" Their pronouns are {c.pronouns}."
         if c.notes:
             who += f" Context about them: {c.notes}"
+        # What Moxie's own eyes have told the server (moxie_sdk/presence.py). The robot
+        # emits found/lost face events and nothing else — no pixels, no boxes, no
+        # identity (docs/architecture/vision.md §1.1) — so this is presence, not sight.
+        # `line` is deliberately EMPTY unless something changed, which is most turns: a
+        # standing "a child is visible" would be a per-turn tax on the context window and
+        # would teach the model to narrate the camera.
+        pres = getattr(turn, "presence", None)
+        line = pres.get("line", "") if isinstance(pres, dict) else ""
+        if not line:      # no Turn (a `greeting()` call) -> derive it from the raw record
+            line = presence_seam.prompt_line(robot.extra.get("presence") or {})
+        if line:
+            who += f"\n\nWhat you can see right now: {line}"
+            print(f"[llm] presence in prompt: {line}", flush=True)
         # Model agency: the tags the brain may write inline (moxie_sdk/actions.py
         # parses them off the line and onto the Reply as real robot actions).
         tags = ("\n\n--- Robot controls (most important rule) ---\n" + ACTION_TAG_PROMPT +
@@ -356,7 +370,7 @@ class LLMApp(MoxieApp):
         return Reply(text=text, markup=build_markup(text, "happy", "celebrate"))
 
     def _messages(self, turn: Turn) -> list:
-        messages = [{"role": "system", "content": self._system(turn.robot)}]
+        messages = [{"role": "system", "content": self._system(turn.robot, turn)}]
         messages += turn.history[-self._max_history:]
         messages.append({"role": "user", "content": turn.speech})
         return messages
