@@ -51,7 +51,31 @@ LLM_MODEL    = os.environ.get("MOXIE_LLM_MODEL", "graphling-medium")
 # key from MOXIE_VOICE_API_KEY (falls back to the LLM key). Empty → not configured.
 VOICE_BASE_URL = os.environ.get("MOXIE_VOICE_BASE_URL", "")
 VOICE_API_KEY  = os.environ.get("MOXIE_VOICE_API_KEY", LLM_API_KEY)
-TTS_VOICE      = os.environ.get("MOXIE_TTS_VOICE", "alloy")
+# Which voice the endpoint should speak with. On our LiteLLM gateway the MODEL is the
+# voice ("piper-amy" / "piper-ryan"), so this is only read when the endpoint is a real
+# OpenAI-shaped one; empty → derived from the model name (piper-amy → "amy"), which the
+# gateway requires as a field and then ignores.
+TTS_VOICE      = os.environ.get("MOXIE_TTS_VOICE", "")
+# The gateway's TTS model. Only read when MOXIE_VOICE_BASE_URL is set; "piper-amy" is
+# the voice Moxie ships with (docs/guides/litellm-tts-setup.md).
+VOICE_MODEL    = os.environ.get("MOXIE_VOICE_MODEL", "") or "piper-amy"
+# "wav" (default) — the header carries the true sample rate, so a voice swap needs no
+# config change. "pcm" — raw 16-bit frames at MOXIE_VOICE_SAMPLE_RATE (nothing in the
+# payload can say otherwise). mp3/opus are NOT decoded here.
+VOICE_FORMAT   = (os.environ.get("MOXIE_VOICE_FORMAT", "").strip().lower() or "wav")
+
+
+
+def _env_int(name, default):
+    try:
+        return int(os.environ.get(name) or default)
+    except ValueError:
+        return int(default)
+
+
+# Sample rate of a raw-PCM reply — pcm ONLY (a wav reply carries its own). 22050 is what
+# the gateway's Piper voices render at.
+VOICE_SAMPLE_RATE = _env_int("MOXIE_VOICE_SAMPLE_RATE", 22050)
 # Local Piper voice (offline, our default/primary — Amy). Path to a Piper .onnx model;
 # when set + piper installed, used if no voice server is configured. Empty → off.
 PIPER_MODEL    = os.environ.get("MOXIE_PIPER_MODEL", "")
@@ -127,15 +151,31 @@ def build_content_app():
 
 
 def build_synthesizer():
-    """A server voice (moxie_sdk.tts.Synthesizer): a voice server if MOXIE_VOICE_BASE_URL
-    is set; else a local Piper voice if MOXIE_PIPER_MODEL is set + piper installed; else
-    None (a real robot self-synthesizes; the SIM needs one of these for audio)."""
+    """A server voice (moxie_sdk.tts.Synthesizer).
+
+    Precedence is unchanged — **voice server > Piper > tone**: a voice server if
+    MOXIE_VOICE_BASE_URL is set; else a local Piper voice if MOXIE_PIPER_MODEL is set +
+    piper installed; else the built-in tone with MOXIE_TTS=tone; else None (a real robot
+    self-synthesizes; the SIM needs one of these for audio).
+
+    What is new is the STANDBY: the gateway voice is wrapped in a `FallbackSynthesizer`
+    whose second engine is exactly what the next rung down would have been (Piper if it
+    is configured and installed, else the tone). The gateway is someone else's box; when
+    it 500s past the SDK's backoff or answers with an error body, the turn downgrades to
+    a working voice instead of handing a child silence. It is reported once, on the first
+    failure — see moxie_sdk/tts.py::FallbackSynthesizer.
+    """
     from moxie_sdk.tts import make_voice_synthesizer, make_piper_synthesizer
     if TTS_ENGINE == "off":
         return None
-    if VOICE_BASE_URL:
-        return make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE)
     piper = make_piper_synthesizer(PIPER_MODEL, PIPER_CONFIG or None)
+    if VOICE_BASE_URL:
+        from moxie_sdk.tts import FallbackSynthesizer, ToneSynthesizer
+        voice = make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE,
+                                       model=VOICE_MODEL,
+                                       response_format=VOICE_FORMAT,
+                                       sample_rate=VOICE_SAMPLE_RATE)
+        return FallbackSynthesizer(voice, piper or ToneSynthesizer())
     if piper:
         return piper
     if TTS_ENGINE == "tone":                 # built-in zero-dep voice (SIL/demo)

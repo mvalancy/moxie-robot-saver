@@ -1,5 +1,5 @@
 {
- "generated": "docs-8117ac7029a2",
+ "generated": "docs-011b8a137563",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 44653,
+   "bytes": 45976,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -211,7 +211,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 20441,
+   "bytes": 21998,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -222,6 +222,7 @@
     "③ TTS out — markup → audio + viseme marks",
     "Request in — `CloudTTSRequest`",
     "Response out — `CloudTTSResponse`",
+    "Backends in this repo — and what happens when one fails",
     "Conformance checklist",
     "Where each seam is implemented in this repo"
    ],
@@ -335,7 +336,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 68106,
+   "bytes": 68688,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -923,11 +924,18 @@
   },
   {
    "path": "guides/litellm-tts-setup.md",
-   "title": "TTS on the LiteLLM gateway — setup handoff",
+   "title": "TTS on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 5500,
+   "bytes": 9912,
    "mermaid": 0,
    "headings": [
+    "Live since 2026-09-02",
+    "Turning it on — one variable",
+    "What we measured (live, 2026-09-02)",
+    "Four quirks worth knowing",
+    "If the gateway hiccups, a child still hears a voice",
+    "Verify it yourself",
+    "The original handoff (the contract we asked for)",
     "What we already confirmed",
     "What we need (the contract)",
     "How to register it (LiteLLM `config.yaml`)",
