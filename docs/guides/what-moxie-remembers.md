@@ -26,7 +26,9 @@ kinds of thing come back:
 
 Each one is stored **per activity** — the storytelling activity and the free-chat activity
 keep separate memories and never overwrite each other. The card shows one section per
-activity, with the date and which activity learned it on every row.
+activity, with the date and which activity learned it on every row, and it says how far
+through the conversation Moxie actually got ("summarized through turn 8") so you are never
+left assuming it wrote down everything.
 
 ## What is *never* written down
 
@@ -41,13 +43,30 @@ activity, with the date and which activity learned it on every row.
   ⚙️ Settings and nothing new is remembered. The card says so plainly. Reading and erasing
   keep working, so switching it off never traps what was stored before.
 - **The conversation itself.** This is not a transcript. It is at most a couple of dozen
-  short sentences per activity, capped at 16 KB in total, in plain JSON under your data
+  short sentences per activity, capped at 64 KB in total, in plain JSON under your data
   directory (`MOXIE_DATA_DIR`, default `mqtt/data/robots/<robot>/memory.json`) — a file you
   can open, back up or delete yourself.
 
-## Erasing it
+## Fixing one line
 
-Two buttons, both in the memory card. Each asks twice: the first click arms it, the second
+Hover a row and two small buttons appear.
+
+- **✏️ correct it.** The row turns into a text box. Type what Moxie *should* remember and
+  press Save. This is the button for the common case: the fact is nearly right, and erasing
+  the whole activity to fix one word would throw away everything else it learned.
+  A corrected line is **pinned** (📌) — Moxie keeps it exactly as you wrote it, never
+  rewrites it when it hears the same thing again, and never ages it out.
+- **✕ forget just this one.** Click once to arm it, again to confirm. Everything else that
+  activity remembers stays.
+
+Two things you type can be refused, with the reason shown under the card: anything the
+[safety check](child-safety.md) would block, and your child's own words pasted back in.
+What you write here goes into every later conversation, so it goes through the same two
+checks Moxie's own summaries do.
+
+## Erasing more of it
+
+Two buttons at the bottom of the card. Each asks twice: the first click arms it, the second
 one does it.
 
 - **Erase this activity's memory** — forgets everything one activity learned.
@@ -56,10 +75,18 @@ one does it.
 Erasing always works. It is never blocked by a setting, it happens immediately on disk, and
 Moxie's next conversation starts without it.
 
-**There is no "delete just this one fact" yet.** The finest cut today is one activity. If a
-single line is wrong, erase that activity and Moxie relearns the rest over the next few
-conversations. (Tracked as a known gap in the
-[implementation plan](../architecture/implementation-plan.md).)
+## Old facts fade on their own
+
+A fact that no conversation has used for **90 days** is dropped the next time that robot
+writes something down. Anything you have corrected (📌 pinned) is exempt, and so is
+anything with no date to judge it by.
+
+Be clear about what this is: a timer, not a judgement. It knows only whether a line has
+come up lately — not whether it matters. It will happily let something important fade
+because nobody talked about it all summer, and it will keep something trivial that comes up
+every week. It exists so a stale fact stops being fed back forever, not to curate the
+memory for you. (Set `MOXIE_MEMORY_MAX_AGE_DAYS` to change the window, or to `0` to switch
+it off entirely.)
 
 ## Summaries can be wrong
 
@@ -68,11 +95,12 @@ invents details. In our own testing "the puppy sleeps on my bed" came back as "P
 on **his** bed" — a pronoun nobody said.
 
 A wrong fact is also **sticky**: it goes back into every later conversation until someone
-erases it, so Moxie can sound confidently wrong about your child for weeks. That is the
-whole reason this card exists, why every row carries the day and activity it came from, and
-why the erase buttons are one click away from the facts themselves.
+fixes it, so Moxie can sound confidently wrong about your child for weeks. That is the whole
+reason this card exists, why every row carries the day and activity it came from, and why
+the ✏️ and ✕ buttons sit on the rows themselves.
 
-Read it now and then. If something looks off, erase that activity.
+Read it now and then. If a line is wrong, correct it (✏️) — that is one word instead of a
+whole activity's memory. If it should never have been written down, forget it (✕).
 
 ---
 📖 [Guides index](README.md) · [Child safety](child-safety.md) · [The content-module contract (engineering detail)](../architecture/content-module-contract.md) · [Back to top](../../README.md)

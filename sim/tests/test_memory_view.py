@@ -12,8 +12,13 @@ like `test_fleet.py`. The shape it consumes is `MemoryStore.view()` wrapped by
 `MoxieRuntime.memory_view()`:
 
     {ok, device_id, policy, writes_allowed, bytes,
-     namespaces: {ns: {data: {facts: [...], ...}, provenance: [{at, date, module_id,
-                                                               turns, reason}, ...]}}}
+     namespaces: {ns: {data: {facts: [{id, text, _provenance, use_count, pinned}, ...]},
+                       provenance: [{at, date, module_id, turns, reason}, ...],
+                       meta: {summarized_through: N}}}}
+
+An item is a record now, so a row can carry the id the per-item erase and the inline edit
+act on; a bare string (a `memory.json` written before ids existed) still renders, with an
+empty id and the namespace's provenance as its date.
 """
 import os
 import sys
@@ -35,6 +40,14 @@ def _prov(at, module_id="MCHAT", **kw):
     return out
 
 
+def _item(text, at, *, module_id="MCHAT", turns=2, **kw):
+    """One stored item as `MemoryStore` writes it — id, text, its own provenance."""
+    out = {"id": "id-" + text.split()[-1].lower().strip(".'"), "text": text,
+           "_provenance": _prov(at, module_id=module_id, turns=turns)}
+    out.update(kw)
+    return out
+
+
 def _view():
     """A two-namespace `memory_view()` payload, as the runtime serves it."""
     return {
@@ -42,15 +55,21 @@ def _view():
         "bytes": 412,
         "namespaces": {
             "mchat": {
-                "data": {"facts": ["Sam has a beagle named Pepper", "Sam is in year 2"],
-                         "preferences": ["Likes drawing"],
-                         "open_threads": ["Ask how the play went"],
-                         "summaries": ["They talked about pets."]},
+                "data": {"facts": [_item("Sam has a beagle named Pepper", 200, turns=4,
+                                         use_count=3, last_used_at=900.0),
+                                   _item("Sam is in year 2", 200, turns=4)],
+                         "preferences": [_item("Likes drawing", 200, turns=4,
+                                               pinned=True)],
+                         "open_threads": [_item("Ask how the play went", 200, turns=4)],
+                         "summaries": [_item("They talked about pets.", 200, turns=4)]},
                 "provenance": [_prov(200, turns=4), _prov(100, turns=2)],
+                "meta": {"summarized_through": 6},
             },
             "free_chat": {
-                "data": {"facts": ["Sam's favourite colour is red"]},
+                "data": {"facts": [_item("Sam's favourite colour is red", 50,
+                                         module_id="FREE_CHAT")]},
                 "provenance": [_prov(50, module_id="FREE_CHAT", reason="switch")],
+                "meta": {},
             },
         },
     }
@@ -73,6 +92,14 @@ def test_the_whole_view_flattens_into_dated_rows():
     assert first["text"] == "Sam has a beagle named Pepper"
     assert first["provenance"] == {"date": "2026-09-03", "at": 200, "module_id": "MCHAT",
                                    "content_id": "default", "turns": 4, "reason": "exit"}
+    # ...and the three things the per-item controls need
+    assert first["id"] == "id-pepper" and first["pinned"] is False
+    assert first["use_count"] == 3 and first["last_used"] == 900.0
+    liked = [i for i in ns["mchat"]["items"] if i["kind"] == "preference"][0]
+    assert liked["pinned"] is True                     # a parent corrected this one
+    # the hint the card shows above the rows, now that view() carries `meta`
+    assert ns["mchat"]["summarized_through"] == 6
+    assert m["summarized_through"] == 6
     # the namespace header carries the newest attribution + how many conversations fed it
     assert ns["mchat"]["last_learned"]["module_id"] == "MCHAT"
     assert ns["mchat"]["conversations"] == 2
@@ -97,10 +124,9 @@ def test_namespaces_are_newest_first_by_provenance_date():
     assert [n["namespace"] for n in m2["namespaces"]] == ["free_chat", "mchat"]
 
 
-def test_per_item_provenance_is_honoured_when_a_store_ever_records_it():
-    """Items are plain strings today (provenance is per merge). A dict item carrying its
-    own `_provenance` sorts and renders on that, so a runtime that later attributes item
-    by item needs no console change."""
+def test_per_item_provenance_orders_the_rows():
+    """Provenance is stamped per item at merge time, so two conversations' facts inside
+    one activity no longer share one date — the newest line sorts to the top."""
     ns = normalize_namespace("mchat", {
         "data": {"facts": [
             {"text": "older", "_provenance": _prov(10, date="2026-01-01")},
@@ -115,6 +141,18 @@ def test_undated_items_fall_back_to_the_namespaces_own_provenance():
     ns = normalize_namespace("mchat", {"data": {"facts": ["a"]}, "provenance": []})
     assert ns["items"][0]["provenance"] == {"date": "", "at": None, "module_id": "",
                                             "content_id": "", "turns": 0, "reason": ""}
+
+
+def test_a_bare_string_still_renders_but_offers_no_id():
+    """A `memory.json` written before ids existed, read straight off disk. It must still
+    be readable — with no id, so the card offers the activity erase and no per-item ✕
+    rather than a button that would 404."""
+    ns = normalize_namespace("mchat", {"data": {"facts": ["has a dog"]},
+                                       "provenance": [_prov(3)]})
+    row = ns["items"][0]
+    assert row["text"] == "has a dog" and row["id"] == ""
+    assert row["pinned"] is False and row["use_count"] == 0 and row["last_used"] is None
+    assert row["provenance"]["module_id"] == "MCHAT"      # the namespace's, as a fallback
 
 
 # --- tolerance ---------------------------------------------------------------------
@@ -163,21 +201,32 @@ def test_a_list_a_module_invented_is_still_shown():
 
 
 def test_a_raw_memory_json_off_disk_renders_too():
-    """The same transform reads the stored file, whose `_`-prefixed keys the runtime's
-    view() strips — which is the only place `summarized_through` survives today."""
-    m = normalize_memory({"mchat": {"facts": ["has a dog"],
+    """The same transform reads the stored file, `_`-prefixed keys and all — so a parent
+    (or a test) can point it straight at `robots/<id>/memory.json`."""
+    m = normalize_memory({"mchat": {"facts": [{"id": "abc", "text": "has a dog",
+                                               "_provenance": _prov(3)}],
                                     "_meta": {"summarized_through": 6},
                                     "_provenance": [_prov(3)]}})
     assert m["ok"] is True and m["total"] == 1
     assert m["summarized_through"] == 6
     assert m["namespaces"][0]["summarized_through"] == 6
     assert m["namespaces"][0]["items"][0]["text"] == "has a dog"
+    assert m["namespaces"][0]["items"][0]["id"] == "abc"
+
+
+def test_an_edit_reply_keeps_its_confirmation():
+    m = normalize_memory({"ok": True, "device_id": "d1", "namespaces": {},
+                          "edited": True, "namespace": "mchat", "item": "abc",
+                          "policy": "NO_MEDIA"})
+    assert m["edited"] is True and m["namespace"] == "mchat" and m["item"] == "abc"
 
 
 def test_an_erase_reply_keeps_its_confirmation():
     m = normalize_memory({"ok": True, "device_id": "d1", "namespaces": {},
-                          "erased": True, "namespace": "mchat", "policy": "NO_MEDIA"})
+                          "erased": True, "namespace": "mchat", "item": "abc",
+                          "policy": "NO_MEDIA"})
     assert m["erased"] is True and m["namespace"] == "mchat" and m["total"] == 0
+    assert m["item"] == "abc"
 
 
 def test_the_privacy_switch_comes_through_for_the_ui_note():

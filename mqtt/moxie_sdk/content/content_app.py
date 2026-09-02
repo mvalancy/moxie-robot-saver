@@ -33,7 +33,7 @@ from ..store import MemoryStore
 from ..types import Turn, Reply, RobotContext
 from .module import ContentModule
 from .volley import Volley, Session
-from .memory import default_classifier, provenance, wrap_facts
+from .memory import default_classifier, note_used, provenance, wrap_facts
 from .render import render_prompt
 
 ChatFn = Callable[[list], str]          # messages [{role,content}] -> assistant text
@@ -180,6 +180,7 @@ class ContentApp(MoxieApp):
         session = self._session(turn, history=list(turn.history),
                                 persist_data=v.persist_data, conv=conv)
         system = render_prompt(conv.prompt, {"volley": v, "session": session})
+        note_used(self.memory, turn.robot.device_id, system)   # decay's clock (memory.py)
         if self._persona:
             system = f"{self._persona}\n\n{system}" if system else self._persona
         messages = [{"role": "system", "content": system}]

@@ -32,7 +32,7 @@ Ours is built to the full recovered protocol with clean seams:
 | AI seam — input safety | [ai-seam](ai-seam.md) §2 · [mqtt §4.5](mqtt-and-conversation.md#safety-on-the-wire-inputsafety-inputsafety) | 🟢 `InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}` **enforced**, not just specified: assessed pre-inference (a hard block never reaches a model) and **per streamed chunk** before publication (blocked chunk never goes out; a safe line closes the sequence with `SUCCESS`+`is_completed`; the stream is cancelled). 8 categories with a per-side block/flag policy in a parent-readable `safety_rules.json`, normalization + false-positive guards, a `Classifier` protocol for a drop-in local model, and a parent review queue (`GET|POST /safety` → console 🛡️ panel, `NO_DATA` = counts only). **Live-proven:** an unsafe request cost **0 gateway calls** and got a redirect + `input.safety`; a benign turn in the same run streamed 4 clean chunks | `mqtt/moxie_sdk/safety.py` + `safety_rules.json` + `moxie_runtime.py::_safety_gate_input`/`_handle_stream_turn` + `server/moxie_server/fleet.py` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟢 seam + runtime-wired + **real zmqSTTRequest protobuf decode** (dep-free) + JSON bridge, e2e-tested; live faster-whisper is an optional dep | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟢 seam + runtime-wired + **3 backends: built-in tone (zero-dep) · Piper (offline, Amy) · OpenAI-voice (gateway)**; **full audio round-trip proven through a real broker** (SIL smoke `--expect-tts`); real-speech play-through pending a Piper model/creds | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
-| Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example modules, e2e-tested through the runtime. **Memory built (2026-09-02):** `volley.persist_data` (durable, module-namespaced, bounded, `NO_DATA`-gated) + `session.summarize()` at end-of-conversation with provenance, served to a parent over `GET`/`DELETE /memory`; ships as `content_modules/memory_chat.json`. exec-code + action-plumbing still deferred | `mqtt/moxie_sdk/content/` + `mqtt/moxie_sdk/store.py` + `mqtt/content_modules/` |
+| Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example modules, e2e-tested through the runtime. **Memory built (2026-09-02):** `volley.persist_data` (durable, module-namespaced, bounded, `NO_DATA`-gated) + `session.summarize()` at end-of-conversation, served to a parent over `/memory`; ships as `content_modules/memory_chat.json`. **Per-item control (2026-09-02):** every remembered thing carries a stable id and its own provenance, so a parent can **erase or correct one line** (`DELETE …&item=` / `POST {"edit":…}` → the console's ✕/✏️), a correction is pinned, and unused items age out after `MOXIE_MEMORY_MAX_AGE_DAYS` (90). exec-code + action-plumbing still deferred | `mqtt/moxie_sdk/content/` + `mqtt/moxie_sdk/store.py` + `mqtt/content_modules/` |
 | Cloud queries — schedule + `mentor_behaviors` | [mqtt](mqtt-and-conversation.md) · [content-module](content-module-contract.md) | 🟢 the robot gets a **real day plan** and its **own history back**: `build_schedule` plans onboarding + a variety rotation of on-board activities, skipping what this robot already completed (so FTUE ends and nothing repeats); reported `mentor_behavior`s are ingested and served. Deterministic (day+device seeded), not yet LLM-planned | `mqtt/moxie_sdk/schedule.py` + `wire.py` + `moxie_runtime.py::_on_activity` |
 | Durable per-robot state | — | 🟡 JSON files under `MOXIE_DATA_DIR` (default `mqtt/data/`), atomic-ish writes, survives restarts — a **stepping stone**, not the database the audit asks for (ADOPT #8) | `mqtt/moxie_sdk/store.py` + [`mqtt/data/`](../../mqtt/data/) |
 | Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig (now incl. **`alarms` + `schedule_preferences`**, contract gap closed) + RobotStatus ingest + **Packet telemetry (build/parse/ingest/summarize) + LoggingPolicy upload-gate**; served to the console as `GET /telemetry`. Config is layered **`defaults ⊕ fleet ⊕ per-robot`** (audit ADOPT #6) — one `fleet/config.json`, `POST /config?scope=fleet`. **Gated by a device allowlist** (audit §3.1, closed by default): only a permitted robot is pushed `child_pii`; an unknown one is *pending* and gets `build_unpaired_cloud_config()` — `fleet/permits.json`, `GET`/`POST /permits`, the console's 🔐 Robot access card, `MOXIE_ALLOW_UNVERIFIED_BOTS` to migrate | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` + `store.py` |
@@ -94,23 +94,26 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   few durable facts with provenance, and a parent can read/erase them over `/memory`. The parent-facing
   browser UI over those endpoints landed 2026-09-02 (the console's 🧠 What Moxie remembers card —
   see the memory-browser bullet below for what it still cannot do). One honesty remains: a summary
-  **can be wrong and is sticky** — a bad fact is re-injected into every later prompt until someone erases it. Arbitrary
+  **can be wrong and is sticky** — a bad fact is re-injected into every later prompt until someone corrects
+  or erases it (which is now a one-line ✏️/✕ rather than the whole activity). Arbitrary
   module `code`-string execution is deliberately deferred (sandboxing), so a module *declares* its
   memory with a `memory` block instead of scripting a `complete_handler`; `volley.execution_actions`
   (e.g. `eb_timer_request`) are captured but **not yet plumbed** into `RemoteChatAction` on the wire.
-- **memory browser — a parent can read and erase, but only in whole activities.** The console's
-  🧠 What Moxie remembers card lists every stored item with the day and module it came from, and erases
-  one namespace or all of it, because **that is exactly the granularity the runtime offers**
-  (`MemoryStore.erase(device_id, namespace|None)`); there is no per-item delete and no edit, so one
-  wrong fact costs that whole activity's memory and Moxie relearns the rest. Three more honesties:
-  provenance is recorded **per merge**, not per item, so every row in a namespace shows that
-  namespace's newest attribution (the console already renders a per-item `_provenance` if a later
-  runtime writes one); `_meta.summarized_through` is stripped by the runtime's parent view, so the
-  card's "summarized through" hint has nothing to show until `MemoryStore.view()` surfaces it; and
-  nothing **decays** — a fact learned once stays until a person deletes it, which is why the guide
-  ([`what-moxie-remembers.md`](../guides/what-moxie-remembers.md)) tells parents to read it now and
-  then. Per-item erase, editing and age-out are what keep
-  [audit](openmoxie-feature-audit.md) §4.2 BEYOND #4 at 🟡 rather than 🟢.
+- **memory browser — a parent can now read, correct and erase one line at a time (2026-09-02).** Every
+  stored item carries a stable id (`blake2b(namespace|kind|text)`, assigned at creation, kept across
+  an edit) and its **own** provenance, so the console's 🧠 What Moxie remembers card offers a per-item
+  ✕ and an inline ✏️ on top of the activity/everything erases — `MemoryStore.erase_item` / `edit_item`
+  behind `DELETE /memory?…&item=` and `POST /memory {"edit":…}`. An edit re-runs the safety classifier
+  and the no-verbatim check (a text box that writes into every later prompt is exactly where those
+  rules matter) and **pins** the result. `view()` now surfaces `_meta.summarized_through`, so the card's
+  "summarized through turn N" hint has something real to say. What decay honestly cannot do is the
+  remaining gap: items unused for `MOXIE_MEMORY_MAX_AGE_DAYS` (default 90, 0 = off) are pruned at merge
+  time, but "used" means *this sentence appeared in a rendered prompt* — a substring test that misses a
+  truncated or reworded render, and that can never tell an important fact from a trivial one. Pinned and
+  undatable items are therefore never pruned, and the guide
+  ([`what-moxie-remembers.md`](../guides/what-moxie-remembers.md)) says plainly that this is a timer, not
+  a judgement. A wrong summary is still written in the first place — correcting it is a parent's job,
+  not the model's.
 - **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); real zmqSTTRequest protobuf decode is DONE (dep-free field reader in stt.py); only a live faster-whisper test remains (optional dep). TTS out (§3) seam + runtime-wired (synthesize-on-reply → CloudTTSResponse); live voice needs creds + viseme TTSMarks deferred. Input safety/moderation (§2) is **built** — see the next bullet for what it honestly cannot do.
 - **expressive markup — a rule floor, and no robot has ever played it.** The floor is built and every
   app performs now, but three honesties stand. (a) **Nothing about robot rendering is verified.** Our
