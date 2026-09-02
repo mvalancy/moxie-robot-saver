@@ -377,5 +377,10 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   the two-command install is now real. Owner action outstanding: flip the three packages **public** on the
   repo's Packages page (no API for it). "Pending first tag" wording retired where found.
 
+- **2026-09-02** — Integrated `feat/memory-item-erase` (PR #33 → dev): a parent can erase or **correct** any single
+  remembered line — stable derived item ids (migration-free), per-item provenance, a use-clock decay with pinning,
+  edits re-checked for safety and verbatim child speech (unsafe correction → 400). +23 tests (→807 full / 773
+  fast-shaped). **Audit BEYOND #4 → 🟢.** In flight: `feat/vision-events`, `test/compose-parity-guards`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

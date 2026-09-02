@@ -51,6 +51,8 @@ import re
 import time
 from typing import Optional
 
+from ..store import item_text
+
 # The keys we keep out of a summary, in the order a parent reads them.
 LIST_KEYS = ("facts", "preferences", "open_threads")
 
@@ -93,12 +95,18 @@ class FactList(list):
 
 
 def wrap_facts(data):
-    """Recursively turn stored lists-of-strings into `FactList` for prompt rendering."""
+    """Recursively turn stored lists of items into `FactList` for prompt rendering.
+
+    A stored item is either a bare string (files written before ids existed) or the
+    record `moxie_sdk/store.py` writes now (`{id, text, _provenance, use_count, …}`).
+    Both render as the same bullet line: the prompt gets the sentence and nothing else,
+    so adding ids and provenance to the file changed no prompt anywhere."""
     if isinstance(data, dict):
         return {k: wrap_facts(v) for k, v in data.items()}
-    if isinstance(data, list) and all(isinstance(x, str) for x in data):
-        return FactList(data)
     if isinstance(data, list):
+        texts = [item_text(x) for x in data]
+        if all(t is not None for t in texts):     # empty stays a FactList: renders blank
+            return FactList(texts)
         return [wrap_facts(x) for x in data]
     return data
 
@@ -230,6 +238,44 @@ def filter_summary(summary: dict, *, history: list = (), classifier=None,
 def is_empty(summary: dict) -> bool:
     """True when there is nothing worth writing down."""
     return not any(summary.get(k) for k in LIST_KEYS) and not summary.get("summary")
+
+
+def check_text(text: str, *, history=(), classifier=None) -> bool:
+    """May this line be stored as a memory item? (the parent's edit runs through here)
+
+    The same two rules a model's summary faces, for the same reason: whatever ends up in
+    `memory.json` is read back into **every** later prompt, so the safety classifier must
+    not BLOCK it, and it must not be a long span of the child's own words. A parent typing
+    a correction is trusted — but a text box that writes straight into the child's future
+    conversations is exactly the hole those two rules exist to close, and the second one
+    also catches the innocent mistake of pasting the transcript back in.
+
+    `classifier=None` resolves the default rule classifier; a classifier that cannot be
+    loaded means "allowed", never "silently eat the parent's correction"."""
+    line = str(text or "").strip()
+    if not line:
+        return False
+    if classifier is None:
+        classifier = default_classifier()
+    if not _safe(line, classifier):
+        return False
+    return bool(strip_verbatim([line], list(history or [])))
+
+
+def note_used(store, device_id: str, rendered: str) -> int:
+    """Decay's clock, as one call a caller can make from the render path.
+
+    `ContentApp` renders a module's prompt and hands the result here; the store marks the
+    items whose sentence actually appears in it (`MemoryStore.note_used`). Kept as a
+    module-level function so the render path stays a single line and never has to know
+    whether memory is configured, or care that a broken memory file must not end a turn."""
+    if store is None or not device_id:
+        return 0
+    try:
+        return store.note_used(device_id, rendered)
+    except Exception as e:                        # a use counter is never worth a turn
+        print(f"[memory] note_used failed: {e}", flush=True)
+        return 0
 
 
 # ---------------------------------------------------------------------------

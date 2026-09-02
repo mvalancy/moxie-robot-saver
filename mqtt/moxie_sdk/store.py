@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import threading
+import time
 
 # Default data dir: mqtt/data/ (sibling of moxie_sdk/). Git-ignored — it is runtime
 # state, not source. Override with MOXIE_DATA_DIR (e.g. a volume in the compose stack).
@@ -207,7 +208,190 @@ POLICY_NO_DATA = 0
 MAX_MEMORY_NAMESPACES = 32
 MAX_MEMORY_ITEMS = 25            # items in any one list (facts, preferences, …)
 MAX_MEMORY_ITEM_CHARS = 240      # one fact is a sentence, not a paragraph
-MAX_MEMORY_BYTES = 16384         # the whole memory.json, serialized
+# The whole memory.json, serialized. Raised 16 KB → 64 KB when every item grew from a
+# bare string to `{id, text, _provenance, use_count, …}`: the byte cap drops *whole
+# trailing namespaces*, so leaving it at 16 KB would have silently halved how many
+# activities a robot can remember the day per-item ids landed. Still small enough that a
+# runaway module cannot blow up a prompt or the disk.
+MAX_MEMORY_BYTES = 65536
+
+#: Bytes of blake2b in an item id → 8 hex characters. Short enough to put in a URL and
+#: click, wide enough that a collision inside one (namespace, kind) is a curiosity.
+MEMORY_ID_BYTES = 4
+
+#: How long an unused item survives, in days (`MOXIE_MEMORY_MAX_AGE_DAYS`, 0 = off).
+#: 90 days ≈ a school term: long enough that a summer holiday does not wipe the term's
+#: memory, short enough that a fact nothing has used since last year stops being fed
+#: back into every prompt.
+MEMORY_MAX_AGE_DAYS = 90
+
+#: The per-item provenance we keep **on the item** — the six fields the parent console
+#: renders. The namespace-level `_provenance` log keeps the full record (conversation
+#: id, source), so nothing is lost and the item stays about 110 bytes.
+ITEM_PROVENANCE_KEYS = ("at", "date", "module_id", "content_id", "turns", "reason")
+
+
+def memory_max_age_days() -> int:
+    """`MOXIE_MEMORY_MAX_AGE_DAYS` as a non-negative int (0 = decay off)."""
+    raw = os.environ.get("MOXIE_MEMORY_MAX_AGE_DAYS", "").strip()
+    if not raw:
+        return MEMORY_MAX_AGE_DAYS
+    try:
+        return max(0, int(float(raw)))
+    except ValueError:
+        return MEMORY_MAX_AGE_DAYS
+
+
+# ---------------------------------------------------------------------------
+# Items — a stable id, per-item provenance, and a use clock on every fact
+# ---------------------------------------------------------------------------
+# A remembered thing used to be a bare string in a list. A parent who can only erase a
+# whole activity is one wrong pronoun away from losing everything Moxie learned, so each
+# item is now a small self-describing record instead::
+#
+#     {"id": "9f3ac1d0", "text": "Sam has a beagle named Pepper",
+#      "_provenance": {"at": …, "date": "2026-09-02", "module_id": "MEMORY_CHAT",
+#                      "content_id": "default", "turns": 4, "reason": "exit"},
+#      "use_count": 3, "last_used_at": 1788352646.0, "pinned": true}
+#
+# `id` is `blake2b(namespace \0 kind \0 text)` taken at **creation** and then carried —
+# an edit keeps the id, so a console link survives a correction. Because it is derived,
+# a `memory.json` written before ids existed migrates to exactly the ids it would have
+# had (`normalize_items` on read; written back on the next merge). Defaults are omitted
+# from the file, so an item nobody has used or pinned costs id + text + provenance.
+
+def item_id(namespace: str, kind: str, text: str) -> str:
+    """The stable id of one remembered item — 8 hex of blake2b(namespace|kind|text)."""
+    raw = f"{namespace}\x00{kind}\x00{text}".encode("utf-8", "replace")
+    return hashlib.blake2b(raw, digest_size=MEMORY_ID_BYTES).hexdigest()
+
+
+def item_text(value):
+    """The sentence a stored value carries, or None when it is not a memory item.
+
+    Both shapes are items: a bare string (pre-ids, or written straight by a module) and
+    the record above. Anything else — a number, a module's own dict — is left alone."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and isinstance(value.get("text"), str):
+        return value["text"]
+    return None
+
+
+def _unique_id(candidate: str, taken: set) -> str:
+    """`candidate`, widened until it is free. Two items with the same text under one kind
+    never survive the merge dedup, so this only fires on a real hash collision."""
+    if candidate not in taken:
+        return candidate
+    n = 1
+    while f"{candidate}{n:x}" in taken:
+        n += 1
+    return f"{candidate}{n:x}"
+
+
+def item_provenance(prov) -> dict:
+    """The subset of a merge's provenance that is worth carrying on every item."""
+    p = prov if isinstance(prov, dict) else {}
+    return {k: p[k] for k in ITEM_PROVENANCE_KEYS if p.get(k) not in (None, "")}
+
+
+def make_item(namespace: str, kind: str, text: str, *, provenance=None,
+              taken: set | None = None) -> dict:
+    """A fresh item record for `text` under `namespace`/`kind`."""
+    item = {"id": _unique_id(item_id(namespace, kind, text), taken or set()),
+            "text": text}
+    prov = item_provenance(provenance)
+    if prov:
+        item["_provenance"] = prov
+    return item
+
+
+def normalize_items(namespace: str, kind: str, values, *, provenance=None) -> list:
+    """One stored list → items with ids (migrating bare strings and id-less dicts).
+
+    Pure and idempotent: run twice and nothing changes, which is what makes "ids are
+    stable across reads" true for a file written before ids existed."""
+    out, taken = [], set()
+    for value in list(values or []):
+        text = item_text(value)
+        if text is None:
+            out.append(value)                  # not a memory item — never rewritten
+            continue
+        if isinstance(value, dict):
+            item = dict(value)
+            got = item.get("id")
+            item["id"] = _unique_id(
+                got if isinstance(got, str) and got else item_id(namespace, kind, text),
+                taken)
+            if provenance and not isinstance(item.get("_provenance"), dict):
+                prov = item_provenance(provenance)
+                if prov:
+                    item["_provenance"] = prov
+        else:
+            item = make_item(namespace, kind, text, provenance=provenance, taken=taken)
+        taken.add(item["id"])
+        out.append(item)
+    return out
+
+
+def normalize_block(namespace: str, block, *, provenance=None) -> dict:
+    """One stored namespace with every list migrated to items. `_`-keys are untouched."""
+    if not isinstance(block, dict):
+        return block
+    out = {}
+    for key, value in block.items():
+        if not str(key).startswith("_") and isinstance(value, list):
+            out[key] = normalize_items(namespace, str(key), value,
+                                       provenance=provenance)
+        else:
+            out[key] = value
+    return out
+
+
+def item_clock(item) -> float | None:
+    """When this item was last worth having — the last prompt that rendered it, else the
+    day it was learned. **None** when neither is known: an item we cannot date is one we
+    must never age out, because "undated" and "unused since 2019" look identical."""
+    if not isinstance(item, dict):
+        return None
+    used = item.get("last_used_at")
+    if isinstance(used, (int, float)) and not isinstance(used, bool) and used > 0:
+        return float(used)
+    prov = item.get("_provenance")
+    born = prov.get("at") if isinstance(prov, dict) else None
+    if isinstance(born, (int, float)) and not isinstance(born, bool) and born > 0:
+        return float(born)
+    return None
+
+
+def prune_stale(data: dict, *, max_age_days: int, now: float) -> tuple:
+    """Drop unpinned items nothing has used for `max_age_days`. → `(data, removed)`.
+
+    Deliberately dumb, and that is the honest part: this can only see *whether* an item
+    was rendered into a prompt, never whether it was true, useful, or hurtful. It cannot
+    judge that "Sam's grandad died" matters more than "Sam liked the blue crayon". It
+    only stops a stale fact being re-injected forever. A parent's edit pins an item and
+    takes it out of decay entirely — a human decision outranks a clock."""
+    removed = 0
+    if not isinstance(data, dict) or not max_age_days:
+        return data, 0
+    horizon = float(now) - (float(max_age_days) * 86400.0)
+    for ns, block in list(data.items()):
+        if str(ns).startswith("_") or not isinstance(block, dict):
+            continue
+        for key, values in list(block.items()):
+            if str(key).startswith("_") or not isinstance(values, list):
+                continue
+            kept = []
+            for value in values:
+                clock = item_clock(value)
+                pinned = isinstance(value, dict) and bool(value.get("pinned"))
+                if clock is not None and not pinned and clock < horizon:
+                    removed += 1
+                    continue
+                kept.append(value)
+            block[key] = kept
+    return data, removed
 
 
 def _policy_value(policy) -> int | None:
@@ -299,16 +483,26 @@ class MemoryStore:
         return sorted(k for k in self.load(device_id) if not k.startswith("_"))
 
     def view(self, device_id: str) -> dict:
-        """What Moxie remembers, by namespace, with provenance — the parent's read."""
+        """What Moxie remembers, by namespace, with provenance — the parent's read.
+
+        Every item comes out as its full record (`id`, `text`, per-item `_provenance`,
+        `use_count`, `pinned`), migrating a file written before ids existed on the way
+        past — so a parent reading an old robot still gets something they can erase or
+        correct one line at a time. `meta` carries the module's own bookkeeping that a
+        parent *does* need to see (`summarized_through`: how far through the transcript
+        was written down); the rest of the `_`-prefixed engine keys stay out of `data`."""
         data = self.load(device_id)
         out = {}
         for ns in sorted(data):
             if ns.startswith("_"):
                 continue
             block = data[ns] if isinstance(data[ns], dict) else {"value": data[ns]}
+            block = normalize_block(ns, block)
+            meta = block.get("_meta")
             out[ns] = {"data": {k: v for k, v in block.items()
                                 if not k.startswith("_")},
-                       "provenance": block.get("_provenance", [])}
+                       "provenance": block.get("_provenance", []),
+                       "meta": dict(meta) if isinstance(meta, dict) else {}}
         return {"namespaces": out,
                 "bytes": len(json.dumps(data)) if data else 0,
                 "writes_allowed": self.writes_allowed(device_id)}
@@ -341,23 +535,32 @@ class MemoryStore:
 
     def merge(self, device_id: str, namespace: str, values: dict, *,
               provenance: dict | None = None, meta: dict | None = None,
-              prepend_lists: bool = True) -> dict | None:
+              prepend_lists: bool = True, now=None) -> dict | None:
         """Fold `values` into one namespace and record where they came from.
 
-        List values are **prepended** (newest first) and de-duplicated case-insensitively,
-        so a second conversation adds to what the first learned instead of replacing it;
-        scalars overwrite. `provenance` (conversation id, module, date, how many turns)
-        is appended to the namespace's `_provenance` log — Fork A's idea that a remembered
-        thing must carry how it was learned. `meta` is a module's own bookkeeping (e.g.
-        how far through a transcript it has summarized); like `_provenance` it is
-        `_`-prefixed and stays out of the parent-facing `view()`. Returns the merged namespace, or **None**
-        when the policy dropped the write (nothing is stored, and the caller can say so).
+        List values become **items** (`{id, text, _provenance, …}`), are **prepended**
+        (newest first) and de-duplicated case-insensitively, so a second conversation adds
+        to what the first learned instead of replacing it; scalars overwrite. `provenance`
+        (conversation id, module, date, how many turns) is appended to the namespace's
+        `_provenance` log *and* stamped on each item it created — Fork A's idea that a
+        remembered thing must carry how it was learned, taken down to the line. `meta` is a
+        module's own bookkeeping (e.g. how far through a transcript it has summarized);
+        like `_provenance` it is `_`-prefixed and stays out of the parent-facing `data`.
+
+        Merge is also the file's maintenance window: every namespace is migrated to items
+        (so a `memory.json` written before ids existed gains them here, exactly the ids it
+        already reads back with) and stale items are pruned (see `prune_stale`). Returns
+        the merged namespace, or **None** when the policy dropped the write (nothing is
+        stored, and the caller can say so).
         """
         if not self.writes_allowed(device_id):
             return None
         ns = str(namespace or "default")
         with self.store._lock:                   # read-modify-write, like JsonStore.append
             data = self.load(device_id)
+            # Write-back of the id migration: whatever shape the file was in, from here on
+            # every list in it is a list of items.
+            data = {k: normalize_block(str(k), v) for k, v in data.items()}
             block = data.get(ns)
             if not isinstance(block, dict):
                 block = {}
@@ -369,13 +572,35 @@ class MemoryStore:
                     continue
                 if isinstance(safe, list):
                     old = block.get(key) if isinstance(block.get(key), list) else []
-                    merged = (safe + old) if prepend_lists else (old + safe)
+                    # Index what is already on disk by its text, so the parent's decisions
+                    # about an item (its id, its pin, its use clock) survive re-learning it
+                    # whichever way round the two lists are concatenated.
+                    old = normalize_items(ns, str(key), old)
+                    prior = {}
+                    for item in old:
+                        text = item_text(item)
+                        if text is not None and isinstance(item, dict):
+                            prior.setdefault(text.strip().lower(), item)
+                    new = normalize_items(ns, str(key), safe, provenance=provenance)
+                    merged = (new + old) if prepend_lists else (old + new)
                     seen, dedup = set(), []
                     for item in merged:
-                        key_of = item.strip().lower() if isinstance(item, str) else repr(item)
+                        text = item_text(item)
+                        key_of = text.strip().lower() if text is not None else repr(item)
                         if key_of in seen:
                             continue
                         seen.add(key_of)
+                        was = prior.get(key_of)
+                        if isinstance(item, dict) and isinstance(was, dict) and was is not item:
+                            # Re-learning something already remembered must not reset it:
+                            # keep the newest provenance and position, inherit the rest.
+                            if was.get("id"):
+                                item["id"] = was["id"]
+                            if was.get("pinned"):
+                                item["pinned"] = True
+                            for carry in ("use_count", "last_used_at"):
+                                if was.get(carry) and not item.get(carry):
+                                    item[carry] = was[carry]
                         dedup.append(item)
                     block[key] = dedup[: self.max_items]
                 else:
@@ -393,8 +618,130 @@ class MemoryStore:
                 log.insert(0, json_safe(provenance) or {})
                 block["_provenance"] = log[: self.max_items]
             data[ns] = block
+            data, dropped = prune_stale(data, max_age_days=memory_max_age_days(),
+                                        now=time.time() if now is None else now)
+            if dropped:
+                print(f"[memory] decay: forgot {dropped} unused item(s) for {device_id}",
+                      flush=True)
             self.store.write(device_id, self.collection, self._bound(data))
             return self.load(device_id).get(ns, {})
+
+    # ---- per-item: what a parent does about one wrong line -------------------------
+    # BEYOND #4's other half. Erasing a whole activity because one pronoun is wrong costs
+    # everything Moxie learned about a child in that activity, so both of these work on a
+    # single `id` and leave the rest of the namespace (and its `_meta.summarized_through`,
+    # which is what stops the same transcript being re-summarized) exactly as it was.
+
+    def find_item(self, device_id: str, namespace: str, item_id: str) -> tuple:
+        """`(kind, index, item)` for one id in one namespace, or `(None, -1, None)`."""
+        block = self.load(device_id).get(str(namespace))
+        if not isinstance(block, dict):
+            return None, -1, None
+        for key, values in block.items():
+            if str(key).startswith("_") or not isinstance(values, list):
+                continue
+            for idx, item in enumerate(normalize_items(str(namespace), str(key), values)):
+                if isinstance(item, dict) and item.get("id") == str(item_id):
+                    return str(key), idx, item
+        return None, -1, None
+
+    def erase_item(self, device_id: str, namespace: str, item_id: str) -> bool:
+        """Forget exactly one remembered item. Never policy-gated, like every erase."""
+        with self.store._lock:
+            data = self.load(device_id)
+            block = data.get(str(namespace))
+            if not isinstance(block, dict):
+                return False
+            for key, values in list(block.items()):
+                if str(key).startswith("_") or not isinstance(values, list):
+                    continue
+                items = normalize_items(str(namespace), str(key), values)
+                kept = [i for i in items
+                        if not (isinstance(i, dict) and i.get("id") == str(item_id))]
+                if len(kept) != len(items):
+                    block[key] = kept
+                    data[str(namespace)] = block
+                    self.store.write(device_id, self.collection, data)
+                    return True
+            return False
+
+    def edit_item(self, device_id: str, namespace: str, item_id: str, text: str, *,
+                  history=(), check=None, now=None) -> dict:
+        """Correct one remembered item, keeping its id, and **pin** it.
+
+        A parent correcting a fact is the most trustworthy write this store ever takes —
+        so it is never policy-gated (a `NO_DATA` robot can still have a wrong line fixed
+        rather than only deleted) and the result is pinned, which takes it out of decay
+        for good. It is *not* unchecked: the new text goes through the same two rules a
+        model's summary does — the safety classifier must not BLOCK it, and it must not
+        be a long span of the child's own words — because a text box that writes straight
+        into every future prompt is exactly the hole those rules exist to close.
+
+        Raises `ValueError` when the item does not exist or the text is refused."""
+        new_text = str(text or "").strip()[:MAX_MEMORY_ITEM_CHARS]
+        if not new_text:
+            raise ValueError("an empty memory is an erase, not an edit")
+        if check is None:
+            from .content.memory import check_text as check   # lazy: no import cycle
+        if not check(new_text, history=history):
+            raise ValueError("that text cannot be stored (safety or the child's own words)")
+        with self.store._lock:
+            data = self.load(device_id)
+            block = data.get(str(namespace))
+            if not isinstance(block, dict):
+                raise ValueError(f"unknown namespace {namespace!r}")
+            for key, values in list(block.items()):
+                if str(key).startswith("_") or not isinstance(values, list):
+                    continue
+                items = normalize_items(str(namespace), str(key), values)
+                for idx, item in enumerate(items):
+                    if not (isinstance(item, dict) and item.get("id") == str(item_id)):
+                        continue
+                    item["text"] = new_text
+                    item["pinned"] = True
+                    item["edited_at"] = round(
+                        float(time.time() if now is None else now), 3)
+                    items[idx] = item
+                    block[key] = items
+                    data[str(namespace)] = block
+                    self.store.write(device_id, self.collection, self._bound(data))
+                    return item
+            raise ValueError(f"unknown memory item {item_id!r}")
+
+    def note_used(self, device_id: str, rendered: str, *, now=None) -> int:
+        """Mark the items that appear in a rendered prompt as used. → how many.
+
+        This is decay's whole clock. It is a **substring** test against the prompt the
+        module actually rendered, which is honest but blunt: an item the prompt truncated,
+        reworded, or handed to the model some other way is not counted, and an item that
+        appears is not necessarily one the model used. Gated like every other write, so a
+        `NO_DATA` robot's clocks simply stop (and nothing is pruned either, since pruning
+        happens on merge, which is also gated)."""
+        text = rendered if isinstance(rendered, str) else ""
+        if not text or not device_id or not self.writes_allowed(device_id):
+            return 0
+        stamp = round(float(time.time() if now is None else now), 3)
+        with self.store._lock:
+            data = self.load(device_id)
+            hits = 0
+            for ns, block in data.items():
+                if str(ns).startswith("_") or not isinstance(block, dict):
+                    continue
+                for key, values in list(block.items()):
+                    if str(key).startswith("_") or not isinstance(values, list):
+                        continue
+                    items = normalize_items(str(ns), str(key), values)
+                    for item in items:
+                        body = item_text(item)
+                        if not isinstance(item, dict) or not body or body not in text:
+                            continue
+                        item["use_count"] = int(item.get("use_count") or 0) + 1
+                        item["last_used_at"] = stamp
+                        hits += 1
+                    block[key] = items
+            if hits:
+                self.store.write(device_id, self.collection, data)
+            return hits
 
     def erase(self, device_id: str, namespace: str | None = None) -> bool:
         """Forget one namespace, or (namespace None/"all") everything for this robot.
