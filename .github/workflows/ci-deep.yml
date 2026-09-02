@@ -56,7 +56,12 @@ jobs:
         with: { python-version: "3.11" }
       - name: Install deps (broker client + brain/test)
         run: |
-          pip install --quiet "paho-mqtt>=2.0" pytest openai jinja2
+          # Tier parity (playbook rule 9): the deep tier runs the SAME hermetic suite as
+          # the fast tier, so it needs the SAME test deps — pyyaml (compose + workflow
+          # guards) and the console's own requirements + httpx (the 55 console
+          # round-trip tests) were missing here. Guarded by test_ci_workflows.py.
+          pip install --quiet "paho-mqtt>=2.0" pytest openai jinja2 pyyaml httpx \
+            -r server/requirements.txt
       - name: SIL smoke (state→config→remote-chat→reply)
         run: bash sim/run_smoke.sh
       - name: SIL scenarios (scripted conversations)
