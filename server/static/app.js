@@ -140,20 +140,28 @@ let liveDevice=null;
 async function refreshLive(){
   const box=$('#robot-live'); if(!box) return;
   let f; try{ f=await api('/local/fleet',{auth:false}); }catch(e){ return; }
+  renderPermits(f);
+  // A *pending* robot (reached the broker, not on the permit list) is deliberately NOT
+  // the live robot: it has no child config to show and no settings to edit. It lives in
+  // the 🔐 Robot access card until a grown-up permits it.
+  const served=(f.robots||[]).filter(r=>!r.pending);
   const cfgBox=$('#cfg-box');
-  if(!f.ok || !f.robot_count){
+  if(!f.ok || !served.length){
     liveDevice=null;
-    box.innerHTML = `<div class="live-off">● Live state: ${f.ok?'no robot connected':'supervisor offline'}</div>`;
+    const why = !f.ok ? 'supervisor offline'
+              : (f.pending_count ? `${f.pending_count} robot${f.pending_count===1?'':'s'} waiting to be permitted`
+                                 : 'no robot connected');
+    box.innerHTML = `<div class="live-off">● Live state: ${escapeHtml(why)}</div>`;
     if(cfgBox) cfgBox.style.display='none';
     refreshInsights(null);
     refreshSafety(null);
     return;
   }
   if(cfgBox) cfgBox.style.display='';
-  liveDevice=f.robots[0].device_id;
+  liveDevice=served[0].device_id;
   fillModulePicker(f.schedule_modules);
-  if(cfgBox && !cfgBox.open) prefillConfig(f.robots[0], f);  // don't clobber active edits
-  box.innerHTML = f.robots.map(r=>{
+  if(cfgBox && !cfgBox.open) prefillConfig(served[0], f);  // don't clobber active edits
+  box.innerHTML = served.map(r=>{
     const rows=[
       ['Battery', r.battery_level==null?'—':`${r.battery_level}%`],
       ['Volume',  r.audio_volume==null?'—':r.audio_volume],
@@ -170,6 +178,62 @@ async function refreshLive(){
   refreshInsights(liveDevice);
   refreshSafety(liveDevice);
 }
+
+// ---- 🔐 Robot access (the device allowlist / pairing gate) ----
+// Our broker accepts anonymous connections, so "reached the port" must not mean "is my
+// child's robot". A robot that is not on the permit list is PENDING: it gets a minimal
+// config with no child_pii and is served nothing else. One click here lets it in.
+function renderPermits(f){
+  const card=$('#permits-card'), box=$('#permits-box'); if(!card||!box) return;
+  const toggle=$('#permit-allowall'), warn=$('#permit-warn');
+  const robots=(f&&f.robots)||[];
+  const pending=robots.filter(r=>r.pending), permitted=robots.filter(r=>!r.pending);
+  const open=!!(f&&f.allow_unverified_bots);
+  // Hidden only when there is nothing to say: supervisor up, gate closed, nobody waiting.
+  card.classList.toggle('hidden', !(f&&f.ok) || (!pending.length && !open && !permitted.length));
+  if(toggle && document.activeElement!==toggle) toggle.checked=open;
+  if(warn) warn.innerHTML = open
+    ? '⚠️ <b>Open:</b> any robot that reaches this server is paired and receives your '
+      + 'child\u2019s name and birthday. Leave this off unless you are testing.'
+    : 'Off (recommended). New robots wait here until you permit them.';
+  const row=(r,act)=>
+    `<div class="ev"><span>${escapeHtml(r.device_id||'')}</span> `
+    + `<b>${escapeHtml(r.permit_label||r.summary||'')}</b> ${act}</div>`;
+  const parts=[];
+  if(pending.length) parts.push('<div class="insights-hd">Waiting for you</div>'
+    + pending.map(r=>row(r,
+        `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="1">Permit</button>`)).join(''));
+  if(permitted.length) parts.push('<div class="insights-hd">Allowed</div>'
+    + permitted.map(r=>row(r,
+        `<button class="ghost permit-btn" data-id="${escapeHtml(r.device_id)}" data-permit="0">Revoke</button>`)).join(''));
+  if(!parts.length) parts.push('<div class="live-off">No robot has connected yet.</div>');
+  box.innerHTML=parts.join('');
+  box.querySelectorAll('.permit-btn').forEach(b=>{ b.onclick=()=>setPermit(b.dataset.id, b.dataset.permit==='1'); });
+}
+async function setPermit(deviceId, permitted){
+  const s=$('#permit-status'); if(s) s.textContent = permitted?'Permitting…':'Revoking…';
+  try{
+    const r=await api(`/local/robots/${encodeURIComponent(deviceId)}/permit`,
+                      {method:'POST',auth:false,body:{permitted}});
+    if(s) s.textContent = r.ok
+      ? (permitted?'✅ Permitted — Moxie is paired and has its settings.'
+                  :'⛔ Revoked — that robot no longer receives your child\u2019s settings.')
+      : `⚠️ ${r.error||'failed'}`;
+  }catch(e){ if(s) s.textContent='⚠️ '+(e.message||'failed'); }
+  refreshLive();
+}
+{ const t=$('#permit-allowall'); if(t) t.onchange=async()=>{
+    const s=$('#permit-status'); if(s) s.textContent='Saving…';
+    try{
+      const r=await api('/local/fleet/permits',
+                        {method:'POST',auth:false,body:{allow_unverified_bots:t.checked}});
+      if(s) s.textContent = r.ok
+        ? (t.checked?'⚠️ Open — any robot that connects is now served.'
+                    :'🔒 Closed — new robots wait for your approval.')
+        : `⚠️ ${r.error||'failed'}`;
+    }catch(e){ if(s) s.textContent='⚠️ '+(e.message||'failed'); }
+    refreshLive();
+  }; }
 
 // telemetry insights (M6): the Packet events the runtime stored for this robot
 async function refreshInsights(deviceId){
@@ -348,7 +412,16 @@ function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTime
 // ---- dev: simulate ----
 $('#btn-sim').onclick = async () => {
   if(!LAST.qr_payload){ alert('Generate a Wi-Fi pairing QR first (Wi-Fi tab).'); return; }
-  await api('/local/simulate-robot-scan',{method:'POST',auth:false,body:{qr_payload:LAST.qr_payload}});
+  // Pairing IS the parent saying "this robot is mine", so hand the pairing call the
+  // robot's MQTT id when it is unambiguous (exactly one robot pending) — the server then
+  // permits it as part of completing the pairing and no second click is needed.
+  let device_id='';
+  try{
+    const f=await api('/local/fleet',{auth:false});
+    if(f.ok && (f.pending||[]).length===1) device_id=f.pending[0];
+  }catch(e){}
+  await api('/local/simulate-robot-scan',
+            {method:'POST',auth:false,body:{qr_payload:LAST.qr_payload, device_id}});
   setTimeout(refreshMoxie,500);
 };
 

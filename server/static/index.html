@@ -128,6 +128,17 @@
 
     <!-- TAB: Moxie status -->
     <section class="tabpanel" id="tab-moxie">
+      <!-- Device allowlist (pairing gate). A robot that reaches the broker but is not
+           permitted is "pending": it gets a minimal config with no child data and is
+           served nothing else until a grown-up lets it in here. -->
+      <div class="card hidden" id="permits-card">
+        <h2>🔐 Robot access</h2>
+        <div id="permits-box"></div>
+        <label class="check"><input id="permit-allowall" type="checkbox">
+          Let any robot that connects use this server</label>
+        <div id="permit-warn" class="muted"></div>
+        <div id="permit-status" class="muted"></div>
+      </div>
       <div class="card" id="moxie-none">
         <h2>No Moxie paired yet</h2>
         <p class="muted">Finish Wi-Fi + Server pairing, then your robot appears here.</p>

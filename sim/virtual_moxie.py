@@ -27,6 +27,7 @@ and by ``sim/run_smoke.sh`` locally.
 
 Usage:
   python3 sim/virtual_moxie.py --host 127.0.0.1 --port 1883 --timeout 15
+  python3 sim/virtual_moxie.py --expect-unpaired    # assert the device allowlist gates us
 """
 from __future__ import annotations
 import argparse, json, sys, threading, time, uuid
@@ -243,6 +244,35 @@ class VirtualMoxie:
             self.client.loop_stop()
             self.client.disconnect()
 
+    # -- the pairing gate: what a NOT-permitted robot is served --
+    def run_unpaired(self) -> bool:
+        """Announce ourselves and assert we are treated as **pending**.
+
+        The supervisor's device allowlist (`fleet/permits.json`) is closed by default, so
+        a robot it has never been told about must receive the minimal config: a
+        `pairing_status` that is not `"paired"` and — the point of the whole gate — **no
+        `child_pii`**. Prints the document it got, so a live check can show it verbatim.
+        """
+        self.client.connect(self.host, self.port, 30)
+        self.client.loop_start()
+        try:
+            self.client.publish(self.t_state, json.dumps(
+                {"software_version": FIRMWARE, "state": "config"}))
+            self.log(f"→ state (software_version={FIRMWARE})")
+            if not self.got_config.wait(self.timeout):
+                self.errors.append("no config pushed within timeout")
+                return False
+            cfg = self.config_payload or {}
+            print(json.dumps(cfg, indent=2, sort_keys=True))
+            if cfg.get("pairing_status") == "paired":
+                self.errors.append("expected an un-paired config, got pairing_status='paired'")
+            if "child_pii" in cfg:
+                self.errors.append("LEAK: an unpermitted device was sent child_pii")
+            return not self.errors
+        finally:
+            self.client.loop_stop()
+            self.client.disconnect()
+
     # -- the scripted round-trip --
     def run_smoke(self) -> bool:
         self.client.connect(self.host, self.port, 30)
@@ -351,6 +381,9 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--expect-tts", action="store_true",
                     help="also assert a CloudTTSResponse (server voice audio) arrives")
+    ap.add_argument("--expect-unpaired", action="store_true",
+                    help="assert the server treats us as PENDING (device allowlist): a "
+                         "non-'paired' pairing_status and no child_pii; prints the config")
     ap.add_argument("--query", default=None,
                     help="comma-separated CloudQuery names to pull instead of the smoke "
                          "round-trip (e.g. 'schedule,mentor_behaviors')")
@@ -361,6 +394,20 @@ def main():
 
     vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet,
                       expect_tts=args.expect_tts)
+
+    if args.expect_unpaired:
+        ok = False
+        try:
+            ok = vm.run_unpaired()
+        except Exception as e:
+            vm.errors.append(f"exception: {e}")
+        if ok:
+            print("✅ pairing gate OK — pending: minimal config, no child_pii")
+            sys.exit(0)
+        print("❌ pairing gate FAILED:")
+        for e in vm.errors:
+            print("   -", e)
+        sys.exit(1)
 
     if args.query:
         names = [q.strip() for q in args.query.split(",") if q.strip()]

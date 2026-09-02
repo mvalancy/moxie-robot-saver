@@ -27,6 +27,10 @@ def _num(v):
 def robot_summary(r: dict) -> str:
     """A one-line human summary of a robot's live state for the console card."""
     bits = []
+    # The pairing gate leads, because it changes what every other line means: a pending
+    # robot's config is the minimal child-free one, and nothing else is being served to it.
+    if r.get("pending"):
+        bits.append("pending — not permitted")
     bat = r.get("battery_level")
     if bat is not None:
         bits.append(f"battery {bat}%" if isinstance(bat, (int, float)) and bat <= 100
@@ -66,6 +70,11 @@ def normalize_robot(r: dict) -> dict:
         "device_id": r.get("device_id"),
         "child": r.get("child"),
         "firmware": r.get("firmware"),
+        # Device allowlist. A snapshot from a supervisor that predates the gate carries
+        # neither key — it served everything, so it reads back as permitted.
+        "permitted": bool(r.get("permitted", True)),
+        "pending": bool(r.get("pending", False)),
+        "permit_label": str(r.get("permit_label") or ""),
         "battery_level": _num(r.get("battery_level")),
         "audio_volume": _num(r.get("audio_volume")),
         "wifi_ssid": r.get("wifi_ssid"),
@@ -101,6 +110,13 @@ def normalize_fleet(snapshot: Optional[dict]) -> dict:
         # appliance-wide defaults every robot inherits (audit ADOPT #6) + the on-board
         # module ids a parent may schedule, so the console never copies the catalog.
         "fleet_config": fleet_config,
+        # The pairing gate (audit §3.1): the appliance-wide "serve anything that
+        # connects" switch as the supervisor ENFORCES it (env included), plus the robots
+        # waiting for a parent to click Permit. `pending` is the console's whole to-do
+        # list, so it is lifted out of `robots` rather than left to be filtered client-side.
+        "allow_unverified_bots": bool(snap.get("allow_unverified_bots")) if ok else False,
+        "pending": [r["device_id"] for r in robots if r["pending"]],
+        "pending_count": sum(1 for r in robots if r["pending"]),
         "schedule_modules": [str(m) for m in (snap.get("schedule_modules") or [])] if ok else [],
         "robots": robots,
         "recent": list(snap.get("recent") or [])[-60:],
