@@ -368,6 +368,41 @@ who pairs through the console never sees this: `POST /local/simulate-robot-scan`
 the device id it is given as part of completing the pairing. Owner guide:
 [`../guides/permitting-a-robot.md`](../guides/permitting-a-robot.md).
 
+### 3.8 The `schedule` query — the day plan, and the parent's read of it *(adaptive, 2026-09-02)*
+
+The robot pulls its day at the start of every session — `client-service-activity-log`,
+`subtopic:"query"`, `query:"schedule"` (§3.3) — and the cloud answers on
+`/devices/{id}/commands/query_result` with a `CloudQueryResponse` whose field 6 is a
+`ContentSchedule` (§3.5). **That wire is unchanged.** What changed is what fills it:
+`build_schedule` was a `(device_id, day)` rotation and is now a scored recommender
+(audit §4.2 BEYOND #7) that plans from the robot's `mentor_behaviors`, the parent's
+`schedule_preferences`, the bedtime windows in its config, and the clock. The factors,
+their weights, the time-of-day mapping and what telemetry can honestly contribute are
+documented once, in
+[`content-module-contract.md` §How a `schedules[]` entry becomes the day the robot
+runs](content-module-contract.md#how-a-schedules-entry-becomes-the-day-the-robot-runs).
+
+Because the plan now has *reasons*, they are kept — never on the wire, only for the
+parent. Every served day is written to `robots/<device_id>/schedule_explain.json` and
+read back over the supervisor's localhost status server:
+
+| endpoint | answer |
+|---|---|
+| `GET /schedule?device_id=…` | `{ok, device_id, day, planned_at, served, schedule, explanations[], inputs}` — the exact `ContentSchedule` that went out, one `{module_id, slot, at, reason_codes[], line, score, factors}` per entry **in plan order**, and a summary of what the planner knew (`bucket`, `bedtime`, `slots`, `parent_requests`, `ftue_skips`, `telemetry`, `history`, `planned`) |
+| `GET /schedule?device_id=…&refresh=1` | re-plans on the spot instead of reading the stored answer (`served:false`) |
+
+404 for a device this appliance has never seen; localhost-only, like every other handler
+on that server. Example of the `line` a parent reads:
+
+```
+ 07:38  DRAW           Sam finished Drawing once — scheduling it in the morning slot.
+ 07:58  SCAVENGERHUNT  Requested by a parent for 8:01 am — Scavenger hunt is pinned to that slot.
+ 08:18  JUKEBOX        Sam finished Jukebox once — scheduling it in the morning slot.
+```
+
+Surfacing that line in the **parent console** is a follow-up: `server/` renders
+`GET /local/robots/{id}/…` views and no console page reads this endpoint yet.
+
 ---
 
 ## 3b. Robot identity / auth

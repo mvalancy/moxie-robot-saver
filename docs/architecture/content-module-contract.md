@@ -92,9 +92,101 @@ that history per robot and answers `query:"mentor_behaviors"` with it — which 
 plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py)
 (the builder) and [`../../mqtt/moxie_sdk/store.py`](../../mqtt/moxie_sdk/store.py) (the history).
 
-Today's builder is **deterministic** — seeded on `(device_id, day)` — so a plan is stable for a day and
-different tomorrow. An adaptive, explainable recommender is a later slice
-([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 row 7).
+#### The recommender: history + preferences + the clock → today's plan *(2026-09-02)*
+
+The builder used to be a `(device_id, day)` rotation. It is still **deterministic** — the same
+inputs produce byte-identical bytes, in any process, under any `PYTHONHASHSEED` — but it is now a
+*scored* recommender ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 row 7).
+Two pure functions, both in [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py):
+
+- **`plan_inputs(device_id, now, …)`** gathers the signals — the `schedules[]` template, the
+  robot's `mentor_behaviors`, its effective config, its telemetry, the clock — into one JSON-safe
+  object. That object is the plan's audit trail: it is exactly what `GET /schedule` shows a parent.
+- **`plan_day(inputs) -> (ContentSchedule, explanations)`** scores, orders and explains. It reads
+  nothing but `inputs`, so a plan can be replayed from a stored one.
+
+**The signals, and where each comes from**
+
+| signal | source | how it is read |
+|---|---|---|
+| what the child has done | `mentor_behaviors` (`MentorBehavior{module_id, timestamp, action}`) | `COMPLETED` = finished, `QUIT`/`REFUSED` = abandoned, anything else = merely offered |
+| what the parent asked for | `RobotCloudConfig.schedule_preferences.parent_requests[]` (`{module_id, scheduled_at}`, field 28 — see [config contract](config-and-telemetry-contract.md)) | a request dated **today** is pinned to the slot nearest its `scheduled_at` |
+| when the child must be asleep | `weekday_bedtime` / `weekend_bedtime` in the effective config | a hard exclusion; windows may wrap midnight |
+| the time of day | the caller's `now` (injected — the planner never reads a clock of its own) | slot *i* is notionally at `now + i × SLOT_MINUTES` (10 min, **ours**: `CSData.module_started_ts` shows the robot time-boxes activities but our corpus does not recover the limit) |
+| what the module offers | the module's own `schedules[]` | an entry named after the current bucket (`morning`/`afternoon`/`evening`/`night`) is preferred, so a module can ship a wind-down day; otherwise the first entry |
+| telemetry | `Packet` (`event_name`, `recorded_at`, `moxie_session_id`) | **context only** — see the honesty note below |
+
+**Constraints** (applied before scoring): nothing is ever planned into bedtime, and a candidate
+whose `ModuleCategory` matches the previous pick is filtered out unless nothing else remains
+(the same no-two-in-a-row rule the rotation had).
+
+**Weights** (summed; every term is returned in `factors` so the arithmetic is inspectable):
+
+| factor | weight | what it does |
+|---|---|---|
+| parent request | +4000 | outranks everything, including the template's own `excluded_module_ids` |
+| FTUE still running | +2000 | unfinished onboarding goes first |
+| coverage | −1000 × times seen (capped at 5) | the "nothing repeats until the catalog is exhausted" invariant, kept as the dominant term |
+| recency | −300 today / −100 within 3 days | do not re-offer yesterday's activity |
+| completion affinity | +10 … +200 (neutral 100) | `COMPLETED ÷ (COMPLETED + QUIT/REFUSED)`. A repeatedly-abandoned module is demoted **to the floor, never to zero** — it comes back around once the rest of the catalog has had its turn |
+| time-of-day fit | −60 … +120 | the slot's clock time vs. the category's energy (below) |
+| category spread | −90 × prior uses today | keeps the day broad rather than five games in a row |
+| tiebreak | 0…31 | `blake2b(device_id\|day\|module_id)` — stable for a day, different tomorrow, and independent of the interpreter's hash salt |
+
+Because coverage outranks affinity **by design**, a favourite waits its turn behind an activity the
+child has never seen; affinity ranks modules with *equal* exposure, which after a few days is all
+of them.
+
+**Time-of-day mapping.** Buckets are `morning` 05:00-11:59, `afternoon` 12:00-16:59, `evening`
+17:00-20:59, `night` 21:00-04:59. Energy is assigned per **category**, not per module, from the
+recovered `ModuleDetail.ModuleCategory` enum
+([`ContentModule.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/ContentModule.proto):46-60
+· [`proto-catalog.md`](../reverse-engineering/protocol/proto-catalog.md):1675):
+
+| energy | categories | best slot |
+|---|---|---|
+| energetic | `MOVEMENT`, `PLAYFUL_GAME` | morning (+120), never negative except at night (−60) |
+| neutral | `CREATIVITY`, `FUN_TIDBIT`, `PUZZLE_GAME`, `MISSION`, `CONVERSATION` | afternoon (+120) |
+| calm | `REGULATION`, `LISTENING`, `READING` | evening and night (+120) |
+
+Anything unclassified (`UNASSIGNED`, `UTILITY`, `OTHER`, an authored `USER` category) is neutral.
+Nothing is *forbidden* by time of day — a child who wants to dance at 8 pm still can; it is just no
+longer the top pick.
+
+**Honesty note — what telemetry does *not* carry.** The recovered envelope is
+`embodied.logging.Packet{model, version, recorded_at, moxie_id, moxie_session_id, user_id,
+event_name, event_data}`
+([`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md)
+§"The telemetry envelope"). `event_name` is a **free string** and `event_data` is opaque serialized
+bytes: our RE corpus establishes **no module-scoped event vocabulary**, so there is no "module
+launched" or "module exited" event to count. Completion-vs-abandonment therefore comes from
+`mentor_behaviors` alone. Telemetry contributes only what the envelope really carries — a packet
+count, the event-name histogram, distinct session ids, and a `recorded_at` histogram of when this
+robot is awake — reported to the parent as context. `inputs.telemetry.carries_module_signal` is
+`false` and says why.
+
+#### The explanation — "why this activity today"
+
+`plan_day` returns a second list, one entry per `provided_schedule` entry, **in the same order**:
+
+```json
+{"module_id": "SCAVENGERHUNT", "slot": 6, "at": "07:58",
+ "reason_codes": ["parent_request", "unseen", "time_of_day"],
+ "line": "Requested by a parent for 8:01 am — Scavenger hunt is pinned to that slot.",
+ "score": 4291, "factors": {"coverage": 0, "recency": 0, "affinity": 100,
+                            "time_of_day": 120, "category_spread": 0, "tiebreak": 11,
+                            "parent_request": 4000}}
+```
+
+`reason_codes` are for machines (`parent_request`, `ftue`, `fixture`, `chat`, `unseen`, `finishes`,
+`abandons`, `just_played`, `played_recently`, `rested`, `time_of_day`, `variety`); `line` is the one
+sentence a parent reads. Labels come from `Recommendation.module_name` when the template supplies
+one, else a small table of plain-English names — a module id we have no English name for (`RDL`,
+`FF`, `AB`) is printed verbatim rather than given an invented product name. **None of this reaches
+the robot**: the served `ContentSchedule` still contains only `ContentSchedule` fields, and each
+entry only `Recommendation` fields. It is stored at `robots/<device_id>/schedule_explain.json` and
+served by `GET /schedule?device_id=…`
+([`mqtt-and-conversation.md` §3.8](mqtt-and-conversation.md#38-the-schedule-query-the-day-plan-and-the-parents-read-of-it-adaptive-2026-09-02)).
 
 ## The `volley` / `session` API (per-turn hooks)
 
