@@ -1,5 +1,5 @@
 {
- "generated": "docs-e12e62175dca",
+ "generated": "docs-aa44b9b9c5a0",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -579,7 +579,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 848,
+   "bytes": 970,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -642,6 +642,24 @@
     "Quick method — ARP scan by vendor",
     "Confirming it's Moxie",
     "Worked example"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/litellm-tts-setup.md",
+   "title": "TTS on the LiteLLM gateway — setup handoff",
+   "section": "guides",
+   "bytes": 5500,
+   "mermaid": 0,
+   "headings": [
+    "What we already confirmed",
+    "What we need (the contract)",
+    "How to register it (LiteLLM `config.yaml`)",
+    "Option A — Piper via an OpenAI-compatible shim (recommended)",
+    "Option B — a hosted OpenAI-compatible TTS (simplest)",
+    "Option C — any OpenAI-`/audio/speech` server you already run",
+    "Verify it works",
+    "What to send back to us"
    ],
    "kind": "md"
   },
