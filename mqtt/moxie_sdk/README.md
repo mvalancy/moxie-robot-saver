@@ -12,6 +12,13 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   and interleaved chats. Pure + deterministic.
 - [`store.py`](store.py) — the durable per-robot store (JSON under `MOXIE_DATA_DIR`, default
   [`../data/`](../data/)) that remembers reported `mentor_behaviors` across restarts.
+- [`faces.py`](faces.py) — 🎨 **Moxie's look**: the frozen appearance catalog and how a
+  selection becomes `child_pii.face_options` + the `child_pii.id` texture cache-buster. Pure.
+  Our recovered docs name all 14 `MoxieCustomizationType` slots but list options for only two
+  (the eye/face colour enums, with hex), so it ships **12 cited options and no invented asset
+  ids** — a parent supplies their own through `face.custom`. Read the module docstring before
+  touching it: it carries the citation trail and the two flagged assumptions. Parent-facing
+  summary: [Moxie's look guide](../../docs/guides/moxies-look.md).
 - [`wire.py`](wire.py) — the JSON encoders/decoders for the robot-cloud bus (chat responses,
   `query_result`, mentor-behavior reports). A chat response can be one chunk of several
   (`chunk_num` + `consistency_control.is_completed`) — that is how a slow turn answers twice.

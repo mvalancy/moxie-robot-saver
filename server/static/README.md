@@ -4,8 +4,9 @@ The parent-app UI your phone loads over the LAN. Vanilla HTML/CSS/JS — **no bu
 dependencies** (works fully offline). Served at `/` by the FastAPI server.
 
 - `index.html` — the setup flow (login → child + Wi-Fi → QR → paired), then the Moxie tab: 🔐 Robot
-  access (permit a pending robot), live state, ⚙️ Settings, 📈 Insights, 🛡️ Safety, 🧠 What Moxie
-  remembers (browse + erase long-term memory).
+  access (permit a pending robot), live state, ⚙️ Settings, 📈 Insights, 🛡️ Safety,
+  🎨 Moxie's look (pick the face layers — see the [guide](../../docs/guides/moxies-look.md)),
+  🧠 What Moxie remembers (browse + erase long-term memory).
 - `app.js` — talks to the server's `/local/*` and `/api/*` endpoints.
 - `style.css` — mobile-first, light/dark aware.
 

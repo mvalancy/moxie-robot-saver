@@ -36,7 +36,7 @@ One document is the robot's entire remotely-managed runtime state. Change any kn
 
 | Group | Fields |
 |---|---|
-| **Child / user** | `child` (`ChildEncrypted` ciphertext), `child_pii` (`ChildDecrypted` plaintext), `secret_key` (pairing seed), `num_children`, `max_children`, `switch_user_config` |
+| **Child / user** | `child` (`ChildEncrypted` ciphertext), `child_pii` (`ChildDecrypted` plaintext — incl. **`face_options`**, the child's chosen appearance, see [§Appearance](#-appearance-the-childs-chosen-face)), `secret_key` (pairing seed), `num_children`, `max_children`, `switch_user_config` |
 | **Quiet hours** | `privacy_mode_enabled`, `weekday_bedtime_enabled` + `…_starts_at`/`…_ends_at`, `weekend_bedtime_*` |
 | **Wake / alarms** | `alarms` (`WakeSchedule{ WakeEntry{days[], time}…, enabled }`), `wake_button_enabled`, `audio_wake_set`, `touch_wake_enabled`, `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — **all built**, see [§Wake alarms & scheduled activities](#wake-alarms-scheduled-activities-the-json-we-emit) |
 | **Device** | `audio_volume`, `screen_brightness`, `timezone_id`, `settings` (`DeviceSettings` k/v) |
@@ -92,6 +92,101 @@ so the JSON on `/devices/{id}/config` is:
 >
 > `module_id` is *not* assumed: it is validated against the one on-board activity catalog
 > (`moxie_sdk/schedule.py::ONBOARD_MODULES`), so a parent can only ask for an activity the robot has.
+
+### 🎨 Appearance — the child's chosen face
+
+Moxie's face is a **composite of independent layers**, not one picture, and which layers it
+wears is part of the child profile. So appearance rides down inside `child_pii`, in
+`ChildDecrypted.face_options` — `repeated string`, field **17**
+([`Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto):166,
+catalogued at [`proto-catalog.md`](../reverse-engineering/protocol/proto-catalog.md):334; the sealed
+twin `ChildEncrypted.face_options = 16` is Cloud.proto:144 · proto-catalog.md:313). It is **not** one of
+the encrypted fields: both
+[`device-config-and-telemetry.md`](../reverse-engineering/protocol/device-config-and-telemetry.md):52-54
+and [`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md):506-508 list it among the
+*clear* metadata sitting beside the `*_encrypted` blobs, so a server fills it in directly.
+
+**The anatomy — 14 layers, cited.**
+[`unity-face-animation.md`](../reverse-engineering/runtime/unity-face-animation.md):34-42 records
+`MoxieCustomizationType` as "14 independent, swappable slots" and names every one:
+
+| Slot(s) | |
+|---|---|
+| `EyeColor` · `EyeDesign` · `EyeLid` | the eyes — the expressive core |
+| `Brows` · `Mouth` · `Nose` · `Mustache` | brows and lower-face features |
+| `FaceColor` · `FaceDesign` | base head colour + surface pattern |
+| `Hair` · `Glasses` · `Stickers` · `Extras` · `Misc` | cosmetic add-on layers |
+
+**The options — 12, across 2 of the 14, and that is all we have.** Our corpus lists concrete choices
+for exactly two slots, and lists them *with hex*, which is why those two are the only ones the console
+can preview ([`robot-lifecycle.md`](../features/robot-lifecycle.md):280-283 = the `Robot.java`
+`EYE_COLORS`/`FACE_COLORS` constants; repeated at
+[`feature-catalog.md`](../features/feature-catalog.md):238-241, which also gives the Channel-1 spelling
+`ChildrenModel.eye-color`/`face-color` → `PUT children/{id}`, gated by the account flags
+`supports-eye-color`/`supports-face-color`):
+
+* `EyeColor{green 42D02B, blue 8491EF, purple 9437DE, brown 443319, gold F4BF03, teal 38ADAE}`
+* `FaceColor{blue BBCFE1, yellow F0F055, green 9BDB9B, teal 7ED6DD, pink E1A2A2, purple C395D4}`
+
+For the other **twelve** slots our corpus names the slot and stops. That is structural, not an oversight:
+the customization art is loaded by `MoxieCustomizationAsset`/`MoxieCustomizationPreview` out of a
+**streamed** bundle ([`content-delivery.md`](../reverse-engineering/runtime/content-delivery.md):79,
+source `REMOTE_ASSETBUNDLES`) rather than the base APK, which is exactly why the UnityPy inventory in
+[`unity-assets.md`](../reverse-engineering/firmware/unity-assets.md):19-67 found none of them; and
+[`behavior-markup.md`](../reverse-engineering/runtime/behavior-markup.md):161-163 records that the
+generators "accept **any** id the loaded bundle defines", so the id space is bundle-defined and cannot
+be inferred. **`moxie_sdk/faces.py` therefore ships 12 cited options and zero invented ids.** The
+remaining twelve slots are listed (a parent should see the whole anatomy) and marked `cited: false`; a
+parent who knows their robot's real labels supplies them verbatim through `face.custom`, which we never
+rewrite — bearing in mind [`mqtt-and-conversation.md`](mqtt-and-conversation.md):824, "some face
+customization assets crash Unity and are excluded". OpenMoxie (MIT) ships a ~60-entry table of real
+`MX_*` labels from robots its authors can run; we credit the idea and the mechanism in `ATTRIBUTION.md`
+and copied neither the code nor the list.
+
+So the JSON on `/devices/{id}/config` is:
+
+```json
+"child_pii": { "nickname": "Sam",
+               "face_options": ["EyeColor_teal", "FaceColor_pink"],
+               "id": "a6f3609a-0e20-512c-ae72-a16153adf140" }
+```
+
+**Layering.** The parent-facing override is `face` — an object, so `merge_config_layers` deep-merges it
+**per slot**: a fleet-default look ("all our robots are teal-eyed") survives a per-robot edit that only
+changes the face colour, and a robot-layer `null` on one slot clears just that layer. An explicit
+`face: null` from the robot layer clears the whole selection, and — like `weekday_bedtime` — beats an
+inherited fleet look, so "this robot wears nothing" stays expressible. With no face chosen, neither
+`face_options` nor `id` is emitted and the document is byte-for-byte what it was before appearance
+existed.
+
+> **Two honest assumptions**, each isolated behind one function in
+> [`mqtt/moxie_sdk/faces.py`](../../mqtt/moxie_sdk/faces.py), and **neither observed on a physical
+> robot — this project has none**:
+>
+> - **The label format.** `face_options` is `repeated string`; nothing in our corpus records what those
+>   strings look like. `face_option_label()` joins two *cited* spellings — the `MoxieCustomizationType`
+>   slot name and the enum member name — as `EyeColor` + `_` + `teal` → `"EyeColor_teal"`. Every
+>   character is quoted from a document above; only the join is ours. `face.custom` bypasses it entirely.
+> - **The cache-buster.** A layered face is composited into a texture, and a robot that has one has no
+>   reason to redo the work. Our corpus does not record the cache key: it gives `ChildDecrypted.id = 14`
+>   as the child's identity in the pushed config, `SwitchUserConfig{action, restore_id, child_id, force,
+>   child_name}` as the user-switch lever (proto-catalog.md:341-347), and `USER_DATA_UPDATE` as both the
+>   cloud-visible lifecycle state (device-config-and-telemetry.md:88) and the on-device disengage reason
+>   for "the child's data/profile is being updated"
+>   ([power-and-system-events.md](../reverse-engineering/protocol/power-and-system-events.md):85) — but
+>   it never says the texture cache is keyed on `child_pii.id`. OpenMoxie's face editor does, from a
+>   server that drives real robots, by writing a fresh `uuid4` there on every save. So this is
+>   **field-proven, not capture-proven**, exactly like `UNPAIRED_PAIRING_STATUS`. We take the mechanism
+>   and make it deterministic: `face_child_id()` is a **UUIDv5** over the child key + the rendered layer
+>   list, so the same look re-pushes the same id (an idempotent push does not disturb the robot) and any
+>   layer change yields a new one (a stale record cannot match). One function; a contradicting capture
+>   is a one-line fix.
+
+**Surface.** Supervisor: `POST /config?device_id=…` (or `?scope=fleet`) with `{"face": {…}}`, the same
+whitelisted path every other setting uses; `GET /status` publishes `face_catalog` (the SDK's catalog, so
+the console never keeps a second copy) and each robot's `face_cache_id`. Console: the 🎨 Moxie's look
+card in the 🤖 Moxie tab, per-robot with the fleet look underneath. Owner guide:
+[`../guides/moxies-look.md`](../guides/moxies-look.md).
 
 ### Fleet defaults ⊕ per-robot overrides
 
@@ -232,6 +327,7 @@ via `LoggingStateChangeRequest{state, path}`, reporting back the effective `uplo
 | Wake alarms & wake toggles | `alarms` (`WakeSchedule`) + `wake_button_enabled`/`touch_wake_enabled`/`audio_wake_set` — weekday checkboxes + a time in the ⚙️ form |
 | Timezone | `timezone_id` |
 | Scheduled activities | `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — module picker fed by the on-board catalog |
+| Moxie's look (the child's face) | `child_pii.face_options` (14 layers, 12 cited options) + the `child_pii.id` cache-buster — the 🎨 card; see [§Appearance](#-appearance-the-childs-chosen-face) |
 | House rules for every robot | the **fleet** layer: `POST /config?scope=fleet` → `fleet/config.json`, merged under each robot's own overrides |
 | OTA target / hold | `ota_update{id,version}`, `forbid_otaver`; status via `ota_reboot_required` + `OTA_LOCK` |
 | Privacy / data sharing | `data_sharing` → `LoggingPolicy` gate |
@@ -259,6 +355,8 @@ writes become a `RobotCloudConfig` push, and the status it shows comes from `/st
 - [ ] Tracks `CloudStatus.UserState` for pairing/OTA lifecycle.
 - [ ] **Serves the child's config only to a permitted device** — an unknown robot gets the
       un-paired document with no `child_pii`, and nothing else.
+- [ ] Carries the child's chosen appearance in `child_pii.face_options`, and **changes
+      `child_pii.id` whenever those layers change** so the robot cannot serve a stale face texture.
 - [ ] Honors `LoggingPolicy` (`NO_DATA`/`NO_MEDIA`/`FULL`) before uploading or staging any telemetry.
 
 Where it lives: [`../../mqtt/`](../../mqtt/) (publishes config, consumes state/telemetry) +

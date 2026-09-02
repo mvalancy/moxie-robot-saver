@@ -373,6 +373,11 @@ class MoxieRuntime:
                 "ota_reboot_required": st.get("ota_reboot_required"),
                 "config_overrides": self._config_overrides.get(r.device_id, {}),
                 "config_effective": self.effective_config(r.device_id),
+                # The face cache-buster as this robot's next /config push will carry it
+                # (`child_pii.id`) — "" when no face is chosen and the field is omitted.
+                # Surfaced so a parent (and a test) can see that changing the look really
+                # did re-key the texture, without reading the MQTT wire.
+                "face_cache_id": self.face_cache_id(r.device_id),
                 "telemetry_count": len(r.extra.get("telemetry", [])),
                 "safety_total": int((self.store.read(
                     r.device_id, safety_seam.COUNTS_COLLECTION, {}) or {}).get("total", 0)),
@@ -382,12 +387,17 @@ class MoxieRuntime:
                     if isinstance(e, dict) and not e.get("reviewed")),
             })
         from moxie_sdk.cloud_config import schedulable_module_ids
+        from moxie_sdk.faces import face_catalog
         return {"ok": True, "app": self.app.name,
                 "uptime_s": int(time.time() - self.started_at),
                 "fleet_config": self.fleet_config(),
                 "allow_unverified_bots": open_fleet,
                 "pending_count": sum(1 for r in robots if r["pending"]),
                 "schedule_modules": list(schedulable_module_ids()),
+                # The appearance catalog the 🎨 card renders (audit ADOPT #9). Published
+                # rather than hard-coded in the console so the two can never disagree
+                # about which slots exist or which options are actually cited.
+                "face_catalog": face_catalog(),
                 "robots": robots, "recent": list(self.recent)[-60:]}
 
     # ---- lifecycle ----
@@ -531,8 +541,11 @@ class MoxieRuntime:
                 """Parent-console writes.
 
                 `POST /config?device_id=…` with a JSON body of overrides (audio_volume,
-                weekday_bedtime, alarms, wake toggles, …), validated by
+                weekday_bedtime, alarms, wake toggles, `face`, …), validated by
                 sanitize_config_overrides, then update_config re-pushes RobotCloudConfig.
+                A `face` edit re-pushes like any other override, and because the pushed
+                `child_pii.id` is derived from the chosen layers, the change also re-keys
+                the robot's face-texture cache (`moxie_sdk/faces.py`).
                 `POST /config?scope=fleet` writes the same whitelisted overrides as the
                 **appliance-wide defaults** (audit ADOPT #6) and re-pushes every connected
                 robot; a per-robot override still wins over the fleet value.
@@ -730,6 +743,26 @@ class MoxieRuntime:
         from moxie_sdk.cloud_config import merge_config_layers
         return merge_config_layers(self.fleet_config(),
                                    self._config_overrides.get(device_id, {}))
+
+    def face_cache_id(self, device_id) -> str:
+        """The `child_pii.id` this robot's next `/config` push will carry — the face
+        cache-buster (`moxie_sdk/faces.py`, "the cache-buster"). `""` when no face is
+        chosen, which is exactly when the field is omitted from the document.
+
+        Read off the same `fleet ⊕ per-robot` layers `_push_config` builds from, so it is
+        the value that will actually go out, not a second opinion about it."""
+        face = (self.effective_config(device_id) or {}).get("face")
+        if not face:
+            return ""
+        from moxie_sdk.faces import face_child_id, face_options_list, validate_face
+        try:
+            labels = face_options_list(validate_face(face))
+        except ValueError:
+            return ""
+        if not labels:
+            return ""
+        child = (self.robots[device_id].child if device_id in self.robots else self.child)
+        return face_child_id(labels, child_key=child.nickname)
 
     def update_fleet_config(self, **overrides):
         """Parent-console *fleet* config edit: merge overrides into the appliance-wide
@@ -1116,6 +1149,12 @@ class MoxieRuntime:
         RobotCloudConfig and re-publish it. Overrides persist across re-pushes."""
         self._config_overrides.setdefault(device_id, {}).update(overrides)
         self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
+        if "face" in overrides:
+            # Worth its own line in the console's activity feed: this is the one config
+            # edit whose result a child sees on the robot's face.
+            from moxie_sdk.faces import describe_face
+            look = describe_face(overrides["face"] or {}) or "the default look"
+            self._note("config", f"🎨 look updated: {look}")
         return self._push_config(device_id)
 
     # ---- presence: the robot's own eyes (audit BEYOND #9) ------------------------
