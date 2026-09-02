@@ -44,6 +44,17 @@ has the audio context suspended, the audio is queued and plays on the next user 
 Contract: [docs/architecture/sim-as-a-client.md](../../docs/architecture/sim-as-a-client.md);
 tests: `sim/test_audio.mjs` + `sim/tests/test_sil.py`.
 
+**`#tts-status` has one owner: `audio.js`.** Two independent things want that line —
+the live `🔊 speaking — cloud TTS …` indicator and the async probe in `env.js` that
+reports whether the optional Piper sidecar is up. Writing it from both meant whichever
+landed last won, so a probe resolving mid-utterance wiped the speaking indicator (and
+was itself wiped when playback restored the pre-probe text). Anything else that wants
+to say something there calls `moxieAudio.setTtsHint(hint)` — a plain string, or
+`{text}`/`{html}` plus an optional `warn` — and `audio.js` paints it only while nothing
+is speaking. `moxieAudio.hasCloudVoice()` reports whether a `CloudTTSResponse` has ever
+arrived, so `env.js` stops claiming "no TTS server" when the server voice is the one
+talking.
+
 ## JS control API (`window.moxie`)
 
 Attached to `window` when the module loads; a `moxie-ready` CustomEvent fires

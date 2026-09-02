@@ -248,19 +248,43 @@ def test_cloud_tts_plays_and_animates_the_mouth(page, server):
                                          "marks": [{"time": 0, "start": 0, "end": 5,
                                                     "type": "viseme", "value": "a"}]})
     assert frames == 26460, f"the page decoded {frames} frames, expected 26460"
-    page.wait_for_function("() => window.moxieAudio.isSpeaking()", timeout=5000)
-    info = page.evaluate("() => window.moxieAudio.speakingInfo()")
-    assert info["sampleRate"] == 22050 and info["channels"] == 1
-    assert abs(info["duration"] - 1.2) < 0.01, info
-    # the face visibly speaks while the audio plays
-    page.wait_for_function("() => window.moxie.getMouthOpen() > 0.05", timeout=5000)
-    assert "speaking" in page.text_content("#tts-status")
-    assert page.evaluate("() => document.body.classList.contains('tts-speaking')")
+    # WAIT for the whole speaking state to be up, don't sample it at an instant:
+    # the audio graph, the mouth pump and the status line all come up async, and
+    # env.js probes its sidecars in parallel. Everything asserted below is read
+    # from ONE atomic snapshot taken while the utterance is live.
+    live = page.wait_for_function(
+        """() => {
+             const a = window.moxieAudio, m = window.moxie;
+             if (!a || !a.isSpeaking()) return null;
+             const info = a.speakingInfo();
+             if (!info) return null;
+             const open = m.getMouthOpen();               // the face visibly speaks
+             if (!(open > 0.05)) return null;
+             const st = document.getElementById("tts-status");
+             const status = st ? (st.textContent || "") : "";
+             if (!status.includes("speaking")) return null;
+             return {speaking: a.isSpeaking(), status: status, open: open,
+                     sampleRate: info.sampleRate, channels: info.channels,
+                     duration: info.duration,
+                     body: document.body.classList.contains("tts-speaking")};
+           }""",
+        timeout=10000).json_value()
+    assert live["speaking"] is True, live
+    assert live["sampleRate"] == 22050 and live["channels"] == 1, live
+    assert abs(live["duration"] - 1.2) < 0.01, live
+    assert live["open"] > 0.05, live
+    assert "speaking" in live["status"], live
+    assert live["body"] is True, live
     # ...and everything clears when the buffer ends
     page.wait_for_function("() => window.moxieAudio.isSpeaking() === false", timeout=15000)
-    assert page.evaluate("() => window.moxie.getMouthOpen()") == 0
-    assert not page.evaluate("() => document.body.classList.contains('tts-speaking')")
-    assert "speaking" not in page.text_content("#tts-status")
+    page.wait_for_function(
+        """() => {
+             const st = document.getElementById("tts-status");
+             return window.moxie.getMouthOpen() === 0 &&
+                    !document.body.classList.contains("tts-speaking") &&
+                    !((st ? st.textContent : "") || "").includes("speaking");
+           }""",
+        timeout=5000)
     assert not [e for e in page.console_errors if "favicon" not in e], page.console_errors[:3]
 
 

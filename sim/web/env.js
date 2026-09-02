@@ -35,6 +35,32 @@
   }
   function warn(el, html) { if (el) { el.innerHTML = html; el.classList.add("warn"); } }
 
+  // #tts-status is shared with the cloud/server voice indicator in audio.js, and
+  // this probe is async: writing the element directly meant a slow probe could
+  // land mid-utterance and wipe the live "speaking" line (and be wiped in turn
+  // when playback restored the pre-probe text). audio.js owns that element, so
+  // hand it a resting hint instead — it paints it only when nothing is speaking.
+  function ttsHint(html, isWarn) {
+    if (window.moxieAudio && window.moxieAudio.setTtsHint)
+      return window.moxieAudio.setTtsHint({ html: html, warn: !!isWarn });
+    var el = $("tts-status");                       // audio.js absent: old behaviour
+    if (!el) return;
+    el.innerHTML = html;
+    el.classList.toggle("warn", !!isWarn);
+  }
+
+  // Is a server voice available? Then "no TTS server" is simply untrue — the
+  // Piper sidecar is only one of the two ways this sim gets a voice.
+  function hasCloudVoice() {
+    try {
+      var a = window.moxieAudio;
+      if (a && ((a.hasCloudVoice && a.hasCloudVoice()) || (a.isSpeaking && a.isSpeaking()))) return true;
+      var b = window.moxieBridge;
+      if (b && b.hasCloudVoice && b.hasCloudVoice()) return true;
+    } catch (e) {}
+    return false;
+  }
+
   // ---- probe the optional local services, then annotate ----
   function probe(url) {
     var opt = ("AbortSignal" in window && AbortSignal.timeout) ? { signal: AbortSignal.timeout(2500) } : {};
@@ -53,14 +79,16 @@
 
   function apply(tts, stt) {
     // Voice / TTS
-    var ttsSt = $("tts-status");
-    if (tts) { if (ttsSt) { ttsSt.textContent = "piper tts · connected"; ttsSt.classList.remove("warn"); } }
+    if (tts) { ttsHint("piper tts &middot; connected", false); }
     else {
-      warn(ttsSt, isLocal
-        ? "no TTS server &mdash; run <code>python3 sim/tts/server.py</code>"
-        : "hosted demo &mdash; only pre&#8209;scripted lines have audio (no live TTS)");
+      // The buttons really do need the local Piper server, cloud voice or not.
       needsBackend($("tts-test"), "Needs the Piper TTS server (python3 sim/tts/server.py). Not available on the hosted demo.");
       needsBackend($("speech-btn"), "Speaks arbitrary text via the local Piper TTS server. On the hosted demo only pre-rendered demo lines play.");
+      // ...but only say the sim has no voice when it really has neither.
+      if (!hasCloudVoice())
+        ttsHint(isLocal
+          ? "no TTS server &mdash; run <code>python3 sim/tts/server.py</code>"
+          : "hosted demo &mdash; only pre&#8209;scripted lines have audio (no live TTS)", true);
     }
     // Mic / STT
     var micSt = $("mic-status");
