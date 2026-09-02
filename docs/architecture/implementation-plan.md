@@ -267,21 +267,35 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   `provide_mentor_behaviors` / `ingest_mentor_behavior`. **Still gaps:** `license` answers empty (we hold
   no license blobs); `response_code` (field 99) is not emitted (the docs give the enum but not its JSON
   spelling); the other queries (`idf`, `contexts`, `context_store`, `remote_lines`) answer empty.
-- **the day plan is deterministic, not intelligent.** `build_schedule` seeds on `(device_id, day)`, so a
-  robot gets a stable plan that changes tomorrow — it does **not** read telemetry, mood, time of day or
-  parent preference, and it cannot explain *why this activity today*. That recommender is BEYOND #7
-  ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2). Two smaller honesties: the
-  "already done → don't schedule again" rule applies to the generated rotation and to first-time-user
-  onboarding, **not** to fixtures an author pins in `provided_schedule` (e.g. `DM`, which is meant to
-  recur daily); and the FTUE completion thresholds (`TNT`=9, `SYSTEMSCHECK`=4 content ids) are
-  **OpenMoxie's field-proven constants**, not something our RE docs establish — see the note in
-  `mqtt/moxie_sdk/schedule.py`.
+- **day plan:** the deterministic rotation was replaced by the explainable recommender in PR #39 (see the adaptive-schedule bullet below); what remains inferred is listed there.
 - **the store is JSON files, not a database.** `mqtt/moxie_sdk/store.py` persists per-robot
   `mentor_behaviors` under `MOXIE_DATA_DIR` with atomic-ish writes and a 500-record cap. It has no
   indexes, no queries, no migrations, and no concurrent-writer story beyond a single process's lock —
   it exists so ADOPT #1/#2 could ship without blocking on ADOPT #8's real database. Conversation memory
   (`MOXIE_MEMORY_DIR`) and telemetry still use their own paths; folding all three onto one durable
   store is the next slice.
+- **Integration evidence (2026-09-02, v0.7.0 RC).** The whole stack was exercised end to end on the
+  release candidate and both paths that landed last were live-validated through the *built* backend, not
+  a mock. Creds-free: `sim/run_smoke.sh` on a free port → `✅ SIL round-trip OK` with the audio leg
+  (`🔊 spoke 50934 B @ 22050 Hz`), `sim/run_scenarios.sh` → `4/4` + `4/4`. The **adaptive schedule** was
+  driven through a real mosquitto + `mqtt/run.py` + `sim/virtual_moxie.py --query schedule` with a
+  scratch `MOXIE_DATA_DIR`: seeded `mentor_behaviors`, a bedtime and a `ParentRequest` written over
+  `POST /config?scope=fleet`, and the eight ids the robot received matched the eight `GET /schedule`
+  explains, one activity dropped for bedtime, the request pinned, every entry carrying a *why* line —
+  now a hermetic regression suite (`sim/tests/test_schedule_sil_e2e.py`, 13 tests, mutation-checked).
+  The **gateway voice** was proven on the assembled appliance in one turn (`MOXIE_APP=llm` +
+  `MOXIE_VOICE_BASE_URL`): `[run] server voice enabled: openai-voice (standby: tone)`, brain →
+  `"Hello Sam! I'm so glad you're here."`, robot → `🔊 spoke 138472 B @ 22050 Hz (~3.14s)` at spectral
+  flatness `5.09e-02` against the tone's `3.4e-14` — `sim/tests/test_live_gateway_turn_e2e.py`, budgeted
+  at one completion + one `/audio/speech`. **Three honest gaps this pass did not fix:** (a) the
+  `ToneSynthesizer` placeholder emits **22050 Hz mono, exactly like the gateway WAV**, so sample rate can
+  never be the proof a real voice spoke — only spectral flatness can, and any future test that checks the
+  rate alone is vacuous; (b) `[tool.setuptools.package-data]` maps `moxie_sdk = ["*.json"]` only, so a
+  data file added under `moxie_sdk/apps/` or `moxie_sdk/content/` would be dropped from the wheel in
+  silence — now *detected* by `sim/tests/test_package_contents.py`, not yet prevented by a wider glob;
+  (c) the recommender's coverage term (−1000 per airing) outweighs its affinity term (10–200), so a module
+  a child finishes every time is demoted below one they have never seen — variety by design, but it means
+  "what they love" cannot currently come back the same week.
 
 ## DoD progress (audited 2026-09-02, at v0.7.0) — 4/6 🟢 · overall ≈ 90% (done = all six 🟢)
 

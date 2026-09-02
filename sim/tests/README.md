@@ -29,6 +29,15 @@ browser at all and carry the hermetic suite CI actually runs.
   RemoteChatResponse conformance check). Import this rather than growing a fifth
   private copy of it. It also owns `LatchClient` (a fake transport a test can *wait on*
   instead of sleeping) and `CountingSynth`.
+
+  Four more pieces landed with the v0.7.0 integration pass, each replacing a hand-rolled
+  copy: **`free_port()`** (bind `:0` — never a hard-coded 8930/1883, which a lab machine
+  and sibling agents already hold), **`status_server(rt)`** which starts the runtime's
+  *real* `_start_status_server` on one and hands back its base URL, **`http_json(url, …)`**
+  for talking to it, and **`loopback(rt, vm)`** — the two-subscriber in-process broker that
+  lets a `sim/virtual_moxie.py` robot and a real runtime exchange bytes on the real topics
+  with no mosquitto and no sleeps. `make_runtime` also takes `store=` now, so a test that
+  writes durable state points it at a `tmp_path` instead of the developer's data dir.
 - **`test_segment.py`** — the pure sentence segmenter (`moxie_sdk/segment.py`) a streaming
   brain talks through: boundaries, the same split whatever size the network cuts the
   stream into, decimals, abbreviations and initials, ellipses, the minimum chunk length,
@@ -76,6 +85,40 @@ browser at all and carry the hermetic suite CI actually runs.
   deep tier's PR-to-main docker smokes could see that. Every guard is paired with
   **negative tests** — tiny in-memory compose pairs carrying exactly one injected drift —
   so the suite proves the guards still bite, not merely that they pass.
+- **`test_schedule_sil_e2e.py`** — the adaptive day plan end to end: the parent writes a
+  bedtime and a `ParentRequest` over the **real** `POST /config?scope=fleet`, a SIL robot
+  pulls its day over the **real** `CloudQuery` round trip, and the parent reads the "why
+  this activity today" lines back over the **real** `GET /schedule`. The claim that binds
+  them is the one nothing else asserted: *the ids the robot was served are exactly the ids
+  the parent is shown an explanation for* — an audit trail describing a different day than
+  the robot got would be worse than none. Also: nothing is planned inside bedtime (and the
+  day really is truncated by it), the parent's request is pinned and says so, finished FTUE
+  never comes back, a module quit an hour ago is not re-offered, and a reported
+  `mentor_behavior` reaches the store and changes the next plan. Hermetic — the loopback
+  above stands in for the broker, the store is a `tmp_path`, and every clock window is
+  computed relative to *now*, so it never depends on the hour it runs at.
+- **`test_package_contents.py`** — what `pip install moxie-cloud-sdk` actually gets, which
+  no other test can see because every other test runs against the source tree: every
+  package on disk is in `[tool.setuptools] packages` (add `moxie_sdk/telehealth/`, forget
+  the line, and it ships absent), every non-code file inside a package is covered by a
+  `[tool.setuptools.package-data]` glob (`moxie_sdk = ["*.json"]` covers exactly one
+  package — a JSON under `apps/` or `content/` matches nothing and is dropped silently),
+  the version has one source, and **no module needs an optional backend to import** — that
+  last one asserted in a subprocess where `openai`/`numpy`/`jinja2`/`piper`/`faster_whisper`
+  are made unimportable, so the full-fat venv catches what playbook rule 9 says the fast
+  tier otherwise discovers as a red push.
+- **`test_live_gateway_turn_e2e.py` + `helpers_stack.py`** — ONE live turn on the
+  *assembled appliance*, which is the combination nothing else covered:
+  `test_live_gateway.py` proves the brain, `test_live_gateway_tts.py` proves the voice but
+  builds its synthesizer in-process, and `sim/run_smoke.sh` puts a real robot on a real
+  broker with the echo app and the tone beep. `helpers_stack.py` boots the real thing —
+  mosquitto on a free port (binary, else docker) and `mqtt/run.py` in a subprocess with its
+  own scratch `MOXIE_DATA_DIR` — and the SIL robot takes one turn with `MOXIE_APP=llm` +
+  `MOXIE_VOICE_BASE_URL`. Budget: **1 completion + 1 `/audio/speech`**, one module-scoped
+  fixture every test reads (the filler timer is put out of reach so a slow brain cannot
+  buy a second voice call). The audio assertion is spectral flatness, not sample rate:
+  `ToneSynthesizer` also emits 22050 Hz mono, and the creds-free guard in the same file
+  proves the tone fails the check, so a green cannot mean "the standby spoke".
 - **Live tests** (`test_live_gateway.py`, `test_live_action_tags.py`,
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the

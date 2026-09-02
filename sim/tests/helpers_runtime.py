@@ -155,9 +155,14 @@ class CountingSynth(Synthesizer):
 
 def make_runtime(app, *, device_id: str = "d_test", nickname: str = "Sam",
                  module_id: str = "FREE_CHAT", content_id: str = "default",
-                 allow_unverified_bots: bool = True):
+                 allow_unverified_bots: bool = True, store=None):
     """A real `MoxieRuntime` wired to `app`, with a fake transport and one robot
     already 'connected'. Returns `(runtime, device_id)`.
+
+    `store` is the runtime's durable `JsonStore` (mentor behaviors, the schedule audit,
+    permits). It defaults to None, which is exactly what `MoxieRuntime` already did —
+    a store rooted at `MOXIE_DATA_DIR`/`mqtt/data`. Pass `JsonStore(str(tmp_path))` so a
+    test that writes durable state cannot touch the developer's own data dir.
 
     `allow_unverified_bots` defaults to **True** — this harness exists to drive the turn
     loop, and its robot is hand-placed into `rt.robots` rather than let in through the
@@ -168,7 +173,8 @@ def make_runtime(app, *, device_id: str = "d_test", nickname: str = "Sam",
     from moxie_sdk.types import ChildProfile, RobotContext
 
     rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname=nickname),
-                                    allow_unverified_bots=allow_unverified_bots)
+                                    allow_unverified_bots=allow_unverified_bots,
+                                    store=store)
     rt.client = FakeClient()
     rt.robots[device_id] = RobotContext(device_id=device_id, child=rt.child,
                                         module_id=module_id, content_id=content_id)
@@ -218,3 +224,91 @@ def assert_spec_response(resp: dict, *, device_id: str = None, event_id: str = N
     assert out.get("markup", "").strip(), f"empty markup: {resp!r}"
     assert isinstance(resp.get("end_turn"), bool), resp
     return resp
+
+
+# ---------------------------------------------------------------------------
+# A supervisor on a scratch data dir, its real status HTTP server, and an
+# in-process robot↔runtime loopback
+# ---------------------------------------------------------------------------
+# Four suites had already hand-rolled `socket(); bind(("127.0.0.1", 0))` to find a free
+# port before `rt._start_status_server(port)` (test_memory_runtime ×2, test_runtime_turn
+# ×2, test_console_roundtrip), and `test_presence_sil.py` hand-rolled the two-subscriber
+# loopback that lets a `sim/virtual_moxie.py` robot talk to a real `MoxieRuntime` with no
+# broker. New suites use these; the existing copies stay put for the reason this module's
+# docstring gives (a shared fixture must not break a suite for reasons unrelated to the
+# thing under test).
+
+def free_port() -> int:
+    """A port nothing is listening on right now — bind :0 and let the OS choose.
+
+    Never a hard-coded number: the lab machine has stale supervisors on 8930/8932 and
+    concurrent agents on 19xx, and a test that picks a port by hand eventually collides
+    with one of them (see the port rules in docs/architecture/orchestration-plan.md).
+    """
+    import socket
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def status_server(rt) -> str:
+    """Start the runtime's REAL status HTTP server on a free port; return its base URL.
+
+    This is `MoxieRuntime._start_status_server` itself — the same handlers the parent
+    console talks to — so a test that goes through it proves the HTTP layer, not a double.
+    The server is a daemon thread and dies with the process.
+    """
+    port = free_port()
+    rt._start_status_server(port)
+    return f"http://127.0.0.1:{port}"
+
+
+def http_json(url: str, *, method: str = "GET", body=None, timeout: float = 5.0):
+    """One JSON request against the status server → the decoded response.
+
+    Raises `urllib.error.HTTPError` on 4xx/5xx so a test can assert the status code.
+    """
+    import urllib.request
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode() or "{}")
+
+
+class _Msg:
+    """paho's message object, as much of it as `_on_message` reads."""
+
+    def __init__(self, topic, payload):
+        self.topic = topic
+        self.payload = payload if isinstance(payload, bytes) else str(payload).encode()
+
+
+class _LoopSide:
+    """One direction of the loopback: record the publish, then hand the exact bytes to
+    the other end's `_on_message`. Synchronous — when `publish()` returns, the far side
+    has already answered, so a test never sleeps."""
+
+    def __init__(self, peer_on_message):
+        self._deliver = peer_on_message
+        self.published: list = []
+
+    def publish(self, topic, payload):
+        self.published.append((topic, payload))
+        self._deliver(None, None, _Msg(topic, payload))
+
+
+def loopback(rt, vm):
+    """Wire a real `MoxieRuntime` and a `sim/virtual_moxie.py` robot together in-process.
+
+    Stands in for the broker: every runtime publish reaches the robot's `_on_message` and
+    every robot publish reaches the runtime's, byte for byte on the real topics. No
+    network, no mosquitto, no sleeps. Returns `(runtime_side, robot_side)` so a test can
+    read what each end put on the wire.
+    """
+    rt.client = _LoopSide(vm._on_message)
+    vm.client = _LoopSide(rt._on_message)
+    return rt.client, vm.client
