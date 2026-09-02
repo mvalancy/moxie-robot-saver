@@ -50,7 +50,8 @@ jobs:
           # anyway, and WITHOUT it the compiled-proto oracle silently `importorskip`s —
           # which is precisely the test that was red. Guarded by
           # sim/tests/test_ci_workflows.py.
-          python3 -m pip install -q pytest openai jinja2 pyyaml protobuf
+          python3 -m pip install -q pytest openai jinja2 pyyaml protobuf httpx \
+            -r server/requirements.txt
           python3 -m pytest sim/tests -q -k "not test_sil and not test_docs" \
             --ignore=sim/tests/test_live_gateway.py
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
@@ -90,6 +91,7 @@ jobs:
           # This step runs the WHOLE sim/tests suite, so it needs the same hermetic test
           # deps as the deep tier (sim/ci/ci-deep.yml) — a dep only that tier installs is
           # a tier drift that shows up here as a red push, not as a caught bug.
-          python3 -m pip install -q "paho-mqtt>=2.0" pytest openai jinja2 pyyaml playwright
+          python3 -m pip install -q "paho-mqtt>=2.0" pytest openai jinja2 pyyaml playwright \
+            httpx -r server/requirements.txt
           python3 -m playwright install --with-deps chromium
           python3 -m pytest sim/tests -q

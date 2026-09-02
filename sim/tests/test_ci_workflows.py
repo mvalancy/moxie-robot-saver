@@ -196,3 +196,67 @@ def test_the_only_event_conditionals_in_the_deep_tier_are_the_dispatch_only_live
             assert "workflow_dispatch" in cond, (
                 f"deep tier job {job_id} step {i} branches on the event without being "
                 f"dispatch-only: {cond}")
+
+
+# --------------------------------------------------------------------------- #
+# Tier dependency parity — a test that CI never RUNS is not a test
+# --------------------------------------------------------------------------- #
+#: Everything the hermetic suite needs in order to actually execute, rather than to
+#: `importorskip` past itself. Found the hard way on 2026-09-02: neither tier installed
+#: fastapi/httpx, so all 55 `test_console_roundtrip.py` tests — the acceptance tests for
+#: DoD criterion 3, the parent console's config/telemetry/safety/memory round trips —
+#: skipped in CI on every run since they were written. `pyyaml` was likewise missing
+#: from the deep tier, which silently skipped the compose parity guards (PR #34).
+#:
+#: `-r server/requirements.txt` rather than a hand-copied `fastapi pynacl …` list: the
+#: console's deps are declared once, in the console's own file, so this cannot drift.
+HERMETIC_TEST_DEPS = (
+    "pytest",
+    "openai",                      # LLMApp's injected-client seam still imports it
+    "jinja2",                      # content-module templates
+    "pyyaml",                      # compose parity guards + this file
+    "httpx",                       # fastapi's TestClient
+    "-r server/requirements.txt",  # fastapi + pynacl: the console app itself
+)
+
+#: Which file runs the hermetic suite, and which job in it.
+HERMETIC_JOBS = ((FAST, "sil"), ("ci-deep.yml", "hil-sim"))
+
+
+def _runs_up_to_pytest(job: dict) -> str:
+    """Every `run:` block in the job up to and including the first hermetic pytest —
+    which is where its deps must have been installed."""
+    seen = []
+    for step in _steps(job):
+        run = step.get("run") or ""
+        seen.append(run)
+        if "pytest sim/tests" in run and " -k " in run:
+            return "\n".join(seen)
+    return "\n".join(seen)
+
+
+@pytest.mark.parametrize("workflow,job_id", HERMETIC_JOBS)
+@pytest.mark.parametrize("dep", HERMETIC_TEST_DEPS)
+def test_both_tiers_install_the_same_hermetic_test_deps(workflow, job_id, dep):
+    """Playbook rule 9, as an assertion: the tiers' hermetic test deps stay in parity.
+    A dep only one tier installs is a tier drift that shows up as a red push rather than
+    as a caught bug — or, worse, as a suite that quietly skips itself."""
+    job = _load(os.path.join(TEMPLATES, workflow))["jobs"][job_id]
+    text = _runs_up_to_pytest(job)
+    assert dep in text, (
+        f"{workflow} job `{job_id}` runs the hermetic suite without installing {dep!r}; "
+        "the tests that need it will importorskip instead of running")
+
+
+def test_the_console_round_trip_suite_can_actually_run_in_ci():
+    """The concrete consequence, spelled out so nobody re-derives it: DoD criterion 3 is
+    proven by `test_console_roundtrip.py`, and that file opens with
+    `importorskip("fastapi")`. If CI does not install the console's own requirements, the
+    whole file reports as one green skip."""
+    gate = open(os.path.join(os.path.dirname(__file__),
+                             "test_console_roundtrip.py")).read()
+    assert 'importorskip("fastapi"' in gate, (
+        "test_console_roundtrip.py no longer gates on fastapi — update this guard")
+    for workflow, job_id in HERMETIC_JOBS:
+        job = _load(os.path.join(TEMPLATES, workflow))["jobs"][job_id]
+        assert "server/requirements.txt" in _runs_up_to_pytest(job), workflow
