@@ -82,5 +82,11 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   the PR, waited for green, merged. Honest gaps recorded: telemetry is in-memory (last 50/robot), typed
   `event_data` decoding deferred. Still in flight: `feat/openmoxie-audit`.
 
+- **2026-09-02** — Integrated `feat/openmoxie-audit` (PR #4 → dev): [`openmoxie-feature-audit.md`](openmoxie-feature-audit.md)
+  — every OpenMoxie (MIT) + fork feature classified HAVE / ADOPT / BEYOND, with ranked **Top-10 ADOPT** and
+  **Top-10 BEYOND** lists. This is now the WS-B / WS-C backlog. It also surfaced a real conformance bug —
+  `_on_activity` answers `schedule`/`mentor_behaviors` with the wrong wire shape (no `request_id` echo,
+  generic `result` key) — delegated immediately as `feat/activity-wire-shape` (in flight).
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
