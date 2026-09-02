@@ -382,5 +382,29 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   edits re-checked for safety and verbatim child speech (unsafe correction → 400). +23 tests (→807 full / 773
   fast-shaped). **Audit BEYOND #4 → 🟢.** In flight: `feat/vision-events`, `test/compose-parity-guards`.
 
+- **2026-09-02 (INTEGRATION)** — Integrated `test/compose-parity-guards` (PR #34 → dev): hermetic PyYAML guards keep
+  the clone and prebuilt compose files in sync — env passthrough + defaults per service, the inlined broker
+  config diffed (plus a `$$`-escaping check the runtime smoke couldn't see), service/healthcheck/port/volume
+  parity, doc parity; 20 negative cases prove each guard names the key and file. The v0.6.0 pause would have
+  been caught in 0.2 s on the feature PR. `test_compose.py` 14→47; suite → 806. In flight: `feat/vision-events`,
+  `feat/face-customization`.
+
+- **2026-09-02 (AUDIT)** — All green after v0.6.0: guards + 0-diff bundle, standing PR #32 MERGEABLE (no-push
+  multi-arch builds + docs + package pass; HIL/compose/SIL running), fast tier green on the last pushes, package
+  0.6.0 builds, no secrets in tree/history, `.env` files ignored, token works, zero stale branches, all three
+  workflow templates in parity with `.github/`, four loops armed. Spec check (ai-seam §2): `InputSafety`
+  fields `is_unsafe`/`blocked_by`/`intents`/`phrase_id` present in `safety.py` + `wire.py` as specified. DoD
+  unchanged at 4/6 🟢 (criteria 1 + 6 ~90%; the physical robot is the ceiling). RESEARCH delegated build-ready
+  briefs for broker authentication (the permits gap) and puppet/telehealth (ADOPT #7). In flight:
+  `feat/vision-events`, `feat/face-customization`, `feat/backlog-security-telehealth`.
+
+- **2026-09-02** — Integrated `feat/vision-events` (PR #35 → dev, BEYOND #9): Moxie notices you walked in. Key
+  finding: the vision events are not topics — they arrive as the `speech` of a `RemoteChatRequest` only after
+  the brain sends `EventSubscription`, which is why nobody had ever seen one; we now subscribe, keep a
+  hysteresis-filtered presence model, put presence in the turn context, and greet a returning child on the
+  arrival event's own `event_id` (no unsolicited publish — recorded assumption). +70 tests (→820 fast /
+  875 full); live: "There you are, friend!" with TTS at 5.04 s, rate-limited. Merge combined with PR #33's
+  decay clock in `content_app.py`. In flight: `feat/face-customization`, `feat/backlog-security-telehealth`.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

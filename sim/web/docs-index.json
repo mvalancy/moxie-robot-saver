@@ -1,5 +1,5 @@
 {
- "generated": "docs-0cb06fdc4696",
+ "generated": "docs-3132649f3fda",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 42382,
+   "bytes": 44653,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 34099,
+   "bytes": 36306,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -161,7 +161,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 56704,
+   "bytes": 59117,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -192,6 +192,7 @@
     "4.4 Full turn, end to end",
     "4.5 Slow brain → a filler now, the real answer next (`REPLY_PENDING`)",
     "4.6 The markup floor — **built**, v1 2026-09-02",
+    "4.7 Vision events, and whether the cloud may speak first — **built**, v1 2026-09-02",
     "5. Local AI integration points (the part we change)",
     "5.1 LLM — `ai_factory.py` + `conversations.py`",
     "5.2 STT — `zmq_stt_handler.py`",
@@ -202,8 +203,7 @@
     "7.1 How the two halves sit on one Orin box",
     "7.2 What we take vs rebuild from OpenMoxie",
     "7.3 Recommended phased build order",
-    "Appendix A — File map (OpenMoxie, for reference)",
-    "Appendix B — Endpoint QR #2 generator (pseudocode, no protobuf runtime needed)"
+    "Appendix A — File map (OpenMoxie, for reference)"
    ],
    "kind": "md"
   },
@@ -211,7 +211,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 18013,
+   "bytes": 20441,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -335,7 +335,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 65841,
+   "bytes": 66340,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -440,7 +440,7 @@
    "path": "architecture/vision.md",
    "title": "13 — Camera & Vision: can we pipe Moxie's camera into a local CV/VLM stack?",
    "section": "architecture",
-   "bytes": 18451,
+   "bytes": 27071,
    "mermaid": 0,
    "headings": [
     "0. TL;DR / Verdict",
@@ -457,6 +457,12 @@
     "4. If we get frames: the local vision pipeline (recommended stack)",
     "5. Camera hardware: resolution / format / FPS / location",
     "6. Verdict — feasibility table",
+    "7. BUILT — presence in the turn loop (v1, 2026-09-02)",
+    "7.1 How the events actually reach a server",
+    "7.2 The presence model",
+    "7.3 Into the turn",
+    "7.4 The greeting rule — and the unsolicited-reply assumption",
+    "7.5 What is still not true",
     "Sources"
    ],
    "kind": "md"
@@ -722,7 +728,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 16744,
+   "bytes": 18115,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -737,6 +743,7 @@
     "stt` — local speech-to-text",
     "Point a real robot at it",
     "Prove it works",
+    "How the two compose files stay in sync",
     "Updating",
     "Troubleshooting",
     "Running it a different way"

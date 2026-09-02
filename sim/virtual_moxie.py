@@ -57,6 +57,7 @@ class VirtualMoxie:
         self._chunks: dict[str, dict[int, str]] = {}   # event_id -> {chunk_num: text}
         self.query_results: dict = {}       # CloudQuery name -> last CloudQueryResponse
         self.spoke: dict | None = None      # last decoded CloudTTSResponse (audio playback)
+        self.face_replies: list = []        # what the server answered each vision event
         self.errors: list[str] = []
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.device_id)
         self.client.on_connect = self._on_connect
@@ -244,6 +245,63 @@ class VirtualMoxie:
             self.client.loop_stop()
             self.client.disconnect()
 
+    # -- vision: the robot's own eyes (docs/architecture/vision.md) --
+    #
+    # The stock robot runs vision ON-DEVICE and emits semantic events only — no pixels,
+    # no bounding boxes (vision.md §1.1). A subscribed event is delivered to the brain as
+    # the `speech` of an ordinary RemoteChatRequest ("instead of the modules receiving
+    # something the user said, it receives a special event string like `eb-found-face`" —
+    # RemoteModuleAPI §Event Handling), so the SIL robot publishes it on exactly the topic
+    # and in exactly the envelope it publishes a child's utterance in. Nothing new on the
+    # wire: that IS the protocol-faithful shape.
+    FACE_EVENTS = {"found": "eb-found-face", "lost": "eb-lost-target"}
+
+    def send_face_event(self, kind: str, input_vars: dict | None = None) -> str:
+        """Publish one vision event. `kind` is `found`/`lost` or a raw `eb-*` name."""
+        name = self.FACE_EVENTS.get(kind, kind)
+        event_id = str(uuid.uuid4())
+        payload = {"event_id": event_id, "command": "prompt", "backend": "router",
+                   "speech": name, "module_name": "virtual-moxie"}
+        if input_vars:
+            payload["input_vars"] = input_vars
+        self.client.publish(self.t_event("remote-chat"), json.dumps(payload))
+        self.log(f"→ events/remote-chat vision event: {name!r}")
+        return event_id
+
+    def run_face_events(self, kinds, gap: float = 0.0) -> bool:
+        """Announce, then play a list of vision events, asserting the server answers each.
+
+        A server that has nothing to say answers `NOREPLY_ACK` (ResultCode 6, "acknowledge
+        only, no spoken line") — the contract still requires *a* response, because "the
+        remote module must produce some response for this input to continue the
+        interaction". A hello is a `SUCCESS` with real `output.text`. Both count as
+        answered; `self.face_replies` records which was which."""
+        self.face_replies = []
+        self.client.connect(self.host, self.port, 30)
+        self.client.loop_start()
+        try:
+            self.client.publish(self.t_state, json.dumps(
+                {"software_version": FIRMWARE, "state": "config"}))
+            if not self.got_config.wait(min(5.0, self.timeout)):
+                self.log("(no config push — already-known robot; continuing)")
+            for i, kind in enumerate(kinds):
+                if i and gap:
+                    time.sleep(gap)
+                self._reset_turn()
+                self.send_face_event(kind)
+                if not self.got_reply.wait(self.timeout):
+                    self.errors.append(f"{kind!r}: no response to the vision event")
+                    continue
+                resp = self.reply_payload or {}
+                text = (resp.get("output") or {}).get("text", "")
+                self.face_replies.append({"kind": kind, "result": resp.get("result"),
+                                          "text": text, "event_id": resp.get("event_id")})
+                self.log(f"   {kind}: result={resp.get('result')} text={text[:60]!r}")
+            return not self.errors
+        finally:
+            self.client.loop_stop()
+            self.client.disconnect()
+
     # -- the pairing gate: what a NOT-permitted robot is served --
     def run_unpaired(self) -> bool:
         """Announce ourselves and assert we are treated as **pending**.
@@ -384,6 +442,14 @@ def main():
     ap.add_argument("--expect-unpaired", action="store_true",
                     help="assert the server treats us as PENDING (device allowlist): a "
                          "non-'paired' pairing_status and no child_pii; prints the config")
+    ap.add_argument("--face-event", default=None,
+                    help="publish vision events instead of the smoke round-trip: "
+                         "'found', 'lost', or a comma-separated sequence "
+                         "(e.g. 'lost,found'). Each is sent as the `speech` of a "
+                         "RemoteChatRequest, which is how a real robot delivers a "
+                         "subscribed perception event (docs/architecture/vision.md).")
+    ap.add_argument("--face-gap", type=float, default=0.0,
+                    help="with --face-event: seconds to wait between events")
     ap.add_argument("--query", default=None,
                     help="comma-separated CloudQuery names to pull instead of the smoke "
                          "round-trip (e.g. 'schedule,mentor_behaviors')")
@@ -408,6 +474,21 @@ def main():
         for e in vm.errors:
             print("   -", e)
         sys.exit(1)
+
+    if args.face_event:
+        kinds = [k.strip() for k in args.face_event.split(",") if k.strip()]
+        ok = False
+        try:
+            ok = vm.run_face_events(kinds, gap=args.face_gap)
+        except Exception as e:
+            vm.errors.append(f"exception: {e}")
+        for rep in vm.face_replies:
+            spoke = f" → {rep['text']!r}" if rep["text"] else " (silent)"
+            print(f"{'✅' if rep['result'] else '❌'} {rep['kind']}: "
+                  f"{rep['result']}{spoke}")
+        for e in vm.errors:
+            print("   -", e)
+        sys.exit(0 if ok else 1)
 
     if args.query:
         names = [q.strip() for q in args.query.split(",") if q.strip()]

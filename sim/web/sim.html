@@ -87,6 +87,16 @@
       <span id="bubble-text"></span>
     </div>
 
+    <!-- presence badge: what the robot's own eyes have told the server.
+         Recorded state (window.moxieBridge.presenceStats()), not an animation. -->
+    <div id="presence-badge" data-presence="unknown"
+         style="position:absolute;top:12px;right:14px;display:flex;gap:8px;align-items:center;
+                padding:5px 10px;border-radius:4px;background:rgba(10,10,15,.72);
+                border:1px solid rgba(18,181,176,.45);font-size:11px;letter-spacing:.08em">
+      <span class="callout-label">PRESENCE</span>
+      <span id="presence-state">UNKNOWN</span>
+    </div>
+
     <!-- stage hint -->
     <div id="scene-hint" aria-hidden="true">DRAG&thinsp;&middot;&thinsp;ORBIT&ensp;&#47;&#47;&ensp;SCROLL&thinsp;&middot;&thinsp;ZOOM&ensp;&#47;&#47;&ensp;<code>window.moxie</code> API</div>
   </main>
@@ -183,6 +193,18 @@
             <button id="bus-connect">Link</button>
           </div>
           <p id="bus-status">not connected</p>
+        </section>
+
+        <section class="sub">
+          <h3>Presence<span class="hint">robot vision events</span></h3>
+          <div class="row">
+            <button id="presence-toggle" type="button">Walk in</button>
+            <span id="presence-status" class="hint">no face events yet</span>
+          </div>
+          <p class="hint" style="margin-top:6px">Publishes <code>eb-found-face</code> &#47;
+            <code>eb-lost-target</code> the way the robot delivers a subscribed vision
+            event &mdash; as the <code>speech</code> of a RemoteChatRequest. The stock
+            camera never leaves the robot: these carry presence, not pixels.</p>
         </section>
 
         <section class="sub sub-log">

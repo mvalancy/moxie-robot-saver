@@ -28,6 +28,7 @@ Ours is built to the full recovered protocol with clean seams:
 | Parent-app REST (Channel 1) | [rest-api](rest-api-contract.md) | 🟢 substantially built | `server/` (main.py, crypto, db) |
 | MQTT runtime (connect/config/state/turn) | [mqtt](mqtt-and-conversation.md) · [config](config-and-telemetry-contract.md) | 🟢 full turn loop: **streamed sentence chunks** (`REPLY_PENDING`/`chunk_num`/`is_completed`), slow-brain filler + re-arm, stale-turn cancel, **safety gates** (input / per chunk / whole reply), automarkup on every line, schedule + `mentor_behaviors` served, telemetry ingest, config editing (`POST /config`, fleet defaults in flight); end-to-end + live-tested through a real broker | `mqtt/supervisor/moxie_runtime.py` |
 | AI seam — LLM brain | [ai-seam](ai-seam.md) §2 · [mqtt §4.5](mqtt-and-conversation.md#45-slow-brain-a-filler-now-the-real-answer-next-reply_pending) | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback; **latency budget** (`MOXIE_BRAIN_BUDGET_S`, default 6 s) — a slower brain speaks a rotating filler as `REPLY_PENDING` chunk 0, with a stale-turn guard, every chunk synthesized. **Streaming** (`MOXIE_STREAMING`, default on): each finished sentence is published as its own `REPLY_PENDING` chunk as the model writes it, closed by a `SUCCESS` + `is_completed`; the filler timer re-arms per chunk (cap 2/turn) and a newer turn cancels the stream mid-answer. **Live-proven:** filler at 3.0 s + answer at 17.9 s (blocking, PR #14); streamed, first sentence at **1.52 s** vs whole answer at **4.38 s** on a healthy gateway (PR #15) | `mqtt/moxie_sdk/apps/llm_app.py` + `segment.py` + `chat.stream_completion` + `filler.py` + `moxie_runtime.py::_handle_stream_turn` |
+| AI seam — presence (vision events) | [ai-seam](ai-seam.md) §2 · [vision](vision.md) §7 · [mqtt §4.7](mqtt-and-conversation.md#47-vision-events-and-whether-the-cloud-may-speak-first-built-v1-2026-09-02) | 🟡 **built, unproven against hardware** (audit BEYOND #9): the runtime subscribes the robot to its own vision events (`EventSubscription.active[]`, once per `(device, module_id)`) and routes `eb-found-face`/`eb-lost-target`/`eb-qr-event`/`eb-dr-event`/`eb-br-event` — which arrive as the `speech` of a `RemoteChatRequest`, not a topic of their own — into a pure presence state machine with hysteresis (a face blinking at the frame edge yields **one** `arrived` + **one** `left`, not twenty). `Turn.presence` carries a resolved snapshot into the prompt, and its `line` is **empty on most turns by design**. An `arrived` after ≥ `MOXIE_GREET_AFTER_S` (default 300 s, 0 = off) earns **one** unprompted hello — answered on the arrival event's own `event_id` (an unsolicited publish is *not* established as legal — see vision.md §7.4), rate-limited once per absence, never over a turn, never unpermitted, never in bedtime hours. **Honest ceiling:** no physical robot has ever sent us one of these events; the whole path is exercised by the SIL robot (`--face-event`) and the browser SIM, which proves consistency, not hardware truth | `mqtt/moxie_sdk/presence.py` + `moxie_runtime.py::_on_vision_turn`/`_greeting_for` + `wire.py` + `apps/llm_app.py::_system` + `sim/virtual_moxie.py` + `sim/web/bridge.js` |
 | AI seam — expressive markup | [ai-seam](ai-seam.md) §2 · [mqtt §4.6](mqtt-and-conversation.md#46-the-markup-floor-built-v1-2026-09-02) | 🟢 the **markup floor**: `supervisor/markup.py` is no longer a passthrough — one pure, deterministic, stdlib-only generator (`annotate`) performs every reply that does not bring its own markup, so the echo/content/webhook apps stopped speaking flat and `LLMApp` stopped being a second generator (the model's mood/gesture are now *hints* into the same floor; `stream_style` deleted). Per line: a mood from `ePlaybackMood` 0-10, a `<usel>` delivery on a question or an exclamation, arm gestures on the carrying words, a `<break>` at an internal boundary (never after the final word), at most one whole-body `Bht_*`, a closing `Gesture_None`. Every id validated against a frozen, doc-cited catalog (`vocab.py`); an id a brain invents is dropped, never forwarded. Deterministic via `blake2b`, never `hash()`. **Measured p95 0.23 ms/line** (1 ms budget), no model call, no dependency. 8 byte-exact goldens + 277 hermetic cases; the goldens render six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` restores the passthrough | `mqtt/moxie_sdk/automarkup.py` + `vocab.py` + `supervisor/markup.py` + `apps/llm_app.py::build_markup` + `sim/tests/test_automarkup.py` + `sim/test_automarkup_render.mjs` |
 | AI seam — input safety | [ai-seam](ai-seam.md) §2 · [mqtt §4.5](mqtt-and-conversation.md#safety-on-the-wire-inputsafety-inputsafety) | 🟢 `InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}` **enforced**, not just specified: assessed pre-inference (a hard block never reaches a model) and **per streamed chunk** before publication (blocked chunk never goes out; a safe line closes the sequence with `SUCCESS`+`is_completed`; the stream is cancelled). 8 categories with a per-side block/flag policy in a parent-readable `safety_rules.json`, normalization + false-positive guards, a `Classifier` protocol for a drop-in local model, and a parent review queue (`GET|POST /safety` → console 🛡️ panel, `NO_DATA` = counts only). **Live-proven:** an unsafe request cost **0 gateway calls** and got a redirect + `input.safety`; a benign turn in the same run streamed 4 clean chunks | `mqtt/moxie_sdk/safety.py` + `safety_rules.json` + `moxie_runtime.py::_safety_gate_input`/`_handle_stream_turn` + `server/moxie_server/fleet.py` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟢 seam + runtime-wired + **real zmqSTTRequest protobuf decode** (dep-free) + JSON bridge, e2e-tested; live faster-whisper is an optional dep | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
@@ -112,21 +113,30 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   module `code`-string execution is deliberately deferred (sandboxing), so a module *declares* its
   memory with a `memory` block instead of scripting a `complete_handler`; `volley.execution_actions`
   (e.g. `eb_timer_request`) are captured but **not yet plumbed** into `RemoteChatAction` on the wire.
-- **memory browser — a parent can now read, correct and erase one line at a time (2026-09-02).** Every
-  stored item carries a stable id (`blake2b(namespace|kind|text)`, assigned at creation, kept across
-  an edit) and its **own** provenance, so the console's 🧠 What Moxie remembers card offers a per-item
-  ✕ and an inline ✏️ on top of the activity/everything erases — `MemoryStore.erase_item` / `edit_item`
-  behind `DELETE /memory?…&item=` and `POST /memory {"edit":…}`. An edit re-runs the safety classifier
-  and the no-verbatim check (a text box that writes into every later prompt is exactly where those
-  rules matter) and **pins** the result. `view()` now surfaces `_meta.summarized_through`, so the card's
-  "summarized through turn N" hint has something real to say. What decay honestly cannot do is the
-  remaining gap: items unused for `MOXIE_MEMORY_MAX_AGE_DAYS` (default 90, 0 = off) are pruned at merge
-  time, but "used" means *this sentence appeared in a rendered prompt* — a substring test that misses a
-  truncated or reworded render, and that can never tell an important fact from a trivial one. Pinned and
-  undatable items are therefore never pruned, and the guide
-  ([`what-moxie-remembers.md`](../guides/what-moxie-remembers.md)) says plainly that this is a timer, not
-  a judgement. A wrong summary is still written in the first place — correcting it is a parent's job,
-  not the model's.
+- **presence is inferred, not observed.** Vision events are now ingested and can make Moxie greet a
+  child who walks back in ([vision.md](vision.md) §7), but **no physical robot has ever sent us one**.
+  Four specific honesties: (a) the delivery shape (a perception event in the `speech` slot) and the
+  `EventSubscription` opt-in come from the recovered catalog + OpenMoxie's module-API doc, not from a
+  capture; (b) an **unsolicited** `commands/remote_chat` is *not* established as legal, so a hello with no
+  request to answer is queued as chunk 0 of the next turn instead — if a capture ever shows otherwise the
+  queue becomes an optimization; (c) the hysteresis constants (`FLICKER_S` 3 s, `MIN_PRESENT_S` 2 s) are
+  guesses about how twitchy the on-device tracker is, which is why they are env knobs; (d)
+  `eb_custom_face_search`'s "someone is close enough" size gate is catalogued but not yet driven, so
+  presence means "a face the robot chose to target", not "someone within range" — and it can never mean
+  *which* child, because the events carry no identity.
+- **memory browser — a parent can read and erase, but only in whole activities.** The console's
+  🧠 What Moxie remembers card lists every stored item with the day and module it came from, and erases
+  one namespace or all of it, because **that is exactly the granularity the runtime offers**
+  (`MemoryStore.erase(device_id, namespace|None)`); there is no per-item delete and no edit, so one
+  wrong fact costs that whole activity's memory and Moxie relearns the rest. Three more honesties:
+  provenance is recorded **per merge**, not per item, so every row in a namespace shows that
+  namespace's newest attribution (the console already renders a per-item `_provenance` if a later
+  runtime writes one); `_meta.summarized_through` is stripped by the runtime's parent view, so the
+  card's "summarized through" hint has nothing to show until `MemoryStore.view()` surfaces it; and
+  nothing **decays** — a fact learned once stays until a person deletes it, which is why the guide
+  ([`what-moxie-remembers.md`](../guides/what-moxie-remembers.md)) tells parents to read it now and
+  then. Per-item erase, editing and age-out are what keep
+  [audit](openmoxie-feature-audit.md) §4.2 BEYOND #4 at 🟡 rather than 🟢.
 - **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); real zmqSTTRequest protobuf decode is DONE (dep-free field reader in stt.py); only a live faster-whisper test remains (optional dep). TTS out (§3) seam + runtime-wired (synthesize-on-reply → CloudTTSResponse); live voice needs creds + viseme TTSMarks deferred. Input safety/moderation (§2) is **built** — see the next bullet for what it honestly cannot do.
 - **expressive markup — a rule floor, and no robot has ever played it.** The floor is built and every
   app performs now, but three honesties stand. (a) **Nothing about robot rendering is verified.** Our
@@ -304,8 +314,7 @@ reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` i
 **Most valuable next slice:** the memory floor (`persist_data` + `summarize`, PR #25) and the config
 contract (PR #24) are in; in flight are a **device allowlist / pairing gate** (a real exposure: today any
 device reaching the broker is pushed `pairing_status:"paired"` with the child's PII) and **published
-multi-arch images** (ADOPT #10's remainder). Next after those, in value order: the audit's remaining ADOPT items (memory erase/edit/decay landed in PR #33 — BEYOND #4 🟢), **vision events in
-the turn loop** (BEYOND #9 — the robot already emits `eb-found-face`/`eb-lost-target`; nobody listens), the
+multi-arch images** (ADOPT #10's remainder). Next after those, in value order: the audit's remaining ADOPT items (memory erase/edit/decay landed in PR #33 — BEYOND #4 🟢), the
 remaining ADOPT items (content packs export/import, puppet / telehealth, face customization), and the
 BEYOND #1 behavior planner (spec in [`backlog/expressiveness.md`](backlog/expressiveness.md) §2). The
 physical-robot gap stays the honest ceiling on criteria 1 and 6.
