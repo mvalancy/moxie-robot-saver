@@ -90,6 +90,24 @@ Three parts:
 | `dialog_act`, `emotion`, `sentiment` (+ scores) | optional | what the line *means* — analytics/steering |
 | `signals`, `auto_tags[]`, `perplexity`, `source` | optional | conversation signals + content tags + provenance |
 
+> **Output scoring — where `markup` comes from, and what is still empty.** Since the **markup
+> floor** landed (v1, 2026-09-02) `markup` is *derived, never authored*: every reply that does
+> not bring its own goes through one generator,
+> [`moxie_sdk/automarkup.py`](../../mqtt/moxie_sdk/automarkup.py), behind the
+> `supervisor/markup.py` seam, and every id it emits is validated against the frozen catalog in
+> [`moxie_sdk/vocab.py`](../../mqtt/moxie_sdk/vocab.py) — so the "no unknown asset id"
+> guarantee holds for *every* path, including a brain that suggests one (a suggestion is
+> dropped, never forwarded). See [`mqtt-and-conversation.md`](mqtt-and-conversation.md) §4.6.
+>
+> The **scored** neighbours of `markup` are still plumbed and empty. `Reply` carries `mood` and
+> `dialog_act`, `build_chat_response` puts them on `RemoteChatOutput`, and no app sets them;
+> `mood_intensity`, `emotion`, `signals` and `auto_tags[]` have no `Reply` field at all, and
+> `ReplyChunk` has none of them, so a *streamed* answer cannot carry scored output even in
+> principle. The floor scores a line internally (it must, to pick a face) but only renders that
+> score into `markup`. Filling the wire fields is the behavior planner's contract change —
+> C1–C5 in [`backlog/expressiveness.md`](backlog/expressiveness.md) §2.3 — and needs nothing
+> new on the wire itself.
+
 **(b) `RemoteChatAction` — drive the robot (optional, this is the "director" power).** `ActionID`:
 `launch` / `launch_if_confirmed` (start a module), `exit_module` / `abort_module`, `request_next`,
 `execute` (run a device-side `function_id(args)`, result returns next turn via `execute_returns`),

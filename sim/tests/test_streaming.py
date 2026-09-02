@@ -503,12 +503,18 @@ def test_llm_app_streams_the_say_field_sentence_by_sentence():
         "Isn't that neat?"]
     assert [c.final for c in chunks] == [False, False, True]
     assert fake.stream_calls == 1 and fake.whole_calls == 0
-    # markup is local string work, never a second model call: rules mid-stream, the
-    # model's own mood/gesture on the closing chunk.
+    # markup is local string work, never a second model call: the markup floor
+    # (moxie_sdk/automarkup.py) scores every chunk, and the model's own mood/gesture reach
+    # the closing chunk as HINTS into that same floor — never a second generator.
     assert '+mood+:0' in chunks[0].markup and "Gesture_Talk" in chunks[0].markup
-    assert "Gesture_Question" in chunks[1].markup or chunks[1].markup   # rule-based
-    assert '+mood+:5' in chunks[-1].markup, "the model's mood reaches the last chunk"
-    assert "Gesture_Large" in chunks[-1].markup
+    assert all(c.markup.endswith(
+        '+eventName+:+Gesture_None+,+category+:+BehaviourTree+,'
+        '+behaviour+:++,+Track+:++}"/>') for c in chunks), \
+        "every chunk brings the body back to rest — the robot may pause between them"
+    # ONE mood mark for the whole answer: chunk 0 carries the face and the later chunks
+    # do not flip it mid-thought (docs/architecture/backlog/expressiveness.md §1.5 S3).
+    assert sum(c.markup.count("cmd:playback-mood") for c in chunks) == 1
+    assert "Gesture_Large" in chunks[-1].markup, "the model's gesture reaches the last chunk"
 
 
 def test_llm_app_lifts_a_leading_action_tag_onto_the_first_chunk():

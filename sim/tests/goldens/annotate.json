@@ -1,0 +1,63 @@
+{
+  "_readme": "Byte-exact goldens for moxie_sdk/automarkup.py, from docs/architecture/backlog/expressiveness.md \u00a71.6. Regenerate ONLY when the floor's rules change on purpose, and read the diff: every byte here is something a child sees the robot do. Two documented departures from the brief's hand-written shorthand: (a) G4 keeps the space between two sentences, because invariant S2 says the spoken words never change and `strip_markup` would otherwise fuse \"amazing!You\"; (b) G8 places Gesture_Point before the line rather than after, consistent with G1 and G6, which both pin a leading gesture mark.",
+  "cases": [
+    {
+      "id": "G1",
+      "text": "Hi! I am Moxie.",
+      "kwargs": {},
+      "why": "`!` -> Happy (mood 1) + `excited` genre; `I` is a self word -> Gesture_Self; the internal sentence boundary earns a break; the line ends at rest.",
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:1,+intensity+:1}\"/><usel variant=\"0\" genre=\"excited\">Hi!</usel><break time=\"0.35s\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Self+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/> I am Moxie.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "id": "G2",
+      "text": "What do you want to play today?",
+      "kwargs": {},
+      "why": "`?` -> `question` genre; an open question is Curious (mood 9); `what` is a question word -> Gesture_Question. No break: it is the final word, and a break there would delay the robot's turn hand-back.",
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:9,+intensity+:1}\"/><usel variant=\"0\" genre=\"question\">What do you want to play today?</usel><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Question+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "id": "G3",
+      "text": "Hmm, let me think about that.",
+      "kwargs": {},
+      "why": "leading interjection comma -> break; thinking cue -> Curious + Bht_Active_Thinking (an app-hardcoded tree the SIM renders). A sentence that plays a whole-body tree gets no arm gesture stacked on it.",
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:9,+intensity+:1}\"/>Hmm,<break time=\"0.35s\"/> let me think about that.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Active_Thinking+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "id": "G4",
+      "text": "That is amazing! You did it!",
+      "kwargs": {},
+      "why": "two `!` -> intensity 2 (clamped at maxIntensity); `amazing` is a high word -> Gesture_Higher; the praise phrase `you did it` -> Gesture_Celebrate. Gestures for a `<usel>`-wrapped sentence are minted after the span, never inside it.",
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:1,+intensity+:2}\"/><usel variant=\"0\" genre=\"excited\">That is amazing!</usel><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Higher+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/><break time=\"0.35s\"/> <usel variant=\"0\" genre=\"excited\">You did it!</usel><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Celebrate+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "id": "G5",
+      "text": "Oh! I did not know that.",
+      "kwargs": {},
+      "why": "mood 5 Surprised is the value shipped content uses for exactly this - \"Oh!\", 14 occurrences (behavior-markup.md:122) - and it beats the generic `!` -> Happy rule.",
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:5,+intensity+:1}\"/><usel variant=\"0\" genre=\"excited\">Oh!</usel><break time=\"0.35s\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Self+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/> I did not know that.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "id": "G6",
+      "text": "I am sorry that happened.",
+      "kwargs": {},
+      "why": "mood 2 Sad is what shipped content uses for \"I'm sorry...\", 8 occurrences (behavior-markup.md:119); no `!`/`?` so no `<usel>`.",
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:2,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Self+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>I am sorry that happened.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "id": "G7",
+      "text": "Oops.",
+      "kwargs": {},
+      "why": "mood 4 Shy is shipped content's value for \"Oops.\", 2 occurrences (behavior-markup.md:121) - and note the earlier *inferred* reading mislabeled 4 as \"embarrassed\". One word is far under the talking-gesture floor, so it gets no arm gesture at all: the anti-twitch rule in action.",
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:4,+intensity+:1}\"/>Oops.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "id": "G8",
+      "text": "Your birthday is on Friday.",
+      "kwargs": {
+        "icons": true
+      },
+      "why": "`Birthday` is one of the four confirmed icon values; a turn shows command:0 before the line and clears with command:2 after; `your` points at the child (Gesture_Point - our catalog has no \"you\" gesture, so we do NOT borrow OpenMoxie's AUTO_GESTURE_YOU).",
+      "markup": "<mark name=\"cmd:icons-v2,data:{+command+:0,+index+:0,+transition+:0.25,+volume+:1.0,+icon0+:{+iconType+:1,+value+:+Birthday+,+background+:+Null+},+icon1+:{+iconType+:0,+value+:+Null+,+background+:+Null+},+icon2+:{+iconType+:0,+value+:+Null+,+background+:+Null+},+icon3+:{+iconType+:0,+value+:+Null+,+background+:+Null+},+highlight+:0}\"/><mark name=\"cmd:playback-mood,data:{+mood+:1,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Point+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>Your birthday is on Friday.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/><mark name=\"cmd:icons-v2,data:{+command+:2,+index+:0,+transition+:0.25,+volume+:1.0,+icon0+:{+iconType+:0,+value+:+Null+,+background+:+Null+},+icon1+:{+iconType+:0,+value+:+Null+,+background+:+Null+},+icon2+:{+iconType+:0,+value+:+Null+,+background+:+Null+},+icon3+:{+iconType+:0,+value+:+Null+,+background+:+Null+},+highlight+:0}\"/>"
+    }
+  ]
+}

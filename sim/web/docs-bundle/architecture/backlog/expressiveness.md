@@ -63,7 +63,45 @@ latency it adds is latency a child waits through.
 
 ---
 
-## 1. ADOPT #3 — the markup floor
+## 1. ADOPT #3 — the markup floor · 🟢 **SHIPPED 2026-09-02**
+
+> **Built.** [`mqtt/moxie_sdk/automarkup.py`](../../../mqtt/moxie_sdk/automarkup.py) (the pure
+> `annotate`) + [`mqtt/moxie_sdk/vocab.py`](../../../mqtt/moxie_sdk/vocab.py) (the frozen,
+> doc-cited catalogs and the one place a mark is minted), behind the unchanged
+> [`mqtt/supervisor/markup.py`](../../../mqtt/supervisor/markup.py) seam. Wired at both runtime
+> call sites, in [`llm_app.py`](../../../mqtt/moxie_sdk/apps/llm_app.py) (`stream_style`
+> deleted; the model's choice is now a *hint* into the same floor) and on the content app's
+> authored-markup path. Pinned by
+> [`sim/tests/test_automarkup.py`](../../../sim/tests/test_automarkup.py) (277 hermetic cases,
+> 8 byte-exact goldens in [`sim/tests/goldens/annotate.json`](../../../sim/tests/goldens/annotate.json))
+> and rendered by [`sim/test_automarkup_render.mjs`](../../../sim/test_automarkup_render.mjs)
+> through the real browser bridge. Written up as built in
+> [`mqtt-and-conversation.md` §4.6](../mqtt-and-conversation.md#46-the-markup-floor-built-v1-2026-09-02).
+>
+> **Four deliberate departures from the spec below, each for a stated reason.**
+> 1. The module is `automarkup.py`, not `annotate.py` — the function is `annotate`.
+> 2. **§1.6 G4** keeps the space between the two sentences that the shorthand elides: invariant
+>    S2 (the spoken words never change) outranks the shorthand, and without it `strip_markup`
+>    would fuse `amazing!You`. **§1.6 G8** places `Gesture_Point` *before* the line rather than
+>    after, consistent with G1 and G6, which both pin a leading gesture mark; there is no rule
+>    that distinguishes them. Both are recorded in the goldens fixture.
+> 3. **§1.5 S3 is implemented as the strict form**: the mood mark is emitted on
+>    `chunk_index == 0` and on no later chunk, ever — not "again if the scored mood changed".
+>    A pure function with the signature this brief fixes cannot know the previously-emitted
+>    mood, and §1.7 T5 demands *exactly one* mood mark per answer. The cost is real and is
+>    recorded in Known gaps: on a streamed turn the model's own mood shapes the closing chunk's
+>    gesture and never reaches the wire. Carrying it needs `ReplyChunk` to grow scored fields —
+>    §2.3 C2/C4, the planner's change.
+> 4. **`filler.py` is unchanged and byte-identical**, as §1.2 requires. Its markup is
+>    hand-authored and `test_brain_latency.py` pins the spoken line as one contiguous run,
+>    which a floor pass would thread a `<break>` through. It does now mint its marks through
+>    `vocab`, so it is validated by the same catalog — as are the safety redirects.
+>
+> Two more rules were added that the brief did not name, both anti-twitch: a talking gesture is
+> never placed inside the last two words of a sentence (which makes the effective floor an
+> 8-word sentence, and is what keeps G2 gesture-free by rule rather than by luck), and a
+> sentence that plays a whole-body tree gets no arm gesture stacked on it (which is what makes
+> G3 come out right).
 
 ### 1.1 Goal
 
@@ -279,13 +317,13 @@ New `sim/tests/test_annotate.py` (hermetic, no creds, runs in the fast CI tier):
 
 | File | Change |
 |---|---|
-| `mqtt/moxie_sdk/annotate.py` | **new** — the pure floor |
+| `mqtt/moxie_sdk/automarkup.py` | **new** — the pure floor (built; named `automarkup.py`, function `annotate`) |
 | `mqtt/moxie_sdk/vocab.py` | **new** — the frozen catalogs (moods, 12 gestures, 45 trees, 52 spurts, 4 icons, 2 SFX ids, 5 usel genres, 22 dialog acts, 9 signals), each entry carrying the doc + line it came from |
 | `mqtt/supervisor/markup.py` | adapter over `annotate` (keep `make_markup`) |
 | `mqtt/supervisor/moxie_runtime.py` | pass `turn_key`/`chunk_index` at the two call sites |
 | `mqtt/moxie_sdk/apps/llm_app.py` | `build_markup` → `annotate` with hints; delete `stream_style` |
-| `sim/tests/test_annotate.py`, `sim/tests/goldens/annotate.json` | **new** |
-| `sim/tests/test_sil.py` (or a new Playwright case) | the SIM render check |
+| `sim/tests/test_automarkup.py`, `sim/tests/goldens/annotate.json` | **new** (built) |
+| `sim/test_automarkup_render.mjs` | the SIM render check (built — the goldens through the real `bridge.js`, no browser needed) |
 | `docs/architecture/backlog/expressiveness.md`, `docs/architecture/openmoxie-feature-audit.md` | status |
 
 ### 1.10 Risks and honest limits
