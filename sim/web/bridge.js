@@ -166,15 +166,21 @@
   // it the moment real audio lands. Off the bus (static site / stub brain) there
   // is no server voice at all, so speak immediately as before.
   const TTS_GRACE_MS = 900;
-  let cloudVoice = false, pendingSpeak = 0;
+  let cloudVoice = false, pendingSpeak = 0, pendingText = "";
 
+  // A streamed answer arrives as several chunks of one event_id, so the grace timer must
+  // ACCUMULATE them rather than let each chunk clobber the last (which used to mean only
+  // the final sentence was ever spoken locally). Chunks that land inside one grace window
+  // are spoken as one line; a later chunk starts a new one.
   function speakLocally(text) {
     if (!window.moxieAudio || cloudVoice) return;
     if (!(client && client.connected)) { window.moxieAudio.speak(text); return; }
+    pendingText = pendingText ? pendingText + " " + text : text;
     clearTimeout(pendingSpeak);
     pendingSpeak = setTimeout(() => {
       pendingSpeak = 0;
-      if (!cloudVoice) window.moxieAudio.speak(text);
+      const say = pendingText; pendingText = "";
+      if (!cloudVoice) window.moxieAudio.speak(say);
     }, TTS_GRACE_MS);
   }
 
@@ -189,17 +195,31 @@
     window.moxieAudio.playCloudTTS(msg);     // resolves when playback ends
   }
 
+  // One turn can answer with SEVERAL responses sharing an event_id: a filler while the
+  // brain thinks, then the answer streamed a sentence at a time (result=REPLY_PENDING +
+  // chunk_num, closed by consistency_control.is_completed — see
+  // docs/architecture/mqtt-and-conversation.md §4.5). Audio ordering is audio.js's job
+  // (it queues CloudTTSResponses by chunk_num); here we keep the transcript and the
+  // speech bubble reading as ONE turn instead of one row per sentence.
+  let chatEvent = null, chatSaid = "";
+
   function handleRemoteChat(payload) {
     let msg; try { msg = JSON.parse(payload); } catch { return; }
     const out = msg.output || {};
     const text = out.text || "";
-    if (text) window.moxie && window.moxie.setSpeech(text);
+    const eid = msg.event_id || "";
+    const more = typeof msg.chunk_num === "number" && msg.chunk_num > 0 &&
+                 eid !== "" && eid === chatEvent;
+    chatEvent = eid;
+    chatSaid = more && chatSaid ? chatSaid + " " + text : text;
+    if (text) window.moxie && window.moxie.setSpeech(chatSaid);
     // emotion field (if the server tags one) wins for the face
     if (typeof msg.emotion === "number" && EMOTION_TO_FACE[msg.emotion])
       window.moxie && window.moxie.setFace(EMOTION_TO_FACE[msg.emotion]);
     applyMarkup(out.markup || "");
     if (text) {
-      status(`💬 "${text.slice(0, 48)}"`); addTranscript("moxie", text);
+      status(`💬 "${chatSaid.slice(0, 48)}"`);
+      addTranscript("moxie", text, more);
       speakLocally(text);            // stands down if the server sends real audio
     }
   }
@@ -282,8 +302,14 @@
   }
 
   // ---- transcript ----
-  function addTranscript(role, text) {
+  function addTranscript(role, text, append) {
     const el = document.getElementById("transcript"); if (!el || !text) return;
+    if (append) {                         // a later chunk of the same turn
+      const rows = el.querySelectorAll(".turn.moxie");
+      const last = rows[rows.length - 1];
+      const msg = last && last.querySelector(".msg");
+      if (msg) { msg.textContent += " " + text; el.scrollTop = el.scrollHeight; return; }
+    }
     const row = document.createElement("div");
     row.className = "turn " + (role === "moxie" ? "moxie" : "user");
     row.innerHTML = `<span class="who">${role === "moxie" ? "Moxie" : "Child"}</span>` +

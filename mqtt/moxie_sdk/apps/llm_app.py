@@ -15,7 +15,8 @@ import re
 
 from ..app import MoxieApp
 from ..actions import ACTION_TAG_PROMPT, parse_action_tags
-from ..types import Turn, Reply, RobotContext
+from ..segment import SentenceSegmenter
+from ..types import Turn, Reply, ReplyChunk, RobotContext
 from ..chat import is_offline_error as _is_offline_error
 
 # Moxie's character. The real persona was cloud-authored and is NOT in the firmware
@@ -79,6 +80,114 @@ def build_markup(text: str, mood: str = "neutral", gesture: str = "none") -> str
     return "".join(out)
 
 
+# --- streaming helpers ------------------------------------------------------ #
+# The expressive prompt asks for `{"say": …, "mood": …, "gesture": …}`, and the model
+# writes that object left to right — so while a reply is still streaming we have the
+# spoken words but NOT yet the mood/gesture, which arrive after the closing quote of
+# "say". Rather than spend a second model call per chunk (the whole point of streaming is
+# to be faster, not more expensive), each in-flight chunk gets a **rule-based** mood +
+# gesture from its own punctuation, and the FINAL chunk uses the mood/gesture the model
+# actually chose, parsed off the completed JSON. `build_markup` itself is pure local
+# string work, so markup costs nothing either way.
+
+def stream_style(text: str) -> tuple:
+    """A cheap (mood, gesture) for a mid-stream chunk — no model call."""
+    t = (text or "").strip()
+    if t.endswith("?"):
+        return "neutral", "question"
+    if t.endswith("!"):
+        return "positive", "talk"
+    return "neutral", "talk"
+
+
+_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f",
+            '"': '"', "\\": "\\", "/": "/"}
+
+
+class SayStream:
+    """Pull the spoken words out of a *streaming* reply, as they arrive.
+
+    In expressive mode the model streams a JSON object, so the spoken line is the value
+    of its `"say"` key: this walks the growing raw text, finds that key, and decodes the
+    string incrementally (stopping short of a half-arrived `\\uXXXX` escape) so the
+    segmenter downstream only ever sees real words. Everything after the closing quote —
+    `"mood"`, `"gesture"` — is never spoken.
+
+    A model that ignores the format and just writes prose is handled too: the first
+    non-space character decides. `{` (or a ``` fence) means JSON, anything else means the
+    whole stream is the spoken line.
+    """
+
+    def __init__(self, expressive: bool = True):
+        self.raw = ""                       # everything the model has streamed
+        self._mode = "sniff" if expressive else "plain"
+        self._out = ""                      # spoken text decoded so far
+        self._start = None                  # index in `raw` of the first char of "say"
+        self._closed = False                # the say string is finished
+
+    def feed(self, delta: str) -> str:
+        """Add one streamed delta; return the *new* spoken text it produced (may be "")."""
+        if not delta:
+            return ""
+        self.raw += delta
+        before = len(self._out)
+        self._recompute()
+        return self._out[before:]
+
+    # -- internals --
+    def _recompute(self):
+        if self._mode == "plain":
+            self._out = self.raw
+            return
+        if self._mode == "sniff":
+            head = self.raw.lstrip()
+            if not head:
+                return
+            if head[0] not in "{`":
+                self._mode = "plain"
+                self._out = self.raw
+                return
+            self._mode = "json"
+        if self._closed:
+            return
+        if self._start is None:
+            m = re.search(r'"say"\s*:\s*"', self.raw)
+            if not m:
+                return
+            self._start = m.end()
+        text, closed = self._decode(self.raw[self._start:])
+        self._out, self._closed = text, closed
+
+    @staticmethod
+    def _decode(s: str):
+        """Decode a partial JSON string body → (text, closed). Stops before an escape
+        that has not fully arrived, so no half-character is ever spoken."""
+        out, i, n = [], 0, len(s)
+        while i < n:
+            c = s[i]
+            if c == '"':
+                return "".join(out), True
+            if c != "\\":
+                out.append(c)
+                i += 1
+                continue
+            if i + 1 >= n:
+                break                                   # "\" alone — wait for more
+            e = s[i + 1]
+            if e == "u":
+                if i + 6 > n:
+                    break                               # \uXXXX still arriving
+                try:
+                    out.append(chr(int(s[i + 2:i + 6], 16)))
+                except ValueError:
+                    out.append(s[i + 2:i + 6])
+                i += 6
+                continue
+            out.append(_ESCAPES.get(e, e))
+            i += 2
+        return "".join(out), False
+
+
 class LLMApp(MoxieApp):
     """An expressive Moxie brain on any OpenAI-compatible endpoint."""
 
@@ -114,6 +223,10 @@ class LLMApp(MoxieApp):
         "  A blue whale? That is the biggest animal ever!\n"
         + _LAST_CHECK
     )
+
+    #: Below this many characters a finished sentence waits for the next one, so the
+    #: child never hears a lone "Hi." followed by a gap (moxie_sdk/segment.py).
+    stream_min_chars = 24
 
     def __init__(self, base_url: str, api_key: str, model: str = "gpt-4o-mini",
                  persona: str = DEFAULT_PERSONA, max_tokens: int = 200,
@@ -191,10 +304,81 @@ class LLMApp(MoxieApp):
         text = f"Hi {robot.child.nickname}! It's so good to see you. What's on your mind today?"
         return Reply(text=text, markup=build_markup(text, "positive", "celebrate"))
 
-    def respond(self, turn: Turn) -> Reply:
+    def _messages(self, turn: Turn) -> list:
         messages = [{"role": "system", "content": self._system(turn.robot)}]
         messages += turn.history[-self._max_history:]
         messages.append({"role": "user", "content": turn.speech})
+        return messages
+
+    # ---- streaming (a sentence at a time) ----
+    def respond_stream(self, turn: Turn):
+        """Answer as the model writes: one `ReplyChunk` per finished sentence.
+
+        A whole completion costs 18-45 s on our gateway, but its first sentence is done
+        after a handful of tokens — so the child hears real words at first-token latency
+        instead of waiting for the full answer (docs/architecture/mqtt-and-conversation.md
+        §4.5). The persona, the JSON envelope and the leading-tag convention are exactly
+        the ones `respond` uses; only the delivery changes.
+
+        If the stream fails **before any words were spoken**, this falls back to the
+        ordinary `respond` call and yields its answer as the single closing chunk, so a
+        gateway that cannot stream is never worse than before."""
+        return self._stream_chunks(turn)
+
+    def _stream_chunks(self, turn: Turn):
+        from ..chat import stream_completion
+        messages = self._messages(turn)
+        seg = SentenceSegmenter(min_chars=self.stream_min_chars)
+        says = SayStream(self._expressive)
+        carry, spoken = [], 0            # actions with no chunk yet; chunks published
+        try:
+            for delta in stream_completion(
+                    self._client, self._model, messages, max_tokens=self._max_tokens,
+                    temperature=self._temperature, pacer=self._pacer):
+                words = says.feed(delta)
+                if not words:
+                    continue
+                for sentence in seg.feed(words):
+                    text, actions = parse_action_tags(sentence)
+                    actions = carry + actions
+                    if not text:                 # a chunk that was only a tag: keep the
+                        carry = actions          # action, wait for words to attach it to
+                        continue
+                    carry = []
+                    spoken += 1
+                    mood, gesture = stream_style(text)
+                    yield ReplyChunk(
+                        text=text, actions=actions,
+                        markup=build_markup(text, mood, gesture) if self._expressive else None)
+        except GeneratorExit:                    # the runtime cancelled a stale turn
+            raise
+        except Exception as e:
+            if spoken == 0:
+                # Nothing has been said yet, so the whole answer is still recoverable:
+                # take the ordinary non-streaming path and close the turn with it.
+                print(f"[llm] stream unavailable ({type(e).__name__}); "
+                      f"falling back to a single reply", flush=True)
+                yield ReplyChunk.from_reply(self.respond(turn))
+                return
+            print(f"[llm] stream died mid-answer ({type(e).__name__}); "
+                  f"closing with what we have", flush=True)
+
+        # The last sentence is ALWAYS still in the segmenter (a boundary is only
+        # confirmed by following text), so this is the real closing line — and by now the
+        # model's own mood/gesture have arrived at the tail of the JSON.
+        tail = (seg.flush() or [""])[0]
+        say, mood, gesture = self._parse(says.raw)
+        if not tail and spoken == 0:
+            tail = say                           # model ignored the format entirely
+        text, actions = parse_action_tags(tail)
+        actions = carry + actions
+        if not text and not actions and spoken == 0:
+            text, mood, gesture = "Tell me more!", "positive", "question"
+        markup = build_markup(text, mood, gesture) if (self._expressive and text) else None
+        yield ReplyChunk(text=text, markup=markup, actions=actions, final=True)
+
+    def respond(self, turn: Turn) -> Reply:
+        messages = self._messages(turn)
         try:
             from ..chat import call_with_backoff
             def _once():

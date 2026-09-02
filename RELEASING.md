@@ -40,7 +40,9 @@ feat/*  ──PR──▶  dev  ──PR──▶  main  ──tag v X.Y.Z──
 | Tier | Workflow | Trigger | Runs |
 |---|---|---|---|
 | **Fast** (dev) | `.github/workflows/ci.yml` | push `dev`, PR → `dev` | docs/protocol guards + SIL smoke + unit/cloud tests (~5 min) |
-| **Deep** (main) | `.github/workflows/ci-deep.yml` | PR → `main`, manual | full suite + **HIL sim** (hardware-in-the-loop: a virtual robot end-to-end, later a real robot + real gateway/voice via repo secrets) |
+| **Deep** (main) | `.github/workflows/ci-deep.yml` | PR → `main` | full suite + **HIL sim** (hardware-in-the-loop: a virtual robot end-to-end, later a real robot on a self-hosted runner) |
+| **Deep — live** | same, `workflow_dispatch` | `gh workflow run ci-deep.yml --ref dev` | the above **+ the live gateway suites** (`test_live_gateway` · `test_live_action_tags` · `test_live_content_e2e`) on the real brain via repo secrets. **Spends ≈12–13 real gateway completions** — hence manual, never on a PR. Fails (not skips) if the secret is empty. |
+| **Deep — live voice** | same, dispatch input | `gh workflow run ci-deep.yml --ref dev -f voice=true` | the above **+ `test_live_talk_e2e`**: real Piper speech ⇄ real faster-whisper. Installs the voice deps and fetches 2 × 63 MB pinned Piper voices (cached); ~1 more completion. Fails if fewer than 3 of its 4 tests actually ran. |
 | **Release** | `.github/workflows/release.yml` | tag `v*` | build sdist+wheel, verify version==tag, GitHub Release (+ index publish when configured) |
 
 ## Version numbering (semver)
@@ -61,18 +63,14 @@ Single source: `mqtt/moxie_sdk/__init__.py` `__version__`; `pyproject.toml` read
 
 Build a package locally anytime: `cd mqtt && python -m build` → `dist/moxie_cloud_sdk-<version>.*`.
 
-## ⚠️ Workflow install (owner, one-time — needs a `workflow`-scoped token)
+## Workflow files — templates and the installed copies
 
-`.github/workflows/` can't be pushed from the build session (token lacks `workflow` scope). Install-ready
-templates live in [`sim/ci/`](sim/ci/): **`ci.yml`** (fast, dev tier), **`ci-deep.yml`** (deep + HIL, main
-tier), **`release.yml`** (tags). Install:
-```sh
-cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml .github/workflows/ && \
-git add .github/workflows/ && git commit -m "ci: fast(dev)+deep(main,HIL)+release tiers" && \
-git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:TOKEN' | base64 -w0)" push   # then revoke
-```
-HIL against real hardware/servers uses repo **secrets** (gateway key, voice URL, robot host) the deep
-workflow reads — never committed. Until installed, the live `ci.yml` gates PRs to `main` and locals build packages.
+The three workflows are **installed** in `.github/workflows/` and mirrored as templates in
+[`sim/ci/`](sim/ci/) (`ci.yml`, `ci-deep.yml`, `release.yml`). Edit the template, then sync the installed
+copy in the same change (`cp sim/ci/<file> .github/workflows/<file>`); the AUDIT loop checks they're
+identical. Pushing `.github/workflows/` needs a `workflow`-scoped token (the orchestrator session has one;
+revoke it when the session ends). HIL against real infra uses repo **secrets** (gateway key, voice URL,
+robot host) that the deep workflow reads — never committed.
 
 ---
 📖 [Repo structure](STRUCTURE.md) · [Implementation plan](docs/architecture/implementation-plan.md)

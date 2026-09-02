@@ -293,7 +293,49 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 }
 
 // --------------------------------------------------------------------------- //
-// 6. Wiring — the bridge routes /commands/tts here, and the SIM stays SDK-free
+// 6. #tts-status ownership — one line, two writers. env.js probes the optional
+//    Piper sidecar asynchronously and used to write this element directly, so a
+//    slow probe landing mid-utterance wiped the live "speaking" indicator (and
+//    was itself wiped when playback restored the pre-probe text). audio.js owns
+//    the element now: hints are deferred, never painted over a live utterance.
+// --------------------------------------------------------------------------- //
+{
+  ok(typeof A.setTtsHint === "function", "moxieAudio.setTtsHint must exist (env.js hands it the hint)");
+  ok(typeof A.hasCloudVoice === "function", "moxieAudio.hasCloudVoice must exist (env.js asks before warning)");
+  ok(A.hasCloudVoice() === true, "hasCloudVoice() must be true once a CloudTTSResponse has been decoded");
+
+  const ctx = CTX.made;
+  const p = A.playCloudTTS(wire(tone(64), { eventId: "status" }));
+  ok(A.isSpeaking(), "the utterance must be playing for this check to mean anything");
+  const live = el.textContent;
+  ok(/speaking/.test(live), `#tts-status must show the speaking indicator, got ${live}`);
+
+  A.setTtsHint({ html: "no TTS server &mdash; run <code>python3 sim/tts/server.py</code>", warn: true });
+  ok(el.textContent === live,
+     `a late probe result must not overwrite the live indicator, got ${el.textContent}`);
+
+  ctx.sources[ctx.sources.length - 1].onended();
+  await p;
+  ok(A.isSpeaking() === false, "playback must end");
+  ok(/no TTS server/.test(el.textContent),
+     `the deferred hint must land once speaking stops, got ${el.textContent}`);
+
+  A.setTtsHint(null);
+  ok(el.textContent === "optional local Piper service",
+     `clearing the hint must restore the markup default, got ${el.textContent}`);
+
+  const env = readFileSync(join(here, "web", "env.js"), "utf8");
+  const apply = env.slice(env.indexOf("function apply("), env.indexOf("// Mic / STT"));
+  ok(apply.includes("ttsHint(") && !/tts-status/.test(apply),
+     "env.js apply() must hand its probe result to the hint API, not write #tts-status");
+  ok(env.includes("moxieAudio.setTtsHint"),
+     "env.js must route the TTS hint through moxieAudio.setTtsHint");
+  ok(apply.includes("hasCloudVoice()"),
+     'env.js must not claim "no TTS server" when a server voice is available');
+}
+
+// --------------------------------------------------------------------------- //
+// 7. Wiring — the bridge routes /commands/tts here, and the SIM stays SDK-free
 // --------------------------------------------------------------------------- //
 {
   const bridge = readFileSync(join(here, "web", "bridge.js"), "utf8");
@@ -331,4 +373,4 @@ if (fails.length) {
 }
 console.log("✅ audio tests OK — CloudTTSResponse decode (LE int16 → Float32, mono + stereo," +
             " odd/junk input)" + (parity ? ", parity with the real moxie_sdk encoder" : " (parity skipped)") +
-            ", autoplay queueing, chunk_num ordering, mouth/marks lip-sync, mute, bridge wiring");
+            ", autoplay queueing, chunk_num ordering, mouth/marks lip-sync, mute, #tts-status ownership, bridge wiring");

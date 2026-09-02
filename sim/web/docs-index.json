@@ -1,5 +1,5 @@
 {
- "generated": "docs-a4176993faa7",
+ "generated": "docs-59548959652e",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 20142,
+   "bytes": 25338,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -114,7 +114,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 15514,
+   "bytes": 19724,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -148,7 +148,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 35752,
+   "bytes": 44036,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -176,7 +176,8 @@
     "4.2 \"Notify\" context tracking",
     "4.3 STT audio over ZMQ-over-MQTT",
     "4.4 Full turn, end to end",
-    "4.5 The automarkup engine (why it matters)",
+    "4.5 Slow brain → a filler now, the real answer next (`REPLY_PENDING`)",
+    "4.6 The automarkup engine (why it matters)",
     "5. Local AI integration points (the part we change)",
     "5.1 LLM — `ai_factory.py` + `conversations.py`",
     "5.2 STT — `zmq_stt_handler.py`",
@@ -363,7 +364,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 18886,
+   "bytes": 22066,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -372,6 +373,7 @@
     "Design language",
     "The 1-week roadmap (drives the build timer)",
     "The layered session timers",
+    "Live CI — proving it against the real gateway and real speech, on demand",
     "Run it now"
    ],
    "kind": "md"

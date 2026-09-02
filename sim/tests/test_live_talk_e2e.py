@@ -55,7 +55,8 @@ pytest.importorskip("faster_whisper", reason="faster-whisper not installed (live
 pytest.importorskip("numpy")
 
 import helpers_audio as A                                    # noqa: E402
-from helpers_runtime import FakeClient, assert_spec_response, drive_turn, make_runtime  # noqa: E402,F401
+from helpers_runtime import (FakeClient, assert_spec_response, drive_turn,  # noqa: E402,F401
+                             load_repo_dotenv, make_runtime)
 
 STARTER = os.path.join(REPO, "mqtt", "content_modules", "starter.json")
 
@@ -85,19 +86,7 @@ pytestmark = pytest.mark.skipif(
            "set MOXIE_VOICES_DIR to point at them)")
 
 
-def _load_dotenv():
-    """Best-effort load of mqtt/.env (git-ignored) so a local gateway key is picked up."""
-    try:
-        for line in open(os.path.join(REPO, "mqtt", ".env")):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
-    except FileNotFoundError:
-        pass
-
-
-_load_dotenv()
+load_repo_dotenv()          # mqtt/.env from this tree or the main checkout
 KEY = os.environ.get("MOXIE_LLM_API_KEY") or os.environ.get("LITELLM_MASTER_KEY") or ""
 BASE = os.environ.get("MOXIE_LLM_BASE_URL", "https://gateway.graphlings.net/v1")
 MODEL = os.environ.get("MOXIE_LLM_MODEL", "graphling-medium")

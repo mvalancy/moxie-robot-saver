@@ -36,6 +36,27 @@ def test_strip_markup_leaves_spoken_text():
     assert strip_markup("just text") == "just text"
 
 
+def test_strip_markup_drops_emoji_so_piper_never_reads_them_aloud():
+    """A TTS engine speaks an emoji's Unicode NAME — Piper said "grinning face"
+    mid-sentence in the PR #12 talk-loop run. LLMs sprinkle them, so they come off
+    before synthesis. Ordinary punctuation must survive untouched."""
+    assert strip_markup("Sure! \U0001F600 Let's play.") == "Sure! Let's play."
+    assert strip_markup("I love it \u2764\ufe0f\u2b50") == "I love it"
+    assert strip_markup("Hi \U0001F44B\U0001F3FD there") == "Hi there"          # skin-tone modifier
+    assert strip_markup("\U0001F469\u200D\U0001F680 astronaut") == "astronaut"  # ZWJ sequence
+    assert strip_markup("\U0001F1FA\U0001F1F8 flag") == "flag"                   # regional indicators
+    assert strip_markup("\u2705 done \u27A1 next") == "done next"
+    assert strip_markup("\U0001F600") == "", "an emoji-only line has nothing to say"
+    # …and the words a child's turn is actually made of are left exactly alone.
+    kept = "Hello \u2014 it's 3:45, \"ok\"? (yes) 50% #1 & more\u2026 caf\u00e9 na\u00efve"
+    assert strip_markup(kept) == kept
+
+
+def test_strip_markup_drops_emoji_inside_behavior_markup():
+    markup = '<mark name="cmd:playback-mood,data:{+mood+:1}"/>Yay \U0001F389 you did it!'
+    assert strip_markup(markup) == "Yay you did it!"
+
+
 def test_cloud_tts_response_shape():
     r = build_cloud_tts_response(b"abc", event_id="e1", channels=1, sample_rate=16000)
     assert r["event_id"] == "e1"

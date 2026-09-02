@@ -27,7 +27,25 @@ browser at all and carry the hermetic suite CI actually runs.
   through the real `MoxieRuntime`: a `FakeClient` that records publishes,
   `make_runtime` / `drive_turn` / `drive_once`, and `assert_spec_response` (the
   RemoteChatResponse conformance check). Import this rather than growing a fifth
-  private copy of it.
+  private copy of it. It also owns `LatchClient` (a fake transport a test can *wait on*
+  instead of sleeping) and `CountingSynth`.
+- **`test_segment.py`** — the pure sentence segmenter (`moxie_sdk/segment.py`) a streaming
+  brain talks through: boundaries, the same split whatever size the network cuts the
+  stream into, decimals, abbreviations and initials, ellipses, the minimum chunk length,
+  and the flush contract (the LAST sentence must still be buffered when the stream ends,
+  so there is always a chunk left to close the turn with).
+- **`test_streaming.py`** — streamed replies end to end: chunk numbering under one
+  `event_id`, a one-sentence stream staying wire-identical to a plain reply, an action
+  riding out on chunk 0, a late first token → filler, a mid-answer stall → a second filler
+  and provably never a third, a newer turn cancelling a stream, a stream failing before a
+  word (falls back to `respond`) or mid-answer (closes the sequence), `MOXIE_STREAMING=0`,
+  LLMApp's own streaming path, and the SIL client joining the chunks of one turn.
+- **`test_brain_latency.py`** — the background-inference + filler behavior: a fast brain
+  still answers in exactly one `SUCCESS` chunk, a slow one speaks a filler
+  (`REPLY_PENDING`, chunk 0) inside the budget and delivers the real line as chunk 1, a
+  superseded turn's answer is dropped, fillers never repeat back-to-back, and both chunks
+  get their own `CloudTTSResponse`. No sleeps: the fake brain blocks on an `Event` the
+  test releases and the fake transport is a `Condition` the test waits on.
 - **`test_console_roundtrip.py`** — the parent console ⇄ supervisor contract, driven
   in-process against a status-server double whose payload keys are diffed against the
   real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).
@@ -35,9 +53,18 @@ browser at all and carry the hermetic suite CI actually runs.
   `test_live_content_e2e.py`) — real completions through the LLM gateway. They run
   only when `MOXIE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`) is present, e.g. from the
   git-ignored `mqtt/.env`, and **skip** otherwise, so the hermetic run stays fast and
-  CI stays green with no key. `test_live_action_tags.py` asserts a *rate* (2 of 3
+  CI stays green with no key. They find that file through
+  `helpers_runtime.load_repo_dotenv()`, which looks in this tree and then in the **main
+  checkout**, so the live tier runs from a `git worktree` too (before that it silently
+  skipped there). To force the creds-free behavior locally — exactly what CI does — run
+  the suite with `MOXIE_LLM_API_KEY= `. `test_live_action_tags.py` asserts a *rate* (2 of 3
   sampled turns) rather than a single sample, because the brain runs at temperature
   0.8 — see its docstring for the measured numbers.
+  **In CI** all three run together in the deep tier's dispatch-only step
+  (`gh workflow run ci-deep.yml --ref dev`) as one `pytest -q -ra` invocation against the
+  repo secrets — see [`../ci/README.md`](../ci/README.md). That step *fails* on an empty
+  `MOXIE_LLM_API_KEY` rather than skipping, because a green live run that tested nothing is
+  the exact gap it exists to close. It is manual because it spends ≈12–13 real completions.
 - **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper
   speech in, real Piper speech out, read back by real faster-whisper. Tier 1 round-trips
   Moxie's own voice through Whisper (and proves the built-in `ToneSynthesizer` would
@@ -52,6 +79,12 @@ browser at all and carry the hermetic suite CI actually runs.
   `pip install piper-tts faster-whisper numpy`, then
   `python -m pytest sim/tests/test_live_talk_e2e.py -q -s` — add `MOXIE_VOICES_DIR=…`
   if the voices live outside this checkout (a git worktree starts without them).
+  **In CI** it is opt-in on the same dispatch: `gh workflow run ci-deep.yml --ref dev -f
+  voice=true` installs those three packages and fetches the voices with
+  [`../ci/fetch_piper_voices.py`](../ci/fetch_piper_voices.py) (pinned `rhasspy/piper-voices`
+  `v1.0.0` URLs, sha256-verified, cached, idempotent). That step fails unless ≥3 of its 4
+  tests really passed — only the live-brain one may legitimately skip, when the gateway
+  degrades to its canned fallback.
 
 ## Run
 

@@ -30,6 +30,21 @@ class MoxieApp:
         """Given what the child said (+ context/history), return what Moxie says/does."""
         raise NotImplementedError
 
+    # --- optional: answer incrementally, a sentence at a time ---
+    def respond_stream(self, turn: Turn):
+        """Return an `Iterator[ReplyChunk]` to answer *while* the brain is still writing,
+        or **None** to say "I don't stream" (the default).
+
+        The runtime publishes each chunk as its own `RemoteChatResponse`
+        (`result=REPLY_PENDING` + `chunk_num`) and closes the sequence on the chunk marked
+        `final`. That is what gets a real first sentence to a child in ~3 s instead of
+        waiting 18-45 s for a whole completion — see
+        docs/architecture/mqtt-and-conversation.md §4.5.
+
+        Returning None (or raising) is always safe: the runtime falls straight back to
+        `respond`, so an app that never heard of streaming behaves exactly as before."""
+        return None
+
     # --- optional lifecycle hooks ---
     def on_connect(self, robot: RobotContext) -> None:
         """Called when a robot comes online (after config is pushed)."""

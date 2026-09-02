@@ -21,13 +21,31 @@ from typing import Optional
 _MARK_RE = re.compile(r"<mark\b[^>]*/?>", re.I)     # <mark name="cmd:..."/> behavior tags
 _TAG_RE = re.compile(r"<[^>]+>")                    # any residual angle-bracket tag
 
+# Emoji / pictographs. An LLM writes "Sure! 😀" and a TTS engine reads the character's
+# Unicode NAME aloud — Piper says "grinning face" mid-sentence (observed in the live
+# talk-loop run, PR #12). They carry no speech, so they come off before synthesis;
+# ordinary punctuation (!?,.'"-… and friends) is deliberately left alone.
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"      # emoticons, pictographs, transport, flags, symbols ext-A
+    "☀-➿"              # miscellaneous symbols + dingbats (sun, sparkles, check)
+    "⬀-⯿"              # miscellaneous symbols and arrows (star, arrows, blocks)
+    "\ufe00-\ufe0f"            # variation selectors (the invisible one after a heart)
+    "\u200d\u20e3"             # zero-width joiner + combining enclosing keycap
+    "©®™ℹ"   # (c) (r) (tm) information source
+    "⤴⤵〰〽㊗㊙"
+    "]"
+)
+
 
 def strip_markup(markup: str) -> str:
-    """The spoken text out of a behavior-markup line (drop <mark .../> + tidy space)."""
+    """The spoken text out of a behavior-markup line (drop <mark .../> and emoji, tidy
+    space). What comes back is what a TTS engine should actually say."""
     if not markup:
         return ""
     text = _MARK_RE.sub("", markup)
     text = _TAG_RE.sub("", text)
+    text = _EMOJI_RE.sub("", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -222,10 +240,16 @@ def decode_cloud_tts_response(resp: dict) -> dict:
 
 
 def synthesize_cloud_tts(synth: Synthesizer, markup: str, *, event_id: str = "",
-                         voice: Optional[str] = None) -> dict:
-    """CloudTTSRequest(markup) → CloudTTSResponse: strip markup → synthesize → wrap."""
+                         voice: Optional[str] = None, chunk_num: int = 0) -> dict:
+    """CloudTTSRequest(markup) → CloudTTSResponse: strip markup → synthesize → wrap.
+
+    `chunk_num` rides through to the response so a multi-chunk turn (a filler chunk 0
+    followed by the real answer as chunk 1 — see the runtime's brain-latency budget)
+    plays back in order: a client queues the chunks of one `event_id` by `chunk_num`
+    (docs/architecture/sim-as-a-client.md:77)."""
     text = strip_markup(markup)
     audio = synth.synthesize(text, voice=voice) if text else b""
     return build_cloud_tts_response(audio, event_id=event_id,
                                     channels=synth.channels,
-                                    sample_rate=synth.sample_rate)
+                                    sample_rate=synth.sample_rate,
+                                    chunk_num=chunk_num)

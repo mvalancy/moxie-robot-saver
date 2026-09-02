@@ -13,7 +13,21 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`store.py`](store.py) — the durable per-robot store (JSON under `MOXIE_DATA_DIR`, default
   [`../data/`](../data/)) that remembers reported `mentor_behaviors` across restarts.
 - [`wire.py`](wire.py) — the JSON encoders/decoders for the robot-cloud bus (chat responses,
-  `query_result`, mentor-behavior reports).
+  `query_result`, mentor-behavior reports). A chat response can be one chunk of several
+  (`chunk_num` + `consistency_control.is_completed`) — that is how a slow turn answers twice.
+- [`tts.py`](tts.py) — the voice seam: `strip_markup` (behavior marks **and** emoji off, so a
+  TTS engine never reads "grinning face" aloud), the `Synthesizer` interface (Piper, an
+  OpenAI-compatible voice server, the built-in tone) and the `CloudTTSResponse` encoder.
+- [`filler.py`](filler.py) — the short "let me think" lines, with thinking markup, that the
+  runtime speaks when the brain outlives its latency budget (see
+  [`../supervisor/`](../supervisor/)).
+- [`segment.py`](segment.py) — the sentence segmenter a streaming brain talks through:
+  dependency-free, pure, and careful about decimals, abbreviations, ellipses and lines too
+  short to speak alone. Each finished sentence becomes one `RemoteChatResponse` chunk, so a
+  child hears the first line at first-token latency instead of at whole-answer latency.
+- [`chat.py`](chat.py) — the LLM boundary: `make_openai_chat` (a whole completion),
+  `make_openai_stream` / `stream_completion` (text deltas), plus the rate-limit
+  classification, `Pacer` and `call_with_backoff` both share.
 
 ---
 📖 [Back to top](../../README.md)

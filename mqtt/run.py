@@ -11,7 +11,9 @@ def assemble(config):
     """Build the full runtime from config: the brain + optional STT + optional voice."""
     child = ChildProfile(nickname=config.CHILD_NICKNAME)
     rt = MoxieRuntime(config.build_app(), host=config.MQTT_HOST,
-                      port=config.MQTT_PORT, child=child)
+                      port=config.MQTT_PORT, child=child,
+                      brain_budget_s=config.BRAIN_BUDGET_S,
+                      streaming=config.STREAMING)
     synth = config.build_synthesizer()
     if synth:
         rt.set_synthesizer(synth)

@@ -9,10 +9,11 @@ Public API:
 Implement `MoxieApp.respond(turn) -> Reply` and register it with the runtime
 (see mqtt/supervisor). The runtime does the rest.
 """
-__version__ = "0.3.0"     # single source of truth (pyproject reads this)
+__version__ = "0.4.0"     # single source of truth (pyproject reads this)
 
-from .types import (Turn, Reply, Action, ActionType, RobotContext, ChildProfile)
+from .types import (Turn, Reply, ReplyChunk, Action, ActionType,
+                    RobotContext, ChildProfile)
 from .app import MoxieApp
 
-__all__ = ["MoxieApp", "Turn", "Reply", "Action", "ActionType",
+__all__ = ["MoxieApp", "Turn", "Reply", "ReplyChunk", "Action", "ActionType",
            "RobotContext", "ChildProfile", "__version__"]

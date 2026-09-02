@@ -15,6 +15,11 @@ What it does (the protocol round-trip a real Moxie performs):
   4. Assert the pushed config has ``pairing_status == "paired"``.
   5. Publish a ``/devices/{id}/events/remote-chat`` prompt ("hello").
   6. Assert a ``/devices/{id}/commands/remote_chat`` reply with ``output.text`` arrives.
+     One turn may answer with SEVERAL responses (a filler while the brain thinks, then
+     the answer streamed sentence by sentence): they share an ``event_id``, carry a
+     ``chunk_num``, and the last one is ``result=SUCCESS`` /
+     ``consistency_control.is_completed``. We join them in order — see
+     ``_on_chat_reply`` and docs/architecture/mqtt-and-conversation.md §4.5.
 
 Exit code 0 = the full round-trip worked. Used by the CI workflow (sim/ci/ci.yml;
 install to .github/workflows/ to run it on GitHub)
@@ -46,7 +51,9 @@ class VirtualMoxie:
         self.got_tts = threading.Event()
         self.got_query = threading.Event()
         self.config_payload: dict | None = None
-        self.reply_payload: dict | None = None
+        self.reply_payload: dict | None = None   # the FINAL RemoteChatResponse of a turn
+        self.reply_text: str = ""                # every chunk of that turn, in order
+        self._chunks: dict[str, dict[int, str]] = {}   # event_id -> {chunk_num: text}
         self.query_results: dict = {}       # CloudQuery name -> last CloudQueryResponse
         self.spoke: dict | None = None      # last decoded CloudTTSResponse (audio playback)
         self.errors: list[str] = []
@@ -83,16 +90,51 @@ class VirtualMoxie:
             self.log(f"← config: pairing_status={payload.get('pairing_status')!r}")
             self.got_config.set()
         elif topic.endswith("/commands/remote_chat"):
-            self.reply_payload = payload
-            out = (payload.get("output") or {}).get("text", "")
-            self.log(f"← remote_chat reply: {out[:60]!r}")
-            self.got_reply.set()
+            self._on_chat_reply(payload)
         elif topic.endswith("/commands/tts"):
             self._play_tts(payload)
         elif topic.endswith("/commands/query_result"):
             self._on_query_result(payload)
         elif "/commands/" in topic:
             self.log(f"← {topic.split('/commands/')[-1]}: {str(payload)[:60]}")
+
+    def _on_chat_reply(self, payload):
+        """Accumulate one turn's answer, which may arrive as SEVERAL responses.
+
+        The contract lets one ``event_id`` be answered by more than one
+        ``RemoteChatResponse``: ``result=REPLY_PENDING`` (ResultCode 9) means "more chunks
+        to come", ``chunk_num`` (field 22) orders them, and
+        ``consistency_control.is_completed`` (field 18) marks the last one — see
+        docs/architecture/mqtt-and-conversation.md §4.5. Our server uses that to speak a
+        filler while a slow brain thinks, and to stream an answer sentence by sentence.
+
+        So a real client cannot treat the FIRST reply as the answer. This joins the chunks
+        of an event in ``chunk_num`` order and only wakes the waiter on the closing chunk
+        (a terminal ``result``, or ``is_completed``). ``reply_payload`` stays the final
+        response; ``reply_text`` is the whole thing the child heard.
+        """
+        event_id = payload.get("event_id") or ""
+        chunk_num = payload.get("chunk_num")
+        text = (payload.get("output") or {}).get("text", "")
+        parts = self._chunks.setdefault(event_id, {})
+        parts[int(chunk_num) if chunk_num is not None else 0] = text
+        result = payload.get("result")
+        completed = bool((payload.get("consistency_control") or {}).get("is_completed"))
+        pending = result == "REPLY_PENDING" and not completed
+        if pending:
+            self.log(f"← remote_chat chunk {chunk_num}: {text[:60]!r} (more to come)")
+            return
+        self.reply_payload = payload
+        self.reply_text = " ".join(parts[k] for k in sorted(parts) if parts[k]).strip()
+        self.log(f"← remote_chat reply ({len(parts)} chunk(s)): {self.reply_text[:60]!r}")
+        self.got_reply.set()
+
+    def _reset_turn(self):
+        """Forget the previous turn's chunks before sending the next prompt."""
+        self.got_reply.clear()
+        self.reply_payload = None
+        self.reply_text = ""
+        self._chunks.clear()
 
     def _play_tts(self, payload):
         """Consume a CloudTTSResponse: decode the audio buffer + marks and 'play' it.
@@ -231,7 +273,7 @@ class VirtualMoxie:
             if not self.got_reply.wait(self.timeout):
                 self.errors.append("no remote_chat reply within timeout")
                 return False
-            text = ((self.reply_payload or {}).get("output") or {}).get("text", "")
+            text = self.reply_text or ((self.reply_payload or {}).get("output") or {}).get("text", "")
             if not text:
                 self.errors.append("remote_chat reply had empty output.text")
                 return False
@@ -277,13 +319,13 @@ class VirtualMoxie:
                     time.sleep(turn.get("hold", 0.6))
                     continue
                 say = turn.get("say", "")
-                self.got_reply.clear(); self.reply_payload = None
+                self._reset_turn()
                 self.client.publish(self.t_event("remote-chat"), json.dumps(
                     {"event_id": str(uuid.uuid4()), "command": "prompt",
                      "backend": "router", "speech": say}))
                 if not self.got_reply.wait(self.timeout):
                     self.errors.append(f"turn {i} ({say!r}): no reply"); continue
-                text = ((self.reply_payload or {}).get("output") or {}).get("text", "")
+                text = self.reply_text or ((self.reply_payload or {}).get("output") or {}).get("text", "")
                 if not text:
                     self.errors.append(f"turn {i} ({say!r}): empty reply"); continue
                 exp = turn.get("expect_contains")

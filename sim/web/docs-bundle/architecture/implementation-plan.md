@@ -27,7 +27,7 @@ Ours is built to the full recovered protocol with clean seams:
 |---|---|---|---|
 | Parent-app REST (Channel 1) | [rest-api](rest-api-contract.md) | 🟢 substantially built | `server/` (main.py, crypto, db) |
 | MQTT runtime (connect/config/state/turn) | [mqtt](mqtt-and-conversation.md) · [config](config-and-telemetry-contract.md) | 🟡 core works + end-to-end turn test (lazy client → integration-testable, no broker) | `mqtt/supervisor/moxie_runtime.py` |
-| AI seam — LLM brain | [ai-seam](ai-seam.md) §2 | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback | `mqtt/moxie_sdk/apps/llm_app.py` |
+| AI seam — LLM brain | [ai-seam](ai-seam.md) §2 · [mqtt §4.5](mqtt-and-conversation.md#45-slow-brain-a-filler-now-the-real-answer-next-reply_pending) | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback; **latency budget** (`MOXIE_BRAIN_BUDGET_S`, default 6 s) — a slower brain speaks a rotating filler as `REPLY_PENDING` chunk 0, with a stale-turn guard, every chunk synthesized. **Streaming** (`MOXIE_STREAMING`, default on): each finished sentence is published as its own `REPLY_PENDING` chunk as the model writes it, closed by a `SUCCESS` + `is_completed`; the filler timer re-arms per chunk (cap 2/turn) and a newer turn cancels the stream mid-answer. **Live-proven:** filler at 3.0 s + answer at 17.9 s (blocking, PR #14); streamed, first sentence at **1.52 s** vs whole answer at **4.38 s** on a healthy gateway (PR #15) | `mqtt/moxie_sdk/apps/llm_app.py` + `segment.py` + `chat.stream_completion` + `filler.py` + `moxie_runtime.py::_handle_stream_turn` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟢 seam + runtime-wired + **real zmqSTTRequest protobuf decode** (dep-free) + JSON bridge, e2e-tested; live faster-whisper is an optional dep | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟢 seam + runtime-wired + **3 backends: built-in tone (zero-dep) · Piper (offline, Amy) · OpenAI-voice (gateway)**; **full audio round-trip proven through a real broker** (SIL smoke `--expect-tts`); real-speech play-through pending a Piper model/creds | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
@@ -83,6 +83,30 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   Arbitrary module `code`-string execution is deliberately deferred (sandboxing); `volley.execution_actions`
   (e.g. `eb_timer_request`) are captured but **not yet plumbed** into `RemoteChatAction` on the wire.
 - **ai-seam:** STT seam is built + wired (feed_stt/handle_zmq, e2e via a JSON audio bridge); real zmqSTTRequest protobuf decode is DONE (dep-free field reader in stt.py); only a live faster-whisper test remains (optional dep). TTS out (§3) seam + runtime-wired (synthesize-on-reply → CloudTTSResponse); live voice needs creds + viseme TTSMarks deferred. Input safety/moderation (§2) unbuilt.
+- **brain latency — the multi-chunk assumption.** Background inference + filler is built and
+  live-proven (a filler inside the budget, the answer as chunk 1 of the same `event_id`), but the
+  *robot-side* semantics of `REPLY_PENDING` are only partly established by our RE docs: they give the
+  fields (ResultCode 9 = "more chunks to come", `chunk_num`=22, `RemoteConsistencyControl.is_completed`=18)
+  and that the robot "can start speaking a stable prefix before the full reply lands", **not** a capture
+  proving a physical Moxie speaks chunk 0 and keeps the turn open for chunk 1. The SIM does
+  ([`sim-as-a-client.md`](sim-as-a-client.md):77), so this is proven against every client we have and
+  assumed for the robot. If a real robot disagrees, the field-proven fallback is OpenMoxie Fork A's shape —
+  answer the current request with the filler and deliver the finished answer on the robot's next
+  (re)prompt, same background inference, no second unsolicited publish; that is a small change to
+  `_handle_turn`, not a redesign. Two smaller honesties: the filler is a fixed rotation of eight written
+  lines (Fork A pulls DB-sourced trivia/jokes, and only ours is markup-performed), and a turn that
+  overruns the budget occupies a `_pool` worker plus a timer thread until it finishes.
+- **streaming — the same assumption, leaned on harder.** A filler turn publishes two responses for one
+  `event_id`; a streamed turn publishes three to five, and we have **no capture** of a physical Moxie
+  playing chunk 2. It is proven against every client we have (`sim/virtual_moxie.py` joins the chunks of an
+  `event_id` in `chunk_num` order; the browser SIM queues each `CloudTTSResponse` by `chunk_num` and now
+  appends later chunks of a turn to one transcript row) and assumed for the robot; `MOXIE_STREAMING=0` is
+  the one-variable switch back to the single-reply wire. Three smaller honesties: sentence segmentation is
+  rule-based, so a rare abbreviation outside the small built-in set splits a line one sentence early (a
+  clipped breath, never lost words); mid-stream chunks get a **rule-based** mood/gesture because the
+  model's own choice arrives after the `"say"` string, so only the closing chunk performs exactly what the
+  model asked for; and once a chunk has been spoken it cannot be unsaid, so a stream that dies mid-answer
+  closes the turn with what was already said rather than retrying the question.
 - **ai-seam → response-tag actions: BUILT.** The brain can now drive the robot from inside its own line — `moxie_sdk/actions.py::parse_action_tags` lifts `<exit>` / `<sleep>` / `<launch:MOD[:CID]>` / `<launch_if_confirmed:MOD[:CID]>` out of model text into real `Reply.actions` (stripped before speaking), applied in `LLMApp.respond` and `ContentApp` (model + global-handler paths) and taught to the model via `ACTION_TAG_PROMPT`; tests in `sim/tests/test_action_tags.py`. **Caveat:** our recovered contract defines `RemoteChatAction.ActionID.launch_if_confirmed`, but `ActionType` has no confirm member, so that tag maps to `LAUNCH` — the robot launches immediately instead of asking first (one-line fix at `actions.py::LAUNCH_IF_CONFIRMED_AS` once the enum gains one). Pattern from OpenMoxie (MIT), audit §4.1 row 4.
 - **config/telemetry:** RobotCloudConfig + RobotStatus ingest + Packet telemetry (build/parse/runtime-ingest/
   summarize) + the LoggingPolicy upload-gate are built (M5 🟢) and the console's 📈 Insights panel now surfaces the
@@ -128,21 +152,40 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
-| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~90% | **Every link is built and live-proven with real speech through the real runtime** (PR #12): Piper "child" audio → zmqSTT protobuf frames → faster-whisper → brain (gateway, live) → spec `RemoteChatResponse` → Piper Amy `CloudTTSResponse` → re-heard at overlap 1.00; the browser SIM decodes and **plays** it with mouth animation (PR #11); markup/actions reach the client. Remaining: the same loop on a **physical Moxie** (needs the operator's robot; the SIM stands in), and brain latency (45 s healthy / 18 s degraded vs the ~20 s reprompt window — see next slice) |
+| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~90% | **Every link is built and live-proven with real speech through the real runtime** (PR #12): Piper "child" audio → zmqSTT protobuf frames → faster-whisper → brain (gateway, live) → spec `RemoteChatResponse` → Piper Amy `CloudTTSResponse` → re-heard at overlap 1.00; the browser SIM decodes and **plays** it with mouth animation (PR #11); markup/actions reach the client. Remaining: the same loop on a **physical Moxie** (needs the operator's robot; the SIM stands in). Brain latency is no longer silence *or* a wait: a slow turn speaks a filler inside `MOXIE_BRAIN_BUDGET_S` (live: 3.0 s / 17.9 s) and the answer itself now **streams** a sentence at a time (live: first words at 1.52 s, whole answer at 4.38 s), with the filler timer re-arming per chunk. Remaining honesty: no capture proves a *physical* robot plays chunk 2 of an `event_id` (see Known gaps) |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
 | 3 | Cloud management (console + config/telemetry) | 🟢 | RobotCloudConfig + RobotStatus + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. The console surfaces **live state** (`/local/fleet`), **edits config** (Settings form → `POST /local/robots/{id}/config` → runtime `POST /config` → `update_config` re-pushes `RobotCloudConfig`), and shows **telemetry insights** (`summarize_events` → runtime `GET /telemetry` → `GET /local/robots/{id}/telemetry` → the 📈 Insights panel) — all three live-verified against a real broker. Caveat: telemetry is in-memory (last 50 events/robot), not persisted |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
 | 5 | One-command stack | 🟢 | `docker compose up` (repo root) = broker + supervisor + parent console, one `.env`, healthchecks + named volumes. **Proven** by [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh): build → health → `virtual_moxie --expect-tts` round-trip through the composed broker → the robot visible in the console's `/local/fleet` → `down -v`; shape asserted hermetically by `sim/tests/test_compose.py`. Guide: [`../guides/one-command-stack.md`](../guides/one-command-stack.md). Caveats (documented, not hidden): the `content`/`llm` brains still need a gateway key to say anything real (keyless → the "brain got fuzzy" fallback, which is why the smoke uses `echo`), and the `voice`/`stt` profiles each need one `.env` line + `up --build` rather than the profile flag alone |
-| 6 | Green + live-tested | 🟡 ~90% | Three-tier CI green incl. the compose-stack deep job; hermetic suite ≈220; **live-proven against real infra:** LLM turn, action tags 3/3, content module e2e, console↔runtime round-trip, and **real speech end to end** (Piper→whisper 1.00; full talk loop with 0 gateway calls and with a live completion; degraded gateway skips, never false-greens). Remaining: live tests need creds so CI runs them skipped (a secrets-gated dispatch exists for the LLM path); a physical-robot HIL job on a self-hosted runner |
+| 6 | Green + live-tested | 🟡 ~90% | Three-tier CI green incl. the compose-stack deep job; hermetic suite ≈281; **live-proven against real infra:** LLM turn, action tags 3/3, content module e2e, console↔runtime round-trip, and **real speech end to end** (Piper→whisper 1.00; full talk loop with 0 gateway calls and with a live completion; degraded gateway skips, never false-greens). Remaining: live tests need creds so CI runs them skipped (a secrets-gated dispatch exists for the LLM path); a physical-robot HIL job on a self-hosted runner |
 
-**Most valuable next slice:** **brain latency — background inference + filler.** PR #12 measured the live
-gateway turn at 45 s (healthy) / 18 s (degraded) against the robot's ~20 s reprompt window, while the voice
-legs total ≈1.5 s — the brain, not speech, is the bottleneck. Build the audit's Fork-A pattern behind our
-seam: on a slow completion, reply within the window with a short spoken filler + `REPLY_PENDING`, keep
-inferring in the background, then deliver the real line (streaming/`chunk_num` is already specified in the
-RemoteChat contract). Quick wins in the same pass (S): `strip_markup` drops emoji (Piper reads them aloud);
-live tests load `mqtt/.env` from the repo root so they run in worktrees. Then: `alarms`/`schedule_preferences`
-(config contract gap), and the audit's ADOPT #3 `automarkup` floor / BEYOND #1 behavior planner.
+**Brain latency — background inference + filler: 🟢 done (2026-09-02).** The runtime runs the brain under
+`MOXIE_BRAIN_BUDGET_S` (default 6 s); over budget it speaks a rotating, markup-performed filler as
+`REPLY_PENDING` chunk 0 and delivers the real line as chunk 1 (`is_completed`), synthesizing both, and drops
+a result whose turn has been superseded. Live-proven on one gateway turn: **filler at 3.0 s, real answer at
+17.9 s**, same `event_id` — where a child previously heard 17.9 s of silence. Shipped with it: `strip_markup`
+drops emoji (Piper was reading "grinning face" aloud), and the live tests now find `mqtt/.env` in the main
+checkout so the creds-gated tier stops silently skipping inside a worktree.
+
+**Streamed replies — 🟢 done (2026-09-02).** The latency story is finished. `MoxieApp.respond_stream`
+yields a `ReplyChunk` per finished sentence (`moxie_sdk/segment.py` decides where a sentence ends;
+`chat.stream_completion` opens an `stream=True` completion through the same backoff/`Pacer`), and
+`_handle_stream_turn` publishes each one as `REPLY_PENDING` + `chunk_num`, closed by `SUCCESS` +
+`is_completed`. The filler timer re-arms after every chunk (cap **2** per turn), a newer turn cancels the
+stream mid-answer, and a one-chunk answer is still byte-identical to the reply we have always sent.
+**Live-proven:** first sentence at **1.52 s**, whole answer at **4.38 s**, four chunks on one `event_id` —
+where a child previously heard nothing until 4.38 s (and until 17.9 s on the day PR #12 measured).
+`MOXIE_STREAMING=0` restores the old path.
+
+**Most valuable next slice:** **make the answer *right*, now that it is fast.** Two candidates, both
+cheap now that the chunk plumbing exists. (a) **Input safety/moderation** (ai-seam §2) is still unbuilt and
+is the one gap on the list that a child can actually be hurt by; streaming makes it more urgent, because a
+sentence is on the wire before the rest of the answer exists — a per-chunk check is the natural shape, and
+`REPLY_PENDING` already lets us stop a sequence early. (b) **Markup quality** — the audit's ADOPT #3
+`automarkup` floor: every streamed chunk currently gets one mood + one gesture, which is a thinner
+performance than the vendor engine's per-clause prosody, and delivery is what makes Moxie feel alive
+([mqtt §4.6](mqtt-and-conversation.md#46-the-automarkup-engine-why-it-matters)). After those: `alarms` /
+`schedule_preferences` (config contract gap) and BEYOND #1, the behavior planner.
 
 ## TTS strategy (2026-09-01)
 
