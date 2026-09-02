@@ -47,22 +47,35 @@ class Synthesizer:
 
 class OpenAIVoiceSynthesizer(Synthesizer):
     """Server voice via an OpenAI-compatible audio endpoint (`/audio/speech`).
-    Lazily imports openai (no hard SDK dep); returns raw PCM by default."""
+    Lazily imports openai (no hard SDK dep); returns raw PCM by default. A busy voice
+    server backs off + paces exactly like the LLM gateway (shared chat.call_with_backoff
+    + Pacer) — 429/5xx are retried, not failed."""
     name = "openai-voice"
 
     def __init__(self, base_url: str, api_key: str, voice: str = "alloy",
                  model: str = "tts-1", response_format: str = "pcm",
-                 sample_rate: int = 24000):
-        from openai import OpenAI          # lazy
-        self._client = OpenAI(base_url=base_url, api_key=api_key or "sk-local")
+                 sample_rate: int = 24000, *, client=None, max_retries: int = 4):
+        if client is None:
+            from openai import OpenAI      # lazy
+            client = OpenAI(base_url=base_url, api_key=api_key or "sk-local",
+                            max_retries=0)
+        from .chat import Pacer
+        self._client = client
         self._voice, self._model, self._fmt = voice, model, response_format
         self.sample_rate = sample_rate
+        self._pacer = Pacer()
+        self._max_retries = max_retries
 
     def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
-        resp = self._client.audio.speech.create(
-            model=self._model, voice=voice or self._voice, input=text,
-            response_format=self._fmt)
-        return resp.content
+        from .chat import call_with_backoff
+
+        def _once():
+            resp = self._client.audio.speech.create(
+                model=self._model, voice=voice or self._voice, input=text,
+                response_format=self._fmt)
+            return resp.content
+        return call_with_backoff(_once, max_retries=self._max_retries,
+                                 pacer=self._pacer)
 
 
 def make_voice_synthesizer(base_url: str, api_key: str, voice: str = "alloy",
