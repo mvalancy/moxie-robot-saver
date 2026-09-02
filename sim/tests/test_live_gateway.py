@@ -12,22 +12,13 @@ import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
+sys.path.insert(0, os.path.dirname(__file__))
 
+from helpers_runtime import load_repo_dotenv  # noqa: E402
 
-def _load_dotenv():
-    """Best-effort load of mqtt/.env (git-ignored) so a local key is picked up."""
-    path = os.path.join(REPO, "mqtt", ".env")
-    try:
-        for line in open(path):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
-    except FileNotFoundError:
-        pass
-
-
-_load_dotenv()
+# Finds mqtt/.env in this tree or in the main checkout, so the live tier also runs
+# from a `git worktree` (where the git-ignored .env does not exist).
+load_repo_dotenv()
 KEY = os.environ.get("MOXIE_LLM_API_KEY") or os.environ.get("LITELLM_MASTER_KEY") or ""
 BASE = os.environ.get("MOXIE_LLM_BASE_URL", "https://gateway.graphlings.net/v1")
 MODEL = os.environ.get("MOXIE_LLM_MODEL", "graphling-medium")
