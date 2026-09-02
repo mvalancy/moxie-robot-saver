@@ -24,7 +24,10 @@ def assemble(config):
     trans = config.build_transcriber()
     if trans:
         rt.set_transcriber(trans)
-        print(f"[run] STT enabled: {trans.name}")
+        # `describe()` rather than `.name`: the gateway ears are wrapped in a
+        # FallbackTranscriber, whose own name is the wrapper's — the startup log should
+        # say which engine is listening, on which model, and what stands by behind it.
+        print(f"[run] STT enabled: {trans.describe()}")
     return rt
 
 

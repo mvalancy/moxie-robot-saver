@@ -102,8 +102,10 @@ services:
       MOXIE_TTS_VOICE: ${MOXIE_TTS_VOICE:-}   # empty = derived from the model name
       MOXIE_PIPER_MODEL: ${MOXIE_PIPER_MODEL:-}      # set with --profile voice (see the guide)
       MOXIE_PIPER_CONFIG: ${MOXIE_PIPER_CONFIG:-}
-      MOXIE_STT: ${MOXIE_STT:-auto}          # auto = on when faster-whisper is installed
-      MOXIE_STT_MODEL: ${MOXIE_STT_MODEL:-base.en}
+      MOXIE_STT: ${MOXIE_STT:-auto}          # auto = gateway ears when a voice/STT URL + key are set, else local whisper if installed, else off
+      MOXIE_STT_MODEL: ${MOXIE_STT_MODEL:-}    # unset = per-engine default (stt-whisper on the gateway, base.en locally)
+      MOXIE_STT_BASE_URL: ${MOXIE_STT_BASE_URL:-}   # falls back to MOXIE_VOICE_BASE_URL, then the LLM base URL
+      MOXIE_STT_API_KEY: ${MOXIE_STT_API_KEY:-}     # falls back to the voice key, then the LLM key
       MOXIE_LLM_BASE_URL: ${MOXIE_LLM_BASE_URL:-https://gateway.graphlings.net/v1}
       MOXIE_LLM_API_KEY: ${MOXIE_LLM_API_KEY:-}
       MOXIE_LLM_MODEL: ${MOXIE_LLM_MODEL:-graphling-medium}

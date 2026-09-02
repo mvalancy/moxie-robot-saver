@@ -1,5 +1,5 @@
 {
- "generated": "docs-7686543e5a96",
+ "generated": "docs-19bde43fb729",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 53797,
+   "bytes": 55141,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -211,11 +211,12 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 21998,
+   "bytes": 24038,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
     "① STT in — audio → text",
+    "What we implement (plug point B) — BUILT, and live on both engines (2026-09-02)",
     "② Brain — the RemoteChat contract (where the AI lives)",
     "Request in — `RemoteChatRequest`",
     "Response out — `RemoteChatResponse`",
@@ -787,7 +788,7 @@
    "path": "guides/README.md",
    "title": "Guides",
    "section": "guides",
-   "bytes": 2480,
+   "bytes": 2798,
    "mermaid": 0,
    "headings": [],
    "kind": "md"
@@ -966,6 +967,27 @@
     "Option C — any OpenAI-`/audio/speech` server you already run",
     "Verify it works",
     "What to send back to us"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "guides/litellm-stt-setup.md",
+   "title": "STT on the LiteLLM gateway",
+   "section": "guides",
+   "bytes": 10698,
+   "mermaid": 0,
+   "headings": [
+    "Live since 2026-09-02",
+    "Turning it on — one variable",
+    "Deployment matrix — pick the ears that match the box",
+    "What we measured (live, 2026-09-02)",
+    "Four quirks worth knowing",
+    "If the gateway hiccups, a child is still heard",
+    "Verify it yourself",
+    "The contract, for reference (and for a second gateway)",
+    "What we send (the contract)",
+    "How to register it (LiteLLM `config.yaml`)",
+    "What a gateway has to tell us"
    ],
    "kind": "md"
   },

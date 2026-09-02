@@ -33,6 +33,19 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`tts.py`](tts.py) — the voice seam: `strip_markup` (behavior marks **and** emoji off, so a
   TTS engine never reads "grinning face" aloud), the `Synthesizer` interface (Piper, an
   OpenAI-compatible voice server, the built-in tone) and the `CloudTTSResponse` encoder.
+- [`stt.py`](stt.py) — the ears ([ai-seam](../../docs/architecture/ai-seam.md) §1): the
+  dependency-free `zmqSTTRequest` protobuf reader, `SttSession` (accumulate one utterance's
+  VAD-tagged frames, transcribe on `END_OF_SPEECH`, at the bus's 16 kHz) and two **first-class**
+  engines behind one `Transcriber` interface — `WhisperTranscriber` (local faster-whisper: no
+  network, no key, the home-appliance answer) and `OpenAITranscriber` (an OpenAI-shaped
+  `/audio/transcriptions`; live on our gateway since 2026-09-02, the answer for a hosted box with
+  nowhere to put a model). `FallbackTranscriber` puts one behind the other and latches on the
+  first failure, so an outage is a downgrade rather than a traceback mid-sentence. Setup + the
+  deployment matrix: [litellm-stt-setup.md](../../docs/guides/litellm-stt-setup.md).
+- [`audio_models.py`](audio_models.py) — pure name rules that split a gateway's flat
+  `GET /v1/models` list into voices and ears (`classify_audio_models`, `default_tts_model`,
+  `default_stt_model`). LiteLLM's listing says nothing about *mode*, so the names are the only
+  contract; pinned by a golden test against the ids the gateway really served.
 - [`filler.py`](filler.py) — the short "let me think" lines, with thinking markup, that the
   runtime speaks when the brain outlives its latency budget (see
   [`../supervisor/`](../supervisor/)).

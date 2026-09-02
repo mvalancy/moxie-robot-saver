@@ -62,6 +62,34 @@ low-latency barge-in), `confidence`, `speaker_id` (diarization), and the transla
 `END_OF_SPEECH` + `FINAL` (plug B); everything before that is provisional.
 Full detail: [`perception-pipeline.md`](../reverse-engineering/runtime/perception-pipeline.md).
 
+### What we implement (plug point B) — BUILT, and live on both engines (2026-09-02)
+
+`moxie_sdk/stt.py` is plug B: `SttSession` accumulates the VAD-tagged frames of one utterance and
+hands the whole thing to a `Transcriber` on `END_OF_SPEECH`, and the runtime publishes the
+`zmqSTTResponse`. **The audio the accumulator carries is 16-bit mono PCM at 16 kHz** — the
+perception bus's own rate, and the default `SttSession(transcriber)` is built with — so any engine
+plugged in here must be told that rate rather than assume one.
+
+Two engines ship, and **neither is a fallback for the other** — which one a deployment wants is a
+property of the box, not a ranking (the matrix is in
+[`litellm-stt-setup.md`](../guides/litellm-stt-setup.md)):
+
+| Engine | `MOXIE_STT` | What it is | For |
+|---|---|---|---|
+| `WhisperTranscriber` | `whisper` (alias `local`) | local faster-whisper, lazily imported | a home appliance: no network, no key, a child's voice never leaves the house |
+| `OpenAITranscriber` | `gateway` | OpenAI-shaped `POST /v1/audio/transcriptions` (multipart WAV in, `{"text": …}` out) | a hosted deployment: no model wheels, no GPU, one key for brain + voice + ears |
+
+`auto` (the default) picks the gateway when a URL **and** a key resolve, else local whisper, else
+nothing. The gateway engine wraps the headerless PCM in an in-memory RIFF/WAVE **at the rate it was
+handed** (a header that lies pitch-shifts the audio), drops anything under 120 ms without a request,
+and shares the LLM path's `call_with_backoff` + `Pacer` for 429/5xx. `FallbackTranscriber` puts the
+local engine (or a `NullTranscriber` returning `""`) behind the cloud one and latches on the first
+failure, reporting it once — a gateway outage is a downgrade, never a traceback mid-sentence.
+
+Live-proven end to end on 2026-09-02: gateway TTS → gateway STT at **word overlap 1.00** at both
+22050 Hz and the robot's 16 kHz, and one child utterance through the real runtime with all three
+seams on the gateway (`sim/tests/test_live_gateway_stt.py`).
+
 ---
 
 ## ② Brain — the RemoteChat contract (where the AI lives)
