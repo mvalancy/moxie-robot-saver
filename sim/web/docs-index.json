@@ -1,5 +1,5 @@
 {
- "generated": "docs-c642e8caef78",
+ "generated": "docs-e12e62175dca",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 9761,
+   "bytes": 10417,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -104,6 +104,7 @@
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
     "DoD progress (audited 2026-09-01) — ≈ 45%",
+    "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
    ],

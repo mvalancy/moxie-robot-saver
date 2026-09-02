@@ -81,6 +81,16 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 (RobotCloudConfig round-trip + /state ingest + LoggingPolicy). Criterion 1 (talk-e2e) is gated on the
 voice-server creds for live TTS; the CloudTTSRequest runtime handler can still land with a stub.
 
+## TTS strategy (2026-09-01)
+
+- **Default server voice = Piper (Amy)** — local, free, no rate limits (a `sim/tts/` Piper service already
+  exists). A `PiperSynthesizer` in the SDK is the next TTS slice.
+- **Gateway TTS is possible now-ish:** `gateway.graphlings.net/v1/audio/speech` route EXISTS (returns 400
+  "invalid model", not 404) → LiteLLM supports the TTS payload; it just needs a TTS model registered in the
+  gateway config. Then set `MOXIE_VOICE_BASE_URL=<gateway>/v1` + a model name and `OpenAIVoiceSynthesizer`
+  (already backoff+paced) drives it through the **same key + same limits**. Piper stays the default; the
+  gateway is the alt.
+
 ## Definition of done — the complete end-to-end system
 
 The build is DONE when all of the below hold together, not milestone-by-milestone:
