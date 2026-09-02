@@ -39,6 +39,9 @@ def robot_summary(r: dict) -> str:
         bits.append(f"mode {r['mode']}")
     if r.get("telemetry_count"):
         bits.append(f"{r['telemetry_count']} events")
+    if r.get("safety_unreviewed"):
+        bits.append(f"{r['safety_unreviewed']} safety flag"
+                    f"{'' if r['safety_unreviewed'] == 1 else 's'} to review")
     if r.get("ota_reboot_required"):
         bits.append("OTA reboot pending")
     return " · ".join(bits) or "connected"
@@ -57,6 +60,8 @@ def normalize_robot(r: dict) -> dict:
         "ota_reboot_required": bool(r.get("ota_reboot_required")),
         "config_overrides": dict(r.get("config_overrides") or {}),
         "telemetry_count": int(r.get("telemetry_count") or 0),
+        "safety_total": int(r.get("safety_total") or 0),
+        "safety_unreviewed": int(r.get("safety_unreviewed") or 0),
         "online": True,                     # present in the live snapshot ⇒ connected
         "summary": robot_summary(r),
     }
@@ -118,5 +123,71 @@ def normalize_telemetry(payload: Optional[dict]) -> dict:
         "count": int(summary.get("count") or 0) if ok else 0,
         "by_event": event_counts(summary) if ok else [],
         "events": [normalize_event(e) for e in (p.get("events") or [])] if ok else [],
+        "error": None if ok else (p.get("error") or "supervisor not reachable"),
+    }
+
+
+# --- safety review queue (ai-seam §2 InputSafety) ------------------------------------
+# The runtime's GET /safety returns {ok, device_id, policy, detail, enabled, classifier,
+# counts, unreviewed, labels, events}; the console wants a sorted category table and tidy
+# rows it can render without knowing the storage shape. Pure, so it unit-tests here.
+
+def safety_counts(view: Optional[dict]) -> list:
+    """counts.by_category + labels → render-ready rows, most frequent first (ties broken
+    by label so the table doesn't jitter between refreshes)."""
+    v = view or {}
+    by = (v.get("counts") or {}).get("by_category") or {}
+    labels = v.get("labels") or {}
+    rows = [{"category": str(k), "label": str(labels.get(k) or k), "count": int(n or 0)}
+            for k, n in by.items()]
+    rows.sort(key=lambda r: (-r["count"], r["label"]))
+    return rows
+
+
+def normalize_safety_event(e: Optional[dict], labels: Optional[dict] = None) -> dict:
+    """One stored review-queue row → the console's event row.
+
+    `excerpt` is already redacted by the runtime (`moxie_sdk.safety.redact` masks the
+    matched words and drops the excerpt entirely if masking could not be verified), and
+    it is absent under LoggingPolicy NO_DATA — so this never has raw unsafe text to
+    handle. It is passed through as-is; the UI escapes it.
+    """
+    e = e or {}
+    labels = labels or {}
+    cats = [str(c) for c in (e.get("categories") or [])]
+    return {
+        "id": str(e.get("id") or ""),
+        "ts": _num(e.get("ts")),
+        "side": "moxie" if e.get("side") == "moxie" else "child",
+        "action": "block" if e.get("action") == "block" else "flag",
+        "categories": cats,
+        "labels": [str(labels.get(c) or c) for c in cats],
+        "escalate": bool(e.get("escalate")),
+        "excerpt": str(e.get("excerpt") or ""),
+        "reviewed": bool(e.get("reviewed")),
+    }
+
+
+def normalize_safety(payload: Optional[dict]) -> dict:
+    """Runtime `/safety` response → the console's 🛡️ Safety panel shape. Tolerates a
+    None/error payload (supervisor down, unknown device) with ok=false and an empty view."""
+    p = payload or {}
+    ok = bool(p.get("ok"))
+    labels = p.get("labels") or {}
+    counts = p.get("counts") or {}
+    events = [normalize_safety_event(e, labels) for e in (p.get("events") or [])] if ok else []
+    return {
+        "ok": ok,
+        "device_id": p.get("device_id"),
+        "enabled": bool(p.get("enabled")) if ok else False,
+        "classifier": p.get("classifier") if ok else None,
+        "policy": p.get("policy") if ok else None,
+        "detail": bool(p.get("detail")) if ok else False,
+        "total": int(counts.get("total") or 0) if ok else 0,
+        "blocked": int((counts.get("by_action") or {}).get("block") or 0) if ok else 0,
+        "flagged": int((counts.get("by_action") or {}).get("flag") or 0) if ok else 0,
+        "unreviewed": int(p.get("unreviewed") or 0) if ok else 0,
+        "by_category": safety_counts(p) if ok else [],
+        "events": events,
         "error": None if ok else (p.get("error") or "supervisor not reachable"),
     }
