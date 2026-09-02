@@ -275,5 +275,13 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   disjoint slice (the last three concurrent pairs merged cleanly). In flight: `feat/automarkup-floor`,
   `feat/config-alarms-fleet-defaults`. Release v0.5.0 queued behind the automarkup floor.
 
+- **2026-09-02** — Integrated `feat/automarkup-floor` (PR #22 → dev, ADOPT #3): every line Moxie speaks now
+  performs — mood + gestures from our recovered vocabularies (11 moods / 12 gestures / 50 trees / 52 spurts,
+  cited by line), a deterministic blake2b-gated `annotate()` behind the unchanged seam, 8/8 goldens, 0 unknown
+  ids, p95 0.23 ms, +280 tests (→641), and the browser SIM rendering six distinct faces with arms moving.
+  Honest gaps: SFX/icons/spurts gated off (thin catalogs); the model's own mood reaches only the closing
+  chunk on a streamed turn until `ReplyChunk` carries scored fields (planner phase); no hardware has played
+  it. In flight: `feat/config-alarms-fleet-defaults`. **Next: promote v0.5.0** ("safe and alive").
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)
