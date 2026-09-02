@@ -110,5 +110,13 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
   deterministic (BEYOND #7 adaptive), store is JSON (ADOPT #8), `response_code` not emitted. In flight:
   `feat/one-command-stack` (M7), `feat/live-e2e-validation` (criterion 6).
 
+- **2026-09-02** — Integrated `feat/one-command-stack` (PR #8 → dev, M7 + ADOPT #10): `docker compose up`
+  runs certs → broker → supervisor → console with healthchecks + volumes; `sim/run_compose_smoke.sh` PROVES
+  a virtual robot round-trips (incl. TTS audio) through the composed stack and the console sees it. **M7 🟢,
+  DoD criterion 5 🟢.** +14 tests (201→215). Also fixed Piper ≥1.3 producing no audio. A `compose-stack`
+  deep-CI job was added (template + `.github` synced; active on `main` after the next promotion). Gaps:
+  `stt` profile unverified live; profiles need `MOXIE_SUPERVISOR_EXTRAS` + `--build`. In flight:
+  `feat/live-e2e-validation` (criterion 6) — then promote **v0.2.0**.
+
 ---
 📖 [Implementation plan](implementation-plan.md) · [Vision](vision.md) · [Releasing](../../RELEASING.md) · [Docs index](../README.md)

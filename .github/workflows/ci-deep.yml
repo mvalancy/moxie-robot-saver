@@ -68,3 +68,23 @@ jobs:
         run: python -m pytest sim/tests/test_live_gateway.py -q
       # Future: a `real-robot` job on a self-hosted runner wired to physical hardware
       # + the live gateway/voice, promoted from this virtual HIL stage.
+
+  compose-stack:
+    name: One-command stack (docker compose, end to end)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      # GitHub's ubuntu-latest runner ships Docker Engine + the compose plugin, so the
+      # real repo-root stack can be built and proven here — no service containers, no
+      # docker-in-docker shim. The smoke uses its own project name and ports (see
+      # sim/compose-smoke.env), so it cannot collide with anything else on the runner.
+      - name: Docker + compose available
+        run: docker compose version
+      - run: pip install --quiet "paho-mqtt>=2.0"
+      - name: Compose smoke (build → up → virtual robot + TTS → /local/fleet → down -v)
+        run: bash sim/run_compose_smoke.sh
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -p moxie-smoke --env-file sim/compose-smoke.env logs --tail 100 || true

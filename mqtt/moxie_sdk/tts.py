@@ -113,12 +113,19 @@ class PiperSynthesizer(Synthesizer):
         self.sample_rate = int(getattr(cfg, "sample_rate", sample_rate) or sample_rate)
         # piper yields raw PCM chunks; join to one buffer (version-tolerant)
         def _fn(text: str) -> bytes:
-            if hasattr(voice, "synthesize_stream_raw"):
+            if hasattr(voice, "synthesize_stream_raw"):     # piper-tts <= 1.2
                 return b"".join(voice.synthesize_stream_raw(text))
             import io, wave                        # fallback: capture WAV, return PCM
             buf = io.BytesIO()
             with wave.open(buf, "wb") as w:
-                voice.synthesize(text, w)
+                # piper-tts >= 1.3 renamed the WAV writer; its `synthesize` became a
+                # chunk generator, so calling it with a wave writer raises
+                # "# channels not specified" (seen with piper-tts 1.3 in the compose
+                # `voice` profile). Prefer the explicit WAV entry point when present.
+                if hasattr(voice, "synthesize_wav"):
+                    voice.synthesize_wav(text, w)
+                else:
+                    voice.synthesize(text, w)
             buf.seek(0)
             with wave.open(buf, "rb") as r:
                 return r.readframes(r.getnframes())
