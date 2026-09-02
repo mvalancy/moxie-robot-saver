@@ -28,9 +28,13 @@ swappable slots"** and names every one: `EyeColor` · `EyeDesign` · `EyeLid` ·
 `Stickers` · `Extras` · `Misc`. That is the whole anatomy; `FACE_SLOTS` below is it,
 in the document's order.
 
-**The option vocabulary — thin, and honestly so.** Our corpus lists concrete choices for
-exactly **two** of the fourteen slots, and it lists them *with hex*, so they are the two a
-picker can actually preview:
+**The option vocabulary — two origins, kept apart.** The catalog is *data*:
+`moxie_sdk/face_assets.json`, loaded at import by `load_face_assets()` and turned into
+slots by `build_face_slots(catalog=)` — one seam, so a test can hand in its own table.
+Every option carries an `origin`, and there are exactly two of those.
+
+`origin: "recovered-enum"` — **12 options across 2 slots, from our own corpus, with hex**,
+which makes them the only ones a picker can truly *preview*:
   * `EyeColor{green, blue, purple, brown, gold, teal}` — green `42D02B`, blue `8491EF`,
     purple `9437DE`, brown `443319`, gold `F4BF03`, teal `38ADAE`
   * `FaceColor{blue, yellow, green, teal, pink, purple}` — blue `BBCFE1`, yellow `F0F055`,
@@ -41,27 +45,40 @@ Channel-1 spelling `ChildrenModel.eye-color`/`face-color` → `PUT children/{id}
 the account flags `supports-eye-color`/`supports-face-color`, and
 `docs/reverse-engineering/phone/rest-api.md`:412 lists both keys on `ChildrenModel`.)
 
-For the other **twelve** slots our corpus names the slot and stops. It does not contain a
-single concrete face asset label, and it is structurally clear about why: the
+`origin: "openmoxie-manifest"` — **60 asset ids ingested as data** from OpenMoxie (MIT),
+`site/hive/content/data.py::MOXIE_CUSTOMIZATIONS`, commit `c8c2d380`, cited in full in the
+JSON's own `source` block and in `ATTRIBUTION.md`. These are real
+`MX_<nnn>_<Group>_<Detail>` labels harvested from a robot that project's authors could
+run — precisely the thing our corpus structurally *cannot* give us, because the
 customization art is loaded by `MoxieCustomizationAsset` / `MoxieCustomizationPreview`
-out of a **streamed** bundle (`content-delivery.md`:79, source `REMOTE_ASSETBUNDLES`),
-not the base APK — which is exactly why the UnityPy inventory of `sharedassets1` in
-`unity-assets.md`:19-67 found none of them, and why that file's own gap note ends at the
-streamed `rig3animations` bundle ("the last in-scope clean-room gap"). Worse for
-guessing: `behavior-markup.md`:161-163 records that the generators "accept **any** id the
-loaded bundle defines", so the id space is bundle-defined and cannot be inferred at all.
-So this catalog ships **12 cited options across 2 slots and zero invented ids**. The
-remaining slots are listed (a parent should see the whole anatomy) but carry no options,
-and say so.
+out of a **streamed** bundle (`content-delivery.md`:79, source `REMOTE_ASSETBUNDLES`), not
+the base APK, which is why the UnityPy inventory of `sharedassets1` in
+`unity-assets.md`:19-67 found none of them. We took **the id strings and nothing else** —
+no code, no comments, no function bodies. The slot mapping (each `MX_<nnn>_<Group>_`
+prefix → exactly one recovered `MoxieCustomizationType`) and every human-readable label
+are ours, and an id whose prefix does not map with confidence goes to the JSON's
+`unmapped` list rather than being guessed into a slot. All 60 mapped; `unmapped` is empty.
 
-OpenMoxie (MIT) ships a ~60-entry table of real `MX_*` asset labels harvested from a robot
-its authors could run. We did not copy it, and we do not reproduce ids we cannot cite —
-see ATTRIBUTION.md. An owner who *does* know their robot's labels can pass them verbatim
-through `custom`, which this module never rewrites. Two warnings travel with that
-freedom, both from our own docs: `mqtt-and-conversation.md`:824 records that **"some face
-customization assets crash Unity and are excluded"**, and the id space is bundle-defined
-(above) — so an unrecognised label is a real risk on a real robot, not a typo. We
-therefore validate a custom label's *shape* and nothing more, and the console says so.
+That is **72 options across 11 of the 14 slots**. `Stickers`, `Extras` and `Misc` are
+still named and empty — neither source lists a single id for them, and we invent none.
+
+**Nothing here is hardware-proven, and the manifest half carries an explicit warning.**
+Upstream's own note above that list records that some of these assets crashed Unity on a
+real Moxie, and that problem assets should be removed once found; it does not say which,
+so **every manifest-origin entry carries `caution: true`**. Our own corpus says the same
+thing independently — `mqtt-and-conversation.md`:824, "some face customization assets
+crash Unity and are excluded". And the id space is genuinely open: `behavior-markup.md`
+:161-163 records that the generators "accept **any** id the loaded bundle defines", so a
+robot whose streamed bundle differs may not carry any of these. An owner who knows their
+own robot's labels passes them verbatim through `custom`, which this module never
+rewrites; we validate a custom label's *shape* and nothing more, and the console says so.
+
+**The wire spelling depends on the origin.** A `recovered-enum` option is an enum *member*
+name, so `face_option_label()` joins it to the slot's `MoxieCustomizationType` spelling
+(the ASSUMPTION below) → `EyeColor_teal`. An `openmoxie-manifest` option is already a
+whole asset label, so it travels **verbatim** → `MX_010_Eyes_Hazel`. A value typed into
+one of the three still-empty slots is joined too, because we have nothing better to do
+with it.
 
 **ASSUMPTION — the label format.** `face_options` is `repeated string`; nothing in our
 corpus records what those strings look like. `face_option_label()` joins two *cited*
@@ -98,64 +115,119 @@ cited is cited; what is assumed is flagged here, in
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import uuid
+from typing import Optional
 
-FACE_CATALOG_VERSION = 1
+FACE_CATALOG_VERSION = 2
 
-# The 14 `MoxieCustomizationType` slots, in the order unity-face-animation.md:34-42 lists
-# them. `id` is the parent-facing key we accept and store; `type` is the recovered
-# `MoxieCustomizationType` spelling, which is half of the wire label (see the ASSUMPTION
-# above); `options` are the choices our corpus actually lists, with the hex it gives.
-#
-# Twelve of the fourteen have `options: ()`. That is not an oversight — see the module
-# docstring. Never add an id here that cannot be cited to a line in docs/.
-FACE_SLOTS = (
+#: Where the option table lives. It is *data*, shipped in the wheel by the
+#: `moxie_sdk = ["*.json"]` package-data glob (`sim/tests/test_package_contents.py`
+#: guards that), and it is the only place an asset id is written down.
+_ASSETS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "face_assets.json")
+
+#: The 14 `MoxieCustomizationType` slots, in the order unity-face-animation.md:34-42
+#: lists them. `id` is the parent-facing key we accept and store; `type` is the recovered
+#: `MoxieCustomizationType` spelling, which is half of the wire label for a
+#: `recovered-enum` option (see the ASSUMPTION above); `label`/`note` are ours. This is
+#: the anatomy and nothing else — the options come from `face_assets.json`.
+SLOT_SPINE = (
     {"id": "eye_color", "type": "EyeColor", "label": "Eye colour",
-     "note": "the expressive core — colour",
-     "options": (
-         {"id": "green", "label": "Green", "hex": "#42D02B"},
-         {"id": "blue", "label": "Blue", "hex": "#8491EF"},
-         {"id": "purple", "label": "Purple", "hex": "#9437DE"},
-         {"id": "brown", "label": "Brown", "hex": "#443319"},
-         {"id": "gold", "label": "Gold", "hex": "#F4BF03"},
-         {"id": "teal", "label": "Teal", "hex": "#38ADAE"},
-     )},
+     "note": "the expressive core — colour"},
     {"id": "eye_design", "type": "EyeDesign", "label": "Eye design",
-     "note": "iris / shape design", "options": ()},
+     "note": "iris / shape design"},
     {"id": "eye_lid", "type": "EyeLid", "label": "Eyelids",
-     "note": "lid style", "options": ()},
+     "note": "lid style"},
     {"id": "brows", "type": "Brows", "label": "Eyebrows",
-     "note": "expression amplifier", "options": ()},
+     "note": "expression amplifier"},
     {"id": "mouth", "type": "Mouth", "label": "Mouth",
-     "note": "lower-face feature", "options": ()},
+     "note": "lower-face feature"},
     {"id": "nose", "type": "Nose", "label": "Nose",
-     "note": "lower-face feature", "options": ()},
+     "note": "lower-face feature"},
     {"id": "mustache", "type": "Mustache", "label": "Moustache",
-     "note": "lower-face feature", "options": ()},
+     "note": "lower-face feature"},
     {"id": "face_color", "type": "FaceColor", "label": "Face colour",
-     "note": "base head colour",
-     "options": (
-         {"id": "blue", "label": "Blue", "hex": "#BBCFE1"},
-         {"id": "yellow", "label": "Yellow", "hex": "#F0F055"},
-         {"id": "green", "label": "Green", "hex": "#9BDB9B"},
-         {"id": "teal", "label": "Teal", "hex": "#7ED6DD"},
-         {"id": "pink", "label": "Pink", "hex": "#E1A2A2"},
-         {"id": "purple", "label": "Purple", "hex": "#C395D4"},
-     )},
+     "note": "base head colour"},
     {"id": "face_design", "type": "FaceDesign", "label": "Face design",
-     "note": "surface pattern", "options": ()},
+     "note": "surface pattern"},
     {"id": "hair", "type": "Hair", "label": "Hair",
-     "note": "cosmetic add-on layer", "options": ()},
+     "note": "cosmetic add-on layer"},
     {"id": "glasses", "type": "Glasses", "label": "Glasses",
-     "note": "cosmetic add-on layer", "options": ()},
+     "note": "cosmetic add-on layer"},
     {"id": "stickers", "type": "Stickers", "label": "Stickers",
-     "note": "cosmetic add-on layer", "options": ()},
+     "note": "cosmetic add-on layer"},
     {"id": "extras", "type": "Extras", "label": "Extras",
-     "note": "cosmetic add-on layer", "options": ()},
+     "note": "cosmetic add-on layer"},
     {"id": "misc", "type": "Misc", "label": "Misc",
-     "note": "cosmetic add-on layer", "options": ()},
+     "note": "cosmetic add-on layer"},
 )
+
+#: The two `origin` values `face_assets.json` may use. Anything else is a data bug and
+#: the loader says so rather than shipping an option with unknown provenance.
+OPTION_ORIGINS = ("recovered-enum", "openmoxie-manifest")
+
+#: The origin whose ids are *whole asset labels* and therefore ride the wire verbatim.
+VERBATIM_ORIGIN = "openmoxie-manifest"
+
+
+def face_assets_path() -> str:
+    """The table on disk. `MOXIE_FACE_ASSETS` overrides it, the same escape hatch
+    `safety.rules_path()` gives the safety table — an owner who has read their own
+    robot's bundle can point us at their own list without forking the SDK."""
+    return os.environ.get("MOXIE_FACE_ASSETS", "").strip() or _ASSETS_PATH
+
+
+def load_face_assets(path: Optional[str] = None) -> dict:
+    """Read the option table. Loud on a missing/broken file: it ships in the wheel, so
+    its absence is a packaging bug, not a runtime condition to paper over."""
+    with open(path or face_assets_path(), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def build_face_slots(catalog: Optional[dict] = None) -> tuple:
+    """The 14-slot spine ⊕ the option table → `FACE_SLOTS`. The `catalog=` seam is how a
+    test substitutes its own table; production passes nothing and gets the shipped one.
+
+    A slot name the spine does not know is refused rather than silently dropped — the
+    slots are the 14 recovered `MoxieCustomizationType` names and a fifteenth would mean
+    the data and our documents disagree."""
+    data = load_face_assets() if catalog is None else catalog
+    by_type = data.get("slots") or {}
+    known = {s["type"] for s in SLOT_SPINE}
+    stray = [k for k in by_type if k not in known]
+    if stray:
+        raise ValueError(f"face_assets.json names slot(s) our docs do not: "
+                         f"{', '.join(sorted(stray))}")
+    slots = []
+    for spine in SLOT_SPINE:
+        options = []
+        seen = set()
+        for entry in by_type.get(spine["type"]) or ():
+            oid = str(entry["id"])
+            if oid in seen:
+                raise ValueError(f"duplicate {spine['id']} option id {oid!r}")
+            seen.add(oid)
+            origin = str(entry.get("origin") or "")
+            if origin not in OPTION_ORIGINS:
+                raise ValueError(f"{spine['id']} option {oid!r} has unknown origin "
+                                 f"{origin!r} (known: {', '.join(OPTION_ORIGINS)})")
+            row = {"id": oid, "label": str(entry.get("label") or ""), "origin": origin}
+            if not row["label"]:
+                raise ValueError(f"{spine['id']} option {oid!r} has no label")
+            if entry.get("hex"):
+                row["hex"] = str(entry["hex"])
+            if entry.get("caution"):
+                row["caution"] = True
+            options.append(row)
+        slots.append(dict(spine, options=tuple(options)))
+    return tuple(slots)
+
+
+FACE_ASSETS = load_face_assets()
+FACE_SLOTS = build_face_slots(FACE_ASSETS)
 
 SLOT_IDS = tuple(s["id"] for s in FACE_SLOTS)
 _SLOT_BY_ID = {s["id"]: s for s in FACE_SLOTS}
@@ -174,8 +246,10 @@ FACE_CACHE_NAMESPACE = uuid.UUID("6f1a3d5e-2c94-4f7b-9a10-8d5b2e0c7a31")
 
 def face_catalog() -> list:
     """The catalog as plain JSON (lists, not tuples) — what the console renders and what
-    `status_snapshot` publishes. A slot with `options: []` is one our docs name but list
-    no choices for; `cited` says so out loud so the UI never implies we have art."""
+    `status_snapshot` publishes. Each option keeps its `origin` (and `caution`, and `hex`
+    where we have one), so a UI can say where a choice came from. A slot with
+    `options: []` is one neither source lists an id for; `cited` says so out loud so the
+    UI never implies we have art we do not."""
     return [{"id": s["id"], "type": s["type"], "label": s["label"], "note": s["note"],
              "options": [dict(o) for o in s["options"]],
              "cited": bool(s["options"])}
@@ -183,14 +257,21 @@ def face_catalog() -> list:
 
 
 def face_option_label(slot_id: str, option_id: str) -> str:
-    """One `face_options` entry — **the assumed spelling** (see the module docstring).
+    """One `face_options` entry — see the module docstring, "the wire spelling depends on
+    the origin".
 
-    Both halves are quoted from our docs: the `MoxieCustomizationType` slot name
-    (unity-face-animation.md:34-42) and the enum member name (robot-lifecycle.md:281-282).
-    Only the underscore between them is ours."""
+    An `openmoxie-manifest` option **is** a whole asset label (`MX_010_Eyes_Hazel`), so it
+    goes down untouched. Anything else is an enum member name or a value the parent typed,
+    and gets **the assumed spelling**: the `MoxieCustomizationType` slot name
+    (unity-face-animation.md:34-42) joined to it (robot-lifecycle.md:281-282 for the
+    member names). Both halves are quoted from our docs; only the underscore is ours."""
     slot = _SLOT_BY_ID.get(slot_id)
     if slot is None:
         raise ValueError(f"unknown face slot {slot_id!r}")
+    for opt in slot["options"]:
+        if opt["id"] == option_id:
+            return option_id if opt["origin"] == VERBATIM_ORIGIN else (
+                f"{slot['type']}{FACE_LABEL_JOIN}{option_id}")
     return f"{slot['type']}{FACE_LABEL_JOIN}{option_id}"
 
 
@@ -230,14 +311,16 @@ def validate_face(selection) -> dict:
         if allowed:
             if option_id not in allowed:
                 raise ValueError(
-                    f"unknown {sid} option {option_id!r} (offered: {', '.join(allowed)})")
+                    f"unknown {sid} option {option_id!r} (offered: {', '.join(allowed)}"
+                    f"; an id we do not catalogue goes in face.custom)")
         elif not _LABEL_RE.match(option_id):
-            # A slot our docs name but list no options for: we cannot check the value
-            # against a catalog we do not have, so we check only that it is a plausible
-            # asset label. We never invent one; the parent supplies it.
-            raise ValueError(f"bad {sid} value {option_id!r} — our recovered docs list no "
-                             f"options for this slot, so it must be an asset label "
-                             f"(letters, digits, . _ -; max 64)")
+            # A slot neither source lists an id for (Stickers/Extras/Misc): we cannot
+            # check the value against a catalog we do not have, so we check only that it
+            # is a plausible asset label. We never invent one; the parent supplies it.
+            raise ValueError(f"bad {sid} value {option_id!r} — neither our recovered docs "
+                             f"nor the ingested manifest list options for this slot, so "
+                             f"it must be an asset label (letters, digits, . _ -; "
+                             f"max 64)")
         out[sid] = option_id
 
     customs = selection.get(CUSTOM_KEY)
