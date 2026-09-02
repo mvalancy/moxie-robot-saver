@@ -148,6 +148,32 @@ class MoxieRuntime:
                 self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(body)
 
+            def do_POST(self):
+                """Parent-console config edit: POST /config?device_id=… with a JSON body
+                of overrides (audio_volume, weekday_bedtime, wake toggles, …). Validated
+                by sanitize_config_overrides, then update_config re-pushes RobotCloudConfig.
+                Localhost-only (the server binds 127.0.0.1)."""
+                from urllib.parse import urlparse, parse_qs
+                if urlparse(self.path).path != "/config":
+                    self.send_response(404); self.end_headers(); return
+                device_id = (parse_qs(urlparse(self.path).query).get("device_id") or [""])[0]
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b"{}"
+                try:
+                    from moxie_sdk.cloud_config import sanitize_config_overrides
+                    overrides = sanitize_config_overrides(_json.loads(raw or b"{}"))
+                    if not device_id or device_id not in rt.robots:
+                        raise ValueError(f"unknown device_id {device_id!r}")
+                    rt.update_config(device_id, **overrides)
+                    out, code = {"ok": True, "device_id": device_id, "applied": overrides,
+                                 "config_overrides": rt._config_overrides.get(device_id, {})}, 200
+                except Exception as e:
+                    out, code = {"ok": False, "error": str(e)}, 400
+                body = _json.dumps(out).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(body)
+
         try:
             srv = HTTPServer(("127.0.0.1", port), H)
             threading.Thread(target=srv.serve_forever, daemon=True).start()

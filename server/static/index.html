@@ -139,6 +139,20 @@
         <h2>✅ Your Moxie</h2>
         <div id="robot-card"></div>
         <div id="robot-live" class="livebox"></div>
+        <details class="cfgbox" id="cfg-box">
+          <summary>⚙️ Settings</summary>
+          <label>Volume <input id="cfg-vol" type="range" min="0" max="100" step="5"></label>
+          <div class="cfg-row">
+            <label>Bedtime start <input id="cfg-bed-start" type="time"></label>
+            <label>Bedtime end <input id="cfg-bed-end" type="time"></label>
+          </div>
+          <label class="check"><input id="cfg-wake-btn" type="checkbox"> Wake button enabled</label>
+          <label class="check"><input id="cfg-touch-wake" type="checkbox"> Touch to wake</label>
+          <div class="row">
+            <button id="btn-cfg-save" class="primary grow">Save settings</button>
+          </div>
+          <div id="cfg-status" class="muted"></div>
+        </details>
         <div class="row">
           <button id="btn-wake" class="primary grow">Wake up</button>
           <button id="btn-reboot" class="ghost grow">Reboot</button>

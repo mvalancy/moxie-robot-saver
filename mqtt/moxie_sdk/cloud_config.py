@@ -87,6 +87,64 @@ def build_robot_cloud_config(child, *, audio_volume: float = 0.6,
     return cfg
 
 
+import re as _re
+
+_HHMM = _re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")     # 00:00–23:59
+
+
+def _bedtime(v):
+    """Validate an ["HH:MM","HH:MM"] start/end pair → a list, or None to clear."""
+    if v in (None, "", False):
+        return None
+    if not isinstance(v, (list, tuple)) or len(v) != 2:
+        raise ValueError("bedtime must be [\"HH:MM\", \"HH:MM\"] or null")
+    a, b = str(v[0]), str(v[1])
+    if not (_HHMM.match(a) and _HHMM.match(b)):
+        raise ValueError(f"bad bedtime time(s): {a!r}, {b!r} (expected HH:MM)")
+    return [a, b]
+
+
+def sanitize_config_overrides(raw: dict) -> dict:
+    """Parent-console config edit → clean, JSON-safe kwargs for build_robot_cloud_config.
+
+    Whitelists the parent-editable fields, coerces + validates types, and drops unknown
+    keys. Values stay JSON-serializable (float/int/str/bool/list) because they are stored
+    in `_config_overrides` and echoed in the status snapshot — never enums. Raises
+    ValueError for a known field with an invalid value (→ the endpoint returns 400)."""
+    if not isinstance(raw, dict):
+        raise ValueError("config overrides must be an object")
+    out = {}
+    if "audio_volume" in raw:
+        v = float(raw["audio_volume"])
+        if v > 1:                                   # accept a 0–100 percent slider
+            v = v / 100.0
+        out["audio_volume"] = max(0.0, min(1.0, v))
+    if "screen_brightness" in raw:
+        v = float(raw["screen_brightness"])
+        if v > 1:
+            v = v / 100.0
+        out["screen_brightness"] = max(0.0, min(1.0, v))
+    if raw.get("timezone_id"):
+        out["timezone_id"] = str(raw["timezone_id"])
+    if "logging_policy" in raw:
+        lp = raw["logging_policy"]
+        out["logging_policy"] = int(LoggingPolicy[lp] if isinstance(lp, str)
+                                    else LoggingPolicy(lp))   # store the int value
+    for b in ("privacy_mode_enabled", "wake_button_enabled", "touch_wake_enabled"):
+        if b in raw:
+            out[b] = bool(raw[b])
+    if "audio_wake_set" in raw:
+        v = str(raw["audio_wake_set"]).lower()
+        if v not in ("on", "off"):
+            raise ValueError("audio_wake_set must be 'on' or 'off'")
+        out["audio_wake_set"] = v
+    for key in ("weekday_bedtime", "weekend_bedtime"):
+        if key in raw:
+            bt = _bedtime(raw[key])
+            out[key] = bt if bt is not None else None
+    return out
+
+
 # RobotStatus (/state) fields we surface (embodied/logging/Cloud.proto message RobotStatus)
 _STATUS_FIELDS = ("embodied_robot_id", "robot_firmware_version", "android_version",
                   "battery_level", "audio_volume", "screen_brightness", "mode",

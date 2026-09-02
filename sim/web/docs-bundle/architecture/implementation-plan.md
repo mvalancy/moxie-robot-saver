@@ -53,9 +53,10 @@ Following the [build-order spine](overview.md); the parent app
 - **M5 — Config & telemetry. 🟢 (2026-09-02)** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
   ingest, the `Packet` telemetry envelope, and the LoggingPolicy upload-gate — all built + tested. Surfacing the
   stored state/telemetry in the console is M6.
-- **M6 — Parent console wiring. 🟡 (state 2026-09-02)** Robot **state surfaced**: `/local/fleet` (pure `normalize_fleet`)
-  + a live-state card in the Moxie tab (battery/volume/Wi-Fi/mode/firmware/telemetry/config-overrides). Next:
-  in-console config **editing** (bedtime/volume/wake) + a telemetry/insights view.
+- **M6 — Parent console wiring. 🟡 (state+config 2026-09-02)** Robot **state surfaced** (`/local/fleet` + live-state
+  card) AND **config editing**: a Settings form (volume/bedtime/wake) → `POST /local/robots/{id}/config` → runtime
+  `POST /config` (`sanitize_config_overrides` whitelist/validate) → `update_config` re-pushes `RobotCloudConfig`,
+  live-verified end to end. Next: a telemetry/insights view (the stored Packet events).
 - **M7 — One-command stack + docs. 🟡 (assembly 2026-09-01)** `docker compose up` runs broker + supervisor + brain + STT/TTS; the
   SIM and a real robot connect identically; deploy/config guides.
 
@@ -76,14 +77,15 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 |--:|---|---|---|
 | 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~70% | brain live-validated 🟢; STT incl. **real zmqSTT protobuf decode** 🟢; **full audio round-trip proven through a real broker** — supervisor synthesizes → `CloudTTSResponse` on `/commands/tts` → SIM decodes audio (SIL smoke asserts it via `--expect-tts`) 🟢. Three voices: built-in **tone** (zero-dep), **Piper/Amy** (offline), gateway. Remaining: browser Web-Audio playback + one live talk-through with real speech (Piper model / gateway) |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
-| 3 | Cloud management (console + config/telemetry) | 🟡 ~75% | RobotCloudConfig + RobotStatus + config-editing (`update_config`) + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. **Console now surfaces live robot state** — `/local/fleet` (`normalize_fleet`) → Moxie-tab card shows battery/volume/Wi-Fi/mode/firmware/telemetry/config-overrides 🟢. Remaining: in-console config **editing** UI (bedtime/volume/wake) + a telemetry/insights view |
+| 3 | Cloud management (console + config/telemetry) | 🟡 ~85% | RobotCloudConfig + RobotStatus + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. Console surfaces **live state** (`/local/fleet`) AND **edits config** — a Settings form (volume/bedtime/wake) → `POST /local/robots/{id}/config` → runtime `POST /config` (validated by `sanitize_config_overrides`) → `update_config` re-pushes `RobotCloudConfig` 🟢 (live-verified). Remaining: a telemetry/insights view |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
 | 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command run unverified (M7) |
 | 6 | Green + live-tested | 🟡 ~70% | **three-tier CI installed + green** (fast on dev · deep+HIL on PR-to-main · release on tags); live LLM turn 🟢. Remaining: live voice + a full talk-e2e scenario (skips in CI without creds) |
 
-**Most valuable next slice:** criterion 3's **in-console config editing (M6)** — a form in the Moxie tab
-that PUTs bedtime/volume/wake to the runtime (`update_config` → `RobotCloudConfig` push), now that live
-state is surfaced. Then a telemetry/insights view. Criterion-1 finishers (browser Web-Audio playback of
+**Most valuable next slice:** criterion 3's **telemetry/insights view (M6)** — surface the runtime's stored
+Packet events (per-robot, already ingested + capped at 50) in the console: an activity/insights panel fed
+by the fleet snapshot's `recent` + a per-robot events endpoint. That's the last M6 gap now that live state
+and config editing are done. Criterion-1 finishers (browser Web-Audio playback of
 the `CloudTTSResponse`, a live talk-through with a downloaded Piper model) remain but are heavier /
 partly gated; the live-voice gateway path stays gated on TTS-model registration
 (handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)).

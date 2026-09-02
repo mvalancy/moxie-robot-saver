@@ -136,13 +136,20 @@ async function refreshMoxie(){
   refreshLive();
 }
 // live runtime state (battery/volume/Wi-Fi/mode/telemetry) from the MQTT supervisor
+let liveDevice=null;
 async function refreshLive(){
   const box=$('#robot-live'); if(!box) return;
   let f; try{ f=await api('/local/fleet',{auth:false}); }catch(e){ return; }
+  const cfgBox=$('#cfg-box');
   if(!f.ok || !f.robot_count){
+    liveDevice=null;
     box.innerHTML = `<div class="live-off">● Live state: ${f.ok?'no robot connected':'supervisor offline'}</div>`;
+    if(cfgBox) cfgBox.style.display='none';
     return;
   }
+  if(cfgBox) cfgBox.style.display='';
+  liveDevice=f.robots[0].device_id;
+  if(cfgBox && !cfgBox.open) prefillConfig(f.robots[0]);   // don't clobber active edits
   box.innerHTML = f.robots.map(r=>{
     const rows=[
       ['Battery', r.battery_level==null?'—':`${r.battery_level}%`],
@@ -158,6 +165,31 @@ async function refreshLive(){
             <div class="livegrid">${rows}${ovHtml}</div>`;
   }).join('');
 }
+function prefillConfig(r){
+  const ov=r.config_overrides||{};
+  if(r.audio_volume!=null) $('#cfg-vol').value=Math.round(r.audio_volume*100);
+  const bt=ov.weekday_bedtime;
+  $('#cfg-bed-start').value = (bt&&bt[0])||'';
+  $('#cfg-bed-end').value   = (bt&&bt[1])||'';
+  $('#cfg-wake-btn').checked   = ov.wake_button_enabled!==false;
+  $('#cfg-touch-wake').checked = ov.touch_wake_enabled!==false;
+}
+async function saveConfig(){
+  if(!liveDevice){ return; }
+  const s=$('#cfg-status'); s.textContent='Saving…';
+  const start=$('#cfg-bed-start').value, end=$('#cfg-bed-end').value;
+  const body={
+    audio_volume: Number($('#cfg-vol').value),      // 0–100 → server clamps to 0–1
+    wake_button_enabled: $('#cfg-wake-btn').checked,
+    touch_wake_enabled: $('#cfg-touch-wake').checked,
+    weekday_bedtime: (start&&end)? [start,end] : null,
+  };
+  try{
+    const r=await api(`/local/robots/${encodeURIComponent(liveDevice)}/config`,
+                      {method:'POST',auth:false,body});
+    s.textContent = r.ok ? '✅ Saved — pushed to Moxie.' : `⚠️ ${r.error||'failed'}`;
+  }catch(e){ s.textContent='⚠️ '+(e.message||'save failed'); }
+}
 function renderRobot(r){
   $('#moxie-none').classList.add('hidden');
   $('#moxie-card').classList.remove('hidden');
@@ -170,6 +202,9 @@ function renderRobot(r){
   $('#btn-reboot').onclick=()=>api(`/api/robots/${r.id}/reboot`,{method:'POST'}).then(()=>flash('#btn-reboot','Sent!'));
 }
 function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTimeout(()=>b.textContent=o,1200);}
+
+// ---- settings ----
+{ const b=$('#btn-cfg-save'); if(b) b.onclick=saveConfig; }
 
 // ---- dev: simulate ----
 $('#btn-sim').onclick = async () => {

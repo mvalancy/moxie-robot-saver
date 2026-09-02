@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.cloud_config import (  # noqa: E402
     LoggingPolicy, MoxieMode, build_robot_cloud_config, parse_robot_status,
-    child_pii_from_profile,
+    child_pii_from_profile, sanitize_config_overrides,
 )
 from moxie_sdk.types import ChildProfile  # noqa: E402
 
@@ -72,3 +72,51 @@ def test_parse_robot_status_extracts_known_fields():
 def test_status_firmware_falls_back_to_software_version():
     s = parse_robot_status({"software_version": "v24.10.803"})
     assert s["robot_firmware_version"] == "v24.10.803"
+
+
+# --- sanitize_config_overrides (M6 parent-console config edit) ---
+import json as _json
+import pytest
+
+
+def test_sanitize_whitelists_and_coerces():
+    out = sanitize_config_overrides({
+        "audio_volume": 80,                 # 0–100 slider → 0–1
+        "wake_button_enabled": 0,           # truthy-coerce → bool
+        "touch_wake_enabled": True,
+        "weekday_bedtime": ["20:00", "07:00"],
+        "logging_policy": "FULL",           # name → int value
+        "bogus_key": "dropped",             # unknown → dropped
+    })
+    assert out["audio_volume"] == 0.8
+    assert out["wake_button_enabled"] is False and out["touch_wake_enabled"] is True
+    assert out["weekday_bedtime"] == ["20:00", "07:00"]
+    assert out["logging_policy"] == int(LoggingPolicy.FULL)
+    assert "bogus_key" not in out
+
+
+def test_sanitize_output_is_json_safe_and_feeds_builder():
+    """config_overrides are echoed in the status snapshot (JSON) and passed to the
+    builder — so sanitized values must be JSON-serializable AND valid builder kwargs."""
+    out = sanitize_config_overrides({"audio_volume": 0.5, "logging_policy": 2,
+                                     "weekday_bedtime": ["21:00", "06:30"]})
+    _json.dumps(out)                        # must not raise (no enums)
+    cfg = build_robot_cloud_config(ChildProfile(nickname="Sam"), **out)
+    assert cfg["audio_volume"] == 0.5 and cfg["data_sharing"] == "FULL"
+    assert cfg["weekday_bedtime_enabled"] and cfg["weekday_bedtime_starts_at"] == "21:00"
+
+
+def test_sanitize_clears_bedtime_with_null():
+    out = sanitize_config_overrides({"weekday_bedtime": None})
+    assert out["weekday_bedtime"] is None
+    cfg = build_robot_cloud_config(ChildProfile(nickname="Sam"), **out)
+    assert cfg["weekday_bedtime_enabled"] is False
+
+
+def test_sanitize_rejects_bad_values():
+    with pytest.raises(ValueError):
+        sanitize_config_overrides({"weekday_bedtime": ["25:00", "07:00"]})
+    with pytest.raises(ValueError):
+        sanitize_config_overrides({"audio_wake_set": "maybe"})
+    with pytest.raises(ValueError):
+        sanitize_config_overrides([1, 2, 3])          # not an object

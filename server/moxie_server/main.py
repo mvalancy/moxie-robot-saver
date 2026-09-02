@@ -478,6 +478,26 @@ def fleet():
     return normalize_fleet(_fetch_status())
 
 
+@app.post("/local/robots/{device_id}/config")
+async def set_robot_config(device_id: str, request: Request):
+    """Parent-console config edit (M6): forward whitelisted overrides (volume/bedtime/wake
+    …) to the supervisor's POST /config, which validates + re-pushes RobotCloudConfig to
+    the robot. Server-side call so the browser has no CORS issue."""
+    import urllib.request, urllib.error
+    body = await request.body()
+    url = STATUS_URL.rsplit("/status", 1)[0] + f"/config?device_id={device_id}"
+    req = urllib.request.Request(url, data=body or b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code, content=json.loads(e.read().decode() or "{}"))
+    except Exception as e:
+        return JSONResponse(status_code=503, content={
+            "ok": False, "error": "supervisor not reachable", "detail": str(e)})
+
+
 @app.get("/local/pairing/qr.png")
 def pairing_qr_png(payload: str, ec: str = "l"):
     # The original app rendered with ZXing EC level L (low density) because Moxie's
