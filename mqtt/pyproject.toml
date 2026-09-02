@@ -33,5 +33,10 @@ Documentation = "https://github.com/mvalancy/moxie-robot-saver/tree/main/docs/ar
 packages = ["moxie_sdk", "moxie_sdk.apps", "moxie_sdk.content"]
 include-package-data = true
 
+# The safety rule table is data, not code — it must ship inside the wheel or the
+# InputSafety classifier has nothing to load (moxie_sdk/safety.py).
+[tool.setuptools.package-data]
+moxie_sdk = ["*.json"]
+
 [tool.setuptools.dynamic]
 version = { attr = "moxie_sdk.__version__" }
