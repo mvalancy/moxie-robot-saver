@@ -97,3 +97,41 @@ def test_voice_synth_backs_off_on_rate_limit():
     finally:
         chat.time.sleep = orig
     assert out == b"PCMOK" and fake.calls == 3      # retried through 2 rate-limits
+
+
+# --- local Piper voice (our default/primary, offline) ---
+
+def test_piper_available_is_bool():
+    from moxie_sdk.tts import PiperSynthesizer
+    # piper isn't installed in CI → available() is a clean False (never raises)
+    assert PiperSynthesizer.available() in (True, False)
+
+
+def test_piper_synth_full_path_with_injected_voice_fn():
+    """The whole strip→synthesize→CloudTTSResponse path works with an injected voice_fn,
+    so we exercise it hermetically without Piper installed."""
+    from moxie_sdk.tts import PiperSynthesizer
+    seen = {}
+
+    def fake_voice(text):
+        seen["text"] = text
+        return b"\x00\x01" * 8                      # 16 bytes of raw PCM
+    synth = PiperSynthesizer("en_US-amy-medium.onnx", voice_fn=fake_voice,
+                             sample_rate=22050)
+    assert synth.name == "piper" and synth.sample_rate == 22050 and synth.channels == 1
+    resp = synthesize_cloud_tts(synth, '<mark name="cmd:x"/>Hi Amy', event_id="p1")
+    assert seen["text"] == "Hi Amy"                 # markup stripped before synthesis
+    assert base64.b64decode(resp["audio"]["buffer"]) == b"\x00\x01" * 8
+    assert resp["audio"]["sample_rate"] == 22050 and resp["event_id"] == "p1"
+
+
+def test_make_piper_synthesizer_selection():
+    from moxie_sdk.tts import make_piper_synthesizer, PiperSynthesizer
+    # no model path → None (nothing to load)
+    assert make_piper_synthesizer("") is None
+    # a model path but Piper not installed → None (unless a voice_fn is injected)
+    if not PiperSynthesizer.available():
+        assert make_piper_synthesizer("some.onnx") is None
+    # injected voice_fn always builds (test/custom backend)
+    s = make_piper_synthesizer("some.onnx", voice_fn=lambda t: b"x")
+    assert isinstance(s, PiperSynthesizer) and s.synthesize("hi") == b"x"

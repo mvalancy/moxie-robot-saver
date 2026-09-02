@@ -86,6 +86,67 @@ def make_voice_synthesizer(base_url: str, api_key: str, voice: str = "alloy",
     return OpenAIVoiceSynthesizer(base_url, api_key, voice=voice, **kw)
 
 
+class PiperSynthesizer(Synthesizer):
+    """Local, offline server voice via Piper (https://github.com/rhasspy/piper) — our
+    default/primary TTS (Amy). No network, no gateway TTS model, no voice creds needed:
+    it synthesizes on the box that runs the supervisor, so the SIM can speak even before
+    the gateway registers a TTS model (see docs/guides/litellm-tts-setup.md).
+
+    Piper is imported lazily (no hard dep); `available()` is False when it isn't
+    installed. Output is raw 16-bit mono PCM at the voice's own sample rate (Amy-medium
+    is 22050 Hz), matching the CloudTTSResponse AudioBuffer convention. Tests inject
+    `voice_fn` to exercise the whole path without Piper (like the OpenAI backend's
+    `client=`)."""
+    name = "piper"
+    channels = 1
+
+    def __init__(self, model_path: str = "", config_path: Optional[str] = None,
+                 sample_rate: int = 22050, *, voice_fn=None):
+        self._model_path = model_path
+        if voice_fn is not None:                 # test / custom injection
+            self._voice_fn = voice_fn
+            self.sample_rate = sample_rate
+            return
+        from piper import PiperVoice              # lazy — real backend
+        voice = PiperVoice.load(model_path, config_path=config_path)
+        cfg = getattr(voice, "config", None)
+        self.sample_rate = int(getattr(cfg, "sample_rate", sample_rate) or sample_rate)
+        # piper yields raw PCM chunks; join to one buffer (version-tolerant)
+        def _fn(text: str) -> bytes:
+            if hasattr(voice, "synthesize_stream_raw"):
+                return b"".join(voice.synthesize_stream_raw(text))
+            import io, wave                        # fallback: capture WAV, return PCM
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                voice.synthesize(text, w)
+            buf.seek(0)
+            with wave.open(buf, "rb") as r:
+                return r.readframes(r.getnframes())
+        self._voice_fn = _fn
+
+    def synthesize(self, text: str, voice: Optional[str] = None) -> bytes:
+        return self._voice_fn(text)
+
+    @classmethod
+    def available(cls) -> bool:
+        try:
+            import piper  # noqa: F401
+            return True
+        except Exception:
+            return False
+
+
+def make_piper_synthesizer(model_path: str, config_path: Optional[str] = None,
+                           *, voice_fn=None, **kw) -> Optional[Synthesizer]:
+    """A PiperSynthesizer when a model is configured and Piper is installed (or a
+    `voice_fn` is injected), else None."""
+    if voice_fn is not None:
+        return PiperSynthesizer(model_path, config_path, voice_fn=voice_fn, **kw)
+    if not model_path or not PiperSynthesizer.available():
+        return None
+    return PiperSynthesizer(model_path, config_path, **kw)
+
+
 def build_cloud_tts_response(audio: bytes, *, event_id: str = "", channels: int = 1,
                              sample_rate: int = 24000, marks: Optional[list] = None,
                              chunk_num: int = 0, request_source: str = "ROBOT_TTS_REQUEST"

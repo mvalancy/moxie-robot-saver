@@ -52,6 +52,10 @@ LLM_MODEL    = os.environ.get("MOXIE_LLM_MODEL", "graphling-medium")
 VOICE_BASE_URL = os.environ.get("MOXIE_VOICE_BASE_URL", "")
 VOICE_API_KEY  = os.environ.get("MOXIE_VOICE_API_KEY", LLM_API_KEY)
 TTS_VOICE      = os.environ.get("MOXIE_TTS_VOICE", "alloy")
+# Local Piper voice (offline, our default/primary — Amy). Path to a Piper .onnx model;
+# when set + piper installed, used if no voice server is configured. Empty → off.
+PIPER_MODEL    = os.environ.get("MOXIE_PIPER_MODEL", "")
+PIPER_CONFIG   = os.environ.get("MOXIE_PIPER_CONFIG", "")
 
 # STT: local faster-whisper. "auto" = enable when installed; "off" to disable.
 STT_ENABLED = os.environ.get("MOXIE_STT", "auto").lower()
@@ -96,10 +100,13 @@ def build_content_app():
 
 
 def build_synthesizer():
-    """A server voice (moxie_sdk.tts.Synthesizer) if MOXIE_VOICE_BASE_URL is set, else
-    None (a real robot self-synthesizes; the SIM needs this for audio)."""
-    from moxie_sdk.tts import make_voice_synthesizer
-    return make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE)
+    """A server voice (moxie_sdk.tts.Synthesizer): a voice server if MOXIE_VOICE_BASE_URL
+    is set; else a local Piper voice if MOXIE_PIPER_MODEL is set + piper installed; else
+    None (a real robot self-synthesizes; the SIM needs one of these for audio)."""
+    from moxie_sdk.tts import make_voice_synthesizer, make_piper_synthesizer
+    if VOICE_BASE_URL:
+        return make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE)
+    return make_piper_synthesizer(PIPER_MODEL, PIPER_CONFIG or None)
 
 
 def build_transcriber():

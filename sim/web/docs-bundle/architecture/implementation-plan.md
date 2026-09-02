@@ -29,7 +29,7 @@ Ours is built to the full recovered protocol with clean seams:
 | MQTT runtime (connect/config/state/turn) | [mqtt](mqtt-and-conversation.md) · [config](config-and-telemetry-contract.md) | 🟡 core works + end-to-end turn test (lazy client → integration-testable, no broker) | `mqtt/supervisor/moxie_runtime.py` |
 | AI seam — LLM brain | [ai-seam](ai-seam.md) §2 | 🟢 expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback | `mqtt/moxie_sdk/apps/llm_app.py` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟢 seam + runtime-wired + **real zmqSTTRequest protobuf decode** (dep-free) + JSON bridge, e2e-tested; live faster-whisper is an optional dep | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
-| AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟡 seam + **wired into runtime** (set_synthesizer → synthesize-on-reply → CloudTTSResponse on /commands/tts); live voice needs creds | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
+| AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟢 seam + runtime-wired (set_synthesizer → synthesize-on-reply → CloudTTSResponse on /commands/tts) + **two backends: local Piper (offline, Amy default) + OpenAI-voice (gateway)**; a live audio play-through still pending a model/creds | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
 | Content-module engine | [content-module](content-module-contract.md) | 🟢 engine + ContentApp, runtime-selectable (MOXIE_APP=content) + example module, e2e-tested through the runtime; exec-code/action-plumbing/summarize deferred | `mqtt/moxie_sdk/content/` + `mqtt/content_modules/` |
 | Config/telemetry data-model | [config](config-and-telemetry-contract.md) | 🟢 RobotCloudConfig + RobotStatus ingest + **Packet telemetry (build/parse/ingest) + LoggingPolicy upload-gate** | `mqtt/moxie_sdk/cloud_config.py` + `telemetry.py` |
 | SDK boundary (Turn/Reply/Action) | all | 🟢 clean, done | `mqtt/moxie_sdk/` |
@@ -47,7 +47,8 @@ Following the [build-order spine](overview.md); the parent app
   regex commands; the `volley`/`session` API (set_output, persist_data, add_execution_action).
 - **M3 — AI seam: STT in. 🟢 (2026-09-01)** Turn `handle_zmq` into a real STT path — accumulate `zmqSTT` audio →
   transcribe (faster-whisper local, or a Deepgram-shaped proxy) → emit the recognized turn.
-- **M4 — AI seam: TTS out for the SIM. 🟡 (seam 2026-09-01)** Server-side Piper → `CloudTTSResponse{audio, marks}` so the
+- **M4 — AI seam: TTS out for the SIM. 🟢 (backends 2026-09-02)** Server-side Piper (`PiperSynthesizer`, offline, Amy)
+  + OpenAI-voice backend → `CloudTTSResponse{audio, marks}` so the
   SIM (and optionally a robot) speaks with a server voice + viseme marks.
 - **M5 — Config & telemetry. 🟢 (2026-09-02)** Full `RobotCloudConfig` (bedtime/wake/volume/timezone/child_pii), `/state`
   ingest, the `Packet` telemetry envelope, and the LoggingPolicy upload-gate — all built + tested. Surfacing the
@@ -71,23 +72,24 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
-| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~55% | brain live-validated 🟢; STT path complete incl. **real zmqSTT protobuf decode** 🟢; TTS **wired into runtime** (synthesize-on-reply → `CloudTTSResponse` on `/commands/tts`) 🟡. Remaining for a full live chain: a working synthesizer (local Piper, or gateway TTS model once registered) + SIM audio playback |
+| 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~60% | brain live-validated 🟢; STT path complete incl. **real zmqSTT protobuf decode** 🟢; TTS synthesize-on-reply → `CloudTTSResponse` on `/commands/tts` with **a working offline synthesizer (Piper/Amy) + gateway backend** 🟢. Remaining: SIM audio **playback** of the response + one live talk-through scenario |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
 | 3 | Cloud management (console + config/telemetry) | 🟡 ~65% | RobotCloudConfig + RobotStatus + config-editing (`update_config`) + status snapshot + **Packet telemetry (build/parse/ingest) + LoggingPolicy gate** built 🟢. Remaining: `server/` web UI surfaces the stored state/telemetry (M6) |
 | 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol |
 | 5 | One-command stack | 🟡 | compose exists; full brain+STT+TTS one-command run unverified (M7) |
 | 6 | Green + live-tested | 🟡 ~70% | **three-tier CI installed + green** (fast on dev · deep+HIL on PR-to-main · release on tags); live LLM turn 🟢. Remaining: live voice + a full talk-e2e scenario (skips in CI without creds) |
 
-**Most valuable next slice:** a **local `PiperSynthesizer` in the SDK** (Piper-Amy default, offline) —
-this unblocks criterion 1's talk-e2e chain *without* waiting on the gateway TTS model or voice creds,
-and matches the TTS strategy (Piper/Amy primary). Criterion 3's remaining work (server UI, M6) is the
-other fully-unblocked track. The live-voice path stays gated on the gateway TTS model registration
-(handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)).
+**Most valuable next slice:** **SIM audio playback** — the SIL client consuming the `CloudTTSResponse`
+on `/devices/{id}/commands/tts` and representing/playing it, which closes criterion 1's visible loop now
+that both a synthesizer (`PiperSynthesizer` 🟢, offline Amy) and the runtime publish path exist. The
+other fully-unblocked track is criterion 3's server console UI (M6). The live-voice gateway path stays
+gated on TTS-model registration (handoff doc: [`../guides/litellm-tts-setup.md`](../guides/litellm-tts-setup.md)).
 
 ## TTS strategy (2026-09-01)
 
-- **Default server voice = Piper (Amy)** — local, free, no rate limits (a `sim/tts/` Piper service already
-  exists). A `PiperSynthesizer` in the SDK is the next TTS slice.
+- **Default server voice = Piper (Amy)** — local, free, no rate limits. **Built:** `PiperSynthesizer` in
+  the SDK (`moxie_sdk.tts`, offline, Amy default), selected by `MOXIE_PIPER_MODEL` when no voice server is
+  set; install with `pip install 'moxie-cloud-sdk[tts]'`. Needs a downloaded Piper `.onnx` model to speak.
 - **Gateway TTS is possible now-ish:** `gateway.graphlings.net/v1/audio/speech` route EXISTS (returns 400
   "invalid model", not 404) → LiteLLM supports the TTS payload; it just needs a TTS model registered in the
   gateway config. Then set `MOXIE_VOICE_BASE_URL=<gateway>/v1` + a model name and `OpenAIVoiceSynthesizer`
