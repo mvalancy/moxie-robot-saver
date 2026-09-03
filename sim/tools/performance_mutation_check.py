@@ -141,6 +141,10 @@ MUTATIONS = [
     ("M35 validate lets a bool through as a mood", P,
      "        if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):",
      "        if (mood is not None and mood not in vocab.MOOD_IDS):"),
+    ("M37 a publish path forgets to score (the coverage guard)", R,
+     '                           is_completed=None if chunk is None else True,\n'
+     "                           scored=scored)",
+     "                           is_completed=None if chunk is None else True)"),
     ("M29 a streamed chunk publishes without its score", R,
      "                           is_completed=None if solo else bool(final),\n"
      "                           scored=scored)",

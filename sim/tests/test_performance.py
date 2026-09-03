@@ -585,6 +585,35 @@ def test_a_streamed_answer_holds_one_face():
     assert joined.count("+eventName+:+Gesture_None+") >= len(parts)
 
 
+def test_no_publish_path_can_forget_to_score(monkeypatch):
+    """(c) says **100 %** of published turns, and a test that drives four of them proves
+    four. So read the runtime instead: every `_publish_chat` call that carries words must
+    pass `scored=`. A new path added later fails here rather than shipping an unscored
+    turn nobody notices — this is the only assertion in the file that is about *coverage*
+    rather than about behavior, which is exactly why it is written over the source."""
+    src = open(os.path.join(MQTT_DIR, "supervisor", "moxie_runtime.py")).read()
+    unscored, seen = [], 0
+    for m in re.finditer(r"_publish_chat\(", src):
+        if src[max(0, m.start() - 4):m.start()].endswith("def "):
+            continue                                   # the definition itself
+        i, depth = m.end(), 1
+        while depth:                                   # balanced-paren scan of the call
+            depth += (src[i] == "(") - (src[i] == ")")
+            i += 1
+        call, line = src[m.start():i], src[:m.start()].count("\n") + 1
+        seen += 1
+        # A call with a literal empty `text` is an ACK / a modules answer: no words were
+        # spoken, so there is nothing to score and nothing to assert.
+        if '"router", ""' in call or 'backend, ""' in call:
+            continue
+        if "scored=" not in call:
+            unscored.append(line)
+    assert seen >= 10, f"only found {seen} publish sites — did the scan break?"
+    assert not unscored, (
+        f"moxie_runtime.py publishes spoken turns without scoring them, at line(s) "
+        f"{unscored}. Route the line through `self._stage(...)` and pass `scored=`.")
+
+
 def test_an_apps_own_scoring_wins_over_the_seams():
     """The precedence rule: a brain that knows its line is an apology is not overruled by
     a rule engine — but a brain that says nothing still ships a scored turn."""
