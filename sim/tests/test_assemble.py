@@ -8,10 +8,43 @@ import importlib
 import os
 import sys
 
+import pytest
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MQTT = os.path.join(REPO, "mqtt")
 sys.path.insert(0, MQTT)
 sys.path.insert(0, os.path.join(MQTT, "supervisor"))
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _no_env_escapes_this_file():
+    """Every `MOXIE_*` variable this file touches, put back when the file is done.
+
+    `_fresh_config` below DELETES `MOXIE_LLM_BASE_URL`, `MOXIE_LLM_API_KEY`,
+    `MOXIE_VOICE_BASE_URL`, `MOXIE_APP` and `MOXIE_STT` from the process, and sets
+    `MOXIE_SKIP_DOTENV=1` so the deletions survive a reload. That is exactly right *here*
+    — it is what makes "nothing configured" mean nothing configured (playbook rule 20) —
+    and it used to be permanent, because nothing put any of it back.
+
+    On a machine with credentials that made the rest of the session a different machine.
+    `test_live_gateway_turn_e2e.py` boots a real supervisor with `MOXIE_APP=llm` and
+    inherits the brain endpoint and key from `os.environ`; by the time it ran, this file
+    had deleted both and set the one flag that stops the subprocess recovering them from
+    `mqtt/.env`. `config.require_llm_base_url` then exits at assembly, the supervisor
+    never comes up, and all four of that module's tests ERROR — while passing perfectly
+    when the file is run on its own. CI never saw it (no `.env`, so the live tier skips).
+
+    So the isolation stays and the escape closes: snapshot at module setup, restore at
+    module teardown. Module scope rather than function scope on purpose — several tests
+    here set a variable, call `_fresh_config`, and clean up in their own `finally`; a
+    per-test restore would race that, and the bug was never about this file's internals.
+    """
+    before = {k: v for k, v in os.environ.items() if k.startswith("MOXIE_")}
+    yield
+    for k in [k for k in os.environ if k.startswith("MOXIE_")]:
+        if k not in before:
+            del os.environ[k]
+    os.environ.update(before)
 
 
 def _fresh_config(env):

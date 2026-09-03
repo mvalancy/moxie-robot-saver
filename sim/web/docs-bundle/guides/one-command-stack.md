@@ -51,13 +51,21 @@ three small images and starts them.
 
 ```sh
 curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/docker-compose.images.yml
-docker compose -f docker-compose.images.yml up            # add -d for the background
+MOXIE_APP=echo docker compose -f docker-compose.images.yml up    # add -d for the background
 ```
 
-That file is deliberately **self-contained** — it references nothing else in the repo, so
-those two commands are the entire install. Want to configure it? Grab the documented
-example env beside it (you need it for one value — the brain endpoint; everything else
-has a working default):
+That file is deliberately **self-contained** — it references nothing else in the repo.
+
+> **`MOXIE_APP=echo` is not decoration.** The supervisor's default brain is `content`, and
+> `content`/`llm` **exit at startup** when `MOXIE_LLM_BASE_URL` is empty — this repo is
+> public and deliberately ships no brain endpoint. With `restart: unless-stopped` that is a
+> crash loop, and the console waits on `supervisor: service_healthy`, so a bare `up` gives
+> you the broker and nothing else. `echo` is the brainless stack our own smoke test uses:
+> it round-trips the real protocol, pushes config and speaks a synthesized voice — it just
+> answers by echoing. Give it a brain endpoint below and drop the `MOXIE_APP=echo`.
+
+Want a real brain? Grab the documented example env beside it (you need it for one value —
+the brain endpoint; everything else has a working default):
 
 ```sh
 curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/.env.example
@@ -65,10 +73,13 @@ cp .env.example .env && $EDITOR .env
 docker compose -f docker-compose.images.yml up -d
 ```
 
-> **Honest status.** The release workflow publishes these images on every `v*` tag
-> ([RELEASING.md](../../RELEASING.md)). Until the **first tag cut after this landed**,
-> `ghcr.io/mvalancy/moxie-robot-saver/*` is empty and the pull will 404 — use Path B, or
-> check the repo's Packages page. The wiring itself is proven: `MOXIE_SMOKE_MODE=images
+> **Honest status.** The images are **published and anonymously pullable** — verified
+> 2026-09-03 without credentials, which is what your `docker pull` actually does: all three
+> carry `0.6.0`, `0.6`, `0.7.0`, `0.7` and `latest`, and `supervisor:0.7.0` is a real OCI
+> index with `linux/amd64` **and** `linux/arm64`. (This paragraph previously warned they
+> were unpublished and would 404; that stopped being true at the v0.6.0 tag.) The release
+> workflow republishes on every `v*` tag ([RELEASING.md](../../RELEASING.md)). The wiring
+> is proven too: `MOXIE_SMOKE_MODE=images
 > sim/run_compose_smoke.sh` runs this exact file, with `pull_policy: never`, against
 > locally built images carrying those names, and takes it through the full robot
 > round-trip.

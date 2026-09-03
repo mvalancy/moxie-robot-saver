@@ -9,6 +9,10 @@
 #   3b/3c. the compose default MOXIE_TTS=tone does NOT pin the engine (#77), so a
 #      composed deployment's Speech dropdown keeps its full list — checked over
 #      /voice and again inside the container, with MOXIE_STT=off as the control
+#   3d/3e. the same coupling for the BRAIN (#88), where it does bite: MOXIE_APP pins,
+#      so the compose default `${MOXIE_APP:-content}` collapses the 🧠 card to one
+#      entry — asserted over /brain and inside the container, with MOXIE_APP=any
+#      (the escape the pin note names) as the control
 #   4. sim/virtual_moxie.py --expect-tts round-trips against the COMPOSED broker:
 #      state → config(paired) → remote-chat → reply → CloudTTSResponse audio
 #   5. the console's /local/fleet shows that robot while it is connected
@@ -241,6 +245,68 @@ assert speech == ["gateway:piper-amy", "gateway:piper-ryan", "tone"], speech
 print("   in-container MOXIE_TTS=%s -> speech=%s" % (os.environ.get("MOXIE_TTS"), speech))
 '; then ok "the composed supervisor still offers its full engine list"
 else bad "the composed supervisor's Speech dropdown COLLAPSED under MOXIE_TTS=tone"; fi
+
+# ── 3d/3e. THE BRAIN PIN vs THE COMPOSE DEFAULT ──────────────────────────────────────
+# Same coupling class as 3b, opposite polarity, and this one really bites. PR #88 made an
+# explicit MOXIE_APP *pin* the appliance's brain (the owner rule #77 wrote for
+# MOXIE_TTS/MOXIE_STT), and this repo's own docker-compose.yml interpolates
+# `MOXIE_APP: ${MOXIE_APP:-content}` — so a `docker compose up` with nothing set arrives
+# in the container as an EXPLICIT `content` and pins. `brains.py` documents that as a
+# known, deliberate consequence; these two steps hold it to what it says, through the
+# running stack rather than in a unit test, in both directions.
+step "3d. the brain pin is real through the composed stack (/brain)"
+if "$PY" - "$STATUS_PORT" <<'PYEOF'
+import json, sys, urllib.request
+b = json.load(urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/brain", timeout=5))
+assert b.get("ok"), b
+ids = [e["id"] for e in b.get("available") or []]
+# This env file sets MOXIE_APP=echo, so the pin must be echo and the card must offer it
+# ALONE — a picker that offered a brain this appliance would then refuse is the failure.
+assert b.get("pin") == "echo", f"MOXIE_APP=echo did not pin the brain: {b.get('pin')!r}"
+assert ids == ["echo"], f"a pinned appliance offered more than its brain: {ids!r}"
+assert "MOXIE_APP" in (b.get("pin_note") or ""), f"the pin note never names the variable: {b.get('pin_note')!r}"
+assert "MOXIE_APP=any" in b["pin_note"], "the pin note never names the escape"
+assert b.get("appliance") == "echo" and b.get("default") == "echo", b
+print(f"   pin={b['pin']!r} card={ids} fleet={b.get('fleet')!r}")
+PYEOF
+then ok "/brain: MOXIE_APP pins, the card offers exactly the pinned brain, the note names the escape"
+else bad "/brain pin check failed"; fi
+
+step "3e. …and the compose file's OWN default (MOXIE_APP=content) is what a bare deployment gets"
+# Runs in the SUPERVISOR CONTAINER with the composed environment, overriding only
+# MOXIE_APP, so it reads the same config module the appliance booted with. Two facts a
+# `docker compose up` owner needs, and neither is visible from outside the container:
+#   * `content` (the compose default) PINS — the 🧠 card collapses to one entry, so the
+#     per-child picker is unavailable in a bare deployment until someone writes a line;
+#   * `MOXIE_APP=any` — the escape the pin note names — really does restore all four and
+#     pin nothing. That is the positive control that keeps this from passing vacuously.
+# It also records the boot verdict for each, because `content` with no MOXIE_LLM_BASE_URL
+# exits at assembly (config.require_llm_base_url, PR #68) and `restart: unless-stopped`
+# turns that into a crash loop — see docs/architecture/implementation-plan.md, Known gaps.
+if "${COMPOSE[@]}" exec -T -e MOXIE_APP=content -e MOXIE_LLM_BASE_URL= supervisor python -c '
+import sys; sys.path.insert(0, "/app")
+import config
+ids = [e["id"] for e in config.brain_engines().available()["available"]]
+assert config.brain_pin() == "content", config.brain_pin()
+assert ids == ["content"], ids
+try:
+    config.build_app(); boot = "boots"
+except SystemExit as e:
+    boot = "exits: " + str(e).split(" —")[0]
+print("   MOXIE_APP=content (compose default) -> pin=content card=%s, %s" % (ids, boot))
+'; then ok "the compose default pins the brain — deliberate, documented, and now fenced"
+else bad "the compose default no longer behaves as brains.py documents"; fi
+
+if "${COMPOSE[@]}" exec -T -e MOXIE_APP=any -e MOXIE_LLM_BASE_URL= supervisor python -c '
+import sys; sys.path.insert(0, "/app")
+import config
+from moxie_sdk import brains
+ids = [e["id"] for e in config.brain_engines().available()["available"]]
+assert config.brain_pin() == "", config.brain_pin()
+assert ids == list(brains.BRAIN_IDS), (ids, list(brains.BRAIN_IDS))
+print("   MOXIE_APP=any (the documented escape) -> pin=<none> card=%s" % (ids,))
+'; then ok "MOXIE_APP=any hands the choice back — the control that makes 3e non-vacuous"
+else bad "MOXIE_APP=any did NOT restore the per-child picker"; fi
 
 step "4. virtual Moxie against the COMPOSED broker (127.0.0.1:$MQTT_PORT)"
 # Poll the console's fleet view in the background, while the robot is connected.

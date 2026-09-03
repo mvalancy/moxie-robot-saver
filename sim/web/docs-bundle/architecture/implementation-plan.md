@@ -98,6 +98,55 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **Integration evidence (2026-09-03, third pass) — #86 and #88 hold together, and the coupling their
+  authors flagged is real but told loudly.** The sandboxed-extension evaluator (#86) and per-robot brains
+  (#88) both changed the same turn, had 293 unit tests between them, and had never met a running
+  appliance. All four risks were settled against real infrastructure.
+  **(1) The compose stack.** `docker-compose.yml` interpolates `MOXIE_APP: ${MOXIE_APP:-content}` and #88
+  made an explicit `MOXIE_APP` a **pin**, so a bare deployment arrives in the container as an explicit
+  `content` and pins: its 🧠 card offers `content` alone, `MOXIE_APP=any` restores all four and pins
+  nothing. Both are now steps 3d/3e of [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh),
+  green in **build and images** mode alongside the full robot round-trip with TTS audio, checked over
+  `/brain` *and* inside the container with `any` as the control. **The sharper half predates #88 and was
+  found by running the stack rather than reading it:** `content` with no `MOXIE_LLM_BASE_URL` exits at
+  assembly (#68's loud failure), `restart: unless-stopped` makes that a crash loop, and the console waits
+  on `supervisor: service_healthy` — so `docker compose up` with **no `.env`** brings up the broker and
+  nothing else (observed: `supervisor restarting (1)`, `console created`). The compose header claimed
+  "every value below has a working default"; it now says which one has none. The remaining honesty: the
+  smoke pins `MOXIE_APP=echo` in its own env file, so **the documented one-command install has still
+  never been proven in its default configuration** — DoD criterion 5's 🟢 is earned for a stack that was
+  told what brain to run.
+  **(2) Brains resolve per robot, and the swap lands between turns.** `sim/run_smoke.sh` (1981),
+  `--telehealth` (1982), `sim/run_scenarios.sh` (1983) and `sim/run_acl_proof.sh` are all green
+  (18/18 ACL checks). `sim/tests/test_sil_brains_and_ext.py` (+13) boots the real stack and proves the
+  boundary rather than the stored value: a fleet brain POSTed to the real status HTTP answers the *next*
+  turn as a different sentence on the wire; a per-robot brain overrides it for that robot alone while a
+  second robot on the same supervisor stays on the house rule; and with the brain made to take two
+  seconds and the swap posted while the robot is parked inside the call, the in-flight turn is still
+  answered by the **old** brain and the next one by the new. Same POST, different timing, different
+  outcome.
+  **(3) The shipped extension runs live with no model call.** `starter.json`'s G1 answers *"what time is
+  it"* on the wire as `The time is …` for **zero** calls to the brain endpoint — checkable because that
+  endpoint is a counting stub, with an unmatched utterance on the same robot and the same brain as the
+  positive control that still costs exactly one.
+  **(4) The two together** is the same file: the extension ran under a brain chosen *per robot*, beside a
+  robot on `echo`, in one supervisor.
+  **The open finding from the last pass is closed, and it was two leaks, not one.**
+  `test_live_gateway.py` left `MOXIE_APP=content` + `MOXIE_STT=off` in `os.environ`, which is why the
+  voice picker reported 3 failures in-suite and none alone (reproduced in 2 gateway calls:
+  `[picker] 1 listening entries: off`; fixed, and the same pair is 5 passed in 2 more). `test_assemble.py`
+  **deleted** `MOXIE_LLM_BASE_URL`/`MOXIE_LLM_API_KEY` and set `MOXIE_SKIP_DOTENV=1`, so
+  `test_live_gateway_turn_e2e.py`'s supervisor could not find a brain endpoint and exited at assembly —
+  the recorded "4 errors" — proved at zero gateway cost with an ordered probe. Both are fenced by
+  `sim/tests/test_env_hygiene_live_suites.py` (+9 hermetic, mutation-checked). **Not verified:** the full
+  `pytest sim/tests` with credentials was not re-run — it costs 30–50 gateway calls — so "the tier's own
+  command is green on a developer box" remains a claim about two proven mechanisms, not an observation.
+  Hermetic 4384 → **4393 passed / 27 skipped / 4 xfailed**; whole suite creds-blanked 4415 passed /
+  95 skipped; the wheel carries every `moxie_sdk/*.json` plus `brains.py` and `content/ext.py` and
+  imports in a venv holding only `paho-mqtt`. **Honestly not proven:** no physical robot, nothing heard
+  by ear, and no live-gateway turn through a per-robot brain (the stub is the model everywhere above).
+  6 gateway calls, 4 spent.
+
 - **Integration evidence (2026-09-03, second pass) — four of the five slices merged that day hold; the
   fifth had shipped half-done.** #77 (engine pin), #78 (content packs), #79 (STT/telehealth CI dispatch),
   #81 (audit) and #82 (the child's voice) had never been exercised together. **The pin does not collapse
