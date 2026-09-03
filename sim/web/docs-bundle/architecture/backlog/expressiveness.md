@@ -380,6 +380,14 @@ New `sim/tests/test_annotate.py` (hermetic, no creds, runs in the fast CI tier):
 >    "Backchannelling gets a subtle nod": there is no nod id either, so backchannelling is rendered
 >    as the assertable half — **no arm gesture at all** plus the attentive tree.
 >
+> **Proven in both directions.** [`sim/tools/performance_mutation_check.py`](../../../sim/tools/performance_mutation_check.py)
+> breaks one guard at a time and requires a test to go red: **39/39 caught**. The first run
+> caught 24/34, and two of the misses were holes in the *code*, not the tests — an app's own
+> scored fields were overlaid onto `RemoteChatOutput` **without** passing the catalog (so a brain
+> could have authorized `dialog_act: "smalltalk"` simply by setting the field), and an
+> uncatalogued `emotion`/`signal` hint blanked the field instead of falling through to the rules.
+> Both are fixed and both now have a mutation.
+>
 > **Still open, honestly.** Icons and SFX stay gated off (the four confirmed icons are calendar cues;
 > one of the two confirmed sounds is a music bed) and spurts are never populated — the `Beat` slots
 > exist and validate, and nothing turns them on. `auto_tags[]`, `sentiment` and `perplexity` remain

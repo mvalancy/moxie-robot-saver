@@ -1,5 +1,5 @@
 {
- "generated": "docs-2d17d4564b22",
+ "generated": "docs-4ad1277a5852",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -394,7 +394,7 @@
    "path": "architecture/backlog/expressiveness.md",
    "title": "Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)",
    "section": "architecture",
-   "bytes": 48810,
+   "bytes": 49456,
    "mermaid": 1,
    "headings": [
     "Why this is the next slice",
