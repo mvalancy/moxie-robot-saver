@@ -10,6 +10,7 @@ already work this way (`functions/api/_lib/env.js`: `DEMO_GATEWAY_BASE_URL` has 
 default, and unset means degraded, never "assume ours" — `backlog/live-sim-demo.md` C3).
 `sim/tests/test_no_deployment_defaults.py` is the guard that keeps it true.
 """
+import re
 import os
 
 #: Falsy spellings, shared by every switch in this file.
@@ -40,6 +41,38 @@ def _truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() not in _OFF
 
 
+def _dotenv_value(raw: str) -> str:
+    """The value half of a dotenv line, with a trailing `# comment` removed.
+
+    Our own `mqtt/.env.example` documents values with inline comments, e.g.
+
+        MOXIE_VOICE_BASE_URL=         # e.g. https://your-gateway/v1 (empty -> Piper/tone)
+
+    and the documented first step is to copy that file. Without this, the value became the
+    **comment text** — truthy garbage that `build_synthesizer` would then treat as a
+    gateway URL, and `MOXIE_APP` became `"llm            # llm | content | echo"`. So the
+    documented setup path produced a broken appliance. Found by the class guard added with
+    the gateway-default fix.
+
+    Rules, deliberately conservative:
+      * a quoted value is taken verbatim inside the quotes, so a `#` may appear in it;
+      * otherwise a comment starts at the first `#` **preceded by whitespace**, so a value
+        like `pass#word` survives — only ` #` reads as a comment, which is the convention
+        every dotenv file in this repo already follows.
+    """
+    v = raw.strip()
+    if not v:
+        return ""
+    if v[0] == "#":                          # the whole value is a comment -> unset
+        return ""
+    if v[0] in "\"'":
+        q = v[0]
+        end = v.find(q, 1)
+        return v[1:end] if end != -1 else v[1:]
+    cut = re.search(r"\s#", v)
+    return (v[:cut.start()] if cut else v).strip()
+
+
 def _load_env(path=None):
     """Load KEY=VALUE lines from a dotenv file into the environment (no dependency).
 
@@ -59,7 +92,7 @@ def _load_env(path=None):
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
+                os.environ.setdefault(k.strip(), _dotenv_value(v))
     except FileNotFoundError:
         return None
     return path
