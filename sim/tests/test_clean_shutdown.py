@@ -265,8 +265,17 @@ def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     tail = _Tail(proc)
     try:
-        assert tail.wait_for("clean shutdown armed", timeout=40), \
-            f"the supervisor never armed its stop signals:\n{tail.text()}"
+        # Generous on purpose, and the generosity is about the *boot*, not about the
+        # subject. Booting a supervisor is not what this test asserts; a slow boot on a
+        # loaded runner making it red would be the test measuring the machine. (Seen once,
+        # at 40 s, with 16 CPU burners and a soak running — the process was alive and
+        # still importing.) The assertions that matter — rc == 0 and the two log lines —
+        # are unaffected by how long the boot took, and `_Tail` fails fast if the child
+        # dies instead of printing. Playbook rule 11: assert recorded state, and do not
+        # let a live timing sample decide the verdict.
+        assert tail.wait_for("clean shutdown armed", timeout=180), \
+            ("the supervisor never armed its stop signals "
+             f"(alive={proc.poll() is None}):\n{tail.text()}")
         proc.send_signal(signal.SIGTERM)
         if not tail.wait_closed(timeout=30) or proc.poll() is None:
             proc.kill()

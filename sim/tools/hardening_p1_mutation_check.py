@@ -294,6 +294,15 @@ MUTATIONS = [
      '    STOP_SIGNALS = ("SIGTERM", "SIGINT", "SIGKILL")',
      T_STOP, "sigkill_is_deliberately_not"),
 
+    # ---- the store: the backoff overflow, and the write's return code -----------
+    ("B1  the backoff exponent is unbounded again (OverflowError at 1024 polls)", STORE,
+     "                        LOCK_BACKOFF_BASE_S * (2 ** min(attempt, LOCK_BACKOFF_MAX_SHIFT)))",
+     "                        LOCK_BACKOFF_BASE_S * (2 ** attempt))",
+     T_STORE, "t11"),
+    ("B2  the clamp is raised past the float cliff", STORE,
+     "LOCK_BACKOFF_MAX_SHIFT = 32",
+     "LOCK_BACKOFF_MAX_SHIFT = 4096",
+     T_STORE, "t11"),
     # ---- the store: append reads the write's return code ------------------------
     ("A1  append ignores the write's return code (the P1 fix, reverted)", STORE,
      "                if not self._write_path(path, items):\n                    return None\n                return items",

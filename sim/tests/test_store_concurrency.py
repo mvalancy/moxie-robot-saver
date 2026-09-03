@@ -722,3 +722,93 @@ def test_t10d_the_identity_the_soak_rests_on_holds_under_real_contention(tmp_pat
     on_disk = len(s.read(DEVICE, COLLECTION, []))
     assert on_disk + refused == attempted, \
         f"{attempted - on_disk - refused} append(s) vanished without being refused"
+
+
+# --------------------------------------------------------------------------- #
+# T11 — a raised lock budget must time out, not crash the caller
+# --------------------------------------------------------------------------- #
+#
+# Found 2026-09-03 while characterising a reported `test_t1` flake ("failed once under
+# full-suite load, then passed 5/5 isolated"). It is not a flake and it is not starvation.
+#
+# `_wait_flock`'s backoff computed `LOCK_BACKOFF_BASE_S * (2 ** attempt)`, and `2 **
+# attempt` is an arbitrary-precision **int**. The loop runs until the budget is spent —
+# about `timeout / LOCK_BACKOFF_CAP_S` iterations — so:
+#
+#     MOXIE_STORE_LOCK_TIMEOUT_S = 2.0  (default)  →  ~1 000 polls   — 24 short of the cliff
+#     MOXIE_STORE_LOCK_TIMEOUT_S = 5.0             →  ~2 500 polls   — CRASHES
+#     MOXIE_STORE_LOCK_TIMEOUT_S = 30.0            →  ~15 000 polls  — CRASHES
+#
+# At `attempt == 1024` the product overflows a float and raises `OverflowError: int too
+# large to convert to float` — straight out of `transaction()`, **past** `append`'s
+# `except StoreLockTimeout`, into whatever called it. On the paho network thread that is
+# the "never take the MQTT loop down for a store write" property broken outright.
+#
+# Three things make it nasty rather than merely wrong:
+#
+# * **the default hides it by 24 polls**, so nobody sees it until an operator tunes;
+# * **`config.py` invites the tuning** — the only bound it enforces is
+#   `< MOXIE_BRAIN_BUDGET_S`, which is far above the cliff;
+# * **it needs real contention to reach**, so it presents as a rare, load-dependent test
+#   failure rather than as a bug.
+#
+# `test_t1` uses a 30 s budget *deliberately* (so that starvation cannot be mistaken for a
+# lost update), which is precisely why the flake surfaced there first. It is also the most
+# likely explanation for the unexplained single lost append in the handed-down
+# "999 of 1 000 at 30 s" measurement: not a starved waiter, a crashed writer.
+
+@pytest.mark.parametrize("timeout_s", [2.0, 5.0, 30.0, 120.0])
+def test_t11_a_contended_waiter_times_out_at_any_budget(tmp_path, timeout_s):
+    """Whatever the budget, exhausting it is a `StoreLockTimeout` — never an
+    `OverflowError`, and never anything else the caller has not been told to expect.
+
+    The sleep is injected and does nothing, so ~15 000 polls take milliseconds and no wall
+    clock is read (`test_clock_dependence.py`'s ratchet). That also means the test is
+    measuring the **poll count**, which is exactly the axis the bug lives on.
+    """
+    s = JsonStore(str(tmp_path), lock_timeout_s=timeout_s, sleep=lambda _: None)
+    path = s.path(DEVICE, COLLECTION)
+    lock = s.lock_path(path)
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_EX)     # another process holds it
+    try:
+        with pytest.raises(StoreLockTimeout):
+            with s.transaction(DEVICE, COLLECTION):
+                pass
+        # …and the store's own writers turn that into a falsy answer, not a traceback.
+        assert s.append(DEVICE, COLLECTION, "x") is None
+        assert s.write(DEVICE, COLLECTION, ["x"]) is False
+        assert s.lock_timeouts >= 2
+    finally:
+        store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def test_t11b_the_backoff_never_computes_an_unbounded_exponent(tmp_path):
+    """The mechanism, pinned at the line rather than only at the symptom.
+
+    Asserted as a property of the delays themselves — every one is a real float inside
+    `[0, cap + base]` — because the symptom (an `OverflowError`) is reachable only through
+    a poll count that a future refactor of the loop could change without fixing anything.
+    """
+    delays: list = []
+    s = JsonStore(str(tmp_path), lock_timeout_s=30.0, sleep=delays.append)
+    path = s.path(DEVICE, COLLECTION)
+    lock = s.lock_path(path)
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_EX)
+    try:
+        with pytest.raises(StoreLockTimeout):
+            with s.transaction(DEVICE, COLLECTION):
+                pass
+    finally:
+        store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_UN)
+        os.close(fd)
+    assert len(delays) > 1024, (
+        f"only {len(delays)} polls — this budget no longer crosses the overflow cliff, so "
+        "the test has stopped exercising the bug it was written for")
+    ceiling = store_mod.LOCK_BACKOFF_CAP_S + store_mod.LOCK_BACKOFF_BASE_S
+    for d in delays:
+        assert isinstance(d, float) and 0.0 <= d <= ceiling, d

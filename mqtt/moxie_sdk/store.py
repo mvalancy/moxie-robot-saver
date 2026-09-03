@@ -121,6 +121,12 @@ DEFAULT_LOCK_TIMEOUT_S = 2.0
 #: bounded, recorded failure §3.2 point 4 accepts, not a silent one.
 LOCK_BACKOFF_BASE_S = 0.0005
 LOCK_BACKOFF_CAP_S = 0.002
+#: Largest exponent the backoff will compute. `2 ** attempt` is an arbitrary-precision
+#: int and this loop iterates `timeout / cap` times — ~1 000 at the default 2.0 s budget
+#: and ~15 000 at 30 s — so without a clamp `LOCK_BACKOFF_BASE_S * (2 ** attempt)` raises
+#: `OverflowError` at `attempt == 1024` and takes the *caller* down rather than timing
+#: out. The cap is already reached at `attempt == 2`, so this discards nothing.
+LOCK_BACKOFF_MAX_SHIFT = 32
 
 _NO_LOCKING_NOTE = (
     "⚠️  cross-process store locking is unavailable on this platform (no fcntl): two "
@@ -354,7 +360,27 @@ class JsonStore:
         asked = 0.0
         attempt = 0
         while asked < self.lock_timeout_s:
-            delay = min(LOCK_BACKOFF_CAP_S, LOCK_BACKOFF_BASE_S * (2 ** attempt))
+            # `2 ** attempt` is an arbitrary-precision **int**, and this loop runs until
+            # the budget is spent — roughly `timeout / LOCK_BACKOFF_CAP_S` times. At
+            # `attempt == 1024` the product overflows a float and raises
+            # `OverflowError: int too large to convert to float`, straight out of
+            # `transaction()`, past `append`'s `except StoreLockTimeout`, into the caller.
+            #
+            # The default budget hides it by 24 polls: 2.0 s / 2 ms = ~1000. **Any** larger
+            # value crosses the cliff — 5 s is ~2 500 polls, 30 s is ~15 000 — and
+            # `config.py` positively invites larger ones, since the only bound it enforces
+            # is `< MOXIE_BRAIN_BUDGET_S`. So a contended writer under a raised timeout
+            # crashed instead of waiting, and did it rarely enough to read as a flake:
+            # found 2026-09-03 as a 1-in-12 failure of `test_t1` (which uses 30 s
+            # deliberately) under load, and it is very likely the unexplained lost append
+            # in the handed-down "999 of 1 000 at 30 s" measurement.
+            #
+            # The clamp costs nothing: the cap is reached at `attempt == 2`
+            # (0.0005 × 4 = 0.002), so every exponent past a handful is already discarded
+            # by the `min`. It is 32 rather than 3 only so the shape stays recognisably
+            # "exponential, capped" to the next reader.
+            delay = min(LOCK_BACKOFF_CAP_S,
+                        LOCK_BACKOFF_BASE_S * (2 ** min(attempt, LOCK_BACKOFF_MAX_SHIFT)))
             delay += random.uniform(0, LOCK_BACKOFF_BASE_S)
             delay = min(delay, self.lock_timeout_s - asked)
             self._sleep(delay)
