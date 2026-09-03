@@ -446,6 +446,34 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   🎭 puppet mode's only end-to-end proof is manual. All three, plus the two `.mjs` suites nobody runs,
   are now fenced by `sim/tests/test_ci_test_coverage.py` as a two-directional ratchet whose lists can
   only shrink.
+- **Integration evidence (2026-09-03) — the container renderer is proven *in the image*, and the
+  clock-flake class is now fenced instead of hunted.** Four things had landed on `dev` within an hour
+  and none had been exercised as a whole. Verdicts, in order. (a) **The container change is real where it
+  matters.** PR #62's own proof was a build-mode compose smoke; this pass drove a **conditional-bearing
+  prompt through `ContentApp.respond()` inside the running supervisor container** (`docker exec` into
+  `moxie-smoke-*-supervisor-1`): jinja2 3.1.6, `{% if presence.face_present %}` taking both branches
+  correctly, a `{% for %}…{% else %}` too, `render.STRIPPED == 0` proving the *real* renderer ran rather
+  than the fallback, and `render.BLOCKED == 1` proving the sandbox is still the environment doing it.
+  Both compose modes are green (`build` and `images`) and **neither pulled a published image** — images
+  mode builds the three images from this clone, tags them with the published names and runs with
+  `pull_policy: never`, so it proves the wiring, not the registry. (b) **The whole creds-free stack is
+  green**: SIL round-trip, 🎭 telehealth, 2/2 scenarios, 18/18 broker-ACL checks against a real
+  `eclipse-mosquitto:2.0.20`. (c) **One more clock flake of the PR #60/#63 family was found before it
+  bit** — `test_telemetry_runtime.TODAY = int(time.time())` with packets stamped `TODAY - 30` files them
+  under yesterday's roll-up row for ~30 s after local midnight — plus two narrower ones (a
+  `date.today()` read twice either side of midnight, and two independent clock reads that had to agree
+  about one instant). All fixed, and the whole class is now fenced: `sim/tests/test_clock_dependence.py`
+  lists **every** wall-clock read in the test tree by `file::scope` with a verdict and a reason, and
+  fails three ways — an unlisted read, a listed read that no longer exists, and a listed row whose
+  constructs changed. (d) **The live turn still works on the merged tree**: one real child utterance
+  through `mqtt/run.py` with the gateway brain *and* gateway voice, answered `"Hello Sam! I'm so happy
+  to see you."` in 3.30 s of `piper-amy` audio at flatness 7.1e-02 — real speech by
+  `helpers_audio.is_real_speech`, whose floor this pass de-duplicated so two copies cannot drift.
+  **Honest gaps this pass leaves:** the container proof drives the *renderer* end to end inside the
+  image but the composed stack still runs `MOXIE_APP=echo`, so no *container* turn has gone through the
+  gateway brain with a templated pack; the clock ledger covers `sim/tests/*.py` and `sim/*.mjs` only —
+  product code and `functions/` are unswept; and monotonic-clock load flakiness (playbook rule 11's
+  disease) is deliberately out of that guard's scope and still unfenced.
 
 ## DoD progress (audited 2026-09-02 23:00 PDT, at v0.7.0) — **4/6 🟢 · overall ≈ 91%** (done = all six 🟢)
 
