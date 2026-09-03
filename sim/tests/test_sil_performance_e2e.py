@@ -572,11 +572,25 @@ def test_the_floor_is_a_rollback_not_a_downgrade_of_the_wire(tmp_path_factory):
 # on the model path, `test_the_model_path_performs_the_floors_markup` goes red, which is
 # exactly the notification that change should send.
 def _floor_and_planner(text: str, turn_key: str, chunk_index: int):
+    """`(annotate(...), perform(...))` for one line — the two candidate performances.
+
+    `markup.mode()` reads `MOXIE_EXPRESSIVE` per call, so `perform` has to be pinned here
+    — and the pin is **restored**. A test that leaves a mode behind in `os.environ`
+    changes what every later test in the same process publishes, which is exactly the
+    leak `test_env_hygiene_live_suites.py` exists to fence (playbook rule 20).
+    """
     from moxie_sdk.automarkup import annotate
     from supervisor.markup import perform
-    os.environ["MOXIE_EXPRESSIVE"] = "planner"     # this process, for `perform` only
-    return (annotate(text, turn_key=turn_key, chunk_index=chunk_index),
-            perform(text, turn_key=turn_key, chunk_index=chunk_index).markup)
+    was = os.environ.get("MOXIE_EXPRESSIVE")
+    os.environ["MOXIE_EXPRESSIVE"] = "planner"
+    try:
+        return (annotate(text, turn_key=turn_key, chunk_index=chunk_index),
+                perform(text, turn_key=turn_key, chunk_index=chunk_index).markup)
+    finally:
+        if was is None:
+            os.environ.pop("MOXIE_EXPRESSIVE", None)
+        else:
+            os.environ["MOXIE_EXPRESSIVE"] = was
 
 
 def test_an_app_that_authors_no_markup_performs_the_planners(plain):
