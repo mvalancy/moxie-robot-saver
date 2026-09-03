@@ -97,8 +97,27 @@ def truncated_by(play, tol_ms=COMPLETION_TOLERANCE_MS):
 # --------------------------------------------------------------------------- #
 RECORDER = r"""
 (() => {
-  const R = { fetches: [], decodes: [], plays: [], edges: [], destIds: [] };
+  const R = { fetches: [], decodes: [], plays: [], edges: [], destIds: [], status: [] };
   window.__childVoice = R;
+
+  // `bridge.js::replay` says when it is DONE — `status("replay done (N events)")` into
+  // #bus-status, set as `replaying` flips back to false. That is a fact the page states
+  // about itself, and it is what the fixture waits on: a tally of side effects cannot
+  // tell "not finished yet" from "this will never happen", so a missing clip used to be
+  // a 30 s hang instead of an assertion. Recorded as it changes rather than read at the
+  // end, because audio.js writes its own playback text into the SAME element and would
+  // overwrite it (rule 11: assert the record, never a live sample).
+  (function watchStatus() {
+    const el = document.getElementById("bus-status");
+    if (!el) { setTimeout(watchStatus, 20); return; }
+    const push = () => {
+      const t = (el.textContent || "").trim();
+      if (t && R.status[R.status.length - 1] !== t) R.status.push(t);
+    };
+    push();
+    new MutationObserver(push).observe(el,
+      { childList: true, characterData: true, subtree: true });
+  })();
 
   // Node identity, so a connect-graph can be walked in the test rather than guessed at.
   let nid = 0;
@@ -206,6 +225,56 @@ def _reaches_destination(edges, dest_ids, node_id):
     return False
 
 
+def _wait(page, expr, what, *, arg=None, timeout=30000, required=True):
+    """`page.wait_for_function`, but a timeout DUMPS THE RECORD instead of saying nothing.
+
+    A bare `TimeoutError` out of a module-scoped fixture is the least useful failure this
+    suite can produce: it errors every test that uses it and tells whoever reads the CI
+    log nothing about which of several causes happened. The record separates them — a clip
+    that never fetched, one that fetched but never decoded, one that decoded but never
+    started, and one that merely arrived late all look different here.
+    """
+    try:
+        page.wait_for_function(expr, arg=arg, timeout=timeout)
+        return ""
+    except Exception as exc:
+        rec = page.evaluate("() => window.__childVoice") or {}
+        base = lambda u: str(u).rsplit("/", 1)[-1]
+        mp3s = [(base(u), st) for u, st in _MP3S.get(id(page), [])]
+        fetched = [(base(f["url"]), f["bytes"], f["status"])
+                   for f in rec.get("fetches") or []]
+        decoded = [(d["bytes"], round(d["duration"], 2), round(d["peak"], 3))
+                   for d in rec.get("decodes") or []]
+        lines = ["waiting for %s timed out after %d ms." % (what, timeout),
+                 "  page status line: %r" % (rec.get("status"),),
+                 "  mp3 responses:    %r" % (mp3s,),
+                 "  fetched:          %r" % (fetched,),
+                 "  decoded:          %r" % (decoded,),
+                 "  plays:"]
+        for pl in rec.get("plays") or []:
+            held = (pl["endedAt"] - pl["startedAt"]) if pl["endedAt"] else 0
+            lines.append(
+                "    bytes=%s dur=%.0fms ended=%s held=%.0fms stopped=%s"
+                % (pl["bytes"], pl["duration"] * 1000, pl["ended"], held,
+                   "yes" if pl["stoppedAt"] else "no"))
+        if not (rec.get("plays") or []):
+            lines.append("    (none - nothing ever reached AudioBufferSourceNode.start)")
+        note = "\n".join(lines)
+        if not required:
+            return note      # the assertions below will say what is missing, and why
+        raise AssertionError(note) from exc
+
+
+#: `page` object id -> the mp3 responses seen for it, so `_wait` can report them too.
+_MP3S = {}
+
+
+def _why(replayed):
+    """The fixture's timeout dump, appended to an assertion that is about to explain why."""
+    note = replayed.get("note") or ""
+    return ("\n" + note) if note else ""
+
+
 @pytest.fixture(scope="module")
 def replayed(browser, server):
     """Load `/sim.html`, replay the shipped demo to completion, hand back the record.
@@ -228,6 +297,7 @@ def replayed(browser, server):
             if r.status == 404 and _CAPABILITY_PROBE not in r.url else None)
     page.add_init_script(RECORDER)
     responses = []
+    _MP3S[id(page)] = responses
     page.on("response",
             lambda r: responses.append((r.url, r.status)) if ".mp3" in r.url else None)
     page.set_viewport_size({"width": 1440, "height": 900})
@@ -238,18 +308,40 @@ def replayed(browser, server):
     # scripted turns. (It is also a user gesture, which the autoplay policy is happy with.)
     page.click("#alive-toggle")
     page.click("#rec-demo")
-    # WAIT FOR COMPLETION, then assert the record (rule 11). The shipped session's last
-    # event is at t=11400 ms; the predicate is the record itself, not a fixed sleep.
-    page.wait_for_function(
-        """() => {
-             const r = window.__childVoice;
-             if (!r) return false;
-             const child = r.plays.filter((p) => p.bytes && p.duration > 0.5);
-             return child.length >= 4 && child.every((p) => p.ended || p.stoppedAt);
+    # WAIT FOR THE PAGE'S OWN COMPLETION SIGNAL, then assert the record (rule 11).
+    #
+    # The first version of this waited for `plays.length >= 4` — a tally of side effects,
+    # which cannot distinguish "not finished yet" from "this will never happen". Anything
+    # that stopped a fourth qualifying clip being recorded (a Moxie reply falling back to
+    # the browser voice, a failed .mp3, the duration filter excluding one) became a 30 s
+    # hang and six fixture ERRORS rather than one assertion that named the problem. So:
+    # wait on `replay done (N events)`, which `bridge.js::replay` states about itself when
+    # the session ends, and let the assertions below decide whether what was recorded is
+    # what we require.
+    _wait(page, """() => (window.__childVoice ? window.__childVoice.status : [])
+                           .some((s) => /^replay done \\(\\d+ events\\)$/.test(s))""",
+          "the demo replay to report itself done")
+    # Then the one thing this file actually requires, waited on SEPARATELY so its failure
+    # names itself: both child clips finished. They end well before the replay does, so on
+    # a healthy run this returns immediately; on CI it is the check that would report a
+    # child clip that never played, instead of a timeout with no subject.
+    # …then the one thing this file actually requires: both child clips finished. They end
+    # well before the replay does, so on a healthy run this returns instantly. It is
+    # `required=False` ON PURPOSE — if a clip is missing, the right output is the ordinary
+    # assertion that names it ("nothing ever asked for…", "decoded but was never
+    # start()ed"), not a fixture error that kills all eight tests and says only "timeout".
+    # The dump is carried along and appended to whichever assertion fails.
+    note = _wait(page, """(sizes) => {
+             const r = window.__childVoice; if (!r) return false;
+             return sizes.every((n) => r.plays.some(
+               (p) => p.bytes === n && (p.ended || p.stoppedAt)));
            }""",
-        timeout=30000)
-    page.wait_for_timeout(500)          # let the last `ended` land in the record
+          "both child clips to finish playing",
+          arg=[os.path.getsize(os.path.join(WEB, "audio", rel))
+               for rel in CHILD_LINES.values()],
+          timeout=10000, required=False)
     rec = page.evaluate("() => window.__childVoice")
+    rec["note"] = note
     rec["responses"] = responses
     rec["console"] = ConsoleErrors(raw, unexpected)
     page.close()
@@ -264,8 +356,8 @@ def test_the_demo_replay_requests_both_child_clips(replayed):
            for url, status in replayed["responses"] if "/audio/" in url}
     for line, rel in CHILD_LINES.items():
         assert rel in got, (f"nothing ever asked for the child's clip for {line!r} "
-                            f"({rel}); requested: {sorted(got)}")
-        assert got[rel] == 200, f"{rel} answered {got[rel]}"
+                            f"({rel}); requested: {sorted(got)}{_why(replayed)}")
+        assert got[rel] == 200, f"{rel} answered {got[rel]}{_why(replayed)}"
     # …and with the size the repo actually ships, so a truncated deploy is not a pass.
     sizes = {f["bytes"] for f in replayed["fetches"]}
     for rel in CHILD_LINES.values():
@@ -282,7 +374,7 @@ def test_both_child_clips_decode_to_audible_pcm(replayed):
         n = os.path.getsize(os.path.join(WEB, "audio", rel))
         d = by_bytes.get(n)
         assert d, (f"{rel} was never decoded — the browser fetched it and threw it away "
-                   f"(decoded byte counts: {sorted(by_bytes)})")
+                   f"(decoded byte counts: {sorted(by_bytes)}){_why(replayed)}")
         assert d["duration"] > 0.5, f"{rel} decoded to {d['duration']:.3f}s of audio"
         assert d["channels"] >= 1 and d["sampleRate"] >= 8000, d
         assert d["peak"] > PEAK_FLOOR, (
@@ -302,7 +394,8 @@ def test_each_child_clip_is_wired_through_to_the_destination(replayed):
     for line, rel in CHILD_LINES.items():
         n = os.path.getsize(os.path.join(WEB, "audio", rel))
         plays = [p for p in replayed["plays"] if p["bytes"] == n]
-        assert plays, f"{rel} decoded but was never start()ed — {line!r} stayed silent"
+        assert plays, (f"{rel} decoded but was never start()ed — {line!r} stayed "
+                       f"silent{_why(replayed)}")
         for p in plays:
             assert _reaches_destination(edges, dests, p["node"]), (
                 f"{rel} played into a node that does not reach ctx.destination")
@@ -315,7 +408,7 @@ def test_the_reply_does_not_truncate_the_child(replayed):
     for line, rel in CHILD_LINES.items():
         n = os.path.getsize(os.path.join(WEB, "audio", rel))
         plays = [p for p in replayed["plays"] if p["bytes"] == n]
-        assert plays, f"{rel} never played"
+        assert plays, f"{rel} never played{_why(replayed)}"
         p = plays[0]
         assert p["ended"], f"{rel} never reached its natural end"
         lost = truncated_by(p)
@@ -338,6 +431,14 @@ def test_moxie_answers_only_after_the_child_has_finished(replayed):
     Compared against the child's NATURAL end (`startedAt + duration`), never against the
     recorded `endedAt`: the `ended` event fires on a `stop()` too, so an `endedAt`
     comparison would report "Moxie waited politely" about a clip she had just cut off.
+
+    It checks the pairs the record HAS, and says how many. The fixture now stops at the
+    page's own `replay done`, and Moxie's final reply starts a beat after that — so this
+    normally sees one pair, not two. That is not a hole: for the pair it cannot see, the
+    truncation test above asks the identical question from the child's side (if Moxie had
+    started early, `speak()`'s `stop()` would have cut that clip), and it covers BOTH
+    children unconditionally. The `checked` count is asserted so this can never quietly
+    verify nothing, which is the failure mode a `continue` invites.
     """
     sizes = {os.path.getsize(os.path.join(WEB, "audio", rel))
              for rel in CHILD_LINES.values()}
@@ -348,17 +449,22 @@ def test_moxie_answers_only_after_the_child_has_finished(replayed):
                    key=lambda p: p["startedAt"])
     assert len(child) >= 2, f"expected both scripted child lines, got {len(child)}"
     assert moxie, "Moxie never spoke in the replay — the comparison would be vacuous"
+    checked = 0
     for c in child:
         after = [m for m in moxie if m["startedAt"] > c["startedAt"]]
         if not after:
             continue
         natural_end = c["startedAt"] + c["duration"] * 1000
         gap = after[0]["startedAt"] - natural_end
+        checked += 1
         # Same tolerance, same reason (the two clocks): an overlap inside it is not one.
         assert gap > -COMPLETION_TOLERANCE_MS, (
             f"Moxie started {-gap:.0f} ms BEFORE the child's clip would have finished — "
             f"she is talking over her")
         print(f"   child clip would end → Moxie starts {gap:.0f} ms later")
+    assert checked, (
+        f"no child→Moxie pair was in the record, so this test asserted nothing: "
+        f"{len(child)} child play(s), {len(moxie)} Moxie play(s)")
 
 
 # --------------------------------------------------------------------------- #
