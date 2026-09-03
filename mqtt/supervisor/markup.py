@@ -171,7 +171,9 @@ def perform(text: str, **kw) -> Staged:
         if staged is not None:
             scored = staged.scored()
 
-    if mode == MODE_PLANNER and staged is not None and not _latched:
+    # `staged` is None whenever the breaker has latched (it is only computed above
+    # while the breaker is open), so this needs no second `_latched` check.
+    if mode == MODE_PLANNER and staged is not None:
         try:
             markup = _perf.render(staged)
         except Exception as e:

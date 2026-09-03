@@ -290,6 +290,29 @@ def test_validate_drops_every_non_catalog_id(slot, bad):
     assert not vocab.validate_markup(perf.render(out))
 
 
+@pytest.mark.parametrize("bad", [11, -1, 99, "happy", 1.5, True])
+def test_validate_drops_a_bad_beat_mood(bad):
+    """A beat's mood is an `ePlaybackMood` **int** 0-10 and nothing else — not a name, not
+    a float, and (because `bool` is an `int` in Python) not `True`."""
+    perf.reset_dropped()
+    out = perf.validate(perf.Performance(beats=(perf.Beat(text="hi", mood=bad),)))
+    assert out.beats[0].mood is None, bad
+    assert out.dropped and perf.dropped_ids() == 1
+    assert "cmd:playback-mood" not in perf.render(out)
+
+
+def test_the_drop_counter_actually_counts():
+    """The counter is an acceptance criterion ("0 unknown ids over the corpus"), so a
+    counter stuck at zero would make that criterion vacuous. Assert it moves."""
+    perf.reset_dropped()
+    assert perf.dropped_ids() == 0
+    perf.validate(perf.Performance(beats=(perf.Beat(text="hi", gesture="Gesture_Nope",
+                                                    tree="Bht_Nope"),)))
+    assert perf.dropped_ids() == 2
+    perf.reset_dropped()
+    assert perf.dropped_ids() == 0
+
+
 @pytest.mark.parametrize("slot,bad", [("dialog_act", "smalltalk"), ("emotion", "curious"),
                                       ("signal", "agreement"), ("mood", 11),
                                       ("mood", -1)])
@@ -385,6 +408,76 @@ def test_rate_limits_hold_on_a_long_paragraph():
     assert len(gestures) <= 6, gestures
     assert not out.rstrip().endswith("/>" + "</usel>")
     assert "<break" not in out.split(line.split()[-1])[-1]
+
+
+def test_the_face_changes_at_most_once_per_line():
+    """M18's line: several clauses that each score a DIFFERENT mood. Without the cap the
+    face would flip on every comma, which is the twitchiness a child notices — so at most
+    one transition survives, and the beats prove the cap acted rather than the line being
+    uniform by luck."""
+    line = ("I am so sorry about that, but wow, that is amazing, and I am confused, "
+            "and oops, I did it again.")
+    p = staged(line, turn_key="moods")
+    marked = [b.mood for b in p.beats if b.mood is not None]
+    assert len(marked) <= perf.MAX_MOOD_MARKS, marked
+    assert perf.render(p).count("cmd:playback-mood") <= perf.MAX_MOOD_MARKS
+    # …and the clauses really do score differently, or the cap was never exercised.
+    scores = {perf._score_mood(" ".join(b.text.split()))[0] for b in p.beats if b.text}
+    assert len(scores) >= 3, scores
+
+
+def test_the_gesture_caps_hold_on_a_many_clause_line():
+    """M20's line: more carrying clauses than the caps allow. Six per line and three per
+    sentence are the numbers; a line that offers ten must still emit at most six."""
+    line = ("I want you, and me, and what is up there, and everything down here, and my "
+            "big world, and your little one, and who is high, and how is low.")
+    out = perf.render(staged(line, turn_key="caps"))
+    gestures = [g for g in re.findall(r"\+eventName\+:\+(Gesture_\w+)\+", out)
+                if g != "Gesture_None"]
+    assert len(gestures) <= 6, gestures
+    assert len(gestures) >= 3, f"the caps were never exercised: {gestures}"
+
+
+def test_a_whole_body_tree_gets_no_arm_gesture_stacked_on_it():
+    """M22: a sentence already playing a `Bht_*` must not also throw an arm — two
+    animation systems fighting over the same limbs is the failure mode the SIM renders as
+    a twitch. Each line here is ONE sentence with a carrying word in it, so a regression
+    that dropped the rule would produce a visible extra gesture rather than nothing."""
+    # line -> the SAME words with the tree cue swapped out, which must still gesture.
+    controls = {
+        "Hello, I am so happy to see you.": "Well, I am so happy to see you.",
+        "Hold on, let me think about that.": "Well, you can think about that.",
+        "Goodbye my friend, I hope you sleep well.":
+            "Well my friend, I hope you rest a lot.",
+    }
+    for line, control in controls.items():
+        p = staged(line, turn_key="tree")
+        tree_beats = [b for b in p.beats if b.tree]
+        assert len(tree_beats) == 1, line
+        out = perf.render(p)
+        assert len(re.findall(r"\+behaviour\+:\+Bht_", out)) == 1, line
+        arms = [g for g in re.findall(r"\+eventName\+:\+(Gesture_\w+)\+", out)
+                if g != "Gesture_None"]
+        assert arms == [], f"{line}: tree + {arms}"
+        # …and the near-identical line WITHOUT a tree cue DOES gesture, so the assertion
+        # above is about the rule and not about the words happening to be gesture-free.
+        twin = staged(control, turn_key="tree")
+        assert all(b.tree is None for b in twin.beats), control
+        assert any(b.gesture for b in twin.beats), control
+
+
+@pytest.mark.parametrize("slot,bad", [("signal", "agreement"), ("emotion", "curious"),
+                                      ("look", "left"), ("icon", "Party"),
+                                      ("dialog_act", "smalltalk"), ("mood", "ecstatic")])
+def test_an_uncatalogued_hint_falls_through_to_the_rules(slot, bad):
+    """M9b: a suggestion nobody can honor must cost **nothing**. Leaving a bad value in
+    for `validate` to drop later would take the line's emotion (or gaze, or icon) away
+    entirely, which is a worse outcome than ignoring the hint — and it is not what the
+    mood and gesture hints do."""
+    good = staged("Tell me about your day.", turn_key="hint")
+    hinted = staged("Tell me about your day.", turn_key="hint", **{slot: bad})
+    assert hinted == good, f"a bad {slot} hint changed the performance"
+    assert not hinted.dropped
 
 
 def test_the_line_always_comes_back_to_rest():
@@ -511,6 +604,55 @@ def test_an_apps_own_scoring_wins_over_the_seams():
     assert out["mood_intensity"] == 2
 
 
+def test_a_declined_plan_does_not_cost_the_app_its_own_scoring(monkeypatch):
+    """M28b: when the planner declines (or fails), the seam has nothing to score with —
+    and the app's own `Reply.mood`/`dialog_act` are then the ONLY scored output there is.
+    Degrading to the floor must not also degrade the wire."""
+    from helpers_runtime import drive_once
+    from moxie_sdk.types import Reply
+    monkeypatch.setattr(perf, "plan", lambda *a, **kw: None)
+
+    class Opinionated:
+        name = "opinionated"
+
+        def respond(self, turn):
+            return Reply(text="The sky is blue today.", mood="surprised",
+                         dialog_act="opinion", emotion="surprise", signal="interest",
+                         mood_intensity=2)
+
+    out = drive_once(Opinionated(), "hi")["output"]
+    assert out["mood"] == "surprised"
+    assert out["dialog_act"] == "opinion"
+    assert out["emotion"] == "surprise"
+    assert out["signals"] == ["interest"]
+    assert out["mood_intensity"] == 2
+
+
+def test_an_apps_invented_scoring_never_reaches_the_wire():
+    """M28's line, and a real hole this check found: an app's own scored fields used to be
+    overlaid onto `RemoteChatOutput` *without* passing the catalog, so a brain could have
+    authorized `dialog_act: "smalltalk"` simply by setting the field. An app is a brain by
+    another name and takes the same positive list."""
+    from helpers_runtime import drive_once
+    from moxie_sdk.types import Reply
+
+    class Inventive:
+        name = "inventive"
+
+        def respond(self, turn):
+            return Reply(text="The sky is blue today.", mood="ecstatic",
+                         dialog_act="smalltalk", emotion="curious",
+                         signal="agreement", mood_intensity=9)
+
+    out = drive_once(Inventive(), "hi")["output"]
+    assert out.get("dialog_act") in vocab.DIALOG_ACTS
+    assert out["dialog_act"] != "smalltalk"
+    assert out.get("mood") in vocab.MOODS
+    assert out.get("emotion") in vocab.EMOTION_STATES
+    assert all(s in vocab.SIGNALS for s in out.get("signals") or [])
+    assert 0 <= out.get("mood_intensity", 0) <= vocab.MAX_INTENSITY
+
+
 def test_an_apps_authored_markup_is_still_spoken_verbatim():
     """Scoring a line must not rewrite one that came with its own markup."""
     from helpers_runtime import drive_once
@@ -606,12 +748,23 @@ def test_an_over_budget_planner_latches_to_the_floor(monkeypatch):
     assert not seam.planner_latched()
 
 
-def test_plan_declines_rather_than_raising_on_hostile_input():
-    """`plan` is total: it answers None for anything it will not stage, so the seam's
-    fallback is reached by a return value and not only by an exception handler."""
-    for hostile in ("", "   ", "\n", "<mark/>", "a" * (perf.MAX_PLAN_CHARS + 1),
-                    "...", "!!!"):
-        assert perf.plan(hostile) is None or perf.plan(hostile).beats
+@pytest.mark.parametrize("hostile", ["", "   ", "\n", "<mark/>", "a>b",
+                                    "a" * (perf.MAX_PLAN_CHARS + 1)])
+def test_plan_declines_rather_than_raising(hostile):
+    """`plan` is total: it answers **None** for anything it will not stage, so the seam's
+    fallback is reached by a return value and not only by an exception handler. The
+    length guard is the one that matters on the hot path — an unbounded line is unbounded
+    work between the first token and the first audio."""
+    assert perf.plan(hostile) is None
+
+
+@pytest.mark.parametrize("odd", ["...", "!!!", "?", "—", "3.14", "ok"])
+def test_plan_still_stages_a_short_or_odd_line(odd):
+    """…and the other direction: `plan` must not decline everything unusual, or the
+    fallback test above would pass on a planner that never plans at all."""
+    p = perf.validate(perf.plan(odd))
+    assert p is not None and p.beats
+    assert strip_markup(perf.render(p)) == strip_markup(odd)
 
 
 # =====================================================================================
@@ -805,6 +958,29 @@ def test_preview_refuses_an_unknown_device_and_an_empty_line():
     assert rt.preview("d_nope", "hi")["error"].startswith("unknown device_id")
     assert rt.preview(device_id, "   ")["error"] == "empty line"
     assert not rt.client.published
+
+
+def test_preview_refuses_a_robot_that_is_still_pending(tmp_path):
+    """A rehearsal is still speech reaching a robot, so it takes the device allowlist like
+    every other cloud→robot command. A pending robot is one nobody has let in yet."""
+    from helpers_runtime import make_runtime
+    from moxie_sdk.store import JsonStore
+
+    class Never:
+        name = "never"
+
+        def respond(self, turn):                     # pragma: no cover
+            raise AssertionError
+
+    rt, device_id = make_runtime(Never(), allow_unverified_bots=False,
+                                 store=JsonStore(str(tmp_path)))
+    out = rt.preview(device_id, "Hello there!")
+    assert out["ok"] is False and out["error"] == "robot is pending"
+    assert not rt.client.published
+    # …and once it is permitted, the same call goes through — or the refusal above would
+    # be indistinguishable from a preview that never works.
+    rt.set_permit(device_id, permitted=True)
+    assert rt.preview(device_id, "Hello there!")["ok"] is True
 
 
 def test_preview_is_gated_by_the_same_safety_classifier():

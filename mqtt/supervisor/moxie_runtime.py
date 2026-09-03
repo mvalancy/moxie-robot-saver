@@ -2307,10 +2307,13 @@ class MoxieRuntime:
         # A filler already went out → this is chunk 1 and it ends the sequence. No
         # filler → the single-chunk reply we have always sent, unchanged on the wire.
         chunk = 1 if filler is not None else None
+        # `scored` already carries the app's own mood/dialog_act — validated, because
+        # `_stage` puts them through the same catalog every other id goes through. Passing
+        # the raw `reply.mood`/`reply.dialog_act` here as well would let an app's invented
+        # act win over that check inside `_publish_chat` (mutation M28's other half).
         self._publish_chat(device_id, event_id, "router", reply.text, markup,
                            actions=reply.actions, end_turn=reply.end_turn,
-                           result=reply.result_code, mood=reply.mood,
-                           dialog_act=reply.dialog_act, chunk_num=chunk,
+                           result=reply.result_code, chunk_num=chunk,
                            is_completed=None if chunk is None else True,
                            scored=scored)
         self._maybe_synthesize(device_id, markup, event_id, chunk_num=chunk or 0)
@@ -2500,12 +2503,20 @@ class MoxieRuntime:
             hints.setdefault("intensity", obj.mood_intensity)
         staged = perform(text, turn_key=turn_key, chunk_index=chunk_index, **hints)
         scored = dict(staged.scored)
-        for key in ("mood", "dialog_act", "emotion", "signal"):
+        # The app's own values win — but they take the SAME positive list every other id
+        # takes. An app is a brain by another name, and a brain may suggest, it may never
+        # authorize: a `dialog_act` that is not one of the recovered 22 is dropped here
+        # rather than forwarded onto `RemoteChatOutput`. (Found by mutation M28.)
+        for key, catalog in (("mood", vocab_seam.MOODS),
+                             ("dialog_act", vocab_seam.DIALOG_ACTS),
+                             ("emotion", vocab_seam.EMOTION_STATES),
+                             ("signal", vocab_seam.SIGNALS)):
             value = getattr(obj, key, None)
-            if value:
+            if value and value in catalog:
                 scored[key] = value
-        if getattr(obj, "mood_intensity", 0):
-            scored["mood_intensity"] = obj.mood_intensity
+        strength = getattr(obj, "mood_intensity", 0)
+        if strength and 0 < int(strength) <= vocab_seam.MAX_INTENSITY:
+            scored["mood_intensity"] = int(strength)
         if obj is not None and getattr(obj, "performance", None) is None:
             try:                      # diagnostics + the preview panel; never the wire
                 object.__setattr__(obj, "performance", staged.performance)

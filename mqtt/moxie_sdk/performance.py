@@ -498,7 +498,7 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
     tree = profile.tree
     gaze = None if tree else (profile.gaze or None)
     look = ctx.get("look")
-    if look:
+    if look and str(look) in vocab.GAZE_TREES:
         gaze, tree = (str(look), None)       # an explicit look overrides both
 
     # ---- icons / sfx: gated off, exactly as in the floor -------------------- #
@@ -510,7 +510,7 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
     # confirmed sounds is a music bed for a cast segment (see `vocab.ICON_VALUES` /
     # `vocab.SFX_IDS` for the honest reasons).
     icon = None
-    if isinstance(ctx.get("icon"), str) and ctx["icon"]:
+    if isinstance(ctx.get("icon"), str) and ctx["icon"] in vocab.ICON_SET:
         icon = ctx["icon"]
     elif ctx.get("icons"):
         for pattern, value in _ICON_CUES:
@@ -518,7 +518,7 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
                 icon = value
                 break
     sfx = None
-    if isinstance(ctx.get("sfx"), str) and ctx["sfx"]:
+    if isinstance(ctx.get("sfx"), str) and ctx["sfx"] in vocab.SFX_SET:
         sfx = ctx["sfx"]
     elif ctx.get("sfx") and act == "appreciation" and mood == vocab.MOODS["happy"]:
         sfx = vocab.SFX_STINGER
@@ -620,11 +620,17 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
 
     if not beats:
         return None
+    # A hint is taken only when it is IN the catalog; an unrecognized one falls through
+    # to the rules rather than blanking the field. Leaving the bad value in for `validate`
+    # to drop would cost the line its emotion/signal entirely — a suggestion nobody can
+    # honor should cost nothing, which is the same shape as the mood and gesture hints.
+    emotion = str(ctx.get("emotion") or "")
+    signal = str(ctx.get("signal") or "")
     return Performance(
         beats=tuple(beats), dialog_act=act,
-        emotion=(str(ctx["emotion"]) if ctx.get("emotion")
+        emotion=(emotion if emotion in vocab.EMOTION_STATES
                  else _EMOTION_BY_MOOD.get(mood, "neutral")),
-        signal=(str(ctx["signal"]) if ctx.get("signal") else profile.signal),
+        signal=(signal if signal in vocab.SIGNALS else profile.signal),
         mood=mood, mood_intensity=strength,
     )
 
@@ -673,7 +679,10 @@ def validate(p: Optional[Performance], *, strict: bool = False) -> Optional[Perf
     beats: List[Beat] = []
     for b in p.beats:
         mood = b.mood
-        if mood is not None and mood not in vocab.MOOD_IDS:
+        # `bool` is an `int` in Python, so `True` would pass the membership test, render
+        # as mood 1 and then SERIALIZE as `true` in a golden — two representations of one
+        # face. Refuse it at the gate rather than let the two drift.
+        if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):
             _drop(bad, f"mood={mood}")
             mood = None
         try:
@@ -708,7 +717,7 @@ def validate(p: Optional[Performance], *, strict: bool = False) -> Optional[Perf
             break_after=brk,
         ))
     mood = p.mood
-    if mood is not None and mood not in vocab.MOOD_IDS:
+    if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):
         _drop(bad, f"mood={mood}")
         mood = None
     out = Performance(
