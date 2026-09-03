@@ -339,6 +339,22 @@ def test_an_unknown_moxie_app_now_exits_naming_the_four_real_brains(monkeypatch)
         assert name in str(exc.value)
 
 
+def test_building_a_brain_by_name_refuses_one_that_is_not_in_the_registry(monkeypatch):
+    """`build_brain` is the seam the *runtime* builds through (`BrainEngines.build`, on
+    the first turn of a child whose layer names another brain), so the refusal lives
+    there too rather than being trusted to the caller. Without this the check is only
+    ever exercised through `default_brain`, and deleting it changes nothing."""
+    monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
+    monkeypatch.delenv("MOXIE_APP", raising=False)
+    import config as _c
+    c = importlib.reload(_c)
+    with pytest.raises(SystemExit) as exc:
+        c.build_brain("gpt5")
+    for name in EXPECTED:
+        assert name in str(exc.value)
+    assert c.build_brain("Echo").name == "echo", "…while a known name is still normalised"
+
+
 def test_an_explicit_moxie_app_pins_and_an_unset_one_does_not(monkeypatch):
     """`config.brain_pin()` reads the RAW variable, which is the whole point: `MOXIE_APP`
     resolved is `llm` on a box where nobody said anything."""

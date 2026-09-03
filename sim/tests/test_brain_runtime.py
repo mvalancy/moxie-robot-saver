@@ -218,21 +218,21 @@ def test_a_turn_already_in_flight_finishes_with_the_brain_it_started_with(tmp_pa
 
 
 def test_the_brain_is_resolved_once_per_turn_not_once_per_lookup(tmp_path):
-    """A turn that consulted the layers twice could straddle a swap. Asserted through the
-    store rather than by counting calls: the layers change *between* the two reads a turn
-    would make, and the answer still comes out whole."""
+    """A turn that consulted the layers twice could straddle a swap, and the window is
+    real rather than theoretical: `respond_stream` is asked first, and a parent's Save can
+    land between that question and `respond`. So the swap is performed from INSIDE that
+    window, and the answer must still come from the brain the turn started with."""
     rt, _ = _runtime(tmp_path, default="echo")
-    seen = []
 
-    class _Watching(_Brain):
-        def respond(self, turn):
-            rt.update_config("d_one", brain="webhook")     # change the layers mid-turn
-            seen.append(rt.brain_for("d_one")["brain"])
-            return super().respond(turn)
+    class _Switching(_Brain):
+        def respond_stream(self, turn):
+            rt.update_config("d_one", brain="webhook")   # ← the swap, mid-turn
+            return None                                  # …and this brain does not stream
 
-    rt.app = rt._brains["echo"] = _Watching("echo")
+    rt.app = rt._brains["echo"] = _Switching("echo")
     assert drive_turn(rt, "d_one", "hi")["output"]["text"].startswith("echo heard")
-    assert seen == ["webhook"], "the layers really did change during the turn"
+    assert rt.brain_for("d_one")["brain"] == "webhook", \
+        "the layers really did change during the turn"
 
 
 # --------------------------------------------------------------------- the pin --
