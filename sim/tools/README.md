@@ -63,17 +63,17 @@
   is what a plausible patch actually looks like. All 35 are caught; the run that got there found
   **five** holes, four of them the same disease: two guards each covering for the other's absence, so
   neither was individually load-bearing. Run it after touching either file.
-- **`hardening_p1_mutation_check.py`** — the same proof for production hardening **P1**: **64
+- **`hardening_p1_mutation_check.py`** — the same proof for production hardening **P1**: **66
   mutations** across `moxie_sdk/roster.py`, `moxie_sdk/conn_telemetry.py`, `store.py::_append_path`, the
   connection/shutdown/onboarding regions of `supervisor/moxie_runtime.py` and the console's connection
   normalizer. Several are deliberately *plausible patches rather than deletions*, because that is what a
   regression looks like in review — the roster resume marking rostered robots as **connected** (a status
   field reporting a belief instead of an observation), `gap_since` returning `0.0` instead of `None` for a
   first connect, the shutdown row written *after* `disconnect()`, and `_stopping` hard-wired True, which
-  passes *"a clean stop is not an outage"* while silently erasing every real outage. Three of them found
-  real holes on the first run: a test that asserted the roster's key negative property about **a code
+  passes *"a clean stop is not an outage"* while silently erasing every real outage. Four of them found
+  real holes: a test that asserted the roster's key negative property about **a code
   path it never called**, a missing-lock mutation no single-writer test could ever see, and
-  `JsonStore.append` ignoring its own write's return code. One benign finding worth keeping: a property
+  `JsonStore.append` ignoring its own write's return code — plus an `OverflowError` in the lock backoff that had been reported as a *flake* (`2 ** attempt` past 1024). One benign finding worth keeping: a property
   guarded **twice**, where neither guard is individually load-bearing — so the mutation had to remove both
   at once. The checker also reports a `-k` selector that matched **no test** as a NO-OP, because a renamed
   test is how a mutation table rots into reporting "caught" forever.
