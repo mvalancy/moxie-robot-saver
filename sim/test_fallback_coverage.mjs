@@ -113,17 +113,40 @@ for (const [group, entries] of Object.entries(manifest)) {
 }
 
 /* --------------------------------------------------------------------------- *
- * 2. Every Moxie line in every recorded session has a clip
+ * 2. Every line in every recorded session has a clip — BOTH speakers
+ *
+ * This section used to read the Moxie half only, and that omission was the bug: the two
+ * child clips shipped, the manifest listed them, nothing in the page ever asked for them,
+ * and no test noticed that half of the shipped conversation was silent. A child line is
+ * now inventoried like a Moxie line, but with a STRICTER rule — see `strict` below.
  * --------------------------------------------------------------------------- */
 const sessionsDir = join(web, "sessions");
 const sessionFiles = readdirSync(sessionsDir).filter((f) => f.endsWith(".json"));
 ok(sessionFiles.length > 0, "there must be at least one recorded session");
 
+/* A child utterance rides `/events/remote-chat`. Not every one is a child SPEAKING: a
+ * perception event uses the same `speech` slot (`bridge.js::notePresence`) and is Moxie's
+ * eye, not a voice, and a `notify` turn is the robot echoing itself. Both are skipped by
+ * the handler and must be skipped here too, or the inventory would demand clips for lines
+ * nobody can ever hear. */
+const PERCEPTION = /^(eb-)?(found|lost)[-_]?(face|target|person)?$/i;
+const childSpeech = (msg) => {
+  if (!msg || msg.command === "notify") return "";
+  let speech = msg.speech || "";
+  for (const ln of msg.extra_lines || [])
+    if (ln.context_type === "input" && ln.text) speech = ln.text;
+  speech = String(speech).trim();
+  return PERCEPTION.test(speech) ? "" : speech;
+};
+
 const sessionLines = [];
+const childSessionLines = [];
+const sessions = [];
 for (const file of sessionFiles) {
   const events = JSON.parse(readFileSync(join(sessionsDir, file), "utf8"));
   ok(Array.isArray(events), `${file} must be an array of {t, topic, payload} events`);
   if (!Array.isArray(events)) continue;
+  sessions.push({ file, events });
 
   for (const [i, ev] of events.entries()) {
     ok(ev && typeof ev === "object", `${file}[${i}] must be an object`);
@@ -132,6 +155,15 @@ for (const file of sessionFiles) {
     // payload that is not a STRING would silently render nothing (`bridge.js`:599-610).
     eq(typeof ev.payload, "string", `${file}[${i}] payload must be a STRING (route() parses it)`);
     ok(Number.isFinite(Number(ev.t)), `${file}[${i}] must carry a numeric t`);
+
+    if (ev.topic.endsWith("/events/remote-chat")) {
+      let msg = null;
+      try { msg = JSON.parse(ev.payload); } catch {}
+      ok(msg !== null, `${file}[${i}] remote-chat payload must be valid JSON`);
+      const text = childSpeech(msg);
+      if (text) childSessionLines.push({ text, where: `${file}[${i}]`, t: Number(ev.t), i });
+      continue;
+    }
 
     if (!ev.topic.endsWith("/commands/remote_chat")) continue;
     let msg = null;
@@ -142,6 +174,49 @@ for (const file of sessionFiles) {
   }
 }
 ok(sessionLines.length > 0, "the sessions must contain at least one spoken Moxie line");
+ok(childSessionLines.length > 0,
+   "the sessions must contain at least one CHILD line — a demo conversation with only one " +
+   "voice in it is the thing this section exists to stop shipping again");
+
+/* --------------------------------------------------------------------------- *
+ * 2b. The script leaves the child room to FINISH her line
+ *
+ * `audio.js::speak` calls `stop()` before Moxie says anything, so the moment Moxie's turn
+ * lands the child's clip is cut dead — deliberately (the robot is never talked over by a
+ * prop) but destructively if the script does not allow for it. The shipped session was
+ * timed when the child was silent: her first clip runs ~2.6 s from t=300 and Moxie
+ * answered at t=1800, so giving her a voice would have shipped "…it's my birthd—".
+ *
+ * Duration is estimated from FILE SIZE rather than decoded, so this guard needs no codec
+ * and no ffprobe. `prerender_audio.py` writes mono ~64 kbit MP3 (the shipped clips measure
+ * 8.10-8.20 kB/s); dividing by 8000 rounds the estimate UP, which is the safe direction
+ * for a "leaves room" assertion.
+ * --------------------------------------------------------------------------- */
+const MP3_BYTES_PER_SEC = 8000;
+// Only these topics make MOXIE speak, and only speaking calls stop(). A config frame or
+// another child line does not cut her off.
+const MOXIE_SPEAKS = ["/commands/remote_chat", "/commands/tts", "/commands/telehealth"];
+{
+  let checked = 0;
+  for (const { file, events } of sessions) {
+    for (const ln of childSessionLines.filter((c) => c.where.startsWith(file + "["))) {
+      const rel = (manifest.child || {})[ln.text];
+      if (!rel || !existsSync(join(audioDir, rel))) continue;   // silent line: nothing to cut
+      const needMs = (statSync(join(audioDir, rel)).size / MP3_BYTES_PER_SEC) * 1000;
+      const next = events.find((e, j) => j > ln.i && Number(e.t) > ln.t &&
+                                         MOXIE_SPEAKS.some((t) => String(e.topic).endsWith(t)));
+      if (!next) continue;                    // nothing follows: she finishes in peace
+      const gapMs = Number(next.t) - ln.t;
+      checked++;
+      ok(gapMs >= needMs,
+         `${ln.where}: Moxie speaks ${Math.round(gapMs)} ms after the child starts, but the child's ` +
+         `clip needs about ${Math.round(needMs)} ms — speak() calls stop(), so the shipped demo would ` +
+         `cut her off mid-word on ${JSON.stringify(ln.text.slice(0, 40))}. Move the reply later.`);
+    }
+  }
+  ok(checked > 0, "no scripted child line was timing-checked — the extractor above stopped finding them");
+  notes.push(`session timing: ${checked} scripted child line(s) have room to finish before Moxie answers`);
+}
 
 /* --------------------------------------------------------------------------- *
  * 3. §6.1 — the fallback's parts are all present and wired
@@ -249,29 +324,39 @@ ok(Array.isArray(ambient.lines) && ambient.lines.length > 0, "ambient.json must 
  * `group` is the manifest group `audio.js::playClip(text, who)` looks in first. `playClip`
  * falls back moxie -> child, but never to `ambient`, so an ambient line in the wrong group
  * really is silent.
+ *
+ * `strict: true` means NO group fallthrough is acceptable for that line. The child's lines
+ * are strict, because `audio.js::speakClipOnly` looks in the `child` group and nowhere
+ * else: a child line found in the `moxie` group would be Moxie's voice saying the child's
+ * words, which is not "covered", it is wrong.
  * --------------------------------------------------------------------------- */
 const inventory = [];
 for (const t of stubReplies()) inventory.push({ text: t, group: "moxie", source: "stub.js reply" });
 for (const t of filler.texts) inventory.push({ text: t, group: "moxie", source: "filler.py thinking line" });
 for (const ln of ambient.lines) inventory.push({ text: (ln.text || "").trim(), group: "ambient", source: "ambient.json quip" });
 for (const s of sessionLines) inventory.push({ text: s.text, group: "moxie", source: `session ${s.where}` });
+for (const s of childSessionLines)
+  inventory.push({ text: s.text, group: "child", strict: true, source: `session-child ${s.where}` });
 if (ambient.degraded) {
   inventory.push({ text: (ambient.degraded.text || "").trim(), group: "moxie", source: "ambient.json degraded line" });
 }
 
 const counts = { "stub.js reply": 0, "filler.py thinking line": 0, "ambient.json quip": 0,
-                 "ambient.json degraded line": 0, session: 0 };
+                 "ambient.json degraded line": 0, session: 0, "session-child": 0 };
 const uncovered = [];
 for (const item of inventory) {
-  const key = item.source.startsWith("session") ? "session" : item.source;
+  const key = item.source.startsWith("session-child") ? "session-child"
+            : item.source.startsWith("session") ? "session" : item.source;
   counts[key] = (counts[key] || 0) + 1;
   ok(item.text.length > 0, `an inventory entry from ${item.source} has no text`);
-  const rel = (manifest[item.group] || {})[item.text] ||
-              (item.group !== "ambient" ? (manifest.moxie || {})[item.text] || (manifest.child || {})[item.text] : null);
+  const rel = item.strict
+    ? (manifest[item.group] || {})[item.text]
+    : (manifest[item.group] || {})[item.text] ||
+      (item.group !== "ambient" ? (manifest.moxie || {})[item.text] || (manifest.child || {})[item.text] : null);
   ok(!!rel,
      `NO PRE-CACHED CLIP for a line the degraded page can say (${item.source}): ` +
      `${JSON.stringify(item.text.slice(0, 60))} — run sim/tools/prerender_audio.py, or the visitor hears a ` +
-     `browser voice mid-conversation`);
+     `browser voice mid-conversation${item.strict ? " (or, for a child line, nothing at all)" : ""}`);
   if (!rel) { uncovered.push(item); continue; }
   ok(existsSync(join(audioDir, rel)), `${item.source}: clip file missing on disk: ${rel}`);
 }
@@ -541,6 +626,328 @@ async function probeFired(modeState, opts = {}) {
 }
 
 /* --------------------------------------------------------------------------- *
+ * 8b. The CHILD's voice — clip, or nothing, driven for real
+ *
+ * The child's two lines in `sessions/demo.json` were mute for the whole life of this
+ * repo: `bridge.js::handleUserTurn` wrote the transcript row and stopped, and nothing
+ * anywhere passed `who === "child"` to `audio.js`. Half of the shipped demo conversation
+ * had no sound in it.
+ *
+ * Making it audible is not "call speak()". The SAME handler carries whatever a visitor
+ * typed into the Talk box or said into the microphone, and `speak()` guarantees sound —
+ * clip -> Piper -> the browser voice — so it would read a visitor's own sentence back at
+ * them in a stranger's voice, and on the mic path talk over them. `speakClipOnly` is the
+ * entry point with no route to a synthesizer at all.
+ *
+ * §8 above proved the Piper probe by watching the wire; this proves the child's voice the
+ * same way — the REAL `audio.js` under a stubbed window, asserting which URLs were
+ * fetched, which buffers were STARTED and STOPPED, whether the mouth moved and whether
+ * anything reached speechSynthesis. Not a grep for a function name.
+ * --------------------------------------------------------------------------- */
+
+/** Boot the real audio.js against a fake Web Audio stack and report what it did. */
+async function voiceRig(run, manifestOverride) {
+  const g = globalThis;
+  const savedKeys = ["window", "document", "localStorage", "location", "fetch", "CustomEvent",
+                     "requestAnimationFrame", "cancelAnimationFrame", "AudioContext",
+                     "SpeechSynthesisUtterance"];
+  const saved = Object.fromEntries(savedKeys.map((k) => [k, g[k]]));
+
+  const log = { urls: [], started: [], stopped: [], mouth: [], synthesized: [] };
+  // Each URL gets its own byteLength, so a decoded buffer can be traced back to the file
+  // it came from without assuming anything about call ordering.
+  const byLen = new Map();
+  let nextLen = 64;
+  const bufFor = (url) => {
+    if (![...byLen.entries()].some(([, u]) => u === url)) { byLen.set((nextLen += 8), url); }
+    const len = [...byLen.entries()].find(([, u]) => u === url)[0];
+    return new ArrayBuffer(len);
+  };
+
+  class Src {
+    constructor() { this.onended = null; this.buffer = null; }
+    connect() {}
+    start() { log.started.push((this.buffer && this.buffer.url) || "?"); }
+    stop() { log.stopped.push((this.buffer && this.buffer.url) || "?"); }
+  }
+  class Ctx {
+    constructor() { this.state = "running"; this.currentTime = 0; this.destination = {}; }
+    resume() {}
+    createBufferSource() { return new Src(); }
+    createAnalyser() {
+      return { fftSize: 256, frequencyBinCount: 8, connect() {}, getByteTimeDomainData() {} };
+    }
+    decodeAudioData(buf) { return Promise.resolve({ url: byLen.get(buf.byteLength) || "?" }); }
+    createOscillator() {
+      return { type: "", frequency: { setValueAtTime() {} }, connect() {}, start() {}, stop() {} };
+    }
+    createGain() {
+      return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} };
+    }
+  }
+
+  // Never actually re-enters: `pump()` is called once and its next frame is dropped, so a
+  // clip that DOES drive the mouth records exactly one sample and a clip that does not
+  // records none. That is the whole assertion for `opts.mouth:false`.
+  g.requestAnimationFrame = () => 0;
+  g.cancelAnimationFrame = () => {};
+  g.CustomEvent = class { constructor(t, i) { this.type = t; this.detail = i && i.detail; } };
+  g.AudioContext = Ctx;
+  g.SpeechSynthesisUtterance = class { constructor(t) { this.text = t; } };
+  g.window = {
+    addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true,
+    AudioContext: Ctx,
+    moxie: { setMouthOpen: (v) => log.mouth.push(v) },
+    /* Records the utterance and stops there. `u.onstart()` is deliberately NOT fired:
+     * `speakBrowser` starts a `setInterval` there to wobble the mouth, and this rig tears
+     * its globals down synchronously — a timer surviving that fires against a `window`
+     * that no longer exists and crashes the whole run several tests later. */
+    speechSynthesis: { cancel() {}, getVoices: () => [], speak: (u) => log.synthesized.push(u.text) },
+  };
+  g.document = { getElementById: () => null, body: { classList: { toggle() {} } } };
+  g.localStorage = { getItem: () => null, setItem() {} };
+  g.location = { protocol: "https:", hostname: "moxie.example" };
+  g.fetch = (url) => {
+    url = String(url);
+    log.urls.push(url);
+    if (url.endsWith("audio/index.json"))
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(manifestOverride || RIG_MANIFEST) });
+    if (url.startsWith("audio/"))
+      return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(bufFor(url)) });
+    return Promise.reject(new Error("nothing is listening"));   // :8081 and anything else
+  };
+
+  new Function(audioSrc)();
+  try { await run(g.window.moxieAudio, log); }
+  finally { for (const k of savedKeys) g[k] = saved[k]; }
+  return log;
+}
+
+// A miniature manifest with one line per interesting case.
+const RIG_MANIFEST = {
+  moxie: { "Happy birthday!": "moxie/m1.mp3", "Only Moxie has this one.": "moxie/m2.mp3" },
+  child: { "Guess what, it's my birthday today!": "child/c1.mp3", "Thank you Moxie!": "child/c2.mp3" },
+  ambient: {},
+};
+const C1 = "audio/child/c1.mp3", C2 = "audio/child/c2.mp3", M1 = "audio/moxie/m1.mp3";
+const probed = (log) => log.urls.some((u) => u.includes(":8081"));
+
+{
+  // (a) a scripted child line PLAYS — from the child group, and from nothing else.
+  await voiceRig(async (audio, log) => {
+    const ok1 = await audio.speakClipOnly("Guess what, it's my birthday today!", "child");
+    eq(ok1, true, "a scripted child line with a clip must actually play — this is the whole feature");
+    ok(log.started.includes(C1),
+       `…from the child clip; started ${JSON.stringify(log.started)}`);
+    eq(log.mouth.length, 0,
+       "the child's clip must NOT drive Moxie's mouth — a robot lip-syncing the child's words " +
+       "is a visibly broken toy (playUrl opts.mouth:false)");
+    eq(log.synthesized.length, 0, "a child line must never reach speechSynthesis");
+    eq(probed(log), false, "a child line must never probe the Piper sidecar");
+  });
+
+  // (b) NO clip -> silence. Not Piper, not the browser voice, not a tone. This is the trap
+  //     the whole design exists for: a visitor's own words come through this same call.
+  await voiceRig(async (audio, log) => {
+    const said = await audio.speakClipOnly("is my mum going to be ok", "child");
+    eq(said, false, "a child line with no clip must report that it made no sound");
+    eq(log.started.length, 0, "…and must start no audio at all");
+    eq(log.synthesized.length, 0,
+       "a child line with no clip must NEVER be synthesized — that reads the visitor's own " +
+       "sentence back at them in a stranger's voice, which is worse than the silence we started with");
+    eq(probed(log), false,
+       "…and must not even ask Piper: there is no fallback chain out of speakClipOnly, by construction");
+  });
+
+  // (c) the SAME text through `speak()` DOES make sound. Without this, (b) could pass on a
+  //     rig where nothing can make sound at all, and would prove nothing.
+  await voiceRig(async (audio, log) => {
+    await audio.speak("is my mum going to be ok");
+    ok(log.synthesized.length > 0 || probed(log),
+       "control: speak() must still fall through to a synthesizer for an uncached line — " +
+       "otherwise the no-fallback assertions above are vacuous");
+  });
+
+  // (d) strict group. A text cached only in the `moxie` group is NOT the child's voice.
+  //     `playClip` deliberately falls through moxie -> child; `speakClipOnly` must not.
+  await voiceRig(async (audio, log) => {
+    const said = await audio.speakClipOnly("Only Moxie has this one.", "child");
+    eq(said, false,
+       "speakClipOnly must look in the named group and NOWHERE else — falling through to " +
+       "`moxie` would answer a child line with a clip of Moxie's voice saying the child's words");
+    eq(log.started.length, 0, "…and start nothing");
+  });
+
+  // (e) ORDERING, half one: the child never cuts Moxie off. A visitor typing while Moxie
+  //     answers must not be able to silence her.
+  await voiceRig(async (audio, log) => {
+    await audio.speak("Happy birthday!");
+    eq(log.started.length, 1, "precondition: Moxie's clip is playing");
+    const said = await audio.speakClipOnly("Thank you Moxie!", "child");
+    eq(said, false, "a child line must not start while Moxie is speaking");
+    eq(log.stopped.length, 0,
+       "…and must not stop her: the robot is the subject of the page and is never talked over by a prop");
+    eq(log.started.length, 1, "…so no second source was started");
+  });
+
+  // (f) ORDERING, half two: Moxie DOES cut the child. `speak()` calls `stop()` first, and
+  //     that stays true — it is why §2b has to time the shipped session.
+  await voiceRig(async (audio, log) => {
+    await audio.speakClipOnly("Guess what, it's my birthday today!", "child");
+    eq(log.started.length, 1, "precondition: the child's clip is playing");
+    await audio.speak("Happy birthday!");
+    ok(log.stopped.includes(C1),
+       `Moxie starting to speak must stop the child's clip; stopped ${JSON.stringify(log.stopped)}`);
+    ok(log.started.includes(M1), "…and Moxie's own clip must play");
+  });
+
+  // (g) a newer child line replaces an older one rather than layering over it.
+  await voiceRig(async (audio, log) => {
+    await audio.speakClipOnly("Guess what, it's my birthday today!", "child");
+    await audio.speakClipOnly("Thank you Moxie!", "child");
+    ok(log.stopped.includes(C1), `the older child clip must be stopped; got ${JSON.stringify(log.stopped)}`);
+    ok(log.started.includes(C2), `…and the newer one started; got ${JSON.stringify(log.started)}`);
+  });
+
+  // (h) structural, not conditional: there is no synthesizer reachable from the function.
+  //     A future `speakClipOnly` that grew a `speakBrowser`/`speakLive` call — or that was
+  //     quietly re-pointed at `speak()` — is exactly the loosening the separate entry point
+  //     exists to prevent, and the behavioural cases above only catch it for lines the rig
+  //     happens to try.
+  const body = audioSrc.slice(audioSrc.indexOf("function speakClipOnly"));
+  const fnEnd = body.indexOf("\n  }\n");
+  const clipOnlyBody = fnEnd === -1 ? body : body.slice(0, fnEnd);
+  ok(clipOnlyBody.length > 0, "speakClipOnly must exist in audio.js");
+  for (const forbidden of ["speakBrowser", "speakLive", "speechSynthesis", "sfx(", "speak("])
+    ok(!clipOnlyBody.includes(forbidden),
+       `speakClipOnly's body must not mention ${forbidden} — the no-fallback guarantee is meant to be ` +
+       `a property of WHICH FUNCTION you called, not a condition someone can loosen`);
+  ok(/window\.moxieAudio\s*=\s*\{[\s\S]{0,400}speakClipOnly/.test(audioSrc),
+     "speakClipOnly must be exported on window.moxieAudio — bridge.js calls it by name");
+
+  // (i) …and the caller really is `handleUserTurn`, with the child group named.
+  const bridgeSrc = readFileSync(join(web, "bridge.js"), "utf8");
+  const turn = bridgeSrc.slice(bridgeSrc.indexOf("function handleUserTurn"));
+  const turnBody = turn.slice(0, turn.indexOf("\n  }\n"));
+  ok(/speakClipOnly\(\s*speech\s*,\s*"child"\s*\)/.test(turnBody),
+     "bridge.js::handleUserTurn must speak the child's line through speakClipOnly(speech, \"child\")");
+  ok(!/moxieAudio\.speak\(/.test(turnBody),
+     "handleUserTurn must NEVER call speak() — that is the path that synthesizes a visitor's own words");
+
+  notes.push("child voice: clip-only — scripted lines play from the `child` group, uncached lines " +
+             "(a visitor's own words) make no sound at all; child yields, Moxie interrupts");
+}
+
+/* --------------------------------------------------------------------------- *
+ * 8c. End to end, on the REAL assets
+ *
+ * §8b proves the rule against a hand-written manifest; §2 proves the shipped strings
+ * against the shipped manifest. Neither one proves they meet. This boots the REAL
+ * `bridge.js` AND the REAL `audio.js` together against the REAL `audio/index.json`,
+ * `audio/child/*.mp3` and `sessions/demo.json`, routes the demo's own child events through
+ * `route()` exactly as `replay()` does, and asserts the actual MP3 the site ships is the
+ * URL that goes out — so a renamed clip, a re-punctuated line or a manifest rewrite is
+ * caught by the same test that proves the mechanism.
+ * --------------------------------------------------------------------------- */
+{
+  const g = globalThis;
+  const savedKeys = ["window", "document", "localStorage", "location", "fetch", "CustomEvent",
+                     "requestAnimationFrame", "cancelAnimationFrame", "AudioContext",
+                     "SpeechSynthesisUtterance", "mqtt"];
+  const saved = Object.fromEntries(savedKeys.map((k) => [k, g[k]]));
+  const urls = [], started = [], mouth = [], synthesized = [];
+  const byLen = new Map();
+
+  class Src {
+    constructor() { this.onended = null; this.buffer = null; }
+    connect() {} start() { started.push((this.buffer && this.buffer.url) || "?"); } stop() {}
+  }
+  class Ctx {
+    constructor() { this.state = "running"; this.currentTime = 0; this.destination = {}; }
+    resume() {}
+    createBufferSource() { return new Src(); }
+    createAnalyser() { return { fftSize: 256, frequencyBinCount: 8, connect() {}, getByteTimeDomainData() {} }; }
+    decodeAudioData(buf) { return Promise.resolve({ url: byLen.get(buf.byteLength) || "?" }); }
+    createOscillator() { return { type: "", frequency: { setValueAtTime() {} }, connect() {}, start() {}, stop() {} }; }
+    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
+  }
+
+  g.requestAnimationFrame = () => 0;
+  g.cancelAnimationFrame = () => {};
+  g.CustomEvent = class { constructor(t, i) { this.type = t; this.detail = i && i.detail; } };
+  g.AudioContext = Ctx;
+  g.SpeechSynthesisUtterance = class { constructor(t) { this.text = t; } };
+  const el = () => ({ value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0,
+                      scrollHeight: 0, addEventListener() {}, appendChild() {},
+                      querySelector: () => ({ set textContent(v) {} }), classList: { toggle() {} } });
+  g.document = { getElementById: () => el(), createElement: () => el(), body: el() };
+  g.localStorage = { getItem: () => null, setItem() {} };
+  g.location = { protocol: "https:", hostname: "moxie.example" };
+  g.window = {
+    addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true,
+    AudioContext: Ctx,
+    // A minimal avatar: enough for bridge.js to render, and it RECORDS every mouth call.
+    moxie: { setFace() {}, setSpeech() {}, setMotor() {}, getMotor: () => 16384, showIcons() {},
+             clearIcons() {}, setHeartLED() {}, setMouthOpen: (v) => mouth.push(v) },
+    speechSynthesis: { cancel() {}, getVoices: () => [], speak: (u) => synthesized.push(u.text) },
+  };
+  g.mqtt = { connect: () => { throw new Error("this test never goes on the bus"); } };
+  // Serves the site's real files, so the URLs asserted below are the URLs that ship.
+  g.fetch = (url) => {
+    url = String(url);
+    urls.push(url);
+    const onDisk = join(web, url);
+    if (!url.startsWith("audio/") || !existsSync(onDisk))
+      return Promise.reject(new Error("not served: " + url));
+    if (url.endsWith(".json"))
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(JSON.parse(readFileSync(onDisk, "utf8"))) });
+    const bytes = readFileSync(onDisk);
+    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    byLen.set(ab.byteLength, url);
+    return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(ab) });
+  };
+
+  new Function(audioSrc)();                                    // the real audio.js
+  new Function(readFileSync(join(web, "bridge.js"), "utf8"))(); // the real bridge.js
+  ok(!!g.window.moxieBridge, "bridge.js must expose window.moxieBridge");
+
+  // The demo's own child events, routed exactly as replay() routes them.
+  const demo = JSON.parse(readFileSync(join(sessionsDir, "demo.json"), "utf8"));
+  const childEvents = demo.filter((e) => String(e.topic).endsWith("/events/remote-chat"));
+  eq(childEvents.length, 2, "sessions/demo.json must still carry the two child turns");
+
+  for (const ev of childEvents) {
+    started.length = 0;
+    g.window.moxieBridge.route(ev.topic, ev.payload);
+    // speakClipOnly is async (manifest fetch -> clip fetch -> decode); let it settle.
+    for (let i = 0; i < 20 && started.length === 0; i++) await new Promise((r) => setImmediate(r));
+
+    const text = JSON.parse(ev.payload).speech;
+    const want = "audio/" + manifest.child[text];
+    ok(urls.includes(want),
+       `replaying ${JSON.stringify(text.slice(0, 30))} must fetch the shipped clip ${want}; ` +
+       `fetched ${JSON.stringify(urls.filter((u) => u.endsWith(".mp3")))}`);
+    ok(started.includes(want), `…and actually start it; started ${JSON.stringify(started)}`);
+  }
+  eq(mouth.length, 0, "replaying the child's turns must never move Moxie's mouth");
+  eq(synthesized.length, 0, "…and must never reach speechSynthesis");
+  eq(urls.some((u) => u.includes(":8081")), false, "…and must never probe the Piper sidecar");
+
+  // The same route, with something a VISITOR could have typed: silent, end to end.
+  const before = urls.length;
+  g.window.moxieBridge.route("/devices/d_demo/events/remote-chat",
+    JSON.stringify({ command: "prompt", speech: "my hamster died last night" }));
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  eq(urls.slice(before).filter((u) => u.endsWith(".mp3")).length, 0,
+     "a visitor's own words must fetch no audio at all — this is the trap the design exists for");
+  eq(synthesized.length, 0, "…and must not be synthesized");
+
+  for (const k of savedKeys) g[k] = saved[k];
+  notes.push(`end to end: both demo.json child turns play their shipped MP3 through the real ` +
+             `bridge.js + audio.js; an unscripted line fetches nothing`);
+}
+
+/* --------------------------------------------------------------------------- *
  * 9. The renderer cannot silently drop a manifest group again
  *
  * §1 guards the artefact; this guards the tool that writes it. The merge used to name
@@ -565,7 +972,7 @@ async function probeFired(modeState, opts = {}) {
 notes.push(`inventory: ${inventory.length} utterable line(s), ALL pre-rendered — ` +
            `${counts["stub.js reply"]} stub · ${counts["filler.py thinking line"]} filler · ` +
            `${counts["ambient.json quip"]} ambient · ${counts["ambient.json degraded line"]} degraded · ` +
-           `${counts.session} session`);
+           `${counts.session} session moxie · ${counts["session-child"]} session child`);
 notes.push(`degraded line: ${JSON.stringify(degradedText)} — once on entering degraded, never repeated`);
 notes.push(`manifest: ${clipCount} clips, ${(clipBytes / 1024 / 1024).toFixed(2)} MiB on disk ` +
            `(${Object.keys(manifest.moxie || {}).length} moxie / ${Object.keys(manifest.child || {}).length} child / ` +

@@ -122,6 +122,51 @@ tests in `sim/tests/test_sil.py`.
 than dropping it, and the existing sound toggle mutes it. The backend is unaffected — this is entirely
 client-side, like the body render.
 
+### The other voice on the page: the child (2026-09-03)
+
+Everything above is Moxie's voice. The browser SIM has a **second** one, and it is governed by the
+opposite rule.
+
+The scripted session (`sim/web/sessions/demo.json`) is a *conversation*: the child asks, Moxie
+answers. Both halves arrive through `bridge.js::route` — the child's on `/events/remote-chat`, which
+`handleUserTurn` renders. Until now that handler wrote the transcript row, played a listening chirp,
+and stopped, so the demo was half-silent even though the child's two lines had been pre-rendered into
+the manifest's `child` group all along.
+
+It cannot be fixed by calling `speak()`, and the reason is a property of the wire rather than of the
+page. **`/events/remote-chat` is the child channel, and a visitor IS the child**: the Talk box and the
+microphone publish a visitor's own words on exactly that topic, through exactly that handler.
+`speak()` guarantees sound — pre-cached clip → Piper → the browser's speech synthesis — so pointing it
+at this handler would read a visitor's sentence back at them in a stranger's voice, and on the mic
+path over the top of them. Worse than the silence it replaced.
+
+So the child's voice is `audio.js::speakClipOnly(text, "child")`, and it is a **separate entry point,
+not a flag**:
+
+| | Moxie — `speak()` | the child — `speakClipOnly()` |
+|---|---|---|
+| promise | **sound always**: clip → Piper → browser voice | **a shipped clip, or nothing** |
+| manifest lookup | falls through `moxie` → `child` | the named group and nowhere else |
+| synthesizer reachable | yes, by design | **no — there is no code path to one** |
+| drives the mouth | yes (envelope or `marks[]`) | never: Moxie lip-syncing the child is a broken toy |
+| may interrupt | yes — `speak()` calls `stop()` first | never while Moxie is speaking |
+
+The guarantee is deliberately structural. A `noFallback` argument threaded through `speak()` would be
+one condition away from being loosened by someone who did not know why it was there; "which function
+did you call" cannot be loosened by editing a condition. There is no gate on *replaying* either — the
+clip check is the tighter guarantee (sound only where this site authored the child's voice for that
+exact sentence), and a replay gate would additionally mute `mic.js`'s degraded scripted-child line,
+which runs outside a replay and is exactly where the child should be heard.
+
+**Ordering is asymmetric on purpose: the child yields, Moxie interrupts.** The robot is the subject of
+the page and must never be talked over by a prop, so a visitor typing mid-answer cannot cut her off; a
+child line still playing when Moxie's turn lands is cut, and a newer child line replaces an older one.
+That last rule has a consequence for the *script*: a session whose reply lands before the child's clip
+ends ships a child cut off mid-word. `sim/test_fallback_coverage.mjs` §2b times every scripted child
+line against the next event that makes Moxie speak (durations estimated from file size, so the guard
+needs no codec), and §8b drives the real `audio.js` under a stubbed Web Audio stack to assert what was
+started, stopped, synthesized, and whether the mouth moved.
+
 ## How the SIM connects
 
 The browser subscribes MQTT-over-WebSocket to the **same topics the robot sees**, so the avatar

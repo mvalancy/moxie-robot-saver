@@ -29,10 +29,19 @@ const fakeEl = (id) => ({
   querySelector: () => ({ set textContent(v) {}, get textContent() { return ""; } }),
 });
 globalThis.window = { moxie, addEventListener: () => {} };
-// A no-op audio stub: bridge.js only *calls* these (local TTS on connect, and
-// stop() on a telehealth INTERRUPT); nothing here is asserted, so it stays silent.
-globalThis.window.moxieAudio = { speak: () => {}, stop: () => {}, sfx: () => {},
-                                 playCloudTTS: () => {} };
+/* A RECORDING audio stub. It plays nothing, but what the bridge asked for is asserted:
+ * `speakClipOnly` is how a child turn becomes audible, and calling plain `speak()` for a
+ * child line instead would read a visitor's own words back at them through Piper or the
+ * browser voice (audio.js::speakClipOnly explains why). Both are spied so the test can
+ * fail on the WRONG one being called, not only on neither. */
+const voice = { speak: [], speakClipOnly: [], sfx: [], stop: 0 };
+globalThis.window.moxieAudio = {
+  speak: (t) => voice.speak.push(t),
+  speakClipOnly: (t, who) => voice.speakClipOnly.push([t, who]),
+  stop: () => { voice.stop++; },
+  sfx: (n) => voice.sfx.push(n),
+  playCloudTTS: () => {},
+};
 globalThis.location = { hostname: "127.0.0.1" };
 globalThis.document = {
   getElementById: (id) => (els[id] ||= fakeEl(id)),
@@ -218,6 +227,22 @@ ok(calls.setMotor.length > 0, "Gesture_Celebrate → setMotor(...) called");
 ok(JSON.stringify(calls.showIcons).includes("Birthday"), `icons-v2 → showIcons(['Birthday']); got ${JSON.stringify(calls.showIcons)}`);
 ok(calls.transcript.includes("I feel happy today"), `child turn → transcript; got ${JSON.stringify(calls.transcript)}`);
 ok(!calls.transcript.includes("echo of Moxie"), "notify turn must NOT appear in transcript");
+
+/* 🗣️ The child is HEARD, not only read. `handleUserTurn` used to add the transcript row,
+ * fire sfx("listen") and stop — so half of the shipped `sessions/demo.json` conversation
+ * was silent while two child MP3s sat in `audio/index.json` with no caller. */
+ok(voice.speakClipOnly.some(([t, w]) => t === "I feel happy today" && w === "child"),
+   `child turn → speakClipOnly(text, "child"); got ${JSON.stringify(voice.speakClipOnly)}`);
+/* …and through the CLIP-ONLY door, never `speak()`. This is the whole safety property:
+ * the same handler carries whatever a visitor typed into the Talk box or said into the
+ * mic, and `speak()` would synthesize it back at them in a stranger's voice. */
+ok(!voice.speak.includes("I feel happy today"),
+   `a child line must NEVER reach speak() — it falls through to Piper/browser TTS and reads ` +
+   `the visitor's own words back at them; got ${JSON.stringify(voice.speak)}`);
+ok(voice.sfx.includes("listen"), `child turn still fires sfx("listen"); got ${JSON.stringify(voice.sfx)}`);
+// The robot echoing itself is not the child speaking: no row, and no voice either.
+ok(!voice.speakClipOnly.some(([t]) => t === "echo of Moxie") && !voice.speak.includes("echo of Moxie"),
+   `a 'notify' echo must not be spoken as the child; got ${JSON.stringify(voice.speakClipOnly)}`);
 ok(calls.transcript.includes("Happy birthday!"), "Moxie reply → transcript");
 ok(calls.setMotor.some(([i, v]) => i === 0 && v === 30000) && calls.setMotor.some(([i, v]) => i === 4 && v === 24000),
    `commands/motor → setMotor(0,30000)+setMotor(4,24000); got ${JSON.stringify(calls.setMotor)}`);
