@@ -31,6 +31,7 @@ from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire
 from moxie_sdk import telemetry as telemetry_seam        # 📈 Packet envelope + durable history
 from moxie_sdk import vocab as vocab_seam                # the frozen mood/markup catalog
 from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
+from moxie_sdk import brains as brain_seam             # 🧠 which brain, per robot
 from moxie_sdk.content import packs as content_packs  # 📦 content packs (ADOPT #5)
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
 from markup import make_markup  # the markup floor (moxie_sdk.automarkup) behind the seam
@@ -151,6 +152,17 @@ class MoxieRuntime:
         # so a test drives the whole card with a fake and spends no gateway request.
         self._voice_engines = None
         self._voice_lock = threading.Lock()      # one swap at a time; never held in a turn
+        # 🧠 The brain picker (`moxie_sdk/brains.py`): `self.app` is the appliance's own
+        # brain — the `defaults` layer — and `_brains` caches every OTHER brain a robot's
+        # `fleet ⊕ per-robot` layers have asked for, keyed by name. Keyed by NAME rather
+        # than by device because that is exactly today's semantics: one app object serves
+        # every robot on it, and two children on `content` share the module set the
+        # console installed. The default is seeded under its own name so it is never
+        # rebuilt (and so `reload_content()`'s attribute swap is never bypassed).
+        self._brain_engines = None
+        self._brains = {getattr(app, "name", ""): app} if app is not None else {}
+        self._brain_lock = threading.Lock()      # builds only — NEVER held during a turn
+        self._brain_failed: dict[str, str] = {}  # a brain that would not build, said once
         # 📦 Content packs (backlog/content-packs.md): one import or undo at a time, so a
         # snapshot can never be taken between another import's write and its own snapshot.
         # Like the voice lock, it is NEVER held inside a turn — the live swap it guards is
@@ -286,12 +298,16 @@ class MoxieRuntime:
         except (TypeError, ValueError):
             return MEMORY_POLICY
 
-    def _wire_memory_policy(self):
-        """Hand the app's memory store this runtime's per-device privacy gate.
+    def _wire_memory_policy(self, app=None):
+        """Hand an app's memory store this runtime's per-device privacy gate.
 
         Done here rather than at construction so an app built by `config.build_app()`
-        (which knows nothing about a device's config overrides) still honours them."""
-        mem = getattr(self.app, "memory", None)
+        (which knows nothing about a device's config overrides) still honours them.
+        `app` defaults to the appliance's own brain; `app_for` passes every brain it
+        builds later, so a per-child brain's memory obeys the same parent switch as the
+        default one — a privacy gate that applied to only one of them would be worse
+        than none, because nobody would know which."""
+        mem = getattr(app if app is not None else self.app, "memory", None)
         if mem is not None and getattr(mem, "policy", None) is None:
             try:
                 mem.policy = self.memory_policy
@@ -385,7 +401,7 @@ class MoxieRuntime:
             return None
         def _run():
             try:
-                self.app.on_session_end(robot, history, reason)
+                self.app_for(device_id).on_session_end(robot, history, reason)
             except Exception as e:
                 print(f"[runtime] app.on_session_end error: {e}", flush=True)
         if inline:
@@ -423,6 +439,11 @@ class MoxieRuntime:
                 # Surfaced so a parent (and a test) can see that changing the look really
                 # did re-key the texture, without reading the MQTT wire.
                 "face_cache_id": self.face_cache_id(r.device_id),
+                # 🧠 Which brain answers this child, and which layer decided — the console
+                # renders it beside the robot, and the SIL smoke asserts a per-robot swap
+                # without reading the runtime's internals.
+                "brain": self.brain_for(r.device_id)["brain"],
+                "brain_source": self.brain_for(r.device_id)["source"],
                 # Hydrated from `telemetry_packets.json` on first touch, so this is how
                 # many events we *hold* for this robot — history included, not just what
                 # arrived since the supervisor started.
@@ -437,6 +458,11 @@ class MoxieRuntime:
         from moxie_sdk.cloud_config import schedulable_module_ids
         from moxie_sdk.faces import face_catalog
         return {"ok": True, "app": self.app.name,
+                # The appliance's own brain (`MOXIE_APP` ⊕ the fleet layer, resolved at
+                # boot) and what the environment pins. `app` stays what it always was —
+                # the object that is running — so nothing that read it has to change.
+                "brain": brain_seam.sanitize_brain(self.app.name),
+                "brain_pin": self.brain_pin(),
                 "uptime_s": int(time.time() - self.started_at),
                 "fleet_config": self.fleet_config(),
                 "allow_unverified_bots": open_fleet,
@@ -483,6 +509,8 @@ class MoxieRuntime:
                 GET /telehealth?device_id=… → 🎭 puppet mode + the live transcript;
                 GET /voice → 🎚️ the speech/listening pickers: what this appliance can
                 use, what is in force and what the default would be (fleet-level);
+                GET /brain → 🧠 the brain picker: every brain this box can run, the house
+                rule, and which one answers each robot (with the layer that chose it);
                 GET /content → 📦 the installed content inventory + the pack ledger;
                 GET /content/export?items=… → one pack file built from those items;
                 GET /permits → the device allowlist + who is pending.
@@ -558,6 +586,12 @@ class MoxieRuntime:
                     q = parse_qs(u.query)
                     refresh = (q.get("refresh") or ["0"])[0] not in ("", "0", "false")
                     return self._json_out(rt.voice_view(refresh=refresh))
+                if u.path == "/brain":
+                    # 🧠 Every brain this appliance can run, the house rule, and which
+                    # one answers each robot — with the layer that decided it. Fleet AND
+                    # per-robot in one document: the difference between them IS the
+                    # feature.
+                    return self._json_out(rt.brain_view())
                 if u.path == "/content":
                     # 📦 The inventory + the pack ledger + whether an undo is armed.
                     # Fleet-level: content is a property of the appliance, not of a robot.
@@ -766,6 +800,12 @@ class MoxieRuntime:
                 safety classifier BLOCKS comes back **400 with the reason** and is never
                 spoken; see `_telehealth`.
 
+                `POST /brain?device_id=…` (or `?scope=fleet`) with `{"brain": "echo"}`
+                picks which brain answers one child — or, at fleet scope, the house rule.
+                `{"brain": null}` clears that layer. The next turn uses it; a turn already
+                in flight keeps the brain it started with. A pick the environment has
+                pinned is refused **naming `MOXIE_APP`** — see `brain_update`.
+
                 `POST /voice` with `{"speech": "gateway:piper-amy", "listening": …}`
                 persists the 🎚️ picker's choice and swaps the live engines; the next turn
                 uses them. `POST /voice/test?device_id=…` speaks one line through the
@@ -809,6 +849,26 @@ class MoxieRuntime:
                     if out.get("ok"):
                         return self._json_out(out, 200)
                     code = 404 if "unknown device_id" in str(out.get("error")) else 409
+                    return self._json_out(out, code)
+                if path == "/brain":
+                    # `POST /brain?device_id=…` or `?scope=fleet` with {"brain": "echo"}.
+                    # A thin, validating front door onto the ordinary config write — the
+                    # store and the push are `update_config` / `update_fleet_config`,
+                    # exactly as if a parent had posted to /config. What it adds is the
+                    # registry check and the pin, so a refusal names `MOXIE_APP`.
+                    q = parse_qs(urlparse(self.path).query)
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length) if length else b"{}"
+                    try:
+                        body = _json.loads(raw or b"{}") or {}
+                    except Exception as e:
+                        return self._json_out({"ok": False, "error": str(e)}, 400)
+                    out = rt.brain_update(body,
+                                          device_id=(q.get("device_id") or [""])[0],
+                                          scope=(q.get("scope") or ["robot"])[0])
+                    if out.get("ok"):
+                        return self._json_out(out, 200)
+                    code = 404 if "unknown device_id" in str(out.get("error")) else 400
                     return self._json_out(out, code)
                 if path not in ("/config", "/safety", "/permits", "/telehealth",
                                 "/voice", "/voice/test"):
@@ -945,7 +1005,7 @@ class MoxieRuntime:
             if not self.is_permitted(device_id):
                 return
             try:
-                self.app.on_connect(robot)
+                self.app_for(device_id).on_connect(robot)
             except Exception as e:
                 print(f"[runtime] app.on_connect error: {e}", flush=True)
         threading.Timer(1.0, _settle).start()
@@ -956,7 +1016,7 @@ class MoxieRuntime:
             print(f"[runtime] robot disconnected: {device_id}")
             self._end_conversation(device_id, "disconnect", robot=robot)
             try:
-                self.app.on_disconnect(robot)
+                self.app_for(device_id).on_disconnect(robot)
             except Exception:
                 pass
 
@@ -1023,6 +1083,197 @@ class MoxieRuntime:
         for device_id in list(self.robots):
             self._push_config(device_id)
         return cfg
+
+    # ---- 🧠 the brain picker: any brain, hot-swappable, per child -----------------
+    #
+    # `ai-seam.md` §2 calls the brain a seam and says any AI can wear the shell. It was
+    # true of the drawing and false of the box: `MOXIE_APP` chose one brain, once, at
+    # import, for every child on the appliance. These few methods are the whole feature,
+    # and each half is something this codebase already does:
+    #
+    #   * **the registry** — `moxie_sdk/brains.py`, a closed positive list (the idiom of
+    #     `content/packs.py::SPEC` and `content/ext.py::OPS`). A name resolves to a
+    #     builder; an unknown name is refused, never guessed;
+    #   * **the selection** — `brain` is an ordinary key in the ordinary config layers
+    #     (`fleet/config.json` ⊕ the per-robot overrides, audit ADOPT #6). There is no
+    #     second store and no second layering: `POST /config?scope=fleet` already writes
+    #     the house rule and `POST /config?device_id=` already writes one robot's;
+    #   * **the swap** — the 🎚️ voice picker's rule, exactly: the choice is resolved ONCE
+    #     at the top of a turn (`_handle_turn`), so the next turn uses the new brain and a
+    #     turn already in flight finishes with the one it started with. Same shape as
+    #     `reload_content()`'s attribute swap: no restart, no reconnect, no dropped turn;
+    #   * **the pin** — an explicit `MOXIE_APP` wins over any per-child pick (PR #77's
+    #     owner rule). It is enforced in `brains.resolve_brain`, which every read goes
+    #     through, so a pick stored before the pin appeared cannot install anything.
+    #
+    # A brain that cannot be built on this box (a `webhook` with no endpoint, an `llm`
+    # with no `MOXIE_LLM_BASE_URL`) keeps the appliance TALKING with the brain it already
+    # had, and says so once — the same trade `_install_voice` makes, for the same reason:
+    # a downgrade caused by an attempt to improve things is the worst shape a failure can
+    # take.
+    BRAIN_KEY = brain_seam.CONFIG_KEY
+
+    def set_brain_engines(self, engines):
+        """Install the appliance's brain builders (`config.brain_engines()`).
+
+        Without one the card still renders and the appliance keeps its boot brain — an
+        honest floor rather than a picker that offers what this box cannot build."""
+        self._brain_engines = engines
+
+    def _brain_availability(self) -> dict:
+        """`{available, pin, pin_note, default}` — never raises.
+
+        No discovery and no network: unlike the gateway's voice catalog, the set of
+        brains is a table in this repo. With no engines installed the answer is still the
+        real table, marked with the brain this runtime actually booted with.
+        """
+        boot = brain_seam.sanitize_brain(getattr(self.app, "name", "")) \
+            or brain_seam.DEFAULT_BRAIN
+        engines = self._brain_engines
+        if engines is not None:
+            try:
+                out = engines.available() or {}
+                return {"available": list(out.get("available")
+                                          or brain_seam.options(default=boot)),
+                        "pin": brain_seam.sanitize_brain(out.get("pin")),
+                        "pin_note": str(out.get("pin_note") or ""),
+                        "default": brain_seam.sanitize_brain(out.get("default")) or boot}
+            except Exception as e:              # noqa: BLE001 — a broken seam is local
+                self._note("brain", f"🧠 brain options unavailable: {type(e).__name__}")
+        return {"available": brain_seam.options(default=boot), "pin": "",
+                "pin_note": "", "default": boot}
+
+    def brain_pin(self) -> str:
+        """The brain `MOXIE_APP` pins right now — `""` when it pins nothing."""
+        return self._brain_availability()["pin"]
+
+    def brain_for(self, device_id) -> dict:
+        """Which brain answers THIS robot, and which layer said so.
+
+        `{brain, source, requested, pinned, note}` — `brains.resolve_brain` over
+        `defaults ⊕ fleet ⊕ per-robot`, read from the store each time so an edit made in
+        another process (or by hand in `fleet/config.json`) is picked up on the next turn.
+        """
+        avail = self._brain_availability()
+        return brain_seam.resolve_brain(
+            default=avail["default"],
+            fleet=self.fleet_config().get(self.BRAIN_KEY),
+            robot=(self._config_overrides.get(device_id) or {}).get(self.BRAIN_KEY),
+            pin=avail["pin"])
+
+    def app_for(self, device_id):
+        """The `MoxieApp` in force for one robot — built on first use, then cached.
+
+        Called ONCE per turn, at the top, and the result is carried through the turn: a
+        parent who swaps a brain mid-answer gets the new one on the child's *next*
+        sentence, never halfway through this one.
+
+        The lock covers the BUILD, never the turn: constructing a brain is a client
+        object, not a network round trip, and `respond()` runs outside it.
+        """
+        name = self.brain_for(device_id)["brain"]
+        app = self._brains.get(name)
+        if app is not None:
+            return app
+        with self._brain_lock:
+            app = self._brains.get(name)
+            if app is not None:
+                return app
+            engines = self._brain_engines
+            note = ""
+            if engines is None:
+                note = "no brain builders installed (set_brain_engines)"
+            else:
+                try:
+                    app = engines.build(name)
+                except SystemExit as e:          # a brain whose environment is missing
+                    note = str(e)
+                except Exception as e:           # noqa: BLE001 — a bad pick must not kill us
+                    note = f"{type(e).__name__}: {e}"
+            if app is None:
+                # Keep talking with the brain we already have, and say it ONCE per name
+                # rather than once per turn — a child must not pay for a parent's typo,
+                # and an operator must not have to read the same line every ten seconds.
+                if self._brain_failed.get(name) != note:
+                    self._brain_failed[name] = note
+                    self._note("brain", f"🧠 {name} could not be built — keeping "
+                                        f"{getattr(self.app, 'name', '?')}: {note}")
+                    print(f"[runtime] 🧠 {name} could not be built — keeping "
+                          f"{getattr(self.app, 'name', '?')}: {note}", flush=True)
+                return self.app
+            self._wire_memory_policy(app)
+            self._brains[name] = app
+            self._brain_failed.pop(name, None)
+            self._note("brain", f"🧠 built {brain_seam.describe_brain(name)}")
+            print(f"[runtime] 🧠 built {brain_seam.describe_brain(name)}", flush=True)
+            return app
+
+    def brain_view(self) -> dict:
+        """What the 🧠 card renders: every brain this appliance can run, the house rule,
+        and which one answers each robot — with the layer that decided it.
+
+        Fleet-level *and* per-robot in one document, because the whole point of the
+        feature is the difference between the two: a card that showed only the appliance
+        value could not show that one child is on a different brain.
+        """
+        avail = self._brain_availability()
+        fleet = brain_seam.sanitize_brain(self.fleet_config().get(self.BRAIN_KEY))
+        robots = []
+        for device_id in self.robots:
+            if not self.is_permitted(device_id):
+                continue
+            r = self.brain_for(device_id)
+            override = brain_seam.sanitize_brain(
+                (self._config_overrides.get(device_id) or {}).get(self.BRAIN_KEY))
+            robots.append({
+                "device_id": device_id,
+                "child": self.robots[device_id].child.nickname,
+                "brain": r["brain"], "source": r["source"],
+                "requested": r["requested"], "note": r["note"],
+                "label": brain_seam.describe_brain(r["brain"]),
+                "override": override,
+                "line": brain_seam.boot_line(r, device_id=device_id)})
+        return {"ok": True, "available": avail["available"],
+                "pin": avail["pin"], "pin_note": avail["pin_note"],
+                "default": avail["default"], "fleet": fleet,
+                "appliance": getattr(self.app, "name", ""),
+                "installed": sorted(k for k in self._brains if k),
+                "env_var": brain_seam.ENV_VAR, "robots": robots}
+
+    def brain_update(self, patch, device_id: str = "", scope: str = "robot") -> dict:
+        """Persist a brain pick — the house rule (`scope="fleet"`) or one robot's.
+
+        The pick is checked against the registry AND against the environment's pin, and a
+        refusal carries the sentence the card shows, naming `MOXIE_APP`. It then goes
+        through the ordinary config write (`update_fleet_config` / `update_config`), so
+        there is one code path that stores a parent's setting and one that pushes a
+        robot's document — this method adds a validation and a log line, not a store.
+
+        Nothing is "installed" here: the next turn resolves the layers and builds what it
+        finds. That is what makes the swap free of a restart and safe mid-conversation.
+        """
+        try:
+            name = brain_seam.normalize_brain_patch(patch, pin=self.brain_pin())
+        except ValueError as e:
+            return {"ok": False, "error": str(e), "reason": str(e)}
+        if scope == "fleet":
+            self.update_fleet_config(**{self.BRAIN_KEY: name})
+            target = "fleet"
+        else:
+            if not device_id or device_id not in self.robots:
+                err = f"unknown device_id {device_id!r}"
+                return {"ok": False, "error": err, "reason": err}
+            self.update_config(device_id, **{self.BRAIN_KEY: name})
+            target = device_id
+        line = (f"🧠 {target}: brain → {brain_seam.describe_brain(name)}" if name
+                else f"🧠 {target}: brain cleared — the layer underneath decides")
+        self._note("brain", line)
+        print(f"[runtime] {line}", flush=True)
+        out = self.brain_view()
+        out["applied"] = {"scope": "fleet" if scope == "fleet" else "robot",
+                          "device_id": "" if scope == "fleet" else device_id,
+                          self.BRAIN_KEY: name}
+        return out
 
     # ---- the pairing gate: which devices this appliance serves --------------------
     #
@@ -1119,7 +1370,7 @@ class MoxieRuntime:
             self._push_config(device_id)
             if permitted:
                 try:
-                    self.app.on_connect(self.robots[device_id])
+                    self.app_for(device_id).on_connect(self.robots[device_id])
                 except Exception as e:
                     print(f"[runtime] app.on_connect error: {e}", flush=True)
         return self.permits_view()
@@ -1213,9 +1464,14 @@ class MoxieRuntime:
         before the gate existed. **Not permitted** → `build_unpaired_cloud_config()`: the
         not-paired status, no `child_pii`, no household settings, privacy gate shut."""
         from moxie_sdk.cloud_config import (build_robot_cloud_config,
-                                            build_unpaired_cloud_config)
+                                            build_unpaired_cloud_config,
+                                            robot_config_kwargs)
         if self.is_permitted(device_id):
-            cfg = build_robot_cloud_config(self.child, **self.effective_config(device_id))
+            # `robot_config_kwargs` drops the keys that are the SERVER's business — today
+            # exactly `brain`, which rides these layers because they are the one layering
+            # this codebase has, and which the robot has no field for.
+            cfg = build_robot_cloud_config(
+                self.child, **robot_config_kwargs(self.effective_config(device_id)))
         else:
             cfg = build_unpaired_cloud_config()
             self._note("permit", f"⛔ {device_id} is not permitted — pending "
@@ -1609,7 +1865,8 @@ class MoxieRuntime:
             print(f"[runtime] eye {name} -> {sig['name']}{detail} on {device_id}",
                   flush=True)
         try:
-            self.app.on_event(robot, name, dict(payload) if isinstance(payload, dict) else {})
+            self.app_for(device_id).on_event(
+                robot, name, dict(payload) if isinstance(payload, dict) else {})
         except Exception as e:
             print(f"[runtime] app.on_event error: {e}", flush=True)
         return signals
@@ -1794,7 +2051,7 @@ class MoxieRuntime:
             return None
         # everything else → surface to the app as an event (module lifecycle…)
         try:
-            self.app.on_event(robot, name, data)
+            self.app_for(device_id).on_event(robot, name, data)
         except Exception:
             pass
 
@@ -1885,15 +2142,19 @@ class MoxieRuntime:
         """
         if self._safety_gate_input(device_id, event_id, speech, seq):
             return
+        # 🧠 Which brain answers THIS child (`app_for`) — resolved exactly once, here, and
+        # carried through the turn. A parent who swaps brains while Moxie is mid-sentence
+        # gets the new one on the next turn; this one finishes with what it started with.
+        app = self.app_for(device_id)
         if self.streaming:
             stream = None
             try:
-                stream = self.app.respond_stream(turn)
+                stream = app.respond_stream(turn)
             except Exception as e:
                 print(f"[runtime] app.respond_stream error: {e}", flush=True)
             if stream is not None:
                 return self._handle_stream_turn(device_id, event_id, speech, turn,
-                                                seq, stream)
+                                                seq, stream, app=app)
         state = {"lock": threading.Lock(), "done": False, "filler": None}
         # A hello queued while a previous turn was in flight (someone walked in mid-answer)
         # rides out as this turn's chunk 0 — the filler's own wire shape, so the answer
@@ -1906,7 +2167,7 @@ class MoxieRuntime:
             timer.daemon = True
             timer.start()
         try:
-            reply = self.app.respond(turn)
+            reply = app.respond(turn)
         except Exception as e:
             print(f"[runtime] app.respond error: {e}", flush=True)
             reply = Reply(text="Hmm, let me think about that.")
@@ -1977,7 +2238,8 @@ class MoxieRuntime:
             return text
 
     # ---- one turn, streamed sentence by sentence ----
-    def _handle_stream_turn(self, device_id, event_id, speech, turn, seq, stream):
+    def _handle_stream_turn(self, device_id, event_id, speech, turn, seq, stream,
+                            app=None):
         """Answer a turn from an `Iterator[ReplyChunk]`, publishing as the model writes.
 
         Each finished sentence goes out immediately as `result=REPLY_PENDING` with its
@@ -2075,7 +2337,8 @@ class MoxieRuntime:
             with state["lock"]:
                 n = state["chunk"]
             if n == 0:
-                reply = self._safe_respond(turn) if failed is not None else Reply(text="")
+                reply = (self._safe_respond(turn, app=app) if failed is not None
+                         else Reply(text=""))
                 said.append(reply.text)
                 self._publish_stream_chunk(device_id, event_id, reply, 0, True, ann=0)
             else:
@@ -2088,9 +2351,13 @@ class MoxieRuntime:
               f"({state['chunk']} chunk(s))", flush=True)
         self._maybe_end_conversation(device_id, acts)
 
-    def _safe_respond(self, turn):
+    def _safe_respond(self, turn, app=None):
+        """One non-streamed answer, from the brain this turn resolved (`app_for`).
+
+        `app=None` means the appliance's own — the only callers that pass nothing are the
+        ones that have no device in hand."""
         try:
-            return self.app.respond(turn)
+            return (app if app is not None else self.app).respond(turn)
         except Exception as e:
             print(f"[runtime] app.respond error: {e}", flush=True)
             return Reply(text="Hmm, let me think about that.")
@@ -2472,6 +2739,26 @@ class MoxieRuntime:
             value = 0
         return value if value > 0 else content_packs.DEFAULT_MAX_BYTES
 
+    def _content_apps(self) -> list:
+        """Every live app that carries a content module.
+
+        Since 🧠 per-child brains, "the content app" is not necessarily `self.app`: an
+        appliance whose default is `llm` can still have one child on `content`, built
+        lazily by `app_for` and held in `_brains`. A pack import that swapped only
+        `self.app.module` would install content that the child who is actually running it
+        never sees — so the swap iterates. De-duplicated by identity, because the
+        appliance's own brain is also cached under its own name.
+        """
+        apps, seen = [], set()
+        for app in [getattr(self, "app", None)] + list(self._brains.values()):
+            if app is None or id(app) in seen:
+                continue
+            seen.add(id(app))
+            if (getattr(app, "module", None) is not None
+                    or getattr(app, "content_defaults", None) is not None):
+                apps.append(app)
+        return apps
+
     def _content_defaults(self) -> dict:
         """The SHIPPED baseline the overlay sits on top of.
 
@@ -2481,9 +2768,14 @@ class MoxieRuntime:
         way — we fall back to the loaded module itself, which is the same answer on a fresh
         appliance and an honest approximation on one that has already imported (the merge is
         idempotent, and overlay entries win either way)."""
-        recorded = getattr(self.app, "content_defaults", None)
-        if isinstance(recorded, dict):
-            return recorded
+        for app in self._content_apps():
+            recorded = getattr(app, "content_defaults", None)
+            if isinstance(recorded, dict):
+                return recorded
+        for app in self._content_apps():
+            items = content_packs.items_from_module(getattr(app, "module", None))
+            if items:
+                return items
         return content_packs.items_from_module(getattr(self.app, "module", None))
 
     def _content_overlay(self) -> dict:
@@ -2537,10 +2829,10 @@ class MoxieRuntime:
         defaults, overlay = self._content_defaults(), self._content_overlay()
         module = content_packs.build_module(defaults, overlay)
         live = False
-        app = getattr(self, "app", None)
-        if app is not None and getattr(app, "module", None) is not None:
-            app.module = module                  # ← the whole swap
-            live = True
+        for app in self._content_apps():
+            if getattr(app, "module", None) is not None:
+                app.module = module              # ← the whole swap, per live content brain
+                live = True
         return {"ok": True, "live": live,
                 "conversations": len(module.conversations),
                 "globals": len(module.globals),
@@ -2728,7 +3020,8 @@ class MoxieRuntime:
         from moxie_sdk.schedule import plan
         schedules = None
         try:
-            schedules = getattr(getattr(self.app, "module", None), "schedules", None)
+            apps = self._content_apps() or [self.app]
+            schedules = getattr(getattr(apps[0], "module", None), "schedules", None)
         except Exception as e:
             print(f"[runtime] schedule template unavailable ({e}); using the default")
         robot = self.robots.get(device_id)
