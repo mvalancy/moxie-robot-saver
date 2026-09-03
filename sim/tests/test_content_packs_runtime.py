@@ -323,6 +323,19 @@ def test_a_code_carrying_pack_imports_and_the_string_is_never_executed(tmp_path)
     assert drive_turn(rt2, d2, "hello")["output"]["text"] == PACK_PROMPT
 
 
+def test_a_pack_sent_as_raw_text_is_digested_over_exactly_those_bytes(tmp_path):
+    """What the 📦 card actually sends. The console never re-serializes a pack: a browser
+    would turn `1.0` into `1` and make a perfectly good file report as tampered."""
+    rt, _ = build(tmp_path)
+    raw = P.dumps_pack(pack_of(temperature=1.0))
+    assert '"temperature": 1.0' in raw
+    reviewed = rt.content_review(raw)
+    assert reviewed["digest"] == "ok"
+    out = rt.content_import(raw, [IDENT], reviewed["expect_digest"])
+    assert out["ok"] and out["applied"] == [IDENT]
+    assert rt.content_items()[IDENT]["data"]["temperature"] == 1.0
+
+
 def test_the_pack_size_cap_is_env_configurable(tmp_path, monkeypatch):
     import moxie_runtime
     monkeypatch.setenv("MOXIE_PACK_MAX_BYTES", "4096")

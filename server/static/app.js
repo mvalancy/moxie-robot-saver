@@ -161,6 +161,7 @@ async function refreshLive(){
     refreshTelehealth(null);
     refreshSchedule(null);
     refreshVoice(null);
+    refreshContent(null);
     return;
   }
   if(cfgBox) cfgBox.style.display='';
@@ -188,6 +189,7 @@ async function refreshLive(){
   refreshTelehealth(liveDevice);
   refreshSchedule(liveDevice);
   refreshVoice(liveDevice);
+  refreshContent(liveDevice);
 }
 
 // ---- 🔐 Robot access (the device allowlist / pairing gate) ----
@@ -1008,6 +1010,242 @@ async function testVoice(){
     const s=$('#voice-status'); if(s){ delete s.dataset.sticky; s.textContent=''; }
     refreshVoice(voiceDevice||liveDevice);
   };
+}
+
+// ---- 📦 Content packs (backlog/content-packs.md) ----
+// One JSON file that carries activities between machines. Three things this card does
+// that a plain "import" button would not:
+//   * it shows the REVIEW before anything is written — per item, with the field-level
+//     diff, so installing a stranger's pack is never a leap of faith;
+//   * it marks the items YOU edited here, and pre-selects "Keep mine" on them, so an
+//     upgrade cannot quietly overwrite your own wording (upstream compares two version
+//     integers and cannot see your edit at all);
+//   * it never re-serializes the pack before sending it. The file's own text goes to the
+//     supervisor for both the review and the install, so the digest the review checked is
+//     the digest the install checks — a re-encode in the browser would change a `1.0`
+//     into a `1` and turn a perfectly good file into a mismatch.
+// Content is fleet-level (no device_id anywhere in these routes); the card follows the
+// 🎚️ card's visibility rule only so the console has one idiom.
+let contentFile=null, contentReview=null, contentDecisions={};
+const CONTENT_KIND_GLYPH={conversation:'💬', global:'⚡', schedule:'📅'};
+const CONTENT_STATE_TEXT={
+  new:'New', upgrade:'Upgrade', conflict:'Replaces your edit', same:'Already installed',
+  keep_local:'You edited this', fork:'Same version, different text',
+  downgrade:'Older', downgrade_conflict:'Older, replaces your edit',
+  invalid:'Cannot install'};
+
+async function refreshContent(deviceId){
+  const card=$('#content-card'); if(!card) return;
+  if(!deviceId){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  let v;
+  try{ v=await api('/local/content',{auth:false}); }
+  catch(e){ v={ok:false,error:'Supervisor unreachable'}; }
+  renderContentCard(v);
+}
+
+function renderContentCard(v){
+  const head=$('#content-head'), list=$('#content-list'), packs=$('#content-packs');
+  if(!head||!list) return;
+  v=v||{};
+  if(!v.ok){
+    const why=(v.error==='supervisor not reachable')?'Supervisor unreachable':(v.error||'unavailable');
+    head.innerHTML=`<span class="live-off">${escapeHtml(why)}</span>`;
+    list.innerHTML=''; if(packs) packs.textContent='';
+    const u=$('#btn-content-undo'); if(u) u.classList.add('hidden');
+    return;
+  }
+  const c=v.counts||{};
+  const bits=[`${c.total||0} item${(c.total||0)===1?'':'s'}`];
+  if(c.from_packs) bits.push(`${c.from_packs} from packs`);
+  if(c.edited) bits.push(`${c.edited} edited here`);
+  head.textContent=bits.join(' · ');
+  list.innerHTML=(v.items||[]).map(it=>{
+    const flags=[];
+    if(it.local_edited) flags.push('<span class="chip edited">edited here</span>');
+    if(it.has_code) flags.push('<span class="chip warn" title="'
+      + 'This appliance never runs a pack’s code">carries code</span>');
+    if((it.pii||[]).length) flags.push('<span class="chip warn">mentions '
+      + escapeHtml(it.pii.map(h=>h.name).join(', '))+'</span>');
+    const from=it.origin==='pack'&&it.pack_id ? ' · from '+escapeHtml(it.pack_id)
+             : (it.origin==='shipped' ? ' · built in' : '');
+    return `<label class="packrow"><input type="checkbox" class="packpick" value="${escapeHtml(it.id)}" checked>
+      <span class="packname">${CONTENT_KIND_GLYPH[it.kind]||'•'} ${escapeHtml(it.name)}</span>
+      <span class="muted">v${it.source_version}${from}</span>
+      ${flags.join('')}</label>`;
+  }).join('') || '<div class="muted">Nothing installed yet.</div>';
+  if(packs){
+    packs.innerHTML=(v.packs||[]).length
+      ? 'Installed packs: '+v.packs.map(p=>`<b>${escapeHtml(p.name||p.id)}</b> v${p.pack_version}`
+          +` (${p.item_count} item${p.item_count===1?'':'s'})`).join(' · ')
+      : '';
+  }
+  const undo=$('#btn-content-undo');
+  if(undo){
+    undo.classList.toggle('hidden', !v.undo_available);
+    undo.title=v.undo_label||'';
+  }
+  renderContentPii();
+}
+
+function contentPicked(){
+  return Array.from($$('.packpick')).filter(b=>b.checked).map(b=>b.value);
+}
+
+function renderContentPii(){
+  const box=$('#content-pii'); if(!box) return;
+  const picked=new Set(contentPicked());
+  const names=new Set();
+  Array.from($$('.packrow')).forEach(row=>{
+    const box2=row.querySelector('.packpick');
+    if(!box2||!picked.has(box2.value)) return;
+    row.querySelectorAll('.chip.warn').forEach(chip=>{
+      const m=/^mentions (.+)$/.exec(chip.textContent||'');
+      if(m) m[1].split(', ').forEach(n=>names.add(n));
+    });
+  });
+  box.innerHTML = names.size
+    ? '⚠️ Some of the text you are exporting mentions '
+      + escapeHtml(Array.from(names).join(', '))
+      + '. Edit it first if you would rather it did not leave this house — this check only'
+      + ' knows the names set up here, so read the prompts before you send them on.'
+    : '';
+}
+
+async function exportContent(){
+  const s=$('#content-status'); if(!s) return;
+  const items=contentPicked();
+  if(!items.length){ s.textContent='⚠️ Tick at least one item to export.'; return; }
+  const name=($('#content-name').value||'').trim() || 'Moxie content';
+  s.textContent='Building the pack…';
+  const q=new URLSearchParams({items:items.join(','), name:name, id:name});
+  try{
+    const r=await fetch('/local/content/export?'+q.toString());
+    if(!r.ok){ const b=await r.json().catch(()=>({}));
+               s.textContent='⚠️ '+(b.error||'could not export'); return; }
+    const text=await r.text();
+    const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));
+    const a=document.createElement('a');
+    a.href=url; a.download=(JSON.parse(text).id||'moxie-content')+'.moxiepack.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    s.textContent=`✅ Exported ${items.length} item${items.length===1?'':'s'}.`;
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not export'); }
+}
+
+async function reviewContentFile(file){
+  const s=$('#content-status'); if(!s||!file) return;
+  s.textContent='Reading the pack…';
+  let text;
+  try{ text=await file.text(); }
+  catch(e){ s.textContent='⚠️ could not read that file'; return; }
+  contentFile=text;
+  try{
+    const r=await fetch('/local/content/review',
+                        {method:'POST',headers:{'Content-Type':'application/json'},body:text});
+    const v=await r.json();
+    if(!v.ok){ s.textContent='⚠️ '+(v.error||'this file is not a content pack');
+               hideContentReview(); return; }
+    contentReview=v; contentDecisions={};
+    (v.items||[]).forEach(it=>{ contentDecisions[it.id]=it.decision; });
+    renderContentReview(v); s.textContent='';
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not read that pack'); }
+}
+
+function renderContentReview(v){
+  const box=$('#content-review'), head=$('#content-review-head'), list=$('#content-review-list');
+  if(!box||!head||!list) return;
+  box.classList.remove('hidden');
+  const p=v.pack||{};
+  const bits=[`<b>${escapeHtml(p.name||p.id||'this pack')}</b> v${p.pack_version}`];
+  if(p.author) bits.push('by '+escapeHtml(p.author));
+  bits.push(`${(v.items||[]).length} item${(v.items||[]).length===1?'':'s'}`);
+  if(v.digest==='mismatch') bits.push('<span class="warn">this file was changed after it '
+    +'was exported — nothing is pre-selected</span>');
+  if(v.digest==='absent') bits.push('<span class="warn">no checksum — this pack was '
+    +'written by hand</span>');
+  head.innerHTML=bits.join(' · ');
+  list.innerHTML=(v.items||[]).map(it=>{
+    const chip=`<span class="chip st-${escapeHtml(it.state)}">`
+      + escapeHtml(CONTENT_STATE_TEXT[it.state]||it.state)+'</span>';
+    const warn=(it.warnings||[]).map(w=>`<div class="muted warn">⚠️ ${escapeHtml(w)}</div>`).join('');
+    const why=(it.reasons||[]).map(w=>`<div class="muted warn">${escapeHtml(w)}</div>`).join('');
+    const diff=(it.diff||[]).map(d=>d.kind==='text'
+      ? `<details class="packdiff"><summary>${escapeHtml(d.field)}</summary>`
+        + `<pre>${escapeHtml((d.diff||[]).join('\n'))}</pre></details>`
+      : `<div class="packdiff scalar">${escapeHtml(d.field)}: `
+        + `${escapeHtml(d.old)} → ${escapeHtml(d.new)}</div>`).join('');
+    const pick=['accept','keep','skip'].map(d=>{
+      const label={accept:'Accept', keep:'Keep mine', skip:'Skip'}[d];
+      const off=(d==='accept'&&!it.installable)?' disabled':'';
+      const on=(contentDecisions[it.id]===d)?' checked':'';
+      return `<label class="packdec"><input type="radio" name="dec-${escapeHtml(it.id)}"`
+        + ` value="${d}" data-item="${escapeHtml(it.id)}"${on}${off}> ${label}</label>`;
+    }).join('');
+    return `<div class="packreview">
+      <div class="packreview-hd">${CONTENT_KIND_GLYPH[it.kind]||'•'} `
+      + `<b>${escapeHtml(it.name)}</b> ${chip} <span class="muted">`
+      + `${escapeHtml(it.label)}</span></div>${why}${warn}${diff}
+      <div class="packdecs">${pick}</div></div>`;
+  }).join('');
+  list.querySelectorAll('input[type=radio]').forEach(r=>{
+    r.onchange=()=>{ contentDecisions[r.dataset.item]=r.value; };
+  });
+}
+
+function hideContentReview(){
+  contentReview=null; contentFile=null; contentDecisions={};
+  const box=$('#content-review'); if(box) box.classList.add('hidden');
+  const f=$('#content-file'); if(f) f.value='';
+}
+
+async function importContent(){
+  const s=$('#content-status'); if(!s||!contentReview||!contentFile) return;
+  const accept=Object.keys(contentDecisions).filter(k=>contentDecisions[k]==='accept');
+  if(!accept.length){ s.textContent='⚠️ Nothing is set to Accept — nothing to install.'; return; }
+  s.textContent='Installing…';
+  try{
+    const r=await fetch('/local/content/import',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pack:contentFile, accept:accept,
+                           expect_digest:contentReview.expect_digest})});
+    const v=await r.json();
+    if(!v.ok){
+      s.textContent=v.conflict
+        ? '⚠️ That file changed since you looked at it — open it again.'
+        : '⚠️ '+(v.error||'could not install');
+      return;
+    }
+    s.textContent=`✅ Installed ${v.count} item${v.count===1?'':'s'} — Moxie uses them from `
+      + 'the next thing she says.';
+    hideContentReview();
+    refreshContent(liveDevice);
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not install'); }
+}
+
+async function undoContent(){
+  const s=$('#content-status'); if(!s) return;
+  s.textContent='Putting it back…';
+  try{
+    const v=await api('/local/content/undo',{method:'POST',auth:false,body:{}});
+    s.textContent=v.ok ? '✅ Put back what the last import replaced.'
+                       : '⚠️ '+(v.error||'nothing to undo');
+    refreshContent(liveDevice);
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not undo'); }
+}
+
+{
+  const ex=$('#btn-content-export'); if(ex) ex.onclick=exportContent;
+  const f=$('#content-file');
+  if(f) f.onchange=()=>{ if(f.files&&f.files[0]) reviewContentFile(f.files[0]); };
+  const im=$('#btn-content-import'); if(im) im.onclick=importContent;
+  const ca=$('#btn-content-cancel');
+  if(ca) ca.onclick=()=>{ hideContentReview(); const s=$('#content-status'); if(s) s.textContent=''; };
+  const un=$('#btn-content-undo'); if(un) un.onclick=undoContent;
+  const list=$('#content-list');
+  if(list) list.addEventListener('change', e=>{
+    if(e.target && e.target.classList.contains('packpick')) renderContentPii();
+  });
 }
 
 // boot
