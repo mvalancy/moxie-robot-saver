@@ -50,7 +50,7 @@
  * empty text, which `bridge.js` renders as nothing) is exactly what this contract exists
  * to prevent: an empty completion is `upstream_down`, and the page degrades visibly.
  */
-import { readConfig, modeOf, publicLimits } from "./_lib/env.js";
+import { readConfig, modeOf, publicLimits, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
 import { assess } from "./_lib/safety.js";
 import { admit, budgetState, loadOf, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
@@ -225,12 +225,11 @@ async function callGateway(cfg, body) {
     noteUpstreamCall();
     res = await fetch(url, {
       method: "POST",
-      headers: {
-        // The ONLY place the key appears. Outbound, on one header, and nowhere else.
-        Authorization: "Bearer " + cfg.apiKey,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      // The ONLY place the credentials appear. Outbound, on request headers, and nowhere
+      // else. `upstreamHeaders` also adds the two `CF-Access-*` headers when a complete
+      // Cloudflare Access service token is configured, so a gateway behind an
+      // Access-protected tunnel is reachable (`_lib/env.js::ACCESS_VARS`).
+      headers: Object.assign(upstreamHeaders(cfg, "application/json"), { Accept: "application/json" }),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(cfg.chatTimeoutMs),
     });
@@ -251,11 +250,24 @@ async function callGateway(cfg, body) {
     return { ok: false, reason: "upstream_down" };
   }
 
+  // A 200 that is not JSON is the Cloudflare Access failure mode, and it gets its own
+  // reason so an operator is not left guessing (`_lib/envelope.js::REASONS`): a tunnel
+  // protected by Access answers an unauthenticated server-side fetch with an HTML LOGIN
+  // PAGE at status 200. The Content-Type is used here only as a HINT for the diagnosis —
+  // the authority is whether the body actually parses.
+  const ctype = String(res.headers.get("Content-Type") || "").toLowerCase();
+  const looksGated = ctype.includes("text/html") || ctype.includes("application/xhtml");
   let json;
   try {
     json = await res.json();
   } catch {
-    return { ok: false, reason: "upstream_down" };
+    return { ok: false, reason: looksGated ? "gateway_unreachable_or_gated" : "upstream_down" };
+  }
+  if (looksGated) {
+    // JSON served as text/html is odd but harmless; an HTML body that somehow parsed as
+    // JSON is not a thing. Belt and braces: if the header says HTML and there is no
+    // completion in the body, call it gated rather than down.
+    if (!completionText(json)) return { ok: false, reason: "gateway_unreachable_or_gated" };
   }
   const text = completionText(json);
   // An empty completion is a FAILURE, not a turn. §4.5: never a 200 with an empty string.

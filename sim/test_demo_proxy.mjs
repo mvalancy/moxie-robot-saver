@@ -26,6 +26,7 @@
  *   node sim/test_demo_proxy.mjs
  */
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -839,6 +840,134 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     eq(r.body.reason, "bad_ticket", `${label} reason`);
   }
   eq(upstreamCalls(), 0, "THERE IS NO TEXT FIELD: /api/speech cannot be driven without a ticket");
+}
+
+/* =========================================================================== *
+ * 10b. The Cloudflare Tunnel / Cloudflare Access path
+ * =========================================================================== *
+ * The gateway is expected to sit behind a Cloudflare Tunnel. A plain public tunnel
+ * hostname is just a base URL and needs nothing. But a tunnel protected by Cloudflare
+ * Access answers an unauthenticated server-side fetch with an HTML LOGIN PAGE AT STATUS
+ * 200 — the worst possible failure shape, because it looks exactly like a broken gateway.
+ * So: a service token can be configured, half a token is a refusal, and a non-JSON reply
+ * gets its own reason.
+ */
+{
+  const ID = "abcdef0123456789.access";
+  const SECRET = "access-secret-testonly-0123456789abcdef";
+  const WITH_TOKEN = { ...FULL, DEMO_GATEWAY_ACCESS_CLIENT_ID: ID, DEMO_GATEWAY_ACCESS_CLIENT_SECRET: SECRET };
+  const gatedForbidden = [...FORBIDDEN, ID, SECRET];
+
+  /** The sweep, widened to the service token: neither half may ever leave either. */
+  async function assertCleanGated(res, label) {
+    const text = await res.clone().text();
+    let headerText = "";
+    for (const [k, v] of res.headers.entries()) headerText += k + ": " + v + "\n";
+    for (const secret of gatedForbidden) {
+      ok(!text.includes(secret), `${label}: the BODY leaked ${JSON.stringify(secret.slice(0, 12))}…`);
+      ok(!headerText.includes(secret), `${label}: a HEADER leaked ${JSON.stringify(secret.slice(0, 12))}…`);
+    }
+    ok(!/CF-Access/i.test(text), `${label}: the body names a CF-Access header`);
+    ok(!/CF-Access/i.test(headerText), `${label}: a response header is a CF-Access header`);
+  }
+
+  // (a) NEITHER half set: nothing changes. This is the property that matters most — a
+  // plain public tunnel must be completely unaffected by the feature existing.
+  fresh();
+  await call(chat, "/api/chat", { text: "hi" });
+  deep(Object.keys(sent[0].opt.headers).sort(), ["Accept", "Authorization", "Content-Type"],
+       "with no service token, the upstream headers are EXACTLY what they were");
+
+  // (b) BOTH halves set: the two headers ride every upstream call, on both routes, in the
+  // shape Cloudflare Access expects for a non-interactive client.
+  fresh();
+  const c = await call(chat, "/api/chat", { text: "hi" }, null, WITH_TOKEN);
+  await assertCleanGated(c.res, "/api/chat with a service token");
+  const h = sent[0].opt.headers;
+  eq(h["CF-Access-Client-Id"], ID, "CF-Access-Client-Id is sent on /chat/completions");
+  eq(h["CF-Access-Client-Secret"], SECRET, "CF-Access-Client-Secret is sent on /chat/completions");
+  eq(h.Authorization, "Bearer " + KEY, "…alongside the gateway key, not instead of it");
+  const s = await call(speech, "/api/speech", { ticket: c.body.speech[0].ticket }, null, WITH_TOKEN);
+  await assertCleanGated(s.res, "/api/speech with a service token");
+  eq(s.res.status, 200, "the speech turn still succeeds");
+  eq(sent[1].opt.headers["CF-Access-Client-Id"], ID, "CF-Access-Client-Id is sent on /audio/speech too");
+  eq(sent[1].opt.headers["CF-Access-Client-Secret"], SECRET, "…and its secret");
+
+  // (c) EXACTLY ONE half set is a MISCONFIGURATION, not a partial credential: calling
+  // upstream half-credentialled would produce the very login page this exists to avoid,
+  // while looking configured. So it is `gateway_not_configured` with ZERO upstream calls.
+  for (const [label, env] of [
+    ["a client id with no secret", { ...FULL, DEMO_GATEWAY_ACCESS_CLIENT_ID: ID }],
+    ["a secret with no client id", { ...FULL, DEMO_GATEWAY_ACCESS_CLIENT_SECRET: SECRET }],
+  ]) {
+    fresh();
+    const r = await call(chat, "/api/chat", { text: "hi" }, null, env);
+    await assertCleanGated(r.res, "half a token: " + label);
+    eq(r.res.status, 503, `${label} is 503`);
+    eq(r.body.reason, "gateway_not_configured", `${label} answers gateway_not_configured`);
+    eq(upstreamCalls(), 0, `${label} MAKES ZERO UPSTREAM CALLS`);
+    const sp = await call(speech, "/api/speech", { ticket: "v1.a.b" }, null, env);
+    eq(sp.body.reason, "gateway_not_configured", `${label}: /api/speech too`);
+    eq(upstreamCalls(), 0, `${label}: still zero upstream calls`);
+    // …and the operator is told WHICH half, server-side only. `notes` is never on the wire.
+    const cfgHalf = (await import(join(repo, "functions", "api", "_lib", "env.js"))).readConfig(env);
+    ok(cfgHalf.notes.some((n) => /BOTH halves/.test(n)),
+       `${label}: readConfig explains the misconfiguration in its notes`);
+    ok(!JSON.stringify(r.body).includes("BOTH halves"), `${label}: …and that note stays off the wire`);
+  }
+
+  // (d) THE LOGIN PAGE ITSELF. An Access-gated tunnel answers 200 + text/html. That is not
+  // `upstream_down` — the brain may be perfectly healthy behind a locked door — and the
+  // two have completely different fixes.
+  const LOGIN_PAGE =
+    "<!DOCTYPE html><html><head><title>Sign in · Cloudflare Access</title></head>" +
+    "<body><h1>Sign in to continue</h1><form action=\"/cdn-cgi/access/login\"></form></body></html>";
+
+  for (const [label, plan_] of [
+    ["a 200 HTML login page", { chat: { status: 200, body: LOGIN_PAGE, headers: { "Content-Type": "text/html; charset=utf-8" } } }],
+    ["a 302-shaped HTML body", { chat: { status: 200, body: LOGIN_PAGE, headers: { "Content-Type": "text/html" } } }],
+    ["HTML with no Content-Type", { chat: { status: 200, body: LOGIN_PAGE } }],
+  ]) {
+    fresh();
+    plan = plan_;
+    const r = await call(chat, "/api/chat", { text: "hi" }, null, FULL);
+    await assertCleanGated(r.res, "gated: " + label);
+    eq(r.res.status, 503, `${label} is 503`);
+    ok(["gateway_unreachable_or_gated", "upstream_down"].includes(r.body.reason),
+       `${label} is a 503 reason, got ${JSON.stringify(r.body.reason)}`);
+    deep(r.body.messages, [], `${label} produces no message`);
+    ok(!/Sign in|cdn-cgi|Cloudflare/i.test(JSON.stringify(r.body)),
+       `${label}: NOTHING from the login page reaches the visitor`);
+  }
+
+  // The one that carries the Content-Type a real Access page carries gets the DISTINCT
+  // reason, which is the whole point of the addition: it is diagnosable.
+  fresh();
+  plan = { chat: { status: 200, body: LOGIN_PAGE, headers: { "Content-Type": "text/html; charset=utf-8" } } };
+  const gated = await call(chat, "/api/chat", { text: "hi" });
+  eq(gated.body.reason, "gateway_unreachable_or_gated",
+     "AN HTML LOGIN PAGE IS DIAGNOSED, not folded into upstream_down");
+  eq(gated.res.headers.get("Retry-After"), "60", "…with upstream_down's Retry-After, so the page behaves identically");
+
+  // /api/speech: an HTML page where AUDIO was expected would otherwise fall through the
+  // RIFF check and be played to a child as several seconds of loud static.
+  fresh();
+  const c2 = await call(chat, "/api/chat", { text: "hi" });
+  plan = { speech: { status: 200, body: LOGIN_PAGE, headers: { "Content-Type": "text/html" } } };
+  const sGated = await call(speech, "/api/speech", { ticket: c2.body.speech[0].ticket });
+  eq(sGated.res.status, 503, "an HTML login page at /audio/speech is 503");
+  eq(sGated.body.reason, "gateway_unreachable_or_gated", "…and diagnosed as gated");
+  deep(sGated.body.messages, [], "…with NO audio message — never static in a child's ear");
+
+  // A gated turn still degrades the page rather than erroring it: the reason is in the
+  // closed set that `sim/web/mode.js` understands, or the client would read it as healthy.
+  const envelopeMod = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
+  ok(envelopeMod.REASONS.includes("gateway_unreachable_or_gated"),
+     "the new reason is in the closed set");
+  const modeSrc = readFileSync(join(repo, "sim", "web", "mode.js"), "utf8");
+  ok(modeSrc.includes("gateway_unreachable_or_gated"),
+     "…AND in sim/web/mode.js's matching list — an unknown reason there is coerced to null " +
+     "and would be misread as a healthy turn");
 }
 
 /* =========================================================================== *

@@ -38,7 +38,7 @@
  * JSON body where audio was expected is `upstream_down`, never handed to a visitor as
  * noise.
  */
-import { readConfig, modeOf, publicLimits } from "./_lib/env.js";
+import { readConfig, modeOf, publicLimits, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
 import { admit, budgetState, loadOf, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { b64FromBytes, verifyTicket } from "./_lib/hmac.js";
@@ -189,10 +189,9 @@ async function callGateway(cfg, text) {
     noteUpstreamCall();
     res = await fetch(joinUrl(cfg.baseUrl, "audio/speech"), {
       method: "POST",
-      headers: {
-        Authorization: "Bearer " + cfg.apiKey, // the ONLY place the key appears
-        "Content-Type": "application/json",
-      },
+      // The ONLY place the credentials appear — the same one function `chat.js` uses, so
+      // the two routes cannot drift on what they present (`_lib/env.js::upstreamHeaders`).
+      headers: upstreamHeaders(cfg, "application/json"),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(cfg.speechTimeoutMs),
     });
@@ -218,10 +217,16 @@ async function callGateway(cfg, text) {
     if (!out.pcm.length) return { ok: false, reason: "upstream_down" };
     return { ok: true, pcm: out.pcm, sampleRate: out.sampleRate, channels: out.channels };
   } catch (err) {
-    // A JSON error body, an unreadable WAV, or a bit depth `audio.js` cannot decode. All
-    // of them are `upstream_down`: the page degrades and says so, and NOTHING from the
-    // error — which for a JSON body would contain a model id — reaches the response.
-    if (err instanceof AudioBodyError) return { ok: false, reason: "upstream_down" };
+    // A JSON error body, an HTML page, an unreadable WAV, or a bit depth `audio.js` cannot
+    // decode. The page degrades and says the same thing to a VISITOR in every case, and
+    // NOTHING from the error — which for a JSON body would contain a model id — reaches
+    // the response. The one distinction that is drawn is for the OPERATOR: an HTML body
+    // where audio was expected is a Cloudflare Access login page in front of the tunnel,
+    // whose fix is a service token rather than a gateway restart
+    // (`_lib/envelope.js::REASONS`, `_lib/env.js::ACCESS_VARS`).
+    if (err instanceof AudioBodyError && err.kind === "html") {
+      return { ok: false, reason: "gateway_unreachable_or_gated" };
+    }
     return { ok: false, reason: "upstream_down" };
   }
 }

@@ -108,9 +108,16 @@ const browser = await puppeteer.launch({
 /**
  * Load sim.html and report what a visitor would actually see.
  * @param {string} url
- * @param {{health?:{status:number,body:string,contentType?:string}, transport?:boolean}} [opts]
+ * @param {{health?:{status:number,body:string,contentType?:string},
+ *           transport?:boolean, noTransport?:boolean}} [opts]
  *   `health` stubs the /api/health reply at the browser (the static test server has no
- *   Functions); `transport` pretends P0-b's cloud-transport.js is loaded.
+ *   Functions). `transport` sets `window.moxieCloudTransport` before any script runs — it
+ *   is now redundant on a full page (P0-b's `cloud-transport.js` sets it for real) and is
+ *   kept because it also covers a page where the flag arrives from somewhere else.
+ *   `noTransport` serves a 404 for `cloud-transport.js`, which is how the "configured but
+ *   no live transport" state is reached NOW THAT THE FILE SHIPS: a partial deploy, a stale
+ *   cached index, or a fork that removed it. That state must still read SCRIPTED — the
+ *   honesty guard is the point of the whole slice.
  */
 async function load(url, opts = {}) {
   const page = await browser.newPage();
@@ -125,11 +132,13 @@ async function load(url, opts = {}) {
   });
   if (opts.transport)
     await page.evaluateOnNewDocument(() => { window.moxieCloudTransport = true; });
-  if (opts.health) {
+  if (opts.health || opts.noTransport) {
     await page.setRequestInterception(true);
     page.on("request", (r) => {
       if (r.isInterceptResolutionHandled()) return;
-      if (/\/api\/health\b/.test(r.url()))
+      if (opts.noTransport && /cloud-transport\.js/.test(r.url()))
+        return r.respond({ status: 404, body: "", contentType: "text/plain" });
+      if (opts.health && /\/api\/health\b/.test(r.url()))
         return r.respond({ status: opts.health.status, body: opts.health.body,
                            contentType: opts.health.contentType || "application/json" });
       return r.continue();
@@ -168,7 +177,11 @@ async function load(url, opts = {}) {
   // text with the 404 responses actually observed) rather than by loosening the guard:
   // `errs` stays strict for everything else, and `notFound` is asserted by URL, so any
   // OTHER missing asset fails both checks instead of hiding behind this one.
-  const onlyProbe404 = notFound.length > 0 && notFound.every((u) => /\/api\/health\b/.test(u));
+  // `noTransport` withholds cloud-transport.js ON PURPOSE, so its 404 is part of the
+  // fixture rather than a fault — forgiven by the same correlation rule and no more
+  // loosely: `notFound` is still asserted by URL, so any OTHER missing asset fails.
+  const expected404 = (u) => /\/api\/health\b/.test(u) || (opts.noTransport && /cloud-transport\.js/.test(u));
+  const onlyProbe404 = notFound.length > 0 && notFound.every(expected404);
   const errs = raw.filter((t) => !(onlyProbe404 && /status of 404/.test(t)));
   return { errs, raw, notFound, sidecar, api, ...info };
 }
@@ -226,9 +239,13 @@ try {
   ok(live.sidecar.length === 0, "a live hosted page still fires no sidecar probes");
   ok(live.errs.length === 0, `live console errors: ${live.errs.slice(0, 3).join(" | ")}`);
 
-  // --- 3b. LIVE with no transport loaded — which is exactly what P0-a alone ships. The
-  //         page must NOT claim LIVE over something that still answers from stub.js.
-  const noTr = await load(HOSTED, { health: { status: 200, body: HEALTH_LIVE } });
+  // --- 3b. LIVE with no transport loaded. P0-a shipped this state by simply not having a
+  //         transport file; now that `cloud-transport.js` ships, the state is reached by a
+  //         page served WITHOUT it — a partial deploy, a stale cached index, a fork that
+  //         removed it. Either way the page must NOT claim LIVE over something that still
+  //         answers from `stub.js`. (Rule 17: the guard was right and the world changed
+  //         under it, so the guard's SETUP moved and its assertion did not.)
+  const noTr = await load(HOSTED, { health: { status: 200, body: HEALTH_LIVE }, noTransport: true });
   ok(noTr.state === "live", `the mode is still live (got ${noTr.state})`);
   ok(noTr.badge === "HOSTED DEMO · SCRIPTED",
      `a live mode with no transport must read SCRIPTED (got "${noTr.badge}")`);

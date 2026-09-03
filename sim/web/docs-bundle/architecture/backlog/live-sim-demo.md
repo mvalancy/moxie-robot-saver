@@ -1,7 +1,7 @@
 # 🌐 Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears
 
-**State: P0-a built, P0-b build-ready (2026-09-02).** P0-a — the mode machine and the honest
-indicator, §9's first table — is implemented and green; nothing else here is shipped. This is the file
+**State: P0-a + P0-b built (2026-09-02).** Both P0 tables in §9 are implemented and green; P1 and P2
+are not shipped. This is the file
 [`../orchestration-plan.md`](../orchestration-plan.md):34 points at (`backlog/live-sim-demo.md`) and that
 did not exist until now.
 **Owner outcome:** *full cloud service* — outcome 1's public face.
@@ -809,7 +809,44 @@ preview `curl` settles them.
 | `sim/test_mode.mjs`, extended `sim/test_env_hosted.mjs` | new/edit | 220 |
 | `sim/ci/ci.yml`, `sim/tests/test_ci_workflows.py` | edit | 10 |
 
-**P0-b · the live turn** — M
+**P0-b · the live turn** — M — **BUILT 2026-09-02** (branch `feat/livesim-live-turn`).
+Every file below exists and is green: `node sim/test_demo_proxy.mjs`,
+`test_demo_tickets.mjs`, `test_wav_decode.mjs`, `test_cloud_transport.mjs` and
+`test_fallback_coverage.mjs` all run under bare node with a stubbed `fetch`, wired
+into `sim/ci/ci.yml` ahead of the browser install and guarded by
+`sim/tests/test_ci_workflows.py`. **Tested** (not merely intended): the key and the
+gateway base URL appear in NO response body or header on any path, success or
+failure, including a hostile upstream 500 that names the model, the org and a key
+prefix (139 sweeps, 0 leaks); every refusal path makes ZERO upstream calls, recorded
+rather than inferred; a forged, expired, over-length, replayed or field-tampered
+ticket is refused for free, and the constant-time compare walks the same 32-byte
+width whichever byte differs; a hard-blocked utterance never reaches a model; the
+chat field set equals `wire.build_chat_response`'s with the Python builder as
+oracle; the server WAV decoder and `audio.js`'s browser decoder agree sample for
+sample; and the TTS message is routed before the chat message, with the naive order
+demonstrated on the same bridge to prove the double voice is real.
+**Three deliberate deviations, each documented at its site:** (1) a blocked turn
+answers the rule table's own redirect line rather than `stub.js`, because `stub.js`
+answers a self-harm disclosure with "Tell me more about that!" — it still spends
+nothing (`_lib/safety.js::redirectFor`); (2) `cloud-transport.js` injects a **Talk**
+box, because `#speech-input` makes MOXIE speak and nothing on the page could send a
+child's turn, so "types a sentence" in the definition of done had no control; (3)
+one reason is ADDED to §3.2's closed set — `gateway_unreachable_or_gated` — for a
+gateway behind a Cloudflare Tunnel protected by Cloudflare Access, which answers an
+unauthenticated server-side fetch with an HTML login page at status 200; folding
+that into `upstream_down` would be true and useless, since the fixes differ
+entirely. It carries the same status, `Retry-After` and visitor-facing copy, and is
+mirrored in `sim/web/mode.js` (an unknown reason there is coerced to `null` and
+would be misread as a healthy turn). `DEMO_GATEWAY_ACCESS_CLIENT_ID` /
+`_SECRET` are optional, both-or-neither, and half a token answers
+`gateway_not_configured` rather than calling upstream half-credentialled.
+**Not settled, and it cannot be from here:** §10's assumptions 8-13 (unchanged),
+plus whether a Pages build accepts the `import ... with { type: "json" }` attribute
+`_lib/safety.js` uses — all fail safe, and one preview `curl` settles them.
+**Best-effort by design, and said out loud in the code:** the per-IP windows, the
+concurrency ceiling and the unit budget are in-process, so they stop scripts and
+accidents but are not a hard global ceiling (§4.6); the ceilings that hold are the
+per-request caps, the ticket, and a budget-scoped gateway key (§10 assumption 14).
 
 | File | Action | ~Lines |
 |---|---|--:|

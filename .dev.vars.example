@@ -44,6 +44,37 @@ DEMO_TTS_MODEL=your-tts-model
 # `mic.js` keeps its scripted fallback.
 # DEMO_STT_MODEL=your-stt-model
 
+# ---------------------------------------------------------------------------
+# A gateway behind a CLOUDFLARE TUNNEL
+# ---------------------------------------------------------------------------
+# A plain public tunnel hostname needs nothing extra: put it in
+# DEMO_GATEWAY_BASE_URL above and everything works unchanged.
+#
+# The two variables below are needed ONLY when the tunnel is protected by
+# CLOUDFLARE ACCESS. An Access-protected hostname answers an unauthenticated
+# server-side fetch with an HTML LOGIN PAGE AT STATUS 200 — which looks exactly
+# like a broken gateway and is maddening to diagnose. So configure a SERVICE
+# TOKEN (Cloudflare dashboard -> Zero Trust -> Access -> Service Auth) and the
+# Functions will present it as CF-Access-Client-Id / CF-Access-Client-Secret on
+# every upstream call, alongside the gateway key rather than instead of it.
+#
+# BOTH OR NEITHER. Exactly one of the pair is treated as a MISCONFIGURATION:
+# every route answers `gateway_not_configured` and makes no upstream call,
+# because calling half-credentialled would produce that same login page while
+# looking configured.
+#
+# The _SECRET half is a SECRET binding in production (an encrypted variable, or
+# `npx wrangler pages secret put DEMO_GATEWAY_ACCESS_CLIENT_SECRET`), exactly
+# like DEMO_GATEWAY_API_KEY. The _ID half is a var but is still a credential.
+#
+# If it is ever misconfigured anyway, the routes answer the envelope with
+# `reason: "gateway_unreachable_or_gated"` rather than a bare 502 — the page
+# degrades with the same copy a dead gateway gets, and the reason says which of
+# the two it actually is.
+#
+# DEMO_GATEWAY_ACCESS_CLIENT_ID=0123456789abcdef0123456789abcdef.access
+# DEMO_GATEWAY_ACCESS_CLIENT_SECRET=replace-me-with-a-service-token-secret
+
 # Optional. Signs the speech tickets and the conversation blobs. When unset it is an
 # HKDF of DEMO_GATEWAY_API_KEY, so the minimum configuration stays two values. Set it
 # explicitly if you rotate the gateway key often — rotation otherwise invalidates

@@ -34,7 +34,7 @@ export class AudioBodyError extends Error {
   constructor(message, kind) {
     super(message);
     this.name = "AudioBodyError";
-    /** `empty` · `json` · `unreadable` · `bit_depth` — an internal word. */
+    /** `empty` · `json` · `html` · `unreadable` · `bit_depth` — an internal word. */
     this.kind = kind || "unreadable";
   }
 }
@@ -57,6 +57,24 @@ function jsonError(bytes) {
   }
 }
 
+/**
+ * Does this body look like an HTML document?
+ *
+ * This one is not about audio formats at all — it is a DIAGNOSIS. The gateway is expected
+ * to sit behind a Cloudflare Tunnel, and a tunnel protected by Cloudflare Access answers
+ * an unauthenticated server-side fetch with an HTML LOGIN PAGE carrying a 200 status. An
+ * HTML page is not RIFF, so without this check it would fall through to the raw-PCM branch
+ * and a child would hear several seconds of loud static made out of markup. Byte-sniffed
+ * like everything else here (`<` first, after whitespace), so no Content-Type is trusted.
+ */
+function htmlBody(bytes) {
+  let i = 0;
+  while (i < bytes.length && (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0a || bytes[i] === 0x0d)) i++;
+  if (i >= bytes.length || bytes[i] !== 0x3c) return false; // '<'
+  const head = new TextDecoder().decode(bytes.subarray(i, Math.min(bytes.length, i + 512))).toLowerCase();
+  return /^<(?:!doctype|html|head|meta|title|\?xml|script|body)\b/.test(head) || head.includes("<html");
+}
+
 function fourcc(bytes, at) {
   return String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
 }
@@ -73,6 +91,10 @@ export function pcmFromAudio(raw, fallback) {
   const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw || 0);
   if (!bytes.length) throw new AudioBodyError("the voice server returned an empty body", "empty");
   if (jsonError(bytes)) throw new AudioBodyError("the voice server returned JSON, not audio", "json");
+  // An HTML body where audio was expected is almost always an Access login page in front
+  // of the tunnel — see `htmlBody`. Distinguished from every other failure because the fix
+  // is completely different: configure the service token, do not restart the gateway.
+  if (htmlBody(bytes)) throw new AudioBodyError("the voice server returned an HTML page, not audio", "html");
 
   const rate = Math.round(Number(fallback && fallback.sampleRate)) || 22050;
   const ch = Math.round(Number(fallback && fallback.channels)) || 1;

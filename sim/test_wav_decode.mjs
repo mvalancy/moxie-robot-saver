@@ -237,6 +237,30 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   try { wav.pcmFromAudio(new Uint8Array(0), { sampleRate: 22050 }); } catch (e) { empty = e; }
   eq(empty && empty.kind, "empty", "an empty body raises kind `empty`");
 
+  // AN HTML BODY gets its own kind, because it means something completely different: the
+  // gateway is expected to sit behind a Cloudflare Tunnel, and a tunnel protected by
+  // Cloudflare Access answers an unauthenticated server-side fetch with an HTML LOGIN PAGE
+  // AT STATUS 200. HTML is not RIFF, so without this sniff it would fall through to the
+  // raw-PCM branch and a child would hear several seconds of loud static made of markup.
+  for (const [body, label] of [
+    ["<!DOCTYPE html><html><head><title>Sign in · Cloudflare Access</title></head><body></body></html>",
+     "a Cloudflare Access login page"],
+    ["<html><body>Access denied</body></html>", "a bare HTML page"],
+    ["  \n<HTML>", "HTML with leading whitespace and upper case"],
+    ["<meta http-equiv=\"refresh\" content=\"0;url=/cdn-cgi/access/login\">", "an HTML redirect stub"],
+    ["<?xml version=\"1.0\"?><Error><Code>AccessDenied</Code></Error>", "an XML error document"],
+  ]) {
+    let threw = null;
+    try { wav.pcmFromAudio(new TextEncoder().encode(body), { sampleRate: 22050 }); } catch (e) { threw = e; }
+    ok(threw instanceof wav.AudioBodyError, `${label} raises`);
+    eq(threw && threw.kind, "html", `…of kind html (${label}) — the diagnosis is the point`);
+  }
+  // A `<` that is not a document is NOT html: PCM whose first byte happens to be 0x3c must
+  // still be treated as audio, so the sniff checks for a real tag rather than one byte.
+  const ltFirst = new Uint8Array([0x3c, 0x00, 0x7f, 0x01, 0x02, 0x03]);
+  eq(wav.pcmFromAudio(ltFirst, { sampleRate: 22050 }).container, "raw",
+     "PCM starting with 0x3c is not mistaken for HTML");
+
   // A body that merely CONTAINS a brace is fine — the sniff is on the first byte, not a
   // substring search, so PCM whose first sample happens to be 0x7b is not misread.
   const braceFirst = new Uint8Array([0x7b, 0x00, 0x01, 0x02, 0x03, 0x04]);
