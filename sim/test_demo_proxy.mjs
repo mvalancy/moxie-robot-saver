@@ -1123,6 +1123,60 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   ok(!/\bsk-[A-Za-z0-9_-]{16,}/.test(wrangler), "wrangler.toml carries no key");
 }
 
+/* --------------------------------------------------------------------------- *
+ * `_headers` IS INERT FOR FUNCTIONS — the code must carry every /api/* header.
+ * ===========================================================================
+ * Settled by a real preview deploy on 2026-09-03. `sim/web/_headers` declares an
+ * `/api/*` block, and for a long time the repo could not say whether Pages applied it
+ * to a Function response. It does not:
+ *
+ *   GET /sim.html    -> referrer-policy: strict-origin-when-cross-origin   (the /* block)
+ *   GET /api/health  -> no referrer-policy at all
+ *
+ * …while `cache-control: no-store` and `x-content-type-options: nosniff` WERE present on
+ * the Function — and those are exactly the two `envelope.js` sets itself. The static page
+ * proves `_headers` works on that deployment, so the Function's missing header is not a
+ * misconfigured file; it is Pages not applying `_headers` to Functions.
+ *
+ * The failure mode this guards is silent: someone adds a header to the `/api/*` block,
+ * sees it in the file, and believes every API response carries it. So: every header named
+ * in that block must ALSO be set in code. The file may keep documenting intent; it may not
+ * be the only place a header lives.
+ */
+{
+  const headersFile = readFileSync(join(repo, "sim", "web", "_headers"), "utf8");
+  const envelopeSrc = readFileSync(
+    join(repo, "functions", "api", "_lib", "envelope.js"), "utf8");
+
+  // the /api/* block: its indented "Name: value" lines, up to the next unindented line
+  const lines = headersFile.split("\n");
+  const start = lines.findIndex((l) => l.trim() === "/api/*");
+  ok(start !== -1, "_headers still declares an /api/* block");
+  const declared = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.trim() || l.trim().startsWith("#")) continue;
+    if (!/^\s+/.test(l)) break;                       // next path rule
+    const m = l.match(/^\s*([A-Za-z-]+)\s*:/);
+    if (m) declared.push(m[1]);
+  }
+  ok(declared.length >= 3,
+     `the /api/* block names at least 3 headers, found ${declared.length}`);
+
+  // strip comments so the prose above (which names these headers) cannot satisfy the check
+  const code = envelopeSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const missing = declared.filter(
+    (h) => !new RegExp(`["']${h}["']\\s*:`, "i").test(code));
+  deep(missing, [],
+       `_headers does NOT apply to Pages Functions (settled 2026-09-03), so every header ` +
+       `in its /api/* block must also be set in functions/api/_lib/envelope.js. Missing ` +
+       `from the code: ${missing.join(", ")}. Add them to the Headers() in respond().`);
+
+  // …and the specific one that was actually absent in production-shaped traffic.
+  ok(/["']Referrer-Policy["']\s*:/i.test(code),
+     "envelope.js must set Referrer-Policy itself — the preview proved _headers will not");
+}
+
 /* --------------------------------------------------------------------------- */
 if (fails.length) {
   console.error(`✗ test_demo_proxy: ${fails.length} failure(s)`);
