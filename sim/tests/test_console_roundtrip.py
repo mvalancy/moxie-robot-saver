@@ -98,6 +98,11 @@ def _snapshot(overrides: dict, fleet: dict = None) -> dict:
         "robots": [{
             "device_id": DEVICE, "child": "Sam", "firmware": "3.6.4",
             "permitted": True, "pending": False, "permit_label": "",
+            # Have we heard from this robot on the CURRENT broker connection (production
+            # hardening P1)? A robot that was served before a broker restart and has not
+            # spoken since is a ghost — labelled rather than deleted, because our socket
+            # dying is evidence about us and not about the robot.
+            "seen_since_connect": True,
             "battery_level": 91, "audio_volume": 0.4, "wifi_ssid": "Home",
             "mode": "normal", "ota_reboot_required": False,
             "config_overrides": dict(overrides),

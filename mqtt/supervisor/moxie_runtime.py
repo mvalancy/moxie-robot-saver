@@ -156,6 +156,17 @@ class MoxieRuntime:
         #: Bumped on every successful CONNACK. The roster resume is keyed on it so a
         #: reconnect storm cannot queue N overlapping resume bursts.
         self._connect_generation = 0
+        #: Robots we have had **evidence of on the current broker connection**.
+        #:
+        #: `self.robots` answers *"who have we served"*; this answers *"who have we heard
+        #: from since this socket came up"*, and conflating them is the defect this exists
+        #: to close. `_device_connect` early-returned on `device_id in self.robots`, and
+        #: the only thing that ever removed a robot was `_device_disconnect`, driven by a
+        #: `$SYS/broker/log` line — which **dies with the broker**. So after a broker
+        #: restart the returning robot was already "known", was never re-onboarded, and
+        #: got no config push and no `app.on_connect`: silently half-connected, for the
+        #: rest of the session.
+        self._seen_since_connect: set = set()
         self.robots: dict[str, RobotContext] = {}
         self.history: dict[str, list] = {}
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
@@ -455,6 +466,13 @@ class MoxieRuntime:
         the work is submitted to the pool, because this can make a brain call and the
         MQTT loop must never block on one. A failure here is logged and dropped: a
         summary is a nice-to-have, and a child's session must not end badly for it."""
+        # The module is exiting, and the recovered contract is explicit that *"events are
+        # automatically unsubscribed when the module exits"* (RemoteModuleAPI
+        # §Unsubscribing). The latch is keyed `(device, module)`, which catches a switch
+        # A→B but **not** a re-entry A→B→A: the key matches again and we never re-subscribe.
+        # Cleared here, before the early return below, because a conversation with no
+        # history still ended a module.
+        self._forget_robot_state(device_id, vision_only=True)
         robot = robot or self.robots.get(device_id)
         history = list(self.history.get(device_id) or [])
         if robot is None or not history:
@@ -487,6 +505,11 @@ class MoxieRuntime:
                 # child-free config and nothing else until a parent lets it in.
                 "permitted": permitted, "pending": not permitted,
                 "permit_label": (permits["devices"].get(r.device_id) or {}).get("label", ""),
+                # Have we heard from this robot on the CURRENT broker connection? False
+                # means "we served it before the outage and it has not spoken since" —
+                # a ghost, labelled as one rather than removed, because our socket dying
+                # is evidence about us and not about the robot.
+                "seen_since_connect": r.device_id in self._seen_since_connect,
                 "firmware": r.firmware or st.get("robot_firmware_version"),
                 "battery_level": st.get("battery_level"),
                 "audio_volume": st.get("audio_volume"),
@@ -1257,6 +1280,12 @@ class MoxieRuntime:
         reason = self._connack_reason(rc) if rc is not None else "connection lost"
         for device_id in set(self._turn_seq) | set(self.robots):
             self._turn_seq[device_id] = self._turn_seq.get(device_id, 0) + 1
+        # Every robot is now **unconfirmed**, and every vision subscription we believed we
+        # held is now a belief rather than a fact: we lost *our* socket, and that is
+        # evidence about us, not about them. See `_device_connect` for why the robots
+        # themselves are not removed, and `_forget_robot_state` for why these two caches
+        # are cleared together.
+        self._forget_robot_state()
         if self._stopping:
             # A disconnect we asked for. Recorded as a `shutdown`, not a fault: an operator
             # reading a history where every planned stop looks like an outage learns
@@ -1408,8 +1437,13 @@ class MoxieRuntime:
         """
         if not roster_seam.resume_enabled():
             return []
+        # `_seen_since_connect`, **not** `self.robots`: after a broker restart every robot
+        # is still in `self.robots` and none of them is confirmed, so subtracting the
+        # remembered set would make this resume push to nobody in exactly the case it was
+        # built for. It is the same conflation `_device_connect` used to make.
         targets = roster_seam.resume_targets(
-            self.roster(), connected=list(self.robots), permitted=self.is_permitted)
+            self.roster(), connected=sorted(self._seen_since_connect),
+            permitted=self.is_permitted)
         pushed = []
         for device_id in targets:
             try:
@@ -1555,12 +1589,55 @@ class MoxieRuntime:
             return self._device_disconnect(m.group(1))
 
     def _device_connect(self, device_id: str):
-        if device_id in self.robots:
-            return
-        print(f"[runtime] 🤖 robot connected: {device_id}", flush=True)
-        self._note("robot", f"🤖 robot connected: {device_id}")
-        robot = RobotContext(device_id=device_id, child=self.child)
-        self.robots[device_id] = robot
+        """Onboard a robot: register it, push its config, and let the app greet it.
+
+        **Idempotent per broker connection, not per process** — and that distinction is a
+        bug fix, not a refinement. This used to early-return on `device_id in self.robots`,
+        and the only thing that ever *removed* a robot was `_device_disconnect`, which is
+        driven by a `$SYS/broker/log` line and therefore **dies with the broker**. So a
+        robot that came back after a broker restart with the same device id was already
+        "known", was never re-onboarded, and got **no config push and no `app.on_connect`**
+        — silently half-connected for the rest of the session. Reproduced 4/4 by
+        `sim/run_broker_outage.sh` phase 5c.
+
+        **Why not simply drop the robots on `on_disconnect`?** It is the obvious fix and it
+        is the wrong one, for three reasons:
+
+        1. *It claims knowledge we do not have.* Our socket died; the robot's did not
+           necessarily. "The supervisor dropped, therefore the robot is gone" is a belief,
+           and a `/status` that reports beliefs as observations is the disease this whole
+           brief exists to cure.
+        2. *It stampedes on a blip.* A 200 ms flap would drop every robot and re-onboard
+           the lot on their next packet — N config pushes and N `on_connect`s at a broker
+           that has just come back, for an outage nobody noticed.
+        3. *It would have to lie about the conversation.* Removal runs through
+           `_device_disconnect`, which fires `app.on_disconnect` and `_end_conversation`.
+           Ending a child's session because *we* lost the broker is a worse error than the
+           one being fixed; skipping those and removing anyway leaves the app's model of
+           the session and ours disagreeing.
+
+        So the roster is not cleared — **confirmation** is. Nothing happens until the robot
+        gives us real evidence it is there (a `/state`, an event), and then exactly one
+        robot is re-onboarded: the one that actually came back. The `RobotContext` is
+        **reused**, so `history`, the telemetry buffer, presence and every other per-robot
+        thing survive the outage — a returning child continues their conversation rather
+        than meeting a stranger.
+        """
+        robot = self.robots.get(device_id)
+        if robot is not None and device_id in self._seen_since_connect:
+            return                            # already onboarded on this connection
+        returning = robot is not None
+        if robot is None:
+            robot = RobotContext(device_id=device_id, child=self.child)
+            self.robots[device_id] = robot
+        self._seen_since_connect.add(device_id)
+        if returning:
+            print(f"[runtime] 🤖 robot back after the outage: {device_id}", flush=True)
+            self._note("robot", f"🤖 robot back after the outage: {device_id} — "
+                                f"re-pushing config")
+        else:
+            print(f"[runtime] 🤖 robot connected: {device_id}", flush=True)
+            self._note("robot", f"🤖 robot connected: {device_id}")
         self.history.setdefault(device_id, [])
         # The one place every ingress path converges — the broker log line, `_on_state`'s
         # fallback and P0's C6 all land here — so it is the one place the roster has to be
@@ -1580,7 +1657,54 @@ class MoxieRuntime:
                 print(f"[runtime] app.on_connect error: {e}", flush=True)
         threading.Timer(1.0, _settle).start()
 
+    # ---- one place that forgets what we believe about a robot's state ----
+    #
+    # Two defects found within a day of each other turned out to be the same defect:
+    #
+    #   * `_device_connect` early-returned on `device_id in self.robots` — *"already
+    #     onboarded"* — so a robot returning after a broker restart was never re-onboarded;
+    #   * `_vision_subscribed[device_id]` — *"already subscribed"* — was never cleared, so
+    #     after a module exit, a sleep/wake or an outage the robot had silently dropped the
+    #     subscription while our latch still said we held it, and the vision and QR events
+    #     went nowhere.
+    #
+    # Both are **a cached belief about the robot's state outliving the robot's actual
+    # state**, and both caches are pure optimisation: the thing they save is one config
+    # push and one `EventSubscription.active[]` list on a reply. So the asymmetry that
+    # settles the design is the cost of being wrong in each direction — being wrong by
+    # *forgetting* costs a redundant message; being wrong by *remembering* costs a robot
+    # that is silently half-connected, or eyes that never report, with nothing logged
+    # either way. When in doubt, forget.
+    #
+    # `_seen_since_connect` and `_vision_subscribed` have deliberately different
+    # lifetimes, and the shorter one is a **strict subset** of the longer: everything that
+    # breaks connection continuity invalidates both, and the vision latch has one extra
+    # invalidator (a module exit) that says nothing about whether the robot is connected.
+    # That is why there is one shared method plus one extra call site, rather than two
+    # independent patches that can drift apart.
+    #
+    # What is deliberately NOT forgotten here: `history`, memory, the telemetry buffer,
+    # presence and the `RobotContext` itself. Those are the robot's **data**, not our
+    # belief about its state, and a child mid-conversation when the broker blinked must
+    # continue it rather than meet a stranger.
+    def _forget_robot_state(self, device_id: str | None = None, *, vision_only=False):
+        """Drop our cached beliefs about one robot (or all of them, `device_id=None`)."""
+        with self._presence_lock:
+            if device_id is None:
+                self._vision_subscribed.clear()
+            else:
+                self._vision_subscribed.pop(device_id, None)
+        if vision_only:
+            return
+        if device_id is None:
+            self._seen_since_connect.clear()
+        else:
+            self._seen_since_connect.discard(device_id)
+
     def _device_disconnect(self, device_id: str):
+        # The broker told us this client went away: that is real evidence about the robot,
+        # so everything we believed about its state goes with it.
+        self._forget_robot_state(device_id)
         robot = self.robots.pop(device_id, None)
         if robot:
             print(f"[runtime] robot disconnected: {device_id}")
@@ -1591,8 +1715,10 @@ class MoxieRuntime:
                 pass
 
     def _on_state(self, device_id, payload):
-        if device_id not in self.robots:
-            self._device_connect(device_id)      # fallback if we missed the log line
+        # Unconditional: `_device_connect` is idempotent per broker connection now, and
+        # this is the packet a real Moxie sends on **its** connect — so it is the evidence
+        # that re-onboards a robot the broker restart made us forget we could see.
+        self._device_connect(device_id)          # fallback if we missed the log line
         try:
             from moxie_sdk.cloud_config import parse_robot_status
             status = parse_robot_status(payload)
@@ -2086,6 +2212,13 @@ class MoxieRuntime:
             return {"ok": False, "device_id": device_id, "published": False,
                     "error": "robot is pending",
                     "reason": "Let this robot in first (Permit it in the fleet panel)."}
+        # A robot that has been asleep has dropped its subscriptions, so waking it is one
+        # of the moments our latch stops being true. Upstream openmoxie PR #59 diagnoses
+        # exactly this variant — the STT subscribe must be re-sent on wake — and four
+        # independent owner reports of "crossed ears" are the evidence behind it. We clear
+        # rather than re-send: the next reply carries the subscription anyway, so the fix
+        # is to stop *suppressing* it rather than to add a second publish.
+        self._forget_robot_state(device_id, vision_only=True)
         # `if self.client is None` asked whether an OBJECT existed, not whether there was
         # a connection — so a live client over a dead socket answered `published: true`,
         # which is the exact failure PR #55 shipped to kill, surviving in the one place
@@ -2684,8 +2817,7 @@ class MoxieRuntime:
         # the difference between "the appliance recovered" and "the appliance is answering
         # a robot it does not know it has". The pairing gate is unaffected — it lives on
         # the transport boundary in `_on_message` and has already run by here.
-        if device_id not in self.robots:
-            self._device_connect(device_id)
+        self._device_connect(device_id)
         robot = self.robots.get(device_id) or RobotContext(device_id=device_id, child=self.child)
         if name.startswith("remote-chat"):
             return self._on_remote_chat(device_id, robot, payload)

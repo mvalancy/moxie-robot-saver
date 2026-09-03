@@ -256,7 +256,7 @@ def test_the_resume_does_not_push_at_an_unpermitted_robot(tmp_path):
     rt._device_connect("d_ok")
     rt._device_connect("d_revoked")
     rt.set_permit("d_ok", True)
-    rt.robots.clear()
+    rt.client.drop()          # the outage: every robot is now unconfirmed
 
     rt.client.published.clear()
     pushed = rt.resume_roster()
@@ -277,7 +277,7 @@ def test_the_resume_is_silent_when_it_is_turned_off(monkeypatch, tmp_path):
     rt, _ = _rt(tmp_path)
     rt.client.up()
     rt._device_connect("d_1")
-    rt.robots.clear()
+    rt.client.drop()          # the outage: every robot is now unconfirmed
     rt.client.published.clear()
     assert rt.resume_roster() == []
     assert rt.client.published == []
@@ -328,7 +328,7 @@ def test_a_reconnect_storm_runs_one_resume_not_one_per_connack(monkeypatch, tmp_
     publishes at a broker that is already struggling."""
     rt, _ = _rt(tmp_path)
     rt._device_connect("d_1")
-    rt.robots.clear()
+    rt.client.drop()          # the outage: every robot is now unconfirmed
     timers = _held_timers(monkeypatch)
     runs = []
     rt.resume_roster = lambda: runs.append(rt._connect_generation)
@@ -358,7 +358,7 @@ def test_a_resume_scheduled_before_a_shutdown_does_not_publish(monkeypatch, tmp_
     already in flight."""
     rt, _ = _rt(tmp_path)
     rt._device_connect("d_1")
-    rt.robots.clear()
+    rt.client.drop()          # the outage: every robot is now unconfirmed
     timers = _held_timers(monkeypatch)
     runs = []
     rt.resume_roster = lambda: runs.append(1)
@@ -471,3 +471,207 @@ def test_a_broken_store_never_costs_a_robot_its_connection(tmp_path):
     assert rt._roster_seen("d_1") is False
     rt._device_connect("d_2")                  # and the real path still registers it
     assert "d_2" in rt.robots
+
+
+# --------------------------------------------------------------------------- #
+# The returning robot — a broker restart must not leave it half-connected
+# --------------------------------------------------------------------------- #
+#
+# Found by `sim/run_broker_outage.sh` phase 5c (feat/integration-10), 4/4 runs. The
+# mechanism, verified in the code:
+#
+#   * `_device_connect` early-returned on `if device_id in self.robots`;
+#   * the ONLY thing that removed a robot was `_device_disconnect`, driven by a
+#     `$SYS/broker/log` line — which dies with the broker;
+#   * `_on_disconnect` bumped `_turn_seq` and recorded the gap, and cleared neither.
+#
+# So a robot returning with the same device id after a broker restart was already
+# "known", was never re-onboarded, and got no config push and no `app.on_connect` — for
+# the rest of the session. `/status` meanwhile listed every robot as present, including
+# the ones that never came back.
+#
+# The fix separates two things this file had fused: **membership** (`self.robots` — who
+# have we served) and **confirmation** (`_seen_since_connect` — who have we heard from on
+# *this* socket). The disconnect clears confirmation and nothing else. See
+# `_device_connect`'s docstring for why clearing membership instead is the wrong fix.
+
+class CountingApp(MoxieApp):
+    """Counts `on_connect`, so "was the robot re-onboarded" is a number, not an inference."""
+    name = "test-onboard"
+
+    def __init__(self):
+        self.connects: list = []
+
+    def on_connect(self, robot):
+        self.connects.append(robot.device_id)
+
+    def respond(self, turn):
+        return Reply(text=f"You said: {turn.speech}")
+
+
+def _counting_rt(tmp_path, **kw):
+    app = CountingApp()
+    rt, device_id = make_runtime(app, store=JsonStore(str(tmp_path)), **kw)
+    rt.ROSTER_RESUME_DELAY_S = 0.0
+    return rt, device_id, app
+
+
+def _settle(rt):
+    """Let `_device_connect`'s 1 s settle timer run. It is a real `threading.Timer`, so
+    this waits on the observable effect (a config publish) rather than on a duration."""
+    import threading
+    done = threading.Event()
+    threading.Timer(1.4, done.set).start()
+    assert done.wait(10)
+
+
+def test_a_robot_returning_after_a_broker_restart_is_re_onboarded(tmp_path):
+    """The defect, as itself. Same device id, same `RobotContext`, and it must get a
+    config push and an `app.on_connect` — not silence."""
+    rt, device_id, app = _counting_rt(tmp_path)
+    rt.client.up()
+    rt._device_connect("d_bear")
+    _settle(rt)
+    assert app.connects == ["d_bear"]
+
+    rt.client.drop()
+    rt.client.up()
+    rt.client.published.clear()
+    app.connects.clear()
+
+    # The robot comes back and publishes `/state`, exactly as a real Moxie does on ITS
+    # connect. Before the fix this hit `if device_id in self.robots: return`.
+    rt._on_state("d_bear", b'{"state":"config"}')
+    _settle(rt)
+
+    assert app.connects == ["d_bear"], "the returning robot never reached the app"
+    assert CONFIG.format(d="d_bear") in [t for (t, _) in rt.client.published], \
+        "the returning robot got no config push"
+
+
+def test_an_event_also_re_onboards_a_returning_robot(tmp_path):
+    """The other ingress path (P0's C6). A real Moxie may speak before it re-publishes
+    `/state`, and the two paths must not disagree about what "known" means."""
+    rt, _, app = _counting_rt(tmp_path)
+    rt.client.up()
+    rt._device_connect("d_bear")
+    _settle(rt)
+    rt.client.drop()
+    rt.client.up()
+    app.connects.clear()
+
+    rt._on_event("d_bear", "some-event", b"{}")
+    _settle(rt)
+    assert app.connects == ["d_bear"]
+
+
+def test_the_returning_robot_keeps_its_history_and_its_context(tmp_path):
+    """The reason the robot is not dropped and re-created. A child who was mid-conversation
+    when the broker blinked must continue it, not meet a stranger."""
+    rt, _, app = _counting_rt(tmp_path)
+    rt.client.up()
+    rt._device_connect("d_bear")
+    before = rt.robots["d_bear"]
+    before.extra["remember"] = "the dinosaur story"
+    rt.history["d_bear"].append({"role": "user", "content": "tell me about dinosaurs"})
+
+    rt.client.drop()
+    rt.client.up()
+    rt._on_state("d_bear", b"{}")
+
+    assert rt.robots["d_bear"] is before, "the RobotContext was replaced, not reused"
+    assert rt.robots["d_bear"].extra["remember"] == "the dinosaur story"
+    assert len(rt.history["d_bear"]) == 1
+
+
+def test_onboarding_is_idempotent_within_one_connection(tmp_path):
+    """The other direction, and the one that stops the fix becoming a stampede: while the
+    socket is up, every `/state` and every event must NOT re-onboard. Without this,
+    `_device_connect` fires `on_connect` and re-pushes config on every packet."""
+    rt, _, app = _counting_rt(tmp_path)
+    rt.client.up()
+    rt._device_connect("d_bear")
+    _settle(rt)
+    assert app.connects == ["d_bear"]
+
+    rt.client.published.clear()
+    for _ in range(5):
+        rt._on_state("d_bear", b"{}")
+        rt._on_event("d_bear", "some-event", b"{}")
+    _settle(rt)
+
+    assert app.connects == ["d_bear"], f"re-onboarded {len(app.connects)} times on one socket"
+    assert CONFIG.format(d="d_bear") not in [t for (t, _) in rt.client.published]
+
+
+def test_a_blip_does_not_re_onboard_a_robot_that_says_nothing(tmp_path):
+    """The stampede this design exists to avoid. A brief drop must cost **nothing** until
+    a robot actually gives us evidence — which is the whole argument against clearing
+    `self.robots` on disconnect."""
+    rt, _, app = _counting_rt(tmp_path)
+    rt.client.up()
+    for d in ("d_1", "d_2", "d_3"):
+        rt._device_connect(d)
+    _settle(rt)
+    app.connects.clear()
+
+    rt.client.drop()
+    rt.client.up()
+    rt.client.published.clear()
+    _settle(rt)
+
+    # The roster resume re-pushes config (that IS its job, and it is one bounded burst).
+    # What must not happen is `on_connect` firing for robots we have not heard from.
+    assert app.connects == [], "a socket blip re-onboarded robots that never spoke"
+
+
+def test_status_labels_a_robot_we_have_not_heard_from_since_the_outage(tmp_path):
+    """Ghosts are labelled, not deleted. Deleting would claim the robot is gone, and our
+    socket dying is evidence about us — a `/status` that reports beliefs as observations
+    is the disease this brief exists to cure."""
+    rt, harness_id, _ = _counting_rt(tmp_path)
+    rt.client.up()
+    rt._device_connect("d_bear")
+    rt._device_connect("d_fox")
+    seen = {r["device_id"]: r["seen_since_connect"] for r in rt.status_snapshot()["robots"]}
+    assert seen["d_bear"] is True and seen["d_fox"] is True
+    # `make_runtime` hand-places its own robot straight into `rt.robots` without any
+    # evidence ever arriving, so it reads as unconfirmed — which is the field being
+    # honest rather than a bug, and worth pinning so nobody "fixes" it.
+    assert seen[harness_id] is False
+
+    rt.client.drop()
+    rt.client.up()
+    rt._on_state("d_bear", b"{}")           # only the bear comes back
+
+    seen = {r["device_id"]: r["seen_since_connect"] for r in rt.status_snapshot()["robots"]}
+    assert seen["d_bear"] is True, "the robot that came back is not marked present"
+    assert seen["d_fox"] is False, "a robot that never came back is still claimed present"
+    assert "d_fox" in rt.robots, "the ghost was deleted rather than labelled"
+
+
+def test_the_broker_log_disconnect_still_removes_a_robot_properly(tmp_path):
+    """The other direction of the membership/confirmation split: when the **broker** tells
+    us a client went away, that is real evidence about the robot, and the robot leaves."""
+    rt, _, app = _counting_rt(tmp_path)
+    rt.client.up()
+    rt._device_connect("d_bear")
+    rt._device_disconnect("d_bear")
+    assert "d_bear" not in rt.robots
+    assert "d_bear" not in rt._seen_since_connect
+    assert [r["device_id"] for r in rt.status_snapshot()["robots"]] == ["d_test"]
+
+
+def test_the_roster_resume_reaches_robots_the_outage_made_unconfirmed(tmp_path):
+    """P1's resume subtracted `self.robots`, which after a broker restart is *every*
+    robot — so it would have pushed to nobody in exactly the case it was built for. It
+    subtracts the **confirmed** set instead."""
+    rt, _, _ = _counting_rt(tmp_path)
+    rt.client.up()
+    rt._device_connect("d_bear")
+
+    rt.client.drop()
+    rt.client.up()
+    rt.client.published.clear()
+    assert "d_bear" in rt.resume_roster()
+    assert CONFIG.format(d="d_bear") in [t for (t, _) in rt.client.published]

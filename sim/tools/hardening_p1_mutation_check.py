@@ -50,6 +50,7 @@ T_ROSTER = "sim/tests/test_roster.py"
 T_STOP = "sim/tests/test_clean_shutdown.py"
 T_STORE = "sim/tests/test_store_concurrency.py"
 T_CONSOLE = "sim/tests/test_console_roundtrip.py"
+T_VISION = "sim/tests/test_presence_runtime.py"
 
 MUTATIONS = [
     # ---- the connection history: the shapes ------------------------------------
@@ -269,9 +270,8 @@ MUTATIONS = [
      T_STOP, "disconnect_that_is_not_a_stop"),
     ("S6  a stop no longer stales the in-flight turns", RT,
      "        for device_id in set(self._turn_seq) | set(self.robots):\n"
-     "            self._turn_seq[device_id] = self._turn_seq.get(device_id, 0) + 1\n"
-     "        if self._stopping:",
-     "        if self._stopping:",
+     "            self._turn_seq[device_id] = self._turn_seq.get(device_id, 0) + 1\n",
+     "",
      T_STOP, "abandons_every_in_flight_turn"),
     ("S7  a disconnect() that raises aborts the stop", RT,
      "            except Exception as e:\n"
@@ -299,6 +299,64 @@ MUTATIONS = [
      "                if not self._write_path(path, items):\n                    return None\n                return items",
      "                self._write_path(path, items)\n                return items",
      T_STORE, "t10"),
+
+    # ---- the returning robot, and the vision latch (the same defect twice) ------
+    ("O1  _device_connect early-returns on membership (the roster ghost)", RT,
+     "        if robot is not None and device_id in self._seen_since_connect:\n"
+     "            return                            # already onboarded on this connection",
+     "        if robot is not None:\n            return",
+     T_ROSTER, "returning_after_a_broker_restart or event_also_re_onboards"),
+    ("O2  the disconnect does not un-confirm anybody", RT,
+     "        self._forget_robot_state()\n        if self._stopping:",
+     "        if self._stopping:",
+     T_ROSTER, "returning_after_a_broker_restart"),
+    ("O3  onboarding re-fires on every packet (the stampede)", RT,
+     "        if robot is not None and device_id in self._seen_since_connect:",
+     "        if False:",
+     T_ROSTER, "idempotent_within_one_connection"),
+    ("O4  /status claims a robot we have not heard from is present", RT,
+     '                "seen_since_connect": r.device_id in self._seen_since_connect,',
+     '                "seen_since_connect": True,',
+     T_ROSTER, "status_labels"),
+    ("O5  the returning robot gets a fresh context (its conversation is lost)", RT,
+     "        if robot is None:\n            robot = RobotContext(device_id=device_id, child=self.child)\n"
+     "            self.robots[device_id] = robot",
+     "        if True:\n            robot = RobotContext(device_id=device_id, child=self.child)\n"
+     "            self.robots[device_id] = robot",
+     T_ROSTER, "keeps_its_history"),
+    ("V1  a broker outage leaves the vision latch set (eyes go silent)", RT,
+     "        self._forget_robot_state()\n        if self._stopping:",
+     "        self._seen_since_connect.clear()\n        if self._stopping:",
+     T_VISION, "broker_outage_makes_the_next_reply"),
+    ("V2  a module exit leaves the vision latch set", RT,
+     "        self._forget_robot_state(device_id, vision_only=True)\n"
+     "        robot = robot or self.robots.get(device_id)",
+     "        robot = robot or self.robots.get(device_id)",
+     T_VISION, "module_exit_makes_the_next_reply"),
+    ("V3  waking a robot leaves the vision latch set (openmoxie PR #59)", RT,
+     "        self._forget_robot_state(device_id, vision_only=True)\n"
+     "        # `if self.client is None` asked whether an OBJECT existed",
+     "        # `if self.client is None` asked whether an OBJECT existed",
+     T_VISION, "waking_a_robot"),
+    ("V4  a robot the broker says left keeps its latch", RT,
+     "        self._forget_robot_state(device_id)\n        robot = self.robots.pop(device_id, None)",
+     "        robot = self.robots.pop(device_id, None)",
+     T_VISION, "broker_says_left"),  # caught via `_seen_since_connect`; the
+     # vision half of this line is redundant with `_end_conversation`, which is the
+     # finding V4 produced on its first run.
+    ("V5  over-forgetting: the invalidation drops the conversation too", RT,
+     "        if vision_only:\n            return",
+     "        self.history.pop(device_id, None) if device_id else self.history.clear()\n"
+     "        if vision_only:\n            return",
+     T_VISION, "does_not_forget_the_conversation"),
+    ("V6  vision_only is ignored (a module exit un-onboards the robot)", RT,
+     "        if vision_only:\n            return",
+     "        if False:\n            return",
+     T_VISION, "module_exit_does_not_claim"),
+    ("V7  the two caches drift apart (only one is invalidated)", RT,
+     "            if device_id is None:\n                self._vision_subscribed.clear()",
+     "            if False:\n                self._vision_subscribed.clear()",
+     T_VISION, "invalidated_by_one_rule"),
 
     # ---- the console -----------------------------------------------------------
     ("K1  a supervisor we never reached still gets a verdict", FLEET,

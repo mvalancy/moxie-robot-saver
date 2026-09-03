@@ -157,17 +157,42 @@ def _http_json(url: str, timeout: float = 3.0):
 # The stack
 # --------------------------------------------------------------------------- #
 
+#: Container name prefix. Named rather than anonymous so a run that was killed hard —
+#: Ctrl-C, a session teardown, an OOM — leaves something *identifiable* behind instead of
+#: an anonymous `eclipse-mosquitto` a later operator dare not remove. Found by killing a
+#: 60-minute run: the `finally` never got to run and the broker outlived it.
+BROKER_NAME_PREFIX = "moxie-soak-broker-"
+
+
+def sweep_stale_brokers() -> list:
+    """Remove brokers left behind by a previous soak that died before its cleanup.
+
+    Scoped to this prefix and nothing else: a soak must never remove a container it did
+    not start, and `eclipse-mosquitto:2` is an image a developer may well be running for
+    something entirely unrelated on the same box.
+    """
+    out = subprocess.run(["docker", "ps", "-aq", "--filter",
+                          f"name=^{BROKER_NAME_PREFIX}"],
+                         capture_output=True, text=True)
+    stale = [c for c in out.stdout.split() if c]
+    for cid in stale:
+        subprocess.run(["docker", "rm", "-f", cid], capture_output=True)
+    return stale
+
+
 class Broker:
     """A real mosquitto in a container, restartable on demand."""
 
     def __init__(self, port: int):
         self.port = port
         self.cid = ""
+        self.name = f"{BROKER_NAME_PREFIX}{os.getpid()}"
         self.restarts = 0
 
     def start(self):
         self.cid = subprocess.check_output(
-            ["docker", "run", "-d", "-p", f"127.0.0.1:{self.port}:1883",
+            ["docker", "run", "-d", "--name", self.name,
+             "-p", f"127.0.0.1:{self.port}:1883",
              "-v", f"{BROKER_CONF}:/mosquitto/config/mosquitto.conf:ro",
              BROKER_IMAGE], text=True).strip()
         assert _wait_until(lambda: _port_open(self.port), 60) is not None, \
@@ -507,6 +532,10 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
 
     print(f"▶️  soak · profile={profile} · {cfg['minutes']:.0f} min · "
           f"{cfg['robots']} robot(s) · broker :{port} · data {data_dir}", flush=True)
+    swept = sweep_stale_brokers()
+    if swept:
+        print(f"  · swept {len(swept)} broker(s) left by a soak that died before its "
+              f"cleanup", flush=True)
     try:
         broker.start()
         sup.start()
@@ -545,8 +574,16 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
             if what == "broker":
                 listening = broker.restart()
                 took = _wait_until(sup.connected, 90)
+                # A12 — the robots are talking continuously, so every one of them should
+                # be re-onboarded within a few seconds of the broker coming back. Before
+                # the `_device_connect` fix this NEVER became true: the robot was already
+                # in `self.robots`, so it was never re-onboarded and `/status` listed it
+                # as present while it had had no config push and no `app.on_connect`.
+                reonboard = _wait_until(lambda: _all_robots_seen(sup), 15.0)
                 reconnects.append({"listening_after_s": round(listening, 2),
-                                   "resubscribed_after_s": None if took is None else round(took, 2)})
+                                   "resubscribed_after_s": None if took is None else round(took, 2),
+                                   "reonboarded_after_s": None if reonboard is None else round(reonboard, 2),
+                                   "ghosts": _ghosts(sup)})
                 print(f"  · broker restart #{broker.restarts}: listening in "
                       f"{listening:.1f}s, supervisor back in "
                       f"{'NEVER' if took is None else f'{took:.1f}s'}", flush=True)
@@ -600,6 +637,30 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
             result["data_dir"] = f"{data_dir} (removed)"
             shutil.rmtree(data_dir, ignore_errors=True)
     return result
+
+
+def _all_robots_seen(sup) -> bool:
+    """Is every robot `/status` lists confirmed on the CURRENT broker connection?
+
+    `seen_since_connect` is the field the fix added, and this is the property it exists
+    for: after a broker restart a returning robot must be re-onboarded, not merely
+    remembered. A supervisor with no robots yet is vacuously true — and `_ghosts()` prints
+    the ones that are not, so a green A12 cannot hide an empty one.
+    """
+    try:
+        robots = sup.status().get("robots") or []
+    except Exception:
+        return False
+    return bool(robots) and all(r.get("seen_since_connect") for r in robots)
+
+
+def _ghosts(sup) -> list:
+    """Device ids `/status` lists that have not spoken since the broker came back."""
+    try:
+        return [r["device_id"] for r in (sup.status().get("robots") or [])
+                if not r.get("seen_since_connect")]
+    except Exception:
+        return ["<status unreadable>"]
 
 
 def _resumed(sup, known_before: int) -> bool:
@@ -753,6 +814,17 @@ def grade(r: dict) -> list:
                  f"recent={len(st.get('recent', []))} robots={len(st.get('robots', []))} "
                  f"roster={st.get('roster', {}).get('known')} conn_events={conn_kept}/{conn_cap}",
                  conn_kept <= conn_cap and len(st.get("robots", [])) <= max(1, r["config"]["robots"])))
+
+    reo = [x for x in r["reconnects"] if "reonboarded_after_s" in x]
+    ok_reo = [x for x in reo if x["reonboarded_after_s"] is not None]
+    ghosts = sorted({g for x in reo for g in (x.get("ghosts") or [])})
+    bars.append(("A12", "every robot is re-onboarded after a broker restart "
+                        "(no ghost left half-connected)",
+                 (f"{len(ok_reo)}/{len(reo)} restarts re-onboarded every robot · "
+                  f"max {max((x['reonboarded_after_s'] for x in ok_reo), default=0):.2f}s"
+                  + (f" · STILL GHOSTS: {ghosts}" if ghosts else ""))
+                 if reo else "not exercised",
+                 None if not reo else (len(ok_reo) == len(reo) and not ghosts)))
 
     lg = r["log_findings"]
     bars.append(("A10", "unhandled exceptions / tracebacks in the supervisor log = 0",

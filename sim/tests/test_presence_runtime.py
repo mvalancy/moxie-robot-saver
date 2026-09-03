@@ -160,6 +160,148 @@ def test_the_subscription_is_sent_once_per_module_not_once_per_turn():
     assert "response_actions" not in second, second
 
 
+# --------------------------------------------------------------------------- #
+# 2b. …and the latch that says "once" must stop saying it when it stops being true
+# --------------------------------------------------------------------------- #
+#
+# `_vision_subscribed[device] = module` was set and **never cleared** — not on a module
+# exit, not on a wake, not on a broker outage. Meanwhile the recovered contract says
+# *"events are automatically unsubscribed when the module exits"* (RemoteModuleAPI
+# §Unsubscribing), which the latch's own docstring quoted. So the robot dropped the
+# subscription while our latch still claimed we held it, and we never re-sent
+# `EventSubscription.active[]`: vision and QR events went nowhere, silently, with nothing
+# logged on either side.
+#
+# Evidence this is real and not just readable-from-the-code: four independent owner
+# reports of "crossed ears", and upstream openmoxie PR #59 diagnoses the sleep/wake
+# variant as exactly this (the STT subscribe must be re-sent on wake).
+#
+# **The ceiling, stated where it cannot be missed:** no physical robot has ever sent this
+# appliance a vision event. These tests prove *we re-subscribe*. They cannot prove a robot
+# then delivers, and a green run here must never be read as saying it does.
+#
+# This is the same defect as the roster ghost, and deliberately shares its fix
+# (`_forget_robot_state`): a cached belief about the robot's state outliving the robot's
+# actual state. Both caches are pure optimisation — being wrong by forgetting costs one
+# redundant message; being wrong by remembering costs eyes that never report.
+
+def _subscribed(resp) -> bool:
+    """Did this reply carry an `EventSubscription.active[]`?"""
+    for action in (resp.get("response_actions") or []):
+        if action.get("event_subscription", {}).get("active"):
+            return True
+    return False
+
+
+def test_a_broker_outage_makes_the_next_reply_re_subscribe():
+    """The robot's session went with the broker; our latch must not outlive it."""
+    rt, dev = _runtime()
+    assert _subscribed(drive_turn(rt, dev, "hello", event_id="e1"))
+    _fresh_pool(rt)
+
+    rt.client.drop()
+    rt.client.up()
+    _fresh_pool(rt)
+    assert _subscribed(drive_turn(rt, dev, "again", event_id="e2")), \
+        "after an outage the robot has no subscription and we never re-sent one"
+
+
+def test_a_module_exit_makes_the_next_reply_re_subscribe():
+    """The contract's own sentence, as a test. The latch is keyed `(device, module)`,
+    which catches a switch A→B but **not** a re-entry A→B→A — the key matches again and
+    the subscription is never re-sent, even though the robot dropped it on the exit."""
+    rt, dev = _runtime()
+    module = rt.robots[dev].module_id
+    assert _subscribed(drive_turn(rt, dev, "hello", event_id="e1"))
+    _fresh_pool(rt)
+
+    rt._end_conversation(dev, "module exit")        # A exits
+    rt._pool.shutdown(wait=True)
+    _fresh_pool(rt)
+    assert rt.robots[dev].module_id == module, "the test needs the SAME module re-entered"
+    assert _subscribed(drive_turn(rt, dev, "again", event_id="e2")), \
+        "the module exited and dropped the subscription; we never re-sent it"
+
+
+def test_waking_a_robot_makes_the_next_reply_re_subscribe():
+    """Upstream openmoxie PR #59's case. A robot that has been asleep has dropped its
+    subscriptions, so a wake is one of the moments our latch stops being true."""
+    rt, dev = _runtime()
+    assert _subscribed(drive_turn(rt, dev, "hello", event_id="e1"))
+    _fresh_pool(rt)
+
+    out = rt.wake_robot(dev)
+    assert out["published"] is True, out
+    _fresh_pool(rt)
+    assert _subscribed(drive_turn(rt, dev, "again", event_id="e2")), \
+        "the robot was woken with no subscription and we never re-sent one"
+
+
+def test_a_robot_the_broker_says_left_forgets_everything_we_believed_about_it():
+    """`_device_disconnect` is the one place with *real evidence about the robot* — the
+    broker told us the client went away — so it drops both caches, not just one.
+
+    Asserting both matters: the vision half is **also** covered by `_end_conversation`,
+    which `_device_disconnect` calls, so a test that checked only the latch passed with
+    this line deleted (found by the mutation checker, V4). The half that is uniquely
+    load-bearing here is `_seen_since_connect` — without it a robot that genuinely left
+    stays 'confirmed' forever and is never re-onboarded when it returns.
+    """
+    rt, dev = _runtime()
+    drive_turn(rt, dev, "hello", event_id="e1")
+    rt._seen_since_connect.add(dev)
+    assert rt._vision_subscribed.get(dev) is not None
+
+    rt._device_disconnect(dev)
+    assert dev not in rt._vision_subscribed
+    assert dev not in rt._seen_since_connect
+
+
+def test_forgetting_the_subscription_does_not_forget_the_conversation():
+    """The other direction, and the line between belief and data. Everything cleared here
+    is *our model of the robot's state*; `history`, presence and the `RobotContext` are
+    the robot's own data and must survive — a child mid-conversation when the broker
+    blinked continues it rather than meeting a stranger."""
+    rt, dev = _runtime()
+    drive_turn(rt, dev, "hello", event_id="e1")
+    rt.robots[dev].extra["presence"] = {"face_present": True, "faces_seen": 3}
+    before_ctx = rt.robots[dev]
+    before_history = list(rt.history[dev])
+    assert before_history, "the test needs a conversation to preserve"
+
+    rt.client.drop()
+    rt.client.up()
+
+    assert rt.robots[dev] is before_ctx
+    assert rt.history[dev] == before_history
+    assert rt.robots[dev].extra["presence"]["faces_seen"] == 3
+
+
+def test_the_two_caches_are_invalidated_by_one_rule():
+    """The generalisation, pinned. Both defects were a cached belief about the robot
+    outliving the robot's state, and a single broken connection must clear both — two
+    independent patches would drift apart at the next one."""
+    rt, dev = _runtime()
+    drive_turn(rt, dev, "hello", event_id="e1")
+    rt._seen_since_connect.add(dev)
+    assert rt._vision_subscribed and rt._seen_since_connect
+
+    rt.client.drop()
+    assert not rt._vision_subscribed, "the vision latch survived the outage"
+    assert not rt._seen_since_connect, "the onboarding latch survived the outage"
+
+
+def test_a_module_exit_does_not_claim_the_robot_went_away():
+    """…and the lifetimes really are different, which is why one method takes a flag
+    rather than two methods existing. A module exiting says nothing about whether the
+    robot is connected, so it must NOT force a re-onboard and a fresh `app.on_connect`."""
+    rt, dev = _runtime()
+    rt._seen_since_connect.add(dev)
+    rt._end_conversation(dev, "module exit")
+    assert dev in rt._seen_since_connect, "a module exit un-onboarded the robot"
+    assert dev not in rt._vision_subscribed
+
+
 def test_an_unpermitted_robot_is_never_subscribed():
     rt, dev = _runtime(allow_unverified_bots=False)
     assert rt._vision_subscription(dev) is None
