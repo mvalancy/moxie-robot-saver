@@ -1,8 +1,16 @@
 # `sim/ci/` — GitHub Actions workflow templates (+ the live-tier helper)
 
-These are the **source of truth** for our CI. They are *templates*: the build session's token
-lacks `workflow` scope, so it cannot push under `.github/workflows/` — the owner copies them
-across (see [`../../RELEASING.md`](../../RELEASING.md)). **Edit the file here, then sync.**
+These are the **source of truth** for our CI, mirrored to the installed copies under
+`.github/workflows/`. **Edit the file here, then sync in the SAME commit** — the two must stay
+byte-identical or `sim/tests/test_ci_workflows.py` reddens, which is why a workflow change must
+never be split across commits that could be dropped separately.
+
+> **The session token CAN push `.github/workflows/` (verified 2026-09-03, PR #79).** This note
+> used to say it lacked `workflow` scope and that the owner copied the files across by hand.
+> That stopped being true, and the stale claim cost real work: an agent isolated a workflow
+> commit so it could be dropped whole, and a later one flagged its CI edit as unpushable. Treat
+> CI tier changes as ordinary work. Verify after pushing with
+> `git diff --quiet origin/<branch>:sim/ci/<file>.yml origin/<branch>:.github/workflows/<file>.yml`.
 
 ```sh
 cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml .github/workflows/
