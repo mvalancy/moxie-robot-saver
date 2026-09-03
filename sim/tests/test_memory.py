@@ -419,7 +419,8 @@ def test_render_missing_namespace_is_blank_not_an_error():
 
 def test_render_exposes_persist_data_without_jinja2_installed():
     """`render.py` falls back to a dependency-free `{{ dotted.path }}` substitution when
-    jinja2 is absent (it is not in mqtt/requirements.txt) — memory must render there too."""
+    jinja2 is absent — a bare `pip install moxie-cloud-sdk` with no `content` extra (the
+    container itself now ships jinja2). Memory must render on that path too."""
     from moxie_sdk.content import render as render_mod
     v = Volley(persist_data=wrap_facts({"mchat": {"facts": ["has a dog"]}}))
     out = render_mod._minimal_render("FACTS:\n{{ volley.persist_data.mchat.facts }}",

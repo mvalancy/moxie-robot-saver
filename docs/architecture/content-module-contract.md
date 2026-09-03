@@ -39,13 +39,40 @@ A module is JSON with three optional sections:
   "model":"gpt-4o", "max_tokens":100, "temperature":0.5,
   "code":"def post_process(volley, session): ..." }
 ```
-- **`prompt`** is **Jinja2-templated** over `volley`/`session` (`{{…}}`, `{% if %}`). Common vars:
+- **`prompt`** is **Jinja2-templated** over `volley`/`session` (`{{…}}`, `{% if %}` — see
+  [how a prompt is rendered](#how-a-prompt-is-rendered)). Common vars:
   `volley.config.child_pii.nickname`, `volley.persist_data.*`, `session.overflow`.
 - **`opener`** supports `|`-alternatives and inline tags (`<opener>`, `<exit>`, `<sleep>`, `<launch:XX>`).
 - **`code`** defines Python hooks run around each turn: `pre_process`, `post_process`,
   `complete_handler`, `notify_handler` (and `handle_volley` for globals).
 - `model`/`max_tokens`/`temperature` are the LLM knobs — served to *your* [AI-seam brain](ai-seam.md),
   not a hardcoded vendor.
+
+#### How a prompt is rendered
+
+`mqtt/moxie_sdk/content/render.py` renders `prompt` and `opener` through a **sandboxed** Jinja2
+environment (`jinja2.sandbox.SandboxedEnvironment`, `ChainableUndefined`, no autoescape). The
+sandbox is not decoration: a `prompt` travels inside an importable [content pack](#content-packs-moving-content-between-machines-p0-built-2026-09-02),
+so it is *untrusted input*, and under a plain `jinja2.Environment` a template is server-side code
+execution. Every refusal is counted in `render.BLOCKED`; a hostile template comes back inert and
+the turn is never interrupted (`sim/tests/test_render_sandbox.py`).
+
+**The container has jinja2** — `mqtt/requirements.txt` lists `jinja2>=3.0` and `mqtt/Dockerfile`
+installs from that file, so the appliance runs the form this page documents. Measured in the real
+`mqtt/` image (2026-09-02, jinja2 3.1.6): with `presence.face_present` true and false,
+
+```
+template : You are Moxie.{% if presence.face_present %} Sam is here.{% endif %} Say hi to {{ nickname }}.
+true     : You are Moxie. Sam is here. Say hi to Sam.
+false    : You are Moxie. Say hi to Sam.
+```
+
+Shipping jinja2 into the image costs **+437 KB** (57.31 MB → 57.75 MB, +0.8%) and is safe *only*
+because the renderer is sandboxed — the two changes are a package, not a coincidence.
+
+A **bare-metal** install can still lack jinja2 (`pip install moxie-cloud-sdk` without the
+`content` extra — `mqtt/pyproject.toml` keeps it there on purpose so the SDK imports with no heavy
+dependencies). On that path `render_prompt` uses a dependency-free fallback.
 
 ### `globals[]` — regex-triggered commands (always on)
 ```json

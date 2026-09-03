@@ -38,7 +38,9 @@ BLOCKED = 0
 
 def _sandbox():
     """A `SandboxedEnvironment` that counts what it refuses. Raises `ImportError` when
-    jinja2 is absent, which is the shipped container's situation."""
+    jinja2 is absent — no longer the shipped container's situation (`mqtt/requirements.txt`
+    lists `jinja2>=3.0`), but still the situation for a bare-metal `pip install
+    moxie-cloud-sdk` without the `content` extra."""
     from jinja2.sandbox import SandboxedEnvironment
     from jinja2 import ChainableUndefined
 
