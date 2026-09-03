@@ -446,6 +446,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   🎭 puppet mode's only end-to-end proof is manual. All three, plus the two `.mjs` suites nobody runs,
   are now fenced by `sim/tests/test_ci_test_coverage.py` as a two-directional ratchet whose lists can
   only shrink.
+- **the supervisor still hard-codes *our* gateway as its default (2026-09-03 audit).** `mqtt/config.py`:81 reads `os.environ.get("MOXIE_LLM_BASE_URL", "https://gateway.graphlings.net/v1")`. No key is committed and the endpoint refuses unauthenticated calls, so this is **not** a secret leak — but this repo is public and the stated principle is that *any* Moxie sim and *any* OpenAI-compatible gateway work by configuration. A stranger who clones this today gets a supervisor silently pointed at the maintainer's server. The hosted Functions already do the right thing and refuse to guess: `functions/api/_lib/env.js` has **no** default for `DEMO_GATEWAY_BASE_URL`, and unset means degraded rather than "assume ours" — `backlog/live-sim-demo.md`'s constraint C3 records the inconsistency explicitly. The fix is to make the supervisor's default empty (or a neutral OpenAI-compatible base) and fail loudly when unset, which touches eight test files that reference the hostname, so it is a slice rather than a one-liner. Queued as the next BUILD slice; filed rather than rushed because there is no exposure to race.
 
 ## DoD progress (audited 2026-09-02 23:00 PDT, at v0.7.0) — **4/6 🟢 · overall ≈ 91%** (done = all six 🟢)
 
