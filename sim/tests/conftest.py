@@ -131,20 +131,81 @@ def _is_benign(msg: str) -> bool:
     return any(tok in msg for tok in _BENIGN_CONSOLE)
 
 
+#: Chrome logs a 404 SUBRESOURCE as a console error, with no URL in the message text.
+_RESOURCE_404 = "status of 404"
+#: The one 404 the static test server is EXPECTED to produce: `sim/web/mode.js` probes the
+#: optional same-origin capability route `/api/health` on every load, and a static server
+#: has no Pages Functions behind it. That miss is the `offline` path working as designed
+#: (spec docs/architecture/backlog/live-sim-demo.md §6.3 — an absent route leaves the page
+#: byte-identical to the pre-Functions site), and it is the same category as
+#: ERR_CONNECTION_REFUSED above: an optional backend that is not there.
+_CAPABILITY_PROBE = "/api/health"
+
+
+class ConsoleErrors(list):
+    """The console errors a test should care about.
+
+    A `list` so the existing assertion sites keep working unchanged, but the view is
+    computed at ACCESS time rather than at capture time — and that is the point. Whether
+    the capability probe's 404 line is benign depends on whether any OTHER 404 was seen,
+    which is only knowable once the page has finished loading. Filtering as each message
+    arrived would depend on the console event and the response event racing in the right
+    order; filtering when a test asserts cannot.
+
+    A genuinely missing asset therefore still fails: its 404 lands in `unexpected` and the
+    suppression switches off for the whole page, so every 404 line is reported.
+    """
+
+    def __init__(self, raw, unexpected):
+        super().__init__()
+        self._raw = raw
+        self._unexpected = unexpected
+
+    def _view(self):
+        if self._unexpected:
+            return list(self._raw)
+        return [m for m in self._raw if _RESOURCE_404 not in m]
+
+    def __iter__(self):
+        return iter(self._view())
+
+    def __len__(self):
+        return len(self._view())
+
+    def __bool__(self):
+        return bool(self._view())
+
+    def __getitem__(self, index):
+        return self._view()[index]
+
+    def __repr__(self):
+        return repr(self._view())
+
+    @property
+    def unexpected_404(self):
+        """404s that were NOT the optional capability probe — a real missing asset."""
+        return list(self._unexpected)
+
+
 @pytest.fixture
 def page(browser):
     """A fresh page that records real console errors on `page.console_errors`.
 
     Benign 'optional backend absent' errors (see `_BENIGN_CONSOLE`) are filtered
     at capture, so the suite is hermetic — it passes with OR without a broker up.
+    The optional `/api/health` capability probe's 404 is filtered at access time
+    instead (see `ConsoleErrors`), because judging it needs the whole page load.
     """
     page = browser.new_page()
-    errors = []
+    raw, unexpected = [], []
     page.on("console",
-            lambda m: errors.append(m.text)
+            lambda m: raw.append(m.text)
             if m.type == "error" and not _is_benign(m.text) else None)
-    page.on("pageerror", lambda e: errors.append(f"PAGEERR {e}"))
-    page.console_errors = errors
+    page.on("pageerror", lambda e: raw.append(f"PAGEERR {e}"))
+    page.on("response",
+            lambda r: unexpected.append(r.url)
+            if r.status == 404 and _CAPABILITY_PROBE not in r.url else None)
+    page.console_errors = ConsoleErrors(raw, unexpected)
     yield page
     page.close()
 
