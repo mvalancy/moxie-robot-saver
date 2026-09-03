@@ -1,5 +1,5 @@
 {
- "generated": "docs-dfa6ab347cb6",
+ "generated": "docs-519c97f0d79e",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 58913,
+   "bytes": 59538,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -288,10 +288,11 @@
    "path": "architecture/sim-as-a-client.md",
    "title": "The SIM as a backend client — interchangeable with a real robot",
    "section": "architecture",
-   "bytes": 7907,
+   "bytes": 9619,
    "mermaid": 1,
    "headings": [
     "The interchangeability guarantee",
+    "Robot → cloud: the activity log, and the delta that is allowed",
     "What the SIM substitutes vs what's identical",
     "The one divergence a spec must call out: TTS",
     "What each SIM client does with a `CloudTTSResponse`",
