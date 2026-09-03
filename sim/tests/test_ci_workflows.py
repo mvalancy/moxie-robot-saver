@@ -422,3 +422,48 @@ def test_the_local_runner_reinstalls_when_requirements_change():
     assert "requirements.txt" in run_sh and "sha256sum" in run_sh, (
         "run.sh no longer re-installs when requirements.txt changes; a stale venv will "
         "under-provision the suite again")
+
+# --------------------------------------------------------------------------- #
+# Every live suite must be dispatched by SOME tier.
+# --------------------------------------------------------------------------- #
+def test_every_live_suite_is_dispatched_by_some_tier():
+    """A live suite nobody runs is worse than one that does not exist: the file sits in
+    the tree looking like coverage, and a status-log line starts claiming it.
+
+    That is exactly what happened. `test_live_gateway_stt.py` and
+    `test_live_telehealth_voice.py` were dispatched by **no** tier from the day they were
+    written until 2026-09-03, while the log claimed live STT coverage. Nothing swept them
+    in by accident either — the deep tier names FILES, so a `-k test_live_gateway`
+    substring never applied to them. STT went live the same day as TTS and got the same
+    claim but none of the enforcement.
+
+    If a suite is deliberately not dispatched, add it to EXEMPT with the reason — that is
+    a decision someone can read, unlike silence.
+    """
+    here = os.path.dirname(__file__)
+    on_disk = {
+        f[:-3] for f in os.listdir(here)
+        if f.startswith("test_live_") and f.endswith(".py")
+    }
+    assert on_disk, "no live suites found — has the naming convention changed?"
+
+    dispatched = set()
+    for name in os.listdir(TEMPLATES):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        text = open(os.path.join(TEMPLATES, name)).read()
+        for suite in on_disk:
+            # match the FILE the tier names, not a substring of a longer suite name
+            if f"{suite}.py" in text:
+                dispatched.add(suite)
+
+    EXEMPT = {
+        # test_live_gateway.py is named by the fast tier only to be --ignore'd there;
+        # the deep tier really runs it, so it is dispatched and needs no exemption.
+    }
+    missing = sorted(on_disk - dispatched - set(EXEMPT))
+    assert not missing, (
+        "these live suites are dispatched by no CI tier, so they can only ever run on "
+        "someone's laptop: " + ", ".join(missing) + ". Add them to the deep tier's "
+        "creds-only invocation, or list them in EXEMPT with a reason."
+    )
