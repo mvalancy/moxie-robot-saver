@@ -373,13 +373,34 @@ BRAIN_BUILDERS = {
 }
 
 
-def default_brain() -> str:
-    """The brain the `defaults` layer contributes — `MOXIE_APP` when it names one,
-    otherwise `brains.DEFAULT_BRAIN`. `any`/`auto` land here too: they select nothing and
-    pin nothing, so the box still needs *some* brain to boot with."""
+def _unknown_brain(name) -> SystemExit:
+    """The one refusal for a `MOXIE_APP` nobody can build, so every path says it the same
+    way: `build_brain`, `default_brain`, and therefore `build_app` and `run.assemble`."""
     _sdk_path()
     from moxie_sdk import brains
-    return brains.sanitize_brain(MOXIE_APP) or brains.DEFAULT_BRAIN
+    return SystemExit(
+        f"MOXIE_APP={str(name)!r} is not a brain this appliance knows. "
+        f"Choose one of: {brains.offered()} — or MOXIE_APP=any to leave the choice "
+        f"to the console, per child (docs/architecture/ai-seam.md §2).")
+
+
+def default_brain() -> str:
+    """The brain the `defaults` layer contributes.
+
+    `MOXIE_APP` when it names one; `brains.DEFAULT_BRAIN` for the values that mean
+    *decide for me* (unset, `any`, `auto`) — they select nothing and pin nothing, but the
+    box still has to boot with something. **Anything else raises**: falling back to the
+    default for a typo is exactly the behaviour the registry exists to remove, and it is
+    what made `MOXIE_APP=gpt5` come out as the free-form companion.
+    """
+    _sdk_path()
+    from moxie_sdk import brains
+    name = brains.sanitize_brain(MOXIE_APP)
+    if name:
+        return name
+    if str(MOXIE_APP or "").strip().lower() in brains.NO_PIN_VALUES:
+        return brains.DEFAULT_BRAIN
+    raise _unknown_brain(MOXIE_APP)
 
 
 def brain_pin() -> str:
@@ -407,10 +428,7 @@ def build_brain(name):
     from moxie_sdk import brains
     key = brains.sanitize_brain(name)
     if not key or key not in BRAIN_BUILDERS:
-        raise SystemExit(
-            f"MOXIE_APP={str(name)!r} is not a brain this appliance knows. "
-            f"Choose one of: {brains.offered()} — or MOXIE_APP=any to leave the choice "
-            f"to the console, per child (docs/architecture/ai-seam.md §2).")
+        raise _unknown_brain(name)
     return BRAIN_BUILDERS[key]()
 
 

@@ -1138,7 +1138,9 @@ class MoxieRuntime:
                         "pin": brain_seam.sanitize_brain(out.get("pin")),
                         "pin_note": str(out.get("pin_note") or ""),
                         "default": brain_seam.sanitize_brain(out.get("default")) or boot}
-            except Exception as e:              # noqa: BLE001 — a broken seam is local
+            except (Exception, SystemExit) as e:   # a broken seam is local-only, and a
+                # misconfigured `MOXIE_APP` raises SystemExit rather than Exception — a
+                # card that 500s is a worse answer than a card that shows the real table.
                 self._note("brain", f"🧠 brain options unavailable: {type(e).__name__}")
         return {"available": brain_seam.options(default=boot), "pin": "",
                 "pin_note": "", "default": boot}
