@@ -85,16 +85,25 @@ ENV_VAR = {SPEECH: "MOXIE_TTS", LISTENING: "MOXIE_STT"}
 
 #: Which engine each explicit env value names, aliases included. A value that is absent
 #: from this table (`""`, `auto`, a typo) pins nothing and leaves the picker in charge.
+#:
+#: **`MOXIE_TTS=tone` is deliberately NOT here**, and the reason matters: in
+#: `config.build_synthesizer` `tone` is a PERMISSION, not a selection — it opts the
+#: built-in beep in as the *last rung* under a gateway and under Piper, exactly as
+#: `.env.example` describes it ("the built-in zero-dependency placeholder voice"). It is
+#: also what **both compose files default to** (`MOXIE_TTS: ${MOXIE_TTS:-tone}`), so
+#: treating it as a pin would silently reduce every `docker compose up` deployment's
+#: Speech dropdown to one entry. `piper`/`local`, `gateway`/`openai` and `off` are the
+#: values that really do select, and they are the ones that pin.
 ENV_PIN = {
     SPEECH: {"piper": "piper", "local": "piper", "gateway": "gateway",
-             "openai": "gateway", "tone": "tone", "off": "off"},
+             "openai": "gateway", "off": "off"},
     LISTENING: {"whisper": "whisper", "local": "whisper", "gateway": "gateway",
                 "off": "off"},
 }
 
 #: How a pinned engine is named in the sentence the console prints.
 PIN_LABEL = {"gateway": "the gateway", "piper": "local Piper",
-             "whisper": "local whisper", "tone": "the built-in tone"}
+             "whisper": "local whisper"}
 
 
 # ---------------------------------------------------------------- one choice --

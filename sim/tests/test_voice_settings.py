@@ -672,16 +672,18 @@ def test_an_explicit_value_pins_an_engine_and_auto_pins_nothing():
     assert vs.pin_for_env(vs.SPEECH, "local") == "piper"        # the documented alias
     assert vs.pin_for_env(vs.SPEECH, "GATEWAY") == "gateway"    # case-insensitive
     assert vs.pin_for_env(vs.SPEECH, "openai") == "gateway"
-    assert vs.pin_for_env(vs.SPEECH, "tone") == "tone"
     assert vs.pin_for_env(vs.SPEECH, "off") == "off"
+    # `tone` is a PERMISSION, not a selection (`config.build_synthesizer` reaches it only
+    # after the gateway and Piper), and it is what BOTH compose files default to. Pinning
+    # it would cut every `docker compose up` deployment's Speech dropdown down to one
+    # entry — so it pins nothing, and this assertion is the guard on that.
+    assert vs.pin_for_env(vs.SPEECH, "tone") == ""
     assert vs.pin_for_env(vs.LISTENING, "whisper") == "whisper"
     assert vs.pin_for_env(vs.LISTENING, "local") == "whisper"
     # Everything that means "decide for me" — which is what the picker is for.
-    for empty in ("", "  ", "auto", None, "banana", "piper"):
-        if empty == "piper":
-            continue
-        assert vs.pin_for_env(vs.LISTENING, empty) == "", empty
-    assert vs.pin_for_env(vs.SPEECH, "auto") == ""
+    for nothing in ("", "  ", "auto", None, "banana", "tone"):
+        assert vs.pin_for_env(vs.LISTENING, nothing) == "", nothing
+        assert vs.pin_for_env(vs.SPEECH, nothing) == "", nothing
 
 
 def test_honours_pin_allows_another_model_but_never_another_engine():
@@ -798,6 +800,21 @@ def test_the_dropdown_offers_only_what_the_pin_would_install(monkeypatch, voices
     assert out["pins"] == {vs.SPEECH: "piper", vs.LISTENING: ""}
     assert "MOXIE_TTS=piper" in out["pin_notes"][vs.SPEECH]
     assert out["pin_notes"][vs.LISTENING] == ""
+
+
+def test_the_compose_default_leaves_the_whole_picker_in_charge(monkeypatch):
+    """Both compose files ship `MOXIE_TTS=tone` / `MOXIE_STT=auto`. Neither selects an
+    engine — `tone` is the last rung `build_synthesizer` reaches, `auto` is the absence of
+    a choice — so the dropdowns must be exactly as full as with nothing set at all.
+    `sim/tests/test_compose.py` guards the other end of this coupling: that the defaults
+    in the two files are still values that pin nothing."""
+    c = _fresh_config(monkeypatch, MOXIE_TTS="tone", MOXIE_STT="auto")
+    cat = vs.GatewayCatalog(lambda: GATEWAY_MODELS, submit=lambda fn: fn())
+    out = c.voice_engines(cat).available()
+    assert "gateway:piper-amy" in vs.option_ids(out["available"][vs.SPEECH])
+    assert "gateway:stt-whisper" in vs.option_ids(out["available"][vs.LISTENING])
+    assert out["pins"] == {vs.SPEECH: "", vs.LISTENING: ""}
+    assert out["pin_notes"] == {vs.SPEECH: "", vs.LISTENING: ""}
 
 
 def test_a_voiceless_deployment_offers_nothing_and_says_which_variable_did_it(monkeypatch):
