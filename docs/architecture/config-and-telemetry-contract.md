@@ -135,13 +135,28 @@ source `REMOTE_ASSETBUNDLES`) rather than the base APK, which is exactly why the
 [`unity-assets.md`](../reverse-engineering/firmware/unity-assets.md):19-67 found none of them; and
 [`behavior-markup.md`](../reverse-engineering/runtime/behavior-markup.md):161-163 records that the
 generators "accept **any** id the loaded bundle defines", so the id space is bundle-defined and cannot
-be inferred. **`moxie_sdk/faces.py` therefore ships 12 cited options and zero invented ids.** The
-remaining twelve slots are listed (a parent should see the whole anatomy) and marked `cited: false`; a
-parent who knows their robot's real labels supplies them verbatim through `face.custom`, which we never
-rewrite — bearing in mind [`mqtt-and-conversation.md`](mqtt-and-conversation.md):824, "some face
-customization assets crash Unity and are excluded". OpenMoxie (MIT) ships a ~60-entry table of real
-`MX_*` labels from robots its authors can run; we credit the idea and the mechanism in `ATTRIBUTION.md`
-and copied neither the code nor the list.
+be inferred *from our corpus*.
+
+**So we ingested someone else's, as data (2026-09-02).** OpenMoxie (MIT) ships a 60-entry table of real
+`MX_<nnn>_<Group>_<Detail>` labels harvested from robots its authors can run
+(`site/hive/content/data.py::MOXIE_CUSTOMIZATIONS`). We transcribed **the id strings and nothing else** —
+no code, no comments, no function bodies — into [`mqtt/moxie_sdk/face_assets.json`](../../mqtt/moxie_sdk/face_assets.json),
+which carries the full citation inline (repo, path, symbol, commit `c8c2d380`, MIT, ingest date, entry
+count, sha256 of the id list). The slot mapping — each group prefix to exactly one recovered
+`MoxieCustomizationType` — and every human-readable label are ours; an id we could not place would sit in
+`unmapped` rather than be guessed, and all 60 placed. **`moxie_sdk/faces.py` therefore ships 72 options
+across 11 of the 14 slots and still zero invented ids**, each tagged with its `origin`:
+`recovered-enum` (the 12 with hex, previewable) or `openmoxie-manifest` (the 60, every one carrying
+`caution: true`, because upstream's own note beside the list records that some of these crashed Unity
+**without saying which** — [`mqtt-and-conversation.md`](mqtt-and-conversation.md):824 says the same
+independently, "some face customization assets crash Unity and are excluded").
+
+`Stickers`, `Extras` and `Misc` remain listed and empty (`cited: false`) — neither source names a piece
+for them. A parent who knows their robot's real labels supplies them verbatim through `face.custom`,
+which we never rewrite. **The wire spelling depends on the origin:** a `recovered-enum` option is an enum
+*member* name and is joined to the slot's `MoxieCustomizationType` spelling (`EyeColor_teal` — the
+assumption below); an `openmoxie-manifest` option is already a whole asset label and travels verbatim
+(`MX_010_Eyes_Hazel`). The mechanism and the ingest are both credited in `ATTRIBUTION.md`.
 
 So the JSON on `/devices/{id}/config` is:
 
@@ -246,6 +261,14 @@ deployment that was already running; `0` pins it shut. Precedence: constructor a
 env → the stored fleet flag → **closed**. The console shows the flag *as enforced*
 alongside the stored one, so an appliance opened by the environment cannot look closed.
 
+**The same record also renders the broker ACL.** `mqtt/moxie_sdk/broker_acl.py::render_acl`
+turns this file into a mosquitto ACL — the `%c` device floor plus one `user d_<uuid>` block
+per permitted device. It is **generated and inert** today: no robot authenticates, so no
+`user` block can match ([`backlog/security-broker-auth.md`](backlog/security-broker-auth.md)
+§2.3). It exists so that when the broker gains a way to verify a device, `permits.json`
+stays the one place that says which robots are ours — for service, for the ACL and for
+broker auth alike.
+
 **Surface.** Supervisor: `GET /permits`, `POST /permits {device_id, permitted, label}` or
 `{allow_unverified_bots}`. Console: `GET /local/permits`, `POST /local/robots/{id}/permit`,
 `POST /local/fleet/permits`; `GET /local/fleet` gains `allow_unverified_bots`, `pending[]`,
@@ -327,7 +350,7 @@ via `LoggingStateChangeRequest{state, path}`, reporting back the effective `uplo
 | Wake alarms & wake toggles | `alarms` (`WakeSchedule`) + `wake_button_enabled`/`touch_wake_enabled`/`audio_wake_set` — weekday checkboxes + a time in the ⚙️ form |
 | Timezone | `timezone_id` |
 | Scheduled activities | `schedule_preferences` (`ParentRequest{module_id, scheduled_at}`) — module picker fed by the on-board catalog |
-| Moxie's look (the child's face) | `child_pii.face_options` (14 layers, 12 cited options) + the `child_pii.id` cache-buster — the 🎨 card; see [§Appearance](#-appearance-the-childs-chosen-face) |
+| Moxie's look (the child's face) | `child_pii.face_options` (14 layers, 72 cited options across 11) + the `child_pii.id` cache-buster — the 🎨 card; see [§Appearance](#-appearance-the-childs-chosen-face) |
 | House rules for every robot | the **fleet** layer: `POST /config?scope=fleet` → `fleet/config.json`, merged under each robot's own overrides |
 | OTA target / hold | `ota_update{id,version}`, `forbid_otaver`; status via `ota_reboot_required` + `OTA_LOCK` |
 | Privacy / data sharing | `data_sharing` → `LoggingPolicy` gate |

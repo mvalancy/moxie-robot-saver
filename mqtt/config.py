@@ -25,6 +25,42 @@ _load_env()
 MQTT_HOST = os.environ.get("MOXIE_MQTT_HOST", "127.0.0.1")   # supervisor→broker (loopback)
 MQTT_PORT = int(os.environ.get("MOXIE_MQTT_PORT", "1883"))   # plain listener for the supervisor
 
+# --- broker credential (security-broker-auth.md §2.2) ---
+# The supervisor is the appliance's ONE fleet-wide MQTT identity — the only client that
+# may read `$SYS/broker/log` (where every d_<uuid> is announced) and write into another
+# device's subtree. Unset = today's behaviour exactly: an anonymous supervisor on an
+# open broker, which is what a bare-metal dev broker and the SIL harness still run.
+MQTT_USERNAME = os.environ.get("MOXIE_MQTT_USER", "")
+# Two ways in, because a secret in `environment:` is visible to `docker inspect` and to
+# anything that can read /proc: MOXIE_MQTT_PASSWORD is the literal (fine for a hand-run
+# supervisor), MOXIE_MQTT_PASSWORD_FILE is a path the compose one-shot minted at 0600
+# inside the shared volume. An explicit literal wins; otherwise the file is read.
+MQTT_PASSWORD = os.environ.get("MOXIE_MQTT_PASSWORD", "")
+MQTT_PASSWORD_FILE = os.environ.get("MOXIE_MQTT_PASSWORD_FILE", "")
+
+
+def broker_credentials():
+    """`(username, password)` for the supervisor's MQTT client — `("", "")` when unset.
+
+    Read at CONNECT time rather than baked in at import, because in compose the `certs`
+    one-shot may mint the secret after this module was first imported. A missing or
+    unreadable password file is not fatal: it degrades to anonymous, which is exactly
+    what a broker with no `password_file` expects, and the connection failure it would
+    otherwise cause is far harder to diagnose than a log line.
+    """
+    password = MQTT_PASSWORD
+    if not password and MQTT_PASSWORD_FILE:
+        try:
+            with open(MQTT_PASSWORD_FILE) as fh:
+                password = fh.read().strip()
+        except OSError as e:
+            print(f"[config] MOXIE_MQTT_PASSWORD_FILE unreadable ({e.strerror}) — "
+                  f"connecting anonymously", flush=True)
+            password = ""
+    if MQTT_USERNAME and password:
+        return MQTT_USERNAME, password
+    return "", ""
+
 # Best-effort HTTP status endpoint (http://127.0.0.1:STATUS_PORT/status). Env-overridable
 # so repeated/parallel SIL runs (or a leftover supervisor) don't collide on one fixed port.
 STATUS_PORT = int(os.environ.get("MOXIE_STATUS_PORT", "8930"))
@@ -83,10 +119,42 @@ PIPER_CONFIG   = os.environ.get("MOXIE_PIPER_CONFIG", "")
 # Voice engine hint. "" = auto (voice server / piper / none). "tone" = the built-in
 # zero-dep placeholder voice (demos/CI/SIL audio round-trip). "off" = force no voice.
 TTS_ENGINE     = os.environ.get("MOXIE_TTS", "").lower()
+# Where local Piper voices live, for the console's 🎚️ Voice picker. The repo's own
+# `sim/tts/voices/` by default (git-ignored — 63 MB per voice), overridable for a box that
+# keeps its models elsewhere. Read-only discovery: nothing here downloads anything.
+VOICES_DIR     = (os.environ.get("MOXIE_VOICES_DIR", "").strip()
+                  or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "sim", "tts", "voices"))
 
-# STT: local faster-whisper. "auto" = enable when installed; "off" to disable.
-STT_ENABLED = os.environ.get("MOXIE_STT", "auto").lower()
-STT_MODEL   = os.environ.get("MOXIE_STT_MODEL", "base.en")
+# --- STT (AI seam §1): the ears. Two FIRST-CLASS engines, one env line apart ---------
+# "auto"    (default) the gateway when one is configured (an STT base URL resolves, a key
+#           is present and the openai SDK is importable), else local faster-whisper when
+#           it is installed, else off. A hosted deployment therefore hears out of the box;
+#           a keyless box behaves exactly as it did before this knob existed.
+# "gateway" force the cloud ears (with local whisper as their standby, see below).
+# "whisper" / "local"  force LOCAL faster-whisper **even when a gateway URL is set** —
+#           a home appliance that keeps a child's voice inside the house is a supported
+#           deployment, not a degraded one (the same statement `MOXIE_TTS=piper` makes
+#           for the voice).
+# "off"     no ears at all; text turns still work.
+STT_ENABLED = os.environ.get("MOXIE_STT", "auto").strip().lower()
+# Unset → the selected engine's own default (below); set → passed to whichever engine
+# runs, so name a model that engine knows.
+STT_MODEL   = os.environ.get("MOXIE_STT_MODEL", "").strip()
+#: What the gateway calls its ears (`graphling-stt` and `stt-whisper-base` also exist).
+GATEWAY_STT_MODEL = "stt-whisper"
+#: faster-whisper's smallest English model — the local default since M3.
+LOCAL_STT_MODEL = "base.en"
+# One gateway, one key: the STT endpoint defaults to the voice endpoint and then to the
+# brain's, because on our LiteLLM proxy they are the same host with the same key. Set
+# MOXIE_STT_BASE_URL only to point the ears somewhere else.
+STT_BASE_URL = (os.environ.get("MOXIE_STT_BASE_URL", "").strip()
+                or VOICE_BASE_URL or LLM_BASE_URL)
+STT_API_KEY  = (os.environ.get("MOXIE_STT_API_KEY", "").strip()
+                or VOICE_API_KEY or LLM_API_KEY)
+# How long the 🎚️ picker trusts one `GET /v1/models` listing before refreshing it in the
+# background (seconds). Never on a turn's path — see moxie_sdk/voice_settings.py.
+VOICE_DISCOVERY_TTL_S = _env_int("MOXIE_VOICE_DISCOVERY_TTL_S", 300)
 
 # --- brain latency (background inference + filler) ---
 # Seconds a turn's brain call may run before the runtime speaks a short filler line
@@ -136,24 +204,82 @@ def build_app():
 
 
 def build_content_app():
-    """A ContentApp running the configured module through the AI seam."""
+    """A ContentApp running the configured module through the AI seam.
+
+    **Effective content = the shipped file, then the imported overlay by `kind:key`**
+    (📦 content packs, `docs/architecture/backlog/content-packs.md` §2.4). The two are kept
+    apart on the app — `content_defaults` is the shipped baseline, `module` is the merge —
+    because `MoxieRuntime.reload_content()` and `content_undo()` both need to rebuild one
+    from the other without a restart.
+
+    A fresh appliance has an empty overlay and therefore loads exactly what it always did.
+    """
     import json
-    from moxie_sdk.content import load_modules, ContentApp
+    from moxie_sdk.content import ContentApp, packs
     from moxie_sdk.chat import make_openai_chat
+    from moxie_sdk.store import JsonStore
     from moxie_sdk.apps.llm_app import DEFAULT_PERSONA
     path = CONTENT_MODULE
     if not os.path.isabs(path):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
     with open(path) as fh:
-        module = load_modules(json.load(fh))
+        defaults = packs.shipped_items(json.load(fh))
+    stored = JsonStore().read_shared("content_items", {}) or {}
+    overlay = stored.get("items") if isinstance(stored, dict) else None
+    overlay = overlay if isinstance(overlay, dict) else {}
+    module = packs.build_module(defaults, overlay)
+    if overlay:
+        print(f"[config] 📦 content: {len(defaults)} shipped + {len(overlay)} imported")
     chat = make_openai_chat(LLM_BASE_URL, LLM_API_KEY, LLM_MODEL)
-    return ContentApp(module, chat, persona=DEFAULT_PERSONA)
+    return ContentApp(module, chat, persona=DEFAULT_PERSONA, content_defaults=defaults)
 
 
-def build_synthesizer():
+def _speech_for_choice(choice, piper):
+    """The engine one 🎚️ speech choice names, or None when it cannot be built here.
+
+    `piper` is the already-built local voice (or None), reused as the gateway's standby so
+    a picked cloud voice degrades exactly the way the env-driven one does.
+    """
+    from moxie_sdk import voice_settings
+    from moxie_sdk.tts import (FallbackSynthesizer, ToneSynthesizer,
+                               make_piper_synthesizer, make_voice_synthesizer)
+    engine, model = choice["engine"], choice["model"]
+    if engine == "tone":
+        return ToneSynthesizer()
+    if engine == "piper":
+        # A picked LOCAL voice wins even with a gateway fully configured (owner rule).
+        path = voice_settings.piper_voice_path(model, PIPER_MODEL, VOICES_DIR)
+        if not path:
+            return None
+        cfg = PIPER_CONFIG if (PIPER_CONFIG and path == PIPER_MODEL) else None
+        return make_piper_synthesizer(path, cfg or None)
+    if engine == "gateway":
+        if not VOICE_BASE_URL:
+            return None
+        voice = make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE,
+                                       model=model, response_format=VOICE_FORMAT,
+                                       sample_rate=VOICE_SAMPLE_RATE)
+        if voice is None:
+            return None
+        return FallbackSynthesizer(voice, piper or ToneSynthesizer())
+    return None
+
+
+def build_synthesizer(override=None):
     """A server voice (moxie_sdk.tts.Synthesizer).
 
-    Precedence is unchanged — **voice server > Piper > tone**: a voice server if
+    `override` is the 🎚️ console pick (`{"engine", "model"}` — see
+    `moxie_sdk/voice_settings.py`), read from `fleet/voice.json` at boot and passed again
+    on every live swap. It sits **above** the env precedence, with two deliberate
+    exceptions: `MOXIE_TTS=off` still wins (a deployment that declared itself voiceless is
+    not talked out of it by a dropdown), and a pick that cannot be built here — a gateway
+    voice with no `MOXIE_VOICE_BASE_URL`, a Piper voice whose `.onnx` is gone — falls
+    through to the env path rather than leaving a child in silence. Unset `override`
+    keeps today's behaviour byte-for-byte.
+
+    Explicit `MOXIE_TTS=piper` (alias `local`) or `gateway` (alias `openai`) selects that
+    engine outright and exits loudly if it cannot be built. Otherwise the auto precedence is
+    unchanged — **voice server > Piper > tone**: a voice server if
     MOXIE_VOICE_BASE_URL is set; else a local Piper voice if MOXIE_PIPER_MODEL is set +
     piper installed; else the built-in tone with MOXIE_TTS=tone; else None (a real robot
     self-synthesizes; the SIM needs one of these for audio).
@@ -165,10 +291,25 @@ def build_synthesizer():
     a working voice instead of handing a child silence. It is reported once, on the first
     failure — see moxie_sdk/tts.py::FallbackSynthesizer.
     """
+    from moxie_sdk import voice_settings
     from moxie_sdk.tts import make_voice_synthesizer, make_piper_synthesizer
     if TTS_ENGINE == "off":
         return None
     piper = make_piper_synthesizer(PIPER_MODEL, PIPER_CONFIG or None)
+    choice = voice_settings.sanitize_choice(voice_settings.SPEECH, override)
+    if choice:
+        picked = _speech_for_choice(choice, piper)
+        if picked is not None:
+            return picked
+    # Explicit engines win over the auto precedence (owner rule: local stays first-class,
+    # one env line away even with a gateway fully configured — the mirror of MOXIE_STT).
+    if TTS_ENGINE in ("piper", "local"):
+        if piper is None:
+            raise SystemExit("MOXIE_TTS=piper but no local Piper voice could be built — "
+                             "set MOXIE_PIPER_MODEL to a voice .onnx and install piper-tts")
+        return piper
+    if TTS_ENGINE in ("gateway", "openai") and not VOICE_BASE_URL:
+        raise SystemExit("MOXIE_TTS=gateway but MOXIE_VOICE_BASE_URL is not set")
     if VOICE_BASE_URL:
         from moxie_sdk.tts import FallbackSynthesizer, ToneSynthesizer
         voice = make_voice_synthesizer(VOICE_BASE_URL, VOICE_API_KEY, TTS_VOICE,
@@ -184,12 +325,179 @@ def build_synthesizer():
     return None
 
 
-def build_transcriber():
-    """A local STT engine (moxie_sdk.stt.WhisperTranscriber) when enabled + installed,
-    else None (text turns still work; audio frames are ignored)."""
+def _listening_for_choice(choice):
+    """The ears one 🎚️ listening choice names, or None when they cannot be built here.
+
+    `off` is handled by the caller, because "no ears" and "could not build these ears" are
+    the same `None` and must not be confused.
+    """
+    from moxie_sdk.stt import (FallbackTranscriber, NullTranscriber, WhisperTranscriber,
+                               make_openai_transcriber)
+    engine, model = choice["engine"], choice["model"]
+    if engine == "whisper":
+        # A picked LOCAL engine wins even with a gateway fully configured (owner rule).
+        if not WhisperTranscriber.available():
+            return None
+        return WhisperTranscriber(model=model or LOCAL_STT_MODEL)
+    if engine == "gateway":
+        primary = make_openai_transcriber(STT_BASE_URL, STT_API_KEY,
+                                          model=model or GATEWAY_STT_MODEL)
+        if primary is None:
+            return None
+        standby = (WhisperTranscriber(model=LOCAL_STT_MODEL)
+                   if WhisperTranscriber.available() else NullTranscriber())
+        return FallbackTranscriber(primary, standby)
+    return None
+
+
+def build_transcriber(override=None):
+    """The ears (moxie_sdk.stt.Transcriber), or None when nothing can hear.
+
+    `override` is the 🎚️ console pick, with the same precedence the voice has: above the
+    env, under `MOXIE_STT=off`, and falling through to the env path when the picked engine
+    cannot be built on this box (see `build_synthesizer`). Unset keeps today's behaviour.
+
+    Neither engine is the "real" one. **Local faster-whisper** keeps a child's voice on
+    the box and needs no key; **the gateway** (live 2026-09-02) needs no 140 MB model and
+    is what a hosted deployment — the SIM on Cloudflare, a VPS, a slim container — can
+    actually run. `MOXIE_STT` picks: `whisper`/`local` and `gateway` are explicit and
+    win over everything, `off` disables, and `auto` prefers the gateway *only when one is
+    genuinely configured* (URL + key + SDK) and otherwise uses local whisper.
+
+    Why `auto` also demands a KEY: `STT_BASE_URL` falls back to `LLM_BASE_URL`, which has
+    a default, so a URL alone is never evidence that anyone meant to use the cloud. With
+    no key the gateway can only answer 401 — local whisper is the better ears, and an
+    unset environment keeps behaving exactly as it did before this knob existed.
+
+    The gateway is wrapped in a `FallbackTranscriber` whose standby is the rung it
+    displaced: local whisper when installed, else a `NullTranscriber` that returns "".
+    An outage then costs one reported downgrade instead of an exception on the turn's
+    transcription path (mirrors `build_synthesizer`'s standby voice). The standby is
+    built eagerly, so a box that must not load the whisper weights should simply not
+    install faster-whisper — then a gateway outage means Moxie hears nothing until it
+    returns, which the log says out loud.
+    """
+    from moxie_sdk import voice_settings
+    from moxie_sdk.stt import (FallbackTranscriber, NullTranscriber, OpenAITranscriber,
+                               WhisperTranscriber, make_openai_transcriber)
     if STT_ENABLED == "off":
         return None
+    choice = voice_settings.sanitize_choice(voice_settings.LISTENING, override)
+    if choice:
+        if choice["engine"] == "off":
+            return None
+        picked = _listening_for_choice(choice)
+        if picked is not None:
+            return picked
+    local_ok = WhisperTranscriber.available()
+    if STT_ENABLED in ("whisper", "local"):      # local wins over any gateway URL
+        if not local_ok:
+            raise SystemExit("MOXIE_STT=%s needs faster-whisper: "
+                             "pip install 'moxie-cloud-sdk[stt]'" % STT_ENABLED)
+        return WhisperTranscriber(model=STT_MODEL or LOCAL_STT_MODEL)
+    gateway_ok = OpenAITranscriber.available(STT_BASE_URL)
+    if STT_ENABLED == "gateway" and not gateway_ok:
+        # Explicitly asked for the cloud ears and they cannot be built. Say so loudly
+        # rather than quietly hearing with something else than what was configured.
+        raise SystemExit("MOXIE_STT=gateway needs the openai SDK "
+                         "(pip install 'moxie-cloud-sdk[llm]') and an STT endpoint "
+                         "(MOXIE_STT_BASE_URL / MOXIE_VOICE_BASE_URL / MOXIE_LLM_BASE_URL)")
+    if gateway_ok and (STT_ENABLED == "gateway" or (STT_ENABLED == "auto"
+                                                    and bool(STT_API_KEY))):
+        primary = make_openai_transcriber(STT_BASE_URL, STT_API_KEY,
+                                          model=STT_MODEL or GATEWAY_STT_MODEL)
+        if primary is not None:
+            # The standby always runs the LOCAL default model — STT_MODEL, when set, names
+            # a model on whichever engine was selected, and that is the gateway here.
+            standby = (WhisperTranscriber(model=LOCAL_STT_MODEL) if local_ok
+                       else NullTranscriber())
+            return FallbackTranscriber(primary, standby)
+    if local_ok:
+        return WhisperTranscriber(model=STT_MODEL or LOCAL_STT_MODEL)
+    return None
+
+
+# --- 🎚️ the voice picker (docs/architecture/backlog/voice-picker.md) ----------------
+# What this appliance can actually speak and hear with, and how to build any of it. The
+# supervisor runtime holds one of these and never imports `config` itself, so a test can
+# hand it a fake and the whole picker runs with no gateway, no key and no model wheels.
+
+def gateway_model_ids():
+    """Every model id the voice gateway lists — ONE `GET {MOXIE_VOICE_BASE_URL}/models`.
+
+    Which of them is a voice and which is a pair of ears is decided by name, in
+    `moxie_sdk/audio_models.py`: the listing itself says nothing (LiteLLM's
+    `model_info.mode` is server-side config, not part of the public payload).
+    """
+    from openai import OpenAI                 # lazy — the SDK is an optional extra
+    client = OpenAI(base_url=VOICE_BASE_URL, api_key=VOICE_API_KEY or "sk-local",
+                    max_retries=0)
+    return [getattr(m, "id", "") for m in (client.models.list().data or [])]
+
+
+def local_piper_voices():
+    """Local Piper voice names this box can really speak with — `[]` when the `piper`
+    package is missing or no `.onnx` is installed. Both halves are required: a voice file
+    with no runtime cannot speak, and a runtime with no voice file has nothing to say."""
+    from moxie_sdk import voice_settings
+    from moxie_sdk.tts import PiperSynthesizer
+    if not PiperSynthesizer.available():
+        return []
+    return voice_settings.piper_voices(PIPER_MODEL, VOICES_DIR)
+
+
+def local_whisper_models():
+    """Local whisper sizes to offer — `[]` when faster-whisper is not installed.
+
+    Only the default (`base.en`) and an explicitly configured `MOXIE_STT_MODEL`, never the
+    whole catalogue: faster-whisper *accepts* any size but DOWNLOADS it on first use, and a
+    dropdown that silently costs a 1.5 GB fetch mid-conversation is not an offer.
+    """
     from moxie_sdk.stt import WhisperTranscriber
     if not WhisperTranscriber.available():
-        return None
-    return WhisperTranscriber(model=STT_MODEL)
+        return []
+    names = [LOCAL_STT_MODEL]
+    if STT_MODEL and STT_MODEL not in names:
+        names.append(STT_MODEL)
+    return names
+
+
+class VoiceEngines:
+    """The runtime's one seam onto this module for the 🎚️ picker.
+
+    `available()` never blocks: the gateway listing is cached by `GatewayCatalog` and
+    refreshed on a background thread, so the first call after boot answers with the local
+    entries and `discovering: True` while the request is still in flight.
+    """
+
+    def __init__(self, catalog=None):
+        from moxie_sdk import voice_settings
+        self.catalog = catalog if catalog is not None else voice_settings.GatewayCatalog(
+            gateway_model_ids if VOICE_BASE_URL else None,
+            ttl_s=VOICE_DISCOVERY_TTL_S)
+
+    def available(self, *, refresh: bool = False, settle_s: float = 0.0) -> dict:
+        """`{available: {speech, listening}, discovering, gateway_error}`.
+
+        `settle_s` is the bounded wait a console WRITE may ask for so a cold supervisor
+        validates a pick against the real list rather than against `tone` alone. A read
+        passes 0 and never waits.
+        """
+        from moxie_sdk import voice_settings
+        snap = self.catalog.snapshot(refresh=refresh, settle_s=settle_s)
+        return {"available": voice_settings.build_available(
+                    snap["ids"], piper_voices=local_piper_voices(),
+                    whisper_models=local_whisper_models()),
+                "discovering": snap["discovering"],
+                "gateway_error": snap["gateway_error"]}
+
+    def build_speech(self, choice):
+        return build_synthesizer(override=choice)
+
+    def build_listening(self, choice):
+        return build_transcriber(override=choice)
+
+
+def voice_engines(catalog=None) -> "VoiceEngines":
+    """The appliance's `VoiceEngines` — what `run.py` hands the runtime at boot."""
+    return VoiceEngines(catalog)

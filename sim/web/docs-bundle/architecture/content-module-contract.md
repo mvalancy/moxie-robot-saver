@@ -188,6 +188,26 @@ entry only `Recommendation` fields. It is stored at `robots/<device_id>/schedule
 served by `GET /schedule?device_id=…`
 ([`mqtt-and-conversation.md` §3.8](mqtt-and-conversation.md#38-the-schedule-query-the-day-plan-and-the-parents-read-of-it-adaptive-2026-09-02)).
 
+##### In the console
+
+The parent reads it on the **📅 Today's plan** card: `GET /local/robots/{device_id}/schedule` is a
+thin proxy of the runtime's `GET /schedule` ([`../../server/moxie_server/main.py`](../../server/moxie_server/main.py)),
+normalized by the pure `normalize_schedule_view`
+([`../../server/moxie_server/fleet.py`](../../server/moxie_server/fleet.py)) into one row per served
+entry — clock time, name, and the `line` above it in muted text — plus a footer carrying the
+constraints the payload reports: the bedtime window and how many slots it cost, each pinned parent
+request, and *"no telemetry module signal — finish/abandon comes from the robot's reports"* whenever
+`inputs.telemetry.carries_module_signal` is `false`. Rows are paired to `provided_schedule` by
+position (the contract above) and re-paired by `module_id` if a payload ever breaks that order.
+Three things the card refuses to invent: a **name** (`Recommendation.module_name` when the template
+supplies one, else the id verbatim — the plain-English table lives in the SDK and is not copied
+across the seam), a **clock time** (the authored spine is ordered, not timed, and shows `—`), and a
+**telemetry signal**. The card is **read-only**: a day is changed from ⚙️ Settings (bedtime,
+`schedule_preferences.parent_requests`), never from here. Tested pure in
+[`../../sim/tests/test_schedule_view.py`](../../sim/tests/test_schedule_view.py) against a recorded
+real payload, and across the seam in
+[`../../sim/tests/test_console_roundtrip.py`](../../sim/tests/test_console_roundtrip.py).
+
 ## The `volley` / `session` API (per-turn hooks)
 
 Each turn hands the module's `code` a **`volley`** (this exchange) and **`session`** (the conversation):
@@ -391,6 +411,166 @@ These are ordinary content QRs (a text payload the vision pipeline decodes) — 
 setup/`bo-wifi` grammar in [`qr-commands.md`](../reverse-engineering/protocol/qr-commands.md); same
 camera, different consumer.
 
+## Content packs — moving content between machines *(P0 built 2026-09-02)*
+
+A module is a file in a git repository, which makes authoring content a developer activity.
+A **pack** is the distribution unit that fixes that: one JSON file a parent, a teacher or a
+speech therapist can be handed, reviewed item by item before it changes anything, and undone
+afterwards. Design record and the full assumption ledger:
+[`backlog/content-packs.md`](backlog/content-packs.md) (audit
+[ADOPT #5](openmoxie-feature-audit.md)). Implementation:
+[`../../mqtt/moxie_sdk/content/packs.py`](../../mqtt/moxie_sdk/content/packs.py) — pure,
+stdlib only, no store and no clock except an injected `now`.
+
+### The file
+
+```jsonc
+{"pack_format": 1,                          // reader contract; an unknown number is refused readably
+ "id": "bedtime-wind-down",                 // [a-z0-9-], <= 64
+ "name": "Bedtime wind-down", "details": "", "author": "",
+ "pack_version": 3,                         // the PACK's own release counter (display only)
+ "created_at": "2026-09-02T19:40:00Z", "generator": "moxie-cloud",
+ "items": [{"kind": "conversation", "key": "FREE_CHAT/default",
+            "source_version": 3, "data": { /* the allowlist, below */ }}],
+ "signatures": [],                          // reserved, unread
+ "digest": "sha256:9f2c…"}
+```
+
+`items[]` is **flat and keyed**, not three sections: every operation here (review state,
+diff, selection, conflict, provenance) is per item, so "import exactly these" is a set of
+`kind:key` ids rather than three parallel arrays of indexes. Identity is upstream's:
+conversation = `module_id/content_id`, global = `name`, schedule = `name`.
+
+The **digest** is `sha256` over the canonical serialization of the whole object with
+`digest` and `signatures` removed (`json.dumps(sort_keys=True, separators=(",", ":"),
+ensure_ascii=False)`), so it survives pretty-printing and key reordering and fails on any
+content edit. `parse_pack` reports `ok` / `mismatch` / `absent`; a mismatch is **not** fatal
+— a hand-written pack is legitimate — but then **nothing is pre-selected** in the review.
+
+**Checksummed, deliberately not signed.** A detached signature is only worth something
+against a known publisher, which needs key distribution, trust roots and revocation; a LAN
+appliance with no account system can honestly provide none of the three, and a signature
+verified against a key that arrived in the same file reads as a guarantee it is not.
+`signatures: []` is reserved so adding one later is not a format break, and the property
+packs actually need is delivered structurally instead: **an imported pack cannot execute
+anything** (see the `code` row below).
+
+### What travels — a positive allowlist
+
+| Kind | Fields in `data` |
+|---|---|
+| `conversation` | `name`, `module_id`, `content_id`, `prompt`, `opener`, `model`, `max_tokens`, `temperature`, `max_history`, `max_volleys`, `code`, `memory` |
+| `global` | `name`, `pattern`, `entity_groups`, `action`, `code` |
+| `schedule` | `name`, `schedule` |
+
+An allowlist, never a denylist — a denylist leaks the first time somebody adds a field, and
+on a child's appliance that is not an acceptable failure mode. `packs.FIELDS` is pinned
+against `dataclasses.fields()` by `sim/tests/test_content_packs.py`, so a new field on
+`Conversation` fails a test rather than quietly shipping in everybody's packs. `Global._rx`
+(the compiled pattern) is derived state and never travels; `source_version` is the *item's*
+field, not content, which is what makes a version bump distinguishable from an edit.
+
+**Never in a pack:** child PII, anything Moxie remembers, telemetry, safety events,
+telehealth transcripts, device ids, permits, config overrides, or any credential — none of
+them has a field here to ride out on. The one **residual leak, named honestly:** a parent may
+have edited a prompt to include their child's name, and the exporter cannot know a string is
+PII by looking at it. `scan_outgoing` checks outgoing text against the nicknames the
+appliance currently knows and flags a hit, so the console can say *"this prompt mentions
+Ada — edit it or export anyway"*. **It catches the names we know and nothing else.**
+
+**`code` is data, never behaviour.** The engine has never executed a module's `code`
+([`content_app.py`](../../mqtt/moxie_sdk/content/content_app.py)), and packs make that a
+security property rather than a deferral: a `code` string round-trips as an opaque field,
+the review marks the item ⚠️ *"carries a `code` block, which this appliance never runs"*, and
+it stays in the store so a future sandboxed runtime (audit BEYOND #6) could start running it
+behind a capability declaration without a re-import. The honest cost: importing upstream's
+`MoxieTime` or `MoxieTimers` gives you a global that matches an utterance and then does
+nothing, because their behaviour *is* the `code`.
+
+### `source_version`, `local_rev`, and the review that does not clobber
+
+Every record — shipped or imported — carries **`source_version`**, an integer the *author*
+owns and bumps (default 1; the shipped modules under
+[`../../mqtt/content_modules/`](../../mqtt/content_modules/) now state it explicitly). Every
+installed item also carries provenance:
+
+```jsonc
+"provenance": {"pack_id": "bedtime-wind-down", "pack_version": 3, "source_version": 2,
+               "imported_at": 1788400000, "imported_rev": "sha256:1a3f…",
+               "origin": "pack" | "shipped" | "local"}
+```
+
+`local_rev = sha256(canonical(the data as it stands now))`. **`local_rev != imported_rev`
+means the item was edited on this appliance** — and that one comparison is the whole
+difference from upstream, whose review compares two `source_version` integers and therefore
+cannot see your edit at all. The review state is a 2×2:
+
+| incoming vs installed | local untouched | **locally edited** |
+|---|---|---|
+| not installed | `NEW` — pre-selected | *(n/a)* |
+| `source_version` greater | `UPGRADE` — pre-selected | ⚠️ `CONFLICT` — not selected |
+| equal, same bytes as imported | `SAME` | `KEEP LOCAL` |
+| equal, different bytes | `FORK` — *same version number, different content* | `FORK` |
+| `source_version` lower | `DOWNGRADE` | `DOWNGRADE` + conflict |
+
+Only `NEW` and a clean `UPGRADE` are ever ticked by default, and nothing at all is ticked
+when the digest does not verify. `FORK` exists because "authors bump `source_version`" is an
+assumption, not a guarantee. **Re-importing the same pack after a local edit never clobbers
+it**, and a parent who accepts anyway has one-slot `undo`.
+
+### Storage, the overlay, and the reload
+
+Three fleet-scoped [`JsonStore`](../../mqtt/moxie_sdk/store.py) collections:
+
+| File | Holds |
+|---|---|
+| `fleet/content_items.json` | the installed **overlay** — `{"items": {"conversation:FREE_CHAT/default": {"data", "provenance"}, …}}` |
+| `fleet/content_packs.json` | the ledger the 📦 card lists (one row per installed pack) |
+| `fleet/content_backup.json` | the one-slot pre-import snapshot, for `undo` |
+
+**Effective content = shipped defaults, then the overlay by `kind:key`.**
+`build_content_app()` loads `MOXIE_CONTENT_MODULE` as it always did, then applies the
+overlay; an appliance that has never imported behaves exactly as it did before. Because
+shipped records carry a version, upgrading *our* content across a release obeys the identical
+rule as a stranger's pack — and a shipped item a parent edited is not silently taken back.
+Only accepted items are written to the overlay, never the merged view, so a later release's
+improved starter chat is still an upgrade rather than something the overlay shadows. The
+overlay never deletes: P0 has no remove-item operation.
+
+An import ends in `reload_content()`, which reassigns **one attribute** (`self.app.module`).
+The next turn renders the new prompt; a turn already in flight finishes on the module object
+it started with, and a conversation session keeps its `Conversation` for that session. There
+is no lock in the turn loop — the same rule the voice picker adopted for engine swaps — and
+that is documented behaviour, not an oversight.
+
+### The routes
+
+Supervisor status HTTP (localhost-only), all fleet-level — content is a property of the
+appliance, not of one robot:
+
+| Route | Body / query | Answers |
+|---|---|---|
+| `GET /content` | — | inventory + pack ledger + `undo_available` |
+| `GET /content/export` | `?items=<kind:key,…>&name=…&id=…` | the pack JSON itself |
+| `POST /content/review` | the pack file's own bytes | per-item rows + `expect_digest`; **writes nothing** |
+| `POST /content/import` | `{"pack", "accept": ["kind:key", …], "expect_digest"}` | the applied/skipped summary, or **409** |
+| `POST /content/undo` | — | what was restored |
+
+`pack` may be the parsed object **or the file's raw text**, and the console sends the text:
+re-encoding in a browser turns `1.0` into `1` and would make a good file report as tampered.
+A body over `MOXIE_PACK_MAX_BYTES` (default 1 MiB) is **413**, refused before it is buffered.
+The **409** closes the review-one-file-import-another gap: the pack is re-sent between the two
+calls because the server holds no session state, so they can genuinely be different files.
+The console proxies these at `/local/content{,/export,/review,/import,/undo}` behind the 📦
+card. Nothing here touches the wire — a pack is server-side data, and `_push_config` and
+`RobotCloudConfig` are untouched (which is why face/config packs are a later slice).
+
+**Unsettled without hardware:** a pack-authored `schedules[]` entry is the one thing that
+reaches the robot (as `ContentSchedule`). No physical robot has ever been served one, so what
+a real robot does with an entry naming a module its firmware lacks — ignore it, skip the day,
+or fail the query — is **unobserved**; the review warns on any `module_id` outside the
+recovered on-board catalog rather than refusing it.
+
 ## Content delivery (assets)
 
 Activities that ship art/audio pull **dynamic AssetBundles** via `RobotAssetBundleSource` +
@@ -416,6 +596,10 @@ references; a text-only activity needs none. Detail:
 - [x] `persist_data` + `session.summarize()`: durable module-namespaced memory, summarized at
       the end of a conversation with provenance, `NO_DATA`-gated, and readable/erasable by a
       parent over `/memory`.
+- [x] Content packs: a versioned, digest-checked pack file exported from a positive field
+      allowlist; import-with-review whose per-item state is a 2×2 over `source_version` **and**
+      a `local_rev` digest, so a locally edited item is never silently replaced; one-slot undo;
+      shipped defaults ⊕ the imported overlay, live on the next turn with no restart.
 
 Where it lives: [`../../mqtt/`](../../mqtt/) (the `MoxieApp` brain that loads modules + answers turns);
 new activities are pure server-side modules — no firmware change.

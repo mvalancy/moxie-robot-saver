@@ -27,6 +27,10 @@ from moxie_sdk.store import JsonStore, MemoryStore       # durable per-robot JSO
 from moxie_sdk.filler import pick_filler                 # "let me think" lines + markup
 from moxie_sdk import safety as safety_seam              # InputSafety classifier (ai-seam §2)
 from moxie_sdk import presence as presence_seam          # vision events -> presence (vision.md)
+from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire (audit ADOPT #7)
+from moxie_sdk import vocab as vocab_seam                # the frozen mood/markup catalog
+from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
+from moxie_sdk.content import packs as content_packs  # 📦 content packs (ADOPT #5)
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
 from markup import make_markup  # the markup floor (moxie_sdk.automarkup) behind the seam
 
@@ -128,6 +132,17 @@ class MoxieRuntime:
         self._permits_cache = None       # ((path, mtime, size), flag, devices)
         # TTS (AI seam §3): an optional server voice (for the SIM; a real robot self-synthesizes).
         self._synth = None
+        # 🎚️ Voice picker (backlog/voice-picker.md): the appliance's engine builders +
+        # cached gateway discovery, injected by `run.py` (`config.voice_engines()`). None
+        # means the picker offers the built-ins only — this module never imports `config`,
+        # so a test drives the whole card with a fake and spends no gateway request.
+        self._voice_engines = None
+        self._voice_lock = threading.Lock()      # one swap at a time; never held in a turn
+        # 📦 Content packs (backlog/content-packs.md): one import or undo at a time, so a
+        # snapshot can never be taken between another import's write and its own snapshot.
+        # Like the voice lock, it is NEVER held inside a turn — the live swap it guards is
+        # a single attribute assignment.
+        self._content_lock = threading.Lock()
         # Child safety (AI seam §2): the InputSafety classifier applied to BOTH sides of a
         # turn — the child's utterance before the brain is called, and every chunk the
         # brain produces before it is published. Constructor arg wins (a local-model
@@ -160,6 +175,11 @@ class MoxieRuntime:
             self.greet_after_s = DEFAULT_GREET_AFTER_S
         self.vision = (os.environ.get("MOXIE_VISION") or "1").strip().lower() \
             not in ("0", "off", "false", "no")
+        # Telehealth / "Be Moxie" (audit ADOPT #7): per-robot puppet state — the minted
+        # session id, the state the ROBOT last reported, and a bounded in-memory
+        # transcript ring. Runtime-level, not on RobotContext, so an operator can still
+        # read the session after the robot drops off Wi-Fi. See the telehealth region.
+        self._telehealth: dict = {}
         # Long-term memory (content-module-contract.md → `volley.persist_data`): the app
         # owns the store; the runtime owns the parent's privacy switch. See the memory
         # region below.
@@ -168,6 +188,18 @@ class MoxieRuntime:
     def _build_client(self):
         import paho.mqtt.client as mqtt
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="supervisor")
+        # The supervisor's broker credential (security-broker-auth.md §2.2). It is the
+        # ONE fleet-wide identity: `$SYS/broker/log` — the connect watch below — and any
+        # write outside a client's own device subtree are supervisor-only once the ACL
+        # is loaded. Unset (a bare-metal dev broker, the SIL harness, CI) leaves this an
+        # anonymous client, byte-for-byte what it was before.
+        try:
+            from config import broker_credentials
+            username, password = broker_credentials()
+        except Exception:                      # config not importable → anonymous
+            username, password = "", ""
+        if username and password:
+            self.client.username_pw_set(username, password)
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
         return self.client
@@ -430,6 +462,11 @@ class MoxieRuntime:
                 """GET /status → the console snapshot; GET /telemetry?device_id=…&limit=N
                 → that robot's stored telemetry Packets rolled up for the insights view;
                 GET /schedule?device_id=… → the planned day + why each activity is on it;
+                GET /telehealth?device_id=… → 🎭 puppet mode + the live transcript;
+                GET /voice → 🎚️ the speech/listening pickers: what this appliance can
+                use, what is in force and what the default would be (fleet-level);
+                GET /content → 📦 the installed content inventory + the pack ledger;
+                GET /content/export?items=… → one pack file built from those items;
                 GET /permits → the device allowlist + who is pending.
                 Localhost-only (the server binds 127.0.0.1)."""
                 from urllib.parse import urlparse, parse_qs
@@ -485,6 +522,41 @@ class MoxieRuntime:
                     q = parse_qs(u.query)
                     out = rt.memory_view((q.get("device_id") or [""])[0])
                     return self._json_out(out, 200 if out.get("ok") else 404)
+                if u.path == "/telehealth":
+                    # 🎭 "Be Moxie" (audit ADOPT #7): whether puppet mode is on, the open
+                    # session, the state the ROBOT reported (empty = never reported), the
+                    # bedtime warning and the live transcript.
+                    q = parse_qs(u.query)
+                    out = rt.telehealth_view((q.get("device_id") or [""])[0])
+                    return self._json_out(out, 200 if out.get("ok") else 404)
+                if u.path == "/voice":
+                    # 🎚️ The picker: every speech/listening option this appliance can
+                    # really use, which one is in force, which is the default, and whether
+                    # the gateway listing is still on its way. Fleet-level — no device_id.
+                    q = parse_qs(u.query)
+                    refresh = (q.get("refresh") or ["0"])[0] not in ("", "0", "false")
+                    return self._json_out(rt.voice_view(refresh=refresh))
+                if u.path == "/content":
+                    # 📦 The inventory + the pack ledger + whether an undo is armed.
+                    # Fleet-level: content is a property of the appliance, not of a robot.
+                    return self._json_out(rt.content_view())
+                if u.path == "/content/export":
+                    # `?items=kind:key,…&name=…&id=…` → the pack JSON itself, so `curl -o`
+                    # and the browser both get a file they can hand to somebody else.
+                    # No `items` means everything installed.
+                    q = parse_qs(u.query)
+                    keys = [k for part in (q.get("items") or [])
+                            for k in part.split(",") if k.strip()]
+                    try:
+                        pack = rt.content_export(
+                            keys, name=(q.get("name") or [""])[0],
+                            pack_id=(q.get("id") or [""])[0],
+                            details=(q.get("details") or [""])[0],
+                            author=(q.get("author") or [""])[0])
+                    except Exception as e:
+                        return self._json_out({"ok": False, "error": str(e),
+                                               "reason": str(e)}, 400)
+                    return self._json_out(pack)
                 self.send_response(404); self.end_headers()
 
             def _memory_write(self, query):
@@ -527,6 +599,119 @@ class MoxieRuntime:
                     out, code = {"ok": False, "error": str(e)}, 400
                 return self._json_out(out, code)
 
+            def _telehealth(self, query):
+                """🎭 One operator verb. `POST /telehealth?device_id=…` with
+                `{"action": "enable"|"disable"|"start"|"end"|"state"|"speak"|"interrupt"}`
+                — `speak` also takes `{"text", "mood", "intensity", "gesture"}`.
+
+                A safety BLOCK on the operator's line comes back as **400 with the reason**
+                and nothing is spoken, which is the whole point of checking a human's text
+                rather than rewriting it (`backlog/telehealth.md` §2.3)."""
+                from urllib.parse import parse_qs
+                device_id = (parse_qs(query).get("device_id") or [""])[0]
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b"{}"
+                try:
+                    body = _json.loads(raw or b"{}") or {}
+                    if not isinstance(body, dict):
+                        raise ValueError("expected a JSON object")
+                    action = str(body.get("action") or "").strip().lower()
+                    if action in ("enable", "disable"):
+                        out = rt.telehealth_enable(device_id, action == "enable")
+                    elif action in ("start", "start_session"):
+                        out = rt.telehealth_session(device_id, "START_SESSION")
+                    elif action in ("end", "end_session"):
+                        out = rt.telehealth_session(device_id, "END_SESSION")
+                    elif action in ("state", "update_state"):
+                        out = rt.telehealth_session(device_id, "UPDATE_STATE")
+                    elif action in ("speak", "play_output", "say"):
+                        out = rt.telehealth_speak(
+                            device_id, body.get("text") or body.get("speech") or "",
+                            mood=body.get("mood"), intensity=body.get("intensity"),
+                            gesture=body.get("gesture"))
+                    elif action == "interrupt":
+                        out = rt.telehealth_interrupt(device_id)
+                    else:
+                        raise ValueError(
+                            "expected action: enable, disable, start, end, state, "
+                            "speak or interrupt")
+                    if out.get("ok"):
+                        code = 200
+                    else:
+                        code = 404 if "unknown device_id" in str(out.get("error")) else 400
+                except Exception as e:
+                    out, code = {"ok": False, "error": str(e), "reason": str(e)}, 400
+                return self._json_out(out, code)
+
+            def _voice(self, path: str, query: str):
+                """🎚️ `POST /voice` with `{"speech": …, "listening": …}` (either side an
+                option `id` like `"gateway:piper-amy"`, the `{engine, model}` dict, or
+                `null` to fall back to the default) — persisted, then swapped live.
+
+                `POST /voice/test?device_id=…` with an optional `{"text": …}` speaks one
+                line through the engine that is ACTUALLY installed and publishes it to
+                that robot, which is the only honest answer to "did my pick work".
+
+                A pick that is not among the current options comes back **400 with the
+                reason**, so a stale page cannot install a model the gateway stopped
+                serving."""
+                from urllib.parse import parse_qs
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b"{}"
+                try:
+                    body = _json.loads(raw or b"{}") or {}
+                    if not isinstance(body, dict):
+                        raise ValueError("expected a JSON object")
+                    if path == "/voice/test":
+                        device_id = (parse_qs(query).get("device_id")
+                                     or [body.get("device_id") or ""])[0]
+                        out = rt.voice_test(device_id, body.get("text") or "")
+                        code = (200 if out.get("ok")
+                                else (404 if "unknown device_id" in str(out.get("error"))
+                                      else 400))
+                    else:
+                        out = rt.voice_update(body)
+                        code = 200 if out.get("ok") else 400
+                except Exception as e:
+                    out, code = {"ok": False, "error": str(e), "reason": str(e)}, 400
+                return self._json_out(out, code)
+
+            def _content(self, path: str):
+                """📦 `POST /content/review` (the pack itself), `POST /content/import`
+                (`{"pack", "accept", "expect_digest"}`) and `POST /content/undo`.
+
+                Review writes nothing; import is the one verb that changes the store, and
+                it refuses with **409** when `expect_digest` does not match the body now
+                being imported — the pack is re-sent between the two calls, so they can
+                genuinely be different files. A body over `MOXIE_PACK_MAX_BYTES` is
+                **413**, refused before it is buffered rather than after."""
+                cap = rt.pack_max_bytes()
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > cap:
+                    return self._json_out(
+                        {"ok": False, "error": f"pack is larger than {cap} bytes",
+                         "reason": "That file is too big to be a content pack.",
+                         "max_bytes": cap}, 413)
+                raw = self.rfile.read(length) if length else b"{}"
+                try:
+                    if path == "/content/undo":
+                        out = rt.content_undo()
+                        return self._json_out(out, 200 if out.get("ok") else 404)
+                    if path == "/content/review":
+                        return self._json_out(rt.content_review(raw), 200)
+                    body = _json.loads(raw or b"{}") or {}
+                    if not isinstance(body, dict):
+                        raise ValueError("expected a JSON object")
+                    out = rt.content_import(body.get("pack"),
+                                            body.get("accept") or [],
+                                            str(body.get("expect_digest") or ""))
+                    if out.get("ok"):
+                        return self._json_out(out, 200)
+                    return self._json_out(out, 409 if out.get("conflict") else 400)
+                except Exception as e:
+                    return self._json_out({"ok": False, "error": str(e),
+                                           "reason": str(e)}, 400)
+
             def do_DELETE(self):
                 """`DELETE /memory?device_id=…[&namespace=…[&item=…]]` — a parent erasing
                 what Moxie remembers. With `item`, exactly that one line goes; with only
@@ -553,6 +738,25 @@ class MoxieRuntime:
                 `POST /safety?device_id=…` with `{"event_id": "sfe-…"}` (or `{}` / `"all"`)
                 marks queued safety events reviewed — the parent's "I have seen this".
 
+                `POST /telehealth?device_id=…` with `{"action": …}` drives 🎭 puppet mode
+                (audit ADOPT #7) — enable/disable, start/end a session, speak a line
+                (with `text`, `mood`, `intensity`), or interrupt. An operator line the
+                safety classifier BLOCKS comes back **400 with the reason** and is never
+                spoken; see `_telehealth`.
+
+                `POST /voice` with `{"speech": "gateway:piper-amy", "listening": …}`
+                persists the 🎚️ picker's choice and swaps the live engines; the next turn
+                uses them. `POST /voice/test?device_id=…` speaks one line through the
+                engine actually installed and publishes it to that robot — see `_voice`.
+
+                `POST /content/review` with a pack file says what WOULD happen to every
+                item in it — new, upgrade, conflict with a local edit, fork, downgrade —
+                and writes nothing. `POST /content/import` with
+                `{"pack", "accept": ["kind:key", …], "expect_digest"}` applies exactly the
+                accepted items, snapshots what they replaced and makes them live on the
+                next turn; a body whose digest is not the reviewed one is **409**.
+                `POST /content/undo` puts the snapshot back. See `_content`.
+
                 `POST /permits` with `{"device_id": "d_…", "permitted": true, "label": …}`
                 lets one pending robot in (or `permitted:false` to revoke it) and re-pushes
                 its config on the spot; with `{"allow_unverified_bots": true}` it flips the
@@ -567,8 +771,15 @@ class MoxieRuntime:
                     # `{"edit": {"namespace", "item", "text"}}`, a parent correcting one
                     # remembered line instead of losing the whole activity to it.
                     return self._memory_write(urlparse(self.path).query)
-                if path not in ("/config", "/safety", "/permits"):
+                if path in ("/content/review", "/content/import", "/content/undo"):
+                    return self._content(path)
+                if path not in ("/config", "/safety", "/permits", "/telehealth",
+                                "/voice", "/voice/test"):
                     self.send_response(404); self.end_headers(); return
+                if path in ("/voice", "/voice/test"):
+                    return self._voice(path, urlparse(self.path).query)
+                if path == "/telehealth":
+                    return self._telehealth(urlparse(self.path).query)
                 if path == "/permits":
                     length = int(self.headers.get("Content-Length") or 0)
                     raw = self.rfile.read(length) if length else b"{}"
@@ -1318,20 +1529,14 @@ class MoxieRuntime:
         window that wraps midnight (20:30-07:00, the normal case) is handled. No window
         configured -> never bedtime, which is the pre-presence behavior exactly."""
         import datetime
+        from moxie_sdk.cloud_config import in_bedtime
         dt = (datetime.datetime.fromtimestamp(now) if now is not None
               else datetime.datetime.now())
         try:
             cfg = self.effective_config(device_id)
         except Exception:
             return False
-        window = cfg.get("weekend_bedtime" if dt.weekday() >= 5 else "weekday_bedtime")
-        if not isinstance(window, (list, tuple)) or len(window) != 2:
-            return False
-        start, end = str(window[0]), str(window[1])
-        cur = dt.strftime("%H:%M")
-        if start == end:
-            return False
-        return (start <= cur < end) if start < end else (cur >= start or cur < end)
+        return in_bedtime(cfg, dt)
 
     def _vision_subscription(self, device_id, robot=None):
         """The `EventSubscription.active[]` list to attach to this response, or None.
@@ -1428,6 +1633,15 @@ class MoxieRuntime:
         # rebuild history from notify events (Moxie is authoritative about what it said)
         if command == "notify":
             return self._ingest_notify(device_id, rcr)
+
+        # 🎭 No brain while a telehealth session is open. Whether a brain-less robot in
+        # STATE_TELEBRAIN still emits `events/remote-chat` at all is unknown
+        # (`backlog/telehealth.md` B3) — this `if` makes the design correct either way. A
+        # brain reply racing the operator's line is the one failure a child would see as
+        # broken, and two voices in one mouth is exactly what puppet mode exists to avoid.
+        if self._telehealth.get(device_id, {}).get("session_id"):
+            self._note("telehealth", "ignored a remote-chat during a session")
+            return None
 
         speech = rcr.get("speech") or ""
         for ln in rcr.get("extra_lines", []) or []:
@@ -1800,6 +2014,442 @@ class MoxieRuntime:
             print(f"[runtime] TTS synth failed (non-fatal): {e}", flush=True)
             return None
 
+    # ---- 🎚️ the voice picker (backlog/voice-picker.md) ----
+    # Two dropdowns — **Speech** and **Listening** — over what this appliance can really
+    # use: the gateway's audio models, the local engines installed on the box, and the two
+    # built-ins. The pick is FLEET-level (`fleet/voice.json`), because a voice is a
+    # property of the house rather than of one robot, and it survives a restart because
+    # `run.py` reads the same record before it builds either engine.
+    #
+    # Two properties are load-bearing and neither costs the turn loop anything:
+    #   * **Discovery never blocks a turn.** `voice_settings.GatewayCatalog` caches one
+    #     `GET /v1/models` for `MOXIE_VOICE_DISCOVERY_TTL_S` and refreshes it on a
+    #     background thread; the first call after boot answers with the local entries and
+    #     `discovering: true`.
+    #   * **A swap takes effect on the NEXT turn.** `set_synthesizer` / `set_transcriber`
+    #     rebind one attribute; a turn already in flight finishes on the engine it started
+    #     with. That is the whole reason there is no lock inside the turn loop — the lock
+    #     below serializes concurrent *swaps*, nothing else.
+
+    DEFAULT_VOICE_TEST_LINE = "Hi, I'm Moxie."
+    #: How long a console WRITE may wait for the first gateway listing (seconds). Only
+    #: `voice_update` uses it — see `_voice_discovery`. Generous because it is paid once,
+    #: by a parent who just pressed Save, and the alternative is refusing their pick.
+    VOICE_SETTLE_S = 10.0
+
+    def set_voice_engines(self, engines):
+        """Install the appliance's engine builders + discovery (`config.voice_engines()`).
+
+        Without one the picker still works and offers `tone` / `off` — an honest floor
+        rather than a card that claims models this box cannot build."""
+        self._voice_engines = engines
+
+    def _voice_discovery(self, *, refresh: bool = False,
+                         settle_s: float = 0.0) -> dict:
+        """`{available, discovering, gateway_error}` — never raises.
+
+        A discovery that throws is reported as `gateway_error` beside the local entries,
+        because a card that empties itself when a proxy hiccups is worse than one that
+        says the gateway is unreachable next to the options it already had.
+
+        `settle_s` is the only way this waits, it is bounded, and only `voice_update`
+        passes it: a WRITE has to be judged against the real list, or a supervisor that
+        booted three seconds ago refuses a perfectly good pick with "choose one of: tone"
+        (seen live on 2026-09-02). Reads — the card's poll, and anything a turn touches —
+        pass 0 and get whatever is cached, instantly.
+        """
+        engines = self._voice_engines
+        if engines is None:
+            return {"available": voice_seam.build_available(), "discovering": False,
+                    "gateway_error": ""}
+        try:
+            out = engines.available(refresh=refresh, settle_s=settle_s)
+        except Exception as e:              # noqa: BLE001 — any failure is local-only
+            return {"available": voice_seam.build_available(), "discovering": False,
+                    "gateway_error": type(e).__name__}
+        return {"available": out.get("available") or voice_seam.build_available(),
+                "discovering": bool(out.get("discovering")),
+                "gateway_error": str(out.get("gateway_error") or "")}
+
+    def voice_settings(self) -> dict:
+        """The stored fleet record (`fleet/voice.json`) — `{}` when nobody has picked."""
+        return voice_seam.read_settings(self.store)
+
+    def voice_view(self, *, refresh: bool = False) -> dict:
+        """What the 🎚️ card renders: every option, which one is in force, which one is
+        the default, whether discovery is still running and whether the gateway answered.
+
+        `current` is what is IN FORCE — a stored pick when there is one, otherwise the
+        default computed from this moment's availability. A stored pick the gateway can no
+        longer confirm stays current on purpose (`voice_settings.sanitize_choice`): an
+        outage must not silently revert a parent's choice.
+        """
+        disc = self._voice_discovery(refresh=refresh)
+        stored = voice_seam.read_settings(self.store)
+        resolved = voice_seam.resolve_settings(stored, disc["available"])
+        installed = {
+            voice_seam.SPEECH: (self._synth.describe() if self._synth is not None else ""),
+            voice_seam.LISTENING: (self._transcriber.describe()
+                                   if self._transcriber is not None else ""),
+        }
+        return {"ok": True,
+                "available": voice_seam.mark_defaults(disc["available"],
+                                                      resolved["defaults"]),
+                "current": resolved["current"], "defaults": resolved["defaults"],
+                "chosen": resolved["chosen"],
+                "selected": {k: voice_seam.choice_id(resolved["current"][k])
+                             for k in voice_seam.KINDS},
+                "labels": {k: voice_seam.describe_choice(resolved["current"][k])
+                           for k in voice_seam.KINDS},
+                "installed": installed,
+                "discovering": disc["discovering"],
+                "gateway_error": disc["gateway_error"],
+                "updated_at": int(stored.get("updated_at") or 0),
+                "robots": [d for d in self.robots if self.is_permitted(d)]}
+
+    def voice_update(self, patch) -> dict:
+        """Persist a parent's pick and swap the live engines to match.
+
+        The patch is checked against what is available RIGHT NOW
+        (`normalize_voice_settings`), so a stale page cannot install a model this gateway
+        stopped serving; the refusal carries the sentence the card shows. Order —
+        validate, persist, install — means a supervisor that dies mid-swap comes back with
+        the choice a parent was told was saved.
+        """
+        with self._voice_lock:
+            disc = self._voice_discovery(settle_s=self.VOICE_SETTLE_S)
+            stored = voice_seam.read_settings(self.store)
+            try:
+                settings = voice_seam.normalize_voice_settings(
+                    patch, disc["available"], current=stored)
+            except ValueError as e:
+                return {"ok": False, "error": str(e), "reason": str(e)}
+            voice_seam.write_settings(self.store, settings)
+            resolved = voice_seam.resolve_settings(settings, disc["available"])
+            applied = self._install_voice(resolved["current"], chosen=resolved["chosen"])
+        out = self.voice_view()
+        out["applied"] = applied
+        return out
+
+    def _install_voice(self, current: dict, *, chosen: dict | None = None) -> dict:
+        """Build both engines for `current` and bind them. Returns one report per side.
+
+        **A build that fails keeps the engine that is already speaking.** Losing the voice
+        because a newly chosen one could not be constructed would be a downgrade caused by
+        an *attempt to improve things*, which is the worst shape a failure can take. `off`
+        is the one intentional `None`, so it is spelled out rather than inferred.
+        """
+        chosen = chosen or {}
+        engines = self._voice_engines
+        report = {}
+        for kind in voice_seam.KINDS:
+            choice = current.get(kind) or voice_seam.make_choice(
+                voice_seam.BUILTIN_ENGINE[kind])
+            engine, note = None, ""
+            if engines is None:
+                note = "no engine builders installed (set_voice_engines)"
+            else:
+                build = (engines.build_speech if kind == voice_seam.SPEECH
+                         else engines.build_listening)
+                try:
+                    engine = build(dict(choice))
+                except SystemExit as e:      # an env engine that refuses to be built
+                    note = str(e)
+                except Exception as e:       # noqa: BLE001 — a bad pick must not kill us
+                    note = f"{type(e).__name__}: {e}"
+            silent = choice["engine"] in ("off",)
+            if engine is not None or silent:
+                if kind == voice_seam.SPEECH:
+                    self.set_synthesizer(engine)
+                else:
+                    self.set_transcriber(engine)
+            elif not note:
+                note = "could not be built on this box — keeping the current engine"
+            line = voice_seam.boot_line(kind, choice, chosen=bool(chosen.get(kind)),
+                                        note=note)
+            report[kind] = {"id": voice_seam.choice_id(choice), "choice": dict(choice),
+                            "label": voice_seam.describe_choice(choice),
+                            "installed": engine.describe() if engine is not None else "",
+                            "note": note, "line": line}
+            self._note("voice", f"🎚️ {line}")
+            print(f"[runtime] 🎚️ {line}", flush=True)
+        return report
+
+    def voice_test(self, device_id, text: str = "") -> dict:
+        """Speak one line with the CURRENT speech engine and send it to one robot.
+
+        This is the card's **Test** button, and it is the only honest answer to "did my
+        pick work": it exercises the engine that is actually installed, on the wire the
+        SIM really plays (`commands/tts`, a `CloudTTSResponse`), rather than reporting the
+        record back to the page that just wrote it.
+        """
+        line = str(text or "").strip() or self.DEFAULT_VOICE_TEST_LINE
+        if not self.is_permitted(device_id):
+            return {"ok": False, "device_id": device_id, "error": "not permitted",
+                    "reason": "This robot is waiting to be permitted. Let it in on the "
+                              "Robot access card first."}
+        if device_id not in self.robots:
+            return {"ok": False, "device_id": device_id,
+                    "error": f"unknown device_id {device_id!r}",
+                    "reason": "That robot is not connected."}
+        if self._synth is None:
+            return {"ok": False, "device_id": device_id, "error": "no voice",
+                    "reason": "No speech engine is installed — pick one, or check "
+                              "MOXIE_TTS."}
+        event_id = f"voice-test-{int(time.time())}"
+        markup = make_markup(line, turn_key=event_id, chunk_index=0)
+        resp = self._maybe_synthesize(device_id, markup, event_id=event_id, chunk_num=0)
+        if not resp:
+            return {"ok": False, "device_id": device_id, "error": "synthesis failed",
+                    "reason": "The voice engine could not speak that line — see the "
+                              "supervisor log."}
+        audio = resp.get("audio") or {}
+        self._note("voice", f"🎚️ test '{line[:40]}' → {device_id}")
+        return {"ok": True, "device_id": device_id, "spoke": line, "event_id": event_id,
+                "engine": self._synth.describe(),
+                "sample_rate": int(audio.get("sample_rate") or 0),
+                "channels": int(audio.get("channels") or 1),
+                "bytes": len(audio.get("buffer") or "")}
+
+    # ---- 📦 content packs (backlog/content-packs.md) ----
+    # Content stops being a file in our repository and becomes a thing a parent installs
+    # and a stranger publishes: one JSON file, reviewed before it changes anything, undoable
+    # afterwards. Everything hard is in the pure `moxie_sdk/content/packs.py` — this region
+    # is the store, the clock and the live swap, and nothing else.
+    #
+    # Three properties are load-bearing here, and each is asserted by a test:
+    #   * **Review writes nothing.** `content_review` is a pure read; only `content_import`
+    #     touches the store, and only after it has taken the one-slot snapshot `undo`
+    #     restores (R1: one atomic `write_shared`, so a crash leaves the old set or the new
+    #     one, never a mixture).
+    #   * **The overlay is written, never the merged view.** Effective content is *shipped
+    #     defaults ⊕ overlay*; an import writes only the accepted items into the overlay, so
+    #     a future release's improved starter chat is still an upgrade rather than something
+    #     the overlay silently shadows.
+    #   * **The swap is one attribute.** `reload_content()` reassigns `self.app.module`; a
+    #     turn already in flight finishes on the module object it started with and the NEXT
+    #     turn uses the new one. There is no lock in the turn loop — the same rule the voice
+    #     picker adopted for engine swaps — and that is documented behaviour, not an
+    #     oversight. `_push_config` is untouched: nothing a P0 pack carries reaches
+    #     `RobotCloudConfig`, which is exactly why face/config packs are P2.
+
+    CONTENT_ITEMS_COLLECTION = "content_items"    # → $MOXIE_DATA_DIR/fleet/content_items.json
+    CONTENT_PACKS_COLLECTION = "content_packs"    # the ledger the 📦 card lists
+    CONTENT_BACKUP_COLLECTION = "content_backup"  # the ONE-slot pre-import snapshot
+
+    @staticmethod
+    def pack_max_bytes() -> int:
+        """Largest pack body this appliance will buffer (`MOXIE_PACK_MAX_BYTES`, 1 MiB).
+
+        Read per call rather than at import, so the cap is testable and a deployment can
+        raise it without a code change. Upstream has no cap at all and round-trips the
+        pack through a hidden form field twice."""
+        try:
+            value = int(os.environ.get("MOXIE_PACK_MAX_BYTES", "").strip() or 0)
+        except ValueError:
+            value = 0
+        return value if value > 0 else content_packs.DEFAULT_MAX_BYTES
+
+    def _content_defaults(self) -> dict:
+        """The SHIPPED baseline the overlay sits on top of.
+
+        `config.build_content_app()` records it on the app (`content_defaults`) *before* it
+        applies the overlay, which is the only way an `undo` can put a shipped item back
+        after a pack replaced it. Without it — a bare `MoxieApp`, or an app built some other
+        way — we fall back to the loaded module itself, which is the same answer on a fresh
+        appliance and an honest approximation on one that has already imported (the merge is
+        idempotent, and overlay entries win either way)."""
+        recorded = getattr(self.app, "content_defaults", None)
+        if isinstance(recorded, dict):
+            return recorded
+        return content_packs.items_from_module(getattr(self.app, "module", None))
+
+    def _content_overlay(self) -> dict:
+        """The installed overlay (`fleet/content_items.json`) — `{}` when nothing imported."""
+        rec = self.store.read_shared(self.CONTENT_ITEMS_COLLECTION, {}) or {}
+        items = rec.get("items") if isinstance(rec, dict) else None
+        return items if isinstance(items, dict) else {}
+
+    def _write_content_overlay(self, items: dict) -> bool:
+        """One atomic write of the whole overlay (R1) — never a partial merge."""
+        return self.store.write_shared(self.CONTENT_ITEMS_COLLECTION,
+                                       {"items": items, "updated_at": int(time.time())})
+
+    def _content_packs(self) -> list:
+        rec = self.store.read_shared(self.CONTENT_PACKS_COLLECTION, {}) or {}
+        rows = rec.get("packs") if isinstance(rec, dict) else None
+        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+    def content_items(self) -> dict:
+        """**Effective content**: shipped defaults, then the overlay by `kind:key`."""
+        return content_packs.merge_items(self._content_defaults(), self._content_overlay())
+
+    def _known_child_names(self) -> list:
+        """Names this appliance knows, for the export-time PII flag.
+
+        The child profile the supervisor was started with, every connected robot's, and any
+        name-ish string in the fleet config. It catches the names we know and **nothing
+        else** — a prompt naming a sibling or a school sails straight through, and the card
+        says so."""
+        names = []
+        for child in ([getattr(self, "child", None)]
+                      + [getattr(r, "child", None) for r in self.robots.values()]):
+            nick = str(getattr(child, "nickname", "") or "").strip()
+            if nick and nick not in names:
+                names.append(nick)
+        for key, value in (self.fleet_config() or {}).items():
+            if isinstance(value, str) and ("name" in key or "nickname" in key):
+                value = value.strip()
+                if value and value not in names:
+                    names.append(value)
+        return names
+
+    def reload_content(self) -> dict:
+        """Rebuild the live `ContentModule` from defaults ⊕ overlay and swap it in.
+
+        One attribute assignment. The next turn renders the new prompt; a turn already in
+        flight finishes on the module it started with, and a conversation session keeps its
+        `Conversation` for that session (brief §2.5). No restart, and nothing on the wire —
+        a pack is server-side data.
+        """
+        defaults, overlay = self._content_defaults(), self._content_overlay()
+        module = content_packs.build_module(defaults, overlay)
+        live = False
+        app = getattr(self, "app", None)
+        if app is not None and getattr(app, "module", None) is not None:
+            app.module = module                  # ← the whole swap
+            live = True
+        return {"ok": True, "live": live,
+                "conversations": len(module.conversations),
+                "globals": len(module.globals),
+                "schedules": len(module.schedules),
+                "overlay": len(overlay), "shipped": len(defaults)}
+
+    def content_view(self) -> dict:
+        """The 📦 card's poll: the inventory, the pack ledger, and whether undo is armed."""
+        items = self.content_items()
+        backup = self.store.read_shared(self.CONTENT_BACKUP_COLLECTION, {}) or {}
+        rows = content_packs.inventory(items, known_names=self._known_child_names())
+        return {
+            "ok": True,
+            "items": rows,
+            "packs": self._content_packs(),
+            "counts": {"total": len(rows),
+                       "edited": sum(1 for r in rows if r["local_edited"]),
+                       "with_code": sum(1 for r in rows if r["has_code"]),
+                       "from_packs": sum(1 for r in rows if r["origin"] == "pack")},
+            "undo_available": bool(isinstance(backup, dict) and backup.get("items") is not None),
+            "undo_label": str((backup or {}).get("label") or ""),
+            "max_bytes": self.pack_max_bytes(),
+            "pack_format": content_packs.PACK_FORMAT,
+        }
+
+    def content_export(self, keys=None, *, name: str = "", pack_id: str = "",
+                       details: str = "", author: str = "", now=None) -> dict:
+        """Build a pack from the named installed items (`kind:key`), or from all of them.
+
+        Returns the pack itself — the HTTP layer serializes it and the browser saves it.
+        A key that is not installed is an error rather than a quietly smaller file.
+        """
+        items = self.content_items()
+        wanted = [str(k).strip() for k in (keys or []) if str(k or "").strip()]
+        if wanted:
+            missing = [k for k in wanted if k not in items]
+            if missing:
+                raise content_packs.PackError(
+                    "not installed: " + ", ".join(sorted(missing)))
+            items = {k: items[k] for k in wanted}
+        if not items:
+            raise content_packs.PackError("there is nothing to export")
+        label = str(name or "").strip() or "Moxie content"
+        return content_packs.export_pack(items, name=label,
+                                         pack_id=pack_id or label, details=details,
+                                         author=author, now=now)
+
+    def content_review(self, body) -> dict:
+        """What WOULD happen if this pack were imported. Writes nothing, reads no clock.
+
+        `expect_digest` in the answer is the digest of the body as reviewed; echoing it back
+        on import is what closes the review-one-file-import-another gap that upstream's
+        hidden form field leaves open.
+        """
+        pack, meta = content_packs.parse_pack(body)
+        rows = content_packs.review_pack(pack, self.content_items(),
+                                         digest=meta["digest"])
+        return {
+            "ok": True,
+            "pack": {k: v for k, v in pack.items() if k != "items"},
+            "digest": meta["digest"],
+            "expect_digest": meta["computed"],
+            "warnings": meta["warnings"],
+            "items": rows,
+            "accept": [r["id"] for r in rows if r["default"]],
+            "counts": {"total": len(rows),
+                       "default": sum(1 for r in rows if r["default"]),
+                       "conflicts": sum(1 for r in rows
+                                        if r["state"] in (content_packs.CONFLICT,
+                                                          content_packs.DOWNGRADE_CONFLICT)),
+                       "invalid": sum(1 for r in rows
+                                      if r["state"] == content_packs.INVALID)},
+        }
+
+    def content_import(self, body, accept=None, expect_digest: str = "") -> dict:
+        """Apply the accepted items, then make them live. The only verb here that writes.
+
+        Refuses with `conflict: True` (HTTP **409**) when `expect_digest` — the digest the
+        reviewer was shown — is not the digest of the body now being imported: the pack is
+        re-sent between review and import (the server holds no session state), so the two
+        can genuinely be different files.
+        """
+        pack, meta = content_packs.parse_pack(body)
+        if expect_digest and str(expect_digest) != meta["computed"]:
+            return {"ok": False, "conflict": True,
+                    "error": "this is not the pack that was reviewed",
+                    "reason": "The file changed between the review and the import. "
+                              "Review it again before installing.",
+                    "expect_digest": meta["computed"]}
+        with self._content_lock:
+            overlay = self._content_overlay()
+            merged, summary = content_packs.apply_pack(pack, overlay, accept or [],
+                                                       now=int(time.time()))
+            if summary["applied"]:
+                self.store.write_shared(self.CONTENT_BACKUP_COLLECTION, {
+                    "items": overlay, "packs": self._content_packs(),
+                    "label": f"before importing {pack.get('name') or pack.get('id')}",
+                    "at": int(time.time())})
+                if not self._write_content_overlay(merged):
+                    return {"ok": False, "error": "could not write the content overlay",
+                            "reason": "The appliance could not save the imported items."}
+                ledger = [r for r in self._content_packs()
+                          if r.get("id") != summary["pack"]["id"]]
+                ledger.append(summary["pack"])
+                self.store.write_shared(self.CONTENT_PACKS_COLLECTION, {"packs": ledger})
+            reload = self.reload_content()
+        self._note("content", f"📦 imported {summary['count']} item(s) "
+                              f"from {pack.get('id')}")
+        return {"ok": True, "digest": meta["digest"], **summary, "reload": reload,
+                "undo_available": bool(summary["applied"])}
+
+    def content_undo(self) -> dict:
+        """Put the one-slot snapshot back — the overlay AND the ledger, byte for byte."""
+        with self._content_lock:
+            backup = self.store.read_shared(self.CONTENT_BACKUP_COLLECTION, {}) or {}
+            items = backup.get("items") if isinstance(backup, dict) else None
+            if not isinstance(items, dict):
+                return {"ok": False, "error": "nothing to undo",
+                        "reason": "No import has been made since this appliance started "
+                                  "keeping a snapshot."}
+            self._write_content_overlay(items)
+            packs_before = backup.get("packs")
+            if isinstance(packs_before, list):
+                self.store.write_shared(self.CONTENT_PACKS_COLLECTION,
+                                        {"packs": packs_before})
+            self.store.delete_shared(self.CONTENT_BACKUP_COLLECTION)   # one slot, used up
+            reload = self.reload_content()
+        self._note("content", "📦 undo — content restored")
+        return {"ok": True, "restored": len(items), "reload": reload,
+                "label": str(backup.get("label") or ""), "undo_available": False}
+
     def _ingest_notify(self, device_id, rcr):
         h = self.history.setdefault(device_id, [])
         for ln in rcr.get("extra_lines", []) or []:
@@ -1918,6 +2568,299 @@ class MoxieRuntime:
             stored.setdefault("served", True)
         return {"ok": True, "device_id": device_id, **stored}
 
+    # ---- 🎭 telehealth / "Be Moxie": the operator drives the body (audit ADOPT #7) ----
+    #
+    # A remote human replaces the robot's brain and says the lines themselves. The whole
+    # protocol is recovered (`moxie_sdk/telehealth.py` carries the citations); what lives
+    # here is the six verbs, the state the console polls, and the one gate that keeps two
+    # voices out of one mouth.
+    #
+    # THE SHAPE OF A SESSION (telehealth.md:66-79):
+    #     enable  → moxie_mode:"TELEHEALTH" in this robot's /config  (ASSUMPTION B1)
+    #     start   → START_SESSION, a session_id is minted
+    #     speak*  → safety(MOXIE) → automarkup → PLAY_OUTPUT (+ commands/tts for the SIM)
+    #     end     → END_SESSION, the session_id is cleared
+    # and the robot reports READY → IN_SESSION → EXITING → READY on the activity log.
+    #
+    # EVERY verb refuses a device that is not on the permit list. A *pending* robot is by
+    # definition one we have not identified; puppeting it would be the pairing gate's
+    # exact failure mode with a microphone attached.
+
+    def _th(self, device_id) -> dict:
+        """This robot's live telehealth state — created on first use.
+
+        Runtime-level rather than on `RobotContext.extra` on purpose: `_device_disconnect`
+        pops the robot, and an operator whose robot just dropped off Wi-Fi should still see
+        the transcript of what was said and the last state the robot reported, not an empty
+        card. In memory, bounded, never written through `store.py` (`backlog/telehealth.md`
+        R6)."""
+        from collections import deque
+        st = self._telehealth.get(device_id)
+        if st is None:
+            st = {"session_id": "", "state": "", "state_at": None, "lines": 0,
+                  "transcript": deque(maxlen=telehealth_seam.TRANSCRIPT_MAX)}
+            self._telehealth[device_id] = st
+        return st
+
+    def telehealth_enabled(self, device_id) -> bool:
+        """True when this robot's *effective* config puts it in TELEHEALTH mode.
+
+        Read off `effective_config` rather than a flag of our own, so the card can never
+        disagree with the document that actually went down the wire."""
+        try:
+            mode = (self.effective_config(device_id) or {}).get(
+                telehealth_seam.MOXIE_MODE_KEY)
+        except Exception:
+            return False
+        try:
+            return int(mode) == telehealth_seam.TELEHEALTH_MOXIE_MODE
+        except (TypeError, ValueError):
+            return str(mode).upper() == "TELEHEALTH"
+
+    def _telehealth_guard(self, device_id, *, need_mode: bool = False):
+        """`None` when the call may proceed, else the refusal the console renders."""
+        if not self.is_permitted(device_id):
+            return {"ok": False, "device_id": device_id, "error": "not permitted",
+                    "reason": "This robot is waiting to be permitted. Let it in on the "
+                              "Robot access card first."}
+        if device_id not in self.robots:
+            return {"ok": False, "device_id": device_id,
+                    "error": f"unknown device_id {device_id!r}",
+                    "reason": "That robot is not connected."}
+        if need_mode and not self.telehealth_enabled(device_id):
+            # Publishing PLAY_OUTPUT at a robot still running its own brain would put two
+            # voices in one mouth (`backlog/telehealth.md` R1/R2).
+            return {"ok": False, "device_id": device_id, "error": "not in telehealth mode",
+                    "reason": "Turn on Be Moxie first."}
+        return None
+
+    def _telehealth_publish(self, device_id, command: dict):
+        """Publish one `TelehealthRobotCommand` on `commands/telehealth`."""
+        if self.client:
+            self.client.publish(telehealth_seam.telehealth_topic(device_id),
+                                json.dumps(command))
+        return command
+
+    def _telehealth_note(self, device_id, who: str, text: str):
+        """Append one line to this robot's transcript ring.
+
+        A **child** line is subject to the same `LoggingPolicy` check the safety journal
+        uses: under `NO_DATA` the ring keeps operator lines only, because a transcript of
+        a child's words is exactly the thing that gate exists to withhold. Operator lines
+        are always kept — they are the record of what a third party said to a child, and
+        that record is the mitigation for this feature's inherent risk (R3)."""
+        if who == telehealth_seam.CHILD and not self._safety_keeps_rows(device_id):
+            return None
+        entry = telehealth_seam.transcript_entry(who, text)
+        self._th(device_id)["transcript"].append(entry)
+        return entry
+
+    def telehealth_enable(self, device_id, on: bool = True) -> dict:
+        """Turn puppet mode on or off for one robot.
+
+        **ASSUMPTION B1**: this writes `moxie_mode` into the robot's own override layer and
+        re-pushes `/config` through the ordinary `update_config` path — so the fleet⊕robot
+        merge, the console's layer labels and every existing config test apply unchanged,
+        and `sanitize_config_overrides` (which does *not* whitelist `moxie_mode`) still
+        makes it impossible for the ⚙️ form's "Apply to all robots" to put a whole fleet
+        into puppet mode.
+
+        Turning it **off** ends an open session first: leaving a brain-less robot holding a
+        session nobody will send lines to is the one state worse than either end."""
+        refusal = self._telehealth_guard(device_id)
+        if refusal:
+            return refusal
+        on = bool(on)
+        if not on and self._th(device_id)["session_id"]:
+            self.telehealth_session(device_id, "END_SESSION")
+        mode = (telehealth_seam.TELEHEALTH_MOXIE_MODE if on
+                else telehealth_seam.DEFAULT_MOXIE_MODE)
+        self.update_config(device_id, **{telehealth_seam.MOXIE_MODE_KEY: mode})
+        self._note("telehealth",
+                   f"🎭 Be Moxie {'ON' if on else 'off'} for {device_id}")
+        print(f"[runtime] 🎭 telehealth {'enabled' if on else 'disabled'} on {device_id}",
+              flush=True)
+        return self.telehealth_view(device_id)
+
+    def telehealth_session(self, device_id, action: str) -> dict:
+        """`START_SESSION` / `END_SESSION` / `UPDATE_STATE`.
+
+        A start mints a `session_id` and remembers it; an end clears it. `UPDATE_STATE` is
+        the "tell me what you are" poke — it changes nothing here and simply asks the robot
+        to report on the activity log."""
+        name = str(action or "").strip().upper()
+        if name not in ("START_SESSION", "END_SESSION", "UPDATE_STATE"):
+            return {"ok": False, "device_id": device_id,
+                    "error": f"unknown session action {action!r}",
+                    "reason": "Expected START_SESSION, END_SESSION or UPDATE_STATE."}
+        refusal = self._telehealth_guard(device_id, need_mode=(name == "START_SESSION"))
+        if refusal:
+            return refusal
+        st = self._th(device_id)
+        if name == "START_SESSION":
+            st["session_id"] = telehealth_seam.new_session_id()
+            st["lines"] = 0
+        session_id = st["session_id"]
+        self._telehealth_publish(device_id, telehealth_seam.build_telehealth_command(
+            name, session_id=session_id))
+        if name == "END_SESSION":
+            st["session_id"] = ""
+        self._note("telehealth", f"🎭 {name.lower().replace('_', ' ')} "
+                                 f"{session_id or '(no session)'}")
+        return self.telehealth_view(device_id)
+
+    def telehealth_speak(self, device_id, text, *, mood=None, intensity=None,
+                         gesture=None) -> dict:
+        """The hot path: an operator's line becomes something the robot says.
+
+        Order — permit, mode, **safety**, markup, publish, voice, journal — is
+        `backlog/telehealth.md` §2.3 and the order matters:
+
+        **The operator's text IS checked**, as `role=MOXIE`, by the same classifier that
+        guards the brain's own output. The `MOXIE` role is defined as *text about to be
+        spoken to a child*; the author is not part of that definition and the child cannot
+        tell the difference. Telehealth's whole premise is that the operator is a third
+        party, and a channel that skipped the parent's journal would make that journal a
+        lie.
+
+        **But the handling differs from the brain path, deliberately.** When a model
+        produces an unsafe line there is nobody to tell, so the runtime substitutes a
+        redirect. Here a human is at the keyboard: a BLOCK is **returned to the operator
+        with its reason and nothing is spoken**, so they can rephrase. Substituting a
+        redirect for a clinician's sentence would be both useless and dishonest. A FLAG
+        passes through and is journaled.
+        """
+        refusal = self._telehealth_guard(device_id, need_mode=True)
+        if refusal:
+            return refusal
+        line = str(text or "").strip()
+        if not line:
+            return {"ok": False, "device_id": device_id, "error": "empty line",
+                    "reason": "Type something for Moxie to say."}
+        try:
+            mood = telehealth_seam.validate_mood(mood)
+            intensity = telehealth_seam.validate_intensity(intensity)
+        except ValueError as e:
+            return {"ok": False, "device_id": device_id, "error": str(e),
+                    "reason": str(e)}
+
+        verdict = self._assess(line, safety_seam.MOXIE)
+        if verdict:
+            self._record_safety(device_id, verdict)
+            if verdict.action == safety_seam.BLOCK:
+                labels = safety_seam.category_labels(self.safety) if self.safety else {}
+                named = [str(labels.get(c) or c) for c in verdict.categories]
+                return {"ok": False, "device_id": device_id, "error": "blocked",
+                        "blocked": True, "categories": list(verdict.categories),
+                        "labels": named,
+                        "reason": "Moxie will not say that (%s). Nothing was spoken — "
+                                  "please rephrase." % (", ".join(named) or "safety")}
+
+        st = self._th(device_id)
+        session_id = st["session_id"]
+        st["lines"] = n = int(st.get("lines") or 0) + 1
+        # One PLAY_OUTPUT per line, always chunk 0 of its own utterance. Telehealth never
+        # streams (there is no brain and no token stream — the line is complete when the
+        # operator presses send), and the SIM's player requires an utterance's first chunk
+        # to be `chunk_num` 0 (`sim/web/audio.js`, the ORDERING/EVENT rules). Numbering the
+        # LINE rather than a chunk keeps every line its own utterance and keeps the mood
+        # mark — which `annotate` emits on chunk 0 only — on every one of them.
+        line_key = f"{session_id or device_id}#{n}"
+        markup = make_markup(line, mood_hint=mood, gesture_hint=gesture,
+                             intensity=intensity, turn_key=line_key, chunk_index=0)
+        self._telehealth_publish(device_id, telehealth_seam.build_telehealth_command(
+            "PLAY_OUTPUT", text=line, markup=markup, session_id=session_id))
+        # A real robot self-synthesizes from the markup and ignores this; it is how the SIM
+        # (and any voice-enabled client) gets an actual voice (mqtt-and-conversation §5.3).
+        self._maybe_synthesize(device_id, markup, event_id=line_key, chunk_num=0)
+        self._telehealth_note(device_id, telehealth_seam.OPERATOR, line)
+        self._note("telehealth", f"🎭 said '{line[:40]}'")
+        out = self.telehealth_view(device_id)
+        out["spoke"] = line
+        out["markup"] = markup
+        out["mood"] = mood
+        out["intensity"] = intensity
+        if verdict:
+            out["flagged"] = list(verdict.categories)
+        return out
+
+    def telehealth_interrupt(self, device_id) -> dict:
+        """Cut Moxie off mid-line — barge-in from the operator side.
+
+        **INFERRED (B2).** Our corpus records the verb and that it *"cuts Moxie off
+        mid-line"*; what that looks like physically (clean cut, fade, ignored mid-phoneme)
+        has never been observed. The message carries **no `output`**, which is the one
+        thing the proto makes unambiguous."""
+        refusal = self._telehealth_guard(device_id, need_mode=True)
+        if refusal:
+            return refusal
+        self._telehealth_publish(device_id, telehealth_seam.build_telehealth_command(
+            "INTERRUPT", session_id=self._th(device_id)["session_id"]))
+        self._note("telehealth", "🎭 interrupt")
+        return self.telehealth_view(device_id)
+
+    def telehealth_view(self, device_id) -> dict:
+        """What the 🎭 card renders: mode, session, the robot's own reported state, whether
+        it is inside its bedtime window, and the live transcript.
+
+        `state` is **empty until the robot says otherwise** — the console renders that as
+        *"never reported"* rather than inventing `READY`. Whether a robot reports on this
+        subtopic at all is one of the open questions (`backlog/telehealth.md` §6).
+
+        `in_bedtime` is a **warning, not a gate**: we do not know whether the robot
+        suppresses a puppet line inside its bedtime window (B4), so the operator is told
+        the truth and the line is sent anyway."""
+        if not self.is_permitted(device_id):
+            return {"ok": False, "device_id": device_id, "error": "not permitted",
+                    "reason": "This robot is waiting to be permitted.",
+                    "enabled": False, "online": device_id in self.robots,
+                    "transcript": [], "moods": telehealth_seam.moods(),
+                    "max_intensity": vocab_seam.MAX_INTENSITY}
+        if device_id not in self.robots and device_id not in self._telehealth:
+            # A device we have never seen and hold nothing about — the same shape
+            # `safety_view` and `memory_view` return, so the console's proxy 404s.
+            return {"ok": False, "device_id": device_id,
+                    "error": f"unknown device_id {device_id!r}",
+                    "reason": "That robot is not connected.",
+                    "enabled": False, "online": False, "transcript": [],
+                    "moods": telehealth_seam.moods(),
+                    "max_intensity": vocab_seam.MAX_INTENSITY}
+        st = self._th(device_id)
+        return {
+            "ok": True, "device_id": device_id,
+            "enabled": self.telehealth_enabled(device_id),
+            "online": device_id in self.robots,
+            "session_id": st["session_id"],
+            "in_session": bool(st["session_id"]),
+            "state": st["state"], "state_at": st["state_at"],
+            "in_bedtime": self._in_bedtime(device_id),
+            "transcript": list(st["transcript"]),
+            "moods": telehealth_seam.moods(),
+            "max_intensity": vocab_seam.MAX_INTENSITY,
+        }
+
+    def ingest_telehealth_event(self, device_id, payload) -> dict:
+        """A `TelehealthRobotEvent` off `client-service-activity-log` (`subtopic:
+        "telehealth"`) → this robot's reported state.
+
+        An unrecognised state name is stored verbatim and flagged rather than coerced: a
+        robot telling us something new must not be rounded off to something we already
+        believe."""
+        event = telehealth_seam.parse_telehealth_event(payload)
+        st = self._th(device_id)
+        if event["state"]:
+            st["state"] = event["state"]
+            st["state_at"] = event["at"] if event["at"] is not None else time.time()
+            flag = "" if event["known"] else " (not a state we know)"
+            self._note("telehealth", f"🎭 robot reports {event['state']}{flag}")
+        # Adopt a session id we do not have ONLY from a robot that says it is in one — a
+        # supervisor restarted mid-session should pick the session back up, but an
+        # `EXITING` report arriving after we closed the session must never resurrect it.
+        if (event["session_id"] and not st["session_id"]
+                and event["state"] == "IN_SESSION"):
+            st["session_id"] = event["session_id"]
+        return event
+
     def _query_payload(self, device_id, query):
         """The value for a CloudQuery — None means "send this field's empty value"."""
         if query == "schedule":
@@ -1950,6 +2893,11 @@ class MoxieRuntime:
             self.client.publish(f"/devices/{device_id}/commands/query_result",
                                 json.dumps(resp))
             return resp
+        # 🎭 The robot's own report of where it is in a telehealth session
+        # (`TelehealthRobotEvent`, telehealth.md:88-91). READY / IN_SESSION / EXITING —
+        # stored, never assumed: the card says "never reported" until this arrives.
+        if subtopic == telehealth_seam.EVENT_SUBTOPIC:
+            return self.ingest_telehealth_event(device_id, data)
         # The same topic also carries *reports*: `mentor_behavior` is what the child just
         # finished (or quit). Ingest it — that history is what stops the robot repeating
         # the same missions forever and lets FTUE end.
@@ -1960,8 +2908,14 @@ class MoxieRuntime:
     # ---- STT (AI seam §1) ----
     def set_transcriber(self, transcriber):
         """Install an STT engine (moxie_sdk.stt.Transcriber). Without one, audio
-        frames are ignored (text turns still work)."""
+        frames are ignored (text turns still work).
+
+        Live VAD accumulators are dropped with the old engine: an `SttSession` captures the
+        transcriber it was built with, so a 🎚️ swap mid-utterance would otherwise finish
+        that utterance on the engine a parent just replaced. Losing a half-spoken sentence
+        at the exact moment someone changes the ears is the right trade."""
         self._transcriber = transcriber
+        self._stt_sessions.clear()
 
     def _stt_session(self, device_id):
         from moxie_sdk.stt import SttSession
@@ -1987,6 +2941,12 @@ class MoxieRuntime:
         if self.client:
             self.client.publish(f"/devices/{device_id}/commands/zmq", json.dumps(resp))
         self._note("stt", f"👂 heard: '{transcript[:40]}'")
+        # 🎭 During a telehealth session the child's side of the conversation is the only
+        # thing the operator can see (text only — no audio and no video reach them this
+        # phase; `backlog/telehealth.md` §2.5). This is a READ of transcript the STT path
+        # already produced, not a new capture: outside a session nothing is kept.
+        if self._telehealth.get(device_id, {}).get("session_id"):
+            self._telehealth_note(device_id, telehealth_seam.CHILD, transcript)
         return transcript
 
     def handle_zmq(self, device_id, payload):

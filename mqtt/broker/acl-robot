@@ -1,0 +1,21 @@
+# ACL for the ROBOT listener — TLS 8883.
+# Ships with docs/architecture/backlog/security-broker-auth.md §2.1 (P0).
+#
+# Same `%c` floor as `acl`, and NOTHING else. Two things are deliberately absent:
+#
+#   * no `user` block. A real robot presents an RS256 JWT as its MQTT password and an
+#     unspecified username (cloud-protocol.md E3/E4), so this listener cannot carry a
+#     `password_file` without refusing the robot it exists for. On a listener with no
+#     password file mosquitto accepts ANY username unchecked — a `user supervisor` block
+#     here would hand the fleet to anyone who typed the word. Verified against
+#     eclipse-mosquitto 2.0.20 before this file was written.
+#   * no fleet-wide `topic read`. This is the listener a real robot connects on, so the
+#     cross-device read this closes is one child's `child_pii` reaching another's robot.
+#
+# **P0 is containment, not authentication.** A spoofed `d_<uuid>` is confined to that
+# robot's subtree — which is the subtree it wanted. Refusing the CONNECT is P2.
+
+pattern write /devices/%c/events/#
+pattern write /devices/%c/state
+pattern read  /devices/%c/config
+pattern read  /devices/%c/commands/#

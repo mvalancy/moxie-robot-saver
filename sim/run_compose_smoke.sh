@@ -93,37 +93,45 @@ step "0. compose file parses ($MODE mode: $(basename "$COMPOSE_FILE"))"
 if "${COMPOSE[@]}" config -q; then ok "docker compose config"; else bad "compose config failed"; exit 1; fi
 
 # docker-compose.images.yml has to stand alone (an owner downloads that ONE file), so it
-# inlines the broker config instead of bind-mounting mqtt/broker/compose-mosquitto.conf.
-# That is a copy, and copies drift — so assert they still say the same thing, in BOTH
-# modes, before anything else runs.
-step "0b. inlined broker config still matches mqtt/broker/compose-mosquitto.conf"
+# inlines the broker config AND its two ACL files instead of bind-mounting them from
+# mqtt/broker/. Those are copies, and copies drift — so assert all three still say the
+# same thing, in BOTH modes, before anything else runs.
+step "0b. inlined broker config + ACLs still match mqtt/broker/"
 if "$PY" - "$ROOT" <<'PYEOF'
-# Dependency-free on purpose (a CI runner may have no PyYAML): pull the literal block
+# Dependency-free on purpose (a CI runner may have no PyYAML): pull each literal block
 # scalar out by indentation, exactly as the YAML spec folds it.
 import sys, pathlib, difflib
 root = pathlib.Path(sys.argv[1])
 lines = (root / "docker-compose.images.yml").read_text().splitlines()
-start = next(i for i, l in enumerate(lines)
-             if l.startswith("    content: |") and lines[i - 1].strip() == "mosquitto-conf:") + 1
-block, indent = [], "      "
-for l in lines[start:]:
-    if l.strip() and not l.startswith(indent):
-        break
-    block.append(l[len(indent):] if l.startswith(indent) else "")
-onfile = (root / "mqtt" / "broker" / "compose-mosquitto.conf").read_text()
+PAIRS = [("mosquitto-conf", "compose-mosquitto.conf"),
+         ("mosquitto-acl", "acl"),
+         ("mosquitto-acl-robot", "acl-robot")]
 def norm(seq):   # "$$" is compose's escape for a literal "$"
     out = [l.replace("$$", "$").rstrip() for l in seq]
     while out and not out[-1]:
         out.pop()
     return out
-a, b = norm(block), norm(onfile.splitlines())
-if a != b:
-    print("   " + "\n   ".join(list(difflib.unified_diff(b, a, "compose-mosquitto.conf",
-                                                          "docker-compose.images.yml", lineterm=""))[:20]))
-    sys.exit(1)
-print(f"   {len(b)} lines identical")
+rc = 0
+for config_name, filename in PAIRS:
+    start = next(i for i, l in enumerate(lines)
+                 if l.startswith("    content: |")
+                 and lines[i - 1].strip() == config_name + ":") + 1
+    block, indent = [], "      "
+    for l in lines[start:]:
+        if l.strip() and not l.startswith(indent):
+            break
+        block.append(l[len(indent):] if l.startswith(indent) else "")
+    onfile = (root / "mqtt" / "broker" / filename).read_text()
+    a, b = norm(block), norm(onfile.splitlines())
+    if a != b:
+        print("   " + "\n   ".join(list(difflib.unified_diff(b, a, filename,
+                                          "docker-compose.images.yml", lineterm=""))[:20]))
+        rc = 1
+        continue
+    print(f"   {filename}: {len(b)} lines identical")
+sys.exit(rc)
 PYEOF
-then ok "inlined broker config is in sync"; else bad "the inlined broker config has DRIFTED"; exit 1; fi
+then ok "inlined broker config + ACLs are in sync"; else bad "an inlined broker file has DRIFTED"; exit 1; fi
 
 if [ "$MODE" = "images" ]; then
   step "0c. building the three images locally under their published names"

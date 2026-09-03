@@ -62,6 +62,41 @@ low-latency barge-in), `confidence`, `speaker_id` (diarization), and the transla
 `END_OF_SPEECH` + `FINAL` (plug B); everything before that is provisional.
 Full detail: [`perception-pipeline.md`](../reverse-engineering/runtime/perception-pipeline.md).
 
+### What we implement (plug point B) — BUILT, and live on both engines (2026-09-02)
+
+`moxie_sdk/stt.py` is plug B: `SttSession` accumulates the VAD-tagged frames of one utterance and
+hands the whole thing to a `Transcriber` on `END_OF_SPEECH`, and the runtime publishes the
+`zmqSTTResponse`. **The audio the accumulator carries is 16-bit mono PCM at 16 kHz** — the
+perception bus's own rate, and the default `SttSession(transcriber)` is built with — so any engine
+plugged in here must be told that rate rather than assume one.
+
+Two engines ship, and **neither is a fallback for the other** — which one a deployment wants is a
+property of the box, not a ranking (the matrix is in
+[`litellm-stt-setup.md`](../guides/litellm-stt-setup.md)):
+
+| Engine | `MOXIE_STT` | What it is | For |
+|---|---|---|---|
+| `WhisperTranscriber` | `whisper` (alias `local`) | local faster-whisper, lazily imported | a home appliance: no network, no key, a child's voice never leaves the house |
+| `OpenAITranscriber` | `gateway` | OpenAI-shaped `POST /v1/audio/transcriptions` (multipart WAV in, `{"text": …}` out) | a hosted deployment: no model wheels, no GPU, one key for brain + voice + ears |
+
+`auto` (the default) picks the gateway when a URL **and** a key resolve, else local whisper, else
+nothing. The gateway engine wraps the headerless PCM in an in-memory RIFF/WAVE **at the rate it was
+handed** (a header that lies pitch-shifts the audio), drops anything under 120 ms without a request,
+and shares the LLM path's `call_with_backoff` + `Pacer` for 429/5xx. `FallbackTranscriber` puts the
+local engine (or a `NullTranscriber` returning `""`) behind the cloud one and latches on the first
+failure, reporting it once — a gateway outage is a downgrade, never a traceback mid-sentence.
+
+Live-proven end to end on 2026-09-02: gateway TTS → gateway STT at **word overlap 1.00** at both
+22050 Hz and the robot's 16 kHz, and one child utterance through the real runtime with all three
+seams on the gateway (`sim/tests/test_live_gateway_stt.py`).
+
+**Choosing the ears without an env edit — BUILT (2026-09-02).** The console's 🎚️ **Listening**
+dropdown offers whatever this appliance can really hear with: the gateway's STT models
+(`stt-whisper`, `graphling-stt`, `stt-whisper-base`, discovered from `GET /v1/models` and classified
+by `moxie_sdk/audio_models.py`), the local whisper sizes that are installed, and `off`. The pick is
+persisted fleet-wide in `fleet/voice.json` and swaps the live engine — see §③'s *Choosing an
+engine* for the one mechanism both seams share.
+
 ---
 
 ## ② Brain — the RemoteChat contract (where the AI lives)
@@ -295,6 +330,51 @@ The gateway voice is a network call to someone else's box, so it is wrapped in a
 tone). A 400, an outage past the SDK's backoff, or a body that is JSON rather than audio is surfaced
 **once** and then latched: the turn *downgrades* to a working voice instead of handing a child
 silence. `synth.voice_name` says which one is talking.
+
+### Choosing an engine — the 🎚️ picker (BUILT, 2026-09-02)
+
+The precedence above is what an appliance boots with. **What it runs after that is a parent's
+choice**, made in the console rather than in a `.env`: a **Speech** dropdown and a **Listening**
+dropdown, each populated from what this box can genuinely use right now.
+
+| Where an entry comes from | How we know it is available | Examples |
+|---|---|---|
+| Gateway | one cached `GET /v1/models` classified by [`moxie_sdk/audio_models.py`](../../mqtt/moxie_sdk/audio_models.py) | `gateway:piper-amy`, `gateway:graphling-tts-narrator`, `gateway:stt-whisper` |
+| Local | `PiperSynthesizer.available()` + the `.onnx` voices under `sim/tts/voices/` (or `MOXIE_PIPER_MODEL`) · `WhisperTranscriber.available()` | `piper:en_US-amy-medium`, `whisper:base.en` |
+| Built-in | always | `tone` (speech) · `off` (listening) |
+
+Five properties are load-bearing, and each is pinned by a test in
+[`sim/tests/test_voice_settings.py`](../../sim/tests/test_voice_settings.py) /
+[`test_voice_runtime.py`](../../sim/tests/test_voice_runtime.py):
+
+1. **`piper-amy` when possible.** The default speech is `piper-amy` whenever the gateway lists it,
+   else the first gateway voice, else a local Piper Amy, else the tone; the ears default to
+   `stt-whisper` the same way. Defaults are computed **at read time** from that moment's
+   availability, so a model the gateway starts serving tomorrow becomes the default with no
+   migration.
+2. **Local engines are first class.** An explicit local pick is honoured even with
+   `MOXIE_VOICE_BASE_URL` fully configured — the same statement `MOXIE_TTS=piper` /
+   `MOXIE_STT=whisper` make on the command line.
+3. **Discovery never blocks a turn.** `voice_settings.GatewayCatalog` caches one listing for
+   `MOXIE_VOICE_DISCOVERY_TTL_S` (default 300 s) and refreshes it on a background thread; the first
+   ask after boot answers with the local entries and `discovering: true`. The one bounded exception
+   is a console **write**: `POST /voice` waits up to `VOICE_SETTLE_S` (10 s) for the *first* listing,
+   because a supervisor three seconds old would otherwise refuse a perfectly good `gateway:piper-amy`
+   with *"choose one of: tone"* — which is exactly what the live run hit on 2026-09-02. A write is
+   never on a turn's path; a read never waits.
+4. **An outage never blanks the card.** A failed listing keeps the last good one and reports
+   `gateway_error: "<ExceptionClass>"`; a stored pick the gateway can no longer confirm stays in
+   force rather than silently reverting.
+5. **A swap costs no restart, and no lock in the turn loop.** `voice_update` rebuilds both engines
+   through the same `config.build_synthesizer` / `build_transcriber` `run.py` uses (they grew an
+   `override=` argument) and rebinds them; the **next** turn uses the new engine and a turn already
+   in flight finishes on the old one. A build that fails keeps the engine already speaking.
+
+`run.py` reads `fleet/voice.json` before it builds either engine, so a choice survives a restart, and
+logs which engine was installed and why — `speech: piper-amy (gateway, chosen)` /
+`speech: tone (built-in, default — gateway unreachable)`. `MOXIE_TTS=off` and `MOXIE_STT=off` still
+win over a pick: a deployment that declared itself voiceless is not talked back into speaking by a
+dropdown. Wire: `GET /voice`, `POST /voice`, `POST /voice/test` on the supervisor's status server.
 
 **Required:** `audio` (PCM: raw `buffer` + `channels` + `sample_rate`) and `event_id` to correlate.
 **`marks[]` (recommended):** timed events lifted from the markup — the face reads them for **viseme**

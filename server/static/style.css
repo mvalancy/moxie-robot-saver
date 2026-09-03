@@ -159,3 +159,85 @@ button.linkish.mem-arm{opacity:1;color:#c0392b;font-weight:700}
 #face-custom{width:100%;padding:8px;border-radius:8px;border:1px solid var(--line);
   background:var(--bg);color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-size:12px}
+
+/* --- 🎭 Be Moxie (puppet / telehealth, audit ADOPT #7) --- */
+.th-controls{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.th-controls.off{opacity:.45;pointer-events:none}
+.th-controls select{padding:8px;border-radius:8px;border:1px solid var(--line);
+  background:var(--bg);color:var(--ink)}
+.th-controls #th-mood{flex:1 1 auto;min-width:0}
+.th-controls #th-text{min-width:0;padding:8px;border-radius:8px;
+  border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.th-warn{border:1px solid #e0b000;background:rgba(224,176,0,.10);border-radius:8px;
+  padding:6px 9px;font-size:12px;margin:6px 0}
+.th-log{max-height:190px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;
+  padding:6px 8px;margin:8px 0;font-size:13px;display:flex;flex-direction:column;gap:3px}
+.th-log:empty{display:none}
+.th-log .thln{display:flex;gap:6px;align-items:baseline}
+.th-log .thln span{color:var(--muted);font-size:11px;flex:0 0 auto}
+.th-log .thln.op b{font-weight:600}
+.th-log .thln.child{color:var(--muted)}
+.th-log .thln.child b{font-weight:400;font-style:italic}
+.th-note{font-size:11px;margin-top:8px}
+
+/* --- 📅 Today's plan (the schedule's "why this activity today", BEYOND #7) --- */
+#sched-head{margin:2px 0 8px}
+#sched-list{display:flex;flex-direction:column;border:1px solid var(--line);
+  border-radius:8px;margin:8px 0}
+#sched-list:empty{display:none}
+.sched-row{display:flex;gap:10px;padding:7px 10px;border-bottom:1px solid var(--line)}
+.sched-row:last-child{border-bottom:0}
+.sched-at{flex:0 0 44px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;
+  padding-top:1px}
+.sched-row.fixture .sched-at{opacity:.6}
+.sched-body{min-width:0}
+.sched-body b{font-weight:600;font-size:13px;word-break:break-word}
+.sched-pin{margin-left:6px;color:var(--brand);font-size:12px}
+.sched-why{color:var(--muted);font-size:12px;margin-top:2px}
+.sched-foot{font-size:12px;margin:0 0 8px}
+
+/* --- 🎚️ Voice (Speech + Listening pickers, backlog/voice-picker.md) --- */
+.voicegrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0}
+@media (max-width:560px){.voicegrid{grid-template-columns:1fr}}
+.voicepick{display:flex;flex-direction:column;gap:4px;min-width:0}
+.voicepick>span{color:var(--muted);font-size:12px}
+.voicepick select{width:100%;max-width:100%}
+#voice-note{font-size:12px;margin:2px 0 8px;word-break:break-word}
+.voice-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+#voice-status{font-size:12px;min-height:16px}
+
+/* --- 📦 Content packs (export / review / import, backlog/content-packs.md) --- */
+#content-head{margin:2px 0 6px;font-size:12px}
+#content-list{display:flex;flex-direction:column;border:1px solid var(--line);
+  border-radius:8px;margin:6px 0}
+#content-list:empty{display:none}
+.packrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px;
+  border-bottom:1px solid var(--line);font-size:12px;cursor:pointer}
+.packrow:last-child{border-bottom:0}
+.packname{font-weight:600;font-size:13px;word-break:break-word}
+.chip{border:1px solid var(--line);border-radius:999px;padding:1px 7px;font-size:11px;
+  color:var(--muted);white-space:nowrap}
+.chip.edited{border-color:var(--brand);color:var(--brand)}
+.chip.warn{border-color:#c0392b;color:#c0392b;font-weight:600}
+.chip.st-new,.chip.st-upgrade{border-color:var(--brand);color:var(--brand);font-weight:600}
+.chip.st-conflict,.chip.st-downgrade_conflict,.chip.st-invalid{border-color:#c0392b;
+  color:#c0392b;font-weight:600}
+/* The file picker is a styled label so it reads like the other buttons; the input itself
+   is off-screen rather than display:none, so it keeps its keyboard focus. */
+.packfile{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;
+  color:var(--muted);cursor:pointer;text-align:center}
+.packfile input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+#content-pii{font-size:12px;margin:0 0 6px}
+#content-review{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0}
+#content-review-head{font-size:12px;margin-bottom:6px}
+.packreview{border-top:1px solid var(--line);padding:8px 0}
+.packreview:first-child{border-top:0}
+.packreview-hd{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px}
+.packdiff{font-size:12px;color:var(--muted);margin:4px 0 0}
+.packdiff pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;font-size:11px;
+  max-height:180px;overflow-y:auto}
+.packdecs{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.packdec{display:flex;gap:4px;align-items:center;font-size:12px;color:var(--muted)}
+#content-packs{font-size:12px;margin:6px 0 0}
+#content-packs:empty{display:none}
+#content-status{font-size:12px;min-height:16px}

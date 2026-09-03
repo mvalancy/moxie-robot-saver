@@ -148,9 +148,15 @@ def inlined_broker_conf(compose: dict, config_name: str = "mosquitto-conf") -> l
 
 def broker_conf_drift(compose: dict, on_disk: str, *,
                       inline_name: str = "docker-compose.images.yml",
-                      file_name: str = "mqtt/broker/compose-mosquitto.conf") -> str:
-    """`""` when in sync, else a unified diff (on-disk → inlined)."""
-    inlined = inlined_broker_conf(compose)
+                      file_name: str = "mqtt/broker/compose-mosquitto.conf",
+                      config_name: str = "mosquitto-conf") -> str:
+    """`""` when in sync, else a unified diff (on-disk → inlined).
+
+    `config_name` selects which inlined block to compare: broker hardening
+    (security-broker-auth.md §2) added `mosquitto-acl` and `mosquitto-acl-robot` beside
+    the broker config, and all three drift the same way.
+    """
+    inlined = inlined_broker_conf(compose, config_name)
     disk = _normalize_conf(on_disk)
     if inlined == disk:
         return ""

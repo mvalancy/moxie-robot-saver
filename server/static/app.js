@@ -158,6 +158,10 @@ async function refreshLive(){
     refreshInsights(null);
     refreshSafety(null);
     refreshMemory(null);
+    refreshTelehealth(null);
+    refreshSchedule(null);
+    refreshVoice(null);
+    refreshContent(null);
     return;
   }
   if(cfgBox) cfgBox.style.display='';
@@ -182,6 +186,10 @@ async function refreshLive(){
   refreshInsights(liveDevice);
   refreshSafety(liveDevice);
   refreshMemory(liveDevice);
+  refreshTelehealth(liveDevice);
+  refreshSchedule(liveDevice);
+  refreshVoice(liveDevice);
+  refreshContent(liveDevice);
 }
 
 // ---- 🔐 Robot access (the device allowlist / pairing gate) ----
@@ -578,6 +586,187 @@ function renderRobot(r){
 }
 function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTimeout(()=>b.textContent=o,1200);}
 
+// ---- 🎭 Be Moxie (puppet / telehealth, audit ADOPT #7) ----
+// A remote grown-up drives the body: Moxie's own brain is switched off and every line
+// comes from this box. The vocabulary is NOT kept here — the mood list and the intensity
+// ceiling come from the supervisor (`moxie_sdk/vocab.py`, the 11 recovered ePlaybackMood
+// names and maxIntensity=2), so this card can never offer a mood the robot's enum does
+// not have. Nothing polls on its own: it rides refreshLive()'s cadence like every other
+// card, so the transcript updates without a second timer.
+let thDevice=null, thMoodsBuilt='';
+async function refreshTelehealth(deviceId){
+  const card=$('#telehealth-card'); if(!card) return;
+  thDevice=deviceId;
+  if(!deviceId){ card.classList.add('hidden'); return; }
+  let t;
+  try{ t=await api(`/local/robots/${encodeURIComponent(deviceId)}/telehealth`,{auth:false}); }
+  catch(e){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  renderTelehealth(t);
+}
+function renderTelehealth(t){
+  const box=$('#th-controls'), en=$('#th-enable'), st=$('#th-state'), warn=$('#th-warn');
+  if(!box) return;
+  if(!t.ok){
+    if(st) st.innerHTML=`<span class="warn">${escapeHtml(t.reason||t.error||'unavailable')}</span>`;
+    if(en){ en.checked=false; en.disabled=true; }
+    box.classList.add('off');
+    return;
+  }
+  if(en && document.activeElement!==en){ en.checked=!!t.enabled; }
+  if(en) en.disabled=false;
+  // Build the mood picker once, from the supervisor's own list.
+  const sel=$('#th-mood'), sig=(t.moods||[]).map(m=>m.id).join(',');
+  if(sel && sig && thMoodsBuilt!==sig){
+    thMoodsBuilt=sig;
+    const keep=sel.value;
+    sel.innerHTML=(t.moods||[]).map(m=>
+      `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join('');
+    if(keep) sel.value=keep;
+  }
+  const inten=$('#th-intensity');
+  if(inten) [...inten.options].forEach(o=>{ o.disabled = +o.value > (t.max_intensity||2); });
+  // The robot's OWN reported state. Never invented: with nothing received it says so.
+  const when=t.state_at?new Date(t.state_at*1000).toLocaleTimeString():'';
+  const state = t.reported
+    ? `Robot reports <b>${escapeHtml(t.state)}</b>${t.state_known?'':' (a state we do not know)'}${when?` · ${escapeHtml(when)}`:''}`
+    : 'Robot state: <b>never reported</b>';
+  const sess = t.in_session ? `session ${escapeHtml(t.session_id)}` : 'no session';
+  if(st) st.innerHTML = `${t.online?'●':'○'} ${t.online?'online':'offline'} · ${state} · ${sess}`;
+  if(warn){
+    warn.classList.toggle('hidden', !t.in_bedtime);
+    if(t.in_bedtime) warn.innerHTML='🌙 This robot is inside its bedtime window. '
+      + 'We do not know whether Moxie plays a line during bedtime — it is sent either way.';
+  }
+  box.classList.toggle('off', !t.enabled || !t.online);
+  const sb=$('#btn-th-session');
+  if(sb) sb.textContent = t.in_session ? 'End session' : 'Start session';
+  const log=$('#th-transcript');
+  if(log) log.innerHTML=(t.transcript||[]).map(l=>{
+    const tm=l.at?new Date(l.at*1000).toLocaleTimeString():'';
+    const who=l.who==='operator'?'You (as Moxie)':'Your child';
+    return `<div class="thln ${l.who==='operator'?'op':'child'}"><span>${escapeHtml(tm)}</span>`
+      + `<b>${escapeHtml(who)}:</b> ${escapeHtml(l.text)}</div>`;
+  }).join('');
+  if(log) log.scrollTop=log.scrollHeight;
+}
+async function thPost(body, saying){
+  if(!thDevice) return null;
+  const s=$('#th-status'); if(s) s.textContent=saying||'Sending…';
+  let r;
+  try{
+    r=await api(`/local/robots/${encodeURIComponent(thDevice)}/telehealth`,
+                {method:'POST',auth:false,body});
+  }catch(e){
+    // The proxy keeps the supervisor's 400 (a safety block, or the mode being off) and
+    // its reason travels in the body — show it, never swallow it.
+    let reason=e.message||'failed';
+    try{ const j=JSON.parse(reason); reason=j.reason||j.error||reason; }catch(_){}
+    if(s) s.innerHTML=`⚠️ ${escapeHtml(reason)}`;
+    refreshTelehealth(thDevice);
+    return null;
+  }
+  if(s) s.textContent = r.ok ? (r.spoke ? `✅ Moxie said “${r.spoke}”`
+                                        : '✅ Done.') : `⚠️ ${r.reason||r.error||'failed'}`;
+  if(r.ok && r.flagged && r.flagged.length && s)
+    s.textContent += ' (recorded in the Safety card)';
+  renderTelehealth(r);
+  return r;
+}
+{ const t=$('#th-enable'); if(t) t.onchange=async()=>{
+    const r=await thPost({action:t.checked?'enable':'disable'},
+                         t.checked?'Turning Be Moxie on…':'Turning Be Moxie off…');
+    // Turning it on opens a session straight away — that is what a person means by
+    // "let me talk through Moxie now" (backlog/telehealth.md §2.6).
+    if(r && r.ok && t.checked && !r.in_session) await thPost({action:'start'}, 'Starting…');
+    refreshLive();
+  }; }
+{ const b=$('#btn-th-session'); if(b) b.onclick=async()=>{
+    const ending=b.textContent.indexOf('End')===0;
+    await thPost({action: ending?'end':'start'}, ending?'Ending…':'Starting…');
+  }; }
+{ const b=$('#btn-th-interrupt'); if(b) b.onclick=()=>thPost({action:'interrupt'},'Interrupting…'); }
+async function thSpeak(){
+  const box=$('#th-text'); if(!box) return;
+  const text=(box.value||'').trim(); if(!text) return;
+  const r=await thPost({action:'speak', text,
+                        mood:($('#th-mood')||{}).value||undefined,
+                        intensity:+(($('#th-intensity')||{}).value||1)}, 'Speaking…');
+  if(r && r.ok) box.value='';       // a refused line stays in the box to be rephrased
+}
+{ const b=$('#btn-th-speak'); if(b) b.onclick=thSpeak; }
+{ const t=$('#th-text'); if(t) t.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); thSpeak(); } }; }
+
+// ---- 📅 Today's plan (the recommender's "why this activity today", BEYOND #7) ----
+// The supervisor plans the day the robot pulls and keeps one plain sentence per entry
+// explaining why it is there. This card only reads it: nothing here changes the plan (that
+// is ⚙️ Settings — bedtime and requested activities), so it offers no control it
+// cannot honour. It rides refreshLive()'s cadence like every other card, plus a Refresh
+// button because a parent who just changed a bedtime wants to see the day re-planned.
+//
+// Two honesty rules the card keeps:
+//   * an entry with no clock time is a fixture or a chat break, and shows "—", never an
+//     invented hour;
+//   * "no telemetry module signal" is stated plainly — finish/abandon comes from the
+//     robot's own reports, not from the telemetry stream.
+let schedDevice=null;
+async function refreshSchedule(deviceId){
+  const card=$('#schedule-card'); if(!card) return;
+  schedDevice=deviceId;
+  if(!deviceId){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  let s;
+  try{ s=await api(`/local/robots/${encodeURIComponent(deviceId)}/schedule`,{auth:false}); }
+  catch(e){ renderSchedule({ok:false,error:'Supervisor unreachable'}); return; }
+  renderSchedule(s);
+}
+function renderSchedule(s){
+  const head=$('#sched-head'), list=$('#sched-list'), foot=$('#sched-foot');
+  if(!list) return;
+  s=s||{};
+  if(!s.ok){
+    if(head) head.textContent='';
+    if(foot) foot.textContent='';
+    const why=(s.error==='supervisor not reachable')?'Supervisor unreachable':(s.error||'unavailable');
+    list.innerHTML=`<div class="live-off">${escapeHtml(why)}</div>`;
+    return;
+  }
+  const who=s.child_name||(s.device_id?String(s.device_id).slice(0,16)+'\u2026':'this robot');
+  if(head) head.innerHTML=`Planned for <b>${escapeHtml(who)}</b>, ${escapeHtml(s.day||'today')}`
+    + (s.served?'':' \u00b7 not pulled by the robot yet');
+  const rows=(s.entries||[]);
+  if(!rows.length){
+    list.innerHTML='<div class="live-off">No plan yet \u2014 the robot pulls its day when it '
+      + 'wakes.</div>';
+    if(foot) foot.textContent='';
+    return;
+  }
+  list.innerHTML=rows.map(e=>{
+    const t=e.time_local||'\u2014';
+    const pin=e.pinned?'<span class="sched-pin" title="A parent asked for this">\u2691</span>':'';
+    return `<div class="sched-row${e.fixture?' fixture':''}">`
+      + `<span class="sched-at">${escapeHtml(t)}</span>`
+      + `<div class="sched-body"><b>${escapeHtml(e.name||e.module_id||'')}</b>${pin}`
+      + `<div class="sched-why">${escapeHtml(e.why||'')}</div></div></div>`;
+  }).join('');
+  if(foot){
+    const c=s.constraints||{}, bed=c.bedtime||{}, pr=c.parent_request||{};
+    const bits=[];
+    if(bed.enabled){
+      const w=`${bed.starts_at||''}\u2013${bed.ends_at||''}`;
+      bits.push(`Bedtime ${escapeHtml(w)} honoured`
+        + (s.dropped_for_bedtime?` (${s.dropped_for_bedtime} later slot`
+            + `${s.dropped_for_bedtime===1?'':'s'} dropped)`:''));
+    } else bits.push('No bedtime set');
+    if(pr.count) bits.push(`${pr.count} parent request${pr.count===1?'':'s'} pinned `
+      + `(${(pr.pinned||[]).map(p=>escapeHtml(p.module_id)+(p.at?' at '+escapeHtml(p.at):'')).join(', ')})`);
+    if(!c.telemetry_signal) bits.push('No telemetry module signal \u2014 finish/abandon '
+      + "comes from the robot's reports");
+    foot.innerHTML=bits.join(' \u00b7 ');
+  }
+}
+{ const b=$('#btn-sched-refresh'); if(b) b.onclick=()=>refreshSchedule(schedDevice||liveDevice); }
+
 // ---- 🎨 Moxie's look (face customization, audit ADOPT #9) ----
 // The child's chosen face rides down inside `child_pii` as `face_options` — a list of
 // layer labels — and the pushed `child_pii.id` is re-derived from that list, which is
@@ -711,6 +900,353 @@ $('#btn-sim').onclick = async () => {
             {method:'POST',auth:false,body:{qr_payload:LAST.qr_payload, device_id}});
   setTimeout(refreshMoxie,500);
 };
+
+// ---- 🎚️ Voice (which voice speaks, which ears listen) ----
+// The two dropdowns are populated from the SUPERVISOR, never from a list kept here: the
+// gateway's audio models are discovered live and classified by name, and the local
+// entries exist only when the engine that would run them is genuinely installed. So the
+// card can never offer something that would fail on the way to a child's ears.
+//
+// Three honesty rules it keeps:
+//   * "Discovering gateway models…" while the first listing is still in flight — the
+//     local options render immediately rather than waiting on someone else's box;
+//   * a gateway that is down says so beside the options it still has, and never blanks;
+//   * the status line names the engine ACTUALLY installed, which is not always the pick
+//     (a chosen engine that could not be built keeps the one already speaking).
+let voiceDevice=null, voiceDirty=false;
+const VOICE_GROUPS=['Gateway','Local','Built-in'];
+async function refreshVoice(deviceId){
+  const card=$('#voice-card'); if(!card) return;
+  voiceDevice=deviceId;
+  if(!deviceId){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  let v;
+  try{ v=await api(`/local/robots/${encodeURIComponent(deviceId)}/voice`,{auth:false}); }
+  catch(e){ renderVoiceCard({ok:false,error:'Supervisor unreachable'}); return; }
+  renderVoiceCard(v);
+}
+function voiceOptions(sel, entries, selected){
+  if(!sel) return;
+  const by={};
+  (entries||[]).forEach(e=>{ (by[e.group]=by[e.group]||[]).push(e); });
+  const groups=VOICE_GROUPS.filter(g=>by[g]).concat(
+    Object.keys(by).filter(g=>VOICE_GROUPS.indexOf(g)<0));
+  sel.innerHTML=groups.map(g=>
+    `<optgroup label="${escapeHtml(g)}">`
+    + by[g].map(e=>`<option value="${escapeHtml(e.id)}"${e.id===selected?' selected':''}>`
+        + `${escapeHtml(e.label||e.id)}${e.default?' — default':''}</option>`).join('')
+    + '</optgroup>').join('');
+  if(selected && !sel.querySelector(`option[value="${CSS.escape(selected)}"]`)){
+    // A stored pick the gateway can no longer confirm stays in force — show it rather
+    // than silently snapping the dropdown to something the parent never chose.
+    sel.insertAdjacentHTML('afterbegin',
+      `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}`
+      + ' (not offered right now)</option>');
+  }
+  sel.value=selected||sel.value;
+}
+function renderVoiceCard(v){
+  const note=$('#voice-note'), status=$('#voice-status');
+  const speech=$('#voice-speech'), listening=$('#voice-listening');
+  if(!speech||!listening) return;
+  v=v||{};
+  if(!v.ok){
+    const why=(v.error==='supervisor not reachable')?'Supervisor unreachable':(v.error||'unavailable');
+    speech.innerHTML=''; listening.innerHTML='';
+    if(note) note.innerHTML=`<span class="live-off">${escapeHtml(why)}</span>`;
+    if(status) status.textContent='';
+    return;
+  }
+  if(!voiceDirty){
+    voiceOptions(speech,(v.available||{}).speech,(v.selected||{}).speech);
+    voiceOptions(listening,(v.available||{}).listening,(v.selected||{}).listening);
+  }
+  if(note){
+    const bits=[];
+    if(v.discovering) bits.push('Discovering gateway models…');
+    else if(v.gateway_error) bits.push('Gateway unreachable ('
+      + escapeHtml(v.gateway_error)+') — local options only');
+    const inst=v.installed||{};
+    if(inst.speech) bits.push('Speaking with <b>'+escapeHtml(inst.speech)+'</b>');
+    if(inst.listening) bits.push('Listening with <b>'+escapeHtml(inst.listening)+'</b>');
+    else bits.push('Not listening (text turns still work)');
+    note.innerHTML=bits.join(' · ');
+  }
+  if(status && !voiceDirty && !status.dataset.sticky) status.textContent='';
+}
+async function saveVoice(){
+  const s=$('#voice-status'); if(!s) return;
+  const body={speech:$('#voice-speech').value, listening:$('#voice-listening').value};
+  s.dataset.sticky='1'; s.textContent='Saving…';
+  try{
+    const r=await api(`/local/robots/${encodeURIComponent(voiceDevice||liveDevice)}/voice`,
+                      {method:'POST',auth:false,body});
+    voiceDirty=false;
+    if(r.ok){
+      s.textContent='✅ Saved — the next thing Moxie says uses it.';
+      renderVoiceCard(r);
+    } else s.textContent='⚠️ '+(r.reason||r.error||'could not save');
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not save'); }
+}
+async function testVoice(){
+  const s=$('#voice-status'); if(!s) return;
+  s.dataset.sticky='1'; s.textContent='Speaking…';
+  try{
+    const r=await api(`/local/robots/${encodeURIComponent(voiceDevice||liveDevice)}/voice/test`,
+                      {method:'POST',auth:false,body:{}});
+    s.textContent=r.ok
+      ? `✅ Played on ${String(voiceDevice||liveDevice).slice(0,16)}…: "${r.spoke||''}"`
+      : '⚠️ '+(r.reason||r.error||'could not play');
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not play'); }
+}
+{
+  const sp=$('#voice-speech'), ls=$('#voice-listening');
+  if(sp) sp.onchange=()=>{ voiceDirty=true; };
+  if(ls) ls.onchange=()=>{ voiceDirty=true; };
+  const b=$('#btn-voice-save'); if(b) b.onclick=saveVoice;
+  const t=$('#btn-voice-test'); if(t) t.onclick=testVoice;
+  const r=$('#btn-voice-refresh'); if(r) r.onclick=()=>{
+    voiceDirty=false;
+    const s=$('#voice-status'); if(s){ delete s.dataset.sticky; s.textContent=''; }
+    refreshVoice(voiceDevice||liveDevice);
+  };
+}
+
+// ---- 📦 Content packs (backlog/content-packs.md) ----
+// One JSON file that carries activities between machines. Three things this card does
+// that a plain "import" button would not:
+//   * it shows the REVIEW before anything is written — per item, with the field-level
+//     diff, so installing a stranger's pack is never a leap of faith;
+//   * it marks the items YOU edited here, and pre-selects "Keep mine" on them, so an
+//     upgrade cannot quietly overwrite your own wording (upstream compares two version
+//     integers and cannot see your edit at all);
+//   * it never re-serializes the pack before sending it. The file's own text goes to the
+//     supervisor for both the review and the install, so the digest the review checked is
+//     the digest the install checks — a re-encode in the browser would change a `1.0`
+//     into a `1` and turn a perfectly good file into a mismatch.
+// Content is fleet-level (no device_id anywhere in these routes); the card follows the
+// 🎚️ card's visibility rule only so the console has one idiom.
+let contentFile=null, contentReview=null, contentDecisions={};
+const CONTENT_KIND_GLYPH={conversation:'💬', global:'⚡', schedule:'📅'};
+const CONTENT_STATE_TEXT={
+  new:'New', upgrade:'Upgrade', conflict:'Replaces your edit', same:'Already installed',
+  keep_local:'You edited this', fork:'Same version, different text',
+  downgrade:'Older', downgrade_conflict:'Older, replaces your edit',
+  invalid:'Cannot install'};
+
+async function refreshContent(deviceId){
+  const card=$('#content-card'); if(!card) return;
+  if(!deviceId){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  let v;
+  try{ v=await api('/local/content',{auth:false}); }
+  catch(e){ v={ok:false,error:'Supervisor unreachable'}; }
+  renderContentCard(v);
+}
+
+function renderContentCard(v){
+  const head=$('#content-head'), list=$('#content-list'), packs=$('#content-packs');
+  if(!head||!list) return;
+  v=v||{};
+  if(!v.ok){
+    const why=(v.error==='supervisor not reachable')?'Supervisor unreachable':(v.error||'unavailable');
+    head.innerHTML=`<span class="live-off">${escapeHtml(why)}</span>`;
+    list.innerHTML=''; if(packs) packs.textContent='';
+    const u=$('#btn-content-undo'); if(u) u.classList.add('hidden');
+    return;
+  }
+  const c=v.counts||{};
+  const bits=[`${c.total||0} item${(c.total||0)===1?'':'s'}`];
+  if(c.from_packs) bits.push(`${c.from_packs} from packs`);
+  if(c.edited) bits.push(`${c.edited} edited here`);
+  head.textContent=bits.join(' · ');
+  list.innerHTML=(v.items||[]).map(it=>{
+    const flags=[];
+    if(it.local_edited) flags.push('<span class="chip edited">edited here</span>');
+    if(it.has_code) flags.push('<span class="chip warn" title="'
+      + 'This appliance never runs a pack’s code">carries code</span>');
+    if((it.pii||[]).length) flags.push('<span class="chip warn">mentions '
+      + escapeHtml(it.pii.map(h=>h.name).join(', '))+'</span>');
+    const from=it.origin==='pack'&&it.pack_id ? ' · from '+escapeHtml(it.pack_id)
+             : (it.origin==='shipped' ? ' · built in' : '');
+    return `<label class="packrow"><input type="checkbox" class="packpick" value="${escapeHtml(it.id)}" checked>
+      <span class="packname">${CONTENT_KIND_GLYPH[it.kind]||'•'} ${escapeHtml(it.name)}</span>
+      <span class="muted">v${it.source_version}${from}</span>
+      ${flags.join('')}</label>`;
+  }).join('') || '<div class="muted">Nothing installed yet.</div>';
+  if(packs){
+    packs.innerHTML=(v.packs||[]).length
+      ? 'Installed packs: '+v.packs.map(p=>`<b>${escapeHtml(p.name||p.id)}</b> v${p.pack_version}`
+          +` (${p.item_count} item${p.item_count===1?'':'s'})`).join(' · ')
+      : '';
+  }
+  const undo=$('#btn-content-undo');
+  if(undo){
+    undo.classList.toggle('hidden', !v.undo_available);
+    undo.title=v.undo_label||'';
+  }
+  renderContentPii();
+}
+
+function contentPicked(){
+  return Array.from($$('.packpick')).filter(b=>b.checked).map(b=>b.value);
+}
+
+function renderContentPii(){
+  const box=$('#content-pii'); if(!box) return;
+  const picked=new Set(contentPicked());
+  const names=new Set();
+  Array.from($$('.packrow')).forEach(row=>{
+    const box2=row.querySelector('.packpick');
+    if(!box2||!picked.has(box2.value)) return;
+    row.querySelectorAll('.chip.warn').forEach(chip=>{
+      const m=/^mentions (.+)$/.exec(chip.textContent||'');
+      if(m) m[1].split(', ').forEach(n=>names.add(n));
+    });
+  });
+  box.innerHTML = names.size
+    ? '⚠️ Some of the text you are exporting mentions '
+      + escapeHtml(Array.from(names).join(', '))
+      + '. Edit it first if you would rather it did not leave this house — this check only'
+      + ' knows the names set up here, so read the prompts before you send them on.'
+    : '';
+}
+
+async function exportContent(){
+  const s=$('#content-status'); if(!s) return;
+  const items=contentPicked();
+  if(!items.length){ s.textContent='⚠️ Tick at least one item to export.'; return; }
+  const name=($('#content-name').value||'').trim() || 'Moxie content';
+  s.textContent='Building the pack…';
+  const q=new URLSearchParams({items:items.join(','), name:name, id:name});
+  try{
+    const r=await fetch('/local/content/export?'+q.toString());
+    if(!r.ok){ const b=await r.json().catch(()=>({}));
+               s.textContent='⚠️ '+(b.error||'could not export'); return; }
+    const text=await r.text();
+    const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));
+    const a=document.createElement('a');
+    a.href=url; a.download=(JSON.parse(text).id||'moxie-content')+'.moxiepack.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    s.textContent=`✅ Exported ${items.length} item${items.length===1?'':'s'}.`;
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not export'); }
+}
+
+async function reviewContentFile(file){
+  const s=$('#content-status'); if(!s||!file) return;
+  s.textContent='Reading the pack…';
+  let text;
+  try{ text=await file.text(); }
+  catch(e){ s.textContent='⚠️ could not read that file'; return; }
+  contentFile=text;
+  try{
+    const r=await fetch('/local/content/review',
+                        {method:'POST',headers:{'Content-Type':'application/json'},body:text});
+    const v=await r.json();
+    if(!v.ok){ s.textContent='⚠️ '+(v.error||'this file is not a content pack');
+               hideContentReview(); return; }
+    contentReview=v; contentDecisions={};
+    (v.items||[]).forEach(it=>{ contentDecisions[it.id]=it.decision; });
+    renderContentReview(v); s.textContent='';
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not read that pack'); }
+}
+
+function renderContentReview(v){
+  const box=$('#content-review'), head=$('#content-review-head'), list=$('#content-review-list');
+  if(!box||!head||!list) return;
+  box.classList.remove('hidden');
+  const p=v.pack||{};
+  const bits=[`<b>${escapeHtml(p.name||p.id||'this pack')}</b> v${p.pack_version}`];
+  if(p.author) bits.push('by '+escapeHtml(p.author));
+  bits.push(`${(v.items||[]).length} item${(v.items||[]).length===1?'':'s'}`);
+  if(v.digest==='mismatch') bits.push('<span class="warn">this file was changed after it '
+    +'was exported — nothing is pre-selected</span>');
+  if(v.digest==='absent') bits.push('<span class="warn">no checksum — this pack was '
+    +'written by hand</span>');
+  head.innerHTML=bits.join(' · ');
+  list.innerHTML=(v.items||[]).map(it=>{
+    const chip=`<span class="chip st-${escapeHtml(it.state)}">`
+      + escapeHtml(CONTENT_STATE_TEXT[it.state]||it.state)+'</span>';
+    const warn=(it.warnings||[]).map(w=>`<div class="muted warn">⚠️ ${escapeHtml(w)}</div>`).join('');
+    const why=(it.reasons||[]).map(w=>`<div class="muted warn">${escapeHtml(w)}</div>`).join('');
+    const diff=(it.diff||[]).map(d=>d.kind==='text'
+      ? `<details class="packdiff"><summary>${escapeHtml(d.field)}</summary>`
+        + `<pre>${escapeHtml((d.diff||[]).join('\n'))}</pre></details>`
+      : `<div class="packdiff scalar">${escapeHtml(d.field)}: `
+        + `${escapeHtml(d.old)} → ${escapeHtml(d.new)}</div>`).join('');
+    const pick=['accept','keep','skip'].map(d=>{
+      const label={accept:'Accept', keep:'Keep mine', skip:'Skip'}[d];
+      const off=(d==='accept'&&!it.installable)?' disabled':'';
+      const on=(contentDecisions[it.id]===d)?' checked':'';
+      return `<label class="packdec"><input type="radio" name="dec-${escapeHtml(it.id)}"`
+        + ` value="${d}" data-item="${escapeHtml(it.id)}"${on}${off}> ${label}</label>`;
+    }).join('');
+    return `<div class="packreview">
+      <div class="packreview-hd">${CONTENT_KIND_GLYPH[it.kind]||'•'} `
+      + `<b>${escapeHtml(it.name)}</b> ${chip} <span class="muted">`
+      + `${escapeHtml(it.label)}</span></div>${why}${warn}${diff}
+      <div class="packdecs">${pick}</div></div>`;
+  }).join('');
+  list.querySelectorAll('input[type=radio]').forEach(r=>{
+    r.onchange=()=>{ contentDecisions[r.dataset.item]=r.value; };
+  });
+}
+
+function hideContentReview(){
+  contentReview=null; contentFile=null; contentDecisions={};
+  const box=$('#content-review'); if(box) box.classList.add('hidden');
+  const f=$('#content-file'); if(f) f.value='';
+}
+
+async function importContent(){
+  const s=$('#content-status'); if(!s||!contentReview||!contentFile) return;
+  const accept=Object.keys(contentDecisions).filter(k=>contentDecisions[k]==='accept');
+  if(!accept.length){ s.textContent='⚠️ Nothing is set to Accept — nothing to install.'; return; }
+  s.textContent='Installing…';
+  try{
+    const r=await fetch('/local/content/import',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pack:contentFile, accept:accept,
+                           expect_digest:contentReview.expect_digest})});
+    const v=await r.json();
+    if(!v.ok){
+      s.textContent=v.conflict
+        ? '⚠️ That file changed since you looked at it — open it again.'
+        : '⚠️ '+(v.error||'could not install');
+      return;
+    }
+    s.textContent=`✅ Installed ${v.count} item${v.count===1?'':'s'} — Moxie uses them from `
+      + 'the next thing she says.';
+    hideContentReview();
+    refreshContent(liveDevice);
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not install'); }
+}
+
+async function undoContent(){
+  const s=$('#content-status'); if(!s) return;
+  s.textContent='Putting it back…';
+  try{
+    const v=await api('/local/content/undo',{method:'POST',auth:false,body:{}});
+    s.textContent=v.ok ? '✅ Put back what the last import replaced.'
+                       : '⚠️ '+(v.error||'nothing to undo');
+    refreshContent(liveDevice);
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not undo'); }
+}
+
+{
+  const ex=$('#btn-content-export'); if(ex) ex.onclick=exportContent;
+  const f=$('#content-file');
+  if(f) f.onchange=()=>{ if(f.files&&f.files[0]) reviewContentFile(f.files[0]); };
+  const im=$('#btn-content-import'); if(im) im.onclick=importContent;
+  const ca=$('#btn-content-cancel');
+  if(ca) ca.onclick=()=>{ hideContentReview(); const s=$('#content-status'); if(s) s.textContent=''; };
+  const un=$('#btn-content-undo'); if(un) un.onclick=undoContent;
+  const list=$('#content-list');
+  if(list) list.addEventListener('change', e=>{
+    if(e.target && e.target.classList.contains('packpick')) renderContentPii();
+  });
+}
 
 // boot
 if(TOKEN){ api('/local/state').then(()=>{$('#who').textContent='';enterApp();}).catch(()=>{}); }

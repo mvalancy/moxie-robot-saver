@@ -222,6 +222,65 @@
         <div id="face-status" class="muted"></div>
         <div id="face-layers" class="muted"></div>
       </div>
+      <!-- 🎭 "Be Moxie" — puppet / telehealth mode (audit ADOPT #7). The recovered
+           TeleHealth protocol lets a remote grown-up drive the body: Moxie's own brain is
+           switched off (STATE_TELEBRAIN runs perception + MAINAPP but no BRAIN) and every
+           line comes from the person at this keyboard. Text only — no audio and no video
+           from the child's room reaches the operator in this phase, and the docs say so.
+           Every line is checked by the same safety classifier that guards Moxie's own
+           speech and lands in the parent's safety journal; a blocked line is refused back
+           to the operator with the reason rather than silently rewritten. -->
+      <div class="card hidden" id="telehealth-card">
+        <h2>🎭 Be Moxie</h2>
+        <p class="muted">Speak through Moxie from anywhere. While this is on, Moxie stops
+          thinking for herself and says only what you type — so there is never a second
+          voice talking over you.</p>
+        <label class="check"><input id="th-enable" type="checkbox">
+          Be Moxie (puppet mode)</label>
+        <div id="th-state" class="muted"></div>
+        <div id="th-warn" class="th-warn hidden"></div>
+        <div id="th-controls" class="th-controls">
+          <div class="row">
+            <select id="th-mood" aria-label="Mood"></select>
+            <select id="th-intensity" aria-label="How strongly">
+              <option value="0">gentle</option>
+              <option value="1" selected>normal</option>
+              <option value="2">strong</option>
+            </select>
+          </div>
+          <div class="row">
+            <input id="th-text" class="grow" type="text" autocomplete="off"
+                   placeholder="Say something as Moxie…" aria-label="What Moxie says">
+            <button id="btn-th-speak" class="primary">Speak</button>
+          </div>
+          <div class="row">
+            <button id="btn-th-session" class="ghost grow">Start session</button>
+            <button id="btn-th-interrupt" class="ghost grow">Interrupt</button>
+          </div>
+        </div>
+        <div id="th-transcript" class="th-log"></div>
+        <div id="th-status" class="muted"></div>
+        <p class="muted th-note">Everything typed here is said to your child in Moxie's
+          voice and is recorded in the Safety card. What your child says back appears above
+          as text only — no microphone or camera is streamed to whoever is driving.</p>
+      </div>
+      <!-- 📅 Today's plan (audit BEYOND #7). The robot asks the cloud for a schedule
+           before it will enter a session at all, and the supervisor's recommender scores
+           every candidate on what a parent asked for, unfinished onboarding, coverage,
+           recency, whether the child finishes or walks out, category variety and the time
+           of day — never planning into bedtime. It keeps a plain-sentence reason for each
+           entry, and this card is where a parent reads it. Read-only: the plan is changed
+           from Settings (bedtime, requested activities), not from here. -->
+      <div class="card hidden" id="schedule-card">
+        <h2>📅 Today's plan</h2>
+        <p class="muted">What Moxie lines up for today, and why each one is on the list.
+          Activities without a time are daily fixtures and chat breaks — they run in order,
+          not at the clock.</p>
+        <div id="sched-head" class="muted"></div>
+        <div id="sched-list"></div>
+        <div id="sched-foot" class="muted sched-foot"></div>
+        <button id="btn-sched-refresh" class="ghost">Refresh</button>
+      </div>
       <!-- What Moxie remembers (audit BEYOND #4). The runtime keeps a few durable facts
            per activity, each stamped with a stable id, the day and the module that
            learned it. A memory a parent cannot read or erase is not acceptable on a
@@ -235,6 +294,71 @@
         <div id="memory-box"></div>
         <button id="btn-mem-forget-all" class="ghost hidden">Erase everything</button>
         <div id="memory-status" class="muted"></div>
+      </div>
+      <!-- 🎚️ The voice picker (docs/architecture/backlog/voice-picker.md). Two dropdowns
+           over what this appliance can GENUINELY use: the gateway's audio models,
+           discovered live and classified by name, the local Piper voices and whisper
+           sizes actually installed on the box, and the two built-ins. Defaults to
+           piper-amy / stt-whisper when the gateway serves them; an explicit local pick
+           wins even with a gateway configured; a gateway that is down leaves the local
+           options rather than blanking the card. A pick takes effect on the next turn. -->
+      <div class="card hidden" id="voice-card">
+        <h2>🎚️ Voice</h2>
+        <p class="muted">Which voice Moxie speaks with, and which ears she listens with.
+          These are the engines this appliance can actually use right now — pick one and
+          press Test to hear it. The change applies to the next thing Moxie says; no
+          restart, and it is remembered across one.</p>
+        <div class="voicegrid">
+          <label class="voicepick"><span>Speech</span>
+            <select id="voice-speech"></select></label>
+          <label class="voicepick"><span>Listening</span>
+            <select id="voice-listening"></select></label>
+        </div>
+        <div id="voice-note" class="muted"></div>
+        <div class="voice-actions">
+          <button id="btn-voice-save">Save</button>
+          <button id="btn-voice-test" class="ghost">Test</button>
+          <button id="btn-voice-refresh" class="ghost">Refresh</button>
+        </div>
+        <div id="voice-status" class="muted"></div>
+      </div>
+      <!-- 📦 Content packs (docs/architecture/backlog/content-packs.md, audit ADOPT #5).
+           Content is the one part of this appliance a parent, a teacher or a speech
+           therapist has real expertise in, and until now they could not touch it without
+           cloning a repository. A pack is one JSON file you can email. Nothing installs
+           until it has been reviewed item by item: the card says which items are new,
+           which are a newer version of one you already have, and — the part upstream
+           cannot do — which ones YOU edited here, so an upgrade never silently destroys
+           your own wording. An imported pack cannot execute anything: a `code` block
+           travels as inert text and is flagged as such. -->
+      <div class="card hidden" id="content-card">
+        <h2>📦 Content packs</h2>
+        <p class="muted">What Moxie can talk about, as a file you can share. Export what
+          this Moxie has, or open somebody else's pack — you see exactly what it would
+          change before anything is installed, and you can undo the last one.</p>
+        <div id="content-head" class="muted"></div>
+        <div id="content-list"></div>
+        <div class="row">
+          <input id="content-name" class="grow" type="text" autocomplete="off"
+                 placeholder="Name this pack" aria-label="Pack name">
+          <button id="btn-content-export" class="primary">Export</button>
+        </div>
+        <div id="content-pii" class="muted"></div>
+        <div class="row">
+          <label class="packfile grow" for="content-file">Open a pack file…
+            <input id="content-file" type="file" accept=".json,application/json"></label>
+          <button id="btn-content-undo" class="ghost hidden">Undo last import</button>
+        </div>
+        <div id="content-review" class="hidden">
+          <div id="content-review-head" class="muted"></div>
+          <div id="content-review-list"></div>
+          <div class="row">
+            <button id="btn-content-import" class="primary grow">Install chosen items</button>
+            <button id="btn-content-cancel" class="ghost grow">Cancel</button>
+          </div>
+        </div>
+        <div id="content-packs" class="muted"></div>
+        <div id="content-status" class="muted"></div>
       </div>
     </section>
   </div>

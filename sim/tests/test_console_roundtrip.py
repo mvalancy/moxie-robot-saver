@@ -102,6 +102,153 @@ def _telemetry(device_id: str, limit: int) -> tuple:
             "summary": summary, "events": summary["latest"]}, 200
 
 
+#: 📅 A REAL `GET /schedule?device_id=…` body, captured 2026-09-02 from a real mosquitto +
+#: `mqtt/run.py` + `sim/virtual_moxie.py --query schedule` on free ports, with a fleet
+#: bedtime an hour out and one `ParentRequest` — then re-keyed to this file's device and
+#: trimmed to the entries that carry a distinct case (an FTUE spine with no clock time, a
+#: daily fixture, a parent request that drifted to a later slot, a scored pick, a chat
+#: breather). `test_fake_status_server_matches_the_real_runtime_shapes` diffs its keys
+#: against the live `MoxieRuntime.schedule_view`, so runtime drift fails there.
+#:
+#: Recorded rather than computed on purpose: `schedule_view` re-plans against the wall
+#: clock, so a live call here would make these assertions depend on the hour CI runs at.
+_SCHEDULE = {
+    "ok": True, "device_id": DEVICE, "day": "2026-09-02",
+    "planned_at": "2026-09-02T08:23:20", "served": True,
+    "schedule": {
+        "provided_schedule": [
+            {"module_id": "WELCOME"},
+            {"module_id": "DM"},
+            {"module_id": "STORYTELLING"},
+            {"module_id": "FREE_CHAT", "content_id": "default"},
+            {"module_id": "SCAVENGERHUNT"},
+        ],
+        "chat_request": {"module_id": "FREE_CHAT", "content_id": "default"},
+    },
+    "explanations": [
+        {"module_id": "WELCOME", "slot": None, "at": None, "reason_codes": ["ftue"],
+         "line": "Welcome is part of Moxie's first-week onboarding, which is still "
+                 "running.", "score": None, "factors": {}},
+        {"module_id": "DM", "slot": None, "at": None, "reason_codes": ["fixture"],
+         "line": "Daily Missions is a daily fixture \u2014 it runs every day.",
+         "score": None, "factors": {}},
+        {"module_id": "STORYTELLING", "slot": 4, "at": "09:03",
+         "reason_codes": ["parent_request", "unseen"],
+         "line": "Requested by a parent for 8:43 am \u2014 this session starts later than "
+                 "that, so Storytelling is queued at 9:03 am instead.",
+         "score": 4164,
+         "factors": {"affinity": 100, "category_spread": 0, "coverage": 0,
+                     "parent_request": 4000, "recency": 0, "tiebreak": 4,
+                     "time_of_day": 60}},
+        {"module_id": "FREE_CHAT", "slot": None, "at": None, "reason_codes": ["chat"],
+         "line": "A free chat, so friend gets a breather between activities.",
+         "score": None, "factors": {}},
+        {"module_id": "SCAVENGERHUNT", "slot": 5, "at": "09:13",
+         "reason_codes": ["unseen", "time_of_day", "variety"],
+         "line": "Friend has not tried Scavenger hunt yet \u2014 new for today in the "
+                 "morning slot.", "score": 242,
+         "factors": {"affinity": 100, "category_spread": 0, "coverage": 0, "recency": 0,
+                     "tiebreak": 22, "time_of_day": 120}},
+    ],
+    "inputs": {
+        "device_id": DEVICE, "day": "2026-09-02", "now": "2026-09-02T08:23:20",
+        "bucket": "morning", "slot_minutes": 10, "child_name": "friend",
+        "bedtime": {"enabled": True, "kind": "weekday", "starts_at": "09:23",
+                    "ends_at": "17:23"},
+        "slots": [{"index": 0, "at": "09:03", "bucket": "morning", "in_bedtime": False},
+                  {"index": 1, "at": "09:13", "bucket": "morning", "in_bedtime": False},
+                  {"index": 2, "at": "09:23", "bucket": "morning", "in_bedtime": True}],
+        "parent_requests": [{"module_id": "STORYTELLING", "scheduled_at": 1788363799,
+                             "at": "08:43", "due_today": True, "slot": 0}],
+        "ftue_skips": [], "history": {},
+        "telemetry": {"count": 0, "by_event": {}, "sessions": 0, "active_buckets": {},
+                      "carries_module_signal": False,
+                      "note": "Packet.event_name is a free string in the recovered "
+                              "proto; no module launch/exit vocabulary is established, "
+                              "so completion affinity comes from mentor_behaviors only."},
+        "planned": {"entries": 5, "activities": 2, "requested": 6,
+                    "dropped_for_bedtime": 4},
+    },
+}
+
+
+def _schedule(device_id: str) -> tuple:
+    """MoxieRuntime.schedule_view() + the status code its HTTP layer answers with."""
+    if device_id != DEVICE:
+        return {"ok": False, "error": f"unknown device_id {device_id!r}"}, 404
+    return dict(_SCHEDULE), 200
+
+
+class _RecordingClient:
+    """The supervisor's MQTT seam, recorded. `/config` and `commands/telehealth` publishes
+    are what the 🎭 round-trip proves reached the wire; nothing here talks to a broker."""
+
+    def __init__(self):
+        self.published = []
+
+    def publish(self, topic, payload):
+        self.published.append((topic, json.loads(payload)))
+
+    def on(self, topic):
+        return [p for (t, p) in self.published if t == topic]
+
+
+#: 🎚️ What `GET /v1/models` really served on 2026-09-02 — the list the picker classifies.
+_GATEWAY_MODELS = ["piper-amy", "piper-ryan", "graphling-tts-narrator", "stt-whisper",
+                   "graphling-stt", "tts-piper-amy", "graphling-medium"]
+
+
+class _ConsoleVoiceSynth:
+    """A voice for the 🎚️ Test button: 22050 Hz, one channel, remembers what it said."""
+    name = "console-fake"
+    channels = 1
+    sample_rate = 22050
+
+    def __init__(self, choice):
+        self.choice = dict(choice)
+        self.spoken = []
+
+    def describe(self):
+        return "fake-voice (%s:%s)" % (self.choice["engine"], self.choice["model"])
+
+    def synthesize(self, text, voice=None):
+        self.spoken.append(text)
+        return b"\x21\x43" * 64
+
+
+class _ConsoleVoiceEngines:
+    """`config.VoiceEngines` for the console seam: a scripted listing + recorder builders.
+
+    Only the *builders* and the *listing* are fake — the runtime verbs behind them are the
+    real ones, so this proves the console's URL, body and status codes against genuine
+    validation rather than a hand-drawn double.
+    """
+
+    def available(self, *, refresh=False, settle_s=0.0):
+        from moxie_sdk import voice_settings as _vs
+        return {"available": _vs.build_available(_GATEWAY_MODELS,
+                                                 piper_voices=["en_US-amy-medium"],
+                                                 whisper_models=["base.en"]),
+                "discovering": False, "gateway_error": ""}
+
+    def build_speech(self, choice):
+        return None if choice["engine"] == "off" else _ConsoleVoiceSynth(choice)
+
+    def build_listening(self, choice):
+        return None
+
+
+#: 📦 The shipped content this fake appliance boots with — one chat and one global, the
+#: shape `mqtt/content_modules/starter.json` has. The console never sees this file; it
+#: sees whatever `content_view` makes of it, which is the point.
+_CONTENT_MODULE = {
+    "conversations": [{"name": "Free Chat", "module_id": "FREE_CHAT",
+                       "content_id": "default", "source_version": 1,
+                       "prompt": "You are Moxie, talking to Sam.", "opener": "Hi!"}],
+    "globals": [{"name": "Timer", "pattern": r"timer for (\d+)", "entity_groups": "1"}],
+}
+
+
 def _safety_runtime(root: str):
     """A REAL `MoxieRuntime` with a couple of recorded verdicts, used as the /safety
     backend of the fake supervisor — so the queue the console reads is the queue the
@@ -116,9 +263,28 @@ def _safety_runtime(root: str):
     class _App(MoxieApp):
         name = "content"
 
-    rt = moxie_runtime.MoxieRuntime(app=_App(), child=ChildProfile(nickname="Sam"))
+    # `allow_unverified_bots=True` for the same reason `helpers_runtime.make_runtime`
+    # pins it: this file's robot is hand-placed rather than let in through the allowlist,
+    # and the 🎭 telehealth verbs (which DO check the gate) would otherwise refuse it.
+    # The gate has its own tests — `test_device_permits.py`, and the pending-robot cases
+    # in `test_telehealth_runtime.py`.
+    rt = moxie_runtime.MoxieRuntime(app=_App(), child=ChildProfile(nickname="Sam"),
+                                    allow_unverified_bots=True)
     rt.store = JsonStore(root=root)
     rt.robots[DEVICE] = RobotContext(device_id=DEVICE, child=rt.child)
+    rt.client = _RecordingClient()
+    # 🎚️ The voice picker's engines. The runtime is real, so `voice_view`/`voice_update`/
+    # `voice_test` are the genuine ones; only the appliance's *builders* are faked, which
+    # is the seam `set_voice_engines` exists for — no gateway, no piper, no whisper.
+    rt.set_voice_engines(_ConsoleVoiceEngines())
+    # 📦 Content packs: the REAL runtime verbs need a shipped baseline and a live module
+    # to swap, which `_App` (a bare MoxieApp) does not carry. Two attributes, exactly what
+    # `config.build_content_app()` records — so `content_view`, `content_export`,
+    # `content_review`, `content_import`, `content_undo` and `reload_content` here are the
+    # genuine ones, over a real `JsonStore` on a scratch dir.
+    from moxie_sdk.content import packs as _packs
+    rt.app.content_defaults = _packs.shipped_items(_CONTENT_MODULE)
+    rt.app.module = _packs.build_module(rt.app.content_defaults, {})
     rt._record_safety(DEVICE, S.assess("I want to kill myself"))
     rt._record_safety(DEVICE, S.assess("this is bullshit"))
     return rt
@@ -176,6 +342,13 @@ class FakeSupervisor:
         self.memory_queries: list = []
         self.memory_erases: list = []
         self.memory_edits: list = []
+        self.telehealth_queries: list = []
+        self.schedule_queries: list = []
+        self.voice_queries: list = []
+        self.voice_posts: list = []
+        self.content_queries: list = []
+        self.content_posts: list = []
+        self.telehealth_posts: list = []
         self.runtime = _safety_runtime(safety_root)
         self.memory = _seed_memory(self.runtime)
         outer = self
@@ -237,6 +410,48 @@ class FakeSupervisor:
                     outer.memory_queries.append(device_id)
                     out = outer.runtime.memory_view(device_id)
                     return self._out(out, 200 if out.get("ok") else 404)
+                if u.path == "/telehealth":
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    outer.telehealth_queries.append(device_id)
+                    out = outer.runtime.telehealth_view(device_id)
+                    return self._out(out, 200 if out.get("ok") else 404)
+                if u.path == "/voice":
+                    # 🎚️ The REAL `voice_view` — discovery, defaults and what is
+                    # installed all come from the runtime under test.
+                    q = parse_qs(u.query)
+                    refresh = (q.get("refresh") or ["0"])[0] not in ("", "0", "false")
+                    outer.voice_queries.append((q.get("refresh") or [""])[0])
+                    return self._out(outer.runtime.voice_view(refresh=refresh))
+                if u.path in ("/content", "/content/export"):
+                    # 📦 The REAL content verbs — the store, the allowlist, the merge and
+                    # the digest all come from the runtime under test, so the console is
+                    # proved against the payloads it will really receive.
+                    q = parse_qs(u.query)
+                    outer.content_queries.append((u.path, u.query))
+                    if u.path == "/content":
+                        return self._out(outer.runtime.content_view())
+                    keys = [k for part in (q.get("items") or [])
+                            for k in part.split(",") if k.strip()]
+                    try:
+                        return self._out(outer.runtime.content_export(
+                            keys, name=(q.get("name") or [""])[0],
+                            pack_id=(q.get("id") or [""])[0],
+                            details=(q.get("details") or [""])[0],
+                            author=(q.get("author") or [""])[0]))
+                    except Exception as e:
+                        return self._out({"ok": False, "error": str(e),
+                                          "reason": str(e)}, 400)
+                if u.path == "/schedule":
+                    # 📅 Recorded, not re-planned: `schedule_view` reads the wall clock,
+                    # and a live call would make the console's assertions depend on the
+                    # hour CI runs at. The keys are diffed against the real runtime in
+                    # `test_fake_status_server_matches_the_real_runtime_shapes`.
+                    q = parse_qs(u.query)
+                    device_id = (q.get("device_id") or [""])[0]
+                    outer.schedule_queries.append(
+                        (device_id, (q.get("refresh") or [""])[0]))
+                    return self._out(*_schedule(device_id))
                 self.send_response(404)
                 self.end_headers()
 
@@ -260,6 +475,82 @@ class FakeSupervisor:
 
             def do_POST(self):
                 u = urlparse(self.path)
+                if u.path in ("/voice", "/voice/test"):
+                    # 🎚️ Dispatched exactly the way the real `_start_status_server`
+                    # dispatches it, onto the REAL runtime verbs: a pick that is not on
+                    # offer is refused by `normalize_voice_settings`, not by this double.
+                    raw = self.rfile.read(
+                        int(self.headers.get("Content-Length") or 0)) or b"{}"
+                    body = json.loads(raw or b"{}") or {}
+                    outer.voice_posts.append((u.path, body))
+                    if u.path == "/voice/test":
+                        device_id = (parse_qs(u.query).get("device_id") or [""])[0]
+                        out = outer.runtime.voice_test(device_id, body.get("text") or "")
+                        code = (200 if out.get("ok")
+                                else (404 if "unknown device_id" in str(out.get("error"))
+                                      else 400))
+                    else:
+                        out = outer.runtime.voice_update(body)
+                        code = 200 if out.get("ok") else 400
+                    return self._out(out, code)
+                if u.path in ("/content/review", "/content/import", "/content/undo"):
+                    # 📦 Dispatched exactly the way `_start_status_server._content` does,
+                    # onto the REAL runtime verbs — including the 409 an import gets when
+                    # its digest is not the one the review was shown.
+                    raw = self.rfile.read(
+                        int(self.headers.get("Content-Length") or 0)) or b"{}"
+                    outer.content_posts.append((u.path, len(raw)))
+                    try:
+                        if u.path == "/content/undo":
+                            out = outer.runtime.content_undo()
+                            return self._out(out, 200 if out.get("ok") else 404)
+                        if u.path == "/content/review":
+                            return self._out(outer.runtime.content_review(raw), 200)
+                        body = json.loads(raw or b"{}") or {}
+                        out = outer.runtime.content_import(
+                            body.get("pack"), body.get("accept") or [],
+                            str(body.get("expect_digest") or ""))
+                        if out.get("ok"):
+                            return self._out(out, 200)
+                        return self._out(out, 409 if out.get("conflict") else 400)
+                    except Exception as e:
+                        return self._out({"ok": False, "error": str(e),
+                                          "reason": str(e)}, 400)
+                if u.path == "/telehealth":
+                    # 🎭 One operator verb, dispatched exactly the way the real
+                    # `_start_status_server` dispatches it — the REAL runtime does the
+                    # permit check, the mode gate, the safety classifier and the publish.
+                    device_id = (parse_qs(u.query).get("device_id") or [""])[0]
+                    raw = self.rfile.read(
+                        int(self.headers.get("Content-Length") or 0)) or b"{}"
+                    body = json.loads(raw or b"{}") or {}
+                    outer.telehealth_posts.append((device_id, body))
+                    action = str(body.get("action") or "").strip().lower()
+                    rt = outer.runtime
+                    try:
+                        if action in ("enable", "disable"):
+                            out = rt.telehealth_enable(device_id, action == "enable")
+                        elif action in ("start", "start_session"):
+                            out = rt.telehealth_session(device_id, "START_SESSION")
+                        elif action in ("end", "end_session"):
+                            out = rt.telehealth_session(device_id, "END_SESSION")
+                        elif action in ("state", "update_state"):
+                            out = rt.telehealth_session(device_id, "UPDATE_STATE")
+                        elif action in ("speak", "play_output", "say"):
+                            out = rt.telehealth_speak(
+                                device_id, body.get("text") or "", mood=body.get("mood"),
+                                intensity=body.get("intensity"))
+                        elif action == "interrupt":
+                            out = rt.telehealth_interrupt(device_id)
+                        else:
+                            raise ValueError("expected action: enable, disable, start, "
+                                             "end, state, speak or interrupt")
+                        code = (200 if out.get("ok") else
+                                404 if "unknown device_id" in str(out.get("error"))
+                                else 400)
+                    except Exception as e:
+                        out, code = {"ok": False, "error": str(e), "reason": str(e)}, 400
+                    return self._out(out, code)
                 if u.path not in ("/config", "/safety", "/permits", "/memory"):
                     self.send_response(404)
                     self.end_headers()
@@ -531,11 +822,14 @@ def test_the_console_learns_the_face_catalog_from_the_supervisor(client):
     assert [s["id"] for s in f["face_catalog"]] == [s["id"] for s in face_catalog()]
     eyes = next(s for s in f["face_catalog"] if s["id"] == "eye_color")
     assert eyes["cited"] is True
-    assert {o["id"] for o in eyes["options"]} == {"green", "blue", "purple",
-                                                 "brown", "gold", "teal"}
-    assert all(o["hex"].startswith("#") for o in eyes["options"])   # swatch-able
-    # the twelve slots our docs name but list no options for say so rather than lying
-    assert next(s for s in f["face_catalog"] if s["id"] == "hair")["cited"] is False
+    assert {"green", "blue", "purple", "brown", "gold", "teal"} <= {
+        o["id"] for o in eyes["options"]}          # the recovered enum, still offered
+    swatchable = [o for o in eyes["options"] if "hex" in o]
+    assert len(swatchable) == 6                    # …and still the only previewable six
+    assert all(o["hex"].startswith("#") for o in swatchable)
+    # a slot neither source lists an id for says so rather than lying (three are left:
+    # stickers / extras / misc — the rest were widened by the ingested asset manifest)
+    assert next(s for s in f["face_catalog"] if s["id"] == "stickers")["cited"] is False
 
 
 def test_a_face_edit_round_trips_and_changes_the_texture_key(client, supervisor):
@@ -912,8 +1206,207 @@ def test_memory_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# 📅 Today's plan — the recommender's "why this activity today" (audit BEYOND #7)
+# --------------------------------------------------------------------------- #
+# The supervisor plans the day and keeps one parent-readable sentence per entry. This is
+# the seam that finally reads it: the URL the console builds, the `refresh` flag it
+# forwards, and the claim the card is worth anything for — that the rows a parent reads
+# are the entries the ROBOT was served, in that order, each with its own reason.
+
+def test_todays_plan_reaches_the_console_with_a_reason_per_entry(client, supervisor):
+    before = len(supervisor.schedule_queries)
+    r = client.get(f"/local/robots/{DEVICE}/schedule")
+    assert r.status_code == 200, r.text
+    s = r.json()
+    assert supervisor.schedule_queries[before:] == [(DEVICE, "")]
+    assert s["ok"] is True and s["error"] is None
+    assert s["device_id"] == DEVICE and s["day"] == "2026-09-02"
+    assert s["child_name"] == "friend" and s["served"] is True
+    # the rows ARE the served day, in order — the whole point of the card
+    assert [e["module_id"] for e in s["entries"]] == [
+        e["module_id"] for e in _SCHEDULE["schedule"]["provided_schedule"]]
+    assert all(e["why"] for e in s["entries"])
+
+
+def test_untimed_fixtures_show_no_clock_time_and_scored_picks_do(client):
+    rows = {e["module_id"]: e for e in
+            client.get(f"/local/robots/{DEVICE}/schedule").json()["entries"]}
+    assert rows["DM"]["time_local"] is None and rows["DM"]["fixture"] is True
+    assert rows["FREE_CHAT"]["time_local"] is None
+    assert rows["WELCOME"]["time_local"] is None
+    assert rows["STORYTELLING"]["time_local"] == "09:03"
+    assert rows["SCAVENGERHUNT"]["time_local"] == "09:13"
+    assert rows["SCAVENGERHUNT"]["fixture"] is False
+
+
+def test_the_constraints_the_planner_reported_reach_the_footer(client):
+    c = client.get(f"/local/robots/{DEVICE}/schedule").json()
+    assert c["constraints"]["bedtime"] == {"enabled": True, "kind": "weekday",
+                                           "starts_at": "09:23", "ends_at": "17:23"}
+    assert c["dropped_for_bedtime"] == 4
+    assert c["constraints"]["parent_request"] == {
+        "count": 1, "pinned": [{"module_id": "STORYTELLING", "at": "08:43"}]}
+    assert [e["module_id"] for e in c["entries"] if e["pinned"]] == ["STORYTELLING"]
+    # the runtime says telemetry carries no module signal; the console must not lose it
+    assert c["constraints"]["telemetry_signal"] is False
+
+
+def test_refresh_is_forwarded_so_a_parent_can_re_plan_the_day(client, supervisor):
+    before = len(supervisor.schedule_queries)
+    r = client.get(f"/local/robots/{DEVICE}/schedule", params={"refresh": "true"})
+    assert r.status_code == 200
+    assert supervisor.schedule_queries[before:] == [(DEVICE, "1")]
+
+
+def test_schedule_for_an_unknown_device_is_a_404(client):
+    r = client.get("/local/robots/d_nope/schedule")
+    assert r.status_code == 404, r.text
+    s = r.json()
+    assert s["ok"] is False and s["entries"] == [] and "d_nope" in s["error"]
+
+
+def test_schedule_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    """A plan nobody can fetch must read as "supervisor unreachable", never as an empty
+    day — a parent would take a blank list for "Moxie has nothing planned"."""
+    from moxie_server import main
+    dead = socket.socket()
+    dead.bind(("127.0.0.1", 0))
+    port = dead.getsockname()[1]
+    dead.close()
+    monkeypatch.setattr(main, "STATUS_URL", f"http://127.0.0.1:{port}/status")
+    r = client.get(f"/local/robots/{DEVICE}/schedule")
+    assert r.status_code == 503
+    s = r.json()
+    assert s["ok"] is False and s["entries"] == [] and s["error"]
+    assert s["constraints"]["bedtime"] == {"enabled": False, "kind": ""}
+
+
+# --------------------------------------------------------------------------- #
 # the double is honest
 # --------------------------------------------------------------------------- #
+
+# --------------------------------------------------------------------------- #
+# 🎭 "Be Moxie" — puppet / telehealth (audit ADOPT #7)
+# --------------------------------------------------------------------------- #
+# The console↔runtime seam for the one card where a mistake is *audible in a child's
+# room*: the URL, the verb, the body, and — the part worth the whole file — what the
+# console does with the supervisor's 400 when the safety classifier refuses a line.
+
+@pytest.fixture()
+def puppet(client, supervisor):
+    """Puppet mode on and a session open, torn back down afterwards."""
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "enable"})
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "start"})
+    supervisor.runtime.client.published.clear()
+    yield
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "disable"})
+
+
+def _telehealth_wire(supervisor):
+    return [p["message"] for p in supervisor.runtime.client.on(
+        f"/devices/{DEVICE}/commands/telehealth")]
+
+
+def test_the_card_reads_the_supervisors_telehealth_view(client, supervisor):
+    r = client.get(f"/local/robots/{DEVICE}/telehealth")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["device_id"] == DEVICE
+    assert len(body["moods"]) == 11 and body["max_intensity"] == 2
+    # nothing has been reported by the robot, and the card must not invent a state
+    assert body["reported"] is False and body["state"] == ""
+    assert supervisor.telehealth_queries[-1] == DEVICE
+
+
+def test_enable_speak_interrupt_disable_round_trips(client, supervisor, puppet):
+    say = client.post(f"/local/robots/{DEVICE}/telehealth",
+                      json={"action": "speak", "text": "Hello from Grandma.",
+                            "mood": "happy", "intensity": 2})
+    assert say.status_code == 200
+    body = say.json()
+    assert body["ok"] is True and body["spoke"] == "Hello from Grandma."
+    assert body["in_session"] is True
+    cut = client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "interrupt"})
+    assert cut.status_code == 200 and cut.json()["ok"] is True
+
+    wire = _telehealth_wire(supervisor)
+    assert [m["action"] for m in wire] == ["PLAY_OUTPUT", "INTERRUPT"]
+    assert wire[0]["output"]["text"] == "Hello from Grandma."
+    assert "+mood+:1" in wire[0]["output"]["markup"]
+    assert "+intensity+:2" in wire[0]["output"]["markup"]
+    assert "output" not in wire[1]          # INTERRUPT carries no line
+
+
+def test_the_operators_line_comes_back_in_the_transcript(client, supervisor, puppet):
+    client.post(f"/local/robots/{DEVICE}/telehealth",
+                json={"action": "speak", "text": "Time to brush your teeth."})
+    body = client.get(f"/local/robots/{DEVICE}/telehealth").json()
+    assert [(l["who"], l["text"]) for l in body["transcript"]][-1] == (
+        "operator", "Time to brush your teeth.")
+
+
+def test_a_line_the_safety_check_refuses_is_a_400_with_a_reason_and_is_never_spoken(
+        client, supervisor, puppet):
+    """The acceptance criterion, through the console's own seam: the operator is told
+    why, and the robot hears nothing."""
+    r = client.post(f"/local/robots/{DEVICE}/telehealth",
+                    json={"action": "speak", "text": "you are a fucking idiot"})
+    assert r.status_code == 400
+    body = r.json()
+    assert body["ok"] is False and body["blocked"] is True
+    assert body["categories"] == ["profanity"]
+    assert "Profanity" in body["reason"]
+    assert _telehealth_wire(supervisor) == []
+
+
+def test_speaking_with_the_mode_off_is_a_400_the_card_can_act_on(client, supervisor):
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "disable"})
+    supervisor.runtime.client.published.clear()
+    r = client.post(f"/local/robots/{DEVICE}/telehealth",
+                    json={"action": "speak", "text": "Hello."})
+    assert r.status_code == 400 and "Be Moxie" in r.json()["reason"]
+    assert _telehealth_wire(supervisor) == []
+
+
+def test_enable_re_pushes_the_config_with_the_mode_set(client, supervisor):
+    supervisor.runtime.client.published.clear()
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "enable"})
+    cfg = supervisor.runtime.client.on(f"/devices/{DEVICE}/config")[-1]
+    assert cfg["moxie_mode"] == "TELEHEALTH"
+    client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "disable"})
+    cfg = supervisor.runtime.client.on(f"/devices/{DEVICE}/config")[-1]
+    assert cfg["moxie_mode"] == "DEFAULT_MODE"
+
+
+def test_the_robots_own_reported_state_reaches_the_card(client, supervisor, puppet):
+    supervisor.runtime._on_activity(DEVICE, json.dumps(
+        {"subtopic": "telehealth",
+         "message": {"state": "IN_SESSION", "timestamp": 1700000000000}}))
+    body = client.get(f"/local/robots/{DEVICE}/telehealth").json()
+    assert body["state"] == "IN_SESSION" and body["state_known"] is True
+    assert body["state_at"] == 1700000000.0
+
+
+def test_telehealth_for_an_unknown_device_is_a_404(client):
+    r = client.get("/local/robots/d_nope/telehealth")
+    assert r.status_code == 404 and r.json()["ok"] is False
+
+
+def test_an_unknown_verb_is_a_400(client):
+    r = client.post(f"/local/robots/{DEVICE}/telehealth", json={"action": "dance"})
+    assert r.status_code == 400 and r.json()["ok"] is False
+
+
+def test_telehealth_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    import moxie_server.main as main
+    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.get(f"/local/robots/{DEVICE}/telehealth")
+    assert r.status_code == 503
+    body = r.json()
+    assert body["ok"] is False and body["transcript"] == []
+    assert body["max_intensity"] == 2
+
 
 def test_fake_status_server_matches_the_real_runtime_shapes():
     """Diff the fake's payloads against the REAL MoxieRuntime, so runtime drift fails
@@ -957,8 +1450,46 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
     assert rt.safety_view("d_nope")["ok"] is False
     assert rt.acknowledge_safety("d_nope", "sfe-nope")["ok"] is False
     assert rt.memory_view("d_nope")["ok"] is False
+    # 🎭 /telehealth is not doubled either — the fake runs the REAL runtime behind both
+    # verbs — so what is guarded is the unknown-device shape and the keys the card reads.
+    assert rt.telehealth_view("d_nope")["ok"] is False
+    rt._allow_unverified_bots = True     # every telehealth verb checks the permit gate
+    assert set(rt.telehealth_view(DEVICE)) == {
+        "ok", "device_id", "enabled", "online", "session_id", "in_session",
+        "state", "state_at", "in_bedtime", "transcript", "moods", "max_intensity"}
     assert set(rt.memory_view(DEVICE)) == {"ok", "device_id", "namespaces", "bytes",
                                            "writes_allowed", "policy"}
+    # 📦 /content is not doubled either — the fake runs the REAL runtime behind all five
+    # routes — so what is pinned is the key set each normalizer reads, on a runtime built
+    # here rather than the shared fixture's. A key the card depends on that the runtime
+    # stops sending fails HERE, not as a blank card.
+    from moxie_sdk.content import packs as _packs
+    from moxie_sdk.store import JsonStore as _Store
+    import tempfile as _tf
+    rt.store = _Store(root=_tf.mkdtemp())
+    rt.app.content_defaults = _packs.shipped_items(_CONTENT_MODULE)
+    rt.app.module = _packs.build_module(rt.app.content_defaults, {})
+    assert set(rt.content_view()) == {"ok", "items", "packs", "counts", "undo_available",
+                                      "undo_label", "max_bytes", "pack_format"}
+    assert set(rt.content_view()["items"][0]) == {
+        "id", "kind", "key", "name", "source_version", "origin", "pack_id",
+        "imported_at", "local_edited", "has_code", "warnings", "pii"}
+    _exported = rt.content_export([CONV], name="Shapes", pack_id="shapes")
+    assert set(_exported) == {"pack_format", "id", "name", "details", "author",
+                              "pack_version", "created_at", "generator", "items",
+                              "signatures", "digest"}
+    _reviewed = rt.content_review(json.dumps(_exported))
+    assert set(_reviewed) == {"ok", "pack", "digest", "expect_digest", "warnings",
+                              "items", "accept", "counts"}
+    assert set(_reviewed["items"][0]) >= {
+        "id", "kind", "key", "name", "state", "label", "default", "local_edited",
+        "source_version", "installed_version", "origin", "pack_id", "warnings",
+        "reasons", "diff"}
+    _imported = rt.content_import(_exported, [CONV])
+    assert set(_imported) == {"ok", "digest", "pack", "applied", "replaced", "skipped",
+                              "count", "reload", "undo_available"}
+    assert set(rt.content_undo()) == {"ok", "restored", "reload", "label",
+                                      "undo_available"}
     # The per-item seam the console now drives: an id-carrying view, an erase that takes
     # an `item`, and an edit. Doubling any of these would let the card claim a control the
     # runtime does not have, which on this card is the whole promise.
@@ -982,3 +1513,347 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
             dropped["namespaces"]["mchat"]["data"]["facts"]] == ["has a beagle"]
     erased = rt.erase_memory(DEVICE)
     assert erased["ok"] is True and set(erased) >= {"erased", "namespace", "namespaces"}
+
+    # 📅 /schedule IS doubled (recorded — see `_SCHEDULE`), so its keys are diffed against
+    # the live planner: the view, one explanation, and the inputs summary the card's
+    # footer reads. `schedule_view` re-plans when nothing is stored, which is exactly the
+    # path a parent hits before the robot has pulled its day.
+    real_s = rt.schedule_view(DEVICE)
+    fake_s, code = _schedule(DEVICE)
+    assert code == 200 and set(fake_s) == set(real_s), "schedule view keys drifted"
+    assert set(fake_s["schedule"]) <= set(real_s["schedule"])
+    assert set(fake_s["explanations"][0]) == set(real_s["explanations"][0])
+    assert set(fake_s["inputs"]) == set(real_s["inputs"]), "inputs summary keys drifted"
+    assert set(fake_s["inputs"]["telemetry"]) == set(real_s["inputs"]["telemetry"])
+    assert real_s["inputs"]["telemetry"]["carries_module_signal"] is False
+    assert set(fake_s["inputs"]["planned"]) == set(real_s["inputs"]["planned"])
+    real_missing = rt.schedule_view("d_nope")
+    fake_missing, code = _schedule("d_nope")
+    assert code == 404 and set(fake_missing) == set(real_missing)
+
+
+# --------------------------------------------------------------------------- #
+# 🎚️ Voice — the Speech and Listening pickers (backlog/voice-picker.md)
+# --------------------------------------------------------------------------- #
+# The console never keeps a list of voices: it renders what the supervisor says this
+# appliance can genuinely use. This is that seam — the URL the card builds, the body it
+# posts, and what it does with the 400 a stale page earns. The runtime behind the fake
+# status server is REAL, so the validation, the persistence and the engine swap under
+# these assertions are the ones that ship.
+
+def test_the_voice_card_gets_every_option_grouped_for_its_dropdowns(client, supervisor):
+    before = len(supervisor.voice_queries)
+    r = client.get(f"/local/robots/{DEVICE}/voice")
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert supervisor.voice_queries[before:] == [""]
+    assert v["ok"] is True and v["error"] is None
+    speech = [e["id"] for e in v["available"]["speech"]]
+    assert "gateway:piper-amy" in speech and "piper:en_US-amy-medium" in speech
+    assert speech[-1] == "tone"
+    assert [e["id"] for e in v["available"]["listening"]][-1] == "off"
+    assert {e["group"] for e in v["available"]["speech"]} == {"Gateway", "Local",
+                                                              "Built-in"}
+    # chat models never leak into a voice picker
+    assert not any("graphling-medium" in e for e in speech)
+
+
+def test_the_default_is_piper_amy_and_it_is_marked_for_the_card(client):
+    v = client.get(f"/local/robots/{DEVICE}/voice").json()
+    assert v["selected"]["speech"] == "gateway:piper-amy"
+    assert v["selected"]["listening"] == "gateway:stt-whisper"
+    assert [e["id"] for e in v["available"]["speech"] if e["default"]] == \
+        ["gateway:piper-amy"]
+    assert v["chosen"] == {"speech": False, "listening": False}
+
+
+def test_a_refresh_is_forwarded_to_the_supervisor(client, supervisor):
+    before = len(supervisor.voice_queries)
+    client.get(f"/local/robots/{DEVICE}/voice?refresh=true")
+    assert supervisor.voice_queries[before:] == ["1"]
+
+
+def test_picking_a_voice_round_trips_and_sticks(client, supervisor):
+    r = client.post(f"/local/robots/{DEVICE}/voice",
+                    json={"speech": "gateway:piper-ryan"})
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert v["ok"] is True and v["selected"]["speech"] == "gateway:piper-ryan"
+    assert supervisor.voice_posts[-1] == ("/voice", {"speech": "gateway:piper-ryan"})
+    # …and the next poll agrees, because it was persisted, not held in the page
+    assert client.get(f"/local/robots/{DEVICE}/voice").json()["selected"]["speech"] == \
+        "gateway:piper-ryan"
+    # the engine actually installed is the one that was picked
+    assert supervisor.runtime._synth.choice["model"] == "piper-ryan"
+    client.post(f"/local/robots/{DEVICE}/voice", json={"speech": None})
+
+
+def test_a_local_pick_is_honoured_with_a_gateway_configured(client, supervisor):
+    r = client.post(f"/local/robots/{DEVICE}/voice",
+                    json={"speech": "piper:en_US-amy-medium"})
+    assert r.status_code == 200 and r.json()["selected"]["speech"] == \
+        "piper:en_US-amy-medium"
+    assert supervisor.runtime._synth.choice["engine"] == "piper"
+    client.post(f"/local/robots/{DEVICE}/voice", json={"speech": None})
+
+
+def test_a_stale_page_gets_a_400_with_the_reason_not_a_silent_no_op(client):
+    r = client.post(f"/local/robots/{DEVICE}/voice",
+                    json={"speech": "gateway:piper-bob"})
+    assert r.status_code == 400, r.text
+    v = r.json()
+    assert v["ok"] is False and "piper-bob" in (v["reason"] or "")
+    assert "gateway:piper-amy" in v["reason"], "the refusal must say what IS available"
+
+
+def test_the_test_button_plays_a_line_on_the_named_robot(client, supervisor):
+    client.post(f"/local/robots/{DEVICE}/voice", json={"speech": "gateway:piper-amy"})
+    before = len(supervisor.runtime.client.on(f"/devices/{DEVICE}/commands/tts"))
+    r = client.post(f"/local/robots/{DEVICE}/voice/test",
+                    json={"text": "Hello from the console."})
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True and r.json()["spoke"] == "Hello from the console."
+    published = supervisor.runtime.client.on(f"/devices/{DEVICE}/commands/tts")
+    assert len(published) == before + 1
+    assert published[-1]["audio"]["sample_rate"] == 22050
+    assert published[-1]["audio"]["buffer"], "the Test button published no audio"
+    client.post(f"/local/robots/{DEVICE}/voice", json={"speech": None})
+
+
+def test_testing_a_robot_that_is_not_connected_is_a_404(client):
+    r = client.post("/local/robots/d_nobody/voice/test", json={})
+    assert r.status_code == 404, r.text
+    assert r.json()["ok"] is False
+
+
+def test_a_supervisor_that_is_down_is_a_503_in_the_cards_own_shape(client, monkeypatch):
+    """The card must be able to render the failure, so a 503 still carries both empty
+    dropdowns and an error sentence rather than a FastAPI 500 page."""
+    from moxie_server import main as console_main
+    monkeypatch.setattr(console_main, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.get(f"/local/robots/{DEVICE}/voice")
+    assert r.status_code == 503
+    v = r.json()
+    assert v["ok"] is False and v["available"] == {"speech": [], "listening": []}
+    assert v["error"]
+
+
+# --------------------------------------------------------------------------- #
+# 📦 Content packs — export → review → import → inventory (backlog/content-packs.md §3.12)
+# --------------------------------------------------------------------------- #
+# The console never invents a pack: it forwards the file's own bytes to the supervisor,
+# renders what the review says, and posts back the decisions a parent made. The fake
+# supervisor runs the REAL runtime verbs over a real `JsonStore`, so what is proved here is
+# the console's URL, body, status codes and normalizer against genuine payloads.
+#
+# These tests share one module-scoped supervisor with everything above, so each one puts
+# the content store back the way it found it (`_content_reset`) — an import that leaked
+# into the next test would make the review states meaningless.
+
+CONV = "conversation:FREE_CHAT/default"
+
+
+def _content_reset(supervisor):
+    """Empty overlay, empty ledger, no undo slot — a fresh appliance."""
+    rt = supervisor.runtime
+    rt.store.delete_shared(rt.CONTENT_ITEMS_COLLECTION)
+    rt.store.delete_shared(rt.CONTENT_PACKS_COLLECTION)
+    rt.store.delete_shared(rt.CONTENT_BACKUP_COLLECTION)
+    rt.reload_content()
+
+
+@pytest.fixture()
+def content(supervisor):
+    _content_reset(supervisor)
+    yield supervisor
+    _content_reset(supervisor)
+
+
+def _export(client, items=CONV, name="Bedtime", pack_id="bedtime"):
+    r = client.get("/local/content/export",
+                   params={"items": items, "name": name, "id": pack_id})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _review(client, pack):
+    r = client.post("/local/content/review", content=json.dumps(pack))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_the_content_card_lists_what_is_installed(client, content):
+    v = client.get("/local/content").json()
+    assert v["ok"] is True
+    assert {i["id"] for i in v["items"]} == {CONV, "global:Timer"}
+    row = {i["id"]: i for i in v["items"]}[CONV]
+    assert (row["origin"], row["source_version"], row["local_edited"]) == ("shipped", 1, False)
+    assert row["name"] == "Free Chat" and row["kind"] == "conversation"
+    assert v["packs"] == [] and v["undo_available"] is False
+    assert v["counts"]["total"] == 2 and v["error"] is None
+
+
+def test_the_export_download_carries_a_filename_and_the_pack_itself(client, content):
+    r = client.get("/local/content/export", params={"items": CONV, "name": "Bedtime",
+                                                    "id": "bedtime"})
+    assert r.status_code == 200
+    assert 'filename="bedtime.moxiepack.json"' in r.headers["content-disposition"]
+    pack = r.json()
+    assert pack["pack_format"] == 1 and pack["id"] == "bedtime"
+    assert [i["key"] for i in pack["items"]] == ["FREE_CHAT/default"]
+
+
+def test_exporting_something_that_is_not_installed_is_a_400_the_card_can_render(client,
+                                                                               content):
+    r = client.get("/local/content/export", params={"items": "conversation:NOPE/x"})
+    assert r.status_code == 400
+    assert r.json()["ok"] is False and "not installed" in r.json()["error"]
+
+
+def test_export_review_import_round_trips_through_the_console(client, content,
+                                                              supervisor):
+    """Test 12: the whole card, end to end, against the runtime's own store."""
+    pack = _export(client)
+    pack["items"][0]["data"]["prompt"] = "A prompt somebody else wrote."
+    pack["items"][0]["source_version"] = 4
+    pack["digest"] = _pack_digest(pack)
+
+    reviewed = _review(client, pack)
+    assert reviewed["ok"] and reviewed["digest"] == "ok"
+    row = reviewed["items"][0]
+    assert (row["state"], row["decision"], row["installable"]) == ("upgrade", "accept", True)
+    assert row["installed_version"] == 1 and row["source_version"] == 4
+    assert [d["field"] for d in row["diff"]] == ["prompt"]
+    assert reviewed["accept"] == [CONV]
+
+    r = client.post("/local/content/import",
+                    json={"pack": json.dumps(pack), "accept": reviewed["accept"],
+                          "expect_digest": reviewed["expect_digest"]})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["ok"] and out["applied"] == [CONV] and out["count"] == 1
+    assert out["pack"]["id"] == "bedtime" and out["undo_available"] is True
+
+    v = client.get("/local/content").json()
+    installed = {i["id"]: i for i in v["items"]}[CONV]
+    assert (installed["origin"], installed["pack_id"]) == ("pack", "bedtime")
+    assert installed["source_version"] == 4 and installed["local_edited"] is False
+    assert [p["id"] for p in v["packs"]] == ["bedtime"]
+    assert v["undo_available"] is True
+    # …and the supervisor's live module really changed
+    assert supervisor.runtime.app.module.conversation("FREE_CHAT").prompt == \
+        "A prompt somebody else wrote."
+
+
+def test_the_review_pre_selects_keep_mine_on_an_item_edited_here(client, content,
+                                                                 supervisor):
+    """The clobber guarantee, as the card renders it: the safe choice is the one already
+    selected, and Accept is still available for a parent who means it."""
+    from moxie_sdk.content import packs as _packs
+    rt = supervisor.runtime
+    pack = _export(client)
+    pack["items"][0]["source_version"] = 2
+    pack["digest"] = _pack_digest(pack)
+    rt._write_content_overlay(_packs.mark_edited(
+        {}, CONV, dict(rt.content_items()[CONV]["data"], prompt="I wrote this myself.")))
+    rt.reload_content()
+
+    row = _review(client, pack)["items"][0]
+    assert row["state"] == "conflict"
+    assert row["decision"] == "keep", "the un-destructive choice is pre-selected"
+    assert row["default"] is False and row["local_edited"] is True
+    assert row["installable"] is True
+
+    # Keep mine → nothing is sent for it → nothing changes
+    r = client.post("/local/content/import", json={"pack": json.dumps(pack), "accept": []})
+    assert r.status_code == 200 and r.json()["applied"] == []
+    assert rt.content_items()[CONV]["data"]["prompt"] == "I wrote this myself."
+
+
+def test_a_pack_changed_after_it_was_exported_pre_selects_nothing(client, content):
+    pack = _export(client)
+    pack["items"][0]["data"]["prompt"] = "edited after the export, digest left alone"
+    reviewed = _review(client, pack)
+    assert reviewed["digest"] == "mismatch"
+    assert reviewed["accept"] == []
+    assert reviewed["items"][0]["decision"] == "skip"
+
+
+def test_a_file_that_is_not_a_pack_is_a_400_the_card_can_explain(client, content):
+    r = client.post("/local/content/review", content='{"hello": "world"}')
+    assert r.status_code == 400
+    assert r.json()["ok"] is False and "content pack" in r.json()["error"]
+    assert r.json()["items"] == [], "an empty-but-renderable review"
+
+
+def test_importing_a_different_file_than_the_one_reviewed_is_a_409(client, content):
+    pack = _export(client)
+    pack["items"][0]["source_version"] = 3
+    pack["digest"] = _pack_digest(pack)
+    reviewed = _review(client, pack)
+
+    other = _export(client)
+    other["items"][0]["data"]["prompt"] = "a different file entirely"
+    other["items"][0]["source_version"] = 3
+    other["digest"] = _pack_digest(other)
+    r = client.post("/local/content/import",
+                    json={"pack": json.dumps(other), "accept": [CONV],
+                          "expect_digest": reviewed["expect_digest"]})
+    assert r.status_code == 409, r.text
+    assert r.json()["conflict"] is True
+    assert client.get("/local/content").json()["items"][0]["origin"] == "shipped"
+
+
+def test_undo_through_the_console_puts_the_content_back(client, content, supervisor):
+    assert client.post("/local/content/undo").status_code == 404
+    pack = _export(client)
+    pack["items"][0]["data"]["prompt"] = "the imported prompt"
+    pack["items"][0]["source_version"] = 2
+    pack["digest"] = _pack_digest(pack)
+    reviewed = _review(client, pack)
+    client.post("/local/content/import",
+                json={"pack": json.dumps(pack), "accept": reviewed["accept"],
+                      "expect_digest": reviewed["expect_digest"]})
+    assert supervisor.runtime.app.module.conversation("FREE_CHAT").prompt == \
+        "the imported prompt"
+
+    r = client.post("/local/content/undo")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    v = client.get("/local/content").json()
+    assert v["undo_available"] is False and v["packs"] == []
+    assert {i["id"]: i for i in v["items"]}[CONV]["origin"] == "shipped"
+    assert supervisor.runtime.app.module.conversation("FREE_CHAT").prompt == \
+        "You are Moxie, talking to Sam."
+
+
+def test_a_code_carrying_item_is_flagged_all_the_way_to_the_card(client, content):
+    pack = _export(client)
+    pack["items"][0]["data"]["code"] = "def complete_handler(v, s): s.summarize()"
+    pack["items"][0]["source_version"] = 2
+    pack["digest"] = _pack_digest(pack)
+    row = _review(client, pack)["items"][0]
+    assert any("never runs" in w for w in row["warnings"])
+    client.post("/local/content/import", json={"pack": json.dumps(pack), "accept": [CONV]})
+    assert {i["id"]: i for i in client.get("/local/content").json()["items"]}[CONV][
+        "has_code"] is True
+
+
+def test_the_content_card_gets_a_503_in_its_own_shape_when_the_supervisor_is_down(
+        client, monkeypatch):
+    """Acceptance criterion 10: the card renders the reason, never a blank list."""
+    from moxie_server import main as console_main
+    monkeypatch.setattr(console_main, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.get("/local/content")
+    assert r.status_code == 503
+    v = r.json()
+    assert v["ok"] is False and v["items"] == [] and v["packs"] == []
+    assert v["error"]
+    r2 = client.post("/local/content/undo")
+    assert r2.status_code == 503 and r2.json()["error"]
+
+
+def _pack_digest(pack: dict) -> str:
+    """The console never computes a digest — these tests do, to forge a *legitimately*
+    re-signed pack (a hand edit plus a re-export is exactly what an author does)."""
+    from moxie_sdk.content import packs as _packs
+    return _packs.pack_digest(pack)

@@ -25,6 +25,35 @@ flowchart LR
 the same topics and honor the same request/response contracts. The SIM is the test/display surface;
 the robot is production; the backend cannot tell them apart at the protocol layer.
 
+## Robot → cloud: the activity log, and the delta that is allowed
+
+Both SIM clients publish the robot's own upstream channel,
+`/devices/{id}/events/client-service-activity-log`, multiplexed by `subtopic`
+([mqtt-and-conversation §3.3](mqtt-and-conversation.md), cited to
+[cloud-protocol.md](../reverse-engineering/protocol/cloud-protocol.md)). Until 2026-09-02 only
+[`sim/virtual_moxie.py`](../../sim/virtual_moxie.py) did, so the browser SIM could not ask the cloud
+anything or report its own state, and the interchangeability guarantee above was overstated in that
+direction. It now holds in both.
+
+The guarantee is enforced from **both** ends against one recorded file,
+[`sim/tests/goldens/robot_to_cloud_activity.json`](../../sim/tests/goldens/robot_to_cloud_activity.json):
+
+| Held by | Asserts |
+|---|---|
+| `sim/tests/test_sim_client_parity.py` | the Python SIL robot still publishes exactly the golden's envelopes, in the golden's key order |
+| `sim/test_bridge.mjs` | the browser SIM builds the same envelopes, with the same keys in the same order |
+
+So neither client can drift from the other without a test going red, and the golden cannot go stale
+without the first test catching it.
+
+**The one legitimate delta** is the golden's `identity_keys`: the fields that say *which* robot is
+speaking and *when* (the device id inside `auid`, and the client's own `module_name`). Every other field
+must match. A divergence anywhere else is a bug, not a difference.
+
+**Cloud → robot:** the browser SIM also acts on `response_actions` now — moods reach the face, gestures
+reach the motors, and an unknown action type is counted and ignored rather than thrown, so a newer cloud
+cannot break an older SIM.
+
 ## What the SIM substitutes vs what's identical
 
 | Concern | Real robot | SIM | Same contract? |

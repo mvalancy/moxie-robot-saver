@@ -438,3 +438,505 @@ def normalize_memory(raw: Optional[dict]) -> dict:
         if p.get("item"):
             out["item"] = str(p.get("item"))
     return out
+
+
+# --- 🎭 "Be Moxie" — puppet / telehealth mode (audit ADOPT #7) ------------------------
+# The runtime's `GET /telehealth` returns `{ok, device_id, enabled, online, session_id,
+# in_session, state, state_at, in_bedtime, transcript[], moods[], max_intensity}` and a
+# `POST` returns the same view plus what just happened (`spoke`, `markup`, `flagged`) or a
+# refusal (`error`, `reason`, `categories`). The card needs one shape for both, and it
+# needs to be honest about two things the runtime is careful about: a state the robot has
+# never reported is NOT "READY", and a bedtime window is a warning, not a claim that the
+# line was dropped.
+#
+# Pure, so it unit-tests in the hermetic suite (`sim/tests/test_telehealth_view.py`).
+
+#: `TeleHealth.RobotState`, recovered — the only state names we recognise
+#: (docs/reverse-engineering/protocol/telehealth.md:36).
+TELEHEALTH_STATES = ("UNKNOWN_STATE", "READY", "IN_SESSION", "EXITING")
+
+
+def normalize_transcript_line(e: Optional[dict]) -> dict:
+    """One `{who, text, at}` transcript entry → the console's row. Text only: no audio
+    and no video path exists in this phase, by design (backlog/telehealth.md §2.5)."""
+    e = e or {}
+    who = "operator" if e.get("who") == "operator" else "child"
+    return {"who": who, "text": str(e.get("text") or ""), "at": _num(e.get("at"))}
+
+
+def normalize_telehealth(payload: Optional[dict]) -> dict:
+    """Runtime `/telehealth` response → the console's 🎭 "Be Moxie" card shape.
+
+    Tolerates a None/error payload (supervisor down, unknown device, a robot that is not
+    permitted) with `ok:false` and an empty-but-renderable view — the card then shows the
+    reason instead of a dead control.
+
+    `state_known` is false for a name outside the recovered `RobotState` enum, so the card
+    can show what the robot actually said without pretending to understand it; `reported`
+    is false when the robot has said nothing at all, which the card renders as *"never
+    reported"* rather than inventing a state.
+    """
+    p = payload if isinstance(payload, dict) else {}
+    ok = bool(p.get("ok"))
+    state = str(p.get("state") or "")
+    moods = [{"id": str(m.get("id") or ""), "label": str(m.get("label") or ""),
+              "value": int(_num(m.get("value")) or 0)}
+             for m in (p.get("moods") or []) if isinstance(m, dict)]
+    lines = [normalize_transcript_line(e) for e in (p.get("transcript") or [])
+             if isinstance(e, dict)]
+    out = {
+        "ok": ok,
+        "device_id": p.get("device_id"),
+        "enabled": bool(p.get("enabled")) if ok else False,
+        "online": bool(p.get("online")),
+        "session_id": str(p.get("session_id") or "") if ok else "",
+        "in_session": bool(p.get("in_session")) if ok else False,
+        "state": state,
+        "reported": bool(state),
+        "state_known": state in TELEHEALTH_STATES,
+        "state_at": _num(p.get("state_at")),
+        "in_bedtime": bool(p.get("in_bedtime")) if ok else False,
+        "transcript": lines,
+        "moods": moods,
+        "max_intensity": int(_num(p.get("max_intensity")) or 2),
+        "error": None if ok else (p.get("error") or "supervisor not reachable"),
+        "reason": p.get("reason") or None,
+    }
+    # A write's receipt: what was said (or why nothing was), carried through so the card
+    # can confirm the line rather than infer it from the transcript refreshing.
+    if p.get("spoke"):
+        out["spoke"] = str(p["spoke"])
+    if p.get("flagged"):
+        out["flagged"] = [str(c) for c in p["flagged"]]
+    if p.get("blocked") or p.get("categories"):
+        out["blocked"] = bool(p.get("blocked"))
+        out["categories"] = [str(c) for c in (p.get("categories") or [])]
+        out["labels"] = [str(c) for c in (p.get("labels") or [])]
+    return out
+
+
+# --- 📅 Today's plan — the recommender's "why this activity today" (audit BEYOND #7) --
+# The supervisor's `GET /schedule?device_id=…` answers with the day this robot was served
+# and a parallel audit trail:
+#
+#   {ok, device_id, day, planned_at, served,
+#    schedule:{provided_schedule:[Recommendation…], chat_request, …},
+#    explanations:[{module_id, slot, at, reason_codes, line, score, factors}…],
+#    inputs:{child_name, bedtime, slots, parent_requests, telemetry, planned, history, …}}
+#
+# `explanations` is **in the same order** as `schedule.provided_schedule`
+# (`docs/architecture/content-module-contract.md` §"The explanation"), which is what lets
+# a name from the wire and a reason from the audit trail be joined without guessing.
+#
+# Three things this normalizer refuses to invent, because the card's whole promise is that
+# a parent is reading the real reason:
+#
+#   * a **name**. `Recommendation.module_name` (RemoteChat.proto:26-34) is the only name on
+#     the wire, and the planner leaves it empty for the on-board catalog. When it is empty
+#     the id goes out verbatim — the plain-English table lives in the SDK, on the other
+#     side of the seam, and copying it here would let the two drift into two different
+#     names for one module.
+#   * a **clock time**. Only the scored fill gets a slot; the authored spine (a daily
+#     fixture like `DM`, an onboarding step, a `FREE_CHAT` breather) is ordered but not
+#     timed, and `time_local` is None for those rather than a made-up hour.
+#   * a **telemetry signal**. `inputs.telemetry.carries_module_signal` is the runtime
+#     saying out loud that finish/abandon comes from the robot's `mentor_behaviors`
+#     reports and not from telemetry; it is carried through, never quietly dropped.
+#
+# Pure, so it unit-tests in the hermetic suite (`sim/tests/test_schedule_view.py`).
+
+def normalize_schedule_entry(expl: Optional[dict], rec: Optional[dict]) -> dict:
+    """One `explanations[i]` + the `provided_schedule[i]` it explains → a card row."""
+    expl = expl if isinstance(expl, dict) else {}
+    rec = rec if isinstance(rec, dict) else {}
+    codes = [str(c) for c in (expl.get("reason_codes") or []) if c is not None]
+    module_id = str(expl.get("module_id") or rec.get("module_id") or "")
+    at = expl.get("at")
+    return {
+        "time_local": str(at) if at else None,
+        "module_id": module_id,
+        # `module_name` when the template supplied one, else the id verbatim.
+        "name": str(rec.get("module_name") or "") or module_id,
+        "why": str(expl.get("line") or ""),
+        "pinned": "parent_request" in codes,
+        # No slot = the authored spine, not a scored pick: a daily fixture, an onboarding
+        # step or a breather chat. Those are the rows that show "—" instead of a time.
+        "fixture": expl.get("slot") is None,
+        "reason_codes": codes,
+    }
+
+
+def normalize_schedule_view(payload: Optional[dict]) -> dict:
+    """Runtime `/schedule` response → the console's 📅 Today's plan card shape.
+
+    Tolerates anything: a None payload (supervisor down), an unknown device's `ok:false`,
+    a truncated or mistyped body. It never raises — a payload it cannot read comes back as
+    `{"ok": False, "error": …}` with an empty-but-renderable view, so the card shows the
+    reason rather than a blank list that looks like "no plan".
+    """
+    empty = {"ok": False, "device_id": None, "day": "", "planned_at": "",
+             "child_name": "", "served": False, "entries": [],
+             "constraints": {"bedtime": {"enabled": False, "kind": ""},
+                             "parent_request": {"count": 0, "pinned": []},
+                             "telemetry_signal": False},
+             "dropped_for_bedtime": 0, "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        ok = bool(p.get("ok"))
+        inputs = p.get("inputs") if isinstance(p.get("inputs"), dict) else {}
+        sched = p.get("schedule") if isinstance(p.get("schedule"), dict) else {}
+        # `or []` is not enough: a string is iterable, and one bad field must not turn
+        # into a row per character.
+        recs = list(sched.get("provided_schedule") or []) \
+            if isinstance(sched.get("provided_schedule"), (list, tuple)) else []
+        expls = list(p.get("explanations") or []) \
+            if isinstance(p.get("explanations"), (list, tuple)) else []
+
+        # Same order, by contract — but a payload that broke the contract still renders:
+        # fall back to the first unused entry with the same module_id, then to nothing.
+        rows, used = [], set()
+        for i, expl in enumerate(expls):
+            mid = (expl or {}).get("module_id") if isinstance(expl, dict) else None
+            rec, hit = (recs[i] if i < len(recs) else None), i
+            if not (isinstance(rec, dict) and rec.get("module_id") == mid):
+                rec, hit = None, None
+                for j, r in enumerate(recs):
+                    if j not in used and isinstance(r, dict) and r.get("module_id") == mid:
+                        rec, hit = r, j
+                        break
+            if hit is not None:
+                used.add(hit)
+            rows.append(normalize_schedule_entry(expl, rec))
+
+        bed = inputs.get("bedtime") if isinstance(inputs.get("bedtime"), dict) else {}
+        bedtime = {"enabled": bool(bed.get("enabled")), "kind": str(bed.get("kind") or "")}
+        if bedtime["enabled"]:
+            bedtime["starts_at"] = str(bed.get("starts_at") or "")
+            bedtime["ends_at"] = str(bed.get("ends_at") or "")
+        reqs = inputs.get("parent_requests")
+        pinned = [{"module_id": str(r.get("module_id") or ""),
+                   "at": str(r.get("at") or "")}
+                  for r in (reqs if isinstance(reqs, (list, tuple)) else [])
+                  if isinstance(r, dict) and r.get("due_today") and r.get("slot") is not None]
+        tel = inputs.get("telemetry") if isinstance(inputs.get("telemetry"), dict) else {}
+        planned = inputs.get("planned") if isinstance(inputs.get("planned"), dict) else {}
+
+        return {
+            "ok": ok,
+            "device_id": p.get("device_id"),
+            "day": str(p.get("day") or inputs.get("day") or ""),
+            "planned_at": str(p.get("planned_at") or ""),
+            "child_name": str(inputs.get("child_name") or ""),
+            # False = this plan was built for the parent's read; the robot has not pulled
+            # its day yet this run. The card says so instead of implying Moxie ran it.
+            "served": bool(p.get("served")),
+            "entries": rows,
+            "constraints": {
+                "bedtime": bedtime,
+                "parent_request": {"count": len(pinned), "pinned": pinned},
+                "telemetry_signal": bool(tel.get("carries_module_signal")),
+            },
+            "dropped_for_bedtime": int(_num(planned.get("dropped_for_bedtime")) or 0),
+            "error": None if ok else (p.get("error") or "no plan available"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable schedule payload: {e}"}
+
+
+# --- 🎚️ the voice picker (docs/architecture/backlog/voice-picker.md) -----------------
+#: The two sides of the picker, named once (mirrors `moxie_sdk.voice_settings.KINDS` —
+#: this module stays dependency-free of the supervisor package, so it re-states the two
+#: strings rather than importing them across the process boundary).
+VOICE_KINDS = ("speech", "listening")
+
+
+def normalize_voice_option(entry: Optional[dict]) -> dict:
+    """One dropdown `<option>`: `{id, label, group, engine, model, default}`."""
+    e = entry if isinstance(entry, dict) else {}
+    return {"id": str(e.get("id") or ""), "label": str(e.get("label") or ""),
+            "group": str(e.get("group") or ""), "engine": str(e.get("engine") or ""),
+            "model": str(e.get("model") or ""), "default": bool(e.get("default"))}
+
+
+def normalize_voice(payload: Optional[dict]) -> dict:
+    """Runtime `/voice` (or `/voice/test`) response → the console's 🎚️ card shape.
+
+    Tolerates anything: a None payload (supervisor down), a refusal, a truncated body. It
+    never raises and it never returns *empty* lists silently — an unreadable payload comes
+    back with `error` set so the card prints the reason instead of two blank dropdowns
+    that look like "this appliance cannot speak".
+
+    A `POST` response is the same shape plus `applied` / the test's `spoke`, so one
+    normalizer serves all three routes and the card re-renders from whatever came back.
+    """
+    empty = {"ok": False, "available": {k: [] for k in VOICE_KINDS},
+             "selected": {k: "" for k in VOICE_KINDS},
+             "labels": {k: "" for k in VOICE_KINDS},
+             "installed": {k: "" for k in VOICE_KINDS},
+             "chosen": {k: False for k in VOICE_KINDS},
+             "discovering": False, "gateway_error": "", "updated_at": 0,
+             "robots": [], "applied": None, "spoke": "", "reason": "",
+             "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        avail = p.get("available") if isinstance(p.get("available"), dict) else {}
+        options = {}
+        for kind in VOICE_KINDS:
+            raw = avail.get(kind)
+            options[kind] = [normalize_voice_option(e)
+                             for e in (raw if isinstance(raw, (list, tuple)) else [])
+                             if isinstance(e, dict) and e.get("id")]
+        ok = bool(p.get("ok"))
+
+        def _side(field, cast):
+            src = p.get(field) if isinstance(p.get(field), dict) else {}
+            return {k: cast(src.get(k)) for k in VOICE_KINDS}
+
+        applied = p.get("applied") if isinstance(p.get("applied"), dict) else None
+        robots = p.get("robots")
+        return {
+            "ok": ok,
+            "available": options,
+            "selected": _side("selected", lambda v: str(v or "")),
+            "labels": _side("labels", lambda v: str(v or "")),
+            "installed": _side("installed", lambda v: str(v or "")),
+            "chosen": _side("chosen", bool),
+            # True only until the first listing lands; the card says "Discovering…" and
+            # keeps whatever entries it already has rather than blanking.
+            "discovering": bool(p.get("discovering")),
+            # The exception CLASS the supervisor saw, e.g. "APIConnectionError". Present
+            # AND `ok` is normal: the local options still work.
+            "gateway_error": str(p.get("gateway_error") or ""),
+            "updated_at": int(_num(p.get("updated_at")) or 0),
+            "robots": [str(r) for r in robots] if isinstance(robots, (list, tuple)) else [],
+            "applied": applied,
+            "spoke": str(p.get("spoke") or ""),
+            "reason": str(p.get("reason") or ""),
+            "error": None if ok else (p.get("error") or p.get("reason")
+                                      or "no voice settings available"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable voice payload: {e}"}
+
+
+# --- 📦 content packs (docs/architecture/backlog/content-packs.md) --------------------
+# Content stops being a file in our repository: a pack is one JSON file a parent can be
+# handed, review before it changes anything, and undo afterwards. These three normalizers
+# keep the same defensive contract as `normalize_schedule_view` — they never raise, and a
+# payload they cannot read renders as `{ok: False, error: …}` with an empty-but-renderable
+# view, so the card shows the REASON rather than a blank list that reads as "no content".
+#
+# Dependency-free of the supervisor package on purpose: this module is imported by the
+# console process, which does not have `mqtt/` on its path, so the review states are
+# re-stated here rather than imported from `moxie_sdk.content.packs`. `test_fleet.py` and
+# the console round trip diff these shapes against the real runtime.
+
+#: The review states, in the order the card sorts them: things to do first, then noise.
+CONTENT_STATES = ("conflict", "downgrade_conflict", "new", "upgrade", "fork",
+                  "downgrade", "keep_local", "same", "invalid")
+
+#: The three decisions a parent can make per row in the 📦 review table.
+CONTENT_DECISIONS = ("accept", "keep", "skip")
+
+
+def normalize_content_item(entry: Optional[dict]) -> dict:
+    """One inventory row: what it is, where it came from, and what to warn about."""
+    e = entry if isinstance(entry, dict) else {}
+    warnings = e.get("warnings")
+    pii = e.get("pii")
+    return {
+        "id": str(e.get("id") or ""),
+        "kind": str(e.get("kind") or ""),
+        "key": str(e.get("key") or ""),
+        "name": str(e.get("name") or e.get("key") or ""),
+        "source_version": int(_num(e.get("source_version")) or 1),
+        "origin": str(e.get("origin") or ""),
+        "pack_id": str(e.get("pack_id") or ""),
+        "imported_at": int(_num(e.get("imported_at")) or 0),
+        "local_edited": bool(e.get("local_edited")),
+        "has_code": bool(e.get("has_code")),
+        "warnings": [str(w) for w in warnings] if isinstance(warnings, (list, tuple)) else [],
+        "pii": [{"field": str((h or {}).get("field") or ""),
+                 "name": str((h or {}).get("name") or "")}
+                for h in pii if isinstance(h, dict)] if isinstance(pii, (list, tuple)) else [],
+    }
+
+
+def normalize_content_view(payload: Optional[dict]) -> dict:
+    """Runtime `GET /content` → the 📦 card's shape: inventory, ledger, undo."""
+    empty = {"ok": False, "items": [], "packs": [], "counts": {},
+             "undo_available": False, "undo_label": "", "max_bytes": 0,
+             "pack_format": 0, "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        raw_items = p.get("items")
+        raw_packs = p.get("packs")
+        counts = p.get("counts") if isinstance(p.get("counts"), dict) else {}
+        ok = bool(p.get("ok"))
+        return {
+            "ok": ok,
+            "items": [normalize_content_item(i)
+                      for i in (raw_items if isinstance(raw_items, (list, tuple)) else [])
+                      if isinstance(i, dict)],
+            "packs": [normalize_pack_row(r)
+                      for r in (raw_packs if isinstance(raw_packs, (list, tuple)) else [])
+                      if isinstance(r, dict)],
+            "counts": {str(k): int(_num(v) or 0) for k, v in counts.items()},
+            "undo_available": bool(p.get("undo_available")),
+            "undo_label": str(p.get("undo_label") or ""),
+            "max_bytes": int(_num(p.get("max_bytes")) or 0),
+            "pack_format": int(_num(p.get("pack_format")) or 0),
+            "error": None if ok else (p.get("error") or p.get("reason")
+                                      or "no content available"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable content payload: {e}"}
+
+
+def normalize_pack_row(entry: Optional[dict]) -> dict:
+    """One row of the installed-packs ledger."""
+    e = entry if isinstance(entry, dict) else {}
+    return {"id": str(e.get("id") or ""), "name": str(e.get("name") or ""),
+            "details": str(e.get("details") or ""), "author": str(e.get("author") or ""),
+            "pack_version": int(_num(e.get("pack_version")) or 1),
+            "digest": str(e.get("digest") or ""),
+            "imported_at": int(_num(e.get("imported_at")) or 0),
+            "item_count": int(_num(e.get("item_count")) or 0)}
+
+
+def normalize_content_row(entry: Optional[dict]) -> dict:
+    """One review row: the state, the pre-set decision, the diff and the warnings.
+
+    `decision` is what the card's radio group starts on — `accept` for the two states the
+    runtime pre-ticks, `keep` for anything that would replace a local edit (so the safe
+    choice is the one already selected), `skip` otherwise. A row the runtime marked
+    `invalid` cannot be accepted at all, and the card renders it disabled with its reason.
+    """
+    e = entry if isinstance(entry, dict) else {}
+    state = str(e.get("state") or "")
+    diff = e.get("diff")
+    warnings, reasons = e.get("warnings"), e.get("reasons")
+    default = bool(e.get("default"))
+    if state == "invalid":
+        decision = "skip"
+    elif default:
+        decision = "accept"
+    elif bool(e.get("local_edited")):
+        decision = "keep"
+    else:
+        decision = "skip"
+    installed = e.get("installed_version")
+    return {
+        "id": str(e.get("id") or ""),
+        "kind": str(e.get("kind") or ""),
+        "key": str(e.get("key") or ""),
+        "name": str(e.get("name") or e.get("key") or ""),
+        "state": state if state in CONTENT_STATES else (state or "unknown"),
+        "label": str(e.get("label") or ""),
+        "default": default,
+        "decision": decision,
+        "installable": state != "invalid",
+        "local_edited": bool(e.get("local_edited")),
+        "source_version": int(_num(e.get("source_version")) or 1),
+        "installed_version": (None if installed is None
+                              else int(_num(installed) or 0)),
+        "origin": str(e.get("origin") or ""),
+        "pack_id": str(e.get("pack_id") or ""),
+        "warnings": [str(w) for w in warnings] if isinstance(warnings, (list, tuple)) else [],
+        "reasons": [str(r) for r in reasons] if isinstance(reasons, (list, tuple)) else [],
+        "diff": [normalize_content_diff(d)
+                 for d in (diff if isinstance(diff, (list, tuple)) else [])
+                 if isinstance(d, dict)],
+    }
+
+
+def normalize_content_diff(entry: Optional[dict]) -> dict:
+    """One field-level difference — a unified diff for prose, `old → new` for a scalar."""
+    e = entry if isinstance(entry, dict) else {}
+    lines = e.get("diff")
+    return {"field": str(e.get("field") or ""),
+            "kind": str(e.get("kind") or "scalar"),
+            "old": str(e.get("old") or ""), "new": str(e.get("new") or ""),
+            "diff": [str(ln) for ln in lines] if isinstance(lines, (list, tuple)) else []}
+
+
+def normalize_content_review(payload: Optional[dict]) -> dict:
+    """Runtime `POST /content/review` → the review table.
+
+    `digest` is the honest one: `ok`, `mismatch` (the file was changed after it was
+    exported — nothing is pre-selected) or `absent` (hand-written, flagged not refused).
+    """
+    empty = {"ok": False, "pack": {}, "digest": "", "expect_digest": "", "items": [],
+             "accept": [], "counts": {}, "warnings": [],
+             "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        raw_items = p.get("items")
+        accept = p.get("accept")
+        counts = p.get("counts") if isinstance(p.get("counts"), dict) else {}
+        warnings = p.get("warnings")
+        ok = bool(p.get("ok"))
+        return {
+            "ok": ok,
+            "pack": normalize_pack_row(p.get("pack")),
+            "digest": str(p.get("digest") or ""),
+            "expect_digest": str(p.get("expect_digest") or ""),
+            "items": [normalize_content_row(i)
+                      for i in (raw_items if isinstance(raw_items, (list, tuple)) else [])
+                      if isinstance(i, dict)],
+            "accept": [str(a) for a in accept] if isinstance(accept, (list, tuple)) else [],
+            "counts": {str(k): int(_num(v) or 0) for k, v in counts.items()},
+            "warnings": [str(w) for w in warnings]
+                        if isinstance(warnings, (list, tuple)) else [],
+            "error": None if ok else (p.get("error") or p.get("reason")
+                                      or "this file could not be read as a content pack"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable review payload: {e}"}
+
+
+def normalize_content_result(payload: Optional[dict]) -> dict:
+    """Runtime `POST /content/import` or `/content/undo` → what actually happened.
+
+    `conflict` is the 409 case — the file changed between the review and the import — and
+    the card says so rather than reporting a failure it cannot explain.
+    """
+    empty = {"ok": False, "applied": [], "replaced": [], "skipped": [], "count": 0,
+             "restored": 0, "conflict": False, "undo_available": False, "pack": {},
+             "reload": {}, "label": "", "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+
+        def _ids(field):
+            v = p.get(field)
+            return [str(x) for x in v] if isinstance(v, (list, tuple)) else []
+
+        reload = p.get("reload") if isinstance(p.get("reload"), dict) else {}
+        ok = bool(p.get("ok"))
+        return {
+            "ok": ok,
+            "applied": _ids("applied"), "replaced": _ids("replaced"),
+            "skipped": _ids("skipped"),
+            "count": int(_num(p.get("count")) or 0),
+            "restored": int(_num(p.get("restored")) or 0),
+            "conflict": bool(p.get("conflict")),
+            "undo_available": bool(p.get("undo_available")),
+            "pack": normalize_pack_row(p.get("pack")),
+            "reload": {str(k): (v if isinstance(v, bool) else int(_num(v) or 0))
+                       for k, v in reload.items()},
+            "label": str(p.get("label") or ""),
+            "error": None if ok else (p.get("reason") or p.get("error")
+                                      or "the import did not go through"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable import payload: {e}"}

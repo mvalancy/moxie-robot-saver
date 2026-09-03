@@ -91,11 +91,21 @@ Single source: `mqtt/moxie_sdk/__init__.py` `__version__`; `pyproject.toml` read
 - **Release** on `main`: `X.Y.Z` (tag `vX.Y.Z`). The release workflow **fails if `__version__` ≠ the tag**.
 - Bump `__version__` in the `dev → main` promotion PR: `Z` for fixes, `Y` for a milestone (e.g. M-set complete).
 
+## Release cadence — promotions are not releases
+
+**Promotion (dev → main) is the end-to-end exercise; a tag is a milestone.** The deep gate on the
+standing PR already builds the package, runs the compose stack and HIL end to end, and builds all
+three images multi-arch *without pushing* — so `main` moves whenever `dev` is a green RC. A **tag**
+(which publishes a GitHub Release and three GHCR image versions) is cut **only when the owner says so**
+or at a milestone the implementation plan names (e.g. Definition of done 6/6) — never per promotion.
+Everything before 1.0 is marked **pre-release**. (Owner rule, 2026-09-02: "don't clog GitHub with
+unlimited packages/releases since they aren't good yet, but exercise the whole system end to end.")
+
 ## Cutting a release
 
 1. `dev` green as an RC → open/refresh PR `dev → main` → **deep CI passes**.
 2. Bump `__version__` (in the PR); merge to `main`.
-3. `git tag vX.Y.Z && git push origin vX.Y.Z` → the release workflow builds + publishes the
+3. Only at a named milestone or on the owner's word: `git tag vX.Y.Z && git push origin vX.Y.Z` → the release workflow builds + publishes the
    package **and** the three images. Verify after the run: `docker pull
    ghcr.io/mvalancy/moxie-robot-saver/supervisor:X.Y.Z` and, on the very first release, flip the
    three packages to public.

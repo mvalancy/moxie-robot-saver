@@ -15,6 +15,17 @@ robot-cloud layer builds on its groundwork:
 - the **`automarkup`** text→behavior (expressiveness) engine,
 - the **endpoint/migration QR** relocation mechanism and mosquitto TLS setup,
 - the conversation **volley** model, scheduler, and content-module concepts,
+- the **shareable content pack and its `source_version` upgrade rule** — the idea that authored content
+  (conversations, globals, schedules) travels as one JSON file, that each record carries an
+  author-owned integer version, and that an import is a *two-step review then apply* rather than a
+  blind overwrite (`site/hive/views.py::export_data` + `upload_import_data` + `import_data`,
+  `site/hive/data_import.py::update_import_status`/`import_content`, and the same version comparison
+  reused to upgrade their own shipped defaults in
+  `site/hive/management/commands/init_data.py`). The behaviour is theirs and we credit it; the design
+  we build on top — a versioned self-describing envelope with a content digest, a positive field
+  allowlist so no child data can leave, selection by key rather than array index, and a review that
+  also detects **local edits** so an upstream re-import cannot silently destroy them — is ours, and is
+  specified in [`docs/architecture/backlog/content-packs.md`](docs/architecture/backlog/content-packs.md),
 - the **two-level config merge** — one appliance-wide default config layered under each robot's own
   overrides (`models.py::HiveConfiguration` + `robot_data.py::build_config`'s `deepmerge`); ours is
   [`mqtt/moxie_sdk/cloud_config.py`](mqtt/moxie_sdk/cloud_config.py)`::merge_config_layers`,
@@ -31,10 +42,20 @@ robot-cloud layer builds on its groundwork:
   Our corpus never captured that; theirs is a server that drives real robots, so we take the mechanism
   as **field-proven** and say so in the code. Ours is deterministic rather than random —
   [`mqtt/moxie_sdk/faces.py`](mqtt/moxie_sdk/faces.py)`::face_child_id`, a UUIDv5 over the chosen
-  layers, so an idempotent re-push does not churn the child's identity. **Their ~60-entry asset table
-  (`content/data.py::MOXIE_CUSTOMIZATIONS`) was deliberately not copied**: our catalog carries only the
-  options our own recovered documents cite (the 14 `MoxieCustomizationType` slots, and the
-  `EyeColor`/`FaceColor` enums), so we ship twelve options and no invented ids,
+  layers, so an idempotent re-push does not churn the child's identity,
+- the **face-customization asset table, ingested as data** — `site/hive/content/data.py::MOXIE_CUSTOMIZATIONS`,
+  60 `MX_<nnn>_<Group>_<Detail>` asset ids their authors harvested from a robot they could run. Our own
+  corpus structurally *cannot* supply these (the art streams from `REMOTE_ASSETBUNDLES`, never the APK),
+  so on 2026-09-02 we transcribed **the id strings and nothing else** — no code, no comments, no function
+  bodies — into [`mqtt/moxie_sdk/face_assets.json`](mqtt/moxie_sdk/face_assets.json), which carries the
+  full citation inline: repo URL, file path, symbol, commit `c8c2d380efd37d2e83761957587f5d08f73b3a63`,
+  MIT (© 2025 Justin Beghtol), ingest date, entry count and a sha256 of the id list. The slot mapping
+  (each group prefix → exactly one recovered `MoxieCustomizationType`) and every human-readable label
+  are ours; an id we could not place would be parked in `unmapped` rather than guessed, and all 60
+  placed. Each entry is tagged `origin: "openmoxie-manifest"` and `caution: true`, because upstream's
+  own note beside the list records that some of these crashed Unity without saying which. The twelve
+  hex colour options our documents cite keep `origin: "recovered-enum"` and stay separable —
+  72 options across 11 of the 14 slots, and still no invented ids,
 - the **day-plan shape** — a `schedules[]` template with a `generate` block, FTUE pruning, chats
   distributed between activities, and the goal of *avoiding two same-category activities in a row*
   (`mqtt/scheduler.py::expand_schedule`/`ftue_remove`/`ransac_select`/`distribute_elements`, plus the
@@ -45,7 +66,19 @@ robot-cloud layer builds on its groundwork:
   [`mqtt/moxie_sdk/schedule.py`](mqtt/moxie_sdk/schedule.py)`::plan_inputs`/`plan_day`,
 - the **response action-tag** convention — `<exit>` / `<sleep>` / `<launch:MOD:CID>` written inline by the
   model and lifted into real robot actions (`volley.py::ingest_action_tags`); our own implementation lives
-  in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py).
+  in [`mqtt/moxie_sdk/actions.py`](mqtt/moxie_sdk/actions.py),
+- the **puppet page** — the shape of a telehealth console (`views.py::puppet_api`,
+  `templates/hive/puppet.html`): four verbs (enable / disable / speak / interrupt), a mood + intensity
+  picker beside the line box, a state poll, and — the load-bearing insight — that turning puppet mode on
+  is *just a config write* (`robot_config["moxie_mode"] = "TELEHEALTH"`, then re-push). Our corpus
+  recovered the `TeleHealth.proto` and the `STATE_TELEBRAIN` launcher state but never captured what
+  *triggers* the mode, so theirs is a server driving real robots and we take that trigger as
+  **field-proven**, behind one constant that says so
+  ([`mqtt/moxie_sdk/telehealth.py`](mqtt/moxie_sdk/telehealth.py)`::TELEHEALTH_MOXIE_MODE`, assumption
+  B1). Three things are deliberately ours: intensity is an **integer 0-2** (the recovered
+  `maxIntensity=2`, not a 0.0-1.0 float), the operator's line goes through **our safety classifier and
+  the parent's journal**, and a blocked line is **refused back to the operator with its reason** rather
+  than silently rewritten. No code was copied.
 
 > When we vendor any OpenMoxie source into this repo, its MIT `LICENSE` and copyright notice are
 > included alongside it (see `mqtt/` third-party notices as that code lands). Nothing here is a
