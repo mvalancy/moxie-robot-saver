@@ -493,15 +493,41 @@ class JsonStore:
         across processes — before that fix two appenders lost one item per collision, with
         no error anywhere.
         """
+        return self._append_path(self.path(device_id, collection), item, cap=cap)
+
+    def append_shared(self, collection: str, item, *, cap: int | None = None):
+        """`append()` for the fleet tier (`fleet/<collection>.json`).
+
+        The tier the appliance's own history lives in — the connection ring
+        (`conn_telemetry.py`) is appliance-wide because there is one socket, not one per
+        robot, and two supervisors on one data directory must not lose each other's rows
+        for exactly the reason §3 gives about `safety_events`.
+        """
+        return self._append_path(self.shared_path(collection), item, cap=cap)
+
+    def _append_path(self, path: str, item, *, cap: int | None = None):
+        """Append over an already-resolved record path. None = refused or not written.
+
+        **The write's return value is checked**, and that is a fix rather than a tidy-up.
+        This method used to call `write()` and return `items` regardless, so an `OSError`
+        — a full disk, a read-only `/data`, a permission change — produced a *successful*
+        append of an item that reached no file. That is the same disease as the eight
+        publishes whose `info.rc` nobody read (§4.1 C5) and the CONNACK that logged
+        "connected" for a refusal (C3): a comfortable lie at the one boundary that knows
+        the truth. It also breaks the identity the soak's contention probe is built on —
+        `attempted == on_disk + refused` — which is what makes a *silent* loss
+        distinguishable from a *recorded* refusal at all (§5.3 A5 vs A11).
+        """
         try:
-            with self.transaction(device_id, collection):
-                items = self.read(device_id, collection, [])
+            with self._transaction_path(path):
+                items = self._read_path(path, [])
                 if not isinstance(items, list):
                     items = []
                 items.append(item)
                 if cap is not None and cap >= 0 and len(items) > cap:
                     del items[: len(items) - cap]
-                self.write(device_id, collection, items)
+                if not self._write_path(path, items):
+                    return None
                 return items
         except StoreLockTimeout:
             return None

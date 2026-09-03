@@ -29,6 +29,8 @@ from moxie_sdk import safety as safety_seam              # InputSafety classifie
 from moxie_sdk import presence as presence_seam          # vision events -> presence (vision.md)
 from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire (audit ADOPT #7)
 from moxie_sdk import telemetry as telemetry_seam        # 📈 Packet envelope + durable history
+from moxie_sdk import conn_telemetry as conn_seam        # 🔌 the broker connection's own history
+from moxie_sdk import roster as roster_seam              # 🤖 every robot this appliance has served
 from moxie_sdk import vocab as vocab_seam                # the frozen mood/markup catalog
 from moxie_sdk import performance as performance_seam   # the behavior planner (§2)
 from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
@@ -137,6 +139,23 @@ class MoxieRuntime:
         #: Publishes the transport refused because there was no socket. At QoS 0 paho
         #: does not queue them (A3), so this is a count of messages the robot never got.
         self.publish_drops = 0
+        # --- the connection's own history (§8 P1) ---
+        #: P0's six `/status` fields are scalars in RAM: they say what is true *now* and
+        #: are erased by the restart that is often the interesting event. `conn_events` is
+        #: the durable ring behind them (`moxie_sdk/conn_telemetry.py`).
+        #:
+        #: **The re-entrancy guard is not paranoia.** `_on_store_lock_timeout` records a
+        #: `lock_timeout` row — by writing to the store. If *that* write is also refused,
+        #: the recorder recurses into itself, and a lock the whole appliance is contending
+        #: for is exactly when it would. One flag, checked on every path in, so the worst
+        #: case is a row we did not write rather than a stack we cannot unwind.
+        self._recording_conn = False
+        #: True from the moment a SIGTERM/SIGINT handler runs, so the disconnect it causes
+        #: is reported as the clean close it is instead of as a fault.
+        self._stopping = False
+        #: Bumped on every successful CONNACK. The roster resume is keyed on it so a
+        #: reconnect storm cannot queue N overlapping resume bursts.
+        self._connect_generation = 0
         self.robots: dict[str, RobotContext] = {}
         self.history: dict[str, list] = {}
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
@@ -526,6 +545,15 @@ class MoxieRuntime:
                 "last_connect_error": self.last_connect_error,
                 "publish_drops": self.publish_drops,
                 "store_lock_timeouts": getattr(self.store, "lock_timeouts", 0),
+                # 🤖 How many robots this appliance has ever served (§8 P1). A count and
+                # two timestamps rather than the ids: `/status` is polled every few seconds
+                # and no card renders a fleet-sized id list. `GET /conn` carries the rest.
+                "roster": roster_seam.summarize(self.roster()),
+                # 🔌 The durable connection history's headline, so an operator can see
+                # "up, but it dropped nine times this hour" without a second request.
+                "connection_health": conn_seam.health(
+                    conn_seam.summarize(self.conn_events(), limit=0),
+                    connected=self.broker_connected),
                 "robots": robots, "recent": list(self.recent)[-60:]}
 
     # ---- lifecycle ----
@@ -549,8 +577,92 @@ class MoxieRuntime:
         # connect_async" from a `loop_start()` codebase onto this one is a no-op. S6 in
         # `sim/tests/test_connection_resilience.py` exists to fail on exactly that
         # half-done fix rather than only on no fix at all.
+        self._install_signal_handlers()
         self.client.connect_async(self.host, self.port, KEEPALIVE_S)
         self.client.loop_forever(retry_first_connection=True)
+        # `loop_forever` returns when `disconnect()` was called — i.e. only on the clean
+        # path below. A crash still raises out of it, which is what we want.
+        print("[runtime] 👋 supervisor stopped", flush=True)
+
+    # ---- clean shutdown (§8 P1) ----
+    #: The signals a container runtime and a terminal actually send. SIGKILL is absent
+    #: because it cannot be caught — which is the case the store's atomic `os.replace`
+    #: covers instead, and the reason §5.3's A6 kills the writer 20 times.
+    STOP_SIGNALS = ("SIGTERM", "SIGINT")
+
+    def _install_signal_handlers(self) -> list:
+        """Catch SIGTERM/SIGINT and close the broker connection **cleanly**.
+
+        Without this, `docker stop` / `compose restart` / Ctrl-C kills the process with
+        its TCP session still open, and the broker only notices when the keepalive expires:
+        30 s keepalive → **45 s** before mosquitto declares us gone (§4.1 C2). For that
+        three-quarters of a minute the broker holds a session for a `client_id="supervisor"`
+        that no longer exists, and — the part that actually bites — `$SYS/broker/log` emits
+        nothing, so `DISCONNECT_RE` never fires and a supervisor that comes back inside the
+        window is talking past its own ghost.
+
+        A `disconnect()` sends a DISCONNECT packet, the broker logs the close immediately,
+        and `loop_forever()` returns instead of being torn down mid-callback.
+
+        Returns the signal names actually installed. It is **not** an error to install
+        none: `signal.signal` only works on the main thread of the main interpreter, and
+        the runtime is legitimately embedded (the SIL harness, a test, a future
+        supervisor-in-a-thread). Silently doing nothing there is right; silently doing
+        nothing in the *container* is the bug, so what happened is printed either way.
+        """
+        import signal as _signal
+        installed = []
+        for name in self.STOP_SIGNALS:
+            sig = getattr(_signal, name, None)
+            if sig is None:
+                continue
+            try:
+                _signal.signal(sig, self._on_stop_signal)
+                installed.append(name)
+            except (ValueError, OSError, RuntimeError):
+                # Not the main thread, or a platform without it. Not fatal: the appliance
+                # still runs, it just stops the old rude way.
+                pass
+        if installed:
+            print(f"[runtime] clean shutdown armed ({', '.join(installed)})", flush=True)
+        else:
+            print("[runtime] ⚠️  clean shutdown NOT armed (signals unavailable here) — a "
+                  "stop will look like a 45s keepalive timeout to the broker", flush=True)
+        return installed
+
+    def _on_stop_signal(self, signum, frame=None):
+        try:
+            import signal as _signal
+            name = _signal.Signals(signum).name
+        except (ValueError, ImportError):
+            name = str(signum)
+        print(f"[runtime] {name} — closing the broker connection cleanly", flush=True)
+        self.request_stop(reason=name)
+
+    def request_stop(self, reason: str = "stop") -> bool:
+        """Begin a clean shutdown. Idempotent; True when this call started it.
+
+        Separate from the signal handler so a test (and the SIL harness) can exercise the
+        real path without sending a real signal to a real process — and so an embedder
+        that installed no handlers still has a way to stop politely.
+
+        The `shutdown` row is written **here**, before `disconnect()`, deliberately: once
+        the socket is closing the store write is racing the interpreter's teardown, and a
+        history whose last row is missing exactly when the appliance was stopped on purpose
+        would be missing it in every case an operator cares about.
+        """
+        if self._stopping:
+            return False
+        self._stopping = True
+        self._note("conn", f"👋 clean shutdown requested ({reason})")
+        self._record_conn(conn_seam.SHUTDOWN, reason=reason)
+        client = self.client
+        if client is not None:
+            try:
+                client.disconnect()
+            except Exception as e:
+                print(f"[runtime] disconnect during shutdown failed: {e}", flush=True)
+        return True
 
     def _start_status_server(self, port):
         """Tiny HTTP status endpoint for the web UI's connection monitor."""
@@ -570,6 +682,9 @@ class MoxieRuntime:
 
             def do_GET(self):
                 """GET /status → the console snapshot;
+                GET /conn?limit=N → 🔌 the broker connection's durable history: connects,
+                disconnects, CONNACK refusals, gap durations, dropped publishes and store
+                lock timeouts, rolled up beside the live connection scalars;
                 GET /telemetry?device_id=…&limit=N&days=D → that robot's stored telemetry
                 Packets rolled up for the insights view, plus D days of durable daily
                 history and the retention window behind it;
@@ -587,6 +702,16 @@ class MoxieRuntime:
                 u = urlparse(self.path)
                 if u.path == "/status":
                     return self._json_out(rt.status_snapshot())
+                if u.path == "/conn":
+                    # 🔌 The broker connection's durable history (§8 P1): P0's live
+                    # scalars beside the ring of what actually happened, so "is it down
+                    # now" and "has it been flapping" are one request, not a guess.
+                    q = parse_qs(u.query)
+                    try:
+                        limit = int((q.get("limit") or ["40"])[0])
+                    except ValueError:
+                        limit = 40
+                    return self._json_out(rt.conn_view(limit=limit))
                 if u.path == "/telemetry":
                     q = parse_qs(u.query)
                     device_id = (q.get("device_id") or [""])[0]
@@ -1085,14 +1210,29 @@ class MoxieRuntime:
                   f"{self.last_connect_error}", flush=True)
             self._note("error", f"⛔ broker refused the connection: "
                                 f"{self.last_connect_error}")
+            self._record_conn(conn_seam.REFUSED, reason=self.last_connect_error)
             return                            # and subscribe to nothing
+        now = time.time()
+        # The gap is measured BEFORE `last_broker_connect` moves, and from the recorded
+        # disconnect rather than from a fresh clock read, so it is the outage the appliance
+        # actually experienced. `None` on the very first connect: an appliance that has
+        # never dropped must not report a zero-second outage as its first history row.
+        gap = conn_seam.gap_since(self.last_broker_disconnect, now)
         self.broker_connected = True
-        self.last_broker_connect = time.time()
+        self.last_broker_connect = now
         self.last_connect_error = ""
+        self._connect_generation += 1
         print(f"[runtime] broker connected rc={rc}")
-        self._note("conn", "broker connected")
+        self._note("conn", "broker connected" if gap is None
+                   else f"broker reconnected after {gap:.1f}s")
         for t in self.SUBSCRIPTIONS:
             c.subscribe(t)
+        self._record_conn(conn_seam.CONNECT, at=now, gap_s=gap)
+        # Off the network thread, and after the subscriptions are in: a config push is a
+        # publish, and `_device_connect` has always used the same one-second settle timer
+        # for the same reason. Blocking the MQTT loop on a roster-sized burst of publishes
+        # would stall every robot the reconnect just recovered.
+        self._schedule_roster_resume()
 
     def _on_disconnect(self, c, u, flags=None, rc=None, props=None):
         """The socket went away. Two jobs, and the second is the subtle one.
@@ -1117,10 +1257,21 @@ class MoxieRuntime:
         reason = self._connack_reason(rc) if rc is not None else "connection lost"
         for device_id in set(self._turn_seq) | set(self.robots):
             self._turn_seq[device_id] = self._turn_seq.get(device_id, 0) + 1
+        if self._stopping:
+            # A disconnect we asked for. Recorded as a `shutdown`, not a fault: an operator
+            # reading a history where every planned stop looks like an outage learns
+            # nothing from the outages.
+            # The `shutdown` row was already written by `request_stop()`, before the
+            # socket started closing — writing a second one here would double every clean
+            # stop in the history and make `by_kind` count intentions instead of events.
+            print("[runtime] 👋 broker connection closed cleanly (shutting down)", flush=True)
+            self._note("conn", "👋 broker connection closed cleanly (shutting down)")
+            return
         if was:
             print(f"[runtime] ⚠️  broker disconnected: {reason}", flush=True)
             self._note("conn", f"⚠️ broker disconnected: {reason} — "
                                f"{len(self.robots)} robot(s) in flight abandoned")
+            self._record_conn(conn_seam.DISCONNECT, reason=reason)
 
     def _on_connect_fail(self, c, u=None):
         """The socket never opened (broker down, DNS gone). Distinct from a CONNACK
@@ -1135,14 +1286,167 @@ class MoxieRuntime:
         # backoff throttles it for us: at 1, 2, 4 … 60 s this is at worst a line a minute.
         print(f"[runtime] ⛔ {self.last_connect_error} — retrying", flush=True)
         self._note("error", f"⛔ {self.last_connect_error} — retrying")
+        self._record_conn(conn_seam.CONNECT_FAIL, reason=self.last_connect_error)
 
     def _on_store_lock_timeout(self, lock_path, waited):
         """A store write another **process** would not let go of. Recorded, never retried
-        forever and never swallowed (production-hardening.md §3.3 #3)."""
+        forever and never swallowed (production-hardening.md §3.3 #3).
+
+        Also the row that measures A13: `MOXIE_STORE_LOCK_TIMEOUT_S = 2.0` is the brief's
+        one openly *chosen* number, and a `lock_timeout` row carrying `waited_s` is the
+        only evidence that could ever retune it.
+        """
         if getattr(self, "recent", None) is None:
             return
         self._note("error", f"⏳ a store write was refused after {waited:.1f}s — another "
                             f"process holds {os.path.basename(lock_path)}")
+        self._record_conn(conn_seam.LOCK_TIMEOUT, waited_s=waited,
+                          reason=os.path.basename(lock_path))
+
+    # ---- the connection's own durable history (§8 P1) ----
+    def _record_conn(self, kind: str, **fields) -> bool:
+        """Append one row to the appliance's `fleet/conn_events` ring. Never raises.
+
+        Three properties, each of which is a bug somewhere else in this file's history:
+
+        1. **Re-entrant calls are dropped, not recursed.** The `lock_timeout` recorder
+           writes to the store, and a store under contention is exactly when it fires.
+        2. **Every failure is swallowed here and nowhere else.** This runs on the paho
+           network thread (`_on_connect`, `_on_disconnect`) and inside `_publish`; a
+           telemetry write must never cost a child their turn, still less take the MQTT
+           loop down. The bounded `flock` wait (§3.3 #3) is what makes that safe to say.
+        3. **It is best-effort by construction and the return value says so**, so a caller
+           that cares (the tests, the soak) can tell "recorded" from "we were busy".
+        """
+        if self._recording_conn:
+            return False
+        self._recording_conn = True
+        try:
+            row = conn_seam.build_event(kind, **fields)
+            return self.store.append_shared(conn_seam.COLLECTION, row,
+                                            cap=conn_seam.max_events()) is not None
+        except Exception:
+            return False
+        finally:
+            self._recording_conn = False
+
+    def conn_events(self) -> list:
+        """The stored connection ring, oldest first. `[]` when nothing has happened."""
+        rows = self.store.read_shared(conn_seam.COLLECTION, [])
+        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+    def conn_view(self, limit: int = 40) -> dict:
+        """The 🔌 connection view: the durable ring rolled up, beside P0's live scalars.
+
+        Both halves on purpose. The scalars are what is true **now** and the rows are what
+        has **happened**, and an operator staring at a robot that has gone quiet needs to
+        tell "it is down right now" from "it dropped nine times this hour and is up at the
+        moment", which neither half answers alone.
+        """
+        summary = conn_seam.summarize(self.conn_events(), limit=limit)
+        return {"ok": True,
+                "connected": self.broker_connected,
+                "last_connect": self.last_broker_connect,
+                "last_disconnect": self.last_broker_disconnect,
+                "last_error": self.last_connect_error,
+                "publish_drops": self.publish_drops,
+                "store_lock_timeouts": getattr(self.store, "lock_timeouts", 0),
+                "uptime_s": int(time.time() - self.started_at),
+                "retention": {"events": conn_seam.max_events()},
+                "health": conn_seam.health(summary, connected=self.broker_connected),
+                "summary": summary,
+                "events": summary["latest"],
+                "roster": roster_seam.summarize(self.roster())}
+
+    # ---- the durable robot roster (§8 P1) ----
+    def roster(self) -> dict:
+        """Every robot this appliance has served, read from the store each time so a
+        second process's edit (or a hand-edited `fleet/roster.json`) is picked up — the
+        same promise `fleet_config()` already makes."""
+        return self.store.read_shared(roster_seam.COLLECTION, roster_seam.new_roster())
+
+    def _roster_seen(self, device_id: str) -> bool:
+        """Record that we are serving `device_id`. Read-modify-write under the record's
+        own lock, so two supervisors on one data directory cannot lose each other's
+        robots — which is precisely the `append()` bug §3 exists to fix, in a new place."""
+        try:
+            with self.store.transaction_shared(roster_seam.COLLECTION):
+                current = self.roster()
+                self.store.write_shared(roster_seam.COLLECTION,
+                                        roster_seam.record_seen(current, device_id))
+            return True
+        except Exception:
+            return False
+
+    def _roster_forget(self, device_id: str) -> bool:
+        """Drop `device_id` from the roster — a parent un-pairing a robot has said this
+        appliance no longer serves it, and a roster that kept publishing config at a robot
+        the family gave away would be the permit list quietly not applying."""
+        try:
+            with self.store.transaction_shared(roster_seam.COLLECTION):
+                self.store.write_shared(roster_seam.COLLECTION,
+                                        roster_seam.forget(self.roster(), device_id))
+            return True
+        except Exception:
+            return False
+
+    def resume_roster(self) -> list:
+        """Re-push config to every rostered robot we have no live evidence of. Returns the
+        ids pushed to.
+
+        This is what makes P0's C6 *prompt* instead of merely *possible*. C6 registers an
+        unknown device when it next speaks; the roster does not wait for it to speak.
+        After a supervisor restart with the robot still connected there is no event to
+        wait for at all — `$SYS/broker/log` is live-only (A15) and a real Moxie publishes
+        `/state` on **its** connect, not on ours — so without this the appliance is silent
+        until the child is, which at bedtime is tomorrow.
+
+        **It does not mark anybody connected.** A rostered robot stays out of
+        `self.robots`; a QoS 0 push to a robot that is not there is discarded by the broker
+        and claims nothing. Inventing presence to make a card look populated is the exact
+        disease this brief was written about.
+        """
+        if not roster_seam.resume_enabled():
+            return []
+        targets = roster_seam.resume_targets(
+            self.roster(), connected=list(self.robots), permitted=self.is_permitted)
+        pushed = []
+        for device_id in targets:
+            try:
+                self._push_config(device_id)
+                pushed.append(device_id)
+            except Exception as e:
+                print(f"[runtime] roster re-push failed for {device_id}: {e}", flush=True)
+        if pushed:
+            self._note("robot", f"🤖 re-pushed config to {len(pushed)} robot(s) from the "
+                                f"roster (no event needed)")
+        return pushed
+
+    #: Seconds between a successful CONNACK and the roster re-push. The same 1.0 s
+    #: `_device_connect` has always used to let a robot settle before its config lands.
+    ROSTER_RESUME_DELAY_S = 1.0
+
+    def _schedule_roster_resume(self):
+        """Run `resume_roster()` off the network thread, once per connect generation.
+
+        The generation check is what makes a reconnect **storm** safe: paho's ladder can
+        fire several CONNACKs inside the settle window on a flapping link, and without it
+        each one would queue its own full-roster burst of publishes at a broker that is
+        already struggling. The last generation to be scheduled is the only one that runs.
+        """
+        generation = self._connect_generation
+
+        def _resume():
+            if generation != self._connect_generation or self._stopping:
+                return                        # superseded by a newer connect, or stopping
+            try:
+                self.resume_roster()
+            except Exception as e:
+                print(f"[runtime] roster resume failed: {e}", flush=True)
+
+        timer = threading.Timer(self.ROSTER_RESUME_DELAY_S, _resume)
+        timer.daemon = True                   # never hold a shutdown open for a re-push
+        timer.start()
 
     # ---- publishing, with the return code read (§4.1 C5) ----
     def _broker_connected(self) -> bool:
@@ -1202,6 +1506,11 @@ class MoxieRuntime:
         who = f"{device_id} " if device_id else ""
         print(f"[runtime] ⚠️  dropped {label} for {who}— {reason}", flush=True)
         self._note("drop", f"⚠️ dropped {label} for {who or 'the fleet'}— {reason}")
+        # Filed in the appliance-wide ring even though it carries a device id, so the
+        # sequence `disconnect → three drops → connect after 4.2 s` reads in order. That
+        # ordering is the whole reason a stream beats six scalars.
+        self._record_conn(conn_seam.PUBLISH_DROP, device_id=device_id, topic=topic,
+                          reason=reason)
 
     # ---- message router ----
     def _on_message(self, c, u, msg):
@@ -1253,6 +1562,10 @@ class MoxieRuntime:
         robot = RobotContext(device_id=device_id, child=self.child)
         self.robots[device_id] = robot
         self.history.setdefault(device_id, [])
+        # The one place every ingress path converges — the broker log line, `_on_state`'s
+        # fallback and P0's C6 all land here — so it is the one place the roster has to be
+        # written for "every robot we have ever served" to be true.
+        self._roster_seen(device_id)
         # Push config after a short settle delay, WITHOUT blocking the MQTT loop.
         def _settle():
             self._push_config(device_id)
