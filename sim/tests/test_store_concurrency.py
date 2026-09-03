@@ -636,3 +636,89 @@ def test_a_transaction_on_one_record_does_not_block_another(tmp_path):
     s.write(DEVICE, COLLECTION, [])
     assert s.lock_path(s.path(DEVICE, "memory")) != s.lock_path(s.path(DEVICE, COLLECTION))
     assert s.lock_path(s.path(DEVICE, "memory")) != s.lock_path(s.path("d_other", "memory"))
+
+
+# --------------------------------------------------------------------------- #
+# T10 — `append` reads the write's return code (production hardening P1)
+# --------------------------------------------------------------------------- #
+#
+# Found while wiring P1's connection ring onto the store. `append()` called `write()` and
+# returned `items` regardless of what it said, so an `OSError` — a full disk, a read-only
+# `/data`, a permission change under a running appliance — produced a **successful** append
+# of an item that reached no file.
+#
+# That is the same disease as the eight `publish()` sites whose `info.rc` nobody read
+# (§4.1 C5) and the CONNACK that logged "broker connected" for a refusal (C3): a
+# comfortable answer at the one boundary that knows the truth. It also breaks the identity
+# the soak's contention probe is built on —
+#
+#     attempted == items_on_disk + refusals
+#
+# — which is the only thing that tells a **recorded refusal** (§3.2 point 4 accepts it,
+# A11 asks it to be recorded) apart from a **silent loss** (A5 forbids it). With `append`
+# lying about a failed write, a lost item looks exactly like a successful one.
+
+def test_t10_append_reports_failure_when_the_write_failed(tmp_path, monkeypatch):
+    """A write that did not land must not come back as a list that says it did."""
+    s = JsonStore(str(tmp_path))
+    assert s.append(DEVICE, COLLECTION, "first") == ["first"]
+
+    monkeypatch.setattr(s, "_write_path", lambda *a, **kw: False)
+    assert s.append(DEVICE, COLLECTION, "second") is None, \
+        "append returned a list for a write that failed"
+    # And the record is unchanged — the failure is refused, never partial.
+    monkeypatch.undo()
+    assert s.read(DEVICE, COLLECTION, []) == ["first"]
+
+
+def test_t10b_a_read_only_data_directory_is_a_refusal_not_a_lie(tmp_path):
+    """The realistic version of T10, end to end through the real write path: an
+    unwritable tree. `None` is the store's own *"nothing was stored"* answer, and it is
+    what the caller already handles for a refused lock."""
+    s = JsonStore(str(tmp_path))
+    s.append(DEVICE, COLLECTION, "first")
+    device_dir = s.device_dir(DEVICE)
+    mode = os.stat(device_dir).st_mode
+    os.chmod(device_dir, 0o500)                   # r-x: no new temp file can be created
+    try:
+        assert s.append(DEVICE, COLLECTION, "second") is None
+    finally:
+        os.chmod(device_dir, mode)
+    assert s.read(DEVICE, COLLECTION, []) == ["first"]
+
+
+def test_t10c_append_shared_reports_the_same_way(tmp_path, monkeypatch):
+    """The fleet tier is where the appliance's own history lives (`conn_events`), so a
+    silent failure there is a connection outage nobody can read about afterwards."""
+    s = JsonStore(str(tmp_path))
+    assert s.append_shared("conn_events", {"kind": "connect"}) == [{"kind": "connect"}]
+    monkeypatch.setattr(s, "_write_path", lambda *a, **kw: False)
+    assert s.append_shared("conn_events", {"kind": "disconnect"}) is None
+
+
+def test_t10d_the_identity_the_soak_rests_on_holds_under_real_contention(tmp_path):
+    """`attempted == on_disk + refused`, proved in-process over threads.
+
+    The soak (`sim/tools/soak.py`) asserts this across **processes** at a rate CI cannot
+    afford; this is the same invariant at a size the fast tier can run, so a regression in
+    it fails in seconds rather than in the nightly job.
+    """
+    s = JsonStore(str(tmp_path))
+    attempted, refused = 200, 0
+    lock = threading.Lock()
+
+    def writer(tag):
+        nonlocal refused
+        for i in range(attempted // 4):
+            if s.append(DEVICE, COLLECTION, f"{tag}-{i}") is None:
+                with lock:
+                    refused += 1
+
+    threads = [threading.Thread(target=writer, args=(t,)) for t in "abcd"]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    on_disk = len(s.read(DEVICE, COLLECTION, []))
+    assert on_disk + refused == attempted, \
+        f"{attempted - on_disk - refused} append(s) vanished without being refused"

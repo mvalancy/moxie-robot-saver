@@ -203,15 +203,31 @@ def test_the_roster_survives_the_process_that_wrote_it(tmp_path):
 
 def test_a_rostered_robot_is_not_reported_as_connected(tmp_path):
     """**The negative property, and the reason this feature is not a lie.** A restart
-    knows who it serves; it does not know who is *there*. `/status` must keep saying so."""
+    knows who it serves; it does not know who is *there*. `/status` must keep saying so.
+
+    The assertion is made **after `resume_roster()` has actually run**, which is the only
+    moment the lie can be told. An earlier draft of this test checked a freshly-restarted
+    runtime and never called the resume — so `sim/tools/hardening_p1_mutation_check.py`'s
+    R10 (the resume `setdefault`-ing every rostered device into `self.robots`, which is
+    exactly the plausible "improvement" that makes the console look populated) went
+    **UNCAUGHT**. The test asserted a property of a code path it never exercised.
+    """
     rt, _ = _rt(tmp_path)
     rt._device_connect("d_1")
 
     reborn, live_id = _rt(tmp_path, device_id="d_live")
+    reborn.client.up()
     assert "d_1" not in reborn.robots
+
+    pushed = reborn.resume_roster()
+    assert "d_1" in pushed, "the resume did not reach the rostered robot at all"
+    # …and having pushed at it, it still does not claim it is there.
+    assert "d_1" not in reborn.robots, \
+        "the resume invented presence for a robot it has no evidence of"
     snap = reborn.status_snapshot()
     assert [r["device_id"] for r in snap["robots"]] == [live_id]
     assert snap["roster"]["known"] >= 1, "the roster is still known, just not claimed"
+    assert snap["pending_count"] == 0, "a rostered robot must not surface as pending either"
 
 
 def test_a_restart_re_pushes_config_without_waiting_for_an_event(tmp_path):
@@ -366,6 +382,81 @@ def test_a_resume_that_raises_does_not_kill_the_timer_thread(monkeypatch, tmp_pa
     rt._connect_generation += 1
     rt._schedule_roster_resume()
     timers.fire_all()                          # must not raise
+
+
+def test_two_supervisors_on_one_data_directory_do_not_lose_each_others_robots(tmp_path):
+    """The roster is a read-modify-write, and §3 is about exactly this shape.
+
+    Two processes each register 30 distinct robots. Without `transaction_shared()` around
+    the read and the write, they interleave read-read-write-write and one process's
+    additions vanish silently — the `append()` bug, in a new place, on the record that
+    decides who gets served after a restart.
+
+    Written because the mutation check found it: R15 (replacing the transaction with
+    `if True:`) went **UNCAUGHT**, since every other roster test is single-writer and a
+    single writer cannot see a missing lock.
+    """
+    # The writers call the runtime's **real** `_roster_seen`, not a copy of it. An
+    # earlier draft inlined the read-modify-write into the script, which proved the
+    # store's transaction works on this shape and said nothing about whether the runtime
+    # uses it — so R15 (replacing `_roster_seen`'s transaction with `if True:`) stayed
+    # UNCAUGHT. `__new__` rather than a constructed runtime because `_roster_seen` and
+    # `roster()` touch exactly one attribute between them, and booting a whole supervisor
+    # per writer would make the test about process startup.
+    script = (
+        "import os, sys\n"
+        f"sys.path.insert(0, {os.path.join(REPO, 'mqtt')!r})\n"
+        f"sys.path.insert(0, {os.path.join(REPO, 'mqtt', 'supervisor')!r})\n"
+        "from moxie_sdk.store import JsonStore\n"
+        "from moxie_runtime import MoxieRuntime\n"
+        "rt = MoxieRuntime.__new__(MoxieRuntime)\n"
+        "rt.store = JsonStore(sys.argv[1])\n"
+        "tag, n = sys.argv[2], int(sys.argv[3])\n"
+        "for i in range(n):\n"
+        "    assert rt._roster_seen(f'd_{tag}{i}'), 'the roster write was refused'\n")
+    import subprocess
+    n = 30
+    procs = [subprocess.Popen([sys.executable, "-c", script, str(tmp_path), tag, str(n)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+             for tag in ("a", "b")]
+    for p in procs:
+        out, err = p.communicate(timeout=180)
+        assert p.returncode == 0, err.decode()[-500:]
+
+    store = JsonStore(str(tmp_path))
+    known = set(store.read_shared(roster_seam.COLLECTION, {}).get("devices", {}))
+    expected = {f"d_{tag}{i}" for tag in ("a", "b") for i in range(n)}
+    assert known == expected, \
+        f"{len(expected - known)} robot(s) were lost between two processes"
+
+
+def test_the_runtimes_own_roster_write_is_inside_the_lock(tmp_path):
+    """The same property at the runtime's seam rather than the store's: `_roster_seen`
+    must do its read-modify-write **inside** `transaction_shared`, not beside it.
+
+    Structural on purpose — the cross-process test above proves the behaviour, and this
+    pins the mechanism at the one line a refactor would move.
+    """
+    rt, _ = _rt(tmp_path)
+    order = []
+    real_tx = rt.store.transaction_shared
+    real_write = rt.store.write_shared
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def traced_tx(collection):
+        order.append(("enter", collection))
+        with real_tx(collection):
+            yield
+        order.append(("exit", collection))
+
+    rt.store.transaction_shared = traced_tx
+    rt.store.write_shared = lambda c, v: (order.append(("write", c)), real_write(c, v))[1]
+    assert rt._roster_seen("d_1") is True
+    assert order == [("enter", roster_seam.COLLECTION),
+                     ("write", roster_seam.COLLECTION),
+                     ("exit", roster_seam.COLLECTION)], order
 
 
 def test_a_broken_store_never_costs_a_robot_its_connection(tmp_path):
