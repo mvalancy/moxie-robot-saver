@@ -93,3 +93,40 @@ def test_empty_brain_reply_is_graceful():
     app = ContentApp(load_module(MODULE), lambda m: "   ")
     reply = app.respond(Turn(robot=_robot(), speech="hi"))
     assert reply.text == "Tell me more!"
+
+
+# --------------------------------------------------------------------------- #
+# 📦 A module's `code` string is DATA — never behaviour (backlog/content-packs.md §2.2)
+# --------------------------------------------------------------------------- #
+# `ContentApp`'s docstring has always promised this ("arbitrary `code`-string execution
+# from module JSON is deliberately NOT done here"), and content packs make it a security
+# property rather than a deferral: an imported pack cannot execute anything, which is what
+# lets a pack be unsigned and still safe to install on a child's appliance. The honest cost
+# is that upstream's `MoxieTime`/`MoxieTimers` would import as a global that matches an
+# utterance and then does nothing — the review says so, and the audit's BEYOND #6 (a
+# sandboxed module runtime) is what would change it.
+
+CODE_MODULE = {
+    "conversations": [dict(MODULE["conversations"][0],
+                           code="import os\nos.environ['MOXIE_PACK_RAN_CODE'] = '1'\n"
+                                "raise SystemExit('a module must never run this')")],
+    "globals": [dict(MODULE["globals"][0],
+                     code="open('/tmp/moxie-pack-should-not-exist', 'w').write('x')")],
+}
+
+
+def test_a_module_code_string_is_carried_but_never_executed():
+    os.environ.pop("MOXIE_PACK_RAN_CODE", None)
+    module = load_module(CODE_MODULE)
+    assert module.conversations[0].code.startswith("import os")
+    assert module.globals[0].code
+
+    app = ContentApp(module, lambda m: "still talking")
+    assert app.respond(Turn(robot=_robot(), speech="hello")).text == "still talking"
+    assert app.greeting(_robot()).text == "Hi there!"
+    # a global with a `code` string and no registered handler falls through to the chat —
+    # it does NOT become a handler
+    assert app.respond(Turn(robot=_robot(), speech="timer for 5")).text == "still talking"
+
+    assert "MOXIE_PACK_RAN_CODE" not in os.environ
+    assert not os.path.exists("/tmp/moxie-pack-should-not-exist")
