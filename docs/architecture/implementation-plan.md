@@ -126,6 +126,19 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   any loop, and `test_live_gateway_stt.py`'s 400-downgrade test was deselected to stay inside the call
   budget. Suite unchanged at 4091 passed / 27 skipped; guards green; the wheel carries every
   `moxie_sdk` data file and imports clean in a venv holding only `paho-mqtt`.
+  **One finding left OPEN, and it deserves its own slice: the SIL tier's own documented command is not
+  creds-free on a developer box.** `python3 -m pytest sim/tests -q` — what `sim/ci/ci.yml`'s SIL job
+  runs — gave **9 failed, 4170 passed, 10 skipped, 4 errors** here, twice, in
+  `test_live_voice_picker.py` and `test_live_gateway_turn_e2e.py`. Every one of those files passes **in
+  isolation** (`test_live_voice_picker.py`: 4 passed), and the cause was not isolated — the obvious
+  suspect, `test_live_gateway_stt._config()` leaving `config` reloaded under a pin, was reproduced
+  deliberately and does **not** do it, because the picker's own fixture reloads `config` again. This is
+  rule 8 one level deeper than it is written: rule 8 warns that a careless full-suite run spends gateway
+  calls, but the command that spends them here is the *tier's own*, and it is green in CI only because CI
+  has no `mqtt/.env` to find. So a cross-test interaction among the live suites is invisible to every
+  tier and shows up only on the one machine that has credentials. Not chased further because doing so
+  costs gateway calls on a failure outside this pass's four risks — but it is real, it is reproducible,
+  and it should be briefed rather than rediscovered.
 
 - **Integration evidence (2026-09-03) — the merged state was exercised as a whole, and it holds.** The three
   slices that landed without ever being run together (config honesty, the offline fallback, the rewritten deploy
