@@ -592,16 +592,16 @@ should be driven by a feature, not by this page.
 
 ## 9. Assumption ledger
 
-**Twenty-one rows: six proven, eight inferred, one measured, six unverified.** A different six —
+**Twenty-one rows: seven proven, seven inferred, one measured, six unverified.** A different six —
 **A4, A5, A6, A7, A17 and A20** — need a **physical robot**, and that set deliberately cuts across the
 states: A4 and A7 are *inferred* and still hardware-gated, because an inference from upstream is not a
 measurement. That second number is the honest ceiling on this whole area and it does not move by
-building — **P0 shipping did not move it, and A12 is the only row P0 settled.**
+building — **P0 shipping did not move it: the two rows P0 settled — A12 and A8 — are both about our own filesystem, and not one of the six hardware-gated rows budged.**
 
 > **P0 shipped 2026-09-03.** A12 → shipped; **A21 is new and is the only measured number here**;
 > A13 and A14 are explicitly **unchanged** — the lock timeout and the reconnect ceiling remain
-> *chosen*, and P1's connection telemetry is still what would measure them. A8 (`flock` on a Docker
-> named volume) is still inferred: T1 runs on a tmpdir, not inside the compose stack. A9 (network
+> *chosen*, and P1's connection telemetry is still what would measure them. **A8 was settled while
+> building** (`flock` on a real Docker named volume, with a negative control). A9 (network
 > filesystems) is not settled either — `/data` on NFS or SMB is **declared unsupported**, which is a
 > decision rather than a measurement, and the store's module docstring says so where an implementer
 > will read it.
@@ -615,7 +615,7 @@ building — **P0 shipping did not move it, and A12 is the only row P0 settled.*
 | A5 | A real Moxie reconnects to the broker on its own after a broker restart, and within what window | **unverified — needs hardware** | A robot, a broker restart, and a stopwatch. Nothing in our corpus states it. |
 | A6 | A real Moxie accepts a `/config` push mid-session without ending the session | **unverified — needs hardware** | C6 re-pushes on re-registration, which after a supervisor restart may land mid-session. Today's `_device_connect` only ever pushes at the start of one. |
 | A7 | A duplicate/idempotent config push is harmless | **inferred** | The face path already depends on it — `faces.py` re-keys `child_pii.id` as a deterministic UUIDv5 *so that* an idempotent re-push does not bust the Unity texture cache (audit ADOPT #9). **Needs hardware** to confirm the rest of the config behaves the same. |
-| A8 | `fcntl.flock` is honoured on a Docker **named volume** | **inferred** (local ext4 under `/var/lib/docker/volumes`) | Settled by running T1 inside the compose stack rather than on a tmpdir — a one-line addition to `run_compose_smoke.sh`'s sibling. |
+| A8 | `fcntl.flock` is honoured on a Docker **named volume** | **PROVEN 2026-09-03** | Settled the way this row asked: T1's shape run inside a container against a real named volume (`docker volume create` → `-v vol:/data`), two processes × 250 `append`s → **500 of 500, zero lost**, and the `.lock` sidecar present on the volume. With the **negative control on the same volume type** — `origin/dev`'s unlocked read-modify-write — losing **250 of 500**, so the probe can see a loss and the green result is not vacuous. Not yet wired into `run_compose_smoke.sh`; that is a P1 line. |
 | A9 | `flock` over NFS/SMB is unreliable | **inferred** (NFSv4 maps `flock` to POSIX locks; older/odd servers do not) | Not settled — **declared unsupported** in §3.4 instead. SQLite would be strictly worse here (WAL is unsupported over NFS), so this is a cost of the problem, not of the choice. |
 | A10 | The supervisor is the **only** process writing `$MOXIE_DATA_DIR` today | **proven** | Repo-wide sweep: `JsonStore(` outside tests appears only at `mqtt/run.py`:57, `mqtt/config.py`:461, `store.py`:461. Nothing under `server/`. |
 | A11 | A second writer is coming | **inferred, and near-certain** | Audit §4.4 #10 reconciles the console's child registry with the supervisor's. Plus `run_smoke.sh` already makes a developer one **today** (§2.3). |

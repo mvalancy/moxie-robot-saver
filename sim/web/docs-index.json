@@ -1,5 +1,5 @@
 {
- "generated": "docs-a0318a4b68c0",
+ "generated": "docs-cf23e9075d1c",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -658,7 +658,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 58855,
+   "bytes": 59276,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",
