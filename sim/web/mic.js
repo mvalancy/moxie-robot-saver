@@ -12,6 +12,27 @@
  *     to the `moxie.sttBase` override, which still WINS over the same-origin route: a
  *     developer who typed a base meant it.
  *
+ * ===========================================================================
+ * WHY THE HOSTED PATH ENCODES ITS OWN WAV.
+ *
+ * A `MediaRecorder` with no `mimeType` produces a COMPRESSED container — webm/Opus on
+ * Chrome and Firefox, mp4/AAC on Safari — and never a WAV. Probed live on 2026-09-03
+ * against the gateway's `stt-whisper`, one utterance in four containers: **16 kHz mono
+ * RIFF/WAVE transcribed word-perfect in 2.58 s; webm/Opus, ogg/Opus and mp4/AAC each
+ * answered HTTP 500.** (§10 assumption 15, and the evidence table lives in
+ * `functions/api/_lib/env.js::sttFormats`.)
+ *
+ * So on the hosted path this file does what `mqtt/moxie_sdk/stt.py::wav_bytes` has always
+ * done server-side, and does it in the browser: `getUserMedia` → `AudioContext` →
+ * Float32 → downsample to 16 kHz → signed 16-bit → a RIFF header. §2.1 of the spec noted
+ * that no downsampler or WAV writer existed anywhere in `sim/web`; this is it, and it is
+ * the difference between ears that work and a microphone that 500s.
+ *
+ * **The local sidecar keeps `MediaRecorder`**, unchanged: `sim/stt/server.py` runs
+ * faster-whisper, which decodes whatever ffmpeg can, so there is nothing to fix there and
+ * no reason to make a home stack pay for a resample.
+ * ===========================================================================
+ *
  * Either way the transcript is published to the bus as a child utterance on
  * `/devices/<id>/events/remote-chat`, exactly as a real robot would, so the backend brain
  * answers it and Moxie speaks the reply — and on ANY failure the page falls back to a
@@ -33,7 +54,7 @@
  * ===========================================================================
  *
  * Exposes window.moxieMic = { start, stop, toggle, isRecording, setSttBase, getSttBase,
- *                             sttTarget, maxRecordMs, stats, setCapture }.
+ *                             sttTarget, maxRecordMs, stats, setCapture, encodeWav }.
  */
 (function () {
   "use strict";
@@ -282,7 +303,132 @@
       return { recorder: new MediaRecorder(s), stream: s };
     });
   }
-  var capture = defaultCapture;
+
+  /** The rate the gateway's ears actually want. `docs/guides/litellm-stt-setup.md` says it
+   *  in as many words — *"The rate that matters is 16000"* — and it is the rate of the
+   *  control clip that transcribed word-perfect in the 2026-09-03 probe. */
+  var TARGET_RATE = 16000;
+
+  /**
+   * Float32 mono at `fromRate` → a complete 16-bit RIFF/WAVE file at `TARGET_RATE`.
+   *
+   * The resample is nearest-neighbour decimation, which is honest about what it is: for
+   * speech going into an ASR at a 3:1 ratio (48 000 → 16 000) it is what
+   * `AudioContext`-based recorders have always done, and the transcript is what is being
+   * optimised, not the fidelity. **The header carries the TRUE rate** — a WAV that claimed
+   * 16000 for 48 kHz audio would pitch-shift it and wreck the transcript, which is the
+   * exact warning `stt.py::wav_bytes` carries.
+   *
+   * Exported on `window.moxieMic` so `sim/test_demo_ears.mjs` can parse the result with
+   * the SERVER's own RIFF walker (`functions/api/_lib/wav.js`) — one test pinning both
+   * halves of the contract, the trick `sim/test_wav_decode.mjs` established for the voice.
+   */
+  function encodeWav(chunks, total, fromRate) {
+    var src = new Float32Array(total), at = 0, i, j;
+    for (i = 0; i < chunks.length; i++) { src.set(chunks[i], at); at += chunks[i].length; }
+
+    // NEVER upsample: a header claiming 16 000 for 8 kHz audio would be a lie, and a lie
+    // in a WAV header pitch-shifts the audio and wrecks the transcript (the warning
+    // `stt.py::wav_bytes` carries). Below the target we keep the source rate and say so.
+    var rate = fromRate > 0 ? fromRate : TARGET_RATE;
+    var ratio = rate > TARGET_RATE ? rate / TARGET_RATE : 1;
+    var outRate = Math.round(rate / ratio);
+    var outLen = Math.floor(src.length / ratio);
+
+    var bytes = new Uint8Array(44 + outLen * 2);
+    var view = new DataView(bytes.buffer);
+    var wr = function (off, str) {
+      for (var k = 0; k < str.length; k++) view.setUint8(off + k, str.charCodeAt(k));
+    };
+    wr(0, "RIFF");
+    view.setUint32(4, 36 + outLen * 2, true);   // file size - 8
+    wr(8, "WAVE");
+    wr(12, "fmt ");
+    view.setUint32(16, 16, true);               // PCM fmt chunk size
+    view.setUint16(20, 1, true);                // format 1 = PCM
+    view.setUint16(22, 1, true);                // mono
+    view.setUint32(24, outRate, true);          // THE TRUE RATE
+    view.setUint32(28, outRate * 2, true);      // byte rate
+    view.setUint16(32, 2, true);                // block align
+    view.setUint16(34, 16, true);               // bits per sample
+    wr(36, "data");
+    view.setUint32(40, outLen * 2, true);
+    for (j = 0; j < outLen; j++) {
+      var v = src[Math.floor(j * ratio)];
+      if (!isFinite(v)) v = 0;
+      if (v > 1) v = 1;
+      if (v < -1) v = -1;
+      view.setInt16(44 + j * 2, Math.round(v * 32767), true);
+    }
+    return bytes;
+  }
+
+  /**
+   * The hosted capture: real audio frames, encoded as WAV on stop.
+   *
+   * It presents the SAME `{recorder, stream}` contract as `defaultCapture`, so the cap
+   * timer, the size gates, the fallback and the tests are all identical either way — the
+   * only difference is what comes out of the blob.
+   */
+  function wavCapture() {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!navigator.mediaDevices || !Ctx) return Promise.reject(new Error("unsupported"));
+    return navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    }).then(function (s) {
+      var ctx = new Ctx();
+      var source = ctx.createMediaStreamSource(s);
+      var node = ctx.createScriptProcessor(4096, 1, 1);
+      // A ScriptProcessor only runs while it is connected to a destination — but routing
+      // the microphone to the speakers would be a howling feedback loop, so it goes
+      // through a SILENT gain node. The frames still arrive; nothing is audible.
+      var mute = ctx.createGain();
+      mute.gain.value = 0;
+      var buffers = [], total = 0, running = false;
+
+      node.onaudioprocess = function (e) {
+        if (!running) return;
+        var ch = e.inputBuffer.getChannelData(0);
+        var copy = new Float32Array(ch.length);
+        copy.set(ch);
+        buffers.push(copy);
+        total += copy.length;
+      };
+      source.connect(node);
+      node.connect(mute);
+      mute.connect(ctx.destination);
+
+      var recorder = {
+        state: "inactive",
+        mimeType: "audio/wav",
+        ondataavailable: null,
+        onstop: null,
+        start: function () { running = true; recorder.state = "recording"; },
+        stop: function () {
+          if (recorder.state === "inactive") return;
+          running = false;
+          recorder.state = "inactive";
+          try { node.disconnect(); source.disconnect(); mute.disconnect(); } catch (e) {}
+          var wav = encodeWav(buffers, total, ctx.sampleRate);
+          buffers = []; total = 0;
+          try { ctx.close(); } catch (e) {}
+          if (recorder.ondataavailable) {
+            recorder.ondataavailable({ data: new Blob([wav], { type: "audio/wav" }) });
+          }
+          if (recorder.onstop) recorder.onstop();
+        },
+      };
+      return { recorder: recorder, stream: s };
+    });
+  }
+
+  /** An explicit override (tests, a headless harness) always wins; otherwise the capture
+   *  follows the TARGET, because the two ears want different things on the wire. */
+  var capture = null;
+  function captureFor(kind) {
+    if (capture) return capture();
+    return kind === "cloud" ? wavCapture() : defaultCapture();
+  }
 
   function clearCap() {
     if (capTimer !== null) { clearTimeout(capTimer); capTimer = null; }
@@ -297,7 +443,7 @@
 
   function start() {
     if (recording) return Promise.resolve();
-    return capture().then(function (got) {
+    return captureFor(sttTarget().kind).then(function (got) {
       rec = got && got.recorder;
       stream = (got && got.stream) || null;
       if (!rec) { status("mic unsupported in this browser"); return; }
@@ -367,8 +513,11 @@
     /** Recorded state for tests and for the console; never a live sample. */
     stats: function () { return JSON.parse(JSON.stringify(stats)); },
     /** Swap the capture source. For tests and headless harnesses; pass nothing to
-     *  restore the real microphone. */
-    setCapture: function (fn) { capture = typeof fn === "function" ? fn : defaultCapture; },
+     *  restore the real microphone (and the per-target choice of encoder). */
+    setCapture: function (fn) { capture = typeof fn === "function" ? fn : null; },
+    /** Float32 frames -> a 16 kHz 16-bit mono RIFF/WAVE file. Exposed so a test can parse
+     *  the result with the server's own RIFF walker. */
+    encodeWav: encodeWav,
   };
 
   // wire the HUD button if present

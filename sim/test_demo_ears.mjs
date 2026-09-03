@@ -57,6 +57,7 @@ const health = await import(join(repo, "functions", "api", "health.js"));
 const limits = await import(join(repo, "functions", "api", "_lib", "limits.js"));
 const envlib = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
 const envmod = await import(join(repo, "functions", "api", "_lib", "env.js"));
+const wavlib = await import(join(repo, "functions", "api", "_lib", "wav.js"));
 
 /* The fake deployment. These strings exist only inside this test: the host is
  * `.invalid.test` (RFC 6761 reserved and unresolvable, so a bug that actually fired a
@@ -106,14 +107,14 @@ function clip(n, kind) {
     webm: [0x1a, 0x45, 0xdf, 0xa3],
     ogg: [0x4f, 0x67, 0x67, 0x53],
     flac: [0x66, 0x4c, 0x61, 0x43],
-  }[kind || "webm"];
-  if (kind === "wav") {
+    mp3: [0x49, 0x44, 0x33, 0x04],               // "ID3"
+    junk: [0x7b, 0x22, 0x65, 0x72],              // `{"er` — a JSON body, not audio
+  }[kind || "wav"];
+  if (!kind || kind === "wav") {
     b.set([0x52, 0x49, 0x46, 0x46], 0);          // "RIFF"
     b.set([0x57, 0x41, 0x56, 0x45], 8);          // "WAVE"
   } else if (kind === "mp4") {
     b.set([0x66, 0x74, 0x79, 0x70], 4);          // "ftyp" at offset 4
-  } else if (kind === "junk") {
-    b.set([0x7b, 0x22, 0x65, 0x72], 0);          // `{"er` — a JSON body, not audio
   } else {
     b.set(magic, 0);
   }
@@ -124,7 +125,7 @@ function clip(n, kind) {
 function req(bytes, headers) {
   const h = Object.assign(
     {
-      "Content-Type": "audio/webm",
+      "Content-Type": "audio/wav",
       Origin: ORIGIN,
       "Sec-Fetch-Site": "same-origin",
       "CF-Connecting-IP": "203.0.113.9",
@@ -454,6 +455,53 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
 }
 
 /* --------------------------------------------------------------------------- *
+ * A7b. §10 assumption 15 — the container allowlist, and why it is not optional
+ * --------------------------------------------------------------------------- *
+ * Settled live on 2026-09-03 (`sim/tools/probe_demo_gateway.mjs`, four containers, one
+ * utterance): the gateway transcribes 16 kHz mono RIFF/WAVE word-perfect and answers
+ * **HTTP 500** to webm/Opus, ogg/Opus and mp4/AAC alike.
+ *
+ * 500 maps to `upstream_down`, which is a 503, and `mode.js` degrades the WHOLE PAGE on a
+ * 503. So without this allowlist one press of the microphone would take the brain and the
+ * voice down with the ears — after paying for the call. That is what these assertions
+ * exist to prevent regressing, and the first one is the one that matters.
+ * --------------------------------------------------------------------------- */
+{
+  fresh();
+  for (const kind of ["webm", "ogg", "mp4", "mp3", "flac"]) {
+    const { res, body } = await call(clip(4000, kind), null, FULL, `a ${kind} clip`);
+    eq(res.status, 400, `${kind} is refused with a 400 — PER-TURN, so the page stays live`);
+    eq(body.reason, "bad_request", `${kind}: bad_request`);
+    ok(res.status !== 503, `${kind} MUST NOT be a 503: that would degrade the brain and the voice too`);
+  }
+  eq(upstreamCalls(), 0,
+     "A CONTAINER THE GATEWAY REJECTS NEVER BECOMES A PAID 500 (assumption 15, settled 2026-09-03)");
+  eq(sent.length, 0, "…and no upstream request is built at all");
+
+  // wav is the default, and it is the one that was measured to work.
+  deep(envmod.readConfig(FULL).sttFormats, ["wav"],
+       "DEMO_STT_FORMATS defaults to wav alone — the only container measured to transcribe");
+  const wav = await call(clip(4000, "wav"), null, FULL, "a wav clip");
+  eq(wav.res.status, 200, "…and a wav clip is accepted");
+  eq(upstreamCalls(), 1, "…as the one upstream call");
+
+  // A fork whose gateway is more capable opens it up, with no code change (C3).
+  fresh();
+  const wide = { ...FULL, DEMO_STT_FORMATS: "wav,webm,ogg" };
+  eq((await call(clip(4000, "webm"), null, wide, "webm on a wider gateway")).res.status, 200,
+     "DEMO_STT_FORMATS widens the allowlist for a gateway that accepts more");
+  eq((await call(clip(4000, "mp4"), null, wide, "mp4 on a wider gateway")).body.reason, "bad_request",
+     "…and still refuses what is not listed");
+
+  // A malformed value falls back to the default rather than switching the ears off with a
+  // reason nobody could read.
+  deep(envmod.readConfig({ ...FULL, DEMO_STT_FORMATS: "mp9,quicktime" }).sttFormats, ["wav"],
+       "an unusable DEMO_STT_FORMATS falls back to wav, never to nothing");
+  deep(envmod.readConfig({ ...FULL, DEMO_STT_FORMATS: "" }).sttFormats, ["wav"],
+       "…and so does an empty one");
+}
+
+/* --------------------------------------------------------------------------- *
  * A8. The upstream body is BUILT, never forwarded (§4.1's highest-value control)
  * --------------------------------------------------------------------------- */
 {
@@ -468,8 +516,8 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   deep([...form.keys()].sort(), ["file", "model", "response_format"],
        "…and NOTHING else is sent: no language, no prompt, no temperature");
   const file = form.get("file");
-  eq(file.name, "utterance.webm", "the filename carries the sniffed extension (an OpenAI endpoint reads it)");
-  eq(file.type, "audio/webm", "…and the sniffed mime");
+  eq(file.name, "utterance.wav", "the filename carries the sniffed extension (an OpenAI endpoint reads it)");
+  eq(file.type, "audio/wav", "…and the sniffed mime");
   eq(file.size, 4000, "…and the visitor's bytes, unmodified");
 
   // The credentials are present, and the Content-Type is deliberately ABSENT so `fetch`
@@ -643,15 +691,54 @@ function bootMic(o) {
     getItem: (k) => (k in store ? store[k] : null),
     setItem: (k, v) => { store[k] = String(v); },
   };
-  globalThis.navigator = { mediaDevices: { getUserMedia: () => Promise.reject(new Error("no mic in a test")) } };
+  /* A microphone that is NOT a microphone: `getUserMedia` resolves a marker object, and
+   * the fake AudioContext below feeds `encodeWav` a synthesised tone. No device is ever
+   * opened, and `MediaRecorder` throws if anything tries to construct a real one. */
+  const gum = [];
+  globalThis.navigator = {
+    mediaDevices: {
+      getUserMedia: (c) => {
+        gum.push(c);
+        return opts.denyMic
+          ? Promise.reject(new Error("NotAllowedError"))
+          : Promise.resolve({ getTracks: () => [{ stop() {} }] });
+      },
+    },
+  };
   globalThis.MediaRecorder = function () { throw new Error("a test must never construct a real MediaRecorder"); };
+  const audioCtx = { closed: false, processors: [] };
+  globalThis.window = globalThis.window || {};
+  globalThis.AudioContext = function () {
+    const ctx = {
+      sampleRate: opts.sampleRate || 48000,
+      createMediaStreamSource: () => ({ connect() {}, disconnect() {} }),
+      createGain: () => ({ gain: { value: 1 }, connect() {}, disconnect() {} }),
+      createScriptProcessor: (size) => {
+        const node = { bufferSize: size, onaudioprocess: null, connect() {}, disconnect() {} };
+        audioCtx.processors.push(node);
+        return node;
+      },
+      destination: {},
+      close: () => { audioCtx.closed = true; },
+    };
+    return ctx;
+  };
   globalThis.AbortSignal = { timeout: () => ({ aborted: false, addEventListener() {} }) };
+  const RealBlob = globalThis.__realBlob || (globalThis.__realBlob = globalThis.Blob);
   globalThis.Blob = class FakeBlob {
     constructor(parts, o2) {
-      this.size = (parts || []).reduce((n, p) => n + ((p && p.size) || 0), 0);
+      const list = parts || [];
+      // A part that carries real bytes (the WAV encoder's Uint8Array, or a real Blob) is
+      // kept whole, so a test can assert on what would actually be uploaded.
+      this.parts = list;
+      this.size = list.reduce(
+        (n, p) => n + (p && p.size !== undefined ? p.size : (p && p.byteLength) || 0), 0);
       this.type = (o2 && o2.type) || "";
+      const bytes = list.find((x) => x && x.byteLength !== undefined);
+      this.bytes = bytes || (list[0] && list[0].bytes) || null;
     }
   };
+  void RealBlob;
 
   const published = [];
   const spoken = [];
@@ -672,6 +759,10 @@ function bootMic(o) {
     }, opts.mode || {}),
   };
 
+  // mic.js reads `window.AudioContext` (a real page's global), so the fake window needs it
+  // — it is deliberately NOT on the bare `globalThis` for the page to find by accident.
+  globalThis.window.AudioContext = globalThis.AudioContext;
+
   const notes = [];
   const posts = [];
   globalThis.fetch = (url, init) => {
@@ -688,8 +779,13 @@ function bootMic(o) {
   (0, eval)(MIC_SRC);
   const mic = globalThis.window.moxieMic;
   const rec = makeRecorder(opts.recorder);
-  mic.setCapture(() => Promise.resolve({ recorder: rec, stream: { getTracks: () => [] } }));
-  return { mic, rec, posts, notes, published, els, bodyAttrs, statusText: () => els["mic-status"].textContent };
+  // `realCapture` leaves mic.js to choose its OWN capture per target — which is the thing
+  // the WAV block below has to exercise. Everything else injects a fake recorder.
+  if (!opts.realCapture) {
+    mic.setCapture(() => Promise.resolve({ recorder: rec, stream: { getTracks: () => [] } }));
+  }
+  return { mic, rec, posts, notes, published, els, bodyAttrs, audioCtx, gum,
+           statusText: () => els["mic-status"].textContent };
 }
 
 /* --------------------------------------------------------------------------- *
@@ -937,6 +1033,107 @@ function bootMic(o) {
 }
 
 /* --------------------------------------------------------------------------- *
+ * B7b. §10 assumption 15's CONSEQUENCE — the browser encodes WAV for the hosted ear
+ * --------------------------------------------------------------------------- *
+ * The gateway answers HTTP 500 to webm/Opus, ogg/Opus and mp4/AAC and transcribes a
+ * 16 kHz mono RIFF/WAVE word-perfect (probed live, 2026-09-03). A `MediaRecorder` cannot
+ * produce a WAV, so the hosted path builds one itself. THE ASSERTION THAT MATTERS is the
+ * one that parses `mic.js`'s output with the SERVER's own RIFF walker — one test pinning
+ * both halves of the contract with no server and no browser, exactly as
+ * `sim/test_wav_decode.mjs` does for the voice.
+ * --------------------------------------------------------------------------- */
+{
+  // ---- the encoder, against functions/api/_lib/wav.js -----------------------
+  const w = bootMic();
+  const tone = (n, rate) => {
+    const f = new Float32Array(n);
+    for (let i = 0; i < n; i++) f[i] = Math.sin((2 * Math.PI * 440 * i) / rate) * 0.5;
+    return f;
+  };
+  const frames = tone(48000, 48000);          // one second at a browser's usual rate
+  const wav = w.mic.encodeWav([frames], frames.length, 48000);
+
+  eq(wav.length, 44 + 16000 * 2, "one second at 48 kHz becomes 16 000 samples plus a 44-byte header");
+  const parsed = wavlib.pcmFromAudio(wav, { sampleRate: 22050, channels: 1 });
+  eq(parsed.container, "wav", "THE SERVER'S OWN RIFF WALKER READS IT as a wav");
+  eq(parsed.sampleRate, 16000, "…at 16 000 Hz — the rate litellm-stt-setup.md says matters");
+  eq(parsed.channels, 1, "…mono");
+  eq(parsed.pcm.length, 16000 * 2, "…with the expected PCM length");
+  // The same header fields the ffmpeg-produced control clip carried — the one the gateway
+  // actually transcribed on 2026-09-03. Matching it is the closest a hermetic test can get
+  // to "this is the thing that worked".
+  deep({ rate: parsed.sampleRate, ch: parsed.channels, bits: 16, container: parsed.container },
+       { rate: 16000, ch: 1, bits: 16, container: "wav" },
+       "…identical in shape to the control WAV the gateway accepted live");
+
+  // The route agrees: this is a container it will forward, and it sniffs as one.
+  const kind = route.audioKind(wav, null);
+  eq(kind.ext, "wav", "the route sniffs the browser's own file as a wav");
+  ok(envmod.readConfig(FULL).sttFormats.includes(kind.ext),
+     "…and it is inside DEMO_STT_FORMATS, so it is forwarded rather than refused");
+
+  // Never upsample: a header claiming a rate the audio does not have wrecks a transcript.
+  const low = w.mic.encodeWav([tone(8000, 8000)], 8000, 8000);
+  eq(wavlib.pcmFromAudio(low, { sampleRate: 22050, channels: 1 }).sampleRate, 8000,
+     "audio already below 16 kHz keeps its TRUE rate — the header never lies");
+  // No frames at all is a bare 44-byte header. The server's parser REFUSES it (a WAV with
+  // no data chunk is unreadable) — and it can never get there, because 44 bytes is far
+  // under both the client's floor and DEMO_MIN_AUDIO_BYTES. Two independent guards, and
+  // the cheap one runs first.
+  const empty = w.mic.encodeWav([], 0, 48000);
+  eq(empty.length, 44, "no frames is a bare 44-byte RIFF header");
+  ok(empty.length < envmod.readConfig(FULL).minAudioBytes,
+     "…which is under DEMO_MIN_AUDIO_BYTES, so it is refused for free before any parser sees it");
+  let refused = null;
+  try { wavlib.pcmFromAudio(empty, { sampleRate: 22050, channels: 1 }); } catch (e) { refused = e.kind; }
+  eq(refused, "unreadable", "…and the server's parser would refuse it anyway");
+  // Out-of-range samples clamp rather than wrapping into noise.
+  const hot = w.mic.encodeWav([new Float32Array([2, -2, NaN, 0])], 4, 16000);
+  const dv = new DataView(hot.buffer, hot.byteOffset);
+  deep([dv.getInt16(44, true), dv.getInt16(46, true), dv.getInt16(48, true)], [32767, -32767, 0],
+       "samples outside [-1,1] and NaN clamp instead of wrapping");
+
+  // ---- and it is what actually goes on the wire ----------------------------
+  const live = bootMic({ realCapture: true });
+  await live.mic.start();
+  await flush();
+  eq(live.mic.isRecording(), true, "the hosted path opens its own capture");
+  deep(live.gum[0], { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } },
+       "…asking getUserMedia for mono, which is what the encoder writes");
+  ok(live.audioCtx.processors.length === 1, "…through exactly one ScriptProcessor");
+
+  // Feed it a second of audio, the way a browser would.
+  const node = live.audioCtx.processors[0];
+  for (let i = 0; i < 12; i++) {
+    node.onaudioprocess({ inputBuffer: { getChannelData: () => tone(4096, 48000) } });
+  }
+  await advance(15001);                        // the hard stop fires and encodes
+  await flush();
+  eq(live.audioCtx.closed, true, "the AudioContext is CLOSED on stop — no mic left running");
+  eq(live.posts.length, 1, "one POST");
+  eq(live.posts[0].url, ORIGIN + "/api/transcribe", "…to the same-origin route");
+  eq(live.posts[0].init.headers["Content-Type"], "audio/wav",
+     "…AS audio/wav, not the webm the gateway answers 500 to");
+  const blob = live.posts[0].init.body;
+  ok(blob.bytes && blob.bytes.length > 44, "…carrying real encoded bytes");
+  const onWire = wavlib.pcmFromAudio(blob.bytes, { sampleRate: 22050, channels: 1 });
+  eq(onWire.container, "wav", "THE BYTES ON THE WIRE PARSE AS A WAV on the server side");
+  eq(onWire.sampleRate, 16000, "…at 16 000 Hz");
+
+  // ---- while the local sidecar still gets a MediaRecorder ------------------
+  const home = bootMic({ realCapture: true, mode: { ears: () => false } });
+  let threw = null;
+  await home.mic.start().catch((e) => { threw = e; });
+  await flush();
+  // `MediaRecorder` in this harness throws on construction, which is exactly how we prove
+  // the local path still reaches for it rather than the WAV encoder.
+  eq(home.audioCtx.processors.length, 0,
+     "the LOCAL path does not build an AudioContext — it still uses MediaRecorder, unchanged");
+  eq(home.mic.isRecording(), false, "…and a MediaRecorder that will not construct fails safely");
+  ok(home.statusText().length > 0, "…with an honest status line, never a silent dead button");
+}
+
+/* --------------------------------------------------------------------------- *
  * B8. The source-level guards the other suites expect to keep holding
  * --------------------------------------------------------------------------- */
 {
@@ -960,5 +1157,7 @@ console.log(
   `✓ test_demo_ears: the ears hold their contract (${asserts} assertions, ${sweeps} secret sweeps, 0 leaks) — ` +
   `both byte caps with the floor costing nothing, the per-IP windows, our own AbortSignal timeout, ` +
   `an unset DEMO_STT_MODEL making zero upstream calls, a hostile upstream degrading per-turn instead of ` +
-  `taking the page down, and the 15 s hard stop proven to stop a recorder`,
+  `taking the page down, the container allowlist keeping a webm/Opus 500 from degrading the whole page ` +
+  `(assumption 15, settled live 2026-09-03), the browser's own 16 kHz WAV read back by the SERVER's RIFF ` +
+  `walker, and the 15 s hard stop proven to stop a recorder`,
 );

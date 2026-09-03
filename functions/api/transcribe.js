@@ -65,7 +65,19 @@
  *     local sidecar (`sim/stt/server.py`:69-70), which is untouched. One extra branch in
  *     the client buys the whole §4.5 status table.
  *
- * (2) **An upstream 4xx about the PAYLOAD answers `bad_request` (400), not
+ * (2) **THE GATEWAY DOES NOT ACCEPT webm/Opus, AND THAT CHANGED THIS ROUTE.** §10
+ *     assumption 15, settled live on 2026-09-03: a 16 kHz mono RIFF/WAVE transcribes
+ *     word-perfect in 2.58 s, while the SAME UTTERANCE as webm/Opus, ogg/Opus and mp4/AAC
+ *     all answer **HTTP 500**. Since 500 maps to `upstream_down` — a 503, which degrades
+ *     the whole page — forwarding a browser's default recording would have taken the brain
+ *     and the voice down every time someone pressed the microphone, after paying 1.6-4.3 s
+ *     for the privilege. So the route carries a container allowlist (`DEMO_STT_FORMATS`,
+ *     default `wav`, step 4b below) and refuses the rest for free and per-turn; and
+ *     `sim/web/mic.js` now ENCODES 16 kHz mono WAV in the browser rather than shipping
+ *     whatever `MediaRecorder` felt like producing. The full evidence table is in
+ *     `_lib/env.js::sttFormats`.
+ *
+ * (3) **An upstream 4xx about the PAYLOAD answers `bad_request` (400), not
  *     `upstream_down` (503).** The distinction is not pedantry: `mode.js` degrades the
  *     WHOLE PAGE off a 503 (§6.3, `live --> degraded`), so a gateway that rejects one
  *     audio container would take the brain and the voice down with it — while §4.5's
@@ -118,6 +130,15 @@ export async function onRequestPost(context) {
     // and an allowlist as the answer. An unrecognised body never becomes a paid request.
     const kind = audioKind(body.bytes, request.headers.get("Content-Type"));
     if (!kind) return refusal(cfg, "bad_request", { load: slot.load, rateLimit: slot.rateLimit });
+
+    // ---- 4b. …and is it a container THIS GATEWAY takes? `DEMO_STT_FORMATS` defaults to
+    // `wav` alone because that is what was measured (see `_lib/env.js::sttFormats` for the
+    // four-container probe of 2026-09-03). This check is free, per-turn, and — crucially —
+    // keeps a rejected container from becoming an upstream **500**, which would map to
+    // `upstream_down` and degrade the brain and the voice along with the ears.
+    if (!cfg.sttFormats.includes(kind.ext)) {
+      return refusal(cfg, "bad_request", { load: slot.load, rateLimit: slot.rateLimit });
+    }
 
     // ---- 5. The one upstream call.
     const upstream = await callGateway(cfg, body.bytes, kind);
