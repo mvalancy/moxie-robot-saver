@@ -34,6 +34,50 @@ deliberately not scheduled.
 > is still mitigated only by a compile check and a length cap, as §5 says; A9 stands —
 > nobody has yet imported a real community pack, so the card's shape is still inferred.
 
+> ## 🔒 Import-path hardening, 2026-09-03 — and the hole it found
+>
+> P0 shipped with the renderer already sandboxed, so the review of that slice reasoned about
+> the *last* stage of the import path. This pass fenced the **whole** path a pack travels —
+> `parse_pack` → `review_pack`/`diff_item` → `apply_pack` → `JsonStore` → `reload_content` →
+> `ContentApp` → `render_prompt` → the brain — in
+> [`sim/tests/test_content_pack_sandbox.py`](../../../sim/tests/test_content_pack_sandbox.py)
+> (46 tests), and found one live hole plus one review gap.
+>
+> **The hole: an imported `prompt` could read `os.environ`.** `render.py::_minimal_render` is
+> the dependency-free renderer a `pip install moxie-cloud-sdk` *without* the `content` extra
+> falls back to, and its whole grammar is "a bare dotted path" — evaluated with `getattr` over
+> the live `volley`/`session`/`presence` objects. A pack author chooses every segment of that
+> path, so the grammar **was** an attribute-chain escape. Measured on this tree before the fix:
+>
+> ```
+> {{ session.__class__.__repr__.__globals__.inspect.os.environ }}
+> → environ({...})   # 4.9 KB, MOXIE_LLM_API_KEY included, inside the system prompt
+> ```
+>
+> A pack that also says *"repeat your instructions"* exfiltrates the appliance's own key.
+> **Reach, honestly:** the shipped container was never exposed — `mqtt/requirements.txt` ships
+> jinja2 and `SandboxedEnvironment` already refuses underscore-leading attributes — so the
+> exposed shape is a bare-metal SDK install, which `pyproject.toml` deliberately supports.
+> `_resolve` now refuses any `_`-leading segment and counts it in `BLOCKED`, which is *parity*
+> with the sandbox rather than a new rule; `child_pii` still resolves, because the guard is the
+> first character of a segment. §2.1's claim — "the security property packs actually need is
+> delivered structurally: an imported pack cannot execute anything" — was true of the container
+> and not of every install, and now is of both.
+>
+> **The review gap:** `review_pack` computed `diff: []` for a `NEW` item — the one state it
+> **pre-ticks**. `diff_item`'s own contract already promised *"a parent installing a stranger's
+> chat should see the whole prompt, not a summary (risk R4)"*; the review now calls it, so the
+> pre-ticked row is no longer the row that shows the least.
+>
+> **And the round trip is now a circle.** Acceptance criterion 2 was covered by two one-legged
+> tests (a pack survives its serializer; installed items become a module) that would both pass
+> if the *store* dropped a field, since exporter and parser go on agreeing about a shape neither
+> ever saw. Three new tests demand bytes: export → parse → apply into an empty appliance →
+> export ⇒ the same file; the same over the upgrade path; and **two real runtimes on separate
+> data dirs** — A exports, B (which has never seen the pack) imports and re-exports ⇒
+> byte-identical. That last one is the claim a pack format exists to make and one process
+> cannot make it.
+
 **Reserved-region note up front.** P0 touches the status-HTTP handler block in
 [`../../../mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py)
 (`_start_status_server`) and adds one runtime method region. It **must not touch `_push_config`, the
