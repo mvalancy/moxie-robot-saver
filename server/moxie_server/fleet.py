@@ -190,20 +190,195 @@ def normalize_event(e: Optional[dict]) -> dict:
     }
 
 
+def normalize_history(rows) -> list:
+    """The runtime's durable daily roll-up → the console's history rows.
+
+    One row per calendar day, oldest→newest and **zero-filled** by the runtime, so a
+    quiet day renders as a quiet day rather than vanishing from the week. `share` is the
+    day's count against the busiest day in the window (0.0–1.0), which is all the 📈
+    card's bars need — no chart library, no second request."""
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict) or not r.get("day"):
+            continue
+        out.append({"day": str(r["day"]), "count": max(0, int(r.get("count") or 0)),
+                    "top_event": (str(r["top_event"]) if r.get("top_event") else None)})
+    peak = max([r["count"] for r in out] or [0])
+    for r in out:
+        r["share"] = round(r["count"] / peak, 4) if peak else 0.0
+    return out
+
+
 def normalize_telemetry(payload: Optional[dict]) -> dict:
     """Runtime `/telemetry` response → the console insights shape. Tolerates a
-    None/error payload (supervisor down, unknown device) with ok=False + an empty view."""
+    None/error payload (supervisor down, unknown device) with ok=False + an empty view.
+
+    Since telemetry became durable (2026-09-02) this also carries what the card needs to
+    be honest about its own history: `history` (the daily roll-up), `totals` (the lifetime
+    count behind a sliding window, and how far back the store really reaches), `retention`
+    (the caps), and `policy`/`persisted` — because under `LoggingPolicy.NO_DATA` the card
+    must say "nothing is being kept" rather than show an empty week as if it were quiet.
+    """
     p = payload or {}
     ok = bool(p.get("ok"))
     summary = p.get("summary") or {}
+    totals = p.get("totals") if isinstance(p.get("totals"), dict) else {}
+    retention = p.get("retention") if isinstance(p.get("retention"), dict) else {}
     return {
         "ok": ok,
         "device_id": p.get("device_id"),
         "count": int(summary.get("count") or 0) if ok else 0,
         "by_event": event_counts(summary) if ok else [],
         "events": [normalize_event(e) for e in (p.get("events") or [])] if ok else [],
+        "history": normalize_history(p.get("history")) if ok else [],
+        "policy": str(p.get("policy") or "") if ok else "",
+        # `persisted` is only ever True when the runtime said so: a payload that predates
+        # durable telemetry (or an error body) must not be rendered as if it had history.
+        "persisted": bool(p.get("persisted")) if ok else False,
+        "connected": bool(p.get("connected")) if ok else False,
+        "totals": {
+            "total": int(totals.get("total") or 0),
+            "days_kept": int(totals.get("days_kept") or 0),
+            "first_day": totals.get("first_day") or None,
+            "last_day": totals.get("last_day") or None,
+            "dropped_days": int(totals.get("dropped_days") or 0),
+        },
+        "retention": {"packets": int(retention.get("packets") or 0),
+                      "days": int(retention.get("days") or 0)},
         "error": None if ok else (p.get("error") or "supervisor not reachable"),
     }
+
+
+# --- console actions: which buttons are real -----------------------------------------
+# Three parent-console endpoints used to report success for things they never did:
+# `POST robots/{id}/wakeup` and `POST robots/{id}/reboot` both published nothing and
+# returned `{"error": null}`, and `GET robots/{id}/ota_status` returned a hard-coded
+# `{"status": "up_to_date"}`. A button that lies is worse than a button that is missing,
+# so each was decided from our own recovered corpus and nothing was invented:
+#
+#   wakeup  → REAL. `/devices/{id}/commands/wakeup` + `{"command":"wakeup"}`
+#             (`docs/architecture/mqtt-and-conversation.md` §3.5, on the command-topic
+#             shape `docs/reverse-engineering/protocol/cloud-protocol.md`:147 establishes).
+#             It now publishes, and reports `published`, never "awake" — no
+#             acknowledgement for it exists anywhere in the corpus.
+#   reboot  → UNSUPPORTED. Nothing in the corpus is a cloud→robot reboot command.
+#             `STATE_SILENT_REBOOT` is a value of the robot's own on-device power state
+#             machine, and `ShutdownRequest`/`SystemShutdown` are listed as system status
+#             events the robot *emits* on its ZMQ bus — neither establishes that a
+#             cloud-injected one is honored, nor what `recover_type` would have to be.
+#             Publishing a guess at a child's robot to make a button feel real is not a
+#             trade we make, so it answers 501 and the console shows it as unavailable.
+#   ota_status → REAL DATA, HONEST VERDICT. We know only what the robot reports up in
+#             `RobotStatus` (`robot_firmware_version`, `ota_reboot_required` —
+#             `config-and-telemetry-contract.md`:300) and that this appliance implements
+#             no `api/ota` (`cloud-protocol.md`:45), so it can never truthfully say
+#             "up_to_date". It reports the firmware the robot told us and says plainly
+#             that no update server is configured.
+
+#: Actions the console offers that our corpus does not establish a command for. Keyed by
+#: the REST verb; every value carries the reason a parent reads and the evidence a
+#: maintainer checks, so the "why" travels with the refusal instead of living in a doc.
+UNSUPPORTED_ACTIONS = {
+    "reboot": {
+        "reason": "Rebooting Moxie remotely is not something this appliance can do.",
+        "detail": "No cloud-to-robot reboot command has been recovered from the robot's "
+                  "firmware. Turn Moxie off and on at the button instead.",
+        "evidence": "docs/reverse-engineering/protocol/power-and-system-events.md — "
+                    "STATE_SILENT_REBOOT is an on-device power state and "
+                    "ShutdownRequest/SystemShutdown are events the robot emits, not "
+                    "commands the cloud is known to be able to send.",
+    },
+}
+
+
+def unsupported_action(name: str) -> dict:
+    """The honest body for a console action we have no recovered command for.
+
+    `ok:false` with a reason a parent can act on. Never `{"error": null}`: the console's
+    old `wakeup`/`reboot` returned exactly that while publishing nothing, which is the
+    bug this whole shape exists to make impossible."""
+    known = UNSUPPORTED_ACTIONS.get(str(name)) or {}
+    return {"ok": False, "supported": False, "action": str(name),
+            "error": "unsupported",
+            "reason": known.get("reason") or f"{name} is not supported.",
+            "detail": known.get("detail") or "",
+            "evidence": known.get("evidence") or ""}
+
+
+def ota_status_view(snapshot: Optional[dict], device_id: Optional[str] = None) -> dict:
+    """The honest `ota_status` body, from the supervisor's own `/status` snapshot.
+
+    Never `"up_to_date"`. What we actually know is what the robot last reported in
+    `RobotStatus` — its firmware version and whether it is holding a reboot for an
+    update — and that this appliance serves no `api/ota`, so "up to date" is not a claim
+    we are in a position to make about anything.
+
+    `status` is one of:
+      * `reboot_required` — the robot said `ota_reboot_required` (the one OTA fact the
+        recovered protocol gives us directly);
+      * `unknown` — we have the robot's live state but no update server to compare it to;
+      * `unavailable` — the supervisor is down or that robot has never connected.
+    """
+    snap = snapshot if isinstance(snapshot, dict) else {}
+    robots = [r for r in (snap.get("robots") or []) if isinstance(r, dict)]
+    robot = None
+    if device_id:
+        robot = next((r for r in robots if r.get("device_id") == device_id), None)
+    elif len(robots) == 1:
+        robot = robots[0]
+    note = ("This appliance runs no OTA server, so it cannot tell you whether a newer "
+            "Moxie firmware exists — only what your robot last reported about itself.")
+    if not snap.get("ok") or robot is None:
+        return {"status": "unavailable", "version": None, "ota_reboot_required": None,
+                "ota_server": False, "supported": False, "device_id": device_id,
+                "reason": "No live state for this robot (it has not connected to this "
+                          "appliance, or the supervisor is not running).", "note": note}
+    pending = bool(robot.get("ota_reboot_required"))
+    return {
+        "status": "reboot_required" if pending else "unknown",
+        # `version` keeps the original API's field name and now carries a real value: the
+        # firmware string the robot reported, not None.
+        "version": robot.get("firmware") or None,
+        "ota_reboot_required": pending,
+        "ota_server": False, "supported": False,
+        "device_id": robot.get("device_id"),
+        "reason": ("Moxie is holding a reboot to finish an update it already downloaded."
+                   if pending else
+                   "Moxie's reported firmware is below; whether that is the newest build "
+                   "is not something this appliance can know."),
+        "note": note,
+    }
+
+
+def resolve_device_id(robot_attrs: Optional[dict],
+                      snapshot: Optional[dict]) -> tuple:
+    """`(device_id, how)` — the MQTT identity behind a parent-app robot record.
+
+    The two halves of this system learn a robot's identity at different moments and the
+    gap is real, not an oversight: the pairing QR carries Wi-Fi and a pairing seed but no
+    device id, so `POST pairing-complete` mints a record id (`rid`) while the robot's
+    MQTT client id (`d_<uuid>`) only exists once it reaches the broker. A command has to
+    be addressed to the latter.
+
+    Resolution, most trustworthy first:
+      * `"record"`      — the record itself carries `mqtt-device-id` (written at
+                          pair-complete when the console knew it);
+      * `"sole-served"` — the supervisor serves exactly one permitted robot, so there is
+                          no ambiguity about who the button means. Same inference the
+                          console's own live panel makes (`app.js`: `served[0]`);
+      * `None, "ambiguous"` / `None, "none"` — several robots or no robot. The caller
+                          must say so rather than pick one.
+    """
+    attrs = robot_attrs if isinstance(robot_attrs, dict) else {}
+    stored = str(attrs.get("mqtt-device-id") or "").strip()
+    if stored:
+        return stored, "record"
+    snap = snapshot if isinstance(snapshot, dict) else {}
+    served = [r for r in (snap.get("robots") or [])
+              if isinstance(r, dict) and r.get("device_id") and not r.get("pending")]
+    if len(served) == 1:
+        return str(served[0]["device_id"]), "sole-served"
+    return None, ("ambiguous" if served else "none")
 
 
 # --- safety review queue (ai-seam §2 InputSafety) ------------------------------------

@@ -91,15 +91,39 @@ _PACKETS = [
 ]
 
 
-def _telemetry(device_id: str, limit: int) -> tuple:
-    """MoxieRuntime.telemetry_view() + the status code its HTTP layer answers with."""
+#: A REAL `telemetry_daily.json` roll-up: three days, one of them empty, so the console's
+#: week has a zero day to render and the "history since" footer has something to state.
+#: Shaped by `moxie_sdk.telemetry.roll_up_packet`; the keys are diffed against the live
+#: runtime in `test_fake_status_server_matches_the_real_runtime_shapes`.
+_ROLLUP = {
+    "days": {
+        "2026-08-31": {"count": 5, "by_event": {"conversation_start": 4, "battery_low": 1},
+                       "first": 1756600000, "last": 1756620000},
+        "2026-09-02": {"count": 3, "by_event": {"conversation_start": 2, "battery_low": 1},
+                       "first": 100, "last": 140},
+    },
+    "total": 11, "dropped_days": 2, "updated_at": 1756800000,
+}
+
+
+def _telemetry(device_id: str, limit: int, days: int = 7) -> tuple:
+    """MoxieRuntime.telemetry_view() + the status code its HTTP layer answers with.
+
+    Durable since 2026-09-02: the view carries the daily history, the retention window
+    and the privacy policy alongside the live roll-up, so the double builds all four from
+    the same pure helpers the runtime uses (`moxie_sdk.telemetry`) over `_ROLLUP`."""
     if device_id != DEVICE:
         return {"ok": False, "device_id": device_id,
                 "error": f"unknown device_id {device_id!r}"}, 404
-    from moxie_sdk.telemetry import summarize_events
+    from moxie_sdk.telemetry import (history_view, retention, rollup_totals,
+                                     summarize_events)
     summary = summarize_events(_PACKETS, limit=limit)
     return {"ok": True, "device_id": device_id,
-            "summary": summary, "events": summary["latest"]}, 200
+            "summary": summary, "events": summary["latest"],
+            "policy": "NO_MEDIA", "persisted": True, "connected": True,
+            "retention": retention(),
+            "history": history_view(_ROLLUP, days=days, today="2026-09-02"),
+            "totals": rollup_totals(_ROLLUP)}, 200
 
 
 #: 📅 A REAL `GET /schedule?device_id=…` body, captured 2026-09-02 from a real mosquitto +
@@ -392,8 +416,12 @@ class FakeSupervisor:
                         limit = int((q.get("limit") or ["20"])[0])
                     except ValueError:
                         limit = 20
+                    try:
+                        days = int((q.get("days") or ["7"])[0])
+                    except ValueError:
+                        days = 7
                     outer.telemetry_queries.append((device_id, limit))
-                    return self._out(*_telemetry(device_id, limit))
+                    return self._out(*_telemetry(device_id, limit, days))
                 if u.path == "/safety":
                     q = parse_qs(u.query)
                     device_id = (q.get("device_id") or [""])[0]
