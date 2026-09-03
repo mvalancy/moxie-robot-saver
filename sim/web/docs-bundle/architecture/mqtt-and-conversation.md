@@ -377,6 +377,31 @@ push config, then send a ZMQ `ProtoSubscribe` telling the robot to stream STT au
 (subscribe to `embodied.perception.audio.zmqSTTRequest`). There's also a fallback
 `check_device_connect` that fires on the first event/state if the log line was missed.
 
+#### The log is live-only, so a supervisor restart cannot read the roster off it
+
+`$SYS/broker/log/#` is a **stream, not a retained record**: mosquitto publishes each line
+as it happens and re-publishes nothing on a re-subscribe. So a supervisor that restarts
+while a robot is still happily connected sees **no connect line at all** — the line it
+needed was published while the process was down — and the robot will not re-publish
+`/state` either, because from its side nothing happened.
+
+Our fallback is therefore not a nicety, it is the only recovery path, and it now covers
+**both** ingress topics rather than one:
+
+| Path | `moxie_runtime.py` | Behaviour |
+|---|---|---|
+| `/devices/{id}/state` | `_on_state` | registers an unknown device — *"fallback if we missed the log line"*, since the first version |
+| `/devices/{id}/events/{name}` | `_on_event` | **registers it too, since 2026-09-03.** It used to build an *ephemeral* `RobotContext` and answer the turn from it — no config push, no `app.on_connect`, no presence state, absent from `/status` — potentially for the rest of the session |
+
+Registration is not admission: the pairing gate still lives on the transport boundary in
+`_on_message`, so an unpermitted robot becomes *visible as pending* and is served the
+not-paired line, exactly as before. See
+[`backlog/production-hardening.md`](backlog/production-hardening.md) §4.1 C6 and assumption
+A15; `sim/tests/test_connection_resilience.py::test_s7*` holds all three properties.
+
+**What a *robot* does across a broker restart is still unverified** — no physical Moxie
+has ever been on our broker (that brief's §0 and A5). This section describes our side.
+
 ### 3.5 Command names (cloud → robot, `/devices/{id}/commands/{name}`)
 
 | command | payload shape / purpose |

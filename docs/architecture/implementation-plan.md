@@ -671,6 +671,29 @@ webhook apps stopped speaking flat, and `LLMApp` stopped being a second, diverge
 p95 **0.23 ms** per line against a 1 ms budget, no model call, no new dependency; eight byte-exact goldens
 reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` is the one-variable rollback.
 
+**Production hardening P0 — 🟢 done (2026-09-03).** The supervisor stops dying when the broker is late,
+stops lying when the socket is dead, stops answering a question the child abandoned, and stops losing a
+write to a second process it did not know was there. Built to
+[`backlog/production-hardening.md`](backlog/production-hardening.md) §3–§4, whose §3 decision —
+advisory `flock` on a per-record `.lock` sidecar behind a public `JsonStore.transaction()`, JSON staying
+on disk, over WAL-SQLite and over a single-writer rule — was implemented as written; **none of §3.2's
+three falsifiers appeared** (no caller wants two-collection atomicity, `/data` is not on NFS, the console
+still does not write this tree). **Three real bugs closed**, each with a test that failed first:
+`_on_connect` logged *"broker connected"* for a CONNACK **refusal** and subscribed into a closing socket;
+the wakeup route answered `published: true` into a dead socket because its guard was `client is None`
+rather than `is_connected()` — PR #55's own bug surviving in the one place that fix did not look, with
+all eight `publish()` sites ignoring `info.rc`; and `connect_async` alone is a **no-op** under
+`loop_forever()` unless `retry_first_connection=True`. Measured: on `origin/dev`, two processes × 500
+`append`s lost **500 of 1 000** every run; now 0. +40 tests
+([`test_store_concurrency.py`](../../sim/tests/test_store_concurrency.py),
+[`test_connection_resilience.py`](../../sim/tests/test_connection_resilience.py)) and **35 mutations, 0
+missed** — which found five holes, four of them two guards each covering for the other's absence.
+**Honest ceiling, unchanged:** no physical Moxie has ever been on our broker, the P1 soak that stands in
+for *"a week"* does not exist, and both `MOXIE_STORE_LOCK_TIMEOUT_S = 2.0` and the 60 s reconnect ceiling
+are **chosen, not measured**. `/data` on a network filesystem is declared unsupported. The one number
+that *is* measured is the lock's backoff cadence (0.5 ms / 2 ms), because `flock` has no queue and a
+coarse poller starves against a tight writer.
+
 **Most valuable next slice (2026-09-03, re-ranked — the previous two rankings were stale and cost two agent runs on already-built work; check each backlog spec's own status banner before briefing):** ① **the unreachable child voice** — `audio.js`:160 `speak(text, who)` accepts a `who` and **no caller ever passes `"child"`** (`bridge.js`:300,306 pass nothing; `ambient.js`:106 passes `"ambient"`), so two committed clips are dead weight and the demo speaks with one voice where it was designed for two — small, provable, and visible on the page the owner is trying to launch; ② **live-Sim P1 remainder** — exact counters (the per-IP and concurrency limits are best-effort in-process, and a Worker isolate is not a shared counter), Turnstile, a TTS cache; ③ **sandboxed content extensions** (`backlog/sandboxed-extensions.md` P0 — the declarative rule list; two server-side execution holes have now been closed reactively, so the durable model is worth building); ④ **broker auth** (`backlog/security-broker-auth.md` P1, still blocked on assumptions A1–A4); ⑤ the behavior planner. **Already built, do not re-brief:** content packs P0+P1 (PR #51, hardened #78), the voice + listening picker P0 (PR #48, pinned #77), durable telemetry, the console `wakeup` fix. **Owner-blocked, not agent-blocked:** the three Cloudflare Production variables (`DEMO_GATEWAY_BASE_URL`, `DEMO_GATEWAY_API_KEY` as a secret, `DEMO_CHAT_MODEL`) — every other link in the hosted chain is proven on a real deploy.
 
 ## TTS strategy (2026-09-01)

@@ -1,5 +1,5 @@
 {
- "generated": "docs-292e5d88e7d4",
+ "generated": "docs-0d0e1bc39ef1",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 106897,
+   "bytes": 108998,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -163,7 +163,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 73640,
+   "bytes": 75322,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -351,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 113846,
+   "bytes": 114137,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -658,7 +658,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 56356,
+   "bytes": 58855,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",
@@ -686,7 +686,7 @@
     "6. Tests",
     "7. Acceptance criteria",
     "8. Effort and the file list",
-    "P0 — **M**, one agent, one sitting, shippable alone",
+    "P0 — **M**, one agent, one sitting, shippable alone — ✅ **shipped 2026-09-03**",
     "P1 — **M**",
     "P2 — **L**",
     "Risks",
