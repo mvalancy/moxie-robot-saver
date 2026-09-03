@@ -132,6 +132,12 @@ class Supervisor:
             MOXIE_ALLOW_UNVERIFIED_BOTS="1",        # throwaway d_<uuid> per run, as in run_smoke.sh
             MOXIE_DATA_DIR=data_dir,
             MOXIE_STT="off",                        # nothing here speaks TO the robot
+            # ...and nothing here needs a brain, so it does not demand one. `llm` (the
+            # module default) now exits unless MOXIE_LLM_BASE_URL names an endpoint —
+            # this repo ships no default gateway (config.require_llm_base_url) — which is
+            # the same reason run_smoke.sh and sim/compose-smoke.env both pick `echo`.
+            # A test that IS about the brain passes MOXIE_APP itself, as the live suites do.
+            MOXIE_APP="echo",
         )
         self.env.update(env or {})
         self._proc = None

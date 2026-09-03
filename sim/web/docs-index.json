@@ -1,5 +1,5 @@
 {
- "generated": "docs-73bb8b65c2e9",
+ "generated": "docs-819635c5be6f",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 85903,
+   "bytes": 87538,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 80351,
+   "bytes": 82468,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -958,7 +958,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 20924,
+   "bytes": 21568,
    "mermaid": 1,
    "headings": [
     "What comes up",

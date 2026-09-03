@@ -56,7 +56,8 @@ docker compose -f docker-compose.images.yml up            # add -d for the backg
 
 That file is deliberately **self-contained** — it references nothing else in the repo, so
 those two commands are the entire install. Want to configure it? Grab the documented
-example env beside it (optional — every value has a working default):
+example env beside it (you need it for one value — the brain endpoint; everything else
+has a working default):
 
 ```sh
 curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/.env.example
@@ -100,8 +101,10 @@ curl -s http://127.0.0.1:8080/local/fleet | head -c 200  # the console's fleet v
 
 ## Configure it — one `.env`
 
-Every knob lives in **one** file at the repo root. There is a working default for all of
-them, so the stack starts with no `.env` at all:
+Every knob lives in **one** file at the repo root. **One** of them has no default and
+must be set — `MOXIE_LLM_BASE_URL`, the OpenAI-compatible endpoint Moxie thinks with —
+because this repo is public and a baked-in endpoint would point every fork at one
+person's server. Everything else has a working default:
 
 ```sh
 cp .env.example .env         # then edit
@@ -121,7 +124,7 @@ the tracked copy and documents every `MOXIE_*` knob. The ones that matter most:
 | `MOXIE_BIND_HOST` | `0.0.0.0` | Which host interface the published ports bind to. `127.0.0.1` = this machine only. |
 | `MOXIE_BIND_HOST_PLAIN` | `127.0.0.1` | The **plain** MQTT listener (`1883`) binds separately, and to loopback: it is the one door with a fleet-wide identity behind it. A robot never uses it. Set to `0.0.0.0` only to drive the SIM or the tests from another machine. |
 | `MOXIE_APP` | `content` | The brain: `content` (data-driven modules) · `llm` (free-form companion) · `echo` (no LLM, for testing the plumbing) · `webhook` (hand turns to your own service). |
-| `MOXIE_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | our LiteLLM gateway | Any OpenAI-compatible endpoint — the gateway, Ollama, vLLM, LM Studio. **Without a key the stack still runs**; Moxie just answers with a "my brain got fuzzy" fallback instead of real conversation. |
+| `MOXIE_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | **none — you must set the base URL** | Any OpenAI-compatible endpoint: Ollama (`http://host.docker.internal:11434/v1`), vLLM, LM Studio, LiteLLM, a hosted proxy. There is **no default on purpose** — a public repo that shipped one would silently point every clone at its author's server — so `content` and `llm` **exit at startup naming this variable** when it is empty, instead of failing quietly on every turn. `MOXIE_APP=echo` needs no brain and brings the stack up without one. **Without a *key*** (but with a base URL) the stack still runs; Moxie just answers with a "my brain got fuzzy" fallback whenever the endpoint refuses the call. |
 | `MOXIE_TTS` | `tone` | The server voice. `tone` is the built-in zero-dependency placeholder — audio arrives with no model and no key. Real speech: the `voice` profile below. |
 | `MOXIE_STT` | `auto` | Ears. `auto` = on when faster-whisper is in the supervisor image (see the `stt` profile). |
 | `MOXIE_CHILD_NICKNAME` | `friend` | What Moxie calls the child until the console's record is wired in. |

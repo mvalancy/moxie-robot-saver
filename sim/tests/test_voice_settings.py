@@ -398,6 +398,9 @@ _ENV = ("MOXIE_TTS", "MOXIE_STT", "MOXIE_STT_MODEL", "MOXIE_STT_BASE_URL",
 
 
 def _fresh_config(monkeypatch, **env):
+    # The dotenv opt-out comes first: `config._load_env` would otherwise refill every
+    # variable deleted below from a real `mqtt/.env` (playbook rule 20).
+    monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
     for k in _ENV:
         monkeypatch.delenv(k, raising=False)
     for k, v in env.items():

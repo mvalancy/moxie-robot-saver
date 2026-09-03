@@ -284,6 +284,10 @@ CRED_ENV = ("MOXIE_MQTT_USER", "MOXIE_MQTT_PASSWORD", "MOXIE_MQTT_PASSWORD_FILE"
 def fresh_config(monkeypatch):
     """Import `config` with a controlled credential environment (it caches at import)."""
     def _load(**env):
+        # Same reason as `test_stt_gateway._fresh_config`: a real `mqtt/.env` is re-read
+        # on every reload and would refill the credentials deleted here, so a test named
+        # "unset credentials" would assert whatever the developer happens to have.
+        monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
         for key in CRED_ENV:
             monkeypatch.delenv(key, raising=False)
         for key, value in env.items():
