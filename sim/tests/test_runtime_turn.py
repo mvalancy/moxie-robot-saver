@@ -617,7 +617,15 @@ def test_schedule_view_plans_on_demand_for_a_robot_that_has_not_pulled_one(tmp_p
 
 def test_a_parent_requested_activity_lands_at_the_hour_they_asked_for(tmp_path):
     """`SchedulePreferences.parent_requests[]` (RobotCloudConfig field 28) is honored by
-    the planner, not just stored: a 16:00 request is pinned to the 16:00 slot."""
+    the planner, not just stored: a 16:00 request is pinned to the 16:00 slot.
+
+    No wall clock anywhere. `parent_requests_due` pins a request only when
+    `when.date() == now.date()`, and `plan_schedule_for` takes `now` — so a **fixed**
+    day serves the assertion exactly as well as today does, and cannot drift.
+    It used to read `datetime.date.today()` twice, once for the request and once for
+    `now`: a run that crossed local midnight between those two calls put the request on
+    the day before "today", left it unpinned, and failed. Same family as the flakes fixed
+    in PR #60/#63 — narrow, but there is no reason to carry it."""
     import datetime
     from moxie_sdk.store import JsonStore
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"),
@@ -625,11 +633,12 @@ def test_a_parent_requested_activity_lands_at_the_hour_they_asked_for(tmp_path):
     rt.client = _FakeClient()
     did = "d_pref"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
-    at_four = datetime.datetime.combine(datetime.date.today(), datetime.time(16, 0))
+    day = datetime.date(2026, 9, 2)                       # a Wednesday, fixed on purpose
+    at_four = datetime.datetime.combine(day, datetime.time(16, 0))
     rt._config_overrides[did] = {"schedule_preferences": {"parent_requests": [
         {"module_id": "STORY", "scheduled_at": int(at_four.timestamp())}]}}
     sched, expl, _ = rt.plan_schedule_for(
-        did, now=datetime.datetime.combine(datetime.date.today(), datetime.time(15, 0)))
+        did, now=datetime.datetime.combine(day, datetime.time(15, 0)))
     pinned = [e for e in expl if "parent_request" in e["reason_codes"]]
     assert [e["module_id"] for e in pinned] == ["STORY"]
     assert pinned[0]["at"] == "16:00"

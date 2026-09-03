@@ -52,7 +52,11 @@ def _runtime(app=None, *, greet_after_s=300.0, **kw):
 
 
 def _seed_absent(rt, dev, away_s, *, greeted=False):
-    """Put this robot's presence where it would be `away_s` seconds after a departure."""
+    """Put this robot's presence where it would be `away_s` seconds after a departure.
+
+    Clock-relative and correct: presence is scored as an AGE (`greet_after_s`), so the
+    state is defined by offsets from now and means the same thing at any hour. A pinned
+    epoch would make every robot look absent for years."""
     robot = rt.robots[dev]
     now = time.time()
     state = P.new_state()
@@ -225,31 +229,73 @@ def test_an_unpermitted_robot_is_never_greeted():
 
 
 def test_bedtime_hours_suppress_the_hello():
+    """Clock-RELATIVE on purpose: the subject is `rt._in_bedtime`, which reads the real
+    `datetime.now()` itself (moxie_runtime.py:1723), so pinning the test's clock would
+    only test a different function. A window of now±30 min contains now at every one of
+    the 1440 minutes of a day, wrap included — verified exhaustively against
+    `cloud_config.in_bedtime`, whose `start > end` branch is what makes the wrap work.
+
+    **Both** keys are written, never just the one today's weekday picks: the runtime
+    re-reads the clock a moment after this test does, and on a Fri→Sat / Sun→Mon midnight
+    those two reads disagree about which key to look at. Writing both makes the weekday
+    irrelevant instead of nearly-always-right. (Same move as the PR #63 telehealth fix.)"""
     rt, dev = _runtime()
     _seed_absent(rt, dev, away_s=9000.0)
-    now = time.time()
     import datetime
-    cur = datetime.datetime.fromtimestamp(now)
+    cur = datetime.datetime.now()
     start = (cur - datetime.timedelta(minutes=30)).strftime("%H:%M")
     end = (cur + datetime.timedelta(minutes=30)).strftime("%H:%M")
-    key = "weekend_bedtime" if cur.weekday() >= 5 else "weekday_bedtime"
-    rt._config_overrides[dev] = {key: [start, end]}
-    assert rt._in_bedtime(dev) is True
+    rt._config_overrides[dev] = {"weekday_bedtime": [start, end],
+                                 "weekend_bedtime": [start, end]}
+    assert rt._in_bedtime(dev) is True, f"window {start}-{end} must contain {cur:%H:%M}"
     assert _vision(rt, dev, FOUND)["result"] == "NOREPLY_ACK"
 
 
 def test_outside_the_bedtime_window_the_hello_is_allowed():
+    """The other side of the same clock-relative gate, and for the same reason.
+
+    A window of now+2 h … now+4 h excludes now at every one of the 1440 minutes of a day
+    — including the hours where it wraps midnight, because it then reads `start < end`
+    over a wrapped pair rather than as a wrapping window. That was verified exhaustively,
+    which is why the `pytest.skip("the synthetic window wrapped onto now")` this test used
+    to carry is gone: it could never fire, and a skip that cannot fire is an escape hatch
+    a future regression would slip through silently. Both keys, as above."""
     rt, dev = _runtime()
     _seed_absent(rt, dev, away_s=9000.0)
     import datetime
     cur = datetime.datetime.now()
     start = (cur + datetime.timedelta(hours=2)).strftime("%H:%M")
     end = (cur + datetime.timedelta(hours=4)).strftime("%H:%M")
-    key = "weekend_bedtime" if cur.weekday() >= 5 else "weekday_bedtime"
-    rt._config_overrides[dev] = {key: [start, end]}
-    if rt._in_bedtime(dev):
-        pytest.skip("the synthetic window wrapped onto now; nothing to assert")
+    rt._config_overrides[dev] = {"weekday_bedtime": [start, end],
+                                 "weekend_bedtime": [start, end]}
+    assert rt._in_bedtime(dev) is False, f"window {start}-{end} must exclude {cur:%H:%M}"
     assert _vision(rt, dev, FOUND)["result"] == "SUCCESS"
+
+
+def test_the_synthetic_windows_the_two_tests_above_build_hold_at_every_minute():
+    """The premise the two clock-relative tests above rest on, asserted rather than
+    claimed — with no wall clock at all, over all 1440 minutes of a day.
+
+    Those tests cannot pin their own clock (the runtime reads it), so their correctness
+    depends on a property of the *window they synthesize*: now±30 min always contains
+    now, and now+2 h…+4 h never does. That property is exactly the kind of thing that
+    reads as obvious and is not — `["00:00", "23:59"]` also read as "all day" and was
+    false for one minute a night (PR #63). Checked here against the same pure helper the
+    runtime calls, so if a future change to `in_bedtime`'s wrap handling breaks the
+    premise, this fails deterministically instead of the pair above going red once a day."""
+    import datetime
+    from moxie_sdk.cloud_config import in_bedtime
+    base = datetime.datetime(2026, 9, 2)                      # any day; only H:M matters
+    for minute in range(1440):
+        cur = base + datetime.timedelta(minutes=minute)
+        near = [(cur - datetime.timedelta(minutes=30)).strftime("%H:%M"),
+                (cur + datetime.timedelta(minutes=30)).strftime("%H:%M")]
+        far = [(cur + datetime.timedelta(hours=2)).strftime("%H:%M"),
+               (cur + datetime.timedelta(hours=4)).strftime("%H:%M")]
+        assert in_bedtime({"weekday_bedtime": near, "weekend_bedtime": near}, cur) is True, \
+            f"{near} must contain {cur:%H:%M}"
+        assert in_bedtime({"weekday_bedtime": far, "weekend_bedtime": far}, cur) is False, \
+            f"{far} must exclude {cur:%H:%M}"
 
 
 def test_no_bedtime_configured_is_never_bedtime():
@@ -260,6 +306,13 @@ def test_no_bedtime_configured_is_never_bedtime():
 
 
 def test_a_bedtime_window_that_wraps_midnight_is_understood():
+    """Clock-INDEPENDENT despite the `datetime.now()`: only today's *date* is borrowed,
+    the hour and minute are overwritten, and the fixed 20:30-07:00 window's answer for
+    21:30 / 03:00 / 12:00 is the same on every date. The timestamp is passed to
+    `_in_bedtime` explicitly, so the runtime does not read its own clock here either, and
+    the weekday the key is chosen by is `at`'s — the same one the runtime will resolve.
+    Leave it reading `now()`: pinning a date would test nothing extra and would hide a
+    real DST/timezone regression that a real date would surface."""
     rt, dev = _runtime()
     import datetime
     for hhmm, inside in (("21:30", True), ("03:00", True), ("12:00", False)):
@@ -376,16 +429,24 @@ def test_the_llm_system_prompt_gains_the_presence_line_only_when_it_matters():
 
 
 def test_a_content_module_prompt_can_read_presence():
-    # This prompt uses a Jinja `{% if %}` block, which only the full renderer
-    # understands — the minimal fallback leaves it literal. jinja2 is an OPTIONAL
-    # extra (`pyproject.toml`:25 `content`), and the shipped container ships without
-    # it, so the dependency has to be declared or this test lies about that shape.
+    # This prompt uses a Jinja `{% if %}` block. jinja2 is still an OPTIONAL extra of the
+    # SDK (`pyproject.toml` `content`), so a bare `pip install moxie-cloud-sdk` reaches
+    # the dependency-free fallback and this exact assertion would not hold there — hence
+    # the importorskip. What is NO LONGER true is the reason this comment used to give
+    # ("the shipped container ships without it"): PR #62 added `jinja2>=3.0` to
+    # `mqtt/requirements.txt`, so the container runs the real renderer on purpose, and
+    # `test_render_container_deps.py` pins that split in both directions. Since PR #62's
+    # second half the fallback *strips* a block it cannot evaluate rather than leaking
+    # the template source into a system prompt, so the two paths differ in what they
+    # render, never in whether they leak — see `test_render_fallback.py`.
     pytest.importorskip("jinja2", reason="the `{% if %}` form needs the full renderer")
     from moxie_sdk.content.render import render_prompt
     from moxie_sdk.content.content_app import _presence_vars
     from moxie_sdk.types import ChildProfile, RobotContext
     robot = RobotContext(device_id="d_1", child=ChildProfile(nickname="Sam"))
     robot.extra["presence"] = P.new_state()
+    # `present_since` is an age the renderer may phrase; now keeps it fresh, and the
+    # assertion below does not read it — hour-independent.
     robot.extra["presence"].update({"face_present": True, "present_since": time.time()})
     out = render_prompt("{% if presence.face_present %}They are here.{% endif %}",
                         {"presence": _presence_vars(robot)})
