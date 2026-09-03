@@ -20,12 +20,28 @@
  * that exists today is exactly what this contract exists to prevent.
  */
 
-/** The closed reason set (§3.2). Nothing else may ever appear in `reason`. */
+/** The closed reason set (§3.2), plus ONE addition P0-b makes and the reason for it.
+ *
+ * `gateway_unreachable_or_gated` is not in §3.2's list. It exists because the gateway is
+ * expected to sit behind a **Cloudflare Tunnel**, and a tunnel protected by **Cloudflare
+ * Access** answers an unauthenticated server-side `fetch` with an **HTML login page and a
+ * 200 status**. Folding that into `upstream_down` would be technically true and
+ * operationally useless: the two have completely different fixes (restart the gateway vs.
+ * configure `DEMO_GATEWAY_ACCESS_CLIENT_ID`/`_SECRET`, see `./env.js::ACCESS_VARS`), and
+ * from a bare 502 they are indistinguishable. So it gets its own reason, with the same
+ * 503 status and the same visitor-facing copy as `upstream_down` — the visitor's
+ * experience is identical, and only the operator learns anything new.
+ *
+ * Adding a reason is a CONTRACT CHANGE, so it is made in exactly two places and nowhere
+ * else: here, and `sim/web/mode.js`'s matching list — where an unknown reason is coerced
+ * to `null` and would therefore be misread as a HEALTHY turn. That is why the client half
+ * is not optional. */
 export const REASONS = Object.freeze([
   "rate_limited",
   "at_capacity",
   "budget_exhausted",
   "upstream_down",
+  "gateway_unreachable_or_gated",
   "gateway_not_configured",
   "timeout",
   "bad_request",
@@ -49,6 +65,7 @@ export const PUBLIC_KEYS = Object.freeze([
   "messages",
   "speech",
   "context",
+  "transcript",
   "voice",
   "ears",
 ]);
@@ -59,6 +76,7 @@ export const STATUS_FOR = Object.freeze({
   at_capacity: 503,
   budget_exhausted: 503,
   upstream_down: 503,
+  gateway_unreachable_or_gated: 503,
   gateway_not_configured: 503,
   timeout: 504,
   bad_request: 400,
@@ -76,6 +94,7 @@ export const STATUS_FOR = Object.freeze({
 export const RETRY_AFTER_FOR = Object.freeze({
   at_capacity: 15,
   upstream_down: 60,
+  gateway_unreachable_or_gated: 60,
   timeout: 10,
   gateway_not_configured: null,
   rate_limited: null,
@@ -163,6 +182,13 @@ export function envelope(partial) {
     messages: wireList(p.messages),
     speech: speechList(p.speech),
     context: typeof p.context === "string" ? p.context : "",
+    // P1's ears (`/api/transcribe`). It is a FIELD ON THE ONE ENVELOPE rather than the
+    // bare `DeepgramResponse` §3.2 sketched, and that is a deliberate deviation recorded
+    // at `functions/api/transcribe.js`'s header: a Deepgram body carries no `reason`, no
+    // `mode` and no `retry_after_s`, so a rate-limited visitor would be indistinguishable
+    // from a deployment with no ears at all and `mic.js` could not degrade honestly. The
+    // Deepgram shape is still what `mic.js` parses from the LOCAL sidecar, unchanged.
+    transcript: typeof p.transcript === "string" ? p.transcript : "",
     voice: !!p.voice,
     ears: !!p.ears,
   };

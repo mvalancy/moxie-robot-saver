@@ -87,6 +87,9 @@ class Broker:
         return self
 
     def wait_ready(self, timeout: float = 15.0):
+        # `time.time()` here measures a DURATION, not a date: the loop is a deadline, and
+        # its answer is the same at every hour of every day. Clock-reading, not
+        # clock-dependent — see the ledger in `test_clock_dependence.py`.
         import socket
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -149,6 +152,7 @@ class Supervisor:
             return ""
 
     def wait_for(self, needle: str, timeout: float = 30.0) -> str:
+        # Deadline, not a date — see `wait_ready` above.
         deadline = time.time() + timeout
         while time.time() < deadline:
             body = self.text()
@@ -207,3 +211,33 @@ class Stack:
     @property
     def port(self) -> int:
         return self.broker.port
+
+    def restart_supervisor(self, *, env=None, timeout: float = 60.0) -> "Supervisor":
+        """Stop `mqtt/run.py` and start a NEW one on the same broker and the same
+        `MOXIE_DATA_DIR` — a real process restart, which is the only honest way to prove
+        that durable state is durable.
+
+        A fresh `MoxieRuntime` object over the same `JsonStore` proves the hydration
+        *code path*, but it shares the test's interpreter: module-level caches, an
+        `atexit` flush or a store the runtime happened to keep open would all survive it
+        and nobody would notice. This does not — the old process is gone, and the new one
+        is the shipped entry point reading its own environment again.
+
+        The status port is re-picked (a `TIME_WAIT` socket on the old one would make the
+        new supervisor's status server fail to bind, and that failure is best-effort and
+        silent), so a caller holding the old `status_url` must re-read it from the
+        returned `Supervisor`. `env` overlays the new process's environment; omitted, it
+        inherits exactly what the first one had.
+        """
+        assert self.supervisor is not None, "nothing to restart"
+        previous = dict(self.supervisor.env)
+        self.supervisor.stop()
+        merged = {k: v for k, v in previous.items() if k.startswith("MOXIE_")}
+        merged.pop("MOXIE_STATUS_PORT", None)       # re-picked by Supervisor.__init__
+        merged.update(env or {})
+        self.supervisor = Supervisor(self.log_dir, broker_port=self.broker.port,
+                                     data_dir=self.data_dir, env=merged)
+        # A second process writing the same log path would truncate the first one's
+        # evidence, so the restart gets its own file.
+        self.supervisor.log = os.path.join(self.log_dir, "supervisor-restart.log")
+        return self.supervisor.start(timeout)

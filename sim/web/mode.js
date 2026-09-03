@@ -48,7 +48,16 @@
   var STRIKES_TO_DEGRADE = 3;   // consecutive transport errors before live -> degraded
 
   // ---- the closed reason set (§3.2). Anything else is treated as unknown. ----
+  // `gateway_unreachable_or_gated` is P0-b's one addition to §3.2's set: the gateway is
+  // expected to live behind a Cloudflare Tunnel, and a tunnel behind Cloudflare Access
+  // answers a server-side fetch with an HTML LOGIN PAGE AND A 200 — so the Function
+  // distinguishes "the brain is down" from "the door in front of it is locked"
+  // (functions/api/_lib/envelope.js says why). It MUST be listed here: an unknown reason
+  // is coerced to `null` below, which `note()` would then read as a HEALTHY turn.
+  // The visitor sees the same badge and the same copy as `upstream_down`; only an
+  // operator reading the reason learns anything.
   var REASONS = ["rate_limited", "at_capacity", "budget_exhausted", "upstream_down",
+                 "gateway_unreachable_or_gated",
                  "gateway_not_configured", "timeout", "bad_request", "too_long",
                  "too_short", "bad_ticket", "blocked", "forbidden_origin"];
 
@@ -128,7 +137,8 @@
     if (state === "degraded") {
       if (reason === "budget_exhausted")
         return { badge: BADGE_SCRIPTED, message: COPY.budget_exhausted };
-      if (reason === "upstream_down" || reason === "timeout")
+      if (reason === "upstream_down" || reason === "timeout" ||
+          reason === "gateway_unreachable_or_gated")
         return { badge: BADGE_SCRIPTED, message: COPY.unreachable };
       if (reason === "at_capacity") return { badge: BADGE_BUSY, message: COPY.full };
       // gateway_not_configured (and anything unknown): today's copy, unchanged. §7 is
@@ -303,7 +313,7 @@
 
     if (r === "forbidden_origin") { absent(); return snapshot(); }   // §4.5: treated as offline
     if (r === "gateway_not_configured") { setState("degraded", r); clear(); return snapshot(); }
-    if (r === "budget_exhausted" || r === "upstream_down") {
+    if (r === "budget_exhausted" || r === "upstream_down" || r === "gateway_unreachable_or_gated") {
       setState("degraded", r);
       schedule(retryMs || POLL_MIN_MS);
       return snapshot();

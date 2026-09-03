@@ -482,17 +482,34 @@ def test_the_bedtime_warning_is_reported_and_the_line_is_still_sent(rt):
     be worse than saying so."""
     import datetime
     runtime, device_id = rt
-    runtime.update_config(device_id, weekday_bedtime=["00:00", "23:59"],
-                          weekend_bedtime=["00:00", "23:59"])
+
+    # A window centred on *now*, so this test cannot depend on the hour it runs at.
+    # It used to say ["00:00", "23:59"], which reads as "all day" but is not: the helper
+    # compares `start <= cur < end`, so that window is false for exactly the minute
+    # 23:59, and the test failed there once a day. A now±1h window always contains now,
+    # including when it wraps midnight — `in_bedtime` handles `start > end` explicitly,
+    # and the wrap is the normal case for a real bedtime (20:30-07:00).
+    now = datetime.datetime.now()
+    start = (now - datetime.timedelta(hours=1)).strftime("%H:%M")
+    end = (now + datetime.timedelta(hours=1)).strftime("%H:%M")
+    runtime.update_config(device_id, weekday_bedtime=[start, end],
+                          weekend_bedtime=[start, end])   # both, so the weekday never matters
     runtime.client = FakeClient()
     view = runtime.telehealth_view(device_id)
-    assert view["in_bedtime"] is True
+    assert view["in_bedtime"] is True, f"window {start}-{end} must contain {now:%H:%M}"
     assert runtime.telehealth_speak(device_id, "Sleep well.")["ok"] is True
     assert len(_telehealth_msgs(runtime, device_id)) == 1
+
     # …and the pure helper the view reads is exactly the runtime's own answer.
     from moxie_sdk.cloud_config import in_bedtime
-    assert in_bedtime(runtime.effective_config(device_id),
-                      datetime.datetime(2026, 9, 2, 12, 0)) is True
+    assert in_bedtime(runtime.effective_config(device_id), now) is True
+
+    # Plus a fully deterministic pair — no wall clock anywhere — so the helper's real
+    # semantics stay pinned even if the block above were ever loosened: a normal wrapping
+    # night contains 23:00 and excludes noon.
+    night = {"weekday_bedtime": ["20:30", "07:00"], "weekend_bedtime": ["20:30", "07:00"]}
+    assert in_bedtime(night, datetime.datetime(2026, 9, 2, 23, 0)) is True
+    assert in_bedtime(night, datetime.datetime(2026, 9, 2, 12, 0)) is False
 
 
 # --------------------------------------------------------------------------- #

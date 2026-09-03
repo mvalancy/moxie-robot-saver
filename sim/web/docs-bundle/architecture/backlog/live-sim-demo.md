@@ -1,7 +1,9 @@
 # 🌐 Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears
 
-**State: P0-a built, P0-b build-ready (2026-09-02).** P0-a — the mode machine and the honest
-indicator, §9's first table — is implemented and green; nothing else here is shipped. This is the file
+**State: P0-a + P0-b built (2026-09-02); P1's EARS built (2026-09-03).** Both P0 tables in §9 are
+implemented and green, and `POST /api/transcribe` + the client recording cap now ship with them.
+The rest of P1 (the 17 missing clips, exact counters, Turnstile, the TTS cache, a nonce CSP) and all
+of P2 are not shipped. This is the file
 [`../orchestration-plan.md`](../orchestration-plan.md):34 points at (`backlog/live-sim-demo.md`) and that
 did not exist until now.
 **Owner outcome:** *full cloud service* — outcome 1's public face.
@@ -318,18 +320,48 @@ changes to either.
 
 ---
 
-#### `POST /api/transcribe` — the ears (P1)
+#### `POST /api/transcribe` — the ears — **BUILT 2026-09-03**
 
 **Request:** the raw audio bytes as the body, `Content-Type` from the blob — i.e. **exactly what
-`mic.js`:37‑39 already sends**. **Response:** the `DeepgramResponse` shape
-`{"channel":{"alternatives":[{"transcript":"…","confidence":0.0}]}}`, which is **exactly what
-`mic.js`:44‑45 already parses**. The Function repackages the body as a multipart `file` upload to
-`/v1/audio/transcriptions` with a server-fixed `model`.
+`mic.js`:37‑39 already sent**. The Function repackages the body as a multipart `file` upload to
+`/v1/audio/transcriptions` with a server-fixed `model`, and nothing else: no `language`, no `prompt`,
+no `temperature`, no client `response_format`.
 
-*Client change: one line.* `mic.js`:15‑16 gains a same-origin default:
-`STT_BASE = localStorage.getItem("moxie.sttBase") || (window.moxieMode && window.moxieMode.apiBase()) || "<the current :8082 default>"`.
-On any non-2xx, `mic.js`:50‑64 **already** falls back to a scripted child line — the degrade path is
-free.
+**Response: the house envelope, with a `transcript` field** — *not* the `DeepgramResponse` shape this
+section originally specified. That was a deliberate change, and the reason is §6: a Deepgram body
+carries no `reason`, no `mode`, no `retry_after_s` and no `limits`, so a rate-limited visitor would be
+indistinguishable from a deployment with no ears and a spent budget from a dead gateway — and `mic.js`
+could not degrade *honestly*, which is the one thing the fallback contract asks of it. `mic.js` reads
+`transcript` from the envelope and **keeps its Deepgram parse for the local sidecar**
+(`sim/stt/server.py`:69‑70), which is untouched. One extra branch in the client buys the whole §4.5
+status table.
+
+**An upstream 4xx about the payload answers `bad_request` (400), not `upstream_down` (503).**
+`mode.js` degrades the whole page off a 503 (§6.3), so a gateway that refuses one audio container
+would otherwise take the brain and the voice down with it — while §4.5's `bad_request` row says
+explicitly that it *does not change mode*. 401/403 stay `upstream_down`, because a revoked key really
+is an operator problem. The table is `transcribe.js::reasonForUpstreamStatus`.
+
+**The container allowlist, and why it exists.** §10 assumption 15 is now **settled FALSE**: the
+gateway answers **HTTP 500** to webm/Opus, ogg/Opus and mp4/AAC, and transcribes a 16 kHz mono
+RIFF/WAVE word-perfect. Since 500 maps to `upstream_down`, forwarding a browser's default recording
+would degrade the whole page on every press of the microphone. So `DEMO_STT_FORMATS` (default `wav`)
+is checked *before* the call, and anything outside it is refused per-turn and for free. The evidence
+table lives at `functions/api/_lib/env.js::sttFormats`.
+
+*Client change, and it turned out not to be one line.* `mic.js` now asks the mode machine where to
+post (`window.moxieMode.apiBase()` + `ears()`, exactly as `cloud-transport.js` does for chat and the
+voice), with an explicit `moxie.sttBase` still winning so a home stack is never redirected. And
+because a `MediaRecorder` cannot produce a WAV, the hosted path **encodes one itself** —
+`getUserMedia` → `AudioContext` → Float32 → decimate to 16 kHz → s16 → a RIFF header, which is what
+`mqtt/moxie_sdk/stt.py::wav_bytes` has always done server-side and what §2.1 observed was missing from
+`sim/web` entirely. The local sidecar keeps `MediaRecorder`: faster-whisper decodes anything.
+
+**The recording cap is the real cost ceiling.** `DEMO_MAX_RECORD_MS` (15 s) is published in
+`/api/health`'s `limits` and enforced by `mic.js`, because §4.1 is explicit that `DEMO_MAX_AUDIO_BYTES`
+is a *size* cap and not a *duration* cap for a compressed container — and a Function only ever sees a
+finished upload. On any refusal `mic.js` falls back to the scripted child line it always had, with the
+reason on the status line.
 
 ### 3.3 The context blob — memory without a store
 
@@ -573,7 +605,9 @@ and `CLOUDFLARE_ACCOUNT_ID` as GitHub secrets; that is an alternative path, expl
 | `DEMO_TTS_VOICE` | var | *(empty)* | no | The OpenAI `voice` field. Our gateway encodes the voice in the model id, so empty is correct there (`config.py`:91‑92). |
 | `DEMO_TTS_FORMAT` | var | `wav` | no | Only `wav` and `pcm` are decoded — mirrors `config.py`:101. mp3/opus are **not** decoded. |
 | `DEMO_TTS_SAMPLE_RATE` | var | `22050` | no | Read **only** when the format is `pcm`; a wav reply carries its own rate (`config.py`:114). |
-| `DEMO_STT_MODEL` | var | *(empty)* | for ears (P1) | e.g. `stt-whisper` (`litellm-stt-setup.md`:18) or `whisper-1`. Unset ⇒ `ears: false` and `mic.js` keeps its scripted fallback. |
+| `DEMO_STT_MODEL` | var | *(empty)* | for ears | e.g. `stt-whisper` (`litellm-stt-setup.md`:18) or `whisper-1`. Unset ⇒ `ears: false`, `/api/transcribe` answers `gateway_not_configured` and makes **no upstream call**, and `mic.js` keeps its scripted fallback. |
+| `DEMO_STT_FORMATS` | var | `wav` | no | The containers this gateway accepts at `/audio/transcriptions`. **The default is a measurement, not caution** — see §10 assumption 15. Anything outside it is refused per-turn, for free, *before* the call. Widen it for a more capable gateway: `wav,webm,ogg,mp4,mp3,flac`. |
+| `DEMO_MAX_RECORD_MS` | var | `15000` | no | §4.1's client-side recording cap. Published in `/api/health`'s `limits` and enforced by `mic.js`. **This, not `DEMO_MAX_AUDIO_BYTES`, is the ceiling on what the ears can cost.** |
 | `DEMO_PERSONA` | var | built-in | no | The system prompt. The built-in default is a short, kid-safe Moxie persona committed in the repo. |
 | `DEMO_DEVICE_ID` | var | `d_sim` | no | The topic segment the Function stamps (`/devices/<id>/commands/…`), matching `bridge.js`:453. |
 | `DEMO_ALLOWED_ORIGINS` | var | *(empty = request origin only)* | no | Comma-separated extras, e.g. to allow a preview host or a second domain. |
@@ -738,6 +772,7 @@ same trick `sim/test_bridge.mjs`:31‑51 already uses for `bridge.js`.
 | 5 | `node sim/test_cloud_transport.mjs` | Loads `bridge.js` + `cloud-transport.js` under the stubbed-window harness with a stubbed `fetch`: `window.moxieBridge` still exposes all seven members; the **TTS message is routed before the chat message**; on a slow `/api/speech` the chat message still lands by `DEMO_SPEECH_WAIT_MS`; `hasCloudVoice()` is true after; in `degraded` the wrapper delegates to `inner.sendUserTurn` and `stub.js` answers. |
 | 6 | `node sim/test_fallback_coverage.mjs` | Every Moxie line in `sim/web/sessions/*.json` has an `audio/index.json` entry whose file exists on disk — the shape of `sim/test_ambient.mjs`:29‑39. **P0 covers sessions only** (that passes today). **P1 extends it to `stub.js`'s SCRIPT+FALLBACK and `filler.py`'s `_LINES`**, in the same commit as the clips — landing it earlier just paints the build red. |
 | 7 | extend `sim/test_env_hosted.mjs` | Still **zero** `:8081`/`:8082` probes on a hosted hostname; with `/api/health` 404 the badge reads `HOSTED DEMO` and there are no console errors; with a stubbed live health response the badge reads `HOSTED DEMO · LIVE` and `#mic-btn` no longer carries `needs-backend`. |
+| 6b | `node sim/test_demo_ears.mjs` | **The ears, both halves, hermetically.** Part A calls `functions/api/transcribe.js` with a synthetic `Request` and a stubbed `fetch`: both byte caps, with a clip under `DEMO_MIN_AUDIO_BYTES` making **zero** upstream calls; the per-IP windows and the unit budget; our own `AbortSignal` timeout and its env override; an unset `DEMO_STT_MODEL` and a foreign `Origin` each making zero upstream calls; a nine-row upstream-status table proving a payload 4xx is per-turn while 401/403/5xx degrade; the container allowlist refusing webm/ogg/mp4/mp3/flac with a **400 and no call** (asserting explicitly that it is *not* a 503); and a hostile upstream body naming the model and a key prefix swept out of every response and every header. Part B evaluates the **real `sim/web/mic.js`** under a stubbed window with a virtual clock and a **fake recorder** — no microphone is opened — and proves the 15 s hard stop actually stops a recorder (still running at 14 999 ms, stopped at 15 001 ms), that the mode machine picks the target, that an explicit `moxie.sttBase` still wins, that every refusal reason still answers with a scripted child line, and that the browser's own WAV encoder produces a file the **server's** RIFF walker reads back at 16 kHz mono 16-bit. |
 | 8 | `python3 -m pytest sim/tests/test_ci_workflows.py` | The six node tests above are wired into `sim/ci/ci.yml` — the guard that already exists for tier drift. |
 | 9 | a repo lint (new step) | No file under `functions/` or `sim/web/` contains `sk-`, a gateway hostname, `mattvalancy`, or a 32-hex account id. `wrangler.toml` contains no `[vars]`. `.dev.vars` is git-ignored. |
 
@@ -809,7 +844,53 @@ preview `curl` settles them.
 | `sim/test_mode.mjs`, extended `sim/test_env_hosted.mjs` | new/edit | 220 |
 | `sim/ci/ci.yml`, `sim/tests/test_ci_workflows.py` | edit | 10 |
 
-**P0-b · the live turn** — M
+**P0-b · the live turn** — M — **BUILT 2026-09-02** (branch `feat/livesim-live-turn`).
+Every file below exists and is green: `node sim/test_demo_proxy.mjs`,
+`test_demo_tickets.mjs`, `test_wav_decode.mjs`, `test_cloud_transport.mjs` and
+`test_fallback_coverage.mjs` all run under bare node with a stubbed `fetch`, wired
+into `sim/ci/ci.yml` ahead of the browser install and guarded by
+`sim/tests/test_ci_workflows.py`. **Tested** (not merely intended): the key and the
+gateway base URL appear in NO response body or header on any path, success or
+failure, including a hostile upstream 500 that names the model, the org and a key
+prefix (139 sweeps, 0 leaks); every refusal path makes ZERO upstream calls, recorded
+rather than inferred; a forged, expired, over-length, replayed or field-tampered
+ticket is refused for free, and the constant-time compare walks the same 32-byte
+width whichever byte differs; a hard-blocked utterance never reaches a model; the
+chat field set equals `wire.build_chat_response`'s with the Python builder as
+oracle; the server WAV decoder and `audio.js`'s browser decoder agree sample for
+sample; and the TTS message is routed before the chat message, with the naive order
+demonstrated on the same bridge to prove the double voice is real.
+**Three deliberate deviations, each documented at its site:** (1) a blocked turn
+answers the rule table's own redirect line rather than `stub.js`, because `stub.js`
+answers a self-harm disclosure with "Tell me more about that!" — it still spends
+nothing (`_lib/safety.js::redirectFor`); (2) `cloud-transport.js` injects a **Talk**
+box, because `#speech-input` makes MOXIE speak and nothing on the page could send a
+child's turn, so "types a sentence" in the definition of done had no control; (3)
+one reason is ADDED to §3.2's closed set — `gateway_unreachable_or_gated` — for a
+gateway behind a Cloudflare Tunnel protected by Cloudflare Access, which answers an
+unauthenticated server-side fetch with an HTML login page at status 200; folding
+that into `upstream_down` would be true and useless, since the fixes differ
+entirely. It carries the same status, `Retry-After` and visitor-facing copy, and is
+mirrored in `sim/web/mode.js` (an unknown reason there is coerced to `null` and
+would be misread as a healthy turn). `DEMO_GATEWAY_ACCESS_CLIENT_ID` /
+`_SECRET` are optional, both-or-neither, and half a token answers
+`gateway_not_configured` rather than calling upstream half-credentialled.
+**Settled by the deploy, the hard way (2026-09-03):** a Pages build does **not**
+accept the `import ... with { type: "json" }` attribute `_lib/safety.js` used for
+its rule table. The Pages check went `FAILURE` on this branch while the same check
+was green on `dev`, and that one line was the only structural difference in the
+Functions tree — a failure invisible to all 1637 hermetic tests, because node
+accepts the syntax. The table now lives in `_lib/safety.rules.js` as a plain data
+module (content re-emitted mechanically and compared parsed, not retyped; the
+`.json` is deleted rather than kept, so there is one source of truth), and
+`sim/test_demo_proxy.mjs` now fails locally on any `.json` import or import
+attribute anywhere under `functions/`. See assumption 26.
+**Not settled, and it cannot be from here:** §10's assumptions 8-13 (unchanged) —
+all fail safe, and one preview `curl` settles them.
+**Best-effort by design, and said out loud in the code:** the per-IP windows, the
+concurrency ceiling and the unit budget are in-process, so they stop scripts and
+accidents but are not a hard global ceiling (§4.6); the ceilings that hold are the
+per-request caps, the ticket, and a budget-scoped gateway key (§10 assumption 14).
 
 | File | Action | ~Lines |
 |---|---|--:|
@@ -819,7 +900,7 @@ preview `curl` settles them.
 | `functions/api/_lib/limits.js` | new — per-IP windows, concurrency, unit budget (best-effort) | 130 |
 | `functions/api/_lib/wire.js` | new — the `build_chat_response` field set + the three mark templates | 110 |
 | `functions/api/_lib/wav.js` | new — RIFF walker → `{pcm, rate, channels}` | 80 |
-| `functions/api/_lib/safety.json` + `safety.js` | new — the small pre-inference rule table | 120 |
+| `functions/api/_lib/safety.rules.js` + `safety.js` | new — the small pre-inference rule table. **Shipped as `safety.json` and moved:** the Pages build rejects `import ... with { type: "json" }` (assumption 26) | 120 |
 | `sim/web/cloud-transport.js` | new — the wrapper + voice-first ordering | 180 |
 | `sim/web/sim.html` | edit — one more `<script>` after `mode.js` | 1 |
 | `.dev.vars.example`, `.gitignore` | new/edit | 12 |
@@ -832,7 +913,17 @@ the deploy-guide rewrite.
 
 ### P1 — M
 
-`functions/api/transcribe.js` + the one-line `mic.js` base change + the 15 s recording cap · the 9 stub
+**The ears are BUILT (2026-09-03, branch `feat/livesim-ears`).** `functions/api/transcribe.js`,
+`DEMO_STT_FORMATS` + `DEMO_MAX_RECORD_MS` in `_lib/env.js`, `readAudioBody` in `_lib/limits.js`,
+`transcript` in the envelope's key allowlist, the `mic.js` rewrite (mode-driven base, the 15 s hard
+stop, the browser WAV encoder, honest per-reason degrade) and `sim/test_demo_ears.mjs` (1 324
+assertions, 75 secret sweeps, 0 leaks), wired into the fast CI tier ahead of the browser install.
+**Two things turned out differently from this brief and are documented at their sites:** the response
+is the house envelope rather than a bare `DeepgramResponse` (§3.2), and the `mic.js` change was not
+one line — the gateway rejects every compressed container, so the browser has to encode WAV itself
+(§10 assumption 15). The remaining P1 items are untouched:
+
+the 9 stub
 clips + 8 filler clips + the degraded line, and `test_fallback_coverage.mjs` extended to cover them ·
 skip the 1.4 s Piper probe when degraded (`audio.js`:177‑183) · **exact** counters on KV or a Durable
 Object once the dashboard says which exists · Turnstile before the first paid call of a session, then a
@@ -871,8 +962,8 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 | 12 | Free-tier Pages Functions request allowance, CPU limit and concurrency | **unverified — stated nowhere in the repo** | Dashboard. The only Cloudflare limit the repo states is 25 MB/file (`deploy-cloudflare.md`:169). |
 | 13 | KV / Durable Objects / the WAF Rate Limiting product are available on this account and plan | **unverified** | Dashboard. This is why P0's counter is best-effort and P1 owns the exact one. Durable Objects historically need a paid Workers plan. |
 | 14 | The LiteLLM gateway can mint a virtual key with a hard budget and RPM/TPM limits | **unverified** | Ask the gateway. **Check this first** — if it can, it is a one-line control bounding the absolute worst case, and everything in §4 becomes defence in depth. |
-| 15 | The gateway's `/v1/audio/transcriptions` accepts webm/Opus (what `MediaRecorder` produces) | **unverified** | A live probe. Blast radius is contained: `mic.js`:50‑64 already falls back to a scripted line on any non-2xx. |
-| 16 | `MediaRecorder`'s default container/codec per browser, and the mic's actual sample rate | **unverified** | Not pinned anywhere in the repo; `mic.js`:77 only falls back to the string `"audio/webm"` and never constrains the rate. Irrelevant to P0. |
+| 15 | The gateway's `/v1/audio/transcriptions` accepts webm/Opus (what `MediaRecorder` produces) | **SETTLED FALSE (2026-09-03)** — it does not, and neither ogg/Opus nor mp4/AAC | Settled by the only thing that could: real calls, through `sim/tools/probe_demo_gateway.mjs --only=stt`, which posts the body `transcribe.js::buildTranscribeForm` actually builds. One utterance (`sim/web/audio/moxie/03e31950df81e786.mp3`, *"Hi! I am Moxie. It is nice to meet you."*, transcoded with `ffmpeg`) in four containers against `stt-whisper`: **16 kHz mono RIFF/WAVE → 200, word-perfect, 2 582 ms; 48 kHz mono webm/Opus → 500; 48 kHz mono ogg/Opus → 500; 44.1 kHz mono mp4/AAC → 500** — the three failures carrying an identical 270-byte JSON error. Two codecs and three containers failing the same way says the deployment decodes PCM and nothing else, which is also why `mqtt/moxie_sdk/stt.py` never hit it: `wav_bytes` has always wrapped the robot's frames in RIFF first. (A fifth call, on mp3, came back **429** from the gateway's own limiter, so mp3 is **inconclusive** and is not claimed either way.) **Blast radius was NOT contained, which is the finding that mattered:** the gateway answers 500, not a 4xx, so it maps to `upstream_down` — a 503 — and §6.3 degrades the WHOLE PAGE on a 503. Forwarding a browser's default recording would have taken the brain and the voice down every time someone pressed the microphone, after paying 1.6‑4.3 s for it. Fixed in two places: `DEMO_STT_FORMATS` (default `wav`) refuses an unaccepted container *before* the call, per-turn and for free; and `sim/web/mic.js` now **encodes 16 kHz mono WAV in the browser** rather than shipping whatever `MediaRecorder` produced. |
+| 16 | `MediaRecorder`'s default container/codec per browser, and the mic's actual sample rate | **SETTLED for the container family; the exact per-browser mime string and rate remain unverified** | Settled by consequence rather than by a browser: assumption 15's fix means the hosted path **no longer uses `MediaRecorder` at all**, so its default has stopped being load-bearing. What is established: it produces a *compressed* container and never a WAV (webm/Opus on Chrome and Firefox, mp4/AAC on Safari), which `mic.js`:77's old `rec.mimeType \|\| "audio/webm"` fallback had assumed; and all three of those are containers this gateway answers 500 to (row 15). The hosted path now pins the rate itself — `AudioContext` frames decimated to **16 000 Hz**, the rate `litellm-stt-setup.md`:*"The rate that matters is 16000"* names and the rate of the control clip that transcribed live. **Still unverified, and it cannot be settled from here:** the exact mime string and `AudioContext.sampleRate` each browser reports, which would need a real browser with a real microphone — something no test in this repo may open (playbook rule 11). It no longer changes any decision: the encoder reads whatever `ctx.sampleRate` says and writes the **true** rate into the header, never upsampling, so a 44.1 kHz box and a 48 kHz box both produce a correct file. The local sidecar still uses `MediaRecorder`, where the default is fine because faster-whisper decodes anything. |
 | 17 | An `https://` page cannot open a `ws://` socket | **inferred** (general browser behaviour, not asserted by the repo) | Does not matter: MQTT is left as a peer transport for self-hosters and the HTTP path does not use it. |
 | 18 | No physical Moxie has ever been observed playing chunk 1+ of an `event_id` | **unverified, and inherited unchanged** | `mqtt-and-conversation.md`:723‑732 names the fallback. P0 sends single-chunk turns only, so it does not depend on this. |
 | 19 | Cost per token / per second on the gateway | **unverified — no price sheet exists in the repo** | Only latency and byte sizes are recorded. Budgets are therefore denominated in **request units**, not dollars, until someone supplies prices. |
@@ -882,6 +973,7 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 | 23 | The Cloudflare **account id is already public** in every commit's check-run URL | **proven** (survey) | Not a credential, but worth knowing given `orchestration-plan.md`:32's "no account id is hard-coded" — nothing in this spec adds it to a file. |
 | 24 | Origin/Referer checks stop only browser hotlinking | **proven by reasoning, stated in the code** | Headers are trivially forged by `curl`. The controls that matter are the caps, the budget and assumption 14. |
 | 25 | The best-effort counter is not a true global ceiling | **proven** | Cache API is per-colo; an isolate map is per-isolate. Said out loud in §4.6 and in the code comment. |
+| 26 | A Cloudflare Pages build accepts the `import ... with { type: "json" }` attribute, so a Function may load a `.json` data file | **SETTLED FALSE (2026-09-03)** — it does not | Settled by the only thing that could: a real deploy. P0-b's `_lib/safety.js` loaded its rule table that way; the Pages check went `COMPLETED/FAILURE` on `feat/livesim-live-turn` while the identical check was `success` on `dev`, and that single line was the only structural difference in the Functions tree. **Node 20 accepts the syntax, so all 1637 hermetic tests were green** — this was invisible to every local guard, which is the general lesson: a bundler-specific extension cannot be validated by the runtime the tests use. Fixed by inlining the table as `_lib/safety.rules.js` (a plain `export const RULES`), deleting the `.json` so there is one source of truth, and adding a guard in `sim/test_demo_proxy.mjs` that fails on any `.json` import or import attribute under `functions/` — converting a deploy-only failure into a one-second local one. |
 
 ---
 

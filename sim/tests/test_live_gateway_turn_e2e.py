@@ -59,7 +59,12 @@ MODEL = (os.environ.get("MOXIE_VOICE_MODEL") or "piper-amy").strip()
 #: Speech is broadband; the tone is one sine. Observed on this gateway: tone ~3.1e-12,
 #: piper-amy ~5.2e-02 — thirteen orders of magnitude. A floor of 1e-6 is nowhere near
 #: either, so it separates them without being tuned to today's numbers.
-SPEECH_FLATNESS_FLOOR = 1e-6
+#:
+#: Re-exported from `helpers_audio` rather than restated: this file used to carry its own
+#: literal `1e-6`, and two copies of a threshold are two thresholds. The predicate every
+#: assertion below actually calls is `helpers_audio.is_real_speech`, so the SIL suites,
+#: the telehealth-voice suite and this one can never disagree about what "speech" means.
+SPEECH_FLATNESS_FLOOR = A.SPEECH_FLATNESS_FLOOR
 
 
 # --------------------------------------------------------------------------- #
@@ -73,8 +78,10 @@ def test_the_placeholder_tone_fails_the_speech_guard():
     pcm = tone.synthesize("Hi Sam, I am Moxie.")
     assert tone.sample_rate == 22050, tone.sample_rate     # same rate as the gateway WAV
     flat = A.spectral_flatness(pcm)
-    assert flat < SPEECH_FLATNESS_FLOOR, (
+    assert not A.is_real_speech(pcm), (
         f"the tone ({flat:.3e}) is above the speech floor — the guard is useless")
+    assert SPEECH_FLATNESS_FLOOR == A.SPEECH_FLATNESS_FLOOR == 1e-6, \
+        "the floor moved; re-check both directions of this guard before trusting it"
 
 
 # --------------------------------------------------------------------------- #
@@ -146,7 +153,7 @@ def test_the_audio_the_robot_heard_is_real_speech_not_the_tone(turn):
     seconds = A.duration_s(spoke["audio"], spoke["sample_rate"])
     print(f"\n[live] 🔊 {len(spoke['audio'])} B @ {spoke['sample_rate']} Hz "
           f"({seconds:.2f}s) flatness={flat:.3e} model={MODEL}")
-    assert flat > SPEECH_FLATNESS_FLOOR, (
+    assert A.is_real_speech(spoke["audio"]), (
         f"flatness {flat:.3e} is tone-shaped — the gateway voice did not speak")
     assert seconds > 0.3, seconds
 

@@ -1,5 +1,5 @@
 {
- "generated": "docs-8aefd2fa67ee",
+ "generated": "docs-27d5d85d6f7a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,14 +109,14 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 68491,
+   "bytes": 83148,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-02 21:10 PDT, at v0.7.0) — **3/6 🟢 · overall ≈ 89%** (done = all six 🟢)",
+    "DoD progress (audited 2026-09-02 23:00 PDT, at v0.7.0) — **4/6 🟢 · overall ≈ 91%** (done = all six 🟢)",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 66280,
+   "bytes": 81479,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -261,7 +261,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 39852,
+   "bytes": 45097,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -537,7 +537,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 74335,
+   "bytes": 87179,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -587,7 +587,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)",
    "section": "architecture",
-   "bytes": 83680,
+   "bytes": 84303,
    "mermaid": 0,
    "headings": [
     "0. The boundary, stated first — this is cloud-side, and only cloud-side",

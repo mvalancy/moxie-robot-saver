@@ -1,5 +1,9 @@
 paho-mqtt>=2.0
 openai>=1.0
+# Content-module prompts are Jinja2-templated (docs/architecture/content-module-contract.md).
+# Shipped here, NOT in pyproject.toml base deps: the container runs the documented form,
+# while the SDK still imports and unit-tests with no heavy dependencies (extra: `content`).
+jinja2>=3.0
 # STT (Phase: voice) — uncomment when wiring faster-whisper:
 # faster-whisper>=1.0
 # numpy>=1.24

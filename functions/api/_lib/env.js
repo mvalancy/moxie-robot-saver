@@ -37,6 +37,8 @@ export const DEFAULTS = Object.freeze({
   DEMO_MAX_HISTORY_TURNS: 4,
   DEMO_MAX_AUDIO_BYTES: 500000,
   DEMO_MIN_AUDIO_BYTES: 2000,
+  DEMO_MAX_RECORD_MS: 15000,
+  DEMO_STT_FORMATS: "wav",
   DEMO_CHAT_PER_MIN: 5,
   DEMO_CHAT_PER_HOUR: 40,
   DEMO_CHAT_PER_DAY: 150,
@@ -54,6 +56,29 @@ export const DEFAULTS = Object.freeze({
   DEMO_TICKET_TTL_S: 60,
 });
 
+/** The two optional Cloudflare Access service-token variables.
+ *
+ *  WHY THEY EXIST. The owner's gateway is expected to sit behind a **Cloudflare Tunnel**.
+ *  A plain public tunnel hostname needs nothing extra — it is just a base URL. But a
+ *  tunnel protected by **Cloudflare Access** answers an unauthenticated server-side
+ *  `fetch` with an **HTML login page**, with a 200 status. That is the worst possible
+ *  failure shape: it looks exactly like a broken gateway, and from a bare 502 it is
+ *  maddening to diagnose. So a service token can be configured, and when it is, both
+ *  routes send it on every upstream call as `CF-Access-Client-Id` /
+ *  `CF-Access-Client-Secret`.
+ *
+ *  BOTH OR NEITHER. Exactly one of the pair is a MISCONFIGURATION, not a partial
+ *  credential: calling upstream half-credentialled would produce that same HTML login
+ *  page while looking configured. `readConfig` therefore reports it in `missing` so every
+ *  route answers `gateway_not_configured` and makes no upstream call at all.
+ *
+ *  The secret half is a **secret** binding like the API key, and is non-enumerable on the
+ *  returned config for the same reason (see the header). */
+export const ACCESS_VARS = Object.freeze([
+  "DEMO_GATEWAY_ACCESS_CLIENT_ID",
+  "DEMO_GATEWAY_ACCESS_CLIENT_SECRET",
+]);
+
 /** The three values that must be present for `mode: "live"` (§3.2). */
 export const REQUIRED_FOR_LIVE = Object.freeze([
   "DEMO_GATEWAY_BASE_URL",
@@ -61,8 +86,84 @@ export const REQUIRED_FOR_LIVE = Object.freeze([
   "DEMO_CHAT_MODEL",
 ]);
 
+/**
+ * The `voice` field to send for a model name — `piper-amy` → `amy`.
+ *
+ * **THE GATEWAY REQUIRES THIS FIELD AND IGNORES ITS VALUE. Omitting it is an HTTP 500.**
+ * Transcribed from `mqtt/moxie_sdk/tts.py::voice_for_model` (:80-90), whose docstring says
+ * exactly that and cites `docs/guides/litellm-tts-setup.md` ("Live since 2026-09-02"): the
+ * MODEL NAME selects the Piper voice, so the field only has to be present and sane.
+ *
+ * This function exists because of a bug the four-call gateway probe caught. The spec's §5
+ * reads `mqtt/config.py`:91-92 as "our gateway encodes the voice in the model id, so empty
+ * is correct there" and concludes the field can be omitted. That is a misreading:
+ * `MOXIE_TTS_VOICE=""` means "do not set the env var", and `tts.py` then DERIVES the value
+ * — it never sends nothing. A `/api/speech` that omitted the field answered 500 on every
+ * single call, which would have shipped a hosted demo with a permanently silent voice and
+ * an `upstream_down` badge nobody could explain. `sim/tools/probe_demo_gateway.mjs` is
+ * what found it, and it is the whole reason that probe exists.
+ *
+ * A model whose suffix is not a word — `tts-1` → `1` — falls back to OpenAI's own default
+ * voice, which is what an OpenAI-shaped endpoint would want anyway.
+ */
+export function voiceForModel(model) {
+  const tail = String(model || "").split("-").pop().trim();
+  return /^[A-Za-z]+$/.test(tail) ? tail : "alloy";
+}
+
 /** The only audio formats `audio.js` can decode (§5, mirroring mqtt/config.py:101). */
 export const TTS_FORMATS = Object.freeze(["wav", "pcm"]);
+
+/** Every container `functions/api/transcribe.js` knows how to name for an upload. The
+ *  ALLOWLIST of which of them this deployment will actually forward is `DEMO_STT_FORMATS`,
+ *  and it is much shorter — see the next comment. */
+export const STT_CONTAINERS = Object.freeze(["wav", "webm", "ogg", "mp4", "mp3", "flac"]);
+
+/**
+ * The containers the configured gateway is believed to accept at `/v1/audio/transcriptions`.
+ *
+ * ===========================================================================
+ * THE DEFAULT IS `wav` ALONE, AND THAT IS A MEASUREMENT, NOT A GUESS.
+ *
+ * §10 assumption 15 asked whether the gateway accepts webm/Opus — what a browser's
+ * `MediaRecorder` actually produces. **It does not.** Probed live on 2026-09-03 through
+ * `sim/tools/probe_demo_gateway.mjs`, one utterance (`sim/web/audio/moxie/03e31950df81e786.mp3`,
+ * "Hi! I am Moxie. It is nice to meet you.") in four containers against `stt-whisper`:
+ *
+ *   * 16 kHz mono 16-bit RIFF/WAVE → **200**, word-perfect transcript, 2 582 ms
+ *   * 48 kHz mono webm/Opus        → **500**, a 270-byte JSON error
+ *   * 48 kHz mono ogg/Opus         → **500**, the same 270-byte error
+ *   * 44.1 kHz mono mp4/AAC        → **500**, the same 270-byte error
+ *
+ * Three different containers and two different codecs failing identically says this is not
+ * a container quirk: that deployment decodes PCM and nothing else. It is also why the
+ * Python client never hit it — `mqtt/moxie_sdk/stt.py::wav_bytes` has always wrapped the
+ * robot's headerless frames in a RIFF container before uploading.
+ *
+ * WHY AN ALLOWLIST RATHER THAN JUST LETTING IT FAIL. The gateway answers **500**, not a
+ * 4xx, so `reasonForUpstreamStatus` maps it to `upstream_down` — a 503 — and `mode.js`
+ * degrades the WHOLE PAGE on a 503 (§6.3). Pressing the microphone once would therefore
+ * take the brain and the voice down with it, permanently, for a container problem. And it
+ * would spend a real gateway call and 1.6-4.3 s to be told so, every single time. Refusing
+ * it here instead is free, is per-turn, and leaves the rest of the demo alive.
+ *
+ * IT IS A DEPLOYMENT FACT, SO IT IS A VARIABLE. OpenAI's own documented Whisper API
+ * accepts webm; this gateway's deployment is stricter. A fork whose gateway is more
+ * capable sets `DEMO_STT_FORMATS=wav,webm,ogg,mp4,mp3,flac` and the route forwards them
+ * all. Nothing here is hard-coded to anyone's gateway (C3).
+ * ===========================================================================
+ */
+function sttFormats(env) {
+  const raw = str(env, "DEMO_STT_FORMATS", DEFAULTS.DEMO_STT_FORMATS);
+  const out = [];
+  for (const part of String(raw).split(",")) {
+    const v = part.trim().toLowerCase();
+    if (STT_CONTAINERS.includes(v) && !out.includes(v)) out.push(v);
+  }
+  // An entirely unusable value falls back to the default rather than to "nothing", which
+  // would silently switch the ears off with no reason anyone could read.
+  return out.length ? out : [DEFAULTS.DEMO_STT_FORMATS];
+}
 
 /** Exactly the cap names the browser may be told (§4.2). Model ids and URLs are absent
  *  from this list on purpose and `publicLimits` cannot grow them by accident. */
@@ -71,6 +172,16 @@ export const PUBLIC_LIMIT_KEYS = Object.freeze([
   "max_tts_chars",
   "max_tokens",
   "chat_per_min",
+  // The three the MICROPHONE needs (P1). `max_record_ms` is the one that actually bounds
+  // the cost of the ears, and it can only be enforced in the browser: §4.1 is explicit
+  // that `DEMO_MAX_AUDIO_BYTES` is NOT a duration cap for a compressed container —
+  // 500 KB of Opus is minutes, not seconds — so the byte cap alone is not an honest
+  // ceiling and the recorder has to stop itself. The two byte caps let `mic.js` skip an
+  // upload that is already doomed (too small to be speech, too large to be accepted),
+  // which is a request that never happens rather than one that is refused.
+  "max_record_ms",
+  "max_audio_bytes",
+  "min_audio_bytes",
 ]);
 
 /** The built-in persona. Committed in the open on purpose: it is not a secret, and a
@@ -150,10 +261,27 @@ export function readConfig(env) {
     ttsFormat = DEFAULTS.DEMO_TTS_FORMAT;
   }
 
+  // Cloudflare Access service token — optional, but BOTH OR NEITHER (see ACCESS_VARS).
+  const accessId = str(e, "DEMO_GATEWAY_ACCESS_CLIENT_ID", "");
+  const accessSecret = str(e, "DEMO_GATEWAY_ACCESS_CLIENT_SECRET", "");
+
   const missing = [];
   if (!baseUrl) missing.push("DEMO_GATEWAY_BASE_URL");
   if (!apiKey) missing.push("DEMO_GATEWAY_API_KEY");
   if (!chatModel) missing.push("DEMO_CHAT_MODEL");
+  // Half a service token is worse than none: it looks configured and answers an HTML
+  // login page. Named in `missing` so the fail-safe path of C5 handles it, and noted so
+  // an operator reading `/api/health` server-side can see WHICH half is absent.
+  if (accessId && !accessSecret) {
+    missing.push("DEMO_GATEWAY_ACCESS_CLIENT_SECRET");
+    notes.push("DEMO_GATEWAY_ACCESS_CLIENT_ID is set without its secret: a Cloudflare " +
+               "Access service token needs BOTH halves, so the gateway is treated as unconfigured");
+  }
+  if (accessSecret && !accessId) {
+    missing.push("DEMO_GATEWAY_ACCESS_CLIENT_ID");
+    notes.push("DEMO_GATEWAY_ACCESS_CLIENT_SECRET is set without its client id: a Cloudflare " +
+               "Access service token needs BOTH halves, so the gateway is treated as unconfigured");
+  }
 
   const cfg = {
     enabled,
@@ -162,7 +290,11 @@ export function readConfig(env) {
     notes,
     chatModel,
     ttsModel,
-    ttsVoice: str(e, "DEMO_TTS_VOICE", ""),
+    // ALWAYS a non-empty string when a TTS model is configured: `DEMO_TTS_VOICE` when set,
+    // otherwise derived from the model name. The field is mandatory upstream (see
+    // `voiceForModel`), so the derivation lives HERE rather than at the call site — that
+    // way no route can omit it by forgetting to.
+    ttsVoice: str(e, "DEMO_TTS_VOICE", "") || (ttsModel ? voiceForModel(ttsModel) : ""),
     ttsFormat,
     // Read ONLY when the format is pcm — a wav reply carries its own rate (§5). The
     // clamp mirrors audio.js:617-618 so a configured rate can never be one the browser
@@ -179,6 +311,15 @@ export function readConfig(env) {
     maxHistoryTurns: int(e, "DEMO_MAX_HISTORY_TURNS", 0, 64, notes),
     maxAudioBytes: int(e, "DEMO_MAX_AUDIO_BYTES", 1, 50000000, notes),
     minAudioBytes: int(e, "DEMO_MIN_AUDIO_BYTES", 0, 50000000, notes),
+    // The CLIENT-SIDE recording cap (§4.1). It is enforced by `sim/web/mic.js`, not by a
+    // route — a Function only ever sees the finished upload — so this value's whole job is
+    // to be published in `publicLimits` and obeyed by the recorder. It is still read and
+    // clamped here so the deployment has ONE place that decides it, and so a fork can
+    // shorten it without touching JavaScript that ships to a browser.
+    maxRecordMs: int(e, "DEMO_MAX_RECORD_MS", 1000, 600000, notes),
+    // Which containers this gateway will actually take. See `sttFormats` — the default of
+    // `wav` alone is a live measurement, not caution.
+    sttFormats: sttFormats(e),
     chatPerMin: int(e, "DEMO_CHAT_PER_MIN", 1, 100000, notes),
     chatPerHour: int(e, "DEMO_CHAT_PER_HOUR", 1, 1000000, notes),
     chatPerDay: int(e, "DEMO_CHAT_PER_DAY", 1, 10000000, notes),
@@ -194,6 +335,9 @@ export function readConfig(env) {
     speechTimeoutMs: int(e, "DEMO_SPEECH_TIMEOUT_MS", 1000, 120000, notes),
     sttTimeoutMs: int(e, "DEMO_STT_TIMEOUT_MS", 1000, 120000, notes),
     ticketTtlS: int(e, "DEMO_TICKET_TTL_S", 5, 3600, notes),
+    // WHETHER a service token is in play, never what it is (§4.2). A route needs this to
+    // decide whether to add the two headers; nothing else may know.
+    accessToken: !!(accessId && accessSecret),
   };
 
   // Voice and ears are "configured at all" (§3.2), which means the gateway itself is
@@ -206,6 +350,11 @@ export function readConfig(env) {
   for (const [name, value] of [
     ["baseUrl", baseUrl],
     ["apiKey", apiKey],
+    // A Cloudflare Access service token is a credential in both halves — the client id is
+    // as good as a username and is just as much a thing an attacker would like to have —
+    // so both are non-enumerable, exactly like the API key.
+    ["accessClientId", accessId],
+    ["accessClientSecret", accessSecret],
     // §5: derived from the API key when unset, so the minimum config is two values.
     // The derivation itself is P0-b's functions/api/_lib/hmac.js (HKDF); this only
     // carries the configured material.
@@ -229,6 +378,30 @@ export function modeOf(cfg, budget) {
   return { mode: "live", reason: null };
 }
 
+/**
+ * The headers every upstream call carries. ONE function, so `chat.js` and `speech.js`
+ * cannot drift apart on the credentials they present.
+ *
+ * `Authorization` is the gateway key. The two `CF-Access-*` headers are added only when a
+ * complete service token is configured (see `ACCESS_VARS`) — the shape Cloudflare Access
+ * expects for a non-interactive client. NONE of these values is ever put in a response, a
+ * log line or an error string; this object goes into `fetch()` and nowhere else (§4.2).
+ *
+ * @param {object} cfg
+ * @param {string} contentType
+ */
+export function upstreamHeaders(cfg, contentType) {
+  const h = {
+    Authorization: "Bearer " + cfg.apiKey,
+    "Content-Type": contentType || "application/json",
+  };
+  if (cfg.accessToken) {
+    h["CF-Access-Client-Id"] = cfg.accessClientId;
+    h["CF-Access-Client-Secret"] = cfg.accessClientSecret;
+  }
+  return h;
+}
+
 /** The caps the page may know, and nothing else (§4.2 / PUBLIC_LIMIT_KEYS). */
 export function publicLimits(cfg) {
   const all = {
@@ -236,6 +409,9 @@ export function publicLimits(cfg) {
     max_tts_chars: cfg.maxTtsChars,
     max_tokens: cfg.maxTokens,
     chat_per_min: cfg.chatPerMin,
+    max_record_ms: cfg.maxRecordMs,
+    max_audio_bytes: cfg.maxAudioBytes,
+    min_audio_bytes: cfg.minAudioBytes,
   };
   const out = {};
   for (const k of PUBLIC_LIMIT_KEYS) out[k] = all[k];
