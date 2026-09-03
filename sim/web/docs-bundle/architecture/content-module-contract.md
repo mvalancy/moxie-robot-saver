@@ -72,7 +72,61 @@ because the renderer is sandboxed — the two changes are a package, not a coinc
 
 A **bare-metal** install can still lack jinja2 (`pip install moxie-cloud-sdk` without the
 `content` extra — `mqtt/pyproject.toml` keeps it there on purpose so the SDK imports with no heavy
-dependencies). On that path `render_prompt` uses a dependency-free fallback.
+dependencies). On that path `render_prompt` uses a dependency-free fallback — see below.
+
+#### What the dependency-free fallback does
+
+Without jinja2, `render_prompt` falls back to `_minimal_render`. Its **one hard rule** is
+that nothing template-shaped may reach the brain: the output is a *system prompt*, so a
+leftover `{% if presence.face_present %}` is not a cosmetic glitch — it is
+instructions-shaped noise in the place the model takes its instructions from. (Until
+2026-09-02 the fallback passed block tags through verbatim, and every deployment ran the
+fallback. That is the bug this section documents the fix for.)
+
+One principle decides every case: **resolve what you can, and treat everything else as
+absent** — empty string, false, empty sequence. That is not a new rule; it is what a
+missing dotted path already resolved to, and what jinja2's own `ChainableUndefined` gives
+an undefined name, so the fallback is a *subset* of the real renderer rather than a
+divergent dialect.
+
+| Construct | Fallback | Same as jinja2? |
+|---|---|---|
+| `{{ dotted.path }}` | resolved | ✅ |
+| `{% if dotted.path %}` / `{% if not … %}` / `{% elif %}` / `{% else %}` / `{% endif %}` | **evaluated** — the taken branch is kept | ✅ (`true`/`false`/`none` handled as literals) |
+| `{# comment #}` | removed | ✅ |
+| `{%- … -%}`, `{{- … -}}` whitespace control | honoured | ✅ |
+| `{{ … }}` with a filter, subscript, call, literal or arithmetic | removed → `""` | ❌ counted |
+| `{% if <richer condition> %}` | condition treated **false** — `if` body out, `{% else %}` body kept | ❌ counted |
+| `{% for … %}` | sequence treated **empty** — loop body out, `{% else %}` body kept | ❌ counted |
+| `{% raw %}…{% endraw %}` | block removed whole | ❌ counted |
+| any other block tag (`filter`, `with`, `macro`, `block`, …) | block removed whole | ❌ counted |
+| any other bodyless tag (`set`, `do`, `include`, …) | tag removed | ❌ counted |
+| unbalanced or unterminated syntax | removed | ❌ counted |
+
+Two choices in that table are worth their reasons:
+
+- **An unevaluable `{% if %}` is false, not "render the body anyway".** Dropping the tags
+  and keeping the body renders the branch *unconditionally*, which tells the brain
+  *"Sam is here"* when nobody is. A conditional whose condition is unknown must never be
+  reported to the model as a fact. Keeping the `{% else %}` body is what stops an
+  `if`/`else` from emptying the prompt.
+- **A `{% for %}` body is dropped, not emitted once.** The body is a *per-item* fragment,
+  so `{{ loop.index }}. {{ f }}` emitted once becomes a dangling `". "` describing an item
+  that does not exist. Iterating for real would mean loop variables and nested scopes —
+  i.e. a second template engine.
+
+Every ❌ row increments **`render.STRIPPED`**, the sibling of `render.BLOCKED`. The
+degradation is invisible in the output *by design*, so the counter is the only thing that
+separates "working fine" from "quietly serving thinner prompts". A non-zero `STRIPPED`
+means one thing: **this process has no jinja2 and is rendering content that needs it** —
+`pip install moxie-cloud-sdk[content]`. Constructs jinja2 would also have removed
+(comments) are deliberately not counted, so the number stays a signal.
+
+**For a module author:** everything in this page works on the appliance. If you also want
+your module to work on a bare-metal SDK install, keep to `{{ dotted.path }}` and
+`{% if dotted.path %}` — the two forms this contract documents — and it renders identically
+in both. Every module in `mqtt/content_modules/` does, and
+`sim/tests/test_render_fallback.py` fails the day one stops.
 
 ### `globals[]` — regex-triggered commands (always on)
 ```json

@@ -1,5 +1,5 @@
 {
- "generated": "docs-8aebaeb2af08",
+ "generated": "docs-91fd09bbf0bb",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 72076,
+   "bytes": 73755,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -261,7 +261,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 41504,
+   "bytes": 45097,
    "mermaid": 1,
    "headings": [
     "Where this fits",
