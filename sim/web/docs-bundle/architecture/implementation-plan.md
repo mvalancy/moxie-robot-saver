@@ -752,6 +752,37 @@ are **chosen, not measured**. `/data` on a network filesystem is declared unsupp
 that *is* measured is the lock's backoff cadence (0.5 ms / 2 ms), because `flock` has no queue and a
 coarse poller starves against a tight writer.
 
+**Production hardening P1 — 🟢 done (2026-09-03).** §5's soak exists and **runs**, the roster and the
+connection history are durable, and the appliance stops politely. `sim/run_soak.sh` +
+[`sim/tools/soak.py`](../../sim/tools/soak.py): real mosquitto, real `mqtt/run.py`, real virtual robots,
+three profiles (`smoke` ~1 min · `quick` ~5 min · `week` 60 min = §5.2's table), every acceptance bar
+computed and printed **pass or fail, never inferred**, with §5.4 printed under every report so no number
+can be quoted without the sentence that says it is an hour at a raised rate against a simulator.
+**Measured (`quick`, 301 s):** 1 046 turns answered while the broker was up, **0 lost**; 4 broker restarts
+→ re-subscribed **p95 0.62 s / max 0.62 s**; 2 SIGTERM restarts → roster resume **≤ 1.02 s**; 4 processes
+× 250 appends on **one** record → **0 lost** (998 on disk + 2 refused-and-recorded); 10 mid-write
+`SIGKILL`s → **0** unreadable records; RSS **+3.2 %**; file descriptors **+0**; **0** tracebacks. Also
+built: a **durable robot roster** (15th collection) so a restart re-pushes config instead of waiting for
+an event that, after a supervisor restart, never comes; a **connection telemetry stream** (16th
+collection — connects, disconnects, CONNACK reason codes, gap durations, dropped publishes, lock waits) on
+`GET /conn` and as a strip on the console's 📈 card; and a **SIGTERM/SIGINT handler** that `disconnect()`s
+so the broker logs the close now rather than at the 45 s keepalive expiry (measured: rc=0 in ~0.5 s, even
+mid-reconnect, which is the case `docker stop` hits). **What it found is worth more than what it built:**
+two defects reported a day apart were **one** defect — *a cached belief about the robot's state outliving
+the robot's actual state*. A robot returning with the same id after a broker restart was **never
+re-onboarded** (no config push, no `app.on_connect`, `/status` calling it present), and the vision/STT
+subscription latch was **never cleared** (so eyes went silent after a module exit, a wake or an outage —
+upstream openmoxie PR #59 diagnoses the same shape from four owner reports). Both now clear through one
+rule at the moment connection continuity breaks; membership is kept and **confirmation** is cleared, so a
+socket blip costs nothing and a returning child keeps their conversation. A **12th** soak bar exists
+because *the other eleven were green while this was happening*. +76 tests and **64 mutations, 0 missed**
+([`hardening_p1_mutation_check.py`](../../sim/tools/hardening_p1_mutation_check.py)), three of which found
+real holes. **Honest ceiling:** A13 is **unchanged** — P1 built the instrument that would settle
+`MOXIE_STORE_LOCK_TIMEOUT_S` (`lock_timeout` rows carrying `waited_s`) and an instrument is not a
+measurement; **no physical robot has ever sent this appliance a vision event**, so the latch tests prove
+we re-subscribe and never that a robot then delivers; and **not one of the six hardware-gated assumptions
+moved**, again.
+
 **Most valuable next slice (2026-09-03, re-ranked — the previous two rankings were stale and cost two agent runs on already-built work; check each backlog spec's own status banner before briefing):** ① **the unreachable child voice** — `audio.js`:160 `speak(text, who)` accepts a `who` and **no caller ever passes `"child"`** (`bridge.js`:300,306 pass nothing; `ambient.js`:106 passes `"ambient"`), so two committed clips are dead weight and the demo speaks with one voice where it was designed for two — small, provable, and visible on the page the owner is trying to launch; ② **live-Sim P1 remainder** — exact counters (the per-IP and concurrency limits are best-effort in-process, and a Worker isolate is not a shared counter), Turnstile, a TTS cache; ③ **sandboxed content extensions** (`backlog/sandboxed-extensions.md` P0 — the declarative rule list; two server-side execution holes have now been closed reactively, so the durable model is worth building); ④ **broker auth** (`backlog/security-broker-auth.md` P1, still blocked on assumptions A1–A4); ⑤ the behavior planner. **Already built, do not re-brief:** content packs P0+P1 (PR #51, hardened #78), the voice + listening picker P0 (PR #48, pinned #77), durable telemetry, the console `wakeup` fix. **Owner-blocked, not agent-blocked:** the three Cloudflare Production variables (`DEMO_GATEWAY_BASE_URL`, `DEMO_GATEWAY_API_KEY` as a secret, `DEMO_CHAT_MODEL`) — every other link in the hosted chain is proven on a real deploy.
 
 ## TTS strategy (2026-09-01)

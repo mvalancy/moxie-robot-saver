@@ -1,5 +1,5 @@
 {
- "generated": "docs-cf23e9075d1c",
+ "generated": "docs-8ddced0d1065",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 7844,
+   "bytes": 8327,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 114918,
+   "bytes": 117943,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -351,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 115365,
+   "bytes": 116716,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -658,7 +658,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 59276,
+   "bytes": 69022,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",
@@ -687,7 +687,7 @@
     "7. Acceptance criteria",
     "8. Effort and the file list",
     "P0 — **M**, one agent, one sitting, shippable alone — ✅ **shipped 2026-09-03**",
-    "P1 — **M**",
+    "P1 — **M** — ✅ **shipped 2026-09-03**",
     "P2 — **L**",
     "Risks",
     "9. Assumption ledger",
