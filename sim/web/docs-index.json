@@ -1,5 +1,5 @@
 {
- "generated": "docs-67ab35a45cc8",
+ "generated": "docs-0a75046fe330",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 58913,
+   "bytes": 59979,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -258,7 +258,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 29554,
+   "bytes": 39852,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -276,6 +276,12 @@
     "Honest limits",
     "Execution actions (content → robot bridge)",
     "QR inside content",
+    "Content packs — moving content between machines *(P0 built 2026-09-02)*",
+    "The file",
+    "What travels — a positive allowlist",
+    "source_version`, `local_rev`, and the review that does not clobber",
+    "Storage, the overlay, and the reload",
+    "The routes",
     "Content delivery (assets)",
     "Minimum viable vs full",
     "Conformance checklist"
@@ -338,7 +344,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 83614,
+   "bytes": 84473,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -496,7 +502,7 @@
    "path": "architecture/backlog/content-packs.md",
    "title": "Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)",
    "section": "architecture",
-   "bytes": 39708,
+   "bytes": 42205,
    "mermaid": 0,
    "headings": [
     "Why this is worth building",

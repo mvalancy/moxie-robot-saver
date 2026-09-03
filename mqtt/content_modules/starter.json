@@ -2,6 +2,7 @@
   "conversations": [
     {
       "name": "Free Chat",
+      "source_version": 1,
       "module_id": "FREE_CHAT",
       "content_id": "default",
       "max_history": 20,
@@ -21,6 +22,7 @@
   "globals": [
     {
       "name": "Timer",
+      "source_version": 1,
       "pattern": "timer for (\\d+) (minute|second)",
       "entity_groups": "1,2"
     }
