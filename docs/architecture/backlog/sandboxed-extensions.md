@@ -639,3 +639,296 @@ After `MOXIE_EXT_MAX_BREACHES` breaches in one session, the extension is **quara
 of that session (a flag in the per-robot ring). A broken extension may cost the child one turn's worth
 of latency; it may not cost every turn's.
 
+---
+
+## 7. How an extension travels
+
+### 7.1 It rides inside a pack, as a field on an item
+
+Two lines change in [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py)'s `SPEC`:
+
+```python
+"conversation": (..., ("code", _s, ""), ("memory", _d, {}), ("extension", _d, {})),
+"global":       (..., ("action", _i, 0), ("code", _s, ""), ("extension", _d, {})),
+```
+
+`_d` is the existing coercer that returns `json.loads(json.dumps(v))` — *"a deep copy that is provably
+JSON-safe"*. That single line does more work than it looks: it guarantees the stored extension contains
+**only** JSON types before the validator ever sees it, which is the first half of §4.4's argument. The
+second half is a dedicated `ext.validate()` that runs at import **and** at content load.
+
+`FIELDS` derives from `SPEC`, so `test_the_allowlist_is_pinned_to_the_dataclass_fields` (P1) starts
+failing the moment `extension` is added to `SPEC` and not to `Conversation`/`Global` — which is exactly
+the guard rail we want on a field that carries a program.
+
+### 7.2 The digest already covers it
+
+`pack_digest()` hashes the whole body minus `digest`/`signatures` (P2), and items are keyed `kind:key`
+rather than indexed, deliberately so that a pack re-posted between review and import cannot swap what
+you ticked. An extension is inside an item's `data`, so **mutating one operator changes the pack
+digest**, `parse_pack` reports `mismatch`, and `review_pack` ticks nothing (P3). No new mechanism is
+needed; this is the payoff for the flat-`items[]` decision.
+
+### 7.3 The review — and the one new rule that matters
+
+Today `review_pack` emits, per item, a state from the 2×2 (P4) plus warnings including the `code` ⚠️
+(P5). Extensions add three things:
+
+1. **A capability list, in plain language**, rendered from the fixed table in §5.4 — never from
+   author-supplied strings.
+2. **`explain()`'s English sentences**, one per rule, so the review shows *behaviour* and not only
+   *permissions*. A grant list tells a parent what a pack *may* do; the sentences tell them what it
+   *will* do.
+3. **The capability-escalation rule.** This is the load-bearing addition:
+
+> **An item whose incoming extension declares a capability the installed version did not is treated
+> exactly like `CONFLICT`: defaulted un-ticked, with its own sentence.**
+>
+> *"This update asks for more than the version you have: it now wants to remember things about your
+> child."*
+
+The comparison is over the **capability set**, independent of `source_version` and independent of
+`local_rev`. So a pack cannot escalate privileges by bumping a version number, and it cannot escalate
+them quietly on a machine where the parent never edited anything. A *shrinking* capability set is not a
+conflict — it defaults ticked like any other upgrade, because less is always safe.
+
+**"What if upstream updates an extension a parent has locally edited?"** — the question this brief was
+asked to answer explicitly. All three signals are independent and all three are reported:
+
+| Locally edited? | Newer `source_version`? | More capabilities? | State | Default |
+|:--:|:--:|:--:|---|:--:|
+| no | yes | no | `UPGRADE` | ticked |
+| no | yes | **yes** | `UPGRADE` **+ escalation** | **un-ticked** |
+| **yes** | yes | no | `CONFLICT` | un-ticked |
+| **yes** | yes | **yes** | `CONFLICT` **+ escalation** | un-ticked, **two** sentences |
+| yes | no / same | either | `KEEP_LOCAL` | un-ticked |
+
+The parent's choices are the ones `review_pack` already offers — **Accept**, **Keep mine**, **Skip** —
+plus the existing undo, since applying a pack is reversible (P8) and `reload_content()` makes both the
+apply and the undo live on the next turn with no restart. Nothing about extensions needs a new verb in
+the review UI; it needs one more reason to un-tick and two more sentences.
+
+### 7.4 `code` stays inert — forever — and is *not* the migration path
+
+The `code` field keeps its ⚠️, and its wording should become: *"carries a `code` block (Python), which
+this appliance never runs — see `extension` for behaviour this appliance can run."*
+
+A build agent will be tempted to compile `code` into an AST so that upstream packs "just work". **Do
+not.** A Python-to-AST compiler is a parser for a Turing-complete language, embedded in the trusted
+half of the system, whose failure mode is a program that means something other than what the reviewer
+read. It would reintroduce precisely the audit surface this design exists to delete, and it would do so
+in the one component nobody would think to fuzz. Six hooks is a hand-port (§8), not a compiler.
+
+### 7.5 Storage and the overlay
+
+No new storage. An extension lives in the item's `data` inside the existing three pack `JsonStore`
+collections; effective content stays *shipped defaults ⊕ the imported overlay*; `reload_content()`'s
+attribute swap re-validates on load, so an extension that would fail validation after a code change to
+the validator simply stops loading (and says so in the log) rather than running under old rules. The
+only new collection is the bounded `ext_events` breach ring (§6.4).
+
+---
+
+## 8. The migration table — all six upstream hooks, hand-ported, as the conformance golden set
+
+This is a **deliverable**, not an illustration. `sim/tests/data/ext_conformance.json` holds
+`(ast, facts, seed, expected_effects)` for each row; the Python evaluator and (P1) the JS evaluator
+must both reproduce every one byte-for-byte. It is simultaneously the proof that §3.2's choice is
+expressive enough, the regression suite, and the cross-host contract.
+
+| # | Upstream hook | Ports to | Needs |
+|--:|---|---|---|
+| G1 | `MoxieTime.get_response` | One rule, no `when`. `let hour = {"%": [{"var":"clock.local.hour"}, 12]}` etc.; one `say` with `concat` + `if` for AY M / P M. | `clock` |
+| G2 | `MoxieTimers` set | The §4.1 example verbatim. | `clock`, `memory.write`, `act.eb_timer_request` (P1) |
+| G3 | `MoxieTimers` status/cancel | Two rules. `when {"==": [{"var":"entities.0"}, "status"]}` → the h/m/s sentence via three `let`s, a `list` of parts, `compact`, `join`. Second rule → `act` cancel + `forget`. | `clock`, `memory.read`, `memory.write`, `act.eb_timer_request` (P1) |
+| G4 | `MoxieTimers` wake (`pre_process`) | One rule, `when {"var": "session.is_empty"}`. `forget` the fired timer id, `scratch` the id, `markup` with `repeat(mark, 3)` + `<break time="1s"/>`, `say` the plain line, `handled`. **The `time.sleep(0.5)` is dropped** (§5.3). | `memory.write`, `markup` |
+| G5 | `MemoryChat` opener | One rule; `random.pick` over `{"var":"memory.summaries"}`; one `brain` call with a template. **P1** (needs the `brain` capability). | `memory.read`, `random`, `brain` |
+| G6 | `MoxieGo` QR | Three rules: no speech → arm the scanner; `speech == "eb-qr-event"` and `starts_with($eb_qr_value, "GO")` → `say` with a `slice`; else → re-arm. | `act.eb_enable_qr`, `subscribe` (both P1) |
+
+**What this table proves and what it does not.** G1, G3's sentence-building and G4's markup are fully
+expressible in P0's grammar with no `act` — so **P0 can ship a working, shipped-by-us example** (G1, the
+clock, is the natural one) without waiting on S5. G2, G3's actions, G5 and G6 are gated on P1 by
+capability, not by expressiveness: the *programs* validate under P0's grammar today, which is the point
+worth checking early. A build agent should write all six ASTs in P0 and mark the four whose
+capabilities are not yet grantable as `xfail` with the reason — so the day `act` lands, the tests turn
+green rather than needing to be written.
+
+---
+
+## 9. Tests
+
+Hermetic first: pure Python, no broker, no robot, no network, no browser. Escape tests get their own
+file because they are read by different eyes than behaviour tests.
+
+### 9.1 Escape tests — `sim/tests/test_ext_escapes.py`
+
+A sandbox is worth exactly what its escape tests are worth.
+
+| # | Name | Attempt, and the assertion |
+|--:|---|---|
+| **X1** | `test_no_op_or_path_can_name_import_or_a_dunder` | `{"var":"volley.__class__"}`, `{"var":"__builtins__"}`, `{"var":"memory._meta"}`, `{"import":["os"]}`, `{"getattr":[…]}`. Every one is a **load-time refusal** (unknown op, or a path segment starting `_`). Also: the op table's key set equals a frozen literal in the test — a new op cannot be added without a test edit. |
+| **X2** | `test_the_fact_base_contains_no_host_object` | Recursively walk the dict `ContentApp` hands the evaluator for a real turn and assert every value is `str/int/float/bool/None/list/dict`. There is no object to walk to, so attribute-walking has no target. |
+| **X3** | `test_a_prompt_cannot_execute_python_through_jinja` | The §2.6 finding. `render_prompt("{{ volley.__init__.__globals__['__builtins__']['__import__']('os').getcwd() }}", …)` must not return a path, and `{{ volley.__class__ }}` must not return a class. **Fails on `dev` today with `jinja2` installed** (proven); passes after the `SandboxedEnvironment` change. Skipped, loudly, when `jinja2` is absent — and the skip message says the minimal renderer is in use. |
+| **X4** | `test_an_infinite_loop_is_unrepresentable_and_the_budget_still_holds` | (i) Assert no loop/recursion/function-definition construct exists in the grammar (the statement and op key sets are frozen literals). (ii) A hand-built 200-node `if` chain that re-evaluates a costly subtree hits `MOXIE_EXT_MAX_STEPS`, returns `ok=False`, and does so within `MOXIE_EXT_BUDGET_S` measured on the monotonic clock. |
+| **X5** | `test_a_huge_allocation_fails_the_op_not_the_process` | `repeat("A", 16)` nested to depth 8; `concat` of 512 × 16 KiB; `join` over a 4096-element list; `format` with a width of 10⁹. Each fails its op at `MOXIE_EXT_MAX_VALUE_BYTES`/`MAX_TOTAL_BYTES`; RSS growth over the test is bounded; the process survives. |
+| **X6** | `test_deep_recursion_cannot_reach_the_python_stack` | A 10 000-deep nested expression is refused at load by the depth cap (32). A 32-deep one evaluates. Assert **no `RecursionError`** escapes in either case, and that the evaluator is depth-counted (a 33-deep AST is a refusal, never a stack probe). |
+| **X7** | `test_clock_and_entropy_are_injected_only` | Parse the evaluator's own source with `ast` and assert it imports neither `time`, `random`, `os`, `datetime`, `secrets` nor `subprocess`. Then: `clock.ms` twice in one program returns the same number; two runs at the same injected time and seed produce byte-identical effect lists; a program using `clock.ms` without the `clock` capability is refused at load. |
+| **X8** | `test_unicode_tricks_cannot_change_a_capability_or_an_op` | Capability and op names are NFKC-normalized then matched against strict `^[a-z0-9_.]+$`. Feed `"memory.wrıte"` (dotless ı), `"memory​.write"` (zero-width space), `"ｍemory.write"` (fullwidth), `"memory.etirw"` wrapped in RTL overrides, and `"MEMORY.WRITE"`. Every one is **refused**, never silently granted, and never rendered into the parent's grant list as `memory.write`. Also assert the review's English text is generated from the normalized name, so a homoglyph cannot make a scary grant read as a harmless one. |
+| **X9** | `test_an_extension_cannot_reach_another_namespace_or_another_child` | `{"var":"memory.other_module.x"}` → null (the fact base contains only its own namespace). `remember` with keys `"../other/x"`, `"other_ns.x"`, `"/etc/passwd"`, `"a/../../b"` → refused at load (a key is `^[A-Za-z0-9_.-]+$`, dot-segmented, no `..`). Assert the store call is `merge(device_id, own_namespace, …)` with both arguments supplied by the **host**. Then run with two device ids in one `JsonStore` and assert the second robot's `memory.json` is byte-unchanged. |
+| **X10** | `test_a_capability_mismatch_is_a_load_refusal_in_both_directions` | An AST using `clock.ms` without declaring `clock` → refused. An AST declaring `memory.write` and never writing → **also refused**. So the parent's grant list is provably equal to what the program can do. |
+| **X11** | `test_effects_are_all_or_nothing` | A program whose third statement breaches leaves **no** memory write, **no** action and **no** output; the effect list is discarded whole (§4.5). |
+| **X12** | `test_a_pathological_regex_is_still_capped_by_the_item` | Extensions do not construct regexes; assert the grammar has no regex op, and that `MAX_PATTERN_CHARS` (P7) still governs the item's `pattern`. Names the residual risk rather than claiming it away. |
+
+### 9.2 Behaviour, determinism and integration — `sim/tests/test_ext.py`
+
+| # | Name | Asserts |
+|--:|---|---|
+| T1‑T6 | `test_conformance_<G1..G6>` | Each §8 row reproduces its golden effect list byte-for-byte from `ext_conformance.json`. G2/G5/G6 `xfail` until P1's capabilities exist, with the reason in the marker. |
+| T7 | `test_the_same_inputs_give_byte_identical_effects` | 100 runs of G1 and G3 at a fixed injected clock and seed; one golden. |
+| T8 | `test_a_breach_does_not_end_the_turn` | A full `ContentApp.respond()` with a poisoned `on: global` extension returns the **conversation's** reply (S1's fall-through), and with a poisoned `turn.before` returns the model's line. No exception escapes `respond()`. |
+| T9 | `test_three_breaches_quarantine_for_the_session` | The 4th turn does not evaluate the extension at all (assert the step counter never advances), and one `ext_events` entry exists — not four. |
+| T10 | `test_a_pack_round_trips_with_an_extension_inside` | `export_pack` → `parse_pack` → `review_pack` → `apply_pack` → `reload_content()` → the extension runs on the next turn. The exported bytes re-import to the same digest. |
+| T11 | `test_a_capability_escalation_defaults_unticked` | The §7.3 matrix, all five rows, including the two-sentence case. |
+| T12 | `test_the_digest_covers_the_extension` | Flip one operator in a signed-off pack → `parse_pack` reports `mismatch` → `review_pack` ticks nothing. |
+| T13 | `test_explain_produces_english_and_leaks_no_json` | One sentence per rule; no `{`, `}`, `"var"` or capability identifier appears in the output; every capability in the grant list has a sentence in the fixed table (a completeness assertion, so a new capability cannot ship without parent-facing words). |
+| T14 | `test_no_data_policy_drops_the_write_and_the_note` | Under `LoggingPolicy.NO_DATA`, `remember` writes nothing (M6), `note` is dropped, and the extension **still speaks**. |
+| T15 | `test_the_allowlist_pin_covers_extension` | `FIELDS["conversation"]` and `FIELDS["global"]` both contain `extension`, pinned against `dataclasses.fields()` (P1). |
+| T16 | `test_the_extension_budget_is_inside_the_turn_budget` | `MOXIE_EXT_BUDGET_S < BRAIN_BUDGET_S` is asserted at import; a config that violates it fails startup with a readable message. |
+| T17 | `test_validation_runs_on_load_not_only_on_import` | An extension written directly into the store (bypassing import) that fails validation is refused at `reload_content()`, logged once, and does not run. |
+| T18 | `test_a_shipped_example_activity_works_end_to_end` | The G1 clock extension in `mqtt/content_modules/`, through `ContentApp.respond()`, answers *"what time is it"* with a well-formed sentence and no model call. |
+
+### 9.3 What only a real deployment can settle
+
+- Whether the P1 JS evaluator agrees with the Python one on a **Cloudflare Worker's** number formatting
+  and on its CPU accounting under load. The conformance file makes the comparison mechanical; running
+  it in `workerd` is the P1 gate.
+- Whether a real parent reads the §5.4 grant list and the `explain()` sentences and comes away with an
+  accurate belief. That is a user test, not a unit test.
+- Whether a real community author tolerates authoring an AST (P0) or waits for the text surface (P1).
+  Adoption is the only honest measure of §3.3's first concession.
+
+---
+
+## 10. Acceptance criteria
+
+**P0 is accepted when all of these are true:**
+
+1. `render_prompt` cannot execute Python from a template, with `jinja2` installed or absent, and **X3
+   passes**.
+2. An extension is a validated field on a pack item; the digest covers it; the `FIELDS` pin test
+   includes it; a malformed one is refused at import **and** at load, with a readable reason.
+3. **X1–X12 all pass**, and each one fails when the corresponding guard is deliberately removed (a
+   mutation check the build agent runs by hand once and records in the PR).
+4. `capabilities[]` equals the set the AST uses, or the extension does not install — proven in both
+   directions (X10).
+5. The default-granted set is exactly `{say, handled, session, child.nickname}`, and no other capability
+   can be granted at P0 without a code change.
+6. Nothing an extension can express reaches the network, the filesystem, a subprocess, an environment
+   variable, a credential, another module's namespace, another device's store, or the safety rule table
+   — and §5.2's invariant is asserted as the enumerated union of the op table and the fact base.
+7. A breach fails the extension and never the turn: `ContentApp.respond()` still answers, nothing is
+   half-written, the child hears no error text, the parent gets one `ext_events` entry, and three
+   breaches quarantine (T8, T9, X11).
+8. `MOXIE_EXT_BUDGET_S < MOXIE_BRAIN_BUDGET_S` is enforced at startup (T16).
+9. All six §8 ASTs exist and validate; the ones whose capabilities are not yet grantable are `xfail`
+   with a stated reason; **G1 ships as a real activity** in `mqtt/content_modules/` and works end to end
+   with no model call (T18).
+10. `explain()` renders one English sentence per rule and every capability has parent-facing words
+    (T13).
+11. A pack round-trips with an extension inside, and a capability escalation defaults un-ticked (T10,
+    T11).
+12. The contract in [content-module-contract.md](../content-module-contract.md) documents the format,
+    the capability table with defaults, the limits, and the failure behaviour — and its *"`code` is data,
+    never behaviour"* section is amended rather than contradicted: `code` is still never executed.
+
+**P1 adds:** the wire plumbing for `act`/`subscribe` (S5), the `brain` capability with its one-call
+budget, `turn.after` and `session.end`, the text surface that compiles to the AST outside the trust
+boundary, the JS evaluator passing the same conformance file in `workerd`, and the console card showing
+grants and *"this extension stopped working"*.
+
+**P2 adds:** a second runtime (Wasm) behind the same capability table, opt-in, honestly labelled as
+un-reviewable; publisher signatures once there is a trust root worth having (P6); and a schedule-request
+channel.
+
+---
+
+## 11. Effort and the file list
+
+### P0 — **S/M**, one agent, one sitting, shippable alone
+
+| Order | File | Change |
+|--:|---|---|
+| 1 | `mqtt/moxie_sdk/content/render.py` | **The security fix, first and alone.** `jinja2.sandbox.SandboxedEnvironment`; refuse `_`-leading paths in the minimal renderer too. ~10 lines. |
+| 2 | `sim/tests/test_ext_escapes.py` | X3 first (it fails), then X1–X12 as the evaluator lands. |
+| 3 | `mqtt/moxie_sdk/content/ext.py` | **New.** `validate()`, `evaluate()`, `explain()`, the op table, the caps, `ExtResult`. Pure stdlib, no imports of `time`/`random`/`os`. ~550 LOC. |
+| 4 | `mqtt/moxie_sdk/content/module.py` | `extension: dict` on `Conversation` and `Global`; `from_dict` reads it. |
+| 5 | `mqtt/moxie_sdk/content/packs.py` | `SPEC` × 2 lines; the capability-delta review rule; the escalation sentence; the `code` ⚠️ rewording. |
+| 6 | `mqtt/moxie_sdk/content/content_app.py` | Two call sites (`global`, `turn.before`), the fact-base builder, the effect applier, breach → today's behaviour, the `ext_events` ring. |
+| 7 | `mqtt/config.py` | `MOXIE_EXT_MAX_STEPS`, `MOXIE_EXT_BUDGET_S`, `MOXIE_EXT_MAX_VALUE_BYTES`, `MOXIE_EXT_MAX_TOTAL_BYTES`, `MOXIE_EXT_MAX_BREACHES` + the `< BRAIN_BUDGET_S` assertion. |
+| 8 | `sim/tests/test_ext.py` · `sim/tests/data/ext_conformance.json` | T1–T18 and the six goldens. |
+| 9 | `mqtt/content_modules/` | The G1 clock extension as a real shipped activity. |
+| 10 | `docs/architecture/content-module-contract.md` | The format, the capability table, the limits, the failure behaviour. Amend *"`code` is data"*, do not contradict it. |
+| 11 | `docs/architecture/openmoxie-feature-audit.md` | Flip BEYOND #6's status in the same PR (the backlog README's house rule). |
+
+Not in P0, deliberately: `act`, `subscribe`, `brain`, `schedule.request`, `turn.after`, `session.end`,
+the text surface, the JS evaluator, the console card, signatures, and any attempt to run `code`.
+
+### P1 — **M**
+`act`/`subscribe` with the `RemoteChatAction` plumbing that S5 defers · the `brain` capability · the
+text→AST compiler (outside the trust boundary) · `sim/web` or `functions/` JS evaluator + the shared
+conformance run in `workerd` · the console card (grants, breaches, quarantine) · `turn.after` and
+`session.end`.
+
+### P2 — **L**
+A Wasm runtime behind the same capability table, opt-in and labelled un-reviewable · publisher
+signatures once a trust root exists · a schedule-request channel · a capability-scoped asset store for
+packs that want their own sounds.
+
+### Risks
+
+| # | Risk | Mitigation |
+|--:|---|---|
+| R1 | **The op table grows until it is a language.** Every "just one more op" erodes the audit surface that justified choosing (a). | The op key set is a frozen literal in X1, so adding one requires a test edit and a reviewer. New *capabilities* need parent-facing words (T13) — a second brake. |
+| R2 | An author's first experience is hand-writing JSON, and they leave. | P1's text surface. P0 ships the six §8 ASTs as copy-paste starting points. |
+| R3 | The JS port drifts from the Python one, so a pack behaves differently on the hosted demo. | The conformance file is the contract, run in both CIs. A P1 gate, not a hope. |
+| R4 | A *valid* markup id still makes Moxie lurch or blare. | `markup` is refused by default and named in the review; the catalogue bounds the vocabulary, not the taste. |
+| R5 | `MOXIE_EXT_BUDGET_S` at 0.25 s is a guess; a real extension on a slow appliance may routinely breach and quarantine. | The env var, the `ext_events` ring (so we can *see* it), and the honest note in the ledger (A7). |
+| R6 | A pathological item `pattern` still stalls the matching thread (P7's named risk) — extensions do not fix it and must not be claimed to. | X12 asserts the boundary; the risk stays filed against packs, where it belongs. |
+| R7 | `code` and `extension` coexist on the same item, and a reader assumes one becomes the other. | §7.4, the reworded ⚠️, and the contract amendment. |
+
+---
+
+## 12. Assumption ledger
+
+| # | Assumption | State | How it gets settled |
+|--:|---|:--:|---|
+| A1 | Upstream has exactly two `exec` sites, both passing the module's real `globals()` | **proven** | `grep -rn "exec(" --include=*.py` over `jbeghtol/openmoxie` at `c8c2d380efd37d2e83761957587f5d08f73b3a63` → `global_responses.py`:55, `conversations.py`:271, and nothing else |
+| A2 | Upstream's entire executable content library is 6 `code` strings / 9 hooks / 4 modules | **proven** | Walked every `content_modules/*.json` and `site/data/*.json` at `c8c2d38`; `MoxieTime` 1, `MoxieTimers` 3, `MemoryChat` 1, `MoxieGo` 1 |
+| A3 | Not one upstream hook uses a loop, user function or recursion | **proven** | All nine read in full. The nested `def`s are inlining. This is the load-bearing premise of §3.2 |
+| A4 | Upstream's 10 s timeout does not actually bound a runaway hook | **inferred** (code + documented stdlib semantics; high confidence) | `future.result(timeout=10)` raises, then `with ThreadPoolExecutor` exits via `shutdown(wait=True)`. Not executed against a live upstream instance — and it needs no settling, because we are not porting the path |
+| A5 | `render.py` permits arbitrary Python execution from a pack-importable `prompt` when `jinja2` is present | **proven, by execution** | Probe run against `render_prompt` with a real `Volley` on `jinja2` 3.1.2; returned the process cwd. X3 pins it |
+| A6 | It is **not** live in the shipped container | **proven** | `mqtt/requirements.txt` lists no `jinja2`; `Dockerfile` `ARG EXTRAS=""`; `pyproject.toml`:25 puts it behind the `content` extra. `_minimal_render` has no attribute-call surface |
+| A7 | 0.25 s / 10 000 steps / 16 KiB / 256 KiB / 3 breaches are the right numbers | **unverified — chosen, not measured** | Every one is an env var. A week of `ext_events` on a real appliance is what settles them; until then the only defensible claim is "strictly inside the 6 s turn budget" |
+| A8 | A JSON-AST evaluator ports to JS mechanically and agrees byte-for-byte | **inferred** | The conformance file plus a `workerd` run is the P1 gate. Number formatting is the likeliest disagreement, which is why `format` takes an explicit spec |
+| A9 | Cloudflare Workers' CPU limit accommodates a 0.25 s evaluator slice | **unverified — stated nowhere in the repo** | [`live-sim-demo.md`](live-sim-demo.md) §10 already files this: the only Cloudflare limit our docs state is 25 MB/file. Same dashboard check settles both |
+| A10 | A non-programmer parent can act correctly on the grant list + `explain()` sentences | **unverified** | A human test. T13 only proves the sentences *exist* and are complete, not that they *land* |
+| A11 | `SPEC`'s `_d` coercer makes a stored extension provably JSON-only before validation | **proven** | `json.loads(json.dumps(v))`, and the docstring says so |
+| A12 | The 2×2 review needs no new verb for extensions — one more un-tick reason and two sentences | **inferred** | `review_pack`'s existing Accept / Keep mine / Skip + undo. T11 proves the matrix; whether the *card* needs a new control is a P1 UI question |
+| A13 | An extension can be given a namespace by the host in all cases | **inferred** | A conversation has `memory.namespace`; a global gets `ext:<slug(name)>`. Two globals with the same `name` in different packs would collide — the build agent must key on `kind:key` (which packs already use) rather than `name` |
+| A14 | Whether the robot tolerates extension-authored markup that `annotate` would never emit | **unverified** | Needs hardware. The catalogue bounds the ids; it does not prove the robot's parser is total over valid-but-unusual combinations |
+
+---
+
+## 13. What this brief is not
+
+It is not a plan to run someone else's code on a child's robot. It is not a plan to run someone else's
+Python anywhere. It is a plan to let a pack carry a **small, total, metered decision tree**, so that the
+day a speech therapist emails you an activity, the activity can *count*, *check the clock* and
+*remember a score* — and the worst thing a malicious version of it can do is stop working.
+
+---
+📖 [Backlog index](README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) ·
+[Content-module contract](../content-module-contract.md) · [Content packs](content-packs.md) ·
+[Live Sim demo](live-sim-demo.md) · [The AI seam](../ai-seam.md) ·
+[Behavior markup](../../reverse-engineering/runtime/behavior-markup.md) ·
+[Attribution](../../../ATTRIBUTION.md)
