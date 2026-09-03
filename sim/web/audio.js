@@ -19,8 +19,14 @@
  * (no server SDK). bridge.js routes it in. See the section near the bottom.
  *
  * SFX: short synthesized cues (WebAudio oscillators) — no asset files needed.
- * Exposes window.moxieAudio = { speak, sfx, setEnabled, setTtsBase, getClipPhrases,
- *                               playCloudTTS, decodeCloudTTS, isSpeaking }.
+ * THE CHILD'S VOICE: `speakClipOnly(text, "child")` plays a pre-cached clip for that
+ * EXACT string and, if there is none, makes no sound at all. It is a separate entry
+ * point precisely so it has no route into steps 2 and 3 above — the same code path
+ * carries a visitor's own typed/spoken words, and synthesizing those would read them
+ * back in a stranger's voice. See the block comment on speakClipOnly.
+ *
+ * Exposes window.moxieAudio = { speak, speakClipOnly, sfx, setEnabled, setTtsBase,
+ *                               getClipPhrases, playCloudTTS, decodeCloudTTS, isSpeaking }.
  */
 (function () {
   "use strict";
@@ -33,6 +39,10 @@
   var enabled = true;
   var ctx = null;            // created on first user gesture (autoplay policy)
   var current = null;        // current HTMLAudio/AudioBufferSourceNode
+  /* WHOSE voice `current` is. "child" means the pre-recorded prop voice of the scripted
+   * session (see speakClipOnly); anything else — null included — is MOXIE herself, and
+   * Moxie is never interrupted by the prop. Cleared by stop() and by playback ending. */
+  var currentWho = null;
 
   function actx() {
     if (!ctx) { var C = window.AudioContext || window.webkitAudioContext; ctx = C ? new C() : null; }
@@ -68,10 +78,27 @@
   function stop() {
     stopCloudTTS();          // cancel any queued/playing server audio too
     if (current) { try { current.pause ? current.pause() : current.stop(); } catch (e) {} current = null; }
+    currentWho = null;
   }
 
-  // Fetch an audio URL, decode it, play it, and drive the mouth from its envelope.
-  function playUrl(url) {
+  /* Is the ROBOT's voice occupying the speakers right now?
+   *
+   * `speaking` is the server voice (CloudTTSResponse); `current` is a clip, a Piper stream
+   * or a browser utterance. A `current` tagged "child" is the scripted prop voice, which
+   * does NOT count: Moxie may cut it off, and a newer child line may replace an older one.
+   * This is the one asymmetry that keeps the two voices off each other — see
+   * speakClipOnly's ORDERING note. */
+  function moxieIsSpeaking() { return speaking || (!!current && currentWho !== "child"); }
+
+  /* Fetch an audio URL, decode it, play it, and drive the mouth from its envelope.
+   *
+   * `opts.who` tags whose voice this is (see `currentWho`), and `opts.mouth === false`
+   * leaves Moxie's face ALONE. That second option is not cosmetic: the child's clips play
+   * through this same function, and a robot lip-syncing the child's words is a plainly
+   * broken toy. Nothing but the envelope of Moxie's OWN voice may move her mouth. */
+  function playUrl(url, opts) {
+    var who = (opts && opts.who) || null;
+    var driveMouth = !(opts && opts.mouth === false);
     return fetch(url).then(function (r) {
       if (!r.ok) throw new Error("audio " + r.status);
       return r.arrayBuffer();
@@ -81,7 +108,7 @@
         var src = a.createBufferSource(); src.buffer = audio;
         var analyser = a.createAnalyser(); analyser.fftSize = 256;
         src.connect(analyser); analyser.connect(a.destination);
-        current = src;
+        current = src; currentWho = who;
         var data = new Uint8Array(analyser.frequencyBinCount), raf = 0;
         function pump() {
           analyser.getByteTimeDomainData(data);
@@ -92,10 +119,12 @@
           raf = requestAnimationFrame(pump);
         }
         src.onended = function () {
-          cancelAnimationFrame(raf); current = null;
-          if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(0);
+          if (driveMouth) cancelAnimationFrame(raf);
+          if (current === src) { current = null; currentWho = null; }
+          if (driveMouth && window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(0);
         };
-        src.start(0); pump();
+        src.start(0);
+        if (driveMouth) pump();
         return true;
       });
     }).catch(function () { return false; });
@@ -116,8 +145,17 @@
       if (!j) return false;
       var rel = (j[who || "moxie"] || {})[text] || (j.moxie || {})[text] || (j.child || {})[text];
       if (!rel) return false;
-      return playUrl("audio/" + rel);
+      return playUrl("audio/" + rel, { who: who || "moxie" });
     });
+  }
+
+  /* STRICT clip lookup: the named group and NOTHING else.
+   *
+   * `playClip` deliberately falls through moxie -> child so a line rendered into either
+   * group still makes sound. That fallthrough is exactly wrong for the child: it would
+   * answer a child line with a clip of MOXIE's voice saying the child's words. */
+  function clipInGroup(manifest, text, who) {
+    return (manifest && manifest[who] && manifest[who][text]) || null;
   }
 
   function setVoiceStatus(mode) {
@@ -178,6 +216,65 @@
         return spoke;
       });
     });
+  }
+
+  /* ------------------------------------------------------------------------
+   * speakClipOnly — a voice with NO fallback, guaranteed by construction.
+   *
+   * WHY IT IS A SEPARATE FUNCTION. `speak()` promises SOUND: clip -> Piper -> the
+   * browser's own voice, so a line always lands. For the CHILD that promise is exactly
+   * backwards. The same `handleUserTurn` path in `bridge.js` carries three different
+   * things:
+   *
+   *   1. the two scripted child lines of `sessions/demo.json`, which we WANT audible;
+   *   2. `mic.js`'s degraded "Listen", which publishes a scripted child line on purpose;
+   *   3. whatever a VISITOR typed into the Talk box or said into the microphone.
+   *
+   * Synthesizing (3) would read a visitor's own words back at them in a stranger's voice,
+   * and on the mic path talk over them. That is worse than the silence we started with.
+   * So the rule is: a child line is spoken ONLY from a clip this site shipped for that
+   * exact string, and there is no second choice — not Piper, not speechSynthesis, not the
+   * tone generator. Making that a separate entry point rather than a `noFallback` flag
+   * threaded through `speak()` is the point: the guarantee is then a property of which
+   * function you called, and cannot be loosened by editing a condition. There is no code
+   * path out of here that reaches a synthesizer.
+   *
+   * WHY NO `replaying` GATE (bridge.js's replay flag). It was considered and rejected.
+   * The clip check is both the tighter guarantee and the more meaningful one — sound
+   * happens only where this site authored the child's voice for that exact sentence, which
+   * is a fact about the shipped assets rather than about a flag someone can set. Adding
+   * `replaying` on top would buy nothing against case (3) that the clip check does not
+   * already buy, and would actively BREAK case (2): the degraded microphone's scripted
+   * child line runs outside a replay, and muting it is the opposite of what that fallback
+   * is for. The residual it leaves is bounded and known: a visitor who types one of the
+   * two authored lines verbatim hears it read back. Two strings, only after they pressed
+   * send, in the voice the demo already uses. That is a curiosity, not the hazard.
+   *
+   * ORDERING — the child yields, Moxie interrupts. Deliberately asymmetric:
+   *   · Moxie starting to speak CUTS a playing child clip, because `speak()` calls
+   *     `stop()` first. Kept as-is: the robot is the subject of the page and must never
+   *     be talked over by a prop.
+   *   · The child NEVER cuts Moxie. This function refuses to start while
+   *     `moxieIsSpeaking()`, so a visitor typing while Moxie answers cannot silence her.
+   *   · A newer child line replaces an older child line still playing.
+   * The shipped `sessions/demo.json` is timed so the first rule never has to fire —
+   * `test_fallback_coverage.mjs` §2 asserts each scripted child line has room to finish
+   * before the next event, because "Moxie cuts her off mid-word" is what silence turns
+   * into the moment you give the child a voice.
+   * ------------------------------------------------------------------------ */
+  function speakClipOnly(text, who) {
+    if (!enabled || !text) return Promise.resolve(false);
+    who = who || "child";
+    return loadClips().then(function (j) {
+      var rel = clipInGroup(j, text, who);
+      if (!rel) return false;                 // no clip -> silence, exactly as before
+      if (moxieIsSpeaking()) return false;    // never talk over the robot
+      if (current) stop();                    // a newer child line replaces an older one
+      return playUrl("audio/" + rel, { who: who, mouth: false }).then(function (done) {
+        if (done) setVoiceStatus("clip");
+        return done;
+      }, function () { return false; });
+    }, function () { return false; });
   }
 
   // Browser Web Speech API fallback. No audio stream to analyse, so drive a gentle
@@ -680,6 +777,8 @@
 
   window.moxieAudio = {
     speak: speak, sfx: sfx, stop: stop,
+    // The child's voice: a clip, or nothing. NEVER a synthesizer — see speakClipOnly.
+    speakClipOnly: speakClipOnly,
     // --- server voice (CloudTTSResponse on /devices/{id}/commands/tts) ---
     playCloudTTS: playCloudTTS,       // decode + play; resolves when it finished
     decodeCloudTTS: decodeCloudTTS,   // pure wire decode (unit-tested in node)
