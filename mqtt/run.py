@@ -4,9 +4,27 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "supervisor"))
 import config
-from moxie_sdk import voice_settings
+from moxie_sdk import brains, voice_settings
+from moxie_sdk.store import JsonStore
 from moxie_sdk.types import ChildProfile
 from supervisor.moxie_runtime import MoxieRuntime
+
+
+def boot_brain(config, store):
+    """Which brain this appliance boots with — `defaults ⊕ fleet`, under the env's pin.
+
+    The per-robot layer is resolved per turn (`MoxieRuntime.app_for`); the *boot* brain is
+    the two layers that are known before any robot connects. Reading the fleet layer here
+    is what makes a house rule survive a restart — the same reason `assemble` reads
+    `fleet/voice.json` before building either voice engine — and it is what keeps a box
+    whose fleet brain is `echo` from exiting at startup over an `MOXIE_LLM_BASE_URL` that
+    nothing on it was ever going to use.
+    """
+    fleet = store.read_shared(MoxieRuntime.FLEET_CONFIG_COLLECTION, {}) or {}
+    return brains.resolve_brain(
+        default=config.default_brain(),
+        fleet=(fleet.get(brains.CONFIG_KEY) if isinstance(fleet, dict) else None),
+        pin=config.brain_pin())
 
 
 def _voice_line(kind, choice, engine, pin=""):
@@ -33,10 +51,17 @@ def _voice_line(kind, choice, engine, pin=""):
 def assemble(config):
     """Build the full runtime from config: the brain + optional STT + optional voice."""
     child = ChildProfile(nickname=config.CHILD_NICKNAME)
-    rt = MoxieRuntime(config.build_app(), host=config.MQTT_HOST,
-                      port=config.MQTT_PORT, child=child,
+    # 🧠 The brain picker (`moxie_sdk/brains.py`). The store is built first because the
+    # boot brain is `defaults ⊕ fleet`, and the builders are handed over so the runtime can
+    # bring up another brain for another child later without ever importing `config`.
+    store = JsonStore()
+    booted = boot_brain(config, store)
+    rt = MoxieRuntime(config.build_brain(booted["brain"]), host=config.MQTT_HOST,
+                      port=config.MQTT_PORT, child=child, store=store,
                       brain_budget_s=config.BRAIN_BUDGET_S,
                       streaming=config.STREAMING)
+    rt.set_brain_engines(config.brain_engines())
+    print(f"[run] 🧠 {brains.boot_line(booted)}")
     # 🎚️ The console's voice picker (backlog/voice-picker.md). The engine builders and the
     # cached gateway discovery are handed to the runtime here — it never imports `config`
     # itself — and the fleet record is read BEFORE either engine is built, so a choice a

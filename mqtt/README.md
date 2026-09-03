@@ -59,9 +59,31 @@ gets its config, and is ready.
 
 ## Pick the brain (`MOXIE_APP`)
 - `llm` (default) — a companion powered by any OpenAI-compatible endpoint. Local-first.
+- `content` — the data-driven activity engine (`MOXIE_CONTENT_MODULE`), answered through the same
+  model seam.
 - `webhook` — hand each turn to an **external** game/service (set `MOXIE_WEBHOOK_ENDPOINT`). This is
   how another app *becomes* Moxie without any code here.
-- `echo` — echoes speech, for testing.
+- `echo` — echoes speech, for testing. Needs no brain endpoint at all.
+- `any` — *decide per child.* See below.
+
+The four names are a **closed positive list** ([`moxie_sdk/brains.py`](moxie_sdk/brains.py)); anything
+else exits at startup naming them, rather than quietly starting the `llm` app.
+
+### One appliance, a different brain per child
+
+`MOXIE_APP` is only the **default layer**. Which brain answers a given robot is
+`defaults ⊕ fleet ⊕ per-robot` — the same layering as every other parent-set value — so:
+
+```bash
+curl -s localhost:8930/brain                                   # what this box can run, and who is on what
+curl -s -XPOST localhost:8930/brain?scope=fleet  -d '{"brain":"content"}'   # the house rule
+curl -s -XPOST 'localhost:8930/brain?device_id=d_…' -d '{"brain":"webhook"}' # this child only
+```
+
+The change lands on that child's **next turn** — no restart, and a turn already in flight finishes
+with the brain that heard the question. An explicit `MOXIE_APP` **pins** the appliance's brain and a
+per-child pick cannot overrule it; set `MOXIE_APP=any` to hand the choice to the console. Design and
+gaps: [`brain-picker.md`](../docs/architecture/backlog/brain-picker.md).
 
 ## Status
 ✅ Broker, supervisor, config push, and LLM conversation (with history) are working and were verified

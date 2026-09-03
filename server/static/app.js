@@ -161,6 +161,7 @@ async function refreshLive(){
     refreshTelehealth(null);
     refreshSchedule(null);
     refreshVoice(null);
+    refreshBrain(null);
     refreshContent(null);
     return;
   }
@@ -189,6 +190,7 @@ async function refreshLive(){
   refreshTelehealth(liveDevice);
   refreshSchedule(liveDevice);
   refreshVoice(liveDevice);
+  refreshBrain(liveDevice);
   refreshContent(liveDevice);
 }
 
@@ -1082,6 +1084,116 @@ async function testVoice(){
   };
 }
 
+// ---- 🧠 Brain (which AI answers this child) ----
+// The list comes from the SUPERVISOR's own registry, never from a list kept here, and it
+// arrives already filtered by whatever `MOXIE_APP` pins — so the card cannot offer a brain
+// the appliance would then refuse to build (the 🎚️ card's rule, for seam ②).
+//
+// Three honesty rules it keeps:
+//   * the pin note comes FIRST when the environment has pinned the brain: it is the reason
+//     the dropdown looks short, and a parent must not have to read past anything to find it;
+//   * every robot's row says which LAYER chose its brain — "this robot" / "house rule" /
+//     "appliance default" / the pin — because "why is my child on that one" is the question
+//     this card exists to answer;
+//   * saving reports what a parent can verify: the change lands on the NEXT turn, and a
+//     turn already in flight finishes with the brain that heard the question.
+let brainDevice=null, brainDirty=false, brainView=null;
+const BRAIN_SOURCE_TEXT={robot:'this robot', fleet:'house rule',
+                         default:'appliance default', pin:'pinned by MOXIE_APP'};
+async function refreshBrain(deviceId){
+  const card=$('#brain-card'); if(!card) return;
+  brainDevice=deviceId;
+  if(!deviceId){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  let b;
+  try{ b=await api(`/local/robots/${encodeURIComponent(deviceId)}/brain`,{auth:false}); }
+  catch(e){ renderBrainCard({ok:false,error:'Supervisor unreachable'}); return; }
+  renderBrainCard(b);
+}
+function brainOptions(sel, entries, selected){
+  if(!sel) return;
+  const by={};
+  (entries||[]).forEach(e=>{ (by[e.group||'Other']=by[e.group||'Other']||[]).push(e); });
+  sel.innerHTML=Object.keys(by).map(g=>
+    `<optgroup label="${escapeHtml(g)}">`
+    + by[g].map(e=>`<option value="${escapeHtml(e.id)}"${e.id===selected?' selected':''}>`
+        + `${escapeHtml(e.label||e.id)}${e.default?' — default':''}</option>`).join('')
+    + '</optgroup>').join('');
+  if(selected) sel.value=selected;
+}
+function renderBrainCard(b){
+  const note=$('#brain-note'), rows=$('#brain-robots'), status=$('#brain-status');
+  const pick=$('#brain-pick'), scope=$('#brain-scope');
+  if(!pick) return;
+  b=b||{};
+  if(!b.ok){
+    const why=(b.error==='supervisor not reachable')?'Supervisor unreachable':(b.error||'unavailable');
+    pick.innerHTML='';
+    if(note) note.innerHTML=`<span class="live-off">${escapeHtml(why)}</span>`;
+    if(rows) rows.innerHTML='';
+    return;
+  }
+  brainView=b;
+  const mine=(b.robots||[]).find(r=>r.device_id===brainDevice)||{};
+  const wanted=(scope && scope.value==='fleet') ? (b.fleet||b.default) : (mine.brain||b.default);
+  if(!brainDirty) brainOptions(pick, b.available, wanted);
+  renderBrainNote();
+  if(rows){
+    rows.innerHTML=(b.robots||[]).map(r=>{
+      const why=BRAIN_SOURCE_TEXT[r.source]||r.source||'';
+      const over=r.requested? ` <span class="warn">(${escapeHtml(r.requested)} was chosen here)</span>`:'';
+      return `<div class="k"><span>${escapeHtml(r.child||r.device_id)}</span>`
+        + `<b>${escapeHtml(r.label||r.brain)} — ${escapeHtml(why)}${over}</b></div>`;
+    }).join('');
+  }
+  if(status && !brainDirty && !status.dataset.sticky) status.textContent='';
+}
+async function saveBrain(brain){
+  const s=$('#brain-status'); if(!s) return;
+  const scope=($('#brain-scope')||{}).value==='fleet'?'fleet':'robot';
+  const body={brain: brain===null?null:$('#brain-pick').value, scope};
+  s.dataset.sticky='1'; s.textContent='Saving…';
+  try{
+    const r=await api(`/local/robots/${encodeURIComponent(brainDevice||liveDevice)}/brain`,
+                      {method:'POST',auth:false,body});
+    brainDirty=false;
+    if(r.ok){
+      s.textContent=(scope==='fleet')
+        ? '✅ Saved as the house rule — every robot without its own choice uses it next turn.'
+        : '✅ Saved — the next thing your child says goes to this brain.';
+      renderBrainCard(r);
+    } else s.textContent='⚠️ '+(r.reason||r.error||'could not save');
+  }catch(e){ s.textContent='⚠️ '+(e&&e.message?e.message:'could not save'); }
+}
+// The blurb and the "needs" line follow the DROPDOWN rather than the saved value, so a
+// parent reads what a brain IS before committing to it. Only the note is redrawn on a
+// change — re-rendering the whole card would fight the <select> the parent is using.
+function renderBrainNote(){
+  const note=$('#brain-note'), pick=$('#brain-pick'), b=brainView;
+  if(!note||!pick||!b) return;
+  const bits=[];
+  // The pin comes first: it is the reason the dropdown looks short.
+  if(b.pin_note) bits.push('<b>'+escapeHtml(b.pin_note)+'</b>');
+  const chosen=(b.available||[]).find(e=>e.id===pick.value);
+  if(chosen && chosen.blurb) bits.push(escapeHtml(chosen.blurb));
+  if(chosen && (chosen.needs||[]).length)
+    bits.push('Needs '+chosen.needs.map(n=>'<code>'+escapeHtml(n)+'</code>').join(' + '));
+  bits.push('House rule: <b>'+escapeHtml(b.fleet||'—')+'</b>'
+    + ' · appliance default: <b>'+escapeHtml(b.default||'—')+'</b>');
+  note.innerHTML=bits.join(' · ');
+}
+{
+  const pk=$('#brain-pick'); if(pk) pk.onchange=()=>{ brainDirty=true; renderBrainNote(); };
+  const sc=$('#brain-scope'); if(sc) sc.onchange=()=>{ brainDirty=false;
+    refreshBrain(brainDevice||liveDevice); };
+  const b=$('#btn-brain-save'); if(b) b.onclick=()=>saveBrain();
+  const c=$('#btn-brain-clear'); if(c) c.onclick=()=>saveBrain(null);
+  const r=$('#btn-brain-refresh'); if(r) r.onclick=()=>{
+    brainDirty=false;
+    const s=$('#brain-status'); if(s){ delete s.dataset.sticky; s.textContent=''; }
+    refreshBrain(brainDevice||liveDevice);
+  };
+}
 // ---- 📦 Content packs (backlog/content-packs.md) ----
 // One JSON file that carries activities between machines. Three things this card does
 // that a plain "import" button would not:

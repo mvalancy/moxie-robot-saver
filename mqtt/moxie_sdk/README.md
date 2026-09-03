@@ -70,6 +70,14 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   whole table is the JSON file, which a parent can read — behind a `Classifier` protocol a
   local model classifier can drop into. Parent-facing summary:
   [child-safety guide](../../docs/guides/child-safety.md).
+- [`brains.py`](brains.py) — 🧠 **which brain answers this child.** A closed *positive list* of the
+  brains this appliance knows (`llm`, `content`, `webhook`, `echo`) — a name in it resolves to a
+  builder in [`config.BRAIN_BUILDERS`](../config.py), a name that is not is **refused, never
+  guessed** — plus the resolution of `defaults ⊕ fleet ⊕ per-robot` (the scalar case of
+  `cloud_config.merge_config_layers`, not a second layering) and the rule that an explicit
+  `MOXIE_APP` **pins** the appliance's brain over any per-child pick. Dependency-free, like
+  `voice_settings.py`: the runtime builds through a seam, so every test runs with no endpoint and
+  no key. Design + gaps: [brain-picker.md](../../docs/architecture/backlog/brain-picker.md).
 - [`chat.py`](chat.py) — the LLM boundary: `make_openai_chat` (a whole completion),
   `make_openai_stream` / `stream_completion` (text deltas), plus the rate-limit
   classification, `Pacer` and `call_with_backoff` both share.

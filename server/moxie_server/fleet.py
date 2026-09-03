@@ -910,6 +910,92 @@ def normalize_voice(payload: Optional[dict]) -> dict:
         return {**empty, "error": f"unreadable voice payload: {e}"}
 
 
+# --- 🧠 the brain picker (docs/architecture/backlog/brain-picker.md) -----------------
+# Which brain answers which child. The supervisor owns the registry, the layering and the
+# swap; this layer forwards and normalizes, exactly as it does for the 🎚️ voice picker.
+#
+# Unlike the voice, the record is BOTH fleet-level and per-robot — that difference is the
+# whole feature — so one payload carries the house rule, the appliance's own brain and a
+# row per robot saying which brain it is on and *which layer decided*.
+
+def normalize_brain_option(entry: Optional[dict]) -> dict:
+    """One brain the card may offer: `{id, label, group, blurb, needs, default}`.
+
+    `needs` is the list of `MOXIE_*` variables that brain cannot run without. It is shown
+    under the option because "webhook" means nothing to a parent until the card says the
+    endpoint variable is what makes it work.
+    """
+    e = entry if isinstance(entry, dict) else {}
+    needs = e.get("needs")
+    return {"id": str(e.get("id") or ""), "label": str(e.get("label") or ""),
+            "group": str(e.get("group") or ""), "blurb": str(e.get("blurb") or ""),
+            "needs": [str(n) for n in needs] if isinstance(needs, (list, tuple)) else [],
+            "default": bool(e.get("default"))}
+
+
+def normalize_brain_robot(entry: Optional[dict]) -> dict:
+    """One robot's row: which brain answers this child, and which layer chose it."""
+    e = entry if isinstance(entry, dict) else {}
+    return {"device_id": str(e.get("device_id") or ""),
+            "child": str(e.get("child") or ""),
+            "brain": str(e.get("brain") or ""),
+            # `default` / `fleet` / `robot` / `pin` — the card prints it in words, because
+            # "why is this child on that brain" is the question the card exists to answer.
+            "source": str(e.get("source") or ""),
+            "label": str(e.get("label") or ""),
+            "override": str(e.get("override") or ""),
+            "requested": str(e.get("requested") or ""),
+            "note": str(e.get("note") or ""),
+            "line": str(e.get("line") or "")}
+
+
+def normalize_brain(payload: Optional[dict]) -> dict:
+    """Runtime `/brain` (GET or POST) → the console's 🧠 card shape.
+
+    Tolerates anything — a None payload (supervisor down), a refusal, a truncated body —
+    and never raises. An unreadable payload comes back with `error` set so the card prints
+    the reason rather than an empty dropdown that reads as "this box has no brains".
+    """
+    empty = {"ok": False, "available": [], "pin": "", "pin_note": "", "default": "",
+             "fleet": "", "appliance": "", "env_var": "MOXIE_APP", "installed": [],
+             "robots": [], "applied": None, "reason": "",
+             "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        ok = bool(p.get("ok"))
+        avail = p.get("available")
+        robots = p.get("robots")
+        installed = p.get("installed")
+        return {
+            "ok": ok,
+            "available": [normalize_brain_option(e)
+                          for e in (avail if isinstance(avail, (list, tuple)) else [])
+                          if isinstance(e, dict) and e.get("id")],
+            # What an explicit `MOXIE_APP` has pinned, and the sentence that says so. The
+            # list above is ALREADY filtered to it upstream, so this note is the only
+            # thing standing between a parent and "why is there only one brain here".
+            "pin": str(p.get("pin") or ""),
+            "pin_note": str(p.get("pin_note") or ""),
+            "default": str(p.get("default") or ""),
+            "fleet": str(p.get("fleet") or ""),
+            "appliance": str(p.get("appliance") or ""),
+            "env_var": str(p.get("env_var") or "MOXIE_APP"),
+            "installed": ([str(b) for b in installed]
+                          if isinstance(installed, (list, tuple)) else []),
+            "robots": [normalize_brain_robot(r)
+                       for r in (robots if isinstance(robots, (list, tuple)) else [])
+                       if isinstance(r, dict)],
+            "applied": p.get("applied") if isinstance(p.get("applied"), dict) else None,
+            "reason": str(p.get("reason") or ""),
+            "error": None if ok else (p.get("error") or p.get("reason")
+                                      or "no brain settings available"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable brain payload: {e}"}
+
+
 # --- 📦 content packs (docs/architecture/backlog/content-packs.md) --------------------
 # Content stops being a file in our repository: a pack is one JSON file a parent can be
 # handed, review before it changes anything, and undo afterwards. These three normalizers

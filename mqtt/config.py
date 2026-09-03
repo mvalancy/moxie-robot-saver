@@ -149,8 +149,15 @@ BROKER_PUBLIC_HOST = os.environ.get("MOXIE_BROKER_HOST", "192.168.1.9")
 BROKER_PUBLIC_PORT = int(os.environ.get("MOXIE_BROKER_PORT", "8883"))
 
 # --- which MoxieApp drives the robot ---
-# "llm" (default), "echo", "webhook", or "content"
+# "llm" (default), "echo", "webhook", or "content" — the closed positive list lives in
+# `moxie_sdk/brains.py`, and `build_brain` refuses anything that is not in it.
 MOXIE_APP = os.environ.get("MOXIE_APP", "llm")
+
+#: The RAW `MOXIE_APP`, before the `llm` default above is applied. **The pin reads this
+#: one.** `MOXIE_APP` cannot tell "the operator chose llm" from "nobody said anything",
+#: and pinning the second would lock every unconfigured box out of the per-child picker —
+#: PR #77's lesson in a different costume (`moxie_sdk/brains.py`, "the environment's pin").
+BRAIN_ENV = os.environ.get("MOXIE_APP", "")
 
 # Content app: a data-driven module (conversations/globals) run through the AI seam.
 CONTENT_MODULE = os.environ.get("MOXIE_CONTENT_MODULE", "content_modules/starter.json")
@@ -325,21 +332,114 @@ WEBHOOK_ENDPOINT = os.environ.get("MOXIE_WEBHOOK_ENDPOINT", "")
 CHILD_NICKNAME = os.environ.get("MOXIE_CHILD_NICKNAME", "friend")
 
 
-def build_app():
-    """Instantiate the configured MoxieApp."""
+def _sdk_path():
+    """Put this directory on `sys.path` so `moxie_sdk` imports. Called by the builders
+    rather than at module import, which is why nothing above imports the SDK."""
     import sys, os as _os
     sys.path.insert(0, _os.path.dirname(__file__))
-    from moxie_sdk.apps import EchoApp, LLMApp, WebhookApp
-    if MOXIE_APP == "echo":
-        return EchoApp()
-    if MOXIE_APP == "webhook":
-        if not WEBHOOK_ENDPOINT:
-            raise SystemExit("MOXIE_APP=webhook requires MOXIE_WEBHOOK_ENDPOINT")
-        return WebhookApp(WEBHOOK_ENDPOINT)
-    if MOXIE_APP == "content":
-        return build_content_app()
+
+
+def _build_echo():
+    _sdk_path()
+    from moxie_sdk.apps import EchoApp
+    return EchoApp()
+
+
+def _build_webhook():
+    _sdk_path()
+    from moxie_sdk.apps import WebhookApp
+    if not WEBHOOK_ENDPOINT:
+        raise SystemExit("MOXIE_APP=webhook requires MOXIE_WEBHOOK_ENDPOINT")
+    return WebhookApp(WEBHOOK_ENDPOINT)
+
+
+def _build_llm():
+    _sdk_path()
+    from moxie_sdk.apps import LLMApp
     return LLMApp(base_url=require_llm_base_url("llm"), api_key=LLM_API_KEY,
                   model=LLM_MODEL)
+
+
+#: `{brain id: builder}` — the other half of `moxie_sdk.brains.BRAINS`. The registry
+#: says which names exist and what they are called; this table says how to make one on
+#: THIS box, because only `config` knows what a `MOXIE_LLM_BASE_URL` is. The two are
+#: pinned to each other by a test: a brain in one table and not the other is a name the
+#: console would offer and the appliance could not build.
+BRAIN_BUILDERS = {
+    "llm": _build_llm,
+    "content": lambda: build_content_app(),
+    "webhook": _build_webhook,
+    "echo": _build_echo,
+}
+
+
+def _unknown_brain(name) -> SystemExit:
+    """The one refusal for a `MOXIE_APP` nobody can build, so every path says it the same
+    way: `build_brain`, `default_brain`, and therefore `build_app` and `run.assemble`."""
+    _sdk_path()
+    from moxie_sdk import brains
+    return SystemExit(
+        f"MOXIE_APP={str(name)!r} is not a brain this appliance knows. "
+        f"Choose one of: {brains.offered()} — or MOXIE_APP=any to leave the choice "
+        f"to the console, per child (docs/architecture/ai-seam.md §2).")
+
+
+def default_brain() -> str:
+    """The brain the `defaults` layer contributes.
+
+    `MOXIE_APP` when it names one; `brains.DEFAULT_BRAIN` for the values that mean
+    *decide for me* (unset, `any`, `auto`) — they select nothing and pin nothing, but the
+    box still has to boot with something. **Anything else raises**: falling back to the
+    default for a typo is exactly the behaviour the registry exists to remove, and it is
+    what made `MOXIE_APP=gpt5` come out as the free-form companion.
+    """
+    _sdk_path()
+    from moxie_sdk import brains
+    name = brains.sanitize_brain(MOXIE_APP)
+    if name:
+        return name
+    if str(MOXIE_APP or "").strip().lower() in brains.NO_PIN_VALUES:
+        return brains.DEFAULT_BRAIN
+    raise _unknown_brain(MOXIE_APP)
+
+
+def brain_pin() -> str:
+    """Which brain `MOXIE_APP` pins right now — `""` when it pins nothing.
+
+    One place reads the variable for the picker, so the builders, the card's dropdown and
+    the note under it can never disagree about what this deployment allows (the rule
+    `engine_pins()` follows for `MOXIE_TTS`/`MOXIE_STT`)."""
+    _sdk_path()
+    from moxie_sdk import brains
+    return brains.pin_for_env(BRAIN_ENV)
+
+
+def build_brain(name):
+    """Instantiate ONE brain by name — the positive list applied.
+
+    A name that is not in `brains.BRAINS` **exits naming what is offered**, where the old
+    `build_app()` returned the LLM app for anything it did not recognise: `MOXIE_APP=gpt5`
+    and `MOXIE_APP=Echo` both silently became the free-form companion, and on a box with
+    no `MOXIE_LLM_BASE_URL` that typo showed up as the brain-endpoint refusal, naming a
+    variable the operator had never meant to use. Refusing at assembly, in one sentence
+    that lists the four real names, is the same trade `require_llm_base_url` makes.
+    """
+    _sdk_path()
+    from moxie_sdk import brains
+    key = brains.sanitize_brain(name)
+    if not key or key not in BRAIN_BUILDERS:
+        raise _unknown_brain(name)
+    return BRAIN_BUILDERS[key]()
+
+
+def build_app():
+    """Instantiate the appliance's own MoxieApp — the `defaults` layer, from `MOXIE_APP`.
+
+    Still the whole story for a box that never opens the console. What sits above it is
+    `fleet ⊕ per-robot` (`brains.resolve_brain`, `MoxieRuntime.app_for`), which is how one
+    appliance can run a different brain for a different child.
+    """
+    return build_brain(default_brain())
 
 
 def build_content_app():
@@ -694,3 +794,38 @@ class VoiceEngines:
 def voice_engines(catalog=None) -> "VoiceEngines":
     """The appliance's `VoiceEngines` — what `run.py` hands the runtime at boot."""
     return VoiceEngines(catalog)
+
+
+# --- 🧠 the brain picker (any brain, hot-swappable, per child) ----------------------
+# The mirror of `VoiceEngines` above, for seam ② (`docs/architecture/ai-seam.md`). The
+# runtime holds one of these and never imports `config` itself, so a test hands it a fake
+# and the whole card runs with no endpoint, no key and no `openai` installed.
+
+class BrainEngines:
+    """What this appliance can think with, and how to build any of it.
+
+    No discovery, no cache, no network: unlike the gateway's voice catalog, the set of
+    brains is a table in this repo — it cannot change while the process runs, and asking
+    a remote service which brains exist would be inventing a question nobody asked.
+    """
+
+    def available(self) -> dict:
+        """`{available, pin, pin_note, default}` — already reduced to what an explicit
+        `MOXIE_APP` would let this box install (`brains.filter_options`), so the card
+        cannot show an entry `build_brain` would then refuse."""
+        _sdk_path()
+        from moxie_sdk import brains
+        pin = brain_pin()
+        return {"available": brains.filter_options(
+                    brains.options(default=default_brain()), pin),
+                "pin": pin,
+                "pin_note": brains.pin_note(BRAIN_ENV),
+                "default": default_brain()}
+
+    def build(self, name):
+        return build_brain(name)
+
+
+def brain_engines() -> "BrainEngines":
+    """The appliance's `BrainEngines` — what `run.py` hands the runtime at boot."""
+    return BrainEngines()
