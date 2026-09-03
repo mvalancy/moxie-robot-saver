@@ -1,6 +1,6 @@
 # 🔬 OpenMoxie feature audit — what to adopt, and where to go beyond
 
-> **Audit version 1 · 2026-09-02.** A feature-by-feature read of **OpenMoxie** (upstream `v0.8`, MIT)
+> **Audit version 1 · baseline 2026-09-02 · status column refreshed 2026-09-03.** A feature-by-feature read of **OpenMoxie** (upstream `v0.8`, MIT)
 > and its two active forks, measured against **our** build contracts and what we have actually shipped
 > ([`implementation-plan.md`](implementation-plan.md)). Every OpenMoxie claim below cites a file in
 > *their* repo. Every claim about us cites a file in *ours*. Nothing here is guessed.
@@ -14,20 +14,44 @@
 > **Baseline + status.** The audit was measured at commit `fa70309` (PR #4, 2026-09-02) and its
 > *findings* are frozen at that baseline — they are not rewritten as we ship. What we have built since
 > is tracked in the **Status** column of the two ranked-backlog tables (§4.1, §4.2), last refreshed
-> **2026-09-02 (evening)**, and in [`orchestration-plan.md`](orchestration-plan.md)'s status log. Where a
+> **2026-09-03**, and in [`orchestration-plan.md`](orchestration-plan.md)'s status log. Where a
 > status is *partial*, the column says what is actually done, not what was intended. §4.4 re-ranks what is
 > still open.
 >
-> **Upstream re-check — checked 2026-09-02: no new upstream features.** All three source repos were read
-> at their **live remote heads** (`git ls-remote`, so this is not a stale local clone speaking):
+> **⚠️ How to read this page — the frozen half and the live half**
+>
+> This distinction is not pedantry. On **2026-09-03** two build agents were each briefed off this page
+> and each lost a full run discovering on arrival that their item had already shipped: **content packs**
+> (ADOPT #5, merged as PR #51 on 2026-09-02) still carried a 🔵 *open* marker, and the **voice +
+> listening picker** (BEYOND #8's console half, merged as PR #48) was ranked as work to do. An audit that
+> overstates what is left is worse than no audit, because it is trusted. So:
+>
+> | Section | Frozen or live? | What it means |
+> |---|---|---|
+> | §1, §2 (inventory of *their* code) | **frozen** at `c8c2d380` / `a97c85c0` / `a80a81ef` | Re-verified against the live remote heads — see the upstream re-check below |
+> | §3 (the HAVE/ADOPT/BEYOND scorecard) | **FROZEN at 2026-09-02 morning** | Its *"Us today"* column is a **historical snapshot** and several cells are deliberately left describing a gap we have since closed. **Never brief an agent from §3.** §3.0 lists every superseded row |
+> | §4.1, §4.2 **Status** columns | **live** | The authority on what we have shipped. Every 🟢 names the PR *and* the test that proves it |
+> | §4.3 (briefs), §4.4 (the ranking) | **live** | §4.4 is the only place to look for *"what should I build next"* |
+> | §5 (the honest ledger) | **frozen**, with a live "closed since" note at its head | Same rule as §3 |
+>
+> **The rule for anyone editing this page:** a row is 🟢 only if you can name the **file** and the
+> **test** that prove it. "The PR is merged" is not proof; a test name is.
+>
+> **Upstream re-check — checked 2026-09-03: still nothing new upstream.** All three source repos were
+> read again at their **live remote heads** (`git ls-remote`, so this is not a stale local clone
+> speaking), branches and tags both:
 > upstream [`jbeghtol/openmoxie`](https://github.com/jbeghtol/openmoxie) is still `c8c2d380`
 > (2026-01-15, *"Added warning about alt openmoxie (#58)"*), [`Noonster77/openmoxie`](https://github.com/Noonster77/openmoxie)
 > is still `a97c85c0` (2026-08-30, *"Add parent review acknowledgments"*), and
 > [`vapors/openmoxie-ollama`](https://github.com/vapors/openmoxie-ollama) is still `a80a81ef`
-> (2025-08-17). Every one of those is the exact commit this audit was written against — **nothing has
-> been published upstream or in either fork since the baseline**, so there is nothing new to adopt,
-> re-rank or re-cite from their side. A verified nothing is a result: the ADOPT list below is complete
-> as of tonight, and what remains is ours to build.
+> (2025-08-17). No repo has gained a branch or a tag either: both openmoxie repos carry the same three
+> branches (`main`, `disclaimer` `a1521754`, `release` `36f8c122` — the latter two identical across the
+> fork and unmoved) and the same seven tags topping out at `v0.7`; the ollama fork has one branch and
+> three tags all pointing at `6eaa7458`. Every one of those is the exact commit this audit was written
+> against — **nothing has been published upstream or in either fork since the baseline**, so there is
+> nothing new to adopt, re-rank or re-cite from their side. **A verified nothing is a result**, and it
+> is now the second consecutive day of it: the ADOPT list below is complete, and what remains is ours
+> to build.
 
 ## 🙏 Credit — OpenMoxie is MIT, and it is the reason any of this is possible
 
@@ -377,6 +401,36 @@ the code in [`../../mqtt/`](../../mqtt/) + [`../../server/`](../../server/), aud
   notice) and cite where it lives in their tree.
 - **BEYOND** — the honest answer is neither: their version is a floor, and the thing we should build is
   a different, bigger thing.
+
+### 3.0 ⚠️ This scorecard is a frozen snapshot — these rows are superseded
+
+Everything in §3 describes **2026-09-02 morning**. It is kept unrewritten so the audit's reasoning stays
+auditable, which means its *"Us today"* column now understates us in fifteen places. **Do not brief a
+build agent from §3** — brief from §4.4. Each row below is closed; the PR and the test that prove it are
+in the §4.1/§4.2 Status column, and the ones re-verified against `origin/dev` on 2026-09-03 are marked.
+
+| §3 row | What it still says | The truth on `origin/dev`, 2026-09-03 |
+|---|---|---|
+| 3.1 Robot identity / JWT | *"broker is anonymous … brief ready"* | **P0 shipped** — `per_listener_settings` + two ACL files confine every client to its own `%c` subtree; `sim/tests/test_broker_acl.py` (30 tests) + `sim/run_acl_proof.sh` (18 delivery checks against a real `eclipse-mosquitto:2.0.20`). P1/P2 remain open and blocked on A1–A4 |
+| 3.2 LLM response tags | *"nothing parses tags out of model text"* | Shipped PR #6, per-chunk since PR #17 — `sim/tests/test_action_tags.py`, `sim/tests/test_live_action_tags.py` |
+| 3.2 Puppet / telehealth | *"no command path, no UI"* | Shipped PR #43 — `mqtt/moxie_sdk/telehealth.py`; `test_telehealth.py` (42) + `test_telehealth_runtime.py` (50) + `test_telehealth_view.py` (18) |
+| 3.3 Content model / **authoring UI** | *"edit JSON by hand"* | **Partly closed.** A parent can now install, review, diff and export content from the 📦 card (`server/static/index.html`), but there is still no editor for authoring a *new* conversation — that half is genuinely open (§4.4 #6) |
+| 3.3 Content packs: import/export + review | *"none"* | Shipped PR #51, hardened PR #78 — `mqtt/moxie_sdk/content/packs.py` (942 lines); `test_content_packs.py` (78) + `test_content_packs_runtime.py` (36) + `test_content_pack_sandbox.py` (46) |
+| 3.3 Content versioning | *"none"* | Same PR — `source_version` **and** a `local_rev` digest, so an upstream re-import reports `CONFLICT` instead of clobbering |
+| 3.3 Schedule serving | *"answers with `{}` and with the wrong shape"* | Shipped PR #5 (shape) + PR #7 (the plan) + the recommender — `sim/tests/test_schedule.py`, `test_schedule_planner.py` (37), `test_schedule_sil_e2e.py` |
+| 3.3 `mentor_behaviors` history | *"returns `[]`"* | Shipped PR #7, durable across restarts |
+| 3.3 Native-module launching | *"no code schedules them"* | The 23-module catalog is scheduled by `mqtt/moxie_sdk/schedule.py` |
+| 3.4 Config model | *"no fleet-wide layer"* | Shipped — `cloud_config.merge_config_layers`; `sim/tests/test_fleet_config.py` |
+| 3.4 Face customization | *"~60-asset table"* vs ours | Shipped PR #36, widened PR #47 — 72 options across 11 slots; `sim/tests/test_faces.py` (46). Row already reads **HAVE**; listed here only because the count moved |
+| 3.4 Wake command | *"the MQTT `wakeup` command is not sent"* | Shipped PR #55 — `moxie_runtime.py::WAKEUP_COMMAND` publishes `{"command":"wakeup"}` on `/devices/{id}/commands/wakeup`, and `server/moxie_server/main.py`:301 forwards to it instead of returning a lie |
+| 3.4 Telemetry / insights | *"console view still missing"* | Shipped PR #55 — durable `telemetry_packets` + `telemetry_daily`; `test_telemetry.py` (29) + `test_telemetry_runtime.py` (21) + `test_sil_durable_telemetry.py` (10). The *interesting* half (sessions, mood trend) is still open — BEYOND #5 |
+| 3.4 **Device allowlist** | already **HAVE** | Now also enforced at the broker, not just the supervisor (the ACL above) |
+| 3.5 Tests | *"37 test files"* | **105** — `sim/tests/test_*.py` + `sim/test_*.mjs` + `tools/robot-toolkit/test_*.py`, counted on `origin/dev` 2026-09-03 |
+| 3.5 Prebuilt images | *"published at v0.6.0"* | **Verified in the registry 2026-09-03**, which the ADOPT #10 row could not claim before: an anonymous GHCR tag list returns `0.6.0 / 0.6 / 0.7.0 / 0.7 / latest` for all three of `supervisor`, `console`, `broker-certs`, and `supervisor:0.7.0` is a real OCI image **index** carrying `linux/amd64` **and** `linux/arm64` |
+
+**Still true in §3, and worth reading it for:** launch-card QRs (`GO<launch:MOD>` — nothing renders one),
+OTA push, the missions editor, stored-`METHOD` extensions, and the one-`ChildProfile`-for-all-robots
+identity gap. Those five are the live remainder of the scorecard.
 
 ### 3.1 Onboarding & transport
 
