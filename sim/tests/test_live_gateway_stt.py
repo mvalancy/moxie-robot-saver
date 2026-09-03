@@ -215,8 +215,24 @@ def test_a_child_utterance_through_the_runtime_on_gateway_ears_brain_and_voice()
     from helpers_runtime import assert_spec_response, drive_turn, make_runtime
     from moxie_sdk.tts import decode_cloud_tts_response
 
-    c = _config(MOXIE_STT="gateway", MOXIE_APP="llm", MOXIE_VOICE_MODEL=TTS_MODEL,
-                MOXIE_VOICE_FORMAT="wav")
+    # BOTH sides pinned (#77). Nothing had proven a *pinned* engine still produces audio
+    # on the wire — the pin's own tests are hermetic, and every live test so far left
+    # `MOXIE_TTS` unset so `build_synthesizer`'s auto precedence chose. Here the operator's
+    # environment names the engine, a console pick naming another one is dropped, and the
+    # turn below is what that pin actually produced.
+    c = _config(MOXIE_STT="gateway", MOXIE_TTS="gateway", MOXIE_APP="llm",
+                MOXIE_VOICE_MODEL=TTS_MODEL, MOXIE_VOICE_FORMAT="wav")
+    from moxie_sdk import voice_settings as _vs
+    assert _vs.pin_for_env(_vs.SPEECH, c.TTS_ENGINE) == "gateway", c.TTS_ENGINE
+    assert _vs.pin_for_env(_vs.LISTENING, c.STT_ENABLED) == "gateway", c.STT_ENABLED
+    # …and the pin is enforced where the engine is actually constructed. The probe picks
+    # `tone`/`off` rather than piper/whisper ON PURPOSE: those two are the only cross-engine
+    # picks this box could actually BUILD (no .onnx, no faster-whisper here), so without the
+    # pin they really would install, and the assertion is not vacuous. Neither costs a call.
+    assert c.build_synthesizer(override={"engine": "tone", "model": ""}).voice_name \
+        == "openai-voice", "a console pick of `tone` overruled MOXIE_TTS=gateway"
+    assert c.build_transcriber(override={"engine": "off", "model": ""}) is not None, \
+        "a console pick of `off` overruled MOXIE_STT=gateway"
     trans, synth, app = c.build_transcriber(), c.build_synthesizer(), c.build_app()
     print(f"\n[gw-stt] [run] STT enabled: {trans.describe()}"
           f"\n[gw-stt] [run] server voice enabled: {synth.describe()}"
@@ -272,4 +288,11 @@ def test_a_child_utterance_through_the_runtime_on_gateway_ears_brain_and_voice()
         f"  said : {CHILD_LINE!r}\n  heard: {transcript!r}")
     assert len(reply) > 10, f"suspiciously short live reply: {resp}"
     assert spoken["audio"] and spoken["sample_rate"] > 0
+    # The pinned voice must have produced SPEECH, not the placeholder tone. `ToneSynthesizer`
+    # emits the same mono PCM16 at the same rate, so only the spectrum separates them — and
+    # this is the assertion that makes "a pinned engine still speaks on the wire" a fact.
+    assert A.is_real_speech(spoken["audio"]), (
+        f"the pinned gateway voice put tone-shaped audio on the wire "
+        f"(flatness {A.spectral_flatness(spoken['audio']):.3e} <= "
+        f"{A.SPEECH_FLATNESS_FLOOR:.0e})")
     assert len(tts_msgs) == 1, f"the turn spent {len(tts_msgs)} voice calls, budgeted 1"
