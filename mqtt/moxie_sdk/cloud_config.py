@@ -11,6 +11,8 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import Optional
 
+from . import brains
+
 
 class LoggingPolicy(IntEnum):
     """What may leave the device — the child-privacy gate (enums.proto)."""
@@ -484,7 +486,45 @@ def sanitize_config_overrides(raw: dict) -> dict:
         from moxie_sdk.faces import validate_face
         face = validate_face(raw["face"])
         out["face"] = face or None
+    if brains.CONFIG_KEY in raw:                         # which brain answers this child
+        # A scalar, so `merge_config_layers` replaces it wholesale: a per-robot pick wins
+        # over the house rule outright, and an explicit `null` clears this layer back to
+        # the one underneath (`brains.resolve_brain`). Validated against the positive
+        # list here — the *store* never holds a name nobody can build — while the
+        # environment's pin is enforced where the environment is actually readable
+        # (`config.brain_pin` → `MoxieRuntime.brain_for`); this module imports no config.
+        value = raw[brains.CONFIG_KEY]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            out[brains.CONFIG_KEY] = None
+        else:
+            name = brains.sanitize_brain(value)
+            if not name:
+                raise ValueError(f"{str(value)!r} is not a brain this appliance knows. "
+                                 f"Choose one of: {brains.offered()}.")
+            out[brains.CONFIG_KEY] = name
     return out
+
+
+#: Config keys a parent sets that are the SERVER's business and never the robot's.
+#: `brain` rides the ordinary config layers (audit ADOPT #6) because that is the one
+#: layering this codebase has — but the robot has no field for it, and
+#: `build_robot_cloud_config` would raise `TypeError` on the unexpected keyword rather
+#: than quietly shipping it. `robot_config_kwargs` is the one place that difference is
+#: written down, so a future server-side key is one tuple entry away from being safe.
+SERVER_ONLY_KEYS = (brains.CONFIG_KEY,)
+
+
+def robot_config_kwargs(cfg) -> dict:
+    """`cfg` minus the keys that never travel to a robot (`SERVER_ONLY_KEYS`).
+
+    Subtractive by design and safe to be: the *document* is still built additively from a
+    whitelist of kwargs, so a key this function forgets to drop cannot leak into it — it
+    raises at the call instead. The un-paired document stays written out in full
+    elsewhere (`build_unpaired_cloud_config`) for exactly the opposite reason.
+    """
+    if not isinstance(cfg, dict):
+        return {}
+    return {k: v for k, v in cfg.items() if k not in SERVER_ONLY_KEYS}
 
 
 # RobotStatus (/state) fields we surface (embodied/logging/Cloud.proto message RobotStatus)
