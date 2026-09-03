@@ -52,7 +52,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   plain English, so a shared pack can *do* something without trusting its author) and
   [`backlog/brain-picker.md`](backlog/brain-picker.md) (any brain, hot-swappable, per child — a closed
   positive registry of brains, per-robot selection layered like every other config value, a live swap
-  with no restart, and an explicit `MOXIE_APP` that pins the appliance's own).
+  with no restart, and an explicit `MOXIE_APP` that pins the appliance's own), and
+  [`backlog/production-hardening.md`](backlog/production-hardening.md) (production hardening — the
+  cross-process store decision made rather than deferred, MQTT reconnection, and a soak that stands in
+  for a week in a house).
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
 - [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.
