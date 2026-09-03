@@ -925,8 +925,44 @@ our recovered catalog. Independent corroboration in the other direction: their
   tree, so `annotate(..., look=…)` takes one of four `Bht_*` and nothing here invents a
   direction.
 
-The **behavior planner** (`backlog/expressiveness.md` §2) replaces the floor behind this same
-seam, with the same signature, and degrades to it on any failure.
+#### The behavior planner (P1) — **built**, v1 2026-09-03
+
+The floor maps **words** to tags. The planner scores what the line is *doing* and stages a
+performance from that — behind this same seam, with the same signature, degrading to the floor
+on any failure. [`moxie_sdk/performance.py`](../../mqtt/moxie_sdk/performance.py):
+
+- **It does not emit strings.** `plan()` returns a frozen `Performance` (a list of `Beat`s plus
+  the line's dialog act, emotion, signal and mood), `validate()` checks every id in it against
+  the same `vocab.py` catalog, and **one** `render()` mints the marks. So validation is total
+  and the goldens are readable JSON — [`sim/tests/goldens/performance.json`](../../sim/tests/goldens/performance.json),
+  one line per `RemoteDialog.DialogAct`, all 22.
+- **The act is the unit.** A `factual_question` tilts (`Gesture_Question`) and **holds** the
+  gaze; an `apology` goes Sad and stops gesturing; `appreciation` celebrates at intensity 2;
+  `backchannelling` moves **nothing** but the closing rest pose. Rule-based, no model call.
+- **The scored wire fields are finally filled.** `supervisor/markup.py::perform()` returns the
+  markup *and* the score, and `MoxieRuntime._stage` puts it on every published turn — the reply,
+  every streamed chunk, both fillers, the greeting, the queued opener and the safety redirect.
+  An app's own `Reply.mood`/`dialog_act` still wins, field by field. This closes the gap the
+  bullet above records: `ReplyChunk` grew the fields (C2), `_publish_stream_chunk` passes them
+  (C4), and `build_chat_response` emits `mood_intensity`/`emotion`/`signals` (C3).
+- **Rehearsal.** `POST /local/robots/{id}/preview` (→ the supervisor's `POST /preview`) stages a
+  line and publishes it as an **ordinary** `remote_chat`, so the SIM — or a robot paired as a
+  rehearsal device — performs it. No brain, no history, no turn recorded, and there is no
+  SIM-specific API, because the SIM is another client of the same contract.
+- **`MOXIE_EXPRESSIVE=planner|floor|off`.** `floor` is a *rendering* rollback (the wire keeps its
+  scored fields); `off` is v1's passthrough. A `plan()` that declines, throws, or blows an 8 ms
+  budget three times in a row lands on the floor with an identical wire shape.
+- **Cost.** Measured p95 **0.25 ms** on a 140-character line and **0.56 ms** on a 248-character
+  one, against the floor's 0.15 / 0.29 — inside the floor's own 1 ms budget, and about 0.3 ms
+  against a measured 1.52 s first-audio.
+
+**Honest limits of the planner, on top of the floor's.** Two behaviors the brief asked for have
+**no id in our catalog** and were written down rather than invented: nothing lowers the gaze (an
+apology gets `Bht_Idle_Listening`, the least-searching of the four look-bearing trees) and
+nothing is a nod (backchannelling is rendered as the assertable half — no arm gesture). Icons,
+SFX and spurts stay gated off for the floor's own reasons. The act classifier is a rule engine:
+it reads cue phrases and sentence shape, cannot read context or sarcasm, and calls an unfamiliar
+declarative `statement_non_opinion` — a learned scorer is P2, and P2 is open.
 
 ### 4.7 Vision events, and whether the cloud may speak first — **built**, v1 2026-09-02
 
