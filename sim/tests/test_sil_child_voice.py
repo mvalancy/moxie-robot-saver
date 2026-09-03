@@ -38,6 +38,8 @@ import os
 
 import pytest
 
+from conftest import ConsoleErrors, _CAPABILITY_PROBE, _is_benign
+
 WEB = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web"))
 
 #: The two clips `audio/index.json` maps the scripted child lines to. Byte size is the
@@ -168,9 +170,26 @@ def _reaches_destination(edges, dest_ids, node_id):
     return False
 
 
-@pytest.fixture
-def replayed(page, server):
-    """Load `/sim.html`, replay the shipped demo to completion, hand back the record."""
+@pytest.fixture(scope="module")
+def replayed(browser, server):
+    """Load `/sim.html`, replay the shipped demo to completion, hand back the record.
+
+    MODULE-scoped, and that is a performance decision worth naming: the shipped session
+    now runs 14.6 s, so a per-test fixture would replay it six times and add ~90 s to the
+    SIL job — the slowest tier and the one the merge gate waits on (rule 16). One replay,
+    six assertions over the record it left behind, which is also exactly the shape rule 11
+    asks for. `page` is function-scoped, so this makes its own and records console errors
+    the same way `conftest.page` does.
+    """
+    page = browser.new_page()
+    # Console capture, wired exactly as `conftest.page` wires it — including the
+    # access-time view that forgives the optional `/api/health` probe's 404 but no other.
+    raw, unexpected = [], []
+    page.on("console", lambda m: raw.append(m.text)
+            if m.type == "error" and not _is_benign(m.text) else None)
+    page.on("pageerror", lambda e: raw.append(f"PAGEERR {e}"))
+    page.on("response", lambda r: unexpected.append(r.url)
+            if r.status == 404 and _CAPABILITY_PROBE not in r.url else None)
     page.add_init_script(RECORDER)
     responses = []
     page.on("response",
@@ -196,6 +215,8 @@ def replayed(page, server):
     page.wait_for_timeout(500)          # let the last `ended` land in the record
     rec = page.evaluate("() => window.__childVoice")
     rec["responses"] = responses
+    rec["console"] = ConsoleErrors(raw, unexpected)
+    page.close()
     return rec
 
 
@@ -303,8 +324,8 @@ def test_moxie_answers_only_after_the_child_has_finished(replayed):
 # --------------------------------------------------------------------------- #
 # 5. No console errors along the way (the audio path throws quietly otherwise).
 # --------------------------------------------------------------------------- #
-def test_the_replay_is_console_clean(replayed, page):
-    real = [e for e in page.console_errors if "favicon" not in e]
+def test_the_replay_is_console_clean(replayed):
+    real = [e for e in replayed["console"] if "favicon" not in e]
     assert not real, f"console errors during the child's turn: {real[:3]}"
     assert replayed["decodes"], "no audio was decoded at all"
     print(f"   {len(replayed['fetches'])} clip fetch(es), {len(replayed['decodes'])} "
