@@ -2084,3 +2084,47 @@ def test_pairing_remembers_the_mqtt_identity_on_the_record(client, supervisor):
     rid = r.json()["robot_id"]
     attrs = json.loads(db.q1("SELECT * FROM robots WHERE id=?", (rid,))["attributes"])
     assert attrs["mqtt-device-id"] == "d_remembered"
+
+
+# --------------------------------------------------------------------------- #
+# The console page itself: the ids the new code drives must exist in the HTML
+# --------------------------------------------------------------------------- #
+# There is no browser harness for `server/static/`, so the classic failure mode here is
+# a silently dead card: JS reaches for an id the HTML no longer has (or vice versa) and
+# nothing renders, with no test failing. These are cheap structural guards over the
+# served assets — not a substitute for looking at the page, but enough that a rename
+# cannot pass unnoticed.
+
+def _static(client, path):
+    r = client.get(path)
+    assert r.status_code == 200, f"{path} is not being served"
+    return r.text
+
+
+def test_the_console_serves_the_ids_the_insights_and_device_code_drives(client):
+    html = _static(client, "/index.html")
+    js = _static(client, "/app.js")
+    for element_id in ("robot-insights", "btn-wake", "btn-reboot", "dev-status"):
+        assert f'id="{element_id}"' in html, f"#{element_id} vanished from the page"
+        assert f"'#{element_id}'" in js or f"#{element_id}" in js, \
+            f"#{element_id} is in the HTML but nothing drives it"
+
+
+def test_the_reboot_button_ships_disabled_in_the_markup(client):
+    """Belt and braces with `app.js`: even before any JS runs, the button a parent can
+    see must not look like a working control for something we cannot do."""
+    html = _static(client, "/index.html")
+    row = [ln for ln in html.splitlines() if 'id="btn-reboot"' in ln]
+    assert row and "disabled" in row[0], "the Reboot button is offered as if it worked"
+
+
+def test_the_insights_card_renders_the_week_and_the_retention_footer(client):
+    """The 📈 card must actually consume the durable half of the payload — a card that
+    fetched `history`/`retention` and ignored them would pass every API test above."""
+    js = _static(client, "/app.js")
+    for token in ("weekBars", "t.history", "ret.packets", "ret.days",
+                  "tot.first_day", "t.persisted"):
+        assert token in js, f"the insights card never reads {token}"
+    css = _static(client, "/style.css")
+    for cls in (".tweek", ".tbar", ".tday.zero", ".tnote"):
+        assert cls in css, f"{cls} has no styling, so the week will not render"
