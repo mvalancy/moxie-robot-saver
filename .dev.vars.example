@@ -40,9 +40,19 @@ DEMO_CHAT_MODEL=your-chat-model
 # clips or the browser voice, which is what the site does today.
 DEMO_TTS_MODEL=your-tts-model
 
-# The ears. P1 (`/api/transcribe` is not built yet). Unset => `ears: false` and
-# `mic.js` keeps its scripted fallback.
-# DEMO_STT_MODEL=your-stt-model
+# The ears. Unset => `/api/health` reports `ears: false`, `/api/transcribe` answers
+# `gateway_not_configured` and makes NO upstream call, and `mic.js` keeps the scripted
+# child line it has always fallen back to. Set it and a visitor can speak to Moxie.
+DEMO_STT_MODEL=your-stt-model
+
+# How long the browser is allowed to record, in ms. THIS IS THE ONLY HONEST CEILING ON
+# WHAT THE EARS CAN COST, and it is why it is here rather than being left to a default:
+# `DEMO_MAX_AUDIO_BYTES` (500 000) is ~15 s of 16 kHz PCM but MINUTES of the webm/Opus a
+# browser's MediaRecorder actually produces, and a Pages Function only ever sees the
+# finished upload. The value is published in `/api/health`'s `limits` and `sim/web/mic.js`
+# stops the recorder on it. Lower it to make a public demo cheaper; the page obeys
+# immediately, with no redeploy of anything but the variable.
+# DEMO_MAX_RECORD_MS=15000
 
 # ---------------------------------------------------------------------------
 # A gateway behind a CLOUDFLARE TUNNEL
@@ -83,5 +93,7 @@ DEMO_TTS_MODEL=your-tts-model
 
 # Everything else has a default: DEMO_MAX_TOKENS=160, DEMO_MAX_INPUT_CHARS=500,
 # DEMO_MAX_TTS_CHARS=300, DEMO_CHAT_PER_MIN=5, DEMO_MAX_CONCURRENT_CHAT=4,
-# DEMO_UNIT_BUDGET_HOUR=600, DEMO_CHAT_TIMEOUT_MS=20000, DEMO_TICKET_TTL_S=60, …
+# DEMO_UNIT_BUDGET_HOUR=600, DEMO_CHAT_TIMEOUT_MS=20000, DEMO_TICKET_TTL_S=60,
+# DEMO_MAX_AUDIO_BYTES=500000, DEMO_MIN_AUDIO_BYTES=2000, DEMO_STT_PER_MIN=10,
+# DEMO_STT_PER_HOUR=60, DEMO_STT_TIMEOUT_MS=12000, …
 # See the spec's §5 for the whole table and why each number is what it is.
