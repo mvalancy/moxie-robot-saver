@@ -370,6 +370,11 @@ def test_s4c_a_failed_connect_attempt_is_visible(capsys):
     assert rt.broker_connected is False
     assert rt.last_connect_error
     assert any(n["kind"] == "error" for n in rt.recent), list(rt.recent)
+    # ...on **stdout** as well, not only in `recent`. Found live: a real supervisor
+    # started before a real broker retried four times, recorded all four, and printed
+    # nothing — so `docker logs` showed a process that said "connecting to broker" and
+    # then went quiet, which reads exactly like the hang this change removes.
+    assert "retrying" in capsys.readouterr().out
 
     # ...and it is actually installed on the real client. A callback nothing calls is the
     # same silence it was written to remove, and neither this test nor S6 would notice —

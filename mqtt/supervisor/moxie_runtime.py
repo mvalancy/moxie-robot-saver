@@ -1097,6 +1097,12 @@ class MoxieRuntime:
         makes *"it is just sitting there"* the bug report."""
         self.broker_connected = False
         self.last_connect_error = f"could not reach the broker at {self.host}:{self.port}"
+        # Printed as well as `_note`d. Found by starting a real supervisor before a real
+        # broker: `recent` had the four retries and **stdout had nothing**, so anyone
+        # tailing `docker logs` saw a process that had said "connecting to broker" and
+        # then gone silent — which reads exactly like the hang this change removes. The
+        # backoff throttles it for us: at 1, 2, 4 … 60 s this is at worst a line a minute.
+        print(f"[runtime] ⛔ {self.last_connect_error} — retrying", flush=True)
         self._note("error", f"⛔ {self.last_connect_error} — retrying")
 
     def _on_store_lock_timeout(self, lock_path, waited):
