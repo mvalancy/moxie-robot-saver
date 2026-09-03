@@ -83,10 +83,13 @@
     pillEl.className = "mode-pill" + (msg ? " on level-" + ((snap && snap.level) || "ok") : "");
   }
 
+  // `on === false` UNMARKS: the mode can change mid-session (a health poll that reports
+  // ears turns the mic from unavailable to available), so the mark has to be removable —
+  // and its tooltip replaced, or a stale "needs a local server" title would outlive the
+  // claim it was making.
   function needsBackend(btn, tip, on) {
     if (!btn) return;
-    if (on === false) { btn.classList.remove("needs-backend"); return; }
-    btn.classList.add("needs-backend");
+    btn.classList.toggle("needs-backend", on !== false);
     btn.setAttribute("title", tip);
   }
   function warn(el, html) { if (el) { el.innerHTML = html; el.classList.add("warn"); } }
@@ -163,7 +166,9 @@
     var micSt = $("mic-status");
     if (stt) {
       if (micSt) { micSt.textContent = "click to start / stop recording"; micSt.classList.remove("warn"); }
-      needsBackend($("mic-btn"), "", false);
+      needsBackend($("mic-btn"), isLocal
+        ? "Records and transcribes through the local STT server."
+        : "Records and transcribes on this page — speech-to-text runs on the site's own origin.", false);
     } else {
       warn(micSt, isLocal
         ? "no STT server &mdash; run <code>python3 sim/stt/server.py</code> (Listen falls back to a scripted line)"

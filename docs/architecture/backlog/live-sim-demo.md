@@ -1,6 +1,7 @@
 # 🌐 Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears
 
-**State: build-ready spec (2026-09-02).** Nothing here is shipped. This is the file
+**State: P0-a built, P0-b build-ready (2026-09-02).** P0-a — the mode machine and the honest
+indicator, §9's first table — is implemented and green; nothing else here is shipped. This is the file
 [`../orchestration-plan.md`](../orchestration-plan.md):34 points at (`backlog/live-sim-demo.md`) and that
 did not exist until now.
 **Owner outcome:** *full cloud service* — outcome 1's public face.
@@ -782,7 +783,17 @@ line of route logic is written.
 Two commits. **P0-a is independently mergeable and touches no secret at all** — it is pure honesty and
 fallback work, and merging it alone strictly improves today's site.
 
-**P0-a · the mode machine and the honest indicator** — S/M
+**P0-a · the mode machine and the honest indicator** — S/M — **BUILT 2026-09-02**
+(branch `feat/livesim-mode-machine`). Every file below exists and is green:
+`node sim/test_mode.mjs` calls the Functions directly under bare node, and
+`node sim/test_env_hosted.mjs` drives the real rendered page through offline,
+degraded, live, live-without-a-transport, at-capacity and a malformed reply in
+Chrome. It touched no secret: with no variables set at all `/api/health` answers
+`gateway_not_configured` and the page is exactly the pre-existing static demo.
+**Not settled, and it cannot be from here:** §10's assumptions 8, 9 and whether
+`_headers` applies to a Function response — all three fail safe (an unrouted
+Function 404s, which `mode.js` reads as `offline`, i.e. today's page), and one
+preview `curl` settles them.
 
 | File | Action | ~Lines |
 |---|---|--:|

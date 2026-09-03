@@ -760,6 +760,8 @@ const snap = (over) => Object.assign({
   eq(v.pill.hidden, true, "live and idle: nothing to apologise for");
   ok(!v.el("mic-btn").classList.contains("needs-backend"),
      "live ears => the mic mark is REMOVED (env.js:100 used to assert it unconditionally)");
+  ok(!/needs the STT server/i.test(v.el("mic-btn").getAttribute("title") || ""),
+     `...and its tooltip stops claiming a local server (got "${v.el("mic-btn").getAttribute("title")}")`);
   ok(v.el("bus-connect").classList.contains("needs-backend"),
      "...but a REAL robot's broker is still not available here, in every mode");
   ok(/own voice is live/.test(v.hints[v.hints.length - 1].html), "live: the voice line is honest");
