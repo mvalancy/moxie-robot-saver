@@ -98,6 +98,64 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **Integration evidence (2026-09-03, fourth pass) — the behavior planner P1 (#92) holds on the
+  wire, and the criterion its author qualified now has the real number.** P1 touches the turn loop
+  and every published path, and had never met a broker: its criterion (c) was proven "through the
+  real runtime", which is an in-process runtime with a fake MQTT client.
+  **(1) First audio — the experiment, not the bench.** Criterion (f) reported p95 0.25 / 0.56 ms
+  from a loop around `perform()` and said plainly that it was "a bench measurement of the seam, not
+  a re-run of the first-audio experiment". [`sim/tools/first_audio_ab.py`](../../sim/tools/first_audio_ab.py)
+  re-runs it: a real broker, `mqtt/run.py` as its own process, one supervisor boot per arm, timed
+  from the robot's own `events/remote-chat` to the first `remote_chat` carrying words and the first
+  `tts` carrying audio. **Controlled arm** (local brain, fixed answer, fixed pace, 20 turns each):
+  first words **356.5 ms** planner vs **357.9 ms** floor; first audio **409.2 / 411.3 ms** — the
+  planner **1.4 / 2.1 ms faster**, i.e. inside a single arm's own 2–4 ms spread. **Live arm** (real
+  gateway, 6 completions, the whole budget): planner 1.579 / 2.386 s, floor 1.019 / 1.838 s, all
+  straddling PR #15's **1.52 s**, with ~800 ms of spread inside one arm — N=2 against that can bound
+  the seam's cost and never resolve it, which is why the controlled arm carries the verdict.
+  **No first-audio regression.** Honestly not measured: `t_audio` is the local tone synthesizer, not
+  a gateway voice (identical in both arms, so the comparison is fair; the absolute number is our
+  pipeline's, not a voice provider's).
+  **(2) Scored output survives a real broker, on both paths.**
+  [`sim/tests/test_sil_performance_e2e.py`](../../sim/tests/test_sil_performance_e2e.py) (+19) puts
+  robots on a real mosquitto: the five fields (`mood`, `mood_intensity`, `dialog_act`, `emotion`,
+  `signals` — **plural**, renamed across the `_publish_chat` seam) on the single reply and on
+  **every** streamed chunk including the closing `SUCCESS`, one face per answer, and
+  `vocab.validate_markup` clean over everything a robot was handed. Mutation-checked: dropping
+  `signals` in `wire.py` reddens five of them. `sim/run_smoke.sh` (1991), `--telehealth` (1992),
+  `sim/run_scenarios.sh` (1993) and `sim/run_acl_proof.sh` are green (18/18 ACL checks), and the
+  standing smoke now **reads the score** — `virtual_moxie.py --expect-scored`, proven in both
+  directions (default prints the five fields; `MOXIE_EXPRESSIVE=off` fails it).
+  **(3) The 🎬 rehearsal card, end to end.** `POST /preview` on the supervisor's real status HTTP
+  and `POST /local/robots/{id}/preview` on the real console app both land an ordinary `remote_chat`
+  in a robot's hands (no `chunk_num`, `event_id` `preview-…`, the console's markup identical to the
+  robot's), and the captured payloads are then played through the real `sim/web/bridge.js`
+  ([`sim/test_preview_render.mjs`](../../sim/test_preview_render.mjs), new, wired into the fast
+  tier) — four lines, four dialog acts, the faces and motors that follow. No brain call is spent.
+  **(4) All four slices at once.** One supervisor, three robots: the shipped clock extension (#86)
+  under a brain chosen per robot (#88), beside `echo` and a streaming model, every one of them
+  scored by the planner (#92).
+  **The finding, pinned rather than fixed.** On the `llm` brain — the brain a real deployment runs —
+  the markup a robot performs is the **floor's** `annotate` output byte for byte, not
+  `render(validate(plan(…)))`: `LLMApp` authors `Reply.markup`/`ReplyChunk.markup` and `_stage`
+  honours authored markup verbatim by design. So `MOXIE_EXPRESSIVE=planner` changes the five scored
+  fields and **not the performance** there; the act profile, the gaze tree and the per-clause
+  staging never reach the wire on the model path, which is C6 (`backlog/expressiveness.md` §2.3)
+  unmet. Corollary: only `LLMApp` implements `respond_stream`, so **no published path carries
+  planner markup on a streamed chunk at all**. Closing it is a design call on the turn loop, not an
+  integration one, so `test_the_model_path_performs_the_floors_markup` holds the current behaviour
+  and turns that change into a red test. **Also found:** `MOXIE_TTS=tone` does **not** pin the tone
+  engine — `config.build_synthesizer`'s auto precedence is voice-server > Piper > tone, so a
+  `MOXIE_VOICE_BASE_URL` inherited from a developer's `mqtt/.env` silently makes every chunk a paid
+  `/audio/speech` call; every harness here blanks it explicitly. Hermetic **4548 passed / 27 skipped
+  / 4 xfailed**, unchanged (the 19 new cases carry `test_sil` in the file name and are run by the
+  fast tier's own `pytest sim/tests` step, not by the hermetic `-k`); the wheel carries
+  `performance.py`, `brains.py`, `content/ext.py` and both `moxie_sdk/*.json` and imports in a venv
+  holding only `paho-mqtt`, with `plan`/`validate`/`render` exercised there. **Honestly not proven:**
+  no physical robot; nothing heard by ear; first-audio through a *gateway voice* was not measured
+  (the budget bought brain turns instead); and the live A/B is 2 measured turns per arm, which is a
+  bound and not a resolution. 8 gateway calls budgeted, **6 spent**.
+
 - **Integration evidence (2026-09-03, third pass) — #86 and #88 hold together, and the coupling their
   authors flagged is real but told loudly.** The sandboxed-extension evaluator (#86) and per-robot brains
   (#88) both changed the same turn, had 293 unit tests between them, and had never met a running

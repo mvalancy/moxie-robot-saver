@@ -260,6 +260,27 @@ browser at all and carry the hermetic suite CI actually runs.
   exists fails, and a listed row whose *constructs* changed fails — so adding a
   `datetime.now()` to an already-reviewed deadline loop is still caught. Its own scanner
   is proven against a planted file.
+- **`test_sil_performance_e2e.py`** — the behavior planner with a **broker** between it
+  and the client. #92 proved its criterion (c) "through the real runtime", which is an
+  in-process runtime with a fake MQTT client; a scored field dropped by `json.dumps`, by
+  `build_chat_response`'s omit-when-empty rules or by the chunk path's argument list would
+  pass all 124 of those cases and reach no robot. So: real mosquitto, `mqtt/run.py` as its
+  own process, robots reading `commands/remote_chat` off the wire. Nineteen cases —
+  the five scored fields on the single-reply path and on **every** streamed chunk
+  (`signals` **plural**, renamed across the `_publish_chat` seam), one face per answer,
+  `vocab.validate_markup` clean over everything a robot was handed, the 🎬 rehearsal
+  through the supervisor's real status HTTP **and** the real console app's
+  `POST /local/robots/{id}/preview` with the captured payloads replayed through
+  `../test_preview_render.mjs`, three robots on three brains at once (the clock extension
+  under a per-robot brain beside `echo` and a streaming model), and `MOXIE_EXPRESSIVE=floor`
+  proven a rollback rather than a downgrade. It also **pins the gap it found**: on the
+  `llm` brain the markup a robot performs is the floor's `annotate` byte for byte, because
+  `LLMApp` authors markup and `_stage` honours authored markup verbatim — so C6 is unmet
+  on the model path and `test_the_model_path_performs_the_floors_markup` makes closing it
+  a red test rather than a silent change. The brain is the local streaming stub in
+  `sim/tools/first_audio_ab.py` (imported, not re-written); nothing here needs credentials.
+  Note the file name: `-k "not test_sil"` excludes it from the hermetic command, and the
+  fast tier's `pytest sim/tests -q` step is what runs it.
 - **`test_live_telehealth_voice.py`** — 🎭 the operator's line in Moxie's *real* mouth.
   `run_smoke.sh --telehealth` proves the recovered wire but speaks with the zero-dep tone,
   so what the robot played was a beep. This boots the same appliance `helpers_stack.py`

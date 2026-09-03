@@ -388,6 +388,25 @@ New `sim/tests/test_annotate.py` (hermetic, no creds, runs in the fast CI tier):
 > uncatalogued `emotion`/`signal` hint blanked the field instead of falling through to the rules.
 > Both are fixed and both now have a mutation.
 >
+> **C6 holds where an app authors nothing, and not on the model path (found 2026-09-03,
+> integration).** `markup` is derived, never authored — *for `echo`, for the content
+> extensions and for the preview hook, which set no markup and therefore get
+> `render(validate(plan(…)))`*. `LLMApp` does set it: `build_markup` → `automarkup.annotate`
+> on every reply and every streamed chunk, and `_stage` honours an app's authored markup
+> verbatim by design (the idempotence rule). So on the brain a real deployment runs,
+> `MOXIE_EXPRESSIVE=planner` changes the **five scored fields and not the performance** —
+> the act profile, the gaze tree and the per-clause staging never reach the wire there, and
+> the body a child sees is still the floor's. Proven on a real broker by
+> [`sim/tests/test_sil_performance_e2e.py`](../../../sim/tests/test_sil_performance_e2e.py):
+> every chunk of a streamed model answer is byte-identical to `annotate(text,
+> turn_key=f"{device_id}|{speech}", chunk_index=n)`. It is **pinned rather than fixed** —
+> closing it means deciding whether an expressive `LLMApp` should stop authoring markup
+> when the planner is on, which is a design call on the turn loop and not an integration
+> one, and `test_the_model_path_performs_the_floors_markup` turns that change into a red
+> test instead of a silent one. A corollary worth keeping: because only `LLMApp` implements
+> `respond_stream`, **no published path currently carries planner markup on a streamed
+> chunk at all**, so the planner's own `chunk_index` rule is unreachable from the wire.
+>
 > **Still open, honestly.** Icons and SFX stay gated off (the four confirmed icons are calendar cues;
 > one of the two confirmed sounds is a music bed) and spurts are never populated — the `Beat` slots
 > exist and validate, and nothing turns them on. `auto_tags[]`, `sentiment` and `perplexity` remain
@@ -516,7 +535,7 @@ budget; when the budget blows, the floor answers.
 | Phase | Scope | Acceptance |
 |---|---|---|
 | **P0 · the floor** | §1 in full — `annotate` + `vocab` behind `make_markup` | §1.8, all nine criteria |
-| **P1 · the planner** 🟢 **SHIPPED 2026-09-03** | `Performance` + `plan`/`validate`/`render`; C1–C7; the preview hook; scored output on both the single and the streamed path. **Deterministic, still no model call** — it scores from the model's own mood/act when present and from rules otherwise | (a) ✅ 22 dialog-act goldens green, as JSON *and* as markup; (b) ✅ **0** unknown ids over a 300-line corpus (goldens + every content module + every filler + 260 generated lines) — the ≥500 **live** lines are P2's bar and were not run here; (c) ✅ scored fields on 100 % of published turns, streamed included, asserted through the real runtime; (d) ✅ all **22** acts render on the SIM through the real `bridge.js` (8 distinct faces, 21 moving the body) with `sim/artifacts/performance-contact-sheet.html` uploaded by the fast tier; (e) ✅ fault injection at `plan`/`validate`/`render` + a budget breaker, each proven to land on the floor; (f) ✅ measured p95 **0.25 ms** on a 140-char line and **0.56 ms** on a 248-char one, against the floor's 0.15 / 0.29 — inside the floor's own 1 ms budget, and ~0.3 ms against a measured **1.52 s** first-audio, so no regression a child could perceive. **Honest caveat:** this is a bench measurement of the seam, not a re-run of the first-audio experiment; (g) ✅ `ai-seam.md` §② carries the mapping |
+| **P1 · the planner** 🟢 **SHIPPED 2026-09-03** | `Performance` + `plan`/`validate`/`render`; C1–C7; the preview hook; scored output on both the single and the streamed path. **Deterministic, still no model call** — it scores from the model's own mood/act when present and from rules otherwise | (a) ✅ 22 dialog-act goldens green, as JSON *and* as markup; (b) ✅ **0** unknown ids over a 300-line corpus (goldens + every content module + every filler + 260 generated lines) — the ≥500 **live** lines are P2's bar and were not run here; (c) ✅ scored fields on 100 % of published turns, streamed included, asserted through the real runtime; (d) ✅ all **22** acts render on the SIM through the real `bridge.js` (8 distinct faces, 21 moving the body) with `sim/artifacts/performance-contact-sheet.html` uploaded by the fast tier; (e) ✅ fault injection at `plan`/`validate`/`render` + a budget breaker, each proven to land on the floor; (f) ✅ measured p95 **0.25 ms** on a 140-char line and **0.56 ms** on a 248-char one, against the floor's 0.15 / 0.29 — inside the floor's own 1 ms budget. That was a bench measurement of the seam, and its author said so; **the first-audio experiment itself was re-run on 2026-09-03** ([`sim/tools/first_audio_ab.py`](../../../sim/tools/first_audio_ab.py)), timing a robot's own `events/remote-chat` → first `commands/remote_chat` with words → first `commands/tts` with audio, through a real broker and `mqtt/run.py` as its own process, one supervisor boot per arm. **Controlled arm** (a local brain streaming a fixed answer at a fixed pace, 20 turns each, so the gateway's variance is held still): first words **356.5 ms** planner vs **357.9 ms** floor, first audio **409.2 ms** vs **411.3 ms** — the planner is **1.4 / 2.1 ms FASTER**, which is to say the difference is inside a single arm's own 2–4 ms spread and the seam is not resolvable on the wire. **Live arm** (the real gateway, 6 completions): first words 1.02–2.39 s across both arms, straddling the 1.52 s of PR #15, with ~800 ms of spread *within* one arm — so the live A/B can only bound the planner's cost, never resolve it, and the controlled arm is what carries the verdict. **No first-audio regression.** Remaining honesty: `t_audio` is the built-in tone synthesizer (local, and identical in both arms) rather than a gateway voice, so it measures our pipeline and not a voice provider's queue; (g) ✅ `ai-seam.md` §② carries the mapping |
 | **P2 · learned / model-assisted** | the brain returns the performance itself (the expressive JSON envelope grows `dialog_act`, `gesture`, `gaze`, `icon`, `sfx`), or a small **local** classifier scores the line. Same validator, same renderer, same budget. This is where OpenMoxie's ML rule table would be answered properly — with something we can audit and a child's data that never leaves the house | (a) beats P1 on the blind human score in the live A/B; (b) 0 unknown ids over ≥500 live lines; (c) first-audio latency unchanged; (d) the classifier runs locally with a hard budget and the floor still answers when it blows; (e) every model-chosen id passes the same `validate` — a brain may *suggest*, it may never *authorize* |
 
 **Not in scope, and why.** Barge-in and STT partials (audit §3.2) touch the same turn but are a different
