@@ -317,6 +317,26 @@ if EXT_BUDGET_S >= BRAIN_BUDGET_S:
         f"turn, not a claim on it. Lower MOXIE_EXT_BUDGET_S or raise "
         f"MOXIE_BRAIN_BUDGET_S.")
 
+# --- the durable store's cross-process lock (docs/architecture/backlog/
+#     production-hardening.md §3.3 #3) ---
+#: How long a `JsonStore` write waits for another **process** holding the same record
+#: before giving up, returning False and recording the refusal. Read by `moxie_sdk/store.py`
+#: itself (which imports no config); the *guard* lives here, next to the one it copies.
+#:
+#: **Carved out of the turn, not added to it**, exactly like `MOXIE_EXT_BUDGET_S`: some
+#: store writes happen on the paho network thread, so a wait longer than a turn is a
+#: configuration in which one wedged writer silences the robot. 2.0 s is **chosen, not
+#: measured** (the brief's assumption A13) — P1's connection telemetry is what measures it,
+#: and the only defensible claim today is the one this assertion enforces.
+STORE_LOCK_TIMEOUT_S = _env_float("MOXIE_STORE_LOCK_TIMEOUT_S", 2.0)
+
+if STORE_LOCK_TIMEOUT_S >= BRAIN_BUDGET_S:
+    raise ValueError(
+        f"MOXIE_STORE_LOCK_TIMEOUT_S ({STORE_LOCK_TIMEOUT_S}s) must be strictly less "
+        f"than MOXIE_BRAIN_BUDGET_S ({BRAIN_BUDGET_S}s): waiting for another process's "
+        f"store lock is a slice of the turn, not a claim on it. Lower "
+        f"MOXIE_STORE_LOCK_TIMEOUT_S or raise MOXIE_BRAIN_BUDGET_S.")
+
 # --- streaming replies (a sentence at a time) ---
 # When the app can answer incrementally (MoxieApp.respond_stream), publish each finished
 # sentence as its own RemoteChatResponse chunk (result=REPLY_PENDING + chunk_num, closed
