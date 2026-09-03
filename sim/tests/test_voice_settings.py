@@ -641,7 +641,10 @@ def test_config_offers_whisper_sizes_it_would_not_have_to_download(monkeypatch):
 
 
 def test_the_appliance_adapter_never_lists_a_gateway_it_has_no_url_for(monkeypatch):
-    c = _fresh_config(monkeypatch, MOXIE_TTS="off", MOXIE_STT="off")
+    # No `MOXIE_TTS`/`MOXIE_STT` here on purpose: an explicit value now PINS the engine
+    # and would filter these very lists (see the pin tests below). This test is about a
+    # missing gateway URL, so it leaves the environment saying nothing.
+    c = _fresh_config(monkeypatch)
     engines = c.voice_engines()
     assert not engines.catalog.configured
     out = engines.available()
@@ -650,11 +653,160 @@ def test_the_appliance_adapter_never_lists_a_gateway_it_has_no_url_for(monkeypat
 
 
 def test_the_appliance_adapter_turns_a_listing_into_the_two_dropdowns(monkeypatch):
-    c = _fresh_config(monkeypatch, MOXIE_TTS="off", MOXIE_STT="off")
+    c = _fresh_config(monkeypatch)          # unpinned — see the pin tests below
     cat = vs.GatewayCatalog(lambda: GATEWAY_MODELS, submit=lambda fn: fn())
     out = c.voice_engines(cat).available()
     assert "gateway:piper-amy" in vs.option_ids(out["available"][vs.SPEECH])
     assert "gateway:stt-whisper" in vs.option_ids(out["available"][vs.LISTENING])
+
+
+# ------------------------------------------------- the environment's pin -----
+# The owner rule, from the other direction: `MOXIE_TTS=piper` / `MOXIE_STT=whisper` are an
+# OPERATOR'S statement that this deployment runs local engines, and a dropdown must not be
+# able to move it off them. Before this section the console pick sat above every env value
+# except `off`, so a pick of `gateway:piper-ryan` silently overruled `MOXIE_TTS=piper` —
+# the exact "picker silently overrides an explicit operator setting" bug.
+
+def test_an_explicit_value_pins_an_engine_and_auto_pins_nothing():
+    assert vs.pin_for_env(vs.SPEECH, "piper") == "piper"
+    assert vs.pin_for_env(vs.SPEECH, "local") == "piper"        # the documented alias
+    assert vs.pin_for_env(vs.SPEECH, "GATEWAY") == "gateway"    # case-insensitive
+    assert vs.pin_for_env(vs.SPEECH, "openai") == "gateway"
+    assert vs.pin_for_env(vs.SPEECH, "tone") == "tone"
+    assert vs.pin_for_env(vs.SPEECH, "off") == "off"
+    assert vs.pin_for_env(vs.LISTENING, "whisper") == "whisper"
+    assert vs.pin_for_env(vs.LISTENING, "local") == "whisper"
+    # Everything that means "decide for me" — which is what the picker is for.
+    for empty in ("", "  ", "auto", None, "banana", "piper"):
+        if empty == "piper":
+            continue
+        assert vs.pin_for_env(vs.LISTENING, empty) == "", empty
+    assert vs.pin_for_env(vs.SPEECH, "auto") == ""
+
+
+def test_honours_pin_allows_another_model_but_never_another_engine():
+    gw = vs.make_choice("gateway", "piper-ryan")
+    assert vs.honours_pin(vs.SPEECH, gw, "") is True          # nothing pinned
+    assert vs.honours_pin(vs.SPEECH, gw, "gateway") is True   # same engine, any model
+    assert vs.honours_pin(vs.SPEECH, gw, "piper") is False    # a different engine
+    assert vs.honours_pin(vs.SPEECH, None, "piper") is False  # nothing to honour it with
+
+
+def test_the_pin_note_names_the_variable_that_did_it():
+    note = vs.pin_note(vs.SPEECH, "piper")
+    assert "MOXIE_TTS=piper" in note and "local Piper" in note
+    assert "MOXIE_STT=gateway" in vs.pin_note(vs.LISTENING, "gateway")
+    assert "no ears" in vs.pin_note(vs.LISTENING, "off")
+    assert vs.pin_note(vs.SPEECH, "auto") == "" and vs.pin_note(vs.SPEECH, "") == ""
+
+
+def test_a_pinned_side_offers_only_that_engines_entries():
+    a = _available(piper=["en_US-amy-medium"], whisper=["base.en"])
+    out = vs.filter_available(a, {vs.SPEECH: "piper", vs.LISTENING: ""})
+    assert vs.option_ids(out[vs.SPEECH]) == ["piper:en_US-amy-medium"]
+    # The unpinned side is untouched — one variable pins one side.
+    assert vs.option_ids(out[vs.LISTENING]) == vs.option_ids(a[vs.LISTENING])
+    # `off` for the voice means there is nothing to pick, and saying so beats offering a
+    # `tone` this deployment would refuse to install.
+    assert vs.filter_available(a, {vs.SPEECH: "off"})[vs.SPEECH] == []
+
+
+# --- and the same rule where it actually bites: the builders -------------------
+def test_an_explicit_moxie_tts_piper_is_not_overruled_by_a_gateway_pick(monkeypatch, voices):
+    """THE BUG. `MOXIE_TTS=piper` with a gateway fully configured is the owner's "local
+    stays first-class" written into the environment; a console pick of a gateway voice
+    must not quietly move this house off its local voice."""
+    built = {"piper": [], "gateway": []}
+    _stub_tts(monkeypatch, built)
+    c = _fresh_config(monkeypatch, MOXIE_TTS="piper", MOXIE_STT="off",
+                      MOXIE_VOICE_BASE_URL=GW, MOXIE_VOICES_DIR=voices,
+                      MOXIE_PIPER_MODEL=os.path.join(voices, "en_US-amy-medium.onnx"),
+                      MOXIE_LLM_API_KEY="sk-test-not-a-real-key-0000")
+    synth = c.build_synthesizer(override={"engine": "gateway", "model": "piper-ryan"})
+    assert synth.name == "piper", "the pick overruled an explicit MOXIE_TTS"
+    assert built["gateway"] == [], "the picked gateway voice was built anyway"
+
+
+def test_a_pick_within_the_pinned_engine_still_chooses_the_voice(monkeypatch, voices):
+    """The pin names the ENGINE, not the voice: `MOXIE_TTS=piper` still leaves a parent
+    free to choose which installed Piper voice speaks."""
+    built = {"piper": [], "gateway": []}
+    _stub_tts(monkeypatch, built)
+    c = _fresh_config(monkeypatch, MOXIE_TTS="piper", MOXIE_STT="off",
+                      MOXIE_VOICES_DIR=voices,
+                      MOXIE_PIPER_MODEL=os.path.join(voices, "en_US-amy-medium.onnx"))
+    synth = c.build_synthesizer(override={"engine": "piper",
+                                          "model": "en_US-lessac-medium"})
+    assert synth.name == "piper"
+    assert built["piper"][-1] == os.path.join(voices, "en_US-lessac-medium.onnx")
+
+
+def test_moxie_tts_gateway_pins_the_engine_but_the_model_stays_pickable(monkeypatch, voices):
+    built = {"piper": [], "gateway": []}
+    _stub_tts(monkeypatch, built)
+    c = _fresh_config(monkeypatch, MOXIE_TTS="gateway", MOXIE_STT="off",
+                      MOXIE_VOICE_BASE_URL=GW, MOXIE_VOICES_DIR=voices,
+                      MOXIE_LLM_API_KEY="sk-test-not-a-real-key-0000")
+    c.build_synthesizer(override={"engine": "gateway", "model": "piper-ryan"})
+    assert built["gateway"] == ["piper-ryan"]          # the model pick got through
+    c.build_synthesizer(override={"engine": "piper", "model": "en_US-amy-medium"})
+    assert built["piper"] == [], "a local pick overruled an explicit MOXIE_TTS=gateway"
+    assert built["gateway"][-1] == "piper-amy"         # the env default model
+
+
+def test_an_explicit_moxie_stt_whisper_is_not_overruled_by_a_gateway_pick(monkeypatch):
+    """The ears' half of the same rule — a child's voice stays in the house."""
+    built = {"whisper": [], "gateway": []}
+    _stub_stt(monkeypatch, built)
+    c = _fresh_config(monkeypatch, MOXIE_TTS="off", MOXIE_STT="whisper",
+                      MOXIE_STT_BASE_URL=GW, MOXIE_STT_API_KEY="sk-test-0000")
+    trans = c.build_transcriber(override={"engine": "gateway", "model": "graphling-stt"})
+    assert trans.name == "faster-whisper"
+    assert built["gateway"] == [], "the picked gateway ears were built anyway"
+
+
+def test_a_pick_within_the_pinned_ears_still_chooses_the_size(monkeypatch):
+    built = {"whisper": [], "gateway": []}
+    _stub_stt(monkeypatch, built)
+    c = _fresh_config(monkeypatch, MOXIE_TTS="off", MOXIE_STT="whisper")
+    c.build_transcriber(override={"engine": "whisper", "model": "small.en"})
+    assert built["whisper"] == ["small.en"]
+
+
+def test_moxie_stt_gateway_pins_the_ears_but_the_model_stays_pickable(monkeypatch):
+    built = {"whisper": [], "gateway": []}
+    _stub_stt(monkeypatch, built)
+    c = _fresh_config(monkeypatch, MOXIE_TTS="off", MOXIE_STT="gateway",
+                      MOXIE_STT_BASE_URL=GW, MOXIE_STT_API_KEY="sk-test-0000")
+    c.build_transcriber(override={"engine": "gateway", "model": "graphling-stt"})
+    assert built["gateway"] == ["graphling-stt"]
+    c.build_transcriber(override={"engine": "whisper", "model": "base.en"})
+    assert built["gateway"][-1] == "stt-whisper", "the env default model was not restored"
+
+
+def test_the_dropdown_offers_only_what_the_pin_would_install(monkeypatch, voices):
+    """The two halves agree by construction: what the card offers is what the builders
+    would accept, so a parent cannot pick something that then quietly does nothing."""
+    import moxie_sdk.tts as tts
+    c = _fresh_config(monkeypatch, MOXIE_TTS="piper", MOXIE_VOICES_DIR=voices)
+    monkeypatch.setattr(tts.PiperSynthesizer, "available", classmethod(lambda cls: True))
+    cat = vs.GatewayCatalog(lambda: GATEWAY_MODELS, submit=lambda fn: fn())
+    out = c.voice_engines(cat).available()
+    assert vs.option_ids(out["available"][vs.SPEECH]) == ["piper:en_US-amy-medium",
+                                                          "piper:en_US-lessac-medium"]
+    assert "gateway:stt-whisper" in vs.option_ids(out["available"][vs.LISTENING])
+    assert out["pins"] == {vs.SPEECH: "piper", vs.LISTENING: ""}
+    assert "MOXIE_TTS=piper" in out["pin_notes"][vs.SPEECH]
+    assert out["pin_notes"][vs.LISTENING] == ""
+
+
+def test_a_voiceless_deployment_offers_nothing_and_says_which_variable_did_it(monkeypatch):
+    c = _fresh_config(monkeypatch, MOXIE_TTS="off", MOXIE_STT="off")
+    out = c.voice_engines(vs.GatewayCatalog(lambda: GATEWAY_MODELS,
+                                            submit=lambda fn: fn())).available()
+    assert out["available"][vs.SPEECH] == []
+    assert vs.option_ids(out["available"][vs.LISTENING]) == ["off"]
+    assert "MOXIE_TTS=off" in out["pin_notes"][vs.SPEECH]
 
 
 # ---------------------------------------------------------- the boot lines ---

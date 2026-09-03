@@ -2219,6 +2219,12 @@ class MoxieRuntime:
     #     rebind one attribute; a turn already in flight finishes on the engine it started
     #     with. That is the whole reason there is no lock inside the turn loop — the lock
     #     below serializes concurrent *swaps*, nothing else.
+    #
+    # And one thing the card is NOT allowed to do: overrule the operator. An explicit
+    # `MOXIE_TTS`/`MOXIE_STT` pins the engine (`voice_settings.pin_for_env`), the pinned
+    # side's dropdown offers only that engine's entries, and `pin_notes` carries the
+    # sentence that says which variable did it. A picker that silently moved a deployment
+    # off local Piper would be a bug — see the owner rule in `voice_settings`' header.
 
     DEFAULT_VOICE_TEST_LINE = "Hi, I'm Moxie."
     #: How long a console WRITE may wait for the first gateway listing (seconds). Only
@@ -2247,18 +2253,29 @@ class MoxieRuntime:
         (seen live on 2026-09-02). Reads — the card's poll, and anything a turn touches —
         pass 0 and get whatever is cached, instantly.
         """
+        blank = {k: "" for k in voice_seam.KINDS}
         engines = self._voice_engines
         if engines is None:
             return {"available": voice_seam.build_available(), "discovering": False,
-                    "gateway_error": ""}
+                    "gateway_error": "", "pins": dict(blank), "pin_notes": dict(blank)}
         try:
             out = engines.available(refresh=refresh, settle_s=settle_s)
         except Exception as e:              # noqa: BLE001 — any failure is local-only
             return {"available": voice_seam.build_available(), "discovering": False,
-                    "gateway_error": type(e).__name__}
+                    "gateway_error": type(e).__name__,
+                    "pins": dict(blank), "pin_notes": dict(blank)}
+
+        def _side(field):
+            src = out.get(field) if isinstance(out.get(field), dict) else {}
+            return {k: str(src.get(k) or "") for k in voice_seam.KINDS}
+
+        # `pins`/`pin_notes` are what an explicit `MOXIE_TTS`/`MOXIE_STT` has taken off
+        # the table (`config.VoiceEngines.available`). They travel with the availability
+        # they explain, so the card can never show a filtered list without its reason.
         return {"available": out.get("available") or voice_seam.build_available(),
                 "discovering": bool(out.get("discovering")),
-                "gateway_error": str(out.get("gateway_error") or "")}
+                "gateway_error": str(out.get("gateway_error") or ""),
+                "pins": _side("pins"), "pin_notes": _side("pin_notes")}
 
     def voice_settings(self) -> dict:
         """The stored fleet record (`fleet/voice.json`) — `{}` when nobody has picked."""
@@ -2291,6 +2308,7 @@ class MoxieRuntime:
                 "labels": {k: voice_seam.describe_choice(resolved["current"][k])
                            for k in voice_seam.KINDS},
                 "installed": installed,
+                "pins": disc["pins"], "pin_notes": disc["pin_notes"],
                 "discovering": disc["discovering"],
                 "gateway_error": disc["gateway_error"],
                 "updated_at": int(stored.get("updated_at") or 0),
@@ -2312,29 +2330,44 @@ class MoxieRuntime:
                 settings = voice_seam.normalize_voice_settings(
                     patch, disc["available"], current=stored)
             except ValueError as e:
-                return {"ok": False, "error": str(e), "reason": str(e)}
+                # A refusal that names only the surviving options reads as "the gateway
+                # lost your voice"; when the environment is what removed it, say that.
+                notes = " ".join(n for k, n in sorted(disc["pin_notes"].items())
+                                 if n and k in (patch if isinstance(patch, dict) else {}))
+                why = f"{e} {notes}".strip()
+                return {"ok": False, "error": why, "reason": why}
             voice_seam.write_settings(self.store, settings)
             resolved = voice_seam.resolve_settings(settings, disc["available"])
-            applied = self._install_voice(resolved["current"], chosen=resolved["chosen"])
+            applied = self._install_voice(resolved["current"], chosen=resolved["chosen"],
+                                          pins=disc["pins"])
         out = self.voice_view()
         out["applied"] = applied
         return out
 
-    def _install_voice(self, current: dict, *, chosen: dict | None = None) -> dict:
+    def _install_voice(self, current: dict, *, chosen: dict | None = None,
+                       pins: dict | None = None) -> dict:
         """Build both engines for `current` and bind them. Returns one report per side.
 
         **A build that fails keeps the engine that is already speaking.** Losing the voice
         because a newly chosen one could not be constructed would be a downgrade caused by
         an *attempt to improve things*, which is the worst shape a failure can take. `off`
         is the one intentional `None`, so it is spelled out rather than inferred.
+
+        `pins` is what `MOXIE_TTS`/`MOXIE_STT` allow (`config.engine_pins`). It changes
+        nothing here — the builders enforce it themselves — but a choice the pin will
+        ignore gets a note saying so, because a log line reading `speech: piper-ryan
+        (gateway, chosen)` next to a box that is speaking with Piper is a lie.
         """
-        chosen = chosen or {}
+        chosen, pins = chosen or {}, pins or {}
         engines = self._voice_engines
         report = {}
         for kind in voice_seam.KINDS:
             choice = current.get(kind) or voice_seam.make_choice(
                 voice_seam.BUILTIN_ENGINE[kind])
             engine, note = None, ""
+            if not voice_seam.honours_pin(kind, choice, pins.get(kind) or ""):
+                note = (f"{voice_seam.ENV_VAR[kind]} pins the engine to "
+                        f"{pins.get(kind)} — this pick is not installed")
             if engines is None:
                 note = "no engine builders installed (set_voice_engines)"
             else:

@@ -9,15 +9,22 @@ from moxie_sdk.types import ChildProfile
 from supervisor.moxie_runtime import MoxieRuntime
 
 
-def _voice_line(kind, choice, engine):
+def _voice_line(kind, choice, engine, pin=""):
     """The 🎚️ startup line: which engine was installed and WHY it is that one.
 
     `speech: piper-amy (gateway, chosen)` when a parent picked it in the console;
     `speech: <describe()> (env default — nothing picked in the console)` otherwise, which
     is every deployment that has never opened the card. "No engine" is said out loud
     rather than left as an absent line, because silence is the failure people report.
+
+    `pin` is what an explicit `MOXIE_TTS`/`MOXIE_STT` allows. A stored pick that the pin
+    ignores must NOT print as `chosen` — the operator's environment won, and a log that
+    named the pick would send someone hunting for a swap that never happened.
     """
     desc = engine.describe() if engine is not None else "none"
+    if choice and not voice_settings.honours_pin(kind, choice, pin):
+        return (f"{kind}: {desc} ({voice_settings.ENV_VAR[kind]}={pin} pins the engine — "
+                f"the console's {voice_settings.choice_id(choice)} is not installed)")
     if choice:
         return voice_settings.boot_line(kind, choice, chosen=True, note=desc)
     return f"{kind}: {desc} (env default — nothing picked in the console)"
@@ -37,6 +44,7 @@ def assemble(config):
     # i.e. exactly the env-driven precedence this file has always had.
     rt.set_voice_engines(config.voice_engines())
     picked = voice_settings.read_settings(rt.store)
+    pins = config.engine_pins()          # what an explicit MOXIE_TTS/MOXIE_STT allows
     synth = config.build_synthesizer(override=picked.get(voice_settings.SPEECH))
     if synth:
         rt.set_synthesizer(synth)
@@ -44,7 +52,7 @@ def assemble(config):
         # FallbackSynthesizer, whose own name is the wrapper's — the startup log should
         # say which voice is speaking and what stands by if it fails.
         print(f"[run] server voice enabled: {synth.describe()}")
-    print(f"[run] 🎚️ {_voice_line(voice_settings.SPEECH, picked.get(voice_settings.SPEECH), synth)}")
+    print(f"[run] 🎚️ {_voice_line(voice_settings.SPEECH, picked.get(voice_settings.SPEECH), synth, pins[voice_settings.SPEECH])}")
     trans = config.build_transcriber(override=picked.get(voice_settings.LISTENING))
     if trans:
         rt.set_transcriber(trans)
@@ -52,7 +60,7 @@ def assemble(config):
         # FallbackTranscriber, whose own name is the wrapper's — the startup log should
         # say which engine is listening, on which model, and what stands by behind it.
         print(f"[run] STT enabled: {trans.describe()}")
-    print(f"[run] 🎚️ {_voice_line(voice_settings.LISTENING, picked.get(voice_settings.LISTENING), trans)}")
+    print(f"[run] 🎚️ {_voice_line(voice_settings.LISTENING, picked.get(voice_settings.LISTENING), trans, pins[voice_settings.LISTENING])}")
     return rt
 
 
