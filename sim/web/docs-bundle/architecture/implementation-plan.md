@@ -412,7 +412,7 @@ webhook apps stopped speaking flat, and `LLMApp` stopped being a second, diverge
 p95 **0.23 ms** per line against a 1 ms budget, no model call, no new dependency; eight byte-exact goldens
 reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` is the one-variable rollback.
 
-**Most valuable next slice (2026-09-02 evening):** today landed the adaptive schedule, the gateway voice and ears, telehealth, broker hardening P0, the schedule card, the face vocabulary (12 → 72) and the 🎚️ voice picker. Next, in value order: **content packs export / import-with-review (ADOPT #5)** — brief being written at `backlog/content-packs.md` by the research tier; then `module_name` on the schedule wire (the 📅 card shows ids); then broker auth P1 once the ledger's A1–A4 are settled; then insights (BEYOND #5) and the behavior planner (BEYOND #1, spec'd in `backlog/expressiveness.md`). The research tier's re-ranked audit supersedes this list when it lands.
+**Most valuable next slice (2026-09-02 evening, per the re-ranked audit §4.4):** ① **content packs export / import-with-review (ADOPT #5)** — build-ready at `backlog/content-packs.md`, P0 alone is shippable; ② **durable telemetry → real insights** (telemetry is RAM-only today, so the 📈 card cannot show a week — DoD criterion 3's gap); ③ sandboxed content extensions; ④ production hardening (blocking `connect()` with no reconnect backoff; no robot has been on our broker for a week); ⑤ any-brain-per-child. Small real bug ahead of all of them: the console's MQTT `wakeup` publishes nothing and reports success — a one-slice follow-up right after content packs (same status-HTTP region, so not concurrent).
 
 ## TTS strategy (2026-09-01)
 
