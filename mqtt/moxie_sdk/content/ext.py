@@ -180,6 +180,13 @@ DEFAULT_GRANTS = frozenset({"say", "handled", "session", "child.nickname"})
 #: capability that cannot do anything would be worse than refusing it out loud.
 P1_CAPABILITIES = frozenset({"subscribe", "brain", "schedule.request"})
 
+def _is_p1(cap: str) -> bool:
+    """True for a capability P0 declares, renders and **refuses**. One predicate, so the
+    §8 conformance generator has exactly one thing to lift when it computes the goldens
+    that will be checked the day the robot-action wire lands."""
+    return cap in P1_CAPABILITIES or cap.startswith("act.")
+
+
 #: Hook points. `turn.after` and `session.end` are P1 — the first needs the output-safety
 #: ordering settled, the second overlaps the already-shipped declarative `memory` block.
 HOOKS = ("global", "turn.before")
@@ -460,6 +467,28 @@ OPS = {
     "session.is_empty": (0, 0, "session"),
 }
 
+#: The eleven ops whose names are punctuation rather than words. Enumerated from `OPS`
+#: rather than written out, so the two can never disagree.
+SYMBOLIC_OPS = frozenset(k for k in OPS if not _IDENT.match(k))
+
+
+def normal_op(raw) -> str:
+    """`normal_name`, widened by exactly the symbolic operator names.
+
+    The NFKC-equality half of the check still applies, so a fullwidth `＋` (which folds
+    *to* `+`) and a mathematical `∗` are refused rather than folded into the real op — the
+    same reasoning as `normal_name`, and the reason this is not simply a membership test
+    against `OPS`.
+    """
+    if not isinstance(raw, str) or not raw:
+        return ""
+    if unicodedata.normalize("NFKC", raw) != raw:
+        return ""
+    if raw in SYMBOLIC_OPS:
+        return raw
+    return raw if _IDENT.match(raw) else ""
+
+
 #: Ops that decide for themselves whether to evaluate their arguments.
 LAZY_OPS = frozenset({"and", "or", "if"})
 
@@ -521,7 +550,7 @@ class _Validator:
             return self._lit(arg, where)
         if key == "var":
             return self._var(arg, where)
-        name = normal_name(key)
+        name = normal_op(key)
         if not name or name not in OPS:
             return self.fail(f"{where}: unknown operator {key!r}")
         lo, hi, cap = OPS[name]
@@ -775,8 +804,7 @@ def validate(ext, *, grants=None, allow_p1: bool = False) -> list:
     if spare:
         v.fail("declares things it never uses: " + ", ".join(spare))
 
-    p1 = sorted(c for c in declared
-                if c in P1_CAPABILITIES or c.startswith("act."))
+    p1 = sorted(c for c in declared if _is_p1(c))
     if p1 and not allow_p1:
         v.fail("needs something this appliance cannot grant yet: " + ", ".join(p1)
                + " (the robot-action wire is not plumbed — see BEYOND #6 P1)")
@@ -859,8 +887,19 @@ def _plain(text: str) -> str:
     return out[:80] + ("…" if len(out) > 80 else "")
 
 
-def _describe(node, depth: int = 0) -> str:
-    """One expression as a short English phrase. Never emits JSON (T13)."""
+#: Ops that shape a value without changing what a parent would call it, so a sentence
+#: reads better describing the thing inside than the wrapper around it.
+_TRANSPARENT_OPS = ("lower", "upper", "trim", "str", "int", "num", "abs", "floor",
+                    "ceil", "round")
+
+
+def _describe(node, depth: int = 0, binds=None) -> str:
+    """One expression as a short English phrase. Never emits JSON (T13).
+
+    `binds` are the rule's `let` names, so `{"var": "line"}` reads as the *sentence it was
+    bound to* rather than as "something it can read" — an author's intermediate name is
+    bookkeeping, and a parent should not have to follow it."""
+    binds = binds or {}
     if depth > 4:
         return "a value it works out"
     if node is None:
@@ -878,40 +917,48 @@ def _describe(node, depth: int = 0) -> str:
     key = next(iter(node))
     arg = node[key]
     if key == "lit":
-        return "a fixed list of options" if isinstance(arg, (list, dict)) else _describe(arg)
+        return ("a fixed list of options" if isinstance(arg, (list, dict))
+                else _describe(arg, depth, binds))
     if key == "var":
         root = str(arg).split(".")[0]
+        if root in binds and "." not in str(arg):
+            return _describe(binds[root], depth + 1)          # a `let`, not a fact
         base = _FACT_WORDS.get(root, "something it can read")
         rest = str(arg).partition(".")[2]
         return f"{base} ({rest})" if rest and root in ("memory", "input_vars",
                                                        "entities", "child") else base
+    if key in _TRANSPARENT_OPS and isinstance(arg, list) and arg:
+        return _describe(arg[0], depth, binds)
     if key in _OP_WORDS and isinstance(arg, list):
         words = _OP_WORDS[key]
         if len(arg) == 0:
             return words
         if len(arg) == 1:
-            return f"{words} {_describe(arg[0], depth + 1)}"
+            return f"{words} {_describe(arg[0], depth + 1, binds)}"
         if len(arg) == 2 and key in ("==", "!=", "<", ">", "<=", ">=",
                                      "starts_with", "ends_with", "contains"):
-            return (f"{_describe(arg[0], depth + 1)} {words} "
-                    f"{_describe(arg[1], depth + 1)}")
-        joined = f" {words} ".join(_describe(a, depth + 1) for a in arg)
+            return (f"{_describe(arg[0], depth + 1, binds)} {words} "
+                    f"{_describe(arg[1], depth + 1, binds)}")
+        joined = f" {words} ".join(_describe(a, depth + 1, binds) for a in arg)
         return joined
     if key == "if" and isinstance(arg, list) and len(arg) >= 2:
-        return (f"{_describe(arg[1], depth + 1)} when "
-                f"{_describe(arg[0], depth + 1)}"
-                + (f", otherwise {_describe(arg[2], depth + 1)}" if len(arg) > 2 else ""))
+        return (f"{_describe(arg[1], depth + 1, binds)} when "
+                f"{_describe(arg[0], depth + 1, binds)}"
+                + (f", otherwise {_describe(arg[2], depth + 1, binds)}" if len(arg) > 2 else ""))
     if key == "concat" and isinstance(arg, list):
-        parts = [a for a in arg if isinstance(a, str) and a.strip()]
-        if parts:
-            return "'" + _plain(" ".join(p.strip() for p in parts)) + "', filled in"
+        # The gist, not the recipe: a parent wants "'Starting timer for …'", not a
+        # transcription of six arguments two of which are a space and a colon.
+        lits = [a.strip() for a in arg if isinstance(a, str) and re.search("[A-Za-z]", a)]
+        if lits:
+            gist = " … ".join(_plain(x) for x in lits[:3])
+            return f"'{gist} …'" if len(lits) < len(arg) else f"'{gist}'"
     return "a value it works out"
 
 
-def _describe_stmt(s) -> str:
+def _describe_stmt(s, binds=None) -> str:
     keys = set(s)
     if "say" in keys:
-        return f"tells your child {_describe(s['say'])}"
+        return f"tells your child {_describe(s['say'], 0, binds)}"
     if "markup" in keys:
         return "makes Moxie move or play a sound"
     if "remember" in keys:
@@ -949,7 +996,8 @@ def explain(ext) -> list:
         if not isinstance(rule, dict):
             continue
         do = [s for s in (rule.get("do") or []) if isinstance(s, dict)]
-        acts = [_describe_stmt(s) for s in do]
+        binds = rule.get("let") if isinstance(rule.get("let"), dict) else {}
+        acts = [_describe_stmt(s, binds) for s in do]
         if not acts:
             continue
         if len(acts) == 1:
@@ -957,7 +1005,7 @@ def explain(ext) -> list:
         else:
             body = ", ".join(acts[:-1]) + " and " + acts[-1]
         if "when" in rule:
-            head = f"When {_describe(rule['when'])}"
+            head = f"When {_describe(rule['when'], 0, binds)}"
         else:
             head = "Whenever this activity is triggered"
         out.append(f"{head}: {body}.")
@@ -1035,7 +1083,7 @@ class _Machine:
             return self.charge(_json_copy(arg))
         if key == "var":
             return self.lookup(arg)
-        name = normal_name(key)
+        name = normal_op(key)
         if name not in OPS:
             raise _Breach("invalid", f"unknown operator {key!r}")
         if name in LAZY_OPS:
