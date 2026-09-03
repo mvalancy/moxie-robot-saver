@@ -183,6 +183,19 @@ browser at all and carry the hermetic suite CI actually runs.
   subscriber, `reboot` is a 501 that publishes nothing, `ota_status` returns the firmware
   the robot itself sent. Named `test_sil_*` so a broker boot stays out of the tiers that
   promise to report in seconds.
+- **`test_sil_child_voice.py`** — the child's voice, in a real Chromium. `speakClipOnly`
+  shipped with 770 hermetic assertions behind it, and every one of them reads a *file*:
+  the clips exist, the manifest lists them, the session leaves room. None of them ever
+  loaded the page, and Web Audio is stubbed in the node tests, so a `decodeAudioData` that
+  rejects or a source node wired to nothing would have passed all 770 with the demo as
+  silent as before. This replays `sessions/demo.json` in the browser and asserts what the
+  audio graph DID: both MP3s fetched 200 at their on-disk size, decoded to real PCM (peak
+  and RMS above a silence floor, so a valid-but-empty buffer fails), `start()`ed on a node
+  whose connect-graph **reaches `ctx.destination`**, and held for their full length with
+  `stop()` never called. That last one found the live bug — the shipped demo still cut her
+  off mid-word, and its second line cleared being dropped entirely by ~700 ms of load
+  latency. It is not proof by ear and says so: a headless browser has no speaker. Rule 11
+  throughout — one module-scoped replay, six assertions over the record it left.
 - **`test_ci_test_coverage.py`** — the ratchet that stops "a green test nobody runs".
   `test_ci_workflows.py` guards what the tiers *say*; this guards what they *cover*: every
   `sim/test_*.mjs` and `sim/run_*.sh` must be named by some `sim/ci/*.yml` step, and every
