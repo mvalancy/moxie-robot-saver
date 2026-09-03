@@ -1,0 +1,78 @@
+{
+  "_readme": [
+    "The robot -> cloud ACTIVITY LOG, as the reference SIL robot publishes it.",
+    "",
+    "`/devices/{id}/events/client-service-activity-log` is the robot's own upstream",
+    "channel, multiplexed by `subtopic` (docs/architecture/mqtt-and-conversation.md 3.3,",
+    "cited to docs/reverse-engineering/cloud-protocol.md:172). This file is the exact",
+    "envelope `sim/virtual_moxie.py` puts on that topic for each of its three kinds, and",
+    "it is asserted from BOTH ends:",
+    "",
+    "  sim/tests/test_sim_client_parity.py   the Python SIL robot still publishes this",
+    "  sim/test_bridge.mjs                   the browser SIM publishes the same thing",
+    "",
+    "so neither client can drift from the other without a test going red. `key_order` is",
+    "the JSON key order each client emits; `identity_keys` (dotted paths) are the fields",
+    "whose VALUE legitimately differs between the two clients -- which robot is speaking",
+    "and when -- so they are compared by JSON type only. Everything else must match",
+    "exactly. The remaining delta is written up in docs/architecture/sim-as-a-client.md.",
+    "",
+    "Regenerate: drive VirtualMoxie's send_query / report_mentor_behavior /",
+    "report_telehealth_state against a recording client and dump what it published."
+  ],
+  "topic_suffix": "events/client-service-activity-log",
+  "reference_client": "sim/virtual_moxie.py",
+  "identity_keys": [
+    "timestamp",
+    "request_id",
+    "auid",
+    "module_name",
+    "message.timestamp",
+    "message.module_name"
+  ],
+  "envelopes": {
+    "query": {
+      "key_order": ["timestamp", "subtopic", "query", "request_id", "auid",
+                    "software_version", "module_name"],
+      "payload": {
+        "timestamp": 1788406302157,
+        "subtopic": "query",
+        "query": "schedule",
+        "request_id": "b827a289-dbf2-457e-a2a6-8b166b6ba764",
+        "auid": "d_golden",
+        "software_version": "24.10.803",
+        "module_name": "virtual-moxie"
+      }
+    },
+    "mentor_behavior": {
+      "key_order": ["timestamp", "mentor_behavior", "software_version", "module_name"],
+      "payload": {
+        "timestamp": 1788406302157,
+        "mentor_behavior": {
+          "module_id": "DRAW",
+          "content_id": "default",
+          "action": "completed",
+          "timestamp": 1788360800925
+        },
+        "software_version": "24.10.803",
+        "module_name": "virtual-moxie"
+      }
+    },
+    "telehealth_state": {
+      "key_order": ["subtopic", "message"],
+      "message_key_order": ["timestamp", "state", "session_id", "action",
+                            "software_version", "module_name"],
+      "payload": {
+        "subtopic": "telehealth",
+        "message": {
+          "timestamp": 1788406302157,
+          "state": "IN_SESSION",
+          "session_id": "ths-1",
+          "action": "UPDATE_STATE",
+          "software_version": "24.10.803",
+          "module_name": "virtual-moxie"
+        }
+      }
+    }
+  }
+}

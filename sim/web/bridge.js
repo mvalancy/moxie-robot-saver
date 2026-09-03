@@ -11,6 +11,15 @@
  * lip-syncing the face from `marks[]`. When real audio arrives the local
  * browser/Piper voice stands down, so Moxie never speaks the line twice.
  *
+ * It is a robot in BOTH directions. Cloud → robot: it acts on `response_actions`
+ * (`launch` / `exit` / `sleep` / `enable_qr` / `execute` + `event_subscription`), the
+ * contract's way for a brain to drive navigation rather than only speak
+ * (docs/architecture/ai-seam.md §2, mqtt-and-conversation.md §4.1). Robot → cloud: it
+ * publishes `events/client-service-activity-log` — the schedule/history pull, the
+ * `mentor_behavior` report and the telehealth state — in the same envelope the headless
+ * SIL robot `sim/virtual_moxie.py` publishes, so the two SIM clients are interchangeable
+ * upstream as well as down (docs/architecture/sim-as-a-client.md).
+ *
  * Classic script (uses the global `mqtt` from mqtt.js). No build step.
  */
 (function () {
@@ -33,6 +42,15 @@
   };
 
   const C = 16384, MAX = 32767;      // motor rest / range (MOTOR_MAX_POS)
+
+  // ---- this robot's identity on the bus ----
+  // The browser SIM has always PUBLISHED as `d_sim` (see `faceEvent` / `sendUserTurn`);
+  // naming it once lets the robot→cloud channels below share the same device id, and
+  // `FIRMWARE` is the analyzed build `sim/virtual_moxie.py:40` reports in `/state`.
+  const DEVICE_ID = "d_sim";
+  const FIRMWARE = "24.10.803";
+  const MODULE_NAME = "sim-web";     // which client this is (the SIL says "virtual-moxie")
+  const dev = (name) => `/devices/${DEVICE_ID}/${name}`;
 
   // Motor indices: 0 L-shoulder, 1 L-elbow, 2 R-shoulder, 3 R-elbow, 4 head, 5 body-yaw, 6 body-lean.
   const set = (i, v) => window.moxie && window.moxie.setMotor(i, Math.max(0, Math.min(MAX, v)));
@@ -159,6 +177,111 @@
     }
   }
 
+  // ---- 🎬 response_actions: the cloud drives navigation, not just speech --------
+  //
+  // A `RemoteChatResponse` may carry `response_actions` — `RemoteChatAction` records the
+  // brain uses to move the robot through its own experience: launch a module, exit one,
+  // go to sleep, turn QR scanning on, call a named on-robot function
+  // (`mqtt/moxie_sdk/wire.py::build_chat_response`, `moxie_sdk/types.py::ActionType`,
+  // docs/architecture/ai-seam.md §2). Until now NOTHING in either SIM client read them:
+  // `sim/tests/test_e2e_actions_to_robot.py` proved they ARRIVE and said so in its own
+  // docstring ("this deliberately does not claim the robot acts on what it received").
+  // This is the client half of that contract.
+  //
+  // Every entry is `{output_type, action, module_id, content_id}`, and the FIRST entry may
+  // instead/also carry `event_subscription:{active[], clear}` — the brain asking the robot
+  // to push it perception events. An action-less entry is legal and means exactly that,
+  // so "no `action` key" is not an error. A legacy singular `response_action` mirrors
+  // `response_actions[0]` (mqtt-and-conversation.md §4.1), so it is read only when the
+  // plural is absent — otherwise the same action would fire twice.
+  //
+  // NOTHING here throws. An action type we do not know is counted and skipped: a future
+  // server teaching a robot a new verb must not be able to break an old client's turn.
+  const ACTION_KINDS = ["launch", "exit", "sleep", "enable_qr", "execute"];
+  const actionState = {
+    applied: [],            // [{action, module_id, content_id, function, t}] bounded
+    unknown: 0,             // action types this client does not implement (skipped safely)
+    module_id: "", content_id: "",   // the module the cloud last put us in
+    launches: 0, exits: 0,
+    asleep: false, qr_enabled: false,
+    subscribed: [],         // event_subscription.active, as the brain last asked for it
+    last: "",
+  };
+
+  function applyAction(entry) {
+    const m = window.moxie;
+    const kind = String(entry.action || "").toLowerCase();
+    const moduleId = entry.module_id || "", contentId = entry.content_id || "";
+    if (ACTION_KINDS.indexOf(kind) < 0) {
+      actionState.unknown += 1;
+      status(`🎬 ignored unknown action ${JSON.stringify(entry.action)}`);
+      return false;
+    }
+    switch (kind) {
+      case "launch":
+        // Entering an activity: the module's badge goes up on the face and Moxie greets
+        // it, which is the closest the avatar has to "a module started".
+        actionState.module_id = moduleId; actionState.content_id = contentId;
+        actionState.asleep = false; actionState.launches += 1;
+        if (m && m.showIcons && moduleId) m.showIcons([moduleId]);
+        behaviourTree("Bht_Gesture_Greet");
+        status(`🎬 launch ${moduleId}${contentId ? ":" + contentId : ""}`);
+        break;
+      case "exit":
+        actionState.module_id = ""; actionState.content_id = ""; actionState.exits += 1;
+        if (m && m.clearIcons) m.clearIcons();
+        behaviourTree("Bht_Sign_off");          // the goodbye wave
+        status("🎬 exit");
+        break;
+      case "sleep":
+        actionState.asleep = true;
+        behaviourTree("Bht_Sleeping_Anim");     // droop + eyes shut
+        status("🎬 sleep");
+        break;
+      case "enable_qr":
+        // QR scanning on — the launch-card path (docs/reverse-engineering/qr-codes.md).
+        // The camera badge is the only honest render: a browser SIM has no scanner.
+        actionState.qr_enabled = true;
+        if (m && m.showIcons) m.showIcons(["QR"]);
+        if (m && m.setFace) m.setFace("curious");
+        status("🎬 QR scanning on");
+        break;
+      case "execute":
+        // A named on-robot function. We cannot invent a body for it, so it is RECORDED
+        // and shown, never guessed at — an honest no-op beats a wrong animation.
+        status(`🎬 execute ${entry.function || "(unnamed)"}`);
+        break;
+      default: break;
+    }
+    actionState.last = kind;
+    actionState.applied.push({ action: kind, module_id: moduleId, content_id: contentId,
+                               function: entry.function || "", t: nowMs() });
+    if (actionState.applied.length > 40) actionState.applied.shift();
+    return true;
+  }
+
+  function noteSubscription(sub) {
+    if (!sub || typeof sub !== "object") return;
+    if (sub.clear) actionState.subscribed = [];
+    for (const name of sub.active || [])
+      if (actionState.subscribed.indexOf(name) < 0) actionState.subscribed.push(name);
+    status(`🎬 event subscription: ${actionState.subscribed.join(", ") || "(none)"}`);
+  }
+
+  function handleActions(msg) {
+    let list = [];
+    if (Array.isArray(msg.response_actions)) list = msg.response_actions;
+    else if (msg.response_action) list = [msg.response_action];   // legacy singular only
+    for (const entry of list) {
+      if (!entry || typeof entry !== "object") { actionState.unknown += 1; continue; }
+      noteSubscription(entry.event_subscription);
+      if (entry.action === undefined || entry.action === null || entry.action === "")
+        continue;                     // an action-less entry carries the subscription only
+      try { applyAction(entry); }
+      catch (e) { actionState.unknown += 1; status(`🎬 action failed: ${e && e.message}`); }
+    }
+  }
+
   // --- voice arbitration -----------------------------------------------------
   // A live backend sends the reply text first and the rendered audio
   // (CloudTTSResponse) a beat later. Speak locally only while we have no server
@@ -224,6 +347,9 @@
     if (typeof msg.emotion === "number" && EMOTION_TO_FACE[msg.emotion])
       window.moxie && window.moxie.setFace(EMOTION_TO_FACE[msg.emotion]);
     applyMarkup(out.markup || "");
+    // …and then what the cloud asked the ROBOT to DO. After the markup on purpose: the
+    // markup performs the line, the action is what happens next (launch/exit/sleep).
+    handleActions(msg);
     if (text) {
       status(`💬 "${chatSaid.slice(0, 48)}"`);
       addTranscript("moxie", text, more);
@@ -259,6 +385,14 @@
       window.moxie && window.moxie.setSpeech("");
       status("🎭 interrupted");
       return;
+    }
+    // Report our own RobotState upstream the way the protocol says and the SIL robot
+    // already did (`virtual_moxie.py::_on_telehealth`): START_SESSION → IN_SESSION,
+    // END_SESSION → EXITING then READY (telehealth.md:66-79).
+    if (action === "START_SESSION") reportTelehealthState("IN_SESSION", m.session_id || "");
+    else if (action === "END_SESSION") {
+      reportTelehealthState("EXITING", m.session_id || "");
+      reportTelehealthState("READY", "");
     }
     if (action !== "PLAY_OUTPUT") {
       status(`🎭 ${action.toLowerCase().replace(/_/g, " ")}`);
@@ -328,10 +462,104 @@
       speech: name, module_name: "sim-web",
     });
     pendingFaceEvents.add(eventId);
-    if (client && client.connected) client.publish("/devices/d_sim/events/remote-chat", payload);
-    route("/devices/d_sim/events/remote-chat", payload);   // always record it locally
+    if (client && client.connected) client.publish(dev("events/remote-chat"), payload);
+    route(dev("events/remote-chat"), payload);   // always record it locally
     presence.lastEventId = eventId;
     return eventId;
+  }
+
+  // ---- 📒 robot → cloud: the activity log ---------------------------------------
+  //
+  // `/devices/{id}/events/client-service-activity-log` is the robot's own UPSTREAM
+  // channel, multiplexed by `subtopic` (docs/architecture/mqtt-and-conversation.md §3.3,
+  // cited to docs/reverse-engineering/cloud-protocol.md:172):
+  //
+  //   subtopic:"query"        pull the day plan / history / a license key. The robot does
+  //                           this at the start of every session (§3.8) and the cloud
+  //                           answers a `CloudQueryResponse` on `commands/query_result`.
+  //   (no subtopic)           a `mentor_behavior` REPORT — what the child just finished.
+  //   subtopic:"telehealth"   a `TelehealthRobotEvent`: the robot's own session state.
+  //
+  // The headless SIL robot has published all three since it was written
+  // (`sim/virtual_moxie.py::send_query` :193-201, `::report_mentor_behavior` :204-210,
+  // `::report_telehealth_state` :373-381). The browser SIM published NONE of them, so it
+  // could not ask the cloud anything and reported no robot state — the two clients were
+  // interchangeable downstream only. Same topic, same envelopes, same subtopic values as
+  // that client; the values that legitimately differ are identity (`module_name`, the
+  // device id in `auid`, `request_id`, `timestamp`) and are listed in
+  // docs/architecture/sim-as-a-client.md. Parity is pinned by the golden
+  // `sim/tests/goldens/robot_to_cloud_activity.json`, asserted from BOTH ends.
+  const ACTIVITY_TOPIC = dev("events/client-service-activity-log");
+
+  // The CloudQueryResponse field each answer is keyed under — the same table the SIL robot
+  // keeps (`virtual_moxie.py::QUERY_FIELD`), recovered from
+  // docs/reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto:310-352.
+  // Duplicated on purpose: a SIM client decodes the wire itself and never imports the
+  // server SDK it exists to test, exactly like firmware.
+  const QUERY_FIELD = {
+    idf: "idf_values", license: "license_values", schedule: "schedule",
+    contexts: "contexts", context_store: "versioned_contexts",
+    mentor_behaviors: "mentor_behaviors", remote_lines: "remote_lines",
+  };
+
+  const activity = {
+    published: [],          // every envelope this robot put upstream, in order (bounded)
+    results: {},            // query name → {request_id, field, value}
+    pending: {},            // request_id → query name, until the answer lands
+    telehealth_state: "",   // what we last told the cloud we are doing
+    last_query: "",
+  };
+
+  function publishActivity(envelope) {
+    const s = JSON.stringify(envelope);
+    activity.published.push(envelope);
+    if (activity.published.length > 60) activity.published.shift();
+    if (recording && !replaying) recorded.push({ t: nowMs(), topic: ACTIVITY_TOPIC, payload: s });
+    if (client && client.connected) client.publish(ACTIVITY_TOPIC, s);
+    return envelope;
+  }
+
+  // A CloudQueryRequest (Cloud.proto:292-305). Key order matches the SIL robot's.
+  function sendQuery(query) {
+    const requestId = "sim-q-" + Math.random().toString(36).slice(2, 10);
+    activity.pending[requestId] = query;
+    activity.last_query = query;
+    publishActivity({ timestamp: Date.now(), subtopic: "query", query: query,
+                      request_id: requestId, auid: DEVICE_ID,
+                      software_version: FIRMWARE, module_name: MODULE_NAME });
+    status(`→ activity-log query ${query}`);
+    return requestId;
+  }
+
+  // An ActivityUpdate whose `mentor_behavior` (Cloud.proto:241) carries the finished
+  // activity (MentorBehavior.proto:26-36) — the history that stops the robot repeating
+  // the same missions forever.
+  function reportMentorBehavior(mbh) {
+    const rec = publishActivity({ timestamp: Date.now(), mentor_behavior: mbh || {},
+                                  software_version: FIRMWARE, module_name: MODULE_NAME });
+    status(`→ mentor_behavior ${(mbh || {}).module_id || "?"}`);
+    return rec;
+  }
+
+  // A TelehealthRobotEvent (docs/reverse-engineering/protocol/telehealth.md:88-91).
+  function reportTelehealthState(state, sessionId) {
+    activity.telehealth_state = state;
+    return publishActivity({ subtopic: "telehealth",
+      message: { timestamp: Date.now(), state: state, session_id: sessionId || "",
+                 action: "UPDATE_STATE", software_version: FIRMWARE,
+                 module_name: MODULE_NAME } });
+  }
+
+  // The cloud's answer: a CloudQueryResponse keyed by the query's own proto field.
+  function handleQueryResult(payload) {
+    let msg; try { msg = JSON.parse(payload); } catch { return; }
+    const query = msg.query || activity.pending[msg.request_id] || "";
+    const field = QUERY_FIELD[query] || "";
+    const value = field ? msg[field] : undefined;
+    delete activity.pending[msg.request_id];
+    activity.results[query] = { request_id: msg.request_id || "", field: field, value: value };
+    const size = Array.isArray(value) ? value.length : (value == null ? "MISSING" : "ok");
+    status(`← query_result ${query}: ${field}=${size}`);
   }
 
   // ---- connection ----
@@ -352,7 +580,12 @@
       client.subscribe("/devices/+/events/remote-chat");     // the child's utterances
       client.subscribe("/devices/+/config");
       client.subscribe("/devices/+/commands/telehealth");     // 🎭 the operator's lines
+      client.subscribe("/devices/+/commands/query_result");   // answers to our activity-log queries
       client.subscribe("/devices/+/commands/motor");         // SIL-only: drive motors directly
+      // A real robot pulls its day at the start of EVERY session
+      // (docs/architecture/mqtt-and-conversation.md §3.8). Now so does this one — it is
+      // the first thing the browser SIM has ever asked the cloud for.
+      sendQuery("schedule");
     });
     client.on("reconnect", () => status(`reconnecting ${url}…`));
     client.on("error", (e) => status(`error: ${e && e.message ? e.message : e}`));
@@ -369,6 +602,7 @@
     else if (topic.endsWith("/commands/tts")) handleTts(s);
     else if (topic.endsWith("/commands/telehealth")) handleTelehealth(s);
     else if (topic.endsWith("/events/remote-chat")) handleUserTurn(s);
+    else if (topic.endsWith("/commands/query_result")) handleQueryResult(s);
     else if (topic.endsWith("/commands/motor")) handleMotor(s);
     else if (topic.endsWith("/config")) {
       try { const c = JSON.parse(s); status(`config: pairing_status=${c.pairing_status}`); } catch {}
@@ -452,13 +686,13 @@
     sendUserTurn: function (text) {
       const payload = JSON.stringify({ command: "prompt", backend: "router", speech: text });
       const live = !!(client && client.connected);
-      if (live) client.publish("/devices/d_sim/events/remote-chat", payload);
-      route("/devices/d_sim/events/remote-chat", payload);   // always show it locally
+      if (live) client.publish(dev("events/remote-chat"), payload);
+      route(dev("events/remote-chat"), payload);   // always show it locally
       // No backend? Answer with the offline stub brain, using the SAME reply shape
       // so the avatar animates from real behavior markup either way.
       if (!live && window.moxieStub && window.moxieStub.enabled) {
         const r = window.moxieStub.reply(text);
-        setTimeout(() => route("/devices/d_sim/commands/remote_chat", JSON.stringify(
+        setTimeout(() => route(dev("commands/remote_chat"), JSON.stringify(
           { command: "remote_chat", result: "OK", backend: "router",
             output: { text: r.text, markup: r.markup } })), 450);
       }
@@ -482,6 +716,35 @@
     },
     // true once a CloudTTSResponse has arrived — the server voice has taken over
     hasCloudVoice: function () { return cloudVoice; },
+
+    /* 🎬 What the cloud's `response_actions` actually DID to this robot, recorded as it
+     * happened: {applied:[{action,module_id,content_id,function,t}], unknown, module_id,
+     * content_id, launches, exits, asleep, qr_enabled, subscribed[], last}. `unknown`
+     * counts action types this client does not implement — they are skipped, never
+     * thrown. Tests assert this, never a live sample. */
+    actionStats: function () {
+      return { applied: actionState.applied.map((a) => ({ action: a.action,
+                 module_id: a.module_id, content_id: a.content_id, function: a.function })),
+               unknown: actionState.unknown, module_id: actionState.module_id,
+               content_id: actionState.content_id, launches: actionState.launches,
+               exits: actionState.exits, asleep: actionState.asleep,
+               qr_enabled: actionState.qr_enabled,
+               subscribed: actionState.subscribed.slice(), last: actionState.last };
+    },
+
+    /* 📒 The robot→cloud activity log: every envelope this client put upstream, in order,
+     * plus the answers that came back. `topic` is the one topic they all ride. */
+    activityStats: function () {
+      return { topic: ACTIVITY_TOPIC, published: activity.published.slice(),
+               results: JSON.parse(JSON.stringify(activity.results)),
+               telehealth_state: activity.telehealth_state,
+               last_query: activity.last_query };
+    },
+    // Ask the cloud something (schedule | mentor_behaviors | license | …) and report what
+    // the child finished — the robot half of the activity log, callable from the page.
+    sendQuery: sendQuery,
+    reportMentorBehavior: reportMentorBehavior,
+    reportTelehealthState: reportTelehealthState,
   };
 
   // ---- wire the panel once moxie + DOM are ready ----
