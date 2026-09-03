@@ -502,15 +502,26 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
         gaze, tree = (str(look), None)       # an explicit look overrides both
 
     # ---- icons / sfx: gated off, exactly as in the floor -------------------- #
+    # Two ways in, both closed: an explicit id the caller chose (`ctx["icon"]` /
+    # `ctx["sfx"]` — an app's `Reply.icon`/`Reply.sfx`), or the boolean gate that lets the
+    # cue rules pick one. Either way `validate()` is the only thing that authorizes it, so
+    # an id nobody recovered is dropped rather than shown on a child's screen. Both stay
+    # OFF by default: all four confirmed icons are calendar cues and one of the two
+    # confirmed sounds is a music bed for a cast segment (see `vocab.ICON_VALUES` /
+    # `vocab.SFX_IDS` for the honest reasons).
     icon = None
-    if ctx.get("icons"):
+    if isinstance(ctx.get("icon"), str) and ctx["icon"]:
+        icon = ctx["icon"]
+    elif ctx.get("icons"):
         for pattern, value in _ICON_CUES:
             if pattern.search(text):
                 icon = value
                 break
-    sfx = (vocab.SFX_STINGER
-           if ctx.get("sfx") and act == "appreciation" and mood == vocab.MOODS["happy"]
-           else None)
+    sfx = None
+    if isinstance(ctx.get("sfx"), str) and ctx["sfx"]:
+        sfx = ctx["sfx"]
+    elif ctx.get("sfx") and act == "appreciation" and mood == vocab.MOODS["happy"]:
+        sfx = vocab.SFX_STINGER
 
     # ---- lay out the beats -------------------------------------------------- #
     beats: List[Beat] = []

@@ -361,9 +361,10 @@ KNOWN_UNDOCUMENTED = frozenset()
 
 #: Documented knobs that reach the supervisor only through `env_file: .env`, not through
 #: an explicit `environment:` passthrough. MOXIE_AUTOMARKUP is the markup floor's
-#: one-variable rollback (mqtt/moxie_sdk/automarkup.py): both files behave identically,
-#: so it is not a parity bug — but it is invisible to `docker compose config`.
-KNOWN_ENV_FILE_ONLY = frozenset({"MOXIE_AUTOMARKUP"})
+#: one-variable rollback (mqtt/moxie_sdk/automarkup.py) and MOXIE_EXPRESSIVE the behavior
+#: planner's (mqtt/supervisor/markup.py, planner|floor|off): both files behave identically,
+#: so neither is a parity bug — but they are invisible to `docker compose config`.
+KNOWN_ENV_FILE_ONLY = frozenset({"MOXIE_AUTOMARKUP", "MOXIE_EXPRESSIVE"})
 
 
 @pytest.mark.parametrize("name,path", [(CLONE, COMPOSE_PATH), (IMAGES, IMAGES_PATH)])
