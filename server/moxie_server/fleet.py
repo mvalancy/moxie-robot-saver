@@ -855,6 +855,8 @@ def normalize_voice(payload: Optional[dict]) -> dict:
              "labels": {k: "" for k in VOICE_KINDS},
              "installed": {k: "" for k in VOICE_KINDS},
              "chosen": {k: False for k in VOICE_KINDS},
+             "pins": {k: "" for k in VOICE_KINDS},
+             "pin_notes": {k: "" for k in VOICE_KINDS},
              "discovering": False, "gateway_error": "", "updated_at": 0,
              "robots": [], "applied": None, "spoke": "", "reason": "",
              "error": "supervisor not reachable"}
@@ -884,6 +886,12 @@ def normalize_voice(payload: Optional[dict]) -> dict:
             "labels": _side("labels", lambda v: str(v or "")),
             "installed": _side("installed", lambda v: str(v or "")),
             "chosen": _side("chosen", bool),
+            # What an explicit `MOXIE_TTS`/`MOXIE_STT` has pinned, and the sentence that
+            # says so. Both empty in the ordinary case; when set, the side's dropdown is
+            # ALREADY filtered to that engine upstream, so the note is the only thing
+            # standing between a parent and "why is the gateway voice gone".
+            "pins": _side("pins", lambda v: str(v or "")),
+            "pin_notes": _side("pin_notes", lambda v: str(v or "")),
             # True only until the first listing lands; the card says "Discovering…" and
             # keeps whatever entries it already has rather than blanking.
             "discovering": bool(p.get("discovering")),

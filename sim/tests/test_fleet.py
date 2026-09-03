@@ -184,6 +184,26 @@ def test_normalize_voice_never_raises_on_junk():
         assert isinstance(v["updated_at"], int)
 
 
+def test_normalize_voice_carries_the_environments_pin_to_the_card():
+    """A short dropdown needs its reason travelling with it. The supervisor filtered the
+    list because `MOXIE_TTS` pinned the engine; if the note were dropped here, the card
+    would look like a gateway that had lost half its voices."""
+    from moxie_server.fleet import normalize_voice
+    payload = _voice_payload()
+    payload["pins"] = {"speech": "piper", "listening": ""}
+    payload["pin_notes"] = {"speech": "MOXIE_TTS=piper pins the voice to local Piper; "
+                                      "only its entries are offered here.",
+                            "listening": ""}
+    v = normalize_voice(payload)
+    assert v["pins"] == {"speech": "piper", "listening": ""}
+    assert "MOXIE_TTS=piper" in v["pin_notes"]["speech"]
+    assert v["pin_notes"]["listening"] == ""
+    # An older supervisor sends neither field; the card must still render.
+    plain = normalize_voice(_voice_payload())
+    assert plain["pins"] == {"speech": "", "listening": ""}
+    assert plain["pin_notes"] == {"speech": "", "listening": ""}
+
+
 def test_normalize_voice_drops_an_option_with_no_id():
     from moxie_server.fleet import normalize_voice
     payload = _voice_payload()

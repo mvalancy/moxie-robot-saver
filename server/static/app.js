@@ -1029,6 +1029,10 @@ function renderVoiceCard(v){
   }
   if(note){
     const bits=[];
+    // The environment's pin comes first: it is the reason a dropdown looks short, and a
+    // parent hunting for a missing gateway voice must not have to read past the rest.
+    const pins=v.pin_notes||{};
+    ['speech','listening'].forEach(k=>{ if(pins[k]) bits.push(escapeHtml(pins[k])); });
     if(v.discovering) bits.push('Discovering gateway models…');
     else if(v.gateway_error) bits.push('Gateway unreachable ('
       + escapeHtml(v.gateway_error)+') — local options only');

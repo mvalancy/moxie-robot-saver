@@ -15,10 +15,12 @@ Three rules are load-bearing and each is pinned by a test:
 
   * **`piper-amy` when possible.** Moxie's own voice, whenever the gateway lists it;
     `stt-whisper` for the ears (`audio_models.DEFAULT_*_MODEL`).
-  * **Local engines are first class.** An explicit local choice wins even when a gateway
-    is fully configured — the same statement `MOXIE_TTS=piper` / `MOXIE_STT=whisper` make
-    in `mqtt/config.py`. A home appliance that keeps a child's voice inside the house is
-    a supported deployment, not a degraded one.
+  * **Local engines are first class**, from both directions. A local *pick* wins even
+    when a gateway is fully configured; and an explicit `MOXIE_TTS=piper` /
+    `MOXIE_STT=whisper` **pins the engine**, so no pick can quietly move a deployment off
+    it (`pin_for_env` and the section it heads). A home appliance that keeps a child's
+    voice inside the house is a supported deployment, not a degraded one — and an
+    operator who said so in the environment is not overruled by a dropdown.
   * **An outage never blanks the card.** A stored choice is honoured on READ even when
     discovery cannot currently confirm it (the gateway is down); only a *write* is
     checked against what is available, because that is the moment a parent can be told.
@@ -77,6 +79,31 @@ ENGINE_LABEL = {"gateway": "gateway", "piper": "local Piper", "whisper": "local 
 
 #: The engine that must exist for a side even when nothing else does.
 BUILTIN_ENGINE = {SPEECH: "tone", LISTENING: "off"}
+
+#: The environment variable that can PIN each side's engine (`mqtt/config.py`).
+ENV_VAR = {SPEECH: "MOXIE_TTS", LISTENING: "MOXIE_STT"}
+
+#: Which engine each explicit env value names, aliases included. A value that is absent
+#: from this table (`""`, `auto`, a typo) pins nothing and leaves the picker in charge.
+#:
+#: **`MOXIE_TTS=tone` is deliberately NOT here**, and the reason matters: in
+#: `config.build_synthesizer` `tone` is a PERMISSION, not a selection — it opts the
+#: built-in beep in as the *last rung* under a gateway and under Piper, exactly as
+#: `.env.example` describes it ("the built-in zero-dependency placeholder voice"). It is
+#: also what **both compose files default to** (`MOXIE_TTS: ${MOXIE_TTS:-tone}`), so
+#: treating it as a pin would silently reduce every `docker compose up` deployment's
+#: Speech dropdown to one entry. `piper`/`local`, `gateway`/`openai` and `off` are the
+#: values that really do select, and they are the ones that pin.
+ENV_PIN = {
+    SPEECH: {"piper": "piper", "local": "piper", "gateway": "gateway",
+             "openai": "gateway", "off": "off"},
+    LISTENING: {"whisper": "whisper", "local": "whisper", "gateway": "gateway",
+                "off": "off"},
+}
+
+#: How a pinned engine is named in the sentence the console prints.
+PIN_LABEL = {"gateway": "the gateway", "piper": "local Piper",
+             "whisper": "local whisper"}
 
 
 # ---------------------------------------------------------------- one choice --
@@ -261,6 +288,76 @@ def mark_defaults(available: dict, defaults: dict) -> dict:
         wanted = choice_id(defaults.get(kind)) if defaults else ""
         out[kind] = [dict(e, default=(e.get("id") == wanted))
                      for e in (available.get(kind) or [])]
+    return out
+
+
+# --------------------------------------------------- the environment's pin --
+# `MOXIE_TTS=piper` and `MOXIE_STT=whisper` are the owner's standing rule written into an
+# environment: *local engines stay first-class, one env line away even with a gateway fully
+# configured*. They are an OPERATOR'S statement about this deployment, and a dropdown must
+# not be able to talk them out of it — a picker that silently overrides an explicit engine
+# is a bug, not a convenience.
+#
+# So an explicit value PINS THE ENGINE, and the pin does three things, in three places:
+#
+#   * `config.build_synthesizer` / `build_transcriber` ignore a pick that names a
+#     different engine (the pin wins, and the boot line says so);
+#   * `config.VoiceEngines.available()` offers only the pinned engine's entries, so the
+#     dropdown never shows a choice this box would refuse to install;
+#   * `voice_update` therefore refuses a stale page's cross-engine pick through the
+#     ordinary "not one of this appliance's options" path, with `pin_note` appended so the
+#     parent reads *why* rather than just *no*.
+#
+# What the pin does NOT do is take the model away: `MOXIE_TTS=gateway` still lets the
+# console pick which gateway voice, and `MOXIE_TTS=piper` still lets it pick which
+# installed Piper voice. The operator chose the ENGINE; the parent chooses the voice.
+def pin_for_env(kind: str, value) -> str:
+    """The engine `MOXIE_TTS` / `MOXIE_STT` pins for `kind`, or `""` for none.
+
+    `""`, `auto` and anything unrecognised pin nothing — exactly the values that mean
+    "decide for me", which is what the picker is for.
+    """
+    return ENV_PIN.get(kind, {}).get(str(value or "").strip().lower(), "")
+
+
+def honours_pin(kind: str, choice, pin: str) -> bool:
+    """Whether `choice` may be installed under `pin`. No pin ⇒ every choice may."""
+    if not pin:
+        return True
+    c = as_choice(choice)
+    return bool(c) and c["engine"] == pin
+
+
+def pin_note(kind: str, value) -> str:
+    """The one sentence the console prints when the environment has pinned a side.
+
+    Empty when nothing is pinned, so the caller can render it unconditionally.
+    """
+    pin = pin_for_env(kind, value)
+    if not pin:
+        return ""
+    var, raw = ENV_VAR[kind], str(value or "").strip().lower()
+    side = "voice" if kind == SPEECH else "ears"
+    if pin == "off":
+        return (f"{var}={raw} — this deployment has no {side}, and a dropdown does not "
+                f"turn it back on.")
+    return (f"{var}={raw} pins the {side} to {PIN_LABEL.get(pin, pin)}; only its entries "
+            f"are offered here.")
+
+
+def filter_available(available: dict, pins) -> dict:
+    """`available` reduced to each side's pinned engine (untouched where nothing is pinned).
+
+    An empty side is the honest answer when the pinned engine has nothing installed — but
+    it is barely reachable in a running appliance, because every such configuration
+    (`MOXIE_TTS=piper` with no `.onnx`, `MOXIE_STT=whisper` with no faster-whisper,
+    `MOXIE_TTS=gateway` with no URL) already exits at boot rather than starting mute.
+    """
+    out = {}
+    for kind in KINDS:
+        entries = list((available or {}).get(kind) or [])
+        pin = str((pins or {}).get(kind) or "")
+        out[kind] = [e for e in entries if e.get("engine") == pin] if pin else entries
     return out
 
 

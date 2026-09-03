@@ -385,12 +385,23 @@ def build_synthesizer(override=None):
 
     `override` is the 🎚️ console pick (`{"engine", "model"}` — see
     `moxie_sdk/voice_settings.py`), read from `fleet/voice.json` at boot and passed again
-    on every live swap. It sits **above** the env precedence, with two deliberate
-    exceptions: `MOXIE_TTS=off` still wins (a deployment that declared itself voiceless is
-    not talked out of it by a dropdown), and a pick that cannot be built here — a gateway
-    voice with no `MOXIE_VOICE_BASE_URL`, a Piper voice whose `.onnx` is gone — falls
-    through to the env path rather than leaving a child in silence. Unset `override`
-    keeps today's behaviour byte-for-byte.
+    on every live swap. It sits above the AUTO precedence, and under an explicit one:
+
+      * **An explicit `MOXIE_TTS` pins the engine.** `piper`/`local`, `gateway`/`openai`,
+        `tone` and `off` are an operator's statement about this deployment, and a pick
+        naming a *different* engine is ignored (`voice_settings.honours_pin`). A pick
+        *within* the pinned engine still applies — `MOXIE_TTS=piper` chooses local Piper,
+        the console still chooses which installed voice. The console does not have to
+        guess this: `VoiceEngines.available()` offers only the pinned engine's entries and
+        carries `pin_note` to say why.
+      * **`MOXIE_TTS=off` still wins outright** — a deployment that declared itself
+        voiceless is not talked out of it by a dropdown.
+      * **A pick that cannot be built here** — a gateway voice with no
+        `MOXIE_VOICE_BASE_URL`, a Piper voice whose `.onnx` is gone — falls through to the
+        env path rather than leaving a child in silence.
+
+    Unset `MOXIE_TTS` pins nothing, and an unset `override` keeps the env-driven behaviour
+    byte-for-byte.
 
     Explicit `MOXIE_TTS=piper` (alias `local`) or `gateway` (alias `openai`) selects that
     engine outright and exits loudly if it cannot be built. Otherwise the auto precedence is
@@ -412,6 +423,10 @@ def build_synthesizer(override=None):
         return None
     piper = make_piper_synthesizer(PIPER_MODEL, PIPER_CONFIG or None)
     choice = voice_settings.sanitize_choice(voice_settings.SPEECH, override)
+    if not voice_settings.honours_pin(voice_settings.SPEECH, choice,
+                                      voice_settings.pin_for_env(voice_settings.SPEECH,
+                                                                 TTS_ENGINE)):
+        choice = None                        # the operator's MOXIE_TTS names the engine
     if choice:
         picked = _speech_for_choice(choice, piper)
         if picked is not None:
@@ -469,8 +484,11 @@ def build_transcriber(override=None):
     """The ears (moxie_sdk.stt.Transcriber), or None when nothing can hear.
 
     `override` is the 🎚️ console pick, with the same precedence the voice has: above the
-    env, under `MOXIE_STT=off`, and falling through to the env path when the picked engine
-    cannot be built on this box (see `build_synthesizer`). Unset keeps today's behaviour.
+    `auto` path, **under an explicit `MOXIE_STT`, which pins the engine** (`whisper`/
+    `local`, `gateway`, `off` — a pick naming another engine is ignored, a pick of another
+    *model within* the pinned engine still applies), and falling through to the env path
+    when the picked engine cannot be built on this box (see `build_synthesizer`). Unset —
+    or `auto` — pins nothing, and an unset override keeps today's behaviour.
 
     Neither engine is the "real" one. **Local faster-whisper** keeps a child's voice on
     the box and needs no key; **the gateway** (live 2026-09-02) needs no 140 MB model and
@@ -500,6 +518,10 @@ def build_transcriber(override=None):
     if STT_ENABLED == "off":
         return None
     choice = voice_settings.sanitize_choice(voice_settings.LISTENING, override)
+    if not voice_settings.honours_pin(voice_settings.LISTENING, choice,
+                                      voice_settings.pin_for_env(voice_settings.LISTENING,
+                                                                 STT_ENABLED)):
+        choice = None                        # the operator's MOXIE_STT names the engine
     if choice:
         if choice["engine"] == "off":
             return None
@@ -579,6 +601,19 @@ def local_whisper_models():
     return names
 
 
+def engine_pins() -> dict:
+    """Which engine each side's env var pins right now — `""` where it pins nothing.
+
+    One place reads `MOXIE_TTS`/`MOXIE_STT` for the picker, so the builders, the dropdown
+    and the console's note can never disagree about what this deployment allows.
+    """
+    from moxie_sdk import voice_settings
+    return {voice_settings.SPEECH:
+            voice_settings.pin_for_env(voice_settings.SPEECH, TTS_ENGINE),
+            voice_settings.LISTENING:
+            voice_settings.pin_for_env(voice_settings.LISTENING, STT_ENABLED)}
+
+
 class VoiceEngines:
     """The runtime's one seam onto this module for the 🎚️ picker.
 
@@ -594,17 +629,32 @@ class VoiceEngines:
             ttl_s=VOICE_DISCOVERY_TTL_S)
 
     def available(self, *, refresh: bool = False, settle_s: float = 0.0) -> dict:
-        """`{available: {speech, listening}, discovering, gateway_error}`.
+        """`{available: {speech, listening}, pins, pin_notes, discovering, gateway_error}`.
 
         `settle_s` is the bounded wait a console WRITE may ask for so a cold supervisor
         validates a pick against the real list rather than against `tone` alone. A read
         passes 0 and never waits.
+
+        The list is already **reduced to what an explicit `MOXIE_TTS`/`MOXIE_STT` would let
+        this box install** (`voice_settings.filter_available`). Filtering here rather than
+        in the browser is what makes the two halves agree by construction: the dropdown
+        cannot show an entry the builders would then refuse, and a stale page that posts
+        one is refused by the ordinary availability check with `pin_notes` saying why.
         """
         from moxie_sdk import voice_settings
         snap = self.catalog.snapshot(refresh=refresh, settle_s=settle_s)
-        return {"available": voice_settings.build_available(
-                    snap["ids"], piper_voices=local_piper_voices(),
-                    whisper_models=local_whisper_models()),
+        pins = engine_pins()
+        return {"available": voice_settings.filter_available(
+                    voice_settings.build_available(
+                        snap["ids"], piper_voices=local_piper_voices(),
+                        whisper_models=local_whisper_models()),
+                    pins),
+                "pins": pins,
+                "pin_notes": {voice_settings.SPEECH:
+                              voice_settings.pin_note(voice_settings.SPEECH, TTS_ENGINE),
+                              voice_settings.LISTENING:
+                              voice_settings.pin_note(voice_settings.LISTENING,
+                                                      STT_ENABLED)},
                 "discovering": snap["discovering"],
                 "gateway_error": snap["gateway_error"]}
 

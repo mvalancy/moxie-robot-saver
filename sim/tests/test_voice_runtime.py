@@ -76,11 +76,15 @@ class _Engines:
     """
 
     def __init__(self, *, gateway=None, piper=(), whisper=(), error="",
-                 discovering=False, fail=()):
+                 discovering=False, fail=(), pins=None):
         self.gateway = list(GATEWAY_MODELS if gateway is None else gateway)
         self.piper, self.whisper = list(piper), list(whisper)
         self.error, self.discovering = error, discovering
         self.fail = set(fail)
+        # What an explicit `MOXIE_TTS`/`MOXIE_STT` pins, exactly as the real adapter
+        # reports it: the list is filtered HERE, so a test cannot accidentally assert a
+        # card that offers more than the builders would take (`config.VoiceEngines`).
+        self.pins = dict(pins or {})
         self.asked = []                  # every choice a builder was handed
         self.refreshes = 0
         self.settles = []                # the settle budget each caller asked for
@@ -88,9 +92,14 @@ class _Engines:
     def available(self, *, refresh=False, settle_s=0.0):
         self.refreshes += int(bool(refresh))
         self.settles.append(settle_s)
-        return {"available": vs.build_available(self.gateway,
-                                                piper_voices=self.piper,
-                                                whisper_models=self.whisper),
+        return {"available": vs.filter_available(
+                    vs.build_available(self.gateway, piper_voices=self.piper,
+                                       whisper_models=self.whisper), self.pins),
+                "pins": dict(self.pins),
+                # Every pin value is itself a legal env value (`ENV_PIN` maps each
+                # onto itself), so the note the real adapter would print is exact.
+                "pin_notes": {k: vs.pin_note(k, self.pins.get(k) or "")
+                              for k in vs.KINDS},
                 "discovering": self.discovering, "gateway_error": self.error}
 
     def build_speech(self, choice):
@@ -443,3 +452,61 @@ def test_a_cold_catalog_does_not_refuse_a_good_pick():
         out = rt.voice_update({"speech": "gateway:piper-ryan"})
         assert out["ok"] is True, out.get("reason")
         assert out["selected"][vs.SPEECH] == "gateway:piper-ryan"
+
+
+# ------------------------------------------- the environment's pin, on the card ---
+# An explicit `MOXIE_TTS`/`MOXIE_STT` pins the engine (`voice_settings.pin_for_env`), and
+# the card's whole job here is to be HONEST about it: offer only what the builders would
+# install, refuse a stale page's cross-engine pick with the variable's name in the reason,
+# and never print a pinned-away pick as though it had been installed.
+
+def test_a_pinned_side_offers_only_that_engine_and_says_which_variable_did_it(tmp_path):
+    rt, _ = _runtime(tmp_path, _Engines(piper=["en_US-amy-medium"], whisper=["base.en"],
+                                        pins={vs.SPEECH: "piper"}))
+    view = rt.voice_view()
+    assert vs.option_ids(view["available"][vs.SPEECH]) == ["piper:en_US-amy-medium"]
+    assert "MOXIE_TTS=piper" in view["pin_notes"][vs.SPEECH]
+    assert view["pins"] == {vs.SPEECH: "piper", vs.LISTENING: ""}
+    # The unpinned side keeps every entry, and carries no note to explain nothing.
+    assert "gateway:stt-whisper" in vs.option_ids(view["available"][vs.LISTENING])
+    assert view["pin_notes"][vs.LISTENING] == ""
+    # And the default follows the pin rather than pointing at a voice this box refuses:
+    # `piper-amy` "when possible" means when the gateway is on the table at all.
+    assert view["selected"][vs.SPEECH] == "piper:en_US-amy-medium"
+
+
+def test_a_cross_engine_pick_is_refused_with_the_variable_that_forbids_it(tmp_path):
+    """A stale page (or a hand-rolled POST) can still name a gateway voice. It must be
+    refused — and the refusal must not read as "the gateway lost your voice"."""
+    rt, _ = _runtime(tmp_path, _Engines(piper=["en_US-amy-medium"],
+                                        pins={vs.SPEECH: "piper"}))
+    out = rt.voice_update({"speech": "gateway:piper-ryan"})
+    assert out["ok"] is False
+    assert "MOXIE_TTS=piper" in out["reason"], out["reason"]
+    assert "piper:en_US-amy-medium" in out["reason"], "the refusal must say what IS offered"
+    assert rt.voice_settings() == {}, "a refused pick must not be persisted"
+
+
+def test_a_pick_within_the_pinned_engine_is_accepted(tmp_path):
+    """The pin names the engine, not the voice — the dropdown still does something."""
+    rt, _ = _runtime(tmp_path, _Engines(piper=["en_US-amy-medium", "en_US-lessac-medium"],
+                                        pins={vs.SPEECH: "piper"}))
+    out = rt.voice_update({"speech": "piper:en_US-lessac-medium"})
+    assert out["ok"] is True, out.get("reason")
+    assert out["selected"][vs.SPEECH] == "piper:en_US-lessac-medium"
+    assert rt._synth.describe() == "fake-voice (piper:en_US-lessac-medium)"
+
+
+def test_a_stored_pick_the_environment_later_pinned_away_is_not_reported_as_installed(tmp_path):
+    """The order a real deployment hits: a parent picks a gateway voice, then an operator
+    adds `MOXIE_TTS=piper`. The record still says gateway, the box speaks Piper, and the
+    per-side report has to say the pin — a line reading `speech: piper-ryan (gateway,
+    chosen)` beside a Piper voice would send someone hunting for a swap that never was."""
+    engines = _Engines(piper=["en_US-amy-medium"], whisper=["base.en"])
+    rt, _ = _runtime(tmp_path, engines)
+    assert rt.voice_update({"speech": "gateway:piper-ryan"})["ok"] is True
+    engines.pins = {vs.SPEECH: "piper"}          # the operator edits the environment
+    out = rt.voice_update({"listening": "whisper:base.en"})   # any later Save
+    assert out["ok"] is True, out.get("reason")
+    assert "MOXIE_TTS" in out["applied"][vs.SPEECH]["note"]
+    assert out["applied"][vs.LISTENING]["note"] == ""
