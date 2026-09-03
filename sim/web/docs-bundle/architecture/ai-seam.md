@@ -121,7 +121,9 @@ idioms this repo already had:
 | **The pin** | An explicit `MOXIE_APP` **pins** the appliance's brain and a per-child pick may not overrule it (the owner rule PR #77 enforced for `MOXIE_TTS`/`MOXIE_STT`). The card offers only that entry, and a stale page's pick is refused *naming the variable*. `MOXIE_APP=any` is the explicit "decide per child". The pin reads the **raw** environment, because `config.MOXIE_APP` already reads as `llm` on a box where nobody said anything |
 
 So one appliance can answer one child with a content module and another with a webhook to your own
-service, live, and `GET`/`POST /brain` is the card's door. Design, gaps and the mutation run:
+service, live. The 🧠 **Brain** card in the console is the parent-facing half — a brain for this
+robot or a house rule for all of them, each robot's row naming *which layer decided* — over
+`GET`/`POST /brain`. Design, gaps and the mutation run:
 [`backlog/brain-picker.md`](backlog/brain-picker.md).
 
 ### Request in — `RemoteChatRequest`

@@ -9,8 +9,11 @@
 > [`mqtt/config.py`](../../../mqtt/config.py) (`BRAIN_BUILDERS`, `BrainEngines`) ·
 > [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) (`app_for`, `brain_for`,
 > `brain_view`, `brain_update`).
+> Console: [`fleet.py::normalize_brain`](../../../server/moxie_server/fleet.py) + two proxy routes
+> + the 🧠 card in [`server/static/`](../../../server/static/index.html).
 > Tests: [`test_brains.py`](../../../sim/tests/test_brains.py) (82) +
-> [`test_brain_runtime.py`](../../../sim/tests/test_brain_runtime.py) (31), plus
+> [`test_brain_runtime.py`](../../../sim/tests/test_brain_runtime.py) (31) +
+> [`test_brain_console.py`](../../../sim/tests/test_brain_console.py) (13), plus
 > [`brain_mutation_check.py`](../../../sim/tools/brain_mutation_check.py) — 22 guards deleted, 22 red.
 
 ## 1. What was actually missing
@@ -62,7 +65,14 @@ is the guard, and mutation **M9** (read `MOXIE_APP` instead) turns it red.
 
 ## 3. What a parent sees
 
-`GET /brain` renders the card: every brain this box can run (id, label, group, blurb, the
+The 🧠 **Brain** card, beside 🎚️ Voice in the console: a dropdown of the brains this appliance can
+actually run (with each one's blurb and the `MOXIE_*` variables it needs), an *applies to* choice —
+**this robot** or **every robot (house rule)** — a **Use the layer underneath** button that clears a
+layer, and a row per robot reading *"Sam — Content modules (content) — house rule"*. When the
+environment has pinned the brain, that sentence is the **first** thing in the card, because it is the
+reason the dropdown looks short.
+
+Underneath, `GET /brain` renders it: every brain this box can run (id, label, group, blurb, the
 `MOXIE_*` variables it needs), the house rule, the pin and its note, and **one row per robot**
 saying which brain answers that child and *which layer decided* (`default` / `fleet` / `robot` /
 `pin`). `POST /brain?device_id=…` picks for one child, `?scope=fleet` sets the house rule,
@@ -81,13 +91,14 @@ saying which brain answers that child and *which layer decided* (`default` / `fl
 | 6 | A swap lands on the next turn; an in-flight turn keeps its brain | `test_brain_runtime.py` |
 | 7 | A brain that will not build keeps the appliance talking, and says so once | `test_brain_runtime.py` |
 | 8 | `brain` never reaches the pushed `RobotCloudConfig` | both |
-| 9 | 22 guards deleted one at a time, 22 tests go red | `sim/tools/brain_mutation_check.py` |
+| 9 | The console normalizer renders a refusal, an unreachable supervisor and a truncated payload — never an empty card that reads as "no brains" | `test_brain_console.py` |
+| 10 | 22 guards deleted one at a time, 22 tests go red | `sim/tools/brain_mutation_check.py` |
 
 ## 5. Honest gaps (P1+)
 
-* **No console card yet.** The runtime, the registry and the two routes are built and tested; the
-  🧠 card in `server/static/` is not. `GET /brain` is shaped for it (it already carries the labels,
-  the blurbs, the pin note and the per-robot rows), so this is a rendering job, not a design one.
+* **The card has no browser harness.** Its normalizer and its id/driver wiring are tested
+  (`test_brain_console.py`), and `test_console_roundtrip.py` proves the console app still imports and
+  serves — but no test *clicks* it. That is the same ceiling every other card in this console has.
 * **Our own compose default pins.** `docker-compose.yml` interpolates `MOXIE_APP:
   ${MOXIE_APP:-content}`, so a `docker compose up` with nothing set arrives as an explicit `content`
   and pins — the shape #77 warned about. It is **told, not hidden**: the card prints the pin note

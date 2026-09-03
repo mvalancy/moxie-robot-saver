@@ -1,5 +1,5 @@
 {
- "generated": "docs-ea35ba38d624",
+ "generated": "docs-bdb0c03524d1",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 6795,
+   "bytes": 6959,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 97945,
+   "bytes": 98163,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -213,7 +213,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 30986,
+   "bytes": 31143,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -351,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 111527,
+   "bytes": 111815,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -642,7 +642,7 @@
    "path": "architecture/backlog/brain-picker.md",
    "title": "Any brain, hot-swappable, per child",
    "section": "architecture",
-   "bytes": 7046,
+   "bytes": 8021,
    "mermaid": 0,
    "headings": [
     "1. What was actually missing",
