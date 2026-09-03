@@ -553,8 +553,8 @@ anything** (see the `code` row below).
 
 | Kind | Fields in `data` |
 |---|---|
-| `conversation` | `name`, `module_id`, `content_id`, `prompt`, `opener`, `model`, `max_tokens`, `temperature`, `max_history`, `max_volleys`, `code`, `memory` |
-| `global` | `name`, `pattern`, `entity_groups`, `action`, `code` |
+| `conversation` | `name`, `module_id`, `content_id`, `prompt`, `opener`, `model`, `max_tokens`, `temperature`, `max_history`, `max_volleys`, `code`, `memory`, `extension` |
+| `global` | `name`, `pattern`, `entity_groups`, `action`, `code`, `extension` |
 | `schedule` | `name`, `schedule` |
 
 An allowlist, never a denylist — a denylist leaks the first time somebody adds a field, and
@@ -580,6 +580,140 @@ it stays in the store so a future sandboxed runtime (audit BEYOND #6) could star
 behind a capability declaration without a re-import. The honest cost: importing upstream's
 `MoxieTime` or `MoxieTimers` gives you a global that matches an utterance and then does
 nothing, because their behaviour *is* the `code`.
+
+**That is still true, and it is now true on purpose rather than by deferral.** The
+sandboxed runtime landed (2026-09-03, BEYOND #6 P0) and it did **not** start running
+`code` — it added a *different field*, [`extension`](#extensions-a-pack-that-can-do-something),
+which carries a small total program instead of a Python string. `code` keeps its ⚠️, its
+wording is now *"carries a `code` block (Python), which this appliance never runs — see
+`extension` for behaviour this appliance can run"*, and compiling one into the other is
+explicitly out of scope: a Python-to-AST compiler is a parser for a Turing-complete
+language living in the trusted half of the system, whose failure mode is a program that
+means something other than what the reviewer read. Six upstream hooks is a hand-port
+([`ext_conformance.json`](../../sim/tests/data/ext_conformance.json)), not a compiler.
+
+### Extensions — a pack that can *do* something
+
+*(BEYOND #6 P0, built 2026-09-03. Design:
+[`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md). Code:
+[`ext.py`](../../mqtt/moxie_sdk/content/ext.py). Tests:
+[`test_ext_escapes.py`](../../sim/tests/test_ext_escapes.py) ·
+[`test_ext.py`](../../sim/tests/test_ext.py).)*
+
+A conversation or a global may carry an **`extension`**: a small, total, capability-scoped
+program the appliance actually runs. It is what lifts a pack from a prompt library to a
+platform — a pack can now **check the clock**, **count something** and **remember a
+score** — while keeping the property packs were unsigned *because of*: an imported pack
+cannot express the harm.
+
+```json
+{"kind": "global", "key": "What Time Is It", "source_version": 1,
+ "data": {"name": "What Time Is It", "pattern": "what time is it",
+   "extension": {
+     "ext_format": 1,
+     "capabilities": ["clock", "handled", "say"],
+     "on": "global",
+     "rules": [
+       {"let": {"h24": {"get": [{"clock.local": []}, "hour", 0]},
+                "h12": {"if": [{"==": [{"%": [{"var": "h24"}, 12]}, 0]},
+                               12, {"%": [{"var": "h24"}, 12]}]}},
+        "do": [{"say": {"concat": ["The time is ", {"str": [{"var": "h12"}]}]}},
+               {"handled": true}]}]}}}
+```
+
+**The shape.** A rule list over a JSON expression language. An expression is a JSON
+scalar, `{"lit": …}`, `{"var": "<dotted path>"}`, or `{"<op>": [args]}` — 53 operators,
+frozen as a literal in the escape suite so adding one takes a test edit and a reviewer.
+Rules run in order; the **first** whose `when` is truthy runs its `do` and the extension
+stops. `let` is an ordered map of value bindings, which is what removes the need for loops
+— and there are none: no loop, no user function, no recursion, no `exec`, no parser, and
+**no name that resolves to a host object**.
+
+`on` selects the hook. P0 ships `global` (a matched pattern, before the conversation — the
+socket a registered Python handler fills) and `turn.before` (before the prompt renders; may
+set `handled` and suppress the model). `turn.after` and `session.end` are P1.
+
+**Capabilities.** An extension **declares** what it needs, and the declared set must
+**equal** the set the AST actually uses — using more is a load refusal, and declaring more
+is *also* a load refusal, so the list a parent reads is provably what the program can do.
+
+| Capability | Grants | Default |
+|---|---|:--:|
+| `say` | Set the spoken line (post-safety, post-automarkup) | **granted** |
+| `handled` | Suppress the model call for this turn | **granted** |
+| `session` | `total_volleys`, `is_empty`, `overflow` | **granted** |
+| `child.nickname` | The child's first name only | **granted** |
+| `child.profile` | Pronouns, birthday, your notes | refused |
+| `clock` | `clock.ms`, `clock.local{hour,minute,weekday,iso}` | refused |
+| `random` | `random.int`, `random.pick`, from a **seeded** PRNG | refused |
+| `memory.read` / `memory.write` | Its **own namespace** of `persist_data` | refused |
+| `presence` | `face_present`, `line` | refused |
+| `markup` | Author behaviour markup (catalogue-validated) | refused |
+| `act.<name>` · `subscribe` · `brain` · `schedule.request` | robot actions, events, a model call, a schedule request | **P1 — refused at load** |
+
+The default-granted set is exactly those four, and widening it is a code change: there is
+deliberately no env var and no console control at P0. Shipped-by-us activities get a wider
+set (`content_app.SHIPPED_EXTRA_GRANTS`) anchored to the **digest of the program** — so an
+imported pack overriding a shipped item's key does *not* inherit its grants.
+
+**What no grant level reaches.** There is no operator, statement or path that names the
+network, the filesystem, a subprocess, an environment variable, any credential, another
+device's store, another module's namespace, the safety rule table, `LoggingPolicy`, or the
+host's own clock and entropy (both are injected). The complete set of strings that resolve
+to anything is the operator table plus the fact base, and both are enumerated in
+[`ext.py`](../../mqtt/moxie_sdk/content/ext.py).
+
+**The fact base** is a plain-JSON dict the host builds before a single node is evaluated —
+`speech`, `entities`, `input_vars`, `child`, `memory` (its own namespace only), `scratch`,
+`session`, `presence`. The evaluator never sees a `Volley`, a `Session` or a `MemoryStore`,
+so an attribute walk has nothing to walk to. A path segment beginning `_` is refused at
+load, so `__class__` and `_meta` are not *blocked* — they are not valid programs.
+
+**Effects are collected, never applied during the program.** `say`, `markup`, `remember`,
+`forget`, `scratch`, `note` (and P1's `act`/`subscribe`/`brain`) append to a list the host
+applies afterwards — through the same output-safety classifier and the same `annotate`
+floor a model's line goes through, with the memory namespace supplied by the host. So a
+breach mid-program leaves **nothing** half-applied.
+
+**The limits**, all env vars in [`config.py`](../../mqtt/config.py):
+
+| Limit | Env var | Default |
+|---|---|:--:|
+| Steps | `MOXIE_EXT_MAX_STEPS` | 10000 |
+| Wall clock | `MOXIE_EXT_BUDGET_S` | 0.25 s |
+| Value size | `MOXIE_EXT_MAX_VALUE_BYTES` | 16384 |
+| Total allocation | `MOXIE_EXT_MAX_TOTAL_BYTES` | 262144 |
+| Breaches per session | `MOXIE_EXT_MAX_BREACHES` | 3 |
+| Expression depth · nodes | (load-time) | 32 · 4096 |
+
+`MOXIE_EXT_BUDGET_S` must be **strictly less** than `MOXIE_BRAIN_BUDGET_S`, asserted at
+startup: an extension gets a slice of a child's patience (4 % of a turn), not a claim on
+it. Every number is chosen rather than measured, which is why every one is an env var.
+
+**Failure is boring and total.** On any breach the effect list is discarded whole and
+`ContentApp` proceeds exactly as it does today: a failed `global` **falls through to the
+conversation**, a failed `turn.before` is skipped and the model runs, nothing is written,
+and **the child hears no error text**. The parent hears it once, in plain language, through
+a bounded `ext_events` ring (*"it took too long"*, *"it tried to build something too
+big"*); after three breaches the extension is quarantined for the session.
+
+**Two renderings a parent reads, both pure functions of the AST.** `ext.grant_list()` is
+one sentence per capability from a fixed table (never author-supplied text, which would be
+a place to lie); `ext.explain()` is one English sentence per rule — *"Whenever this
+activity is triggered: tells your child 'The time is …' and answers without asking the
+AI."* Both appear in the pack review beside the diff.
+
+**Capability escalation.** An incoming item declaring a capability the installed version
+did not is defaulted **un-ticked** whatever its state, with its own sentence — *"This
+update asks for more than the version you have: it now wants to remember things from this
+activity."* The comparison is over the capability set alone, independent of
+`source_version` and of whether the parent edited anything, so a pack cannot escalate by
+bumping a version number. A *shrinking* set is not a conflict.
+
+**Shipped example:** the `What Time Is It` global in
+[`starter.json`](../../mqtt/content_modules/starter.json) — a hand-port of OpenMoxie's
+`MoxieTime` (MIT, © Justin Beghtol; re-authored, never copied), answering with no model
+call.
 
 ### `source_version`, `local_rev`, and the review that does not clobber
 

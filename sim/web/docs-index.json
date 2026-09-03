@@ -1,5 +1,5 @@
 {
- "generated": "docs-bb72efdbe2bc",
+ "generated": "docs-d258817264b9",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 5784,
+   "bytes": 6154,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 97483,
+   "bytes": 99853,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -261,7 +261,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 46223,
+   "bytes": 54526,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -282,6 +282,7 @@
     "Content packs — moving content between machines *(P0 built 2026-09-02)*",
     "The file",
     "What travels — a positive allowlist",
+    "Extensions — a pack that can *do* something",
     "source_version`, `local_rev`, and the review that does not clobber",
     "Storage, the overlay, and the reload",
     "The routes",
@@ -349,7 +350,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 109922,
+   "bytes": 110578,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -590,7 +591,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)",
    "section": "architecture",
-   "bytes": 84303,
+   "bytes": 85508,
    "mermaid": 0,
    "headings": [
     "0. The boundary, stated first — this is cloud-side, and only cloud-side",
