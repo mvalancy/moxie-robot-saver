@@ -895,8 +895,13 @@ def build_module(defaults: dict, overlay: dict):
     return load_modules(module_data(merge_items(defaults, overlay)))
 
 
-def inventory(items: dict, *, catalog=None) -> list:
-    """The 📦 card's list: one row per installed item, with its provenance and flags."""
+def inventory(items: dict, *, catalog=None, known_names=()) -> list:
+    """The 📦 card's list: one row per installed item, with its provenance and flags.
+
+    `known_names` runs `scan_outgoing`'s check per row, so the export picker can say
+    *"this prompt mentions Ada"* before a parent sends the file to somebody — see the
+    honest limits of that check in `scan_outgoing`.
+    """
     rows = []
     for full, entry in sorted((items or {}).items()):
         kind, key = split_key(full)
@@ -918,6 +923,9 @@ def inventory(items: dict, *, catalog=None) -> list:
             "local_edited": is_local_edited({"kind": kind, **e}),
             "has_code": bool(data.get("code")),
             "warnings": _warnings(kind, data, catalog=catalog),
+            "pii": [{"field": h["field"], "name": h["name"]}
+                    for h in scan_outgoing([{"kind": kind, "key": key, "data": data}],
+                                           known_names)],
         })
     return rows
 

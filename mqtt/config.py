@@ -204,18 +204,34 @@ def build_app():
 
 
 def build_content_app():
-    """A ContentApp running the configured module through the AI seam."""
+    """A ContentApp running the configured module through the AI seam.
+
+    **Effective content = the shipped file, then the imported overlay by `kind:key`**
+    (📦 content packs, `docs/architecture/backlog/content-packs.md` §2.4). The two are kept
+    apart on the app — `content_defaults` is the shipped baseline, `module` is the merge —
+    because `MoxieRuntime.reload_content()` and `content_undo()` both need to rebuild one
+    from the other without a restart.
+
+    A fresh appliance has an empty overlay and therefore loads exactly what it always did.
+    """
     import json
-    from moxie_sdk.content import load_modules, ContentApp
+    from moxie_sdk.content import ContentApp, packs
     from moxie_sdk.chat import make_openai_chat
+    from moxie_sdk.store import JsonStore
     from moxie_sdk.apps.llm_app import DEFAULT_PERSONA
     path = CONTENT_MODULE
     if not os.path.isabs(path):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
     with open(path) as fh:
-        module = load_modules(json.load(fh))
+        defaults = packs.shipped_items(json.load(fh))
+    stored = JsonStore().read_shared("content_items", {}) or {}
+    overlay = stored.get("items") if isinstance(stored, dict) else None
+    overlay = overlay if isinstance(overlay, dict) else {}
+    module = packs.build_module(defaults, overlay)
+    if overlay:
+        print(f"[config] 📦 content: {len(defaults)} shipped + {len(overlay)} imported")
     chat = make_openai_chat(LLM_BASE_URL, LLM_API_KEY, LLM_MODEL)
-    return ContentApp(module, chat, persona=DEFAULT_PERSONA)
+    return ContentApp(module, chat, persona=DEFAULT_PERSONA, content_defaults=defaults)
 
 
 def _speech_for_choice(choice, piper):
