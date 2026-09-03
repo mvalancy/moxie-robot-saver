@@ -9,9 +9,14 @@ runtime. Renders BOTH sides: Moxie's replies and the child's turns.
     python3 sim/tools/prerender_audio.py sim/web/sessions/demo.json --out sim/web/audio
 
 Produces:
-    <out>/moxie/<sha1>.wav      Moxie's lines
-    <out>/child/<sha1>.wav      the child's lines
-    <out>/index.json            { "moxie": {text: file}, "child": {text: file} }
+    <out>/moxie/<sha1>.mp3      Moxie's lines (mono 64k MP3 — Piper renders WAV, ffmpeg
+    <out>/child/<sha1>.mp3      transcodes; the WAV is a temp file and is never kept)
+    <out>/ambient/<sha1>.mp3    the ambient self-talk lines (--ambient)
+    <out>/index.json            { "moxie": {text: file}, "child": …, "ambient": … }
+
+The key in index.json is the EXACT utterance string, so the punctuation here and the
+punctuation in stub.js / ambient.json / filler.py must match character for character —
+`sim/test_fallback_coverage.mjs` is the guard that says so out loud.
 
 The web app looks a line up in index.json and plays the file; if it's missing it
 falls back to the live TTS service, then to silent text.
@@ -107,14 +112,22 @@ def main():
     if not voices["moxie"]:
         sys.exit(f"no piper voice found in {VOICES}")
 
-    # merge into any existing manifest so fixed phrases + scenario clips coexist
+    # Merge into any existing manifest so fixed phrases + scenario clips coexist.
+    #
+    # EVERY group is carried over, not just the two a given run might write. This used to
+    # copy `moxie` and `child` by name only, so a run with `--phrases` alone REWROTE the
+    # manifest without an `ambient` key at all: 56 committed MP3s orphaned on disk, the
+    # whole ambient self-talk layer silently muted, and not one error printed. Nothing
+    # caught it because the clips were still there — only the strings that find them were
+    # gone. `sim/test_fallback_coverage.mjs` now fails on exactly that shape.
     idx_path = os.path.join(args.out, "index.json")
     index = {"moxie": {}, "child": {}}
     if os.path.exists(idx_path):
         try:
             cur = json.load(open(idx_path))
-            index["moxie"].update(cur.get("moxie", {}))
-            index["child"].update(cur.get("child", {}))
+            for group, entries in (cur or {}).items():
+                if isinstance(entries, dict):
+                    index.setdefault(group, {}).update(entries)
         except Exception:
             pass
     total = 0
