@@ -92,6 +92,7 @@ divergent dialect.
 | Construct | Fallback | Same as jinja2? |
 |---|---|---|
 | `{{ dotted.path }}` | resolved | ✅ |
+| `{{ … }}` naming a segment that starts with `_` | **refused** → `""`, counted in `BLOCKED` | ✅ (the sandbox refuses it too) |
 | `{% if dotted.path %}` / `{% if not … %}` / `{% elif %}` / `{% else %}` / `{% endif %}` | **evaluated** — the taken branch is kept | ✅ (`true`/`false`/`none` handled as literals) |
 | `{# comment #}` | removed | ✅ |
 | `{%- … -%}`, `{{- … -}}` whitespace control | honoured | ✅ |
@@ -103,7 +104,7 @@ divergent dialect.
 | any other bodyless tag (`set`, `do`, `include`, …) | tag removed | ❌ counted |
 | unbalanced or unterminated syntax | removed | ❌ counted |
 
-Two choices in that table are worth their reasons:
+Three choices in that table are worth their reasons:
 
 - **An unevaluable `{% if %}` is false, not "render the body anyway".** Dropping the tags
   and keeping the body renders the branch *unconditionally*, which tells the brain
@@ -114,6 +115,18 @@ Two choices in that table are worth their reasons:
   so `{{ loop.index }}. {{ f }}` emitted once becomes a dangling `". "` describing an item
   that does not exist. Iterating for real would mean loop variables and nested scopes —
   i.e. a second template engine.
+- **A `_`-leading path segment is refused, and that is a security boundary.** The walk is
+  `getattr` over the live `volley` / `session` / `presence` objects, and a `prompt` is
+  untrusted input — it arrives inside an importable pack — so "a bare dotted path" was, until
+  2026-09-03, an attribute-chain escape:
+  `{{ session.__class__.__repr__.__globals__.inspect.os.environ }}` rendered this process's
+  whole environment, `MOXIE_LLM_API_KEY` included, into the system prompt. Only the
+  jinja2-less path was ever exposed (`SandboxedEnvironment` already refuses underscore-leading
+  attributes, which is why the shipped container was not); the fallback now matches it, and
+  counts each refusal in `BLOCKED` rather than `STRIPPED` because the question it answers is
+  *did somebody try?*, not *is this install missing a dependency?*. The guard is the **first
+  character of a segment**, so `child_pii` and friends keep resolving.
+  Fenced by `sim/tests/test_content_pack_sandbox.py`.
 
 Every ❌ row increments **`render.STRIPPED`**, the sibling of `render.BLOCKED`. The
 degradation is invisible in the output *by design*, so the counter is the only thing that
