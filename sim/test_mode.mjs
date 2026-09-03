@@ -279,8 +279,9 @@ async function probe(env) {
   deep(bare.body.load, { level: "ok", inflight: 0, capacity: 4 },
        "§7: inflight is 0 because in P0-a it IS 0 — no spending route is deployed");
   deep(bare.body.limits,
-       { max_input_chars: 500, max_tts_chars: 300, max_tokens: 160, chat_per_min: 5 },
-       "the probe reports §4.1's caps");
+       { max_input_chars: 500, max_tts_chars: 300, max_tokens: 160, chat_per_min: 5,
+         max_record_ms: 15000, max_audio_bytes: 500000, min_audio_bytes: 2000 },
+       "the probe reports §4.1's caps, including the three the microphone needs (P1)");
 
   const live = await probe(FULL);
   eq(live.res.status, 200, "a configured probe is 200");
@@ -397,7 +398,8 @@ function boot(opts) {
   eq(h.m.canSpendLiveTurn(), false, "nothing may be spent when nothing is configured");
   eq(h.m.voice(), false, "no voice");
   eq(h.m.ears(), false, "no ears");
-  deep(h.m.limits(), { max_input_chars: 500, max_tts_chars: 300, max_tokens: 160, chat_per_min: 5 },
+  deep(h.m.limits(), { max_input_chars: 500, max_tts_chars: 300, max_tokens: 160, chat_per_min: 5,
+                       max_record_ms: 15000, max_audio_bytes: 500000, min_audio_bytes: 2000 },
        "the caps the server sent are kept");
 }
 

@@ -37,6 +37,7 @@ export const DEFAULTS = Object.freeze({
   DEMO_MAX_HISTORY_TURNS: 4,
   DEMO_MAX_AUDIO_BYTES: 500000,
   DEMO_MIN_AUDIO_BYTES: 2000,
+  DEMO_MAX_RECORD_MS: 15000,
   DEMO_CHAT_PER_MIN: 5,
   DEMO_CHAT_PER_HOUR: 40,
   DEMO_CHAT_PER_DAY: 150,
@@ -119,6 +120,16 @@ export const PUBLIC_LIMIT_KEYS = Object.freeze([
   "max_tts_chars",
   "max_tokens",
   "chat_per_min",
+  // The three the MICROPHONE needs (P1). `max_record_ms` is the one that actually bounds
+  // the cost of the ears, and it can only be enforced in the browser: §4.1 is explicit
+  // that `DEMO_MAX_AUDIO_BYTES` is NOT a duration cap for a compressed container —
+  // 500 KB of Opus is minutes, not seconds — so the byte cap alone is not an honest
+  // ceiling and the recorder has to stop itself. The two byte caps let `mic.js` skip an
+  // upload that is already doomed (too small to be speech, too large to be accepted),
+  // which is a request that never happens rather than one that is refused.
+  "max_record_ms",
+  "max_audio_bytes",
+  "min_audio_bytes",
 ]);
 
 /** The built-in persona. Committed in the open on purpose: it is not a secret, and a
@@ -248,6 +259,12 @@ export function readConfig(env) {
     maxHistoryTurns: int(e, "DEMO_MAX_HISTORY_TURNS", 0, 64, notes),
     maxAudioBytes: int(e, "DEMO_MAX_AUDIO_BYTES", 1, 50000000, notes),
     minAudioBytes: int(e, "DEMO_MIN_AUDIO_BYTES", 0, 50000000, notes),
+    // The CLIENT-SIDE recording cap (§4.1). It is enforced by `sim/web/mic.js`, not by a
+    // route — a Function only ever sees the finished upload — so this value's whole job is
+    // to be published in `publicLimits` and obeyed by the recorder. It is still read and
+    // clamped here so the deployment has ONE place that decides it, and so a fork can
+    // shorten it without touching JavaScript that ships to a browser.
+    maxRecordMs: int(e, "DEMO_MAX_RECORD_MS", 1000, 600000, notes),
     chatPerMin: int(e, "DEMO_CHAT_PER_MIN", 1, 100000, notes),
     chatPerHour: int(e, "DEMO_CHAT_PER_HOUR", 1, 1000000, notes),
     chatPerDay: int(e, "DEMO_CHAT_PER_DAY", 1, 10000000, notes),
@@ -337,6 +354,9 @@ export function publicLimits(cfg) {
     max_tts_chars: cfg.maxTtsChars,
     max_tokens: cfg.maxTokens,
     chat_per_min: cfg.chatPerMin,
+    max_record_ms: cfg.maxRecordMs,
+    max_audio_bytes: cfg.maxAudioBytes,
+    min_audio_bytes: cfg.minAudioBytes,
   };
   const out = {};
   for (const k of PUBLIC_LIMIT_KEYS) out[k] = all[k];

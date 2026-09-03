@@ -285,6 +285,11 @@ export function budgetState(cfg, nowS) {
 
 function capacityOf(cfg, route) {
   if (route === "speech") return cfg.maxConcurrentSpeech;
+  // `transcribe` deliberately SHARES the chat ceiling rather than getting one of its own.
+  // §4.1 gives concurrency numbers for chat and speech only, and inventing a third would
+  // be a number with no reasoning behind it — while an STT call at ~2.5-2.8 s
+  // (`docs/guides/litellm-stt-setup.md`:83) is squarely in chat's cost bracket and is the
+  // FIRST leg of a chat turn anyway, so bounding both at 4 bounds the pipeline once.
   return cfg.maxConcurrentChat;
 }
 
@@ -333,6 +338,55 @@ export async function readJsonBody(request, cfg) {
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, reason: "bad_request", body: {} };
   return { ok: true, reason: null, body };
+}
+
+/**
+ * Read a RAW AUDIO request body, bounded at both ends, without throwing.
+ *
+ * This is `/api/transcribe`'s body reader (P1). It is the JSON reader's sibling and lives
+ * beside it for the same reason: a route must not be able to invent its own idea of "how
+ * big is too big".
+ *
+ * BOTH CAPS ARE COST CONTROLS, AND THEY ARE NOT THE SAME KIND OF CONTROL.
+ *
+ *   * `DEMO_MAX_AUDIO_BYTES` (500 000) bounds ONE upload. The declared `Content-Length` is
+ *     checked FIRST, so an oversized upload is refused WITHOUT the body ever being read.
+ *     The real byte count is then checked too, because a chunked body can exceed what it
+ *     declared.
+ *   * `DEMO_MIN_AUDIO_BYTES` (2 000) is the floor that mirrors `mqtt/moxie_sdk/stt.py`'s
+ *     `MIN_MS = 120` — **"no audio → no request, no cost, no latency"** (:194-197, :237-244).
+ *     A blip too short to be speech must not become a paid ~2.5 s round trip that comes
+ *     back empty.
+ *
+ * And the honest limit of the byte cap, restated because §4.1 makes a point of it: **500 KB
+ * is not 15 seconds of a compressed container.** It is ~15 s of 16 kHz PCM but MINUTES of
+ * webm/Opus, which is what a browser's `MediaRecorder` actually produces. The duration
+ * ceiling is `DEMO_MAX_RECORD_MS`, enforced in `sim/web/mic.js`, because a Function only
+ * ever sees the finished upload.
+ *
+ * @returns {{ok: boolean, reason: string|null, bytes: Uint8Array|null, declared: number}}
+ */
+export async function readAudioBody(request, cfg) {
+  const max = cfg.maxAudioBytes;
+  const declared = Number(request.headers.get("Content-Length"));
+  // Refused UNREAD. The point of trusting the declared length here is that it lets us say
+  // no before spending memory; the real count below is what makes the answer sound.
+  if (Number.isFinite(declared) && declared > max) {
+    return { ok: false, reason: "too_long", bytes: null, declared };
+  }
+  let buf;
+  try {
+    buf = await request.arrayBuffer();
+  } catch {
+    return { ok: false, reason: "bad_request", bytes: null, declared: 0 };
+  }
+  const bytes = new Uint8Array(buf);
+  if (bytes.length > max) return { ok: false, reason: "too_long", bytes: null, declared: bytes.length };
+  // THE NO-CALL FLOOR. Below it the route returns here and the gateway is never touched.
+  if (bytes.length < cfg.minAudioBytes) {
+    return { ok: false, reason: "too_short", bytes: null, declared: bytes.length };
+  }
+  return { ok: true, reason: null, bytes, declared: bytes.length };
 }
 
 /* ---------------------------------------------------------------------------- *
