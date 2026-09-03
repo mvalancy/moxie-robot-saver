@@ -427,13 +427,15 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   are now fenced by `sim/tests/test_ci_test_coverage.py` as a two-directional ratchet whose lists can
   only shrink.
 
-## DoD progress (audited 2026-09-02 21:10 PDT, at v0.7.0) — **3/6 🟢 · overall ≈ 89%** (done = all six 🟢)
+## DoD progress (audited 2026-09-02 23:00 PDT, at v0.7.0) — **4/6 🟢 · overall ≈ 91%** (done = all six 🟢)
 
-> **This audit moved a score DOWN.** Criterion 3 was 🟢 and is now 🟡: the research pass proved telemetry is
-> held in RAM only, so "cloud management" cannot show a parent anything about last week, and the console's
-> `wakeup` button reports success while publishing nothing. Criterion 4 stays 🟢 but is *earned* for the first
-> time — it was overstated until PR #52. Nothing regressed in the code; two claims were simply truer today
-> than the table was.
+> **Criterion 3 is green again, two hours after this audit took it away.** The 21:10 audit downgraded it for two
+> concrete reasons — telemetry lived in RAM, so a restart erased the parent's history, and the console's `wakeup`
+> reported success while publishing nothing. Both are now closed (PR #55), and the privacy gate that guards the new
+> on-disk path was re-verified **by execution** at 23:00: strictest policy writes nothing at all, the default
+> withholds every payload behind a marker, and only `FULL` keeps it. Criterion 4 is likewise green and *earned*
+> rather than asserted (PR #52). The two that remain amber are honest: criterion 1's ceiling is a physical robot we
+> have never had, and criterion 6 carries the day the merge gate was a grep.
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|
