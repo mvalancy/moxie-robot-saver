@@ -179,7 +179,7 @@ ok(childSessionLines.length > 0,
    "voice in it is the thing this section exists to stop shipping again");
 
 /* --------------------------------------------------------------------------- *
- * 2b. The script leaves the child room to FINISH her line
+ * 2b. The script leaves the child room to SPEAK, and room to FINISH
  *
  * `audio.js::speak` calls `stop()` before Moxie says anything, so the moment Moxie's turn
  * lands the child's clip is cut dead — deliberately (the robot is never talked over by a
@@ -187,35 +187,88 @@ ok(childSessionLines.length > 0,
  * timed when the child was silent: her first clip runs ~2.6 s from t=300 and Moxie
  * answered at t=1800, so giving her a voice would have shipped "…it's my birthd—".
  *
+ * TWO failure modes, not one — the second was found on 2026-09-03 by driving the shipped
+ * page in a real Chromium (`sim/tests/test_sil_child_voice.py`), which is also how the
+ * first turned out to STILL be live after #82 retimed for it:
+ *
+ *   · CUT — Moxie's turn arrives while the child's clip is playing → stop().
+ *   · DROPPED — the child's turn arrives while MOXIE is still playing. `speakClipOnly`
+ *     refuses to start over the robot, so that line makes no sound AT ALL. Silently: the
+ *     transcript row still appears. The shipped demo cleared this by ~700 ms, entirely by
+ *     the accident of how long the child's own clip took to load.
+ *
+ * SPEECH_MARGIN_MS is why a bare `gap >= duration` was not enough. A clip does not start
+ * at its scripted `t`: `speakClipOnly` must fetch `audio/index.json`, fetch the MP3 and
+ * decode it first, which measured ~900 ms in a warm local Chromium. `stop()` costs no such
+ * thing — it is called synchronously the moment Moxie's event routes. So the child's clip
+ * loses ~250 ms of its tail relative to what the arithmetic here predicts, every time, and
+ * more on a cold or distant connection. The margin is that latency with room over it, and
+ * it doubles as ordinary conversational pacing: a beat before either speaker answers.
+ *
  * Duration is estimated from FILE SIZE rather than decoded, so this guard needs no codec
  * and no ffprobe. `prerender_audio.py` writes mono ~64 kbit MP3 (the shipped clips measure
  * 8.10-8.20 kB/s); dividing by 8000 rounds the estimate UP, which is the safe direction
  * for a "leaves room" assertion.
  * --------------------------------------------------------------------------- */
 const MP3_BYTES_PER_SEC = 8000;
+//: Load latency + a conversational beat. See the block comment above; 1 s is ~4x the
+//: deficit measured in a real browser, and the browser test is what holds it honest.
+const SPEECH_MARGIN_MS = 1000;
 // Only these topics make MOXIE speak, and only speaking calls stop(). A config frame or
 // another child line does not cut her off.
 const MOXIE_SPEAKS = ["/commands/remote_chat", "/commands/tts", "/commands/telehealth"];
+//: How long a clip takes, estimated from its file size — "" when the line is silent.
+const clipMs = (group, text) => {
+  const rel = (manifest[group] || {})[text];
+  if (!rel || !existsSync(join(audioDir, rel))) return 0;
+  return (statSync(join(audioDir, rel)).size / MP3_BYTES_PER_SEC) * 1000;
+};
+//: The text MOXIE speaks for one event, or "" when the event is not her speaking.
+const moxieSpeech = (ev) => {
+  if (!MOXIE_SPEAKS.some((t) => String(ev.topic).endsWith(t))) return "";
+  try { return ((JSON.parse(ev.payload).output || {}).text || "").trim(); } catch { return ""; }
+};
 {
-  let checked = 0;
+  let cutChecks = 0, dropChecks = 0;
   for (const { file, events } of sessions) {
     for (const ln of childSessionLines.filter((c) => c.where.startsWith(file + "["))) {
-      const rel = (manifest.child || {})[ln.text];
-      if (!rel || !existsSync(join(audioDir, rel))) continue;   // silent line: nothing to cut
-      const needMs = (statSync(join(audioDir, rel)).size / MP3_BYTES_PER_SEC) * 1000;
+      const needMs = clipMs("child", ln.text);
+      if (!needMs) continue;                  // silent line: nothing to cut, nothing to drop
+
+      // ── CUT: the next thing that makes Moxie speak must not land before she is done.
       const next = events.find((e, j) => j > ln.i && Number(e.t) > ln.t &&
                                          MOXIE_SPEAKS.some((t) => String(e.topic).endsWith(t)));
-      if (!next) continue;                    // nothing follows: she finishes in peace
-      const gapMs = Number(next.t) - ln.t;
-      checked++;
-      ok(gapMs >= needMs,
-         `${ln.where}: Moxie speaks ${Math.round(gapMs)} ms after the child starts, but the child's ` +
-         `clip needs about ${Math.round(needMs)} ms — speak() calls stop(), so the shipped demo would ` +
-         `cut her off mid-word on ${JSON.stringify(ln.text.slice(0, 40))}. Move the reply later.`);
+      if (next) {
+        const gapMs = Number(next.t) - ln.t;
+        cutChecks++;
+        ok(gapMs >= needMs + SPEECH_MARGIN_MS,
+           `${ln.where}: Moxie speaks ${Math.round(gapMs)} ms after the child starts, but the child's ` +
+           `clip needs about ${Math.round(needMs)} ms plus ${SPEECH_MARGIN_MS} ms of load margin — ` +
+           `speak() calls stop(), so the shipped demo would cut her off mid-word on ` +
+           `${JSON.stringify(ln.text.slice(0, 40))}. Move the reply later.`);
+      }
+
+      // ── DROPPED: the LAST thing Moxie said before this line must have finished.
+      let prev = null;
+      for (const [j, e] of events.entries())
+        if (j < ln.i && Number(e.t) <= ln.t && moxieSpeech(e)) prev = e;
+      if (prev) {
+        const heldMs = clipMs("moxie", moxieSpeech(prev));
+        if (heldMs) {
+          const gapMs = ln.t - Number(prev.t);
+          dropChecks++;
+          ok(gapMs >= heldMs + SPEECH_MARGIN_MS,
+             `${ln.where}: the child speaks ${Math.round(gapMs)} ms after Moxie starts, but Moxie's ` +
+             `clip runs about ${Math.round(heldMs)} ms — speakClipOnly REFUSES to play over the ` +
+             `robot, so ${JSON.stringify(ln.text.slice(0, 40))} would make no sound at all while the ` +
+             `transcript still showed it. Move the child's line later.`);
+        }
+      }
     }
   }
-  ok(checked > 0, "no scripted child line was timing-checked — the extractor above stopped finding them");
-  notes.push(`session timing: ${checked} scripted child line(s) have room to finish before Moxie answers`);
+  ok(cutChecks > 0, "no scripted child line was timing-checked — the extractor above stopped finding them");
+  notes.push(`session timing: ${cutChecks} child line(s) have room to finish before Moxie answers, ` +
+             `${dropChecks} have room to be heard after she stops (${SPEECH_MARGIN_MS} ms margin)`);
 }
 
 /* --------------------------------------------------------------------------- *
