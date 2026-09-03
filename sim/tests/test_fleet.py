@@ -189,3 +189,195 @@ def test_normalize_voice_drops_an_option_with_no_id():
     payload = _voice_payload()
     payload["available"]["speech"].append({"label": "a voice with no id"})
     assert len(normalize_voice(payload)["available"]["speech"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Durable telemetry → the 📈 card, and the three console actions
+# ---------------------------------------------------------------------------
+# `normalize_telemetry` grew a history/retention/policy half when telemetry became
+# durable, and three new pure helpers landed for the endpoints that used to report
+# success for nothing. All pure, so they belong in this hermetic file.
+
+def _durable_payload(**over):
+    """A runtime `GET /telemetry` body of the durable shape."""
+    payload = {
+        "ok": True, "device_id": "d_abc", "connected": True,
+        "summary": {"count": 2, "by_event": {"wake": 2}, "last_seen": {"wake": 140},
+                    "latest": [{"event_name": "wake", "recorded_at": 140}]},
+        "events": [{"event_name": "wake", "recorded_at": 140}],
+        "policy": "NO_MEDIA", "persisted": True,
+        "retention": {"packets": 500, "days": 35},
+        "history": [{"day": "2026-08-31", "count": 4, "top_event": "wake"},
+                    {"day": "2026-09-01", "count": 0, "top_event": None},
+                    {"day": "2026-09-02", "count": 2, "top_event": "wake"}],
+        "totals": {"total": 41, "days_kept": 2, "first_day": "2026-08-31",
+                   "last_day": "2026-09-02", "dropped_days": 6, "updated_at": 1},
+    }
+    payload.update(over)
+    return payload
+
+
+def test_normalize_history_scales_bars_against_the_busiest_day():
+    from moxie_server.fleet import normalize_history
+    rows = normalize_history([{"day": "2026-09-01", "count": 4, "top_event": "wake"},
+                              {"day": "2026-09-02", "count": 1, "top_event": "said"}])
+    assert [r["share"] for r in rows] == [1.0, 0.25]
+    assert [r["day"] for r in rows] == ["2026-09-01", "2026-09-02"]
+
+
+def test_normalize_history_keeps_a_zero_day_as_a_zero_day():
+    """A quiet day must render as a quiet day, not vanish from the week."""
+    from moxie_server.fleet import normalize_history
+    rows = normalize_history([{"day": "2026-09-01", "count": 0},
+                              {"day": "2026-09-02", "count": 0}])
+    assert len(rows) == 2 and all(r["share"] == 0.0 for r in rows)
+    assert rows[0]["top_event"] is None
+
+
+def test_normalize_history_never_raises_on_junk():
+    from moxie_server.fleet import normalize_history
+    for junk in (None, [], "nope", [None, 7, {}, {"day": ""}],
+                 [{"day": "2026-09-02", "count": "x"}]):
+        assert isinstance(normalize_history(junk), list)
+
+
+def test_normalize_telemetry_carries_the_durable_half():
+    t = normalize_telemetry(_durable_payload())
+    assert t["ok"] is True and t["count"] == 2
+    assert [r["count"] for r in t["history"]] == [4, 0, 2]
+    assert t["policy"] == "NO_MEDIA" and t["persisted"] is True
+    assert t["retention"] == {"packets": 500, "days": 35}
+    assert t["totals"]["total"] == 41 and t["totals"]["first_day"] == "2026-08-31"
+    assert t["totals"]["dropped_days"] == 6
+
+
+def test_normalize_telemetry_never_claims_persistence_it_was_not_told_about():
+    """A payload from a supervisor that predates durable telemetry (or an error body)
+    must not be rendered as if it had a history."""
+    t = normalize_telemetry({"ok": True, "device_id": "d", "summary": {"count": 1},
+                             "events": []})
+    assert t["persisted"] is False and t["history"] == []
+    assert t["totals"]["total"] == 0 and t["retention"]["days"] == 0
+    down = normalize_telemetry({"ok": False, "error": "supervisor not reachable"})
+    assert down["persisted"] is False and down["history"] == []
+
+
+def test_normalize_telemetry_reports_a_no_data_robot_honestly():
+    """Under `NO_DATA` the card must say nothing is kept rather than show an empty week
+    as though the robot had been silent."""
+    t = normalize_telemetry(_durable_payload(policy="NO_DATA", persisted=False,
+                                             history=[], totals={}))
+    assert t["persisted"] is False and t["policy"] == "NO_DATA"
+    assert t["history"] == [] and t["totals"]["total"] == 0
+
+
+def test_normalize_telemetry_still_never_raises_on_junk():
+    for junk in (None, {}, [], "nope", {"ok": True, "totals": "x", "retention": 7,
+                                        "history": "nope"},
+                 {"ok": True, "summary": "x", "totals": {"total": "many"},
+                  "retention": {"days": "lots"}}):
+        t = normalize_telemetry(junk)
+        assert set(t["retention"]) == {"packets", "days"}
+        assert isinstance(t["history"], list) and isinstance(t["totals"], dict)
+
+
+# --- the three console actions ---
+
+def test_unsupported_action_is_never_a_fake_success():
+    """The bug this shape exists to make impossible: `reboot` used to return
+    `{"error": null}` while publishing nothing."""
+    from moxie_server.fleet import unsupported_action
+    body = unsupported_action("reboot")
+    assert body["ok"] is False and body["supported"] is False
+    assert body["error"] == "unsupported" and body["action"] == "reboot"
+    assert "not something this appliance can do" in body["reason"]
+    assert "power-and-system-events.md" in body["evidence"], "no citation for the refusal"
+
+
+def test_unsupported_action_has_a_reason_even_for_an_unlisted_name():
+    from moxie_server.fleet import unsupported_action
+    body = unsupported_action("teleport")
+    assert body["ok"] is False and "teleport" in body["reason"]
+
+
+def test_reboot_is_the_only_unsupported_action_and_wakeup_is_not_one():
+    """A regression guard with teeth: if someone lists `wakeup` here again, the real
+    publish path has been quietly turned back into a no-op."""
+    from moxie_server.fleet import UNSUPPORTED_ACTIONS
+    assert set(UNSUPPORTED_ACTIONS) == {"reboot"}
+
+
+def test_ota_status_never_says_up_to_date():
+    """This appliance serves no `api/ota`, so "there is nothing newer" is not a claim it
+    is in a position to make about anything."""
+    from moxie_server.fleet import ota_status_view
+    snap = {"ok": True, "robots": [{"device_id": "d_abc", "firmware": "3.6.4",
+                                    "ota_reboot_required": False}]}
+    for view in (ota_status_view(snap, "d_abc"), ota_status_view(snap),
+                 ota_status_view(None), ota_status_view({"ok": False, "robots": []})):
+        assert view["status"] != "up_to_date"
+        assert view["ota_server"] is False and view["supported"] is False
+
+
+def test_ota_status_reports_the_firmware_the_robot_actually_told_us():
+    from moxie_server.fleet import ota_status_view
+    snap = {"ok": True, "robots": [{"device_id": "d_abc", "firmware": "3.6.4",
+                                    "ota_reboot_required": False}]}
+    view = ota_status_view(snap, "d_abc")
+    assert view["status"] == "unknown" and view["version"] == "3.6.4"
+    assert view["ota_reboot_required"] is False and view["device_id"] == "d_abc"
+    assert "no OTA server" in view["note"]
+
+
+def test_ota_status_surfaces_the_one_ota_fact_the_protocol_gives_us():
+    """`ota_reboot_required` is a real `RobotStatus` field the robot reports up."""
+    from moxie_server.fleet import ota_status_view
+    snap = {"ok": True, "robots": [{"device_id": "d_abc", "firmware": "3.6.4",
+                                    "ota_reboot_required": True}]}
+    view = ota_status_view(snap, "d_abc")
+    assert view["status"] == "reboot_required" and view["ota_reboot_required"] is True
+    assert "holding a reboot" in view["reason"]
+
+
+def test_ota_status_is_unavailable_rather_than_invented_when_nothing_is_known():
+    from moxie_server.fleet import ota_status_view
+    snap = {"ok": True, "robots": [{"device_id": "d_other"}]}
+    view = ota_status_view(snap, "d_abc")
+    assert view["status"] == "unavailable" and view["version"] is None
+    assert view["ota_reboot_required"] is None
+
+
+def test_ota_status_will_not_guess_which_robot_when_several_are_connected():
+    from moxie_server.fleet import ota_status_view
+    snap = {"ok": True, "robots": [{"device_id": "d_1"}, {"device_id": "d_2"}]}
+    assert ota_status_view(snap)["status"] == "unavailable"
+
+
+# --- resolving a parent-app record to an MQTT identity ---
+
+def test_resolve_device_id_prefers_what_the_record_remembers():
+    from moxie_server.fleet import resolve_device_id
+    snap = {"ok": True, "robots": [{"device_id": "d_other", "pending": False}]}
+    assert resolve_device_id({"mqtt-device-id": "d_mine"}, snap) == ("d_mine", "record")
+
+
+def test_resolve_device_id_falls_back_to_the_only_served_robot():
+    from moxie_server.fleet import resolve_device_id
+    snap = {"ok": True, "robots": [{"device_id": "d_only", "pending": False}]}
+    assert resolve_device_id({}, snap) == ("d_only", "sole-served")
+
+
+def test_resolve_device_id_refuses_to_guess_between_two_robots():
+    from moxie_server.fleet import resolve_device_id
+    snap = {"ok": True, "robots": [{"device_id": "d_1", "pending": False},
+                                   {"device_id": "d_2", "pending": False}]}
+    assert resolve_device_id({}, snap) == (None, "ambiguous")
+
+
+def test_resolve_device_id_ignores_a_pending_robot():
+    """A robot that has not been permitted is not "the" robot — nothing may be sent to
+    it, so it cannot be the implicit target of a button."""
+    from moxie_server.fleet import resolve_device_id
+    snap = {"ok": True, "robots": [{"device_id": "d_pending", "pending": True}]}
+    assert resolve_device_id({}, snap) == (None, "none")
+    assert resolve_device_id(None, None) == (None, "none")

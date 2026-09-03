@@ -373,6 +373,7 @@ class FakeSupervisor:
         self.content_queries: list = []
         self.content_posts: list = []
         self.telehealth_posts: list = []
+        self.wakeups: list = []
         self.runtime = _safety_runtime(safety_root)
         self.memory = _seed_memory(self.runtime)
         outer = self
@@ -503,6 +504,16 @@ class FakeSupervisor:
 
             def do_POST(self):
                 u = urlparse(self.path)
+                if u.path == "/wakeup":
+                    # ⏰ The REAL `wake_robot` — the topic and the payload the console's
+                    # Wake button actually puts on the wire come from the runtime under
+                    # test, so a regression back to "publishes nothing" fails here.
+                    device_id = (parse_qs(u.query).get("device_id") or [""])[0]
+                    outer.wakeups.append(device_id)
+                    out = outer.runtime.wake_robot(device_id)
+                    code = (200 if out.get("ok") else
+                            404 if "unknown device_id" in str(out.get("error")) else 409)
+                    return self._out(out, code)
                 if u.path in ("/voice", "/voice/test"):
                     # 🎚️ Dispatched exactly the way the real `_start_status_server`
                     # dispatches it, onto the REAL runtime verbs: a pick that is not on
@@ -1885,3 +1896,191 @@ def _pack_digest(pack: dict) -> str:
     re-signed pack (a hand edit plus a re-export is exactly what an author does)."""
     from moxie_sdk.content import packs as _packs
     return _packs.pack_digest(pack)
+
+
+# --------------------------------------------------------------------------- #
+# 📈 The durable half of the insights card
+# --------------------------------------------------------------------------- #
+
+def test_the_card_gets_a_week_of_history_not_just_this_session(client, supervisor):
+    """The whole point of the slice: `GET /local/robots/{id}/telemetry` carries the daily
+    roll-up, so the 📈 card can render "last week" instead of an event log over one
+    supervisor lifetime."""
+    r = client.get(f"/local/robots/{DEVICE}/telemetry?days=3")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [row["day"] for row in body["history"]] == ["2026-08-31", "2026-09-01",
+                                                       "2026-09-02"]
+    assert [row["count"] for row in body["history"]] == [5, 0, 3]
+    # the bar heights the card renders, scaled against the busiest day in the window
+    assert [row["share"] for row in body["history"]] == [1.0, 0.0, 0.6]
+    assert body["history"][1]["top_event"] is None      # a quiet day stays a quiet day
+
+
+def test_the_card_is_told_the_retention_window_and_the_lifetime_total(client):
+    """A sliding window must not be mistaken for everything that ever happened."""
+    body = client.get(f"/local/robots/{DEVICE}/telemetry").json()
+    assert body["totals"]["total"] == 11 and body["count"] == 3
+    assert body["totals"]["first_day"] == "2026-08-31"
+    assert body["totals"]["dropped_days"] == 2
+    assert body["retention"]["packets"] > 0 and body["retention"]["days"] > 0
+    assert body["policy"] == "NO_MEDIA" and body["persisted"] is True
+
+
+def test_the_days_window_is_forwarded_to_the_supervisor(client):
+    assert len(client.get(f"/local/robots/{DEVICE}/telemetry?days=1").json()["history"]) == 1
+    assert len(client.get(f"/local/robots/{DEVICE}/telemetry?days=7").json()["history"]) == 7
+
+
+def test_telemetry_history_is_empty_when_the_supervisor_is_down(client, monkeypatch):
+    import moxie_server.main as main
+    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    body = client.get(f"/local/robots/{DEVICE}/telemetry").json()
+    assert body["ok"] is False and body["history"] == []
+    assert body["persisted"] is False and body["totals"]["total"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# The three device endpoints that used to report success for nothing
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture()
+def paired(client):
+    """An authenticated user with a robot record that remembers this file's MQTT device
+    id — the `"record"` branch of `fleet.resolve_device_id`. Returns `(auth, rid)`."""
+    from moxie_server import db
+    tok = client.post("/local/quicklogin",
+                      json={"email": "devices-test@local"}).json()["token"]
+    auth = {"Authorization": f"Bearer {tok}"}
+    me = client.get("/local/state", headers=auth).json()
+    rid = db.new_id()
+    db.ex("INSERT INTO robots(id,user_id,child_id,attributes,robot_setting,"
+          "last_seen_at,created_at) VALUES(?,?,?,?,?,?,?)",
+          (rid, me["user"]["id"], None,
+           json.dumps({"name": "Moxie", "mqtt-device-id": DEVICE}),
+           json.dumps({}), db.now_s(), db.now_s()))
+    yield auth, rid
+    db.ex("DELETE FROM robots WHERE id=?", (rid,))
+
+
+def _wakeup_wire(supervisor):
+    return supervisor.runtime.client.on(f"/devices/{DEVICE}/commands/wakeup")
+
+
+def test_pressing_wake_up_really_publishes_the_recovered_command(client, supervisor,
+                                                                 paired):
+    """It used to be `_token(authorization); return {"error": None}` — nothing on the
+    wire, success reported. Now the whole path runs: console → supervisor `POST /wakeup`
+    → the REAL `wake_robot` → `{"command":"wakeup"}` on `/devices/{id}/commands/wakeup`."""
+    auth, rid = paired
+    supervisor.runtime.client.published.clear()
+    r = client.post(f"/api/robots/{rid}/wakeup", headers=auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["published"] is True and body["error"] is None
+    assert body["resolved_by"] == "record" and body["topic"].endswith("/commands/wakeup")
+    assert _wakeup_wire(supervisor) == [{"command": "wakeup"}]
+    assert supervisor.wakeups[-1] == DEVICE
+
+
+def test_the_wake_up_reply_never_claims_the_robot_woke(client, supervisor, paired):
+    """No acknowledgement for this command exists anywhere in our corpus, so the
+    strongest true claim is "it was published" — and that is what the console says."""
+    auth, rid = paired
+    body = client.post(f"/api/robots/{rid}/wakeup", headers=auth).json()
+    assert body["acknowledged"] is False
+    assert "not that Moxie woke up" in body["note"]
+
+
+def test_wake_up_on_a_record_with_no_mqtt_identity_is_a_409_not_a_success(client,
+                                                                          supervisor):
+    """The pairing QR carries no device id, so a record can genuinely not know which
+    robot it is. With two robots served there is nothing to guess — and the old code
+    would have reported success for it."""
+    from moxie_server import db
+    from moxie_server.fleet import resolve_device_id
+    tok = client.post("/local/quicklogin",
+                      json={"email": "devices-test2@local"}).json()["token"]
+    auth = {"Authorization": f"Bearer {tok}"}
+    me = client.get("/local/state", headers=auth).json()
+    rid = db.new_id()
+    db.ex("INSERT INTO robots(id,user_id,child_id,attributes,robot_setting,"
+          "last_seen_at,created_at) VALUES(?,?,?,?,?,?,?)",
+          (rid, me["user"]["id"], None, json.dumps({"name": "Moxie"}),
+           json.dumps({}), db.now_s(), db.now_s()))
+    try:
+        snap = client.get("/local/broker/status").json()
+        # one robot is served here, so the sole-served fallback resolves it honestly
+        assert resolve_device_id({}, snap) == (DEVICE, "sole-served")
+        supervisor.runtime.client.published.clear()
+        r = client.post(f"/api/robots/{rid}/wakeup", headers=auth)
+        assert r.status_code == 200 and r.json()["resolved_by"] == "sole-served"
+        assert _wakeup_wire(supervisor) == [{"command": "wakeup"}]
+        # …and with nothing on the broker at all it is an honest 409, never a success
+        assert resolve_device_id({}, {"ok": True, "robots": []}) == (None, "none")
+    finally:
+        db.ex("DELETE FROM robots WHERE id=?", (rid,))
+
+
+def test_wake_up_reports_a_down_supervisor_instead_of_success(client, paired,
+                                                              monkeypatch):
+    import moxie_server.main as main
+    auth, rid = paired
+    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.post(f"/api/robots/{rid}/wakeup", headers=auth)
+    assert r.status_code >= 400
+    assert r.json()["error"] and r.json().get("published") is not True
+
+
+def test_reboot_is_an_honest_501_with_its_reasoning(client, supervisor, paired):
+    """No cloud→robot reboot command has been recovered, so the endpoint refuses rather
+    than publishing a guess at a child's robot. The old code returned `{"error": None}`."""
+    auth, rid = paired
+    supervisor.runtime.client.published.clear()
+    r = client.post(f"/api/robots/{rid}/reboot", headers=auth)
+    assert r.status_code == 501
+    body = r.json()
+    assert body["ok"] is False and body["supported"] is False
+    assert body["error"] == "unsupported" and body["reason"]
+    assert "power-and-system-events.md" in body["evidence"]
+    assert body.get("error") is not None, "a refusal must never look like a success"
+    assert supervisor.runtime.client.published == [], "reboot must publish nothing"
+
+
+def test_ota_status_reports_the_robots_own_firmware_and_never_up_to_date(client, paired):
+    """It used to be a hard-coded `{"status": "up_to_date", "version": None}`. This
+    appliance serves no `api/ota`, so it says what the robot reported and nothing more."""
+    auth, rid = paired
+    body = client.get(f"/api/robots/{rid}/ota_status", headers=auth).json()
+    assert body["status"] != "up_to_date"
+    assert body["status"] == "unknown" and body["version"] == "3.6.4"
+    assert body["ota_reboot_required"] is False
+    assert body["ota_server"] is False and body["supported"] is False
+    assert "no OTA server" in body["note"]
+
+
+def test_ota_status_is_unavailable_when_the_supervisor_is_down(client, paired,
+                                                               monkeypatch):
+    import moxie_server.main as main
+    auth, rid = paired
+    monkeypatch.setattr(main, "STATUS_URL", "http://127.0.0.1:1/status")
+    body = client.get(f"/api/robots/{rid}/ota_status", headers=auth).json()
+    assert body["status"] == "unavailable" and body["version"] is None
+
+
+def test_pairing_remembers_the_mqtt_identity_on_the_record(client, supervisor):
+    """`resolve_device_id`'s best branch exists only if pairing stores what it knew: the
+    QR carries no device id, so pair-complete is the one moment both halves are in hand."""
+    from moxie_server import db
+    tok = client.post("/local/quicklogin",
+                      json={"email": "devices-test3@local"}).json()["token"]
+    auth = {"Authorization": f"Bearer {tok}"}
+    prep = client.post("/local/pairing/prepare",
+                       json={"ssid": "Home", "password": "hunter2"}, headers=auth)
+    r = client.post("/local/simulate-robot-scan",
+                    json={"qr_payload": prep.json()["qr_payload"],
+                          "device_id": "d_remembered"})
+    assert r.status_code == 200, r.text
+    rid = r.json()["robot_id"]
+    attrs = json.loads(db.q1("SELECT * FROM robots WHERE id=?", (rid,))["attributes"])
+    assert attrs["mqtt-device-id"] == "d_remembered"

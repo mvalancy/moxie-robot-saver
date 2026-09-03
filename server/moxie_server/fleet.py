@@ -198,10 +198,12 @@ def normalize_history(rows) -> list:
     day's count against the busiest day in the window (0.0–1.0), which is all the 📈
     card's bars need — no chart library, no second request."""
     out = []
-    for r in rows or []:
+    for r in (rows if isinstance(rows, list) else []):
         if not isinstance(r, dict) or not r.get("day"):
             continue
-        out.append({"day": str(r["day"]), "count": max(0, int(r.get("count") or 0)),
+        # `_num` not `int()`: this is another process's JSON, and a non-numeric count
+        # must render as an empty day rather than raise inside the console.
+        out.append({"day": str(r["day"]), "count": max(0, int(_num(r.get("count")) or 0)),
                     "top_event": (str(r["top_event"]) if r.get("top_event") else None)})
     peak = max([r["count"] for r in out] or [0])
     for r in out:
@@ -219,9 +221,11 @@ def normalize_telemetry(payload: Optional[dict]) -> dict:
     (the caps), and `policy`/`persisted` — because under `LoggingPolicy.NO_DATA` the card
     must say "nothing is being kept" rather than show an empty week as if it were quiet.
     """
-    p = payload or {}
+    # A non-dict body (a bare JSON string from a proxy, say) is the same kind of "the
+    # other process gave us something odd" this function already promises to tolerate.
+    p = payload if isinstance(payload, dict) else {}
     ok = bool(p.get("ok"))
-    summary = p.get("summary") or {}
+    summary = p.get("summary") if isinstance(p.get("summary"), dict) else {}
     totals = p.get("totals") if isinstance(p.get("totals"), dict) else {}
     retention = p.get("retention") if isinstance(p.get("retention"), dict) else {}
     return {
@@ -237,14 +241,14 @@ def normalize_telemetry(payload: Optional[dict]) -> dict:
         "persisted": bool(p.get("persisted")) if ok else False,
         "connected": bool(p.get("connected")) if ok else False,
         "totals": {
-            "total": int(totals.get("total") or 0),
-            "days_kept": int(totals.get("days_kept") or 0),
+            "total": int(_num(totals.get("total")) or 0),
+            "days_kept": int(_num(totals.get("days_kept")) or 0),
             "first_day": totals.get("first_day") or None,
             "last_day": totals.get("last_day") or None,
-            "dropped_days": int(totals.get("dropped_days") or 0),
+            "dropped_days": int(_num(totals.get("dropped_days")) or 0),
         },
-        "retention": {"packets": int(retention.get("packets") or 0),
-                      "days": int(retention.get("days") or 0)},
+        "retention": {"packets": int(_num(retention.get("packets")) or 0),
+                      "days": int(_num(retention.get("days")) or 0)},
         "error": None if ok else (p.get("error") or "supervisor not reachable"),
     }
 
