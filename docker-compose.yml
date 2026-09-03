@@ -106,7 +106,10 @@ services:
       MOXIE_STT_MODEL: ${MOXIE_STT_MODEL:-}    # unset = per-engine default (stt-whisper on the gateway, base.en locally)
       MOXIE_STT_BASE_URL: ${MOXIE_STT_BASE_URL:-}   # falls back to MOXIE_VOICE_BASE_URL, then the LLM base URL
       MOXIE_STT_API_KEY: ${MOXIE_STT_API_KEY:-}     # falls back to the voice key, then the LLM key
-      MOXIE_LLM_BASE_URL: ${MOXIE_LLM_BASE_URL:-https://gateway.graphlings.net/v1}
+      # NO DEFAULT, deliberately: this repo is public, so a baked-in endpoint would
+      # point every fork at one person's server. `content`/`llm` exit at startup
+      # naming this variable when it is empty; `MOXIE_APP=echo` needs no brain.
+      MOXIE_LLM_BASE_URL: ${MOXIE_LLM_BASE_URL:-}
       MOXIE_LLM_API_KEY: ${MOXIE_LLM_API_KEY:-}
       MOXIE_LLM_MODEL: ${MOXIE_LLM_MODEL:-graphling-medium}
       MOXIE_BRAIN_BUDGET_S: ${MOXIE_BRAIN_BUDGET_S:-6}   # slow brain → a filler line, then the answer

@@ -15,7 +15,16 @@ sys.path.insert(0, os.path.join(MQTT, "supervisor"))
 
 
 def _fresh_config(env):
-    """Import config with a controlled environment (echo app, no voice/whisper)."""
+    """Import config with a controlled environment (echo app, no voice/whisper).
+
+    `MOXIE_SKIP_DOTENV` is what makes the popping below MEAN anything. `config._load_env`
+    reads `mqtt/.env` with `setdefault` at import, so on a machine that has a real one —
+    every developer's; never CI's, never a worktree's, because the file is git-ignored —
+    a reload put back every variable this function just deleted, and these tests asserted
+    nothing (orchestration playbook rule 20). The flag is checked before the file is
+    opened, so "unset" is unset. See `test_config_dotenv.py`.
+    """
+    os.environ["MOXIE_SKIP_DOTENV"] = "1"
     for k in ("MOXIE_APP", "MOXIE_VOICE_BASE_URL", "MOXIE_STT",
               "MOXIE_LLM_API_KEY", "MOXIE_LLM_BASE_URL",
               "MOXIE_VOICE_MODEL", "MOXIE_VOICE_FORMAT", "MOXIE_VOICE_SAMPLE_RATE",

@@ -1,12 +1,90 @@
 """Runtime configuration for the Moxie robot-cloud supervisor.
 All local-first; override via environment variables or a git-ignored `mqtt/.env`
-(see .env.example — never commit real endpoints/keys)."""
+(see .env.example — never commit real endpoints/keys).
+
+**Nothing here defaults to anyone's deployment.** This repo is public and the stated
+principle is that any Moxie sim and any OpenAI-compatible gateway work by configuration,
+so a variable that names a *host* either comes from the environment or is empty — and an
+app that cannot run without one exits saying which variable to set. The hosted Functions
+already work this way (`functions/api/_lib/env.js`: `DEMO_GATEWAY_BASE_URL` has no
+default, and unset means degraded, never "assume ours" — `backlog/live-sim-demo.md` C3).
+`sim/tests/test_no_deployment_defaults.py` is the guard that keeps it true.
+"""
+import re
 import os
 
+#: Falsy spellings, shared by every switch in this file.
+_OFF = ("", "0", "off", "false", "no")
 
-def _load_env():
-    """Load KEY=VALUE lines from mqtt/.env into the environment (no dependency)."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+#: The two switches for the dotenv loader itself. They are read from the ENVIRONMENT and
+#: nowhere else, because a file cannot carry the flag that decides whether it is read.
+#:
+#: `MOXIE_SKIP_DOTENV=1` makes a present `mqtt/.env` invisible. It exists because the file
+#: is loaded with `setdefault` at import, which is exactly right for an appliance and
+#: exactly wrong for a test: a suite that simulates "nothing is configured" by deleting a
+#: variable and reloading this module had it **refilled from the file**, so on any machine
+#: that has a real `mqtt/.env` those tests asserted nothing. `.env` is git-ignored, so CI
+#: and every git worktree never saw it and the whole class was invisible (orchestration
+#: playbook rule 20). The flag is the smallest thing that makes "unset" mean unset.
+#:
+#: `MOXIE_DOTENV=/path/to/file` reads that file instead of `mqtt/.env`. An injectable path
+#: alone could not have fixed the above — `importlib.reload(config)` calls `_load_env()`
+#: with no arguments — but it is what lets the loader be tested against a real dotenv file
+#: without going near a developer's own `mqtt/.env`, and it lets a deployment keep its
+#: configuration outside the checkout.
+_SKIP_DOTENV = "MOXIE_SKIP_DOTENV"
+_DOTENV_PATH = "MOXIE_DOTENV"
+
+
+def _truthy(name: str) -> bool:
+    """An environment switch that is set to anything but a falsy spelling."""
+    return os.environ.get(name, "").strip().lower() not in _OFF
+
+
+def _dotenv_value(raw: str) -> str:
+    """The value half of a dotenv line, with a trailing `# comment` removed.
+
+    Our own `mqtt/.env.example` documents values with inline comments, e.g.
+
+        MOXIE_VOICE_BASE_URL=         # e.g. https://your-gateway/v1 (empty -> Piper/tone)
+
+    and the documented first step is to copy that file. Without this, the value became the
+    **comment text** — truthy garbage that `build_synthesizer` would then treat as a
+    gateway URL, and `MOXIE_APP` became `"llm            # llm | content | echo"`. So the
+    documented setup path produced a broken appliance. Found by the class guard added with
+    the gateway-default fix.
+
+    Rules, deliberately conservative:
+      * a quoted value is taken verbatim inside the quotes, so a `#` may appear in it;
+      * otherwise a comment starts at the first `#` **preceded by whitespace**, so a value
+        like `pass#word` survives — only ` #` reads as a comment, which is the convention
+        every dotenv file in this repo already follows.
+    """
+    v = raw.strip()
+    if not v:
+        return ""
+    if v[0] == "#":                          # the whole value is a comment -> unset
+        return ""
+    if v[0] in "\"'":
+        q = v[0]
+        end = v.find(q, 1)
+        return v[1:end] if end != -1 else v[1:]
+    cut = re.search(r"\s#", v)
+    return (v[:cut.start()] if cut else v).strip()
+
+
+def _load_env(path=None):
+    """Load KEY=VALUE lines from a dotenv file into the environment (no dependency).
+
+    Returns the file it used, or None when it loaded nothing. The existing environment
+    always wins (`setdefault`), so an explicit variable beats the file — and
+    `MOXIE_SKIP_DOTENV` beats both, including an explicitly passed `path`, because the
+    whole point of the flag is "this process must see no file at all".
+    """
+    if _truthy(_SKIP_DOTENV):
+        return None
+    path = (path or os.environ.get(_DOTENV_PATH, "").strip()
+            or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
     try:
         with open(path) as fh:
             for line in fh:
@@ -14,12 +92,13 @@ def _load_env():
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
+                os.environ.setdefault(k.strip(), _dotenv_value(v))
     except FileNotFoundError:
-        pass
+        return None
+    return path
 
 
-_load_env()
+DOTENV_LOADED = _load_env()
 
 # --- broker ---
 MQTT_HOST = os.environ.get("MOXIE_MQTT_HOST", "127.0.0.1")   # supervisor→broker (loopback)
@@ -76,11 +155,45 @@ MOXIE_APP = os.environ.get("MOXIE_APP", "llm")
 # Content app: a data-driven module (conversations/globals) run through the AI seam.
 CONTENT_MODULE = os.environ.get("MOXIE_CONTENT_MODULE", "content_modules/starter.json")
 
-# LLM brain — any OpenAI-compatible endpoint. Default: our LiteLLM gateway (public
-# host; the API KEY is never committed — set MOXIE_LLM_API_KEY in a git-ignored .env).
-LLM_BASE_URL = os.environ.get("MOXIE_LLM_BASE_URL", "https://gateway.graphlings.net/v1")
+# LLM brain — any OpenAI-compatible endpoint (LiteLLM, Ollama, vLLM, LM Studio, a hosted
+# proxy). **There is no default, on purpose.** This file used to ship the maintainer's own
+# gateway as the fallback, which meant a stranger who cloned a public repo got a
+# supervisor silently pointed at someone else's server — and it never even worked, since
+# that endpoint refuses unauthenticated calls, so the child heard "my brain got fuzzy"
+# forever with no line anywhere saying why. Empty is the honest state, and the apps that
+# need a brain say so out loud (`require_llm_base_url`).
+LLM_BASE_URL = os.environ.get("MOXIE_LLM_BASE_URL", "").strip()
 LLM_API_KEY  = os.environ.get("MOXIE_LLM_API_KEY", os.environ.get("LITELLM_MASTER_KEY", ""))
 LLM_MODEL    = os.environ.get("MOXIE_LLM_MODEL", "graphling-medium")
+
+#: Endpoints named in the "set one of these" message. Generic, runnable and vendor-neutral
+#: — a local Ollama and a local vLLM, both on loopback. Nothing here names a deployment.
+_BRAIN_EXAMPLES = ("http://127.0.0.1:11434/v1  (Ollama)",
+                   "http://127.0.0.1:8000/v1   (vLLM / LM Studio / LiteLLM)")
+
+
+def require_llm_base_url(app: str) -> str:
+    """`LLM_BASE_URL`, or exit naming the variable that is missing.
+
+    Called by every app that cannot answer a child without a brain. It fails at
+    ASSEMBLY — `build_app()`, before the broker connection — rather than on the first
+    turn, so the operator reads it in the startup log instead of discovering it as a
+    fuzzy-brain reply hours later. The message names `MOXIE_LLM_BASE_URL` literally,
+    because the previous behaviour's whole failing was that nothing was ever named.
+
+    Mirrors the `MOXIE_APP=webhook requires MOXIE_WEBHOOK_ENDPOINT` rule below: an app
+    selected without the one thing it needs is a misconfiguration, not a degraded mode.
+    """
+    if LLM_BASE_URL:
+        return LLM_BASE_URL
+    raise SystemExit(
+        f"MOXIE_APP={app} needs MOXIE_LLM_BASE_URL — this repo ships no default brain "
+        "endpoint on purpose (it is public, and a default would point every fork at one "
+        "deployment). Set it to any OpenAI-compatible base URL, for example:\n"
+        + "".join(f"    MOXIE_LLM_BASE_URL={e}\n" for e in _BRAIN_EXAMPLES)
+        + "  (put it in mqtt/.env, or in .env for the compose stack — see .env.example.)\n"
+        "  MOXIE_APP=echo needs no brain at all and is the way to bring the stack up "
+        "without one.")
 
 # AI voice server (optional) — server-side STT/TTS for the SIM + a server voice.
 # OpenAI-compatible audio endpoints assumed (/audio/transcriptions, /audio/speech);
@@ -177,8 +290,7 @@ BRAIN_BUDGET_S = _env_float("MOXIE_BRAIN_BUDGET_S", 6.0)
 # by consistency_control.is_completed) instead of waiting for the whole completion. The
 # child hears the first sentence at first-token latency (~3-5 s) instead of at
 # whole-answer latency (18-45 s). "0"/"off" → the old single-reply path.
-STREAMING = (os.environ.get("MOXIE_STREAMING", "1").strip().lower()
-             not in ("0", "off", "false", "no", ""))
+STREAMING = os.environ.get("MOXIE_STREAMING", "1").strip().lower() not in _OFF
 
 # Webhook app (external avatar bridge)
 WEBHOOK_ENDPOINT = os.environ.get("MOXIE_WEBHOOK_ENDPOINT", "")
@@ -200,7 +312,8 @@ def build_app():
         return WebhookApp(WEBHOOK_ENDPOINT)
     if MOXIE_APP == "content":
         return build_content_app()
-    return LLMApp(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, model=LLM_MODEL)
+    return LLMApp(base_url=require_llm_base_url("llm"), api_key=LLM_API_KEY,
+                  model=LLM_MODEL)
 
 
 def build_content_app():
@@ -214,6 +327,8 @@ def build_content_app():
 
     A fresh appliance has an empty overlay and therefore loads exactly what it always did.
     """
+    base_url = require_llm_base_url("content")   # a content module still answers via the
+                                                 # AI seam, so it needs a brain endpoint
     import json
     from moxie_sdk.content import ContentApp, packs
     from moxie_sdk.chat import make_openai_chat
@@ -230,7 +345,7 @@ def build_content_app():
     module = packs.build_module(defaults, overlay)
     if overlay:
         print(f"[config] 📦 content: {len(defaults)} shipped + {len(overlay)} imported")
-    chat = make_openai_chat(LLM_BASE_URL, LLM_API_KEY, LLM_MODEL)
+    chat = make_openai_chat(base_url, LLM_API_KEY, LLM_MODEL)
     return ContentApp(module, chat, persona=DEFAULT_PERSONA, content_defaults=defaults)
 
 
@@ -364,10 +479,12 @@ def build_transcriber(override=None):
     win over everything, `off` disables, and `auto` prefers the gateway *only when one is
     genuinely configured* (URL + key + SDK) and otherwise uses local whisper.
 
-    Why `auto` also demands a KEY: `STT_BASE_URL` falls back to `LLM_BASE_URL`, which has
-    a default, so a URL alone is never evidence that anyone meant to use the cloud. With
-    no key the gateway can only answer 401 — local whisper is the better ears, and an
-    unset environment keeps behaving exactly as it did before this knob existed.
+    Why `auto` also demands a KEY: `STT_BASE_URL` falls back to `LLM_BASE_URL`, so a URL
+    alone says only "a brain is configured somewhere", not "send this child's voice
+    there". With no key the gateway can only answer 401 — local whisper is the better
+    ears, and an unset environment keeps behaving exactly as it did before this knob
+    existed. (Since the brain endpoint stopped having a default, an unconfigured box
+    resolves `STT_BASE_URL` to "" and never even considers the cloud ears.)
 
     The gateway is wrapped in a `FallbackTranscriber` whose standby is the rung it
     displaced: local whisper when installed, else a `NullTranscriber` that returns "".
