@@ -607,40 +607,64 @@ need one get a page under [`backlog/`](backlog/README.md), written so an agent c
 the seam it plugs into, the recovered vocabularies it may draw from, the design, the tests, the
 acceptance criteria, the effort and the risks.
 
-| Brief | Covers | State |
+| Brief | Covers | State — live, 2026-09-03 |
 |---|---|---|
-| [`backlog/expressiveness.md`](backlog/expressiveness.md) | **ADOPT #3** (the markup floor) §1 · **BEYOND #1** (the behavior planner) §2 | §1 🟢 **shipped 2026-09-02** · §2 ready to build |
-| [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) | **§3.1 Robot identity / JWT** — the broker gap PR #27 left open, phased P0 (ACL + supervisor credential, no robot change) → P1 (device credentials the broker verifies) → P2 (a spoofed `d_<uuid>` refused at CONNECT) | 🔵 **ready to build** |
-| [`backlog/telehealth.md`](backlog/telehealth.md) | **ADOPT #7** (puppet / telehealth) — the `commands/telehealth` command path and the 🎭 "Be Moxie" console panel | 🟢 **shipped 2026-09-02 (PR #43)** |
-| [`backlog/voice-picker.md`](backlog/voice-picker.md) | **BEYOND #8** (partly) — 🎚️ Speech + Listening dropdowns fed by live gateway discovery + the installed local engines | 🟢 **built** (PR #48, merged 2026-09-02) |
-| [`backlog/content-packs.md`](backlog/content-packs.md) | **ADOPT #5** (content packs) — a versioned, digest-checked pack file; export from a field allowlist; import-with-review with `source_version` **and** local-edit detection; P0 headless, P1 the 📦 console card | 🔵 **ready to build** |
+| [`backlog/expressiveness.md`](backlog/expressiveness.md) | **ADOPT #3** (the markup floor) §1 · **BEYOND #1** (the behavior planner) §2 | §1 🟢 **shipped 2026-09-02** · §2 🔵 **build-ready** |
+| [`backlog/telehealth.md`](backlog/telehealth.md) | **ADOPT #7** (puppet / telehealth) — the `commands/telehealth` command path and the 🎭 "Be Moxie" console panel | 🟢 **shipped 2026-09-02 (PR #43)** — `test_telehealth*.py`, 110 tests |
+| [`backlog/voice-picker.md`](backlog/voice-picker.md) | **BEYOND #8** (the console half) — 🎚️ Speech + Listening dropdowns fed by live gateway discovery + the installed local engines | 🟢 **shipped 2026-09-02 (PR #48)**, corrected 2026-09-03 (PR #77 — an explicit engine pins) — `test_voice_settings.py` (76) · `test_voice_runtime.py` (34) |
+| [`backlog/content-packs.md`](backlog/content-packs.md) | **ADOPT #5** (content packs) — a versioned, digest-checked pack file; export from a field allowlist; import-with-review with `source_version` **and** local-edit detection; P0 headless, P1 the 📦 console card | 🟢 **shipped 2026-09-02 (PR #51), both P0 and P1**; hardened 2026-09-03 (PR #78) — 160 tests. *This line read "ready to build" until 2026-09-03* |
+| [`backlog/live-sim-demo.md`](backlog/live-sim-demo.md) | 🌐 **the headline goal** — the hosted Sim on a static edge: same-origin Pages Functions for brain · voice · ears behind hard caps, degrading to the pre-cached scripted Moxie | 🟡 **P0-a + P0-b shipped 2026-09-02 (PR #54, #61); the ears + the fallback voice 2026-09-03 (PR #66, #69).** P1's remainder is 🔵 build-ready — see §4.4 #1. **This brief is the best-maintained page in the folder** and needs no refresh: it self-updates, and its §10 ledger settled three deploy-only unknowns against a real Pages preview on 2026-09-03 |
+| [`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md) | **BEYOND #6** (sandboxed content extensions) — a declarative rule list over a total JSON-AST expression language; no `exec`, no parser, no loops, no reachable host object, behind a capability set the parent reads in plain English | 🟡 **its §2.6 security fix shipped (PR #56 → #62 → #78); §3-onward is 🔵 build-ready**, P0 ≈ one sitting |
+| [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) | **§3.1 Robot identity / JWT** — phased P0 (ACL + supervisor credential, no robot change) → P1 (device credentials the broker verifies) → P2 (a spoofed `d_<uuid>` refused at CONNECT) | 🟢 **P0 shipped 2026-09-02 (PR #44)** — `test_broker_acl.py` (30) + `run_acl_proof.sh` (18 delivery checks against a real mosquitto). **P1/P2 🟠 needs-a-spec-decision, not build-ready**: both are blocked on the unanswered assumptions A1–A4 |
+
+**Every brief in [`backlog/`](backlog/README.md) is listed here.** If a brief exists and this table does
+not name it, this table is wrong — that was the case for `live-sim-demo.md` and `sandboxed-extensions.md`
+until 2026-09-03.
 
 ---
 
-## 4.4 The open backlog, re-ranked — 2026-09-02 (evening)
+## 4.4 The open backlog, re-ranked — 2026-09-03
 
-Six items closed today (ADOPT #7, ADOPT #9's catalog, BEYOND #2, BEYOND #7's console half, plus broker
-hardening P0 and gateway STT), so the ranking that produced them is spent. This is what is left, ranked
-by value to the **three top-level outcomes** — ① full cloud service · ② scrape OpenMoxie's best ·
-③ ten levels beyond ([`orchestration-plan.md`](orchestration-plan.md)) — with the reason in one line.
-"Brief" means an agent can start without re-deriving the design.
+**Nine of the previous ranking's ten entries are gone**, which is why it had to be rewritten rather than
+edited: #1 content packs (PR #51), #2 durable telemetry (PR #55), #3's security half (PR #56/#78), the
+`wakeup` half of #9 (PR #55), and — on the ranking that preceded it — telehealth, the face catalog, the
+schedule card, memory browse/erase and the voice picker. The old table's #1 and the old §4.2's voice row
+were still marked as work to do on 2026-09-03, and **two build agents each lost a full run to that**.
+This table is the one place to look for *"what should I build next"*; §3 is a museum.
 
-| # | Open item | Outcome | Why it ranks here (one line) | Brief |
-|--:|---|:--:|---|---|
-| 1 | **Content packs** (ADOPT #5) | ②③ | The last ADOPT that changes what the appliance *is for*: content stops being a file in our repo and becomes a thing a parent installs and a stranger publishes — and ③'s authoring studio, marketplace and per-child content all need a distribution unit before any of them mean anything. | 🔵 [`backlog/content-packs.md`](backlog/content-packs.md) |
-| 2 | **Durable telemetry → insights that mean something** (BEYOND #5 + the telemetry half of ADOPT #8) | ① | DoD criterion 3's last gap, and the 📈 card is currently an event log over RAM that a restart erases — a parent cannot see yesterday, let alone a week, and "local-first insights" is the promise that most distinguishes us from a cloud toy. | 🔴 none |
-| 3 | **Sandboxed content extensions** (BEYOND #6) | ③ | The moment packs are shareable, "we never execute `code`" flips from a safety win to the ceiling on what a pack can do; a capability-scoped runtime is what makes a community pack able to *do* something without trusting its author. | 🔵 [`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md) — P0 is **S/M**, one sitting, and its first commit is a security fix `dev` needs anyway (§2.6) |
-| 4 | **Production hardening for a robot that stays connected** (Fork A's list) | ① | `client.connect()` with no reconnect backoff, an in-process-only store lock, no cross-process story: every one of these is a bug we have not hit only because no real robot has been on our broker for a week — and outcome ① is measured live. | 🔴 none |
-| 5 | **Any brain, hot-swappable, per child** (BEYOND #3) | ③ | The literal ghost-in-the-shell claim in [`vision.md`](vision.md), and both hard parts now exist — a live engine swap with no restart (PR #48's `voice_update`) and a per-robot override layer (ADOPT #6) — so this is a registry plus a console card, not an architecture. | 🔴 none |
-| 6 | **Broker auth P1/P2** — device credentials, then a refused spoof | ①② | P0 confines a client to its own subtree; until P1 the broker still cannot tell *which* robot a client id belongs to, which is the difference between containment and identity on a LAN a stranger can join. | 🔵 [`backlog/security-broker-auth.md`](backlog/security-broker-auth.md) §3-4 |
-| 7 | **The behavior planner** (BEYOND #1) | ③ | The markup floor shipped and is deterministic and cheap; the planner is the 10× version, but it is an **L** that improves something already good rather than filling a hole — which is why it sits below five items that fill holes. | 🔵 [`backlog/expressiveness.md`](backlog/expressiveness.md) §2 |
-| 8 | **`TTSMark[]` visemes** (the rest of BEYOND #8) | ①③ | `marks` is plumbed and never populated, so the SIM's mouth is animated by amplitude rather than phonemes; it is the visible half of "a voice you choose", and Piper can emit the alignment we need. | 🟡 partly [`backlog/voice-picker.md`](backlog/voice-picker.md) |
-| 9 | **Two S quick wins: the MQTT `wakeup` command and printable launch-card QRs** | ①② | `wakeup` is worse than missing — the console reports success for a request that publishes nothing — and launch cards are the cheapest delight left on the ADOPT list. | 🔴 none |
-| 10 | **One identity, one guided first run** (BEYOND #10) | ① | The console is already the single pane; what remains is that the parent app's child records and the supervisor's env-var `ChildProfile` are two registries, which only starts to hurt with a second child or a second robot. | 🔴 none |
+**Every row carries a readiness verdict**, because "ranked #2" and "an agent can start on it this
+morning" are different claims and conflating them is what wasted the runs:
 
-**Not ranked, deliberately.** BEYOND #9 (vision events) and everything in ADOPT #9's assumption list are
-**blocked on a physical robot**, not on effort — they are built, unproven, and no amount of ranking moves
-them. A real Moxie on our broker for an hour would settle more of this page than a week of building.
+- 🟢 **build-ready** — a brief exists (or the design is settled in the row) and an agent can open a
+  worktree and start. No decision is owed first.
+- 🟠 **needs-a-spec** — the *what* is agreed and the *how* is not. Sending a build agent produces a
+  design argument, not a merge. These want a research/spec slice first.
+- ⛔ **blocked** — not on effort. Named blocker, and no ranking moves it.
+
+| # | Open item | Outcome | Readiness | Why it ranks here (one line) |
+|--:|---|:--:|:--:|---|
+| — | **The unreachable child voice** (live-Sim assumption 22) | ① | 🔵 *in flight — do not assign* | `bridge.js::handleUserTurn` never speaks, so `deploy-cloudflare.md`:19's claim that the child is audible is false. An agent owns it right now; it is listed only so nobody starts it twice |
+| 1 | **Live-Sim P1** — exact counters, Turnstile, the TTS cache | ① | 🟢 **build-ready** | The headline goal is *a stranger opens the production domain and Moxie answers*, and P0 shipped with its own ceiling written down: the rate counter is an in-isolate map plus the Cache API, **per-colo and per-isolate**, so it is not a ceiling at all ([`live-sim-demo.md`](backlog/live-sim-demo.md) §4.6). Everything else on this list protects a robot in someone's house; this protects the one surface the public can reach and the one budget a stranger can spend. Brief: [`live-sim-demo.md`](backlog/live-sim-demo.md) §9 P1 — but note assumption 13 (**is KV or a Durable Object even available on this plan?**) is unverified, and the answer changes the design, so *check the dashboard before writing code* |
+| 2 | **Sandboxed content extensions P0** (BEYOND #6, §3-onward) | ③ | 🟢 **build-ready** | Packs shipped, so *"we never execute `code`"* has flipped from a safety win into the ceiling on what a pack can do: importing upstream's `MoxieTime` today gives you a global that matches and then does nothing. P0 is **S/M, one sitting**, the six upstream `code` strings are already hand-ported in the brief as its golden set, and the security fix that used to be P0's first commit is already merged — so the brief starts at §3 with nothing owed. Brief: [`sandboxed-extensions.md`](backlog/sandboxed-extensions.md) |
+| 3 | **Production hardening for a robot that stays connected** (Fork A's list) | ① | 🟠 **needs-a-spec** | `moxie_runtime.py`:458 is still a plain blocking `client.connect(host, port, 30)` with no `connect_async` and no `reconnect_delay_set`; `JsonStore`'s lock is in-process only and now carries **nine** collections. Every one is a bug we have not hit because no real robot has been on our broker for a week — and outcome ① is measured live. It is 🟠 rather than 🟢 because the cross-process story is a **design** decision (WAL-backed SQLite? a single-writer process? file locks?) that ADOPT #8 has deferred three times; deciding it in a PR review is how it gets decided badly |
+| 4 | **The behavior planner** (BEYOND #1) | ③ | 🟢 **build-ready** | Promoted, on the arithmetic rather than on enthusiasm: the four items that used to outrank it have shipped. It is still an **L** that improves something already good rather than filling a hole — but it is now the largest *unfilled* claim in [`vision.md`](vision.md), the markup floor beneath it is deterministic and golden-tested, and the SIM can rehearse it before a child sees it. Brief: [`expressiveness.md`](backlog/expressiveness.md) §2 |
+| 5 | **Broker auth P1/P2** — device credentials, then a refused spoof | ①② | ⛔ **blocked on A1–A4** | P0 confines a client to its own subtree, so this is no longer *"anyone can read another child's `child_pii`"* — it is *"the broker still cannot tell **which** robot a client id belongs to"*, which is the difference between containment and identity. It drops below the planner **only** because it cannot start: [`security-broker-auth.md`](backlog/security-broker-auth.md) §0.4's A1–A4 are unanswered and every one of them needs a **physical robot** to answer. Assigning it produces a rewritten brief, not a merge |
+| 6 | **Content authoring, not just content distribution** (§3.3's authoring-UI row) | ②③ | 🟠 **needs-a-spec** | Packs made content *shippable*; nothing made it *writable*. A parent can install a stranger's conversation and diff it against their own, and still cannot compose one without editing JSON — and upstream's browser chat harness (`/hive/interact`) remains a genuinely better authoring loop than ours. New to this ranking, because packs shipping is what exposed it. No brief |
+| 7 | **Any brain, hot-swappable, per child** (BEYOND #3) | ③ | 🟢 **build-ready** | The literal ghost-in-the-shell claim, and both hard parts exist — a live engine swap with no restart (PR #48's `voice_update` idiom, now with PR #77's pin rule to copy) and a per-robot override layer (ADOPT #6). A repo-wide search finds no registry of any kind, so this is a registry plus a console card, not an architecture. No brief, and it does not need one |
+| 8 | **`TTSMark[]` visemes** (the rest of BEYOND #8) | ①③ | 🟠 **needs-a-spec** | Re-verified 2026-09-03: `marks` is plumbed through `moxie_sdk/tts.py`:370-402 and populated by **nothing but tests**, so the SIM's mouth is animated by amplitude rather than phonemes. 🟠 because whether Piper can emit the alignment we need is an unanswered question, not an implementation detail — and the hosted path now encodes its own WAV, which changes where the marks would come from |
+| 9 | **Printable launch-card QRs** (`GO<launch:MOD>`) | ② | 🟢 **build-ready** | The cheapest delight left on the ADOPT list and now the *whole* of the old #9 — its `wakeup` twin shipped. The action-tag parser already understands `<launch:MOD[:CID]>`; what is missing is a sheet a parent prints. An **S**, and it ranks last among build-ready items only because nothing depends on it |
+| 10 | **One identity, one guided first run** (BEYOND #10) | ① | 🟠 **needs-a-spec** | The parent app keeps real child records (`POST /api/children`) while the supervisor builds one `ChildProfile` from an env var (`mqtt/run.py`:35) — and the hosted edge tier is now a third, deliberately childless surface. Reconciling three registries is a data-model decision before it is code |
+
+**Not ranked, deliberately — and the list grew.** BEYOND #9 (vision events), ADOPT #9's two flagged
+assumptions, the `wakeup` acknowledgement, broker auth A1–A4, and every claim in the OTA row are
+**blocked on a physical robot**, not on effort. They are built or specified, unproven, and no amount of
+ranking moves them. *A real Moxie on our broker for an hour would settle more of this page than a week of
+building* — that sentence has been true at every refresh, and it is the single highest-value thing an
+owner could do for this project.
+
+**Verified nothing, twice.** There is no upstream item on this list because there is nothing new upstream:
+all three source repos were re-read at their live remote heads on 2026-09-03 (see the header) and every
+branch, tag and HEAD is unmoved since 2026-09-02. What remains is ours to build.
 
 ---
 
@@ -650,15 +674,26 @@ them. A real Moxie on our broker for an hour would settle more of this page than
 
 Not "different" — **ahead**. Listed plainly so the status tables stay honest.
 
-> **Frozen at the baseline, read with §4.1/§4.2/§4.4.** These ten were true on 2026-09-02 morning at commit
-> `fa70309` and are **not** rewritten as we ship — that is what the Status columns are for. Closed since:
-> **1** (schedule + `mentor_behaviors`, PR #5/#7), **2** (the markup floor), **4** (published images),
-> most of **5** (face customizer PR #36/#47, puppet mode PR #43, the mission/plan view PR #46 — printable
-> launch cards and a browser chat harness are still theirs alone), the safety-flags half of **8**
-> (PR #20), and **10** (a brain slower than the robot — PR #14's filler-then-real-line, PR #17's streamed
-> chunks). Still true and unmoved tonight: **3** (content you can author and share — this is ADOPT #5,
-> ranked #1 in §4.4), **6** (their `doc/` folder), **7** (it shipped), the transcripts + speaker-scoped
-> memory half of **8**, and **9** (production hardening — §4.4 #4).
+> **Frozen at the baseline, read with §4.1/§4.2/§4.4 — updated 2026-09-03.** These ten were true on
+> 2026-09-02 morning at commit `fa70309` and the numbered text below is **not** rewritten as we ship —
+> that is what the Status columns are for. Only this note moves.
+>
+> **Closed since:** **1** (schedule + `mentor_behaviors`, PR #5/#7), **2** (the markup floor), **4**
+> (published images — and verified in the registry 2026-09-03, §3.0), most of **5** (face customizer
+> PR #36/#47, puppet mode PR #43, the mission/plan view PR #46), the safety-flags half of **8** (PR #20),
+> and **10** (a brain slower than the robot — PR #14's filler-then-real-line, PR #17's streamed chunks).
+>
+> **Closed on 2026-09-02, corrected here on 2026-09-03: item 3.** *"Content you can author and share"* was
+> still listed as unmoved, and pointed at ADOPT #5 as *"ranked #1 in §4.4"* — but ADOPT #5 had shipped
+> the day before (PR #51). **Half of item 3 is genuinely closed:** a parent installs, reviews, diffs,
+> version-upgrades and exports content, which is more than upstream's flow does. **The other half is not,
+> and it is now §4.4 #6:** we made content *shareable* without making it *writable*, so upstream's
+> DB-backed editing and its `/hive/interact` browser chat harness are still theirs alone. Splitting this
+> item rather than ticking it is the whole lesson of this refresh.
+>
+> **Still true and unmoved:** the authoring half of **3** (above), **5**'s printable launch cards and
+> browser harness, **6** (their `doc/` folder), **7** (it shipped), the transcripts + speaker-scoped
+> memory half of **8**, and **9** (production hardening — §4.4 #3).
 
 1. **It makes a real robot run a real day.** Schedule + `mentor_behaviors` + the ~23 native modules is
    the whole product for an owner. We answer both queries with empty values, and in the wrong wire
@@ -702,7 +737,8 @@ Not "different" — **ahead**. Listed plainly so the status tables stay honest.
 5. **The parent app.** Nobody else rebuilt it: 65 REST routes, zero-knowledge crypto, recovery phrases,
    a mobile web client, hardware-verified pairing QR.
 6. **The SIM.** A 3D robot driven by the real protocol, so a change is testable with no hardware.
-7. **Tests and CI.** 37 test files and a three-tier pipeline. Upstream has a 3-line Django stub and no
+7. **Tests and CI.** **105** test files (counted on `origin/dev`, 2026-09-03 — it was 37 at the
+   baseline) and a three-tier pipeline. Upstream has a 3-line Django stub and no
    CI; Fork A has 70 real test methods but no CI; Fork B has CI but no tests. Nobody else has both.
 8. **The reverse-engineering base.** 97 doc pages, 120 recovered `.proto` files, and a full protocol
    catalog — which is why we can implement fields OpenMoxie never used (all 14 of
