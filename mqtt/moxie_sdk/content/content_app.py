@@ -24,17 +24,22 @@ that behaviour is *declared* rather than scripted:
 """
 from __future__ import annotations
 import json
+import re
 from typing import Callable, Optional
 
 from ..app import MoxieApp
 from ..actions import parse_action_tags
 from ..automarkup import annotate, enabled as _automarkup_enabled
+from .. import automarkup as _automarkup
+from .. import safety as _safety
+from .. import vocab
 from ..store import MemoryStore
 from ..types import Turn, Reply, RobotContext
 from .module import ContentModule
 from .volley import Volley, Session
 from .memory import default_classifier, note_used, provenance, wrap_facts
 from .render import render_prompt
+from . import ext
 from .. import presence as _presence
 
 
@@ -282,3 +287,250 @@ class ContentApp(MoxieApp):
         else:
             print(f"[content] 🧠 remembered {len(summary.get('facts', []))} fact(s) "
                   f"for {device_id} in '{ns}' ({reason or 'end'})", flush=True)
+
+
+# --------------------------------------------------------------------------- #
+# Sandboxed content extensions — the host half (BEYOND #6 P0)
+#
+# `moxie_sdk/content/ext.py` is the evaluator: pure, total, and blind to this process.
+# Everything that touches the world lives here, and the split is the security argument
+# (docs/architecture/backlog/sandboxed-extensions.md §4.4/§4.5):
+#
+#   * `ext_facts()` builds a **plain-JSON** dict from primitives. The evaluator never sees
+#     a `Volley`, a `Session`, a `MemoryStore` or any other live object, so there is no
+#     object for an attribute walk to reach (X2).
+#   * `apply_ext_effects()` applies the returned effect list **after** the program ended.
+#     A breach mid-program therefore leaves nothing half-applied — the list is discarded
+#     whole by `ext.evaluate` and never gets here (X11).
+#   * Every breach is boring: the extension fails, the turn does not. A `global` falls
+#     through to the conversation exactly as a matched global with no handler does today
+#     (S1); a `turn.before` is skipped and the model runs. The child hears no error text.
+# --------------------------------------------------------------------------- #
+
+#: Inbound caps. `speech`, `entities` and `input_vars` are robot-supplied — untrusted data
+#: — so they are bounded before the evaluator's own byte caps ever see them.
+EXT_MAX_SPEECH = 2000
+EXT_MAX_ENTITIES = 16
+EXT_MAX_ENTITY_CHARS = 256
+EXT_MAX_INPUT_VARS = 32
+EXT_MAX_INPUT_VAR_CHARS = 512
+EXT_MAX_MEMORY_BYTES = 32768
+
+#: One `<mark …/>`, `<usel …>` or `<break …/>` tag, for the catalogue gate below.
+_EXT_TAG = re.compile(r"<(?:mark|usel|/usel|spurt|break)\b[^>]*/?>", re.I)
+_EXT_VAR_KEY = re.compile(r"^[A-Za-z_$][A-Za-z0-9_.$-]{0,63}$")
+
+
+def _ext_json(value, depth: int = 0):
+    """A plain-JSON copy: `str/int/float/bool/None/list/dict` and nothing else.
+
+    Rebuilds every container, so a `FactList` (a `list` subclass `memory.wrap_facts`
+    returns) comes back a plain list, and anything that is not JSON at all comes back
+    `None`. This is the function X2 is really testing: the fact base cannot contain a host
+    object because this is the only thing that puts values into it.
+    """
+    if depth > 12:
+        return None
+    if value is None or isinstance(value, (bool, int, float)):
+        return None if isinstance(value, float) and value != value else value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if not isinstance(k, str) or k.startswith("_"):
+                continue                      # `_meta`/`_provenance` are the store's
+            out[k] = _ext_json(v, depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_ext_json(v, depth + 1) for v in list(value)[:256]]
+    return None
+
+
+def ext_facts(volley: Volley, session: Session, *, namespace: str = "",
+              grants=(), presence: Optional[dict] = None) -> dict:
+    """The §4.4 fact base — built by the host from primitives, never by exposing objects.
+
+    `namespace` is supplied **here**, by us, from the item's identity. An extension cannot
+    name a namespace, a device, a collection or a path: the words for those do not exist in
+    the grammar, which is what makes "its own memory and nobody else's" structural rather
+    than enforced (X9).
+    """
+    grants = set(grants or ())
+    ents = [str(e)[:EXT_MAX_ENTITY_CHARS]
+            for e in list(getattr(volley, "entities", None) or [])[:EXT_MAX_ENTITIES]]
+    input_vars = {}
+    for k, v in (getattr(volley, "request", None) or {}).get("input_vars", {}).items():
+        if len(input_vars) >= EXT_MAX_INPUT_VARS:
+            break
+        if isinstance(k, str) and _EXT_VAR_KEY.match(k):
+            input_vars[k.lstrip("$")] = str(v)[:EXT_MAX_INPUT_VAR_CHARS]
+    pii = (getattr(volley, "config", None) or {}).get("child_pii") or {}
+    child = {}
+    if "child.nickname" in grants:
+        child["nickname"] = str(pii.get("nickname") or "")
+    if "child.profile" in grants:
+        child.update(pronouns=str(pii.get("pronouns") or ""),
+                     birthday=str(pii.get("birthday") or ""),
+                     notes=str(pii.get("notes") or ""))
+    memory = {}
+    if "memory.read" in grants and namespace:
+        block = (getattr(volley, "persist_data", None) or {}).get(namespace)
+        memory = _ext_json(block) if isinstance(block, dict) else {}
+        if len(json.dumps(memory, default=str)) > EXT_MAX_MEMORY_BYTES:
+            memory = {}                      # too big to hand over is "nothing to read"
+    facts = {
+        "speech": str(getattr(volley, "speech", "") or "")[:EXT_MAX_SPEECH],
+        "entities": ents,
+        "input_vars": input_vars,
+        "child": child,
+        "memory": memory,
+        "scratch": {},                        # per-turn, starts empty (§4.4)
+        "session": {"total_volleys": int(getattr(session, "total_volleys", 0) or 0),
+                    "is_empty": bool(session.is_empty()) if session else True,
+                    "overflow": bool(getattr(session, "overflow", False))},
+        "presence": {},
+    }
+    if "presence" in grants:
+        p = presence or {}
+        facts["presence"] = {"face_present": bool(p.get("face_present")),
+                             "line": str(p.get("line") or "")}
+    return facts
+
+
+def ext_markup(markup: str) -> tuple:
+    """`(clean, dropped)` — behaviour markup through the frozen `vocab.py` catalogue (M3).
+
+    An unknown mark id, a malformed `cmd:` payload or an out-of-catalogue asset is
+    **dropped**, tag by tag, and counted; the surrounding text survives. Never passed
+    through unchecked, because `markup` is the one capability that reaches the robot's
+    *body* — validation is what makes a bad id harmless, and the parent's explicit grant is
+    what covers a valid id in poor taste (risk R4).
+    """
+    if not markup:
+        return "", 0
+    dropped = 0
+    out = []
+    pos = 0
+    for m in _EXT_TAG.finditer(markup):
+        out.append(markup[pos:m.start()])
+        pos = m.end()
+        tag = m.group(0)
+        if vocab.validate_markup(tag):
+            dropped += 1
+            _automarkup._drop("ext")          # the existing `dropped_ids()` counter
+        else:
+            out.append(tag)
+    out.append(markup[pos:])
+    return "".join(out), dropped
+
+
+def _ext_set_path(block: dict, key: str, value):
+    """Write a dotted key into a namespace block, creating maps as it goes."""
+    parts = key.split(".")
+    cur = block
+    for seg in parts[:-1]:
+        nxt = cur.get(seg)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[seg] = nxt
+        cur = nxt
+    cur[parts[-1]] = value
+    return parts[0]
+
+
+def _ext_del_path(block: dict, key: str) -> bool:
+    parts = key.split(".")
+    cur = block
+    for seg in parts[:-1]:
+        cur = cur.get(seg)
+        if not isinstance(cur, dict):
+            return False
+    return cur.pop(parts[-1], _MISSING) is not _MISSING
+
+
+_MISSING = object()
+
+
+def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = "",
+                      namespace: str = "", classifier=None, module_id: str = "",
+                      content_id: str = "") -> dict:
+    """Apply one extension's effect list, in order, subject to every cap in §6.3.
+
+    Returns `{"spoke", "wrote", "dropped_markup", "blocked"}` for the caller and the log.
+
+    Two things are worth reading twice. **`say` goes through the same output-side safety
+    classifier and the same `annotate` floor a model's line does** — an extension does not
+    get a private channel to a child, and a blocked verdict is replaced by a
+    `redirect_for()` line rather than refused (M2). And **`remember`/`forget` name only a
+    key**: the `(device_id, namespace)` pair is supplied here, by us, so the write cannot
+    reach another module's namespace or another child's robot (X9).
+    """
+    spoke = wrote = dropped = 0
+    blocked = False
+    for eff in effects or []:
+        kind = eff.get("kind")
+        if kind == "say":
+            text = str(eff.get("text") or "")[:ext.MAX_SAY_CHARS]
+            markup = eff.get("markup")
+            if classifier is not None and text:
+                try:
+                    verdict = classifier.assess(text, role=_safety.MOXIE)
+                except Exception:
+                    verdict = None            # a broken classifier must not silence Moxie
+                if verdict is not None and verdict.is_unsafe:
+                    blocked = True
+                    text = _safety.redirect_for(verdict, classifier=classifier).line
+                    markup = None
+            if markup:
+                markup, n = ext_markup(str(markup)[:ext.MAX_MARKUP_CHARS])
+                dropped += n
+            volley.set_output(text, markup or None)
+            spoke += 1
+        elif kind == "markup":
+            clean, n = ext_markup(str(eff.get("markup") or "")[:ext.MAX_MARKUP_CHARS])
+            dropped += n
+            volley.set_output(volley.output_text or "", clean or None)
+        elif kind == "scratch":
+            volley.local_data[str(eff["key"])] = eff.get("value")
+        elif kind in ("remember", "forget"):
+            if memory is None or not device_id or not namespace:
+                continue
+            try:
+                data = memory.load(device_id)
+                block = data.get(namespace)
+                block = dict(block) if isinstance(block, dict) else {}
+                if kind == "remember":
+                    top = _ext_set_path(block, str(eff["key"]), eff.get("value"))
+                    got = memory.merge(device_id, namespace, {top: block[top]},
+                                       provenance=provenance(module_id=module_id,
+                                                             content_id=content_id,
+                                                             turns=1, reason="extension"))
+                    wrote += 1 if got is not None else 0
+                else:
+                    if _ext_del_path(block, str(eff["key"])):
+                        data[namespace] = block
+                        wrote += 1 if memory.save(device_id, data) else 0
+            except Exception as e:            # a broken memory file must not end a turn
+                print(f"[ext] memory write failed ({e}); continuing", flush=True)
+        elif kind in ("act", "subscribe", "brain"):
+            # Unreachable in P0 — the capability is refused at load (brief S5). Kept as an
+            # explicit refusal rather than a silent drop so the day the wire lands, the
+            # gap is a line to fill in and not a bug to find.
+            print(f"[ext] {kind} is not plumbed yet; ignored", flush=True)
+    return {"spoke": spoke, "wrote": wrote, "dropped_markup": dropped, "blocked": blocked}
+
+
+def ext_namespace(kind: str, key: str, data: dict) -> str:
+    """The memory namespace an extension owns — chosen by the host, never by the pack.
+
+    A conversation uses its declared `memory.namespace`; a global gets `ext:<kind:key>`.
+    Keyed on the pack's own `kind:key` identity rather than on `name`, because two globals
+    called "Timer" in two different packs must not share a namespace (brief A13).
+    """
+    if kind == "conversation":
+        ns = str(((data or {}).get("memory") or {}).get("namespace") or "")
+        if ns:
+            return ns
+    slug = re.sub(r"[^a-z0-9]+", "_", f"{kind}:{key}".lower()).strip("_")
+    return f"ext:{slug or 'unnamed'}"

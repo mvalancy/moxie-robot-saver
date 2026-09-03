@@ -12,16 +12,77 @@
  "ext_format": 1,
  "rows": [
   {
+   "upstream": "MoxieTime.get_response",
    "ast": {
+    "ext_format": 1,
     "capabilities": [
      "clock",
      "handled",
      "say"
     ],
-    "ext_format": 1,
     "on": "global",
     "rules": [
      {
+      "let": {
+       "h24": {
+        "get": [
+         {
+          "clock.local": []
+         },
+         "hour",
+         0
+        ]
+       },
+       "minute": {
+        "get": [
+         {
+          "clock.local": []
+         },
+         "minute",
+         0
+        ]
+       },
+       "h12": {
+        "if": [
+         {
+          "==": [
+           {
+            "%": [
+             {
+              "var": "h24"
+             },
+             12
+            ]
+           },
+           0
+          ]
+         },
+         12,
+         {
+          "%": [
+           {
+            "var": "h24"
+           },
+           12
+          ]
+         }
+        ]
+       },
+       "half": {
+        "if": [
+         {
+          "<": [
+           {
+            "var": "h24"
+           },
+           12
+          ]
+         },
+         "AY M",
+         "P M"
+        ]
+       }
+      },
       "do": [
        {
         "say": {
@@ -53,111 +114,11 @@
        {
         "handled": true
        }
-      ],
-      "let": {
-       "h12": {
-        "if": [
-         {
-          "==": [
-           {
-            "%": [
-             {
-              "var": "h24"
-             },
-             12
-            ]
-           },
-           0
-          ]
-         },
-         12,
-         {
-          "%": [
-           {
-            "var": "h24"
-           },
-           12
-          ]
-         }
-        ]
-       },
-       "h24": {
-        "get": [
-         {
-          "clock.local": []
-         },
-         "hour",
-         0
-        ]
-       },
-       "half": {
-        "if": [
-         {
-          "<": [
-           {
-            "var": "h24"
-           },
-           12
-          ]
-         },
-         "AY M",
-         "P M"
-        ]
-       },
-       "minute": {
-        "get": [
-         {
-          "clock.local": []
-         },
-         "minute",
-         0
-        ]
-       }
-      }
+      ]
      }
     ]
    },
-   "clock_local": {
-    "hour": 15,
-    "iso": "2026-09-03T15:05:00",
-    "minute": 5,
-    "weekday": 3
-   },
-   "expected_effects": [
-    {
-     "kind": "say",
-     "markup": null,
-     "text": "The time is 3:05 P M"
-    }
-   ],
-   "expected_handled": true,
-   "explain": [
-    "Whenever this activity is triggered: tells your child 'The time is …' and answers without asking the AI."
-   ],
-   "facts": {
-    "child": {
-     "nickname": "Sam"
-    },
-    "entities": [],
-    "input_vars": {},
-    "memory": {},
-    "presence": {
-     "face_present": false,
-     "line": ""
-    },
-    "scratch": {},
-    "session": {
-     "is_empty": true,
-     "overflow": false,
-     "total_volleys": 0
-    },
-    "speech": "what time is it"
-   },
-   "grant_list": [
-    "Can check the time",
-    "Can answer on its own, without asking the AI",
-    "Can speak to your child"
-   ],
+   "p1": false,
    "grants": [
     "child.nickname",
     "clock",
@@ -165,14 +126,55 @@
     "say",
     "session"
    ],
-   "name": "G1",
+   "facts": {
+    "speech": "what time is it",
+    "entities": [],
+    "input_vars": {},
+    "scratch": {},
+    "child": {
+     "nickname": "Sam"
+    },
+    "session": {
+     "total_volleys": 0,
+     "is_empty": true,
+     "overflow": false
+    },
+    "presence": {
+     "face_present": false,
+     "line": ""
+    },
+    "memory": {}
+   },
    "now_ms": 1756900000000,
-   "p1": false,
+   "clock_local": {
+    "hour": 15,
+    "minute": 5,
+    "weekday": 3,
+    "iso": "2026-09-03T15:05:00"
+   },
    "seed": 1,
-   "upstream": "MoxieTime.get_response"
+   "name": "G1",
+   "expected_effects": [
+    {
+     "kind": "say",
+     "text": "The time is 3:05 P M",
+     "markup": null
+    }
+   ],
+   "expected_handled": true,
+   "explain": [
+    "Whenever this activity is triggered: tells your child 'The time is …' and answers without asking the AI."
+   ],
+   "grant_list": [
+    "Can check the time",
+    "Can answer on its own, without asking the AI",
+    "Can speak to your child"
+   ]
   },
   {
+   "upstream": "MoxieTimers handle_volley (set)",
    "ast": {
+    "ext_format": 1,
     "capabilities": [
      "act.eb_timer_request",
      "clock",
@@ -180,10 +182,50 @@
      "memory.write",
      "say"
     ],
-    "ext_format": 1,
     "on": "global",
     "rules": [
      {
+      "let": {
+       "count": {
+        "int": [
+         {
+          "var": "entities.0"
+         }
+        ]
+       },
+       "unit_ms": {
+        "get": [
+         {
+          "lit": {
+           "second": 1000,
+           "minute": 60000,
+           "hour": 3600000
+          }
+         },
+         {
+          "var": "entities.1"
+         },
+         1000
+        ]
+       },
+       "expiry": {
+        "+": [
+         {
+          "clock.ms": []
+         },
+         {
+          "*": [
+           {
+            "var": "count"
+           },
+           {
+            "var": "unit_ms"
+           }
+          ]
+         }
+        ]
+       }
+      },
       "do": [
        {
         "remember": {
@@ -195,6 +237,7 @@
        },
        {
         "act": {
+         "name": "eb_timer_request",
          "args": [
           "1",
           {
@@ -204,8 +247,7 @@
             }
            ]
           }
-         ],
-         "name": "eb_timer_request"
+         ]
         }
        },
        {
@@ -236,110 +278,11 @@
        {
         "handled": true
        }
-      ],
-      "let": {
-       "count": {
-        "int": [
-         {
-          "var": "entities.0"
-         }
-        ]
-       },
-       "expiry": {
-        "+": [
-         {
-          "clock.ms": []
-         },
-         {
-          "*": [
-           {
-            "var": "count"
-           },
-           {
-            "var": "unit_ms"
-           }
-          ]
-         }
-        ]
-       },
-       "unit_ms": {
-        "get": [
-         {
-          "lit": {
-           "hour": 3600000,
-           "minute": 60000,
-           "second": 1000
-          }
-         },
-         {
-          "var": "entities.1"
-         },
-         1000
-        ]
-       }
-      }
+      ]
      }
     ]
    },
-   "clock_local": {
-    "hour": 15,
-    "iso": "2026-09-03T15:05:00",
-    "minute": 5,
-    "weekday": 3
-   },
-   "expected_effects": [
-    {
-     "key": "timers.1",
-     "kind": "remember",
-     "value": 1756900300000
-    },
-    {
-     "args": [
-      "1",
-      "1756900300000"
-     ],
-     "kind": "act",
-     "name": "eb_timer_request"
-    },
-    {
-     "kind": "say",
-     "markup": null,
-     "text": "Starting timer for 5 minutes"
-    }
-   ],
-   "expected_handled": true,
-   "explain": [
-    "Whenever this activity is triggered: remembers timers.1, asks Moxie to eb timer request, tells your child 'Starting timer for …' and answers without asking the AI."
-   ],
-   "facts": {
-    "child": {
-     "nickname": "Sam"
-    },
-    "entities": [
-     "5",
-     "minute"
-    ],
-    "input_vars": {},
-    "memory": {},
-    "presence": {
-     "face_present": false,
-     "line": ""
-    },
-    "scratch": {},
-    "session": {
-     "is_empty": true,
-     "overflow": false,
-     "total_volleys": 0
-    },
-    "speech": "set a timer for 5 minutes"
-   },
-   "grant_list": [
-    "Can ask Moxie to set or cancel a timer",
-    "Can check the time",
-    "Can answer on its own, without asking the AI",
-    "Can remember things from this activity",
-    "Can speak to your child"
-   ],
+   "p1": true,
    "grants": [
     "act.eb_timer_request",
     "child.nickname",
@@ -349,14 +292,73 @@
     "say",
     "session"
    ],
-   "name": "G2",
+   "facts": {
+    "speech": "set a timer for 5 minutes",
+    "entities": [
+     "5",
+     "minute"
+    ],
+    "input_vars": {},
+    "scratch": {},
+    "child": {
+     "nickname": "Sam"
+    },
+    "session": {
+     "total_volleys": 0,
+     "is_empty": true,
+     "overflow": false
+    },
+    "presence": {
+     "face_present": false,
+     "line": ""
+    },
+    "memory": {}
+   },
    "now_ms": 1756900000000,
-   "p1": true,
+   "clock_local": {
+    "hour": 15,
+    "minute": 5,
+    "weekday": 3,
+    "iso": "2026-09-03T15:05:00"
+   },
    "seed": 1,
-   "upstream": "MoxieTimers handle_volley (set)"
+   "name": "G2",
+   "expected_effects": [
+    {
+     "kind": "remember",
+     "key": "timers.1",
+     "value": 1756900300000
+    },
+    {
+     "kind": "act",
+     "name": "eb_timer_request",
+     "args": [
+      "1",
+      "1756900300000"
+     ]
+    },
+    {
+     "kind": "say",
+     "text": "Starting timer for 5 minutes",
+     "markup": null
+    }
+   ],
+   "expected_handled": true,
+   "explain": [
+    "Whenever this activity is triggered: remembers timers.1, asks Moxie to eb timer request, tells your child 'Starting timer for …' and answers without asking the AI."
+   ],
+   "grant_list": [
+    "Can ask Moxie to set or cancel a timer",
+    "Can check the time",
+    "Can answer on its own, without asking the AI",
+    "Can remember things from this activity",
+    "Can speak to your child"
+   ]
   },
   {
+   "upstream": "MoxieTimers handle_volley (status/cancel)",
    "ast": {
+    "ext_format": 1,
     "capabilities": [
      "act.eb_timer_request",
      "clock",
@@ -365,61 +367,22 @@
      "memory.write",
      "say"
     ],
-    "ext_format": 1,
     "on": "global",
     "rules": [
      {
-      "do": [
-       {
-        "say": {
-         "if": [
+      "when": {
+       "==": [
+        {
+         "lower": [
           {
-           ">": [
-            {
-             "len": [
-              {
-               "var": "parts"
-              }
-             ]
-            },
-            0
-           ]
-          },
-          {
-           "concat": [
-            "You have ",
-            {
-             "join": [
-              {
-               "var": "parts"
-              },
-              ", "
-             ]
-            },
-            " left."
-           ]
-          },
-          "That timer is already done."
+           "var": "entities.0"
+          }
          ]
-        }
-       },
-       {
-        "handled": true
-       }
-      ],
+        },
+        "status"
+       ]
+      },
       "let": {
-       "h": {
-        "floor": [
-         {
-          "/": [
-           {
-            "var": "left"
-           },
-           3600
-          ]
-         }
-        ]
-       },
        "left": {
         "max": [
          0,
@@ -444,6 +407,18 @@
          }
         ]
        },
+       "h": {
+        "floor": [
+         {
+          "/": [
+           {
+            "var": "left"
+           },
+           3600
+          ]
+         }
+        ]
+       },
        "m": {
         "floor": [
          {
@@ -459,6 +434,14 @@
            60
           ]
          }
+        ]
+       },
+       "s": {
+        "%": [
+         {
+          "var": "left"
+         },
+         60
         ]
        },
        "parts": {
@@ -567,16 +550,48 @@
           ]
          }
         ]
-       },
-       "s": {
-        "%": [
-         {
-          "var": "left"
-         },
-         60
-        ]
        }
       },
+      "do": [
+       {
+        "say": {
+         "if": [
+          {
+           ">": [
+            {
+             "len": [
+              {
+               "var": "parts"
+              }
+             ]
+            },
+            0
+           ]
+          },
+          {
+           "concat": [
+            "You have ",
+            {
+             "join": [
+              {
+               "var": "parts"
+              },
+              ", "
+             ]
+            },
+            " left."
+           ]
+          },
+          "That timer is already done."
+         ]
+        }
+       },
+       {
+        "handled": true
+       }
+      ]
+     },
+     {
       "when": {
        "==": [
         {
@@ -586,19 +601,17 @@
           }
          ]
         },
-        "status"
+        "cancel"
        ]
-      }
-     },
-     {
+      },
       "do": [
        {
         "act": {
+         "name": "eb_timer_request",
          "args": [
           "1",
           "0"
-         ],
-         "name": "eb_timer_request"
+         ]
         }
        },
        {
@@ -612,73 +625,11 @@
        {
         "handled": true
        }
-      ],
-      "when": {
-       "==": [
-        {
-         "lower": [
-          {
-           "var": "entities.0"
-          }
-         ]
-        },
-        "cancel"
-       ]
-      }
+      ]
      }
     ]
    },
-   "clock_local": {
-    "hour": 15,
-    "iso": "2026-09-03T15:05:00",
-    "minute": 5,
-    "weekday": 3
-   },
-   "expected_effects": [
-    {
-     "kind": "say",
-     "markup": null,
-     "text": "You have 1 hour, 2 minutes, 5 seconds left."
-    }
-   ],
-   "expected_handled": true,
-   "explain": [
-    "When part of what your child said (0) is 'status': tells your child 'You have … left. …' when a value it works out is more than 0, otherwise 'That timer is already done.' and answers without asking the AI.",
-    "When part of what your child said (0) is 'cancel': asks Moxie to eb timer request, forgets timers.1, tells your child 'Okay, I cancelled that timer.' and answers without asking the AI."
-   ],
-   "facts": {
-    "child": {
-     "nickname": "Sam"
-    },
-    "entities": [
-     "status"
-    ],
-    "input_vars": {},
-    "memory": {
-     "timers": {
-      "1": 1756903725000
-     }
-    },
-    "presence": {
-     "face_present": false,
-     "line": ""
-    },
-    "scratch": {},
-    "session": {
-     "is_empty": true,
-     "overflow": false,
-     "total_volleys": 0
-    },
-    "speech": "timer status"
-   },
-   "grant_list": [
-    "Can ask Moxie to set or cancel a timer",
-    "Can check the time",
-    "Can answer on its own, without asking the AI",
-    "Can read what it remembered from this activity",
-    "Can remember things from this activity",
-    "Can speak to your child"
-   ],
+   "p1": true,
    "grants": [
     "act.eb_timer_request",
     "child.nickname",
@@ -689,14 +640,65 @@
     "say",
     "session"
    ],
-   "name": "G3",
+   "facts": {
+    "speech": "timer status",
+    "entities": [
+     "status"
+    ],
+    "input_vars": {},
+    "scratch": {},
+    "child": {
+     "nickname": "Sam"
+    },
+    "session": {
+     "total_volleys": 0,
+     "is_empty": true,
+     "overflow": false
+    },
+    "presence": {
+     "face_present": false,
+     "line": ""
+    },
+    "memory": {
+     "timers": {
+      "1": 1756903725000
+     }
+    }
+   },
    "now_ms": 1756900000000,
-   "p1": true,
+   "clock_local": {
+    "hour": 15,
+    "minute": 5,
+    "weekday": 3,
+    "iso": "2026-09-03T15:05:00"
+   },
    "seed": 1,
-   "upstream": "MoxieTimers handle_volley (status/cancel)"
+   "name": "G3",
+   "expected_effects": [
+    {
+     "kind": "say",
+     "text": "You have 1 hour, 2 minutes, 5 seconds left.",
+     "markup": null
+    }
+   ],
+   "expected_handled": true,
+   "explain": [
+    "When part of what your child said (0) is 'status': tells your child 'You have … left. …' when a value it works out is more than 0, otherwise 'That timer is already done.' and answers without asking the AI.",
+    "When part of what your child said (0) is 'cancel': asks Moxie to eb timer request, forgets timers.1, tells your child 'Okay, I cancelled that timer.' and answers without asking the AI."
+   ],
+   "grant_list": [
+    "Can ask Moxie to set or cancel a timer",
+    "Can check the time",
+    "Can answer on its own, without asking the AI",
+    "Can read what it remembered from this activity",
+    "Can remember things from this activity",
+    "Can speak to your child"
+   ]
   },
   {
+   "upstream": "MoxieTimers pre_process + notify_handler",
    "ast": {
+    "ext_format": 1,
     "capabilities": [
      "handled",
      "markup",
@@ -704,10 +706,15 @@
      "say",
      "session"
     ],
-    "ext_format": 1,
     "on": "turn.before",
     "rules": [
      {
+      "when": {
+       "session.is_empty": []
+      },
+      "let": {
+       "line": "Ding ding ding! Your timer is done."
+      },
       "do": [
        {
         "scratch": {
@@ -723,6 +730,9 @@
         }
        },
        {
+        "say": {
+         "var": "line"
+        },
         "markup": {
          "concat": [
           {
@@ -735,78 +745,16 @@
            "var": "line"
           }
          ]
-        },
-        "say": {
-         "var": "line"
         }
        },
        {
         "handled": true
        }
-      ],
-      "let": {
-       "line": "Ding ding ding! Your timer is done."
-      },
-      "when": {
-       "session.is_empty": []
-      }
+      ]
      }
     ]
    },
-   "clock_local": {
-    "hour": 15,
-    "iso": "2026-09-03T15:05:00",
-    "minute": 5,
-    "weekday": 3
-   },
-   "expected_effects": [
-    {
-     "key": "fired_timer",
-     "kind": "scratch",
-     "value": "1"
-    },
-    {
-     "key": "timers.1",
-     "kind": "forget"
-    },
-    {
-     "kind": "say",
-     "markup": "<mark name=\"cmd:playaudio,data:{+SoundToPlay+:+sfx_twinkly_upbeat_stinger_1+,+LoopSound+:false,+channel+:2,+Volume+:1.0,+FadeInTime+:0.0,+FadeOutTime+:0.0}\"/><break time=\"1s\"/><mark name=\"cmd:playaudio,data:{+SoundToPlay+:+sfx_twinkly_upbeat_stinger_1+,+LoopSound+:false,+channel+:2,+Volume+:1.0,+FadeInTime+:0.0,+FadeOutTime+:0.0}\"/><break time=\"1s\"/><mark name=\"cmd:playaudio,data:{+SoundToPlay+:+sfx_twinkly_upbeat_stinger_1+,+LoopSound+:false,+channel+:2,+Volume+:1.0,+FadeInTime+:0.0,+FadeOutTime+:0.0}\"/><break time=\"1s\"/>Ding ding ding! Your timer is done.",
-     "text": "Ding ding ding! Your timer is done."
-    }
-   ],
-   "expected_handled": true,
-   "explain": [
-    "When the chat has just started: keeps fired_timer for the rest of this turn, forgets timers.1, tells your child 'Ding ding ding! Your timer is done.' and answers without asking the AI."
-   ],
-   "facts": {
-    "child": {
-     "nickname": "Sam"
-    },
-    "entities": [],
-    "input_vars": {
-     "eb_timer_id": "1"
-    },
-    "memory": {},
-    "presence": {
-     "face_present": false,
-     "line": ""
-    },
-    "scratch": {},
-    "session": {
-     "is_empty": true,
-     "overflow": false,
-     "total_volleys": 0
-    },
-    "speech": ""
-   },
-   "grant_list": [
-    "Can answer on its own, without asking the AI",
-    "Can make Moxie move and play sounds",
-    "Can remember things from this activity",
-    "Can speak to your child",
-    "Can tell how far into a chat you are"
-   ],
+   "p1": false,
    "grants": [
     "child.nickname",
     "handled",
@@ -815,24 +763,86 @@
     "say",
     "session"
    ],
-   "name": "G4",
+   "facts": {
+    "speech": "",
+    "entities": [],
+    "input_vars": {
+     "eb_timer_id": "1"
+    },
+    "scratch": {},
+    "child": {
+     "nickname": "Sam"
+    },
+    "session": {
+     "total_volleys": 0,
+     "is_empty": true,
+     "overflow": false
+    },
+    "presence": {
+     "face_present": false,
+     "line": ""
+    },
+    "memory": {}
+   },
    "now_ms": 1756900000000,
-   "p1": false,
+   "clock_local": {
+    "hour": 15,
+    "minute": 5,
+    "weekday": 3,
+    "iso": "2026-09-03T15:05:00"
+   },
    "seed": 1,
-   "upstream": "MoxieTimers pre_process + notify_handler"
+   "name": "G4",
+   "expected_effects": [
+    {
+     "kind": "scratch",
+     "key": "fired_timer",
+     "value": "1"
+    },
+    {
+     "kind": "forget",
+     "key": "timers.1"
+    },
+    {
+     "kind": "say",
+     "text": "Ding ding ding! Your timer is done.",
+     "markup": "<mark name=\"cmd:playaudio,data:{+SoundToPlay+:+sfx_twinkly_upbeat_stinger_1+,+LoopSound+:false,+channel+:2,+Volume+:1.0,+FadeInTime+:0.0,+FadeOutTime+:0.0}\"/><break time=\"1s\"/><mark name=\"cmd:playaudio,data:{+SoundToPlay+:+sfx_twinkly_upbeat_stinger_1+,+LoopSound+:false,+channel+:2,+Volume+:1.0,+FadeInTime+:0.0,+FadeOutTime+:0.0}\"/><break time=\"1s\"/><mark name=\"cmd:playaudio,data:{+SoundToPlay+:+sfx_twinkly_upbeat_stinger_1+,+LoopSound+:false,+channel+:2,+Volume+:1.0,+FadeInTime+:0.0,+FadeOutTime+:0.0}\"/><break time=\"1s\"/>Ding ding ding! Your timer is done."
+    }
+   ],
+   "expected_handled": true,
+   "explain": [
+    "When the chat has just started: keeps fired_timer for the rest of this turn, forgets timers.1, tells your child 'Ding ding ding! Your timer is done.' and answers without asking the AI."
+   ],
+   "grant_list": [
+    "Can answer on its own, without asking the AI",
+    "Can make Moxie move and play sounds",
+    "Can remember things from this activity",
+    "Can speak to your child",
+    "Can tell how far into a chat you are"
+   ]
   },
   {
+   "upstream": "MemoryChat post_process + complete_handler",
    "ast": {
+    "ext_format": 1,
     "capabilities": [
      "brain",
      "memory.read",
      "random",
      "say"
     ],
-    "ext_format": 1,
     "on": "turn.before",
     "rules": [
      {
+      "let": {
+       "pick": {
+        "random.pick": [
+         {
+          "var": "memory.summaries"
+         }
+        ]
+       }
+      },
       "do": [
        {
         "brain": {
@@ -865,71 +875,11 @@
          ]
         }
        }
-      ],
-      "let": {
-       "pick": {
-        "random.pick": [
-         {
-          "var": "memory.summaries"
-         }
-        ]
-       }
-      }
+      ]
      }
     ]
    },
-   "clock_local": {
-    "hour": 15,
-    "iso": "2026-09-03T15:05:00",
-    "minute": 5,
-    "weekday": 3
-   },
-   "expected_effects": [
-    {
-     "kind": "brain",
-     "prompt": "Greet the child warmly in one sentence, referring to this: a rainy walk"
-    },
-    {
-     "kind": "say",
-     "markup": null,
-     "text": "Last time we talked about a rainy walk."
-    }
-   ],
-   "expected_handled": false,
-   "explain": [
-    "Whenever this activity is triggered: asks the AI a question of its own and tells your child 'Last time we talked about …'."
-   ],
-   "facts": {
-    "child": {
-     "nickname": "Sam"
-    },
-    "entities": [],
-    "input_vars": {},
-    "memory": {
-     "summaries": [
-      "the dinosaur museum",
-      "a rainy walk",
-      "your new bike"
-     ]
-    },
-    "presence": {
-     "face_present": false,
-     "line": ""
-    },
-    "scratch": {},
-    "session": {
-     "is_empty": true,
-     "overflow": false,
-     "total_volleys": 0
-    },
-    "speech": ""
-   },
-   "grant_list": [
-    "Can ask the AI a question of its own",
-    "Can read what it remembered from this activity",
-    "Can pick things unpredictably",
-    "Can speak to your child"
-   ],
+   "p1": true,
    "grants": [
     "brain",
     "child.nickname",
@@ -939,31 +889,94 @@
     "say",
     "session"
    ],
-   "name": "G5",
+   "facts": {
+    "speech": "",
+    "entities": [],
+    "input_vars": {},
+    "scratch": {},
+    "child": {
+     "nickname": "Sam"
+    },
+    "session": {
+     "total_volleys": 0,
+     "is_empty": true,
+     "overflow": false
+    },
+    "presence": {
+     "face_present": false,
+     "line": ""
+    },
+    "memory": {
+     "summaries": [
+      "the dinosaur museum",
+      "a rainy walk",
+      "your new bike"
+     ]
+    }
+   },
    "now_ms": 1756900000000,
-   "p1": true,
+   "clock_local": {
+    "hour": 15,
+    "minute": 5,
+    "weekday": 3,
+    "iso": "2026-09-03T15:05:00"
+   },
    "seed": 7,
-   "upstream": "MemoryChat post_process + complete_handler"
+   "name": "G5",
+   "expected_effects": [
+    {
+     "kind": "brain",
+     "prompt": "Greet the child warmly in one sentence, referring to this: a rainy walk"
+    },
+    {
+     "kind": "say",
+     "text": "Last time we talked about a rainy walk.",
+     "markup": null
+    }
+   ],
+   "expected_handled": false,
+   "explain": [
+    "Whenever this activity is triggered: asks the AI a question of its own and tells your child 'Last time we talked about …'."
+   ],
+   "grant_list": [
+    "Can ask the AI a question of its own",
+    "Can read what it remembered from this activity",
+    "Can pick things unpredictably",
+    "Can speak to your child"
+   ]
   },
   {
+   "upstream": "MoxieGo pre_process + complete_handler",
    "ast": {
+    "ext_format": 1,
     "capabilities": [
      "act.eb_enable_qr",
      "handled",
      "say",
      "subscribe"
     ],
-    "ext_format": 1,
     "on": "turn.before",
     "rules": [
      {
+      "when": {
+       "==": [
+        {
+         "trim": [
+          {
+           "var": "speech"
+          }
+         ]
+        },
+        ""
+       ]
+      },
       "do": [
        {
         "act": {
+         "name": "eb_enable_qr",
          "args": [
           "true"
-         ],
-         "name": "eb_enable_qr"
+         ]
         }
        },
        {
@@ -977,21 +990,29 @@
        {
         "handled": true
        }
-      ],
-      "when": {
-       "==": [
-        {
-         "trim": [
-          {
-           "var": "speech"
-          }
-         ]
-        },
-        ""
-       ]
-      }
+      ]
      },
      {
+      "when": {
+       "and": [
+        {
+         "==": [
+          {
+           "var": "speech"
+          },
+          "eb-qr-event"
+         ]
+        },
+        {
+         "starts_with": [
+          {
+           "var": "input_vars.eb_qr_value"
+          },
+          "GO"
+         ]
+        }
+       ]
+      },
       "do": [
        {
         "say": {
@@ -1012,36 +1033,24 @@
        {
         "handled": true
        }
-      ],
-      "when": {
-       "and": [
-        {
-         "==": [
-          {
-           "var": "speech"
-          },
-          "eb-qr-event"
-         ]
-        },
-        {
-         "starts_with": [
-          {
-           "var": "input_vars.eb_qr_value"
-          },
-          "GO"
-         ]
-        }
-       ]
-      }
+      ]
      },
      {
+      "when": {
+       "==": [
+        {
+         "var": "speech"
+        },
+        "eb-qr-event"
+       ]
+      },
       "do": [
        {
         "act": {
+         "name": "eb_enable_qr",
          "args": [
           "true"
-         ],
-         "name": "eb_enable_qr"
+         ]
         }
        },
        {
@@ -1055,64 +1064,11 @@
        {
         "handled": true
        }
-      ],
-      "when": {
-       "==": [
-        {
-         "var": "speech"
-        },
-        "eb-qr-event"
-       ]
-      }
+      ]
      }
     ]
    },
-   "clock_local": {
-    "hour": 15,
-    "iso": "2026-09-03T15:05:00",
-    "minute": 5,
-    "weekday": 3
-   },
-   "expected_effects": [
-    {
-     "kind": "say",
-     "markup": null,
-     "text": "That card says dinosaur_quiz!"
-    }
-   ],
-   "expected_handled": true,
-   "explain": [
-    "When what your child said is an empty phrase: asks Moxie to eb enable qr, starts listening for something the robot notices, tells your child 'Show me a card and I will read it!' and answers without asking the AI.",
-    "When what your child said is 'eb-qr-event' and something the robot sent (eb_qr_value) starts with 'GO': tells your child 'That card says …' and answers without asking the AI.",
-    "When what your child said is 'eb-qr-event': asks Moxie to eb enable qr, starts listening for something the robot notices, tells your child 'Hmm, I did not know that one. Try another card!' and answers without asking the AI."
-   ],
-   "facts": {
-    "child": {
-     "nickname": "Sam"
-    },
-    "entities": [],
-    "input_vars": {
-     "eb_qr_value": "GOdinosaur_quiz"
-    },
-    "memory": {},
-    "presence": {
-     "face_present": false,
-     "line": ""
-    },
-    "scratch": {},
-    "session": {
-     "is_empty": true,
-     "overflow": false,
-     "total_volleys": 0
-    },
-    "speech": "eb-qr-event"
-   },
-   "grant_list": [
-    "Can turn Moxie's QR scanner on",
-    "Can answer on its own, without asking the AI",
-    "Can speak to your child",
-    "Can listen for things the robot notices"
-   ],
+   "p1": true,
    "grants": [
     "act.eb_enable_qr",
     "child.nickname",
@@ -1121,11 +1077,55 @@
     "session",
     "subscribe"
    ],
-   "name": "G6",
+   "facts": {
+    "speech": "eb-qr-event",
+    "entities": [],
+    "input_vars": {
+     "eb_qr_value": "GOdinosaur_quiz"
+    },
+    "scratch": {},
+    "child": {
+     "nickname": "Sam"
+    },
+    "session": {
+     "total_volleys": 0,
+     "is_empty": true,
+     "overflow": false
+    },
+    "presence": {
+     "face_present": false,
+     "line": ""
+    },
+    "memory": {}
+   },
    "now_ms": 1756900000000,
-   "p1": true,
+   "clock_local": {
+    "hour": 15,
+    "minute": 5,
+    "weekday": 3,
+    "iso": "2026-09-03T15:05:00"
+   },
    "seed": 1,
-   "upstream": "MoxieGo pre_process + complete_handler"
+   "name": "G6",
+   "expected_effects": [
+    {
+     "kind": "say",
+     "text": "That card says dinosaur_quiz!",
+     "markup": null
+    }
+   ],
+   "expected_handled": true,
+   "explain": [
+    "When what your child said is an empty phrase: asks Moxie to eb enable qr, starts listening for something the robot notices, tells your child 'Show me a card and I will read it!' and answers without asking the AI.",
+    "When what your child said is 'eb-qr-event' and something the robot sent (eb_qr_value) starts with 'GO': tells your child 'That card says …' and answers without asking the AI.",
+    "When what your child said is 'eb-qr-event': asks Moxie to eb enable qr, starts listening for something the robot notices, tells your child 'Hmm, I did not know that one. Try another card!' and answers without asking the AI."
+   ],
+   "grant_list": [
+    "Can turn Moxie's QR scanner on",
+    "Can answer on its own, without asking the AI",
+    "Can speak to your child",
+    "Can listen for things the robot notices"
+   ]
   }
  ]
 }

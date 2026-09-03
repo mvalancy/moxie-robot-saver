@@ -205,6 +205,9 @@ for name, row in ROWS.items():
     for line in row["explain"]:
         print("   ", line)
 
+# NOT sort_keys: `let` is an ORDERED map (§4.3) — each binding is visible to the ones
+# after it, so sorting the keys would silently reorder every program in this file. The
+# escape suite caught exactly that.
 doc = {
   "_comment": [
     "Conformance golden set for sandboxed content extensions (BEYOND #6 P0).",
@@ -219,5 +222,5 @@ doc = {
   "rows": out,
 }
 path = os.path.join(REPO, "sim", "tests", "data", "ext_conformance.json")
-open(path, "w").write(json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+open(path, "w").write(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
 print("wrote", path)
