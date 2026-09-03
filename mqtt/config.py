@@ -284,6 +284,32 @@ def _env_float(name, default):
 
 BRAIN_BUDGET_S = _env_float("MOXIE_BRAIN_BUDGET_S", 6.0)
 
+# --- sandboxed content extensions (BEYOND #6, docs/architecture/backlog/
+#     sandboxed-extensions.md §6.2) ---
+# An `extension` is a small, total, capability-scoped program a content pack may carry
+# (`moxie_sdk/content/ext.py`). These are its budget. Every default is chosen rather than
+# measured (the brief's assumption A7 is explicit about that), which is exactly why each
+# one is an env var: a week of `ext_events` on a real appliance is what settles them.
+EXT_MAX_STEPS = _env_int("MOXIE_EXT_MAX_STEPS", 10000)
+EXT_MAX_VALUE_BYTES = _env_int("MOXIE_EXT_MAX_VALUE_BYTES", 16384)
+EXT_MAX_TOTAL_BYTES = _env_int("MOXIE_EXT_MAX_TOTAL_BYTES", 262144)
+EXT_MAX_BREACHES = _env_int("MOXIE_EXT_MAX_BREACHES", 3)
+
+#: **Carved out of the turn, not added to it.** An extension gets a slice of a child's
+#: patience, not a claim on it: 0.25 s is 4 % of `BRAIN_BUDGET_S`, and if both the
+#: `global` and the `turn.before` hook run, 8 %. The assertion below is the honest part of
+#: that deal — a deployment that sets the extension budget above the turn budget has
+#: written a configuration in which an extension can eat the whole turn, and it fails at
+#: startup with a sentence rather than at 3 a.m. with a silent robot.
+EXT_BUDGET_S = _env_float("MOXIE_EXT_BUDGET_S", 0.25)
+
+if EXT_BUDGET_S >= BRAIN_BUDGET_S:
+    raise ValueError(
+        f"MOXIE_EXT_BUDGET_S ({EXT_BUDGET_S}s) must be strictly less than "
+        f"MOXIE_BRAIN_BUDGET_S ({BRAIN_BUDGET_S}s): an extension is a slice of the "
+        f"turn, not a claim on it. Lower MOXIE_EXT_BUDGET_S or raise "
+        f"MOXIE_BRAIN_BUDGET_S.")
+
 # --- streaming replies (a sentence at a time) ---
 # When the app can answer incrementally (MoxieApp.respond_stream), publish each finished
 # sentence as its own RemoteChatResponse chunk (result=REPLY_PENDING + chunk_num, closed
