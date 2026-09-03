@@ -155,6 +155,43 @@ browser at all and carry the hermetic suite CI actually runs.
   two-minute merge gate, and that both tiers install the same hermetic test deps —
   including the console's own `server/requirements.txt`, without which all 55
   `test_console_roundtrip.py` tests silently `importorskip` in CI, as they had been doing.
+- **`test_render_sandbox_parity.py`** — the *other* half of the content-renderer security
+  fix. `test_render_sandbox.py` proves eight escape probes come back inert; that says
+  nothing about whether `SandboxedEnvironment` broke a legitimate prompt, and the failure
+  would be silent by design (an unsafe attribute substitutes an undefined, which renders
+  as `""`). So the oracle here is the **pre-sandbox renderer itself**, transcribed from
+  `git show c584d3e^`: every Jinja-bearing string in `mqtt/content_modules/*.json` is
+  globbed at test time and must render byte-identically through both, under a populated
+  and an empty memory context, plus 27 documented constructs (dict-key access that only
+  resolves through `__getitem__`, `.items()`/`.get()` on known mutables, iteration over
+  the `FactList` list subclass, a `@property`, filters, `{% set %}`, whitespace control).
+  Output parity alone is not proof, so `render.BLOCKED` is asserted flat — a legitimate
+  template must never trip the counter. It also pins the renderer the **shipped
+  appliance** actually uses: `mqtt/requirements.txt` has no jinja2, so the container and a
+  bare wheel install take the `ImportError` branch, and one test records the known hole
+  there (`{% if %}` passes through verbatim) rather than letting it look like it works.
+- **`test_sil_durable_telemetry.py`** — the two claims about durable telemetry that no
+  fixture can establish. A second `MoxieRuntime` in the same interpreter proves the
+  hydration code path and nothing about durability, so this boots the real appliance
+  (`helpers_stack.Stack`), sends telemetry from a real paho robot, **kills the supervisor
+  process** (`Stack.restart_supervisor`), starts a new one over the same `MOXIE_DATA_DIR`
+  and reads the history back with the robot deliberately not reconnected — a history that
+  only reappears when the device re-announces itself is a cache. The `LoggingPolicy` gate
+  runs all three values against that *running* supervisor with the verdict read off
+  **disk**, not off an API that might be describing its intentions. The same stack then
+  drives the console's three formerly-lying endpoints: `wakeup` is asserted by a real MQTT
+  subscriber, `reboot` is a 501 that publishes nothing, `ota_status` returns the firmware
+  the robot itself sent. Named `test_sil_*` so a broker boot stays out of the tiers that
+  promise to report in seconds.
+- **`test_ci_test_coverage.py`** — the ratchet that stops "a green test nobody runs".
+  `test_ci_workflows.py` guards what the tiers *say*; this guards what they *cover*: every
+  `sim/test_*.mjs` and `sim/run_*.sh` must be named by some `sim/ci/*.yml` step, and every
+  flag a `run_*.sh` declares in its own `case` arms must be too — a referenced file is not
+  a covered harness. `KNOWN_UNRUN` / `KNOWN_UNRUN_MODES` carry the current gaps
+  (`test_ambient.mjs`, `test_presence_bridge.mjs`, `run_acl_proof.sh`, and
+  `run_smoke.sh --telehealth`), each with a date, and are asserted from **both** sides so
+  the lists can only shrink: an unlisted unreferenced file fails, and so does a listed one
+  that has since been wired in or deleted.
 - **`test_live_telehealth_voice.py`** — 🎭 the operator's line in Moxie's *real* mouth.
   `run_smoke.sh --telehealth` proves the recovered wire but speaks with the zero-dep tone,
   so what the robot played was a beep. This boots the same appliance `helpers_stack.py`
