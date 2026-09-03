@@ -23,15 +23,20 @@ work down:
 
 ## The briefs
 
-| Brief | Audit items | Effort | State |
+| Brief | Audit items | Effort | State — live, 2026-09-03 |
 |---|---|:--:|---|
-| [`expressiveness.md`](expressiveness.md) | **ADOPT #3** — the markup floor (§1) · **BEYOND #1** — the behavior planner (§2) | M → L | §1 shipped · §2 ready to build |
-| [`security-broker-auth.md`](security-broker-auth.md) | **§3.1 Robot identity / JWT** — broker ACL (P0), device credentials (P1), spoof-proofing (P2) | M · M · S | ready to build |
-| [`telehealth.md`](telehealth.md) | **ADOPT #7** — puppet / telehealth: the command path and the "Be Moxie" console panel | M | ready to build |
-| [`content-packs.md`](content-packs.md) | **ADOPT #5** — content packs: a versioned, digest-checked pack file; export from a positive field allowlist; import-with-review whose per-item state tracks `source_version` **and** local edits, so an upstream re-import never clobbers | S/M · S/M | **P0** (headless: pure module + store + five routes + a live reload) ready to build; **P1** the 📦 console card |
-| [`voice-picker.md`](voice-picker.md) | 🎚️ Speech + Listening dropdowns in the console — pick from the gateway's real audio models and the installed local engines; default `piper-amy` / `stt-whisper`; explicit local always wins | build-ready (2026-09-02); after the STT + telehealth slices land |
-| [`live-sim-demo.md`](live-sim-demo.md) | 🌐 **The headline goal** — the hosted Moxie Sim alive on a static edge: three same-origin Cloudflare Pages Functions (brain · voice · ears) behind hard caps, demo-mode only, degrading to the pre-cached scripted Moxie when the gateway is unconfigured, over budget, at capacity or down | build-ready (2026-09-02); P0 is one sitting |
-| [`sandboxed-extensions.md`](sandboxed-extensions.md) | **BEYOND #6** — sandboxed content extensions: a pack that can *do* something (count, check the clock, remember a score) without trusting its author. A declarative rule list over a total JSON-AST expression language — no `exec`, no parser, no loops, no reachable host object — behind a declared capability set the parent reads in plain English at import review | S/M · M · L | build-ready (2026-09-02); **P0 is one sitting**, and its first commit is a security fix `dev` needs anyway (§2.6) |
+| [`expressiveness.md`](expressiveness.md) | **ADOPT #3** — the markup floor (§1) · **BEYOND #1** — the behavior planner (§2) | M → L | §1 🟢 shipped 2026-09-02 · §2 🟢 **build-ready** (audit §4.4 **#4**) |
+| [`security-broker-auth.md`](security-broker-auth.md) | **§3.1 Robot identity / JWT** — broker ACL (P0), device credentials (P1), spoof-proofing (P2) | M · M · S | P0 🟢 **shipped 2026-09-02 (PR #44)** — `test_broker_acl.py` (30) + `run_acl_proof.sh`. P1/P2 ⛔ **blocked on A1–A4**, which need a physical robot (audit §4.4 #5) |
+| [`telehealth.md`](telehealth.md) | **ADOPT #7** — puppet / telehealth: the command path and the "Be Moxie" console panel | M | 🟢 **shipped 2026-09-02 (PR #43)** — `test_telehealth*.py`, 110 tests |
+| [`content-packs.md`](content-packs.md) | **ADOPT #5** — content packs: a versioned, digest-checked pack file; export from a positive field allowlist; import-with-review whose per-item state tracks `source_version` **and** local edits, so an upstream re-import never clobbers | S/M · S/M | 🟢 **shipped 2026-09-02 (PR #51) — P0 *and* P1**; hardened 2026-09-03 (PR #78). 160 tests |
+| [`voice-picker.md`](voice-picker.md) | 🎚️ Speech + Listening dropdowns in the console — pick from the gateway's real audio models and the installed local engines; default `piper-amy` / `stt-whisper`; explicit local always wins | S/M | 🟢 **shipped 2026-09-02 (PR #48)**; corrected 2026-09-03 (PR #77 — an explicit `MOXIE_TTS`/`MOXIE_STT` **pins** the engine, so *"explicit local always wins"* is enforced, not merely intended) |
+| [`live-sim-demo.md`](live-sim-demo.md) | 🌐 **The headline goal** — the hosted Moxie Sim alive on a static edge: three same-origin Cloudflare Pages Functions (brain · voice · ears) behind hard caps, demo-mode only, degrading to the pre-cached scripted Moxie when the gateway is unconfigured, over budget, at capacity or down | M | 🟡 **P0-a + P0-b shipped 2026-09-02 (PR #54, #61); the ears (PR #66) and the fallback voice (PR #69) 2026-09-03.** The rest of P1 is 🟢 **build-ready** and ranked **#1** in the audit. This page keeps its own state current — read its §10 ledger, not this cell |
+| [`sandboxed-extensions.md`](sandboxed-extensions.md) | **BEYOND #6** — sandboxed content extensions: a pack that can *do* something (count, check the clock, remember a score) without trusting its author. A declarative rule list over a total JSON-AST expression language — no `exec`, no parser, no loops, no reachable host object — behind a declared capability set the parent reads in plain English at import review | S/M · M · L | 🟡 **its §2.6 security fix shipped alone (PR #56 → #62 → #78)**; **§3-onward is 🟢 build-ready**, P0 ≈ one sitting, ranked **#2** in the audit. Its first commit is no longer a security fix — that is done |
+
+> **Why this table is dated.** On 2026-09-03 two build agents were briefed off stale status markers and
+> each lost a full run to work that had already merged. Four of the seven rows above said *"ready to
+> build"* for something already shipped. **When a brief ships, flip its state here and in the audit in
+> the same PR** — and prefer naming the test over naming the PR, because a test is checkable.
 
 ## House rules
 
