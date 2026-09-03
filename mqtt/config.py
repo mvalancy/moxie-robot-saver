@@ -1,12 +1,49 @@
 """Runtime configuration for the Moxie robot-cloud supervisor.
 All local-first; override via environment variables or a git-ignored `mqtt/.env`
-(see .env.example — never commit real endpoints/keys)."""
+(see .env.example — never commit real endpoints/keys).
+"""
 import os
 
+#: Falsy spellings, shared by every switch in this file.
+_OFF = ("", "0", "off", "false", "no")
 
-def _load_env():
-    """Load KEY=VALUE lines from mqtt/.env into the environment (no dependency)."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+#: The two switches for the dotenv loader itself. They are read from the ENVIRONMENT and
+#: nowhere else, because a file cannot carry the flag that decides whether it is read.
+#:
+#: `MOXIE_SKIP_DOTENV=1` makes a present `mqtt/.env` invisible. It exists because the file
+#: is loaded with `setdefault` at import, which is exactly right for an appliance and
+#: exactly wrong for a test: a suite that simulates "nothing is configured" by deleting a
+#: variable and reloading this module had it **refilled from the file**, so on any machine
+#: that has a real `mqtt/.env` those tests asserted nothing. `.env` is git-ignored, so CI
+#: and every git worktree never saw it and the whole class was invisible (orchestration
+#: playbook rule 20). The flag is the smallest thing that makes "unset" mean unset.
+#:
+#: `MOXIE_DOTENV=/path/to/file` reads that file instead of `mqtt/.env`. An injectable path
+#: alone could not have fixed the above — `importlib.reload(config)` calls `_load_env()`
+#: with no arguments — but it is what lets the loader be tested against a real dotenv file
+#: without going near a developer's own `mqtt/.env`, and it lets a deployment keep its
+#: configuration outside the checkout.
+_SKIP_DOTENV = "MOXIE_SKIP_DOTENV"
+_DOTENV_PATH = "MOXIE_DOTENV"
+
+
+def _truthy(name: str) -> bool:
+    """An environment switch that is set to anything but a falsy spelling."""
+    return os.environ.get(name, "").strip().lower() not in _OFF
+
+
+def _load_env(path=None):
+    """Load KEY=VALUE lines from a dotenv file into the environment (no dependency).
+
+    Returns the file it used, or None when it loaded nothing. The existing environment
+    always wins (`setdefault`), so an explicit variable beats the file — and
+    `MOXIE_SKIP_DOTENV` beats both, including an explicitly passed `path`, because the
+    whole point of the flag is "this process must see no file at all".
+    """
+    if _truthy(_SKIP_DOTENV):
+        return None
+    path = (path or os.environ.get(_DOTENV_PATH, "").strip()
+            or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
     try:
         with open(path) as fh:
             for line in fh:
@@ -16,10 +53,11 @@ def _load_env():
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
     except FileNotFoundError:
-        pass
+        return None
+    return path
 
 
-_load_env()
+DOTENV_LOADED = _load_env()
 
 # --- broker ---
 MQTT_HOST = os.environ.get("MOXIE_MQTT_HOST", "127.0.0.1")   # supervisor→broker (loopback)
