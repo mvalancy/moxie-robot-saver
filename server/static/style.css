@@ -254,3 +254,15 @@ button.linkish.mem-arm{opacity:1;color:#c0392b;font-weight:700}
 #content-packs{font-size:12px;margin:6px 0 0}
 #content-packs:empty{display:none}
 #content-status{font-size:12px;min-height:16px}
+
+/* 🎬 Rehearsal — the behavior planner's preview panel. One row per beat: the words, and
+   the marks that beat plays. A dropped id is red on purpose: an author must be able to
+   see that something they asked for will NOT play, rather than watch nothing happen. */
+.pv-beats{margin:10px 0 6px;display:flex;flex-direction:column;gap:4px}
+.pv-beat{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:baseline;
+         padding:5px 8px;border-radius:6px;background:rgba(127,127,127,.08)}
+.pv-beat .pv-words{font-style:italic}
+.pv-beat .pv-tags{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+                  opacity:.75;text-align:right}
+.pv-head{font-size:12px;opacity:.8;margin-bottom:2px}
+.pv-dropped{color:#c0392b;font-weight:600}
