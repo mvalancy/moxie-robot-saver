@@ -1,5 +1,5 @@
 {
- "generated": "docs-fa25ecdca0ef",
+ "generated": "docs-a40e04238a67",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 107465,
+   "bytes": 112817,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -394,7 +394,7 @@
    "path": "architecture/backlog/expressiveness.md",
    "title": "Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)",
    "section": "architecture",
-   "bytes": 49456,
+   "bytes": 52152,
    "mermaid": 1,
    "headings": [
     "Why this is the next slice",
