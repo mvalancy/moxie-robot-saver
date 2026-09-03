@@ -29,6 +29,40 @@ drives the same API live from MQTT when a broker + supervisor are connected.
 | `bridge.js` | MQTT→avatar bridge: subscribes to the bus and drives `window.moxie` from live `remote-chat`/markup/motor traffic — including `/commands/tts` (the server voice) |
 | `audio.js` | sound: UI SFX, the pre-cached/Piper/browser voices, and **`playCloudTTS`** — decodes the server's `CloudTTSResponse` (base64 raw 16-bit PCM) and plays it with mouth lip-sync |
 | `style.css` | mission-control HUD skin (dark void + cyan telemetry, per [docs/design/style-guide.md](../../docs/design/style-guide.md)) |
+| `mode.js` | what this deployment can actually DO: polls same-origin `GET /api/health` ([`../../functions/api/health.js`](../../functions/api/health.js)) and publishes `window.moxieMode` — `live` / `degraded` / `offline`, the reason, the capacity signal and the poll schedule ([spec §6.3/§7](../../docs/architecture/backlog/live-sim-demo.md)) |
+| `env.js` | the honest indicator: paints the env badge, the capacity pill, the `needs-backend` marks and the hosted banner **from the mode**, not from the hostname. Renders correctly before `mode.js` answers, and with `mode.js` absent |
+| `_headers` | Cloudflare Pages cache policy **and** the site's security headers (`/api/*` `no-store`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, a CSP whose `connect-src 'self'` is the real control) |
+
+## What this deployment can do (`mode.js` + `window.moxieMode`)
+
+The page used to decide everything from the **hostname**: any non-local host was assumed
+to have no backend, so every visitor was told *"hosted demo — only pre-scripted lines have
+audio"* whether it was true or not, and it never re-checked. Now `mode.js` asks one
+same-origin route and `env.js` paints the answer.
+
+| state | when | what the visitor gets |
+|---|---|---|
+| `offline` | `/api/health` is not there at all — a fork with no Pages Functions, a plain CDN, `file://`, a 404 | **Byte-identical to the site as it shipped**: `HOSTED DEMO`, stub + clips, and nothing is polled again this session |
+| `degraded` | the route exists and answered honestly — nothing configured, over budget, or the brain is unreachable | The same page, plus the reason on screen: a badge suffix and a pill. `gateway_not_configured` keeps today's exact copy and fires exactly **one** request |
+| `live` | a brain is configured and reachable | `HOSTED DEMO · LIVE`, and the page stops claiming the mic needs a locally-run server, because with a same-origin route that claim is false |
+
+`window.moxieMode` exposes `state()`, `reason()`, `badge()`, `message()`, `load()`,
+`limits()`, `voice()`, `ears()`, `apiBase()`, `canSpendLiveTurn()`, `note()`,
+`noteTransportError()`, `snapshot()`, `onChange()`, `refresh()` and `stats()`. The poll
+schedule is `Retry-After` when the server sent one, otherwise 30 s doubling to a 5-minute
+ceiling and resetting on success; it never polls while `document.hidden`.
+
+Two things it deliberately does **not** do. It never claims `LIVE` until something is
+loaded that can use a live mode (`cloud-transport.js`, which sets
+`window.moxieCloudTransport`) — painting LIVE over a page that still answers from
+`stub.js` is the exact dishonesty the module exists to remove. And `#bus-connect` keeps
+its `needs-backend` mark in **every** mode: a real robot's MQTT broker genuinely is not
+available here, and no same-origin route can change that.
+
+Contract and configuration:
+[docs/architecture/backlog/live-sim-demo.md](../../docs/architecture/backlog/live-sim-demo.md);
+the routes: [`functions/`](../../functions/README.md); tests: `sim/test_mode.mjs` +
+`sim/test_env_hosted.mjs`.
 
 ## The server voice (`CloudTTSResponse`)
 

@@ -1,3 +1,34 @@
+# ---------------------------------------------------------------------------
+# Security headers (spec: docs/architecture/backlog/live-sim-demo.md §4.7).
+#
+# This file used to be pure cache policy. A page with no credentialed endpoint can shrug
+# at that; a page that can SPEND MONEY through a same-origin /api/* route cannot. These
+# rules set no Cache-Control at all, so they cannot disturb the cache ordering the rest
+# of the file relies on (later rules win — see the note at the bottom).
+#
+# `connect-src 'self'` is the strongest control here and the reason the CSP earns its
+# place: no script on this page can ship anything to a third-party host. It costs nothing
+# real — every dependency is vendored locally, and the MQTT Link panel already cannot work
+# from an https:// page (bridge.js hardcodes ws://, which a secure page may not open), so
+# a self-hoster's broker was never reachable from a Pages deployment anyway.
+#
+# WHAT IS DELIBERATELY *NOT* HERE, and this is not an oversight. §4.7 sketches
+# `default-src 'self'` — but `script-src` and `style-src` fall back to `default-src`, and
+# this site has inline <script> blocks (sim.html, docs.html, index.html), an inline
+# importmap, inline `onclick=` handlers (docs.html, cloud.html) and inline `style=`
+# attributes. `default-src 'self'` with no `'unsafe-inline'` would therefore BREAK the
+# docs explorer and the HUD glue — and §4.7's own instruction is "do not ship a CSP that
+# breaks the site to look thorough". The directives below are the subset that is
+# verifiably safe for this bundle: no page uses <base>, <object>/<embed> or any iframe,
+# and no page loads a subresource from another origin (only anchor hrefs and the canonical
+# links point off-site). The nonce/hash pass that lets `script-src 'self'` land is P1, and
+# it must be verified on a preview deploy before it ships.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: microphone=(self), camera=(), geolocation=()
+  Content-Security-Policy: connect-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'
+
 # HTML — always revalidate so a redeploy's new asset references show up immediately.
 /
   Cache-Control: no-cache
@@ -26,6 +57,8 @@
   Cache-Control: no-cache
 /env.js
   Cache-Control: no-cache
+/mode.js
+  Cache-Control: no-cache
 
 # Rendered imagery + docs bundle — short cache so overwrites propagate fast.
 /img/*
@@ -46,6 +79,18 @@
   Cache-Control: public, max-age=86400
 
 # Vendored libraries + fonts — content-addressed, safe to cache for a year.
-# (Listed LAST so it wins for vendored .js over the no-cache rules above.)
+# (Listed AFTER the no-cache rules so it wins for vendored .js. The /api/* block below
+#  sets no Cache-Control for these paths, so it cannot disturb that.)
 /vendor/*
   Cache-Control: public, max-age=31536000, immutable
+
+# The Pages Functions (functions/api/*). LISTED LAST so `no-store` wins over anything
+# above: a cached mode, a cached refusal or a cached capacity signal is a lie with a TTL,
+# and `Referrer-Policy: same-origin` keeps the visited page's URL off any request the
+# route makes. The route itself also sets these headers (functions/api/_lib/envelope.js) —
+# belt and braces, because whether `_headers` applies to a Function response at all is
+# not something this repo can establish without a real deploy.
+/api/*
+  Cache-Control: no-store
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: same-origin

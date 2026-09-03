@@ -285,20 +285,83 @@ def delete_robot(rid: str, rfs: str = Query(None), authorization: str = Header(N
     return Response(status_code=204)
 
 
+# --- device actions: the three endpoints that used to report success for nothing -----
+# `wakeup` and `reboot` both returned `{"error": null}` while publishing nothing, and
+# `ota_status` returned a hard-coded `{"status": "up_to_date"}`. A parent pressed a
+# button, the UI said it worked, and nothing happened. Each was re-decided from our own
+# recovered corpus; the reasoning and the citations live next to `UNSUPPORTED_ACTIONS` /
+# `ota_status_view` in `fleet.py`, so the "why" cannot drift away from the code.
+
+def _robot_record(rid: str, user_id: str) -> dict:
+    """This user's robot record attributes, or `{}` when it is not theirs."""
+    row = db.q1("SELECT * FROM robots WHERE id=? AND user_id=?", (rid, user_id))
+    return json.loads(row["attributes"]) if row else {}
+
+
 @app.post("/api/robots/{rid}/wakeup")
 def wakeup(rid: str, authorization: str = Header(None)):
-    _token(authorization); return {"error": None}
+    """Wake a sleeping Moxie — for real, now: the supervisor publishes the recovered
+    `wakeup` command (`{"command":"wakeup"}` on `/devices/{id}/commands/wakeup`,
+    `mqtt-and-conversation.md` §3.5) at the robot behind this record.
+
+    The reply keeps the original API's `error` field, but it is now earned: `null` only
+    when the command actually left the appliance, and a readable string (with a 4xx/5xx)
+    when it did not. `acknowledged` is always false — the recovered protocol has no
+    acknowledgement for this command, so "it was published" is the strongest true claim
+    available and the console says exactly that."""
+    from urllib.parse import quote
+    from .fleet import resolve_device_id
+    u = _token(authorization)
+    attrs = _robot_record(rid, u["id"])
+    device_id, how = resolve_device_id(attrs, _fetch_status())
+    if not device_id:
+        return JSONResponse(status_code=409, content={
+            "error": "no robot on the broker", "ok": False, "published": False,
+            "resolved_by": how,
+            "reason": ("This robot has not connected to this appliance yet."
+                       if how == "none" else
+                       "Several robots are connected and this record does not say which "
+                       "one it is — wake it from the fleet panel instead.")})
+    out, code = _supervisor_post(f"/wakeup?device_id={quote(device_id)}", {})
+    out = dict(out or {})
+    out["resolved_by"] = how
+    out["error"] = None if (code == 200 and out.get("published")) else (
+        out.get("error") or f"supervisor returned {code}")
+    if code == 200 and out.get("published"):
+        return out
+    return JSONResponse(status_code=code if code >= 400 else 502, content=out)
 
 
 @app.post("/api/robots/{rid}/reboot")
 def reboot(rid: str, authorization: str = Header(None)):
-    _token(authorization); return {"error": None}
+    """**501, honestly.** No cloud→robot reboot command has been recovered from the
+    robot's firmware: `STATE_SILENT_REBOOT` is a value of Moxie's own on-device power
+    state machine and `ShutdownRequest`/`SystemShutdown` are events it *emits*, so
+    nothing establishes that a cloud-injected one is honored or what it would have to
+    carry (`docs/reverse-engineering/protocol/power-and-system-events.md`).
+
+    Guessing a payload at a child's robot to make a button feel real is not a trade we
+    make. The body says why and the console renders the button as unavailable."""
+    from .fleet import unsupported_action
+    _token(authorization)
+    body = unsupported_action("reboot")
+    return JSONResponse(status_code=501, content=body)
 
 
 @app.get("/api/robots/{rid}/ota_status")
 def ota_status(rid: str, authorization: str = Header(None)):
-    _token(authorization)
-    return {"status": "up_to_date", "version": None}
+    """What we actually know about this robot's firmware — never `"up_to_date"`.
+
+    This appliance serves no `api/ota` (`cloud-protocol.md`:45), so "there is no newer
+    build" is not a claim it is in a position to make. What the recovered protocol does
+    give us is what the robot reports up in `RobotStatus`: its firmware version and
+    `ota_reboot_required`. That is what this returns, with a note saying so."""
+    from .fleet import ota_status_view, resolve_device_id
+    u = _token(authorization)
+    attrs = _robot_record(rid, u["id"])
+    snap = _fetch_status()
+    device_id, _how = resolve_device_id(attrs, snap)
+    return ota_status_view(snap, device_id)
 
 
 @app.post("/api/robots/{rid}/set-language")
@@ -580,16 +643,18 @@ async def set_fleet_permits(request: Request):
 
 
 @app.get("/local/robots/{device_id}/telemetry")
-def robot_telemetry(device_id: str, limit: int = 20):
-    """Parent-console insights (M6): the robot's stored telemetry Packets, fetched from
-    the supervisor's GET /telemetry and normalized for the UI (counts by event + the
-    newest events). Server-side call so the browser has no CORS issue; graceful
-    {ok:false} when the supervisor is down or the device is unknown."""
+def robot_telemetry(device_id: str, limit: int = 20, days: int = 7):
+    """Parent-console insights (M6): the robot's telemetry, fetched from the supervisor's
+    GET /telemetry and normalized for the UI — counts by event, the newest events, and
+    (since telemetry became durable) `days` of daily history from the store plus the
+    retention window and privacy policy behind it. Server-side call so the browser has no
+    CORS issue; graceful {ok:false} when the supervisor is down or the device is unknown."""
     import urllib.request, urllib.error
     from urllib.parse import quote
     from .fleet import normalize_telemetry
     url = (STATUS_URL.rsplit("/status", 1)[0] +
-           f"/telemetry?device_id={quote(device_id)}&limit={int(limit)}")
+           f"/telemetry?device_id={quote(device_id)}&limit={int(limit)}"
+           f"&days={max(0, int(days))}")
     try:
         with urllib.request.urlopen(url, timeout=3) as r:
             return normalize_telemetry(json.loads(r.read().decode()))
@@ -1094,6 +1159,13 @@ async def simulate_robot_scan(request: Request):
         res, code = _supervisor_post("/permits", {
             "device_id": device_id, "permitted": True, "label": "paired via console"})
         out["device_id"] = device_id
+        # Remember the MQTT identity on the record: it is the only moment the two halves
+        # of the system are both in hand (the QR carries no device id), and every later
+        # device command — `wakeup`, `ota_status` — needs `d_<uuid>`, not this record's
+        # id. `fleet.resolve_device_id` reads it back.
+        robot_attrs["mqtt-device-id"] = device_id
+        db.ex("UPDATE robots SET attributes=? WHERE id=?",
+              (json.dumps(robot_attrs), rid))
         out["permitted"] = bool(code == 200 and res.get("ok"))
         if not out["permitted"]:
             out["permit_error"] = res.get("error") or f"supervisor returned {code}"

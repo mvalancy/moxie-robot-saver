@@ -54,6 +54,14 @@ jobs:
             -r server/requirements.txt
           python3 -m pytest sim/tests -q -k "not test_sil and not test_docs" \
             --ignore=sim/tests/test_live_gateway.py
+      - name: Mode machine + honest indicator (Pages Functions imported under bare node)
+        # Runs HERE, immediately after the hermetic pytest and long before anything
+        # downloads a browser, for the same reason that step moved up: a red mode machine
+        # has to report inside the window a merge gate actually waits. It needs no
+        # Cloudflare account, no network and no browser — functions/api/*.js are ES
+        # modules called with a plain object as context.env. Guarded by
+        # sim/tests/test_ci_workflows.py.
+        run: node sim/test_mode.mjs
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
       - name: Bridge markup→avatar unit test

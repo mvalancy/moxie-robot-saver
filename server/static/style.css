@@ -108,6 +108,19 @@ footer a{color:var(--brand)}
 .evlog .ev:last-child{border-bottom:0}
 .evlog .ev span{color:var(--muted);white-space:nowrap}
 .evlog .ev b{font-weight:600;word-break:break-word}
+/* The 📈 card's week: one column per calendar day, zero-filled by the runtime, so a
+   quiet day is a short bar rather than a missing one. No chart library — the bar height
+   is the day's share of the busiest day, computed in `fleet.normalize_history`. */
+.tweek{display:flex;align-items:flex-end;gap:4px;height:64px;margin:10px 0 4px;
+  padding:0 2px}
+.tweek .tday{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+  align-items:center;gap:3px;height:100%}
+.tweek .tbar{width:100%;min-height:2px;border-radius:4px 4px 0 0;background:var(--brand);
+  opacity:.85}
+.tweek .tday.zero .tbar{background:var(--line);opacity:1}
+.tweek .tlabel{font-size:10px;color:var(--muted);white-space:nowrap}
+.tweek .tnum{font-size:10px;font-weight:700}
+.tnote{color:var(--muted);font-size:11px;margin:6px 0 0;line-height:1.5}
 
 /* --- safety review queue (ai-seam §2 InputSafety) --- */
 .safety-hd{font-weight:700;font-size:13px;margin-bottom:8px;color:var(--brand);

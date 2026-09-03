@@ -108,17 +108,32 @@ try {
   async function open(path, w, h) {
     const p = await browser.newPage();
     await p.setViewport({ width: w, height: h });
-    const errors = [];
-    p.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
-    p.on("pageerror", (e) => errors.push("pageerror: " + e.message));
+    const raw = [], notFound = [];
+    p.on("console", (m) => { if (m.type() === "error") raw.push(m.text()); });
+    p.on("pageerror", (e) => raw.push("pageerror: " + e.message));
+    p.on("response", (r) => { if (r.status() === 404) notFound.push(r.url()); });
     await p.goto(base + "/" + path, { waitUntil: "domcontentloaded", timeout: 30000 });
-    return { p, errors };
+    // Chrome logs a 404 SUBRESOURCE as a console error, and `sim/web/mode.js` probes the
+    // OPTIONAL same-origin capability route `/api/health` on every load. `sim/serve.py`
+    // is a static server with no Pages Functions behind it, so that probe 404s — which
+    // is the `offline` path working exactly as designed (spec
+    // docs/architecture/backlog/live-sim-demo.md §6.3: an absent route means the page
+    // stays byte-identical to the pre-Functions site). The guard was too coarse, not the
+    // code: it treated any console error as a broken page, including a capability
+    // probe's expected miss. So that one line is separated out PRECISELY — by
+    // correlating the console text with the 404 responses actually observed — and any
+    // other missing asset still fails, because it lands in `notFound` too.
+    const errors = () => {
+      const onlyProbe = notFound.length > 0 && notFound.every((u) => /\/api\/health\b/.test(u));
+      return raw.filter((t) => !(onlyProbe && /status of 404/.test(t)));
+    };
+    return { p, errors, notFound, raw };
   }
   const noHScroll = (p) => p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
   // ---- SIMULATOR across every viewport ----
   for (const [label, w, h] of VIEWPORTS) {
-    const { p, errors } = await open("sim.html", w, h);
+    const { p, errors, notFound } = await open("sim.html", w, h);
     // wait for the WebGL app to come up
     await p.evaluate(() => new Promise((r) => {
       if (window.moxie) return r();
@@ -147,7 +162,9 @@ try {
         innerW: window.innerWidth,
       };
     });
-    ok(errors.length === 0, `[sim ${label}] console errors: ${errors.slice(0, 2).join(" | ")}`);
+    ok(errors().length === 0, `[sim ${label}] console errors: ${errors().slice(0, 2).join(" | ")}`);
+    ok(notFound.every((u) => /\/api\/health\b/.test(u)),
+       `[sim ${label}] the only 404 may be the mode probe: ${JSON.stringify(notFound)}`);
     ok(await noHScroll(p), `[sim ${label}] page scrolls horizontally`);
     ok(s.moxieReady, `[sim ${label}] window.moxie API did not initialise`);
     ok(s.canvasFull, `[sim ${label}] 3D canvas does not fill the viewport`);
@@ -183,9 +200,11 @@ try {
   // ---- other surfaces: phone + desktop, no h-scroll + no errors ----
   for (const path of ["", "setup.html", "cloud.html", "docs.html"]) {
     for (const [label, w, h] of [["phone", 390, 844], ["desktop", 1440, 900]]) {
-      const { p, errors } = await open(path, w, h);
+      const { p, errors, notFound } = await open(path, w, h);
       await new Promise((r) => setTimeout(r, 1200));
-      ok(errors.length === 0, `[${path || "hub"} ${label}] console errors: ${errors.slice(0, 2).join(" | ")}`);
+      ok(errors().length === 0, `[${path || "hub"} ${label}] console errors: ${errors().slice(0, 2).join(" | ")}`);
+      ok(notFound.every((u) => /\/api\/health\b/.test(u)),
+         `[${path || "hub"} ${label}] the only 404 may be the mode probe: ${JSON.stringify(notFound)}`);
       ok(await noHScroll(p), `[${path || "hub"} ${label}] page scrolls horizontally`);
       await p.close();
     }

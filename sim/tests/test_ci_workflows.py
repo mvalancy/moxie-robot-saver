@@ -181,6 +181,60 @@ def test_the_early_hermetic_step_installs_protobuf(fast):
 
 
 # --------------------------------------------------------------------------- #
+# The headless node tests are actually WIRED — a test CI never runs is not a test
+# --------------------------------------------------------------------------- #
+#: The node tests that guard what the hosted static site TELLS A VISITOR.
+#: `test_mode.mjs` is the mode machine and the Pages Functions behind it (spec
+#: docs/architecture/backlog/live-sim-demo.md §6.3/§7); `test_env_hosted.mjs` is the
+#: rendered page in every one of those modes. Both are hermetic — no Cloudflare account,
+#: no network, and `test_env_hosted.mjs` skips cleanly with no browser — so there is no
+#: excuse for either to be missing from the fast tier.
+STATIC_SITE_NODE_TESTS = ("sim/test_mode.mjs", "sim/test_env_hosted.mjs")
+
+
+def _node_steps(job: dict) -> list:
+    """(index, script) for every `node sim/<file>.mjs` invocation in the job."""
+    out = []
+    for i, step in enumerate(_steps(job)):
+        for token in (step.get("run") or "").split():
+            if token.startswith("sim/test_") and token.endswith(".mjs"):
+                out.append((i, token))
+    return out
+
+
+@pytest.mark.parametrize("script", STATIC_SITE_NODE_TESTS)
+def test_the_fast_tier_runs_the_static_site_honesty_tests(fast, script):
+    scripts = [s for _, s in _node_steps(fast["jobs"]["sil"])]
+    assert script in scripts, (
+        f"{script} is not run by the fast tier; the honest-indicator contract would be "
+        f"unproven on every push. Wired scripts: {scripts}")
+
+
+def test_every_node_test_the_fast_tier_names_actually_exists(fast):
+    """A rename or a typo in a `run:` line fails the job with "Cannot find module", which
+    reads as a broken runner rather than as a broken workflow. Cheap to assert here."""
+    missing = [s for _, s in _node_steps(fast["jobs"]["sil"])
+               if not os.path.exists(os.path.join(REPO, s))]
+    assert not missing, missing
+
+
+def test_the_mode_machine_test_reports_before_a_two_minute_merge_gate_can_open(fast):
+    """Same reasoning as the early-pytest guard above, for the same window. The mode test
+    is hermetic and takes about a second; running it behind the ~3-minute browser install
+    would mean a red mode machine surfaces minutes after a script could have merged it."""
+    steps = _steps(fast["jobs"]["sil"])
+    mode = next((i for i, s in enumerate(steps)
+                 if "sim/test_mode.mjs" in (s.get("run") or "")), None)
+    browser = next((i for i, s in enumerate(steps)
+                    if "playwright install" in (s.get("run") or "")), None)
+    assert mode is not None, "the fast tier no longer runs sim/test_mode.mjs"
+    assert browser is not None, "the sil job no longer installs a browser (update this guard)"
+    assert mode < browser, (
+        f"sim/test_mode.mjs (step #{mode + 1}) runs after the browser install "
+        f"(#{browser + 1}); a hermetic failure would take minutes to surface")
+
+
+# --------------------------------------------------------------------------- #
 # The deep tier's event conditionals are the documented exception
 # --------------------------------------------------------------------------- #
 def test_the_only_event_conditionals_in_the_deep_tier_are_the_dispatch_only_live_tiers():

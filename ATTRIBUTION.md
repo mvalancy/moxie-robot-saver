@@ -14,6 +14,12 @@ robot-cloud layer builds on its groundwork:
 - the real Embodied **protobuf schemas** and the MQTT topic/message protocol,
 - the **`automarkup`** text→behavior (expressiveness) engine,
 - the **endpoint/migration QR** relocation mechanism and mosquitto TLS setup,
+- the **cloud→robot command names**, including the `wakeup` command our console's *Wake up* button
+  publishes (`{"command":"wakeup"}` on `/devices/{id}/commands/wakeup`). We learned the name and the
+  payload from their command table, recorded it in
+  [`mqtt-and-conversation.md` §3.5](docs/architecture/mqtt-and-conversation.md), and wrote our own
+  publisher against that doc — no code was copied, and where their table establishes nothing (a
+  remote **reboot**) we refuse the action rather than invent one,
 - the conversation **volley** model, scheduler, and content-module concepts,
 - the **shareable content pack and its `source_version` upgrade rule** — the idea that authored content
   (conversations, globals, schedules) travels as one JSON file, that each record carries an
@@ -79,6 +85,20 @@ robot-cloud layer builds on its groundwork:
   `maxIntensity=2`, not a 0.0-1.0 float), the operator's line goes through **our safety classifier and
   the parent's journal**, and a blocked line is **refused back to the operator with its reason** rather
   than silently rewritten. No code was copied.
+- the **executable content hook** — the idea that a content module can carry *behaviour* keyed to a
+  trigger, not just a prompt: a `METHOD` global whose matched regex runs authored code
+  (`models.py::GlobalAction.METHOD` + `mqtt/global_responses.py::MethodPattern.create_response`) and a
+  conversation whose `code` field is harvested for the named hooks `pre_process`, `post_process`,
+  `complete_handler` and `notify_handler` (`mqtt/conversations.py::SinglePromptDBChatSession`). Both are
+  `exec()`d with the module's own `globals()`, which is the right call for a server whose operator *is*
+  the author — and the very thing that stops working the moment content is shareable. We keep the
+  **concept and the hook vocabulary** and reject the mechanism: their nine shipped hooks
+  (`content_modules/MoxieTime`, `MoxieTimers`, `MemoryChat`, `MoxieGo` at commit
+  `c8c2d380efd37d2e83761957587f5d08f73b3a63`) were read as a **requirements corpus** — none of them
+  iterates — and hand-ported into a declarative rule list over a total JSON-AST expression language with
+  no `exec`, no host objects and a declared capability set, specified in
+  [`docs/architecture/backlog/sandboxed-extensions.md`](docs/architecture/backlog/sandboxed-extensions.md).
+  Not one line of their code is in this tree; the ported *behaviours* are credited here.
 
 > When we vendor any OpenMoxie source into this repo, its MIT `LICENSE` and copyright notice are
 > included alongside it (see `mqtt/` third-party notices as that code lands). Nothing here is a
