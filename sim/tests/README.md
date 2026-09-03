@@ -155,6 +155,46 @@ browser at all and carry the hermetic suite CI actually runs.
   two-minute merge gate, and that both tiers install the same hermetic test deps —
   including the console's own `server/requirements.txt`, without which all 55
   `test_console_roundtrip.py` tests silently `importorskip` in CI, as they had been doing.
+- **`test_ext_escapes.py`** — X1–X12, the escape suite for [sandboxed content
+  extensions](../../docs/architecture/backlog/sandboxed-extensions.md) (BEYOND #6). Its own file,
+  apart from the behaviour tests, because a reviewer asking *"can a stranger's content pack hurt
+  this appliance?"* should be able to read one file and get an answer. No op or path can name an
+  import or a dunder and the op/statement/fact-root sets are **frozen literals** (so a new operator
+  takes a test edit and a reviewer); the fact base the host builds is plain JSON all the way down,
+  so an attribute walk has nothing to walk to; no loop, recursion or function construct exists in
+  the grammar at all; the step, wall-clock, per-value and total-allocation budgets each fail their
+  op and return; 10 000-deep nesting is a **load refusal**, never a `RecursionError`; the evaluator
+  imports no clock and no entropy (parsed with `ast`) and the same seed replays byte for byte; ten
+  Unicode homoglyph tricks are refused as capabilities **and** as operators — normalize-and-*check*,
+  never normalize-and-use, because `ｍemory.write` folds *to* `memory.write`; no other namespace and
+  no other child; capability mismatch is a load refusal in both directions; effects are
+  all-or-nothing; and extensions build no regex, so `MAX_PATTERN_CHARS` still governs (the residual
+  risk is named rather than claimed away). X3 fences the appliance's *other* execution surface —
+  six jinja2 template-injection probes, run **both** as shipped and with jinja2 forced absent, so
+  neither renderer is left unfenced and neither shape skips.
+  Its companion is [`../tools/ext_mutation_check.py`](../tools/README.md), which deletes each of 28
+  guards in turn and requires the matching test to go red — 28/28 caught. Two were **not** caught on
+  the first run, and both were real: the dunder probes were being refused for an undeclared
+  capability rather than by the guard under test, and the total-allocation cap was shadowed by the
+  per-value cap. A test that passes for the wrong reason is a test that will pass after the guard is
+  deleted.
+- **`test_ext.py`** — T1–T18, the other two questions: *does the language express what content
+  authors actually wrote?* and *does a broken one leave the child with a working robot?* All six
+  OpenMoxie hooks reproduce their goldens from
+  [`data/ext_conformance.json`](data/README.md) byte for byte (four `xfail(strict)` until the
+  `RemoteChatAction` wire lands, with their grammar asserted valid **today**); 100 runs at a fixed
+  injected clock and seed give one answer, and moving the clock moves it. A poisoned `on: global`
+  falls through to the conversation and a poisoned `turn.before` lets the model answer — the child
+  hears no error text — nothing is half-written, and three breaches quarantine with **one**
+  `ext_events` entry rather than four. A pack round-trips with an extension inside; a
+  capability escalation defaults un-ticked across the whole five-row matrix; flipping one operator
+  breaks the digest so the review ticks nothing. `explain()` leaks no JSON and **no capability
+  identifier** (checked on word boundaries, so an author's "that card says" is not mistaken for the
+  `say` capability), and every capability has parent-facing words. Under `NO_DATA` the write is
+  dropped at the store and the extension still speaks. And the shipped `What Time Is It` activity
+  answers end to end **with no model call** — while an imported look-alike carrying a *different*
+  program gets only the four default grants and falls through, which is the point of anchoring the
+  shipped grant to the program's bytes rather than to its key.
 - **`test_render_sandbox_parity.py`** — the *other* half of the content-renderer security
   fix. `test_render_sandbox.py` proves eight escape probes come back inert; that says
   nothing about whether `SandboxedEnvironment` broke a legitimate prompt, and the failure

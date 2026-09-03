@@ -1,5 +1,20 @@
 # 🧬 Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)
 
+> ### ✅ P0 SHIPPED — 2026-09-03
+>
+> Built as specified, at [`mqtt/moxie_sdk/content/ext.py`](../../../mqtt/moxie_sdk/content/ext.py),
+> behind [`sim/tests/test_ext_escapes.py`](../../../sim/tests/test_ext_escapes.py) (X1–X12) and
+> [`sim/tests/test_ext.py`](../../../sim/tests/test_ext.py) (T1–T18) — 150 tests — plus
+> [`sim/tools/ext_mutation_check.py`](../../../sim/tools/ext_mutation_check.py), which removes each
+> of 28 guards in turn and requires its test to go red (28/28 caught). All six §8 hooks are
+> hand-ported into [`ext_conformance.json`](../../../sim/tests/data/ext_conformance.json); G1 ships
+> as a real activity. **Three places this document was followed with a stated deviation** — §9's X9
+> key list (see that test's docstring), §5's grant mechanism for the shipped G1 (a digest-anchored
+> `SHIPPED_EXTRA_GRANTS`, so acceptance criterion 5's default set stays exactly four), and §4.2's
+> `clock.local`, which is an operator returning a map rather than a `{"var"}` root. Everything
+> marked *"Not in P0, deliberately"* in §11 stayed out. **The rest of this page is the design as
+> written, and is deliberately unedited** — it is the argument, not the changelog.
+>
 > **Backlog brief v1 · 2026-09-02.** The build document for
 > [OpenMoxie feature audit](../openmoxie-feature-audit.md) **§4.2 BEYOND #6** — *"Their `METHOD` globals
 > and conversation `code` fields are `exec()` with a 10-second timeout — powerful, and un-shareable. A
