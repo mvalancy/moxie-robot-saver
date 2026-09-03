@@ -1,5 +1,5 @@
 {
- "generated": "docs-da891b2f34c5",
+ "generated": "docs-ed3cec123029",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1362,6 +1362,156 @@
     "Cross-validation",
     "Caveats"
    ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/README.md",
+   "title": "embodied`",
+   "section": "reverse-engineering",
+   "bytes": 728,
+   "mermaid": 0,
+   "headings": [
+    "Subfolders"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/launcher/README.md",
+   "title": "launcher`",
+   "section": "reverse-engineering",
+   "bytes": 491,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/lizzerface/README.md",
+   "title": "lizzerface`",
+   "section": "reverse-engineering",
+   "bytes": 909,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/logging/README.md",
+   "title": "logging`",
+   "section": "reverse-engineering",
+   "bytes": 1512,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/README.md",
+   "title": "perception`",
+   "section": "reverse-engineering",
+   "bytes": 314,
+   "mermaid": 0,
+   "headings": [
+    "Subfolders"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/audio/README.md",
+   "title": "audio`",
+   "section": "reverse-engineering",
+   "bytes": 1250,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/fusion/README.md",
+   "title": "fusion`",
+   "section": "reverse-engineering",
+   "bytes": 586,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/vision/README.md",
+   "title": "vision`",
+   "section": "reverse-engineering",
+   "bytes": 1673,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/playspace/README.md",
+   "title": "playspace`",
+   "section": "reverse-engineering",
+   "bytes": 591,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/robotbrain/README.md",
+   "title": "robotbrain`",
+   "section": "reverse-engineering",
+   "bytes": 3972,
+   "mermaid": 0,
+   "headings": [
+    "Subfolders"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/robotbrain/serialized/README.md",
+   "title": "serialized`",
+   "section": "reverse-engineering",
+   "bytes": 757,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/system/README.md",
+   "title": "system`",
+   "section": "reverse-engineering",
+   "bytes": 891,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/telehealth/README.md",
+   "title": "telehealth`",
+   "section": "reverse-engineering",
+   "bytes": 564,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/testing/README.md",
+   "title": "testing`",
+   "section": "reverse-engineering",
+   "bytes": 523,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/unity/README.md",
+   "title": "unity`",
+   "section": "reverse-engineering",
+   "bytes": 2746,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/wifiapp/README.md",
+   "title": "wifiapp`",
+   "section": "reverse-engineering",
+   "bytes": 860,
+   "mermaid": 0,
+   "headings": [],
    "kind": "md"
   },
   {
