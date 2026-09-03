@@ -35,6 +35,20 @@
  */
 
 /* ---------------------------------------------------------------------------- *
+ * The gateway URL
+ * ---------------------------------------------------------------------------- */
+
+/** `base` + `/path`, tolerant of a trailing slash on the base.
+ *
+ *  It lives here rather than in a route so that BOTH routes build the upstream URL the
+ *  same way and neither has to import the other. `base` is `DEMO_GATEWAY_BASE_URL`, which
+ *  §4.2 forbids the browser from ever seeing: this function's output goes into `fetch()`
+ *  and nowhere else — never into a response body, a header or an error string. */
+export function joinUrl(base, path) {
+  return String(base).replace(/\/+$/, "") + "/" + String(path).replace(/^\/+/, "");
+}
+
+/* ---------------------------------------------------------------------------- *
  * Topics and ids
  * ---------------------------------------------------------------------------- */
 
