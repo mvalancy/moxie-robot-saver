@@ -13,6 +13,32 @@ the layered session loops work from. The technical spec of *what* we're building
 | 2 | **Scrape OpenMoxie for all of its best features** — [OpenMoxie](https://github.com/jbeghtol/openmoxie) (MIT, jbeghtol) is the canonical revival; we credit it and port what's better than ours | the ADOPT list in [`openmoxie-feature-audit.md`](openmoxie-feature-audit.md), burned down |
 | 3 | **Take it 10 levels beyond** — the "ghost in the shell": any AI becomes Moxie; a platform, not a patch (see [`vision.md`](vision.md), [`moxie-as-a-platform.md`](moxie-as-a-platform.md)) | the BEYOND list in the audit + our own roadmap, shipped behind the same contracts + tests |
 
+### 🎯 The headline goal (owner, 2026-09-02 evening) — outcome 1's public face
+
+**A live, hosted Moxie Sim that is actually alive.** `moxie.mattvalancy.com` (Cloudflare Pages, static)
+runs the full SIL loop with the full cloud experience — a real brain, real TTS and real STT through an
+OpenAI-compatible gateway — as a **demo-mode** experience: a visitor gets the whole thing and can nuke
+nothing. Non-negotiables, in the owner's words and our reading of them:
+
+| Requirement | What it means here |
+|---|---|
+| Real AI, real voice, real ears | brain + `/audio/speech` + `/audio/transcriptions` reach a live gateway |
+| **Reasonable token limits** | per-request `max_tokens`, per-visitor and global ceilings — the demo can never run up a bill |
+| **Cloudflare must not hammer our server** | per-IP and global rate limits at the edge, with an honest 429/503 |
+| A **Cloudflare-locked token** for the site | the key lives in a Cloudflare secret binding and is used only by a same-origin Function; the browser never sees it, and the origin is pinned |
+| **Demo mode** | no destructive or stateful writes are reachable from the public page |
+| **Fallback to the old Sim mode** | gateway offline / over budget / at capacity → pre-scripted, pre-cached speech + ambient self-talk, with an honest indicator |
+| **Capacity indicator** | when too many visitors are on, the page says so plainly instead of failing |
+| **The repo is public** | *any* Moxie sim and *any* OpenAI-compatible gateway must work by configuration — no hostname, key or account id is hard-coded; Cloudflare/GitHub secrets carry the rest |
+
+Spec in progress at `backlog/live-sim-demo.md`. Nothing about this goal may hard-code
+`gateway.graphlings.net` or `moxie.mattvalancy.com`: those are deployment config.
+
+### Model policy (owner, 2026-09-02)
+
+**Opus 5 does most of the work; Fable 5.1 is for planning and the genuinely hard parts.** Implementation
+slices go to Opus agents; contract-level specs, tricky debugging and architecture calls may use Fable.
+
 OpenMoxie is **MIT and explicitly in scope to study**. The clean-room rule is unchanged for the *vendor
 Android app* (never read it or its decompiled output) — it does **not** apply to OpenMoxie.
 

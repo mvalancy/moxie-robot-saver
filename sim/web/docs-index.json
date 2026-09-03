@@ -1,5 +1,5 @@
 {
- "generated": "docs-67ab35a45cc8",
+ "generated": "docs-6672625130bc",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -127,10 +127,12 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 51272,
+   "bytes": 53305,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
+    "The headline goal (owner, 2026-09-02 evening) — outcome 1's public face",
+    "Model policy (owner, 2026-09-02)",
     "How work happens",
     "Workstreams (the backlog agents draw from)",
     "Integration playbook (learned 2026-09-02, day one — apply every time)",
