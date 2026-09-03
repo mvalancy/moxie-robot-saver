@@ -130,19 +130,33 @@ a shared counter, so under real concurrency the true limits are the per-request 
 structural property, and a budget-scoped key at your gateway. Exact counters need durable storage and
 are not built.
 
-## 5. What only a real deploy can settle
+## 5. What a real deploy settled — and what is still open
 
-The highest-risk unknown, and it **fails safe**:
+**Settled 2026-09-03 on a branch preview, which any pull request publishes automatically.** These
+were the document's open questions; two of the three are now answered, and you can re-check them
+yourself on any PR's preview URL with the `curl` in §4.
 
 > **Does Pages route `functions/` from the repo root when the build output directory is `sim/web`?**
-> Cloudflare has no "functions directory" setting, and `functions/` at the repo root is the documented
-> convention — but this repo cannot prove it. If the answer is no, the routes 404, `mode.js` reads
-> that as `offline`, and you get today's static demo. Nothing breaks; the live half simply never
-> appears.
+> **Yes.** `GET /api/health` on a branch preview returned HTTP 200 `application/json` with
+> `{"reason":"gateway_not_configured","mode":"degraded"}`. This was the highest-risk unknown — the
+> failure mode would have been a silently 404-serving static site — and it is closed.
 
-Also unverified from inside the repo: the Functions wall-clock and request-body limits on your plan,
-whether Production and Preview variables are truly separate (they are documented to be), and the
-free-tier request allowance.
+> **Is `functions/api/_lib/` exposed?** **No.** `GET /api/_lib/env.js` returns the site's static HTML
+> fallback, not module source and not a route. Note it answers **200 with HTML**, not 404, so anything
+> testing for "route missing" must check the content type rather than the status code.
+
+> **Does `sim/web/_headers` apply to an `/api/*` response?** **No — and this one mattered.** The same
+> preview served `/sim.html` with the `/*` block's `Referrer-Policy` (so `_headers` works) and served
+> `/api/health` with **no `Referrer-Policy` at all**. The only headers a Function carries are the ones
+> `functions/api/_lib/envelope.js` sets in code. The `/api/*` block in `_headers` is kept as
+> documentation but has **no effect**; `Referrer-Policy` was moved into `envelope.js`, and a test now
+> fails if the two ever disagree. **If you add a security header for the API, add it in the code.**
+
+Still unverified from inside the repo, and each needs your dashboard or a deliberate experiment: the
+Functions wall-clock and request-body limits on your plan; the free-tier request allowance; and
+whether Production and Preview variables are truly separate — the preview is keyless *today*, but so
+is Production, so that is not yet a proof. Check it with one `curl` of a preview **after** you set
+Production-only variables, because **every branch push publishes a public preview**.
 
 ## 6. After deploying: which mode am I in?
 

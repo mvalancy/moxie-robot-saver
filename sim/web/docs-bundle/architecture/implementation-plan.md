@@ -112,30 +112,23 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   worked around: `sim/tests/.venv` was missing `paho-mqtt`, `jinja2`, `PyYAML` and `numpy`, so a parity test
   failed and the live-turn test *skipped* for a reason that had nothing to do with credentials.
 
-- **the hosted mode machine is proven hermetically and in a real browser, but three things
-  need one Cloudflare preview deploy (2026-09-02).** `sim/test_mode.mjs` calls the Pages
-  Functions directly under bare node and `sim/test_env_hosted.mjs` drives the real rendered
-  page through offline/degraded/live/busy/malformed in Chrome — but nothing in this repo can
-  establish **where `functions/` must live** for a project whose `pages_build_output_dir` is
-  `sim/web` (spec [`backlog/live-sim-demo.md`](backlog/live-sim-demo.md) §10 assumption 8, the
-  highest-risk unknown in that document), whether Pages excludes `api/_lib/` from routing
-  (assumption 9), or whether `sim/web/_headers` applies to a Function response at all. All
-  three fail *safe*: an unrouted Function 404s, and `mode.js` reads a 404 as `offline`, which
-  is the site exactly as it shipped. Settle them with one preview `curl` and record the
-  answers in §10. **P0-b (the live turn) lands under the same caveat and adds two of its
-  own:** its per-IP, concurrency and unit-budget counters are best-effort **in-process**, so
-  they stop scripts and accidents but are *not* a hard global ceiling (a Worker isolate is
-  not a shared counter — §4.6 says so and so does the code comment; the real ceilings are
-  the per-request caps, the ticket, and a budget-scoped gateway key). **One of the two is
-  already settled, and the deploy is what settled it (2026-09-03):** a Pages build does NOT
-  accept the `import ... with { type: "json" }` attribute `_lib/safety.js` used for its rule
-  table — the Pages check failed on the branch while the identical check was green on `dev`,
-  invisible to all 1637 hermetic tests because node accepts the syntax. The table is now a
-  plain `.js` data module, the `.json` is deleted, and a guard fails locally on any `.json`
-  import under `functions/` (spec §10 assumption 26). A second, unrelated CI honesty note found while wiring this slice:
-  `sim/test_ambient.mjs` and `sim/test_presence_bridge.mjs` are run by **no** tier — both
-  pass locally today, so nothing is broken, but two green tests nobody executes are not
-  evidence.
+- **the hosted mode machine is proven hermetically, in a real browser, and now ON A REAL DEPLOY
+  (2026-09-03) — two of its three unknowns are closed.** `sim/test_mode.mjs` calls the Pages Functions
+  directly under bare node and `sim/test_env_hosted.mjs` drives the real rendered page through
+  offline/degraded/live/busy/malformed in Chrome. What the repo could not establish, a **branch preview**
+  answered — and no owner was needed, because every branch push already publishes one: **Pages does route
+  `functions/` from the repo root** even though `pages_build_output_dir` is `sim/web` (spec
+  [`backlog/live-sim-demo.md`](backlog/live-sim-demo.md) §10 assumption 8, the highest risk in that
+  document — `GET /api/health` returned 200 JSON `gateway_not_configured`), and **`api/_lib/` is not
+  routed or readable** (assumption 9; it serves the static HTML fallback, so probe by content type, not
+  status). The third is settled the *other* way and it mattered: **`sim/web/_headers` does not apply to a
+  Function response at all** (new assumption 27) — the same preview served `/sim.html` with the `/*`
+  block's `Referrer-Policy` and `/api/health` with none, so §4.7's security block never protected
+  `/api/*`. `Referrer-Policy` now lives in `envelope.js`, where the only headers that actually ship are
+  set, and `sim/test_demo_proxy.mjs` fails if any header named in the `/api/*` block is missing from the
+  code. **Still open, and honestly so:** the plan's wall-clock/body limits, the free-tier allowance, and
+  whether Production and Preview variables are truly separate — the preview is keyless today, but so is
+  Production, so that proves nothing until the owner sets Production-only values.
 
 - **the degraded page now has a voice for every line it can utter — and three places are
   still silent, named rather than rounded off (2026-09-03).** `sim/test_fallback_coverage.mjs`
