@@ -1,5 +1,5 @@
 {
- "generated": "docs-b0e9148197d8",
+ "generated": "docs-0ca1baa2c3ff",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -1139,23 +1139,23 @@
   },
   {
    "path": "guides/deploy-cloudflare.md",
-   "title": "Deploying the SIL to Cloudflare Pages",
+   "title": "Deploying the Moxie Sim to Cloudflare Pages",
    "section": "guides",
-   "bytes": 9919,
+   "bytes": 10190,
    "mermaid": 0,
    "headings": [
-    "TL;DR",
-    "1. Deploy the static bundle",
-    "Easiest: point Cloudflare Pages at this repo (no build step)",
+    "The one thing to understand first",
+    "1. Deploy it",
+    "Point Cloudflare Pages at the repo",
     "CLI alternative",
-    "2. Pre-cache the audio (both sides of the conversation)",
-    "Robot side (Moxie's lines) — Piper, at build time",
-    "Child side (the \"user\" turns) — also pre-rendered",
-    "Pre-warming",
-    "3. Optional: keep the live features on Cloudflare",
-    "4. What to configure per-environment",
-    "5. How the stubs work (and how the real server plugs in)",
-    "6. Honest limits"
+    "2. What the static demo actually does",
+    "3. Make it live: the minimum configuration",
+    "Set them on Production only",
+    "Before you paste a key",
+    "4. The caps, and why they exist",
+    "5. What only a real deploy can settle",
+    "6. After deploying: which mode am I in?",
+    "7. What still does not work"
    ],
    "kind": "md"
   },
