@@ -695,7 +695,14 @@ function bootMic(o) {
    * the fake AudioContext below feeds `encodeWav` a synthesised tone. No device is ever
    * opened, and `MediaRecorder` throws if anything tries to construct a real one. */
   const gum = [];
-  globalThis.navigator = {
+  // `Object.defineProperty`, not assignment: `globalThis.navigator` became a
+  // **getter-only** accessor in Node 21, so `globalThis.navigator = …` throws
+  // `TypeError: Cannot set property navigator of #<Object> which has only a getter`.
+  // Local Node 20 accepts the assignment and CI runs Node 24, so this passed here and
+  // failed there — the same shape as the Pages JSON-import finding (rule 19): a runtime
+  // difference between where a test runs and where it is validated.
+  // `sim/tests/test_node_global_stubs.py` now fails on the assignment form.
+  Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: {
     mediaDevices: {
       getUserMedia: (c) => {
         gum.push(c);
@@ -704,7 +711,7 @@ function bootMic(o) {
           : Promise.resolve({ getTracks: () => [{ stop() {} }] });
       },
     },
-  };
+  } });
   globalThis.MediaRecorder = function () { throw new Error("a test must never construct a real MediaRecorder"); };
   const audioCtx = { closed: false, processors: [] };
   globalThis.window = globalThis.window || {};
