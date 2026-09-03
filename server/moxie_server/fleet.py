@@ -721,3 +721,222 @@ def normalize_voice(payload: Optional[dict]) -> dict:
         }
     except Exception as e:                      # a card must never be a 500
         return {**empty, "error": f"unreadable voice payload: {e}"}
+
+
+# --- 📦 content packs (docs/architecture/backlog/content-packs.md) --------------------
+# Content stops being a file in our repository: a pack is one JSON file a parent can be
+# handed, review before it changes anything, and undo afterwards. These three normalizers
+# keep the same defensive contract as `normalize_schedule_view` — they never raise, and a
+# payload they cannot read renders as `{ok: False, error: …}` with an empty-but-renderable
+# view, so the card shows the REASON rather than a blank list that reads as "no content".
+#
+# Dependency-free of the supervisor package on purpose: this module is imported by the
+# console process, which does not have `mqtt/` on its path, so the review states are
+# re-stated here rather than imported from `moxie_sdk.content.packs`. `test_fleet.py` and
+# the console round trip diff these shapes against the real runtime.
+
+#: The review states, in the order the card sorts them: things to do first, then noise.
+CONTENT_STATES = ("conflict", "downgrade_conflict", "new", "upgrade", "fork",
+                  "downgrade", "keep_local", "same", "invalid")
+
+#: The three decisions a parent can make per row in the 📦 review table.
+CONTENT_DECISIONS = ("accept", "keep", "skip")
+
+
+def normalize_content_item(entry: Optional[dict]) -> dict:
+    """One inventory row: what it is, where it came from, and what to warn about."""
+    e = entry if isinstance(entry, dict) else {}
+    warnings = e.get("warnings")
+    pii = e.get("pii")
+    return {
+        "id": str(e.get("id") or ""),
+        "kind": str(e.get("kind") or ""),
+        "key": str(e.get("key") or ""),
+        "name": str(e.get("name") or e.get("key") or ""),
+        "source_version": int(_num(e.get("source_version")) or 1),
+        "origin": str(e.get("origin") or ""),
+        "pack_id": str(e.get("pack_id") or ""),
+        "imported_at": int(_num(e.get("imported_at")) or 0),
+        "local_edited": bool(e.get("local_edited")),
+        "has_code": bool(e.get("has_code")),
+        "warnings": [str(w) for w in warnings] if isinstance(warnings, (list, tuple)) else [],
+        "pii": [{"field": str((h or {}).get("field") or ""),
+                 "name": str((h or {}).get("name") or "")}
+                for h in pii if isinstance(h, dict)] if isinstance(pii, (list, tuple)) else [],
+    }
+
+
+def normalize_content_view(payload: Optional[dict]) -> dict:
+    """Runtime `GET /content` → the 📦 card's shape: inventory, ledger, undo."""
+    empty = {"ok": False, "items": [], "packs": [], "counts": {},
+             "undo_available": False, "undo_label": "", "max_bytes": 0,
+             "pack_format": 0, "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        raw_items = p.get("items")
+        raw_packs = p.get("packs")
+        counts = p.get("counts") if isinstance(p.get("counts"), dict) else {}
+        ok = bool(p.get("ok"))
+        return {
+            "ok": ok,
+            "items": [normalize_content_item(i)
+                      for i in (raw_items if isinstance(raw_items, (list, tuple)) else [])
+                      if isinstance(i, dict)],
+            "packs": [normalize_pack_row(r)
+                      for r in (raw_packs if isinstance(raw_packs, (list, tuple)) else [])
+                      if isinstance(r, dict)],
+            "counts": {str(k): int(_num(v) or 0) for k, v in counts.items()},
+            "undo_available": bool(p.get("undo_available")),
+            "undo_label": str(p.get("undo_label") or ""),
+            "max_bytes": int(_num(p.get("max_bytes")) or 0),
+            "pack_format": int(_num(p.get("pack_format")) or 0),
+            "error": None if ok else (p.get("error") or p.get("reason")
+                                      or "no content available"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable content payload: {e}"}
+
+
+def normalize_pack_row(entry: Optional[dict]) -> dict:
+    """One row of the installed-packs ledger."""
+    e = entry if isinstance(entry, dict) else {}
+    return {"id": str(e.get("id") or ""), "name": str(e.get("name") or ""),
+            "details": str(e.get("details") or ""), "author": str(e.get("author") or ""),
+            "pack_version": int(_num(e.get("pack_version")) or 1),
+            "digest": str(e.get("digest") or ""),
+            "imported_at": int(_num(e.get("imported_at")) or 0),
+            "item_count": int(_num(e.get("item_count")) or 0)}
+
+
+def normalize_content_row(entry: Optional[dict]) -> dict:
+    """One review row: the state, the pre-set decision, the diff and the warnings.
+
+    `decision` is what the card's radio group starts on — `accept` for the two states the
+    runtime pre-ticks, `keep` for anything that would replace a local edit (so the safe
+    choice is the one already selected), `skip` otherwise. A row the runtime marked
+    `invalid` cannot be accepted at all, and the card renders it disabled with its reason.
+    """
+    e = entry if isinstance(entry, dict) else {}
+    state = str(e.get("state") or "")
+    diff = e.get("diff")
+    warnings, reasons = e.get("warnings"), e.get("reasons")
+    default = bool(e.get("default"))
+    if state == "invalid":
+        decision = "skip"
+    elif default:
+        decision = "accept"
+    elif bool(e.get("local_edited")):
+        decision = "keep"
+    else:
+        decision = "skip"
+    installed = e.get("installed_version")
+    return {
+        "id": str(e.get("id") or ""),
+        "kind": str(e.get("kind") or ""),
+        "key": str(e.get("key") or ""),
+        "name": str(e.get("name") or e.get("key") or ""),
+        "state": state if state in CONTENT_STATES else (state or "unknown"),
+        "label": str(e.get("label") or ""),
+        "default": default,
+        "decision": decision,
+        "installable": state != "invalid",
+        "local_edited": bool(e.get("local_edited")),
+        "source_version": int(_num(e.get("source_version")) or 1),
+        "installed_version": (None if installed is None
+                              else int(_num(installed) or 0)),
+        "origin": str(e.get("origin") or ""),
+        "pack_id": str(e.get("pack_id") or ""),
+        "warnings": [str(w) for w in warnings] if isinstance(warnings, (list, tuple)) else [],
+        "reasons": [str(r) for r in reasons] if isinstance(reasons, (list, tuple)) else [],
+        "diff": [normalize_content_diff(d)
+                 for d in (diff if isinstance(diff, (list, tuple)) else [])
+                 if isinstance(d, dict)],
+    }
+
+
+def normalize_content_diff(entry: Optional[dict]) -> dict:
+    """One field-level difference — a unified diff for prose, `old → new` for a scalar."""
+    e = entry if isinstance(entry, dict) else {}
+    lines = e.get("diff")
+    return {"field": str(e.get("field") or ""),
+            "kind": str(e.get("kind") or "scalar"),
+            "old": str(e.get("old") or ""), "new": str(e.get("new") or ""),
+            "diff": [str(ln) for ln in lines] if isinstance(lines, (list, tuple)) else []}
+
+
+def normalize_content_review(payload: Optional[dict]) -> dict:
+    """Runtime `POST /content/review` → the review table.
+
+    `digest` is the honest one: `ok`, `mismatch` (the file was changed after it was
+    exported — nothing is pre-selected) or `absent` (hand-written, flagged not refused).
+    """
+    empty = {"ok": False, "pack": {}, "digest": "", "expect_digest": "", "items": [],
+             "accept": [], "counts": {}, "warnings": [],
+             "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        raw_items = p.get("items")
+        accept = p.get("accept")
+        counts = p.get("counts") if isinstance(p.get("counts"), dict) else {}
+        warnings = p.get("warnings")
+        ok = bool(p.get("ok"))
+        return {
+            "ok": ok,
+            "pack": normalize_pack_row(p.get("pack")),
+            "digest": str(p.get("digest") or ""),
+            "expect_digest": str(p.get("expect_digest") or ""),
+            "items": [normalize_content_row(i)
+                      for i in (raw_items if isinstance(raw_items, (list, tuple)) else [])
+                      if isinstance(i, dict)],
+            "accept": [str(a) for a in accept] if isinstance(accept, (list, tuple)) else [],
+            "counts": {str(k): int(_num(v) or 0) for k, v in counts.items()},
+            "warnings": [str(w) for w in warnings]
+                        if isinstance(warnings, (list, tuple)) else [],
+            "error": None if ok else (p.get("error") or p.get("reason")
+                                      or "this file could not be read as a content pack"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable review payload: {e}"}
+
+
+def normalize_content_result(payload: Optional[dict]) -> dict:
+    """Runtime `POST /content/import` or `/content/undo` → what actually happened.
+
+    `conflict` is the 409 case — the file changed between the review and the import — and
+    the card says so rather than reporting a failure it cannot explain.
+    """
+    empty = {"ok": False, "applied": [], "replaced": [], "skipped": [], "count": 0,
+             "restored": 0, "conflict": False, "undo_available": False, "pack": {},
+             "reload": {}, "label": "", "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+
+        def _ids(field):
+            v = p.get(field)
+            return [str(x) for x in v] if isinstance(v, (list, tuple)) else []
+
+        reload = p.get("reload") if isinstance(p.get("reload"), dict) else {}
+        ok = bool(p.get("ok"))
+        return {
+            "ok": ok,
+            "applied": _ids("applied"), "replaced": _ids("replaced"),
+            "skipped": _ids("skipped"),
+            "count": int(_num(p.get("count")) or 0),
+            "restored": int(_num(p.get("restored")) or 0),
+            "conflict": bool(p.get("conflict")),
+            "undo_available": bool(p.get("undo_available")),
+            "pack": normalize_pack_row(p.get("pack")),
+            "reload": {str(k): (v if isinstance(v, bool) else int(_num(v) or 0))
+                       for k, v in reload.items()},
+            "label": str(p.get("label") or ""),
+            "error": None if ok else (p.get("reason") or p.get("error")
+                                      or "the import did not go through"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable import payload: {e}"}

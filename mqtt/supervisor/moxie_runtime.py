@@ -30,6 +30,7 @@ from moxie_sdk import presence as presence_seam          # vision events -> pres
 from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire (audit ADOPT #7)
 from moxie_sdk import vocab as vocab_seam                # the frozen mood/markup catalog
 from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
+from moxie_sdk.content import packs as content_packs  # 📦 content packs (ADOPT #5)
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
 from markup import make_markup  # the markup floor (moxie_sdk.automarkup) behind the seam
 
@@ -137,6 +138,11 @@ class MoxieRuntime:
         # so a test drives the whole card with a fake and spends no gateway request.
         self._voice_engines = None
         self._voice_lock = threading.Lock()      # one swap at a time; never held in a turn
+        # 📦 Content packs (backlog/content-packs.md): one import or undo at a time, so a
+        # snapshot can never be taken between another import's write and its own snapshot.
+        # Like the voice lock, it is NEVER held inside a turn — the live swap it guards is
+        # a single attribute assignment.
+        self._content_lock = threading.Lock()
         # Child safety (AI seam §2): the InputSafety classifier applied to BOTH sides of a
         # turn — the child's utterance before the brain is called, and every chunk the
         # brain produces before it is published. Constructor arg wins (a local-model
@@ -459,6 +465,8 @@ class MoxieRuntime:
                 GET /telehealth?device_id=… → 🎭 puppet mode + the live transcript;
                 GET /voice → 🎚️ the speech/listening pickers: what this appliance can
                 use, what is in force and what the default would be (fleet-level);
+                GET /content → 📦 the installed content inventory + the pack ledger;
+                GET /content/export?items=… → one pack file built from those items;
                 GET /permits → the device allowlist + who is pending.
                 Localhost-only (the server binds 127.0.0.1)."""
                 from urllib.parse import urlparse, parse_qs
@@ -528,6 +536,27 @@ class MoxieRuntime:
                     q = parse_qs(u.query)
                     refresh = (q.get("refresh") or ["0"])[0] not in ("", "0", "false")
                     return self._json_out(rt.voice_view(refresh=refresh))
+                if u.path == "/content":
+                    # 📦 The inventory + the pack ledger + whether an undo is armed.
+                    # Fleet-level: content is a property of the appliance, not of a robot.
+                    return self._json_out(rt.content_view())
+                if u.path == "/content/export":
+                    # `?items=kind:key,…&name=…&id=…` → the pack JSON itself, so `curl -o`
+                    # and the browser both get a file they can hand to somebody else.
+                    # No `items` means everything installed.
+                    q = parse_qs(u.query)
+                    keys = [k for part in (q.get("items") or [])
+                            for k in part.split(",") if k.strip()]
+                    try:
+                        pack = rt.content_export(
+                            keys, name=(q.get("name") or [""])[0],
+                            pack_id=(q.get("id") or [""])[0],
+                            details=(q.get("details") or [""])[0],
+                            author=(q.get("author") or [""])[0])
+                    except Exception as e:
+                        return self._json_out({"ok": False, "error": str(e),
+                                               "reason": str(e)}, 400)
+                    return self._json_out(pack)
                 self.send_response(404); self.end_headers()
 
             def _memory_write(self, query):
@@ -647,6 +676,42 @@ class MoxieRuntime:
                     out, code = {"ok": False, "error": str(e), "reason": str(e)}, 400
                 return self._json_out(out, code)
 
+            def _content(self, path: str):
+                """📦 `POST /content/review` (the pack itself), `POST /content/import`
+                (`{"pack", "accept", "expect_digest"}`) and `POST /content/undo`.
+
+                Review writes nothing; import is the one verb that changes the store, and
+                it refuses with **409** when `expect_digest` does not match the body now
+                being imported — the pack is re-sent between the two calls, so they can
+                genuinely be different files. A body over `MOXIE_PACK_MAX_BYTES` is
+                **413**, refused before it is buffered rather than after."""
+                cap = rt.pack_max_bytes()
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > cap:
+                    return self._json_out(
+                        {"ok": False, "error": f"pack is larger than {cap} bytes",
+                         "reason": "That file is too big to be a content pack.",
+                         "max_bytes": cap}, 413)
+                raw = self.rfile.read(length) if length else b"{}"
+                try:
+                    if path == "/content/undo":
+                        out = rt.content_undo()
+                        return self._json_out(out, 200 if out.get("ok") else 404)
+                    if path == "/content/review":
+                        return self._json_out(rt.content_review(raw), 200)
+                    body = _json.loads(raw or b"{}") or {}
+                    if not isinstance(body, dict):
+                        raise ValueError("expected a JSON object")
+                    out = rt.content_import(body.get("pack"),
+                                            body.get("accept") or [],
+                                            str(body.get("expect_digest") or ""))
+                    if out.get("ok"):
+                        return self._json_out(out, 200)
+                    return self._json_out(out, 409 if out.get("conflict") else 400)
+                except Exception as e:
+                    return self._json_out({"ok": False, "error": str(e),
+                                           "reason": str(e)}, 400)
+
             def do_DELETE(self):
                 """`DELETE /memory?device_id=…[&namespace=…[&item=…]]` — a parent erasing
                 what Moxie remembers. With `item`, exactly that one line goes; with only
@@ -684,6 +749,14 @@ class MoxieRuntime:
                 uses them. `POST /voice/test?device_id=…` speaks one line through the
                 engine actually installed and publishes it to that robot — see `_voice`.
 
+                `POST /content/review` with a pack file says what WOULD happen to every
+                item in it — new, upgrade, conflict with a local edit, fork, downgrade —
+                and writes nothing. `POST /content/import` with
+                `{"pack", "accept": ["kind:key", …], "expect_digest"}` applies exactly the
+                accepted items, snapshots what they replaced and makes them live on the
+                next turn; a body whose digest is not the reviewed one is **409**.
+                `POST /content/undo` puts the snapshot back. See `_content`.
+
                 `POST /permits` with `{"device_id": "d_…", "permitted": true, "label": …}`
                 lets one pending robot in (or `permitted:false` to revoke it) and re-pushes
                 its config on the spot; with `{"allow_unverified_bots": true}` it flips the
@@ -698,6 +771,8 @@ class MoxieRuntime:
                     # `{"edit": {"namespace", "item", "text"}}`, a parent correcting one
                     # remembered line instead of losing the whole activity to it.
                     return self._memory_write(urlparse(self.path).query)
+                if path in ("/content/review", "/content/import", "/content/undo"):
+                    return self._content(path)
                 if path not in ("/config", "/safety", "/permits", "/telehealth",
                                 "/voice", "/voice/test"):
                     self.send_response(404); self.end_headers(); return
@@ -2135,6 +2210,245 @@ class MoxieRuntime:
                 "sample_rate": int(audio.get("sample_rate") or 0),
                 "channels": int(audio.get("channels") or 1),
                 "bytes": len(audio.get("buffer") or "")}
+
+    # ---- 📦 content packs (backlog/content-packs.md) ----
+    # Content stops being a file in our repository and becomes a thing a parent installs
+    # and a stranger publishes: one JSON file, reviewed before it changes anything, undoable
+    # afterwards. Everything hard is in the pure `moxie_sdk/content/packs.py` — this region
+    # is the store, the clock and the live swap, and nothing else.
+    #
+    # Three properties are load-bearing here, and each is asserted by a test:
+    #   * **Review writes nothing.** `content_review` is a pure read; only `content_import`
+    #     touches the store, and only after it has taken the one-slot snapshot `undo`
+    #     restores (R1: one atomic `write_shared`, so a crash leaves the old set or the new
+    #     one, never a mixture).
+    #   * **The overlay is written, never the merged view.** Effective content is *shipped
+    #     defaults ⊕ overlay*; an import writes only the accepted items into the overlay, so
+    #     a future release's improved starter chat is still an upgrade rather than something
+    #     the overlay silently shadows.
+    #   * **The swap is one attribute.** `reload_content()` reassigns `self.app.module`; a
+    #     turn already in flight finishes on the module object it started with and the NEXT
+    #     turn uses the new one. There is no lock in the turn loop — the same rule the voice
+    #     picker adopted for engine swaps — and that is documented behaviour, not an
+    #     oversight. `_push_config` is untouched: nothing a P0 pack carries reaches
+    #     `RobotCloudConfig`, which is exactly why face/config packs are P2.
+
+    CONTENT_ITEMS_COLLECTION = "content_items"    # → $MOXIE_DATA_DIR/fleet/content_items.json
+    CONTENT_PACKS_COLLECTION = "content_packs"    # the ledger the 📦 card lists
+    CONTENT_BACKUP_COLLECTION = "content_backup"  # the ONE-slot pre-import snapshot
+
+    @staticmethod
+    def pack_max_bytes() -> int:
+        """Largest pack body this appliance will buffer (`MOXIE_PACK_MAX_BYTES`, 1 MiB).
+
+        Read per call rather than at import, so the cap is testable and a deployment can
+        raise it without a code change. Upstream has no cap at all and round-trips the
+        pack through a hidden form field twice."""
+        try:
+            value = int(os.environ.get("MOXIE_PACK_MAX_BYTES", "").strip() or 0)
+        except ValueError:
+            value = 0
+        return value if value > 0 else content_packs.DEFAULT_MAX_BYTES
+
+    def _content_defaults(self) -> dict:
+        """The SHIPPED baseline the overlay sits on top of.
+
+        `config.build_content_app()` records it on the app (`content_defaults`) *before* it
+        applies the overlay, which is the only way an `undo` can put a shipped item back
+        after a pack replaced it. Without it — a bare `MoxieApp`, or an app built some other
+        way — we fall back to the loaded module itself, which is the same answer on a fresh
+        appliance and an honest approximation on one that has already imported (the merge is
+        idempotent, and overlay entries win either way)."""
+        recorded = getattr(self.app, "content_defaults", None)
+        if isinstance(recorded, dict):
+            return recorded
+        return content_packs.items_from_module(getattr(self.app, "module", None))
+
+    def _content_overlay(self) -> dict:
+        """The installed overlay (`fleet/content_items.json`) — `{}` when nothing imported."""
+        rec = self.store.read_shared(self.CONTENT_ITEMS_COLLECTION, {}) or {}
+        items = rec.get("items") if isinstance(rec, dict) else None
+        return items if isinstance(items, dict) else {}
+
+    def _write_content_overlay(self, items: dict) -> bool:
+        """One atomic write of the whole overlay (R1) — never a partial merge."""
+        return self.store.write_shared(self.CONTENT_ITEMS_COLLECTION,
+                                       {"items": items, "updated_at": int(time.time())})
+
+    def _content_packs(self) -> list:
+        rec = self.store.read_shared(self.CONTENT_PACKS_COLLECTION, {}) or {}
+        rows = rec.get("packs") if isinstance(rec, dict) else None
+        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+    def content_items(self) -> dict:
+        """**Effective content**: shipped defaults, then the overlay by `kind:key`."""
+        return content_packs.merge_items(self._content_defaults(), self._content_overlay())
+
+    def _known_child_names(self) -> list:
+        """Names this appliance knows, for the export-time PII flag.
+
+        The child profile the supervisor was started with, every connected robot's, and any
+        name-ish string in the fleet config. It catches the names we know and **nothing
+        else** — a prompt naming a sibling or a school sails straight through, and the card
+        says so."""
+        names = []
+        for child in ([getattr(self, "child", None)]
+                      + [getattr(r, "child", None) for r in self.robots.values()]):
+            nick = str(getattr(child, "nickname", "") or "").strip()
+            if nick and nick not in names:
+                names.append(nick)
+        for key, value in (self.fleet_config() or {}).items():
+            if isinstance(value, str) and ("name" in key or "nickname" in key):
+                value = value.strip()
+                if value and value not in names:
+                    names.append(value)
+        return names
+
+    def reload_content(self) -> dict:
+        """Rebuild the live `ContentModule` from defaults ⊕ overlay and swap it in.
+
+        One attribute assignment. The next turn renders the new prompt; a turn already in
+        flight finishes on the module it started with, and a conversation session keeps its
+        `Conversation` for that session (brief §2.5). No restart, and nothing on the wire —
+        a pack is server-side data.
+        """
+        defaults, overlay = self._content_defaults(), self._content_overlay()
+        module = content_packs.build_module(defaults, overlay)
+        live = False
+        app = getattr(self, "app", None)
+        if app is not None and getattr(app, "module", None) is not None:
+            app.module = module                  # ← the whole swap
+            live = True
+        return {"ok": True, "live": live,
+                "conversations": len(module.conversations),
+                "globals": len(module.globals),
+                "schedules": len(module.schedules),
+                "overlay": len(overlay), "shipped": len(defaults)}
+
+    def content_view(self) -> dict:
+        """The 📦 card's poll: the inventory, the pack ledger, and whether undo is armed."""
+        items = self.content_items()
+        backup = self.store.read_shared(self.CONTENT_BACKUP_COLLECTION, {}) or {}
+        rows = content_packs.inventory(items, known_names=self._known_child_names())
+        return {
+            "ok": True,
+            "items": rows,
+            "packs": self._content_packs(),
+            "counts": {"total": len(rows),
+                       "edited": sum(1 for r in rows if r["local_edited"]),
+                       "with_code": sum(1 for r in rows if r["has_code"]),
+                       "from_packs": sum(1 for r in rows if r["origin"] == "pack")},
+            "undo_available": bool(isinstance(backup, dict) and backup.get("items") is not None),
+            "undo_label": str((backup or {}).get("label") or ""),
+            "max_bytes": self.pack_max_bytes(),
+            "pack_format": content_packs.PACK_FORMAT,
+        }
+
+    def content_export(self, keys=None, *, name: str = "", pack_id: str = "",
+                       details: str = "", author: str = "", now=None) -> dict:
+        """Build a pack from the named installed items (`kind:key`), or from all of them.
+
+        Returns the pack itself — the HTTP layer serializes it and the browser saves it.
+        A key that is not installed is an error rather than a quietly smaller file.
+        """
+        items = self.content_items()
+        wanted = [str(k).strip() for k in (keys or []) if str(k or "").strip()]
+        if wanted:
+            missing = [k for k in wanted if k not in items]
+            if missing:
+                raise content_packs.PackError(
+                    "not installed: " + ", ".join(sorted(missing)))
+            items = {k: items[k] for k in wanted}
+        if not items:
+            raise content_packs.PackError("there is nothing to export")
+        label = str(name or "").strip() or "Moxie content"
+        return content_packs.export_pack(items, name=label,
+                                         pack_id=pack_id or label, details=details,
+                                         author=author, now=now)
+
+    def content_review(self, body) -> dict:
+        """What WOULD happen if this pack were imported. Writes nothing, reads no clock.
+
+        `expect_digest` in the answer is the digest of the body as reviewed; echoing it back
+        on import is what closes the review-one-file-import-another gap that upstream's
+        hidden form field leaves open.
+        """
+        pack, meta = content_packs.parse_pack(body)
+        rows = content_packs.review_pack(pack, self.content_items(),
+                                         digest=meta["digest"])
+        return {
+            "ok": True,
+            "pack": {k: v for k, v in pack.items() if k != "items"},
+            "digest": meta["digest"],
+            "expect_digest": meta["computed"],
+            "warnings": meta["warnings"],
+            "items": rows,
+            "accept": [r["id"] for r in rows if r["default"]],
+            "counts": {"total": len(rows),
+                       "default": sum(1 for r in rows if r["default"]),
+                       "conflicts": sum(1 for r in rows
+                                        if r["state"] in (content_packs.CONFLICT,
+                                                          content_packs.DOWNGRADE_CONFLICT)),
+                       "invalid": sum(1 for r in rows
+                                      if r["state"] == content_packs.INVALID)},
+        }
+
+    def content_import(self, body, accept=None, expect_digest: str = "") -> dict:
+        """Apply the accepted items, then make them live. The only verb here that writes.
+
+        Refuses with `conflict: True` (HTTP **409**) when `expect_digest` — the digest the
+        reviewer was shown — is not the digest of the body now being imported: the pack is
+        re-sent between review and import (the server holds no session state), so the two
+        can genuinely be different files.
+        """
+        pack, meta = content_packs.parse_pack(body)
+        if expect_digest and str(expect_digest) != meta["computed"]:
+            return {"ok": False, "conflict": True,
+                    "error": "this is not the pack that was reviewed",
+                    "reason": "The file changed between the review and the import. "
+                              "Review it again before installing.",
+                    "expect_digest": meta["computed"]}
+        with self._content_lock:
+            overlay = self._content_overlay()
+            merged, summary = content_packs.apply_pack(pack, overlay, accept or [],
+                                                       now=int(time.time()))
+            if summary["applied"]:
+                self.store.write_shared(self.CONTENT_BACKUP_COLLECTION, {
+                    "items": overlay, "packs": self._content_packs(),
+                    "label": f"before importing {pack.get('name') or pack.get('id')}",
+                    "at": int(time.time())})
+                if not self._write_content_overlay(merged):
+                    return {"ok": False, "error": "could not write the content overlay",
+                            "reason": "The appliance could not save the imported items."}
+                ledger = [r for r in self._content_packs()
+                          if r.get("id") != summary["pack"]["id"]]
+                ledger.append(summary["pack"])
+                self.store.write_shared(self.CONTENT_PACKS_COLLECTION, {"packs": ledger})
+            reload = self.reload_content()
+        self._note("content", f"📦 imported {summary['count']} item(s) "
+                              f"from {pack.get('id')}")
+        return {"ok": True, "digest": meta["digest"], **summary, "reload": reload,
+                "undo_available": bool(summary["applied"])}
+
+    def content_undo(self) -> dict:
+        """Put the one-slot snapshot back — the overlay AND the ledger, byte for byte."""
+        with self._content_lock:
+            backup = self.store.read_shared(self.CONTENT_BACKUP_COLLECTION, {}) or {}
+            items = backup.get("items") if isinstance(backup, dict) else None
+            if not isinstance(items, dict):
+                return {"ok": False, "error": "nothing to undo",
+                        "reason": "No import has been made since this appliance started "
+                                  "keeping a snapshot."}
+            self._write_content_overlay(items)
+            packs_before = backup.get("packs")
+            if isinstance(packs_before, list):
+                self.store.write_shared(self.CONTENT_PACKS_COLLECTION,
+                                        {"packs": packs_before})
+            self.store.delete_shared(self.CONTENT_BACKUP_COLLECTION)   # one slot, used up
+            reload = self.reload_content()
+        self._note("content", "📦 undo — content restored")
+        return {"ok": True, "restored": len(items), "reload": reload,
+                "label": str(backup.get("label") or ""), "undo_available": False}
 
     def _ingest_notify(self, device_id, rcr):
         h = self.history.setdefault(device_id, [])

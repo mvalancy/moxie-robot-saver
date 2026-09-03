@@ -9,6 +9,31 @@ anything resembling a marketplace all need a distribution unit first).
 a live reload) in one ~60–90 minute slice; **P1** is the 📦 console card. **P2** is named in §5 and
 deliberately not scheduled.
 
+> ## ✅ P0 shipped 2026-09-02 (+ the P1 card)
+>
+> Built as specified, on `feat/content-packs`. What landed: the pure
+> [`mqtt/moxie_sdk/content/packs.py`](../../../mqtt/moxie_sdk/content/packs.py); the three
+> fleet `JsonStore` collections; the five status-HTTP routes; `reload_content()`;
+> `build_content_app()`'s defaults ⊕ overlay merge; **and** the 📦 console card of §2.6,
+> which the split calls P1 — it was in the same brief and is shipped in the same slice.
+> 145 new tests (`sim/tests/test_content_packs.py`, `test_content_packs_runtime.py`, 13 in
+> `test_console_roundtrip.py`, one in `test_content_app.py`).
+>
+> **Deviations from this brief, all deliberate:**
+>
+> | § | Brief says | Shipped | Why |
+> |---|---|---|---|
+> | 2.5 | `review_pack(pack, installed)` | `review_pack(pack, installed, *, digest="ok", catalog=None)` | The review has to know `parse_pack`'s verdict to tick nothing on a tampered file; both extras are keyword-only with defaults, so the stated signature still calls. |
+> | 2.5 | `scan_outgoing` used by an export UI | also runs per row in `GET /content` (`inventory(…, known_names=…)`) | `GET /content/export` returns *the pack JSON* (this brief's shape), which leaves no room for a flag; computing it per inventory row lets the card warn **before** the download instead of after. |
+> | 2.5 | `content_import(pack_body, …)` | `pack` may be the object **or the file's raw text** | A browser re-encoding a pack turns `1.0` into `1` and makes a good file report as tampered. The card sends the bytes it read. |
+> | 3.8 | "extend the existing no-exec assertion in `test_content_app.py`" | **added** one | There was no such assertion to extend — the promise lived only in a docstring. |
+> | 5 | `mqtt/content_modules/*.json` "add `source_version`" | added explicitly as `1` | A no-op at runtime (the default), kept because the file a person edits should name the concept. |
+> | 2.4 | `origin: "local"` | provenance keeps its `origin` (`shipped`/`pack`) through a local edit; the edit is detected by `local_rev != imported_rev` | The digest comparison is the load-bearing signal; a second, redundant flag could disagree with it. `mark_edited` is the seam that performs an edit. |
+>
+> **Gaps that stayed open, on purpose:** no remove-item (P0 has none by design); R3 (ReDoS)
+> is still mitigated only by a compile check and a length cap, as §5 says; A9 stands —
+> nobody has yet imported a real community pack, so the card's shape is still inferred.
+
 **Reserved-region note up front.** P0 touches the status-HTTP handler block in
 [`../../../mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py)
 (`_start_status_server`) and adds one runtime method region. It **must not touch `_push_config`, the

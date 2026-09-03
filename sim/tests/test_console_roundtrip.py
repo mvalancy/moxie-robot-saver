@@ -238,6 +238,17 @@ class _ConsoleVoiceEngines:
         return None
 
 
+#: 📦 The shipped content this fake appliance boots with — one chat and one global, the
+#: shape `mqtt/content_modules/starter.json` has. The console never sees this file; it
+#: sees whatever `content_view` makes of it, which is the point.
+_CONTENT_MODULE = {
+    "conversations": [{"name": "Free Chat", "module_id": "FREE_CHAT",
+                       "content_id": "default", "source_version": 1,
+                       "prompt": "You are Moxie, talking to Sam.", "opener": "Hi!"}],
+    "globals": [{"name": "Timer", "pattern": r"timer for (\d+)", "entity_groups": "1"}],
+}
+
+
 def _safety_runtime(root: str):
     """A REAL `MoxieRuntime` with a couple of recorded verdicts, used as the /safety
     backend of the fake supervisor — so the queue the console reads is the queue the
@@ -266,6 +277,14 @@ def _safety_runtime(root: str):
     # `voice_test` are the genuine ones; only the appliance's *builders* are faked, which
     # is the seam `set_voice_engines` exists for — no gateway, no piper, no whisper.
     rt.set_voice_engines(_ConsoleVoiceEngines())
+    # 📦 Content packs: the REAL runtime verbs need a shipped baseline and a live module
+    # to swap, which `_App` (a bare MoxieApp) does not carry. Two attributes, exactly what
+    # `config.build_content_app()` records — so `content_view`, `content_export`,
+    # `content_review`, `content_import`, `content_undo` and `reload_content` here are the
+    # genuine ones, over a real `JsonStore` on a scratch dir.
+    from moxie_sdk.content import packs as _packs
+    rt.app.content_defaults = _packs.shipped_items(_CONTENT_MODULE)
+    rt.app.module = _packs.build_module(rt.app.content_defaults, {})
     rt._record_safety(DEVICE, S.assess("I want to kill myself"))
     rt._record_safety(DEVICE, S.assess("this is bullshit"))
     return rt
@@ -327,6 +346,8 @@ class FakeSupervisor:
         self.schedule_queries: list = []
         self.voice_queries: list = []
         self.voice_posts: list = []
+        self.content_queries: list = []
+        self.content_posts: list = []
         self.telehealth_posts: list = []
         self.runtime = _safety_runtime(safety_root)
         self.memory = _seed_memory(self.runtime)
@@ -402,6 +423,25 @@ class FakeSupervisor:
                     refresh = (q.get("refresh") or ["0"])[0] not in ("", "0", "false")
                     outer.voice_queries.append((q.get("refresh") or [""])[0])
                     return self._out(outer.runtime.voice_view(refresh=refresh))
+                if u.path in ("/content", "/content/export"):
+                    # 📦 The REAL content verbs — the store, the allowlist, the merge and
+                    # the digest all come from the runtime under test, so the console is
+                    # proved against the payloads it will really receive.
+                    q = parse_qs(u.query)
+                    outer.content_queries.append((u.path, u.query))
+                    if u.path == "/content":
+                        return self._out(outer.runtime.content_view())
+                    keys = [k for part in (q.get("items") or [])
+                            for k in part.split(",") if k.strip()]
+                    try:
+                        return self._out(outer.runtime.content_export(
+                            keys, name=(q.get("name") or [""])[0],
+                            pack_id=(q.get("id") or [""])[0],
+                            details=(q.get("details") or [""])[0],
+                            author=(q.get("author") or [""])[0]))
+                    except Exception as e:
+                        return self._out({"ok": False, "error": str(e),
+                                          "reason": str(e)}, 400)
                 if u.path == "/schedule":
                     # 📅 Recorded, not re-planned: `schedule_view` reads the wall clock,
                     # and a live call would make the console's assertions depend on the
@@ -453,6 +493,29 @@ class FakeSupervisor:
                         out = outer.runtime.voice_update(body)
                         code = 200 if out.get("ok") else 400
                     return self._out(out, code)
+                if u.path in ("/content/review", "/content/import", "/content/undo"):
+                    # 📦 Dispatched exactly the way `_start_status_server._content` does,
+                    # onto the REAL runtime verbs — including the 409 an import gets when
+                    # its digest is not the one the review was shown.
+                    raw = self.rfile.read(
+                        int(self.headers.get("Content-Length") or 0)) or b"{}"
+                    outer.content_posts.append((u.path, len(raw)))
+                    try:
+                        if u.path == "/content/undo":
+                            out = outer.runtime.content_undo()
+                            return self._out(out, 200 if out.get("ok") else 404)
+                        if u.path == "/content/review":
+                            return self._out(outer.runtime.content_review(raw), 200)
+                        body = json.loads(raw or b"{}") or {}
+                        out = outer.runtime.content_import(
+                            body.get("pack"), body.get("accept") or [],
+                            str(body.get("expect_digest") or ""))
+                        if out.get("ok"):
+                            return self._out(out, 200)
+                        return self._out(out, 409 if out.get("conflict") else 400)
+                    except Exception as e:
+                        return self._out({"ok": False, "error": str(e),
+                                          "reason": str(e)}, 400)
                 if u.path == "/telehealth":
                     # 🎭 One operator verb, dispatched exactly the way the real
                     # `_start_status_server` dispatches it — the REAL runtime does the
@@ -1396,6 +1459,37 @@ def test_fake_status_server_matches_the_real_runtime_shapes():
         "state", "state_at", "in_bedtime", "transcript", "moods", "max_intensity"}
     assert set(rt.memory_view(DEVICE)) == {"ok", "device_id", "namespaces", "bytes",
                                            "writes_allowed", "policy"}
+    # 📦 /content is not doubled either — the fake runs the REAL runtime behind all five
+    # routes — so what is pinned is the key set each normalizer reads, on a runtime built
+    # here rather than the shared fixture's. A key the card depends on that the runtime
+    # stops sending fails HERE, not as a blank card.
+    from moxie_sdk.content import packs as _packs
+    from moxie_sdk.store import JsonStore as _Store
+    import tempfile as _tf
+    rt.store = _Store(root=_tf.mkdtemp())
+    rt.app.content_defaults = _packs.shipped_items(_CONTENT_MODULE)
+    rt.app.module = _packs.build_module(rt.app.content_defaults, {})
+    assert set(rt.content_view()) == {"ok", "items", "packs", "counts", "undo_available",
+                                      "undo_label", "max_bytes", "pack_format"}
+    assert set(rt.content_view()["items"][0]) == {
+        "id", "kind", "key", "name", "source_version", "origin", "pack_id",
+        "imported_at", "local_edited", "has_code", "warnings", "pii"}
+    _exported = rt.content_export([CONV], name="Shapes", pack_id="shapes")
+    assert set(_exported) == {"pack_format", "id", "name", "details", "author",
+                              "pack_version", "created_at", "generator", "items",
+                              "signatures", "digest"}
+    _reviewed = rt.content_review(json.dumps(_exported))
+    assert set(_reviewed) == {"ok", "pack", "digest", "expect_digest", "warnings",
+                              "items", "accept", "counts"}
+    assert set(_reviewed["items"][0]) >= {
+        "id", "kind", "key", "name", "state", "label", "default", "local_edited",
+        "source_version", "installed_version", "origin", "pack_id", "warnings",
+        "reasons", "diff"}
+    _imported = rt.content_import(_exported, [CONV])
+    assert set(_imported) == {"ok", "digest", "pack", "applied", "replaced", "skipped",
+                              "count", "reload", "undo_available"}
+    assert set(rt.content_undo()) == {"ok", "restored", "reload", "label",
+                                      "undo_available"}
     # The per-item seam the console now drives: an id-carrying view, an erase that takes
     # an `item`, and an edit. Doubling any of these would let the card claim a control the
     # runtime does not have, which on this card is the whole promise.
@@ -1542,3 +1636,224 @@ def test_a_supervisor_that_is_down_is_a_503_in_the_cards_own_shape(client, monke
     v = r.json()
     assert v["ok"] is False and v["available"] == {"speech": [], "listening": []}
     assert v["error"]
+
+
+# --------------------------------------------------------------------------- #
+# 📦 Content packs — export → review → import → inventory (backlog/content-packs.md §3.12)
+# --------------------------------------------------------------------------- #
+# The console never invents a pack: it forwards the file's own bytes to the supervisor,
+# renders what the review says, and posts back the decisions a parent made. The fake
+# supervisor runs the REAL runtime verbs over a real `JsonStore`, so what is proved here is
+# the console's URL, body, status codes and normalizer against genuine payloads.
+#
+# These tests share one module-scoped supervisor with everything above, so each one puts
+# the content store back the way it found it (`_content_reset`) — an import that leaked
+# into the next test would make the review states meaningless.
+
+CONV = "conversation:FREE_CHAT/default"
+
+
+def _content_reset(supervisor):
+    """Empty overlay, empty ledger, no undo slot — a fresh appliance."""
+    rt = supervisor.runtime
+    rt.store.delete_shared(rt.CONTENT_ITEMS_COLLECTION)
+    rt.store.delete_shared(rt.CONTENT_PACKS_COLLECTION)
+    rt.store.delete_shared(rt.CONTENT_BACKUP_COLLECTION)
+    rt.reload_content()
+
+
+@pytest.fixture()
+def content(supervisor):
+    _content_reset(supervisor)
+    yield supervisor
+    _content_reset(supervisor)
+
+
+def _export(client, items=CONV, name="Bedtime", pack_id="bedtime"):
+    r = client.get("/local/content/export",
+                   params={"items": items, "name": name, "id": pack_id})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _review(client, pack):
+    r = client.post("/local/content/review", content=json.dumps(pack))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_the_content_card_lists_what_is_installed(client, content):
+    v = client.get("/local/content").json()
+    assert v["ok"] is True
+    assert {i["id"] for i in v["items"]} == {CONV, "global:Timer"}
+    row = {i["id"]: i for i in v["items"]}[CONV]
+    assert (row["origin"], row["source_version"], row["local_edited"]) == ("shipped", 1, False)
+    assert row["name"] == "Free Chat" and row["kind"] == "conversation"
+    assert v["packs"] == [] and v["undo_available"] is False
+    assert v["counts"]["total"] == 2 and v["error"] is None
+
+
+def test_the_export_download_carries_a_filename_and_the_pack_itself(client, content):
+    r = client.get("/local/content/export", params={"items": CONV, "name": "Bedtime",
+                                                    "id": "bedtime"})
+    assert r.status_code == 200
+    assert 'filename="bedtime.moxiepack.json"' in r.headers["content-disposition"]
+    pack = r.json()
+    assert pack["pack_format"] == 1 and pack["id"] == "bedtime"
+    assert [i["key"] for i in pack["items"]] == ["FREE_CHAT/default"]
+
+
+def test_exporting_something_that_is_not_installed_is_a_400_the_card_can_render(client,
+                                                                               content):
+    r = client.get("/local/content/export", params={"items": "conversation:NOPE/x"})
+    assert r.status_code == 400
+    assert r.json()["ok"] is False and "not installed" in r.json()["error"]
+
+
+def test_export_review_import_round_trips_through_the_console(client, content,
+                                                              supervisor):
+    """Test 12: the whole card, end to end, against the runtime's own store."""
+    pack = _export(client)
+    pack["items"][0]["data"]["prompt"] = "A prompt somebody else wrote."
+    pack["items"][0]["source_version"] = 4
+    pack["digest"] = _pack_digest(pack)
+
+    reviewed = _review(client, pack)
+    assert reviewed["ok"] and reviewed["digest"] == "ok"
+    row = reviewed["items"][0]
+    assert (row["state"], row["decision"], row["installable"]) == ("upgrade", "accept", True)
+    assert row["installed_version"] == 1 and row["source_version"] == 4
+    assert [d["field"] for d in row["diff"]] == ["prompt"]
+    assert reviewed["accept"] == [CONV]
+
+    r = client.post("/local/content/import",
+                    json={"pack": json.dumps(pack), "accept": reviewed["accept"],
+                          "expect_digest": reviewed["expect_digest"]})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["ok"] and out["applied"] == [CONV] and out["count"] == 1
+    assert out["pack"]["id"] == "bedtime" and out["undo_available"] is True
+
+    v = client.get("/local/content").json()
+    installed = {i["id"]: i for i in v["items"]}[CONV]
+    assert (installed["origin"], installed["pack_id"]) == ("pack", "bedtime")
+    assert installed["source_version"] == 4 and installed["local_edited"] is False
+    assert [p["id"] for p in v["packs"]] == ["bedtime"]
+    assert v["undo_available"] is True
+    # …and the supervisor's live module really changed
+    assert supervisor.runtime.app.module.conversation("FREE_CHAT").prompt == \
+        "A prompt somebody else wrote."
+
+
+def test_the_review_pre_selects_keep_mine_on_an_item_edited_here(client, content,
+                                                                 supervisor):
+    """The clobber guarantee, as the card renders it: the safe choice is the one already
+    selected, and Accept is still available for a parent who means it."""
+    from moxie_sdk.content import packs as _packs
+    rt = supervisor.runtime
+    pack = _export(client)
+    pack["items"][0]["source_version"] = 2
+    pack["digest"] = _pack_digest(pack)
+    rt._write_content_overlay(_packs.mark_edited(
+        {}, CONV, dict(rt.content_items()[CONV]["data"], prompt="I wrote this myself.")))
+    rt.reload_content()
+
+    row = _review(client, pack)["items"][0]
+    assert row["state"] == "conflict"
+    assert row["decision"] == "keep", "the un-destructive choice is pre-selected"
+    assert row["default"] is False and row["local_edited"] is True
+    assert row["installable"] is True
+
+    # Keep mine → nothing is sent for it → nothing changes
+    r = client.post("/local/content/import", json={"pack": json.dumps(pack), "accept": []})
+    assert r.status_code == 200 and r.json()["applied"] == []
+    assert rt.content_items()[CONV]["data"]["prompt"] == "I wrote this myself."
+
+
+def test_a_pack_changed_after_it_was_exported_pre_selects_nothing(client, content):
+    pack = _export(client)
+    pack["items"][0]["data"]["prompt"] = "edited after the export, digest left alone"
+    reviewed = _review(client, pack)
+    assert reviewed["digest"] == "mismatch"
+    assert reviewed["accept"] == []
+    assert reviewed["items"][0]["decision"] == "skip"
+
+
+def test_a_file_that_is_not_a_pack_is_a_400_the_card_can_explain(client, content):
+    r = client.post("/local/content/review", content='{"hello": "world"}')
+    assert r.status_code == 400
+    assert r.json()["ok"] is False and "content pack" in r.json()["error"]
+    assert r.json()["items"] == [], "an empty-but-renderable review"
+
+
+def test_importing_a_different_file_than_the_one_reviewed_is_a_409(client, content):
+    pack = _export(client)
+    pack["items"][0]["source_version"] = 3
+    pack["digest"] = _pack_digest(pack)
+    reviewed = _review(client, pack)
+
+    other = _export(client)
+    other["items"][0]["data"]["prompt"] = "a different file entirely"
+    other["items"][0]["source_version"] = 3
+    other["digest"] = _pack_digest(other)
+    r = client.post("/local/content/import",
+                    json={"pack": json.dumps(other), "accept": [CONV],
+                          "expect_digest": reviewed["expect_digest"]})
+    assert r.status_code == 409, r.text
+    assert r.json()["conflict"] is True
+    assert client.get("/local/content").json()["items"][0]["origin"] == "shipped"
+
+
+def test_undo_through_the_console_puts_the_content_back(client, content, supervisor):
+    assert client.post("/local/content/undo").status_code == 404
+    pack = _export(client)
+    pack["items"][0]["data"]["prompt"] = "the imported prompt"
+    pack["items"][0]["source_version"] = 2
+    pack["digest"] = _pack_digest(pack)
+    reviewed = _review(client, pack)
+    client.post("/local/content/import",
+                json={"pack": json.dumps(pack), "accept": reviewed["accept"],
+                      "expect_digest": reviewed["expect_digest"]})
+    assert supervisor.runtime.app.module.conversation("FREE_CHAT").prompt == \
+        "the imported prompt"
+
+    r = client.post("/local/content/undo")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    v = client.get("/local/content").json()
+    assert v["undo_available"] is False and v["packs"] == []
+    assert {i["id"]: i for i in v["items"]}[CONV]["origin"] == "shipped"
+    assert supervisor.runtime.app.module.conversation("FREE_CHAT").prompt == \
+        "You are Moxie, talking to Sam."
+
+
+def test_a_code_carrying_item_is_flagged_all_the_way_to_the_card(client, content):
+    pack = _export(client)
+    pack["items"][0]["data"]["code"] = "def complete_handler(v, s): s.summarize()"
+    pack["items"][0]["source_version"] = 2
+    pack["digest"] = _pack_digest(pack)
+    row = _review(client, pack)["items"][0]
+    assert any("never runs" in w for w in row["warnings"])
+    client.post("/local/content/import", json={"pack": json.dumps(pack), "accept": [CONV]})
+    assert {i["id"]: i for i in client.get("/local/content").json()["items"]}[CONV][
+        "has_code"] is True
+
+
+def test_the_content_card_gets_a_503_in_its_own_shape_when_the_supervisor_is_down(
+        client, monkeypatch):
+    """Acceptance criterion 10: the card renders the reason, never a blank list."""
+    from moxie_server import main as console_main
+    monkeypatch.setattr(console_main, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.get("/local/content")
+    assert r.status_code == 503
+    v = r.json()
+    assert v["ok"] is False and v["items"] == [] and v["packs"] == []
+    assert v["error"]
+    r2 = client.post("/local/content/undo")
+    assert r2.status_code == 503 and r2.json()["error"]
+
+
+def _pack_digest(pack: dict) -> str:
+    """The console never computes a digest — these tests do, to forge a *legitimately*
+    re-signed pack (a hand edit plus a re-export is exactly what an author does)."""
+    from moxie_sdk.content import packs as _packs
+    return _packs.pack_digest(pack)
