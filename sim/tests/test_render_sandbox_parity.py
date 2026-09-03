@@ -324,13 +324,13 @@ def test_the_fence_would_notice_an_over_tight_sandbox():
         f"so the parity assertion is not load-bearing (missed {len(SHIPPED) - len(caught)})")
 
 
-# ------------------------------------- the renderer the SHIPPED appliance uses --
+# ------------------------------------ the renderer a BARE-METAL install still uses --
 #
-# `mqtt/requirements.txt` does not list jinja2 and `pyproject.toml` gates it behind the
-# `content` extra, so the supervisor **container** and a bare `pip install
-# moxie-cloud-sdk` both take the `ImportError` branch: no jinja2, no sandbox, and
-# `_minimal_render` doing the work. That is the renderer most real deployments run, and
-# until now nothing asserted it can still render the modules we ship.
+# `mqtt/requirements.txt` now lists `jinja2>=3.0`, so the supervisor **container** runs the
+# real sandboxed renderer (`test_render_container_deps.py` pins that). `pyproject.toml`
+# still gates jinja2 behind the `content` extra on purpose, so a bare `pip install
+# moxie-cloud-sdk` takes the `ImportError` branch: no jinja2, no sandbox, and
+# `_minimal_render` doing the work. Every shipped module must render there too.
 #
 # Verified against the real artifact on 2026-09-02: the 0.7.0 wheel installed into a venv
 # holding only `paho-mqtt` renders `Hi {{ volley.config.child_pii.nickname }}!` → `Hi Sam!`.
@@ -383,26 +383,39 @@ def test_the_fallback_reaches_memory_the_same_way_jinja_does():
     assert _no_jinja2_render(prompt, ctx) == R.render_prompt(prompt, ctx)
 
 
-def test_a_block_construct_is_a_known_hole_in_the_fallback():
-    """**Honest gap, pinned so it cannot be mistaken for working.**
+def test_a_block_construct_is_no_longer_a_hole_in_the_fallback():
+    """**The gap this test used to pin, now closed** — and the decision it refused to guess.
 
-    `content-module-contract.md`:42 advertises `{% if %}` to module authors, and
-    `test_presence_runtime.py`:383 `importorskip`s jinja2 for exactly that form. With no
-    jinja2 the minimal renderer substitutes `{{ … }}` and passes block tags through
-    **verbatim**, so an imported pack using `{% if %}` puts template source into the
-    system prompt on the shipped container.
+    It used to assert the pre-fix behaviour: with no jinja2 the minimal renderer
+    substituted `{{ … }}` and passed block tags through **verbatim**, so an imported pack
+    using the `{% if %}` form `content-module-contract.md`:42 advertises put template
+    source into the brain's system prompt. It said "change it when that decision lands".
+    Both halves of the decision have landed:
 
-    Not fixed here, and deliberately not guessed at: stripping the tags would render the
-    branch unconditionally (telling the brain "they are here" when nobody is), and
-    dropping the block would silently delete authored instructions. The fix is a product
-    decision — ship `jinja2` in `mqtt/requirements.txt` (the renderer is sandboxed now,
-    which is what made that safe), or reject block syntax at pack review. This test says
-    what today does; change it when that decision lands.
-    """
-    out = _no_jinja2_render("{% if presence.face_present %}They are here.{% endif %}"
-                            "Hi {{ volley.config.child_pii.nickname }}", _child_context())
-    assert out == "{% if presence.face_present %}They are here.{% endif %}Hi Sam"
-    assert "{%" in out, "if this now renders, the gap is closed — update this test"
+    * the container ships jinja2, so the documented form really works in production
+      (`test_render_container_deps.py`);
+    * the fallback no longer passes anything through — it **evaluates** a simple
+      `{% if dotted.path %}` (which is all the documented form needs, and all `_resolve`
+      can honestly decide) and removes what it cannot evaluate, counting each removal in
+      `render.STRIPPED` (`test_render_fallback.py`).
+
+    The old objection — "stripping the tags would render the branch unconditionally" —
+    is answered by evaluating rather than stripping: the branch is taken only when the
+    path is truthy, byte-identically to jinja2. The two asserts below are the two
+    branches; a fallback that guessed would get one of them wrong."""
+    tail = "Hi {{ volley.config.child_pii.nickname }}"
+    template = "{% if presence.face_present %}They are here.{% endif %}" + tail
+    ctx = _child_context()
+    assert ctx["presence"]["face_present"] is True
+    assert _no_jinja2_render(template, ctx) == "They are here.Hi Sam"
+
+    ctx["presence"]["face_present"] = False
+    assert _no_jinja2_render(template, ctx) == "Hi Sam"
+
+    # And the promise generalises: identical to the real renderer, both ways.
+    for face in (True, False):
+        ctx["presence"]["face_present"] = face
+        assert _no_jinja2_render(template, ctx) == _plain_render(template, ctx)
 
 
 # ------------------------------------------------------- the whole-path proof --

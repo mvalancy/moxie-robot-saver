@@ -9,6 +9,10 @@ server-side code execution, and it was: on jinja2 3.1.2 in a dev checkout,
 container happened to be safe only because it has no jinja2 at all
 (`mqtt/requirements.txt`; `pyproject.toml`:25 gates it behind the `content` extra), so the
 hole was live in every dev checkout and every `.[content]` / `.[all]` install.
+**That accident is over:** `mqtt/requirements.txt` now lists `jinja2>=3.0` on purpose, because
+`content-module-contract.md`:42 advertises `{% if %}` and the fallback cannot render it.
+Shipping jinja2 into the container is only safe *because* of this
+sandbox, so these probes now fence the renderer every real deployment runs.
 
 Found by the research pass that specced `backlog/sandboxed-extensions.md` — which is the
 irony worth recording: the brief's whole subject is "we never execute untrusted code", and

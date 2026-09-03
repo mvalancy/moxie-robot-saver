@@ -219,10 +219,14 @@ Template injection through a `prompt` is server-side code execution.
 
 Scope, honestly:
 
-- **It is not live in the shipped container.** `mqtt/requirements.txt` does not list `jinja2`, the
-  `Dockerfile`'s `EXTRAS` build-arg defaults to empty, and `pyproject.toml`:25 puts it behind the
-  optional `content` extra. With `jinja2` absent, `render_prompt` falls back to `_minimal_render` — a
-  `{{ dotted.path }}` regex substitution with no attribute-call surface, which is safe.
+- **It was not live in the shipped container — and as of 2026-09-03 that is no longer the reason it is
+  safe.** When this brief was written `mqtt/requirements.txt` listed no `jinja2`, so `render_prompt`
+  fell back to `_minimal_render`, a `{{ dotted.path }}` substitution with no attribute-call surface.
+  Two things changed since: the hole itself was closed with a `SandboxedEnvironment` (PR #56), and
+  **the container now ships `jinja2` deliberately** (`fix/container-renderer`), because the sandbox
+  made it safe and [`content-module-contract.md`](../content-module-contract.md) advertises the
+  `{% if %}` form that the fallback could not evaluate. So the shipped container runs the *sandboxed*
+  full renderer today, and its safety rests on the sandbox rather than on an absent dependency.
 - **It is live on any install that has `jinja2`**, which is every developer checkout in this repo (we
   measured `jinja2 3.1.2`), anything installed as `.[content]` or `.[all]`, and any environment where
   another dependency pulls Jinja in. The docstring's *"Uses real Jinja2 when it's installed"* means the
@@ -908,7 +912,7 @@ packs that want their own sounds.
 | A3 | Not one upstream hook uses a loop, user function or recursion | **proven** | All nine read in full. The nested `def`s are inlining. This is the load-bearing premise of §3.2 |
 | A4 | Upstream's 10 s timeout does not actually bound a runaway hook | **inferred** (code + documented stdlib semantics; high confidence) | `future.result(timeout=10)` raises, then `with ThreadPoolExecutor` exits via `shutdown(wait=True)`. Not executed against a live upstream instance — and it needs no settling, because we are not porting the path |
 | A5 | `render.py` permits arbitrary Python execution from a pack-importable `prompt` when `jinja2` is present | **proven, by execution** | Probe run against `render_prompt` with a real `Volley` on `jinja2` 3.1.2; returned the process cwd. X3 pins it |
-| A6 | It is **not** live in the shipped container | **proven** | `mqtt/requirements.txt` lists no `jinja2`; `Dockerfile` `ARG EXTRAS=""`; `pyproject.toml`:25 puts it behind the `content` extra. `_minimal_render` has no attribute-call surface |
+| A6 | It is **not** live in the shipped container | **was proven; now superseded (2026-09-03)** | True when written. The container now ships `jinja2` on purpose and runs the **sandboxed** renderer, so safety rests on the sandbox (PR #56) rather than on the dependency being absent. Original evidence: lists no `jinja2`; `Dockerfile` `ARG EXTRAS=""`; `pyproject.toml`:25 puts it behind the `content` extra. `_minimal_render` has no attribute-call surface |
 | A7 | 0.25 s / 10 000 steps / 16 KiB / 256 KiB / 3 breaches are the right numbers | **unverified — chosen, not measured** | Every one is an env var. A week of `ext_events` on a real appliance is what settles them; until then the only defensible claim is "strictly inside the 6 s turn budget" |
 | A8 | A JSON-AST evaluator ports to JS mechanically and agrees byte-for-byte | **inferred** | The conformance file plus a `workerd` run is the P1 gate. Number formatting is the likeliest disagreement, which is why `format` takes an explicit spec |
 | A9 | Cloudflare Workers' CPU limit accommodates a 0.25 s evaluator slice | **unverified — stated nowhere in the repo** | [`live-sim-demo.md`](live-sim-demo.md) §10 already files this: the only Cloudflare limit our docs state is 25 MB/file. Same dashboard check settles both |
