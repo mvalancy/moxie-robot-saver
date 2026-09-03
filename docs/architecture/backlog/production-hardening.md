@@ -34,8 +34,8 @@ reconnects, that it tolerates a config pushed forty minutes into a session, or t
 is really ~20 s.
 
 So the honest framing of this brief is: **it closes the failures we can observe, and it makes the ones we
-cannot observe visible when they finally happen.** Six of the twenty assumptions in §9 need a physical
-robot and are marked as such. None of them blocks P0.
+cannot observe visible when they finally happen.** Six of the twenty assumptions in §9 (A4, A5, A6,
+A7, A17, A20) need a physical robot and are marked as such. None of them blocks P0.
 
 **One-sentence definition of done (P0):** *the supervisor comes up before the broker does, survives the
 broker going away and coming back without losing a turn silently or lying about one, and two processes
@@ -587,8 +587,10 @@ should be driven by a feature, not by this page.
 
 ## 9. Assumption ledger
 
-**Twenty rows. Nine are proven, five inferred, six unverified — and of the six, all six need a physical
-robot.** That last number is the honest ceiling on this whole area and it does not move by building.
+**Twenty rows: six proven, eight inferred, six unverified.** A different six — **A4, A5, A6, A7, A17 and
+A20** — need a **physical robot**, and that set deliberately cuts across the states: A4 and A7 are
+*inferred* and still hardware-gated, because an inference from upstream is not a measurement. That
+second number is the honest ceiling on this whole area and it does not move by building.
 
 | # | Assumption | State | How it gets settled |
 |--:|---|:--:|---|
@@ -611,7 +613,7 @@ robot.** That last number is the honest ceiling on this whole area and it does n
 | A17 | A real Moxie's `d_<uuid>` client id is **stable across reconnects**, so per-device state (`_turn_seq`, memory, permits) survives one | **unverified — needs hardware** | The id is the device id and is presumed stable, but nothing in our corpus proves it does not rotate. If it rotates, C6, the permits gate and every per-device collection are wrong in the same way. |
 | A18 | A real Moxie tolerates the supervisor's **fixed** `client_id="supervisor"` reconnecting into the same broker | **inferred** | Only the broker sees it, and it evicts the older session by MQTT spec. Relevant only if two supervisors ever run at once — which §3 now makes safe for the *store* and not for the *broker*. Named so it is not mistaken for solved. |
 | A19 | The `_turn_seq` bump in `on_disconnect` preserves the "MQTT loop is the only writer" invariant at :2108‑2110 | **proven, by reading paho** | `on_disconnect` is dispatched from the network loop, which under `loop_forever()` is the calling thread. S8 pins it. |
-| A20 | A week is the right horizon at all | **unverified** | Nobody has run a Moxie on our broker for a week, or an hour (§0). The horizon is inherited from the audit's phrasing, not measured. |
+| A20 | A week is the right horizon at all | **unverified — needs a robot in a house** | Nobody has run a Moxie on our broker for a week, or an hour (§0). The horizon is inherited from the audit's phrasing, not measured — and §5's *"week in an hour"* is a **rate substitution**, which is a different claim and is labelled as one. |
 
 ---
 
