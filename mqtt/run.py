@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "supervisor"))
 import config
 from moxie_sdk import brains, voice_settings
+from moxie_sdk import store as store_mod
 from moxie_sdk.store import JsonStore
 from moxie_sdk.types import ChildProfile
 from supervisor.moxie_runtime import MoxieRuntime
@@ -55,6 +56,10 @@ def assemble(config):
     # boot brain is `defaults ⊕ fleet`, and the builders are handed over so the runtime can
     # bring up another brain for another child later without ever importing `config`.
     store = JsonStore()
+    # One line, once, if this platform cannot do cross-process store locking (no `fcntl`).
+    # A silent downgrade is how somebody ships a Windows appliance believing two processes
+    # are safe on one data directory — production-hardening.md §3.3 #4.
+    store_mod.warn_no_locking()
     booted = boot_brain(config, store)
     rt = MoxieRuntime(config.build_brain(booted["brain"]), host=config.MQTT_HOST,
                       port=config.MQTT_PORT, child=child, store=store,

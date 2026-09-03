@@ -340,11 +340,78 @@ New `sim/tests/test_annotate.py` (hermetic, no creds, runs in the fast CI tier):
 
 ---
 
-## 2. BEYOND #1 — the behavior planner
+## 2. BEYOND #1 — the behavior planner · **P1 🟢 SHIPPED 2026-09-03** (P2 open)
 
 > The floor maps **words** to tags. The planner scores **the line's job** and stages a performance — then
 > proves every asset it references exists before it ships, and lets an author watch it on the SIM before a
 > child does.
+
+> **Built (P1).** [`mqtt/moxie_sdk/performance.py`](../../../mqtt/moxie_sdk/performance.py) — the frozen
+> `Beat`/`Performance` structure, a rule classifier over all 22 `RemoteDialog.DialogAct`s, the
+> act→performance profile table, a total `validate()` against the frozen catalog, and the one
+> `render()` that mints a mark — behind the unchanged
+> [`supervisor/markup.py`](../../../mqtt/supervisor/markup.py) seam, which now answers with
+> `perform()` (markup **and** score). Contract changes C1–C7 all landed; the preview hook is
+> `MoxieRuntime.preview` → `POST /preview` → `POST /local/robots/{id}/preview`. Pinned by
+> [`sim/tests/test_performance.py`](../../../sim/tests/test_performance.py) (124 hermetic cases,
+> 22 dialog-act goldens in [`sim/tests/goldens/performance.json`](../../../sim/tests/goldens/performance.json)
+> as **JSON `Performance` objects** plus the markup they render to) and by
+> [`sim/test_performance_render.mjs`](../../../sim/test_performance_render.mjs), which plays all 22
+> through the real `bridge.js` and writes the contact sheet. `MOXIE_EXPRESSIVE=planner|floor|off`.
+>
+> **Four things the build decided that this spec left open, each for a stated reason.**
+> 1. **A `Beat` is a *run of words*, not only a clause.** Clauses are sub-split again at the
+>    talking-gesture stride, so every mark falls at a beat boundary and `render()` never reaches
+>    inside a beat's text. That is what makes rendering total — and it is why the terminal
+>    `Gesture_None` and the `icons-v2` clear are *derived by* `render()` rather than carried as
+>    beats: they are a rendering convention, not a decision.
+> 2. **The words outrank the act for mood.** §2.1 reads as though the act picks the face, but the
+>    floor's mood cues are not guesses — each is what shipped content actually used for that phrase
+>    (`"Oops." → 4 Shy`, 2×; `"Oh!" → 5 Surprised`, 14×). An act profile that overrode them would
+>    trade recovered evidence for a rule of ours, so the profile fills the **silence**: it supplies a
+>    face for every line whose words score plain Neutral, which is most of them.
+> 3. **`Performance` carries a line-level `mood`/`mood_intensity`** beside the per-beat ones. §2.2's
+>    sketch has neither, but C1/C3 need a single value for `RemoteChatOutput.mood`, and beat moods
+>    drive face *changes*. Mood marks are capped at **2 per line** (initial + one transition, §2.5's
+>    "one mood transition at most") and a chunk past the first plans **no** mood at all.
+> 4. **Two wishes in §2.1 have no id behind them and were written down instead of invented.**
+>    "An apology lowers the gaze": nothing in the 24 recovered verbs or the 4 look-bearing trees
+>    lowers a gaze, so an apology gets `Bht_Idle_Listening`, the least-searching tree we have.
+>    "Backchannelling gets a subtle nod": there is no nod id either, so backchannelling is rendered
+>    as the assertable half — **no arm gesture at all** plus the attentive tree.
+>
+> **Proven in both directions.** [`sim/tools/performance_mutation_check.py`](../../../sim/tools/performance_mutation_check.py)
+> breaks one guard at a time and requires a test to go red: **39/39 caught**. The first run
+> caught 24/34, and two of the misses were holes in the *code*, not the tests — an app's own
+> scored fields were overlaid onto `RemoteChatOutput` **without** passing the catalog (so a brain
+> could have authorized `dialog_act: "smalltalk"` simply by setting the field), and an
+> uncatalogued `emotion`/`signal` hint blanked the field instead of falling through to the rules.
+> Both are fixed and both now have a mutation.
+>
+> **C6 holds where an app authors nothing, and not on the model path (found 2026-09-03,
+> integration).** `markup` is derived, never authored — *for `echo`, for the content
+> extensions and for the preview hook, which set no markup and therefore get
+> `render(validate(plan(…)))`*. `LLMApp` does set it: `build_markup` → `automarkup.annotate`
+> on every reply and every streamed chunk, and `_stage` honours an app's authored markup
+> verbatim by design (the idempotence rule). So on the brain a real deployment runs,
+> `MOXIE_EXPRESSIVE=planner` changes the **five scored fields and not the performance** —
+> the act profile, the gaze tree and the per-clause staging never reach the wire there, and
+> the body a child sees is still the floor's. Proven on a real broker by
+> [`sim/tests/test_sil_performance_e2e.py`](../../../sim/tests/test_sil_performance_e2e.py):
+> every chunk of a streamed model answer is byte-identical to `annotate(text,
+> turn_key=f"{device_id}|{speech}", chunk_index=n)`. It is **pinned rather than fixed** —
+> closing it means deciding whether an expressive `LLMApp` should stop authoring markup
+> when the planner is on, which is a design call on the turn loop and not an integration
+> one, and `test_the_model_path_performs_the_floors_markup` turns that change into a red
+> test instead of a silent one. A corollary worth keeping: because only `LLMApp` implements
+> `respond_stream`, **no published path currently carries planner markup on a streamed
+> chunk at all**, so the planner's own `chunk_index` rule is unreachable from the wire.
+>
+> **Still open, honestly.** Icons and SFX stay gated off (the four confirmed icons are calendar cues;
+> one of the two confirmed sounds is a music bed) and spurts are never populated — the `Beat` slots
+> exist and validate, and nothing turns them on. `auto_tags[]`, `sentiment` and `perplexity` remain
+> empty on the wire. The act classifier is a rule engine and says so: it cannot read context or
+> sarcasm and calls an unfamiliar declarative `statement_non_opinion`. **P2 is unchanged and open.**
 
 ### 2.1 What "10×" means, from the child's side
 
@@ -468,7 +535,7 @@ budget; when the budget blows, the floor answers.
 | Phase | Scope | Acceptance |
 |---|---|---|
 | **P0 · the floor** | §1 in full — `annotate` + `vocab` behind `make_markup` | §1.8, all nine criteria |
-| **P1 · the planner** | `Performance` + `plan`/`validate`/`render`; C1–C7; the preview hook; scored output on both the single and the streamed path. **Deterministic, still no model call** — it scores from the model's own mood/act when present and from rules otherwise | (a) 22 dialog-act goldens green; (b) **0** unknown ids over the corpus and over ≥500 live lines; (c) scored fields present on 100 % of published turns, streamed included; (d) preview hook renders ≥10 lines on the SIM with a contact-sheet artifact; (e) fault injection proves the fall back to the floor; (f) no first-audio latency regression; (g) `ai-seam.md` §② gains its one mapping line |
+| **P1 · the planner** 🟢 **SHIPPED 2026-09-03** | `Performance` + `plan`/`validate`/`render`; C1–C7; the preview hook; scored output on both the single and the streamed path. **Deterministic, still no model call** — it scores from the model's own mood/act when present and from rules otherwise | (a) ✅ 22 dialog-act goldens green, as JSON *and* as markup; (b) ✅ **0** unknown ids over a 300-line corpus (goldens + every content module + every filler + 260 generated lines) — the ≥500 **live** lines are P2's bar and were not run here; (c) ✅ scored fields on 100 % of published turns, streamed included, asserted through the real runtime; (d) ✅ all **22** acts render on the SIM through the real `bridge.js` (8 distinct faces, 21 moving the body) with `sim/artifacts/performance-contact-sheet.html` uploaded by the fast tier; (e) ✅ fault injection at `plan`/`validate`/`render` + a budget breaker, each proven to land on the floor; (f) ✅ measured p95 **0.25 ms** on a 140-char line and **0.56 ms** on a 248-char one, against the floor's 0.15 / 0.29 — inside the floor's own 1 ms budget. That was a bench measurement of the seam, and its author said so; **the first-audio experiment itself was re-run on 2026-09-03** ([`sim/tools/first_audio_ab.py`](../../../sim/tools/first_audio_ab.py)), timing a robot's own `events/remote-chat` → first `commands/remote_chat` with words → first `commands/tts` with audio, through a real broker and `mqtt/run.py` as its own process, one supervisor boot per arm. **Controlled arm** (a local brain streaming a fixed answer at a fixed pace, 20 turns each, so the gateway's variance is held still): first words **356.5 ms** planner vs **357.9 ms** floor, first audio **409.2 ms** vs **411.3 ms** — the planner is **1.4 / 2.1 ms FASTER**, which is to say the difference is inside a single arm's own 2–4 ms spread and the seam is not resolvable on the wire. **Live arm** (the real gateway, 6 completions): first words 1.02–2.39 s across both arms, straddling the 1.52 s of PR #15, with ~800 ms of spread *within* one arm — so the live A/B can only bound the planner's cost, never resolve it, and the controlled arm is what carries the verdict. **No first-audio regression.** Remaining honesty: `t_audio` is the built-in tone synthesizer (local, and identical in both arms) rather than a gateway voice, so it measures our pipeline and not a voice provider's queue; (g) ✅ `ai-seam.md` §② carries the mapping |
 | **P2 · learned / model-assisted** | the brain returns the performance itself (the expressive JSON envelope grows `dialog_act`, `gesture`, `gaze`, `icon`, `sfx`), or a small **local** classifier scores the line. Same validator, same renderer, same budget. This is where OpenMoxie's ML rule table would be answered properly — with something we can audit and a child's data that never leaves the house | (a) beats P1 on the blind human score in the live A/B; (b) 0 unknown ids over ≥500 live lines; (c) first-audio latency unchanged; (d) the classifier runs locally with a hard budget and the floor still answers when it blows; (e) every model-chosen id passes the same `validate` — a brain may *suggest*, it may never *authorize* |
 
 **Not in scope, and why.** Barge-in and STT partials (audit §3.2) touch the same turn but are a different

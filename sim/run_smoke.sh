@@ -55,8 +55,24 @@ if [ "$MODE" = "telehealth" ]; then
   rc=$?
 else
   EXPECT_TTS=""; [ "$TTS_ENGINE" != "off" ] && EXPECT_TTS="--expect-tts"
-  echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}) ──"
-  python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout 20 $EXPECT_TTS
+  # --expect-scored: the reply must carry the SCORED half of RemoteChatOutput (mood,
+  # mood_intensity, dialog_act, emotion, signals) and not just words. The behavior
+  # planner fills those on every published turn (backlog/expressiveness.md §2.3), and
+  # until this flag existed the standing smoke would have stayed green with every one of
+  # them missing from the wire. Both `planner` and `floor` score; `MOXIE_EXPRESSIVE=off`
+  # (and its predecessor `MOXIE_AUTOMARKUP=0`) is the documented passthrough rollback and
+  # publishes an unscored line ON PURPOSE, so the check is asked for only when the
+  # appliance claims to score — a rollback lever that reddened the smoke would be a
+  # rollback lever nobody could use. Verified in both directions: with the default this
+  # run prints the five fields, and with MOXIE_EXPRESSIVE=off the same robot reports
+  # "reply (SUCCESS) carried no [...]" — that is why the flag is opt-in and not a
+  # hard-wired assertion.
+  EXPECT_SCORED="--expect-scored"
+  case "${MOXIE_EXPRESSIVE:-planner}" in off) EXPECT_SCORED="";; esac
+  [ "${MOXIE_AUTOMARKUP:-1}" = "0" ] && EXPECT_SCORED=""
+  echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}${EXPECT_SCORED:+ + scored output}) ──"
+  python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout 20 \
+    $EXPECT_SCORED $EXPECT_TTS
   rc=$?
 fi
 echo "── supervisor log tail ──"; tail -6 /tmp/moxie-supervisor.log || true

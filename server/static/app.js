@@ -159,6 +159,7 @@ async function refreshLive(){
     refreshSafety(null);
     refreshMemory(null);
     refreshTelehealth(null);
+    refreshPreview(null);
     refreshSchedule(null);
     refreshVoice(null);
     refreshBrain(null);
@@ -188,6 +189,7 @@ async function refreshLive(){
   refreshSafety(liveDevice);
   refreshMemory(liveDevice);
   refreshTelehealth(liveDevice);
+  refreshPreview(liveDevice);
   refreshSchedule(liveDevice);
   refreshVoice(liveDevice);
   refreshBrain(liveDevice);
@@ -764,6 +766,74 @@ async function thSpeak(){
 }
 { const b=$('#btn-th-speak'); if(b) b.onclick=thSpeak; }
 { const t=$('#th-text'); if(t) t.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); thSpeak(); } }; }
+
+// ---- 🎬 Rehearsal (the behavior planner's preview hook, BEYOND #1) ----
+// A line typed here is staged by the planner and published as an ORDINARY remote_chat, so
+// whatever is subscribed as this robot performs it. No brain, no history, no turn — a
+// dress rehearsal, so an author sees the performance before a child does.
+//
+// Two honesty rules this card keeps:
+//  * it shows the STAGED structure, not a guess. Every beat's mood/gesture/gaze comes back
+//    from the supervisor, so what is listed is exactly what was published.
+//  * an id the validator refused is shown in red rather than dropped silently. "Nothing
+//    happened" with no explanation is the worst possible answer to an author.
+// It does not poll: a rehearsal happens when someone asks for one.
+let pvDevice=null;
+function refreshPreview(deviceId){
+  const card=$('#preview-card'); if(!card) return;
+  pvDevice=deviceId;
+  card.classList.toggle('hidden', !deviceId);
+}
+const PV_SLOTS=[['gesture','arm'],['tree','body'],['gaze','look'],['icon','screen'],
+                ['sfx','sound'],['usel','voice'],['spurt','spurt']];
+function renderPreview(r){
+  const box=$('#pv-beats'), st=$('#pv-status');
+  if(!box) return;
+  if(!r || !r.ok){
+    box.innerHTML='';
+    if(st) st.innerHTML=`<span class="warn">${escapeHtml((r&&(r.reason||r.error))||'unavailable')}</span>`;
+    return;
+  }
+  const p=r.performance||{}, beats=p.beats||[];
+  const head=[`act <b>${escapeHtml(p.dialog_act||'—')}</b>`,
+              `mood <b>${escapeHtml(String(p.mood??'—'))}</b>`,
+              `feels <b>${escapeHtml(p.emotion||'—')}</b>`,
+              `signal <b>${escapeHtml(p.signal||'—')}</b>`,
+              `${beats.length} beat${beats.length===1?'':'s'}`].join(' · ');
+  const rows=beats.map(b=>{
+    const tags=PV_SLOTS.filter(([k])=>b[k]).map(([k,label])=>
+      `${label}:${escapeHtml(String(b[k]))}`);
+    if(b.mood!=null) tags.unshift(`face:${escapeHtml(String(b.mood))}`);
+    if(b.break_after) tags.push(`pause:${escapeHtml(String(b.break_after))}s`);
+    return `<div class="pv-beat"><span class="pv-words">${escapeHtml(b.text||'·')}</span>`
+         + `<span class="pv-tags">${tags.join(' ')||'—'}</span></div>`;
+  }).join('');
+  const dropped=(r.dropped||[]).length
+    ? `<div class="pv-dropped">Not played (Moxie has no such move): `
+      + `${escapeHtml((r.dropped||[]).join(', '))}</div>` : '';
+  box.innerHTML=`<div class="pv-head">${head}</div>${rows}${dropped}`;
+  if(st) st.textContent = r.spoke ? 'Rehearsed and spoken.' : 'Rehearsed — watch the robot.';
+}
+async function pvRun(){
+  const boxEl=$('#pv-text'); if(!boxEl || !pvDevice) return;
+  const text=(boxEl.value||'').trim(); if(!text) return;
+  const st=$('#pv-status'); if(st) st.textContent='Rehearsing…';
+  let r;
+  try{
+    r=await api(`/local/robots/${encodeURIComponent(pvDevice)}/preview`,
+                {method:'POST', auth:false,
+                 body:{text, speak:!!($('#pv-speak')||{}).checked}});
+  }catch(e){
+    // The proxy keeps the supervisor's 400/404 and its reason travels in the body — a
+    // safety block, an empty line, a robot still pending. Show it, never swallow it.
+    let reason=(e && e.message) || 'failed';
+    try{ const j=JSON.parse(reason); reason=j.reason||j.error||reason; }catch(_){}
+    r={ok:false, reason};
+  }
+  renderPreview(r);
+}
+{ const b=$('#btn-pv-run'); if(b) b.onclick=pvRun; }
+{ const t=$('#pv-text'); if(t) t.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); pvRun(); } }; }
 
 // ---- 📅 Today's plan (the recommender's "why this activity today", BEYOND #7) ----
 // The supervisor plans the day the robot pulls and keeps one plain sentence per entry

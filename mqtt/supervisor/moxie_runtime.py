@@ -30,17 +30,36 @@ from moxie_sdk import presence as presence_seam          # vision events -> pres
 from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire (audit ADOPT #7)
 from moxie_sdk import telemetry as telemetry_seam        # 📈 Packet envelope + durable history
 from moxie_sdk import vocab as vocab_seam                # the frozen mood/markup catalog
+from moxie_sdk import performance as performance_seam   # the behavior planner (§2)
 from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
 from moxie_sdk import brains as brain_seam             # 🧠 which brain, per robot
 from moxie_sdk.content import packs as content_packs  # 📦 content packs (ADOPT #5)
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
-from markup import make_markup  # the markup floor (moxie_sdk.automarkup) behind the seam
+from markup import make_markup, perform  # the behavior planner / markup floor seam
 
 # paho is imported lazily in _build_client() so the runtime + turn pipeline can be
 # imported and integration-tested without the broker client installed.
 
 CONNECT_RE = re.compile(r"connected from (.*) as (d_[a-f0-9-]+)", re.I)
 DISCONNECT_RE = re.compile(r"Client (d_[a-f0-9-]+) (?:closed its connection|disconnected)", re.I)
+
+# --- staying connected (docs/architecture/backlog/production-hardening.md §4.1) ---
+#
+# The third argument of paho's `connect(host, port, keepalive)` is the **keepalive**, not
+# a timeout — the audit read it as a timeout and it is not (assumption A1). 30 s is kept
+# deliberately: the broker declares us dead at 1.5× keepalive (45 s) and paho notices a
+# missing PINGRESP within one keepalive, so halving paho's default 60 halves the
+# worst-case detection of a *half-open* socket — the failure a NAT table or a Wi-Fi drop
+# actually produces, where the connection is gone but nobody has said so.
+KEEPALIVE_S = 30
+
+# The reconnect ladder paho walks after a drop: 1 s, doubling, capped. **Chosen, not
+# measured** (A14). 60 rather than paho's own 120 because a house's router reboot is
+# ~30-60 s and a 120 s ceiling is up to two minutes of a child talking to nothing; rather
+# than Fork A's 30 because we would rather not hammer a broker that has been down for an
+# hour. No jitter: paho has none, and with a single supervisor there is no herd.
+RECONNECT_MIN_DELAY_S = 1
+RECONNECT_MAX_DELAY_S = 60
 
 
 
@@ -103,6 +122,21 @@ class MoxieRuntime:
         # Durable per-robot state (mentor behaviors today). JSON files under
         # MOXIE_DATA_DIR — a stepping stone toward a real DB (audit ADOPT #8).
         self.store = store if store is not None else JsonStore()
+        # A store write refused because another PROCESS held the record is the one failure
+        # the cross-process lock newly makes possible, so it is recorded where an operator
+        # already looks instead of being a counter nobody reads (§5.3 A11).
+        self.store.on_lock_timeout = self._on_store_lock_timeout
+        # --- what we actually know about the broker connection (§4.1 C4) ---
+        #: True only between a **successful** CONNACK and the next disconnect. A client
+        #: object is not a connection — that confusion is what let the wakeup route
+        #: report success into a dead socket.
+        self.broker_connected = False
+        self.last_broker_connect = 0.0
+        self.last_broker_disconnect = 0.0
+        self.last_connect_error = ""
+        #: Publishes the transport refused because there was no socket. At QoS 0 paho
+        #: does not queue them (A3), so this is a count of messages the robot never got.
+        self.publish_drops = 0
         self.robots: dict[str, RobotContext] = {}
         self.history: dict[str, list] = {}
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
@@ -227,6 +261,13 @@ class MoxieRuntime:
             self.client.username_pw_set(username, password)
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
+        # After a successful first connect paho already reconnects on its own; what it
+        # does NOT do is tell anyone. These two callbacks are the difference between "the
+        # appliance recovered" and "nobody knows why the robot went quiet" (§4.1 C4).
+        self.client.on_disconnect = self._on_disconnect
+        self.client.on_connect_fail = self._on_connect_fail
+        self.client.reconnect_delay_set(min_delay=RECONNECT_MIN_DELAY_S,
+                                        max_delay=RECONNECT_MAX_DELAY_S)
         return self.client
 
     # ---- conversation memory (survives restarts) ----
@@ -472,6 +513,19 @@ class MoxieRuntime:
                 # rather than hard-coded in the console so the two can never disagree
                 # about which slots exist or which options are actually cited.
                 "face_catalog": face_catalog(),
+                # What we actually know about the broker (§4.1 C4 / §8 file 8). The
+                # console's existing connection monitor renders these with **no console
+                # change**, and `broker_connected` is the honest answer to the question
+                # every other status field silently assumed: is there a socket at all?
+                # The **recorded** state (what a CONNACK last told us), not a live probe
+                # of the transport: a status page reports what happened, and the two only
+                # ever differ for a test double with no socket to have an opinion about.
+                "broker_connected": self.broker_connected,
+                "last_broker_connect": self.last_broker_connect,
+                "last_broker_disconnect": self.last_broker_disconnect,
+                "last_connect_error": self.last_connect_error,
+                "publish_drops": self.publish_drops,
+                "store_lock_timeouts": getattr(self.store, "lock_timeouts", 0),
                 "robots": robots, "recent": list(self.recent)[-60:]}
 
     # ---- lifecycle ----
@@ -481,8 +535,22 @@ class MoxieRuntime:
         self._start_status_server(status_port)
         print(f"[runtime] connecting to broker {self.host}:{self.port} · app={self.app.name}")
         self._note("info", f"supervisor started (app={self.app.name})")
-        self.client.connect(self.host, self.port, 30)
-        self.client.loop_forever()
+        # **All three of these, or none of them.** A plain blocking `connect()` raises
+        # `ConnectionRefusedError` / `socket.gaierror` straight out of `run()` when the
+        # broker is not listening yet, and the supervisor process dies — survivable under
+        # `docker compose up` only because `depends_on: condition: service_healthy` holds
+        # the container back, and not survivable at all on bare metal, in the SIL harness,
+        # or any time the broker restarts before our first connect.
+        #
+        # And `connect_async` **alone changes nothing**: `loop_forever()` defaults to
+        # `retry_first_connection=False` and re-raises the first `OSError` from
+        # `reconnect()` (A2, read out of the installed paho). `loop_start()` gets it right
+        # only because its thread body passes the flag — which is why porting "add
+        # connect_async" from a `loop_start()` codebase onto this one is a no-op. S6 in
+        # `sim/tests/test_connection_resilience.py` exists to fail on exactly that
+        # half-done fix rather than only on no fix at all.
+        self.client.connect_async(self.host, self.port, KEEPALIVE_S)
+        self.client.loop_forever(retry_first_connection=True)
 
     def _start_status_server(self, port):
         """Tiny HTTP status endpoint for the web UI's connection monitor."""
@@ -819,6 +887,13 @@ class MoxieRuntime:
                 next turn; a body whose digest is not the reviewed one is **409**.
                 `POST /content/undo` puts the snapshot back. See `_content`.
 
+                `POST /preview?device_id=…` with `{"text": "…"}` rehearses one line:
+                the behavior planner stages it and the supervisor publishes it as an
+                ordinary `remote_chat`, so the SIM (or a robot paired as a rehearsal
+                device) performs it. No brain is called and no turn is recorded; the reply
+                carries the staged `Performance` JSON and any id `validate` dropped, so an
+                author sees the performance before a child does — see `preview`.
+
                 `POST /wakeup?device_id=…` publishes the recovered `wakeup` command
                 (`{"command":"wakeup"}` on `/devices/{id}/commands/wakeup`) at one robot.
                 The robot acknowledges nothing, so the reply says `published`, never
@@ -840,6 +915,29 @@ class MoxieRuntime:
                     return self._memory_write(urlparse(self.path).query)
                 if path in ("/content/review", "/content/import", "/content/undo"):
                     return self._content(path)
+                if path == "/preview":
+                    # `POST /preview?device_id=…` `{"text": …, "speak": false}` — the
+                    # rehearsal hook (backlog/expressiveness.md §2.4). Plans one line and
+                    # publishes it as an ORDINARY remote_chat so any client subscribed as
+                    # that device performs it; no brain, no history, no turn recorded.
+                    # 404 unknown device, 400 empty/blocked line.
+                    q = parse_qs(urlparse(self.path).query)
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length) if length else b"{}"
+                    try:
+                        body = _json.loads(raw or b"{}") or {}
+                    except Exception as e:
+                        return self._json_out({"ok": False, "error": str(e)}, 400)
+                    device_id = ((q.get("device_id") or [""])[0]
+                                 or str(body.get("device_id") or ""))
+                    out = rt.preview(device_id, body.get("text"),
+                                     speak=bool(body.get("speak")),
+                                     icons=bool(body.get("icons")),
+                                     sfx=bool(body.get("sfx")))
+                    if out.get("ok"):
+                        return self._json_out(out, 200)
+                    code = 404 if "unknown device_id" in str(out.get("error")) else 400
+                    return self._json_out(out, code)
                 if path == "/wakeup":
                     # `POST /wakeup?device_id=…` — publish the recovered `wakeup`
                     # command. 404 unknown device, 409 pending/no broker, and on success
@@ -940,11 +1038,170 @@ class MoxieRuntime:
         except Exception as e:
             print(f"[runtime] status server failed: {e}")
 
+    #: Everything the supervisor listens to. Re-installed on **every** successful CONNACK,
+    #: because the broker drops subscriptions with the session.
+    SUBSCRIPTIONS = ("/devices/+/events/#", "/devices/+/state",
+                     "$SYS/broker/log/#", "$SYS/broker/clients/#")
+
+    @staticmethod
+    def _connack_failed(rc) -> bool:
+        """True when a CONNACK refused us.
+
+        `rc` is a paho `ReasonCode` under `CallbackAPIVersion.VERSION2` and a plain int
+        under VERSION1, so ask the object first and fall back to the integer comparison.
+        """
+        failed = getattr(rc, "is_failure", None)
+        if failed is not None:
+            return bool(failed)
+        try:
+            return int(rc) != 0
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _connack_reason(rc) -> str:
+        """`connack_string(rc)` when paho is importable, else the code as written."""
+        try:
+            import paho.mqtt.client as mqtt
+            return str(mqtt.connack_string(rc))
+        except Exception:
+            return str(rc)
+
     def _on_connect(self, c, u, flags, rc, props=None):
+        """A CONNACK arrived — and it is not necessarily a *yes*.
+
+        This used to print `broker connected rc={rc}` and subscribe unconditionally, so a
+        refusal (`rc=5`, *not authorised*, which the supervisor's broker credential made
+        reachable for the first time) logged the words **"broker connected"** and then
+        subscribed into a socket the broker was closing. Same class of bug as a route that
+        reports success for a publish that never happened: a comfortable lie in the one
+        place an operator looks. Behaviour ported from Fork A's `moxie_server.py`:206-215
+        (MIT, © Justin Beghtol — read as prior art, no code copied).
+        """
+        if self._connack_failed(rc):
+            self.broker_connected = False
+            self.last_connect_error = self._connack_reason(rc)
+            print(f"[runtime] ⛔ broker REFUSED the connection: "
+                  f"{self.last_connect_error}", flush=True)
+            self._note("error", f"⛔ broker refused the connection: "
+                                f"{self.last_connect_error}")
+            return                            # and subscribe to nothing
+        self.broker_connected = True
+        self.last_broker_connect = time.time()
+        self.last_connect_error = ""
         print(f"[runtime] broker connected rc={rc}")
-        for t in ("/devices/+/events/#", "/devices/+/state",
-                  "$SYS/broker/log/#", "$SYS/broker/clients/#"):
+        self._note("conn", "broker connected")
+        for t in self.SUBSCRIPTIONS:
             c.subscribe(t)
+
+    def _on_disconnect(self, c, u, flags=None, rc=None, props=None):
+        """The socket went away. Two jobs, and the second is the subtle one.
+
+        1. Record it, so a gap is a thing an operator can see rather than a silence.
+        2. **Stale every in-flight turn.** `_turn_seq` already numbers turns per robot and
+           `_is_stale` already suppresses an answer whose child has moved on, at seven call
+           sites; bumping the sequence here reuses that machinery whole. The alternative —
+           letting the answer out after the gap — is actively harmful under the recovered
+           contract: the robot re-prompts (~20 s) with a **new** `event_id`, so the child
+           would hear the answer to the question they gave up on arriving after the answer
+           to the one they asked instead. That is precisely what `_is_stale` was written to
+           prevent, and a reconnect is not a reason to re-open it.
+
+        The `_turn_seq` invariant (*"the MQTT loop is the only writer here"*) survives:
+        `on_disconnect` is dispatched from the network loop, which under `loop_forever()`
+        is that same thread (A19).
+        """
+        was = self.broker_connected
+        self.broker_connected = False
+        self.last_broker_disconnect = time.time()
+        reason = self._connack_reason(rc) if rc is not None else "connection lost"
+        for device_id in set(self._turn_seq) | set(self.robots):
+            self._turn_seq[device_id] = self._turn_seq.get(device_id, 0) + 1
+        if was:
+            print(f"[runtime] ⚠️  broker disconnected: {reason}", flush=True)
+            self._note("conn", f"⚠️ broker disconnected: {reason} — "
+                               f"{len(self.robots)} robot(s) in flight abandoned")
+
+    def _on_connect_fail(self, c, u=None):
+        """The socket never opened (broker down, DNS gone). Distinct from a CONNACK
+        refusal and from a disconnect, and without it the retry loop is invisible — which
+        makes *"it is just sitting there"* the bug report."""
+        self.broker_connected = False
+        self.last_connect_error = f"could not reach the broker at {self.host}:{self.port}"
+        # Printed as well as `_note`d. Found by starting a real supervisor before a real
+        # broker: `recent` had the four retries and **stdout had nothing**, so anyone
+        # tailing `docker logs` saw a process that had said "connecting to broker" and
+        # then gone silent — which reads exactly like the hang this change removes. The
+        # backoff throttles it for us: at 1, 2, 4 … 60 s this is at worst a line a minute.
+        print(f"[runtime] ⛔ {self.last_connect_error} — retrying", flush=True)
+        self._note("error", f"⛔ {self.last_connect_error} — retrying")
+
+    def _on_store_lock_timeout(self, lock_path, waited):
+        """A store write another **process** would not let go of. Recorded, never retried
+        forever and never swallowed (production-hardening.md §3.3 #3)."""
+        if getattr(self, "recent", None) is None:
+            return
+        self._note("error", f"⏳ a store write was refused after {waited:.1f}s — another "
+                            f"process holds {os.path.basename(lock_path)}")
+
+    # ---- publishing, with the return code read (§4.1 C5) ----
+    def _broker_connected(self) -> bool:
+        """Is there really a socket?
+
+        `if self.client is None` — the guard this replaces — asks whether an *object*
+        exists, which stays true for the whole life of the process. paho's
+        `is_connected()` is the transport's own answer. A transport double with no opinion
+        (the SIL loopback) is trusted, because it has no socket to be wrong about.
+        """
+        client = self.client
+        if client is None:
+            return False
+        checker = getattr(client, "is_connected", None)
+        if not callable(checker):
+            return True
+        try:
+            return bool(checker())
+        except Exception:
+            return False
+
+    #: The sentence a route hands a parent when the appliance has no broker. One place,
+    #: because it is the same fact whichever button they pressed.
+    NO_BROKER_REASON = "The supervisor is not connected to the broker."
+
+    def _publish(self, topic: str, payload, *, device_id: str = "", what: str = ""):
+        """Publish one message and **read the return code**. Returns `(ok, reason)`.
+
+        All eight publish sites used to be `self.client.publish(...)` with the result
+        thrown away. At QoS 0 paho calls `_send_publish` directly and returns
+        `MQTT_ERR_NO_CONN` on `info.rc` when there is no socket — the message is *not*
+        queued (A3) — so a reply published during a gap was discarded and nothing in this
+        process knew. QoS 0 stays (§4.3: a QoS 1 queue would deliver exactly the stale
+        answers §4.2 just decided are harmful); what changes is that a drop is now a fact
+        the appliance holds rather than one it never learns.
+        """
+        body = payload if isinstance(payload, str) else json.dumps(payload)
+        label = what or topic.rsplit("/", 1)[-1]
+        if not self._broker_connected():
+            self._record_drop(topic, device_id, label, self.NO_BROKER_REASON)
+            return False, self.NO_BROKER_REASON
+        try:
+            info = self.client.publish(topic, body)
+        except Exception as e:                # a transport that raises is still a drop
+            reason = f"the transport refused the message ({type(e).__name__})"
+            self._record_drop(topic, device_id, label, reason)
+            return False, reason
+        rc = getattr(info, "rc", 0)           # a double that returns None means success
+        if rc:
+            reason = f"the broker connection dropped the message (rc={rc})"
+            self._record_drop(topic, device_id, label, reason)
+            return False, reason
+        return True, ""
+
+    def _record_drop(self, topic, device_id, label, reason):
+        self.publish_drops += 1
+        who = f"{device_id} " if device_id else ""
+        print(f"[runtime] ⚠️  dropped {label} for {who}— {reason}", flush=True)
+        self._note("drop", f"⚠️ dropped {label} for {who or 'the fleet'}— {reason}")
 
     # ---- message router ----
     def _on_message(self, c, u, msg):
@@ -1437,10 +1694,10 @@ class MoxieRuntime:
                 return self._publish_chat(device_id, rcr.get("event_id"), backend, "",
                                           markup="", result=ResultCode.SUCCESS, modules=[])
             self._note("permit", f"⛔ turn refused — {device_id} is pending")
+            line, scored = self._stage(self.NOT_PAIRED_LINE)
             return self._publish_chat(device_id, rcr.get("event_id"), backend,
-                                      self.NOT_PAIRED_LINE,
-                                      markup=make_markup(self.NOT_PAIRED_LINE),
-                                      end_turn=True)
+                                      self.NOT_PAIRED_LINE, markup=line,
+                                      end_turn=True, scored=scored)
         if name == "client-service-activity-log":
             try:
                 data = json.loads(payload)
@@ -1451,9 +1708,8 @@ class MoxieRuntime:
                     "schedule", "mentor_behaviors", "license"):
                 resp = build_activity_response(query, None,
                                                request_id=data.get("request_id"))
-                if self.client:
-                    self.client.publish(f"/devices/{device_id}/commands/query_result",
-                                        json.dumps(resp))
+                self._publish(f"/devices/{device_id}/commands/query_result", resp,
+                              device_id=device_id, what="query_result")
                 return resp
             return None
         return None
@@ -1478,8 +1734,8 @@ class MoxieRuntime:
             cfg = build_unpaired_cloud_config()
             self._note("permit", f"⛔ {device_id} is not permitted — pending "
                                  f"(minimal config, no child data)")
-        if self.client:
-            self.client.publish(f"/devices/{device_id}/config", json.dumps(cfg))
+        self._publish(f"/devices/{device_id}/config", cfg,
+                      device_id=device_id, what="config")
         print(f"[runtime] → pushed config to {device_id} "
               f"(pairing_status={cfg.get('pairing_status')})")
         return cfg
@@ -1517,13 +1773,23 @@ class MoxieRuntime:
             return {"ok": False, "device_id": device_id, "published": False,
                     "error": "robot is pending",
                     "reason": "Let this robot in first (Permit it in the fleet panel)."}
-        if self.client is None:
+        # `if self.client is None` asked whether an OBJECT existed, not whether there was
+        # a connection — so a live client over a dead socket answered `published: true`,
+        # which is the exact failure PR #55 shipped to kill, surviving in the one place
+        # that fix did not look. `published` is the only true thing this route can ever
+        # say (the command has no acknowledgement in the recovered corpus), so saying it
+        # falsely is the whole bug.
+        if not self._broker_connected():
             return {"ok": False, "device_id": device_id, "published": False,
-                    "error": "no broker connection",
-                    "reason": "The supervisor is not connected to the broker."}
+                    "acknowledged": False, "error": "no broker connection",
+                    "reason": self.NO_BROKER_REASON}
         topic = f"/devices/{device_id}/commands/{self.WAKEUP_COMMAND}"
         payload = {"command": self.WAKEUP_COMMAND}
-        self.client.publish(topic, json.dumps(payload))
+        ok, why = self._publish(topic, payload, device_id=device_id, what="wakeup")
+        if not ok:
+            # The socket died between the check and the write. Still not a success.
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "acknowledged": False, "error": "publish failed", "reason": why}
         cfg = self.effective_config(device_id) or {}
         # `wake_button_enabled` defaults True in the config we build (cloud_config.py),
         # so "absent" means "on", and only an explicit False is a warning worth showing.
@@ -1538,6 +1804,73 @@ class MoxieRuntime:
         return {"ok": True, "device_id": device_id, "published": True,
                 "acknowledged": False, "topic": topic, "payload": payload,
                 "wake_button_enabled": bool(wake_button), "note": note}
+
+    # ---- rehearsal: watch a line perform before a child does ----
+    def preview(self, device_id, text, *, speak=False, **opts) -> dict:
+        """Stage one line and publish it as an ordinary turn — the preview hook (C7).
+
+        `sim-as-a-client.md`'s guarantee is that the SIM is **not a special case**, so
+        this adds no SIM-specific API and no SIM-specific message. It plans the line,
+        validates it, renders it and publishes a perfectly ordinary
+        `/devices/<id>/commands/remote_chat` with `result=SUCCESS` — byte-identical in
+        shape to what a real turn produces. Whatever is subscribed as that device renders
+        it: the browser SIM, `virtual_moxie.py`, or a robot paired as a rehearsal device.
+
+        **Nothing else happens.** No brain is called, no history is written, no turn is
+        recorded, no memory is folded, no safety journal row is added beyond the ordinary
+        assessment below. That is what makes it a rehearsal: an author can iterate on a
+        line and *see* the performance before a child does.
+
+        `speak=True` also synthesizes, so a rehearsal can be heard as well as seen. It is
+        off by default because a preview must not spend a voice call unless it was asked
+        to — an author is usually watching the body, not listening.
+
+        The returned `performance` is the staged structure as JSON (mood/act/gesture/
+        gaze/icon/sfx per beat) plus `dropped`, the ids `validate` refused, so a console
+        can flag them in red instead of leaving an author wondering why nothing played.
+        """
+        robot = self.robots.get(device_id)
+        if robot is None:
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": f"unknown device_id {device_id!r}",
+                    "reason": "No robot with that id has connected to this appliance."}
+        if not self.is_permitted(device_id):
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "robot is pending",
+                    "reason": "Let this robot in first (Permit it in the fleet panel)."}
+        line = str(text or "").strip()
+        if not line:
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "empty line", "reason": "Type a line to rehearse."}
+        # A rehearsal line is still a line a child could hear, so it passes the same
+        # output-side classifier a brain's own line does — and, like telehealth, a BLOCK
+        # comes back to the author with its reason instead of being replaced by a
+        # redirect. There is a human at the keyboard; substituting for them helps nobody.
+        verdict = self._assess(line, safety_seam.MOXIE)
+        if verdict and verdict.action == safety_seam.BLOCK:
+            self._record_safety(device_id, verdict)
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "blocked", "blocked": True,
+                    "categories": list(verdict.categories),
+                    "reason": "Moxie will not say that. Nothing was published — "
+                              "please rephrase."}
+        event_id = f"preview-{int(time.time() * 1000)}"
+        staged = perform(line, turn_key=event_id, chunk_index=0, **opts)
+        scored = dict(staged.scored)
+        self._publish_chat(device_id, event_id, "router", line, staged.markup,
+                           result=ResultCode.SUCCESS, scored=scored)
+        if speak:
+            self._maybe_synthesize(device_id, staged.markup, event_id, chunk_num=0)
+        self._note("preview", f"🎬 rehearsed '{line[:40]}' on {device_id}")
+        print(f"[runtime] 🎬 preview → {device_id}: '{line[:60]}'", flush=True)
+        out = {"ok": True, "device_id": device_id, "published": True, "spoke": speak,
+               "event_id": event_id, "text": line, "markup": staged.markup,
+               "mode": staged.mode, "scored": scored,
+               "performance": performance_seam.to_json(staged.performance),
+               "dropped": list(getattr(staged.performance, "dropped", ()) or ())}
+        if verdict:
+            out["flagged"] = list(verdict.categories)
+        return out
 
     # ---- child safety (AI seam §2 — InputSafety) ----
     def safety_policy(self, device_id) -> LoggingPolicy:
@@ -1623,8 +1956,11 @@ class MoxieRuntime:
         # Deliberately remember only OUR line: putting the blocked utterance in the
         # history would feed it to the brain as context on the very next turn.
         self._remember(device_id, "", red.text)
+        _, red_scored = self._stage(red.text, red, turn_key=event_id,
+                                    markup=red.markup)
         self._publish_chat(device_id, event_id, "router", red.text, red.markup,
-                           result=ResultCode.SUCCESS, safety=verdict)
+                           result=ResultCode.SUCCESS, safety=verdict,
+                           scored=red_scored)
         self._maybe_synthesize(device_id, red.markup, event_id, chunk_num=0)
         return True
 
@@ -1890,8 +2226,9 @@ class MoxieRuntime:
         text, markup = greeting
         self._note("chat", f"hello (unprompted): '{text[:40]}'")
         print(f"[runtime] 👋 {device_id} walked back in -> '{text}'", flush=True)
+        _, greet_scored = self._stage(text, turn_key=event_id, markup=markup)
         self._publish_chat(device_id, event_id, backend, text, markup,
-                           result=ResultCode.SUCCESS)
+                           result=ResultCode.SUCCESS, scored=greet_scored)
         self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
         return None
 
@@ -1958,12 +2295,12 @@ class MoxieRuntime:
             text = self._pending_opener.pop(device_id, None)
         if not text or self._is_stale(device_id, seq):
             return None
-        markup = make_markup(text, turn_key=f"greet|{event_id}", chunk_index=0)
+        markup, scored = self._stage(text, turn_key=f"greet|{event_id}", chunk_index=0)
         self._note("chat", f"hello (queued): '{text[:40]}'")
         print(f"[runtime] 👋 delivering queued opener on {device_id}: '{text}'", flush=True)
         self._publish_chat(device_id, event_id, "router", text, markup,
                            result=ResultCode.REPLY_PENDING, chunk_num=0,
-                           is_completed=False)
+                           is_completed=False, scored=scored)
         self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
         return text
 
@@ -2023,6 +2360,19 @@ class MoxieRuntime:
 
     # ---- events ----
     def _on_event(self, device_id, name, payload):
+        # An event from a robot we do not know about **registers** it, exactly as
+        # `_on_state` has always done ("fallback if we missed the log line"). The two
+        # ingress paths were asymmetric and it mattered: `$SYS/broker/log` is published
+        # live and never replayed (A15), and a real Moxie publishes `/state` on *its*
+        # connect — so after a supervisor restart, with the robot still happily connected,
+        # there is nothing to re-read and nothing to wait for. This path used to build an
+        # **ephemeral** RobotContext and answer the turn from it forever: no config push,
+        # no `app.on_connect`, no presence state, invisible in `/status`. Three lines, and
+        # the difference between "the appliance recovered" and "the appliance is answering
+        # a robot it does not know it has". The pairing gate is unaffected — it lives on
+        # the transport boundary in `_on_message` and has already run by here.
+        if device_id not in self.robots:
+            self._device_connect(device_id)
         robot = self.robots.get(device_id) or RobotContext(device_id=device_id, child=self.child)
         if name.startswith("remote-chat"):
             return self._on_remote_chat(device_id, robot, payload)
@@ -2198,18 +2548,22 @@ class MoxieRuntime:
             else:
                 self._record_safety(device_id, out_verdict)
         self._remember(device_id, speech, reply.text)
-        markup = (reply.markup if reply.markup is not None
-                  else make_markup(reply.text, turn_key=event_id, chunk_index=0))
+        markup, scored = self._stage(reply.text, reply, turn_key=event_id,
+                                     chunk_index=0, markup=reply.markup)
         self._note("chat", f"💬 '{speech[:30]}' → '{reply.text[:40]}'")
         print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{reply.text[:60]}'", flush=True)
         # A filler already went out → this is chunk 1 and it ends the sequence. No
         # filler → the single-chunk reply we have always sent, unchanged on the wire.
         chunk = 1 if filler is not None else None
+        # `scored` already carries the app's own mood/dialog_act — validated, because
+        # `_stage` puts them through the same catalog every other id goes through. Passing
+        # the raw `reply.mood`/`reply.dialog_act` here as well would let an app's invented
+        # act win over that check inside `_publish_chat` (mutation M28's other half).
         self._publish_chat(device_id, event_id, "router", reply.text, markup,
                            actions=reply.actions, end_turn=reply.end_turn,
-                           result=reply.result_code, mood=reply.mood,
-                           dialog_act=reply.dialog_act, chunk_num=chunk,
-                           is_completed=None if chunk is None else True)
+                           result=reply.result_code, chunk_num=chunk,
+                           is_completed=None if chunk is None else True,
+                           scored=scored)
         self._maybe_synthesize(device_id, markup, event_id, chunk_num=chunk or 0)
         # `<exit>` in the model's own line (or a handler's) ended the activity: this
         # worker is already off the MQTT loop, so summarize inline.
@@ -2233,9 +2587,10 @@ class MoxieRuntime:
             self._note("chat", f"⏳ '{text[:40]}'")
             print(f"[runtime] ⏳ brain over budget ({self.brain_budget_s:g}s) on "
                   f"{device_id} → filler: '{text}'", flush=True)
+            _, scored = self._stage(text, turn_key=event_id, markup=markup)
             self._publish_chat(device_id, event_id, "router", text, markup,
                                result=ResultCode.REPLY_PENDING, chunk_num=0,
-                               is_completed=False)
+                               is_completed=False, scored=scored)
             self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
             return text
 
@@ -2364,6 +2719,59 @@ class MoxieRuntime:
             print(f"[runtime] app.respond error: {e}", flush=True)
             return Reply(text="Hmm, let me think about that.")
 
+    def _stage(self, text, obj=None, *, turn_key="", chunk_index=0, markup=None, **kw):
+        """`(markup, scored)` for one spoken line — the seam's answer, plus the app's own.
+
+        This is the single place a published turn becomes a *scored* turn. Before the
+        behavior planner, `Reply.mood`/`dialog_act` were plumbed end to end and **no app
+        ever set them**, and `ReplyChunk` did not have the fields at all — so a streamed
+        answer could not carry scored output even in principle
+        (docs/architecture/backlog/expressiveness.md §2.3, C4/C5). Now every path through
+        `_publish_chat` that says words comes through here.
+
+        Precedence, and the reason for it: **the app's own scoring wins**, field by field,
+        and the seam fills in only what the app left None. A brain that knows its line is
+        an `apology` is not second-guessed by a rule engine — but a brain that says
+        nothing still ships a scored turn. Anything the app *did* say is a HINT into the
+        planner as well, so the staged performance agrees with the wire fields rather than
+        contradicting them, and an id it invents is dropped by `validate` like any other.
+
+        `markup` is an app's authored markup: it is spoken verbatim (the idempotence rule),
+        and the line is scored anyway.
+        """
+        hints = dict(kw)
+        for attr, key in (("mood", "mood_hint"), ("gesture", "gesture_hint"),
+                          ("dialog_act", "dialog_act"), ("emotion", "emotion"),
+                          ("signal", "signal"), ("gaze", "look"), ("icon", "icon"),
+                          ("sfx", "sfx")):
+            value = getattr(obj, attr, None)
+            if value:
+                hints.setdefault(key, value)
+        if getattr(obj, "mood_intensity", 0):
+            hints.setdefault("intensity", obj.mood_intensity)
+        staged = perform(text, turn_key=turn_key, chunk_index=chunk_index, **hints)
+        scored = dict(staged.scored)
+        # The app's own values win — but they take the SAME positive list every other id
+        # takes. An app is a brain by another name, and a brain may suggest, it may never
+        # authorize: a `dialog_act` that is not one of the recovered 22 is dropped here
+        # rather than forwarded onto `RemoteChatOutput`. (Found by mutation M28.)
+        for key, catalog in (("mood", vocab_seam.MOODS),
+                             ("dialog_act", vocab_seam.DIALOG_ACTS),
+                             ("emotion", vocab_seam.EMOTION_STATES),
+                             ("signal", vocab_seam.SIGNALS)):
+            value = getattr(obj, key, None)
+            if value and value in catalog:
+                scored[key] = value
+        strength = getattr(obj, "mood_intensity", 0)
+        if strength and 0 < int(strength) <= vocab_seam.MAX_INTENSITY:
+            scored["mood_intensity"] = int(strength)
+        if obj is not None and getattr(obj, "performance", None) is None:
+            try:                      # diagnostics + the preview panel; never the wire
+                object.__setattr__(obj, "performance", staged.performance)
+            except Exception:
+                pass
+        return (staged.markup if markup is None else markup), scored
+
     def _publish_stream_chunk(self, device_id, event_id, chunk, n, final,
                               synthesize=True, ann=None):
         """One `ReplyChunk` (or `Reply`) onto the wire, with its chunk bookkeeping.
@@ -2373,9 +2781,9 @@ class MoxieRuntime:
         the way through instead of flipping it every sentence — and a "let me think"
         line ahead of the answer does not cost the answer its mood.
         """
-        markup = (chunk.markup if chunk.markup is not None else
-                  make_markup(chunk.text, turn_key=event_id,
-                              chunk_index=n if ann is None else ann))
+        markup, scored = self._stage(chunk.text, chunk, turn_key=event_id,
+                                     chunk_index=n if ann is None else ann,
+                                     markup=chunk.markup)
         result = getattr(chunk, "result_code", None)
         if result is None:
             result = ResultCode.SUCCESS if final else ResultCode.REPLY_PENDING
@@ -2386,7 +2794,8 @@ class MoxieRuntime:
                            actions=chunk.actions, end_turn=chunk.end_turn,
                            result=result,
                            chunk_num=None if solo else n,
-                           is_completed=None if solo else bool(final))
+                           is_completed=None if solo else bool(final),
+                           scored=scored)
         if synthesize:
             self._maybe_synthesize(device_id, markup, event_id, chunk_num=n)
 
@@ -2442,9 +2851,11 @@ class MoxieRuntime:
             self._note("chat", f"⏳ '{text[:40]}'")
             print(f"[runtime] ⏳ stream quiet for {self.brain_budget_s:g}s on "
                   f"{device_id} → filler {state['fillers']}: '{text}'", flush=True)
+            _, scored = self._stage(text, turn_key=event_id, chunk_index=n,
+                                    markup=markup)
             self._publish_chat(device_id, event_id, "router", text, markup,
                                result=ResultCode.REPLY_PENDING, chunk_num=n,
-                               is_completed=False)
+                               is_completed=False, scored=scored)
             self._maybe_synthesize(device_id, markup, event_id, chunk_num=n)
         self._arm_filler(device_id, event_id, seq, state)   # another stall? one more line
         return text
@@ -2465,8 +2876,8 @@ class MoxieRuntime:
             from moxie_sdk.tts import synthesize_cloud_tts
             resp = synthesize_cloud_tts(self._synth, markup, event_id=event_id,
                                         chunk_num=chunk_num)
-            if self.client:
-                self.client.publish(f"/devices/{device_id}/commands/tts", json.dumps(resp))
+            self._publish(f"/devices/{device_id}/commands/tts", resp,
+                          device_id=device_id, what="tts")
             return resp
         except Exception as e:
             print(f"[runtime] TTS synth failed (non-fatal): {e}", flush=True)
@@ -3153,9 +3564,8 @@ class MoxieRuntime:
 
     def _telehealth_publish(self, device_id, command: dict):
         """Publish one `TelehealthRobotCommand` on `commands/telehealth`."""
-        if self.client:
-            self.client.publish(telehealth_seam.telehealth_topic(device_id),
-                                json.dumps(command))
+        self._publish(telehealth_seam.telehealth_topic(device_id), command,
+                      device_id=device_id, what="telehealth")
         return command
 
     def _telehealth_note(self, device_id, who: str, text: str):
@@ -3407,8 +3817,8 @@ class MoxieRuntime:
             # build_activity_response.
             resp = build_activity_response(query, self._query_payload(device_id, query),
                                            request_id=data.get("request_id"))
-            self.client.publish(f"/devices/{device_id}/commands/query_result",
-                                json.dumps(resp))
+            self._publish(f"/devices/{device_id}/commands/query_result", resp,
+                          device_id=device_id, what="query_result")
             return resp
         # 🎭 The robot's own report of where it is in a telehealth session
         # (`TelehealthRobotEvent`, telehealth.md:88-91). READY / IN_SESSION / EXITING —
@@ -3455,8 +3865,8 @@ class MoxieRuntime:
         if transcript is None:
             return None
         resp = build_stt_response(self._stt_uuid.pop(device_id, device_id), transcript)
-        if self.client:
-            self.client.publish(f"/devices/{device_id}/commands/zmq", json.dumps(resp))
+        self._publish(f"/devices/{device_id}/commands/zmq", resp,
+                      device_id=device_id, what="stt_result")
         self._note("stt", f"👂 heard: '{transcript[:40]}'")
         # 🎭 During a telehealth session the child's side of the conversation is the only
         # thing the operator can see (text only — no audio and no video reach them this
@@ -3501,7 +3911,7 @@ class MoxieRuntime:
     def _publish_chat(self, device_id, event_id, backend, text, markup="",
                       actions=None, end_turn=False, result=ResultCode.SUCCESS,
                       modules=None, mood=None, dialog_act=None,
-                      chunk_num=None, is_completed=None, safety=None):
+                      chunk_num=None, is_completed=None, safety=None, scored=None):
         # Ask the robot to start pushing us its vision events, once per module. It rides
         # a spoken reply because that is the only cloud→robot message the contract gives
         # a `RemoteChatAction` to hang `EventSubscription` on — and it is attached only to
@@ -3513,9 +3923,18 @@ class MoxieRuntime:
                 and self._vision_subscribed.get(device_id) !=
                     (getattr(self.robots.get(device_id), "module_id", None) or "")):
             subscribe = self._vision_subscription(device_id)
+        # `scored` is the seam's answer for this line (`_stage`); explicit mood/
+        # dialog_act arguments still win, because a caller that passed one meant it.
+        sc = dict(scored or {})
         resp = build_chat_response(event_id, text, markup, backend=backend,
                                    result=result, actions=actions, end_turn=end_turn,
-                                   mood=mood, dialog_act=dialog_act, modules=modules,
+                                   mood=mood or sc.get("mood"),
+                                   dialog_act=dialog_act or sc.get("dialog_act"),
+                                   modules=modules,
                                    chunk_num=chunk_num, is_completed=is_completed,
-                                   safety=safety, subscribe_events=subscribe)
-        self.client.publish(f"/devices/{device_id}/commands/remote_chat", json.dumps(resp))
+                                   safety=safety, subscribe_events=subscribe,
+                                   mood_intensity=sc.get("mood_intensity"),
+                                   emotion=sc.get("emotion"),
+                                   signals=sc.get("signal"))
+        self._publish(f"/devices/{device_id}/commands/remote_chat", resp,
+                      device_id=device_id, what="remote_chat")

@@ -268,6 +268,30 @@
           voice and is recorded in the Safety card. What your child says back appears above
           as text only — no microphone or camera is streamed to whoever is driving.</p>
       </div>
+      <!-- 🎬 Rehearsal — the behavior planner's preview hook (audit BEYOND #1,
+           backlog/expressiveness.md §2.4). A line typed here is STAGED by the planner and
+           published as an ordinary remote_chat, so whatever is subscribed as this robot
+           performs it: the browser SIM, virtual_moxie, or a robot paired for rehearsal.
+           No brain is called, no history is written, no turn is recorded — this is a
+           dress rehearsal, which is the whole point: an author sees the performance
+           before a child does. The panel beside it is the staged Performance itself
+           (mood, dialog act, gesture, gaze per beat) with any id the validator refused
+           flagged in red, so nothing plays "and nothing happens" without an explanation.
+           It speaks only if asked: a preview must not spend a voice call by default. -->
+      <div class="card hidden" id="preview-card">
+        <h2>🎬 Rehearsal</h2>
+        <p class="muted">Try a line on Moxie and watch how she performs it — the face, the
+          arms, where she looks — before anyone hears it for real. Nothing is remembered
+          and no conversation happens; Moxie just acts this one line out.</p>
+        <div class="row">
+          <input id="pv-text" class="grow" type="text" autocomplete="off"
+                 placeholder="A line for Moxie to act out…" aria-label="Line to rehearse">
+          <button id="btn-pv-run" class="primary">Rehearse</button>
+        </div>
+        <label class="check"><input id="pv-speak" type="checkbox"> Say it out loud too</label>
+        <div id="pv-beats" class="pv-beats"></div>
+        <div id="pv-status" class="muted"></div>
+      </div>
       <!-- 📅 Today's plan (audit BEYOND #7). The robot asks the cloud for a schedule
            before it will enter a session at all, and the supervisor's recommender scores
            every candidate on what a parent asked for, unfinished onboarding, coverage,

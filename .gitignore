@@ -22,6 +22,9 @@ venv/
 node_modules/
 dist/
 
+# Generated CI artifacts (the behavior planner's contact sheet)
+sim/artifacts/
+
 # Secrets / local
 *.key
 *.pem

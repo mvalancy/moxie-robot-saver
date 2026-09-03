@@ -73,6 +73,19 @@ def _snapshot(overrides: dict, fleet: dict = None) -> dict:
         "allow_unverified_bots": False,
         "pending_count": 0,
         "schedule_modules": list(schedulable_module_ids()),
+        # 📡 Broker health, added by production hardening P0
+        # (backlog/production-hardening.md). The console shows these so an operator can
+        # tell "quiet" from "disconnected", and `publish_drops`/`store_lock_timeouts` are
+        # the two counters that were previously invisible — a publish into a dead socket,
+        # and a starved store waiter. The fake reports a healthy, idle appliance; the
+        # drift test below is what keeps this list honest rather than letting this file
+        # slowly become a test of itself.
+        "broker_connected": True,
+        "last_broker_connect": 0.0,
+        "last_broker_disconnect": 0.0,
+        "last_connect_error": "",
+        "publish_drops": 0,
+        "store_lock_timeouts": 0,
         "face_catalog": face_catalog(),
         "robots": [{
             "device_id": DEVICE, "child": "Sam", "firmware": "3.6.4",

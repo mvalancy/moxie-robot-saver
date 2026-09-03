@@ -30,7 +30,7 @@ Ours is built to the full recovered protocol with clean seams:
 | AI seam — LLM brain | [ai-seam](ai-seam.md) §2 · [mqtt §4.5](mqtt-and-conversation.md#45-slow-brain-a-filler-now-the-real-answer-next-reply_pending) | 🟢 **any OpenAI-compatible endpoint, named by `MOXIE_LLM_BASE_URL`, which has NO default (2026-09-03)** — a public repo must not ship one deployment as everybody's fallback, so `MOXIE_APP=llm`/`content` exit at assembly naming the variable rather than guessing (`config.require_llm_base_url`; `MOXIE_APP=echo` needs no brain and is what the SIL and compose smokes run). expressive + ResultCodes/actions/scored-output; ERROR_OFFLINE fallback; **latency budget** (`MOXIE_BRAIN_BUDGET_S`, default 6 s) — a slower brain speaks a rotating filler as `REPLY_PENDING` chunk 0, with a stale-turn guard, every chunk synthesized. **Streaming** (`MOXIE_STREAMING`, default on): each finished sentence is published as its own `REPLY_PENDING` chunk as the model writes it, closed by a `SUCCESS` + `is_completed`; the filler timer re-arms per chunk (cap 2/turn) and a newer turn cancels the stream mid-answer. **Live-proven:** filler at 3.0 s + answer at 17.9 s (blocking, PR #14); streamed, first sentence at **1.52 s** vs whole answer at **4.38 s** on a healthy gateway (PR #15) | `mqtt/moxie_sdk/apps/llm_app.py` + `segment.py` + `chat.stream_completion` + `filler.py` + `moxie_runtime.py::_handle_stream_turn` |
 | AI seam — **which** brain, per child | [ai-seam](ai-seam.md) §2 · [brief](backlog/brain-picker.md) | 🟢 **any brain, hot-swappable, per child — P0 built 2026-09-03** (audit BEYOND #3, ranked #7). The seam said any AI could wear the shell; the appliance chose one brain, once, globally, from `MOXIE_APP`, and returned the LLM app for **anything it did not recognise**. Now: a **closed positive registry** (`moxie_sdk/brains.py` — `llm`/`content`/`webhook`/`echo`, the idiom of `packs.py::SPEC` and `ext.py::OPS`), where a name resolves to a builder and an unknown one is refused naming the four (`MOXIE_APP=gpt5` used to boot the free-form companion); the selection is `brain` as an **ordinary key in the ordinary config layers** — `defaults ⊕ fleet ⊕ per-robot`, ADOPT #6 — so `POST /config?scope=fleet` and `POST /config?device_id=` already set it, there is no second store and no second layering (a test pins `resolve_brain` against `merge_config_layers` itself), and `SERVER_ONLY_KEYS` keeps it out of the document pushed to the robot; the swap is `MoxieRuntime.app_for(device_id)` resolved **once at the top of a turn**, so a parent's Save lands on the child's next turn and a turn already in flight finishes with the brain that heard the question (`voice_update`/`reload_content`'s rule) and a brain that will not build keeps the appliance talking, saying so once; and an explicit **`MOXIE_APP` pins** the appliance's brain over any per-child pick (PR #77's owner rule) — read from the RAW environment, because `config.MOXIE_APP` already reads as `llm` where nobody said anything, so pinning the resolved value would have locked every unconfigured box out of its own picker. `MOXIE_APP=any` hands the choice back. `GET`/`POST /brain` serve the **🧠 console card** — a brain for this robot or a house rule, each robot's row naming *which layer decided*, and the pin's sentence first when there is one. **126 tests** + `sim/tools/brain_mutation_check.py` (22 guards deleted, 22 red). **Honest gaps:** no browser harness clicks the card (the ceiling every card here has); our own `docker-compose.yml` `${MOXIE_APP:-content}` pins a default compose deployment (told on the card, not hidden); no per-child *persona*, which is BEYOND #3's other half | `mqtt/moxie_sdk/brains.py` + `config.py::BRAIN_BUILDERS`/`BrainEngines` + `moxie_runtime.py::app_for`/`brain_view` + `server/moxie_server/fleet.py::normalize_brain` + `server/static/` (the 🧠 card) + `sim/tests/test_brain{s,_runtime,_console}.py` |
 | AI seam — presence (vision events) | [ai-seam](ai-seam.md) §2 · [vision](vision.md) §7 · [mqtt §4.7](mqtt-and-conversation.md#47-vision-events-and-whether-the-cloud-may-speak-first-built-v1-2026-09-02) | 🟡 **built, unproven against hardware** (audit BEYOND #9): the runtime subscribes the robot to its own vision events (`EventSubscription.active[]`, once per `(device, module_id)`) and routes `eb-found-face`/`eb-lost-target`/`eb-qr-event`/`eb-dr-event`/`eb-br-event` — which arrive as the `speech` of a `RemoteChatRequest`, not a topic of their own — into a pure presence state machine with hysteresis (a face blinking at the frame edge yields **one** `arrived` + **one** `left`, not twenty). `Turn.presence` carries a resolved snapshot into the prompt, and its `line` is **empty on most turns by design**. An `arrived` after ≥ `MOXIE_GREET_AFTER_S` (default 300 s, 0 = off) earns **one** unprompted hello — answered on the arrival event's own `event_id` (an unsolicited publish is *not* established as legal — see vision.md §7.4), rate-limited once per absence, never over a turn, never unpermitted, never in bedtime hours. **Honest ceiling:** no physical robot has ever sent us one of these events; the whole path is exercised by the SIL robot (`--face-event`) and the browser SIM, which proves consistency, not hardware truth | `mqtt/moxie_sdk/presence.py` + `moxie_runtime.py::_on_vision_turn`/`_greeting_for` + `wire.py` + `apps/llm_app.py::_system` + `sim/virtual_moxie.py` + `sim/web/bridge.js` |
-| AI seam — expressive markup | [ai-seam](ai-seam.md) §2 · [mqtt §4.6](mqtt-and-conversation.md#46-the-markup-floor-built-v1-2026-09-02) | 🟢 the **markup floor**: `supervisor/markup.py` is no longer a passthrough — one pure, deterministic, stdlib-only generator (`annotate`) performs every reply that does not bring its own markup, so the echo/content/webhook apps stopped speaking flat and `LLMApp` stopped being a second generator (the model's mood/gesture are now *hints* into the same floor; `stream_style` deleted). Per line: a mood from `ePlaybackMood` 0-10, a `<usel>` delivery on a question or an exclamation, arm gestures on the carrying words, a `<break>` at an internal boundary (never after the final word), at most one whole-body `Bht_*`, a closing `Gesture_None`. Every id validated against a frozen, doc-cited catalog (`vocab.py`); an id a brain invents is dropped, never forwarded. Deterministic via `blake2b`, never `hash()`. **Measured p95 0.23 ms/line** (1 ms budget), no model call, no dependency. 8 byte-exact goldens + 277 hermetic cases; the goldens render six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` restores the passthrough | `mqtt/moxie_sdk/automarkup.py` + `vocab.py` + `supervisor/markup.py` + `apps/llm_app.py::build_markup` + `sim/tests/test_automarkup.py` + `sim/test_automarkup_render.mjs` |
+| AI seam — expressive markup | [ai-seam](ai-seam.md) §2 · [mqtt §4.6](mqtt-and-conversation.md#46-the-markup-floor-built-v1-2026-09-02) | 🟢 the **markup floor** (v1, 2026-09-02) *and* the **behavior planner** (P1, 2026-09-03). The floor performs every reply that does not bring its own markup — one pure, deterministic, stdlib generator (`annotate`), a mood from `ePlaybackMood` 0-10, a `<usel>` delivery, arm gestures on the carrying words, a `<break>` at an internal boundary, a closing `Gesture_None`, **p95 0.23 ms/line**. The planner now sits above it behind the same seam: it scores the line's **dialog act** (all 22 `RemoteDialog.DialogAct`s) and stages a validated `Performance` that exactly **one** `render()` turns into markup — a question tilts and holds its gaze, an apology stops gesturing, praise celebrates, an "mm-hm" moves nothing. Contract changes C1–C7 landed, so `mood`/`mood_intensity`/`dialog_act`/`emotion`/`signals` are filled on **100 % of published turns including streamed chunks** (plumbed and empty since PR #17), and `POST /local/robots/{id}/preview` rehearses a line on the SIM before a child hears it — an ordinary `remote_chat`, no SIM-specific API. Every id, rule-chosen or model-suggested, passes one `validate()` against the frozen `vocab.py` catalog: **0 unknown ids over a 300-line corpus**. Deterministic, no model call, p95 0.25–0.56 ms; any failure (exception, decline, or an 8 ms budget blown 3x) degrades to the floor with an identical wire shape. 8 + 22 byte-exact goldens, 277 + 124 hermetic cases; the 22 acts reach 8 distinct faces through the real browser bridge with a contact sheet as a CI artifact. `MOXIE_EXPRESSIVE=planner\|floor\|off`, `MOXIE_AUTOMARKUP=0` | `mqtt/moxie_sdk/performance.py` + `automarkup.py` + `vocab.py` + `supervisor/markup.py` + `moxie_runtime.py::_stage`/`preview` + `sim/tests/test_performance.py` + `sim/test_performance_render.mjs` |
 | AI seam — input safety | [ai-seam](ai-seam.md) §2 · [mqtt §4.5](mqtt-and-conversation.md#safety-on-the-wire-inputsafety-inputsafety) | 🟢 `InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}` **enforced**, not just specified: assessed pre-inference (a hard block never reaches a model) and **per streamed chunk** before publication (blocked chunk never goes out; a safe line closes the sequence with `SUCCESS`+`is_completed`; the stream is cancelled). 8 categories with a per-side block/flag policy in a parent-readable `safety_rules.json`, normalization + false-positive guards, a `Classifier` protocol for a drop-in local model, and a parent review queue (`GET|POST /safety` → console 🛡️ panel, `NO_DATA` = counts only). **Live-proven:** an unsafe request cost **0 gateway calls** and got a redirect + `input.safety`; a benign turn in the same run streamed 4 clean chunks | `mqtt/moxie_sdk/safety.py` + `safety_rules.json` + `moxie_runtime.py::_safety_gate_input`/`_handle_stream_turn` + `server/moxie_server/fleet.py` |
 | AI seam — STT in | [ai-seam](ai-seam.md) §1 | 🟢 seam + runtime-wired + **real zmqSTTRequest protobuf decode** (dep-free) + JSON bridge, e2e-tested; **2 first-class engines — local faster-whisper (offline, no key) · gateway STT (`OpenAITranscriber`, live 2026-09-02)** — chosen by `MOXIE_STT=auto\|gateway\|whisper\|off` **or from the console's 🎚️ Listening dropdown (2026-09-02), which lists the gateway's STT models discovered live plus the installed local sizes and swaps the engine with no restart — and an explicit `MOXIE_STT` PINS the engine so the dropdown cannot overrule the operator (2026-09-03)**, the headerless mic PCM wrapped in an in-memory WAV **at the bus's true 16 kHz**, and a `FallbackTranscriber` that latches to local whisper (or an honest `""`) instead of raising mid-sentence. **Live-proven:** gateway TTS → gateway STT at word overlap **1.00** at both 22050 Hz and 16 kHz, and one child utterance through the real runtime on gateway ears + brain + voice ([guide](../guides/litellm-stt-setup.md)) | `mqtt/moxie_sdk/stt.py` + `moxie_runtime.py` |
 | AI seam — TTS out (for SIM) | [ai-seam](ai-seam.md) §3 · [sim](sim-as-a-client.md) | 🟢 seam + runtime-wired + **3 backends: built-in tone (zero-dep) · Piper (offline, Amy) · OpenAI-voice (gateway)**, choosable **from the console's 🎚️ Speech dropdown (2026-09-02)** — live gateway discovery + installed local voices, default `piper-amy`, persisted in `fleet/voice.json`, a Test button, explicit-local-wins, and an explicit `MOXIE_TTS` pins the engine (2026-09-03); **full audio round-trip proven through a real broker** (SIL smoke `--expect-tts`); **the gateway voice is live-proven (2026-09-02)** — `MOXIE_VOICE_BASE_URL` + `MOXIE_VOICE_MODEL=piper-amy` is the whole switch, its WAV is unwrapped to the header's true 22050 Hz, Whisper reads the audio back at overlap **1.00**, `piper-ryan` swaps the voice, and a gateway failure downgrades to Piper/tone instead of silence ([guide](../guides/litellm-tts-setup.md)) | `mqtt/moxie_sdk/tts.py` + `moxie_runtime.py` |
@@ -97,6 +97,113 @@ Following the [build-order spine](overview.md); the parent app
 ## Known gaps (audited, honest)
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
+
+- **Integration evidence (2026-09-03, fourth pass) — the behavior planner P1 (#92) holds on the
+  wire, and the criterion its author qualified now has the real number.** P1 touches the turn loop
+  and every published path, and had never met a broker: its criterion (c) was proven "through the
+  real runtime", which is an in-process runtime with a fake MQTT client.
+  **(1) First audio — the experiment, not the bench.** Criterion (f) reported p95 0.25 / 0.56 ms
+  from a loop around `perform()` and said plainly that it was "a bench measurement of the seam, not
+  a re-run of the first-audio experiment". [`sim/tools/first_audio_ab.py`](../../sim/tools/first_audio_ab.py)
+  re-runs it: a real broker, `mqtt/run.py` as its own process, one supervisor boot per arm, timed
+  from the robot's own `events/remote-chat` to the first `remote_chat` carrying words and the first
+  `tts` carrying audio. **Controlled arm** (local brain, fixed answer, fixed pace, 20 turns each):
+  first words **356.5 ms** planner vs **357.9 ms** floor; first audio **409.2 / 411.3 ms** — the
+  planner **1.4 / 2.1 ms faster**, i.e. inside a single arm's own 2–4 ms spread. **Live arm** (real
+  gateway, 6 completions, the whole budget): planner 1.579 / 2.386 s, floor 1.019 / 1.838 s, all
+  straddling PR #15's **1.52 s**, with ~800 ms of spread inside one arm — N=2 against that can bound
+  the seam's cost and never resolve it, which is why the controlled arm carries the verdict.
+  **No first-audio regression.** Honestly not measured: `t_audio` is the local tone synthesizer, not
+  a gateway voice (identical in both arms, so the comparison is fair; the absolute number is our
+  pipeline's, not a voice provider's).
+  **(2) Scored output survives a real broker, on both paths.**
+  [`sim/tests/test_sil_performance_e2e.py`](../../sim/tests/test_sil_performance_e2e.py) (+19) puts
+  robots on a real mosquitto: the five fields (`mood`, `mood_intensity`, `dialog_act`, `emotion`,
+  `signals` — **plural**, renamed across the `_publish_chat` seam) on the single reply and on
+  **every** streamed chunk including the closing `SUCCESS`, one face per answer, and
+  `vocab.validate_markup` clean over everything a robot was handed. Mutation-checked: dropping
+  `signals` in `wire.py` reddens five of them. `sim/run_smoke.sh` (1991), `--telehealth` (1992),
+  `sim/run_scenarios.sh` (1993) and `sim/run_acl_proof.sh` are green (18/18 ACL checks), and the
+  standing smoke now **reads the score** — `virtual_moxie.py --expect-scored`, proven in both
+  directions (default prints the five fields; `MOXIE_EXPRESSIVE=off` fails it).
+  **(3) The 🎬 rehearsal card, end to end.** `POST /preview` on the supervisor's real status HTTP
+  and `POST /local/robots/{id}/preview` on the real console app both land an ordinary `remote_chat`
+  in a robot's hands (no `chunk_num`, `event_id` `preview-…`, the console's markup identical to the
+  robot's), and the captured payloads are then played through the real `sim/web/bridge.js`
+  ([`sim/test_preview_render.mjs`](../../sim/test_preview_render.mjs), new, wired into the fast
+  tier) — four lines, four dialog acts, the faces and motors that follow. No brain call is spent.
+  **(4) All four slices at once.** One supervisor, three robots: the shipped clock extension (#86)
+  under a brain chosen per robot (#88), beside `echo` and a streaming model, every one of them
+  scored by the planner (#92).
+  **The finding, pinned rather than fixed.** On the `llm` brain — the brain a real deployment runs —
+  the markup a robot performs is the **floor's** `annotate` output byte for byte, not
+  `render(validate(plan(…)))`: `LLMApp` authors `Reply.markup`/`ReplyChunk.markup` and `_stage`
+  honours authored markup verbatim by design. So `MOXIE_EXPRESSIVE=planner` changes the five scored
+  fields and **not the performance** there; the act profile, the gaze tree and the per-clause
+  staging never reach the wire on the model path, which is C6 (`backlog/expressiveness.md` §2.3)
+  unmet. Corollary: only `LLMApp` implements `respond_stream`, so **no published path carries
+  planner markup on a streamed chunk at all**. Closing it is a design call on the turn loop, not an
+  integration one, so `test_the_model_path_performs_the_floors_markup` holds the current behaviour
+  and turns that change into a red test. **Also found:** `MOXIE_TTS=tone` does **not** pin the tone
+  engine — `config.build_synthesizer`'s auto precedence is voice-server > Piper > tone, so a
+  `MOXIE_VOICE_BASE_URL` inherited from a developer's `mqtt/.env` silently makes every chunk a paid
+  `/audio/speech` call; every harness here blanks it explicitly. Hermetic **4548 passed / 27 skipped
+  / 4 xfailed**, unchanged (the 19 new cases carry `test_sil` in the file name and are run by the
+  fast tier's own `pytest sim/tests` step, not by the hermetic `-k`); the wheel carries
+  `performance.py`, `brains.py`, `content/ext.py` and both `moxie_sdk/*.json` and imports in a venv
+  holding only `paho-mqtt`, with `plan`/`validate`/`render` exercised there. **Honestly not proven:**
+  no physical robot; nothing heard by ear; first-audio through a *gateway voice* was not measured
+  (the budget bought brain turns instead); and the live A/B is 2 measured turns per arm, which is a
+  bound and not a resolution. 8 gateway calls budgeted, **6 spent**.
+
+- **Integration evidence (2026-09-03, third pass) — #86 and #88 hold together, and the coupling their
+  authors flagged is real but told loudly.** The sandboxed-extension evaluator (#86) and per-robot brains
+  (#88) both changed the same turn, had 293 unit tests between them, and had never met a running
+  appliance. All four risks were settled against real infrastructure.
+  **(1) The compose stack.** `docker-compose.yml` interpolates `MOXIE_APP: ${MOXIE_APP:-content}` and #88
+  made an explicit `MOXIE_APP` a **pin**, so a bare deployment arrives in the container as an explicit
+  `content` and pins: its 🧠 card offers `content` alone, `MOXIE_APP=any` restores all four and pins
+  nothing. Both are now steps 3d/3e of [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh),
+  green in **build and images** mode alongside the full robot round-trip with TTS audio, checked over
+  `/brain` *and* inside the container with `any` as the control. **The sharper half predates #88 and was
+  found by running the stack rather than reading it:** `content` with no `MOXIE_LLM_BASE_URL` exits at
+  assembly (#68's loud failure), `restart: unless-stopped` makes that a crash loop, and the console waits
+  on `supervisor: service_healthy` — so `docker compose up` with **no `.env`** brings up the broker and
+  nothing else (observed: `supervisor restarting (1)`, `console created`). The compose header claimed
+  "every value below has a working default"; it now says which one has none. The remaining honesty: the
+  smoke pins `MOXIE_APP=echo` in its own env file, so **the documented one-command install has still
+  never been proven in its default configuration** — DoD criterion 5's 🟢 is earned for a stack that was
+  told what brain to run.
+  **(2) Brains resolve per robot, and the swap lands between turns.** `sim/run_smoke.sh` (1981),
+  `--telehealth` (1982), `sim/run_scenarios.sh` (1983) and `sim/run_acl_proof.sh` are all green
+  (18/18 ACL checks). `sim/tests/test_sil_brains_and_ext.py` (+13) boots the real stack and proves the
+  boundary rather than the stored value: a fleet brain POSTed to the real status HTTP answers the *next*
+  turn as a different sentence on the wire; a per-robot brain overrides it for that robot alone while a
+  second robot on the same supervisor stays on the house rule; and with the brain made to take two
+  seconds and the swap posted while the robot is parked inside the call, the in-flight turn is still
+  answered by the **old** brain and the next one by the new. Same POST, different timing, different
+  outcome.
+  **(3) The shipped extension runs live with no model call.** `starter.json`'s G1 answers *"what time is
+  it"* on the wire as `The time is …` for **zero** calls to the brain endpoint — checkable because that
+  endpoint is a counting stub, with an unmatched utterance on the same robot and the same brain as the
+  positive control that still costs exactly one.
+  **(4) The two together** is the same file: the extension ran under a brain chosen *per robot*, beside a
+  robot on `echo`, in one supervisor.
+  **The open finding from the last pass is closed, and it was two leaks, not one.**
+  `test_live_gateway.py` left `MOXIE_APP=content` + `MOXIE_STT=off` in `os.environ`, which is why the
+  voice picker reported 3 failures in-suite and none alone (reproduced in 2 gateway calls:
+  `[picker] 1 listening entries: off`; fixed, and the same pair is 5 passed in 2 more). `test_assemble.py`
+  **deleted** `MOXIE_LLM_BASE_URL`/`MOXIE_LLM_API_KEY` and set `MOXIE_SKIP_DOTENV=1`, so
+  `test_live_gateway_turn_e2e.py`'s supervisor could not find a brain endpoint and exited at assembly —
+  the recorded "4 errors" — proved at zero gateway cost with an ordered probe. Both are fenced by
+  `sim/tests/test_env_hygiene_live_suites.py` (+9 hermetic, mutation-checked). **Not verified:** the full
+  `pytest sim/tests` with credentials was not re-run — it costs 30–50 gateway calls — so "the tier's own
+  command is green on a developer box" remains a claim about two proven mechanisms, not an observation.
+  Hermetic 4384 → **4393 passed / 27 skipped / 4 xfailed**; whole suite creds-blanked 4415 passed /
+  95 skipped; the wheel carries every `moxie_sdk/*.json` plus `brains.py` and `content/ext.py` and
+  imports in a venv holding only `paho-mqtt`. **Honestly not proven:** no physical robot, nothing heard
+  by ear, and no live-gateway turn through a per-robot brain (the stub is the model everywhere above).
+  6 gateway calls, 4 spent.
 
 - **Integration evidence (2026-09-03, second pass) — four of the five slices merged that day hold; the
   fifth had shipped half-done.** #77 (engine pin), #78 (content packs), #79 (STT/telehealth CI dispatch),
@@ -621,6 +728,29 @@ a frozen catalog cited to the reverse-engineering page it came from
 webhook apps stopped speaking flat, and `LLMApp` stopped being a second, divergent generator. **Measured:**
 p95 **0.23 ms** per line against a 1 ms budget, no model call, no new dependency; eight byte-exact goldens
 reach six distinct faces through the real browser bridge. `MOXIE_AUTOMARKUP=0` is the one-variable rollback.
+
+**Production hardening P0 — 🟢 done (2026-09-03).** The supervisor stops dying when the broker is late,
+stops lying when the socket is dead, stops answering a question the child abandoned, and stops losing a
+write to a second process it did not know was there. Built to
+[`backlog/production-hardening.md`](backlog/production-hardening.md) §3–§4, whose §3 decision —
+advisory `flock` on a per-record `.lock` sidecar behind a public `JsonStore.transaction()`, JSON staying
+on disk, over WAL-SQLite and over a single-writer rule — was implemented as written; **none of §3.2's
+three falsifiers appeared** (no caller wants two-collection atomicity, `/data` is not on NFS, the console
+still does not write this tree). **Three real bugs closed**, each with a test that failed first:
+`_on_connect` logged *"broker connected"* for a CONNACK **refusal** and subscribed into a closing socket;
+the wakeup route answered `published: true` into a dead socket because its guard was `client is None`
+rather than `is_connected()` — PR #55's own bug surviving in the one place that fix did not look, with
+all eight `publish()` sites ignoring `info.rc`; and `connect_async` alone is a **no-op** under
+`loop_forever()` unless `retry_first_connection=True`. Measured: on `origin/dev`, two processes × 500
+`append`s lost **500 of 1 000** every run; now 0. +40 tests
+([`test_store_concurrency.py`](../../sim/tests/test_store_concurrency.py),
+[`test_connection_resilience.py`](../../sim/tests/test_connection_resilience.py)) and **35 mutations, 0
+missed** — which found five holes, four of them two guards each covering for the other's absence.
+**Honest ceiling, unchanged:** no physical Moxie has ever been on our broker, the P1 soak that stands in
+for *"a week"* does not exist, and both `MOXIE_STORE_LOCK_TIMEOUT_S = 2.0` and the 60 s reconnect ceiling
+are **chosen, not measured**. `/data` on a network filesystem is declared unsupported. The one number
+that *is* measured is the lock's backoff cadence (0.5 ms / 2 ms), because `flock` has no queue and a
+coarse poller starves against a tight writer.
 
 **Most valuable next slice (2026-09-03, re-ranked — the previous two rankings were stale and cost two agent runs on already-built work; check each backlog spec's own status banner before briefing):** ① **the unreachable child voice** — `audio.js`:160 `speak(text, who)` accepts a `who` and **no caller ever passes `"child"`** (`bridge.js`:300,306 pass nothing; `ambient.js`:106 passes `"ambient"`), so two committed clips are dead weight and the demo speaks with one voice where it was designed for two — small, provable, and visible on the page the owner is trying to launch; ② **live-Sim P1 remainder** — exact counters (the per-IP and concurrency limits are best-effort in-process, and a Worker isolate is not a shared counter), Turnstile, a TTS cache; ③ **sandboxed content extensions** (`backlog/sandboxed-extensions.md` P0 — the declarative rule list; two server-side execution holes have now been closed reactively, so the durable model is worth building); ④ **broker auth** (`backlog/security-broker-auth.md` P1, still blocked on assumptions A1–A4); ⑤ the behavior planner. **Already built, do not re-brief:** content packs P0+P1 (PR #51, hardened #78), the voice + listening picker P0 (PR #48, pinned #77), durable telemetry, the console `wakeup` fix. **Owner-blocked, not agent-blocked:** the three Cloudflare Production variables (`DEMO_GATEWAY_BASE_URL`, `DEMO_GATEWAY_API_KEY` as a secret, `DEMO_CHAT_MODEL`) — every other link in the hosted chain is proven on a real deploy.
 
