@@ -98,6 +98,55 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **Integration evidence (2026-09-03, fifth pass) — the connection rewrite (#94) survives a real
+  broker outage; the ROSTER does not.** P0 rewrote how the supervisor connects, reconnects and
+  publishes, and every one of its tests uses a fake client or an injected transport. Nothing had
+  taken a real broker away from a real `mqtt/run.py`. [`sim/run_broker_outage.sh`](../../sim/run_broker_outage.sh)
+  now does, against a mosquitto container it owns (deep tier, `sim/ci/ci-deep.yml`).
+  **(1) Cold start with no broker at all — PROVEN.** The supervisor started against a dead port
+  stays up, prints `⛔ could not reach the broker at 127.0.0.1:18943 — retrying` once per backoff
+  step, and answers `/status` with `broker_connected=False` + a populated `last_connect_error`
+  throughout. That is `test_connection_resilience.py::S6`'s claim — `loop_forever()` re-raising the
+  first `OSError` without `retry_first_connection=True` — made about a **process** rather than a
+  stub. It then connected on its own the moment the broker appeared, with no restart.
+  **(2) The broker taken away from a running supervisor — PROVEN, all six fields.** Measured across
+  one outage: `broker_connected` True → **False** → True; `last_broker_disconnect` **0.0 →
+  1788475928.9289165** (67 ms after `docker stop` was issued); `last_broker_connect` 1788475926.58 →
+  **1788475929.93** (410 ms after `docker start`); `last_connect_error` "" during the gap on the
+  disconnect path (it is the *connect-fail* field, and no connect was attempted in that window);
+  `publish_drops` **0 → 1** for a `POST /config` in the gap, logged as `⚠️ dropped config for
+  d_outage… — The supervisor is not connected to the broker.`; `store_lock_timeouts` 0. The console
+  route answered **409** with `{"published": false, "acknowledged": false, "error": "no broker
+  connection", "reason": "The supervisor is not connected to the broker."}` — never `published:
+  true`. The supervisor process survived, and a robot it had never seen took a full turn
+  (state→config(paired)→remote-chat→reply) over the reconnected socket.
+  **THE GAP this found — a returning robot is never re-onboarded after a broker restart.**
+  `_device_connect` early-returns for a device already in `self.robots`, and the only thing that
+  ever removes one is `_device_disconnect`, which fires off a `$SYS/broker/log` line — a line that
+  dies **with the broker**. `_on_disconnect` bumps `_turn_seq` (correctly: it stales in-flight
+  turns) but does not clear the roster. So after any broker restart `/status` still lists every
+  robot as connected, and the robot that was mid-conversation comes back with the same device id,
+  gets **no config push and no `app.on_connect`**, and sits there. Reproduced twice; phase 5c of the
+  harness reports it and `MOXIE_OUTAGE_STRICT_ROSTER=1` makes it fatal the day it is fixed. Not
+  fixed here — `mqtt/supervisor/moxie_runtime.py` is owned by the hardening P1 slice.
+  **(3) The rest of the stack still works.** `sim/run_smoke.sh` (1991) ✅ incl. TTS audio + the five
+  scored fields, `--telehealth` (1992) ✅ enable→start→speak→interrupt→end, `sim/run_scenarios.sh`
+  (1993) ✅ 2/2 scenarios 4/4 turns, `sim/run_acl_proof.sh` ✅ 18/18 against
+  eclipse-mosquitto:2.0.20, and `sim/run_compose_smoke.sh` ✅ in **both** modes (build and images) —
+  the composed stack reads the new connection code and the new store lock. Hermetic suite
+  **4680 passed / 26 skipped / 4 xfailed** with `fastapi httpx pynacl` present (the 92
+  `test_console_roundtrip` tests run rather than skipping as one module). `python -m build` →
+  `moxie_cloud_sdk-0.7.0`, carrying `performance.py`, `brains.py`, `content/ext.py` and both
+  `moxie_sdk/*.json`, and importing 15 modules in a `paho-mqtt`-only venv.
+  **(4) One live turn through the hardened runtime.** `test_live_gateway_turn_e2e.py` — real broker,
+  `mqtt/run.py` as its own process, gateway brain + gateway voice, 5/5 passed, and the audio the
+  robot heard passes `helpers_audio.is_real_speech` (the anti-tone guard) rather than the
+  placeholder. **2 gateway calls** (1 completion + 1 `/audio/speech`).
+  **Honestly not verified:** a broker that *refuses* the CONNACK (rc=5) — the credential path
+  `_connack_failed` exists for — was never exercised against a real broker; nor was a **half-open**
+  socket (the failure `KEEPALIVE_S=30` is tuned for), which needs packet-level interference rather
+  than `docker stop`. One flake seen once and never again: `test_store_concurrency.py::test_t1`
+  failed in a full-suite run and then passed 5/5 in isolation and in the next full run.
 - **Integration evidence (2026-09-03, fourth pass) — the behavior planner P1 (#92) holds on the
   wire, and the criterion its author qualified now has the real number.** P1 touches the turn loop
   and every published path, and had never met a broker: its criterion (c) was proven "through the
