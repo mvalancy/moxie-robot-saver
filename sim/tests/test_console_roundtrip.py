@@ -62,8 +62,13 @@ def _snapshot(overrides: dict, fleet: dict = None) -> dict:
     effective = merge_config_layers(fleet, overrides)
     face = effective.get("face")
     cache_id = face_child_id(face_options_list(face), "Sam") if face else ""
+    brain = effective.get("brain") or "content"
     return {
         "ok": True, "app": "content", "uptime_s": 12,
+        # 🧠 Which brain the appliance itself booted with, and what `MOXIE_APP` pins —
+        # added with the brain registry (backlog/brain-picker.md). The fake keeps the
+        # unpinned shape; the per-robot half is on each robot below.
+        "brain": "content", "brain_pin": "",
         "fleet_config": fleet,
         "allow_unverified_bots": False,
         "pending_count": 0,
@@ -77,6 +82,11 @@ def _snapshot(overrides: dict, fleet: dict = None) -> dict:
             "config_overrides": dict(overrides),
             "config_effective": effective,
             "face_cache_id": cache_id,
+            # 🧠 Which brain answers THIS child, and which layer decided (`default` /
+            # `fleet` / `robot` / `pin`) — the difference between the two is the feature.
+            "brain": brain,
+            "brain_source": ("robot" if overrides.get("brain")
+                             else ("fleet" if fleet.get("brain") else "default")),
             "telemetry_count": 2,
             "safety_total": 2, "safety_unreviewed": 1,
         }],
