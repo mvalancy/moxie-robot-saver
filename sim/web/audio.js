@@ -5,7 +5,9 @@
  *      sim/tools/prerender_audio.py with Piper) — the fixed UI phrases + scenario
  *      lines play as real recorded speech with envelope-driven mouth-sync.
  *   2) a live local Piper service (sim/tts/server.py) IF one is actually reachable
- *      — lets arbitrary typed text be synthesized when self-hosting.
+ *      — lets arbitrary typed text be synthesized when self-hosting. SKIPPED when
+ *      `mode.js` says `degraded`: that state means a hosted deployment answered, where
+ *      no sidecar can exist and the 1.4 s probe is pure dead air (see skipProbe()).
  *   3) the browser's own speechSynthesis (Web Speech API) — an honest fallback so
  *      free text still makes sound on the static site instead of silently failing.
  * This mirrors the real robot's CloudTTSResponse -> PCM path
@@ -25,6 +27,9 @@
 
   var TTS_BASE = (localStorage.getItem("moxie.ttsBase") ||
                   (location.protocol + "//" + (location.hostname || "127.0.0.1") + ":8081"));
+  // Did a HUMAN name that address, or is it just the localhost default? See skipProbe().
+  var ttsBaseExplicit = false;
+  try { ttsBaseExplicit = !!localStorage.getItem("moxie.ttsBase"); } catch (e) {}
   var enabled = true;
   var ctx = null;            // created on first user gesture (autoplay policy)
   var current = null;        // current HTMLAudio/AudioBufferSourceNode
@@ -123,12 +128,47 @@
     if (msg) el.textContent = msg;
   }
 
+  /* Should step 2 — the 1.4 s probe for an optional local Piper sidecar — be skipped?
+   * (docs/architecture/backlog/live-sim-demo.md §6.2, row 4.)
+   *
+   * `speakLive` asks `hostname:8081` for the line and waits up to 1.4 s before giving up
+   * (see the AbortController below). On a HOSTED deployment nothing is listening on port
+   * 8081 and nothing ever will be, so every uncached line costs a second and a half of
+   * dead air — at exactly the moment a degraded page is trying to prove it is still
+   * alive. Clip -> browser voice, directly.
+   *
+   * The gate is `mode.js`'s state and NOT the hostname, because the hostname cannot tell
+   * these two apart:
+   *   · `degraded` — `/api/health` answered, so this is a real deployment of this site
+   *                  with Functions and no sidecar. SKIP.
+   *   · `offline`  — no `/api/health` at all, which is precisely what a self-hoster
+   *                  running `sim/serve.py` on localhost gets. Their Piper on :8081 is
+   *                  the entire reason this probe exists. NEVER SKIP.
+   * `live` also keeps the probe: that path is only reached when the gateway voice did not
+   * arrive, and one wasted probe is the cheaper mistake.
+   *
+   * An address a human typed always wins over the mode — `setTtsBase` or a `moxie.ttsBase`
+   * already in localStorage means somebody asked for this probe on purpose. */
+  function skipProbe() {
+    if (ttsBaseExplicit) return false;
+    try {
+      return !!(window.moxieMode && typeof window.moxieMode.state === "function" &&
+                window.moxieMode.state() === "degraded");
+    } catch (e) { return false; }
+  }
+
   function speak(text, who) {
     if (!enabled || !text) return Promise.resolve(false);
     stop();
     // 1) pre-cached clip (real recorded speech — works on a fully static deploy)
     return playClip(text, who).then(function (done) {
       if (done) { setVoiceStatus("clip"); return true; }
+      // 3) …straight to the browser voice where a Piper sidecar cannot exist
+      if (skipProbe()) {
+        var quick = speakBrowser(text);
+        setVoiceStatus(quick ? "browser" : "none");
+        return quick;
+      }
       // 2) live Piper service, ONLY if one is actually reachable
       return speakLive(text).then(function (ok) {
         if (ok) { setVoiceStatus("piper"); return true; }
@@ -663,7 +703,8 @@
     },
     setEnabled: function (v) { enabled = !!v; if (!enabled) stop(); },
     isEnabled: function () { return enabled; },
-    setTtsBase: function (u) { TTS_BASE = u; try { localStorage.setItem("moxie.ttsBase", u); } catch (e) {} },
+    setTtsBase: function (u) { TTS_BASE = u; ttsBaseExplicit = true;
+                               try { localStorage.setItem("moxie.ttsBase", u); } catch (e) {} },
     getTtsBase: function () { return TTS_BASE; },
     getClipPhrases: function () {   // pre-cached Moxie lines guaranteed to make sound
       return loadClips().then(function (j) { return j && j.moxie ? Object.keys(j.moxie) : []; });
