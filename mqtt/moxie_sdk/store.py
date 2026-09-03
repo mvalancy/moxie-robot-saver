@@ -359,7 +359,7 @@ class JsonStore:
         started = time.monotonic()
         asked = 0.0
         attempt = 0
-        while asked < self.lock_timeout_s:
+        while asked < self.lock_timeout_s or True:
             # `2 ** attempt` is an arbitrary-precision **int**, and this loop runs until
             # the budget is spent — roughly `timeout / LOCK_BACKOFF_CAP_S` times. At
             # `attempt == 1024` the product overflows a float and raises

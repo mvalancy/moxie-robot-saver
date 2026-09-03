@@ -593,3 +593,44 @@ def test_a_content_module_prompt_can_read_presence():
     out = render_prompt("{% if presence.face_present %}They are here.{% endif %}",
                         {"presence": _presence_vars(robot)})
     assert out == "They are here."
+
+
+def test_no_presence_lock_block_calls_something_that_retakes_it():
+    """`_presence_lock` is a plain `threading.Lock` — **not** reentrant — and P1 added a
+    new acquisition to it (`_forget_robot_state`) that is reached from the paho network
+    thread, from `_end_conversation`, from `wake_robot` and from `_device_disconnect`.
+
+    A future edit that calls one of those from inside a `with self._presence_lock:` block
+    would self-deadlock the MQTT loop: no exception, no log line, the appliance simply
+    stops answering. That is unusually hard to catch at review and impossible to catch by
+    running the happy path, so it is checked structurally.
+
+    Verified at the time of writing by the same walk, over all eight blocks: none of them
+    calls out at all, and every one is one to fourteen lines long.
+    """
+    import moxie_runtime
+    src = open(moxie_runtime.__file__).read().split("\n")
+    risky = ("_forget_robot_state", "_end_conversation", "_device_disconnect",
+             "wake_robot", "_on_disconnect", "_vision_subscription")
+    blocks = 0
+    for i, line in enumerate(src):
+        if "with self._presence_lock:" not in line:
+            continue
+        blocks += 1
+        indent = len(line) - len(line.lstrip())
+        j = i + 1
+        while j < len(src):
+            cur = src[j]
+            if cur.strip() and (len(cur) - len(cur.lstrip())) <= indent:
+                break
+            stripped = cur.strip()
+            # A comment mentioning one of these is documentation, not a call (playbook
+            # rule 17: a guard must assert over code, not over the whole file).
+            if not stripped.startswith("#"):
+                for name in risky:
+                    assert f"{name}(" not in stripped, (
+                        f"{moxie_runtime.__file__}:{j + 1} calls {name}() while holding "
+                        "the non-reentrant _presence_lock — this self-deadlocks the MQTT "
+                        f"loop:\n    {stripped}")
+            j += 1
+    assert blocks >= 5, f"only {blocks} presence-lock blocks found — has the lock moved?"
