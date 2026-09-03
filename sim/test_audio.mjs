@@ -503,9 +503,22 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
      "audio.js must build the AudioBuffer by hand (raw PCM is not a container)");
   ok(!/decodeAudioData[\s\S]{0,400}playCloudTTS/.test(audioSrc),
      "the CloudTTS path must not use decodeAudioData (raw PCM has no header)");
-  for (const f of ["audio.js", "bridge.js"])
-    ok(!readFileSync(join(here, "web", f), "utf8").includes("moxie_sdk"),
-       `${f} must decode the wire itself — no server-SDK import (client/server independence)`);
+  // Client/server independence, checked against CODE and not against comments. The
+  // invariant is that these files never reach into the server SDK — they decode the wire
+  // themselves, exactly like robot firmware. A *citation* of where a wire shape came from
+  // is the house style everywhere else in this repo and cannot import anything, so a
+  // comment naming `moxie_sdk` is fine; the same token in code is the bug this guards.
+  for (const f of ["audio.js", "bridge.js"]) {
+    const code = readFileSync(join(here, "web", f), "utf8")
+      .split("\n")
+      .filter((l) => {
+        const t = l.trim();
+        return !(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"));
+      });
+    ok(!code.some((l) => l.includes("moxie_sdk")),
+       `${f} must decode the wire itself — no server-SDK import in code (client/server ` +
+       `independence). Citing the server module in a comment is fine; using it is not.`);
+  }
 
   const html = readFileSync(join(here, "web", "sim.html"), "utf8");
   ok(/src="audio\.js(\?[^"]*)?"/.test(html), "sim.html must load audio.js");

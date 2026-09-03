@@ -353,7 +353,14 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   ears `openai-stt (stt-whisper)` heard `"Hi Moxie, can you tell me a joke about a robot?"` at overlap
   **1.00**, brain `graphling-medium` answered, voice `openai-voice` spoke 213852 B @ 22050 Hz — and one
   telehealth operator line spoken by `piper-amy` at spectral flatness **2.32e-02** (tone ≈ 3e-12).
-  **Four gaps this pass found and did not fix:** (a) *no SIM client acts on `response_actions`* —
+  **Three of the four gaps this pass found are now closed** (`feat/sim-robot-fidelity`, 2026-09-02): the
+  browser SIM acts on `response_actions`, publishes `client-service-activity-log` with the same envelope
+  keys in the same order as `sim/virtual_moxie.py` (held from **both** ends against
+  `sim/tests/goldens/robot_to_cloud_activity.json`, so neither client can drift without a test going red),
+  and `WebhookApp` strips its own tags on the `Reply` boundary. The only remaining divergence is the
+  golden's `identity_keys` — *which* robot is speaking and *when* — which is the point, not a gap. Gap (d)
+  stands. Original wording:
+  **Four gaps that pass found:** (a) *no SIM client acts on `response_actions`* —
   the actions now provably reach the robot (`sim/tests/test_e2e_actions_to_robot.py`), but neither
   `sim/virtual_moxie.py` nor `sim/web/bridge.js` reads the field, so nothing launches a module or exits on
   a cloud action; (b) *the browser SIM never publishes `client-service-activity-log` at all* — no
