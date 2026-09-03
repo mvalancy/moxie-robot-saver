@@ -79,6 +79,11 @@ export const RESULT = Object.freeze({ SUCCESS: "SUCCESS", ERROR_OFFLINE: "ERROR_
 
 /**
  * `wire.build_chat_response`'s output, field for field.
+ *
+ * `end_turn` defaults to FALSE, matching `wire.py`:13's own default. It means "Moxie stops
+ * listening after this" (`types.py`:99), and a demo conversation is meant to continue — a
+ * `true` here would tell a real robot to stop listening after every single reply.
+ *
  * @param {{result?:string, backend?:string, eventId:string, text:string, markup?:string, endTurn?:boolean}} o
  */
 export function buildChatResponse(o) {
@@ -90,7 +95,7 @@ export function buildChatResponse(o) {
     backend: String((o && o.backend) || "router"),
     event_id: String((o && o.eventId) || ""),
     output: { text, markup },
-    end_turn: o && o.endTurn === false ? false : true,
+    end_turn: !!(o && o.endTurn),
   };
 }
 

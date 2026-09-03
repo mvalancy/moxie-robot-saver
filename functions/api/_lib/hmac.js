@@ -98,13 +98,18 @@ export function bytesFromB64url(text) {
   return out;
 }
 
-/** base64url -> the JSON it encodes, or null. Never throws. */
+/** base64url -> the JSON OBJECT it encodes, or null. Never throws.
+ *
+ *  An array is rejected as firmly as a string is: every artefact this module signs carries
+ *  a claims OBJECT, and accepting an array would mean `claims.x` is `undefined` on a shape
+ *  we never mint — i.e. the expiry check would be reading a field that cannot exist. Better
+ *  to refuse the shape than to rely on the next check catching it. */
 export function jsonFromB64url(text) {
   const bytes = bytesFromB64url(text);
   if (!bytes) return null;
   try {
     const v = JSON.parse(dec.decode(bytes));
-    return v && typeof v === "object" ? v : null;
+    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
   } catch {
     return null;
   }
