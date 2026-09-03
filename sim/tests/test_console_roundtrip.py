@@ -248,11 +248,19 @@ class _ConsoleVoiceEngines:
     validation rather than a hand-drawn double.
     """
 
+    #: What an explicit `MOXIE_TTS`/`MOXIE_STT` pins, as `config.VoiceEngines` reports it.
+    #: Empty for every test but the pin one, which sets it and restores it.
+    pins: dict = {}
+
     def available(self, *, refresh=False, settle_s=0.0):
         from moxie_sdk import voice_settings as _vs
-        return {"available": _vs.build_available(_GATEWAY_MODELS,
-                                                 piper_voices=["en_US-amy-medium"],
-                                                 whisper_models=["base.en"]),
+        return {"available": _vs.filter_available(
+                    _vs.build_available(_GATEWAY_MODELS,
+                                        piper_voices=["en_US-amy-medium"],
+                                        whisper_models=["base.en"]), self.pins),
+                "pins": dict(self.pins),
+                "pin_notes": {k: _vs.pin_note(k, self.pins.get(k) or "")
+                              for k in _vs.KINDS},
                 "discovering": False, "gateway_error": ""}
 
     def build_speech(self, choice):
@@ -1645,6 +1653,35 @@ def test_a_stale_page_gets_a_400_with_the_reason_not_a_silent_no_op(client):
     assert "gateway:piper-amy" in v["reason"], "the refusal must say what IS available"
 
 
+def test_a_pinned_engine_shortens_the_dropdown_and_says_which_variable_did_it(client, supervisor):
+    """`MOXIE_TTS=piper` is the owner rule written into a deployment. The card must not
+    offer the gateway voices it forbids, and a stale page that posts one must get the
+    variable's name back — not a bare "not one of this appliance's options", which reads
+    as a gateway that lost half its voices."""
+    engines = supervisor.runtime._voice_engines
+    engines.pins = {"speech": "piper", "listening": ""}
+    try:
+        v = client.get(f"/local/robots/{DEVICE}/voice").json()
+        assert [e["id"] for e in v["available"]["speech"]] == ["piper:en_US-amy-medium"]
+        assert "MOXIE_TTS=piper" in v["pin_notes"]["speech"]
+        assert v["pins"]["speech"] == "piper"
+        # the ears are unpinned, so nothing about them changes
+        assert "gateway:stt-whisper" in [e["id"] for e in v["available"]["listening"]]
+        assert v["pin_notes"]["listening"] == ""
+        r = client.post(f"/local/robots/{DEVICE}/voice",
+                        json={"speech": "gateway:piper-amy"})
+        assert r.status_code == 400, r.text
+        assert "MOXIE_TTS=piper" in (r.json()["reason"] or "")
+        # …and a pick INSIDE the pinned engine still works, so the card is not dead
+        ok = client.post(f"/local/robots/{DEVICE}/voice",
+                         json={"speech": "piper:en_US-amy-medium"})
+        assert ok.status_code == 200 and ok.json()["selected"]["speech"] == \
+            "piper:en_US-amy-medium"
+    finally:
+        engines.pins = {}
+        client.post(f"/local/robots/{DEVICE}/voice", json={"speech": None})
+
+
 def test_the_test_button_plays_a_line_on_the_named_robot(client, supervisor):
     client.post(f"/local/robots/{DEVICE}/voice", json={"speech": "gateway:piper-amy"})
     before = len(supervisor.runtime.client.on(f"/devices/{DEVICE}/commands/tts"))
@@ -2116,6 +2153,14 @@ def test_the_reboot_button_ships_disabled_in_the_markup(client):
     html = _static(client, "/index.html")
     row = [ln for ln in html.splitlines() if 'id="btn-reboot"' in ln]
     assert row and "disabled" in row[0], "the Reboot button is offered as if it worked"
+
+
+def test_the_voice_card_reads_the_environments_pin(client):
+    """Structural, like its neighbours: a `pin_notes` the card never renders would pass
+    every API assertion above and still leave a parent staring at a dropdown that lost
+    its gateway voices for no visible reason."""
+    js = _static(client, "/app.js")
+    assert "pin_notes" in js, "the 🎚️ card never reads the environment's pin"
 
 
 def test_the_insights_card_renders_the_week_and_the_retention_footer(client):

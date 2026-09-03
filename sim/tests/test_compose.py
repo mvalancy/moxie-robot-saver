@@ -668,3 +668,24 @@ def test_the_certs_one_shot_still_owns_the_shared_volume(compose, images):
         assert "moxie-certs:/certs" in (doc["services"]["certs"]["volumes"] or []), name
         assert "moxie-certs:/mosquitto/config/keys:ro" in \
             doc["services"]["broker"]["volumes"], name
+
+
+def test_the_defaulted_voice_knobs_do_not_pin_the_pickers_engine(compose, images):
+    """The 🎚️ picker reads `MOXIE_TTS`/`MOXIE_STT` as an engine PIN when they name an
+    engine outright (`voice_settings.pin_for_env`). Both files ship a default for both
+    knobs, so a default that pinned would quietly cut every `docker compose up`
+    deployment's dropdown down to one engine — a coupling neither file can see.
+
+    `tone` is a permission (the last rung under the gateway and Piper) and `auto` is the
+    absence of a choice; both must keep pinning nothing.
+    """
+    sys.path.insert(0, os.path.join(REPO, "mqtt"))
+    from moxie_sdk import voice_settings as vs
+    for name, doc in ((CLONE, compose), (IMAGES, images)):
+        env = doc["services"]["supervisor"]["environment"]
+        for var, kind in (("MOXIE_TTS", vs.SPEECH), ("MOXIE_STT", vs.LISTENING)):
+            m = re.match(r"^\$\{%s:-(.*)\}$" % var, str(env[var]))
+            assert m, f"{name}: {var} lost its `${{VAR:-default}}` shape"
+            assert vs.pin_for_env(kind, m.group(1)) == "", (
+                f"{name}: the default {var}={m.group(1)!r} PINS the {kind} engine, so "
+                f"the picker would offer one engine out of the box")

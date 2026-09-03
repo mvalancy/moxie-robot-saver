@@ -1,5 +1,5 @@
 {
- "generated": "docs-ad96bcacceed",
+ "generated": "docs-c17524ec4ecc",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 4654,
+   "bytes": 5784,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 90412,
+   "bytes": 93265,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 93913,
+   "bytes": 102698,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -213,7 +213,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 28020,
+   "bytes": 28817,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -261,7 +261,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 45097,
+   "bytes": 46223,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -295,7 +295,7 @@
    "path": "architecture/sim-as-a-client.md",
    "title": "The SIM as a backend client — interchangeable with a real robot",
    "section": "architecture",
-   "bytes": 9619,
+   "bytes": 12830,
    "mermaid": 1,
    "headings": [
     "The interchangeability guarantee",
@@ -303,6 +303,7 @@
     "What the SIM substitutes vs what's identical",
     "The one divergence a spec must call out: TTS",
     "What each SIM client does with a `CloudTTSResponse`",
+    "The other voice on the page: the child (2026-09-03)",
     "How the SIM connects",
     "Conformance"
    ],
@@ -348,7 +349,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 87164,
+   "bytes": 109922,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -367,7 +368,9 @@
     "2.1 `Noonster77/openmoxie` — \"OpenMoxie Family Edition\"",
     "2.2 `vapors/openmoxie-ollama`",
     "2.3 What the forks tell us",
+    "2.4 Upstream re-check — 2026-09-03, and the one thing that *was* new",
     "3. The scorecard — HAVE / ADOPT / BEYOND",
+    "3.0 ⚠️ This scorecard is a frozen snapshot — these rows are superseded",
     "3.1 Onboarding & transport",
     "3.2 The turn — brain, memory, expressiveness",
     "3.3 Content & the session",
@@ -377,7 +380,7 @@
     "4.1 Top 10 ADOPT — port the idea, credit the source",
     "4.2 Top 10 BEYOND — what we should build instead",
     "4.3 Backlog — the build briefs",
-    "4.4 The open backlog, re-ranked — 2026-09-02 (evening)",
+    "4.4 The open backlog, re-ranked — 2026-09-03",
     "5. The honest ledger",
     "Where OpenMoxie (and its forks) are genuinely ahead of us",
     "Where we are already ahead",
@@ -485,7 +488,7 @@
    "path": "architecture/backlog/voice-picker.md",
    "title": "Voice picker — choose the speech and listening models from the console",
    "section": "architecture",
-   "bytes": 9570,
+   "bytes": 11255,
    "mermaid": 0,
    "headings": [
     "What the user asked for (verbatim intent)",
@@ -506,7 +509,7 @@
    "path": "architecture/backlog/content-packs.md",
    "title": "Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)",
    "section": "architecture",
-   "bytes": 42205,
+   "bytes": 45252,
    "mermaid": 0,
    "headings": [
     "Why this is worth building",
@@ -1093,7 +1096,7 @@
    "path": "guides/litellm-tts-setup.md",
    "title": "TTS on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 10820,
+   "bytes": 11378,
    "mermaid": 0,
    "headings": [
     "Live since 2026-09-02",
@@ -1119,7 +1122,7 @@
    "path": "guides/litellm-stt-setup.md",
    "title": "STT on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 11304,
+   "bytes": 11761,
    "mermaid": 0,
    "headings": [
     "Live since 2026-09-02",
@@ -1362,6 +1365,156 @@
     "Cross-validation",
     "Caveats"
    ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/README.md",
+   "title": "embodied`",
+   "section": "reverse-engineering",
+   "bytes": 728,
+   "mermaid": 0,
+   "headings": [
+    "Subfolders"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/launcher/README.md",
+   "title": "launcher`",
+   "section": "reverse-engineering",
+   "bytes": 491,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/lizzerface/README.md",
+   "title": "lizzerface`",
+   "section": "reverse-engineering",
+   "bytes": 909,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/logging/README.md",
+   "title": "logging`",
+   "section": "reverse-engineering",
+   "bytes": 1512,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/README.md",
+   "title": "perception`",
+   "section": "reverse-engineering",
+   "bytes": 314,
+   "mermaid": 0,
+   "headings": [
+    "Subfolders"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/audio/README.md",
+   "title": "audio`",
+   "section": "reverse-engineering",
+   "bytes": 1250,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/fusion/README.md",
+   "title": "fusion`",
+   "section": "reverse-engineering",
+   "bytes": 586,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/perception/vision/README.md",
+   "title": "vision`",
+   "section": "reverse-engineering",
+   "bytes": 1673,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/playspace/README.md",
+   "title": "playspace`",
+   "section": "reverse-engineering",
+   "bytes": 591,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/robotbrain/README.md",
+   "title": "robotbrain`",
+   "section": "reverse-engineering",
+   "bytes": 3972,
+   "mermaid": 0,
+   "headings": [
+    "Subfolders"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/robotbrain/serialized/README.md",
+   "title": "serialized`",
+   "section": "reverse-engineering",
+   "bytes": 757,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/system/README.md",
+   "title": "system`",
+   "section": "reverse-engineering",
+   "bytes": 891,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/telehealth/README.md",
+   "title": "telehealth`",
+   "section": "reverse-engineering",
+   "bytes": 564,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/testing/README.md",
+   "title": "testing`",
+   "section": "reverse-engineering",
+   "bytes": 523,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/unity/README.md",
+   "title": "unity`",
+   "section": "reverse-engineering",
+   "bytes": 2746,
+   "mermaid": 0,
+   "headings": [],
+   "kind": "md"
+  },
+  {
+   "path": "reverse-engineering/protocol/recovered-proto/embodied/wifiapp/README.md",
+   "title": "wifiapp`",
+   "section": "reverse-engineering",
+   "bytes": 860,
+   "mermaid": 0,
+   "headings": [],
    "kind": "md"
   },
   {

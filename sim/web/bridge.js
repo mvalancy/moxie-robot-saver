@@ -675,8 +675,26 @@
     // A perception event rides the `speech` slot — it is Moxie's eye, not the child's
     // voice, so it updates presence and never enters the comms log.
     if (notePresence(speech)) { if (msg.event_id) pendingFaceEvents.add(msg.event_id); return; }
-    if (speech) { addTranscript("user", speech);
-      if (window.moxieAudio) window.moxieAudio.sfx("listen"); }
+    if (!speech) return;
+    addTranscript("user", speech);
+    if (!window.moxieAudio) return;
+    window.moxieAudio.sfx("listen");
+    /* ...and let the child be HEARD, not only read.
+     *
+     * This one handler carries every child utterance the page ever shows: the scripted
+     * lines of `sessions/demo.json`, `mic.js`'s degraded scripted line, and whatever a
+     * visitor typed into the Talk box or said into the microphone. `speakClipOnly` is the
+     * entry point that can tell them apart WITHOUT a flag: it plays a clip this site
+     * shipped for that exact sentence and otherwise makes no sound, with no route to
+     * Piper, to speechSynthesis or to the tone generator. So the two demo lines speak,
+     * `mic.js`'s scripted line speaks, and a visitor's own words stay silent instead of
+     * being read back at them in a stranger's voice.
+     *
+     * NOT gated on `replaying`, on purpose: that would mute `mic.js`'s scripted-child
+     * fallback, which runs outside a replay and is exactly where the child SHOULD be
+     * audible. The full reasoning, and the ordering rule that keeps the two voices off
+     * each other, is in the block comment on `speakClipOnly` in audio.js. */
+    if (window.moxieAudio.speakClipOnly) window.moxieAudio.speakClipOnly(speech, "child");
   }
 
   // Public surface for other modules (mic.js): inject a child utterance either

@@ -5,8 +5,16 @@
 set -e
 here="$(cd "$(dirname "$0")" && pwd)"
 venv="$here/.venv"
-if [ ! -x "$venv/bin/pytest" ]; then
-  python3 -m venv "$venv"
+# Re-install whenever requirements.txt changes, not merely when the venv is absent.
+# The old guard was `[ ! -x $venv/bin/pytest ]`, which meant a venv that had pytest and
+# nothing else was never repaired — so the suite ran under-provisioned and tests skipped
+# themselves rather than failing. A stamp of the requirements file makes drift cheap to
+# detect and impossible to ignore.
+stamp="$venv/.requirements.sha"
+want="$(sha256sum "$here/requirements.txt" | cut -d" " -f1)"
+if [ ! -x "$venv/bin/pytest" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
+  [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
   "$venv/bin/pip" install -q -r "$here/requirements.txt"
+  printf '%s' "$want" > "$stamp"
 fi
 exec "$venv/bin/python" -m pytest "$here" "$@"

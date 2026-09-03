@@ -488,3 +488,37 @@ def test_the_whole_round_trip_over_http(served):
     assert row["local_edited"] is False
     assert [p["id"] for p in view["packs"]] == ["mine"]
     assert drive_turn(rt, device_id, "hi")["output"]["text"] == "A prompt I wrote by hand."
+
+
+def test_a_second_appliance_re_exports_the_file_the_first_one_sent_it(tmp_path):
+    """**Two appliances, one file** — the claim a pack exists to make, and the one no
+    single-runtime test can prove.
+
+    Appliance A imports a pack and exports what it now holds; appliance B, a separate
+    data dir that has never seen the pack, imports that export and exports again. The
+    two files must be byte-identical. Anything the *store* silently normalises on the
+    way through — a dropped field, a `source_version` reset to its default, a float
+    that came back as an int — is invisible to a round trip inside one process and
+    lands here as a byte difference.
+
+    `now` is pinned on both exports for the obvious reason: `created_at` is the one
+    field that legitimately differs between two exports of the same content.
+    """
+    a, _ = build(tmp_path / "a")
+    b, _ = build(tmp_path / "b")
+
+    pack = pack_of(prompt="Shared between two houses.", version=4)
+    reviewed_a = review(a, pack)
+    a.content_import(json.dumps(pack), reviewed_a["accept"],
+                     reviewed_a["expect_digest"])
+    from_a = a.content_export([IDENT], name="Shared", pack_id="shared", now=1788400000)
+
+    reviewed_b = review(b, from_a)
+    assert [r["state"] for r in reviewed_b["items"]] == [P.UPGRADE]
+    b.content_import(json.dumps(from_a), reviewed_b["accept"],
+                     reviewed_b["expect_digest"])
+    from_b = b.content_export([IDENT], name="Shared", pack_id="shared", now=1788400000)
+
+    assert P.dumps_pack(from_b) == P.dumps_pack(from_a)
+    assert from_b["items"][0]["source_version"] == 4
+    assert from_b["items"][0]["data"]["prompt"] == "Shared between two houses."

@@ -54,9 +54,29 @@ _STRAY = re.compile(r"\{\{-?|-?\}\}|\{%-?|-?%\}|\{#-?|-?#\}")
 
 
 def _resolve(path: str, context: dict):
-    """Walk a dotted path over dicts/objects; missing → ''."""
+    """Walk a dotted path over dicts/objects; missing → ''.
+
+    **A segment beginning with `_` is refused.** That is a security boundary, not a style
+    rule, and it is the fallback's half of the guarantee `SandboxedEnvironment` gives the
+    jinja2 path (its `is_safe_attribute` refuses underscore-leading attributes for exactly
+    this reason). A `prompt` is untrusted input — it arrives inside a content pack
+    (`packs.py`) — and this walk is `getattr` over live objects, so without the guard a
+    bare dotted path *is* an attribute-chain escape: on a jinja2-less install,
+    `{{ session.__class__.__repr__.__globals__.inspect.os.environ }}` rendered the whole
+    process environment, `MOXIE_LLM_API_KEY` included, straight into the system prompt
+    the brain is handed. Measured, not theorised — `sim/tests/test_content_pack_sandbox.py`
+    is the probe that found it and the fence that keeps it shut.
+
+    Nothing legitimate is lost: the documented grammar
+    (`docs/architecture/content-module-contract.md`) is `{{ volley.config.child_pii.nickname }}`
+    and its kin, and no shipped module names a private attribute.
+    """
+    global BLOCKED
     cur = context
     for part in path.split("."):
+        if part.startswith("_"):
+            BLOCKED += 1
+            return ""
         if isinstance(cur, dict):
             cur = cur.get(part)
         else:
@@ -83,9 +103,12 @@ def _condition(cond: str, context: dict):
     return ((not val) if m.group("neg") else bool(val)), True
 
 
-#: Incremented whenever a template asks for something the sandbox refuses. A
-#: content pack that trips this is either broken or hostile, so it is worth
-#: seeing rather than swallowing — `render_prompt` still returns safe text.
+#: Incremented whenever a template asks for something a renderer refuses to give it —
+#: an attribute the jinja2 sandbox rejects, or a private/dunder path segment the
+#: dependency-free fallback rejects (`_resolve`). One counter for both, because it
+#: answers one question: *did somebody try?* A content pack that trips this is either
+#: broken or hostile, so it is worth seeing rather than swallowing — `render_prompt`
+#: still returns safe text either way.
 BLOCKED = 0
 
 #: Incremented once per construct the **dependency-free fallback** removed because it

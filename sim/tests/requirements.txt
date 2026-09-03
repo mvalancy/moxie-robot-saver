@@ -1,3 +1,23 @@
-# Browser automation for the SIL + static-site pytest suite.
+# Dependencies for the local one-shot runner (`sim/tests/run.sh`).
+#
+# This list MUST cover everything CI's SIL job installs, or a local run silently
+# under-provisions and tests `importorskip` themselves away — a skip that reads as
+# coverage, which is worse than a failure. That is not hypothetical: this file listed
+# only pytest + playwright while the suite needs paho-mqtt to import `virtual_moxie`,
+# jinja2 for the content renderer and its sandbox-escape probes, and pyyaml for the
+# workflow guards. `sim/tests/test_ci_workflows.py` now fails if CI installs a package
+# this file omits.
 pytest>=8
 playwright>=1.40
+
+# Imported by the suite itself (mirrors sim/ci/ci.yml's SIL job).
+paho-mqtt>=2.0        # sim/virtual_moxie.py sys.exit()s without it
+openai                # the gateway client seam
+jinja2                # moxie_sdk.content.render + the sandbox tests
+pyyaml                # the CI-workflow parity guards read the YAML
+httpx                 # the console round-trip tests
+
+# Local-only extra, deliberately NOT in CI's fast tier: the speech/tone guard that
+# tells a real voice from a beep. Without it the live-gateway turn test skips for a
+# reason that has nothing to do with credentials.
+numpy

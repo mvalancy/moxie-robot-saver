@@ -643,6 +643,11 @@ def review_pack(pack: dict, installed, *, digest: str = "ok", catalog=None) -> l
         incoming_rev = digest_of(data)
         if entry is None:
             row["state"] = NEW
+            # A NEW row is the one the review **pre-ticks**, so it is the last row that
+            # may show nothing of what it installs. `diff_item(None, …)` renders every
+            # field as an addition, which for a stranger's chat is the whole prompt —
+            # risk R4's answer, and what `diff_item`'s own contract already promised.
+            row["diff"] = diff_item(None, data)
         else:
             prov = entry.get("provenance") if isinstance(entry.get("provenance"), dict) else {}
             installed_data = normalize_data(kind, entry.get("data"))

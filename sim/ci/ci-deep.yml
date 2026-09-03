@@ -101,20 +101,36 @@ jobs:
           # needs the ASR wheels (~1 min). The 63 MB Piper VOICES stay in the voice tier —
           # this suite makes the gateway do the speaking.
           pip install --quiet faster-whisper numpy
-          # All four creds-only live suites in ONE invocation: the gateway/runtime turns,
+          # All the creds-only live suites in ONE invocation: the gateway/runtime turns,
           # the action-tag RATE check (does the shipped prompt still make the model emit
-          # <exit>/<launch:…>), the shipped starter.json end-to-end on the wire, and the
-          # gateway VOICE (4 /audio/speech calls, transcribed back at overlap >= 0.7).
+          # <exit>/<launch:…>), the shipped starter.json end-to-end on the wire, the
+          # gateway VOICE (4 /audio/speech calls, transcribed back at overlap >= 0.7), and
+          # the 🎚️ picker's DISCOVERY (1 /v1/models call — the listing is the picker's one
+          # input we do not own, so a voice renamed on the gateway would otherwise turn
+          # the console's default into "whatever is first" with nothing failing), the
+          # gateway EARS, and the puppet's voice.
+          #
+          # test_live_gateway_stt and test_live_telehealth_voice were dispatched by NO tier
+          # until 2026-09-03, while a status-log line claimed live STT coverage. Nothing
+          # swept them in either: this step names FILES, so a `-k test_live_gateway`
+          # substring never applied. STT went live the same day as TTS and got the same
+          # claim but none of the enforcement — TTS even has a guard that fails when its
+          # URL is empty, and STT had none. Neither needs a new secret: both fall back to
+          # MOXIE_VOICE_BASE_URL / MOXIE_LLM_API_KEY, which this step already requires
+          # above, and faster-whisper + numpy + paho are already installed in this job.
           # `-ra` so any skip is printed with its reason rather than hiding behind a dot.
           python -m pytest sim/tests/test_live_gateway.py \
                            sim/tests/test_live_action_tags.py \
                            sim/tests/test_live_content_e2e.py \
                            sim/tests/test_live_gateway_tts.py \
+                           sim/tests/test_live_voice_picker.py \
+                           sim/tests/test_live_gateway_stt.py \
+                           sim/tests/test_live_telehealth_voice.py \
                            sim/tests/test_live_gateway_turn_e2e.py -q -ra -s | tee live-gateway.log
           {
             echo "### Live gateway tier (creds-only)"
             echo ""
-            echo "Suites: \`test_live_gateway\` · \`test_live_action_tags\` · \`test_live_content_e2e\` · \`test_live_gateway_tts\`"
+            echo "Suites: \`test_live_gateway\` · \`test_live_action_tags\` · \`test_live_content_e2e\` · \`test_live_gateway_tts\` · \`test_live_voice_picker\` · \`test_live_gateway_stt\` · \`test_live_telehealth_voice\` · \`test_live_gateway_turn_e2e\`"
             echo ""
             echo '```'
             tail -n 1 live-gateway.log
