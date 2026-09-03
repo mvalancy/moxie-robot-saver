@@ -1,5 +1,5 @@
 {
- "generated": "docs-10c1bd972bd7",
+ "generated": "docs-e403642e3236",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 5351,
+   "bytes": 5585,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 6959,
+   "bytes": 7844,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -351,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 111815,
+   "bytes": 113846,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -651,6 +651,47 @@
     "3. What a parent sees",
     "4. Tests",
     "5. Honest gaps (P1+)"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/production-hardening.md",
+   "title": "Production hardening — a robot that stays connected, and a store two processes can share",
+   "section": "architecture",
+   "bytes": 55999,
+   "mermaid": 0,
+   "headings": [
+    "0. The ceiling, stated first — before anything optimistic",
+    "1. Why this is 🟠 today, and exactly what a spec has to remove",
+    "2. What is actually true today — verified on `origin/dev`, 2026-09-03",
+    "2.1 The store, exactly",
+    "2.2 The connection, exactly — and the part a PR review would get wrong",
+    "2.3 Who writes what, under `docker compose up`",
+    "2.4 Prior art — Fork A, which has actually done this",
+    "3. The cross-process story — three options, evaluated, then one choice",
+    "3.1 The comparison",
+    "3.2 The choice",
+    "3.3 The mechanism, precisely — the four things a PR review gets wrong",
+    "3.4 What we are giving up, said plainly",
+    "4. Connection resilience — the design",
+    "4.1 The five changes, in order",
+    "4.2 What happens to an in-flight turn across a reconnect",
+    "4.3 QoS stays 0 — a decision, not an accident",
+    "4.4 What the robot sees, in each of the four cases",
+    "5. \"Stays connected for a week\" as a test we can actually run",
+    "5.1 Tier 1 — hermetic fault injection, in the fast CI tier, seconds",
+    "5.2 Tier 2 — the SIL soak, \"a week in an hour\", opt-in",
+    "5.3 Acceptance criteria — numeric, all of them",
+    "5.4 What the soak cannot prove — read this before quoting any number above",
+    "6. Tests",
+    "7. Acceptance criteria",
+    "8. Effort and the file list",
+    "P0 — **M**, one agent, one sitting, shippable alone",
+    "P1 — **M**",
+    "P2 — **L**",
+    "Risks",
+    "9. Assumption ledger",
+    "10. What this brief is not"
    ],
    "kind": "md"
   },
