@@ -68,7 +68,13 @@ ears (`stt-whisper`, `graphling-stt`, `stt-whisper-base`, discovered from `GET /
 local whisper sizes that are actually installed, and `off`. `stt-whisper` is marked as the default.
 A pick takes effect on the **next** utterance without a restart and is remembered in
 `fleet/voice.json` across one; an explicit **local whisper** pick is honoured even with a gateway
-URL set, which is the whole point of the home-appliance row in the matrix above. Design:
+URL set, which is the whole point of the home-appliance row in the matrix above.
+
+And the mirror of that: **the dropdown never overrules `MOXIE_STT`.** `whisper`/`local`, `gateway`
+and `off` pin the engine — the Listening dropdown then offers only that engine's entries and says
+which variable did it, while a pick *within* the engine (which whisper size, which gateway model)
+still works. `auto` and unset pin nothing. A box set to `MOXIE_STT=whisper` keeps a child's voice
+inside the house no matter what anyone selects in a browser. Design:
 [ai-seam §③ *Choosing an engine*](../architecture/ai-seam.md).
 
 ### What we measured (live, 2026-09-02)

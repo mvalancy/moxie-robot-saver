@@ -1,5 +1,5 @@
 {
- "generated": "docs-6d373f34af19",
+ "generated": "docs-ed3cec123029",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 90412,
+   "bytes": 90576,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -213,7 +213,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 28020,
+   "bytes": 28817,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -485,7 +485,7 @@
    "path": "architecture/backlog/voice-picker.md",
    "title": "Voice picker — choose the speech and listening models from the console",
    "section": "architecture",
-   "bytes": 9570,
+   "bytes": 11255,
    "mermaid": 0,
    "headings": [
     "What the user asked for (verbatim intent)",
@@ -1093,7 +1093,7 @@
    "path": "guides/litellm-tts-setup.md",
    "title": "TTS on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 10820,
+   "bytes": 11378,
    "mermaid": 0,
    "headings": [
     "Live since 2026-09-02",
@@ -1119,7 +1119,7 @@
    "path": "guides/litellm-stt-setup.md",
    "title": "STT on the LiteLLM gateway",
    "section": "guides",
-   "bytes": 11304,
+   "bytes": 11761,
    "mermaid": 0,
    "headings": [
     "Live since 2026-09-02",
