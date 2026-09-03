@@ -839,6 +839,115 @@ const probed = (log) => log.urls.some((u) => u.includes(":8081"));
 }
 
 /* --------------------------------------------------------------------------- *
+ * 8c. End to end, on the REAL assets
+ *
+ * §8b proves the rule against a hand-written manifest; §2 proves the shipped strings
+ * against the shipped manifest. Neither one proves they meet. This boots the REAL
+ * `bridge.js` AND the REAL `audio.js` together against the REAL `audio/index.json`,
+ * `audio/child/*.mp3` and `sessions/demo.json`, routes the demo's own child events through
+ * `route()` exactly as `replay()` does, and asserts the actual MP3 the site ships is the
+ * URL that goes out — so a renamed clip, a re-punctuated line or a manifest rewrite is
+ * caught by the same test that proves the mechanism.
+ * --------------------------------------------------------------------------- */
+{
+  const g = globalThis;
+  const savedKeys = ["window", "document", "localStorage", "location", "fetch", "CustomEvent",
+                     "requestAnimationFrame", "cancelAnimationFrame", "AudioContext",
+                     "SpeechSynthesisUtterance", "mqtt"];
+  const saved = Object.fromEntries(savedKeys.map((k) => [k, g[k]]));
+  const urls = [], started = [], mouth = [], synthesized = [];
+  const byLen = new Map();
+
+  class Src {
+    constructor() { this.onended = null; this.buffer = null; }
+    connect() {} start() { started.push((this.buffer && this.buffer.url) || "?"); } stop() {}
+  }
+  class Ctx {
+    constructor() { this.state = "running"; this.currentTime = 0; this.destination = {}; }
+    resume() {}
+    createBufferSource() { return new Src(); }
+    createAnalyser() { return { fftSize: 256, frequencyBinCount: 8, connect() {}, getByteTimeDomainData() {} }; }
+    decodeAudioData(buf) { return Promise.resolve({ url: byLen.get(buf.byteLength) || "?" }); }
+    createOscillator() { return { type: "", frequency: { setValueAtTime() {} }, connect() {}, start() {}, stop() {} }; }
+    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
+  }
+
+  g.requestAnimationFrame = () => 0;
+  g.cancelAnimationFrame = () => {};
+  g.CustomEvent = class { constructor(t, i) { this.type = t; this.detail = i && i.detail; } };
+  g.AudioContext = Ctx;
+  g.SpeechSynthesisUtterance = class { constructor(t) { this.text = t; } };
+  const el = () => ({ value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0,
+                      scrollHeight: 0, addEventListener() {}, appendChild() {},
+                      querySelector: () => ({ set textContent(v) {} }), classList: { toggle() {} } });
+  g.document = { getElementById: () => el(), createElement: () => el(), body: el() };
+  g.localStorage = { getItem: () => null, setItem() {} };
+  g.location = { protocol: "https:", hostname: "moxie.example" };
+  g.window = {
+    addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true,
+    AudioContext: Ctx,
+    // A minimal avatar: enough for bridge.js to render, and it RECORDS every mouth call.
+    moxie: { setFace() {}, setSpeech() {}, setMotor() {}, getMotor: () => 16384, showIcons() {},
+             clearIcons() {}, setHeartLED() {}, setMouthOpen: (v) => mouth.push(v) },
+    speechSynthesis: { cancel() {}, getVoices: () => [], speak: (u) => synthesized.push(u.text) },
+  };
+  g.mqtt = { connect: () => { throw new Error("this test never goes on the bus"); } };
+  // Serves the site's real files, so the URLs asserted below are the URLs that ship.
+  g.fetch = (url) => {
+    url = String(url);
+    urls.push(url);
+    const onDisk = join(web, url);
+    if (!url.startsWith("audio/") || !existsSync(onDisk))
+      return Promise.reject(new Error("not served: " + url));
+    if (url.endsWith(".json"))
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(JSON.parse(readFileSync(onDisk, "utf8"))) });
+    const bytes = readFileSync(onDisk);
+    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    byLen.set(ab.byteLength, url);
+    return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(ab) });
+  };
+
+  new Function(audioSrc)();                                    // the real audio.js
+  new Function(readFileSync(join(web, "bridge.js"), "utf8"))(); // the real bridge.js
+  ok(!!g.window.moxieBridge, "bridge.js must expose window.moxieBridge");
+
+  // The demo's own child events, routed exactly as replay() routes them.
+  const demo = JSON.parse(readFileSync(join(sessionsDir, "demo.json"), "utf8"));
+  const childEvents = demo.filter((e) => String(e.topic).endsWith("/events/remote-chat"));
+  eq(childEvents.length, 2, "sessions/demo.json must still carry the two child turns");
+
+  for (const ev of childEvents) {
+    started.length = 0;
+    g.window.moxieBridge.route(ev.topic, ev.payload);
+    // speakClipOnly is async (manifest fetch -> clip fetch -> decode); let it settle.
+    for (let i = 0; i < 20 && started.length === 0; i++) await new Promise((r) => setImmediate(r));
+
+    const text = JSON.parse(ev.payload).speech;
+    const want = "audio/" + manifest.child[text];
+    ok(urls.includes(want),
+       `replaying ${JSON.stringify(text.slice(0, 30))} must fetch the shipped clip ${want}; ` +
+       `fetched ${JSON.stringify(urls.filter((u) => u.endsWith(".mp3")))}`);
+    ok(started.includes(want), `…and actually start it; started ${JSON.stringify(started)}`);
+  }
+  eq(mouth.length, 0, "replaying the child's turns must never move Moxie's mouth");
+  eq(synthesized.length, 0, "…and must never reach speechSynthesis");
+  eq(urls.some((u) => u.includes(":8081")), false, "…and must never probe the Piper sidecar");
+
+  // The same route, with something a VISITOR could have typed: silent, end to end.
+  const before = urls.length;
+  g.window.moxieBridge.route("/devices/d_demo/events/remote-chat",
+    JSON.stringify({ command: "prompt", speech: "my hamster died last night" }));
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  eq(urls.slice(before).filter((u) => u.endsWith(".mp3")).length, 0,
+     "a visitor's own words must fetch no audio at all — this is the trap the design exists for");
+  eq(synthesized.length, 0, "…and must not be synthesized");
+
+  for (const k of savedKeys) g[k] = saved[k];
+  notes.push(`end to end: both demo.json child turns play their shipped MP3 through the real ` +
+             `bridge.js + audio.js; an unscripted line fetches nothing`);
+}
+
+/* --------------------------------------------------------------------------- *
  * 9. The renderer cannot silently drop a manifest group again
  *
  * §1 guards the artefact; this guards the tool that writes it. The merge used to name
