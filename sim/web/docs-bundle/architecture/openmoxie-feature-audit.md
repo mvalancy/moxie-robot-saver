@@ -391,6 +391,69 @@ line immediately and deliver the real answer on a later turn.
 
 ---
 
+### 2.4 Upstream re-check — 2026-09-03, and the one thing that *was* new
+
+**The code: nothing new, verified three ways.** Beyond the `git ls-remote` head check in the header, the
+whole fork network was swept rather than only the two forks this audit already tracks — because "the two
+active forks" is a claim that decays. Upstream has **40 forks**; the 15 most recently pushed were compared
+to `jbeghtol/openmoxie:main` through the GitHub compare API. The result is that our selection still holds:
+
+| Fork | vs upstream `main` | Verdict |
+|---|---|---|
+| `Noonster77/openmoxie` (**Fork A**) | ahead (the audited family edition) | Still the only fork with a product layer. Unmoved since 2026-08-30 |
+| `vapors/openmoxie-ollama` (**Fork B**) | ahead (separate repo, not a GitHub fork) | Unmoved since 2025-08-17. Stale, still cited for its STT `/control/reload` idea |
+| `omerarman-git/openmoxie` | ahead 2 | **Docs only** — a Mac-Mini native-install plan and a pairing/TLS note (2026-05-18). No code. But see the field report below, filed by the same author |
+| `oregonlooney/openmoxie_loon` | diverged, ahead 2 | *"Add telehealth studio for custom markup playback"* (2025-09-25) — the same instinct as ADOPT #7, which we shipped past in PR #43 |
+| `Novators-kz/openmoxie` | ahead 1 | One commit, message *"antigravity test"*. Noise |
+| `justin-zeno`, `tungpttech-ai`, and the rest of the 15 | **identical** to upstream | Mirrors |
+
+**So: nothing to adopt from anyone's code, for the second consecutive day.** That is the whole finding on
+the code side, and it is stated rather than padded.
+
+#### What *was* new — two field reports on upstream's issue tracker, and one of them matters to us
+
+Upstream's **issues** are not code, and we would not port them; but they are the only place in this
+landscape where a **real robot's behaviour** is written down by someone holding one, and we have none. Two
+open issues postdate this audit's evidence base:
+
+**[jbeghtol/openmoxie#60](https://github.com/jbeghtol/openmoxie/issues/60)** (opened 2026-05-19, 0 comments)
+— *"Empty `google_api_key` silently drops `license` query → `bo-wifi.apk` crash loop on firmware
+24.10.801."* The reporter's account: upstream's handler (`moxie_server.py`:194) short-circuits and
+publishes **nothing** when no Google service account is configured, and a 24.10.801 robot answers that
+silence by crash-looping its Wi-Fi App every few seconds — `std::terminate` out of a `regex_error`, and a
+Unity-side `SIGABRT` variant. Their stated workaround is that a *syntactically valid but fake* service
+account is enough, because the robot only checks that a `query_result` carrying a `license_values` **entry**
+comes back.
+
+> **What this changes for us — and what it does not.** §3.3 scores our `license` handling **HAVE
+> (deliberate — we are local-first)**, and this report does not overturn that; if anything it *validates*
+> the shape we chose. Upstream's failure mode is a **dropped** answer, and we never drop one:
+> `moxie_runtime.py::_on_activity` handles `license` unconditionally alongside `schedule` and
+> `mentor_behaviors`, and `wire.py::build_activity_response` sends that field's **empty value** rather
+> than skipping the publish — deliberately, and the docstring says so: *"we answer honestly-empty."* The
+> robot's pull resolves; it does not hang. **The residual risk is precise and we cannot close it:** we
+> publish `license_values: []`, and this report claims the firmware wants *an entry*, not merely the
+> field. Empty-list versus at-least-one-record is exactly the distinction no test of ours can settle,
+> because settling it needs a robot. Filed in §4.4's blocked list, **not** ranked — and deliberately not
+> "fixed" by inventing a fake credential to hand a robot, which is a decision an owner should make
+> knowingly rather than one an agent should slip into a merge.
+>
+> **Weight it honestly:** one reporter, zero corroborating comments, firmware **24.10.801** where our
+> corpus is stamped `v24.10.803`, and the same account authored the docs-only fork above. It is an
+> unconfirmed field report — which still makes it the strongest evidence anyone has about a code path we
+> deliberately no-op.
+
+**[jbeghtol/openmoxie#62](https://github.com/jbeghtol/openmoxie/issues/62)** (opened 2026-07-10, 4 comments)
+— a `BoVision` crash in `TFEmbeddingRecognizer::RecognizeFace()` (`std::out_of_range: unordered_map::at:
+key not found`) that restarts `me.embodied.services.BoVision`, shows the crossed-ear icon and stops the
+conversation, on `v24.10.803`. It is **robot-side and not cloud-triggered** — the reporter says covering
+the camera changes nothing — so there is nothing for us to adopt or fix. It is worth one line anyway as
+context for **BEYOND #9**: our vision-events work is built and unproven, and the face pipeline it
+subscribes to is fragile enough on real hardware to take the robot out of a conversation. One more reason
+that row stays 🟡.
+
+---
+
 ## 3. The scorecard — HAVE / ADOPT / BEYOND
 
 Read against [`implementation-plan.md`](implementation-plan.md) (status tables + Definition of done) and
@@ -656,8 +719,10 @@ morning" are different claims and conflating them is what wasted the runs:
 | 10 | **One identity, one guided first run** (BEYOND #10) | ① | 🟠 **needs-a-spec** | The parent app keeps real child records (`POST /api/children`) while the supervisor builds one `ChildProfile` from an env var (`mqtt/run.py`:35) — and the hosted edge tier is now a third, deliberately childless surface. Reconciling three registries is a data-model decision before it is code |
 
 **Not ranked, deliberately — and the list grew.** BEYOND #9 (vision events), ADOPT #9's two flagged
-assumptions, the `wakeup` acknowledgement, broker auth A1–A4, and every claim in the OTA row are
-**blocked on a physical robot**, not on effort. They are built or specified, unproven, and no amount of
+assumptions, the `wakeup` acknowledgement, broker auth A1–A4, every claim in the OTA row, and — new on
+2026-09-03 — **whether an empty `license_values: []` satisfies the robot or crash-loops its Wi-Fi App**
+([§2.4](#24-upstream-re-check-2026-09-03-and-the-one-thing-that-was-new), from an unconfirmed field
+report on upstream's tracker) are **blocked on a physical robot**, not on effort. They are built or specified, unproven, and no amount of
 ranking moves them. *A real Moxie on our broker for an hour would settle more of this page than a week of
 building* — that sentence has been true at every refresh, and it is the single highest-value thing an
 owner could do for this project.

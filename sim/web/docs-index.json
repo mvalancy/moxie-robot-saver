@@ -1,5 +1,5 @@
 {
- "generated": "docs-67c4fa8bfb8d",
+ "generated": "docs-36dea4b2cbb7",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -348,7 +348,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 104448,
+   "bytes": 109679,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -367,6 +367,7 @@
     "2.1 `Noonster77/openmoxie` — \"OpenMoxie Family Edition\"",
     "2.2 `vapors/openmoxie-ollama`",
     "2.3 What the forks tell us",
+    "2.4 Upstream re-check — 2026-09-03, and the one thing that *was* new",
     "3. The scorecard — HAVE / ADOPT / BEYOND",
     "3.0 ⚠️ This scorecard is a frozen snapshot — these rows are superseded",
     "3.1 Onboarding & transport",
