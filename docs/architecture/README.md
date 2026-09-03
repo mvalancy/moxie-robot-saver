@@ -49,7 +49,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   pre-cached scripted Moxie when the gateway is unconfigured, over budget, at capacity or down) and
   [`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md) (sandboxed content extensions —
   a declarative rule list over a total JSON-AST expression language, capability-scoped and reviewable in
-  plain English, so a shared pack can *do* something without trusting its author).
+  plain English, so a shared pack can *do* something without trusting its author) and
+  [`backlog/brain-picker.md`](backlog/brain-picker.md) (any brain, hot-swappable, per child — a closed
+  positive registry of brains, per-robot selection layered like every other config value, a live swap
+  with no restart, and an explicit `MOXIE_APP` that pins the appliance's own).
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
 - [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.

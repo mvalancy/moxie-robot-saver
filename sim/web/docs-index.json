@@ -1,5 +1,5 @@
 {
- "generated": "docs-c17524ec4ecc",
+ "generated": "docs-10c1bd972bd7",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 5062,
+   "bytes": 5351,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 5784,
+   "bytes": 6959,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 93265,
+   "bytes": 102381,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 102698,
+   "bytes": 105206,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -213,13 +213,14 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 28817,
+   "bytes": 31143,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
     "① STT in — audio → text",
     "What we implement (plug point B) — BUILT, and live on both engines (2026-09-02)",
     "② Brain — the RemoteChat contract (where the AI lives)",
+    "Which brain, per child — BUILT (P0, 2026-09-03)",
     "Request in — `RemoteChatRequest`",
     "Response out — `RemoteChatResponse`",
     "③ TTS out — markup → audio + viseme marks",
@@ -261,7 +262,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 46223,
+   "bytes": 54526,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -282,6 +283,7 @@
     "Content packs — moving content between machines *(P0 built 2026-09-02)*",
     "The file",
     "What travels — a positive allowlist",
+    "Extensions — a pack that can *do* something",
     "source_version`, `local_rev`, and the review that does not clobber",
     "Storage, the overlay, and the reload",
     "The routes",
@@ -349,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 109922,
+   "bytes": 111815,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -590,7 +592,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)",
    "section": "architecture",
-   "bytes": 84303,
+   "bytes": 85508,
    "mermaid": 0,
    "headings": [
     "0. The boundary, stated first — this is cloud-side, and only cloud-side",
@@ -633,6 +635,22 @@
     "9. Tests",
     "9.1 Escape tests — `sim/tests/test_ext_escapes.py`",
     "9.2 Behaviour, determinism and integration — `sim/tests/test_ext.py`"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/brain-picker.md",
+   "title": "Any brain, hot-swappable, per child",
+   "section": "architecture",
+   "bytes": 8021,
+   "mermaid": 0,
+   "headings": [
+    "1. What was actually missing",
+    "2. The design, in four sentences",
+    "2.1 Why the pin reads the *raw* environment",
+    "3. What a parent sees",
+    "4. Tests",
+    "5. Honest gaps (P1+)"
    ],
    "kind": "md"
   },

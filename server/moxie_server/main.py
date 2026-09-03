@@ -853,6 +853,70 @@ def robot_voice(device_id: str, refresh: bool = False):
             {"ok": False, "error": "supervisor not reachable", "detail": str(e)}))
 
 
+# --- 🧠 The brain picker (backlog/brain-picker.md) -----------------------------------
+# WHICH brain answers this child. Two thin proxies in the shape every other card uses: the
+# supervisor owns the registry, the validation, the layering and the swap; this layer
+# forwards and normalizes. Unlike the voice, `device_id` is load-bearing on the POST — a
+# brain is chosen per child unless the body says `scope: "fleet"`.
+
+@app.get("/local/robots/{device_id}/brain")
+def robot_brain(device_id: str):
+    """The 🧠 card's poll: every brain this appliance can run, the house rule, what
+    `MOXIE_APP` pins, and a row per robot saying which brain answers that child and which
+    layer decided. Server-side call so the browser has no CORS issue; a supervisor that is
+    down is a 503 carrying the card's own shape."""
+    import urllib.request, urllib.error
+    from .fleet import normalize_brain
+    url = STATUS_URL.rsplit("/status", 1)[0] + "/brain"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return normalize_brain(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode() or "{}")
+        return JSONResponse(status_code=e.code, content=normalize_brain(body))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_brain(
+            {"ok": False, "error": "supervisor not reachable", "detail": str(e)}))
+
+
+@app.post("/local/robots/{device_id}/brain")
+async def set_robot_brain(device_id: str, request: Request):
+    """A parent's pick — `{"brain": "content"}` for this child, or with
+    `{"scope": "fleet"}` for every robot that has no pick of its own. `{"brain": null}`
+    clears the layer. Forwarded to the supervisor's `POST /brain`, which checks it against
+    the registry AND against what `MOXIE_APP` pins, then writes it through the ordinary
+    config layers.
+
+    A pick the supervisor refuses keeps its status code — **400 with `reason`** — so the
+    card can tell a parent *why* (a stale page, or an operator's pin) instead of silently
+    doing nothing. The `scope` travels as a query parameter, not in the body, because that
+    is the supervisor's own route shape."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_brain
+    raw = await request.body()
+    try:
+        body = json.loads(raw or b"{}") or {}
+    except Exception:
+        body = {}
+    scope = "fleet" if str(body.get("scope") or "") == "fleet" else "robot"
+    forward = json.dumps({k: v for k, v in body.items() if k != "scope"}).encode()
+    url = STATUS_URL.rsplit("/status", 1)[0] + "/brain"
+    url += (f"?scope=fleet" if scope == "fleet"
+            else f"?device_id={quote(device_id)}")
+    req = urllib.request.Request(url, data=forward, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return normalize_brain(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        return JSONResponse(status_code=e.code,
+                            content=normalize_brain(json.loads(e.read().decode() or "{}")))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_brain(
+            {"ok": False, "error": "supervisor not reachable", "detail": str(e)}))
+
+
 @app.post("/local/robots/{device_id}/voice")
 async def set_robot_voice(device_id: str, request: Request):
     """A parent's pick — `{"speech": "gateway:piper-amy", "listening": "whisper:base.en"}`,

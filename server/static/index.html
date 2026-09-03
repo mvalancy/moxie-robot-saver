@@ -299,6 +299,37 @@
         <button id="btn-mem-forget-all" class="ghost hidden">Erase everything</button>
         <div id="memory-status" class="muted"></div>
       </div>
+      <!-- 🧠 The brain picker (docs/architecture/backlog/brain-picker.md, audit BEYOND #3).
+           WHICH AI answers this child. The list is the appliance's own registry — a closed
+           positive list, so the card can never offer something the box would refuse to
+           build — and the choice is layered like every other setting: the appliance's
+           default, the house rule, then this one robot. A pick takes effect on the child's
+           NEXT turn; a turn already in flight keeps the brain that heard the question. An
+           explicit MOXIE_APP pins the appliance's brain, and then this card says so
+           instead of pretending the choice is open. -->
+      <div class="card hidden" id="brain-card">
+        <h2>🧠 Brain</h2>
+        <p class="muted">Which AI answers your child. Choose for this robot, or set a house
+          rule for every robot that has no choice of its own. The change applies to the next
+          thing your child says — no restart.</p>
+        <div class="voicegrid">
+          <label class="voicepick"><span>Brain</span>
+            <select id="brain-pick"></select></label>
+          <label class="voicepick"><span>Applies to</span>
+            <select id="brain-scope">
+              <option value="robot">This robot</option>
+              <option value="fleet">Every robot (house rule)</option>
+            </select></label>
+        </div>
+        <div id="brain-note" class="muted"></div>
+        <div class="voice-actions">
+          <button id="btn-brain-save">Save</button>
+          <button id="btn-brain-clear" class="ghost">Use the layer underneath</button>
+          <button id="btn-brain-refresh" class="ghost">Refresh</button>
+        </div>
+        <div id="brain-robots" class="muted"></div>
+        <div id="brain-status" class="muted"></div>
+      </div>
       <!-- 🎚️ The voice picker (docs/architecture/backlog/voice-picker.md). Two dropdowns
            over what this appliance can GENUINELY use: the gateway's audio models,
            discovered live and classified by name, the local Piper voices and whisper

@@ -11,6 +11,15 @@ one item (default 1). It is what makes an upgrade distinguishable from a re-impo
 (`packs.py`, docs/architecture/backlog/content-packs.md §2.3); the engine itself never
 reads it.
 
+`extension` is the one field that carries *behaviour* rather than content: a small,
+total, capability-scoped program this appliance actually runs
+(`ext.py`, docs/architecture/backlog/sandboxed-extensions.md). It sits beside `code`,
+which this appliance still never runs and never will — the two are different fields with
+different meanings, and compiling one into the other is explicitly out of scope (§7.4).
+Both are plain data here; validation lives in `ext.validate` and runs at import and at
+load, never in this loader, because a pack that threw inside `load_module` would take the
+whole reload down.
+
 This module is pure (no MQTT/LLM) so it is fully unit-testable.
 """
 from __future__ import annotations
@@ -48,6 +57,7 @@ class Conversation:
     max_volleys: int = 40
     code: str = ""                       # optional Python hooks (pre/post_process, …)
     memory: dict = field(default_factory=dict)   # see `memory_namespace` below
+    extension: dict = field(default_factory=dict)  # a sandboxed program — see ext.py
     source_version: int = 1              # the author's counter for this item (packs.py)
 
     # ---- long-term memory (the contract's persist_data / session.summarize) ----
@@ -86,6 +96,7 @@ class Conversation:
             max_volleys=int(d.get("max_volleys", 40)),
             code=str(d.get("code", "")),
             memory=dict(d.get("memory") or {}),
+            extension=dict(d.get("extension") or {}),
             source_version=_source_version(d),
         )
 
@@ -98,6 +109,7 @@ class Global:
     entity_groups: str = ""              # e.g. "3,4" — which capture groups are entities
     action: int = 0
     code: str = ""
+    extension: dict = field(default_factory=dict)  # a sandboxed program — see ext.py
     source_version: int = 1              # the author's counter for this item (packs.py)
     _rx: Optional[re.Pattern] = field(default=None, repr=False)
 
@@ -109,6 +121,7 @@ class Global:
             entity_groups=str(d.get("entity_groups", "")),
             action=int(d.get("action", 0)),
             code=str(d.get("code", "")),
+            extension=dict(d.get("extension") or {}),
             source_version=_source_version(d),
         )
         if g.pattern:
