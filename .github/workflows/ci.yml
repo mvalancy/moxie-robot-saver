@@ -86,6 +86,8 @@ jobs:
         run: node sim/test_automarkup_render.mjs
       - name: Behavior-planner render test (22 dialog acts through the real bridge)
         run: node sim/test_performance_render.mjs
+      - name: Preview-render test (published remote_chat payloads through the real bridge)
+        run: node sim/test_preview_render.mjs
       - name: Upload the behavior-planner contact sheet
         uses: actions/upload-artifact@v4
         with:
