@@ -1,5 +1,5 @@
 {
- "generated": "docs-d41b5ee21c34",
+ "generated": "docs-4134c8e57ed6",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -979,7 +979,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 21568,
+   "bytes": 22391,
    "mermaid": 1,
    "headings": [
     "What comes up",

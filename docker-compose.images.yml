@@ -1,7 +1,14 @@
 # 🤖 The Moxie stack from PUBLISHED images — no clone, no build, two commands.
 #
 #     curl -O https://raw.githubusercontent.com/mvalancy/moxie-robot-saver/main/docker-compose.images.yml
-#     docker compose -f docker-compose.images.yml up
+#     MOXIE_APP=echo docker compose -f docker-compose.images.yml up
+#
+# NOT optional: the brain below defaults to `content`, and `content`/`llm` EXIT at startup
+# when MOXIE_LLM_BASE_URL is empty (this repo is public and ships no endpoint). With
+# `restart: unless-stopped` that is a crash loop, and the console waits on
+# `supervisor: service_healthy` — so a bare `up` with no .env and no MOXIE_APP brings up
+# the broker and nothing else. Either set MOXIE_LLM_BASE_URL, or pass MOXIE_APP=echo for
+# a brainless stack that still round-trips the real protocol.
 #
 # This file is SELF-CONTAINED on purpose: it references no other file in the repo, so an
 # owner who downloads only this (plus an optional .env) gets the whole appliance. Every
@@ -215,7 +222,10 @@ services:
       MOXIE_STATUS_PROXY_PORT: "8931"        # deploy-layer shim → the console can read /status
       MOXIE_DATA_DIR: /data                  # the moxie-supervisor-data volume
       MOXIE_MEMORY_DIR: /data/memory         # conversation memory, survives restarts
-      MOXIE_APP: ${MOXIE_APP:-content}       # content | llm | echo | webhook
+      # An explicit value also PINS this appliance's brain (moxie_sdk/brains.py), and the
+      # default below IS explicit by the time the container reads it — so a bare
+      # deployment's 🧠 card offers `content` alone. `any` hands the choice back.
+      MOXIE_APP: ${MOXIE_APP:-content}       # content | llm | echo | webhook | any
       MOXIE_CONTENT_MODULE: ${MOXIE_CONTENT_MODULE:-content_modules/starter.json}
       MOXIE_CHILD_NICKNAME: ${MOXIE_CHILD_NICKNAME:-friend}
       MOXIE_TTS: ${MOXIE_TTS:-tone}          # tone = the built-in zero-dependency voice
