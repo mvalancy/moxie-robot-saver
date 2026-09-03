@@ -62,6 +62,20 @@ jobs:
         # modules called with a plain object as context.env. Guarded by
         # sim/tests/test_ci_workflows.py.
         run: node sim/test_mode.mjs
+      - name: Live-turn Pages Functions (proxy caps, tickets, WAV decode, transport, fallback)
+        # Runs HERE for the same reason test_mode.mjs does: these are the guards on the
+        # routes that can SPEND MONEY and on the one control that keeps the gateway key out
+        # of a response body, so a red one has to report inside the window a merge gate
+        # actually waits. All five are hermetic — the Functions are imported as ES modules
+        # with a plain object as context.env and a stubbed fetch, cloud-transport.js runs on
+        # an injected clock, and no Cloudflare account or gateway key is needed by any of
+        # them. Guarded by sim/tests/test_ci_workflows.py.
+        run: |
+          node sim/test_demo_proxy.mjs
+          node sim/test_demo_tickets.mjs
+          node sim/test_wav_decode.mjs
+          node sim/test_cloud_transport.mjs
+          node sim/test_fallback_coverage.mjs
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
       - name: Bridge markup→avatar unit test

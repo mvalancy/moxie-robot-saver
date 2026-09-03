@@ -58,3 +58,7 @@ mqtt/.env
 # the folder is still navigable.
 mqtt/data/*
 !mqtt/data/README.md
+
+# Cloudflare Pages Functions local config (the hosted-demo secrets).
+# `.dev.vars.example` is the committed template; `.dev.vars` itself holds a real key.
+.dev.vars

@@ -183,13 +183,44 @@ def test_the_early_hermetic_step_installs_protobuf(fast):
 # --------------------------------------------------------------------------- #
 # The headless node tests are actually WIRED — a test CI never runs is not a test
 # --------------------------------------------------------------------------- #
-#: The node tests that guard what the hosted static site TELLS A VISITOR.
-#: `test_mode.mjs` is the mode machine and the Pages Functions behind it (spec
+#: The node tests that guard what the hosted static site TELLS A VISITOR, and what its
+#: Pages Functions SPEND on a visitor's behalf.
+#:
+#: `test_mode.mjs` is the mode machine and the honesty guard behind the badge (spec
 #: docs/architecture/backlog/live-sim-demo.md §6.3/§7); `test_env_hosted.mjs` is the
-#: rendered page in every one of those modes. Both are hermetic — no Cloudflare account,
-#: no network, and `test_env_hosted.mjs` skips cleanly with no browser — so there is no
-#: excuse for either to be missing from the fast tier.
-STATIC_SITE_NODE_TESTS = ("sim/test_mode.mjs", "sim/test_env_hosted.mjs")
+#: rendered page in every one of those modes. The five live-turn tests are the guards on
+#: the two routes that can spend money: `test_demo_proxy.mjs` (the caps, the origin pin,
+#: and the sweep proving the gateway key and base URL never appear in ANY response, on any
+#: path), `test_demo_tickets.mjs` (forgery, expiry, replay, tampering, the constant-time
+#: compare), `test_wav_decode.mjs` (both halves of the audio contract, sample for sample),
+#: `test_cloud_transport.mjs` (the voice-first ordering, on an injected clock) and
+#: `test_fallback_coverage.mjs` (a degraded page has a real voice for the lines it plays).
+#:
+#: Every one is hermetic — the Functions are imported as ES modules with a plain object as
+#: `context.env` and a stubbed `fetch`; no Cloudflare account and NO GATEWAY KEY is needed
+#: by any of them, and none may ever be. `test_env_hosted.mjs` skips cleanly with no
+#: browser. So there is no excuse for any of them to be missing from the fast tier: an
+#: unwired guard on a money-spending route is not a guard.
+STATIC_SITE_NODE_TESTS = (
+    "sim/test_mode.mjs",
+    "sim/test_env_hosted.mjs",
+    "sim/test_demo_proxy.mjs",
+    "sim/test_demo_tickets.mjs",
+    "sim/test_wav_decode.mjs",
+    "sim/test_cloud_transport.mjs",
+    "sim/test_fallback_coverage.mjs",
+)
+
+#: The subset that must report BEFORE anything downloads a browser — same reasoning as the
+#: early-pytest guard: a red guard on a route that can spend money has to surface inside
+#: the window a merge gate (or a script) actually waits.
+EARLY_NODE_TESTS = (
+    "sim/test_mode.mjs",
+    "sim/test_demo_proxy.mjs",
+    "sim/test_demo_tickets.mjs",
+    "sim/test_wav_decode.mjs",
+    "sim/test_cloud_transport.mjs",
+)
 
 
 def _node_steps(job: dict) -> list:
@@ -218,20 +249,43 @@ def test_every_node_test_the_fast_tier_names_actually_exists(fast):
     assert not missing, missing
 
 
-def test_the_mode_machine_test_reports_before_a_two_minute_merge_gate_can_open(fast):
-    """Same reasoning as the early-pytest guard above, for the same window. The mode test
-    is hermetic and takes about a second; running it behind the ~3-minute browser install
-    would mean a red mode machine surfaces minutes after a script could have merged it."""
+@pytest.mark.parametrize("script", EARLY_NODE_TESTS)
+def test_the_hermetic_edge_tests_report_before_a_two_minute_merge_gate_can_open(fast, script):
+    """Same reasoning as the early-pytest guard above, for the same window.
+
+    Each of these is hermetic and takes about a second; running one behind the ~3-minute
+    browser install would mean a red mode machine — or a leaked gateway key — surfaces
+    minutes after a script could have merged it.
+    """
     steps = _steps(fast["jobs"]["sil"])
-    mode = next((i for i, s in enumerate(steps)
-                 if "sim/test_mode.mjs" in (s.get("run") or "")), None)
+    at = next((i for i, s in enumerate(steps) if script in (s.get("run") or "")), None)
     browser = next((i for i, s in enumerate(steps)
                     if "playwright install" in (s.get("run") or "")), None)
-    assert mode is not None, "the fast tier no longer runs sim/test_mode.mjs"
+    assert at is not None, f"the fast tier no longer runs {script}"
     assert browser is not None, "the sil job no longer installs a browser (update this guard)"
-    assert mode < browser, (
-        f"sim/test_mode.mjs (step #{mode + 1}) runs after the browser install "
+    assert at < browser, (
+        f"{script} (step #{at + 1}) runs after the browser install "
         f"(#{browser + 1}); a hermetic failure would take minutes to surface")
+
+
+def test_no_hermetic_edge_test_needs_a_gateway_key_or_a_cloudflare_account(fast):
+    """The rule that keeps the fast tier runnable on a fork, and keeps a secret out of CI.
+
+    Every live-turn test imports `functions/api/*.js` and drives it with a synthetic
+    `Request` and a plain object as `context.env`, with `fetch` stubbed — so none of them
+    may reference a real credential or a deploy secret. A step that suddenly needed one
+    would silently skip on a fork (or, worse, put a key in a workflow file).
+    """
+    steps = _steps(fast["jobs"]["sil"])
+    for script in STATIC_SITE_NODE_TESTS:
+        step = next((s for s in steps if script in (s.get("run") or "")), None)
+        assert step is not None, f"{script} is not wired into the fast tier"
+        run = step.get("run") or ""
+        for forbidden in ("MOXIE_LLM_API_KEY", "DEMO_GATEWAY_API_KEY", "CLOUDFLARE_API_TOKEN",
+                          "secrets.", "${{"):
+            assert forbidden not in run, (
+                f"the step running {script} references {forbidden!r}; these tests are "
+                f"hermetic and must never need a credential:\n{run}")
 
 
 # --------------------------------------------------------------------------- #

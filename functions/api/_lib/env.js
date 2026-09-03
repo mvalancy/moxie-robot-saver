@@ -54,12 +54,60 @@ export const DEFAULTS = Object.freeze({
   DEMO_TICKET_TTL_S: 60,
 });
 
+/** The two optional Cloudflare Access service-token variables.
+ *
+ *  WHY THEY EXIST. The owner's gateway is expected to sit behind a **Cloudflare Tunnel**.
+ *  A plain public tunnel hostname needs nothing extra — it is just a base URL. But a
+ *  tunnel protected by **Cloudflare Access** answers an unauthenticated server-side
+ *  `fetch` with an **HTML login page**, with a 200 status. That is the worst possible
+ *  failure shape: it looks exactly like a broken gateway, and from a bare 502 it is
+ *  maddening to diagnose. So a service token can be configured, and when it is, both
+ *  routes send it on every upstream call as `CF-Access-Client-Id` /
+ *  `CF-Access-Client-Secret`.
+ *
+ *  BOTH OR NEITHER. Exactly one of the pair is a MISCONFIGURATION, not a partial
+ *  credential: calling upstream half-credentialled would produce that same HTML login
+ *  page while looking configured. `readConfig` therefore reports it in `missing` so every
+ *  route answers `gateway_not_configured` and makes no upstream call at all.
+ *
+ *  The secret half is a **secret** binding like the API key, and is non-enumerable on the
+ *  returned config for the same reason (see the header). */
+export const ACCESS_VARS = Object.freeze([
+  "DEMO_GATEWAY_ACCESS_CLIENT_ID",
+  "DEMO_GATEWAY_ACCESS_CLIENT_SECRET",
+]);
+
 /** The three values that must be present for `mode: "live"` (§3.2). */
 export const REQUIRED_FOR_LIVE = Object.freeze([
   "DEMO_GATEWAY_BASE_URL",
   "DEMO_GATEWAY_API_KEY",
   "DEMO_CHAT_MODEL",
 ]);
+
+/**
+ * The `voice` field to send for a model name — `piper-amy` → `amy`.
+ *
+ * **THE GATEWAY REQUIRES THIS FIELD AND IGNORES ITS VALUE. Omitting it is an HTTP 500.**
+ * Transcribed from `mqtt/moxie_sdk/tts.py::voice_for_model` (:80-90), whose docstring says
+ * exactly that and cites `docs/guides/litellm-tts-setup.md` ("Live since 2026-09-02"): the
+ * MODEL NAME selects the Piper voice, so the field only has to be present and sane.
+ *
+ * This function exists because of a bug the four-call gateway probe caught. The spec's §5
+ * reads `mqtt/config.py`:91-92 as "our gateway encodes the voice in the model id, so empty
+ * is correct there" and concludes the field can be omitted. That is a misreading:
+ * `MOXIE_TTS_VOICE=""` means "do not set the env var", and `tts.py` then DERIVES the value
+ * — it never sends nothing. A `/api/speech` that omitted the field answered 500 on every
+ * single call, which would have shipped a hosted demo with a permanently silent voice and
+ * an `upstream_down` badge nobody could explain. `sim/tools/probe_demo_gateway.mjs` is
+ * what found it, and it is the whole reason that probe exists.
+ *
+ * A model whose suffix is not a word — `tts-1` → `1` — falls back to OpenAI's own default
+ * voice, which is what an OpenAI-shaped endpoint would want anyway.
+ */
+export function voiceForModel(model) {
+  const tail = String(model || "").split("-").pop().trim();
+  return /^[A-Za-z]+$/.test(tail) ? tail : "alloy";
+}
 
 /** The only audio formats `audio.js` can decode (§5, mirroring mqtt/config.py:101). */
 export const TTS_FORMATS = Object.freeze(["wav", "pcm"]);
@@ -150,10 +198,27 @@ export function readConfig(env) {
     ttsFormat = DEFAULTS.DEMO_TTS_FORMAT;
   }
 
+  // Cloudflare Access service token — optional, but BOTH OR NEITHER (see ACCESS_VARS).
+  const accessId = str(e, "DEMO_GATEWAY_ACCESS_CLIENT_ID", "");
+  const accessSecret = str(e, "DEMO_GATEWAY_ACCESS_CLIENT_SECRET", "");
+
   const missing = [];
   if (!baseUrl) missing.push("DEMO_GATEWAY_BASE_URL");
   if (!apiKey) missing.push("DEMO_GATEWAY_API_KEY");
   if (!chatModel) missing.push("DEMO_CHAT_MODEL");
+  // Half a service token is worse than none: it looks configured and answers an HTML
+  // login page. Named in `missing` so the fail-safe path of C5 handles it, and noted so
+  // an operator reading `/api/health` server-side can see WHICH half is absent.
+  if (accessId && !accessSecret) {
+    missing.push("DEMO_GATEWAY_ACCESS_CLIENT_SECRET");
+    notes.push("DEMO_GATEWAY_ACCESS_CLIENT_ID is set without its secret: a Cloudflare " +
+               "Access service token needs BOTH halves, so the gateway is treated as unconfigured");
+  }
+  if (accessSecret && !accessId) {
+    missing.push("DEMO_GATEWAY_ACCESS_CLIENT_ID");
+    notes.push("DEMO_GATEWAY_ACCESS_CLIENT_SECRET is set without its client id: a Cloudflare " +
+               "Access service token needs BOTH halves, so the gateway is treated as unconfigured");
+  }
 
   const cfg = {
     enabled,
@@ -162,7 +227,11 @@ export function readConfig(env) {
     notes,
     chatModel,
     ttsModel,
-    ttsVoice: str(e, "DEMO_TTS_VOICE", ""),
+    // ALWAYS a non-empty string when a TTS model is configured: `DEMO_TTS_VOICE` when set,
+    // otherwise derived from the model name. The field is mandatory upstream (see
+    // `voiceForModel`), so the derivation lives HERE rather than at the call site — that
+    // way no route can omit it by forgetting to.
+    ttsVoice: str(e, "DEMO_TTS_VOICE", "") || (ttsModel ? voiceForModel(ttsModel) : ""),
     ttsFormat,
     // Read ONLY when the format is pcm — a wav reply carries its own rate (§5). The
     // clamp mirrors audio.js:617-618 so a configured rate can never be one the browser
@@ -194,6 +263,9 @@ export function readConfig(env) {
     speechTimeoutMs: int(e, "DEMO_SPEECH_TIMEOUT_MS", 1000, 120000, notes),
     sttTimeoutMs: int(e, "DEMO_STT_TIMEOUT_MS", 1000, 120000, notes),
     ticketTtlS: int(e, "DEMO_TICKET_TTL_S", 5, 3600, notes),
+    // WHETHER a service token is in play, never what it is (§4.2). A route needs this to
+    // decide whether to add the two headers; nothing else may know.
+    accessToken: !!(accessId && accessSecret),
   };
 
   // Voice and ears are "configured at all" (§3.2), which means the gateway itself is
@@ -206,6 +278,11 @@ export function readConfig(env) {
   for (const [name, value] of [
     ["baseUrl", baseUrl],
     ["apiKey", apiKey],
+    // A Cloudflare Access service token is a credential in both halves — the client id is
+    // as good as a username and is just as much a thing an attacker would like to have —
+    // so both are non-enumerable, exactly like the API key.
+    ["accessClientId", accessId],
+    ["accessClientSecret", accessSecret],
     // §5: derived from the API key when unset, so the minimum config is two values.
     // The derivation itself is P0-b's functions/api/_lib/hmac.js (HKDF); this only
     // carries the configured material.
@@ -227,6 +304,30 @@ export function modeOf(cfg, budget) {
   if (!cfg.configured) return { mode: "degraded", reason: "gateway_not_configured" };
   if (budget && budget.exhausted) return { mode: "degraded", reason: "budget_exhausted" };
   return { mode: "live", reason: null };
+}
+
+/**
+ * The headers every upstream call carries. ONE function, so `chat.js` and `speech.js`
+ * cannot drift apart on the credentials they present.
+ *
+ * `Authorization` is the gateway key. The two `CF-Access-*` headers are added only when a
+ * complete service token is configured (see `ACCESS_VARS`) — the shape Cloudflare Access
+ * expects for a non-interactive client. NONE of these values is ever put in a response, a
+ * log line or an error string; this object goes into `fetch()` and nowhere else (§4.2).
+ *
+ * @param {object} cfg
+ * @param {string} contentType
+ */
+export function upstreamHeaders(cfg, contentType) {
+  const h = {
+    Authorization: "Bearer " + cfg.apiKey,
+    "Content-Type": contentType || "application/json",
+  };
+  if (cfg.accessToken) {
+    h["CF-Access-Client-Id"] = cfg.accessClientId;
+    h["CF-Access-Client-Secret"] = cfg.accessClientSecret;
+  }
+  return h;
 }
 
 /** The caps the page may know, and nothing else (§4.2 / PUBLIC_LIMIT_KEYS). */
