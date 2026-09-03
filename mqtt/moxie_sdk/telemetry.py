@@ -282,6 +282,17 @@ def new_rollup() -> dict:
     return {"days": {}, "total": 0, "dropped_days": 0, "updated_at": None}
 
 
+def _count(value) -> int:
+    """A non-negative int from anything a hand-edited JSON file might hold (0 when it is
+    not a number at all). Nothing in the store is trusted to be well-typed."""
+    if isinstance(value, bool) or value is None:
+        return 0
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _clean_rollup(rollup) -> dict:
     """A roll-up record from the store, defensively normalised (a corrupt or
     hand-edited file must never take a robot's session down)."""
@@ -292,17 +303,16 @@ def _clean_rollup(rollup) -> dict:
         for day, row in days.items():
             if not isinstance(day, str) or not isinstance(row, dict):
                 continue
-            by = row.get("by_event")
+            by = row.get("by_event") if isinstance(row.get("by_event"), dict) else {}
             out["days"][day] = {
-                "count": max(0, int(row.get("count") or 0)),
-                "by_event": {str(k): max(0, int(v or 0))
-                             for k, v in (by or {}).items()
-                             if isinstance(v, (int, float)) and not isinstance(v, bool)},
+                "count": _count(row.get("count")),
+                "by_event": {str(k): _count(v) for k, v in by.items()
+                             if _count(v) or v == 0},
                 "first": _recorded_at(row.get("first")),
                 "last": _recorded_at(row.get("last")),
             }
-    out["total"] = max(0, int(r.get("total") or 0))
-    out["dropped_days"] = max(0, int(r.get("dropped_days") or 0))
+    out["total"] = _count(r.get("total"))
+    out["dropped_days"] = _count(r.get("dropped_days"))
     out["updated_at"] = _recorded_at(r.get("updated_at"))
     return out
 
