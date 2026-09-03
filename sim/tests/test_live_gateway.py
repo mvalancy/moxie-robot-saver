@@ -5,6 +5,7 @@ Runs ONLY when a gateway key is available (MOXIE_LLM_API_KEY / LITELLM_MASTER_KE
 e.g. from mqtt/.env); skips cleanly otherwise, so CI (no key) stays green while the
 build loops verify a real LLM turn when the key is present. Never commits a key.
 """
+import contextlib
 import os
 import sys
 
@@ -94,18 +95,70 @@ def test_live_turn_through_the_runtime():
     assert msgs[-1]["output"]["text"].strip(), "empty reply from the live gateway turn"
 
 
+#: The variables this file has to set to assemble a production-shaped appliance — and
+#: therefore the ones it has to put back. Every one of them is an ENGINE SELECTOR that a
+#: later `importlib.reload(config)` reads straight out of `os.environ`:
+#:
+#:   * `MOXIE_STT=off` **pins** the listening engine (`voice_settings.ENV_PIN`), and
+#:   * `MOXIE_APP=content` **pins** the brain since PR #88 (`brains.pin_for_env`).
+#:
+#: Leaving either behind is invisible in CI (no `mqtt/.env`, so every live file skips)
+#: and invisible when this file runs alone — it only bites the NEXT live suite in the
+#: same session, which reloads `config` and reads what we left. That is exactly what it
+#: did: `test_live_voice_picker.py` reported 3 failures inside a full run and 0 in
+#: isolation for a day, because this test left `MOXIE_STT=off` in the process. See
+#: docs/architecture/implementation-plan.md, Known gaps.
+_ASSEMBLY_ENV = {"MOXIE_APP": "content", "MOXIE_STT": "off"}
+
+
+@contextlib.contextmanager
+def _assembly_env():
+    """`_ASSEMBLY_ENV` for the duration, and the process left exactly as we found it.
+
+    `monkeypatch` cannot do this job here: the values have to survive an
+    `importlib.reload(config)` *inside* the test, and the restore has to happen even when
+    the body raises — which is what a context manager gives and a bare assignment does
+    not. The sibling live suites (`test_live_gateway_tts._config`,
+    `test_live_gateway_stt._config`) already save-and-restore this way; this file was the
+    one that did not.
+    """
+    keep = {k: os.environ.get(k) for k in _ASSEMBLY_ENV}
+    os.environ.update(_ASSEMBLY_ENV)
+    try:
+        yield
+    finally:
+        for k, v in keep.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+        # The body reloads `config`, so putting the ENVIRONMENT back is only half of it —
+        # `config`'s module constants would still hold ours until somebody reloaded it
+        # again. Reload it here, against the restored environment, so the process is left
+        # consistent for a suite that reads `config` without reloading it first.
+        import sys as _sys
+        if "config" in _sys.modules:
+            import importlib as _il
+            try:
+                _il.reload(_sys.modules["config"])
+            except Exception:          # a reload that cannot happen is not this test's
+                pass                   # failure, and must not mask the body's result
+
+
 def test_live_assembled_stack_end_to_end():
     """The real production path: config(MOXIE_APP=content) → run.assemble() → runtime →
     a live turn on the gateway → spec response. As close to `python run.py` as a test
     gets (config + assembly + runtime + live brain), minus the broker."""
+    with _assembly_env():
+        _live_assembled_stack_end_to_end()
+
+
+def _live_assembled_stack_end_to_end():
     try:
         import importlib
         import json
         mqtt_dir = os.path.join(REPO, "mqtt")
         sys.path.insert(0, mqtt_dir)
         sys.path.insert(0, os.path.join(mqtt_dir, "supervisor"))
-        os.environ["MOXIE_APP"] = "content"
-        os.environ["MOXIE_STT"] = "off"
         import config as cfg
         importlib.reload(cfg)
         import run
