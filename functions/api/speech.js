@@ -33,6 +33,20 @@
  * malformed body, forged ticket, expired ticket, over-length ticket text, replayed ticket,
  * rate-limited, over budget, at capacity. All return before the one `fetch()`.
  *
+ * MEASURED AGAINST THE REAL GATEWAY (`sim/tools/probe_demo_gateway.mjs`, 2026-09-02):
+ * a 30-character line returned **131 348 B of RIFF/WAVE in 1 091 ms** — 22 050 Hz mono,
+ * 131 304 B of PCM, 2.98 s of audio — labelled `audio/mpeg`, confirming §2.2's
+ * Content-Type lie live. Two consequences worth knowing before touching a cap:
+ *
+ *   * that is ~4.4 KB of PCM per input character, so `DEMO_MAX_TTS_CHARS = 300` implies a
+ *     worst case near **1.3 MB of PCM ⇒ ~1.75 MB of base64** in one JSON response body.
+ *     §4.1's own estimate of "≈800 KB worst-case egress per call" is LOW by about 2x.
+ *   * the same ratio puts a 300-character line near **11 s** of gateway time, against a
+ *     `DEMO_SPEECH_TIMEOUT_MS` of 12 000. In practice replies are far shorter — the
+ *     persona asks for "one or two short spoken sentences" and `max_tokens` is 160 — but
+ *     anyone RAISING `DEMO_MAX_TTS_CHARS` must raise the timeout with it, or the demo
+ *     starts timing out on its own longest lines.
+ *
  * AND THE LAST RULE, which is the one that keeps a child from hearing static: **SNIFF THE
  * BYTES, NEVER THE CONTENT-TYPE** (`_lib/wav.js`, transcribed from `tts.py`:110-145). A
  * JSON body where audio was expected is `upstream_down`, never handed to a visitor as
@@ -177,12 +191,7 @@ export async function onRequestPost(context) {
  *            reason?:string, retryAfterS?:number}}
  */
 async function callGateway(cfg, text) {
-  const body = {
-    model: cfg.ttsModel, // from DEMO_TTS_MODEL. NEVER from the request.
-    input: text,
-    response_format: cfg.ttsFormat,
-  };
-  if (cfg.ttsVoice) body.voice = cfg.ttsVoice;
+  const body = buildSpeechBody(cfg, text);
 
   let res;
   try {
@@ -229,6 +238,29 @@ async function callGateway(cfg, text) {
     }
     return { ok: false, reason: "upstream_down" };
   }
+}
+
+/**
+ * The `/audio/speech` request body, built from configuration plus the one signed string.
+ *
+ * EXPORTED so it can be exercised directly: `sim/tools/probe_demo_gateway.mjs` posts the
+ * body THIS function builds to the real gateway, which is the only way to prove the shape
+ * is accepted — Cloudflare Pages Functions do not run under a plain static server, so
+ * "the route works" and "the body the route builds is accepted" are two different claims.
+ */
+export function buildSpeechBody(cfg, text) {
+  const body = {
+    model: cfg.ttsModel, // from DEMO_TTS_MODEL. NEVER from the request.
+    input: String(text || ""),
+    response_format: cfg.ttsFormat,
+  };
+  // ALWAYS SENT. The gateway REQUIRES `voice` and ignores its value — omitting it is an
+  // HTTP 500 on every call (`_lib/env.js::voiceForModel` records how that was found, and
+  // `mqtt/moxie_sdk/tts.py`:80-90 says it in its own docstring). `cfg.ttsVoice` is
+  // `DEMO_TTS_VOICE` when set and derived from the model name otherwise, so it is
+  // non-empty whenever a TTS model is configured — and this route only runs when one is.
+  if (cfg.ttsVoice) body.voice = cfg.ttsVoice;
+  return body;
 }
 
 function retryAfterOf(res) {

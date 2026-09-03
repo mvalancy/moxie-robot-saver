@@ -44,6 +44,7 @@ const limits = await import(join(repo, "functions", "api", "_lib", "limits.js"))
 const wav = await import(join(repo, "functions", "api", "_lib", "wav.js"));
 const wire = await import(join(repo, "functions", "api", "_lib", "wire.js"));
 const hmac = await import(join(repo, "functions", "api", "_lib", "hmac.js"));
+const wire2 = await import(join(repo, "functions", "api", "_lib", "env.js"));
 
 /* --------------------------------------------------------------------------- *
  * The fake deployment
@@ -785,17 +786,33 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   // The upstream body is server-built here too.
   eq(sent[1].url, BASE + "/audio/speech", "the upstream path is /audio/speech");
   const up = JSON.parse(sent[1].opt.body);
-  deep(Object.keys(up).sort(), ["input", "model", "response_format"], "the server-built TTS body");
+  deep(Object.keys(up).sort(), ["input", "model", "response_format", "voice"], "the server-built TTS body");
   eq(up.model, "test-voice-model", "the TTS model comes from DEMO_TTS_MODEL");
   eq(up.response_format, "wav", "the format comes from DEMO_TTS_FORMAT");
   eq(up.input, "Hi there! Want to hear a joke?", "the input is the text WE wrote");
-  ok(!("voice" in up), "no empty `voice` field is sent (config.py:91-92)");
+
+  // `voice` IS ALWAYS SENT, and this assertion is the inverse of what it first said.
+  // Rule 17, and the code was wrong: the first version of this test asserted no `voice`
+  // field was sent, reading §5's note on `config.py`:91-92 as "our gateway encodes the
+  // voice in the model id, so omit it". The four-call gateway probe answered **HTTP 500 on
+  // both speech calls**, and `mqtt/moxie_sdk/tts.py`:80-90 says why in its own docstring:
+  // the gateway REQUIRES the field and IGNORES its value. A guard that had passed would
+  // have shipped a hosted demo whose voice never worked once.
+  // `test-voice-model` → tail `model`, which is a word, so that is the derived voice.
+  eq(up.voice, "model", "a `voice` field is ALWAYS sent — omitting it is an upstream 500");
+  eq(wire2.voiceForModel("piper-amy"), "amy", "piper-amy derives the voice `amy` (tts.py:80-90)");
+  eq(wire2.voiceForModel("piper-ryan"), "ryan", "piper-ryan derives `ryan`");
+  eq(wire2.voiceForModel("tts-1"), "alloy", "a non-word suffix falls back to OpenAI's default voice");
+  eq(wire2.voiceForModel(""), "alloy", "…as does an empty model name");
+  eq(wire2.readConfig({ ...FULL }).ttsVoice, "model", "the derived voice lands on the config");
+  eq(wire2.readConfig({ ...FULL, DEMO_TTS_MODEL: "" }).ttsVoice, "",
+     "…and stays empty with no TTS model, since the route cannot run then anyway");
 
   fresh();
   const withVoice = { ...FULL, DEMO_TTS_VOICE: "amy" };
   const c3 = await call(chat, "/api/chat", { text: "hi" }, null, withVoice);
   await call(speech, "/api/speech", { ticket: c3.body.speech[0].ticket }, null, withVoice);
-  eq(JSON.parse(sent[1].opt.body).voice, "amy", "DEMO_TTS_VOICE is sent when set");
+  eq(JSON.parse(sent[1].opt.body).voice, "amy", "an explicit DEMO_TTS_VOICE overrides the derivation");
 
   // A JSON body where audio was expected is upstream_down, NEVER noise in a child's ear —
   // and the model name inside that JSON does not reach the visitor (assertClean).

@@ -84,6 +84,31 @@ export const REQUIRED_FOR_LIVE = Object.freeze([
   "DEMO_CHAT_MODEL",
 ]);
 
+/**
+ * The `voice` field to send for a model name — `piper-amy` → `amy`.
+ *
+ * **THE GATEWAY REQUIRES THIS FIELD AND IGNORES ITS VALUE. Omitting it is an HTTP 500.**
+ * Transcribed from `mqtt/moxie_sdk/tts.py::voice_for_model` (:80-90), whose docstring says
+ * exactly that and cites `docs/guides/litellm-tts-setup.md` ("Live since 2026-09-02"): the
+ * MODEL NAME selects the Piper voice, so the field only has to be present and sane.
+ *
+ * This function exists because of a bug the four-call gateway probe caught. The spec's §5
+ * reads `mqtt/config.py`:91-92 as "our gateway encodes the voice in the model id, so empty
+ * is correct there" and concludes the field can be omitted. That is a misreading:
+ * `MOXIE_TTS_VOICE=""` means "do not set the env var", and `tts.py` then DERIVES the value
+ * — it never sends nothing. A `/api/speech` that omitted the field answered 500 on every
+ * single call, which would have shipped a hosted demo with a permanently silent voice and
+ * an `upstream_down` badge nobody could explain. `sim/tools/probe_demo_gateway.mjs` is
+ * what found it, and it is the whole reason that probe exists.
+ *
+ * A model whose suffix is not a word — `tts-1` → `1` — falls back to OpenAI's own default
+ * voice, which is what an OpenAI-shaped endpoint would want anyway.
+ */
+export function voiceForModel(model) {
+  const tail = String(model || "").split("-").pop().trim();
+  return /^[A-Za-z]+$/.test(tail) ? tail : "alloy";
+}
+
 /** The only audio formats `audio.js` can decode (§5, mirroring mqtt/config.py:101). */
 export const TTS_FORMATS = Object.freeze(["wav", "pcm"]);
 
@@ -202,7 +227,11 @@ export function readConfig(env) {
     notes,
     chatModel,
     ttsModel,
-    ttsVoice: str(e, "DEMO_TTS_VOICE", ""),
+    // ALWAYS a non-empty string when a TTS model is configured: `DEMO_TTS_VOICE` when set,
+    // otherwise derived from the model name. The field is mandatory upstream (see
+    // `voiceForModel`), so the derivation lives HERE rather than at the call site — that
+    // way no route can omit it by forgetting to.
+    ttsVoice: str(e, "DEMO_TTS_VOICE", "") || (ttsModel ? voiceForModel(ttsModel) : ""),
     ttsFormat,
     // Read ONLY when the format is pcm — a wav reply carries its own rate (§5). The
     // clamp mirrors audio.js:617-618 so a configured rate can never be one the browser
