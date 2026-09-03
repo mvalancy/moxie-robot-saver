@@ -692,6 +692,34 @@ def robot_telemetry(device_id: str, limit: int = 20, days: int = 7):
              "detail": str(e)}))
 
 
+@app.get("/local/connection")
+def appliance_connection(limit: int = 30):
+    """🔌 The appliance's own broker connection: the live state beside the durable history
+    (production hardening P1), fetched from the supervisor's `GET /conn` and normalized.
+
+    **Not per-robot**, which is why it does not live under `/local/robots/{id}/…`: the
+    supervisor has one socket to the broker, and a disconnect is not an event about any
+    one robot even though every robot feels it. The console renders it as a strip on the
+    📈 card so a parent whose Moxie "went quiet last Tuesday" has something to read other
+    than a green dot that is green again now.
+
+    Server-side call so the browser has no CORS issue; graceful `{ok:false}` when the
+    supervisor is down — which is itself the most important thing this route can say.
+    """
+    import urllib.request, urllib.error
+    from .fleet import normalize_connection
+    url = STATUS_URL.rsplit("/status", 1)[0] + f"/conn?limit={max(0, int(limit))}"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return normalize_connection(json.loads(r.read().decode()))
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode() or "{}")
+        return JSONResponse(status_code=e.code, content=normalize_connection(body))
+    except Exception as e:
+        return JSONResponse(status_code=503, content=normalize_connection(
+            {"ok": False, "error": "supervisor not reachable", "detail": str(e)}))
+
+
 @app.get("/local/robots/{device_id}/safety")
 def robot_safety(device_id: str, limit: int = 20):
     """Parent-console safety review queue (ai-seam §2): every block/flag the runtime's

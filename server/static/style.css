@@ -121,6 +121,18 @@ footer a{color:var(--brand)}
 .tweek .tlabel{font-size:10px;color:var(--muted);white-space:nowrap}
 .tweek .tnum{font-size:10px;font-weight:700}
 .tnote{color:var(--muted);font-size:11px;margin:6px 0 0;line-height:1.5}
+/* 🔌 the appliance's broker connection (production hardening P1). A left border rather
+   than a filled banner: it is context above the per-robot card, not an alarm — and the
+   three colours are the three states of `conn_telemetry.health`, with `warn` meaning
+   "up now, but it has not been the whole time". */
+.connstrip{font-size:12px;line-height:1.5;padding:7px 10px;margin-bottom:10px;
+  border:1px solid var(--line);border-left-width:3px;border-radius:8px}
+.connstrip b{font-weight:650}
+.connstrip span{color:var(--muted)}
+.connstrip.ok{border-left-color:#2e9e5b}
+.connstrip.warn{border-left-color:#d08b12}
+.connstrip.down{border-left-color:#c0392b}
+.evlog.conn{max-height:150px;margin-top:0}
 
 /* --- safety review queue (ai-seam §2 InputSafety) --- */
 .safety-hd{font-weight:700;font-size:13px;margin-bottom:8px;color:var(--brand);
