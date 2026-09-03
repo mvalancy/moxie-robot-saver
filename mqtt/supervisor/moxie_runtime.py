@@ -30,6 +30,7 @@ from moxie_sdk import presence as presence_seam          # vision events -> pres
 from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire (audit ADOPT #7)
 from moxie_sdk import telemetry as telemetry_seam        # 📈 Packet envelope + durable history
 from moxie_sdk import vocab as vocab_seam                # the frozen mood/markup catalog
+from moxie_sdk import performance as performance_seam   # the behavior planner (§2)
 from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
 from moxie_sdk import brains as brain_seam             # 🧠 which brain, per robot
 from moxie_sdk.content import packs as content_packs  # 📦 content packs (ADOPT #5)
@@ -819,6 +820,13 @@ class MoxieRuntime:
                 next turn; a body whose digest is not the reviewed one is **409**.
                 `POST /content/undo` puts the snapshot back. See `_content`.
 
+                `POST /preview?device_id=…` with `{"text": "…"}` rehearses one line:
+                the behavior planner stages it and the supervisor publishes it as an
+                ordinary `remote_chat`, so the SIM (or a robot paired as a rehearsal
+                device) performs it. No brain is called and no turn is recorded; the reply
+                carries the staged `Performance` JSON and any id `validate` dropped, so an
+                author sees the performance before a child does — see `preview`.
+
                 `POST /wakeup?device_id=…` publishes the recovered `wakeup` command
                 (`{"command":"wakeup"}` on `/devices/{id}/commands/wakeup`) at one robot.
                 The robot acknowledges nothing, so the reply says `published`, never
@@ -840,6 +848,29 @@ class MoxieRuntime:
                     return self._memory_write(urlparse(self.path).query)
                 if path in ("/content/review", "/content/import", "/content/undo"):
                     return self._content(path)
+                if path == "/preview":
+                    # `POST /preview?device_id=…` `{"text": …, "speak": false}` — the
+                    # rehearsal hook (backlog/expressiveness.md §2.4). Plans one line and
+                    # publishes it as an ORDINARY remote_chat so any client subscribed as
+                    # that device performs it; no brain, no history, no turn recorded.
+                    # 404 unknown device, 400 empty/blocked line.
+                    q = parse_qs(urlparse(self.path).query)
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length) if length else b"{}"
+                    try:
+                        body = _json.loads(raw or b"{}") or {}
+                    except Exception as e:
+                        return self._json_out({"ok": False, "error": str(e)}, 400)
+                    device_id = ((q.get("device_id") or [""])[0]
+                                 or str(body.get("device_id") or ""))
+                    out = rt.preview(device_id, body.get("text"),
+                                     speak=bool(body.get("speak")),
+                                     icons=bool(body.get("icons")),
+                                     sfx=bool(body.get("sfx")))
+                    if out.get("ok"):
+                        return self._json_out(out, 200)
+                    code = 404 if "unknown device_id" in str(out.get("error")) else 400
+                    return self._json_out(out, code)
                 if path == "/wakeup":
                     # `POST /wakeup?device_id=…` — publish the recovered `wakeup`
                     # command. 404 unknown device, 409 pending/no broker, and on success
@@ -1538,6 +1569,73 @@ class MoxieRuntime:
         return {"ok": True, "device_id": device_id, "published": True,
                 "acknowledged": False, "topic": topic, "payload": payload,
                 "wake_button_enabled": bool(wake_button), "note": note}
+
+    # ---- rehearsal: watch a line perform before a child does ----
+    def preview(self, device_id, text, *, speak=False, **opts) -> dict:
+        """Stage one line and publish it as an ordinary turn — the preview hook (C7).
+
+        `sim-as-a-client.md`'s guarantee is that the SIM is **not a special case**, so
+        this adds no SIM-specific API and no SIM-specific message. It plans the line,
+        validates it, renders it and publishes a perfectly ordinary
+        `/devices/<id>/commands/remote_chat` with `result=SUCCESS` — byte-identical in
+        shape to what a real turn produces. Whatever is subscribed as that device renders
+        it: the browser SIM, `virtual_moxie.py`, or a robot paired as a rehearsal device.
+
+        **Nothing else happens.** No brain is called, no history is written, no turn is
+        recorded, no memory is folded, no safety journal row is added beyond the ordinary
+        assessment below. That is what makes it a rehearsal: an author can iterate on a
+        line and *see* the performance before a child does.
+
+        `speak=True` also synthesizes, so a rehearsal can be heard as well as seen. It is
+        off by default because a preview must not spend a voice call unless it was asked
+        to — an author is usually watching the body, not listening.
+
+        The returned `performance` is the staged structure as JSON (mood/act/gesture/
+        gaze/icon/sfx per beat) plus `dropped`, the ids `validate` refused, so a console
+        can flag them in red instead of leaving an author wondering why nothing played.
+        """
+        robot = self.robots.get(device_id)
+        if robot is None:
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": f"unknown device_id {device_id!r}",
+                    "reason": "No robot with that id has connected to this appliance."}
+        if not self.is_permitted(device_id):
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "robot is pending",
+                    "reason": "Let this robot in first (Permit it in the fleet panel)."}
+        line = str(text or "").strip()
+        if not line:
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "empty line", "reason": "Type a line to rehearse."}
+        # A rehearsal line is still a line a child could hear, so it passes the same
+        # output-side classifier a brain's own line does — and, like telehealth, a BLOCK
+        # comes back to the author with its reason instead of being replaced by a
+        # redirect. There is a human at the keyboard; substituting for them helps nobody.
+        verdict = self._assess(line, safety_seam.MOXIE)
+        if verdict and verdict.action == safety_seam.BLOCK:
+            self._record_safety(device_id, verdict)
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "blocked", "blocked": True,
+                    "categories": list(verdict.categories),
+                    "reason": "Moxie will not say that. Nothing was published — "
+                              "please rephrase."}
+        event_id = f"preview-{int(time.time() * 1000)}"
+        staged = perform(line, turn_key=event_id, chunk_index=0, **opts)
+        scored = dict(staged.scored)
+        self._publish_chat(device_id, event_id, "router", line, staged.markup,
+                           result=ResultCode.SUCCESS, scored=scored)
+        if speak:
+            self._maybe_synthesize(device_id, staged.markup, event_id, chunk_num=0)
+        self._note("preview", f"🎬 rehearsed '{line[:40]}' on {device_id}")
+        print(f"[runtime] 🎬 preview → {device_id}: '{line[:60]}'", flush=True)
+        out = {"ok": True, "device_id": device_id, "published": True, "spoke": speak,
+               "event_id": event_id, "text": line, "markup": staged.markup,
+               "mode": staged.mode, "scored": scored,
+               "performance": performance_seam.to_json(staged.performance),
+               "dropped": list(getattr(staged.performance, "dropped", ()) or ())}
+        if verdict:
+            out["flagged"] = list(verdict.categories)
+        return out
 
     # ---- child safety (AI seam §2 — InputSafety) ----
     def safety_policy(self, device_id) -> LoggingPolicy:
