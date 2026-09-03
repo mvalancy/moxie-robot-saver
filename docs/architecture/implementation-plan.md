@@ -110,10 +110,13 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   own:** its per-IP, concurrency and unit-budget counters are best-effort **in-process**, so
   they stop scripts and accidents but are *not* a hard global ceiling (a Worker isolate is
   not a shared counter — §4.6 says so and so does the code comment; the real ceilings are
-  the per-request caps, the ticket, and a budget-scoped gateway key), and whether a Pages
-  build accepts the `import ... with { type: "json" }` attribute that `_lib/safety.js` uses
-  for its rule table is unverified — if it does not, the table inlines and `safety.json`
-  stays the reviewable copy. A second, unrelated CI honesty note found while wiring this slice:
+  the per-request caps, the ticket, and a budget-scoped gateway key). **One of the two is
+  already settled, and the deploy is what settled it (2026-09-03):** a Pages build does NOT
+  accept the `import ... with { type: "json" }` attribute `_lib/safety.js` used for its rule
+  table — the Pages check failed on the branch while the identical check was green on `dev`,
+  invisible to all 1637 hermetic tests because node accepts the syntax. The table is now a
+  plain `.js` data module, the `.json` is deleted, and a guard fails locally on any `.json`
+  import under `functions/` (spec §10 assumption 26). A second, unrelated CI honesty note found while wiring this slice:
   `sim/test_ambient.mjs` and `sim/test_presence_bridge.mjs` are run by **no** tier — both
   pass locally today, so nothing is broken, but two green tests nobody executes are not
   evidence.

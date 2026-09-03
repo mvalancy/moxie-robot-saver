@@ -21,7 +21,7 @@ Spec: [`../docs/architecture/backlog/live-sim-demo.md`](../docs/architecture/bac
 | [`api/_lib/limits.js`](api/_lib/limits.js) | — | Request admission: the origin pin, the per-IP windows, the request-**unit** budget, the concurrency ceiling, a bounded body reader. **Its counters are best-effort and in-process — not a global ceiling** (§4.6). |
 | [`api/_lib/wire.js`](api/_lib/wire.js) | — | `build_chat_response`'s field set and `build_cloud_tts_response`'s, transcribed from `mqtt/moxie_sdk/`; the minimal markup floor built from the three mark templates `stub.js` already emits. |
 | [`api/_lib/wav.js`](api/_lib/wav.js) | — | RIFF walker → `{pcm, rate, channels}`, carrying the header's **own** rate out. Refuses 8/24-bit, a JSON body, and an HTML page. |
-| [`api/_lib/safety.js`](api/_lib/safety.js) + [`api/_lib/safety.json`](api/_lib/safety.json) | — | The pre-inference floor. A hard block never calls the gateway, so it is a safety control and a cost control in one rule. **A floor, not a filter.** |
+| [`api/_lib/safety.js`](api/_lib/safety.js) + [`api/_lib/safety.rules.js`](api/_lib/safety.rules.js) | — | The pre-inference floor. A hard block never calls the gateway, so it is a safety control and a cost control in one rule. **A floor, not a filter.** The rule table is a plain data module, not JSON — see below. |
 
 `api/_lib/` holds helpers, not routes. A leading underscore is Pages' convention for
 "not routable"; §10 assumption 9 records that as **inferred, not verified** — if a real
@@ -81,6 +81,21 @@ protected by **Cloudflare Access** answers an unauthenticated server-side `fetch
   mirrored in `sim/web/mode.js` — an unknown reason there is coerced to `null` and would be
   misread as a healthy turn.
 
+## One thing a deploy already settled: no JSON imports here
+
+`api/_lib/safety.js` originally loaded its rule table with
+`import RULES from "./safety.json" with { type: "json" }`. **The Cloudflare Pages build
+rejects that**, and it took a real deploy to find out: the Pages check went `FAILURE` on the
+branch that added it while the same check was green on `dev`, and that one line was the only
+structural difference in this tree. Node 20 accepts the syntax, so the entire hermetic suite
+was green — a bundler-specific extension cannot be validated by the runtime the tests run on.
+
+So: **nothing under `functions/` may import a `.json` file, with or without an import
+attribute, and no `.json` file lives here at all.** Data goes in a `.js` module exporting a
+const, the way [`api/_lib/safety.rules.js`](api/_lib/safety.rules.js) does. `sim/test_demo_proxy.mjs`
+asserts all of that, so the next attempt fails in a second locally instead of in a build log.
+Recorded as assumption 26 in the spec's §10 ledger.
+
 ## Configuring it
 
 Cloudflare dashboard → Workers & Pages → the Pages project → Settings → Environment
@@ -107,12 +122,6 @@ Not one of them may ever require a Cloudflare account or a gateway key, and
 credential at all.
 
 ## Unverified
-
-**Whether a Pages build accepts the `import ... with { type: "json" }` attribute** that
-`api/_lib/safety.js` uses to load its rule table. It works under bare node 20 and esbuild
-supports the syntax; if a real build ever rejects it, the fallback is the same shape as the
-`_lib/` routing one below — inline the table — and `safety.json` stays as the reviewable
-copy.
 
 **Where `functions/` must live for a Pages project whose build output directory is
 `sim/web` is not established by anything in this repo** (spec §10, assumption 8 — the

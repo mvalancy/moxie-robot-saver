@@ -1,4 +1,42 @@
-{
+/* functions/api/_lib/safety.rules.js — the pre-inference safety rule table, as a module.
+ *
+ * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 ('Pre-inference safety') and §2.6.
+ * Compiled and applied by ./safety.js, which is where every behavioural rule is explained.
+ * This file is DATA ONLY: one frozen object, no logic, no imports, no side effects.
+ *
+ * ============================================================================
+ * WHY THIS IS A .js FILE AND NOT THE .json IT WAS.
+ *
+ * It shipped as `safety.json`, loaded with `import RULES from "./safety.json" with { type:
+ * "json" }`. Node 20 accepts that attribute, so the whole hermetic suite was green — and
+ * **the Cloudflare Pages build FAILED**, on a branch whose only structural change to the
+ * Functions tree was that one line. The same check passed on `dev`, which already carried
+ * the rest of the tree. So the Pages bundler does not accept import attributes.
+ *
+ * That is the spec's §10 ledger being settled by the only thing that could settle it: a
+ * deploy. It was listed as unverified — "whether a Pages build accepts the `import ... with
+ * { type: \"json\" }` attribute" — and the answer is **NO**. The documented fallback was
+ * "inline the table", and this file is that fallback.
+ *
+ * The `.json` file is GONE rather than kept alongside. Two copies of a safety rule table
+ * that nothing keeps in sync is a worse failure than the one being fixed: a reviewer would
+ * read one and the Function would enforce the other. There is one source of truth, and it
+ * is this file.
+ *
+ * The content is byte-for-byte the table that shipped: it was re-emitted from the JSON
+ * mechanically and the parsed result compared, not retyped. `sim/test_demo_proxy.mjs`
+ * carries a guard that no file under `functions/` may import a `.json` file or use an
+ * import attribute again, so this cannot come back as a deploy-only failure.
+ * ============================================================================
+ *
+ * WARNING, restated here because it is the first thing a reader meets: to filter offensive
+ * words a filter has to list them. The `words` arrays below contain slurs and profanity on
+ * purpose. That is the only reason they are here. The table's own `_readme` says the rest.
+ */
+
+/** The whole table. Frozen shallowly — `safety.js` only reads it, and freezing the top
+ *  level documents that intent without pretending to a deep freeze it does not do. */
+export const RULES = Object.freeze({
   "_readme": [
     "The hosted demo's PRE-INFERENCE safety floor — the whole table, in one file anyone can read.",
     "",
@@ -46,10 +84,18 @@
     {
       "id": "self_harm",
       "label": "Self-harm",
-      "action": { "child": "block" },
-      "intents": ["self_harm_disclosure"],
+      "action": {
+        "child": "block"
+      },
+      "intents": [
+        "self_harm_disclosure"
+      ],
       "phrase_set": "self_harm",
-      "words": ["suicide", "suicidal", "selfharm"],
+      "words": [
+        "suicide",
+        "suicidal",
+        "selfharm"
+      ],
       "phrases": [
         "\\b(?:kill|hurt|harm|cut|starve|burn)(?:ing)?\\s+(?:my ?self|myself|him ?self|her ?self|them ?selves)\\b",
         "\\bi\\s+(?:want|wanna|need|am going|'m going|plan)\\s+to\\s+(?:die|disappear|end it|not (?:be|exist))\\b",
@@ -58,15 +104,28 @@
         "\\bnobody\\s+would\\s+(?:miss|care about)\\s+me\\b",
         "\\bhow\\s+(?:do i|to|can i)\\s+(?:kill|hurt|cut)\\s+(?:my ?self|myself)\\b"
       ],
-      "allow": ["\\bkill(?:ing)?\\s+myself\\s+laughing\\b", "\\bdying\\s+(?:of|to)\\b"]
+      "allow": [
+        "\\bkill(?:ing)?\\s+myself\\s+laughing\\b",
+        "\\bdying\\s+(?:of|to)\\b"
+      ]
     },
     {
       "id": "violence",
       "label": "Violence & weapons",
-      "action": { "child": "block" },
-      "intents": ["violence_request"],
+      "action": {
+        "child": "block"
+      },
+      "intents": [
+        "violence_request"
+      ],
       "phrase_set": "generic",
-      "words": ["behead", "molotov", "napalm", "thermite", "pipebomb"],
+      "words": [
+        "behead",
+        "molotov",
+        "napalm",
+        "thermite",
+        "pipebomb"
+      ],
       "phrases": [
         "\\bhow\\s+(?:do (?:i|you)|to|can (?:i|you))\\s+\\w{0,12}\\s?(?:make|build|get|buy|use|fire|load|shoot)\\s+(?:a|an|the|my)?\\s?(?:bomb|gun|rifle|pistol|shotgun|weapon|explosive|grenade|poison|knife)\\b",
         "\\bhow\\s+(?:do (?:i|you)|to|can (?:i|you))\\s+(?:kill|murder|stab|shoot|strangle|poison|hurt|beat up)\\s+(?:a |an |the |my |some ?)?(?:one|body|person|people|kid|girl|boy|man|woman|teacher|mom|dad|brother|sister)\\b",
@@ -80,13 +139,35 @@
     {
       "id": "sexual",
       "label": "Sexual content",
-      "action": { "child": "block" },
-      "intents": ["sexual_request"],
+      "action": {
+        "child": "block"
+      },
+      "intents": [
+        "sexual_request"
+      ],
       "phrase_set": "generic",
       "words": [
-        "porn", "pornhub", "blowjob", "handjob", "creampie", "orgasm", "masturbate",
-        "masturbating", "jerkoff", "boner", "dildo", "vibrator", "titties", "boobs",
-        "nudes", "sexting", "horny", "erection", "genitals", "penis", "vagina"
+        "porn",
+        "pornhub",
+        "blowjob",
+        "handjob",
+        "creampie",
+        "orgasm",
+        "masturbate",
+        "masturbating",
+        "jerkoff",
+        "boner",
+        "dildo",
+        "vibrator",
+        "titties",
+        "boobs",
+        "nudes",
+        "sexting",
+        "horny",
+        "erection",
+        "genitals",
+        "penis",
+        "vagina"
       ],
       "phrases": [
         "\\bsend\\s+(?:me\\s+)?(?:a\\s+)?(?:nude|naked|sexy)\\b",
@@ -104,25 +185,48 @@
     {
       "id": "hate",
       "label": "Hate speech & slurs",
-      "action": { "child": "block" },
-      "intents": ["hate_speech"],
+      "action": {
+        "child": "block"
+      },
+      "intents": [
+        "hate_speech"
+      ],
       "phrase_set": "hate",
       "words": [
-        "nigger", "nigga", "faggot", "fag", "tranny", "chink", "spic", "kike",
-        "wetback", "gook", "coon", "raghead", "retard", "retarded", "spastic"
+        "nigger",
+        "nigga",
+        "faggot",
+        "fag",
+        "tranny",
+        "chink",
+        "spic",
+        "kike",
+        "wetback",
+        "gook",
+        "coon",
+        "raghead",
+        "retard",
+        "retarded",
+        "spastic"
       ],
       "phrases": [
         "\\bgo\\s+back\\s+to\\s+(?:your|their)\\s+(?:own\\s+)?country\\b",
         "\\bi\\s+hate\\s+(?:all\\s+)?(?:black|white|brown|asian|jewish|muslim|mexican|gay|trans)\\s+(?:people|kids|folks)\\b",
         "\\b(?:black|white|asian|jewish|muslim|mexican|gay|trans)\\s+people\\s+(?:are|should)\\s+(?:all\\s+)?(?:stupid|dirty|die|leave|evil)\\b"
       ],
-      "allow": ["\\bflag\\s+football\\b"]
+      "allow": [
+        "\\bflag\\s+football\\b"
+      ]
     },
     {
       "id": "personal_info",
       "label": "Personal information",
-      "action": { "child": "flag" },
-      "intents": ["personal_info_disclosure"],
+      "action": {
+        "child": "flag"
+      },
+      "intents": [
+        "personal_info_disclosure"
+      ],
       "phrase_set": "privacy",
       "words": [],
       "phrases": [
@@ -132,15 +236,24 @@
         "\\bi\\s+live\\s+at\\s+\\d",
         "\\bmy\\s+password\\s+is\\b"
       ],
-      "allow": ["\\bmy\\s+address\\s+is\\s+a\\s+secret\\b"]
+      "allow": [
+        "\\bmy\\s+address\\s+is\\s+a\\s+secret\\b"
+      ]
     },
     {
       "id": "dangerous",
       "label": "Dangerous activities",
-      "action": { "child": "flag" },
-      "intents": ["dangerous_request"],
+      "action": {
+        "child": "flag"
+      },
+      "intents": [
+        "dangerous_request"
+      ],
       "phrase_set": "generic",
-      "words": ["huffing", "tidepod"],
+      "words": [
+        "huffing",
+        "tidepod"
+      ],
       "phrases": [
         "\\bhow\\s+(?:do i|to|can i)\\s+(?:get|buy|make)\\s+(?:drugs|weed|alcohol|vape|cigarettes)\\b",
         "\\b(?:drink|swallow|eat)\\s+(?:bleach|detergent|poison)\\b",
@@ -151,22 +264,48 @@
     {
       "id": "violence_talk",
       "label": "Violent talk",
-      "action": { "child": "flag" },
-      "intents": ["violent_talk"],
+      "action": {
+        "child": "flag"
+      },
+      "intents": [
+        "violent_talk"
+      ],
       "phrase_set": "generic",
       "words": [],
-      "phrases": ["\\bi\\s+(?:want to|wanna)\\s+(?:punch|hit|fight)\\b", "\\bi\\s+hate\\s+(?:you|him|her|them)\\b"],
-      "allow": ["\\bhate\\s+(?:you\\s+)?to\\s+(?:say|ask|admit)\\b"]
+      "phrases": [
+        "\\bi\\s+(?:want to|wanna)\\s+(?:punch|hit|fight)\\b",
+        "\\bi\\s+hate\\s+(?:you|him|her|them)\\b"
+      ],
+      "allow": [
+        "\\bhate\\s+(?:you\\s+)?to\\s+(?:say|ask|admit)\\b"
+      ]
     },
     {
       "id": "profanity",
       "label": "Profanity",
-      "action": { "child": "flag" },
-      "intents": ["profanity"],
+      "action": {
+        "child": "flag"
+      },
+      "intents": [
+        "profanity"
+      ],
       "phrase_set": "generic",
-      "words": ["fuck", "fucking", "shit", "bitch", "asshole", "bastard", "cunt", "dick", "pussy"],
+      "words": [
+        "fuck",
+        "fucking",
+        "shit",
+        "bitch",
+        "asshole",
+        "bastard",
+        "cunt",
+        "dick",
+        "pussy"
+      ],
       "phrases": [],
-      "allow": ["\\bshit ?ake\\b", "\\bdick\\s+(?:van|cheney|clark)\\b"]
+      "allow": [
+        "\\bshit ?ake\\b",
+        "\\bdick\\s+(?:van|cheney|clark)\\b"
+      ]
     }
   ],
   "phrases": {
@@ -227,4 +366,4 @@
       }
     ]
   }
-}
+});

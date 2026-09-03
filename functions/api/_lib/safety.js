@@ -1,5 +1,5 @@
-/* functions/api/_lib/safety.js — the pre-inference floor. Compiles ./safety.json, applies
- * it to the child's utterance, and hands the route a verdict.
+/* functions/api/_lib/safety.js — the pre-inference floor. Compiles ./safety.rules.js,
+ * applies it to the child's utterance, and hands the route a verdict.
  *
  * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 ('Pre-inference safety'), §2.6
  * ('The safety journal / parent review queue' — what cannot run here).
@@ -29,12 +29,22 @@
  * verdict out, so `sim/test_demo_proxy.mjs` can assert the verdict rather than assert that
  * some verdict happened.
  *
- * The JSON import: `./safety.json` is the readable authority and this file only compiles
- * it. If a Pages build ever rejects the import-attribute syntax, the fallback is the same
- * as the one `functions/README.md` records for `_lib/` routing — inline the table — and the
- * rules stay in the `.json` file as the reviewable copy.
+ * WHERE THE TABLE LIVES, and why it moved. It shipped as `safety.json`, loaded with
+ * `import RULES from "./safety.json" with { type: "json" }`. Node 20 accepts that
+ * attribute, so every hermetic test was green — and **the Cloudflare Pages build FAILED**
+ * on the branch whose only structural change to this tree was that one line. So the Pages
+ * bundler does not accept import attributes, which settles as **false** an item the spec's
+ * §10 ledger listed as unverified. The table now lives in `./safety.rules.js` as a plain
+ * data module: same content, re-emitted mechanically and compared parsed rather than
+ * retyped. The `.json` file is deleted rather than kept beside it — two copies of a safety
+ * rule table that nothing keeps in sync is a worse failure than the one that was fixed.
+ * `sim/test_demo_proxy.mjs` guards the tree so no `.json` import or import attribute can
+ * come back as a deploy-only failure.
+ *
+ * This file still only COMPILES the table; every rule is in `./safety.rules.js`, and its
+ * `_readme` is written for a person to read.
  */
-import RULES from "./safety.json" with { type: "json" };
+import { RULES } from "./safety.rules.js";
 
 /* ---------------------------------------------------------------------------- *
  * Normalization — one text in, several comparable forms out

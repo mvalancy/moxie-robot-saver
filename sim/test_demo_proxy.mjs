@@ -26,7 +26,7 @@
  *   node sim/test_demo_proxy.mjs
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -1018,6 +1018,107 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
          "limits carries exactly the four public caps — no model id, no URL");
   }
   ok(sweeps > 100, `assertClean ran on every response (${sweeps} sweeps)`);
+}
+
+/* =========================================================================== *
+ * 12. THE DEPLOY-ONLY FAILURE, CONVERTED INTO A LOCAL ONE
+ * =========================================================================== *
+ * On 2026-09-03 the Cloudflare Pages build FAILED on this slice's branch while the same
+ * check was green on `dev`. The only structural difference in the Functions tree was one
+ * line — `import RULES from "./safety.json" with { type: "json" }`. Node 20 accepts the
+ * import-attribute syntax, so all 1637 hermetic tests were green and the failure was
+ * visible ONLY to a real deploy. The spec's §10 ledger had listed exactly that as
+ * unverified; it is now settled as **false**, and the table lives in `_lib/safety.rules.js`
+ * as a plain data module.
+ *
+ * This block is the part that matters going forward: it turns a deploy-only failure into a
+ * local one. A `.json` import or an import attribute anywhere under `functions/` fails here,
+ * in about a second, on a bare runner — instead of after a push, in a build log, on a
+ * branch someone is waiting to merge.
+ */
+{
+  const { readdirSync, statSync } = await import("node:fs");
+  const fnDir = join(repo, "functions");
+
+  const walk = (dir) => {
+    const out = [];
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) out.push(...walk(full));
+      else out.push(full);
+    }
+    return out;
+  };
+  const files = walk(fnDir);
+  const rel = (f) => f.slice(repo.length + 1);
+  ok(files.length > 0, "there are files under functions/ to check");
+
+  const sources = files.filter((f) => f.endsWith(".js") || f.endsWith(".mjs"));
+  ok(sources.length >= 8, `functions/ carries the expected modules, found ${sources.length}`);
+
+  for (const f of sources) {
+    const src = readFileSync(f, "utf8");
+    // Strip block and line comments so this file's OWN explanatory prose — and every
+    // comment quoting the offending syntax, including the ones written above — cannot
+    // trip the guard. Only real code is scanned.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+    // 1. NO IMPORT ATTRIBUTES. `with { type: ... }` (ES2025) and the older `assert
+    //    { type: ... }`. Cloudflare Pages' bundler rejects them; node does not, which is
+    //    precisely why this needs asserting here rather than trusting a green suite.
+    ok(!/\b(?:with|assert)\s*\{\s*type\s*:/.test(code),
+       `${rel(f)} uses an IMPORT ATTRIBUTE — the Cloudflare Pages build rejects these ` +
+       `(settled by a real deploy, 2026-09-03). Inline the data as a .js module instead.`);
+
+    // 2. NO .json IMPORTS AT ALL, with or without an attribute — a bare JSON import is a
+    //    bundler-specific extension and the next thing someone would reach for.
+    const jsonImports = [
+      ...code.matchAll(/\bimport\s[^;]*?from\s*["']([^"']+\.json)["']/g),
+      ...code.matchAll(/\bimport\s*\(\s*["']([^"']+\.json)["']/g),
+      ...code.matchAll(/\brequire\s*\(\s*["']([^"']+\.json)["']/g),
+    ].map((m) => m[1]);
+    deep(jsonImports, [],
+         `${rel(f)} IMPORTS A JSON FILE. A Pages Function cannot rely on that; put the ` +
+         `data in a .js module exporting a const (see functions/api/_lib/safety.rules.js).`);
+  }
+
+  // 3. …and no .json file under functions/ at all, so there is nothing to import. Keeping
+  //    one beside a .js copy is the two-sources-of-truth failure that is worse than the
+  //    bug this replaced: a reviewer reads one, the Function enforces the other.
+  const jsonFiles = files.filter((f) => f.endsWith(".json")).map(rel);
+  deep(jsonFiles, [],
+       "there must be no .json file under functions/ — a Function cannot import one, so " +
+       "its only possible role is to drift out of sync with the .js module that is real");
+
+  // The rule table really is the one the Function compiles, and it is the ONLY copy.
+  const rulesPath = join(repo, "functions", "api", "_lib", "safety.rules.js");
+  ok(existsSync(rulesPath), "functions/api/_lib/safety.rules.js exists");
+  ok(!existsSync(join(repo, "functions", "api", "_lib", "safety.json")),
+     "functions/api/_lib/safety.json is GONE — one source of truth, not two");
+  const safetyMod = await import(rulesPath);
+  eq(safetyMod.RULES.categories.length, 8, "the table still carries its 8 categories");
+  deep(Object.keys(safetyMod.RULES.phrases).sort(), ["generic", "hate", "privacy", "self_harm"],
+       "…and its 4 redirect phrase sets");
+  deep(safetyMod.RULES.categories.map((c) => c.id),
+       ["self_harm", "violence", "sexual", "hate", "personal_info", "dangerous",
+        "violence_talk", "profanity"],
+       "…in the order that decides which redirect a multi-category utterance gets");
+
+  // 4. §8.1 test 9, on the tree it is cheapest and most important to hold: nothing under
+  //    functions/ may carry a key, a deployment hostname or an account id. This tree is
+  //    small and entirely ours, so there is no vendor code to produce a false positive.
+  for (const f of files) {
+    const src = readFileSync(f, "utf8");
+    ok(!/\bsk-[A-Za-z0-9_-]{16,}/.test(src), `${rel(f)} contains a key-shaped literal`);
+    ok(!/graphlings|mattvalancy|pages\.dev/i.test(src),
+       `${rel(f)} names a deployment hostname — both are deployment CONFIG (C3)`);
+    ok(!/\b[0-9a-f]{32}\b/.test(src), `${rel(f)} contains a 32-hex account-id-shaped literal`);
+  }
+
+  // wrangler.toml is committed and world-readable, so it must never gain a [vars] block.
+  const wrangler = readFileSync(join(repo, "wrangler.toml"), "utf8");
+  ok(!/^\s*\[vars\]/m.test(wrangler), "wrangler.toml must have no [vars] block — it is world-readable");
+  ok(!/\bsk-[A-Za-z0-9_-]{16,}/.test(wrangler), "wrangler.toml carries no key");
 }
 
 /* --------------------------------------------------------------------------- */

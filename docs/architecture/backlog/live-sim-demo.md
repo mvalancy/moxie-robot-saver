@@ -840,9 +840,18 @@ mirrored in `sim/web/mode.js` (an unknown reason there is coerced to `null` and
 would be misread as a healthy turn). `DEMO_GATEWAY_ACCESS_CLIENT_ID` /
 `_SECRET` are optional, both-or-neither, and half a token answers
 `gateway_not_configured` rather than calling upstream half-credentialled.
-**Not settled, and it cannot be from here:** §10's assumptions 8-13 (unchanged),
-plus whether a Pages build accepts the `import ... with { type: "json" }` attribute
-`_lib/safety.js` uses — all fail safe, and one preview `curl` settles them.
+**Settled by the deploy, the hard way (2026-09-03):** a Pages build does **not**
+accept the `import ... with { type: "json" }` attribute `_lib/safety.js` used for
+its rule table. The Pages check went `FAILURE` on this branch while the same check
+was green on `dev`, and that one line was the only structural difference in the
+Functions tree — a failure invisible to all 1637 hermetic tests, because node
+accepts the syntax. The table now lives in `_lib/safety.rules.js` as a plain data
+module (content re-emitted mechanically and compared parsed, not retyped; the
+`.json` is deleted rather than kept, so there is one source of truth), and
+`sim/test_demo_proxy.mjs` now fails locally on any `.json` import or import
+attribute anywhere under `functions/`. See assumption 26.
+**Not settled, and it cannot be from here:** §10's assumptions 8-13 (unchanged) —
+all fail safe, and one preview `curl` settles them.
 **Best-effort by design, and said out loud in the code:** the per-IP windows, the
 concurrency ceiling and the unit budget are in-process, so they stop scripts and
 accidents but are not a hard global ceiling (§4.6); the ceilings that hold are the
@@ -856,7 +865,7 @@ per-request caps, the ticket, and a budget-scoped gateway key (§10 assumption 1
 | `functions/api/_lib/limits.js` | new — per-IP windows, concurrency, unit budget (best-effort) | 130 |
 | `functions/api/_lib/wire.js` | new — the `build_chat_response` field set + the three mark templates | 110 |
 | `functions/api/_lib/wav.js` | new — RIFF walker → `{pcm, rate, channels}` | 80 |
-| `functions/api/_lib/safety.json` + `safety.js` | new — the small pre-inference rule table | 120 |
+| `functions/api/_lib/safety.rules.js` + `safety.js` | new — the small pre-inference rule table. **Shipped as `safety.json` and moved:** the Pages build rejects `import ... with { type: "json" }` (assumption 26) | 120 |
 | `sim/web/cloud-transport.js` | new — the wrapper + voice-first ordering | 180 |
 | `sim/web/sim.html` | edit — one more `<script>` after `mode.js` | 1 |
 | `.dev.vars.example`, `.gitignore` | new/edit | 12 |
@@ -919,6 +928,7 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 | 23 | The Cloudflare **account id is already public** in every commit's check-run URL | **proven** (survey) | Not a credential, but worth knowing given `orchestration-plan.md`:32's "no account id is hard-coded" — nothing in this spec adds it to a file. |
 | 24 | Origin/Referer checks stop only browser hotlinking | **proven by reasoning, stated in the code** | Headers are trivially forged by `curl`. The controls that matter are the caps, the budget and assumption 14. |
 | 25 | The best-effort counter is not a true global ceiling | **proven** | Cache API is per-colo; an isolate map is per-isolate. Said out loud in §4.6 and in the code comment. |
+| 26 | A Cloudflare Pages build accepts the `import ... with { type: "json" }` attribute, so a Function may load a `.json` data file | **SETTLED FALSE (2026-09-03)** — it does not | Settled by the only thing that could: a real deploy. P0-b's `_lib/safety.js` loaded its rule table that way; the Pages check went `COMPLETED/FAILURE` on `feat/livesim-live-turn` while the identical check was `success` on `dev`, and that single line was the only structural difference in the Functions tree. **Node 20 accepts the syntax, so all 1637 hermetic tests were green** — this was invisible to every local guard, which is the general lesson: a bundler-specific extension cannot be validated by the runtime the tests use. Fixed by inlining the table as `_lib/safety.rules.js` (a plain `export const RULES`), deleting the `.json` so there is one source of truth, and adding a guard in `sim/test_demo_proxy.mjs` that fails on any `.json` import or import attribute under `functions/` — converting a deploy-only failure into a one-second local one. |
 
 ---
 
