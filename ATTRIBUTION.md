@@ -14,6 +14,12 @@ robot-cloud layer builds on its groundwork:
 - the real Embodied **protobuf schemas** and the MQTT topic/message protocol,
 - the **`automarkup`** text→behavior (expressiveness) engine,
 - the **endpoint/migration QR** relocation mechanism and mosquitto TLS setup,
+- the **cloud→robot command names**, including the `wakeup` command our console's *Wake up* button
+  publishes (`{"command":"wakeup"}` on `/devices/{id}/commands/wakeup`). We learned the name and the
+  payload from their command table, recorded it in
+  [`mqtt-and-conversation.md` §3.5](docs/architecture/mqtt-and-conversation.md), and wrote our own
+  publisher against that doc — no code was copied, and where their table establishes nothing (a
+  remote **reboot**) we refuse the action rather than invent one,
 - the conversation **volley** model, scheduler, and content-module concepts,
 - the **shareable content pack and its `source_version` upgrade rule** — the idea that authored content
   (conversations, globals, schedules) travels as one JSON file, that each record carries an
