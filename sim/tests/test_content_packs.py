@@ -126,6 +126,50 @@ def test_an_exported_pack_loads_as_a_content_module():
     assert [s.name for s in module.schedules] == ["wind_down"]
 
 
+def test_a_clean_appliance_that_imports_a_pack_re_exports_the_same_file():
+    """**The circle closed** — acceptance criterion 2, proved in both directions.
+
+    Every other round-trip test above checks one leg: a pack survives its serializer, or
+    installed items become a module. Neither would catch a field that the *store* drops
+    on the way in, because the exporter and the parser would still agree with each other
+    about the shape they never saw. This one runs the whole loop —
+
+        export → serialize → parse → apply into an empty appliance → export again
+
+    — and demands the same bytes. A field lost in `apply_pack`'s provenance stamping, a
+    `source_version` that reverted to the default, a float coerced to an int: each shows
+    up here as a byte difference and nowhere else."""
+    original = P.dumps_pack(make_pack())
+    parsed, meta = P.parse_pack(original)
+    assert meta["digest"] == "ok"
+
+    clean_appliance = {}
+    installed, _summary = P.apply_pack(
+        parsed, clean_appliance,
+        [P.full_key(i["kind"], i["key"]) for i in parsed["items"]], now=NOW + 10)
+
+    again = P.dumps_pack(P.export_pack(installed, name=parsed["name"],
+                                       pack_id=parsed["id"], now=NOW))
+    assert again == original, "an imported pack no longer exports as the file it came from"
+
+
+def test_the_circle_still_closes_when_the_pack_upgrades_something_installed():
+    """The same proof over the path that *replaces* rather than adds, because that is
+    the path with a previous version's provenance already in the store to confuse it."""
+    v1 = make_pack([conv(prompt="Version one.", version=1)])
+    installed = install(v1)
+    v2 = P.export_pack([conv(prompt="Version two.", version=2)],
+                       name="Bedtime wind-down", pack_id="bedtime-wind-down", now=NOW)
+
+    upgraded, _ = P.apply_pack(v2, installed, [P.full_key("conversation",
+                                                          "FREE_CHAT/default")],
+                               now=NOW + 20)
+    again = P.export_pack(upgraded, name="Bedtime wind-down",
+                          pack_id="bedtime-wind-down", now=NOW)
+    assert P.dumps_pack(again) == P.dumps_pack(v2)
+    assert again["items"][0]["source_version"] == 2
+
+
 # --------------------------------------------------------------------------- #
 # 2 · Tamper detection
 # --------------------------------------------------------------------------- #
