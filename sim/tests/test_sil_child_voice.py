@@ -55,6 +55,42 @@ CHILD_LINES = {
 #: "no audio", it is not a quality metric.
 PEAK_FLOOR, RMS_FLOOR = 0.05, 0.005
 
+#: How far short of its own duration a clip may fall and still count as FINISHED.
+#:
+#: There has to be one, and the reason is a clock mismatch rather than slack. The recorder
+#: timestamps `startedAt`/`stoppedAt` with `performance.now()`, while the audio itself runs
+#: on the AudioContext clock, and `startedAt` is taken just BEFORE `src.start(0)` — which
+#: begins at the next render quantum, not instantly. So a clip that played in full can
+#: still measure a few ms short against `startedAt + duration`.
+#:
+#: 120 ms is far inside one phoneme: a stop that late cannot take a word off the end. It is
+#: also two orders of magnitude away from either case this test has actually seen — the
+#: real cut it caught was 282 ms EARLY on a 2519 ms clip, and CI's benign stop landed 58 ms
+#: AFTER a 1207 ms clip had finished. Nothing here needs fine tuning, and widening it to
+#: make a red run go green would destroy the only thing the test is for.
+COMPLETION_TOLERANCE_MS = 120
+
+
+def truncated_by(play, tol_ms=COMPLETION_TOLERANCE_MS):
+    """How many ms of `play` never reached the speakers — 0.0 when it finished.
+
+    The distinction the first version of this test got wrong: `stop()` HAPPENING is not
+    truncation. `speak()` calls `stop()` unconditionally, so Moxie answering even a
+    moment after the child's clip ends still records a stop against it. What matters is
+    WHEN it landed relative to the clip's own length — the quantity the failure message
+    was already printing while the assertion ignored it.
+
+    Both the stop and the natural end are measured, and the worse (earlier) one is
+    reported, so a clip is "finished" only if it was neither cut short nor ended early.
+    """
+    natural_ms = play["duration"] * 1000.0
+    lost = 0.0
+    if play.get("stoppedAt"):
+        lost = max(lost, natural_ms - (play["stoppedAt"] - play["startedAt"]))
+    if play.get("endedAt"):
+        lost = max(lost, natural_ms - (play["endedAt"] - play["startedAt"]))
+    return 0.0 if lost <= tol_ms else lost
+
 
 # --------------------------------------------------------------------------- #
 # The recorder. Installed before any page script runs, so it sees the first call.
@@ -281,16 +317,19 @@ def test_the_reply_does_not_truncate_the_child(replayed):
         plays = [p for p in replayed["plays"] if p["bytes"] == n]
         assert plays, f"{rel} never played"
         p = plays[0]
-        assert not p["stoppedAt"], (
-            f"{line!r} was CUT: stop() ran {p['stoppedAt'] - p['startedAt']:.0f} ms into a "
-            f"{p['duration'] * 1000:.0f} ms clip. `speak()` calls stop(), so this is Moxie "
-            f"answering before the child finished — retime sessions/demo.json.")
         assert p["ended"], f"{rel} never reached its natural end"
+        lost = truncated_by(p)
+        assert not lost, (
+            f"{line!r} was CUT: {lost:.0f} ms of its {p['duration'] * 1000:.0f} ms never "
+            f"played (stop() at "
+            f"{(p['stoppedAt'] - p['startedAt']) if p['stoppedAt'] else 0:.0f} ms, ended at "
+            f"{p['endedAt'] - p['startedAt']:.0f} ms). `speak()` calls stop(), so this is "
+            f"Moxie answering before the child finished — retime sessions/demo.json.")
         held = p["endedAt"] - p["startedAt"]
-        assert held >= p["duration"] * 1000 * 0.9, (
-            f"{line!r} occupied the speakers for only {held:.0f} ms of its "
-            f"{p['duration'] * 1000:.0f} ms")
-        print(f"   {rel}  played {held:.0f} ms of {p['duration'] * 1000:.0f} ms, uncut")
+        late = (f", stop() {p['stoppedAt'] - p['startedAt'] - p['duration'] * 1000:.0f} ms "
+                f"after it ended" if p["stoppedAt"] else "")
+        print(f"   {rel}  played {held:.0f} ms of {p['duration'] * 1000:.0f} ms, "
+              f"complete{late}")
 
 
 def test_moxie_answers_only_after_the_child_has_finished(replayed):
@@ -315,10 +354,50 @@ def test_moxie_answers_only_after_the_child_has_finished(replayed):
             continue
         natural_end = c["startedAt"] + c["duration"] * 1000
         gap = after[0]["startedAt"] - natural_end
-        assert gap > 0, (
+        # Same tolerance, same reason (the two clocks): an overlap inside it is not one.
+        assert gap > -COMPLETION_TOLERANCE_MS, (
             f"Moxie started {-gap:.0f} ms BEFORE the child's clip would have finished — "
             f"she is talking over her")
         print(f"   child clip would end → Moxie starts {gap:.0f} ms later")
+
+
+# --------------------------------------------------------------------------- #
+# 4b. The predicate itself, in both directions — no browser, no timing luck.
+#
+# `truncated_by` has to separate two things that look identical in the record: a stop that
+# CUT the clip and a stop that merely landed after it finished. Whether a given replay
+# produces the second one is up to how fast the machine is, so a browser test cannot be
+# relied on to exercise it — this is exactly how the first version of this file passed
+# locally and went red in CI. These cases are the record shapes themselves, with the
+# numbers CI and this box actually produced, so both directions are covered on every run.
+# --------------------------------------------------------------------------- #
+def _play(duration_ms, *, stopped_at=0.0, ended_at=None):
+    """One `plays` record as the recorder writes it, started at t=1000."""
+    return {"bytes": 1, "duration": duration_ms / 1000.0, "startedAt": 1000.0,
+            "stoppedAt": (1000.0 + stopped_at) if stopped_at else 0.0,
+            "endedAt": 1000.0 + (duration_ms if ended_at is None else ended_at),
+            "ended": True}
+
+
+def test_a_stop_after_the_clip_ended_is_not_a_truncation():
+    """CI's real numbers: stop() 1265 ms into a 1207 ms clip — 58 ms AFTER the audio
+    finished. The old assertion (`not p["stoppedAt"]`) called that a cut and failed the
+    build; nothing was lost, and the message it printed said so."""
+    assert truncated_by(_play(1207, stopped_at=1265, ended_at=1265)) == 0.0
+    # …and an ordinary uncut play, this box's own: no stop at all.
+    assert truncated_by(_play(2519)) == 0.0
+
+
+def test_a_stop_before_the_clip_ended_is_still_caught():
+    """The regression this file exists for, with the numbers it was found at: stop() 2237
+    ms into a 2519 ms clip — 282 ms of "…it's my birthd—" never played."""
+    lost = truncated_by(_play(2519, stopped_at=2237, ended_at=2237))
+    assert lost > 0 and round(lost) == 282, lost
+    # A cut is caught through `endedAt` too, in case a stop is never recorded.
+    assert round(truncated_by(_play(1207, ended_at=900))) == 307
+    # And the tolerance is a boundary, not a slope: just outside it still fails.
+    assert truncated_by(_play(2519, stopped_at=2519 - COMPLETION_TOLERANCE_MS - 1)) > 0
+    assert truncated_by(_play(2519, stopped_at=2519 - COMPLETION_TOLERANCE_MS + 1)) == 0.0
 
 
 # --------------------------------------------------------------------------- #
