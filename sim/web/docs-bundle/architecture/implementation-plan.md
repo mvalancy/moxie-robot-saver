@@ -393,6 +393,39 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   external brain that writes `<launch:…>` in its `text` has it spoken aloud, because tag parsing lives in
   `LLMApp`/`ContentApp` and not on the `Reply` boundary; (d) *the brain took 33.8 s* on the live turn
   (filler + streaming cover it, but the gateway's own latency remains the ceiling on criterion 1).
+- **Integration evidence (2026-09-02, merged state) — the four slices of the 22:40 window exercised
+  *together* against real infrastructure, and three gaps that only the combination shows.** Verbatim:
+  SIL smoke ✅ (`state→config(paired)→remote-chat→reply`, 50934 B @ 22050 Hz), telehealth SIL ✅
+  (enable→start→speak→interrupt→end), scenarios **2/2**, broker ACL **18/18** against the real
+  `eclipse-mosquitto:2.0.20`, package `moxie_cloud_sdk-0.7.0.{tar.gz,whl}` with `moxie_sdk/telemetry.py`
+  and both `moxie_sdk/*.json` present and `import moxie_sdk` + `from moxie_sdk.content.render import
+  render_prompt` green in a venv holding only `paho-mqtt`. **The sandbox (PR #56) breaks no legitimate
+  prompt** — every Jinja-bearing string in `mqtt/content_modules/*.json` renders byte-identically
+  through the sandbox and through the pre-sandbox environment it replaced, under a populated and an
+  empty memory context, and `render.BLOCKED` never moves for our own content
+  (`sim/tests/test_render_sandbox_parity.py`; a live turn on the shipped module answered *"I love dogs
+  because they are so friendly and always want to play!"* with the rendered prompt reaching the model).
+  **Durable telemetry survives a real process restart** — three packets → `mqtt/run.py` killed → a new
+  supervisor over the same `MOXIE_DATA_DIR` answered `{"ok":true,"connected":false,"policy":"NO_MEDIA",
+  "persisted":true,"totals":{"total":3,"days_kept":1}}` with the robot never reconnected, and a
+  reconnecting robot then showed `telemetry_count: 3` (the hydration path); the `LoggingPolicy` gate
+  holds on the running supervisor for all three values with the verdict read off **disk** (NO_DATA wrote
+  no file at all, NO_MEDIA kept the envelope and withheld the payload, FULL round-tripped it). The three
+  console endpoints answered honestly through that same stack: `wakeup` published `{"command":"wakeup"}`
+  on `/devices/<id>/commands/wakeup` (asserted by a real MQTT subscriber), `reboot` returned **501** with
+  its `power-and-system-events.md` citation and published nothing, `ota_status` returned the robot's own
+  `24.10.803` with `status:"unknown"`. **What the combination newly exposes:** (a) *the shipped container
+  has no jinja2* (`mqtt/requirements.txt`), so the renderer most deployments run is the dependency-free
+  fallback — fine for every module we ship (`{{ dotted.path }}` only, now pinned) but it passes
+  `{% if %}` through **verbatim into the system prompt**, and `content-module-contract.md`:42 advertises
+  that form to pack authors; it is a product decision (ship `jinja2` now that the renderer is sandboxed,
+  or refuse block syntax at pack review), not a bug to guess at. (b) *`sim/run_acl_proof.sh` is run by no
+  CI tier* — the only thing holding the P0 pattern ACLs honest runs when somebody types it; it needs
+  docker, so it belongs beside `run_compose_smoke.sh` in the deep tier. (c) *`sim/run_smoke.sh
+  --telehealth` is run by no tier either* — the file is named twice, but only in its default mode, so
+  🎭 puppet mode's only end-to-end proof is manual. All three, plus the two `.mjs` suites nobody runs,
+  are now fenced by `sim/tests/test_ci_test_coverage.py` as a two-directional ratchet whose lists can
+  only shrink.
 
 ## DoD progress (audited 2026-09-02 23:00 PDT, at v0.7.0) — **4/6 🟢 · overall ≈ 91%** (done = all six 🟢)
 
