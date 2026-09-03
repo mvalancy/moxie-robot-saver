@@ -38,8 +38,8 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
-from helpers_runtime import (LatchClient, free_port, http_json,   # noqa: E402
-                             make_runtime, status_server)
+from helpers_runtime import (FakeClient, LatchClient, free_port,   # noqa: E402
+                             http_json, make_runtime, status_server)
 from moxie_sdk.app import MoxieApp                                # noqa: E402
 from moxie_sdk.types import Reply, RobotContext                   # noqa: E402
 import moxie_runtime                                              # noqa: E402
@@ -89,11 +89,68 @@ def test_s1_a_publish_during_a_drop_is_not_ok_and_is_recorded(tmp_path):
     rt.client.drop()
     ok, reason = rt._publish(CHAT.format(d=device_id), {"hello": 2}, device_id=device_id)
     assert ok is False
-    assert reason, "a dropped publish must carry a reason, not just a False"
+    # Which guard refused matters, not just that something did. This one is the
+    # **pre-flight** check — `is_connected()`, not `client is not None` — so asserting the
+    # exact sentence is what keeps that check load-bearing rather than shadowed by the
+    # return-code check behind it. (Found by sim/tools/hardening_mutation_check.py: with
+    # only `assert ok is False`, reverting `_broker_connected()` to object existence went
+    # UNCAUGHT, because the rc check quietly covered for it.)
+    assert reason == rt.NO_BROKER_REASON, reason
     assert rt.publish_drops == 1
     dropped = [n for n in rt.recent if n["kind"] == "drop"]
     assert dropped, f"the drop was not recorded in `recent`: {list(rt.recent)}"
     assert device_id in dropped[-1]["text"]
+
+
+def test_s1d_a_transport_that_says_it_is_connected_and_is_not(tmp_path):
+    """The second half of C5, and the half a pre-flight check cannot cover: the socket
+    dies **between** `is_connected()` and the write.
+
+    paho answers that with `info.rc = MQTT_ERR_NO_CONN` and drops the message — at QoS 0
+    it is not queued (A3) — so the only way to know is to read the code back. All eight
+    sites threw it away. Two independent guards, and this test exists so each is proved
+    on its own rather than shadowing the other.
+    """
+    from helpers_runtime import FakeInfo, MQTT_ERR_NO_CONN
+
+    class LyingClient(FakeClient):
+        """`is_connected()` says yes; the write says otherwise."""
+
+        def publish(self, topic, payload):
+            self.dropped.append((topic, payload))
+            return FakeInfo(MQTT_ERR_NO_CONN)
+
+        def is_connected(self):
+            return True
+
+    rt, device_id = make_runtime(EchoApp())
+    rt.client = LyingClient(runtime=rt)
+    ok, reason = rt._publish(CHAT.format(d=device_id), {"hi": 1}, device_id=device_id)
+    assert ok is False, "a publish that returned MQTT_ERR_NO_CONN was reported as sent"
+    assert "rc=" in reason, reason
+    assert rt.publish_drops == 1
+    assert [n for n in rt.recent if n["kind"] == "drop"]
+
+    # And the route on top of it stays honest — this is the wakeup button's real race.
+    out = rt.wake_robot(device_id)
+    assert out["ok"] is False and out["published"] is False, out
+    assert out["error"] == "publish failed", out
+    assert out["acknowledged"] is False
+
+
+def test_s1e_a_transport_that_raises_is_a_drop_not_a_crash():
+    """A transport that throws (a closed socket object, a broken pipe) must not take the
+    turn down with it. The reply is lost either way; the difference is whether the
+    supervisor knows."""
+    class ThrowingClient(FakeClient):
+        def publish(self, topic, payload):
+            raise OSError("Broken pipe")
+
+    rt, device_id = make_runtime(EchoApp())
+    rt.client = ThrowingClient(runtime=rt)
+    ok, reason = rt._publish(CHAT.format(d=device_id), {"hi": 1}, device_id=device_id)
+    assert ok is False and "OSError" in reason
+    assert rt.publish_drops == 1
 
 
 def test_s1b_the_wakeup_route_refuses_instead_of_claiming_success(tmp_path):
@@ -117,7 +174,13 @@ def test_s1b_the_wakeup_route_refuses_instead_of_claiming_success(tmp_path):
     assert out["ok"] is False, out
     assert out["published"] is False, "reported a publish into a dead socket"
     assert out.get("acknowledged") is not True
-    assert "broker" in (out.get("reason") or "").lower(), out
+    assert out["reason"] == rt.NO_BROKER_REASON, out
+    # `error` says WHICH guard refused, and that is deliberate: this route must refuse
+    # before it writes, on the connection rather than on the client object's existence.
+    # (Without this line the mutation check found that reverting the guard to
+    # `if self.client is None` went uncaught — `_publish` refused a moment later and the
+    # answer looked the same.)
+    assert out["error"] == "no broker connection", out
     assert len(rt.client.on(WAKEUP.format(d=device_id))) == 1, "it published anyway"
 
 
@@ -308,6 +371,15 @@ def test_s4c_a_failed_connect_attempt_is_visible(capsys):
     assert rt.last_connect_error
     assert any(n["kind"] == "error" for n in rt.recent), list(rt.recent)
 
+    # ...and it is actually installed on the real client. A callback nothing calls is the
+    # same silence it was written to remove, and neither this test nor S6 would notice —
+    # S6 installs its own counter on top. (Hole found by hardening_mutation_check.py.)
+    fresh = moxie_runtime.MoxieRuntime(app=EchoApp())
+    client = fresh._build_client()
+    assert client.on_connect_fail == fresh._on_connect_fail
+    assert client.on_disconnect == fresh._on_disconnect
+    assert client.on_connect == fresh._on_connect
+
 
 # --------------------------------------------------------------------------- #
 # S5/S6 — the connect itself (C1, C2)
@@ -461,7 +533,6 @@ def test_s7c_an_unpermitted_stranger_is_still_refused():
     **visible as pending**; it does not let it in. The gate lives on the transport boundary
     (`_on_message`), so this asserts the gate is still the thing that decides."""
     rt = moxie_runtime.MoxieRuntime(app=EchoApp())           # default: closed policy
-    from helpers_runtime import FakeClient
     rt.client = FakeClient()
     rt.client.runtime = rt
     rt.client.up()
