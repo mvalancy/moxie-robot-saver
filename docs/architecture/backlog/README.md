@@ -30,6 +30,7 @@ work down:
 | [`telehealth.md`](telehealth.md) | **ADOPT #7** — puppet / telehealth: the command path and the "Be Moxie" console panel | M | ready to build |
 | [`content-packs.md`](content-packs.md) | **ADOPT #5** — content packs: a versioned, digest-checked pack file; export from a positive field allowlist; import-with-review whose per-item state tracks `source_version` **and** local edits, so an upstream re-import never clobbers | S/M · S/M | **P0** (headless: pure module + store + five routes + a live reload) ready to build; **P1** the 📦 console card |
 | [`voice-picker.md`](voice-picker.md) | 🎚️ Speech + Listening dropdowns in the console — pick from the gateway's real audio models and the installed local engines; default `piper-amy` / `stt-whisper`; explicit local always wins | build-ready (2026-09-02); after the STT + telehealth slices land |
+| [`live-sim-demo.md`](live-sim-demo.md) | 🌐 **The headline goal** — the hosted Moxie Sim alive on a static edge: three same-origin Cloudflare Pages Functions (brain · voice · ears) behind hard caps, demo-mode only, degrading to the pre-cached scripted Moxie when the gateway is unconfigured, over budget, at capacity or down | build-ready (2026-09-02); P0 is one sitting |
 
 ## House rules
 
