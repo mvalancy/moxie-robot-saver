@@ -16,10 +16,10 @@ the day arithmetic). This file owns the half that only the runtime can prove:
 No broker, no robot: `helpers_runtime.make_runtime` gives a real runtime with a
 recording transport, and every store is rooted at the test's own `tmp_path`.
 """
+import datetime
 import json
 import os
 import sys
-import time
 
 import pytest
 
@@ -47,11 +47,20 @@ def _rt(tmp_path, **kw):
     return make_runtime(_App(), store=JsonStore(str(tmp_path)), **kw)
 
 
-#: "Now", to the second. The daily roll-up is keyed on the LOCAL calendar day and
+#: **Noon today**, not "now". The daily roll-up is keyed on the LOCAL calendar day and
 #: `history_view` counts back from today, so a test that wants to see its own row in the
 #: week has to stamp its packets today — a fixed epoch from last year lands outside every
 #: window, which is correct behaviour and a useless fixture.
-TODAY = int(time.time())
+#:
+#: It was `int(time.time())`, and that is a clock flake of the family fixed in PR #60/#63:
+#: the packets below are stamped `TODAY - 30`, so an import at 00:00:10 put them on
+#: *yesterday's* roll-up row while `history_view`'s "today" was the new day — the row
+#: assertion and `history[-1]["day"]` both fail, ~30 red seconds every night. Noon is
+#: still "today" (which is all the roll-up needs) and no ±30 s offset can cross a day
+#: boundary from there, so the fixture means what its name says at every hour.
+#: Noon exists in every timezone on every DST transition day, unlike 00:00 or 02:00.
+TODAY = int(datetime.datetime.combine(
+    datetime.date.today(), datetime.time(12, 0)).timestamp())
 
 
 def _send(rt, device_id, name, ts=None, data=b""):

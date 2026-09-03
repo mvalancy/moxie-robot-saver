@@ -20,6 +20,9 @@ Hermetic. A two-subscriber in-process loopback (`helpers_runtime.loopback`) stan
 the broker — same shape `test_presence_sil.py` uses — the store is a `tmp_path`, and the
 clock is the real one only because bedtime and "is this request due today" are wall-clock
 by contract; every window is computed *relative to now*, never pinned to a literal hour.
+The discipline that keeps that honest: the `served` fixture reads the clock **once** and
+hands the instant to everything that has to agree about it, because two reads either side
+of local midnight answer for different days (see `_bedtime_body`).
 
 Live-verified 2026-09-02 against a real mosquitto + `mqtt/run.py` + `sim/virtual_moxie.py
 --query schedule` before being written down (v0.7.0 RC integration pass).
@@ -60,7 +63,13 @@ class _App(MoxieApp):
 # The seeded child: FTUE finished, one loved module, one abandoned, one just played
 # --------------------------------------------------------------------------- #
 def _seed_behaviors(store, device_id=DEV, now_ms=None):
-    """A history with a signal in every direction the planner claims to read."""
+    """A history with a signal in every direction the planner claims to read.
+
+    Clock-relative on purpose and safely so: every record is placed a whole number of
+    *days* (or an hour) before `now_ms`, and the recommender scores recency as an age,
+    not as a calendar date — so the same history means the same thing at 03:00 as at
+    15:00. A pinned epoch would age out of the recency window and quietly stop testing
+    anything the day the window changed."""
     now_ms = now_ms or int(datetime.datetime.now().timestamp() * 1000)
     day = 86_400_000
     recs = [dict(module_id="WELCOME", action="COMPLETED", timestamp=now_ms - 10 * day)]
@@ -87,11 +96,18 @@ def _stack(tmp_path, *, device_id=DEV):
     return rt, vm, dev
 
 
-def _bedtime_body(minutes_ahead=60, request_in=2 * SLOT_MINUTES, module="STORYTELLING"):
-    """Parent input for `POST /config?scope=fleet`, always relative to *now* so the test
-    never depends on the hour it runs at: bedtime starts an hour out (so the tail of the
-    plan falls inside it), and one activity is requested two slots from now."""
-    now = datetime.datetime.now()
+def _bedtime_body(minutes_ahead=60, request_in=2 * SLOT_MINUTES, module="STORYTELLING",
+                  now=None):
+    """Parent input for `POST /config?scope=fleet`, always relative to *now*: bedtime
+    starts an hour out (so the tail of the plan falls inside it), and one activity is
+    requested two slots from now.
+
+    `now` is a parameter, not a fresh clock read, because the caller has to be able to
+    ask a second question about *the same instant* — `_request_lands_today` decides which
+    branch of `test_the_parent_request_is_pinned_and_says_so` is real, and two independent
+    `datetime.now()` calls straddling the "20 minutes before midnight" line answer for
+    different days. Narrow (sub-second, once a night) and free to remove."""
+    now = now or datetime.datetime.now()
     start = now + datetime.timedelta(minutes=minutes_ahead)
     end = start + datetime.timedelta(hours=8)
     return {"weekday_bedtime": [start.strftime("%H:%M"), end.strftime("%H:%M")],
@@ -118,11 +134,17 @@ def served(tmp_path):
     the parent reads the explanations back. Returns everything the assertions need."""
     rt, vm, dev = _stack(tmp_path)
     base = status_server(rt)
-    applied = http_json(f"{base}/config?scope=fleet", method="POST", body=_bedtime_body())
+    # ONE clock read for the whole fixture, handed back to the assertions: the config the
+    # parent posted and the question "was that request due today?" must be answered about
+    # the same instant (see `_bedtime_body`).
+    now = datetime.datetime.now()
+    applied = http_json(f"{base}/config?scope=fleet", method="POST",
+                        body=_bedtime_body(now=now))
     assert applied["ok"] and applied["scope"] == "fleet", applied
     wire = vm.query("schedule", timeout=5.0)
     view = http_json(f"{base}/schedule?device_id={dev}")
-    return dict(rt=rt, vm=vm, dev=dev, base=base, wire=wire, view=view, applied=applied)
+    return dict(rt=rt, vm=vm, dev=dev, base=base, wire=wire, view=view, applied=applied,
+                now=now)
 
 
 # --------------------------------------------------------------------------- #
@@ -197,7 +219,7 @@ def test_the_day_is_actually_truncated_by_bedtime(served):
 # --------------------------------------------------------------------------- #
 # The parent's request outranks the recommender
 # --------------------------------------------------------------------------- #
-def _request_lands_today(request_in_minutes=2 * SLOT_MINUTES) -> bool:
+def _request_lands_today(now, request_in_minutes=2 * SLOT_MINUTES) -> bool:
     """Does the scenario's parent request fall on *today's* calendar day?
 
     It usually does, and then the request is pinned. In the last ~20 minutes of a day it
@@ -205,15 +227,18 @@ def _request_lands_today(request_in_minutes=2 * SLOT_MINUTES) -> bool:
     that is 00:08 **tomorrow**, which is not today's plan. The planner is right to leave
     it unpinned; the old assertion was simply wrong for that window, and it failed on
     untouched `dev` at 23:48 (its own docstring claimed it "never depends on the hour it
-    runs at"). So the test now asserts whichever branch is real."""
-    now = datetime.datetime.now()
+    runs at"). So the test asserts whichever branch is real.
+
+    `now` is the fixture's own instant, not a fresh read — this function answers a
+    question *about the config that was posted*, and re-reading the clock here could
+    answer it about a different day than the one the config was built for."""
     return (now + datetime.timedelta(minutes=request_in_minutes)).date() == now.date()
 
 
 def test_the_parent_request_is_pinned_and_says_so(served):
     pinned = [e for e in served["view"]["explanations"]
               if "parent_request" in (e.get("reason_codes") or [])]
-    if not _request_lands_today():
+    if not _request_lands_today(served["now"]):
         # The scenario is not constructible in the tail of a day. Assert the *other*
         # real behaviour instead of skipping: a request that belongs to tomorrow is
         # absent from today's plan, and today's plan still explains every entry it has.
@@ -265,7 +290,11 @@ def test_a_reported_completion_reaches_the_store_and_the_next_plan(tmp_path):
     first = [e["module_id"] for e in vm.query("schedule", timeout=5.0)["provided_schedule"]]
     played = next(m for m in first if m not in ("DM", "FREE_CHAT", "STORYTELLING"))
 
-    # the robot reports it the way a real one does: ActivityUpdate.mentor_behavior
+    # the robot reports it the way a real one does: ActivityUpdate.mentor_behavior.
+    # `now` here is right rather than convenient — a robot stamps a completion with its
+    # own clock, and the recency rule below ("played today") is about the age of that
+    # stamp. Nothing downstream compares it to a calendar boundary, so the hour it runs
+    # at cannot change the answer.
     vm.report_mentor_behavior({"module_id": played, "action": "COMPLETED",
                                "timestamp": int(datetime.datetime.now().timestamp() * 1000)})
     stored = [r["module_id"] for r in rt.mentor_behaviors(dev)]

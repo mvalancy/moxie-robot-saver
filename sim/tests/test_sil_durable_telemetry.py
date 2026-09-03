@@ -110,7 +110,11 @@ class Robot:
 
 
 def _wait(predicate, timeout: float = 20.0, what: str = "condition"):
-    """Poll a real distributed system without sleeping blind. Returns the truthy value."""
+    """Poll a real distributed system without sleeping blind. Returns the truthy value.
+
+    The `time.time()` calls are a DURATION (a deadline), not a date: nothing here reads
+    the hour, so the answer is the same at 03:00 as at 15:00. Reviewed in the ledger in
+    `test_clock_dependence.py`."""
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
