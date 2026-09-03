@@ -1,5 +1,5 @@
 {
- "generated": "docs-508c7bf323c1",
+ "generated": "docs-b5d87457372f",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 4271,
+   "bytes": 4449,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 3305,
+   "bytes": 3715,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -338,7 +338,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 70684,
+   "bytes": 83614,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -367,6 +367,7 @@
     "4.1 Top 10 ADOPT — port the idea, credit the source",
     "4.2 Top 10 BEYOND — what we should build instead",
     "4.3 Backlog — the build briefs",
+    "4.4 The open backlog, re-ranked — 2026-09-02 (evening)",
     "5. The honest ledger",
     "Where OpenMoxie (and its forks) are genuinely ahead of us",
     "Where we are already ahead",
@@ -488,6 +489,37 @@
     "Tests (a test for every feature)",
     "Acceptance",
     "Files"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/content-packs.md",
+   "title": "Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)",
+   "section": "architecture",
+   "bytes": 39708,
+   "mermaid": 0,
+   "headings": [
+    "Why this is worth building",
+    "0. What our corpus establishes",
+    "0.1 The content engine, as it stands",
+    "0.2 Where content is loaded from, and where it lives",
+    "0.3 What the wire cares about",
+    "0.4 The ledger — proven / assumed / unknown",
+    "1. The seam it plugs into",
+    "Prior art — what OpenMoxie actually does",
+    "2. The design",
+    "2.1 The pack file — versioned, self-describing, checksummed",
+    "2.2 What goes in a pack, what never leaves, and why `code` is inert",
+    "2.3 `source_version`, `local_rev`, and the review that does not clobber",
+    "2.4 Storage and the merge order",
+    "2.5 Runtime — five routes and one live swap",
+    "2.6 The console — 📦 Content packs (P1)",
+    "2.7 The SIM handler: none, and that is the finding",
+    "3. Tests",
+    "4. Acceptance criteria",
+    "5. Effort, files, risks",
+    "6. The assumption ledger",
+    "7. What only a physical robot can settle"
    ],
    "kind": "md"
   },
