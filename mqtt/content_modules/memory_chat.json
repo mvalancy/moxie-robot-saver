@@ -4,6 +4,7 @@
   "conversations": [
     {
       "name": "Memory Chat",
+      "source_version": 1,
       "module_id": "MEMORY_CHAT",
       "content_id": "default",
       "max_history": 20,
@@ -21,6 +22,7 @@
     },
     {
       "name": "About Me",
+      "source_version": 1,
       "module_id": "MEMORY_CHAT",
       "content_id": "aboutme",
       "max_history": 10,

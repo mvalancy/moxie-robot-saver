@@ -6,12 +6,31 @@ A module is JSON with three optional sections (docs/architecture/content-module-
   globals[]       — regex-triggered commands, always on (timers, "stop", …)
   schedules[]     — the day's plan of activities
 
+Every record also carries `source_version` — the **pack author's** own counter for that
+one item (default 1). It is what makes an upgrade distinguishable from a re-import
+(`packs.py`, docs/architecture/backlog/content-packs.md §2.3); the engine itself never
+reads it.
+
 This module is pure (no MQTT/LLM) so it is fully unit-testable.
 """
 from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+def _source_version(d: dict) -> int:
+    """A record's author-owned version counter — 1 when it says nothing, which is what
+    every module file written before content packs existed says."""
+    v = (d or {}).get("source_version", 1)
+    if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return 1
+        if v < 0:
+            return 1
+    return v
 
 
 @dataclass
@@ -29,6 +48,7 @@ class Conversation:
     max_volleys: int = 40
     code: str = ""                       # optional Python hooks (pre/post_process, …)
     memory: dict = field(default_factory=dict)   # see `memory_namespace` below
+    source_version: int = 1              # the author's counter for this item (packs.py)
 
     # ---- long-term memory (the contract's persist_data / session.summarize) ----
     # OpenMoxie's MemoryChat drives this from a `code` string
@@ -66,6 +86,7 @@ class Conversation:
             max_volleys=int(d.get("max_volleys", 40)),
             code=str(d.get("code", "")),
             memory=dict(d.get("memory") or {}),
+            source_version=_source_version(d),
         )
 
 
@@ -77,6 +98,7 @@ class Global:
     entity_groups: str = ""              # e.g. "3,4" — which capture groups are entities
     action: int = 0
     code: str = ""
+    source_version: int = 1              # the author's counter for this item (packs.py)
     _rx: Optional[re.Pattern] = field(default=None, repr=False)
 
     @classmethod
@@ -87,6 +109,7 @@ class Global:
             entity_groups=str(d.get("entity_groups", "")),
             action=int(d.get("action", 0)),
             code=str(d.get("code", "")),
+            source_version=_source_version(d),
         )
         if g.pattern:
             g._rx = re.compile(g.pattern, re.I)
@@ -114,10 +137,12 @@ class Schedule:
     """The day's plan — mirrors embodied.robotbrain.ContentSchedule."""
     name: str = ""
     schedule: dict = field(default_factory=dict)
+    source_version: int = 1              # the author's counter for this item (packs.py)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Schedule":
-        return cls(name=str(d.get("name", "")), schedule=dict(d.get("schedule", {})))
+        return cls(name=str(d.get("name", "")), schedule=dict(d.get("schedule", {})),
+                   source_version=_source_version(d))
 
 
 @dataclass

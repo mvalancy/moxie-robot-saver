@@ -61,8 +61,14 @@ class ContentApp(MoxieApp):
                  default_module_id: Optional[str] = None,
                  global_handlers: Optional[dict] = None,
                  memory: Optional[MemoryStore] = None,
-                 safety_classifier=None):
+                 safety_classifier=None, content_defaults=None):
         self.module = module
+        # 📦 The SHIPPED baseline (`packs.shipped_items` of `MOXIE_CONTENT_MODULE`), kept
+        # separately from `module` because `module` is *defaults ⊕ the imported overlay*.
+        # `MoxieRuntime.reload_content()` needs the two apart: without it an `undo` could
+        # not put a shipped item back after a pack replaced it. None ⇒ nobody recorded one
+        # (see `MoxieRuntime._content_defaults` for what happens then).
+        self.content_defaults = content_defaults
         self._chat = chat
         self._persona = persona
         self._default_module_id = default_module_id

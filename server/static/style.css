@@ -205,3 +205,39 @@ button.linkish.mem-arm{opacity:1;color:#c0392b;font-weight:700}
 #voice-note{font-size:12px;margin:2px 0 8px;word-break:break-word}
 .voice-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
 #voice-status{font-size:12px;min-height:16px}
+
+/* --- 📦 Content packs (export / review / import, backlog/content-packs.md) --- */
+#content-head{margin:2px 0 6px;font-size:12px}
+#content-list{display:flex;flex-direction:column;border:1px solid var(--line);
+  border-radius:8px;margin:6px 0}
+#content-list:empty{display:none}
+.packrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px;
+  border-bottom:1px solid var(--line);font-size:12px;cursor:pointer}
+.packrow:last-child{border-bottom:0}
+.packname{font-weight:600;font-size:13px;word-break:break-word}
+.chip{border:1px solid var(--line);border-radius:999px;padding:1px 7px;font-size:11px;
+  color:var(--muted);white-space:nowrap}
+.chip.edited{border-color:var(--brand);color:var(--brand)}
+.chip.warn{border-color:#c0392b;color:#c0392b;font-weight:600}
+.chip.st-new,.chip.st-upgrade{border-color:var(--brand);color:var(--brand);font-weight:600}
+.chip.st-conflict,.chip.st-downgrade_conflict,.chip.st-invalid{border-color:#c0392b;
+  color:#c0392b;font-weight:600}
+/* The file picker is a styled label so it reads like the other buttons; the input itself
+   is off-screen rather than display:none, so it keeps its keyboard focus. */
+.packfile{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;
+  color:var(--muted);cursor:pointer;text-align:center}
+.packfile input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+#content-pii{font-size:12px;margin:0 0 6px}
+#content-review{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0}
+#content-review-head{font-size:12px;margin-bottom:6px}
+.packreview{border-top:1px solid var(--line);padding:8px 0}
+.packreview:first-child{border-top:0}
+.packreview-hd{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px}
+.packdiff{font-size:12px;color:var(--muted);margin:4px 0 0}
+.packdiff pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;font-size:11px;
+  max-height:180px;overflow-y:auto}
+.packdecs{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.packdec{display:flex;gap:4px;align-items:center;font-size:12px;color:var(--muted)}
+#content-packs{font-size:12px;margin:6px 0 0}
+#content-packs:empty{display:none}
+#content-status{font-size:12px;min-height:16px}
