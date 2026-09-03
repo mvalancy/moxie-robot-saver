@@ -2,8 +2,11 @@
 Durable per-robot store — plain JSON files on disk, zero dependencies.
 
 The robot cloud needs to *remember* things between restarts: what activities a child
-has finished (`mentor_behaviors`), and later schedules, memory and telemetry. Today
-that memory lives in process RAM and dies with the supervisor.
+has finished (`mentor_behaviors`), what a conversation left behind (`memory`), why a day
+was planned (`schedule_explain`), the safety journal, the content overlay — and, since
+2026-09-02, **telemetry** (`telemetry_packets` + `telemetry_daily`, shaped by
+`moxie_sdk/telemetry.py`), which was the last collection still living in process RAM
+and dying with the supervisor.
 
 This is the smallest honest fix: one JSON file per (robot, collection), written
 atomically, under a data directory. **It is a stepping stone, not a database** — the

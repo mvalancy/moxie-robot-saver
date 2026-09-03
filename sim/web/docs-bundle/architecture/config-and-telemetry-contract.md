@@ -339,6 +339,67 @@ via `LoggingStateChangeRequest{state, path}`, reporting back the effective `uplo
 > **This is the child-privacy contract, not a cosmetic flag.** A server (or custom firmware) MUST honor
 > `NO_DATA`/`NO_MEDIA`. Staged files land under `/sdcard/EmbodiedData` and upload only per policy.
 
+### How this server persists telemetry *(built, v1 2026-09-02)*
+
+A `Packet` that reaches us has already passed the gate **on the robot**. What the server then
+decides is narrower and stricter: whether it goes to **disk**, and with its payload or without.
+Until 2026-09-02 that decision did not exist — an ingested packet lived in the supervisor's RAM
+(`RobotContext.extra["telemetry"]`, 50 events) and a restart erased it, so the 📈 Insights card was
+an event log over one process's lifetime and *"what did Moxie do last week"* had no answer.
+
+**Two records per robot, not one**, because a parent asks two different questions and only one of
+them needs the packets ([`moxie_sdk/telemetry.py`](../../mqtt/moxie_sdk/telemetry.py) owns both
+shapes, both caps and the filter; the runtime is the only thing that touches disk):
+
+| record | what it is | answers |
+|---|---|---|
+| `robots/<id>/telemetry_packets.json` | a ring of the newest `Packet` envelopes | *"what just happened"* — the event list + the by-event roll-up |
+| `robots/<id>/telemetry_daily.json` | one row per **local calendar day**: a count, counts by `event_name`, and the day's first/last stamp | *"what has been happening"* — a week, a month |
+
+**The policy filter** (`storable_packet`) **fails closed**:
+
+| `LoggingPolicy` | what is written |
+|---|---|
+| **`NO_DATA`** (0) | **nothing.** No packet, no count, no day row. A restart finds an empty store. |
+| **`NO_MEDIA`** (1) | the envelope, with `event_data` **removed** and `event_data_withheld:"NO_MEDIA"` in its place |
+| **`FULL`** (2) | the whole envelope, `event_data` truncated at 2 KB so one packet cannot blow the ring |
+
+> **Why `NO_MEDIA` withholds *every* payload, not just the media ones.** `Packet.event_data` is
+> declared `bytes` and our corpus recovers **no** typed-payload vocabulary — the same gap
+> [`moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py)`::telemetry_signals` records for
+> `event_name`. Nothing available to us proves a given blob is not audio or video, and a store that
+> guessed would be a **privacy incident, not a bug**. So the rule is the payload, never the event's
+> name. ⚠️ **Flagged assumption:** we have never seen a real robot's `event_data`, so we do not know
+> what proportion of it is media; withholding all of it is the conservative reading of the contract.
+
+**The default is `NO_MEDIA`**, not `NO_DATA`, and that is deliberate: `RobotCloudConfig`'s own
+default for `data_sharing` **is** `NO_DATA`, which is about what the *robot uploads to us* — inheriting
+it here would mean the feature never stored anything at all. This matches the two sibling records that
+made the same call, the safety journal and long-term memory (`moxie_runtime.SAFETY_JOURNAL_POLICY`,
+`MEMORY_POLICY`). A parent who explicitly sets `logging_policy` — per robot **or** fleet-wide — wins,
+in both directions.
+
+**Bounded, because this is an appliance and not a warehouse.** The store rewrites the whole file on
+every append, so each cap is also a write cost:
+
+| cap | default | why | override |
+|---|--:|---|---|
+| raw envelopes per robot | **500** | ~60 KB of JSON; a rewrite stays well under a millisecond, and the daily roll-up is what answers "last week", so the ring can stay small | `MOXIE_TELEMETRY_MAX_PACKETS` |
+| daily rows per robot | **35** | a month **plus a week**, so "last week" is still whole when a parent looks on the 1st; ~200 bytes a row | `MOXIE_TELEMETRY_MAX_DAYS` |
+| distinct `event_name`s in one day | **24** | `event_name` is a free string, so a robot (or a bug) can mint unbounded names; the overflow is counted under `(other)` rather than dropped | — |
+
+`total` in the roll-up is a **lifetime** count and does not slide with the window — it is the one
+number that stays true after a day ages out, and the console labels it *"all time"* next to the
+retained count so the two are never confused. A day whose `recorded_at` is missing, unparseable,
+before 2020 or more than a day in the future is filed under **arrival** time: device clocks lie and
+the field is optional.
+
+**Reads survive the restart too.** The in-memory buffer still exists, but it is now a cache of the
+ring hydrated from disk on first touch — so `telemetry_count` in the console snapshot, the insights
+view and the schedule planner's signals all see history rather than only this process, with no second
+place to forget to load it. A robot **known to the store but not currently connected** still answers:
+a parent asking about last week should not need the robot to be on the broker.
+
 ---
 
 ## What the parent console reads/writes (feature → field map)
@@ -357,7 +418,10 @@ via `LoggingStateChangeRequest{state, path}`, reporting back the effective `uplo
 | Pairing status | `CloudStatus.UserState` |
 | Which robots may be served | the **permit list** — `fleet/permits.json` + `allow_unverified_bots`; the 🔐 Robot access card lists pending robots and permits them in one click |
 | Robot health | `RobotStatus` + `SystemState` |
-| Insights / activity history | persisted `Packet` telemetry |
+| Insights / activity history | persisted `Packet` telemetry — a bounded ring + daily roll-ups, [above](#how-this-server-persists-telemetry-built-v1-2026-09-02) |
+| Wake a sleeping Moxie | `{"command":"wakeup"}` on `/devices/{id}/commands/wakeup` ([MQTT §3.5](mqtt-and-conversation.md)) — publishes for real; **no acknowledgement exists**, so the console reports *sent*, never *awake* |
+| Reboot the robot | ❌ **not supported.** No cloud→robot reboot command is recovered ([power & system events](../reverse-engineering/protocol/power-and-system-events.md): `STATE_SILENT_REBOOT` is an on-device power state, `ShutdownRequest`/`SystemShutdown` are events the robot *emits*). The console shows the button as unavailable and the endpoint answers **501** rather than inventing a payload |
+| Firmware / OTA status | `robot_firmware_version` + `ota_reboot_required` from `/state`. This appliance serves no `api/ota`, so it **never claims "up to date"** — it reports what the robot said and says no update server is configured |
 
 The console UI is the [REST/Channel-1 server](rest-api-contract.md)'s web surface; the settings it
 writes become a `RobotCloudConfig` push, and the status it shows comes from `/state` + telemetry.
@@ -381,6 +445,12 @@ writes become a `RobotCloudConfig` push, and the status it shows comes from `/st
 - [ ] Carries the child's chosen appearance in `child_pii.face_options`, and **changes
       `child_pii.id` whenever those layers change** so the robot cannot serve a stale face texture.
 - [ ] Honors `LoggingPolicy` (`NO_DATA`/`NO_MEDIA`/`FULL`) before uploading or staging any telemetry.
+- [ ] **Honors it on the way to disk as well** — `NO_DATA` persists nothing at all, `NO_MEDIA`
+      persists no `event_data` payload, and a policy it cannot read fails closed rather than open.
+- [ ] Keeps telemetry **durably and boundedly** if it keeps it at all: a history that dies with the
+      process cannot answer "last week", and one that grows without limit is a bug on an appliance.
+- [ ] **Never reports success for a command it did not send.** Publish and say so, or refuse and say
+      why; a recovered command with no acknowledgement is reported as *sent*, not as *done*.
 
 Where it lives: [`../../mqtt/`](../../mqtt/) (publishes config, consumes state/telemetry) +
 [`../../server/`](../../server/) (the console that reads/writes it).

@@ -188,8 +188,12 @@
         </details>
         <div class="row">
           <button id="btn-wake" class="primary grow">Wake up</button>
-          <button id="btn-reboot" class="ghost grow">Reboot</button>
+          <!-- Disabled by app.js with the reason in its tooltip: no cloud-to-robot
+               reboot command has been recovered from Moxie's firmware, so this button
+               must not report success (see fleet.py::UNSUPPORTED_ACTIONS). -->
+          <button id="btn-reboot" class="ghost grow" disabled>Reboot</button>
         </div>
+        <div id="dev-status" class="muted"></div>
       </div>
       <!-- 🎨 Moxie's look (audit ADOPT #9). The child's chosen face rides down inside
            child_pii as `face_options` (a list of layer labels), and the pushed
