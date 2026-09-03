@@ -376,3 +376,49 @@ def test_the_console_round_trip_suite_can_actually_run_in_ci():
     for workflow, job_id in HERMETIC_JOBS:
         job = _load(os.path.join(TEMPLATES, workflow))["jobs"][job_id]
         assert "server/requirements.txt" in _runs_up_to_pytest(job), workflow
+
+
+# --------------------------------------------------------------------------- #
+# …and the LOCAL runner must not under-provision either.
+# --------------------------------------------------------------------------- #
+def test_the_local_runner_installs_everything_ci_does():
+    """`sim/tests/run.sh` provisions its venv from `sim/tests/requirements.txt`. If that
+    file lists less than CI installs, a local run silently under-provisions and the tests
+    that need the missing package `importorskip` themselves away — a skip that reads as
+    coverage, which is worse than a failure.
+
+    This is not hypothetical. The file listed only pytest + playwright while the suite
+    needs `paho-mqtt` (without it `sim/virtual_moxie.py` calls `sys.exit` at import, so
+    the client-parity test fails), `jinja2` (the content renderer and its sandbox-escape
+    probes) and `pyyaml` (the guards in this very file). Found 2026-09-03 when the
+    live-gateway turn test skipped for a reason that had nothing to do with credentials.
+    """
+    req = open(os.path.join(os.path.dirname(__file__), "requirements.txt")).read()
+    listed = {
+        line.split("#")[0].strip().split(">")[0].split("=")[0].strip().lower()
+        for line in req.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    # HERMETIC_TEST_DEPS is what BOTH tiers install, but the SIL job additionally
+    # installs paho-mqtt — and that is the one whose absence bites hardest, because
+    # `sim/virtual_moxie.py` calls sys.exit() at import rather than raising ImportError,
+    # so the failure is a hard error in an unrelated-looking test. Check it explicitly.
+    required = [d for d in HERMETIC_TEST_DEPS if not d.startswith("-r")]
+    required.append("paho-mqtt")
+    missing = [d for d in required if d.lower() not in listed]
+    assert not missing, (
+        "sim/tests/requirements.txt omits what CI installs: "
+        + ", ".join(missing)
+        + ". run.sh builds the local venv from that file, so the suite would run "
+          "under-provisioned and skip instead of fail."
+    )
+
+
+def test_the_local_runner_reinstalls_when_requirements_change():
+    """The old guard only rebuilt the venv when `pytest` was absent, so a venv holding
+    pytest and nothing else was never repaired — exactly the state that produced the
+    silent skips above. run.sh must key off the requirements file, not one binary."""
+    run_sh = open(os.path.join(os.path.dirname(__file__), "run.sh")).read()
+    assert "requirements.txt" in run_sh and "sha256sum" in run_sh, (
+        "run.sh no longer re-installs when requirements.txt changes; a stale venv will "
+        "under-provision the suite again")
