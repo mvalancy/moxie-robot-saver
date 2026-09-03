@@ -248,7 +248,30 @@ async function setPermit(deviceId, permitted){
     refreshLive();
   }; }
 
-// telemetry insights (M6): the Packet events the runtime stored for this robot
+// 📈 telemetry insights (M6) — a real history since telemetry became durable.
+//
+// The card used to be an event log over the supervisor's RAM: a restart erased it and
+// "last week" had no answer. It now renders the store's own two records — a week of
+// daily roll-ups (zero-filled, so a quiet day reads as a quiet day) over the newest
+// packet envelopes — and it never implies data the store does not hold:
+//   * `persisted:false` (LoggingPolicy NO_DATA) says nothing is being kept, instead of
+//     showing an empty week as if the robot had been silent;
+//   * the footer states the real retention window and where the counts come from, so a
+//     lifetime total behind a sliding window is not mistaken for the window itself.
+function weekBars(history){
+  if(!(history||[]).length) return '';
+  const bars=history.map(d=>{
+    const label=(d.day||'').slice(5).replace('-','/');
+    const h=Math.round(4+(d.share||0)*56);   // 4–60px: a zero day still shows its slot
+    return `<div class="tday${d.count?'':' zero'}" title="${escapeHtml(d.day||'')}: `
+      +`${d.count} event${d.count===1?'':'s'}${d.top_event?' · mostly '+escapeHtml(d.top_event):''}">
+        <span class="tnum">${d.count||''}</span>
+        <div class="tbar" style="height:${d.count?h:2}px"></div>
+        <span class="tlabel">${escapeHtml(label)}</span>
+      </div>`;
+  }).join('');
+  return `<div class="tweek">${bars}</div>`;
+}
 async function refreshInsights(deviceId){
   const box=$('#robot-insights'); if(!box) return;
   if(!deviceId){ box.innerHTML='<div class="live-off">📈 Insights: no robot connected</div>'; return; }
@@ -259,18 +282,39 @@ async function refreshInsights(deviceId){
     box.innerHTML=`<div class="live-off">📈 Insights: ${escapeHtml(t.error||'unavailable')}</div>`;
     return;
   }
-  const hd=`<div class="insights-hd">📈 Insights · ${t.count} event${t.count===1?'':'s'}</div>`;
-  if(!t.count){
-    box.innerHTML=hd+'<div class="live-off">No events yet — Moxie hasn\'t reported any activity.</div>';
+  const tot=t.totals||{}, ret=t.retention||{};
+  const hd=`<div class="insights-hd">📈 Insights · ${t.count} event${t.count===1?'':'s'} kept`
+    +`${tot.total>t.count?` · ${tot.total} all time`:''}</div>`;
+  if(t.persisted===false){
+    box.innerHTML=hd+'<div class="live-off">Data sharing is '
+      +`${escapeHtml(t.policy||'NO_DATA')}, so nothing is being saved — this card can only `
+      +'show what has arrived since the supervisor started, and a restart clears it.</div>'
+      +(t.count?`<div class="evlog">${(t.events||[]).map(e=>{
+          const when=e.recorded_at?new Date(e.recorded_at*1000).toLocaleString():'—';
+          return `<div class="ev"><span>${escapeHtml(when)}</span> <b>${escapeHtml(e.event_name)}</b></div>`;
+        }).join('')}</div>`:'');
     return;
   }
+  if(!t.count && !(tot.total>0)){
+    box.innerHTML=hd+'<div class="live-off">No events yet — Moxie hasn\'t reported any '
+      +'activity. Once it does, this card keeps the history across restarts.</div>';
+    return;
+  }
+  const week=weekBars(t.history||[]);
   const counts=(t.by_event||[]).map(c=>
     `<div class="k"><span>${escapeHtml(c.event)}</span><b>${c.count}</b></div>`).join('');
   const rows=(t.events||[]).map(e=>{
     const when=e.recorded_at?new Date(e.recorded_at*1000).toLocaleString():'—';
     return `<div class="ev"><span>${escapeHtml(when)}</span> <b>${escapeHtml(e.event_name)}</b></div>`;
   }).join('');
-  box.innerHTML=`${hd}<div class="livegrid">${counts}</div><div class="evlog">${rows}</div>`;
+  const since=tot.first_day?`History since ${escapeHtml(tot.first_day)}`:'History starts today';
+  const note=`${since}. Kept on this box: the newest ${ret.packets||0} events and `
+    +`${ret.days||0} days of daily counts${tot.dropped_days?` (${tot.dropped_days} older `
+    +'day'+(tot.dropped_days===1?'':'s')+' have aged out)':''}. `
+    +`Data sharing is ${escapeHtml(t.policy||'NO_MEDIA')}`
+    +`${t.policy==='NO_MEDIA'?', so event payloads are never written — only what happened and when':''}.`;
+  box.innerHTML=`${hd}${week}<div class="livegrid">${counts}</div>`
+    +`<div class="evlog">${rows}</div><p class="tnote">${note}</p>`;
 }
 // safety review queue (ai-seam §2 InputSafety): what the classifier blocked or flagged,
 // on either side of a turn. Excerpts arrive already redacted by the runtime.
@@ -581,8 +625,30 @@ function renderRobot(r){
      <div class="k">Serial: ${r.serial||r['embodied-robot-id']||'—'}</div>
      <div class="k">Wi-Fi: ${r['wifi-ssid']||'—'}</div>
      <div class="k">Status: ${r['pairing-status']||r.state||'paired'}</div>`;
-  $('#btn-wake').onclick=()=>api(`/api/robots/${r.id}/wakeup`,{method:'POST'}).then(()=>flash('#btn-wake','Sent!'));
-  $('#btn-reboot').onclick=()=>api(`/api/robots/${r.id}/reboot`,{method:'POST'}).then(()=>flash('#btn-reboot','Sent!'));
+  // Wake up REALLY publishes the recovered `wakeup` command now, so the button reports
+  // what happened instead of flashing "Sent!" at a no-op: published, or the reason it
+  // was not. It never claims Moxie woke — the protocol has no acknowledgement.
+  const say=t=>{ const s=$('#dev-status'); if(s) s.textContent=t; };
+  $('#btn-wake').onclick=async()=>{
+    say('Waking Moxie…');
+    try{
+      const res=await api(`/api/robots/${r.id}/wakeup`,{method:'POST'});
+      if(res && res.published){ flash('#btn-wake','Sent'); say('⏰ '+(res.note||'Command sent to Moxie.')); }
+      else{ say('⚠️ '+(res.reason||res.error||'could not send')); }
+    }catch(e){ say('⚠️ '+((e&&e.message)||'could not reach the appliance')); }
+  };
+  // Reboot is NOT something we can do: no cloud→robot reboot command exists in the
+  // recovered protocol (fleet.py::UNSUPPORTED_ACTIONS). A disabled button with the
+  // reason beats a button that lies.
+  const rb=$('#btn-reboot');
+  if(rb){
+    rb.disabled=true;
+    rb.title='No remote reboot command has been recovered from Moxie\'s firmware — '
+      +'turn Moxie off and on at the button.';
+    rb.textContent='Reboot (not available)';
+    rb.onclick=null;
+  }
+  say('');
 }
 function flash(sel,txt){const b=$(sel),o=b.textContent;b.textContent=txt;setTimeout(()=>b.textContent=o,1200);}
 

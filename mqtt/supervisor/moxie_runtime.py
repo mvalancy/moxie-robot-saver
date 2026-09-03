@@ -28,6 +28,7 @@ from moxie_sdk.filler import pick_filler                 # "let me think" lines 
 from moxie_sdk import safety as safety_seam              # InputSafety classifier (ai-seam §2)
 from moxie_sdk import presence as presence_seam          # vision events -> presence (vision.md)
 from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire (audit ADOPT #7)
+from moxie_sdk import telemetry as telemetry_seam        # 📈 Packet envelope + durable history
 from moxie_sdk import vocab as vocab_seam                # the frozen mood/markup catalog
 from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
 from moxie_sdk.content import packs as content_packs  # 📦 content packs (ADOPT #5)
@@ -70,6 +71,18 @@ SAFETY_JOURNAL_POLICY = LoggingPolicy.NO_MEDIA
 # it, so it defaults to NO_MEDIA (allowed) — and a parent who explicitly sets
 # `logging_policy=NO_DATA` turns writing off entirely (reads and erase still work).
 MEMORY_POLICY = LoggingPolicy.NO_MEDIA
+
+# Telemetry's own LoggingPolicy default, for the same reason as the two above: what a
+# robot uploads is gated on the robot by `RobotCloudConfig.data_sharing`, and a Packet
+# that reached us already passed that gate. What THIS constant governs is narrower and
+# stricter — whether the packet is written to disk, and with its `event_data` payload or
+# without. NO_MEDIA keeps the envelope (event name + timestamps + session) and withholds
+# every opaque payload, because `Packet.event_data` is `bytes` with no recovered type
+# vocabulary and a store that guessed "this blob is not audio" would be a privacy
+# incident, not a bug. A parent who sets `logging_policy=NO_DATA` gets nothing on disk at
+# all; one who sets FULL gets payloads too. See `moxie_sdk/telemetry.py::storable_packet`
+# and `docs/architecture/config-and-telemetry-contract.md` §③.
+TELEMETRY_POLICY = LoggingPolicy.NO_MEDIA
 
 # How long a child must have been out of sight before Moxie says hello on its own when
 # they walk back in front of it (`eb-found-face` after an `eb-lost-target`). Short enough
@@ -410,7 +423,10 @@ class MoxieRuntime:
                 # Surfaced so a parent (and a test) can see that changing the look really
                 # did re-key the texture, without reading the MQTT wire.
                 "face_cache_id": self.face_cache_id(r.device_id),
-                "telemetry_count": len(r.extra.get("telemetry", [])),
+                # Hydrated from `telemetry_packets.json` on first touch, so this is how
+                # many events we *hold* for this robot — history included, not just what
+                # arrived since the supervisor started.
+                "telemetry_count": len(self._telemetry_buffer(r.device_id, r)),
                 "safety_total": int((self.store.read(
                     r.device_id, safety_seam.COUNTS_COLLECTION, {}) or {}).get("total", 0)),
                 "safety_unreviewed": sum(
@@ -459,8 +475,10 @@ class MoxieRuntime:
                 self.end_headers(); self.wfile.write(body)
 
             def do_GET(self):
-                """GET /status → the console snapshot; GET /telemetry?device_id=…&limit=N
-                → that robot's stored telemetry Packets rolled up for the insights view;
+                """GET /status → the console snapshot;
+                GET /telemetry?device_id=…&limit=N&days=D → that robot's stored telemetry
+                Packets rolled up for the insights view, plus D days of durable daily
+                history and the retention window behind it;
                 GET /schedule?device_id=… → the planned day + why each activity is on it;
                 GET /telehealth?device_id=… → 🎭 puppet mode + the live transcript;
                 GET /voice → 🎚️ the speech/listening pickers: what this appliance can
@@ -480,7 +498,11 @@ class MoxieRuntime:
                         limit = int((q.get("limit") or ["20"])[0])
                     except ValueError:
                         limit = 20
-                    out = rt.telemetry_view(device_id, limit=limit)
+                    try:                       # `days` of daily history (durable ⑤)
+                        days = int((q.get("days") or ["7"])[0])
+                    except ValueError:
+                        days = 7
+                    out = rt.telemetry_view(device_id, limit=limit, days=days)
                     return self._json_out(out, 200 if out.get("ok") else 404)
                 if u.path == "/safety":
                     q = parse_qs(u.query)
@@ -757,6 +779,11 @@ class MoxieRuntime:
                 next turn; a body whose digest is not the reviewed one is **409**.
                 `POST /content/undo` puts the snapshot back. See `_content`.
 
+                `POST /wakeup?device_id=…` publishes the recovered `wakeup` command
+                (`{"command":"wakeup"}` on `/devices/{id}/commands/wakeup`) at one robot.
+                The robot acknowledges nothing, so the reply says `published`, never
+                "awake" — see `wake_robot`.
+
                 `POST /permits` with `{"device_id": "d_…", "permitted": true, "label": …}`
                 lets one pending robot in (or `permitted:false` to revoke it) and re-pushes
                 its config on the spot; with `{"allow_unverified_bots": true}` it flips the
@@ -773,6 +800,16 @@ class MoxieRuntime:
                     return self._memory_write(urlparse(self.path).query)
                 if path in ("/content/review", "/content/import", "/content/undo"):
                     return self._content(path)
+                if path == "/wakeup":
+                    # `POST /wakeup?device_id=…` — publish the recovered `wakeup`
+                    # command. 404 unknown device, 409 pending/no broker, and on success
+                    # a body that says "published", never "the robot woke up".
+                    q = parse_qs(urlparse(self.path).query)
+                    out = rt.wake_robot((q.get("device_id") or [""])[0])
+                    if out.get("ok"):
+                        return self._json_out(out, 200)
+                    code = 404 if "unknown device_id" in str(out.get("error")) else 409
+                    return self._json_out(out, code)
                 if path not in ("/config", "/safety", "/permits", "/telehealth",
                                 "/voice", "/voice/test"):
                     self.send_response(404); self.end_headers(); return
@@ -1189,6 +1226,61 @@ class MoxieRuntime:
               f"(pairing_status={cfg.get('pairing_status')})")
         return cfg
 
+    # ---- device commands: wake (the one the console used to fake) ------------------
+    #
+    # `POST /api/robots/{id}/wakeup` in the parent console returned `{"error": null}` and
+    # published nothing — a button that reported success for an action that never
+    # happened. The command itself is real and recovered:
+    #
+    #   topic   /devices/{device_id}/commands/wakeup
+    #   payload {"command": "wakeup"}
+    #
+    # `docs/architecture/mqtt-and-conversation.md` §3.5 (the cloud→robot command table,
+    # "wake a `wake_button_enabled` robot from screen-off") on the topic shape
+    # `cloud-protocol.md`:147 establishes for every command. What the corpus does NOT
+    # establish is an acknowledgement: no `commands/wakeup` reply, no state field that
+    # flips. So this method reports what it truly knows — that the command was published —
+    # and says plainly that the robot never confirms. Nothing here has run against a
+    # physical robot.
+    WAKEUP_COMMAND = "wakeup"
+
+    def wake_robot(self, device_id) -> dict:
+        """Publish the recovered `wakeup` command at one robot.
+
+        `{ok:true, published:true, acknowledged:false}` when it went out — never a claim
+        that the robot woke. `ok:false` (with a reason a parent can act on) for an unknown
+        device, a robot still pending a permit, or no broker connection."""
+        robot = self.robots.get(device_id)
+        if robot is None:
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": f"unknown device_id {device_id!r}",
+                    "reason": "No robot with that id has connected to this appliance."}
+        if not self.is_permitted(device_id):
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "robot is pending",
+                    "reason": "Let this robot in first (Permit it in the fleet panel)."}
+        if self.client is None:
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "no broker connection",
+                    "reason": "The supervisor is not connected to the broker."}
+        topic = f"/devices/{device_id}/commands/{self.WAKEUP_COMMAND}"
+        payload = {"command": self.WAKEUP_COMMAND}
+        self.client.publish(topic, json.dumps(payload))
+        cfg = self.effective_config(device_id) or {}
+        # `wake_button_enabled` defaults True in the config we build (cloud_config.py),
+        # so "absent" means "on", and only an explicit False is a warning worth showing.
+        wake_button = cfg.get("wake_button_enabled", True)
+        note = ("Sent. The robot sends no acknowledgement for this command, so this "
+                "confirms the message left the appliance, not that Moxie woke up.")
+        if wake_button is False:
+            note += (" Heads up: this robot's wake button is switched off in Settings, "
+                     "which is the setting the recovered command depends on.")
+        self._note("robot", f"⏰ wakeup published to {device_id}")
+        print(f"[runtime] ⏰ → {topic} {payload}", flush=True)
+        return {"ok": True, "device_id": device_id, "published": True,
+                "acknowledged": False, "topic": topic, "payload": payload,
+                "wake_button_enabled": bool(wake_button), "note": note}
+
     # ---- child safety (AI seam §2 — InputSafety) ----
     def safety_policy(self, device_id) -> LoggingPolicy:
         """The LoggingPolicy governing this robot's safety journal — the parent's explicit
@@ -1325,34 +1417,131 @@ class MoxieRuntime:
         return out
 
     # ---- telemetry ingest (parent-console insights) ----
+    #
+    # Durable since 2026-09-02. Until then an ingested Packet lived only in
+    # `RobotContext.extra["telemetry"]` — a list in this process's RAM, capped at 50 —
+    # so the 📈 card was an event log over one supervisor lifetime and a restart erased
+    # every answer to "what did Moxie do last week". Two collections now back it
+    # (`moxie_sdk/telemetry.py` owns both shapes, both caps and the policy filter):
+    #
+    #   robots/<id>/telemetry_packets.json  a ring of the newest envelopes  ("just now")
+    #   robots/<id>/telemetry_daily.json    one row per calendar day        ("last week")
+    #
+    # The in-memory buffer stays — every existing read path still uses it — but it is now
+    # a **cache of the ring, hydrated from disk on first touch**, so `telemetry_count`,
+    # the insights view and the schedule planner all see history after a restart.
+    def telemetry_policy(self, device_id) -> LoggingPolicy:
+        """The LoggingPolicy governing what may be *written to disk* about this robot's
+        telemetry — the parent's explicit `logging_policy` if there is one, else
+        `TELEMETRY_POLICY`.
+
+        Read from the **effective** config (fleet ⊕ per-robot) like `memory_policy`, so a
+        house rule set once for the appliance governs every robot on it and one robot can
+        still be set apart."""
+        raw = (self.effective_config(device_id) or {}).get("logging_policy")
+        if raw is None:
+            return TELEMETRY_POLICY
+        try:
+            return LoggingPolicy(int(raw))
+        except (TypeError, ValueError):
+            return TELEMETRY_POLICY
+
+    def telemetry_persists(self, device_id) -> bool:
+        """False under `NO_DATA` — nothing about this child's telemetry is stored."""
+        return self.telemetry_policy(device_id) != LoggingPolicy.NO_DATA
+
+    def _telemetry_buffer(self, device_id, robot=None) -> list:
+        """This robot's live packet buffer, **hydrated from the durable ring on first
+        touch**. Returns the list itself, so callers may append to it.
+
+        Load-on-boot lives here rather than in `_device_connect` on purpose: tests and
+        the SIL harness register robots directly (`rt.robots[id] = RobotContext(...)`),
+        and a robot that reconnects mid-session must see the same history as one the
+        supervisor met at startup. Hydrating at the single read point makes every path
+        durable without a second place to forget."""
+        robot = robot if robot is not None else self.robots.get(device_id)
+        if robot is None:
+            return []
+        buf = robot.extra.get("telemetry")
+        if buf is None:
+            stored = self.store.read(device_id, telemetry_seam.PACKETS_COLLECTION, [])
+            buf = [p for p in stored if isinstance(p, dict)] if isinstance(stored, list) else []
+            robot.extra["telemetry"] = buf
+        return buf
+
+    def telemetry_rollup(self, device_id) -> dict:
+        """This robot's daily roll-up record as stored (`{}`-safe)."""
+        return self.store.read(device_id, telemetry_seam.DAILY_COLLECTION,
+                               telemetry_seam.new_rollup())
+
     def ingest_telemetry(self, device_id, payload):
-        """Parse an incoming telemetry Packet and store it per-device for insights.
+        """Parse an incoming telemetry Packet, keep it live, and persist it per policy.
         Returns the parsed packet (or None on parse failure)."""
         try:
-            from moxie_sdk.telemetry import parse_packet
-            pkt = parse_packet(payload)
+            pkt = telemetry_seam.parse_packet(payload)
         except Exception:
             return None
         robot = self.robots.get(device_id)
         if robot is not None:
-            buf = robot.extra.setdefault("telemetry", [])
+            buf = self._telemetry_buffer(device_id, robot)
             buf.append(pkt)
-            del buf[:-50]                       # keep the last 50 events
+            del buf[: max(0, len(buf) - telemetry_seam.max_packets())]
+            self._persist_telemetry(device_id, pkt)
         self._note("telemetry", f"📈 {pkt.get('event_name', 'event')}")
         return pkt
 
-    def telemetry_view(self, device_id, limit: int = 20) -> dict:
-        """The parent console's per-robot insights view (M6): the stored Packets for
-        one device, rolled up by summarize_events + the newest `limit` events.
-        Unknown device → {ok:false, error} (the HTTP layer answers 404)."""
+    def _persist_telemetry(self, device_id, pkt) -> bool:
+        """Write one Packet through the privacy gate. True when something was stored.
+
+        A telemetry write must never cost a child their turn, so every failure here is
+        printed and swallowed — this runs on the MQTT thread."""
+        row = telemetry_seam.storable_packet(pkt, self.telemetry_policy(device_id))
+        if row is None:                       # LoggingPolicy.NO_DATA — nothing on disk
+            return False
+        try:
+            self.store.append(device_id, telemetry_seam.PACKETS_COLLECTION, row,
+                              cap=telemetry_seam.max_packets())
+            self.store.write(device_id, telemetry_seam.DAILY_COLLECTION,
+                             telemetry_seam.roll_up_packet(
+                                 self.telemetry_rollup(device_id), row))
+            return True
+        except Exception as e:
+            print(f"[runtime] telemetry write failed: {e}", flush=True)
+            return False
+
+    def telemetry_view(self, device_id, limit: int = 20, days: int = 7) -> dict:
+        """The parent console's per-robot insights view (M6): the ring rolled up by
+        `summarize_events` + the newest `limit` events + the last `days` days of daily
+        history from the durable roll-up.
+
+        Known to the store but not connected is still a real answer — a parent asking
+        what happened last week should get it whether or not the robot is on the broker
+        right now — so a device with stored history is `ok:true` even when it is absent
+        from `self.robots`. Neither → `{ok:false}` (the HTTP layer answers 404)."""
         robot = self.robots.get(device_id)
+        rollup = self.telemetry_rollup(device_id)
+        totals = telemetry_seam.rollup_totals(rollup)
         if robot is None:
-            return {"ok": False, "device_id": device_id,
-                    "error": f"unknown device_id {device_id!r}"}
-        from moxie_sdk.telemetry import summarize_events
-        summary = summarize_events(robot.extra.get("telemetry", []), limit=limit)
+            stored = self.store.read(device_id, telemetry_seam.PACKETS_COLLECTION, None)
+            if stored is None and not totals["days_kept"]:
+                return {"ok": False, "device_id": device_id,
+                        "error": f"unknown device_id {device_id!r}"}
+            packets = [p for p in stored if isinstance(p, dict)] if isinstance(stored, list) else []
+        else:
+            packets = self._telemetry_buffer(device_id, robot)
+        summary = telemetry_seam.summarize_events(packets, limit=limit)
+        policy = self.telemetry_policy(device_id)
         return {"ok": True, "device_id": device_id,
-                "summary": summary, "events": summary["latest"]}
+                "summary": summary, "events": summary["latest"],
+                # What a parent needs to read the card honestly: how far back the store
+                # really goes, the lifetime total behind the sliding window, and whether
+                # anything is being written at all.
+                "policy": policy.name,
+                "persisted": policy != LoggingPolicy.NO_DATA,
+                "connected": robot is not None,
+                "retention": telemetry_seam.retention(),
+                "history": telemetry_seam.history_view(rollup, days=days),
+                "totals": totals}
 
     def update_config(self, device_id, **overrides):
         """Parent-console config edit: merge overrides (audio_volume, screen_brightness,
@@ -2510,7 +2699,7 @@ class MoxieRuntime:
         except Exception as e:
             print(f"[runtime] schedule template unavailable ({e}); using the default")
         robot = self.robots.get(device_id)
-        packets = (robot.extra.get("telemetry") or []) if robot else []
+        packets = self._telemetry_buffer(device_id, robot) if robot else []
         try:
             config = self.effective_config(device_id)
         except Exception as e:

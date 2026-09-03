@@ -1,5 +1,5 @@
 {
- "generated": "docs-923f265c3d06",
+ "generated": "docs-676fdb209816",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 65121,
+   "bytes": 68491,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -236,7 +236,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 25733,
+   "bytes": 31846,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -250,6 +250,7 @@
     "CloudStatus.UserState` — the pairing/OTA lifecycle the console shows",
     "③ Telemetry — `Packet` envelope + the privacy gate",
     "LoggingPolicy` — the privacy contract a server MUST honor",
+    "How this server persists telemetry *(built, v1 2026-09-02)*",
     "What the parent console reads/writes (feature → field map)",
     "Minimum viable vs full",
     "Conformance checklist"
@@ -347,7 +348,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 84473,
+   "bytes": 85486,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
