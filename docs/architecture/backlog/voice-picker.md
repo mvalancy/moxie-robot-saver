@@ -21,7 +21,11 @@ only the pinned engine's entries and carries `pins`/`pin_notes`, the card prints
 the variable, and a stale page's cross-engine POST is refused with it. The pin names the ENGINE, not
 the voice — a pick *within* it still applies. `MOXIE_TTS=tone` deliberately pins nothing (it is the
 fallback's permission, and is what both compose files default to; `test_compose.py` guards that
-coupling from the other end). +20 tests.
+coupling from the other end). +20 tests, plus a live discovery suite
+(`sim/tests/test_live_voice_picker.py`, ONE `/v1/models` call, in the deep tier): against the real
+gateway on 2026-09-03 the console offers **32 speech entries** (31 gateway voices + the tone) and
+**4 listening** (`stt-whisper`, `graphling-stt`, `stt-whisper-base`, `off`), and an untouched
+picker resolves to `gateway:piper-amy` / `gateway:stt-whisper`.
 
 Originally: build-ready brief (2026-09-02). **Depends on:** the gateway STT slice (`feat/gateway-stt-live`)
 and the telehealth slice (it owns `server/` and the status-HTTP region until it lands).

@@ -1,5 +1,5 @@
 {
- "generated": "docs-c222a56b7063",
+ "generated": "docs-e98881102bae",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -485,7 +485,7 @@
    "path": "architecture/backlog/voice-picker.md",
    "title": "Voice picker — choose the speech and listening models from the console",
    "section": "architecture",
-   "bytes": 10872,
+   "bytes": 11255,
    "mermaid": 0,
    "headings": [
     "What the user asked for (verbatim intent)",
