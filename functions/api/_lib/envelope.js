@@ -65,6 +65,7 @@ export const PUBLIC_KEYS = Object.freeze([
   "messages",
   "speech",
   "context",
+  "transcript",
   "voice",
   "ears",
 ]);
@@ -181,6 +182,13 @@ export function envelope(partial) {
     messages: wireList(p.messages),
     speech: speechList(p.speech),
     context: typeof p.context === "string" ? p.context : "",
+    // P1's ears (`/api/transcribe`). It is a FIELD ON THE ONE ENVELOPE rather than the
+    // bare `DeepgramResponse` §3.2 sketched, and that is a deliberate deviation recorded
+    // at `functions/api/transcribe.js`'s header: a Deepgram body carries no `reason`, no
+    // `mode` and no `retry_after_s`, so a rate-limited visitor would be indistinguishable
+    // from a deployment with no ears at all and `mic.js` could not degrade honestly. The
+    // Deepgram shape is still what `mic.js` parses from the LOCAL sidecar, unchanged.
+    transcript: typeof p.transcript === "string" ? p.transcript : "",
     voice: !!p.voice,
     ears: !!p.ears,
   };

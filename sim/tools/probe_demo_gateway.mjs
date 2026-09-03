@@ -24,6 +24,22 @@
  *
  *   node sim/tools/probe_demo_gateway.mjs            # 2 chat + 2 speech, ~4 calls
  *   node sim/tools/probe_demo_gateway.mjs --dry-run  # print the bodies, call nothing
+ *
+ * THE EARS (`--only=stt`). §10 assumption 15 — *does the gateway's
+ * `/v1/audio/transcriptions` accept webm/Opus, which is what a browser's `MediaRecorder`
+ * actually produces?* — cannot be settled by any hermetic test, because it is a fact about
+ * a third party's decoder. `--stt-file=<path>` posts a real local file through the REAL
+ * `transcribe.js::buildTranscribeForm`, and reports what came back. Pass a WAV as the
+ * control and a webm/Opus clip as the question:
+ *
+ *   S=sim/web/audio/moxie/03e31950df81e786.mp3    # "Hi! I am Moxie. It is nice to meet you."
+ *   ffmpeg -i $S -ac 1 -ar 16000 -c:a pcm_s16le /tmp/control.wav
+ *   ffmpeg -i $S -ac 1 -ar 48000 -c:a libopus -b:a 32k -f webm /tmp/opus.webm
+ *   node sim/tools/probe_demo_gateway.mjs --only=stt --stt-file=/tmp/control.wav \
+ *        --stt-file=/tmp/opus.webm
+ *
+ * The clip is a repo asset with a KNOWN utterance, so the transcript can be checked
+ * without a microphone and without spending a TTS call to make one. No audio is committed.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -35,6 +51,8 @@ const repo = join(here, "..", "..");
 const { readConfig, upstreamHeaders } = await import(join(repo, "functions", "api", "_lib", "env.js"));
 const { buildUpstreamBody } = await import(join(repo, "functions", "api", "chat.js"));
 const { buildSpeechBody } = await import(join(repo, "functions", "api", "speech.js"));
+const { buildTranscribeForm, audioKind, cleanTranscript, reasonForUpstreamStatus } =
+  await import(join(repo, "functions", "api", "transcribe.js"));
 const { joinUrl } = await import(join(repo, "functions", "api", "_lib", "wire.js"));
 const { pcmFromAudio } = await import(join(repo, "functions", "api", "_lib", "wav.js"));
 
@@ -43,6 +61,8 @@ const DRY = process.argv.includes("--dry-run");
  *  small and deliberate, so re-verifying ONE fixed body must not cost four calls. */
 const ONLY = (process.argv.find((a) => a.startsWith("--only=")) || "").slice(7);
 const want = (name) => !ONLY || ONLY === name;
+/** Repeatable. Each one is ONE gateway call, so the slice's budget is the caller's to spend. */
+const STT_FILES = process.argv.filter((a) => a.startsWith("--stt-file=")).map((a) => a.slice(11));
 
 /* --------------------------------------------------------------------------- *
  * Read the local credentials. Nothing from here is ever printed.
@@ -77,14 +97,20 @@ const env = {
   DEMO_CHAT_MODEL: local.MOXIE_LLM_MODEL || "graphling-medium",
   DEMO_TTS_MODEL: local.MOXIE_VOICE_MODEL || "piper-amy",
   DEMO_TTS_FORMAT: "wav",
+  // `MOXIE_STT_BASE_URL` defaults to the voice base and then to the LLM base — one
+  // gateway, one key (docs/guides/litellm-stt-setup.md). `stt-whisper` is the gateway's
+  // own default model, recorded there as live since 2026-09-02.
+  DEMO_STT_MODEL: local.MOXIE_STT_MODEL || "stt-whisper",
 };
+if (local.MOXIE_STT_BASE_URL) env.DEMO_GATEWAY_BASE_URL = local.MOXIE_STT_BASE_URL;
 // A Cloudflare Access service token, if the local stack has one configured for the tunnel.
 if (local.MOXIE_GATEWAY_ACCESS_CLIENT_ID) env.DEMO_GATEWAY_ACCESS_CLIENT_ID = local.MOXIE_GATEWAY_ACCESS_CLIENT_ID;
 if (local.MOXIE_GATEWAY_ACCESS_CLIENT_SECRET) env.DEMO_GATEWAY_ACCESS_CLIENT_SECRET = local.MOXIE_GATEWAY_ACCESS_CLIENT_SECRET;
 
 const cfg = readConfig(env);
 
-console.log("configured:", cfg.configured, "| voice:", cfg.voice, "| access token:", cfg.accessToken);
+console.log("configured:", cfg.configured, "| voice:", cfg.voice, "| ears:", cfg.ears,
+            "| access token:", cfg.accessToken);
 console.log("missing:", cfg.missing.length ? cfg.missing.join(", ") : "(nothing)");
 if (cfg.notes.length) for (const n of cfg.notes) console.log("note:", n);
 if (!cfg.configured) {
@@ -188,6 +214,82 @@ async function speechCall(label, text) {
   }
 }
 
+/**
+ * ONE `/audio/transcriptions` call, built by the REAL route helpers.
+ *
+ * This is the probe that settles §10 assumption 15. What it reports is deliberately more
+ * than "did it work": the container the sniffer identified, the filename and mime the
+ * route would send, the status, and — on a refusal — the reason `transcribe.js` would map
+ * that status to, because THAT is the number that decides whether the whole page degrades
+ * or just this one turn.
+ *
+ * The response body is printed ONLY on success (it is the transcript, which is our own
+ * clip read back). An error body is never printed: an OpenAI-compatible one names the
+ * model and sometimes a key prefix.
+ */
+async function sttCall(label, path) {
+  console.log(`\n── ${label} ──`);
+  let bytes;
+  try {
+    bytes = new Uint8Array(readFileSync(path));
+  } catch (e) {
+    console.log("  ! cannot read", path, "—", e.code || e.message);
+    return;
+  }
+  const kind = audioKind(bytes, null);
+  console.log("  file:", path.replace(process.env.HOME || "~", "~"), "|", bytes.length, "B");
+  if (!kind) {
+    console.log("  → the route's own sniffer does not recognise this container: it would answer " +
+                "`bad_request` and MAKE NO CALL. Nothing was sent.");
+    return;
+  }
+  console.log("  sniffed:", kind.ext, "|", kind.mime, "| from the magic number:", kind.sniffed);
+  const form = buildTranscribeForm(cfg, bytes, kind);
+  console.log("  form fields:", [...form.keys()].sort().join(", "),
+              "| model:", form.get("model"), "| filename:", form.get("file").name);
+  const headers = upstreamHeaders(cfg, "multipart/form-data");
+  delete headers["Content-Type"];        // fetch owns the multipart boundary
+  console.log("  header names:", safeHeaders(headers).join(", "));
+  if (DRY) return;
+
+  const t0 = Date.now();
+  let res;
+  try {
+    res = await fetch(joinUrl(cfg.baseUrl, "audio/transcriptions"), {
+      method: "POST", headers, body: form, signal: AbortSignal.timeout(cfg.sttTimeoutMs),
+    });
+  } catch (e) {
+    console.log("  → threw:", e.name, `| ${Date.now() - t0} ms`,
+                "| the route would answer:", e.name === "TimeoutError" ? "timeout" : "upstream_down");
+    return;
+  }
+  const ms = Date.now() - t0;
+  const raw = await res.text();
+  console.log("  → status:", res.status, "| content-type:", res.headers.get("Content-Type"),
+              `| ${raw.length} B | ${ms} ms`);
+  if (!res.ok) {
+    console.log("  → NOT OK. The route would answer reason:", reasonForUpstreamStatus(res.status),
+                res.status >= 400 && res.status < 500 && ![401, 403, 407, 413].includes(res.status)
+                  ? "  ⇐ per-turn: the page stays LIVE and this one turn falls back to a scripted line"
+                  : "  ⇐ the page degrades");
+    console.log("  → body length:", raw.length, "(not printed: an error body can name a model or a key)");
+    return;
+  }
+  let json = null;
+  try { json = JSON.parse(raw); } catch {}
+  if (!json) {
+    console.log("  → the body did not parse as JSON | starts with:", JSON.stringify(raw.slice(0, 24)));
+    console.log("  → THIS IS THE `gateway_unreachable_or_gated` SHAPE (an Access login page looks like this).");
+    return;
+  }
+  console.log("  → top-level keys:", Object.keys(json).sort().join(", "));
+  console.log("  → text is a string:", typeof json.text === "string",
+              "| the route would answer:", typeof json.text === "string" ? "ok" : "upstream_down");
+  if (typeof json.text === "string") {
+    console.log("  → transcript:", JSON.stringify(cleanTranscript(json.text, cfg.maxInputChars).text));
+  }
+}
+
 console.log(DRY ? "\n[dry run — building bodies, calling nothing]"
                 : ONLY ? `\n[real gateway calls, limited to --only=${ONLY}]`
                        : "\n[4 real gateway calls]");
@@ -196,6 +298,19 @@ if (want("chat")) {
   await chatCall("chat 1 of 2 · a first turn (persona first AND last, one user turn)", [], "hi moxie, tell me a joke");
   await chatCall("chat 2 of 2 · a fourth turn (4 history turns from a signed context blob)",
                  HISTORY, "what should i teach them first?");
+}
+if (want("stt")) {
+  if (!cfg.ears) {
+    console.log("\n── ears ── DEMO_STT_MODEL is unset, so the route would answer " +
+                "`gateway_not_configured` and call nothing. Nothing was sent.");
+  } else if (!STT_FILES.length) {
+    console.log("\n── ears ── no --stt-file=<path> given; see this file's header for the " +
+                "two ffmpeg commands that make a control WAV and a webm/Opus clip.");
+  } else {
+    for (let i = 0; i < STT_FILES.length; i++) {
+      await sttCall(`stt ${i + 1} of ${STT_FILES.length}`, STT_FILES[i]);
+    }
+  }
 }
 if (want("speech1")) await speechCall("speech 1 of 2 · a short line", "Hi there! Want to hear a joke?");
 if (want("speech2")) {

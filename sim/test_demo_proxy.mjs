@@ -1014,8 +1014,10 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     ok(["live", "degraded"].includes(body.mode), "mode is live or degraded");
     ok(res.headers.get("X-Moxie-Mode") !== null, "X-Moxie-Mode rides every response");
     // §4.2: the caps the browser may know, and nothing else.
-    deep(Object.keys(body.limits).sort(), ["chat_per_min", "max_input_chars", "max_tokens", "max_tts_chars"],
-         "limits carries exactly the four public caps — no model id, no URL");
+    deep(Object.keys(body.limits).sort(),
+         ["chat_per_min", "max_audio_bytes", "max_input_chars", "max_record_ms", "max_tokens",
+          "max_tts_chars", "min_audio_bytes"],
+         "limits carries exactly the public caps — no model id, no URL");
   }
   ok(sweeps > 100, `assertClean ran on every response (${sweeps} sweeps)`);
 }
