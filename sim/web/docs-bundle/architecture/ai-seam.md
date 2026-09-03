@@ -106,6 +106,24 @@ utterance + context) and returns a `RemoteChatResponse` that (a) says a line, (b
 navigation, and (c) reports its read of the child. A minimal backend fills only the *speak* half; a
 full brain uses all three.
 
+### Which brain, per child — BUILT (P0, 2026-09-03)
+
+"Any AI wears the shell" was true of this drawing and false of the appliance: a brain was chosen
+**once, globally**, by `MOXIE_APP` at import time, and `config.build_app()` returned the LLM app for
+anything it did not recognise. It is now a **registry plus a selection**, and both halves are
+idioms this repo already had:
+
+| | |
+|---|---|
+| **The registry** | [`moxie_sdk/brains.py`](../../mqtt/moxie_sdk/brains.py) — a **closed positive list** (`llm`, `content`, `webhook`, `echo`), the idiom of `content/packs.py::SPEC` and `content/ext.py::OPS`. A name in the table resolves to a builder in `config.BRAIN_BUILDERS`; **a name that is not in it is refused, naming the four**, never resolved to a default. No deny-list |
+| **The selection** | `brain` is an ordinary key in the ordinary config layers — `defaults ⊕ fleet ⊕ per-robot` (ADOPT #6). `POST /config?scope=fleet` sets the house rule and `POST /config?device_id=` sets one child's, exactly as for volume or bedtime; `cloud_config.SERVER_ONLY_KEYS` keeps it out of the document pushed to the robot, which has no field for it |
+| **The swap** | `MoxieRuntime.app_for(device_id)` resolves **once**, at the top of a turn, and the app is carried through it. A parent's Save lands on the child's **next** turn; a turn already in flight finishes with the brain that heard the question. No restart, no reconnect — `voice_update` and `reload_content()`'s rule |
+| **The pin** | An explicit `MOXIE_APP` **pins** the appliance's brain and a per-child pick may not overrule it (the owner rule PR #77 enforced for `MOXIE_TTS`/`MOXIE_STT`). The card offers only that entry, and a stale page's pick is refused *naming the variable*. `MOXIE_APP=any` is the explicit "decide per child". The pin reads the **raw** environment, because `config.MOXIE_APP` already reads as `llm` on a box where nobody said anything |
+
+So one appliance can answer one child with a content module and another with a webhook to your own
+service, live, and `GET`/`POST /brain` is the card's door. Design, gaps and the mutation run:
+[`backlog/brain-picker.md`](backlog/brain-picker.md).
+
 ### Request in — `RemoteChatRequest`
 The transcript from seam ① plus conversation context, history, the current module/content id, and a
 `RecommendationContext` telling the brain what it *could* steer toward

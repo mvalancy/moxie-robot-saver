@@ -1,5 +1,5 @@
 {
- "generated": "docs-87c360eaa7a2",
+ "generated": "docs-ea35ba38d624",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 5062,
+   "bytes": 5351,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 6154,
+   "bytes": 6795,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 95635,
+   "bytes": 97945,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -213,13 +213,14 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 28817,
+   "bytes": 30986,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
     "① STT in — audio → text",
     "What we implement (plug point B) — BUILT, and live on both engines (2026-09-02)",
     "② Brain — the RemoteChat contract (where the AI lives)",
+    "Which brain, per child — BUILT (P0, 2026-09-03)",
     "Request in — `RemoteChatRequest`",
     "Response out — `RemoteChatResponse`",
     "③ TTS out — markup → audio + viseme marks",
@@ -350,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 110578,
+   "bytes": 111527,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -634,6 +635,22 @@
     "9. Tests",
     "9.1 Escape tests — `sim/tests/test_ext_escapes.py`",
     "9.2 Behaviour, determinism and integration — `sim/tests/test_ext.py`"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/brain-picker.md",
+   "title": "Any brain, hot-swappable, per child",
+   "section": "architecture",
+   "bytes": 7046,
+   "mermaid": 0,
+   "headings": [
+    "1. What was actually missing",
+    "2. The design, in four sentences",
+    "2.1 Why the pin reads the *raw* environment",
+    "3. What a parent sees",
+    "4. Tests",
+    "5. Honest gaps (P1+)"
    ],
    "kind": "md"
   },
