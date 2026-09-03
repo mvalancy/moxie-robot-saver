@@ -6,6 +6,9 @@
 #   1. `docker compose config` parses
 #   2. broker + supervisor + console all report HEALTHY (compose healthchecks)
 #   3. the supervisor's /status is reachable through the composed stack
+#   3b/3c. the compose default MOXIE_TTS=tone does NOT pin the engine (#77), so a
+#      composed deployment's Speech dropdown keeps its full list — checked over
+#      /voice and again inside the container, with MOXIE_STT=off as the control
 #   4. sim/virtual_moxie.py --expect-tts round-trips against the COMPOSED broker:
 #      state → config(paired) → remote-chat → reply → CloudTTSResponse audio
 #   5. the console's /local/fleet shows that robot while it is connected
@@ -185,6 +188,59 @@ assert d.get("ok"), d
 print(f"   app={d.get('app')} uptime={d.get('uptime_s')}s robots={len(d.get('robots') or [])}")
 PYEOF
 then ok "/status ok"; else bad "/status unreachable or not ok"; fi
+
+# ── 3b. THE PIN vs THE COMPOSE DEFAULT ───────────────────────────────────────────────
+# Both compose files default to `MOXIE_TTS: ${MOXIE_TTS:-tone}`, and PR #77 made an
+# explicit MOXIE_TTS/MOXIE_STT *pin* the engine so a console dropdown cannot overrule the
+# operator. If `tone` ever pinned, every `docker compose up` deployment's Speech dropdown
+# would silently collapse to one entry. `voice_settings.ENV_PIN` deliberately leaves
+# `tone` out — this asserts that, through the RUNNING stack rather than in a unit test:
+#
+#   * `/voice` on the composed supervisor reports NO speech pin and no pin note, while
+#   * `MOXIE_STT=off` (also in this env file) DOES pin — the positive control that proves
+#     the assertion can tell the two apart instead of passing vacuously;
+#   * and inside the container, with the composed environment, a gateway listing still
+#     produces a MULTI-ENTRY speech list (gateway voices + the built-in tone). That is
+#     the collapse the coupling was about, and it is the only place it can be seen: the
+#     smoke's own stack has no gateway configured, so its honest speech list is `tone`
+#     alone whether or not the pin is in force.
+step "3b. MOXIE_TTS=tone must not PIN the engine (compose's own default)"
+if "$PY" - "$STATUS_PORT" <<'PYEOF'
+import json, sys, urllib.request
+v = json.load(urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/voice", timeout=5))
+assert v.get("ok"), v
+pins, notes = v.get("pins") or {}, v.get("pin_notes") or {}
+speech = [e["id"] for e in (v.get("available") or {}).get("speech") or []]
+listening = [e["id"] for e in (v.get("available") or {}).get("listening") or []]
+assert pins.get("speech") == "", f"MOXIE_TTS=tone PINNED the speech engine: {pins!r}"
+assert not notes.get("speech"), f"a pin note for an unpinned side: {notes['speech']!r}"
+assert "tone" in speech, f"the built-in voice vanished from the dropdown: {speech!r}"
+# positive control: `off` really does pin, so the check above is not vacuous.
+assert pins.get("listening") == "off", f"MOXIE_STT=off did not pin: {pins!r}"
+assert listening == ["off"], f"a pinned side offered more than its engine: {listening!r}"
+print(f"   pins={pins} speech={speech} listening={listening}")
+PYEOF
+then ok "/voice: tone does not pin; off does (control)"; else bad "/voice pin check failed"; fi
+
+step "3c. …and a gateway listing still fills that dropdown inside the container"
+# Runs in the SUPERVISOR CONTAINER with the composed environment (MOXIE_TTS=tone), so it
+# reads the same config module the appliance booted with. Only the gateway *listing* is
+# faked — a catalog seam, not an engine — because the smoke has no gateway to ask.
+if "${COMPOSE[@]}" exec -T supervisor python -c '
+import os, sys
+sys.path.insert(0, "/app")
+import config
+from moxie_sdk import voice_settings as vs
+cat = vs.GatewayCatalog(lambda: ["piper-amy", "piper-ryan", "stt-whisper"],
+                        submit=lambda fn: fn())
+out = config.voice_engines(cat).available()
+speech = [e["id"] for e in out["available"]["speech"]]
+assert os.environ.get("MOXIE_TTS") == "tone", os.environ.get("MOXIE_TTS")
+assert out["pins"]["speech"] == "", out["pins"]
+assert speech == ["gateway:piper-amy", "gateway:piper-ryan", "tone"], speech
+print("   in-container MOXIE_TTS=%s -> speech=%s" % (os.environ.get("MOXIE_TTS"), speech))
+'; then ok "the composed supervisor still offers its full engine list"
+else bad "the composed supervisor's Speech dropdown COLLAPSED under MOXIE_TTS=tone"; fi
 
 step "4. virtual Moxie against the COMPOSED broker (127.0.0.1:$MQTT_PORT)"
 # Poll the console's fleet view in the background, while the robot is connected.

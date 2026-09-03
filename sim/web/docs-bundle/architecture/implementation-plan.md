@@ -98,6 +98,49 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **Integration evidence (2026-09-03, second pass) — four of the five slices merged that day hold; the
+  fifth had shipped half-done.** #77 (engine pin), #78 (content packs), #79 (STT/telehealth CI dispatch),
+  #81 (audit) and #82 (the child's voice) had never been exercised together. **The pin does not collapse
+  the compose stack** — the coupling its author flagged is closed by construction and now by the running
+  stack: `sim/run_compose_smoke.sh` green in **build and images** mode with two new steps proving
+  `MOXIE_TTS=tone` (what *both* compose files default to) pins nothing, while `MOXIE_STT=off` in the same
+  env file *does* — the positive control that keeps the check from passing vacuously — and, inside the
+  supervisor container with the composed environment, a gateway listing still yields
+  `["gateway:piper-amy", "gateway:piper-ryan", "tone"]` rather than one entry. **A pinned engine still
+  speaks on the wire**: the live e2e turn now runs with `MOXIE_TTS=gateway` *and* `MOXIE_STT=gateway`,
+  drops a console pick of `tone`/`off` at the builders (probes chosen because those are the only
+  cross-engine picks this box could really build, so the assertion is not vacuous), hears the child at
+  overlap 1.00 and puts 6.17 s of `is_real_speech` audio on `commands/tts`. **Both live suites #79
+  dispatched have now actually run** — `test_live_gateway_stt.py` at overlap 1.00 native *and* at the
+  robot's 16 kHz, and `test_live_telehealth_voice.py` speaking the operator's line through the assembled
+  appliance (4.28 s, flatness 2.4e-02 against a 1e-06 tone floor). 8 gateway calls, the budget exactly.
+  **#82 is the one that had not landed**: driving the shipped page in a real Chromium showed the child
+  *still* being cut off — `stop()` 2237 ms into a 2519 ms clip — and her second line clearing being
+  **dropped in silence** (`speakClipOnly` refuses to play over Moxie) by ~700 ms of load latency. §2b of
+  `test_fallback_coverage.mjs` compared the scripted gap to the clip duration with **no margin**, but a
+  clip does not start at its scripted `t`: manifest + MP3 + decode measured ~900 ms warm on localhost,
+  while `stop()` is synchronous — a ~260 ms deficit against shipped margins of 181 ms and 193 ms. Fixed
+  with a 1 s margin, a check of the dropped direction that did not exist, and `demo.json` retimed
+  (3000/7000/8400 → 4200/8800/11400); verified in both directions. `sim/tests/test_sil_child_voice.py` is
+  the standing proof — real PCM, real amplitude, reaching `ctx.destination`, uncut. **Honestly not
+  proven:** nothing here was heard by ear (a headless browser has no speaker), no physical robot was in
+  any loop, and `test_live_gateway_stt.py`'s 400-downgrade test was deselected to stay inside the call
+  budget. Suite unchanged at 4091 passed / 27 skipped; guards green; the wheel carries every
+  `moxie_sdk` data file and imports clean in a venv holding only `paho-mqtt`.
+  **One finding left OPEN, and it deserves its own slice: the SIL tier's own documented command is not
+  creds-free on a developer box.** `python3 -m pytest sim/tests -q` — what `sim/ci/ci.yml`'s SIL job
+  runs — gave **9 failed, 4170 passed, 10 skipped, 4 errors** here, twice, in
+  `test_live_voice_picker.py` and `test_live_gateway_turn_e2e.py`. Every one of those files passes **in
+  isolation** (`test_live_voice_picker.py`: 4 passed), and the cause was not isolated — the obvious
+  suspect, `test_live_gateway_stt._config()` leaving `config` reloaded under a pin, was reproduced
+  deliberately and does **not** do it, because the picker's own fixture reloads `config` again. This is
+  rule 8 one level deeper than it is written: rule 8 warns that a careless full-suite run spends gateway
+  calls, but the command that spends them here is the *tier's own*, and it is green in CI only because CI
+  has no `mqtt/.env` to find. So a cross-test interaction among the live suites is invisible to every
+  tier and shows up only on the one machine that has credentials. Not chased further because doing so
+  costs gateway calls on a failure outside this pass's four risks — but it is real, it is reproducible,
+  and it should be briefed rather than rediscovered.
+
 - **Integration evidence (2026-09-03) — the merged state was exercised as a whole, and it holds.** The three
   slices that landed without ever being run together (config honesty, the offline fallback, the rewritten deploy
   guide) were checked against the four risks that merge created, and all four came back clean: the new loud
