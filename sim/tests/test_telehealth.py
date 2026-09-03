@@ -129,6 +129,11 @@ def test_the_action_name_is_case_insensitive_but_canonical_on_the_wire():
 
 
 def test_the_timestamp_defaults_to_milliseconds():
+    """Deliberately clock-relative: the subject IS the default clock read. `build_…`
+    stamps `time.time() * 1000` when the caller passes none, and the only way to prove
+    the unit is milliseconds (not seconds, not microseconds) is to compare against a real
+    now. Pinning the clock here would delete the test. The 5 s tolerance is slack for a
+    loaded runner, not a window the hour of day can move."""
     import time
     ts = th.build_telehealth_command("UPDATE_STATE")["message"]["timestamp"]
     assert abs(ts - time.time() * 1000) < 5000

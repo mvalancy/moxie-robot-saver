@@ -110,7 +110,11 @@ class Robot:
 
 
 def _wait(predicate, timeout: float = 20.0, what: str = "condition"):
-    """Poll a real distributed system without sleeping blind. Returns the truthy value."""
+    """Poll a real distributed system without sleeping blind. Returns the truthy value.
+
+    The `time.time()` calls are a DURATION (a deadline), not a date: nothing here reads
+    the hour, so the answer is the same at 03:00 as at 15:00. Reviewed in the ledger in
+    `test_clock_dependence.py`."""
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
@@ -327,7 +331,15 @@ def test_the_logging_policy_gate_holds_against_a_running_supervisor(stack, polic
             assert base64.b64decode(row["event_data"]) == PAYLOAD
             assert "event_data_withheld" not in row
         print(f"[policy {expected}] on-disk row: {json.dumps(row, sort_keys=True)[:220]}")
-        assert (_daily(stack.data_dir, device) or {}).get("total") == 1
+        # The ring and the roll-up are two separate writes, so waiting for the ring (above)
+        # says nothing about the roll-up yet. Asserting it immediately failed in CI as
+        # `assert None == 1` (run 33729593409, the PR #63 merge) while passing locally —
+        # the signature of a write that had not landed, not of a wrong value. Wait for the
+        # field this asserts; a wrong total still returns and fails below, and a total that
+        # never arrives times out with a named reason.
+        total = _wait(lambda: (_daily(stack.data_dir, device) or {}).get("total"),
+                      what=f"the daily roll-up's total under {expected}")
+        assert total == 1, _daily(stack.data_dir, device)
     finally:
         r.close()
 

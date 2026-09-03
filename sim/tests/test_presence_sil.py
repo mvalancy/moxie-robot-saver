@@ -80,6 +80,8 @@ def _loopback(greet_after_s=300.0):
 
 
 def _seed_absent(rt, dev, away_s):
+    # Offsets from now, not dates — presence is scored as an age. Same reasoning as
+    # `test_presence_runtime._seed_absent`; reviewed in `test_clock_dependence.py`.
     now = time.time()
     rt.robots[dev].extra["presence"] = dict(
         P.new_state(), face_present=False, announced="left", faces_seen=1,

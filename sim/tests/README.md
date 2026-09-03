@@ -192,6 +192,21 @@ browser at all and carry the hermetic suite CI actually runs.
   `run_smoke.sh --telehealth`), each with a date, and are asserted from **both** sides so
   the lists can only shrink: an unlisted unreferenced file fails, and so does a listed one
   that has since been wired in or deleted.
+- **`test_clock_dependence.py`** — the ratchet that stops "a test that is red for twenty
+  minutes a day". Three flakes in two days came from the same disease (PR #60's
+  20-minutes-before-midnight schedule request, PR #63's `["00:00", "23:59"]` window that
+  is false for exactly 23:59, and a `TODAY = int(time.time())` that filed packets under
+  yesterday's roll-up row for ~30 s after midnight). The shape is never "a test used the
+  clock" — plenty must, and the runtime reads its own clock so pinning the test's would
+  prove nothing. It is *a test that reads the clock and nobody wrote down why that is
+  safe*. So `REVIEWED` lists every wall-clock read in the tree (`time.time`,
+  `strftime`/`localtime`, `datetime.now`, `date.today`, and the node `Date.now` family —
+  monotonic clocks are excluded by construction) keyed by `file::scope`, each with one of
+  three verdicts (`DETERMINISTIC` / `RELATIVE` / `BOTH BRANCHES`) and the reason. Asserted
+  from both sides plus a third: an unlisted read fails, a listed read that no longer
+  exists fails, and a listed row whose *constructs* changed fails — so adding a
+  `datetime.now()` to an already-reviewed deadline loop is still caught. Its own scanner
+  is proven against a planted file.
 - **`test_live_telehealth_voice.py`** — 🎭 the operator's line in Moxie's *real* mouth.
   `run_smoke.sh --telehealth` proves the recovered wire but speaks with the zero-dep tone,
   so what the robot played was a beep. This boots the same appliance `helpers_stack.py`

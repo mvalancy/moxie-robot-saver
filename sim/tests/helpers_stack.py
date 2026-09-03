@@ -87,6 +87,9 @@ class Broker:
         return self
 
     def wait_ready(self, timeout: float = 15.0):
+        # `time.time()` here measures a DURATION, not a date: the loop is a deadline, and
+        # its answer is the same at every hour of every day. Clock-reading, not
+        # clock-dependent — see the ledger in `test_clock_dependence.py`.
         import socket
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -149,6 +152,7 @@ class Supervisor:
             return ""
 
     def wait_for(self, needle: str, timeout: float = 30.0) -> str:
+        # Deadline, not a date — see `wait_ready` above.
         deadline = time.time() + timeout
         while time.time() < deadline:
             body = self.text()
