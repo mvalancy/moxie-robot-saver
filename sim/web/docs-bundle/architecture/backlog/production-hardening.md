@@ -530,9 +530,14 @@ Hermetic first. Every one runs with no network, no broker and no sleeping.
 
 ## 8. Effort and the file list
 
-### P0 — **M**, one agent, one sitting, shippable alone
+### P0 — **M**, one agent, one sitting, shippable alone — ✅ **shipped 2026-09-03**
 
 Two independent halves that happen to share a PR; either could ship alone if an agent runs out of room.
+Both shipped together. Every row below landed, plus one file the plan did not anticipate:
+`sim/tools/hardening_mutation_check.py`, **35 mutations, 0 missed** — which found five holes, four of
+them the same disease (two guards each covering for the other's absence, so neither was individually
+load-bearing). What is **not** here is anything from P1: no soak harness, no durable roster, no
+connection telemetry stream, no SIGTERM handler, and no console change.
 
 | Order | File | Change |
 |--:|---|---|
@@ -587,10 +592,19 @@ should be driven by a feature, not by this page.
 
 ## 9. Assumption ledger
 
-**Twenty rows: six proven, eight inferred, six unverified.** A different six — **A4, A5, A6, A7, A17 and
-A20** — need a **physical robot**, and that set deliberately cuts across the states: A4 and A7 are
-*inferred* and still hardware-gated, because an inference from upstream is not a measurement. That
-second number is the honest ceiling on this whole area and it does not move by building.
+**Twenty-one rows: seven proven, seven inferred, one measured, six unverified.** A different six —
+**A4, A5, A6, A7, A17 and A20** — need a **physical robot**, and that set deliberately cuts across the
+states: A4 and A7 are *inferred* and still hardware-gated, because an inference from upstream is not a
+measurement. That second number is the honest ceiling on this whole area and it does not move by
+building — **P0 shipping did not move it: the two rows P0 settled — A12 and A8 — are both about our own filesystem, and not one of the six hardware-gated rows budged.**
+
+> **P0 shipped 2026-09-03.** A12 → shipped; **A21 is new and is the only measured number here**;
+> A13 and A14 are explicitly **unchanged** — the lock timeout and the reconnect ceiling remain
+> *chosen*, and P1's connection telemetry is still what would measure them. **A8 was settled while
+> building** (`flock` on a real Docker named volume, with a negative control). A9 (network
+> filesystems) is not settled either — `/data` on NFS or SMB is **declared unsupported**, which is a
+> decision rather than a measurement, and the store's module docstring says so where an implementer
+> will read it.
 
 | # | Assumption | State | How it gets settled |
 |--:|---|:--:|---|
@@ -601,13 +615,14 @@ second number is the honest ceiling on this whole area and it does not move by b
 | A5 | A real Moxie reconnects to the broker on its own after a broker restart, and within what window | **unverified — needs hardware** | A robot, a broker restart, and a stopwatch. Nothing in our corpus states it. |
 | A6 | A real Moxie accepts a `/config` push mid-session without ending the session | **unverified — needs hardware** | C6 re-pushes on re-registration, which after a supervisor restart may land mid-session. Today's `_device_connect` only ever pushes at the start of one. |
 | A7 | A duplicate/idempotent config push is harmless | **inferred** | The face path already depends on it — `faces.py` re-keys `child_pii.id` as a deterministic UUIDv5 *so that* an idempotent re-push does not bust the Unity texture cache (audit ADOPT #9). **Needs hardware** to confirm the rest of the config behaves the same. |
-| A8 | `fcntl.flock` is honoured on a Docker **named volume** | **inferred** (local ext4 under `/var/lib/docker/volumes`) | Settled by running T1 inside the compose stack rather than on a tmpdir — a one-line addition to `run_compose_smoke.sh`'s sibling. |
+| A8 | `fcntl.flock` is honoured on a Docker **named volume** | **PROVEN 2026-09-03** | Settled the way this row asked: T1's shape run inside a container against a real named volume (`docker volume create` → `-v vol:/data`), two processes × 250 `append`s → **500 of 500, zero lost**, and the `.lock` sidecar present on the volume. With the **negative control on the same volume type** — `origin/dev`'s unlocked read-modify-write — losing **250 of 500**, so the probe can see a loss and the green result is not vacuous. Not yet wired into `run_compose_smoke.sh`; that is a P1 line. |
 | A9 | `flock` over NFS/SMB is unreliable | **inferred** (NFSv4 maps `flock` to POSIX locks; older/odd servers do not) | Not settled — **declared unsupported** in §3.4 instead. SQLite would be strictly worse here (WAL is unsupported over NFS), so this is a cost of the problem, not of the choice. |
 | A10 | The supervisor is the **only** process writing `$MOXIE_DATA_DIR` today | **proven** | Repo-wide sweep: `JsonStore(` outside tests appears only at `mqtt/run.py`:57, `mqtt/config.py`:461, `store.py`:461. Nothing under `server/`. |
 | A11 | A second writer is coming | **inferred, and near-certain** | Audit §4.4 #10 reconciles the console's child registry with the supervisor's. Plus `run_smoke.sh` already makes a developer one **today** (§2.3). |
-| A12 | The directory must be fsynced for `os.replace` to be durable | **inferred** (POSIX; ext4 `data=ordered` masks it in practice) | T9 asserts the call is made. Whether it *matters* on a given filesystem is not testable from here and does not need to be — the fix is 4 lines. |
-| A13 | `MOXIE_STORE_LOCK_TIMEOUT_S = 2.0` is the right number | **unverified — chosen, not measured** | It is an env var, and P1's connection telemetry is what measures it. The only defensible claim today is *"strictly inside the turn budget"*, which T6 enforces. |
-| A14 | `max_delay=60` is the right reconnect ceiling | **unverified — chosen** | Between paho's 120 and Fork A's 30, reasoned from a router reboot taking 30‑60 s (§4.1 C1). A week of real gap durations (P1 telemetry) settles it. |
+| A12 | The directory must be fsynced for `os.replace` to be durable | **inferred** (POSIX; ext4 `data=ordered` masks it in practice) | **Shipped 2026-09-03.** `store.py::_fsync_dir`, called after every `os.replace`; `test_store_concurrency.py::test_t9_*` asserts an fsync lands on a **directory** fd, and `t9b` that a filesystem refusing it (EINVAL — some container/network mounts) is a durability downgrade rather than a failed write. Whether it *matters* on a given filesystem is still not testable from here, and does not need to be. |
+| A13 | `MOXIE_STORE_LOCK_TIMEOUT_S = 2.0` is the right number | **unverified — chosen, not measured** *(unchanged by P0)* | It is an env var, and P1's connection telemetry is what measures it. The only defensible claim today is *"strictly inside the turn budget"*, which T6 now enforces at startup. **The backoff *cadence* inside that budget is now measured** (see A21) — the budget itself is not. |
+| A14 | `max_delay=60` is the right reconnect ceiling | **unverified — chosen** *(unchanged by P0)* | Between paho's 120 and Fork A's 30, reasoned from a router reboot taking 30‑60 s (§4.1 C1). A week of real gap durations (P1 telemetry) settles it. S5 pins the ladder we configured (1, 2, 4, …, 60), not that 60 is right. |
+| A21 | The lock **backoff cadence** — 0.5 ms base, 2 ms cap — is fast enough that a contended writer is not starved out to the timeout | **measured 2026-09-03** *(new, found while building P0)* | `flock` has **no queue**: a `LOCK_NB` waiter takes whatever gap the holder leaves, so a process appending in a tight loop starves a coarse poller. Measured, two processes × 500 `append`s on one collection, three cadences × two runs: 10 ms/200 ms refused ~5 of 1 000 appends; 0.5 ms/10 ms refused ~2; 0.5 ms/2 ms refused **0**. Recorded on the constants in `store.py`. It is still a *poll*: fairness is not guaranteed, and a starved waiter times out — the bounded, **recorded** failure §3.2 point 4 accepts (T5), not a silent one. This is the one number in this brief that is measured rather than chosen. |
 | A15 | `$SYS/broker/log` is live-only and is **not** replayed on re-subscribe, so a supervisor restart cannot recover the connected set from it | **proven** | mosquitto publishes log lines as they happen; `mqtt-and-conversation.md` §3.4. This is the entire reason C6 exists. |
 | A16 | 3 concurrent virtual robots and 2 000 turns/hour represent a household week | **inferred** | ~100 turns/day is a heavy child; 3 robots is more than one house has. Both are knobs in `run_soak.sh`. |
 | A17 | A real Moxie's `d_<uuid>` client id is **stable across reconnects**, so per-device state (`_turn_seq`, memory, permits) survives one | **unverified — needs hardware** | The id is the device id and is presumed stable, but nothing in our corpus proves it does not rotate. If it rotates, C6, the permits gate and every per-device collection are wrong in the same way. |

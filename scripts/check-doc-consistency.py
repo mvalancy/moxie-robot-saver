@@ -66,10 +66,15 @@ def check_no_conflict_markers(root):
     `functions/` json-import guard learned.
     """
     import re as _re
-    bad, pat = [], _re.compile(r"^(<{7}|={7}|>{7})(\s|$)")
-    skip = {".git", "node_modules", ".venv", "__pycache__", "dist", ".pytest_cache"}
+    # ONLY `<<<<<<<` and `>>>>>>>`. A bare `=======` is a legitimate reStructuredText
+    # underline — pytest's own sources carry one — and a real conflict always brings all
+    # three markers, so dropping the ambiguous one costs no detection and removes the
+    # false positive that fired the first time this guard met a venv.
+    bad, pat = [], _re.compile(r"^(<{7}|>{7})(\s|$)")
+    skip = {".git", "node_modules", "__pycache__", "dist", ".pytest_cache", "site-packages"}
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in skip]
+        dirnames[:] = [d for d in dirnames
+                       if d not in skip and not d.startswith(".venv") and not d.startswith("venv")]
         for fn in filenames:
             if not fn.endswith((".md", ".py", ".js", ".mjs", ".json", ".yml", ".yaml", ".sh")):
                 continue

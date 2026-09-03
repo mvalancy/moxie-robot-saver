@@ -22,18 +22,68 @@ Layout::
 Properties we actually rely on:
   * **robust to a missing directory** — reads return the default, writes create it;
   * **atomic-ish writes** — write a temp file in the same directory, then `os.replace`,
-    so a crash mid-write leaves the previous good file, never a truncated one;
+    so a crash mid-write leaves the previous good file, never a truncated one — and, since
+    2026-09-03, an `fsync` of the **directory** after the rename, so the directory entry
+    pointing at the new inode is durable and not merely likely;
   * **thread-safe** — the runtime ingests reports on a worker pool, so read-modify-write
     (`append`) is serialized by a lock;
+  * **process-safe** — see `transaction()` below;
   * **pure** — no MQTT, no protobuf, no config import; unit-testable on a tmp dir.
+
+Cross-process writes (`docs/architecture/backlog/production-hardening.md` §3)
+----------------------------------------------------------------------------
+An in-process `threading.RLock` is not a lock at all once a second process appears, and a
+second process is not hypothetical: `sim/run_smoke.sh` starts one on every contributor's
+box, an operator's backup or hand-edit is another, and the console's child registry is a
+third that is coming. Two `append()`s from two processes interleave read-read-write-write
+and one item vanishes **silently**.
+
+The fix is deliberately the small one: an **advisory `flock` on a per-record sidecar lock
+file**, behind a public `transaction(device, collection)`, with the JSON staying exactly
+where it is on disk. Not SQLite — the brief's §3.2 argues that at length, and the short
+version is that SQLite's only real advantage here is multi-collection transactions, which
+not one of the fourteen call sites uses. A parent can still `cat` and `rm` their child's
+data, which is the most legible privacy property this appliance has.
+
+Four things a plausible-looking `flock` patch gets wrong, all of them load-bearing:
+
+1. **Lock a sidecar, never the data file.** `os.replace()` swaps the *inode*, so a lock
+   held on `memory.json` is a lock on an inode the next writer will never open. The lock
+   is `<path>.lock` — created once, never replaced, never deleted (deleting it
+   re-introduces the same race), empty, and ignored by every reader.
+2. **`RLock` outside, `flock` inside, one `open()` per acquisition.** `flock` is per *open
+   file description*: two `open()`s in one thread deadlock each other where the old
+   `RLock` was reentrant, and the five `MemoryStore` sites depend on that reentrancy. So
+   the store-wide `RLock` is taken first and only the **outermost** acquisition opens an
+   fd; a nested `transaction()` on the same record is a no-op re-entry.
+3. **Never block the MQTT loop.** Some writes happen on the paho network thread, so the
+   wait is `LOCK_EX | LOCK_NB` in a bounded exponential-backoff-with-jitter loop
+   (`chat.py::call_with_backoff`'s shape, injectable `sleep`) capped by
+   `MOXIE_STORE_LOCK_TIMEOUT_S` — **default 2.0 s, chosen rather than measured** (§9 A13).
+   On exhaustion the write fails, returns False, and is *recorded*: never retried forever,
+   never silently swallowed.
+4. **`fcntl` is POSIX-only, and the fallback is loud.** Without it `transaction()` degrades
+   to exactly the old `RLock` behaviour and `warn_no_locking()` prints one startup line.
+
+What this does **not** buy: multi-collection atomicity, a query layer, schema/migrations —
+§3.4 says so plainly. `/data` on NFS or SMB is **unsupported**: `flock` there is
+best-effort at best (SQLite would be worse — WAL is flatly unsupported over NFS — so this
+is a cost of the problem, not of the choice).
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
+import random
 import threading
 import time
+
+try:                                   # POSIX only; Windows degrades to the RLock alone
+    import fcntl
+except ImportError:                    # pragma: no cover - not reachable on Linux CI
+    fcntl = None                       # type: ignore[assignment]
 
 # Default data dir: mqtt/data/ (sibling of moxie_sdk/). Git-ignored — it is runtime
 # state, not source. Override with MOXIE_DATA_DIR (e.g. a volume in the compose stack).
@@ -42,10 +92,140 @@ _DEFAULT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 _SAFE = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
 
+#: Suffix of a record's advisory lock file. Never the data file itself — see the module
+#: docstring, trap #1.
+LOCK_SUFFIX = ".lock"
+
+#: How long a writer may wait for another process's lock before giving up, in seconds.
+#: **Chosen, not measured** (production-hardening.md §9 A13) — which is exactly why it is
+#: an env var: a week of real contention on an appliance is what settles it. `config.py`
+#: refuses to start when it is not strictly less than `MOXIE_BRAIN_BUDGET_S`, because a
+#: lock wait is a slice of a turn rather than a claim on it.
+DEFAULT_LOCK_TIMEOUT_S = 2.0
+
+#: Backoff shape, mirroring `moxie_sdk/chat.py::call_with_backoff`: exponential from
+#: `base`, capped at `cap`, plus uniform jitter.
+#:
+#: These two are **measured, not chosen** — unlike the timeout (A13). `flock` has no
+#: queue: a `LOCK_NB` waiter takes whatever gap the holder leaves, so a process appending
+#: in a tight loop *starves* a coarse poller. Measured on 2026-09-03, two processes ×
+#: 500 `append`s on one collection, three cadences × two runs:
+#:
+#:   base 10 ms / cap 200 ms → 2-3 timeouts per writer, ~5 of 1 000 appends refused
+#:   base 0.5 ms / cap  10 ms → 0-2 timeouts,           ~2 of 1 000 refused
+#:   base 0.5 ms / cap   2 ms → 0 timeouts,              0 of 1 000 refused
+#:
+#: The contended case is another process finishing a ~1 ms write, so the poll interval has
+#: to be on the order of that write rather than of an HTTP retry. It is still a *poll*:
+#: fairness is not guaranteed and a starved waiter eventually times out — which is the
+#: bounded, recorded failure §3.2 point 4 accepts, not a silent one.
+LOCK_BACKOFF_BASE_S = 0.0005
+LOCK_BACKOFF_CAP_S = 0.002
+
+_NO_LOCKING_NOTE = (
+    "⚠️  cross-process store locking is unavailable on this platform (no fcntl): two "
+    "processes writing $MOXIE_DATA_DIR can still lose each other's updates. Linux and "
+    "macOS are unaffected; see docs/architecture/backlog/production-hardening.md §3.3.")
+
+_warned_no_locking = False
+
+
+class StoreLockTimeout(Exception):
+    """Another process held a record's lock for longer than the store was willing to wait.
+
+    Raised only out of `JsonStore.transaction()`; the store's own writers turn it into a
+    falsy return **and a recorded failure**, because a swallowed lock failure is the same
+    class of bug as the publish whose return code nobody read.
+    """
+
+
+#: `refuses_on_lock`'s marker for a method whose caller expects an exception rather than a
+#: falsy value (the parent-facing memory *edit*, whose handler turns a `ValueError` into a
+#: 400 with the reason — a correction that silently did not save is worse than an error).
+RAISE_INSTEAD = object()
+
+
+def refuses_on_lock(what: str, fallback):
+    """Turn a `StoreLockTimeout` out of one read-modify-write into that method's own
+    *"nothing was stored"* answer, plus a printed line.
+
+    The five `MemoryStore` read-modify-writes each already have such an answer — `merge`
+    returns None when the policy drops a write, `erase` returns False when there was
+    nothing to erase — so a refused lock reuses it rather than inventing a new failure
+    shape a route would have to learn. What it must never do is escape into a turn as a
+    traceback, or vanish: `JsonStore.lock_timeouts` counts every one (§5.3 A11).
+    """
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(self, device_id, *a, **kw):
+            try:
+                return fn(self, device_id, *a, **kw)
+            except StoreLockTimeout as e:
+                print(f"[memory] ⏳ {what} for {device_id} was refused — {e}", flush=True)
+                if fallback is RAISE_INSTEAD:
+                    raise ValueError(
+                        "the store is busy (another process is writing this robot's "
+                        "memory) — that correction was not saved; try again") from e
+                return fallback
+        return wrapper
+    return deco
+
+
+def locking_note() -> str:
+    """The one-line warning for a platform with no `fcntl`, or `""` on POSIX."""
+    return "" if fcntl is not None else _NO_LOCKING_NOTE
+
+
+def warn_no_locking() -> bool:
+    """Print `locking_note()` once per process. True if it printed.
+
+    Called from `mqtt/run.py` at startup: a silent downgrade is how somebody ships a
+    Windows appliance believing two processes are safe on one data directory.
+    """
+    global _warned_no_locking
+    note = locking_note()
+    if not note or _warned_no_locking:
+        return False
+    _warned_no_locking = True
+    print(f"[store] {note}", flush=True)
+    return True
+
+
+def _fsync_dir(path: str) -> None:
+    """`fsync` a directory so a rename into it is durable (A12).
+
+    `os.replace` publishes the new inode; POSIX does not promise the *directory entry*
+    survives a power cut until the directory itself is synced. ext4's `data=ordered` masks
+    this in practice, which is why nobody has been bitten — but that is the filesystem
+    being kind, not the code being correct.
+    """
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
 
 def data_dir() -> str:
     """The configured data directory (`MOXIE_DATA_DIR`, else `mqtt/data`)."""
     return os.environ.get("MOXIE_DATA_DIR", "").strip() or _DEFAULT_DIR
+
+
+def _lock_timeout(explicit: float | None = None) -> float:
+    """The lock budget: an explicit argument, else `MOXIE_STORE_LOCK_TIMEOUT_S`, else 2.0.
+
+    Read here rather than imported from `config`, because this module's stated property is
+    that it imports no config — and a knob the store cannot see is a knob that does
+    nothing. `config.py` reads the same variable and is where the *guard* lives.
+    """
+    if explicit is not None:
+        return float(explicit)
+    try:
+        return float(os.environ.get("MOXIE_STORE_LOCK_TIMEOUT_S") or DEFAULT_LOCK_TIMEOUT_S)
+    except (TypeError, ValueError):
+        return DEFAULT_LOCK_TIMEOUT_S
 
 
 def safe_name(value: str) -> str:
@@ -66,13 +246,37 @@ def safe_name(value: str) -> str:
 class JsonStore:
     """A tiny per-robot JSON store. One file per (device_id, collection)."""
 
-    def __init__(self, root: str | None = None):
+    def __init__(self, root: str | None = None, *, lock_timeout_s: float | None = None,
+                 on_lock_timeout=None, sleep=time.sleep):
         self.root = root or data_dir()
+        #: Store-wide, reentrant, in-process. Taken FIRST, always — see trap #2.
         self._lock = threading.RLock()
+        #: Per-thread nesting depth per lock path, so a nested `transaction()` on one
+        #: record re-enters instead of opening a second file description of the same lock
+        #: file (which would block on itself forever).
+        self._held = threading.local()
+        self.lock_timeout_s = _lock_timeout(lock_timeout_s)
+        #: `on_lock_timeout(lock_path, waited_s)` — the host's recorder. The runtime
+        #: installs one that writes the runtime's `recent` ring, so a refused write is
+        #: visible to an operator instead of being a number nobody reads.
+        self.on_lock_timeout = on_lock_timeout
+        self._sleep = sleep
+        #: Observability for the failure this design newly makes possible (§5.3 A11).
+        self.lock_timeouts = 0
+        self.last_lock_error = ""
 
     # ---- paths ----
     def device_dir(self, device_id: str) -> str:
         return os.path.join(self.root, "robots", safe_name(device_id))
+
+    def lock_path(self, path: str) -> str:
+        """The advisory lock **sidecar** for a record path.
+
+        A sidecar rather than the data file itself because `os.replace` swaps the inode
+        (trap #1): a lock on `memory.json` is a lock on something the next writer will
+        never open, so it looks correct and serializes nothing.
+        """
+        return path + LOCK_SUFFIX
 
     def path(self, device_id: str, collection: str) -> str:
         return os.path.join(self.device_dir(device_id), f"{safe_name(collection)}.json")
@@ -112,58 +316,215 @@ class JsonStore:
         except OSError:
             return []
 
+    # ---- the cross-process lock ----
+    def _depths(self) -> dict:
+        """This thread's `{lock_path: depth}` — see trap #2."""
+        depths = getattr(self._held, "depths", None)
+        if depths is None:
+            depths = self._held.depths = {}
+        return depths
+
+    def _acquire_flock(self, fd) -> bool:
+        """One non-blocking `LOCK_EX` attempt. True when we got it.
+
+        Non-blocking on purpose: some store writes happen on the paho network thread, and
+        a blocking `flock` there stalls every robot on the appliance until whoever is
+        wedged lets go. A seam of its own so a test can make the lock unobtainable
+        without needing a second process.
+        """
+        if fcntl is None:
+            return True
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+
+    def _wait_flock(self, fd, lock_path: str) -> float | None:
+        """Retry `_acquire_flock` with backoff until `lock_timeout_s` is spent.
+
+        Returns None once it is held, else the seconds waited. The budget is counted in
+        *requested* sleep — not in wall clock — so an injected `sleep` (the
+        `test_clock_dependence.py` ratchet: a test never reads a clock) terminates exactly
+        the way the real one does.
+        """
+        if self._acquire_flock(fd):
+            return None
+        started = time.monotonic()
+        asked = 0.0
+        attempt = 0
+        while asked < self.lock_timeout_s:
+            delay = min(LOCK_BACKOFF_CAP_S, LOCK_BACKOFF_BASE_S * (2 ** attempt))
+            delay += random.uniform(0, LOCK_BACKOFF_BASE_S)
+            delay = min(delay, self.lock_timeout_s - asked)
+            self._sleep(delay)
+            asked += delay
+            attempt += 1
+            if self._acquire_flock(fd):
+                return None
+        return max(time.monotonic() - started, asked)
+
+    def _note_lock_timeout(self, lock_path: str, waited: float) -> None:
+        self.lock_timeouts += 1
+        self.last_lock_error = (
+            f"store lock busy after {waited:.2f}s: {os.path.basename(lock_path)}")
+        if self.on_lock_timeout is not None:
+            try:
+                self.on_lock_timeout(lock_path, waited)
+            except Exception:                  # a broken recorder must not lose the write
+                pass
+
+    @contextlib.contextmanager
+    def _transaction_path(self, path: str):
+        """`transaction()` over an already-resolved record path."""
+        lock_path = self.lock_path(path)
+        self._lock.acquire()                   # RLock OUTSIDE, always (trap #2)
+        depths = self._depths()
+        if depths.get(lock_path):              # nested on the same record, same thread
+            depths[lock_path] += 1
+            try:
+                yield self
+            finally:
+                depths[lock_path] -= 1
+                self._lock.release()
+            return
+        fd = None
+        try:
+            if fcntl is not None:
+                try:
+                    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+                    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+                except OSError:
+                    fd = None                  # unwritable tree: the write will fail too
+                if fd is not None:
+                    waited = self._wait_flock(fd, lock_path)
+                    if waited is not None:
+                        self._note_lock_timeout(lock_path, waited)
+                        raise StoreLockTimeout(self.last_lock_error)
+            depths[lock_path] = 1
+            try:
+                yield self
+            finally:
+                depths.pop(lock_path, None)
+        finally:
+            if fd is not None:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+                os.close(fd)                   # the fd is closed on EVERY path (§5.3 A8)
+            self._lock.release()
+
+    def transaction(self, device_id: str, collection: str):
+        """Hold one record against every other writer, in this process and outside it.
+
+        The public seam the five `MemoryStore` read-modify-writes use instead of reaching
+        into `self.store._lock`. Reentrant on the same `(device, collection)` from the
+        same thread; raises `StoreLockTimeout` when another **process** has held the
+        record for longer than `lock_timeout_s`::
+
+            with store.transaction(device_id, "memory"):
+                data = store.read(device_id, "memory", {})
+                data["quiz"] = ...
+                store.write(device_id, "memory", data)
+
+        Readers need no transaction: `os.replace` already gives them a whole old or a
+        whole new record.
+        """
+        return self._transaction_path(self.path(device_id, collection))
+
+    def transaction_shared(self, collection: str):
+        """`transaction()` for the fleet tier (`fleet/<collection>.json`).
+
+        The tier two processes are likeliest to fight over — `config`, `permits`, `voice`,
+        the content overlay — because it is not partitioned by device.
+        """
+        return self._transaction_path(self.shared_path(collection))
+
     # ---- writes ----
     def write(self, device_id: str, collection: str, value) -> bool:
-        """Store `value` (any JSON-serializable object). Returns True on success."""
-        return self._write_path(self.path(device_id, collection), value)
+        """Store `value` (any JSON-serializable object). Returns True on success.
+
+        False also means *"another process held this record and would not let go"* — a
+        refused write, recorded in `lock_timeouts` / `last_lock_error`, never a partial one.
+        """
+        return self._locked_write(self.path(device_id, collection), value)
 
     def write_shared(self, collection: str, value) -> bool:
         """Store a fleet-wide `value` (`fleet/<collection>.json`). True on success."""
-        return self._write_path(self.shared_path(collection), value)
+        return self._locked_write(self.shared_path(collection), value)
+
+    def _locked_write(self, path: str, value) -> bool:
+        try:
+            with self._transaction_path(path):
+                return self._write_path(path, value)
+        except StoreLockTimeout:
+            return False
 
     def _write_path(self, path: str, value) -> bool:
         with self._lock:
             try:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
+                directory = os.path.dirname(path)
+                os.makedirs(directory, exist_ok=True)
                 tmp = f"{path}.{os.getpid()}.tmp"
                 with open(tmp, "w") as fh:
                     json.dump(value, fh)
                     fh.flush()
                     os.fsync(fh.fileno())
                 os.replace(tmp, path)          # atomic on POSIX; readers see old or new
-                return True
             except (OSError, TypeError, ValueError):
                 try:
                     os.unlink(tmp)             # never leave a half-written temp behind
                 except (OSError, UnboundLocalError, NameError):
                     pass
                 return False
+            try:
+                _fsync_dir(directory)          # the rename itself, made durable (A12)
+            except OSError:
+                pass                           # some filesystems refuse; the data is written
+            return True
 
     def append(self, device_id: str, collection: str, item, *, cap: int | None = None):
-        """Append one item to a stored list and return the new list.
+        """Append one item to a stored list and return the new list, or **None** when
+        another process would not release the record.
 
         `cap` keeps only the newest `cap` items (the store is a rolling history, not an
-        archive). Read-modify-write under the store lock.
+        archive). Read-modify-write inside `transaction()`, which is what makes it safe
+        across processes — before that fix two appenders lost one item per collision, with
+        no error anywhere.
         """
-        with self._lock:
-            items = self.read(device_id, collection, [])
-            if not isinstance(items, list):
-                items = []
-            items.append(item)
-            if cap is not None and cap >= 0 and len(items) > cap:
-                del items[: len(items) - cap]
-            self.write(device_id, collection, items)
-            return items
+        try:
+            with self.transaction(device_id, collection):
+                items = self.read(device_id, collection, [])
+                if not isinstance(items, list):
+                    items = []
+                items.append(item)
+                if cap is not None and cap >= 0 and len(items) > cap:
+                    del items[: len(items) - cap]
+                self.write(device_id, collection, items)
+                return items
+        except StoreLockTimeout:
+            return None
 
     def delete(self, device_id: str, collection: str) -> bool:
         """Remove one collection. True if a file was removed."""
-        return self._delete_path(self.path(device_id, collection))
+        return self._locked_delete(self.path(device_id, collection))
 
     def delete_shared(self, collection: str) -> bool:
         """Remove one fleet-wide collection. True if a file was removed."""
-        return self._delete_path(self.shared_path(collection))
+        return self._locked_delete(self.shared_path(collection))
+
+    def _locked_delete(self, path: str) -> bool:
+        try:
+            with self._transaction_path(path):
+                return self._delete_path(path)
+        except StoreLockTimeout:
+            return False
 
     def _delete_path(self, path: str) -> bool:
+        """Remove the record. The `.lock` sidecar is deliberately left behind: deleting it
+        re-introduces the inode race it exists to prevent (two processes each create their
+        own and lock different inodes). It is an empty file."""
         with self._lock:
             try:
                 os.unlink(path)
@@ -465,6 +826,17 @@ class MemoryStore:
         self.max_items = max_items
         self.max_bytes = max_bytes
 
+    # ---- the record lock ----
+    def _record(self, device_id: str):
+        """Hold this robot's memory record for a read-modify-write.
+
+        Was `with self.store._lock:` — an in-process `RLock` reached into from outside the
+        class, which serialized nothing against a second process. Now the store's public
+        `transaction()`, which is why that method exists at all
+        (production-hardening.md §2.1: *"any fix must be reachable from here"*).
+        """
+        return self.store.transaction(device_id, self.collection)
+
     # ---- the privacy gate ----
     def writes_allowed(self, device_id: str) -> bool:
         """False under `LoggingPolicy.NO_DATA` — nothing about the child is stored."""
@@ -536,6 +908,7 @@ class MemoryStore:
             return False
         return self.store.write(device_id, self.collection, self._bound(dict(data or {})))
 
+    @refuses_on_lock("merge", None)
     def merge(self, device_id: str, namespace: str, values: dict, *,
               provenance: dict | None = None, meta: dict | None = None,
               prepend_lists: bool = True, now=None) -> dict | None:
@@ -559,7 +932,7 @@ class MemoryStore:
         if not self.writes_allowed(device_id):
             return None
         ns = str(namespace or "default")
-        with self.store._lock:                   # read-modify-write, like JsonStore.append
+        with self._record(device_id):                     # read-modify-write, across processes
             data = self.load(device_id)
             # Write-back of the id migration: whatever shape the file was in, from here on
             # every list in it is a list of items.
@@ -648,9 +1021,10 @@ class MemoryStore:
                     return str(key), idx, item
         return None, -1, None
 
+    @refuses_on_lock("erase_item", False)
     def erase_item(self, device_id: str, namespace: str, item_id: str) -> bool:
         """Forget exactly one remembered item. Never policy-gated, like every erase."""
-        with self.store._lock:
+        with self._record(device_id):
             data = self.load(device_id)
             block = data.get(str(namespace))
             if not isinstance(block, dict):
@@ -668,6 +1042,7 @@ class MemoryStore:
                     return True
             return False
 
+    @refuses_on_lock("edit_item", RAISE_INSTEAD)
     def edit_item(self, device_id: str, namespace: str, item_id: str, text: str, *,
                   history=(), check=None, now=None) -> dict:
         """Correct one remembered item, keeping its id, and **pin** it.
@@ -688,7 +1063,7 @@ class MemoryStore:
             from .content.memory import check_text as check   # lazy: no import cycle
         if not check(new_text, history=history):
             raise ValueError("that text cannot be stored (safety or the child's own words)")
-        with self.store._lock:
+        with self._record(device_id):
             data = self.load(device_id)
             block = data.get(str(namespace))
             if not isinstance(block, dict):
@@ -711,6 +1086,7 @@ class MemoryStore:
                     return item
             raise ValueError(f"unknown memory item {item_id!r}")
 
+    @refuses_on_lock("note_used", 0)
     def note_used(self, device_id: str, rendered: str, *, now=None) -> int:
         """Mark the items that appear in a rendered prompt as used. → how many.
 
@@ -724,7 +1100,7 @@ class MemoryStore:
         if not text or not device_id or not self.writes_allowed(device_id):
             return 0
         stamp = round(float(time.time() if now is None else now), 3)
-        with self.store._lock:
+        with self._record(device_id):
             data = self.load(device_id)
             hits = 0
             for ns, block in data.items():
@@ -746,11 +1122,12 @@ class MemoryStore:
                 self.store.write(device_id, self.collection, data)
             return hits
 
+    @refuses_on_lock("erase", False)
     def erase(self, device_id: str, namespace: str | None = None) -> bool:
         """Forget one namespace, or (namespace None/"all") everything for this robot.
 
         Erasure is **never** policy-gated: a parent must always be able to delete."""
-        with self.store._lock:
+        with self._record(device_id):
             if namespace in (None, "", "all", "*"):
                 data = self.load(device_id)
                 self.store.delete(device_id, self.collection)

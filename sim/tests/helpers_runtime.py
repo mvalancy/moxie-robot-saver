@@ -99,14 +99,98 @@ def load_repo_dotenv(path: str | None = None) -> str | None:
     return path
 
 
-class FakeClient:
-    """Stands in for the paho client: records `(topic, decoded_payload)` publishes."""
+#: paho's `MQTT_ERR_SUCCESS` / `MQTT_ERR_NO_CONN`, spelled out so this module keeps its
+#: no-hard-dependency shape (the fast tier installs paho, the helper does not require it).
+MQTT_ERR_SUCCESS = 0
+MQTT_ERR_NO_CONN = 4
 
-    def __init__(self):
+
+class FakeInfo:
+    """paho's `MQTTMessageInfo`, as much of it as `_publish()` reads."""
+
+    def __init__(self, rc=MQTT_ERR_SUCCESS):
+        self.rc = rc
+        self.mid = 0
+
+    def is_published(self) -> bool:
+        return self.rc == MQTT_ERR_SUCCESS
+
+
+class FakeClient:
+    """Stands in for the paho client: records `(topic, decoded_payload)` publishes.
+
+    Since the production-hardening slice it also models the **connection**, because that
+    is the thing the runtime was getting wrong: a QoS 0 publish with no socket is dropped
+    rather than queued, and returns `MQTT_ERR_NO_CONN` on `info.rc` (A3, proven by reading
+    the installed paho). `drop()` / `up()` / `refuse()` are §5.1's three fault-injection
+    verbs; they drive the runtime's real callbacks, so a test never has to know how a
+    disconnect is plumbed.
+    """
+
+    def __init__(self, runtime=None):
         self.published: list = []
+        #: Publishes the fake refused because there was no socket — the messages a real
+        #: broker never saw. Kept apart from `published` for exactly that reason.
+        self.dropped: list = []
+        self.subscribed: list = []
+        #: Whether there is a socket. **True by default**: a `FakeClient` stands in for a
+        #: working transport, which is what every existing suite that drives a turn
+        #: assumes. `drop()` is how a test says otherwise. (The runtime's own
+        #: `broker_connected` is a different thing and starts False — it records what a
+        #: CONNACK told us, and a client object that has never connected has told us
+        #: nothing, which is the confusion `wake_robot`'s `if self.client is None` was
+        #: built on.)
+        self.connected = True
+        #: The runtime whose callbacks the verbs drive. `make_runtime` sets it.
+        self.runtime = runtime
 
     def publish(self, topic, payload):
+        if not self.connected:
+            self.dropped.append((topic, payload))
+            return FakeInfo(MQTT_ERR_NO_CONN)
         self.published.append((topic, json.loads(payload)))
+        return FakeInfo(MQTT_ERR_SUCCESS)
+
+    def subscribe(self, topic, qos=0):
+        self.subscribed.append(topic)
+        return (MQTT_ERR_SUCCESS, 1)
+
+    def is_connected(self) -> bool:
+        return self.connected
+
+    # -- fault injection (production-hardening.md §5.1) -----------------------
+    def _reason(self, rc):
+        """A paho `ReasonCode` when paho is importable, else the bare int — so a test can
+        say `refuse(rc=5)` and get what a real CONNACK would hand the callback."""
+        try:
+            import paho.mqtt.client as mqtt
+            from paho.mqtt.reasoncodes import ReasonCode
+            return ReasonCode(mqtt.CONNACK >> 4, identifier=0 if rc == 0 else 135)
+        except Exception:
+            return rc
+
+    def up(self, rc=0):
+        """A successful CONNACK: the socket is live and the runtime re-subscribes."""
+        self.connected = True
+        if self.runtime is not None:
+            self.runtime._on_connect(self, None, {}, self._reason(rc), None)
+        return self
+
+    def drop(self, rc=7):
+        """The socket went away (broker restart, Wi-Fi, NAT). Publishes now fail."""
+        self.connected = False
+        if self.runtime is not None:
+            self.runtime._on_disconnect(self, None, {}, self._reason(rc), None)
+        return self
+
+    def refuse(self, rc=5):
+        """A CONNACK **refusal** — `rc=5`, not authorised, which PR #44's broker
+        credential made reachable for the first time. The socket is closing; nothing may
+        be subscribed on it."""
+        self.connected = False
+        if self.runtime is not None:
+            self.runtime._on_connect(self, None, {}, self._reason(rc), None)
+        return self
 
     # -- convenience readers -------------------------------------------------
     def on(self, topic: str) -> list:
@@ -125,15 +209,16 @@ class LatchClient(FakeClient):
     (`test_brain_latency.py` has its own private copy from PR #14; new suites use this
     one — see this module's docstring on why the old copies stay put.)"""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, runtime=None):
+        super().__init__(runtime)
         import threading
         self._cond = threading.Condition()
 
     def publish(self, topic, payload):
         with self._cond:
-            super().publish(topic, payload)
+            info = super().publish(topic, payload)
             self._cond.notify_all()
+            return info
 
     def wait_for(self, predicate, timeout=10.0) -> bool:
         with self._cond:
@@ -175,7 +260,7 @@ def make_runtime(app, *, device_id: str = "d_test", nickname: str = "Sam",
     rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname=nickname),
                                     allow_unverified_bots=allow_unverified_bots,
                                     store=store)
-    rt.client = FakeClient()
+    rt.client = FakeClient(runtime=rt)
     rt.robots[device_id] = RobotContext(device_id=device_id, child=rt.child,
                                         module_id=module_id, content_id=content_id)
     return rt, device_id

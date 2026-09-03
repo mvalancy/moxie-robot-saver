@@ -53,3 +53,13 @@
   ACLs. Every check is **delivery-based**: MQTT 3.1.1 PUBACKs a publish the broker then drops for ACL
   reasons and SUBACKs a subscription it will never deliver on, so a proof written against acks would pass
   on a broker with no ACL at all.
+- **`hardening_mutation_check.py`** — the same proof for [production
+  hardening](../../docs/architecture/backlog/production-hardening.md) P0: **35 mutations** across
+  `moxie_sdk/store.py`'s cross-process lock and the connection region of
+  `supervisor/moxie_runtime.py`. Two of them are deliberately the *half-done fixes* the brief warns
+  about rather than deleted guards — `connect_async` without `retry_first_connection=True` (a no-op
+  under `loop_forever`, risk R2) and the lock moved from the `.lock` sidecar onto the data file
+  (looks correct, serializes nothing, because `os.replace` swaps the inode — risk R1) — because that
+  is what a plausible patch actually looks like. All 35 are caught; the run that got there found
+  **five** holes, four of them the same disease: two guards each covering for the other's absence, so
+  neither was individually load-bearing. Run it after touching either file.
