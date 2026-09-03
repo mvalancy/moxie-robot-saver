@@ -129,6 +129,12 @@
         return behaviourTree("Bht_Gesture_Greet");
       case "Bht_Idle_Listening":                 // attentive lean-in + head tilt
         set(6, 20000); set(4, 20000); setTimeout(home, 1600); break;
+      case "Bht_Idle_Near_Focused":              // held gaze: lean in, head level, hold
+        // INFERRED, like every other case here: no hardware has ever played our markup,
+        // and the name is what we have. The behavior planner uses this tree as its
+        // "hold the gaze" handle (there is no gaze verb in the 24 recovered commands),
+        // so it must read as steadier and longer than Idle_Listening's tilt.
+        set(6, 22000); set(4, 16384); setTimeout(home, 2400); break;
       case "Bht_Talking_With_Gestures":
       case "Bht_Talking_Poses":
       case "Bht_Vocal_Gestures":                 // talking arm gestures (alternating)

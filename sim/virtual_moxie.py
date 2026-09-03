@@ -39,14 +39,24 @@ except ImportError:
 
 FIRMWARE = "24.10.803"           # the analyzed build; robot reports this in /state
 
+#: The scored half of `RemoteChatOutput` — what the line MEANS and how it is performed
+#: (docs/architecture/ai-seam.md §2; backlog/expressiveness.md §2.3 C1/C3). A robot that
+#: only ever checked `output.text` cannot tell a scored appliance from an unscored one, so
+#: `--expect-scored` asserts these arrive on **every** response of a turn, streamed chunks
+#: included. `signals` is plural on the wire (the field is `repeated`) even though the
+#: planner's own dict spells it `signal`.
+SCORED_FIELDS = ("mood", "mood_intensity", "dialog_act", "emotion", "signals")
+
 
 class VirtualMoxie:
     def __init__(self, host: str, port: int, device_id: str | None = None,
-                 timeout: float = 15.0, verbose: bool = True, expect_tts: bool = False):
+                 timeout: float = 15.0, verbose: bool = True, expect_tts: bool = False,
+                 expect_scored: bool = False):
         self.host, self.port, self.timeout = host, port, timeout
         self.device_id = device_id or f"d_{uuid.uuid4()}"
         self.verbose = verbose
         self.expect_tts = expect_tts        # also assert a CloudTTSResponse (audio) arrives
+        self.expect_scored = expect_scored  # ...and that every response carries its score
         self.got_config = threading.Event()
         self.got_reply = threading.Event()
         self.got_tts = threading.Event()
@@ -55,6 +65,10 @@ class VirtualMoxie:
         self.reply_payload: dict | None = None   # the FINAL RemoteChatResponse of a turn
         self.reply_text: str = ""                # every chunk of that turn, in order
         self._chunks: dict[str, dict[int, str]] = {}   # event_id -> {chunk_num: text}
+        #: Every RemoteChatResponse of the CURRENT turn, verbatim and in arrival order.
+        #: `reply_payload` is only the closing one, so a claim about what a *streamed*
+        #: answer carried has nowhere else to look.
+        self.chat_payloads: list = []
         self.query_results: dict = {}       # CloudQuery name -> last CloudQueryResponse
         self.spoke: dict | None = None      # last decoded CloudTTSResponse (audio playback)
         self.face_replies: list = []        # what the server answered each vision event
@@ -125,6 +139,7 @@ class VirtualMoxie:
         event_id = payload.get("event_id") or ""
         chunk_num = payload.get("chunk_num")
         text = (payload.get("output") or {}).get("text", "")
+        self.chat_payloads.append(payload)
         parts = self._chunks.setdefault(event_id, {})
         parts[int(chunk_num) if chunk_num is not None else 0] = text
         result = payload.get("result")
@@ -144,6 +159,7 @@ class VirtualMoxie:
         self.reply_payload = None
         self.reply_text = ""
         self._chunks.clear()
+        self.chat_payloads = []
 
     def _play_tts(self, payload):
         """Consume a CloudTTSResponse: decode the audio buffer + marks and 'play' it.
@@ -533,7 +549,14 @@ class VirtualMoxie:
                 self.errors.append("remote_chat reply had empty output.text")
                 return False
 
-            # 5) (optional) assert the server voice reached us as audio on /commands/tts
+            # 5) (optional) assert the appliance SCORED the line it sent us. The five
+            # fields are the difference between a speaker and a performance, and until
+            # now nothing on the standing smoke path looked at them — a regression that
+            # emptied `dialog_act` on the wire would have kept this smoke green.
+            if self.expect_scored and not self.check_scored():
+                return False
+
+            # 6) (optional) assert the server voice reached us as audio on /commands/tts
             if self.expect_tts:
                 if not self.got_tts.wait(self.timeout):
                     self.errors.append("expected a CloudTTSResponse (tts) but none arrived")
@@ -545,6 +568,32 @@ class VirtualMoxie:
         finally:
             self.client.loop_stop()
             self.client.disconnect()
+
+    def check_scored(self) -> bool:
+        """Every response of the last turn carries every scored field. Logs what arrived.
+
+        Asserted per RESPONSE, not per turn: a streamed answer is several publishes and
+        the fields were added to the chunk path separately from the reply path
+        (backlog/expressiveness.md §2.3, C2/C4), so "the turn was scored" is exactly the
+        claim that would hide a chunk which was not.
+        """
+        if not self.chat_payloads:
+            self.errors.append("no remote_chat responses to check for scored output")
+            return False
+        ok = True
+        for p in self.chat_payloads:
+            out = p.get("output") or {}
+            missing = [f for f in SCORED_FIELDS if f not in out]
+            got = ", ".join(f"{f}={out[f]!r}" for f in SCORED_FIELDS if f in out)
+            n = p.get("chunk_num")
+            where = "reply" if n is None else f"chunk {n}"
+            if missing:
+                ok = False
+                self.errors.append(
+                    f"{where} ({p.get('result')}) carried no {missing} — "
+                    f"the appliance published an unscored line")
+            self.log(f"🎭 {where} scored: {got or '(nothing)'}")
+        return ok
 
     def run_scenario(self, turns):
         """Play a scripted list of turns through the real round-trip.
@@ -606,6 +655,10 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--expect-tts", action="store_true",
                     help="also assert a CloudTTSResponse (server voice audio) arrives")
+    ap.add_argument("--expect-scored", action="store_true",
+                    help="also assert every RemoteChatResponse of the turn carries the "
+                         "scored output the contract specifies (mood, mood_intensity, "
+                         "dialog_act, emotion, signals) — streamed chunks included")
     ap.add_argument("--expect-unpaired", action="store_true",
                     help="assert the server treats us as PENDING (device allowlist): a "
                          "non-'paired' pairing_status and no child_pii; prints the config")
@@ -635,7 +688,7 @@ def main():
     args = ap.parse_args()
 
     vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet,
-                      expect_tts=args.expect_tts)
+                      expect_tts=args.expect_tts, expect_scored=args.expect_scored)
 
     if args.expect_unpaired:
         ok = False

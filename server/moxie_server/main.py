@@ -642,6 +642,31 @@ async def set_fleet_permits(request: Request):
     return out if code == 200 else JSONResponse(status_code=code, content=out)
 
 
+@app.post("/local/robots/{device_id}/preview")
+async def preview_line(device_id: str, request: Request):
+    """Rehearse one line on a robot — the behavior planner's preview hook.
+
+    `{"text": "…"}` (optionally `speak`, `icons`, `sfx`) is staged by the supervisor's
+    behavior planner and published as an **ordinary** `remote_chat`, so whatever is
+    subscribed as that device performs it: the browser SIM, `virtual_moxie.py`, or a robot
+    paired as a rehearsal device. There is deliberately no SIM-specific API here — the SIM
+    is another client of the same contract (`docs/architecture/sim-as-a-client.md`).
+
+    No brain is called, no history is written and no turn is recorded. The reply carries
+    the staged `Performance` as JSON — mood, dialog act, gesture, gaze, icon and SFX per
+    beat — plus `dropped`, every id the validator refused, so a console can show an author
+    what will play and what will not before a child sees it.
+    """
+    from urllib.parse import quote
+    body = await _json(request)
+    out, code = _supervisor_post(f"/preview?device_id={quote(device_id)}", {
+        "text": body.get("text") or "",
+        "speak": bool(body.get("speak")),
+        "icons": bool(body.get("icons")),
+        "sfx": bool(body.get("sfx"))})
+    return out if code == 200 else JSONResponse(status_code=code, content=out)
+
+
 @app.get("/local/robots/{device_id}/telemetry")
 def robot_telemetry(device_id: str, limit: int = 20, days: int = 7):
     """Parent-console insights (M6): the robot's telemetry, fetched from the supervisor's
