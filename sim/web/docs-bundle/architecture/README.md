@@ -46,7 +46,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   and a `source_version` upgrade that never clobbers a locally edited item), and
   [`backlog/live-sim-demo.md`](backlog/live-sim-demo.md) (**the headline goal** — the hosted Sim alive on a
   static edge: same-origin Cloudflare Functions for brain, voice and ears, behind hard caps, degrading to the
-  pre-cached scripted Moxie when the gateway is unconfigured, over budget, at capacity or down).
+  pre-cached scripted Moxie when the gateway is unconfigured, over budget, at capacity or down) and
+  [`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md) (sandboxed content extensions —
+  a declarative rule list over a total JSON-AST expression language, capability-scoped and reviewable in
+  plain English, so a shared pack can *do* something without trusting its author).
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
 - [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.
