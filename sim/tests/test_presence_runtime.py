@@ -376,6 +376,11 @@ def test_the_llm_system_prompt_gains_the_presence_line_only_when_it_matters():
 
 
 def test_a_content_module_prompt_can_read_presence():
+    # This prompt uses a Jinja `{% if %}` block, which only the full renderer
+    # understands — the minimal fallback leaves it literal. jinja2 is an OPTIONAL
+    # extra (`pyproject.toml`:25 `content`), and the shipped container ships without
+    # it, so the dependency has to be declared or this test lies about that shape.
+    pytest.importorskip("jinja2", reason="the `{% if %}` form needs the full renderer")
     from moxie_sdk.content.render import render_prompt
     from moxie_sdk.content.content_app import _presence_vars
     from moxie_sdk.types import ChildProfile, RobotContext
