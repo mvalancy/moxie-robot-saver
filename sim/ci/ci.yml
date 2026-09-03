@@ -84,6 +84,14 @@ jobs:
         run: node sim/test_bridge.mjs
       - name: Markup-floor render test (the 8 goldens through the real bridge)
         run: node sim/test_automarkup_render.mjs
+      - name: Behavior-planner render test (22 dialog acts through the real bridge)
+        run: node sim/test_performance_render.mjs
+      - name: Upload the behavior-planner contact sheet
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-contact-sheet
+          path: sim/artifacts/performance-contact-sheet.html
+          if-no-files-found: warn
       - name: Voice-loop tests (TTS/STT shapes; skips if services absent)
         run: node sim/test_voice.mjs
       - name: Cloud-TTS playback test (CloudTTSResponse decode + queue + lip-sync)

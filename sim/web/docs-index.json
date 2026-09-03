@@ -1,5 +1,5 @@
 {
- "generated": "docs-292e5d88e7d4",
+ "generated": "docs-fa25ecdca0ef",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 106897,
+   "bytes": 107465,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -163,7 +163,7 @@
    "path": "architecture/mqtt-and-conversation.md",
    "title": "MQTT / \"Talking\" Layer Spec (the Robot Cloud half)",
    "section": "architecture",
-   "bytes": 73640,
+   "bytes": 76630,
    "mermaid": 0,
    "headings": [
     "0. TL;DR of the mechanism",
@@ -213,7 +213,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 31143,
+   "bytes": 32529,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
@@ -351,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 113846,
+   "bytes": 115634,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -394,7 +394,7 @@
    "path": "architecture/backlog/expressiveness.md",
    "title": "Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)",
    "section": "architecture",
-   "bytes": 44578,
+   "bytes": 49456,
    "mermaid": 1,
    "headings": [
     "Why this is the next slice",
@@ -411,7 +411,7 @@
     "1.8 Acceptance criteria",
     "1.9 Files to touch · effort",
     "1.10 Risks and honest limits",
-    "2. BEYOND #1 — the behavior planner",
+    "2. BEYOND #1 — the behavior planner · **P1 🟢 SHIPPED 2026-09-03** (P2 open)",
     "2.1 What \"10×\" means, from the child's side",
     "2.2 The `Performance` object — one structured thing, one renderer",
     "2.3 Contract changes — exactly what is added",

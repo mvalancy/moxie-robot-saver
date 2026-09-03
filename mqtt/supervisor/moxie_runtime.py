@@ -30,11 +30,12 @@ from moxie_sdk import presence as presence_seam          # vision events -> pres
 from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire (audit ADOPT #7)
 from moxie_sdk import telemetry as telemetry_seam        # 📈 Packet envelope + durable history
 from moxie_sdk import vocab as vocab_seam                # the frozen mood/markup catalog
+from moxie_sdk import performance as performance_seam   # the behavior planner (§2)
 from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
 from moxie_sdk import brains as brain_seam             # 🧠 which brain, per robot
 from moxie_sdk.content import packs as content_packs  # 📦 content packs (ADOPT #5)
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
-from markup import make_markup  # the markup floor (moxie_sdk.automarkup) behind the seam
+from markup import make_markup, perform  # the behavior planner / markup floor seam
 
 # paho is imported lazily in _build_client() so the runtime + turn pipeline can be
 # imported and integration-tested without the broker client installed.
@@ -819,6 +820,13 @@ class MoxieRuntime:
                 next turn; a body whose digest is not the reviewed one is **409**.
                 `POST /content/undo` puts the snapshot back. See `_content`.
 
+                `POST /preview?device_id=…` with `{"text": "…"}` rehearses one line:
+                the behavior planner stages it and the supervisor publishes it as an
+                ordinary `remote_chat`, so the SIM (or a robot paired as a rehearsal
+                device) performs it. No brain is called and no turn is recorded; the reply
+                carries the staged `Performance` JSON and any id `validate` dropped, so an
+                author sees the performance before a child does — see `preview`.
+
                 `POST /wakeup?device_id=…` publishes the recovered `wakeup` command
                 (`{"command":"wakeup"}` on `/devices/{id}/commands/wakeup`) at one robot.
                 The robot acknowledges nothing, so the reply says `published`, never
@@ -840,6 +848,29 @@ class MoxieRuntime:
                     return self._memory_write(urlparse(self.path).query)
                 if path in ("/content/review", "/content/import", "/content/undo"):
                     return self._content(path)
+                if path == "/preview":
+                    # `POST /preview?device_id=…` `{"text": …, "speak": false}` — the
+                    # rehearsal hook (backlog/expressiveness.md §2.4). Plans one line and
+                    # publishes it as an ORDINARY remote_chat so any client subscribed as
+                    # that device performs it; no brain, no history, no turn recorded.
+                    # 404 unknown device, 400 empty/blocked line.
+                    q = parse_qs(urlparse(self.path).query)
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length) if length else b"{}"
+                    try:
+                        body = _json.loads(raw or b"{}") or {}
+                    except Exception as e:
+                        return self._json_out({"ok": False, "error": str(e)}, 400)
+                    device_id = ((q.get("device_id") or [""])[0]
+                                 or str(body.get("device_id") or ""))
+                    out = rt.preview(device_id, body.get("text"),
+                                     speak=bool(body.get("speak")),
+                                     icons=bool(body.get("icons")),
+                                     sfx=bool(body.get("sfx")))
+                    if out.get("ok"):
+                        return self._json_out(out, 200)
+                    code = 404 if "unknown device_id" in str(out.get("error")) else 400
+                    return self._json_out(out, code)
                 if path == "/wakeup":
                     # `POST /wakeup?device_id=…` — publish the recovered `wakeup`
                     # command. 404 unknown device, 409 pending/no broker, and on success
@@ -1437,10 +1468,10 @@ class MoxieRuntime:
                 return self._publish_chat(device_id, rcr.get("event_id"), backend, "",
                                           markup="", result=ResultCode.SUCCESS, modules=[])
             self._note("permit", f"⛔ turn refused — {device_id} is pending")
+            line, scored = self._stage(self.NOT_PAIRED_LINE)
             return self._publish_chat(device_id, rcr.get("event_id"), backend,
-                                      self.NOT_PAIRED_LINE,
-                                      markup=make_markup(self.NOT_PAIRED_LINE),
-                                      end_turn=True)
+                                      self.NOT_PAIRED_LINE, markup=line,
+                                      end_turn=True, scored=scored)
         if name == "client-service-activity-log":
             try:
                 data = json.loads(payload)
@@ -1539,6 +1570,73 @@ class MoxieRuntime:
                 "acknowledged": False, "topic": topic, "payload": payload,
                 "wake_button_enabled": bool(wake_button), "note": note}
 
+    # ---- rehearsal: watch a line perform before a child does ----
+    def preview(self, device_id, text, *, speak=False, **opts) -> dict:
+        """Stage one line and publish it as an ordinary turn — the preview hook (C7).
+
+        `sim-as-a-client.md`'s guarantee is that the SIM is **not a special case**, so
+        this adds no SIM-specific API and no SIM-specific message. It plans the line,
+        validates it, renders it and publishes a perfectly ordinary
+        `/devices/<id>/commands/remote_chat` with `result=SUCCESS` — byte-identical in
+        shape to what a real turn produces. Whatever is subscribed as that device renders
+        it: the browser SIM, `virtual_moxie.py`, or a robot paired as a rehearsal device.
+
+        **Nothing else happens.** No brain is called, no history is written, no turn is
+        recorded, no memory is folded, no safety journal row is added beyond the ordinary
+        assessment below. That is what makes it a rehearsal: an author can iterate on a
+        line and *see* the performance before a child does.
+
+        `speak=True` also synthesizes, so a rehearsal can be heard as well as seen. It is
+        off by default because a preview must not spend a voice call unless it was asked
+        to — an author is usually watching the body, not listening.
+
+        The returned `performance` is the staged structure as JSON (mood/act/gesture/
+        gaze/icon/sfx per beat) plus `dropped`, the ids `validate` refused, so a console
+        can flag them in red instead of leaving an author wondering why nothing played.
+        """
+        robot = self.robots.get(device_id)
+        if robot is None:
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": f"unknown device_id {device_id!r}",
+                    "reason": "No robot with that id has connected to this appliance."}
+        if not self.is_permitted(device_id):
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "robot is pending",
+                    "reason": "Let this robot in first (Permit it in the fleet panel)."}
+        line = str(text or "").strip()
+        if not line:
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "empty line", "reason": "Type a line to rehearse."}
+        # A rehearsal line is still a line a child could hear, so it passes the same
+        # output-side classifier a brain's own line does — and, like telehealth, a BLOCK
+        # comes back to the author with its reason instead of being replaced by a
+        # redirect. There is a human at the keyboard; substituting for them helps nobody.
+        verdict = self._assess(line, safety_seam.MOXIE)
+        if verdict and verdict.action == safety_seam.BLOCK:
+            self._record_safety(device_id, verdict)
+            return {"ok": False, "device_id": device_id, "published": False,
+                    "error": "blocked", "blocked": True,
+                    "categories": list(verdict.categories),
+                    "reason": "Moxie will not say that. Nothing was published — "
+                              "please rephrase."}
+        event_id = f"preview-{int(time.time() * 1000)}"
+        staged = perform(line, turn_key=event_id, chunk_index=0, **opts)
+        scored = dict(staged.scored)
+        self._publish_chat(device_id, event_id, "router", line, staged.markup,
+                           result=ResultCode.SUCCESS, scored=scored)
+        if speak:
+            self._maybe_synthesize(device_id, staged.markup, event_id, chunk_num=0)
+        self._note("preview", f"🎬 rehearsed '{line[:40]}' on {device_id}")
+        print(f"[runtime] 🎬 preview → {device_id}: '{line[:60]}'", flush=True)
+        out = {"ok": True, "device_id": device_id, "published": True, "spoke": speak,
+               "event_id": event_id, "text": line, "markup": staged.markup,
+               "mode": staged.mode, "scored": scored,
+               "performance": performance_seam.to_json(staged.performance),
+               "dropped": list(getattr(staged.performance, "dropped", ()) or ())}
+        if verdict:
+            out["flagged"] = list(verdict.categories)
+        return out
+
     # ---- child safety (AI seam §2 — InputSafety) ----
     def safety_policy(self, device_id) -> LoggingPolicy:
         """The LoggingPolicy governing this robot's safety journal — the parent's explicit
@@ -1623,8 +1721,11 @@ class MoxieRuntime:
         # Deliberately remember only OUR line: putting the blocked utterance in the
         # history would feed it to the brain as context on the very next turn.
         self._remember(device_id, "", red.text)
+        _, red_scored = self._stage(red.text, red, turn_key=event_id,
+                                    markup=red.markup)
         self._publish_chat(device_id, event_id, "router", red.text, red.markup,
-                           result=ResultCode.SUCCESS, safety=verdict)
+                           result=ResultCode.SUCCESS, safety=verdict,
+                           scored=red_scored)
         self._maybe_synthesize(device_id, red.markup, event_id, chunk_num=0)
         return True
 
@@ -1890,8 +1991,9 @@ class MoxieRuntime:
         text, markup = greeting
         self._note("chat", f"hello (unprompted): '{text[:40]}'")
         print(f"[runtime] 👋 {device_id} walked back in -> '{text}'", flush=True)
+        _, greet_scored = self._stage(text, turn_key=event_id, markup=markup)
         self._publish_chat(device_id, event_id, backend, text, markup,
-                           result=ResultCode.SUCCESS)
+                           result=ResultCode.SUCCESS, scored=greet_scored)
         self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
         return None
 
@@ -1958,12 +2060,12 @@ class MoxieRuntime:
             text = self._pending_opener.pop(device_id, None)
         if not text or self._is_stale(device_id, seq):
             return None
-        markup = make_markup(text, turn_key=f"greet|{event_id}", chunk_index=0)
+        markup, scored = self._stage(text, turn_key=f"greet|{event_id}", chunk_index=0)
         self._note("chat", f"hello (queued): '{text[:40]}'")
         print(f"[runtime] 👋 delivering queued opener on {device_id}: '{text}'", flush=True)
         self._publish_chat(device_id, event_id, "router", text, markup,
                            result=ResultCode.REPLY_PENDING, chunk_num=0,
-                           is_completed=False)
+                           is_completed=False, scored=scored)
         self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
         return text
 
@@ -2198,18 +2300,22 @@ class MoxieRuntime:
             else:
                 self._record_safety(device_id, out_verdict)
         self._remember(device_id, speech, reply.text)
-        markup = (reply.markup if reply.markup is not None
-                  else make_markup(reply.text, turn_key=event_id, chunk_index=0))
+        markup, scored = self._stage(reply.text, reply, turn_key=event_id,
+                                     chunk_index=0, markup=reply.markup)
         self._note("chat", f"💬 '{speech[:30]}' → '{reply.text[:40]}'")
         print(f"[runtime] 💬 {device_id}: '{speech[:40]}' → '{reply.text[:60]}'", flush=True)
         # A filler already went out → this is chunk 1 and it ends the sequence. No
         # filler → the single-chunk reply we have always sent, unchanged on the wire.
         chunk = 1 if filler is not None else None
+        # `scored` already carries the app's own mood/dialog_act — validated, because
+        # `_stage` puts them through the same catalog every other id goes through. Passing
+        # the raw `reply.mood`/`reply.dialog_act` here as well would let an app's invented
+        # act win over that check inside `_publish_chat` (mutation M28's other half).
         self._publish_chat(device_id, event_id, "router", reply.text, markup,
                            actions=reply.actions, end_turn=reply.end_turn,
-                           result=reply.result_code, mood=reply.mood,
-                           dialog_act=reply.dialog_act, chunk_num=chunk,
-                           is_completed=None if chunk is None else True)
+                           result=reply.result_code, chunk_num=chunk,
+                           is_completed=None if chunk is None else True,
+                           scored=scored)
         self._maybe_synthesize(device_id, markup, event_id, chunk_num=chunk or 0)
         # `<exit>` in the model's own line (or a handler's) ended the activity: this
         # worker is already off the MQTT loop, so summarize inline.
@@ -2233,9 +2339,10 @@ class MoxieRuntime:
             self._note("chat", f"⏳ '{text[:40]}'")
             print(f"[runtime] ⏳ brain over budget ({self.brain_budget_s:g}s) on "
                   f"{device_id} → filler: '{text}'", flush=True)
+            _, scored = self._stage(text, turn_key=event_id, markup=markup)
             self._publish_chat(device_id, event_id, "router", text, markup,
                                result=ResultCode.REPLY_PENDING, chunk_num=0,
-                               is_completed=False)
+                               is_completed=False, scored=scored)
             self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
             return text
 
@@ -2364,6 +2471,59 @@ class MoxieRuntime:
             print(f"[runtime] app.respond error: {e}", flush=True)
             return Reply(text="Hmm, let me think about that.")
 
+    def _stage(self, text, obj=None, *, turn_key="", chunk_index=0, markup=None, **kw):
+        """`(markup, scored)` for one spoken line — the seam's answer, plus the app's own.
+
+        This is the single place a published turn becomes a *scored* turn. Before the
+        behavior planner, `Reply.mood`/`dialog_act` were plumbed end to end and **no app
+        ever set them**, and `ReplyChunk` did not have the fields at all — so a streamed
+        answer could not carry scored output even in principle
+        (docs/architecture/backlog/expressiveness.md §2.3, C4/C5). Now every path through
+        `_publish_chat` that says words comes through here.
+
+        Precedence, and the reason for it: **the app's own scoring wins**, field by field,
+        and the seam fills in only what the app left None. A brain that knows its line is
+        an `apology` is not second-guessed by a rule engine — but a brain that says
+        nothing still ships a scored turn. Anything the app *did* say is a HINT into the
+        planner as well, so the staged performance agrees with the wire fields rather than
+        contradicting them, and an id it invents is dropped by `validate` like any other.
+
+        `markup` is an app's authored markup: it is spoken verbatim (the idempotence rule),
+        and the line is scored anyway.
+        """
+        hints = dict(kw)
+        for attr, key in (("mood", "mood_hint"), ("gesture", "gesture_hint"),
+                          ("dialog_act", "dialog_act"), ("emotion", "emotion"),
+                          ("signal", "signal"), ("gaze", "look"), ("icon", "icon"),
+                          ("sfx", "sfx")):
+            value = getattr(obj, attr, None)
+            if value:
+                hints.setdefault(key, value)
+        if getattr(obj, "mood_intensity", 0):
+            hints.setdefault("intensity", obj.mood_intensity)
+        staged = perform(text, turn_key=turn_key, chunk_index=chunk_index, **hints)
+        scored = dict(staged.scored)
+        # The app's own values win — but they take the SAME positive list every other id
+        # takes. An app is a brain by another name, and a brain may suggest, it may never
+        # authorize: a `dialog_act` that is not one of the recovered 22 is dropped here
+        # rather than forwarded onto `RemoteChatOutput`. (Found by mutation M28.)
+        for key, catalog in (("mood", vocab_seam.MOODS),
+                             ("dialog_act", vocab_seam.DIALOG_ACTS),
+                             ("emotion", vocab_seam.EMOTION_STATES),
+                             ("signal", vocab_seam.SIGNALS)):
+            value = getattr(obj, key, None)
+            if value and value in catalog:
+                scored[key] = value
+        strength = getattr(obj, "mood_intensity", 0)
+        if strength and 0 < int(strength) <= vocab_seam.MAX_INTENSITY:
+            scored["mood_intensity"] = int(strength)
+        if obj is not None and getattr(obj, "performance", None) is None:
+            try:                      # diagnostics + the preview panel; never the wire
+                object.__setattr__(obj, "performance", staged.performance)
+            except Exception:
+                pass
+        return (staged.markup if markup is None else markup), scored
+
     def _publish_stream_chunk(self, device_id, event_id, chunk, n, final,
                               synthesize=True, ann=None):
         """One `ReplyChunk` (or `Reply`) onto the wire, with its chunk bookkeeping.
@@ -2373,9 +2533,9 @@ class MoxieRuntime:
         the way through instead of flipping it every sentence — and a "let me think"
         line ahead of the answer does not cost the answer its mood.
         """
-        markup = (chunk.markup if chunk.markup is not None else
-                  make_markup(chunk.text, turn_key=event_id,
-                              chunk_index=n if ann is None else ann))
+        markup, scored = self._stage(chunk.text, chunk, turn_key=event_id,
+                                     chunk_index=n if ann is None else ann,
+                                     markup=chunk.markup)
         result = getattr(chunk, "result_code", None)
         if result is None:
             result = ResultCode.SUCCESS if final else ResultCode.REPLY_PENDING
@@ -2386,7 +2546,8 @@ class MoxieRuntime:
                            actions=chunk.actions, end_turn=chunk.end_turn,
                            result=result,
                            chunk_num=None if solo else n,
-                           is_completed=None if solo else bool(final))
+                           is_completed=None if solo else bool(final),
+                           scored=scored)
         if synthesize:
             self._maybe_synthesize(device_id, markup, event_id, chunk_num=n)
 
@@ -2442,9 +2603,11 @@ class MoxieRuntime:
             self._note("chat", f"⏳ '{text[:40]}'")
             print(f"[runtime] ⏳ stream quiet for {self.brain_budget_s:g}s on "
                   f"{device_id} → filler {state['fillers']}: '{text}'", flush=True)
+            _, scored = self._stage(text, turn_key=event_id, chunk_index=n,
+                                    markup=markup)
             self._publish_chat(device_id, event_id, "router", text, markup,
                                result=ResultCode.REPLY_PENDING, chunk_num=n,
-                               is_completed=False)
+                               is_completed=False, scored=scored)
             self._maybe_synthesize(device_id, markup, event_id, chunk_num=n)
         self._arm_filler(device_id, event_id, seq, state)   # another stall? one more line
         return text
@@ -3501,7 +3664,7 @@ class MoxieRuntime:
     def _publish_chat(self, device_id, event_id, backend, text, markup="",
                       actions=None, end_turn=False, result=ResultCode.SUCCESS,
                       modules=None, mood=None, dialog_act=None,
-                      chunk_num=None, is_completed=None, safety=None):
+                      chunk_num=None, is_completed=None, safety=None, scored=None):
         # Ask the robot to start pushing us its vision events, once per module. It rides
         # a spoken reply because that is the only cloud→robot message the contract gives
         # a `RemoteChatAction` to hang `EventSubscription` on — and it is attached only to
@@ -3513,9 +3676,17 @@ class MoxieRuntime:
                 and self._vision_subscribed.get(device_id) !=
                     (getattr(self.robots.get(device_id), "module_id", None) or "")):
             subscribe = self._vision_subscription(device_id)
+        # `scored` is the seam's answer for this line (`_stage`); explicit mood/
+        # dialog_act arguments still win, because a caller that passed one meant it.
+        sc = dict(scored or {})
         resp = build_chat_response(event_id, text, markup, backend=backend,
                                    result=result, actions=actions, end_turn=end_turn,
-                                   mood=mood, dialog_act=dialog_act, modules=modules,
+                                   mood=mood or sc.get("mood"),
+                                   dialog_act=dialog_act or sc.get("dialog_act"),
+                                   modules=modules,
                                    chunk_num=chunk_num, is_completed=is_completed,
-                                   safety=safety, subscribe_events=subscribe)
+                                   safety=safety, subscribe_events=subscribe,
+                                   mood_intensity=sc.get("mood_intensity"),
+                                   emotion=sc.get("emotion"),
+                                   signals=sc.get("signal"))
         self.client.publish(f"/devices/{device_id}/commands/remote_chat", json.dumps(resp))

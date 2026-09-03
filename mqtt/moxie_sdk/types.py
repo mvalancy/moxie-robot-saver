@@ -9,7 +9,10 @@ it receives a `Turn` and returns a `Reply`. It never touches the transport.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:                    # a type-only import: `types` stays dependency-free
+    from .performance import Performance
 
 
 @dataclass
@@ -98,8 +101,25 @@ class Reply:
     actions: list = field(default_factory=list)   # list[Action]
     end_turn: bool = False               # True → Moxie stops listening after this
     result_code: ResultCode = ResultCode.SUCCESS  # the RemoteChat outcome (see ResultCode)
-    mood: Optional[str] = None           # optional scored output: emotional performance
-    dialog_act: Optional[str] = None     # optional scored output: what the line does
+    # ---- scored output (docs/architecture/ai-seam.md §② "Response out") ----------
+    # `RemoteChatOutput` is not just text: it is a fully-scored line. Everything below is
+    # optional, and everything below is FILLED IN by the seam when the app leaves it None
+    # — `supervisor/markup.py::perform` scores every line it performs, so a brain that
+    # says nothing about its own delivery still ships a scored turn.
+    mood: Optional[str] = None           # ePlaybackMood by NAME (happy/curious/…)
+    dialog_act: Optional[str] = None     # one of the 22 RemoteDialog.DialogActs
+    mood_intensity: int = 0              # 0-2 (`maxIntensity=2`)
+    emotion: Optional[str] = None        # one of the 7 RemoteDialog.EmotionStates
+    signal: Optional[str] = None         # one of the 9 RemoteSignals.Signals
+    gesture: Optional[str] = None        # a `Gesture_*` the app wants (a HINT, validated)
+    gaze: Optional[str] = None           # a look-bearing `Bht_*` (there is no gaze verb)
+    icon: Optional[str] = None           # an `icons-v2` value (4 confirmed)
+    sfx: Optional[str] = None            # a `SoundToPlay` id (2 confirmed)
+    performance: Optional["Performance"] = None
+    """The staged `moxie_sdk.performance.Performance` behind `markup`, when the behavior
+    planner performed this line. Diagnostics and the preview console — the wire carries
+    the rendered `markup` plus the scored fields above, never this structure. An app may
+    also SET it to stage a line itself; every id in it still passes `validate()`."""
 
     @classmethod
     def offline(cls, text: str = "") -> "Reply":
@@ -133,9 +153,24 @@ class ReplyChunk:
     final: bool = False                  # last chunk of the answer (closes the sequence)
     end_turn: bool = False
     result_code: Optional[ResultCode] = None
+    # ---- scored output, per chunk ------------------------------------------------
+    # These did not exist before the behavior planner, which meant a STREAMED answer
+    # could not carry scored output even in principle: `_publish_stream_chunk` had
+    # nothing to pass (docs/architecture/backlog/expressiveness.md §2.3, C2/C4). They
+    # mirror `Reply`'s, and like `Reply`'s they are filled in by the seam when an app
+    # leaves them None, so every published chunk is scored.
+    mood: Optional[str] = None
+    dialog_act: Optional[str] = None
+    mood_intensity: int = 0
+    emotion: Optional[str] = None
+    signal: Optional[str] = None
+    performance: Optional["Performance"] = None
 
     @classmethod
     def from_reply(cls, reply: "Reply") -> "ReplyChunk":
         """The whole of a non-streamed `Reply` as one closing chunk."""
         return cls(text=reply.text, markup=reply.markup, actions=list(reply.actions),
-                   final=True, end_turn=reply.end_turn, result_code=reply.result_code)
+                   final=True, end_turn=reply.end_turn, result_code=reply.result_code,
+                   mood=reply.mood, dialog_act=reply.dialog_act,
+                   mood_intensity=reply.mood_intensity, emotion=reply.emotion,
+                   signal=reply.signal, performance=reply.performance)

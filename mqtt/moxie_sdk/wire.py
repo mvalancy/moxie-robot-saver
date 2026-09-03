@@ -13,7 +13,8 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
                         result=ResultCode.SUCCESS, actions=None, end_turn=False,
                         mood=None, dialog_act=None, modules=None,
                         chunk_num=None, is_completed=None, safety=None,
-                        subscribe_events=None) -> dict:
+                        subscribe_events=None, mood_intensity=None, emotion=None,
+                        signals=None) -> dict:
     """Build the RemoteChatResponse JSON.
 
     Matches embodied/robotbrain/RemoteChat.proto: `result` is the ResultCode enum
@@ -29,6 +30,18 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     last chunk of the sequence. Both are omitted unless a caller asks for them, so a
     plain single-chunk reply stays byte-identical to what we sent before (chunk 0 /
     not-streaming is the proto default anyway).
+
+    **Scored output.** `RemoteChatOutput` is a *scored* line, not just text
+    (ai-seam.md §2, "Response out (a)"): `mood` + `mood_intensity` are the emotional
+    performance to render on the face, and `dialog_act` / `emotion` / `signals` are what
+    the line MEANS. `mood` and `emotion` are label strings — `mood` from `ePlaybackMood`
+    (`happy`, `curious`, …; the int form lives in the `cmd:playback-mood` mark inside
+    `markup`) and `emotion` from `RemoteDialog.EmotionState`. `signals` accepts one
+    `RemoteSignals.Signal` name or a list of them and always goes out as a list, because
+    the field is `repeated` (remote-chat-protocol.md:124-126). Every one of them is
+    omitted when empty, so a turn that scores nothing is byte-identical to what we sent
+    before. Who fills them: the behavior planner, through `supervisor/markup.py::perform`
+    — see backlog/expressiveness.md §2.3 (C3).
 
     **Moderation.** `safety` (a `moxie_sdk.safety.InputSafety`) fills
     `RemoteChatResponse.input.safety` — `input` is field 17, a `RemoteChatInput`, whose
@@ -58,6 +71,12 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
         output["mood"] = mood
     if dialog_act:
         output["dialog_act"] = dialog_act
+    if mood_intensity:
+        output["mood_intensity"] = int(mood_intensity)
+    if emotion:
+        output["emotion"] = emotion
+    if signals:
+        output["signals"] = [signals] if isinstance(signals, str) else list(signals)
     resp = {"command": "remote_chat", "result": rc.name, "backend": backend,
             "event_id": event_id, "output": output, "end_turn": bool(end_turn)}
     ra = []

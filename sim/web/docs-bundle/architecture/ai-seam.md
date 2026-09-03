@@ -182,14 +182,33 @@ Three parts:
 > guarantee holds for *every* path, including a brain that suggests one (a suggestion is
 > dropped, never forwarded). See [`mqtt-and-conversation.md`](mqtt-and-conversation.md) §4.6.
 >
-> The **scored** neighbours of `markup` are still plumbed and empty. `Reply` carries `mood` and
-> `dialog_act`, `build_chat_response` puts them on `RemoteChatOutput`, and no app sets them;
-> `mood_intensity`, `emotion`, `signals` and `auto_tags[]` have no `Reply` field at all, and
-> `ReplyChunk` has none of them, so a *streamed* answer cannot carry scored output even in
-> principle. The floor scores a line internally (it must, to pick a face) but only renders that
-> score into `markup`. Filling the wire fields is the behavior planner's contract change —
-> C1–C5 in [`backlog/expressiveness.md`](backlog/expressiveness.md) §2.3 — and needs nothing
-> new on the wire itself.
+> **The scored neighbours of `markup` are now filled — the behavior planner (P1, v1,
+> 2026-09-03).** They used to be plumbed and empty: `Reply` carried `mood` and `dialog_act`
+> and no app ever set them, while `mood_intensity`, `emotion` and `signals` had no `Reply`
+> field at all and `ReplyChunk` had none of them, so a *streamed* answer could not be scored
+> even in principle. [`moxie_sdk/performance.py`](../../mqtt/moxie_sdk/performance.py) closes
+> that: it stages every line as a validated `Performance` and
+> [`supervisor/markup.py::perform`](../../mqtt/supervisor/markup.py) hands the runtime the
+> markup **and** the score, which `MoxieRuntime._stage` puts on every published turn — the
+> reply, every streamed chunk, both fillers, the greeting, the queued opener and the safety
+> redirect. An app's own scoring still wins, field by field.
+>
+> **`Performance` → scored output, the one mapping:**
+> `Performance.mood`/`mood_intensity` → `RemoteChatOutput.mood` (the `ePlaybackMood`
+> **name**; the int form rides the `cmd:playback-mood` mark inside `markup`) and
+> `mood_intensity`; `Performance.dialog_act` → `dialog_act` (one of the 22
+> `RemoteDialog.DialogAct`s); `Performance.emotion` → `emotion` (one of the 7
+> `RemoteDialog.EmotionState`s); `Performance.signal` → `signals[]` (one of the 9
+> `RemoteSignals.Signal`s, a list because the field is `repeated`); `Performance.beats[]` →
+> `markup`, through the single `render()`. **The wire needed nothing new** — the point of
+> building to this contract is that a 10× feature turns out to be a fill-in, not a redesign.
+> `auto_tags[]`, `sentiment` and `perplexity` are still empty and still honest: nothing in
+> the appliance produces them yet.
+>
+> Design, phases and the honest gaps (there is no gaze verb, so `gaze` is a closed 4-value
+> enum over look-bearing trees and nothing can lower the gaze):
+> [`backlog/expressiveness.md`](backlog/expressiveness.md) §2. `MOXIE_EXPRESSIVE=planner|floor|off`
+> pins which generation answers, and a planner failure always degrades to the floor.
 
 **(b) `RemoteChatAction` — drive the robot (optional, this is the "director" power).** `ActionID`:
 `launch` / `launch_if_confirmed` (start a module), `exit_module` / `abort_module`, `request_next`,

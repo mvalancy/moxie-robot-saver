@@ -1,0 +1,540 @@
+{
+  "_readme": "Byte-exact goldens for mqtt/moxie_sdk/performance.py \u2014 one line per RemoteDialog.DialogAct (22), from docs/architecture/backlog/expressiveness.md \u00a72.5. The `performance` object is the primary golden (the planner emits a STRUCTURE, not a string); `markup` is what `render()` makes of it, pinned so the two halves cannot drift. Regenerate with sim/tools/build_performance_goldens.py ONLY when the rules change on purpose, and read the diff: every byte here is something a child sees the robot do.",
+  "cases": [
+    {
+      "act": "abandon",
+      "line": "Never mind.",
+      "ctx": {},
+      "why": "an abandoned line goes quiet: Shy, no arm gesture, and the eyes go looking (Bht_Search) rather than holding the child.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Never mind.",
+            "mood": 4,
+            "mood_intensity": 1,
+            "gaze": "Bht_Search"
+          }
+        ],
+        "dialog_act": "abandon",
+        "emotion": "neutral",
+        "signal": "non_interest",
+        "mood": 4,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:4,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Search+,+Track+:++}\"/>Never mind.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "apology",
+      "line": "I am sorry that happened.",
+      "ctx": {},
+      "why": "mood 2 Sad is what shipped content uses for 'I'm sorry...' (8 occurrences, behavior-markup.md:119). Gesture_Self, and the least-searching tree we have: there is NO id that lowers the gaze, so the wish is recorded, not invented.",
+      "performance": {
+        "beats": [
+          {
+            "text": "I am sorry that happened.",
+            "mood": 2,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Self",
+            "gaze": "Bht_Idle_Listening"
+          }
+        ],
+        "dialog_act": "apology",
+        "emotion": "sadness",
+        "signal": "apology",
+        "mood": 2,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:2,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Listening+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Self+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>I am sorry that happened.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "apology_response",
+      "line": "That is okay, it happens to everyone.",
+      "ctx": {},
+      "why": "reassurance points at the child and holds the gaze; signal confirmation_agreement.",
+      "performance": {
+        "beats": [
+          {
+            "text": "That is okay,",
+            "mood": 1,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Point",
+            "gaze": "Bht_Idle_Near_Focused"
+          },
+          {
+            "text": "it happens to everyone."
+          }
+        ],
+        "dialog_act": "apology_response",
+        "emotion": "joy",
+        "signal": "confirmation_agreement",
+        "mood": 1,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:1,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Near_Focused+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Point+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>That is okay, it happens to everyone.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "appreciation",
+      "line": "You did it! I am so proud of you.",
+      "ctx": {},
+      "why": "praise aimed at the child: Happy at the act's own intensity 2, and the one gesture in our catalog that is unambiguously a celebration.",
+      "performance": {
+        "beats": [
+          {
+            "text": "You did it!",
+            "mood": 1,
+            "mood_intensity": 2,
+            "gesture": "Gesture_Celebrate",
+            "gaze": "Bht_Idle_Near_Focused",
+            "usel": "excited",
+            "break_after": 0.35
+          },
+          {
+            "text": "I am so proud of you.",
+            "gesture": "Gesture_Celebrate"
+          }
+        ],
+        "dialog_act": "appreciation",
+        "emotion": "joy",
+        "signal": "confirmation_agreement",
+        "mood": 1,
+        "mood_intensity": 2
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:1,+intensity+:2}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Near_Focused+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Celebrate+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/><usel variant=\"0\" genre=\"excited\">You did it!</usel><break time=\"0.35s\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Celebrate+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/> I am so proud of you.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "backchannelling",
+      "line": "Mm-hm.",
+      "ctx": {},
+      "why": "the act defined by NOT moving: no arm gesture at all, an attentive tree, and nothing else. A nod has no id in our catalog, so we do not pretend to one.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Mm-hm.",
+            "mood": 0,
+            "mood_intensity": 1,
+            "gaze": "Bht_Idle_Listening"
+          }
+        ],
+        "dialog_act": "backchannelling",
+        "emotion": "neutral",
+        "signal": "interest",
+        "mood": 0,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:0,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Listening+,+Track+:++}\"/>Mm-hm.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "closing",
+      "line": "Goodbye for now, sleep well.",
+      "ctx": {},
+      "why": "the whole-body Bht_Sign_off, which is the app's own goodbye tree; signal `closing`, the RemoteSignals value that exists for exactly this.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Goodbye for now,",
+            "mood": 1,
+            "mood_intensity": 1,
+            "tree": "Bht_Sign_off"
+          },
+          {
+            "text": "sleep well."
+          }
+        ],
+        "dialog_act": "closing",
+        "emotion": "joy",
+        "signal": "closing",
+        "mood": 1,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:1,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Sign_off+,+Track+:++}\"/>Goodbye for now, sleep well.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "command",
+      "line": "Tell me more about your day.",
+      "ctx": {},
+      "why": "an imperative points; the gaze holds so the instruction lands on a face.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Tell me more about your day.",
+            "mood": 0,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Point",
+            "gaze": "Bht_Idle_Near_Focused"
+          }
+        ],
+        "dialog_act": "command",
+        "emotion": "neutral",
+        "signal": "no_signal",
+        "mood": 0,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:0,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Near_Focused+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Point+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>Tell me more about your day.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "comment",
+      "line": "That is really interesting.",
+      "ctx": {},
+      "why": "a reaction, not a stance: Surprised, no signature gesture, a curious look.",
+      "performance": {
+        "beats": [
+          {
+            "text": "That is really interesting.",
+            "mood": 5,
+            "mood_intensity": 1,
+            "gaze": "Bht_Idle_Curious"
+          }
+        ],
+        "dialog_act": "comment",
+        "emotion": "surprise",
+        "signal": "interest",
+        "mood": 5,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:5,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Curious+,+Track+:++}\"/>That is really interesting.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "complaint",
+      "line": "That is not fair at all.",
+      "ctx": {},
+      "why": "mood 7 Concerned and a lowered arm; signal complaint_clarification is the contract's own way to say 'this needs sorting out'.",
+      "performance": {
+        "beats": [
+          {
+            "text": "That is not fair at all.",
+            "mood": 7,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Lower",
+            "gaze": "Bht_Idle_Listening"
+          }
+        ],
+        "dialog_act": "complaint",
+        "emotion": "neutral",
+        "signal": "complaint_clarification",
+        "mood": 7,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:7,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Listening+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Lower+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>That is not fair at all.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "factual_question",
+      "line": "What do you want to play today?",
+      "ctx": {},
+      "why": "a question tilts and HOLDS the gaze (Bht_Idle_Near_Focused) \u2014 the difference a child reads as 'it is waiting for me'. `?` also earns the question delivery.",
+      "performance": {
+        "beats": [
+          {
+            "text": "What do you want to play today?",
+            "mood": 9,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Question",
+            "gaze": "Bht_Idle_Near_Focused",
+            "usel": "question"
+          }
+        ],
+        "dialog_act": "factual_question",
+        "emotion": "neutral",
+        "signal": "interest",
+        "mood": 9,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:9,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Near_Focused+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Question+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/><usel variant=\"0\" genre=\"question\">What do you want to play today?</usel><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "hold",
+      "line": "Hold on, let me think about that.",
+      "ctx": {},
+      "why": "Bht_Active_Thinking for the whole body, and no arm gesture stacked on top of it; the thinking cue makes the face Curious.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Hold on,",
+            "mood": 9,
+            "mood_intensity": 1,
+            "tree": "Bht_Active_Thinking"
+          },
+          {
+            "text": "let me think about that."
+          }
+        ],
+        "dialog_act": "hold",
+        "emotion": "neutral",
+        "signal": "no_signal",
+        "mood": 9,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:9,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Active_Thinking+,+Track+:++}\"/>Hold on, let me think about that.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "neg_answer",
+      "line": "No.",
+      "ctx": {},
+      "why": "a plain no: neutral face, a small lowering gesture, signal rejection_disagreement.",
+      "performance": {
+        "beats": [
+          {
+            "text": "No.",
+            "mood": 0,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Lower",
+            "gaze": "Bht_Idle_Near_Focused"
+          }
+        ],
+        "dialog_act": "neg_answer",
+        "emotion": "neutral",
+        "signal": "rejection_disagreement",
+        "mood": 0,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:0,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Near_Focused+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Lower+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>No.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "opening",
+      "line": "Hello there! It is so good to see you.",
+      "ctx": {},
+      "why": "Bht_Gesture_Greet, the app's own wave. The tree displaces both the arm gesture and the gaze \u2014 one whole-body tree per line.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Hello there!",
+            "mood": 1,
+            "mood_intensity": 2,
+            "tree": "Bht_Gesture_Greet",
+            "usel": "excited",
+            "break_after": 0.35
+          },
+          {
+            "text": "It is so good to see you.",
+            "gesture": "Gesture_Point"
+          }
+        ],
+        "dialog_act": "opening",
+        "emotion": "joy",
+        "signal": "no_signal",
+        "mood": 1,
+        "mood_intensity": 2
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:1,+intensity+:2}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Gesture_Greet+,+Track+:++}\"/><usel variant=\"0\" genre=\"excited\">Hello there!</usel><break time=\"0.35s\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Point+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/> It is so good to see you.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "opinion",
+      "line": "I think the red one is the best.",
+      "ctx": {},
+      "why": "a stance points at the speaker (Gesture_Self, from the floor's self-word class) and looks away in thought.",
+      "performance": {
+        "beats": [
+          {
+            "text": "I think the red one",
+            "mood": 0,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Self",
+            "gaze": "Bht_Idle_Curious"
+          },
+          {
+            "text": "is the best.",
+            "gesture": "Gesture_Talk"
+          }
+        ],
+        "dialog_act": "opinion",
+        "emotion": "neutral",
+        "signal": "interest",
+        "mood": 0,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:0,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Curious+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Self+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>I think the red one<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Talk+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/> is the best.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "opinion_question",
+      "line": "What do you think about the blue one?",
+      "ctx": {},
+      "why": "asking for a stance rather than a fact: the same tilt, but a curious look instead of a held one.",
+      "performance": {
+        "beats": [
+          {
+            "text": "What do you think about",
+            "mood": 9,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Question",
+            "gaze": "Bht_Idle_Curious"
+          },
+          {
+            "text": "the blue one?",
+            "gesture": "Gesture_Talk",
+            "usel": "question"
+          }
+        ],
+        "dialog_act": "opinion_question",
+        "emotion": "neutral",
+        "signal": "interest",
+        "mood": 9,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:9,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Curious+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Question+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>What do you think about<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Talk+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/> <usel variant=\"0\" genre=\"question\">the blue one?</usel><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "other",
+      "line": "...",
+      "ctx": {},
+      "why": "nothing to classify and nothing to perform: `other` is the honest answer, and the line still comes back to rest.",
+      "performance": {
+        "beats": [
+          {
+            "text": "...",
+            "mood": 0,
+            "mood_intensity": 1
+          }
+        ],
+        "dialog_act": "other",
+        "emotion": "neutral",
+        "signal": "no_signal",
+        "mood": 0,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:0,+intensity+:1}\"/>...<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "other_answers",
+      "line": "Maybe, I am not sure yet.",
+      "ctx": {},
+      "why": "hedging is Curious with a thinking gesture \u2014 the uncertainty is the content.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Maybe,",
+            "mood": 9,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Think",
+            "gaze": "Bht_Idle_Curious"
+          },
+          {
+            "text": "I am not sure yet.",
+            "gesture": "Gesture_Self"
+          }
+        ],
+        "dialog_act": "other_answers",
+        "emotion": "neutral",
+        "signal": "no_signal",
+        "mood": 9,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:9,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Curious+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Think+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>Maybe,<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Self+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/> I am not sure yet.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "pos_answer",
+      "line": "Yes!",
+      "ctx": {},
+      "why": "an affirmative needs no arm at all; the face and the held gaze carry it.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Yes!",
+            "mood": 1,
+            "mood_intensity": 1,
+            "gaze": "Bht_Idle_Near_Focused",
+            "usel": "excited"
+          }
+        ],
+        "dialog_act": "pos_answer",
+        "emotion": "joy",
+        "signal": "confirmation_agreement",
+        "mood": 1,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:1,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Near_Focused+,+Track+:++}\"/><usel variant=\"0\" genre=\"excited\">Yes!</usel><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "statement_non_opinion",
+      "line": "The sky is blue today.",
+      "ctx": {},
+      "why": "the default: the act adds nothing, and the floor's word rules do the work. This is the row that proves the planner did not throw the floor away.",
+      "performance": {
+        "beats": [
+          {
+            "text": "The sky is blue today.",
+            "mood": 0,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Higher"
+          }
+        ],
+        "dialog_act": "statement_non_opinion",
+        "emotion": "neutral",
+        "signal": "no_signal",
+        "mood": 0,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:0,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Higher+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>The sky is blue today.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "thanking",
+      "line": "Thank you for showing me your drawing.",
+      "ctx": {},
+      "why": "gratitude points at the child and holds the gaze; signal confirmation_agreement.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Thank you for showing me your drawing.",
+            "mood": 1,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Point",
+            "gaze": "Bht_Idle_Near_Focused"
+          }
+        ],
+        "dialog_act": "thanking",
+        "emotion": "joy",
+        "signal": "confirmation_agreement",
+        "mood": 1,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:1,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Near_Focused+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Point+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>Thank you for showing me your drawing.<mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "timeout",
+      "line": "Are you still there?",
+      "ctx": {
+        "timed_out": true
+      },
+      "why": "REACHED THROUGH ctx, not through words: a turn that never arrived is a property of the turn, not of the text. The eyes go searching.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Are you still there?",
+            "mood": 9,
+            "mood_intensity": 1,
+            "gaze": "Bht_Search",
+            "usel": "question"
+          }
+        ],
+        "dialog_act": "timeout",
+        "emotion": "neutral",
+        "signal": "non_interest",
+        "mood": 9,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:9,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Search+,+Track+:++}\"/><usel variant=\"0\" genre=\"question\">Are you still there?</usel><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    },
+    {
+      "act": "yes_no_question",
+      "line": "Do you want to hear a story?",
+      "ctx": {},
+      "why": "a closed question: the same tilt and held gaze as a factual one, classified by its auxiliary-verb opener.",
+      "performance": {
+        "beats": [
+          {
+            "text": "Do you want to hear a story?",
+            "mood": 9,
+            "mood_intensity": 1,
+            "gesture": "Gesture_Question",
+            "gaze": "Bht_Idle_Near_Focused",
+            "usel": "question"
+          }
+        ],
+        "dialog_act": "yes_no_question",
+        "emotion": "neutral",
+        "signal": "interest",
+        "mood": 9,
+        "mood_intensity": 1
+      },
+      "markup": "<mark name=\"cmd:playback-mood,data:{+mood+:9,+intensity+:1}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:+Bht_Idle_Near_Focused+,+Track+:++}\"/><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Question+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/><usel variant=\"0\" genre=\"question\">Do you want to hear a story?</usel><mark name=\"cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_None+,+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}\"/>"
+    }
+  ]
+}
