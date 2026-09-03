@@ -197,9 +197,32 @@ def test_the_day_is_actually_truncated_by_bedtime(served):
 # --------------------------------------------------------------------------- #
 # The parent's request outranks the recommender
 # --------------------------------------------------------------------------- #
+def _request_lands_today(request_in_minutes=2 * SLOT_MINUTES) -> bool:
+    """Does the scenario's parent request fall on *today's* calendar day?
+
+    It usually does, and then the request is pinned. In the last ~20 minutes of a day it
+    cannot: `_bedtime_body` asks for an activity `request_in` minutes out, and at 23:48
+    that is 00:08 **tomorrow**, which is not today's plan. The planner is right to leave
+    it unpinned; the old assertion was simply wrong for that window, and it failed on
+    untouched `dev` at 23:48 (its own docstring claimed it "never depends on the hour it
+    runs at"). So the test now asserts whichever branch is real."""
+    now = datetime.datetime.now()
+    return (now + datetime.timedelta(minutes=request_in_minutes)).date() == now.date()
+
+
 def test_the_parent_request_is_pinned_and_says_so(served):
     pinned = [e for e in served["view"]["explanations"]
               if "parent_request" in (e.get("reason_codes") or [])]
+    if not _request_lands_today():
+        # The scenario is not constructible in the tail of a day. Assert the *other*
+        # real behaviour instead of skipping: a request that belongs to tomorrow is
+        # absent from today's plan, and today's plan still explains every entry it has.
+        assert pinned == [], \
+            f"a request landing tomorrow must not be pinned into today's plan: {pinned}"
+        assert served["view"]["explanations"], "the plan must still explain itself"
+        assert all(e.get("line") for e in served["view"]["explanations"]), \
+            "every entry needs its explanation line even when no request is pinned"
+        return
     assert len(pinned) == 1, pinned
     assert pinned[0]["module_id"] == "STORYTELLING", pinned
     assert "parent" in pinned[0]["line"].lower(), pinned[0]["line"]

@@ -243,10 +243,28 @@ def test_the_buffer_is_a_cache_hydrated_on_first_touch(stack):
     r = Robot(stack.port).connect()
     try:
         r.announce()
-        row = _wait(lambda: next((x for x in http_json(f"{_status_url(sup)}/status")
-                                  .get("robots", []) if x["device_id"] == DEVICE), None),
-                    what="the reconnected robot in /status")
-        print(f"[hydration] telemetry_count={row['telemetry_count']}")
+
+        # Wait for the row to carry the fields this test asserts, not merely to exist.
+        # `announce` puts the robot in `/status` immediately, but `firmware` is filled
+        # from its *state* message (`moxie_runtime.py`:414), which arrives a beat later —
+        # so the first row that exists can legitimately have `firmware: None`. Asserting
+        # on first sight made this test racy: it passed locally and on the next dev
+        # commit, and failed once in CI with `assert None == '24.10.803'` (run
+        # 33723272949, the PR #59 merge). Waiting on the *populated* row costs nothing
+        # and keeps both assertions strict — a wrong value still returns the row and
+        # fails below, and a value that never arrives times out with a named reason.
+        def _populated():
+            row = next((x for x in http_json(f"{_status_url(sup)}/status").get("robots", [])
+                        if x["device_id"] == DEVICE), None)
+            if row is None or row.get("firmware") in (None, "") \
+                    or row.get("telemetry_count") is None:
+                return None
+            return row
+
+        row = _wait(_populated,
+                    what="the reconnected robot in /status with its firmware reported "
+                         "and its telemetry count hydrated")
+        print(f"[hydration] telemetry_count={row['telemetry_count']} firmware={row['firmware']}")
         assert row["telemetry_count"] == 3, row
         assert row["firmware"] == FIRMWARE
     finally:
