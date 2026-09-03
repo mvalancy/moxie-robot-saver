@@ -15,6 +15,7 @@ it ships:
 Exit non-zero if any stale-claim check fails. Run from the repo root:
     python3 scripts/check-doc-consistency.py
 """
+import os
 import re, sys, pathlib
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -48,6 +49,46 @@ def md_files():
             continue
         yield f, rel
 
+
+def check_no_conflict_markers(root):
+    """No file may carry a committed merge-conflict marker.
+
+    Added 2026-09-03 because it happened: PR #93 merged with `<<<<<<< HEAD` /
+    `=======` / `>>>>>>> origin/dev` committed into
+    `docs/architecture/openmoxie-feature-audit.md` and its docs-bundle copy — a
+    duplicated row 3 and a lost row 4 — and **every guard passed**. The doc bundle
+    built, 3308 links resolved, `test_docs.mjs` was green, the suite was green: none
+    of them look at the text of a line. A conflict marker is the one defect that is
+    both trivially detectable and invisible to every other check we run.
+
+    Scanned as whole lines at the start of a line, so prose *about* markers (this
+    docstring included) cannot trip it — the same comment-stripping lesson the
+    `functions/` json-import guard learned.
+    """
+    import re as _re
+    bad, pat = [], _re.compile(r"^(<{7}|={7}|>{7})(\s|$)")
+    skip = {".git", "node_modules", ".venv", "__pycache__", "dist", ".pytest_cache"}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        for fn in filenames:
+            if not fn.endswith((".md", ".py", ".js", ".mjs", ".json", ".yml", ".yaml", ".sh")):
+                continue
+            full = os.path.join(dirpath, fn)
+            try:
+                with open(full, encoding="utf-8", errors="replace") as fh:
+                    for n, line in enumerate(fh, 1):
+                        if pat.match(line):
+                            bad.append(f"{os.path.relpath(full, root)}:{n}: {line.rstrip()[:60]}")
+            except OSError:
+                continue
+    if bad:
+        print("conflict markers committed:")
+        for b in bad[:20]:
+            print("  " + b)
+        return False
+    return True
+
+
 def main():
     stale_hits, missing_stamp = [], []
     stale_res = [re.compile(p, re.I) for p in STALE_CLAIMS]
@@ -65,6 +106,8 @@ def main():
                 missing_stamp.append(rel)
 
     ok = True
+    if not check_no_conflict_markers(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))):
+        ok = False
     if stale_hits:
         ok = False
         print("STALE CLAIMS (assert something we've disproven, with no retirement marker on the line):")
