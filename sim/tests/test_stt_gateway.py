@@ -256,7 +256,12 @@ _STT_ENV = ("MOXIE_STT", "MOXIE_STT_MODEL", "MOXIE_STT_BASE_URL", "MOXIE_STT_API
 
 def _fresh_config(monkeypatch, **env):
     """`mqtt/config.py` re-imported with a controlled environment (the pattern
-    `test_assemble.py` uses for the voice knobs)."""
+    `test_assemble.py` uses for the voice knobs).
+
+    `MOXIE_SKIP_DOTENV` first: without it a real `mqtt/.env` is re-read by `_load_env`
+    on every reload and refills exactly the variables deleted below, so "nothing is set"
+    silently became "whatever the developer has" (playbook rule 20)."""
+    monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
     for k in _STT_ENV:
         monkeypatch.delenv(k, raising=False)
     for k, v in env.items():

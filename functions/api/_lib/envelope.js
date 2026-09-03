@@ -233,6 +233,15 @@ export function respond(partial, opts) {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
+    // SETTLED BY A REAL DEPLOY (2026-09-03): `sim/web/_headers` does NOT apply to a Pages
+    // Function response, so this line is the ONLY thing that sets it. The preview served
+    // `/sim.html` with the `/*` block's `Referrer-Policy` and served `/api/health` with no
+    // `Referrer-Policy` at all — not the `/api/*` block's `same-origin`, not the `/*`
+    // fallback — while the two headers above (which this file also sets) were present.
+    // That is the clean control: `_headers` demonstrably works on the deployment and still
+    // reaches no Function. The `/api/*` block is kept there as documentation, but it is
+    // inert; every header a route needs must be set HERE, in code.
+    "Referrer-Policy": "same-origin",
     // Rides every response, not just the rejections, so the page can pace itself
     // *before* it is refused (§4.5).
     "X-Moxie-Mode": body.mode,

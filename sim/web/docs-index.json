@@ -1,5 +1,5 @@
 {
- "generated": "docs-27d5d85d6f7a",
+ "generated": "docs-ad96bcacceed",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,14 +109,14 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 83148,
+   "bytes": 90412,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-02 23:00 PDT, at v0.7.0) — **4/6 🟢 · overall ≈ 91%** (done = all six 🟢)",
+    "DoD progress (audited 2026-09-03 07:40 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 93%** (done = all six 🟢)",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 81479,
+   "bytes": 93913,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -537,7 +537,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 87179,
+   "bytes": 92051,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -569,7 +569,7 @@
     "How someone else points this at their own gateway and their own domain",
     "6. The fallback experience",
     "6.1 What is reused as-is",
-    "6.2 New content that must be produced",
+    "6.2 New content that must be produced — **ALL FOUR BUILT 2026-09-03** (branch `feat/fallback-voice`)",
     "6.3 The state machine",
     "7. Capacity signalling and what the visitor sees",
     "8. Tests and acceptance criteria",
@@ -958,7 +958,7 @@
    "path": "guides/one-command-stack.md",
    "title": "The one-command stack",
    "section": "guides",
-   "bytes": 20924,
+   "bytes": 21568,
    "mermaid": 1,
    "headings": [
     "What comes up",
@@ -1139,23 +1139,23 @@
   },
   {
    "path": "guides/deploy-cloudflare.md",
-   "title": "Deploying the SIL to Cloudflare Pages",
+   "title": "Deploying the Moxie Sim to Cloudflare Pages",
    "section": "guides",
-   "bytes": 9919,
+   "bytes": 11535,
    "mermaid": 0,
    "headings": [
-    "TL;DR",
-    "1. Deploy the static bundle",
-    "Easiest: point Cloudflare Pages at this repo (no build step)",
+    "The one thing to understand first",
+    "1. Deploy it",
+    "Point Cloudflare Pages at the repo",
     "CLI alternative",
-    "2. Pre-cache the audio (both sides of the conversation)",
-    "Robot side (Moxie's lines) — Piper, at build time",
-    "Child side (the \"user\" turns) — also pre-rendered",
-    "Pre-warming",
-    "3. Optional: keep the live features on Cloudflare",
-    "4. What to configure per-environment",
-    "5. How the stubs work (and how the real server plugs in)",
-    "6. Honest limits"
+    "2. What the static demo actually does",
+    "3. Make it live: the minimum configuration",
+    "Set them on Production only",
+    "Before you paste a key",
+    "4. The caps, and why they exist",
+    "5. What a real deploy settled — and what is still open",
+    "6. After deploying: which mode am I in?",
+    "7. What still does not work"
    ],
    "kind": "md"
   },

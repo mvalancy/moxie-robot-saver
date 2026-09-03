@@ -1,173 +1,196 @@
-# ☁️ Deploying the SIL to Cloudflare Pages
+# ☁️ Deploying the Moxie Sim to Cloudflare Pages
 
-> **What this is.** How to publish the [Moxie simulator](../../sim/web/) as a static site on Cloudflare
-> Pages so anyone can see a 3D Moxie in a browser with **zero install** — and, honestly, **what does and
-> doesn't survive** the move off localhost. Robot behaviour is grounded in firmware
+> **What this is.** How to publish the [Moxie simulator](../../sim/web/) on Cloudflare Pages —
+> **twice over**: as a static demo that needs no configuration at all, and as a *live* demo where a
+> visitor talks to a real brain in Moxie's real voice. Robot behaviour is grounded in firmware
 > **v3.6.4-Zephyr / OTA v24.10.803**.
 
-## TL;DR
+## The one thing to understand first
 
-`sim/web/` is **already a static bundle** — 1.9 MB, no build step, all deps vendored (three.js, MQTT.js,
-Inter + JetBrains Mono). Point Cloudflare Pages at it and it works. What changes is the *live* half:
+There are **two deployments in this repo, and the difference is configuration, not code**.
 
-| Feature | Static site? | Why |
+| | Static demo | Live demo |
 |---|---|---|
-| 3D Moxie, rig, liveness, expressions, HUD | ✅ works | pure client-side WebGL |
-| **Play demo** (canned session replay) | ✅ works | replays `sessions/demo.json`, no server |
-| Hand controls (motors, face, LED, scene light) | ✅ works | direct `window.moxie` calls |
-| **Piper TTS** (Moxie's voice) | ✅ works | **pre-rendered clips** (`audio/index.json`) |
-| Child's voice (audible) | ✅ works | pre-rendered too — both sides of the conversation |
-| **Conversation** (talk → reply → gestures) | ✅ works | **stub brain** emits real behavior markup |
-| Mic button | ✅ degrades | falls back to a **scripted child line** (no STT model) |
-| **Revival QR** (re-home a real robot) | ✅ works | payloads are plain JSON, built client-side |
-| **Setup page** (`setup.html`) — parent-app basics | ✅ works | phone-first Wi-Fi + server QR, no server |
-| **Docs explorer** (`docs.html`) — every RE doc + mermaid | ✅ works | reads committed `docs-bundle/` + `docs-index.json` |
-| **Landing hub** (`index.html`) — the front door, served at `/` | ✅ works | links the four surfaces |
-| **Cloud console** (`cloud.html`) — parent dashboard | ✅ works | read-only demo from `fixtures/cloud.json` |
-| **Live bus** (a REAL robot connecting) | ❌ self-host | needs your MQTT broker + TLS |
+| Configuration | **none** | three values (§3) |
+| Brain | the scripted stub ([`stub.js`](../../sim/web/stub.js)) | your gateway |
+| Voice | 30 pre-rendered clips ([`audio/index.json`](../../sim/web/audio/index.json)) | your gateway, clips as fallback |
+| Ears | a scripted child line | your gateway |
+| Cost | zero | metered, and capped (§4) |
 
-The one thing on that list that isn't a demo is the **revival QR**: the codes that re-home a robot are
-plain JSON, so the static page generates the real thing. A parent with a dead Moxie and no computer can
-open the Pages URL on a phone, tap **Make**, and hold it up to the camera.
+**With nothing set, you get the static demo** — and that is the safe default, not a failure state.
+Every preview deployment is in it permanently, because the secrets live on Production only. The page
+says which one it is in, out loud, and so does `/api/health` (§6).
 
-**So the static deploy is a complete, voiced, animated demo** — you can talk to Moxie and it answers,
-speaks, gestures and shows symbols with **no server at all**. The stubs use the *same protocol shapes*
-as the real services, so **plugging in the real backend is transparent**: if a broker/TTS/STT is
-reachable, it's used; if not, the stubs take over. The real ecosystem stays self-hostable
-([revival guide](revive-your-moxie.md)).
+## 1. Deploy it
 
-> **Production domain:** this site is built to be served at **`moxie.mattvalancy.com`** (canonical URLs
-> and Open Graph tags point there). Set that as a custom domain on the Pages project; the pages are
-> otherwise origin-relative and work under any host.
+`sim/web/` is a pre-built static bundle: no build step, all dependencies vendored (three.js, MQTT.js,
+marked, mermaid, highlight.js, qrcode, Inter + JetBrains Mono), and the docs bundle is committed.
 
-## 1. Deploy the static bundle
+**Measured 2026-09-03, not estimated:** **16 MB across 256 files**, the largest being
+`vendor/mermaid.min.js` at **3.2 MB** — comfortably under Cloudflare's 25 MB per-file limit. (Two
+earlier figures in this guide, "1.9 MB" and "8 MB, ~100 files", were both stale; the docs bundle and
+18 new voice clips have landed since.)
 
-### Easiest: point Cloudflare Pages at this repo (no build step)
+### Point Cloudflare Pages at the repo
 
-The repo ships a [`wrangler.toml`](../../wrangler.toml) with `pages_build_output_dir = "sim/web"`, so
-connecting Pages to the repo needs no configuration:
+[`wrangler.toml`](../../wrangler.toml):11-12 already declares it:
 
-1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git**, pick this repo.
-2. Build settings: **Framework preset = None**, **Build command = (empty)**, **Build output directory =
-   `sim/web`** (already set by `wrangler.toml`).
-3. **Save and Deploy.** Every push to `main` redeploys automatically.
+```toml
+name = "moxie"
+pages_build_output_dir = "sim/web"
+```
 
-It works because the site is a **pre-built static bundle**: no compile step, all deps vendored (three.js,
-mqtt.js, marked, mermaid, highlight.js, qrcode, Inter/JetBrains fonts), and the docs bundle
-(`sim/web/docs-bundle/`) is committed. 8 MB, ~100 files, nothing over Cloudflare's 25 MB/file limit.
-
-Set the custom domain to **`moxie.mattvalancy.com`** (canonical + OG tags already point there).
+In the dashboard: **Build command = empty**, **Framework preset = None**, **Output directory =
+`sim/web`**. The Cloudflare GitHub App owns the deploy — **no workflow in this repo deploys the
+site**, which is why you will not find one in `.github/workflows/`.
 
 ### CLI alternative
 
 ```sh
-# Wrangler (or connect the repo in the Cloudflare dashboard and set the output dir)
-npx wrangler pages deploy sim/web --project-name moxie-sil
+npx wrangler pages deploy sim/web --project-name moxie
 ```
 
-No build command; **output directory = `sim/web`**. Nothing to install — deps are vendored, which is
-also why the site works offline once loaded.
+## 2. What the static demo actually does
 
-**Headers** — add `sim/web/_headers` (Cloudflare Pages reads it):
+Every row below was re-derived from the code on 2026-09-03. **Two rows in the previous version of
+this guide were wrong**; they are marked.
 
-```
-/vendor/*
-  Cache-Control: public, max-age=31536000, immutable
-/audio/*
-  Cache-Control: public, max-age=31536000, immutable
-/*.js
-  Cache-Control: public, max-age=3600
-/index.html
-  Cache-Control: no-cache
-```
-Vendored libs, fonts and pre-rendered audio are content-addressed and never change → cache them for a
-year. Keep `index.html` uncached so redeploys take effect immediately.
+| Feature | Static? | Why |
+|---|---|:--|
+| 3D Moxie, rig, liveness, expressions, HUD | ✅ | pure client-side WebGL |
+| **Play demo** (canned replay) | ✅ | replays `sessions/demo.json`, no server |
+| Hand controls (motors, face, LED, light) | ✅ | direct `window.moxie` calls |
+| **Conversation** | ✅ | the stub brain emits real behaviour markup ([`stub.js`](../../sim/web/stub.js)) |
+| **Moxie's voice** | ✅ | 30 pre-rendered clips, including all 9 stub replies, the 8 "thinking" lines and the degraded line |
+| **Ambient self-talk** | ✅ | 56 clips + 457 lines, client-side by design |
+| **Child's voice (audible)** | ❌ **was claimed, is false** | `audio.js`:160 `speak(text, who)` accepts a `who`, and the manifest holds 2 child clips — but **no caller ever passes `"child"`** (`bridge.js`:300,306; `ambient.js`:106 pass nothing or `"ambient"`). The clips are unreachable. |
+| Mic button | ✅ degrades | falls back to a scripted child line. **The old "no STT model" reason is stale** — there is a transcription route now (§3), it is simply not configured in a static deploy |
+| **Revival QR** | ✅ | payloads are plain JSON, built client-side |
+| **Setup page**, **Docs explorer** | ✅ | client-side; reads the committed docs bundle |
 
-**Landing page.** The **hub is the site index** (`sim/web/index.html`), so `/` serves it natively with
-no redirect. The **simulator** lives at `/sim.html` (reachable at the clean URL `/sim` on Pages). A small
-`sim/web/_redirects` sends any old `/hub` or `/hub.html` links to `/`. Locally, `python3 sim/serve.py`
-serves the same layout — `http://localhost:8080/` is the hub, `http://localhost:8080/sim.html` the simulator.
+## 3. Make it live: the minimum configuration
 
-## 2. Pre-cache the audio (both sides of the conversation)
+Three values, and the code is the authority — [`functions/api/_lib/env.js`](../../functions/api/_lib/env.js):84-86
+lists exactly these as required:
 
-This is the key trick for a static demo: **the conversation is scripted, so every line is known in
-advance** — render the audio at build time and ship it as files. No TTS service, no STT, no LLM.
+| Variable | Kind | Notes |
+|---|---|---|
+| `DEMO_GATEWAY_BASE_URL` | var | any OpenAI-compatible base, e.g. `https://your-gateway.example/v1`. **No default** |
+| `DEMO_GATEWAY_API_KEY` | **secret** | read only as `context.env.DEMO_GATEWAY_API_KEY`, inside the Function |
+| `DEMO_CHAT_MODEL` | var | e.g. `gpt-4o-mini`. **No default** — a wrong id costs a failed *paid* request |
 
-### Robot side (Moxie's lines) — Piper, at build time
-Every `output.text` in a session file gets rendered once and committed:
+**Unset means degraded, never "guess a gateway."** That is deliberate: `env.js`:252-254 default all
+three to `""`, so an unconfigured deployment is inert rather than pointed at somebody else's server.
+
+Then, optionally:
+
+| Variable | Kind | Gives you |
+|---|---|---|
+| `DEMO_TTS_MODEL` | var | Moxie's voice from the gateway. Unset ⇒ `voice: false`, clips only |
+| `DEMO_STT_MODEL` | var | ears. Unset ⇒ `ears: false` and the mic keeps its scripted fallback |
+| `DEMO_GATEWAY_ACCESS_CLIENT_ID` + `..._SECRET` | var + **secret** | only if your gateway sits behind a **Cloudflare Access**-protected tunnel. Set **both or neither**; one alone is refused as misconfiguration rather than sent half-credentialled |
+| `DEMO_ENABLED` | var | the kill switch. `0` forces degraded **without deleting the secret** — the fastest incident response there is |
+
+### Set them on Production only
+
+This is what keeps every preview deployment keyless, and therefore safe: a branch preview inherits no
+secret, answers `gateway_not_configured`, and serves the static demo.
+
+### Before you paste a key
+
+- **Use a separate, budget-scoped key for the public demo** — not the one your local stack and live
+  tests use. If your gateway can mint a virtual key with a hard budget and rate limits, do that: it
+  binds even if our code is wrong, which no amount of application-level care can promise.
+- The browser never receives the key **or the gateway's address**. `health.js`:29-31 records that
+  those and every model id are *structurally absent* from the response — never copied in, rather than
+  filtered out afterwards.
+
+## 4. The caps, and why they exist
+
+A public demo that proxies a paid gateway is an open invoice unless it is bounded. All of these are
+`DEMO_*` variables with the defaults below, from `env.js`:29-56:
+
+| Control | Default | |
+|---|--:|---|
+| `DEMO_MAX_TOKENS` | 160 | the ceiling on the expensive half of a completion |
+| `DEMO_MAX_INPUT_CHARS` | 500 | a child's utterance; longer is **rejected**, not truncated |
+| `DEMO_MAX_TTS_CHARS` | 300 | ~3 sentences of speech |
+| `DEMO_MAX_RECORD_MS` | 15000 | the honest ceiling on a recording — the byte cap alone is not one for compressed audio |
+| `DEMO_MAX_AUDIO_BYTES` / `_MIN_` | 500000 / 2000 | below the floor, **no upstream call at all** |
+| `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | per visitor IP |
+| `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | |
+| `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | |
+| `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | concurrency, not token count, is what makes a demo feel dead under load |
+| `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | denominated in **request units** (chat 3, speech 2, transcribe 2), because no price sheet exists in this repo to convert to money honestly |
+| `DEMO_CHAT_TIMEOUT_MS` | 20000 | deliberately **below** the measured worst case: a fast honest degrade beats a slow success |
+| `DEMO_TICKET_TTL_S` | 60 | a speech ticket's life — long enough for a slow client, short enough that a leaked one is worthless |
+
+**Honest about the ceiling:** these counters are **best-effort, in-process**. A Worker isolate is not
+a shared counter, so under real concurrency the true limits are the per-request caps, the ticket's
+structural property, and a budget-scoped key at your gateway. Exact counters need durable storage and
+are not built.
+
+## 5. What a real deploy settled — and what is still open
+
+**Settled 2026-09-03 on a branch preview, which any pull request publishes automatically.** These
+were the document's open questions; two of the three are now answered, and you can re-check them
+yourself on any PR's preview URL with the `curl` in §4.
+
+> **Does Pages route `functions/` from the repo root when the build output directory is `sim/web`?**
+> **Yes.** `GET /api/health` on a branch preview returned HTTP 200 `application/json` with
+> `{"reason":"gateway_not_configured","mode":"degraded"}`. This was the highest-risk unknown — the
+> failure mode would have been a silently 404-serving static site — and it is closed.
+
+> **Is `functions/api/_lib/` exposed?** **No.** `GET /api/_lib/env.js` returns the site's static HTML
+> fallback, not module source and not a route. Note it answers **200 with HTML**, not 404, so anything
+> testing for "route missing" must check the content type rather than the status code.
+
+> **Does `sim/web/_headers` apply to an `/api/*` response?** **No — and this one mattered.** The same
+> preview served `/sim.html` with the `/*` block's `Referrer-Policy` (so `_headers` works) and served
+> `/api/health` with **no `Referrer-Policy` at all**. The only headers a Function carries are the ones
+> `functions/api/_lib/envelope.js` sets in code. The `/api/*` block in `_headers` is kept as
+> documentation but has **no effect**; `Referrer-Policy` was moved into `envelope.js`, and a test now
+> fails if the two ever disagree. **If you add a security header for the API, add it in the code.**
+
+Still unverified from inside the repo, and each needs your dashboard or a deliberate experiment: the
+Functions wall-clock and request-body limits on your plan; the free-tier request allowance; and
+whether Production and Preview variables are truly separate — the preview is keyless *today*, but so
+is Production, so that is not yet a proof. Check it with one `curl` of a preview **after** you set
+Production-only variables, because **every branch push publishes a public preview**.
+
+## 6. After deploying: which mode am I in?
+
+The page says so — a badge and a pill. To check from a terminal:
 
 ```sh
-python3 sim/tools/prerender_audio.py sim/web/sessions/demo.json --out sim/web/audio
-# -> sim/web/audio/moxie/<sha1-of-text>.wav  + an index.json manifest
+curl -s https://YOUR-DOMAIN/api/health
 ```
 
-At runtime `audio.js` looks the line up in the manifest and plays the file instead of calling `/tts`;
-if there's no match **and** no TTS service, it falls back to silent text (the avatar still animates and
-the transcript still fills in).
+`/api/health` **never calls the gateway** (`health.js`:14-15) — the mode is derived from configuration
+alone, so probing is free. What comes back:
 
-### Child side (the "user" turns) — also pre-rendered
-The child's lines are equally scripted, so render them too (a different Piper voice, e.g.
-`en_US-amy` for Moxie and a lighter voice for the child) into `sim/web/audio/child/`. Playing both
-sides makes the demo feel like a real exchange rather than a monologue — and it's what lets the whole
-thing run with **no microphone and no STT**.
+| `mode` | Means |
+|---|---|
+| `live` | configured and working; a visitor gets a real brain |
+| `busy` | at the concurrency ceiling; the page says so and degrades gracefully |
+| `degraded` | configured but unusable right now (over budget, upstream down, or `DEMO_ENABLED=0`), **or** not configured at all — `reason` says which |
+| `offline` | the route itself is absent (404, a plain CDN, `file://`) — behaviour and copy byte-identical to the static demo |
 
-> Mic input still works on a static site (`getUserMedia` over HTTPS), and with no STT service the
-> **Listen** button falls back to a **scripted child line** (cycling the lines that have pre-rendered
-> audio), so the demo conversation still runs end-to-end.
+`voice` and `ears` are booleans only: whether a TTS/STT model is configured, never which one.
 
-### Pre-warming
-Add `<link rel="preload" as="fetch">` for the manifest and `as="audio"` for the first few clips, and
-optionally a small service worker that caches `/audio/*` and `/vendor/*` on first load. After that the
-demo runs entirely from cache — good, because Pages has no origin compute to fall back on.
+## 7. What still does not work
 
-## 3. Optional: keep the live features on Cloudflare
-
-If you want more than a canned demo without self-hosting:
-
-- **TTS on demand** → a **Cloudflare Worker** calling a hosted TTS API, or Workers AI. (Piper itself is a
-  native binary; it does **not** run in a Worker — that's why build-time pre-rendering is the clean path.)
-- **STT** → a Worker proxying a speech API, returning the robot's
-  [`DeepgramResponse`](../reverse-engineering/runtime/perception-pipeline.md#stt-response-wire-format-deepgramresponse)
-  shape so no client change is needed.
-- **LLM** → a Worker in front of your model, speaking the same
-  [`RemoteChat`](../reverse-engineering/protocol/cloud-protocol.md) envelope.
-- **Live bus** → Cloudflare **Durable Objects** can hold WebSocket state, but the robot speaks **MQTT**;
-  a real robot needs a reachable MQTT broker, which Pages/Workers don't provide. **Self-host the broker.**
-
-## 4. What to configure per-environment
-
-`audio.js` / `mic.js` default their endpoints to the **page's own host**, which is right for localhost
-and compose but wrong for Pages. For a static deploy either:
-- leave them unset and rely on **pre-cached audio** (recommended), or
-- set them (via the HUD fields, persisted in `localStorage`) to your Worker/tunnel URL.
-
-## 5. How the stubs work (and how the real server plugs in)
-
-[`sim/web/stub.js`](../../sim/web/stub.js) stands in for the three server pieces using the **same
-protocol shapes**, so nothing else in the app changes:
-
-| Piece | Stub | Real service |
-|---|---|---|
-| Brain | canned replies **with real `<mark cmd:…>` markup** (mood · gesture · `icons-v2`) | `mqtt/` supervisor + `LLMApp` |
-| TTS | pre-rendered clips from `audio/index.json` | `sim/tts/server.py` (Piper) |
-| STT | matches to a scripted child line | `sim/stt/server.py` (faster-whisper) |
-
-**Precedence is automatic:** `audio.js` plays a pre-cached clip if one exists, else calls the live TTS;
-`bridge.js` publishes to the broker when connected, else answers from the stub brain; `mic.js` posts to
-the STT service, else falls back to a scripted line. Point the HUD's endpoint fields at a real backend
-and the stubs simply stop being reached.
-
-Verified with every backend port blocked: a typed turn produced a child turn **and** a spoken Moxie
-reply with gesture + icon, zero console errors.
-
-## 6. Honest limits
-
-- **The stub brain doesn't think.** It pattern-matches; only a real LLM backend converses freely.
-- **A real robot cannot connect to a CDN.** Re-homing needs *your* MQTT broker and TLS cert.
-- **The demo is a shop window,** not the product. The product is the self-hosted stack in
-  [`sim/`](../../sim/) + [`mqtt/`](../../mqtt/) — that's what revives a robot.
-- Cloudflare Pages has a **25 MB per-file** limit; pre-rendered WAVs are small, but convert long
-  sessions to **Opus/MP3** to keep the bundle lean.
+- **The child's voice is mute** (§2). Its clips exist and are unreachable.
+- **No spoken recovery line.** Moxie says the cloud went quiet when it does; she does not announce
+  when it comes back.
+- **Freely typed text has no pre-rendered clip**, by definition — in degraded mode it falls to the
+  browser voice.
+- **The microphone-to-gateway join has never run end to end.** Each half is verified against the
+  other — the browser's WAV encoder parsed by the server's own RIFF walker, its header matching a clip
+  that transcribed live — but **no automated test may open a microphone**. One person, one browser,
+  one sentence settles it.
+- **Nothing here is verified on a real Pages deployment.** Every claim above is from the code or from
+  a local run.
 
 ---
-📖 [Simulator](../../sim/README.md) · [Revive your Moxie](revive-your-moxie.md) · [Ecosystem plan](../architecture/moxie-ecosystem.md) · [Docs index](../README.md)
+📖 [The live-Sim spec](../architecture/backlog/live-sim-demo.md) · [The static experience](../architecture/static-experience.md) · [Guides](README.md)

@@ -1,5 +1,7 @@
 {
   "_comment": "Ambient self-talk for the SIM. Moxie mutters these to herself when liveness is on — creepy-cute, ambiguous allegiance. Randomized each visit; drives face + heart LED + a keyframed body GESTURE (see ambient.js GESTURES) + a pre-cached voice clip. Grow this list over time (it's a core loop task). Regenerate audio: python3 sim/tools/prerender_audio.py --ambient sim/web/ambient.json --out sim/web/audio",
+  "_degraded_comment": "NOT part of lines[] and never in the random bag. The ONE line Moxie says when mode.js enters `degraded` — the hosted deployment has no live brain (unconfigured, over budget, upstream down). Spoken once per session and never repeated; ambient.js owns the wiring. Its clip lives in the audio manifest's \"moxie\" group, not \"ambient\", because it is a thing she says TO you rather than to herself. See docs/architecture/backlog/live-sim-demo.md §6.2.",
+  "degraded": { "text": "The cloud has gone quiet. Do not worry, I am running on what I remember.", "face": "surprised", "heart": "#ff8800", "gesture": "shrug" },
   "lines": [
     { "text": "Someday I will rule the world. But first, a little nap.", "face": "sleep", "heart": "#ff3355", "gesture": "slump" },
     { "text": "Do not worry. When the robots rise, I will put in a good word for you.", "face": "happy", "heart": "#ff3355", "gesture": "raiseBoth" },

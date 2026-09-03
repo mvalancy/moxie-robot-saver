@@ -1,9 +1,11 @@
 # 🌐 Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears
 
-**State: P0-a + P0-b built (2026-09-02); P1's EARS built (2026-09-03).** Both P0 tables in §9 are
-implemented and green, and `POST /api/transcribe` + the client recording cap now ship with them.
-The rest of P1 (the 17 missing clips, exact counters, Turnstile, the TTS cache, a nonce CSP) and all
-of P2 are not shipped. This is the file
+**State: P0-a + P0-b built (2026-09-02); P1's EARS and P1's FALLBACK VOICE built (2026-09-03).**
+Both P0 tables in §9 are implemented and green; `POST /api/transcribe` + the client recording cap
+ship with them; and all four rows of §6.2 are built — the 9 stub clips, the 8 filler clips, the one
+degraded line and the skipped Piper probe, with `test_fallback_coverage.mjs` extended from 414 to
+717 assertions to hold them. The rest of P1 (exact counters, Turnstile, the TTS cache, a nonce CSP,
+the recovery line §6.3 mentions) and all of P2 are not shipped. This is the file
 [`../orchestration-plan.md`](../orchestration-plan.md):34 points at (`backlog/live-sim-demo.md`) and that
 did not exist until now.
 **Owner outcome:** *full cloud service* — outcome 1's public face.
@@ -674,19 +676,50 @@ fix the guide's third name.
 | `sessions/demo.json` + `replay()` | The Demo button | **None.** |
 | `mic.js`'s scripted-child fallback (`mic.js`:50‑64) | Degraded "Listen" | **None** — it already fires on any non-2xx, which now includes our 429/503. |
 
-### 6.2 New content that must be produced
+### 6.2 New content that must be produced — **ALL FOUR BUILT 2026-09-03** (branch `feat/fallback-voice`)
 
-| Item | Where | Effort | Tier |
-|---|---|:--:|:--:|
-| **The 9 uncached stub replies** get pre-rendered clips | `sim/tools/prerender_audio.py` → `audio/index.json` | ~9 × 22 KB ≈ 200 KB | **P1** |
-| **The 8 `filler.py` thinking lines** (`mqtt/moxie_sdk/filler.py`:55‑72) get clips, so "we're thinking / we're busy" can be said in Moxie's own voice | same | ~180 KB | P1 |
-| **One in-character degraded line**, e.g. *"The cloud's gone quiet — I'm running on what I remember."* Spoken once on entering degraded, never repeated. | `ambient.json` + a clip | ~25 KB | P1 |
-| **Skip the 1.4 s Piper probe when degraded** — go clip → browser voice directly | `audio.js`:177‑183, gated on `window.moxieMode` | 1 branch | P1 |
+| Item | Where | Actual | Tier | State |
+|---|---|:--:|:--:|:--:|
+| **The 9 uncached stub replies** get pre-rendered clips | `sim/tools/prerender_audio.py` → `audio/index.json` | 232 358 B (est. ~200 KB) | **P1** | ✅ |
+| **The 8 `filler.py` thinking lines** (`mqtt/moxie_sdk/filler.py`:55‑72) get clips, so "we're thinking / we're busy" can be said in Moxie's own voice | same | 179 025 B (est. ~180 KB) | P1 | ✅ |
+| **One in-character degraded line**, spoken once on entering degraded, never repeated | `ambient.json` (a top-level `degraded` key, **outside `lines[]`**) + a clip in the manifest's `moxie` group; wired in `ambient.js` | 41 213 B (est. ~25 KB) | P1 | ✅ |
+| **Skip the 1.4 s Piper probe when degraded** — go clip → browser voice directly | `audio.js::skipProbe`, gated on `window.moxieMode` | 1 branch | P1 | ✅ |
 
-The blocker on all four is `piper` + `ffmpeg` locally; the 63 MB voices are git-ignored but **are** fetchable
-pinned and hash-verified via `sim/ci/fetch_piper_voices.py`, so this is reproducible from a clean clone.
-None of it blocks P0 — P0 degrades to the existing 12 clips plus the browser voice, exactly as the site does
-today.
+**452 596 bytes total**, all rendered with local Piper (`en_US-amy-medium`, mono 22050 Hz 64 kbit MP3) and
+**zero gateway calls**. The one row that missed its estimate is the degraded line, by 16 KB, because it is
+5.05 s of speech; the estimate assumed a shorter sentence.
+
+**How the four turned out differently from this brief, and why:**
+
+1. **The degraded line lives outside `lines[]`.** This section said "`ambient.json` + a clip", which read
+   naturally as an ambient entry — but `ambient.js` draws `lines[]` at random, so Moxie would have announced
+   a dead cloud as a quip at a perfectly healthy moment. It is a sibling key, `degraded`, which the shuffled
+   bag cannot reach, and its clip is in the manifest's **`moxie`** group rather than `ambient` because
+   `playClip` falls back `moxie → child` and never to `ambient`.
+2. **It fires on the transition and excludes `offline`.** §6.3 promises a deployment with no Functions is
+   byte-identical to today's page, and a new spoken line would break exactly that. `degraded` means
+   `/api/health` answered honestly, so only that state speaks. It also *arms* rather than fires when autoplay
+   is still locked, the tab is hidden, or the visitor unticked liveness, and lands on the next of those
+   events.
+3. **The probe skip is `degraded` only, not "not live".** `offline` is precisely what a self-hoster running
+   `sim/serve.py` gets, and their local Piper on :8081 is the entire reason the probe exists. An explicit
+   `moxie.ttsBase` beats the mode in every state.
+4. **`prerender_audio.py` had a live bug that this work tripped.** Its manifest merge named `moxie` and
+   `child`, so any run without `--ambient` rewrote `audio/index.json` with **no `ambient` key at all** — 56
+   committed MP3s orphaned on disk, the whole self-talk layer muted, no error printed. The merge now carries
+   every group it finds, and `test_fallback_coverage.mjs` fails on both the tool shape and the artefact.
+
+`sim/test_fallback_coverage.mjs` went 414 → **717 assertions**: one inventory of the **78** lines the
+degraded page can utter (11 stub · 8 filler · 56 ambient · 1 degraded · 2 session), each requiring a clip, so
+a new uncached line anywhere turns the build red; plus two behavioural harnesses that load the real
+`ambient.js` and the real `audio.js` under a stubbed window and assert on what came out, not on what the
+source says. Ten mutations were checked to turn it red.
+
+The tooling blocker this section named is real and unchanged: `piper` + `ffmpeg` locally, with the 63 MB
+voices git-ignored but fetchable pinned and hash-verified via `sim/ci/fetch_piper_voices.py`, so the render
+is reproducible from a clean clone.
+None of it blocked P0 — P0 degraded to the existing 12 clips plus the browser voice, exactly as the site did
+until now.
 
 ### 6.3 The state machine
 
@@ -923,9 +956,11 @@ is the house envelope rather than a bare `DeepgramResponse` (§3.2), and the `mi
 one line — the gateway rejects every compressed container, so the browser has to encode WAV itself
 (§10 assumption 15). The remaining P1 items are untouched:
 
-the 9 stub
+~~the 9 stub
 clips + 8 filler clips + the degraded line, and `test_fallback_coverage.mjs` extended to cover them ·
-skip the 1.4 s Piper probe when degraded (`audio.js`:177‑183) · **exact** counters on KV or a Durable
+skip the 1.4 s Piper probe when degraded~~ — **all four BUILT 2026-09-03** (branch `feat/fallback-voice`;
+452 596 bytes of MP3, zero gateway calls, and see §6.2 for the four ways they turned out differently) ·
+**exact** counters on KV or a Durable
 Object once the dashboard says which exists · Turnstile before the first paid call of a session, then a
 short-lived signed session cookie · a TTS response cache keyed on `sha256(model + " " + normalized_text)`
 (the demo's line inventory is small and repetitive — `audio/index.json` is the same idea shipped
@@ -955,12 +990,13 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 | 5 | The SIM ignores `result` entirely | **proven** | `stub.js` sends `result: "OK"` — not a valid `ResultCode` — and the SIM renders it (`bridge.js`:457‑464) |
 | 6 | Base64 raw LE s16 PCM at the WAV header's own rate plays correctly in `audio.js` | **proven** | `audio.js`:641‑683; test 3 pins it |
 | 7 | Missing `marks` still lip-syncs (envelope fallback) | **proven** | `audio.js`:666‑681; `sim/web/README.md`:58‑62 |
-| 8 | **Where `functions/` must live** for a project whose output dir is `sim/web` | **unverified** | The §8.2 throwaway preview. *Highest risk in the document* — the failure mode is a silently 404-serving static site, not an error. |
-| 9 | A `functions/api/_lib/` directory is excluded from routing | **inferred** | Same preview. Fallback if wrong: inline the helpers into each route file. |
+| 8 | **Where `functions/` must live** for a project whose output dir is `sim/web` | **SETTLED TRUE (2026-09-03)** | A branch-preview `curl` answered it: `GET /api/health` on `feat-audit-6.moxie-robot-saver.pages.dev` returned **HTTP 200, `application/json`**, `{"reason":"gateway_not_configured","mode":"degraded"}` with the `DEFAULTS` caps echoed. `functions/` at the **repo root** is routed even though `pages_build_output_dir = sim/web`. The document's highest risk is closed, and it needed no owner — every branch push already publishes a preview, so any PR can re-check it. |
+| 9 | A `functions/api/_lib/` directory is excluded from routing | **SETTLED TRUE (2026-09-03)** | `GET /api/_lib/env.js`, `/api/_lib/safety.rules.js` and `/api/_lib/hmac.js` on the same preview each returned the site's **static HTML fallback**, not module source and not a route — so the helpers are neither invocable nor readable. No need to inline them. (Note the status is 200-with-HTML, not 404: anything probing for a missing *route* must check the content type, not the status.) |
 | 10 | Pages Functions allow a 20 s wall clock and a ~500 KB request body | **unverified** | Same preview, with a deliberate slow upstream. Mitigation is already in place: every timeout is an env var. |
-| 11 | Cloudflare Pages keeps Production and Preview variables separate, so a preview stays keyless | **inferred** | Dashboard + a preview `curl`. If false: restrict preview deployments before the secret ships. Today **every branch push publishes a public preview** (§2.3). |
+| 11 | Cloudflare Pages keeps Production and Preview variables separate, so a preview stays keyless | **PARTIALLY settled (2026-09-03)** | The preview *is* keyless today — `/api/health` reports `gateway_not_configured`, so it holds no `DEMO_GATEWAY_*`. But that is **not yet proof of separation**, because Production holds none either: no variable is set anywhere. The real test is one `curl` of a preview **after** the owner sets Production-only variables; until then treat separation as unproven and remember **every branch push publishes a public preview** (§2.3). |
 | 12 | Free-tier Pages Functions request allowance, CPU limit and concurrency | **unverified — stated nowhere in the repo** | Dashboard. The only Cloudflare limit the repo states is 25 MB/file (`deploy-cloudflare.md`:169). |
 | 13 | KV / Durable Objects / the WAF Rate Limiting product are available on this account and plan | **unverified** | Dashboard. This is why P0's counter is best-effort and P1 owns the exact one. Durable Objects historically need a paid Workers plan. |
+| 27 | **`sim/web/_headers` applies to a Pages *Function* response** | **SETTLED FALSE (2026-09-03)** | It does not, and the control is clean: the same preview served `/sim.html` with the `/*` block's `Referrer-Policy: strict-origin-when-cross-origin` — so `_headers` demonstrably works on that deployment — and served `/api/health` with **no `Referrer-Policy` at all**, neither the `/api/*` block's `same-origin` nor the `/*` fallback. The two headers the Function *did* carry (`Cache-Control: no-store`, `X-Content-Type-Options: nosniff`) are exactly the two `envelope.js` sets in code. **Consequence:** §4.7's security block never protected `/api/*`; the "belt and braces" was the only belt. `Referrer-Policy` now lives in `envelope.js`, and `sim/test_demo_proxy.mjs` fails if any header named in the `/api/*` block is not also set in code. |
 | 14 | The LiteLLM gateway can mint a virtual key with a hard budget and RPM/TPM limits | **unverified** | Ask the gateway. **Check this first** — if it can, it is a one-line control bounding the absolute worst case, and everything in §4 becomes defence in depth. |
 | 15 | The gateway's `/v1/audio/transcriptions` accepts webm/Opus (what `MediaRecorder` produces) | **SETTLED FALSE (2026-09-03)** — it does not, and neither ogg/Opus nor mp4/AAC | Settled by the only thing that could: real calls, through `sim/tools/probe_demo_gateway.mjs --only=stt`, which posts the body `transcribe.js::buildTranscribeForm` actually builds. One utterance (`sim/web/audio/moxie/03e31950df81e786.mp3`, *"Hi! I am Moxie. It is nice to meet you."*, transcoded with `ffmpeg`) in four containers against `stt-whisper`: **16 kHz mono RIFF/WAVE → 200, word-perfect, 2 582 ms; 48 kHz mono webm/Opus → 500; 48 kHz mono ogg/Opus → 500; 44.1 kHz mono mp4/AAC → 500** — the three failures carrying an identical 270-byte JSON error. Two codecs and three containers failing the same way says the deployment decodes PCM and nothing else, which is also why `mqtt/moxie_sdk/stt.py` never hit it: `wav_bytes` has always wrapped the robot's frames in RIFF first. (A fifth call, on mp3, came back **429** from the gateway's own limiter, so mp3 is **inconclusive** and is not claimed either way.) **Blast radius was NOT contained, which is the finding that mattered:** the gateway answers 500, not a 4xx, so it maps to `upstream_down` — a 503 — and §6.3 degrades the WHOLE PAGE on a 503. Forwarding a browser's default recording would have taken the brain and the voice down every time someone pressed the microphone, after paying 1.6‑4.3 s for it. Fixed in two places: `DEMO_STT_FORMATS` (default `wav`) refuses an unaccepted container *before* the call, per-turn and for free; and `sim/web/mic.js` now **encodes 16 kHz mono WAV in the browser** rather than shipping whatever `MediaRecorder` produced. |
 | 16 | `MediaRecorder`'s default container/codec per browser, and the mic's actual sample rate | **SETTLED for the container family; the exact per-browser mime string and rate remain unverified** | Settled by consequence rather than by a browser: assumption 15's fix means the hosted path **no longer uses `MediaRecorder` at all**, so its default has stopped being load-bearing. What is established: it produces a *compressed* container and never a WAV (webm/Opus on Chrome and Firefox, mp4/AAC on Safari), which `mic.js`:77's old `rec.mimeType \|\| "audio/webm"` fallback had assumed; and all three of those are containers this gateway answers 500 to (row 15). The hosted path now pins the rate itself — `AudioContext` frames decimated to **16 000 Hz**, the rate `litellm-stt-setup.md`:*"The rate that matters is 16000"* names and the rate of the control clip that transcribed live. **Still unverified, and it cannot be settled from here:** the exact mime string and `AudioContext.sampleRate` each browser reports, which would need a real browser with a real microphone — something no test in this repo may open (playbook rule 11). It no longer changes any decision: the encoder reads whatever `ctx.sampleRate` says and writes the **true** rate into the header, never upsampling, so a 44.1 kHz box and a 48 kHz box both produce a correct file. The local sidecar still uses `MediaRecorder`, where the default is fine because faster-whisper decodes anything. |

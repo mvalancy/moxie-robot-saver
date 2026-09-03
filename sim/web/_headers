@@ -84,12 +84,19 @@
 /vendor/*
   Cache-Control: public, max-age=31536000, immutable
 
-# The Pages Functions (functions/api/*). LISTED LAST so `no-store` wins over anything
-# above: a cached mode, a cached refusal or a cached capacity signal is a lie with a TTL,
-# and `Referrer-Policy: same-origin` keeps the visited page's URL off any request the
-# route makes. The route itself also sets these headers (functions/api/_lib/envelope.js) —
-# belt and braces, because whether `_headers` applies to a Function response at all is
-# not something this repo can establish without a real deploy.
+# The Pages Functions (functions/api/*). SETTLED BY A REAL DEPLOY (2026-09-03): this block
+# is INERT — `_headers` does not apply to a Pages Function response at all. The preview
+# served `/sim.html` with the `/*` block's `Referrer-Policy` (so `_headers` demonstrably
+# works on the deployment) and served `/api/health` with NO `Referrer-Policy` whatsoever,
+# while `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` were present —
+# and those two are exactly the ones `functions/api/_lib/envelope.js` sets in code. The
+# "belt and braces" turned out to be the only belt.
+#
+# It is kept here as documentation of intent, and because a future Pages change that DID
+# start applying it would set the same values. But treat it as having no effect: every
+# header an /api/* response needs must be set in `envelope.js`, which is where
+# `Referrer-Policy: same-origin` now lives. `sim/tests/test_demo_proxy.mjs` holds the two
+# in agreement so this block cannot quietly drift away from the code that is real.
 /api/*
   Cache-Control: no-store
   X-Content-Type-Options: nosniff
