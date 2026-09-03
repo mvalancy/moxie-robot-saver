@@ -10,17 +10,17 @@
 "payload": "{\"command\": \"prompt\", \"speech\": \"Guess what, it's my birthday today!\"}"
 },
 {
-"t": 4200.0,
+"t": 6000.0,
 "topic": "/devices/d_demo/commands/remote_chat",
 "payload": "{\"command\": \"remote_chat\", \"output\": {\"text\": \"Happy birthday! I hope your day is amazing.\", \"markup\": \"<mark name=\\\"cmd:playback-mood,data:{+mood+:1,+intensity+:2}\\\"/><mark name=\\\"cmd:icons-v2,data:{+command+:0,+icon0+:{+iconType+:1,+value+:+Birthday+,+background+:+Null+},+highlight+:0}\\\"/><mark name=\\\"cmd:behaviour-tree,data:{+eventName+:+Gesture_Celebrate+,+behaviour+:+Bht_Gesture_Celebrate+}\\\"/>Happy birthday! I hope your day is amazing.<mark name=\\\"cmd:icons-v2,data:{+command+:2,+icon0+:{+iconType+:1,+value+:+Birthday+,+background+:+Null+},+highlight+:0}\\\"/>\"}}"
 },
 {
-"t": 8800.0,
+"t": 12500.0,
 "topic": "/devices/d_demo/events/remote-chat",
 "payload": "{\"command\": \"prompt\", \"speech\": \"Thank you Moxie!\"}"
 },
 {
-"t": 11400.0,
+"t": 17000.0,
 "topic": "/devices/d_demo/commands/remote_chat",
 "payload": "{\"command\": \"remote_chat\", \"output\": {\"text\": \"You're so welcome. I love celebrating with you!\", \"markup\": \"<mark name=\\\"cmd:playback-mood,data:{+mood+:1,+intensity+:1}\\\"/><mark name=\\\"cmd:behaviour-tree,data:{+eventName+:+Gesture_Talk+,+behaviour+:++}\\\"/>You're so welcome. I love celebrating with you!\"}}"
 }
