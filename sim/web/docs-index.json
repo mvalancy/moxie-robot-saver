@@ -1,5 +1,5 @@
 {
- "generated": "docs-2f1c109c8971",
+ "generated": "docs-73bb8b65c2e9",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 83148,
+   "bytes": 85903,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -537,7 +537,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 87179,
+   "bytes": 90226,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -569,7 +569,7 @@
     "How someone else points this at their own gateway and their own domain",
     "6. The fallback experience",
     "6.1 What is reused as-is",
-    "6.2 New content that must be produced",
+    "6.2 New content that must be produced — **ALL FOUR BUILT 2026-09-03** (branch `feat/fallback-voice`)",
     "6.3 The state machine",
     "7. Capacity signalling and what the visitor sees",
     "8. Tests and acceptance criteria",
