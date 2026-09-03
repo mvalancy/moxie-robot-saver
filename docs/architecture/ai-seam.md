@@ -352,9 +352,16 @@ Five properties are load-bearing, and each is pinned by a test in
    `stt-whisper` the same way. Defaults are computed **at read time** from that moment's
    availability, so a model the gateway starts serving tomorrow becomes the default with no
    migration.
-2. **Local engines are first class.** An explicit local pick is honoured even with
-   `MOXIE_VOICE_BASE_URL` fully configured — the same statement `MOXIE_TTS=piper` /
-   `MOXIE_STT=whisper` make on the command line.
+2. **Local engines are first class, from both directions.** An explicit local pick is honoured even
+   with `MOXIE_VOICE_BASE_URL` fully configured; and an explicit `MOXIE_TTS=piper` /
+   `MOXIE_STT=whisper` **pins the engine**, so no pick can move that deployment off it. The pin
+   names the engine, never the voice — `MOXIE_TTS=piper` still lets a parent choose *which*
+   installed Piper voice speaks, `MOXIE_STT=gateway` still lets them choose the STT model. A pinned
+   side's dropdown offers only that engine's entries and carries `pin_notes` saying which variable
+   did it, so the card is short *and* explained rather than short and mysterious; a stale page that
+   posts a cross-engine pick gets a 400 with the variable named. `auto` and unset pin nothing — and
+   neither does `MOXIE_TTS=tone`, which is a permission (the last rung under the gateway and Piper),
+   not a selection, and is what both compose files default to.
 3. **Discovery never blocks a turn.** `voice_settings.GatewayCatalog` caches one listing for
    `MOXIE_VOICE_DISCOVERY_TTL_S` (default 300 s) and refreshes it on a background thread; the first
    ask after boot answers with the local entries and `discovering: true`. The one bounded exception
@@ -372,9 +379,9 @@ Five properties are load-bearing, and each is pinned by a test in
 
 `run.py` reads `fleet/voice.json` before it builds either engine, so a choice survives a restart, and
 logs which engine was installed and why — `speech: piper-amy (gateway, chosen)` /
-`speech: tone (built-in, default — gateway unreachable)`. `MOXIE_TTS=off` and `MOXIE_STT=off` still
-win over a pick: a deployment that declared itself voiceless is not talked back into speaking by a
-dropdown. Wire: `GET /voice`, `POST /voice`, `POST /voice/test` on the supervisor's status server.
+`speech: tone (built-in, default — gateway unreachable)`, and never as `chosen` when the
+environment's pin is what actually decided. `MOXIE_TTS=off` and `MOXIE_STT=off` still win over a
+pick: a deployment that declared itself voiceless is not talked back into speaking by a dropdown. Wire: `GET /voice`, `POST /voice`, `POST /voice/test` on the supervisor's status server.
 
 **Required:** `audio` (PCM: raw `buffer` + `channels` + `sample_rate`) and `event_id` to correlate.
 **`marks[]` (recommended):** timed events lifted from the markup — the face reads them for **viseme**

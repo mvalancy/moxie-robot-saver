@@ -36,7 +36,15 @@ default. Pick one, press **Test** to hear it on the SIM, and the **next turn** s
 restart, and the choice is remembered in `fleet/voice.json` across one. An explicit *local* pick is
 honoured even with `MOXIE_VOICE_BASE_URL` set, and if the gateway is unreachable the card still
 renders the local options beside the reason. `MOXIE_VOICE_MODEL` remains the boot default for an
-appliance nobody has opened the card on. Design: [ai-seam §③](../architecture/ai-seam.md).
+appliance nobody has opened the card on.
+
+**The dropdown never overrules `MOXIE_TTS`.** If you set it to an engine — `piper`/`local` or
+`gateway`/`openai` — you have pinned that engine, and the Speech dropdown then offers only its
+entries, with a line on the card naming the variable. You still choose the voice *within* it (which
+installed Piper voice, or which gateway model); you cannot be moved off the engine this deployment
+declared, which is the point of setting it. `MOXIE_TTS=tone` and an unset `MOXIE_TTS` pin nothing —
+`tone` is the built-in fallback's permission, not a selection. Design:
+[ai-seam §③](../architecture/ai-seam.md).
 
 ### What we measured (live, 2026-09-02)
 

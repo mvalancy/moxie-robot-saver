@@ -11,6 +11,18 @@ also found (and this branch fixed) a cold-start race the brief did not anticipat
 issued before the first `GET /v1/models` returns was judged against an empty catalog and refused a
 good pick, so a console **write** now waits up to 10 s for that first listing while every read still
 answers instantly.
+**Corrected 2026-09-03** (`feat/voice-picker`, second pass): as shipped, the pick sat above *every*
+env value except `off`, so a console pick of `gateway:piper-ryan` silently overruled an explicit
+`MOXIE_TTS=piper` — the owner's "local engines stay first class" said in the one place a deployment
+can say it. A picker that overrides an explicit operator setting is a bug, and nothing in the suite
+paired an explicit engine with a cross-engine pick. An explicit `MOXIE_TTS`/`MOXIE_STT` now **pins
+the engine**: the builders drop a pick that names another engine, `VoiceEngines.available()` offers
+only the pinned engine's entries and carries `pins`/`pin_notes`, the card prints the sentence naming
+the variable, and a stale page's cross-engine POST is refused with it. The pin names the ENGINE, not
+the voice — a pick *within* it still applies. `MOXIE_TTS=tone` deliberately pins nothing (it is the
+fallback's permission, and is what both compose files default to; `test_compose.py` guards that
+coupling from the other end). +20 tests.
+
 Originally: build-ready brief (2026-09-02). **Depends on:** the gateway STT slice (`feat/gateway-stt-live`)
 and the telehealth slice (it owns `server/` and the status-HTTP region until it lands).
 **Owner outcome:** *full cloud service* — a parent picks Moxie's voice and ears from what is actually
@@ -47,6 +59,9 @@ dropdowns still render.
   installed → else `off`.
 - An explicit choice always wins over the default, and an explicit **local** choice wins even when a
   gateway URL is configured (user rule; pinned by a test in the STT slice and re-asserted here).
+- And the converse, which the first pass got wrong (see the 2026-09-03 correction above): an
+  explicit `MOXIE_TTS`/`MOXIE_STT` **pins the engine**, and a pick may only choose the model within
+  it. The operator chooses the engine; the parent chooses the voice.
 
 ## Design
 
