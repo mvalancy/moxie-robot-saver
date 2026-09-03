@@ -54,6 +54,7 @@ import time
 from dataclasses import fields as _dc_fields
 
 from .module import Conversation, Global, Schedule, load_modules
+from . import ext
 
 #: Reader contract. A pack that says a number we do not know is refused *readably*
 #: rather than half-read — a format that cannot say what it is cannot be evolved.
@@ -125,11 +126,11 @@ SPEC = {
         ("prompt", _s, ""), ("opener", _s, ""), ("model", _opt_s, None),
         ("max_tokens", _i, 200), ("temperature", _f, 0.8),
         ("max_history", _i, 40), ("max_volleys", _i, 40),
-        ("code", _s, ""), ("memory", _d, {}),
+        ("code", _s, ""), ("memory", _d, {}), ("extension", _d, {}),
     ),
     "global": (
         ("name", _s, ""), ("pattern", _s, ""), ("entity_groups", _s, ""),
-        ("action", _i, 0), ("code", _s, ""),
+        ("action", _i, 0), ("code", _s, ""), ("extension", _d, {}),
     ),
     "schedule": (
         ("name", _s, ""), ("schedule", _d, {}),
@@ -156,6 +157,10 @@ FORK = "fork"                     # same version number, different content
 DOWNGRADE = "downgrade"           # older source_version
 DOWNGRADE_CONFLICT = "downgrade_conflict"     # older AND edited locally
 INVALID = "invalid"               # the item cannot be installed at all (see `validate_item`)
+
+#: A row carrying `escalation` is defaulted **un-ticked** whatever its state, because the
+#: incoming version asks for more than the installed one did. See `review_pack`.
+ESCALATION_LABEL = "This update asks for more than the version you have"
 
 #: Which states are ticked when the review is first shown. Only two: a genuinely new item
 #: and a clean upgrade. Everything that could destroy work starts un-ticked — a parent has
@@ -295,6 +300,14 @@ def validate_item(item) -> list:
                 re.compile(pattern, re.I)
             except re.error as e:
                 reasons.append(f"pattern does not compile: {e}")
+    block = data.get("extension") or {}
+    if block:
+        # `allow_p1` on purpose: a pack authored for a *later* appliance must still
+        # install, exactly as one carrying `code` does — it simply will not run here, and
+        # `extension_warnings` says so in the review. What is refused at import is a
+        # program this appliance could never read at all.
+        for reason in ext.validate(block, allow_p1=True)[:1]:
+            reasons.append(f"extension: {reason}")
     sv = item.get("source_version", 1)
     if not isinstance(sv, int) or isinstance(sv, bool) or sv < 0:
         reasons.append(f"source_version must be a non-negative integer, got {sv!r}")
@@ -633,6 +646,7 @@ def review_pack(pack: dict, installed, *, digest: str = "ok", catalog=None) -> l
             "installed_version": None, "state": INVALID, "label": "",
             "default": False, "local_edited": False, "origin": "",
             "pack_id": "", "warnings": [], "reasons": reasons, "diff": [],
+            "escalation": [],
         }
         if reasons:
             row["label"] = STATE_LABEL[INVALID]
@@ -659,11 +673,37 @@ def review_pack(pack: dict, installed, *, digest: str = "ok", catalog=None) -> l
             row["diff"] = diff_item(installed_data, data)
             row["state"] = _state(row["source_version"], row["installed_version"],
                                   incoming_rev, str(prov.get("imported_rev") or ""), edited)
+            was = set(extension_capabilities(installed_data))
+            now = set(extension_capabilities(data))
+            row["escalation"] = sorted(now - was)
         row["label"] = _label(row)
         row["warnings"] = _warnings(kind, data, catalog=catalog)
-        row["default"] = bool(trusted and row["state"] in DEFAULT_ACCEPT)
+        row["default"] = bool(trusted and row["state"] in DEFAULT_ACCEPT
+                              and not row["escalation"])
+        if row["escalation"]:
+            # §7.3's load-bearing addition. The comparison is over the **capability set**,
+            # independent of `source_version` and independent of `local_rev`: so a pack
+            # cannot escalate privileges by bumping a version number, and it cannot
+            # escalate them quietly on a machine where the parent never edited anything.
+            # A *shrinking* set is not a conflict — less is always safe, so it defaults
+            # ticked like any other upgrade.
+            row["warnings"].insert(0, ESCALATION_LABEL + ": it now wants to "
+                                   + _escalation_words(row["escalation"]) + ".")
         rows.append(row)
     return rows
+
+
+def _escalation_words(caps) -> str:
+    """"remember things about your child, and check the time" — the newly-asked-for
+    capabilities as one clause a parent can decline on."""
+    words = []
+    for cap in caps:
+        sentence = (ext.ACTION_WORDS.get(cap[4:]) if cap.startswith("act.")
+                    else ext.CAPABILITY_WORDS.get(cap)) or cap
+        words.append(sentence.replace("Can ", "", 1).replace("Can", "", 1).strip())
+    if len(words) == 1:
+        return words[0]
+    return ", ".join(words[:-1]) + " and " + words[-1]
 
 
 def _state(incoming_v: int, installed_v: int, incoming_rev: str, imported_rev: str,
@@ -701,12 +741,51 @@ def _label(row: dict) -> str:
     return STATE_LABEL.get(state, state)
 
 
+def extension_warnings(data: dict) -> list:
+    """What a parent is told about an item's `extension`, in plain language (§7.3).
+
+    Three things, in this order, because a parent reads top-down:
+
+    1. **The grant list** — one sentence per capability, from the fixed table in
+       `ext.CAPABILITY_WORDS`. Never author-supplied text: a pack that could write its own
+       grant sentence could write a reassuring lie.
+    2. **`explain()`'s sentences** — one per rule. A grant list tells a parent what a pack
+       *may* do; these tell them what it *will* do, which is the difference between a
+       permissions dialog and a review.
+    3. **An honest note when it will install but not run** — either because the program is
+       malformed, or because it needs `act`/`subscribe`/`brain`, which this appliance
+       cannot grant yet (brief S5). Saying nothing here would repeat the exact mistake the
+       `code` warning exists to avoid.
+    """
+    block = (data or {}).get("extension") or {}
+    if not block:
+        return []
+    out = []
+    if ext.validate(block, allow_p1=True):
+        return ["carries a program this appliance cannot read, so the rest of this item "
+                "installs and the program does not: "
+                + ext.validate(block, allow_p1=True)[0]]
+    out += ["this activity " + w[0].lower() + w[1:] for w in ext.grant_list(block)]
+    out += ext.explain(block)
+    p0 = ext.validate(block)
+    if p0:
+        out.append("…but not yet on this appliance: " + p0[0])
+    return out
+
+
+def extension_capabilities(data: dict) -> list:
+    """The capability set an item's extension declares — the thing the escalation rule in
+    `review_pack` compares across versions."""
+    return ext.capabilities_of((data or {}).get("extension") or {})
+
+
 def _warnings(kind: str, data: dict, *, catalog=None) -> list:
-    """The three things a parent should be told before an item installs."""
+    """The things a parent should be told before an item installs."""
     out = []
     if data.get("code"):
-        out.append("carries a `code` block, which this appliance never runs — the "
-                   "prompts and patterns install, the scripted behaviour does not")
+        out.append("carries a `code` block (Python), which this appliance never runs — "
+                   "see `extension` for behaviour this appliance can run")
+    out += extension_warnings(data)
     if kind == "schedule":
         unknown = unknown_schedule_modules(data, catalog=catalog)
         if unknown:

@@ -23,8 +23,10 @@ that behaviour is *declared* rather than scripted:
     "memory": {"namespace": "memory_chat", "summarize": true, "min_volleys": 2}
 """
 from __future__ import annotations
+import hashlib
 import json
 import re
+import time
 from typing import Callable, Optional
 
 from ..app import MoxieApp
@@ -66,7 +68,8 @@ class ContentApp(MoxieApp):
                  default_module_id: Optional[str] = None,
                  global_handlers: Optional[dict] = None,
                  memory: Optional[MemoryStore] = None,
-                 safety_classifier=None, content_defaults=None):
+                 safety_classifier=None, content_defaults=None,
+                 ext_grants=None, ext_limits=None, clock=None, monotonic=None):
         self.module = module
         # 📦 The SHIPPED baseline (`packs.shipped_items` of `MOXIE_CONTENT_MODULE`), kept
         # separately from `module` because `module` is *defaults ⊕ the imported overlay*.
@@ -87,6 +90,33 @@ class ContentApp(MoxieApp):
         # remembered. Resolved lazily so a missing rules file is not an import error.
         self._classifier = safety_classifier
         self._classifier_resolved = safety_classifier is not None
+        # 🧬 Sandboxed extensions (BEYOND #6). `ext_grants` is the set of capabilities
+        # this appliance will honour. It defaults to `{say, handled, session,
+        # child.nickname}` and there is deliberately **no env var and no console control**
+        # for it at P0: widening it is a code change, which is a reviewer. The
+        # parent-facing grant flow is P1.
+        self._ext_grants = (frozenset(ext.DEFAULT_GRANTS) if ext_grants is None
+                            else frozenset(ext_grants))
+        # 📦 Shipped-by-us extensions get a wider set, and the trust is anchored to the
+        # **bytes of the program**, not to its name. `content_defaults` is the shipped
+        # baseline (`packs.shipped_items` of `MOXIE_CONTENT_MODULE`), so an imported pack
+        # that overrides `global:What Time Is It` does NOT inherit its grants — its AST
+        # digest is different, and a different program is a different decision. A pack
+        # that copies one of ours byte for byte does get them, which is correct: it is our
+        # program, unchanged, and `explain()` renders it identically.
+        self._ext_shipped_grants = (self._ext_grants | SHIPPED_EXTRA_GRANTS
+                                    if ext_grants is None else self._ext_grants)
+        self._ext_shipped = shipped_ext_digests(content_defaults)
+        self._ext_limits = ext_limits
+        # Clock and entropy are injected into the evaluator, never imported by it (X7).
+        self._clock = clock or time.time
+        self._monotonic = monotonic or time.monotonic
+        #: `{(device_id, extension_id): breaches}` for this session. A broken extension
+        #: may cost the child one turn's latency; it may not cost every turn's (§6.4).
+        self._ext_breaches: dict = {}
+        #: `{(device_id, extension_id, reason)}` already reported, so the parent gets one
+        #: `ext_events` entry per problem per session rather than one per turn.
+        self._ext_reported: set = set()
 
     def register_global(self, name: str, handler: GlobalHandler) -> None:
         self._handlers[name] = handler
@@ -160,6 +190,120 @@ class ContentApp(MoxieApp):
             markup = annotate(markup)
         return Reply(text=text, markup=markup, actions=actions)
 
+
+    # ---- sandboxed extensions (BEYOND #6) ----
+    def _ext_limits_now(self):
+        """The budget, read from `config.py` when it is importable (the supervisor) and
+        from `ext.py`'s own defaults when it is not (a bare SDK install)."""
+        if self._ext_limits is not None:
+            return self._ext_limits
+        try:
+            import config as _cfg
+            return ext.Limits(max_steps=_cfg.EXT_MAX_STEPS,
+                              budget_s=_cfg.EXT_BUDGET_S,
+                              max_value_bytes=_cfg.EXT_MAX_VALUE_BYTES,
+                              max_total_bytes=_cfg.EXT_MAX_TOTAL_BYTES)
+        except Exception:
+            return ext.Limits()
+
+    def _ext_breach(self, device_id: str, ext_id: str, result, *, hook: str) -> None:
+        """Record one breach: quarantine after `MOXIE_EXT_MAX_BREACHES`, and tell the
+        **parent** once — never the child (§6.4).
+
+        The child hears nothing at all: the turn proceeds exactly as it does with no
+        extension, so an `on: global` failure falls through to the conversation (S1) and an
+        `on: turn.before` failure lets the model run. No `f"Script error: {e}"` — that is
+        upstream's one bad output surface (U6), and the whole reason this design exists is
+        that a broken pack should be boring.
+        """
+        key = (device_id, ext_id)
+        self._ext_breaches[key] = self._ext_breaches.get(key, 0) + 1
+        count = self._ext_breaches[key]
+        seen = (device_id, ext_id, result.breach)
+        if seen in self._ext_reported:
+            return
+        self._ext_reported.add(seen)
+        print(f"[ext] {ext_id} ({hook}) stopped: {result.reason}; "
+              f"Moxie carried on without it", flush=True)
+        store = getattr(self.memory, "store", None)
+        if store is None or not device_id:
+            return
+        try:
+            store.append(device_id, EXT_EVENTS_COLLECTION, {
+                "at": int(self._clock()), "extension": ext_id, "hook": hook,
+                "reason": result.breach or "invalid",
+                # The plain-language half, so the console can say "the Bedtime pack's
+                # timer stopped working, and Moxie carried on without it" without having
+                # to know what a step budget is.
+                "sentence": result.sentence,
+                "quarantined": count >= self._ext_max_breaches(),
+            }, cap=EXT_EVENTS_CAP)
+        except Exception as e:
+            print(f"[ext] could not record the breach ({e})", flush=True)
+
+    @staticmethod
+    def _ext_max_breaches() -> int:
+        try:
+            import config as _cfg
+            return int(_cfg.EXT_MAX_BREACHES)
+        except Exception:
+            return ext.DEFAULT_MAX_BREACHES
+
+    def _ext_quarantined(self, device_id: str, ext_id: str) -> bool:
+        return self._ext_breaches.get((device_id, ext_id), 0) >= self._ext_max_breaches()
+
+    def run_extension(self, turn: Turn, volley: Volley, session: Session, *,
+                      hook: str, kind: str, key: str, data: dict):
+        """Run one item's extension for this turn, or return None.
+
+        None means "nothing happened, carry on exactly as before" and is the answer for
+        every failure as well as for no-extension-here, no-rule-matched and quarantined —
+        which is what makes §6.4 true by construction rather than by care.
+        """
+        block = (data or {}).get("extension") or {}
+        if not block or block.get("on") != hook:
+            return None
+        ext_id = full_key_of(kind, key)
+        grants = (self._ext_shipped_grants
+                  if _ext_digest(block) in self._ext_shipped else self._ext_grants)
+        device_id = getattr(turn.robot, "device_id", "") or ""
+        if self._ext_quarantined(device_id, ext_id):
+            return None                       # already broken three times this session
+        # Validation runs HERE, every turn, not only at import: an extension written
+        # straight into the store, or one that would fail under a newer validator, simply
+        # does not run (T17).
+        reasons = ext.validate(block, grants=grants)
+        if reasons:
+            self._ext_breach(device_id, ext_id,
+                             ext.ExtResult(ok=False, reason=reasons[0], breach="invalid"),
+                             hook=hook)
+            return None
+        namespace = ext_namespace(kind, key, data)
+        facts = ext_facts(volley, session, namespace=namespace,
+                          grants=grants,
+                          presence=turn.presence or _presence_vars(turn.robot))
+        now = self._clock()
+        seed = int.from_bytes(hashlib.sha256(
+            f"{device_id}|{turn.speech}|{ext_id}|{int(now)}".encode()).digest()[:4], "big")
+        result = ext.evaluate(block, facts, grants=grants,
+                              now_ms=int(now * 1000),
+                              clock_local=_clock_local(now), seed=seed,
+                              monotonic=self._monotonic,
+                              limits=self._ext_limits_now())
+        if not result.ok:
+            self._ext_breach(device_id, ext_id, result, hook=hook)
+            return None
+        if not result.effects and not result.handled:
+            return None                       # no rule matched: a success, not a failure
+        apply_ext_effects(result.effects, volley=volley, memory=self.memory,
+                          device_id=device_id, namespace=namespace,
+                          classifier=self.classifier,
+                          module_id=getattr(turn.robot, "module_id", "") or "",
+                          content_id=getattr(turn.robot, "content_id", "") or "")
+        for line in result.notes:
+            print(f"[ext] {ext_id}: {line}", flush=True)
+        return result
+
     # ---- MoxieApp ----
     def greeting(self, robot: RobotContext) -> Optional[Reply]:
         conv = self._active_conversation(Turn(robot=robot, speech=""))
@@ -179,18 +323,27 @@ class ContentApp(MoxieApp):
         if hit is not None:
             g, entities = hit
             handler = self._handlers.get(g.name)
-            if handler:
+            if handler or getattr(g, "extension", None):
                 v = self._volley(turn, entities=entities)
                 before = json.dumps(v.persist_data, sort_keys=True, default=str)
                 session = self._session(turn, history=list(turn.history),
                                         persist_data=v.persist_data)
-                handler(v, session)
+                if handler:
+                    handler(v, session)
+                else:
+                    # 🧬 The socket S1 describes, filled by a pack instead of by us. A
+                    # registered Python handler still wins — it is our own code, and a
+                    # shipped default should not be displaced by an import.
+                    self.run_extension(turn, v, session, hook="global",
+                                       kind="global", key=g.name,
+                                       data={"extension": g.extension,
+                                             "name": g.name})
                 # A global (OpenMoxie's timer is the canonical one) may write durable
                 # state; that is what `persist_data` is for.
                 self._save_persist_data(turn.robot.device_id, v.persist_data, before)
                 if v.output_text is not None or v.execution_actions:
                     return self._reply_from_volley(v)
-            # matched but no handler produced output → fall through to conversation
+            # matched but nothing produced output → fall through to conversation
 
         # 2) the active conversation module
         conv = self._active_conversation(turn)
@@ -199,6 +352,19 @@ class ContentApp(MoxieApp):
         v = self._volley(turn)
         session = self._session(turn, history=list(turn.history),
                                 persist_data=v.persist_data, conv=conv)
+        # 🧬 `on: turn.before` — upstream's `pre_process`. It runs before the prompt is
+        # rendered and may set `handled`, which suppresses the model call for this turn
+        # (the True/False return of upstream's hook). A failure here is skipped and the
+        # model runs, so the child is never left with silence.
+        pre = self.run_extension(turn, v, session, hook="turn.before",
+                                 kind="conversation",
+                                 key=f"{conv.module_id}/{conv.content_id}",
+                                 data={"extension": conv.extension,
+                                       "memory": conv.memory})
+        if pre is not None and pre.handled and v.output_text is not None:
+            self._save_persist_data(turn.robot.device_id, v.persist_data,
+                                    json.dumps({}, sort_keys=True))
+            return self._reply_from_volley(v)
         # `presence` — read-only: what Moxie's own eyes have told the server
         # (moxie_sdk/presence.py, docs/architecture/vision.md). A module template can say
         # `{% if presence.face_present %}` or drop `{{ presence.line }}` into its prompt.
@@ -534,3 +700,60 @@ def ext_namespace(kind: str, key: str, data: dict) -> str:
             return ns
     slug = re.sub(r"[^a-z0-9]+", "_", f"{kind}:{key}".lower()).strip("_")
     return f"ext:{slug or 'unnamed'}"
+
+
+#: The bounded per-robot ring the console reads to say *"the Bedtime pack's timer stopped
+#: working, and Moxie carried on without it"*. Same shape as `safety_events` (M4) — one
+#: file per robot under `robots/<safe_name(device_id)>/`, newest-capped, never shared.
+EXT_EVENTS_COLLECTION = "ext_events"
+EXT_EVENTS_CAP = 50
+
+
+#: What a **shipped-by-us** extension may be granted on top of `ext.DEFAULT_GRANTS`. Not
+#: `act`/`subscribe`/`brain` (those are P1 and refused at load whoever asks), and not
+#: `child.profile` (a birthday and free-text notes are the highest-value PII on the
+#: appliance, and no shipped activity needs them). Widening this list is a code change in
+#: a file a reviewer reads — which is exactly the brake acceptance criterion 5 asks for.
+SHIPPED_EXTRA_GRANTS = frozenset({"clock", "random", "memory.read", "memory.write",
+                                  "presence", "markup"})
+
+
+def _ext_digest(block: dict) -> str:
+    """`sha256:…` over an extension's canonical bytes — the same canonicalisation a pack
+    digest uses, so "is this the program we shipped?" has one answer everywhere."""
+    from .packs import digest_of
+    return digest_of(block or {})
+
+
+def shipped_ext_digests(content_defaults) -> frozenset:
+    """The digests of every extension in the shipped baseline.
+
+    Empty when nobody recorded a baseline (a bare SDK install, or a test that did not pass
+    one), which fails **closed**: no extension is trusted, so everything gets the four
+    default grants and a clock-using activity simply does not run.
+    """
+    out = set()
+    for entry in (content_defaults or {}).values():
+        data = (entry or {}).get("data") if isinstance(entry, dict) else None
+        block = (data or {}).get("extension") if isinstance(data, dict) else None
+        if block:
+            out.add(_ext_digest(block))
+    return frozenset(out)
+
+
+def full_key_of(kind: str, key: str) -> str:
+    """`kind:key` — the same identity packs use, so an `ext_events` row names the item a
+    parent can actually find in the console."""
+    return f"{kind}:{key}"
+
+
+def _clock_local(now: float) -> dict:
+    """`clock.local` — the injected local-time map (§4.2).
+
+    Computed **here**, in the host, and handed to the evaluator as four plain values. That
+    is the whole reason `ext.py` can assert it imports no `time` and no `datetime`: the
+    only clock in the system is this line.
+    """
+    t = time.localtime(now)
+    return {"hour": t.tm_hour, "minute": t.tm_min, "weekday": (t.tm_wday + 1) % 7,
+            "iso": time.strftime("%Y-%m-%dT%H:%M:%S", t)}

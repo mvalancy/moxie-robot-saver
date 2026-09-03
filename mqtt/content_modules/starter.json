@@ -25,6 +25,135 @@
       "source_version": 1,
       "pattern": "timer for (\\d+) (minute|second)",
       "entity_groups": "1,2"
+    },
+    {
+      "name": "What Time Is It",
+      "source_version": 1,
+      "pattern": "\\b(what(?:'s| is)? the time|what time is it|tell me the time)\\b",
+      "entity_groups": "",
+      "_comment": [
+        "The first shipped activity whose behaviour is a PROGRAM rather than a prompt",
+        "(BEYOND #6, docs/architecture/backlog/sandboxed-extensions.md).",
+        "A hand-port of OpenMoxie's MoxieTime.get_response (MIT, (c) Justin Beghtol),",
+        "re-authored in our AST -- never their Python, which this appliance does not run.",
+        "Row G1 of the brief's section 8 table, byte-identical to the conformance golden",
+        "in sim/tests/data/ext_conformance.json, so the goldens fence what ships.",
+        "",
+        "In English (ext.explain): \"Whenever this activity is triggered: tells your",
+        "child 'The time is ...' and answers without asking the AI.\"",
+        "What it may do (ext.grant_list): can check the time, can speak to your child,",
+        "can answer on its own without asking the AI.",
+        "",
+        "`clock` is NOT in ext.DEFAULT_GRANTS. This runs because it is SHIPPED: the",
+        "wider grant set is anchored to the digest of the program itself, so an imported",
+        "pack that overrides this key gets the four default grants and does not run.",
+        "No model call, no network, and no clock inside the evaluator -- injected."
+      ],
+      "extension": {
+        "ext_format": 1,
+        "capabilities": [
+          "clock",
+          "handled",
+          "say"
+        ],
+        "on": "global",
+        "rules": [
+          {
+            "let": {
+              "h24": {
+                "get": [
+                  {
+                    "clock.local": []
+                  },
+                  "hour",
+                  0
+                ]
+              },
+              "minute": {
+                "get": [
+                  {
+                    "clock.local": []
+                  },
+                  "minute",
+                  0
+                ]
+              },
+              "h12": {
+                "if": [
+                  {
+                    "==": [
+                      {
+                        "%": [
+                          {
+                            "var": "h24"
+                          },
+                          12
+                        ]
+                      },
+                      0
+                    ]
+                  },
+                  12,
+                  {
+                    "%": [
+                      {
+                        "var": "h24"
+                      },
+                      12
+                    ]
+                  }
+                ]
+              },
+              "half": {
+                "if": [
+                  {
+                    "<": [
+                      {
+                        "var": "h24"
+                      },
+                      12
+                    ]
+                  },
+                  "AY M",
+                  "P M"
+                ]
+              }
+            },
+            "do": [
+              {
+                "say": {
+                  "concat": [
+                    "The time is ",
+                    {
+                      "str": [
+                        {
+                          "var": "h12"
+                        }
+                      ]
+                    },
+                    ":",
+                    {
+                      "format": [
+                        "02d",
+                        {
+                          "var": "minute"
+                        }
+                      ]
+                    },
+                    " ",
+                    {
+                      "var": "half"
+                    }
+                  ]
+                }
+              },
+              {
+                "handled": true
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }
