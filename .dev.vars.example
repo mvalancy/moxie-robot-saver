@@ -1,0 +1,56 @@
+# .dev.vars.example — the hosted Sim demo's configuration, as a local template.
+#
+# Copy to `.dev.vars` for `npx wrangler pages dev sim/web`. **NEVER COMMIT `.dev.vars`.**
+# `.gitignore` already ignored `.env`; this slice adds `.dev.vars` next to it.
+#
+# In PRODUCTION these are NOT set from a file. They are Cloudflare environment
+# variables on the Pages project — dashboard -> Workers & Pages -> the project ->
+# Settings -> Environment variables, **Production environment only**, with the two
+# secrets stored as encrypted variables (or `npx wrangler pages secret put <NAME>`).
+# They are never put in `wrangler.toml`: that file is committed and world-readable.
+#
+# Set them on Production only and previews are automatically safe: a branch preview
+# with no variables answers `gateway_not_configured` on every route, makes no upstream
+# call at all, and is exactly the scripted static demo.
+#
+# The full table, with every default and the reasoning behind every number, is
+# docs/architecture/backlog/live-sim-demo.md §5. Only the values below have no default.
+
+# The kill switch. `0` forces every route to `gateway_not_configured` WITHOUT deleting
+# the secret — the fastest incident response there is.
+DEMO_ENABLED=1
+
+# Any OpenAI-compatible base. NO DEFAULT EXISTS, on purpose: unset means degraded,
+# never "guess ours". Nothing in this repo knows a gateway hostname.
+DEMO_GATEWAY_BASE_URL=https://your-gateway.example/v1
+
+# The key. Read only as `context.env.DEMO_GATEWAY_API_KEY`, inside a Pages Function,
+# and never echoed, logged or sent to the browser in any form.
+#
+# USE A SEPARATE, BUDGET-SCOPED KEY FOR THE PUBLIC DEMO — never the key your local
+# stack and your live tests use. If your gateway can mint a virtual key with a hard
+# budget and RPM/TPM limits, that is the single strongest control available here and
+# everything the Functions enforce becomes defence in depth (spec §4.2).
+DEMO_GATEWAY_API_KEY=replace-me-with-a-budget-scoped-key
+
+# The chat model. No default: a wrong id costs a failed PAID request.
+DEMO_CHAT_MODEL=your-chat-model
+
+# The voice. Unset => `voice: false`, and text still works — spoken from the shipped
+# clips or the browser voice, which is what the site does today.
+DEMO_TTS_MODEL=your-tts-model
+
+# The ears. P1 (`/api/transcribe` is not built yet). Unset => `ears: false` and
+# `mic.js` keeps its scripted fallback.
+# DEMO_STT_MODEL=your-stt-model
+
+# Optional. Signs the speech tickets and the conversation blobs. When unset it is an
+# HKDF of DEMO_GATEWAY_API_KEY, so the minimum configuration stays two values. Set it
+# explicitly if you rotate the gateway key often — rotation otherwise invalidates
+# in-flight 60-second tickets, which is harmless.
+# DEMO_TICKET_SECRET=
+
+# Everything else has a default: DEMO_MAX_TOKENS=160, DEMO_MAX_INPUT_CHARS=500,
+# DEMO_MAX_TTS_CHARS=300, DEMO_CHAT_PER_MIN=5, DEMO_MAX_CONCURRENT_CHAT=4,
+# DEMO_UNIT_BUDGET_HOUR=600, DEMO_CHAT_TIMEOUT_MS=20000, DEMO_TICKET_TTL_S=60, …
+# See the spec's §5 for the whole table and why each number is what it is.
