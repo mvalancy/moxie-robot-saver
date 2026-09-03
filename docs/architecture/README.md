@@ -55,7 +55,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   with no restart, and an explicit `MOXIE_APP` that pins the appliance's own), and
   [`backlog/production-hardening.md`](backlog/production-hardening.md) (production hardening — the
   cross-process store decision made rather than deferred, MQTT reconnection, and a soak that stands in
-  for a week in a house).
+  for a week in a house). One page there is the odd one out and deliberately so:
+  [`backlog/community-signals.md`](backlog/community-signals.md) — **the inbound half**, what owners
+  holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how
+  strong the evidence is rather than how good the feature sounds.
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
 - [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.

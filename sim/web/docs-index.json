@@ -1,5 +1,5 @@
 {
- "generated": "docs-de9340a0a2ac",
+ "generated": "docs-22d525ac4a42",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 5585,
+   "bytes": 5910,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 7844,
+   "bytes": 8835,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -351,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 115365,
+   "bytes": 118728,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -371,6 +371,7 @@
     "2.2 `vapors/openmoxie-ollama`",
     "2.3 What the forks tell us",
     "2.4 Upstream re-check — 2026-09-03, and the one thing that *was* new",
+    "2.5 The community scan — 2026-09-03, and the report that turns §2.4's anecdote into a pair",
     "3. The scorecard — HAVE / ADOPT / BEYOND",
     "3.0 ⚠️ This scorecard is a frozen snapshot — these rows are superseded",
     "3.1 Onboarding & transport",
@@ -692,6 +693,29 @@
     "Risks",
     "9. Assumption ledger",
     "10. What this brief is not"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/community-signals.md",
+   "title": "Community signals — what owners actually hit, ranked by evidence",
+   "section": "architecture",
+   "bytes": 29578,
+   "mermaid": 0,
+   "headings": [
+    "1. What was searched, and when",
+    "2. Findings, ranked by evidence strength",
+    "C1 — Our empty `license_values: []` may be the reason a real robot never gets its voice up",
+    "C2 — Moxie died twice. Our landscape doc only knows about the first one",
+    "C3 — The appliance's address is baked into the robot at pairing, and DHCP moves it",
+    "C4 — \"Crossed ears\" is the most-reported visible failure, and one variant has a diagnosed cause",
+    "C5 — The pre-801 door has closed, and our own doc still points at it",
+    "C6 — There are impostors now, and from the outside we look like one",
+    "C7 — Setup failures cluster into three environmental causes, two of them pre-emptable",
+    "C8 — A first-run expectation nobody has written down: the first boot is slow",
+    "3. Where the community's problem is one we have already solved",
+    "4. Verified nothing-new, and honest gaps",
+    "5. What this changes on the audit's ranking"
    ],
    "kind": "md"
   },
