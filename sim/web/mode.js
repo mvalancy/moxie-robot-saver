@@ -388,7 +388,8 @@
     },
   };
 
-  // First probe immediately: the page must stop guessing as early as it can. Everything
-  // renders correctly before it lands, because `boot` IS today's page.
-  poll();
+  // First probe immediately — via tick(), so the "never poll while hidden" rule holds for
+  // the very first request too: a page opened in a background tab shows today's copy
+  // (which is what `boot` deliberately is) and asks the moment it is looked at.
+  tick();
 })();
