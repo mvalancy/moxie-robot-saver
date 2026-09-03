@@ -324,6 +324,87 @@ def test_the_fence_would_notice_an_over_tight_sandbox():
         f"so the parity assertion is not load-bearing (missed {len(SHIPPED) - len(caught)})")
 
 
+# ------------------------------------- the renderer the SHIPPED appliance uses --
+#
+# `mqtt/requirements.txt` does not list jinja2 and `pyproject.toml` gates it behind the
+# `content` extra, so the supervisor **container** and a bare `pip install
+# moxie-cloud-sdk` both take the `ImportError` branch: no jinja2, no sandbox, and
+# `_minimal_render` doing the work. That is the renderer most real deployments run, and
+# until now nothing asserted it can still render the modules we ship.
+#
+# Verified against the real artifact on 2026-09-02: the 0.7.0 wheel installed into a venv
+# holding only `paho-mqtt` renders `Hi {{ volley.config.child_pii.nickname }}!` → `Hi Sam!`.
+
+def _no_jinja2_render(template: str, context: dict) -> str:
+    """`render_prompt` with jinja2 made unimportable — the container's code path.
+
+    Blocks the import rather than uninstalling anything, so the assertion holds in a
+    full-fat venv too (the same technique `test_package_contents.py` uses to prove no
+    module needs an optional backend).
+    """
+    import builtins
+    real_import = builtins.__import__
+
+    def _blocked(name, *a, **kw):
+        if name == "jinja2" or name.startswith("jinja2."):
+            raise ImportError("blocked: simulating the shipped container")
+        return real_import(name, *a, **kw)
+
+    saved = {k: v for k, v in sys.modules.items() if k.split(".")[0] == "jinja2"}
+    for k in saved:
+        del sys.modules[k]
+    builtins.__import__ = _blocked
+    try:
+        return R.render_prompt(template, context)
+    finally:
+        builtins.__import__ = real_import
+        sys.modules.update(saved)
+
+
+@pytest.mark.parametrize("label,template", SHIPPED, ids=[l for l, _ in SHIPPED])
+def test_a_shipped_prompt_also_renders_without_jinja2_at_all(label, template):
+    """Every module we ship uses only `{{ dotted.path }}`, which is exactly the subset
+    the dependency-free fallback covers — so the container renders them personalised
+    too. If a future shipped module reaches for a filter or a block, this fails here
+    rather than in a parent's living room."""
+    out = _no_jinja2_render(template, _child_context())
+    assert out.strip() and "Sam" in out, f"{label} did not render without jinja2: {out[:160]!r}"
+    assert "{{" not in out and "{%" not in out, \
+        f"{label} left template syntax in the prompt the brain receives: {out[:200]!r}"
+
+
+def test_the_fallback_reaches_memory_the_same_way_jinja_does():
+    """`FactList.__str__` is why `persist_data` renders as bullets in *both* renderers
+    (`memory.py`:88-91 says so). Asserted, because it is the one place the two paths
+    could silently disagree about the child's own remembered facts."""
+    with open(os.path.join(MODULE_DIR, "memory_chat.json")) as fh:
+        prompt = json.load(fh)["conversations"][0]["prompt"]
+    ctx = _child_context()
+    assert _no_jinja2_render(prompt, ctx) == R.render_prompt(prompt, ctx)
+
+
+def test_a_block_construct_is_a_known_hole_in_the_fallback():
+    """**Honest gap, pinned so it cannot be mistaken for working.**
+
+    `content-module-contract.md`:42 advertises `{% if %}` to module authors, and
+    `test_presence_runtime.py`:383 `importorskip`s jinja2 for exactly that form. With no
+    jinja2 the minimal renderer substitutes `{{ … }}` and passes block tags through
+    **verbatim**, so an imported pack using `{% if %}` puts template source into the
+    system prompt on the shipped container.
+
+    Not fixed here, and deliberately not guessed at: stripping the tags would render the
+    branch unconditionally (telling the brain "they are here" when nobody is), and
+    dropping the block would silently delete authored instructions. The fix is a product
+    decision — ship `jinja2` in `mqtt/requirements.txt` (the renderer is sandboxed now,
+    which is what made that safe), or reject block syntax at pack review. This test says
+    what today does; change it when that decision lands.
+    """
+    out = _no_jinja2_render("{% if presence.face_present %}They are here.{% endif %}"
+                            "Hi {{ volley.config.child_pii.nickname }}", _child_context())
+    assert out == "{% if presence.face_present %}They are here.{% endif %}Hi Sam"
+    assert "{%" in out, "if this now renders, the gap is closed — update this test"
+
+
 # ------------------------------------------------------- the whole-path proof --
 def test_the_shipped_module_renders_through_the_real_runtime(tmp_path):
     """End to end, creds-free: shipped `memory_chat.json` → real `ContentApp` → real
