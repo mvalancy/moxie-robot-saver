@@ -162,6 +162,16 @@ CAPABILITY_WORDS = {
 #: `act.<name>` is granted per *name*, not per category: "can set a timer" and "can turn
 #: on the camera" are not the same sentence to a parent. The words are built from this
 #: table, and an action nobody has written words for cannot be declared at all.
+#:
+#: **This table is also the closed allowlist of `function_id`s a pack may put on the
+#: wire.** `content_app.execution_actions_of` maps a name through these keys and refuses
+#: anything else, so the set of nameable robot functions is bounded by the set of things
+#: somebody wrote a parent-facing sentence for — one table, not two that can drift. The
+#: reasoning is transplanted from docs/architecture/backlog/qr-launch-cards.md §P0-b:
+#: *"The catalog is a closed allowlist, and this is a safety property, not tidiness."* A
+#: printed card is an input any stranger can leave on a table in front of a child; so is a
+#: pack a stranger authored. Either may name one of a few reviewed things, and may name
+#: nothing else.
 ACTION_WORDS = {
     "eb_timer_request": "Can ask Moxie to set or cancel a timer",
     "eb_enable_qr": "Can turn Moxie's QR scanner on",
@@ -174,17 +184,37 @@ ACTION_WORDS = {
 #: because the parent-facing grant flow is P1.
 DEFAULT_GRANTS = frozenset({"say", "handled", "session", "child.nickname"})
 
-#: Declared, rendered in the review, and **refused at load** in P0. Not because the
-#: grammar cannot express them, but because `volley.execution_actions` is not plumbed to
-#: `RemoteChatAction` yet (brief S5) and `brain` needs its own budget: shipping a
-#: capability that cannot do anything would be worse than refusing it out loud.
+#: Declared, rendered in the review, and **still refused at load**. Not because the
+#: grammar cannot express them, but because each is a capability that cannot yet do
+#: anything, and shipping one of those would be worse than refusing it out loud.
+#:
+#: `act.<name>` **left this set on 2026-09-04** and is now honoured: `volley
+#: .execution_actions` reaches `RemoteChatAction` through `content_app
+#: .execution_actions_of` → `Reply.actions` → `wire.encode_action`, which since #119
+#: carries `function_id` / `function_args` (RemoteChat.proto:255-281). Brief S5 — *"the
+#: single most important scoping fact in this brief"* — is therefore closed for `act`.
+#:
+#: What is left, and why each is still refused:
+#:   * `subscribe` — the effect has no host that consumes it. `Volley.subscriptions`
+#:     exists and `wire.build_chat_response(subscribe_events=…)` exists, but nothing
+#:     joins them: the supervisor fills `EventSubscription` from its **own** vision
+#:     bookkeeping (`moxie_runtime.py::_publish_chat`), not from a volley.
+#:   * `brain` — needs the one-call-per-turn budget of brief §5.1 before a pack may
+#:     spend money and latency inside the 6 s turn.
+#:   * `schedule.request` — needs the recommender's parent-request channel (P2).
 P1_CAPABILITIES = frozenset({"subscribe", "brain", "schedule.request"})
 
 def _is_p1(cap: str) -> bool:
-    """True for a capability P0 declares, renders and **refuses**. One predicate, so the
-    §8 conformance generator has exactly one thing to lift when it computes the goldens
-    that will be checked the day the robot-action wire lands."""
-    return cap in P1_CAPABILITIES or cap.startswith("act.")
+    """True for a capability this appliance declares, renders and **refuses**. One
+    predicate, so the §8 conformance generator has exactly one thing to lift each time a
+    capability becomes real.
+
+    `act.<name>` is deliberately *not* here any more: an `act` capability is bounded by
+    `ACTION_WORDS`, granted per name, and plumbed to the wire — so the only thing standing
+    between a pack and an action is whether the host granted it, which is a decision and
+    not a gap.
+    """
+    return cap in P1_CAPABILITIES
 
 
 #: Hook points. `turn.after` and `session.end` are P1 — the first needs the output-safety
@@ -807,7 +837,7 @@ def validate(ext, *, grants=None, allow_p1: bool = False) -> list:
     p1 = sorted(c for c in declared if _is_p1(c))
     if p1 and not allow_p1:
         v.fail("needs something this appliance cannot grant yet: " + ", ".join(p1)
-               + " (the robot-action wire is not plumbed — see BEYOND #6 P1)")
+               + " (see `P1_CAPABILITIES` for what each one is still waiting on)")
 
     if grants is not None:
         ungranted = sorted(declared - set(grants))
