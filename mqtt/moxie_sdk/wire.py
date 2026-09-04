@@ -6,7 +6,69 @@ These match the recovered protos (docs/reverse-engineering/protocol/) and the
 implementation contract (docs/architecture/ai-seam.md §2).
 """
 from __future__ import annotations
+from collections.abc import Mapping, Sequence
+
 from .types import ResultCode
+
+
+def _arg_str(value) -> str:
+    """One `function_args` / `ActionArgsEntry.value` element as the wire spells it.
+
+    Both fields are `string` in the recovered proto (RemoteChat.proto:271-273,:280), so a
+    caller's `True` / `3` has to become text somewhere. Booleans go out lowercase
+    (`"true"`), which is the spelling the brief's own worked example uses
+    (qr-launch-cards.md §P0-a: `"function_args": ["true"]`) and the one JSON itself uses,
+    rather than Python's `"True"`. Everything else is `str()`.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return value if isinstance(value, str) else str(value)
+
+
+def encode_action(a) -> dict:
+    """One `moxie_sdk.types.Action` as one `RemoteChatAction` JSON entry.
+
+    `{output_type, action, module_id, content_id}` as before, plus — and this is what
+    changed on 2026-09-04 — **the name of the function an `execute` wants run**.
+
+    `RemoteChatAction` (recovered-proto/embodied/robotbrain/RemoteChat.proto:255-281,
+    read back by remote-chat-protocol.md:99 as *"`execute` — run a robot-side
+    `function_id(function_args…)`"*) carries:
+
+      * `function_id`   — field 7, `optional string`
+      * `function_args` — field 8, `repeated string`
+      * `action_args`   — field 10, `repeated ActionArgsEntry{key = 1, value = 2}`
+
+    Until now `Action.function` and `Action.args` were dropped on the floor here, so every
+    `execute` this appliance could emit reached a robot **unnamed** — the blocker under
+    qr-launch-cards.md §P0-a and sandboxed-extensions.md S5.
+
+    `Action.args` has two honest homes and which one is used is decided by its *type*, not
+    guessed: a **sequence** (`["true"]` — what `volley.add_execution_action` and the
+    brief's §5 T9 example produce) is the positional `function_args`; a **mapping**
+    (`{"run": True}` — the dataclass's own default type) is `action_args`, the one field
+    in the contract that is a key/value list. Neither is invented, and a dict is never
+    flattened into a `k=v` string the proto does not define.
+
+    **Emitted only when present.** An action with no function and no args gains no empty
+    keys, so every launch/exit/sleep response stays byte-identical to what we sent before
+    and no golden moves for free.
+    """
+    entry = {"output_type": "GLOBAL", "action": a.type.value,
+             "module_id": a.module_id, "content_id": a.content_id}
+    function = getattr(a, "function", None)
+    if function:
+        entry["function_id"] = function
+    args = getattr(a, "args", None)
+    if args:
+        if isinstance(args, Mapping):
+            entry["action_args"] = [{"key": str(k), "value": _arg_str(v)}
+                                    for k, v in args.items()]
+        elif isinstance(args, (str, bytes)) or not isinstance(args, Sequence):
+            entry["function_args"] = [_arg_str(args)]   # a lone scalar is one argument
+        else:
+            entry["function_args"] = [_arg_str(v) for v in args]
+    return entry
 
 
 def build_chat_response(event_id, text, markup="", *, backend="router",
@@ -53,6 +115,10 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     is published here; a block on Moxie's own output has no field in the contract and is
     recorded in the parent review queue instead (docs/architecture/ai-seam.md §2).
 
+    **Actions.** Each `Action` is encoded by `encode_action` above — including, since
+    2026-09-04, the `function_id` / `function_args` / `action_args` an `execute` needs to
+    name what it wants run. Read that docstring for the citation and the arg mapping.
+
     **Event subscription.** `subscribe_events` (robot event names, e.g.
     `["eb-found-face", "eb-lost-target"]`) fills
     `RemoteChatAction.EventSubscription{clear, active[]}` — the contract's own way for a
@@ -79,10 +145,7 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
         output["signals"] = [signals] if isinstance(signals, str) else list(signals)
     resp = {"command": "remote_chat", "result": rc.name, "backend": backend,
             "event_id": event_id, "output": output, "end_turn": bool(end_turn)}
-    ra = []
-    for a in (actions or []):
-        ra.append({"output_type": "GLOBAL", "action": a.type.value,
-                   "module_id": a.module_id, "content_id": a.content_id})
+    ra = [encode_action(a) for a in (actions or [])]
     if subscribe_events:
         # An action-less entry carrying only the subscription: we are not asking the
         # robot to launch/exit anything, only to start pushing us these events.

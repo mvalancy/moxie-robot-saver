@@ -216,9 +216,10 @@ def test_an_execute_is_recorded_by_name_and_never_run():
 
 
 def test_execute_reads_the_sims_spelling_too():
-    """`RemoteChat.proto`:255-281 names the field `function_id`; `sim/web/bridge.js`:258
-    reads `entry.function`. Our own `build_chat_response` emits NEITHER today, so both
-    spellings are accepted and an unnamed execute records `""` rather than a guess."""
+    """`RemoteChat.proto`:255-281 names the field `function_id`, and that is what our own
+    `build_chat_response` now emits; `sim/web/bridge.js`:258 reads `entry.function`. Both
+    spellings stay accepted — a client that only understood the one server it was written
+    against would not be a client — and an unnamed execute records `""`, not a guess."""
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_exec2", verbose=False)
     vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
                        "response_actions": [
@@ -228,19 +229,113 @@ def test_execute_reads_the_sims_spelling_too():
     assert [a["function"] for a in vm.action_stats()["applied"]] == ["eb_enable_qr", ""]
 
 
-def test_what_our_own_server_can_actually_send_carries_no_function_at_all():
-    """Named so it cannot be mistaken for a passing feature: `build_chat_response` drops
-    `Action.function`/`Action.args`, so every `execute` this appliance can emit reaches a
-    robot unnamed. Filed against the wire (qr-launch-cards.md §P0-a), not faked here."""
+def test_what_our_own_server_sends_now_names_the_function_it_wants_run():
+    """**This test used to assert the opposite, on purpose.** Until 2026-09-04 it was
+    `…_carries_no_function_at_all`: `build_chat_response` dropped `Action.function` /
+    `Action.args`, so every `execute` this appliance could emit reached a robot unnamed —
+    filed against the wire as qr-launch-cards.md §P0-a and the blocker under
+    sandboxed-extensions.md S5. It was written to turn red the day the fix landed, and
+    this is that day, so it is flipped rather than deleted.
+
+    `wire.py::encode_action` now emits `function_id` (RemoteChat.proto:271, field 7) and,
+    for a dict, `action_args` (field 10, `repeated ActionArgsEntry{key, value}`). The
+    assertion runs the whole hop the gap broke: build the response our server would send,
+    hand it to the SIL robot, and ask the robot what it was told to run.
+    """
     from moxie_sdk.types import Action, ActionType
     from moxie_sdk.wire import build_chat_response
     resp = build_chat_response("e", "hi", actions=[
         Action(type=ActionType.EXECUTE, function="eb_enable_qr", args={"run": True})])
     entry = resp["response_actions"][0]
-    assert "function_id" not in entry and "function" not in entry, entry
+    assert entry["function_id"] == "eb_enable_qr", entry
+    assert entry["action_args"] == [{"key": "run", "value": "true"}], entry
     vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_exec3", verbose=False)
     vm._on_chat_reply(resp)
-    assert vm.action_stats()["applied"][0]["function"] == "", vm.action_stats()
+    applied = vm.action_stats()["applied"][0]
+    assert applied["function"] == "eb_enable_qr", vm.action_stats()
+    assert applied["args"] == {"run": "true"}, vm.action_stats()
+
+
+def test_the_briefs_own_worked_example_is_the_shape_that_goes_out():
+    """qr-launch-cards.md §P0-a prints the JSON it wants, and §5 T9 repeats it:
+    `{"output_type": "GLOBAL", "action": "execute", "function_id": "eb_enable_qr",
+    "function_args": ["true"]}`. Asserted key for key, so the brief and the code cannot
+    drift apart silently. A *list* of args is `function_args` (proto field 8, `repeated
+    string`) — the positional form `volley.add_execution_action(name, args)` produces."""
+    from moxie_sdk.types import Action, ActionType
+    from moxie_sdk.wire import build_chat_response
+    resp = build_chat_response("e", "hi", actions=[
+        Action(type=ActionType.EXECUTE, function="eb_enable_qr", args=["true"])])
+    assert resp["response_actions"] == [
+        {"output_type": "GLOBAL", "action": "execute", "module_id": None,
+         "content_id": None, "function_id": "eb_enable_qr", "function_args": ["true"]}]
+    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_exec4", verbose=False)
+    vm._on_chat_reply(resp)
+    assert vm.action_stats()["applied"][0]["args"] == ["true"], vm.action_stats()
+
+
+def test_an_action_with_no_function_gains_no_empty_keys():
+    """The other half of "emit only when present": a launch must serialise exactly as it
+    did before this landed, or every golden holding a plain response moves for free."""
+    from moxie_sdk.types import Action, ActionType
+    from moxie_sdk.wire import build_chat_response
+    for action in (Action(type=ActionType.LAUNCH, module_id="DRAW", content_id="default"),
+                   Action(type=ActionType.EXIT),
+                   Action(type=ActionType.EXECUTE, function="eb_wake"),   # named, no args
+                   Action(type=ActionType.EXECUTE, args=[])):             # args, but empty
+        entry = build_chat_response("e", "hi", actions=[action])["response_actions"][0]
+        assert "function_args" not in entry and "action_args" not in entry, entry
+        if not action.function:
+            assert "function_id" not in entry, entry
+    plain = build_chat_response("e", "hi", actions=[
+        Action(type=ActionType.LAUNCH, module_id="DRAW", content_id="default")])
+    assert plain["response_actions"] == [{"output_type": "GLOBAL", "action": "launch",
+                                          "module_id": "DRAW", "content_id": "default"}]
+
+
+def test_arg_values_go_out_as_the_strings_the_proto_declares():
+    """`function_args` is `repeated string` and `ActionArgsEntry.value` is a `string`
+    (RemoteChat.proto:271-273,:280), so a caller's `True`/`3` cannot ride as JSON types.
+    Booleans go out lowercase — the brief's own `["true"]`, and JSON's spelling, never
+    Python's `"True"`."""
+    from moxie_sdk.types import Action, ActionType
+    from moxie_sdk.wire import build_chat_response
+
+    def entry(**kw):
+        return build_chat_response("e", "hi", actions=[
+            Action(type=ActionType.EXECUTE, function="f", **kw)])["response_actions"][0]
+
+    assert entry(args=[True, False, 3, "x"])["function_args"] == ["true", "false", "3", "x"]
+    assert entry(args={"run": True, "n": 3})["action_args"] == [
+        {"key": "run", "value": "true"}, {"key": "n", "value": "3"}]
+    # a lone scalar is ONE argument, not one per character — the trap a bare `list(args)`
+    # would walk into on a string.
+    assert entry(args="true")["function_args"] == ["true"]
+
+
+def test_the_naming_defects_p0a_still_owns_are_pinned_here_not_fixed():
+    """**Deliberately asserting what is still wrong**, in the idiom of the test this file
+    flipped above: two `ActionType` values are not names in the recovered `ActionID` enum
+    (`launch`, `launch_if_confirmed`, `exit_module`, `request_next`, `abort_module`,
+    `execute`, `sleep`, `tangent` — RemoteChat.proto:256-265).
+
+      * `EXIT = "exit"`; the enum spells it `exit_module`.
+      * `ENABLE_QR = "enable_qr"` is not a verb in the enum at all — the contract's way to
+        arm the scanner is `execute` + `function_id: "eb_enable_qr"`, which the wire can
+        now carry but `ActionType` still does not route through.
+
+    Renaming a wire value is a separate contract change with its own evidence and its own
+    blast radius (`sim/web/bridge.js::ACTION_KINDS` agrees with us, not with the proto, and
+    `test_sim_client_parity.py` holds all three vocabularies equal). It is owned by
+    qr-launch-cards.md §P0-a / §7 R3. This pins it so the fix turns a test red and has to
+    say so, exactly as this one did."""
+    from moxie_sdk.types import Action, ActionType
+    from moxie_sdk.wire import build_chat_response
+    resp = build_chat_response("e", "hi", actions=[Action(type=ActionType.ENABLE_QR),
+                                                   Action(type=ActionType.EXIT)])
+    assert [a["action"] for a in resp["response_actions"]] == ["enable_qr", "exit"]
+    assert "function_id" not in resp["response_actions"][0], (
+        "ENABLE_QR does not yet route through execute + eb_enable_qr")
 
 
 def test_sleep_is_recorded_and_does_not_stop_the_client():
@@ -299,6 +394,27 @@ def test_nothing_an_action_can_carry_makes_the_client_raise():
                            "output": {"text": ""}, "response_actions": actions})
     assert vm.action_stats()["last"] == "launch"          # the two valid ones landed
     assert vm.action_stats()["launches"] == 2
+
+
+def test_no_shape_of_the_new_arg_fields_can_break_a_turn_either():
+    """The same "never raise" rule, applied to the two fields this slice taught the wire.
+    `action_args` is `repeated ActionArgsEntry{key, value}`; anything else on that key is
+    unreadable, and unreadable must fall through to the next spelling and record nothing —
+    never a partial guess, never an exception that drops the whole turn."""
+    vm = VirtualMoxie(host="127.0.0.1", port=1, device_id="d_args", verbose=False)
+    for entry, want in (
+            ({"action": "execute", "action_args": "nope"}, []),
+            ({"action": "execute", "action_args": []}, []),
+            ({"action": "execute", "action_args": ["nope", 7, None]}, []),
+            ({"action": "execute", "action_args": [{"value": "orphan"}]}, []),
+            ({"action": "execute", "function_args": 7}, 7),
+            ({"action": "execute", "action_args": [{"key": "a", "value": "1"},
+                                                   "junk"]}, {"a": "1"})):
+        vm._on_chat_reply({"command": "remote_chat", "event_id": "a",
+                           "output": {"text": ""},
+                           "response_actions": [dict(entry, output_type="GLOBAL")]})
+        assert vm.action_stats()["applied"][-1]["args"] == want, entry
+    assert vm.action_stats()["unknown"] == 0, "none of these is junk to be counted"
 
 
 def test_the_applied_log_is_bounded_like_the_browser_sims():
