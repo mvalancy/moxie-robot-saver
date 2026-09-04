@@ -157,6 +157,15 @@ jobs:
         run: node sim/test_docs_explorer.mjs
       - name: Mermaid diagram render audit (no parse errors / clipped labels; skips cleanly if no browser)
         run: node sim/test_mermaid.mjs
+      - name: Background-effects growth test (a hidden tab must pile up nothing; skips cleanly if no browser)
+        # The owner-reported defect: leave the landing page open for hours and it turns
+        # sluggish. bg.js filled `packets`/`pings` from two setIntervals and drained them
+        # only inside the rAF frame — and a browser pauses rAF in a hidden tab while timers
+        # keep firing, so a backgrounded page accumulated draw work with no consumer (0 ->
+        # 44 packets in one minute, measured). This suite backgrounds a real tab, and its
+        # teeth block rebuilds the old producer shape and requires the growth to reappear.
+        # Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_bg_perf.mjs
       - name: Run SIL scenarios (scripted conversations)
         run: bash sim/run_scenarios.sh
       - name: SIL + static-site pytest/Playwright suite (all pages, resolutions, controls)
