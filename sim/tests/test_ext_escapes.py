@@ -846,19 +846,107 @@ def test_x10_the_default_granted_set_is_exactly_four():
 
 
 def test_x10_p1_capabilities_are_declared_rendered_and_refused():
-    """The P1 boundary, asserted rather than assumed: `act`/`subscribe`/`brain` parse as
-    grammar (so §8's four goldens are checked today) and are **refused at load** in P0,
-    because `volley.execution_actions` is not on the wire yet (brief S5).
+    """The P1 boundary, asserted rather than assumed: a capability that cannot yet *do*
+    anything parses as grammar (so §8's goldens are checked today) and is **refused at
+    load**. Shipping one that does nothing would be worse than refusing it aloud.
 
-    Shipping a capability that cannot do anything would be worse than refusing it aloud.
+    **The example changed on 2026-09-04, and only the example.** This test used to make
+    its point with `act`, because `volley.execution_actions` was not on the wire (brief
+    S5). It is now, so `act` is no longer an example of a capability that does nothing —
+    `test_x10_an_act_is_bounded_declared_and_granted_or_it_does_not_load` below is what
+    guards it instead, and it guards *more*, not less. `brain` is still an example, so it
+    is the one used here. Nothing about the invariant moved: the last two lines — *a
+    still-P1 capability is refused, and `evaluate()` has no `allow_p1` door* — are the
+    escape property, and they are unchanged and still assert on `E.P1_CAPABILITIES`.
     """
-    e = ext([{"do": [{"act": {"name": "eb_timer_request", "args": ["1", "0"]}},
-                     {"say": "ok"}]}], caps=("say", "act.eb_timer_request"))
+    e = ext([{"do": [{"brain": {"prompt": "hi"}}, {"say": "ok"}]}],
+            caps=("say", "brain"))
     assert E.validate(e, allow_p1=True) == [], "the grammar must accept it today"
     reasons = E.validate(e)
     assert reasons and "cannot grant yet" in reasons[0]
-    r = E.evaluate(e, facts(), grants=E.DEFAULT_GRANTS | {"act.eb_timer_request"})
+    r = E.evaluate(e, facts(), grants=E.DEFAULT_GRANTS | {"brain"})
     assert not r.ok and r.effects == [], "evaluate() has no allow_p1 door"
+    assert "brain" in E.P1_CAPABILITIES and "subscribe" in E.P1_CAPABILITIES
+
+
+def test_x10_an_act_is_bounded_declared_and_granted_or_it_does_not_load():
+    """What replaced the `act` half of the test above — the three gates, each asserted.
+
+    An `act` is not free just because the wire exists. It is refused at **load**, never at
+    runtime, unless all three hold:
+
+    1. **The name is in the closed table.** `ext.ACTION_WORDS` is the whole set of robot
+       functions this appliance will ever name, and it is the same table the parent-facing
+       sentence comes from — so a function nobody wrote English for cannot be declared,
+       granted or emitted. `qr-launch-cards.md` §P0-b: *"the catalog is a closed allowlist,
+       and this is a safety property, not tidiness."*
+    2. **The pack declared it.** `act.foo` used but not declared fails at load, because
+       declared-equals-used is a load condition (§5) — so the grant list a parent reads is
+       provably the program's reach.
+    3. **The host granted it.** `act.<name>` is in neither `DEFAULT_GRANTS` nor
+       `content_app.SHIPPED_EXTRA_GRANTS`; an ungranted one does not run at all, so "absent,
+       not refused, when not granted" (§4.2) still holds — the turn is never at risk.
+    """
+    from moxie_sdk.content import content_app as CA
+    good = ext([{"do": [{"act": {"name": "eb_timer_request", "args": ["1", "0"]}},
+                        {"say": "ok"}]}], caps=("say", "act.eb_timer_request"))
+
+    # 1 — a name outside the closed table is not a program, at load.
+    for bogus in ("eb_shell", "eb_timer_request2", "os.system", "EB_WAKE", ""):
+        bad = ext([{"do": [{"act": {"name": bogus, "args": []}}, {"say": "ok"}]}],
+                  caps=("say", f"act.{bogus}"))
+        assert E.validate(bad, allow_p1=True), bogus
+        assert E.validate(bad), bogus
+    assert set(E.ACTION_WORDS) == {"eb_timer_request", "eb_enable_qr", "eb_wake"}, (
+        "widening the robot-function allowlist is a reviewer's decision, not a diff's")
+
+    # 2 — used but not declared: a load refusal, not a runtime one.
+    undeclared = ext([{"do": [{"act": {"name": "eb_wake", "args": []}},
+                              {"say": "ok"}]}], caps=("say",))
+    reasons = E.validate(undeclared, allow_p1=True)
+    assert reasons and "did not declare" in reasons[0], reasons
+    r = E.evaluate(undeclared, facts(), grants=E.DEFAULT_GRANTS | {"act.eb_wake"})
+    assert not r.ok and r.effects == [], "an undeclared act must never reach an effect"
+
+    # 3 — declared and known, but not granted: still nothing runs.
+    ungranted = E.validate(good, grants=E.DEFAULT_GRANTS | CA.SHIPPED_EXTRA_GRANTS)
+    assert ungranted and "has not been granted" in ungranted[0], ungranted
+    assert not any(c.startswith("act.")
+                   for c in set(E.DEFAULT_GRANTS) | set(CA.SHIPPED_EXTRA_GRANTS))
+    r = E.evaluate(good, facts(), grants=E.DEFAULT_GRANTS)
+    assert not r.ok and r.effects == []
+
+    # …and with all three satisfied it runs, and says so in words a parent reads.
+    assert E.validate(good, grants=E.DEFAULT_GRANTS | {"act.eb_timer_request"}) == []
+    r = E.evaluate(good, facts(), grants=E.DEFAULT_GRANTS | {"act.eb_timer_request"})
+    assert r.ok and r.effects[0] == {"kind": "act", "name": "eb_timer_request",
+                                     "args": ["1", "0"]}
+    assert "Can ask Moxie to set or cancel a timer" in E.grant_list(good)
+
+
+def test_x10_the_host_will_not_name_a_function_the_table_does_not():
+    """The second gate on the same table, at the host boundary — belt to the validator's
+    brace, because `execution_actions_of` is the last function before a string becomes a
+    `function_id` addressed to a robot in a child's room.
+
+    Two ways in are checked: an effect list handed straight to `apply_ext_effects` (what a
+    future evaluator bug would produce) and a Python global handler calling
+    `volley.add_execution_action` directly (which never passed a validator at all). Both
+    drop the unknown name and keep the known one.
+    """
+    from moxie_sdk.content import content_app as CA
+    v = Volley("hi")
+    CA.apply_ext_effects([{"kind": "act", "name": "eb_shell", "args": ["rm"]},
+                          {"kind": "act", "name": "__import__", "args": []},
+                          {"kind": "act", "name": "eb_wake", "args": []}], volley=v)
+    assert [a["name"] for a in v.execution_actions] == ["eb_wake"]
+
+    v2 = Volley("hi")
+    v2.add_execution_action("eb_shell", ["rm", "-rf"])
+    v2.add_execution_action("eb_enable_qr", ["true"])
+    out = CA.execution_actions_of(v2)
+    assert [a.function for a in out] == ["eb_enable_qr"]
+    assert CA.robot_functions() == frozenset(E.ACTION_WORDS)
 
 
 # --------------------------------------------------------------------------- #

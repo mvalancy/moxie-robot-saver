@@ -753,9 +753,16 @@ def extension_warnings(data: dict) -> list:
        *may* do; these tell them what it *will* do, which is the difference between a
        permissions dialog and a review.
     3. **An honest note when it will install but not run** — either because the program is
-       malformed, or because it needs `act`/`subscribe`/`brain`, which this appliance
-       cannot grant yet (brief S5). Saying nothing here would repeat the exact mistake the
-       `code` warning exists to avoid.
+       malformed, or because it needs a capability this appliance cannot grant yet
+       (`ext.P1_CAPABILITIES`: `subscribe`, `brain`, `schedule.request`; **`act` left that
+       set on 2026-09-04** and no longer triggers the note). Saying nothing here would
+       repeat the exact mistake the `code` warning exists to avoid.
+
+       What this note does **not** cover is a capability the appliance *can* honour but has
+       not *granted* — an imported pack asking for `clock`, or now for `act.<name>`. That
+       one installs, reviews cleanly, and is refused at load by the grant check, which the
+       parent sees through the `ext_events` ring. Which grants a parent may hand out is the
+       console card, and that is still P1.
     """
     block = (data or {}).get("extension") or {}
     if not block:
