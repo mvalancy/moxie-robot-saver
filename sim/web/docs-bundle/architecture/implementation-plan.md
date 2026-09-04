@@ -98,6 +98,111 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **The hosted demo refused the eleventh visitor instead of queueing them — fixed 2026-09-03.** At
+  `DEMO_MAX_CONCURRENT_CHAT` in-flight turns, `functions/api/_lib/limits.js::admit` answered `at_capacity`
+  on the spot, so a momentary collision between the ~ten people the demo is sized for turned into scripted
+  lines for whoever arrived second. **The ceiling was deliberately NOT raised:** it is matched to the
+  upstream key's `max_parallel_requests`, which protects another service on the same self-hosted gateway,
+  so a bigger number would only move the refusal upstream as a 429 and starve the neighbour — and at ~1.2 s
+  a turn, four slots already serve ~3 turns/second, far above what ten conversational visitors need.
+  Instead `admit()` is now `async` and, at the ceiling, joins a **bounded FIFO** for up to
+  `DEMO_QUEUE_MAX_WAIT_MS` (2 500 ms) with at most `DEMO_QUEUE_MAX_DEPTH` (8) waiting; past the depth, or
+  when the wait expires, it refuses with the same `at_capacity` + `Retry-After: 15` as before — **a queue
+  with no depth cap is just a slower way to fall over.** `release()` *hands the slot over* rather than
+  freeing it, which is what makes the order FIFO by construction: the count never dips, so a late arrival
+  has no gap to slip into. All three routes await it and keep `release()` in a `finally`;
+  **`/api/health` is untouched and still non-`async` with zero upstream calls**, and `sim/test_mode.mjs`
+  now pins both halves of that pair. The charge/refund question the queue forced — a timed-out waiter had
+  paid a rate-limit unit and budget units for a turn it never got — was answered with a **refund** rather
+  than a reordering, because reordering would let an un-rate-limited script occupy queue slots it never
+  earned; the full argument is in `refundCharges()` and in `backlog/live-sim-demo.md` §4.1. **The honest
+  gap:** the FIFO is **per-isolate**, exactly like every counter around it (§4.6) — a fair order among the
+  requests one isolate holds, never a global queue position — and the load-bearing premise (a ~1.2 s turn,
+  which is what makes a depth of 8 deliverable inside 2 500 ms) is inherited from earlier measurements
+  rather than re-measured under real load. Ledger row 28.
+
+- **`/api/health` told the page what it wanted to hear — fixed 2026-09-03.** `functions/api/health.js`
+  shipped two LOCAL STUBS that shadowed the real implementations: `budgetState()` returned `null` and
+  `loadState()` returned a hard-coded `{inflight: 0}`. Both were honest in P0-a (no spending route was
+  deployed) and became a lie the moment `chat.js` and `speech.js` landed with `_lib/limits.js` behind
+  them: the probe **could not answer `budget_exhausted` at all**, so a new visitor's page painted **LIVE
+  on an over-budget deployment** and §7's BUSY pill could never fire — and after every spend refusal the
+  next 30-second poll re-armed the page to `live` because health kept saying everything was fine. Now it
+  imports `budgetState`/`loadOf` from `_lib/limits.js` and answers from the real counters, with §4.5's
+  `Retry-After` on the `budget_exhausted` row. **The hard invariant holds:** `/api/health` still makes
+  **zero** upstream calls — both reads are synchronous in-memory map lookups, `onRequestGet` is not
+  `async` (a handler that cannot await cannot call upstream), and `sim/test_mode.mjs` asserts
+  `limits.__state().stats.upstreamCalls === 0` across every probe as well as no `fetch(` in the source.
+  **The honest gap, now written down in three places instead of contradicted in three places:** the answer
+  is **that isolate's view**, not the deployment's. §4.6 and assumption-ledger row 25 had claimed the
+  counters were "an in-isolate map plus the per-colo Cache API" — **the Cache API leg was never
+  implemented**, verified against the shipped code on 2026-09-03 — so the multiplier is *isolates*, not
+  colos, and the configured caps are a **per-isolate throttle, not a global budget**. The document was
+  corrected rather than the tier built, because §10 assumption 13 (is KV or a Durable Object available on
+  this plan?) is still open and decides which counter is worth building. `sim/web/mode.js` was
+  **deliberately not changed** — see §4.6's "why a spend refusal opens no separate client-side suppression
+  window".
+- **`/api/speech` shipped an upstream 200 body to the visitor, and the leak sweep could not see it
+  (2026-09-03, closed).** `pcmFromAudio` was never told which `response_format` had been asked for, so its
+  raw-PCM fallback — correct **only** under `DEMO_TTS_FORMAT=pcm` — was live under the shipped `wav`
+  default after just three sniffs (empty, `{`/`[`, `<`). Any other 200 (a `text/plain` proxy error, an SSE
+  `data: {"error":…}` frame whose prefix defeats the `{` sniff, an `ID3` mp3, a webm EBML header) came back
+  as `container:"raw"`, was base64'd into `messages[0].payload.audio.buffer` and shipped at **status 200,
+  `reason: null`, `degraded: false`** — a body-disclosure hole, and with an mp3 several seconds of
+  full-scale static in a child's ear, which is the exact harm `_lib/wav.js`'s header claims to prevent.
+  **The test blind spot is the more useful finding:** `assertClean` swept with `text.includes(secret)`, and
+  **base64 defeats substring matching**, so ~1000 sweeps reported clean on responses that carried the key.
+  Fixed by passing `cfg.ttsFormat` down and gating the raw branch on it (absent ⇒ strict `wav`), by a
+  magic-number container refusal mirroring `transcribe.js::audioKind`, and by two headerless-body guards
+  under `pcm` (odd byte length; >90 % printable). `assertClean` in **both** sweep files now decodes
+  `payload.audio.buffer` and sweeps the bytes. Same slice: the per-isolate `spent` set keyed on the raw MAC
+  **string**, and base64url is not canonical — an HMAC's 43rd character carries two bits nothing reads, so
+  four spellings verified and one paid chat turn bought **exactly 4x** TTS per isolate (measured, then
+  pinned); it now keys on canonical bytes. **Honest ceiling:** under `DEMO_TTS_FORMAT=pcm` there is no
+  header and no magic number, so a short opaque binary error blob is still undecidable and would pass —
+  `wav` is the default for that reason.
+
+- **Integration evidence (2026-09-04, sixth pass) — the `week` soak finished, 12/12 bars, and
+  P1's three fixes hold from outside.** P1's soak was killed at 59 of 60 minutes before it wrote a
+  report, so every §5.3 bar was unverified. Run to completion: **3601 s · 4407 turns answered while
+  the broker was up (bar: 2000) · 24 broker restarts · 4 supervisor restarts · 20 mid-write
+  `SIGKILL`s → 12 met, 0 failed, 0 not exercised.** Headline numbers: A1 4407/4407 (100 %); A3 p95
+  **0.62 s** re-subscribe (bar 3 s), max 0.62 s over 24 reconnects; A4 4/4 roster resumes, max
+  1.12 s; A5 0 lost of 10 000 appends across 4 processes at the **default** 2.0 s lock budget, 0
+  refused; A7 RSS **-1.4 %**; A8 fds +0; A9 recent=60 robots=3 roster=3 conn_events=67/400; A12
+  24/24 restarts re-onboarded every robot, max 9.77 s. **A6 passed with 0 unreadable records and 5
+  stray `.tmp` files** — the bar asks only that nothing is unreadable, but a temp file per
+  interrupted write is uncollected state that grows with faults; recorded, not fixed.
+  **§5.4 unchanged and repeated rather than softened:** an hour at a raised rate against a simulator
+  is a **rate substitution**, not a week — it stands in only for failures that scale with *events* —
+  and **no physical Moxie has ever been on this broker**.
+  **The three fixes, confirmed from outside the code that implements them.** The roster ghost:
+  `run_broker_outage.sh` EXIT=0, and with the pre-P1 early-return restored in a scratch copy EXIT=1
+  with `seen_since_connect=False` while `/status` still listed the device. The vision latch: a real
+  broker + a real `mqtt/run.py`, asserting `EventSubscription.active[]` **on the wire** — sent
+  first, suppressed on a repeat, re-sent on A→B, on the **B→A re-entry** and after a broker restart;
+  ceiling unchanged, that proves *we re-subscribe*, never that a robot delivers. The `OverflowError`:
+  at a raised `MOXIE_STORE_LOCK_TIMEOUT_S=30`, **13 346 polls**, refused cleanly and recorded, while
+  the same harness without the clamp still raises at exactly **1 024**.
+  **Bench-roster noise — a harness defect, not a runtime one, and fixed.** The runtime is correct
+  (cap 64, LRU eviction, QoS 0 pushes, `forget()` on unpair, `MOXIE_ROSTER_RESUME=0`); what was
+  wrong is that three SIL scripts booted `mqtt/run.py` against the repo's `mqtt/data`, so a fresh
+  smoke re-pushed config to `d_outage…` ids minted a quarter of an hour earlier. Each now scopes a
+  per-run `MOXIE_DATA_DIR`, guarded generically in `test_roster.py`.
+  **THE GAP this found — `helpers_stack` calls the supervisor ready before it is listening.**
+  `Supervisor.start()` waits for `[runtime] broker connected`, which `_on_connect` prints **before**
+  `c.subscribe(...)`; the SIL robot then publishes its single `/state` a millisecond later and
+  `run_smoke()` never re-announces, so the live one-turn e2e fails as *"no config pushed within
+  timeout"*. Reproduced repeatedly (a second `/state` is answered at once). Rule 23's shape in the
+  readiness contract. Not fixed here: it touches `_on_connect` and the shared harness.
+  **(3) The rest of the stack.** `run_smoke.sh` (1991) ✅ incl. TTS audio + the five scored fields,
+  `--telehealth` (1992) ✅, `run_scenarios.sh` (1993) ✅ 2/2 × 4/4, `run_acl_proof.sh` ✅ 18/18,
+  `run_compose_smoke.sh` ✅ in **both** modes, and **one live gateway turn** through the P1 runtime:
+  the gateway brain answered *"Hello Sam! I'm so happy to see you."* and the robot heard 145 640 B @
+  22050 Hz at spectral flatness **7.1e-02** — `helpers_audio.is_real_speech` **True**, five orders
+  above the 1e-6 floor, so not the placeholder tone. Hermetic suite **4791 passed / 26 skipped /
+  4 xfailed** with `fastapi httpx pynacl` present.
+
 - **Integration evidence (2026-09-03, fifth pass) — the connection rewrite (#94) survives a real
   broker outage; the ROSTER does not.** P0 rewrote how the supervisor connects, reconnects and
   publishes, and every one of its tests uses a fake client or an injected transport. Nothing had
@@ -719,7 +824,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   product code and `functions/` are unswept; and monotonic-clock load flakiness (playbook rule 11's
   disease) is deliberately out of that guard's scope and still unfenced.
 
-## DoD progress (audited 2026-09-03 07:40 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 93%** (done = all six 🟢)
+## DoD progress (audited 2026-09-03 21:05 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 94%** (done = all six 🟢)
 
 > **Criterion 6 is green, and it was earned in the place it used to be false.** The day the merge gate was a
 > `grep` is fixed and the fix has since caught a genuine red; the three flake classes are fenced by ratchets that
@@ -729,8 +834,37 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > stack passes in **both** compose modes, the wheel carries its data files, and a live turn answered through the
 > real gateway brain **and** the real gateway voice (`piper-amy`, 141 kB @ 22050 Hz, flatness 7.35e-02 — speech,
 > not a tone). Criterion 1 stays honestly amber: its ceiling is a physical robot we have never had, and the
-> hosted mic→gateway join still has no human recording through it. **Nothing here has been verified against a
-> real Cloudflare deployment** — that is owner-blocked on three variables and named in Known gaps, not hidden.
+> hosted mic→gateway join still has no human recording through it.
+>
+> **The "nothing verified against a real Cloudflare deployment" gap closed on 2026-09-03 and is recorded here
+> exactly as far as it goes.** The five `DEMO_*` variables are set on Production (all as `secret_text` — the API
+> silently drops `plain_text` on this project, which cost two false confirmations before a read-back caught it),
+> Preview is deliberately empty, and the public domain now answers for real: `GET /api/health` → `mode: live`;
+> `POST /api/chat` → **200 in 1.23 s** with *"Hello there! My name is Moxie. What's yours?"* and behaviour
+> markup; `POST /api/speech` → **200 in 2.76 s, 257 742 bytes** redeemed against that turn's ticket. A leak sweep
+> over both bodies and every header found no key, no gateway host, no model id and no Tailscale address. Environment
+> separation is proven for the first time — the keyless preview answers `gateway_not_configured` while Production
+> answers `live`, a control that was impossible while neither had variables (assumption 11 can close).
+>
+> **The ears were closed the same evening, as a loop rather than a probe.** `/api/transcribe` had never been
+> exercised against the live deployment; it now has been, by making Moxie listen to herself. One live chat turn
+> (*"The quick brown fox jumps over the lazy dog. What a fun sentence!"*), redeemed for audio through
+> `/api/speech` (237 800 B PCM @ 22 050 Hz, 5.39 s), resampled to the **16 kHz mono RIFF/WAVE** the gateway
+> actually accepts (§10 assumption 15: it rejects webm/Opus, ogg/Opus and mp4/AAC), and posted back to
+> `/api/transcribe` → **200 in 2.93 s**, transcript *"The quick brown fox jumps over the lazy dog. What a fun
+> sentence."* — word-perfect, differing only in the closing punctuation. No key, gateway host, STT model id or
+> Tailscale address in the body or any header. **All three hosted routes are now proven on the public domain.**
+> That response also carried `load.inflight: 1`, **which is NOT evidence for PR #104 and was briefly recorded
+> here as though it were.** `transcribe.js` takes its `load` from `admit()` in `_lib/limits.js`, which has
+> always reported the real in-flight count; the stub PR #104 replaced was in `health.js` alone. Production
+> serves from `main`, which at the time of this test did not carry #104 at all — so the number proves the
+> admission counter, not the health wiring. Corrected the same evening, before promotion.
+>
+> **What is still NOT covered:** no *human* has recorded through the hosted mic — this loop used synthesized
+> speech and a hand-built WAV, so it proves the route and the gateway, not `MediaRecorder` in a real browser on
+> a real microphone. And a 39-agent adversarial audit
+> of that live surface returned **23 confirmed findings (0 critical, 0 high)**; two are fixed (PR #104, PR #105),
+> the rest are filed. A deployment that answers is not the same as a deployment that is finished.
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|

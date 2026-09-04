@@ -13,9 +13,24 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 PORT="${MOXIE_SIL_PORT:-1883}"
 SUP_LOG=/tmp/moxie-supervisor.log
+# ── bench hygiene: this run gets its OWN MOXIE_DATA_DIR ────────────────────────────────
+# Same reason as `run_smoke.sh`, where the note lives: the harness mints a throwaway
+# `d_<uuid>` per invocation and the supervisor's data dir defaults to the repo's
+# `mqtt/data`, so without this every SIL script on the box shares one durable roster and
+# inherits the device ids of every unrelated run before it. An operator's MOXIE_DATA_DIR
+# is kept, and only a directory this script created is removed.
+MOXIE_DATA_DIR_OWNED=""
+if [ -z "${MOXIE_DATA_DIR:-}" ]; then
+  MOXIE_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/moxie-scenarios-data-XXXXXX")"
+  MOXIE_DATA_DIR_OWNED=1
+fi
+export MOXIE_DATA_DIR
+
 PIDS=(); BROKER_CID=""
 cleanup(){ for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
-           [ -n "$BROKER_CID" ] && docker rm -f "$BROKER_CID" >/dev/null 2>&1 || true; }
+           [ -n "$BROKER_CID" ] && docker rm -f "$BROKER_CID" >/dev/null 2>&1
+           [ -n "${MOXIE_DATA_DIR_OWNED:-}" ] && rm -rf "$MOXIE_DATA_DIR"
+           return 0; }
 trap cleanup EXIT
 
 # Wait until something is listening on 127.0.0.1:$1, or give up after $2 seconds.

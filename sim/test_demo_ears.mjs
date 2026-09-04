@@ -154,6 +154,32 @@ async function assertClean(res, label) {
   }
   ok(!/\bBearer\b/i.test(text), `${label}: the body contains the word Bearer`);
   ok(!/https?:\/\//.test(text), `${label}: the body contains a URL`);
+
+  // ---- AND THE SAME SWEEP OVER THE DECODED AUDIO. ---------------------------
+  // `text.includes(secret)` cannot see inside base64, and `messages[0].payload.audio.buffer`
+  // is ~175 KB of it. That blind spot is not hypothetical: it is how a raw-body passthrough
+  // in `/api/speech` survived every sweep in this file reporting CLEAN while returning an
+  // upstream 200 body verbatim to the caller (fixed 2026-09-03, `_lib/wav.js`). A sweep that
+  // stops at the encoding boundary is a sweep that proves the encoding, not the secrecy.
+  // Defensive throughout: a body that is not JSON, a payload that is not JSON, a message
+  // with no audio and an absent buffer are all NOT failures — most responses here have no
+  // audio at all, and this must never turn a refusal into a crash.
+  let __env = null;
+  try { __env = JSON.parse(text); } catch {}
+  const __msgs = __env && Array.isArray(__env.messages) ? __env.messages : [];
+  for (const m of __msgs) {
+    let payload = null;
+    try { payload = JSON.parse(m && m.payload); } catch {}
+    const b64 = payload && payload.audio && typeof payload.audio.buffer === "string" ? payload.audio.buffer : "";
+    if (!b64) continue;
+    let decoded = "";
+    try { decoded = Buffer.from(b64, "base64").toString("latin1"); } catch {}
+    for (const secret of FORBIDDEN) {
+      ok(!decoded.includes(secret),
+         `${label}: the AUDIO BUFFER DECODES to bytes containing ${JSON.stringify(secret.slice(0, 12))}…`);
+    }
+    ok(!/https?:\/\//.test(decoded), `${label}: the audio buffer decodes to something carrying a URL`);
+  }
 }
 
 async function call(bytes, headers, env, label) {
