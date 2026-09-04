@@ -86,7 +86,30 @@
   }
 
   // ---- speech (Piper) with mouth sync ----
+  /* THE THIRD SEAM — a clip that was still LOADING when the answer arrived.
+   *
+   * Two guards already stand around a live answer. ambient.js refuses to tick while
+   * `moxieBusy()`, and `ttsPump` stops a local voice already in the air when the server
+   * voice lands. Between them is a hole neither can see: `playUrl` and `speakLive` FETCH
+   * and DECODE before any node exists, so a quip that began loading while Moxie was
+   * genuinely silent — which is most of a turn, ~1.2 s of /api/chat plus 2-3 s of
+   * /api/speech — presents nothing for the answer to stop, and then starts a few hundred
+   * ms LATER, on top of her. The first two guards are both correct and the defect still
+   * happens, which is why it needs a third.
+   *
+   * `floor` counts who last took the speakers. A loader reads it before its fetch and
+   * refuses to start if it moved: the ordinary stale-async-response guard, applied to
+   * audio. An explicit `stop()` and each answer chunk take the floor.
+   *
+   * IT ABANDONS THE TURN, IT DOES NOT FALL THROUGH. `speak()` promises SOUND by walking
+   * clip -> Piper -> the browser voice, so a dropped clip would normally shift one rung
+   * down the ladder — and the browser voice talks over an answer exactly as loudly as the
+   * clip would have. So losing the floor ends the whole chain rather than retrying it. */
+  var floor = 0;
+  function takeFloor() { floor++; }
+
   function stop() {
+    takeFloor();             // anything still decoding behind this is stale by definition
     noteSpoke();             // whatever we are about to cut, her voice was live until now
     stopCloudTTS();          // cancel any queued/playing server audio too
     if (current) { try { current.pause ? current.pause() : current.stop(); } catch (e) {} current = null; }
@@ -146,12 +169,14 @@
   function playUrl(url, opts) {
     var who = (opts && opts.who) || null;
     var driveMouth = !(opts && opts.mouth === false);
+    var mine = floor;                      // see THE THIRD SEAM
     return fetch(url).then(function (r) {
       if (!r.ok) throw new Error("audio " + r.status);
       return r.arrayBuffer();
     }).then(function (buf) {
       var a = actx(); if (!a) return false;
       return a.decodeAudioData(buf.slice(0)).then(function (audio) {
+        if (floor !== mine) return false;  // she started answering while this was loading
         var src = a.createBufferSource(); src.buffer = audio;
         var analyser = a.createAnalyser(); analyser.fftSize = 256;
         src.connect(analyser); analyser.connect(a.destination);
@@ -269,9 +294,11 @@
   function speak(text, who) {
     if (!enabled || !text) return Promise.resolve(false);
     stop();
+    var mine = floor;                      // see THE THIRD SEAM
     // 1) pre-cached clip (real recorded speech — works on a fully static deploy)
     return playClip(text, who).then(function (done) {
       if (done) { setVoiceStatus("clip"); return true; }
+      if (floor !== mine) return false;    // she took the floor mid-load: abandon, don't fall through
       // 3) …straight to the browser voice where a Piper sidecar cannot exist
       if (skipProbe()) {
         var quick = speakBrowser(text);
@@ -281,6 +308,7 @@
       // 2) live Piper service, ONLY if one is actually reachable
       return speakLive(text).then(function (ok) {
         if (ok) { setVoiceStatus("piper"); return true; }
+        if (floor !== mine) return false;  // …and again after the Piper round-trip
         // 3) honest fallback: the browser's own voice, so sound really plays
         var spoke = speakBrowser(text);
         setVoiceStatus(spoke ? "browser" : "none");
@@ -389,6 +417,7 @@
     // quickly instead of hanging (important on the static deploy).
     var ctl = ("AbortController" in window) ? new AbortController() : null;
     var to = ctl ? setTimeout(function () { ctl.abort(); }, 1400) : 0;
+    var mine = floor;                      // see THE THIRD SEAM
     return fetch(url, ctl ? { signal: ctl.signal } : undefined).then(function (r) {
       clearTimeout(to);
       if (!r.ok) throw new Error("tts " + r.status);
@@ -396,6 +425,7 @@
     }).then(function (buf) {
       var a = actx(); if (!a) return false;
       return a.decodeAudioData(buf.slice(0)).then(function (audio) {
+        if (floor !== mine) return false;  // she started answering while this was loading
         var src = a.createBufferSource(); src.buffer = audio;
         var analyser = a.createAnalyser(); analyser.fftSize = 256;
         src.connect(analyser); analyser.connect(a.destination);
@@ -786,6 +816,7 @@
       try { current.stop ? current.stop() : current.pause(); } catch (e) {}
       currentWho = null;
     }
+    takeFloor();                           // the answer owns the speakers now
     ttsPlaying = item; current = src;
     beginUtterance(d);                     // a NEW event resets the stats below
     setSpeaking(true, d);
