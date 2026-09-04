@@ -248,3 +248,44 @@ def test_the_runtime_still_prints_both_status_bind_outcomes():
         "the success line moved; update run_smoke.sh's wait with it"
     assert "[runtime] status server failed" in src, \
         "the failure line moved; run_smoke.sh's --telehealth guard greps for it"
+
+
+# --------------------------------------------------------------------------- #
+# The fourth location of the same shape: a wait that could not fail.
+# --------------------------------------------------------------------------- #
+# `test_sil_durable_telemetry.py::test_the_buffer_is_a_cache_hydrated_on_first_touch`
+# waited for its status row with, among other clauses, `row.get("telemetry_count") is not
+# None`. The intent was "wait until the ring has been hydrated". The field is
+# `len(self._telemetry_buffer(...))` (`moxie_runtime.py`:533) — a LENGTH, so it is `0`,
+# never `None`, and the clause could not be false. A row that had hydrated nothing
+# satisfied the wait and fell straight through to a bare `assert 0 == 3`.
+#
+# This guard pins the fact that made the predicate vacuous, so the day somebody makes the
+# field nullable — which is the only way that predicate could ever have worked — this goes
+# red next to the test that depends on it. It is not a substitute for the fix (the wait
+# now covers the genuinely asynchronous part and hydration is asserted with a named
+# reason); it is the fact the fix rests on.
+def test_the_status_rows_telemetry_count_is_a_length_and_never_none():
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.join(REPO, "mqtt"))
+    _sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
+    import pytest
+    pytest.importorskip("paho.mqtt.client")
+    import moxie_runtime
+    from moxie_sdk.app import MoxieApp
+    from moxie_sdk.types import ChildProfile, RobotContext
+
+    class _App(MoxieApp):
+        name = "echo"
+
+    rt = moxie_runtime.MoxieRuntime(app=_App(), child=ChildProfile(nickname="Sam"))
+    device = "d_00000000-0000-4000-8000-00000000feed"
+    rt.robots[device] = RobotContext(device_id=device)
+
+    row = next(r for r in rt.status_snapshot()["robots"] if r["device_id"] == device)
+    assert row["telemetry_count"] == 0, row
+    assert row["telemetry_count"] is not None, (
+        "a robot with no telemetry at all still reports a number, not None — so a wait "
+        "predicate gated on `telemetry_count is not None` is vacuous and waits for "
+        "nothing. Gate on the value you mean, or assert it with a named reason.")
