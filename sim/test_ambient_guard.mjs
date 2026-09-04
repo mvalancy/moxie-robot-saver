@@ -35,6 +35,9 @@
  *   3. hosted + degraded — the SCRIPTED path, which plays a clip. The narrow exported
  *      `isSpeaking()` is asserted FALSE while she is plainly speaking, which is the
  *      whole reason the guard uses the broad predicate instead.
+ *   5. THE LOADING SEAM — a quip already FETCHING when the answer landed. Neither
+ *      existing guard can see it: the tick was taken while she was silent, and there is
+ *      no node yet for the answer to stop. Held open deliberately, not waited for.
  *   4. THE SEAM — the measured ~385 ms between `speak()` cutting the old clip and the new
  *      one finishing its fetch-and-decode, in which even the BROAD predicate reads false
  *      while Moxie is mid-reply. This is why the guard needed a timestamped grace beat and
@@ -136,6 +139,10 @@ async function open(url, opts) {
   // CLOSED and no control in it is clickable (see sim/test_mobile_layout.mjs).
   await page.setViewport({ width: 1440, height: 900 });
   const errs = [], aborted = { n: 0, probe404: 0 };
+  /* Hold clip FETCHES open on demand. Block 5 needs a clip that is still in flight at the
+   * instant the answer starts; racing the real network for that would be a test that fails
+   * a few runs in ten, so the fixture creates the condition instead of hoping for it. */
+  const clipNet = { stall: false, held: [] };
   page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
   page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
 
@@ -201,6 +208,7 @@ async function open(url, opts) {
         ? r.respond({ status: 200, contentType: "application/json", body: speechBody })
         : r.respond({ status: 404, contentType: "application/json", body: "{}" });
     if (/:808[12]\//.test(u)) { aborted.n++; return r.abort("connectionrefused"); }
+    if (clipNet.stall && /\/audio\/.+\.(wav|mp3|ogg|m4a)$/i.test(u)) { clipNet.held.push(r); return; }
     return r.continue();
   });
 
@@ -209,7 +217,7 @@ async function open(url, opts) {
                              { timeout: 15000 });
   // env.js's sidecar probe settles in <2.5 s and mode.js's first /api/health right away.
   await new Promise((r) => setTimeout(r, 3500));
-  return { page, errs, aborted };
+  return { page, errs, aborted, clipNet };
 }
 
 /* Console errors, minus the ones this fixture CAUSED on purpose — forgiven exactly as
@@ -264,8 +272,14 @@ async function settleDegradedLine(page) {
    * landing there is the guard working as specified, not failing. It is also a REAL
    * residual, recorded as an honest gap in docs/architecture/implementation-plan.md:
    * closing it needs a turn-in-flight signal, which lives in `bridge.js` and is not this
-   * slice's file. (The LIVE path has no such hole — `ttsPump` cuts a local voice when the
-   * server voice arrives, which block 1 exercises with the scheduler left running.)
+   * slice's file.
+   *
+   * THIS COMMENT USED TO SAY the LIVE path has no such hole, on the grounds that `ttsPump`
+   * cuts a local voice when the server voice arrives. That was wrong, and believing it is
+   * what let the hole ship: `ttsPump` can only cut a NODE, and a clip still fetching has
+   * none. The live path had the same gap one layer earlier — it reddened this suite on
+   * 2026-09-04 from the free-running scheduler block 1 deliberately leaves running. Block 5
+   * now holds that gap open on purpose, and audio.js's `floor` closes it.
    *
    * So the blocks below drive `tick()` explicitly rather than racing a 11–24 s timer, and
    * assert the promise that was actually made. Asserting the other thing would be a test
@@ -342,7 +356,8 @@ try {
     const inside = starts(evs, "clip").filter((e) => e.t >= ans.t && e.t < ans.t + ans.dur);
     eq(inside.length, 0,
        `no ambient line started between the answer's start and end — ` +
-       `${starts(evs, "clip").length} clip(s) all fell outside the ${(ans.dur / 1000).toFixed(2)} s window`);
+       `${inside.length} of ${starts(evs, "clip").length} clip(s) landed inside the ` +
+       `${(ans.dur / 1000).toFixed(2)} s window`);
     // …and that silence was the GUARD refusing, not the fixture failing to ask.
     eq(mid1.pred.busy, true, "the first mid-answer tick saw a busy robot and stood down");
     eq(mid2.pred.busy, true, "…and so did the second, 1.8 s later");
@@ -495,6 +510,62 @@ try {
     eq(seam.busy, true,
        "…but isMoxieBusy still holds ambient off, because the end was timestamped on the way in — " +
        "this is the ~385 ms hole a bare isMoxieSpeaking() guard would have left open");
+    await page.close();
+  }
+
+  /* =======================================================================
+   * 5. THE LOADING SEAM — a quip that was already FETCHING when the answer landed.
+   *
+   * Blocks 1-4 cover the two guards that exist, and the defect survives both. ambient.js
+   * checks `moxieBusy()` at TICK time; `ttsPump` stops a local voice at ANSWER time. A
+   * clip whose fetch-and-decode is still in flight is invisible to each: the tick was
+   * legitimately taken while Moxie was silent, and when the answer arrives there is no
+   * node yet for it to stop. The clip then starts a few hundred ms later, over her.
+   *
+   * That is not a hypothesis. It is what reddened this suite in CI on 2026-09-04 — one
+   * clip inside the 4.78 s window with BOTH mid-answer ticks correctly standing down, on
+   * a branch whose diff was Python and Markdown only. The free-running 11-24 s scheduler,
+   * which block 1 deliberately leaves running, happened to land in the loading gap.
+   *
+   * Here the gap is held open on purpose rather than waited for: the clip's fetch is
+   * stalled, the turn is driven to real audio, and only then is the clip released. Before
+   * `floor` (audio.js, THE THIRD SEAM) it started on top of the answer every single time.
+   * ===================================================================== */
+  {
+    const { page, errs, aborted, clipNet } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });
+    await page.click("body");
+    await page.evaluate(() => window.moxieAmbient.stop());   // drive tick() explicitly
+    await page.waitForFunction("!window.moxieAudio.isMoxieBusy(1600)", { timeout: 25000 });
+
+    clipNet.stall = true;
+    const held = await tickAmbient(page);                    // guard passes: she IS silent
+    eq(held.pred.busy, false,
+       "the tick was taken while Moxie was genuinely silent — the guard had no reason to refuse");
+
+    await type(page, "hello moxie");
+    await page.waitForFunction(
+      `window.__rec.events.some(e => e.ev === "start" && e.src === "pcm")`, { timeout: 20000 });
+    const ansT = starts(await timeline(page), "pcm")[0].t;
+
+    ok(clipNet.held.length >= 1,
+       `the quip really was still in flight when the answer started (${clipNet.held.length} request(s) held)`);
+    clipNet.held.forEach((r) => { try { r.continue(); } catch (e) {} });
+    clipNet.held = []; clipNet.stall = false;
+
+    // Give the released clip every chance to start: fetch + decode is well under a second.
+    await sleep(2500);
+    const late = starts(await timeline(page), "clip").filter((e) => e.t >= ansT);
+    eq(late.length, 0,
+       "the quip that finished loading DURING the answer never reached the speakers — " +
+       `it lost the floor while it was decoding (${late.length} late clip start(s))`);
+
+    // And the answer itself was not collateral damage.
+    const evs5 = await timeline(page);
+    const ans5 = starts(evs5, "pcm")[0] || {};
+    eq(evs5.filter((e) => e.ev === "stop" && e.id === ans5.id && e.t < ans5.t + ans5.dur - 50).length, 0,
+       "…and the answer still played as one uninterrupted utterance");
+
+    eq(notable(errs, aborted).length, 0, "…with no unexplained console errors");
     await page.close();
   }
 } catch (e) {

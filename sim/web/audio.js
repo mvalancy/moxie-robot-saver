@@ -86,6 +86,52 @@
   }
 
   // ---- speech (Piper) with mouth sync ----
+  /* THE THIRD SEAM — a clip that was still LOADING when the answer arrived.
+   *
+   * Two guards already stand around a live answer. ambient.js refuses to tick while
+   * `moxieBusy()`, and `ttsPump` stops a local voice already in the air when the server
+   * voice lands. Between them is a hole neither can see: `playUrl` and `speakLive` FETCH
+   * and DECODE before any node exists, so a quip that began loading while Moxie was
+   * genuinely silent — which is most of a turn, ~1.2 s of /api/chat plus 2-3 s of
+   * /api/speech — presents nothing for the answer to stop, and then starts a few hundred
+   * ms LATER, on top of her. The first two guards are both correct and the defect still
+   * happens, which is why it needs a third.
+   *
+   * `floor` counts who last took the speakers, and an AMBIENT load reads it before its
+   * fetch and refuses to start if it moved: the ordinary stale-async-response guard,
+   * applied to audio.
+   *
+   * WHO TAKES THE FLOOR IS THE WHOLE DESIGN, and getting it wrong twice is what taught it.
+   *
+   *   · A REPLY takes it — `ttsPump` for the live answer, and `speak()` for any non-ambient
+   *     line, which is what the scripted and degraded paths play. Both are Moxie answering.
+   *   · AMBIENT never takes it. It is the thing being held back, not the thing holding.
+   *   · THE CHILD'S PROP never takes it, and is never subject to it. `speakClipOnly(…,
+   *     "child")` is a stage prop; Moxie may cut it off, but it is not an answer and
+   *     nothing about it should silence a line already loading.
+   *
+   * The first draft bumped in `stop()`. That is one line above every `speak()`, so every
+   * ordinary back-to-back utterance cancelled whatever was loading behind it — and on the
+   * scripted path that is the CHILD'S line, dropped whenever Moxie's reply won the decode
+   * race. `sim/test_mic_spend.mjs` caught it in CI (3 of 54 checks: "heard: 3.19s@0.95
+   * (Moxie's answer)" where the child should have been) while passing three times out of
+   * three on a faster local machine. The second draft over-corrected to `ttsPump` alone,
+   * which left the SCRIPTED reply — a clip, not PCM — unable to hold ambient off at all,
+   * and block 3 of the ambient guard went red instead. Only the third framing is right,
+   * and it is the product sentence: NOTHING STARTS ON TOP OF MOXIE ANSWERING.
+   *
+   * IT ABANDONS THE TURN, IT DOES NOT FALL THROUGH. `speak()` promises SOUND by walking
+   * clip -> Piper -> the browser voice, so a dropped ambient clip would normally shift one
+   * rung down the ladder — and the browser voice talks over an answer exactly as loudly as
+   * the clip would have. So losing the floor ends the whole chain rather than retrying it.
+   *
+   * IT ABANDONS THE TURN, IT DOES NOT FALL THROUGH. `speak()` promises SOUND by walking
+   */
+  var floor = 0;
+  function takeFloor() { floor++; }
+  /** Only ambient yields the floor — see the note above for why the child's prop must not. */
+  function heldBy(who) { return who === "ambient"; }
+
   function stop() {
     noteSpoke();             // whatever we are about to cut, her voice was live until now
     stopCloudTTS();          // cancel any queued/playing server audio too
@@ -146,12 +192,16 @@
   function playUrl(url, opts) {
     var who = (opts && opts.who) || null;
     var driveMouth = !(opts && opts.mouth === false);
+    // Capture from the CALLER where it offered one: `speak()`'s window opens at its own
+    // stop(), and `loadClips()` can put an await between the two on a cold manifest.
+    var mine = (opts && opts.since != null) ? opts.since : floor;
     return fetch(url).then(function (r) {
       if (!r.ok) throw new Error("audio " + r.status);
       return r.arrayBuffer();
     }).then(function (buf) {
       var a = actx(); if (!a) return false;
       return a.decodeAudioData(buf.slice(0)).then(function (audio) {
+        if (heldBy(who) && floor !== mine) return false;   // Moxie began answering mid-load
         var src = a.createBufferSource(); src.buffer = audio;
         var analyser = a.createAnalyser(); analyser.fftSize = 256;
         src.connect(analyser); analyser.connect(a.destination);
@@ -187,12 +237,12 @@
   }
 
   // Play a pre-rendered clip for `text` if one exists (either speaker).
-  function playClip(text, who) {
+  function playClip(text, who, since) {
     return loadClips().then(function (j) {
       if (!j) return false;
       var rel = (j[who || "moxie"] || {})[text] || (j.moxie || {})[text] || (j.child || {})[text];
       if (!rel) return false;
-      return playUrl("audio/" + rel, { who: who || "moxie" });
+      return playUrl("audio/" + rel, { who: who || "moxie", since: since });
     });
   }
 
@@ -269,9 +319,12 @@
   function speak(text, who) {
     if (!enabled || !text) return Promise.resolve(false);
     stop();
+    if (!heldBy(who)) takeFloor();         // a REPLY claims the speakers — see THE THIRD SEAM
+    var mine = floor;
     // 1) pre-cached clip (real recorded speech — works on a fully static deploy)
-    return playClip(text, who).then(function (done) {
+    return playClip(text, who, mine).then(function (done) {
       if (done) { setVoiceStatus("clip"); return true; }
+      if (heldBy(who) && floor !== mine) return false;   // abandon; do NOT fall through
       // 3) …straight to the browser voice where a Piper sidecar cannot exist
       if (skipProbe()) {
         var quick = speakBrowser(text);
@@ -279,8 +332,9 @@
         return quick;
       }
       // 2) live Piper service, ONLY if one is actually reachable
-      return speakLive(text).then(function (ok) {
+      return speakLive(text, who, mine).then(function (ok) {
         if (ok) { setVoiceStatus("piper"); return true; }
+        if (heldBy(who) && floor !== mine) return false;   // …and again after the round-trip
         // 3) honest fallback: the browser's own voice, so sound really plays
         var spoke = speakBrowser(text);
         setVoiceStatus(spoke ? "browser" : "none");
@@ -383,12 +437,13 @@
     } catch (e) { return false; }
   }
 
-  function speakLive(text) {
+  function speakLive(text, who, since) {
     var url = TTS_BASE.replace(/\/$/, "") + "/tts?text=" + encodeURIComponent(text.slice(0, 1000));
     // Fast timeout so an unreachable service falls back to the browser voice
     // quickly instead of hanging (important on the static deploy).
     var ctl = ("AbortController" in window) ? new AbortController() : null;
     var to = ctl ? setTimeout(function () { ctl.abort(); }, 1400) : 0;
+    var mine = (since != null) ? since : floor;         // see THE THIRD SEAM
     return fetch(url, ctl ? { signal: ctl.signal } : undefined).then(function (r) {
       clearTimeout(to);
       if (!r.ok) throw new Error("tts " + r.status);
@@ -396,6 +451,7 @@
     }).then(function (buf) {
       var a = actx(); if (!a) return false;
       return a.decodeAudioData(buf.slice(0)).then(function (audio) {
+        if (heldBy(who) && floor !== mine) return false;   // Moxie began answering mid-load
         var src = a.createBufferSource(); src.buffer = audio;
         var analyser = a.createAnalyser(); analyser.fftSize = 256;
         src.connect(analyser); analyser.connect(a.destination);
@@ -786,6 +842,7 @@
       try { current.stop ? current.stop() : current.pause(); } catch (e) {}
       currentWho = null;
     }
+    takeFloor();                           // the answer owns the speakers now
     ttsPlaying = item; current = src;
     beginUtterance(d);                     // a NEW event resets the stats below
     setSpeaking(true, d);
