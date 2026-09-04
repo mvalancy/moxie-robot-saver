@@ -54,7 +54,7 @@ each of them is a design argument rather than an implementation:
 |--:|---|---|
 | D1 | **Where authoring lives** — console, a separate tool, or the SIM | §3.1 compares four options against six criteria; §3.2 chooses the console and defends it |
 | D2 | **What a parent edits** — a form, a guided flow, a text box; and what is off-limits | §4.2's field table, §4.3's trigger decision, §4.5's refusals |
-| D3 | **The loop, and what it costs** — edit → hear it → keep it, in gateway calls | §5's four rungs, §5.2's budget, §5.3's `try` route |
+| D3 | **The loop, and what it costs** — edit → hear it → keep it, in gateway calls | §5's five rungs, §5.2's budget, §5.3's `try` route |
 | D4 | **How it stays safe** without a second validation path | §6's six gates, all existing functions, and the one `if` that is missing today |
 
 **If a reader finishes §3–§6 and still has to choose something before building, this brief failed** and
@@ -364,10 +364,10 @@ The §13-style list, deliberately explicit:
 
 ## 5. The loop — edit → hear it → keep it, and what it costs
 
-Upstream's advantage is the *loop*, not the editor. Ours has four rungs and **exactly one of them
+Upstream's advantage is the *loop*, not the editor. Ours has five rungs and **exactly one of them
 spends a gateway call.**
 
-### 5.1 The four rungs
+### 5.1 The five rungs
 
 | Rung | Fires on | Gateway calls | Store writes | Route |
 |--:|---|:--:|:--:|---|
@@ -660,7 +660,7 @@ Checked against §1's four, honestly:
 |---|---|:--:|
 | D1 | Where authoring lives | ✅ §3.2 chooses the console, defends it in five points, and names the one finding (**A9**) that would flip it |
 | D2 | What a parent edits | ✅ §4.2 decides every field of every kind; §4.3 decides the prompt surface; §4.5 lists the refusals |
-| D3 | The loop and its cost | ✅ §5's four rungs, with the gateway cost of each and a structural reason rung 3 cannot fire on a keystroke |
+| D3 | The loop and its cost | ✅ §5's five rungs, with the gateway cost of each and a structural reason rung 3 cannot fire on a keystroke |
 | D4 | How it stays safe | ✅ §6's six gates are all existing functions; the only new safety code is one `if` (§6.3), and M1 keeps it |
 
 **A build agent can open a worktree and start on P0 without owing a design argument first.** The audit

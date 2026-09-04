@@ -1,5 +1,5 @@
 {
- "generated": "docs-6dd5e912e84b",
+ "generated": "docs-a22cec4f64fd",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -351,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 124283,
+   "bytes": 124282,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -722,7 +722,7 @@
     "4.4 The shadow rule — an authored command's precedence is its name",
     "4.5 What this editor will never author",
     "5. The loop — edit → hear it → keep it, and what it costs",
-    "5.1 The four rungs",
+    "5.1 The five rungs",
     "5.2 Why a preview never fires on a keystroke, and the budget that proves it",
     "5.3 `POST /content/try`, exactly",
     "5.4 What \"hear it\" means with no robot in the house",
