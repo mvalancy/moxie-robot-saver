@@ -67,7 +67,7 @@ the audit row stays 🟠. §11 says which of the four are settled and which are 
 ### 2.1 The content model, exactly
 
 Three dataclasses in [`mqtt/moxie_sdk/content/module.py`](../../../mqtt/moxie_sdk/content/module.py),
-and the pack allowlist `SPEC` in [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py):61-141 is
+and the pack allowlist `SPEC` in [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py):123-141 is
 pinned against `dataclasses.fields()`, so these two lists cannot drift.
 
 | Kind | Fields (`packs.FIELDS`) | Identity (`item_key`) |
@@ -258,6 +258,7 @@ finding about people, not code, and it is exactly what §10's unverified rows ar
 - **Deletion.** `merge_items` has no remove operation — the overlay only adds or replaces
   (`packs.py`:946). An authored conversation can be emptied but not deleted, and the card must not
   offer a ✕ that does not exist. Removal is the packs brief's own P2.
+- **A rehearsal with nothing connected.** Rung 2 publishes to a device, so with no robot and no SIM there is nothing to publish to and the button is disabled. A device-free `stage`-only variant is cheap and is P1's, not P0's — §5.4.
 - **Authoring `code`.** Forever. §6.5.
 
 ---
@@ -444,14 +445,32 @@ to this prompt*, which is the question that was missing. It does not prove *what
 — that is rung 2 plus a real session. The card says so in one line, the way upstream's harness is
 honest about being a harness.
 
-### 5.4 What "hear it" means with no robot in the house
+### 5.4 What "hear it" means with no robot in the house — and the one rung that needs a device
 
-Rung 2 publishes an ordinary `remote_chat` to the device id, so it is performed by whatever is
-subscribed as that device. With a robot: the robot. With the browser SIM open: the SIM's 3D Moxie, with
-face, arms and gaze. With neither: the response still carries the staged `Performance` JSON, and the
+Rung 2 publishes an ordinary `remote_chat` to a **device id**, so it is performed by whatever is
+subscribed as that device. With a robot: the robot. With the browser SIM connected: the SIM's 3D Moxie,
+with face, arms and gaze. Either way the response also carries the staged `Performance` JSON, and the
 card renders the beats as text — mood, dialog act, gesture, gaze, and `dropped`, every id the validator
-refused. **An author with no robot and no SIM still sees what would have played.** That is already how
-the 🎬 card behaves; authoring inherits it unchanged.
+refused — so an author who cannot *watch* still reads what would have played.
+
+**With neither, rung 2 does not exist**, and a build agent must not be told otherwise.
+`MoxieRuntime.preview` 404s an unknown `device_id` and 400s a robot that is still pending, and the
+console's `refreshPreview(deviceId)` (`app.js`:838) simply hides the 🎬 card when `refreshLive` passes
+`null`. So the honest rule for the editor is the same one every other card already follows:
+
+- **Rungs 0, 1 and 4 — type, see the resolved prompt, save — work with no device at all.** They are
+  the whole of P0, which is why P0 ships without touching `preview`.
+- **Rung 2 is enabled only when a device is live**, and when it is not the button is disabled with a
+  sentence (*"connect Moxie or open the simulator to watch her perform it"*) rather than absent —
+  an author should learn the capability exists.
+- **Rung 3 (`try`) needs no device**, because it never publishes: it renders, calls the brain and
+  returns text. An author with no robot can still iterate on a prompt.
+
+**A device-free rehearsal is cheap and is deliberately deferred.** `perform()` (the planner) is already
+a separate call from `_publish_chat()` inside `preview`, so a `stage`-only variant that returns the
+`Performance` without publishing is a small change — but it is a **new route with a new contract**, and
+P0 does not need it. It is named here so P1 can take it as one line of scope rather than rediscovering
+it, and it is the reason §9 keeps `preview` out of P0's file list entirely.
 
 ---
 
@@ -632,7 +651,7 @@ which is really BEYOND #10's registry question wearing a different hat.
 
 ## 10. Assumption ledger
 
-**Eleven rows: four proven, four inferred, three unverified.** **Three of the three unverified
+**Twelve rows: five proven, four inferred, three unverified.** **Three of the three unverified
 (A9, A10, A11) need a real parent**; **one (A8) needs a physical robot.** That is the honest ceiling on
 this area and no phase moves it.
 
@@ -645,6 +664,7 @@ this area and no phase moves it.
 | A5 | Testing the author's own phrases against installed patterns is the strongest shadow check that is decidable | **inferred** | Regex-overlap in general is not something we will decide. The check is exact for the typed phrases and claims nothing more (§4.4). A counter-example would be a *typed* phrase the check missed — T12/T13 bound it |
 | A6 | 40 tries/hour and a 300-token cap are the right numbers | **unverified — chosen, not measured** | Both are env vars. A week of a real author's use settles them; until then the only defensible claim is *"one press, one call, and the count is on screen"* |
 | A7 | A parent's browser and the supervisor agree on what a draft is, so `local_rev`-based conflict detection is enough for two tabs | **inferred** | The same mechanism the import 409 already uses. R7 names the residual: two tabs are detected, not merged |
+| A7b | Rung 2 (rehearse) requires a **live device**; rungs 0, 1, 3 and 4 do not | **proven** | `MoxieRuntime.preview` 404s an unknown `device_id`; `refreshPreview` (`app.js`:838) hides the 🎬 card on `null`. §5.4 states the consequence rather than promising a device-free rehearsal |
 | A8 | An authored conversation naming an unknown `module_id` is ignored by a robot rather than fatal | **unverified — needs hardware** | The same unknown the pack review already warns about for schedules. Nothing in our corpus states it; the editor warns and does not refuse |
 | A9 | The person who authors is the account holder at the console, not a therapist or teacher on their own machine | **unverified — needs a real parent** | Ask five owners who would write content. This is the **one finding that would flip §3.2** to option (b), and it is a question about people |
 | A10 | A non-programmer can write a useful prompt given a text box, four chips and a render panel | **unverified — needs a real parent** | A human test. Every test in §7 proves the surface *exists*, never that it *lands* — the same class as `sandboxed-extensions.md` A10 and `live-sim-demo.md`'s own parent row |

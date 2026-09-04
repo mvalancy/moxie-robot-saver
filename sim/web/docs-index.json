@@ -1,5 +1,5 @@
 {
- "generated": "docs-a22cec4f64fd",
+ "generated": "docs-d0f9223c4e86",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -700,7 +700,7 @@
    "path": "architecture/backlog/content-authoring.md",
    "title": "Content authoring — the verb packs did not ship (§4.4 #6)",
    "section": "architecture",
-   "bytes": 55013,
+   "bytes": 56970,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -725,7 +725,7 @@
     "5.1 The five rungs",
     "5.2 Why a preview never fires on a keystroke, and the budget that proves it",
     "5.3 `POST /content/try`, exactly",
-    "5.4 What \"hear it\" means with no robot in the house",
+    "5.4 What \"hear it\" means with no robot in the house — and the one rung that needs a device",
     "6. How it stays safe — one validation path, not two",
     "6.1 The rule",
     "6.2 The six gates, all of them existing code",
