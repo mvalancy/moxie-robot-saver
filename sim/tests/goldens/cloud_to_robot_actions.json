@@ -1,0 +1,96 @@
+{
+  "_readme": [
+    "The cloud -> robot ACTION script, and the state both SIM clients must end in.",
+    "",
+    "`RemoteChatResponse.response_actions[]` is how the brain DIRECTS the robot rather",
+    "than only speaking through it -- launch a module, leave one, sleep, arm the QR",
+    "scanner, run a named on-robot function, subscribe to perception events (see",
+    "docs/reverse-engineering/protocol/remote-chat-protocol.md, section RemoteChatAction).",
+    "DoD criterion 4 says the two SIM clients are interchangeable; on this channel that",
+    "was false until 2026-09-03: `sim/web/bridge.js::applyAction` acted on actions and",
+    "`sim/virtual_moxie.py` ignored them entirely (grep -c response_actions -> 0).",
+    "",
+    "`script` is the four remote_chat responses `sim/test_bridge.mjs` already emits at the",
+    "browser SIM (event_id act-1 .. act-4), and `expected_state` is the state that file",
+    "already asserts the browser reached. So this golden is held from BOTH ends:",
+    "",
+    "  sim/tests/test_actions_reach_the_robot.py  the SIL robot reaches expected_state",
+    "  sim/test_bridge.mjs                        the browser SIM reaches the same state",
+    "  sim/tests/test_sim_client_parity.py        both clients name the same verbs and",
+    "                                             report the same stat keys",
+    "",
+    "so neither client can start disagreeing about what an action MEANT without a test",
+    "going red. Regenerate: drive VirtualMoxie._on_chat_reply over `script` and dump",
+    "`action_stats()`."
+  ],
+  "topic_suffix": "commands/remote_chat",
+  "reference_client": "sim/virtual_moxie.py",
+  "peer_client": "sim/web/bridge.js",
+  "peer_test": "sim/test_bridge.mjs",
+
+  "action_kinds": ["launch", "exit", "sleep", "enable_qr", "execute"],
+
+  "stat_keys": ["applied", "unknown", "module_id", "content_id", "launches", "exits",
+                "asleep", "qr_enabled", "subscribed", "last"],
+  "applied_keys": ["action", "module_id", "content_id", "function"],
+  "client_only_keys": {
+    "sim/virtual_moxie.py": ["applied[].args"],
+    "sim/web/bridge.js": ["applied[].t"]
+  },
+
+  "script": [
+    {
+      "_why": "a launch: the brain puts the child in an activity",
+      "command": "remote_chat", "result": "SUCCESS", "event_id": "act-1",
+      "output": {"text": "Yes! Let's draw.", "markup": "Yes! Let's draw."},
+      "response_actions": [
+        {"output_type": "GLOBAL", "action": "launch",
+         "module_id": "DRAW", "content_id": "default"}
+      ]
+    },
+    {
+      "_why": "an action-LESS entry carrying only an event subscription -- legal, not an error; the legacy singular mirrors it and must not fire twice",
+      "command": "remote_chat", "result": "NOREPLY_ACK", "event_id": "act-2",
+      "output": {"text": "", "markup": ""},
+      "response_action": {"output_type": "GLOBAL",
+                          "event_subscription": {"active": ["eb-found-face", "eb-lost-target"],
+                                                 "clear": false}},
+      "response_actions": [
+        {"output_type": "GLOBAL",
+         "event_subscription": {"active": ["eb-found-face", "eb-lost-target"],
+                                "clear": false}}
+      ]
+    },
+    {
+      "_why": "a verb this client does not implement, and a junk entry: both COUNTED and skipped, never raised -- a future server verb may not break an old client's turn",
+      "command": "remote_chat", "event_id": "act-3",
+      "output": {"text": "…", "markup": "…"},
+      "response_actions": [{"output_type": "GLOBAL", "action": "teleport_to_mars"},
+                           "nonsense"]
+    },
+    {
+      "_why": "goodbye: leave the module and go to sleep, two actions on one response",
+      "command": "remote_chat", "result": "SUCCESS", "event_id": "act-4",
+      "output": {"text": "Bye Sam!", "markup": "Bye Sam!"},
+      "response_actions": [{"output_type": "GLOBAL", "action": "exit"},
+                           {"output_type": "GLOBAL", "action": "sleep"}]
+    }
+  ],
+
+  "expected_state": {
+    "applied": [
+      {"action": "launch", "module_id": "DRAW", "content_id": "default", "function": ""},
+      {"action": "exit", "module_id": "", "content_id": "", "function": ""},
+      {"action": "sleep", "module_id": "", "content_id": "", "function": ""}
+    ],
+    "unknown": 2,
+    "module_id": "",
+    "content_id": "",
+    "launches": 1,
+    "exits": 1,
+    "asleep": true,
+    "qr_enabled": false,
+    "subscribed": ["eb-found-face", "eb-lost-target"],
+    "last": "sleep"
+  }
+}

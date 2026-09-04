@@ -47,6 +47,24 @@ FIRMWARE = "24.10.803"           # the analyzed build; robot reports this in /st
 #: planner's own dict spells it `signal`.
 SCORED_FIELDS = ("mood", "mood_intensity", "dialog_act", "emotion", "signals")
 
+#: 🎬 The action verbs this client implements — `RemoteChatAction.ActionID` as our server
+#: can spell it (`mqtt/moxie_sdk/types.py::ActionType`), and exactly the five
+#: `sim/web/bridge.js::ACTION_KINDS` implements. Written out as a literal ON PURPOSE: the
+#: SIL robot decodes the wire itself, the way firmware does, and never imports the server
+#: SDK it exists to test — the same rule `QUERY_FIELD` below is written under.
+#: `sim/tests/test_sim_client_parity.py` asserts the three lists agree, so the duplication
+#: cannot drift.
+#:
+#: ⚠️ Two of these are **not** names in the recovered `ActionID` enum (`launch`,
+#: `launch_if_confirmed`, `exit_module`, `request_next`, `abort_module`, `execute`,
+#: `sleep`, `tangent` — proto-catalog.md:2091): `exit` should be `exit_module`, and
+#: `enable_qr` is not a verb at all (the contract spells it `execute` +
+#: `function_id: "eb_enable_qr"`). This client decodes what our server actually sends,
+#: which is what "interchangeable clients" means; correcting the *wire* is a contract
+#: change filed against `build_chat_response`, not a harness change — see
+#: docs/architecture/backlog/qr-launch-cards.md §P0-a and §7 R3.
+ACTION_KINDS = ("launch", "exit", "sleep", "enable_qr", "execute")
+
 
 class VirtualMoxie:
     def __init__(self, host: str, port: int, device_id: str | None = None,
@@ -77,6 +95,20 @@ class VirtualMoxie:
         self.got_telehealth = threading.Event()
         self.telehealth: list = []
         self.telehealth_state: str = ""
+        # 🎬 What the cloud's `response_actions` have DONE to this robot, in the same
+        # shape `sim/web/bridge.js::actionStats()` reports — see `_apply_action`. Client
+        # lifetime, not per-turn: the module the cloud last put us in outlives the turn
+        # that put us there, exactly as it does on the browser SIM.
+        self.got_action = threading.Event()
+        self.actions: dict = {
+            "applied": [],          # [{action, module_id, content_id, function, args}]
+            "unknown": 0,           # verbs this client does not implement (skipped)
+            "module_id": "", "content_id": "",   # the module the cloud last put us in
+            "launches": 0, "exits": 0,
+            "asleep": False, "qr_enabled": False,
+            "subscribed": [],       # event_subscription.active, as last asked for
+            "last": "",
+        }
         self.errors: list[str] = []
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.device_id)
         self.client.on_connect = self._on_connect
@@ -140,6 +172,11 @@ class VirtualMoxie:
         chunk_num = payload.get("chunk_num")
         text = (payload.get("output") or {}).get("text", "")
         self.chat_payloads.append(payload)
+        # …and then what the cloud asked this ROBOT to DO. Applied per RESPONSE, not per
+        # turn — a streamed answer is several publishes and an action may ride any of
+        # them — and BEFORE `got_reply` is set, so a waiter that wakes on the reply is
+        # already looking at settled action state rather than racing it.
+        self._on_actions(payload)
         parts = self._chunks.setdefault(event_id, {})
         parts[int(chunk_num) if chunk_num is not None else 0] = text
         result = payload.get("result")
@@ -160,6 +197,143 @@ class VirtualMoxie:
         self.reply_text = ""
         self._chunks.clear()
         self.chat_payloads = []
+        # Only the EDGE is per-turn. `self.actions` is client state (which module we are
+        # in, whether we are asleep, what we are subscribed to) and a new prompt does not
+        # undo it — the browser SIM's `actionState` has the same lifetime.
+        self.got_action.clear()
+
+    # -- 🎬 response_actions: the brain drives this robot, not just its mouth --
+    #
+    # `RemoteChatResponse.response_actions[]` is a list of `RemoteChatAction`s
+    # (docs/reverse-engineering/protocol/remote-chat-protocol.md §"RemoteChatAction — the
+    # brain drives navigation"): the brain can start a content module, leave one, put
+    # Moxie to sleep, run a named on-robot function, and subscribe to the robot's own
+    # perception events. `docs/architecture/ai-seam.md` §2 and
+    # `mqtt/moxie_sdk/wire.py::build_chat_response` are our server's half of it.
+    #
+    # Until this landed the SIL robot read `output.text` and the audio and **ignored the
+    # actions completely**, so no test could assert that a robot RECEIVED AND ACTED ON a
+    # launch — only that the runtime published one. That was DoD criterion 4's
+    # ("interchangeable clients") one untrue clause, because the browser SIM
+    # (`sim/web/bridge.js::applyAction`) has acted on them since PR #52.
+    #
+    # WHAT THIS DELIBERATELY DOES NOT DO. A stub that RECORDS is right here; a stub that
+    # pretends to run a module is not. So:
+    #   * `launch` does not start anything — there is no content engine on this client,
+    #     and inventing one would make the SIL robot lie about what a real robot did.
+    #   * `execute` is recorded by name and never called. The contract says the result
+    #     comes back next turn in `RemoteChatRequest.execute_returns[]`; we do not send
+    #     that, because we would have to invent a return value for a function we did not
+    #     run. Named as a gap rather than faked.
+    #   * `sleep` records that we were told to sleep; it does not stop the client. The
+    #     corpus describes no wake handshake this robot could then honour.
+    #   * `enable_qr` records that the scanner was armed. A headless client has no camera.
+    # Everything it DOES do mirrors `bridge.js::applyAction` state for state, which is the
+    # whole point: the two clients must agree about what an action meant.
+
+    def _on_actions(self, payload: dict):
+        """Consume one response's `response_actions` — the mirror of `bridge.js::handleActions`.
+
+        The plural `response_actions[]` is the contract's list; a legacy singular
+        `response_action` mirrors `response_actions[0]`
+        (docs/architecture/mqtt-and-conversation.md §4.1), so it is read **only** when the
+        plural is absent — otherwise one action would fire twice.
+
+        An entry with no `action` is legal and is not an error: that is the shape
+        `build_chat_response` sends when a brain is only subscribing to events. Nothing
+        here raises — a future server verb must not be able to break an old client's turn.
+        """
+        entries = payload.get("response_actions")
+        if not isinstance(entries, list):
+            single = payload.get("response_action")
+            entries = [single] if single else []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                self.actions["unknown"] += 1        # junk on the wire, counted not raised
+                continue
+            self._note_subscription(entry.get("event_subscription"))
+            if not entry.get("action"):
+                continue                            # subscription-only entry
+            try:
+                self._apply_action(entry)
+            except Exception as e:                  # never let an action break the turn
+                self.actions["unknown"] += 1
+                self.log(f"🎬 action failed: {e}")
+
+    def _note_subscription(self, sub):
+        """`RemoteChatAction.EventSubscription{clear, active[]}` — the brain asking this
+        robot to push it perception events (remote-chat-protocol.md:103-106)."""
+        if not isinstance(sub, dict):
+            return
+        if sub.get("clear"):
+            self.actions["subscribed"] = []
+        for name in sub.get("active") or []:
+            if name not in self.actions["subscribed"]:
+                self.actions["subscribed"].append(name)
+        self.log(f"🎬 event subscription: {', '.join(self.actions['subscribed']) or '(none)'}")
+
+    def _apply_action(self, entry: dict) -> bool:
+        """Act on one `RemoteChatAction`. Returns False for a verb we do not implement.
+
+        `function` is read from `function_id` first and the SIM's `function` second.
+        `RemoteChat.proto`:255-281 names the fields `function_id` / `function_args`, and
+        that is what a real robot decodes; `sim/web/bridge.js`:258 reads `entry.function`.
+        **Today our own server emits NEITHER** — `build_chat_response` drops
+        `Action.function`/`Action.args` on the floor, so every `execute` we can send
+        arrives unnamed. Recorded as `""` rather than guessed; see the note in
+        docs/architecture/implementation-plan.md and qr-launch-cards.md §P0-a.
+        """
+        kind = str(entry.get("action") or "").lower()
+        module_id = entry.get("module_id") or ""
+        content_id = entry.get("content_id") or ""
+        function = entry.get("function_id") or entry.get("function") or ""
+        args = entry.get("function_args")
+        if args is None:
+            args = entry.get("args")
+        if kind not in ACTION_KINDS:
+            self.actions["unknown"] += 1
+            self.log(f"🎬 ignored unknown action {entry.get('action')!r}")
+            return False
+        if kind == "launch":
+            # We are now IN that module as far as this client is concerned. Nothing is
+            # started; the navigation state is the honest part and the part a test asserts.
+            self.actions["module_id"] = module_id
+            self.actions["content_id"] = content_id
+            self.actions["asleep"] = False
+            self.actions["launches"] += 1
+            self.log(f"🎬 launch {module_id}" + (f":{content_id}" if content_id else ""))
+        elif kind == "exit":
+            self.actions["module_id"] = ""
+            self.actions["content_id"] = ""
+            self.actions["exits"] += 1
+            self.log("🎬 exit")
+        elif kind == "sleep":
+            self.actions["asleep"] = True
+            self.log("🎬 sleep")
+        elif kind == "enable_qr":
+            self.actions["qr_enabled"] = True
+            self.log("🎬 QR scanning on")
+        elif kind == "execute":
+            self.log(f"🎬 execute {function or '(unnamed)'}")
+        self.actions["last"] = kind
+        self.actions["applied"].append({"action": kind, "module_id": module_id,
+                                        "content_id": content_id, "function": function,
+                                        "args": args if args is not None else []})
+        if len(self.actions["applied"]) > 40:       # bounded, like the browser SIM's
+            self.actions["applied"].pop(0)
+        self.got_action.set()
+        return True
+
+    def action_stats(self) -> dict:
+        """What the cloud's actions did to this robot — the same keys, in the same
+        meanings, as `sim/web/bridge.js::actionStats()`. Tests assert this; the parity of
+        the two shapes is asserted in `sim/tests/test_sim_client_parity.py`."""
+        a = self.actions
+        return {"applied": [dict(x) for x in a["applied"]], "unknown": a["unknown"],
+                "module_id": a["module_id"], "content_id": a["content_id"],
+                "launches": a["launches"], "exits": a["exits"], "asleep": a["asleep"],
+                "qr_enabled": a["qr_enabled"], "subscribed": list(a["subscribed"]),
+                "last": a["last"]}
 
     def _play_tts(self, payload):
         """Consume a CloudTTSResponse: decode the audio buffer + marks and 'play' it.
