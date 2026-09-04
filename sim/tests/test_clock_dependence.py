@@ -12,6 +12,17 @@ gate rather than by anything in the repo:
   `TODAY - 30`: an import at 00:00:10 filed them under *yesterday's* roll-up row while
   `history_view`'s "today" was the new day. ~30 red seconds a night, never seen yet.
 
+A fourth, on 2026-09-04, wore the same costume and was a different disease, which is
+worth a line here because this ledger will keep catching the costume: `test_schedule_sil_
+e2e`'s pinning assertion failed on three unrelated PRs at once and passed locally every
+way it was run. Nothing about the *test* was wrong. The **planner** was hour-dependent —
+a parent request pinned to a later slot could be eaten by the scored fill in an earlier
+one whenever `time_of_day` put that module top of the board, which it does in the
+afternoon and not the morning, so a runner in UTC saw it and a developer in PDT did not.
+The verdict for a case like that is neither of the three below: it is *fix the product*,
+and the test was doing its job. Ask which of the two read the hour before reaching for a
+row.
+
 The shared shape is not "a test used the clock" — plenty must, and the runtime reads its
 own clock so pinning the test's would prove nothing. It is **a test that reads the clock
 and nobody wrote down why that is safe**. So the fix is a reviewed ledger, not a ban:
@@ -169,7 +180,10 @@ REVIEWED: dict = {
         "RELATIVE — bedtime and 'due today' are wall-clock by contract, so every window is "
         "built relative to now rather than pinned to a literal hour. It takes `now` as a "
         "parameter so the fixture and the assertions reason about ONE instant; two "
-        "independent reads either side of local midnight answer for different days."),
+        "independent reads either side of local midnight answer for different days. The "
+        "hour cannot change the answer any more: `_request_offset` asks for the activity "
+        "two slots ahead, or two slots behind in the tail of a day, so the request lands "
+        "today at all 1440 minutes and the pinning test has one strict branch, not two."),
     "sim/tests/test_schedule_sil_e2e.py::_seed_behaviors": (
         ("datetime.now",),
         "RELATIVE — records are placed a whole number of days before now and the "
@@ -189,7 +203,16 @@ REVIEWED: dict = {
         (),
         "DETERMINISTIC — kept as a row only to record the fix: it used to read the clock "
         "a second time, independently of the config it was asking about. It now takes the "
-        "fixture's instant. If this row ever gains a construct, that regressed."),
+        "fixture's instant, and its only caller is `_request_offset`, which uses it to "
+        "*build* a request that always lands today rather than to branch on whether one "
+        "did. If this row ever gains a construct, that regressed."),
+    "sim/tests/test_schedule_sil_e2e.py::test_a_request_for_tomorrow_is_not_pinned_into_today": (
+        ("datetime.now",),
+        "RELATIVE — one read, handed to `_bedtime_body` as both the bedtime anchor and the "
+        "base for a request stamped a whole day out. 'A whole day out' is the same "
+        "statement at every hour (naive +1 day always changes the calendar date, DST "
+        "included), so this replaces a branch that used to be reachable only in the last 20 "
+        "minutes of a day — i.e. only ever in CI, unwatched, at 23:4x."),
 
     # ---- telemetry -------------------------------------------------------------------
     "sim/tests/test_sil_durable_telemetry.py::_wait": (
