@@ -116,6 +116,15 @@ REVIEWED: dict = {
         "RELATIVE — the requestAnimationFrame shim hands `cb(Date.now())` to code that "
         "only ever diffs consecutive frame stamps. A duration in disguise; no assertion "
         "reads the value."),
+    "sim/test_console_insights.mjs": (
+        ("Date.now",),
+        "RELATIVE — an ORDERING of two reads of the same clock, never a date. The suite "
+        "stamps each intercepted DELETE with `Date.now()` and asserts it landed at or "
+        "after the `Date.now()` taken immediately before the SECOND click, which is how "
+        "\"the two-click arming held\" is proved on the wire instead of from a label. "
+        "`a >= b` for two reads of one monotone-in-practice clock is true at every one of "
+        "the 1440 minutes of a day; no assertion reads either value, and a clock that "
+        "stepped BACKWARDS between them would redden the suite rather than hide a bug."),
     "sim/test_demo_tickets.mjs": (
         ("Date.now",),
         "RELATIVE — a ticket is aged `Date.now()/1000 - 61` to make it one second past a "
