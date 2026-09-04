@@ -283,3 +283,22 @@ jobs:
         # teeth block rebuilds the old producer shape and requires the growth to reappear.
         # Guarded by sim/tests/test_ci_test_coverage.py.
         run: node sim/test_bg_perf.mjs
+      - name: Parent console — 📈 Insights + the two-click Erase history button
+        # THE FIRST BROWSER COVERAGE THE PARENT CONSOLE HAS EVER HAD. Until this step,
+        # `grep -rln "server/static" sim/test_*.mjs` came back EMPTY: all ~28 headless
+        # suites drove `sim/web` (the public simulator), so every console card — 📈
+        # Insights, 📦 Content, 🧠 Brain, 🛡️ Safety, the robot list — was asserted only by
+        # Python ROUTE tests, which cannot see whether a button in the page ever wires
+        # itself up. PR #136 shipped the two-click-armed Erase history button and had to
+        # report that no headless click had ever touched it.
+        #
+        # No fastapi and no supervisor: `serveStatic` serves `server/static` and every
+        # `/local/*` XHR is answered at the browser, the idiom test_mic_spend.mjs uses for
+        # `/api/*`. Fixtures come out of the REAL `server/moxie_server/fleet.py`
+        # normalizers in a python3 subprocess (that module is dependency-free by design),
+        # so the suite cannot pass against a response shape the route stopped sending.
+        # Its teeth serve three MUTATED copies of app.js to Chrome and require the sweep to
+        # redden — including the one the author's comment at app.js:337 predicted, where
+        # the erase wiring works in some branches and not others.
+        # Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_console_insights.mjs

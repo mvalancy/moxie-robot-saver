@@ -181,21 +181,34 @@ async function freePort() {
 }
 
 /**
- * Serve `sim/web` on a free loopback port.
- * @param {{headers?: boolean, routes?: Record<string, (req,res)=>boolean>}} [opts]
- *   `headers: true` sends the real `_headers` `/*` block (CSP, HSTS, nosniff…).
+ * Serve any directory of static files on a free loopback port.
+ *
+ * WHY IT IS SEPARATE FROM `serveWeb`. Every browser suite in this repo until now loaded
+ * `sim/web` — the public simulator — and `grep -rln "server/static" sim/test_*.mjs` came
+ * back empty, so the PARENT CONSOLE (`server/static/index.html` + `app.js`, ~2,470 lines
+ * of the thing a parent actually uses) had no headless coverage at all. Its cards are
+ * asserted only through Python route tests, which cannot see a button that never wires
+ * up. `serveWeb` is now a thin call to this with `web` and the Pages headers.
+ *
+ * `extIsHtml: false` is the console's shape: it is served by FastAPI's StaticFiles, which
+ * does NOT rewrite `/sim` to `/sim.html` the way Cloudflare's `_redirects` does, so
+ * inventing that here would let a suite pass against a route the real server 404s.
+ *
+ * @param {string} dir absolute path of the directory to serve
+ * @param {{headers?: Record<string,string>, extIsHtml?: boolean}} [opts]
  * @returns {Promise<{port:number, url:string, close:()=>void, hits:string[]}>}
  */
-export async function serveWeb(opts = {}) {
+export async function serveStatic(dir, opts = {}) {
   const port = await freePort();
-  const extra = opts.headers ? pagesHeaders() : {};
+  const extra = opts.headers || {};
+  const extIsHtml = opts.extIsHtml !== false;
   const hits = [];
   const server = http.createServer((req, res) => {
     let p = decodeURIComponent((req.url || "/").split("?")[0]);
     hits.push(p);
     if (p.endsWith("/")) p += "index.html";
-    if (!extname(p)) p += ".html";                       // /sim -> /sim.html, like _redirects
-    const file = join(web, normalize(p).replace(/^(\.\.[/\\])+/, ""));
+    if (extIsHtml && !extname(p)) p += ".html";          // /sim -> /sim.html, like _redirects
+    const file = join(dir, normalize(p).replace(/^(\.\.[/\\])+/, ""));
     let body, code = 200;
     try {
       if (!statSync(file).isFile()) throw new Error("dir");
@@ -211,6 +224,16 @@ export async function serveWeb(opts = {}) {
     url: `http://127.0.0.1:${port}`,
     close: () => { try { server.close(); } catch {} },
   };
+}
+
+/**
+ * Serve `sim/web` on a free loopback port.
+ * @param {{headers?: boolean}} [opts]
+ *   `headers: true` sends the real `_headers` `/*` block (CSP, HSTS, nosniff…).
+ * @returns {Promise<{port:number, url:string, close:()=>void, hits:string[]}>}
+ */
+export async function serveWeb(opts = {}) {
+  return serveStatic(web, { headers: opts.headers ? pagesHeaders() : {} });
 }
 
 /* ---- assertions ----------------------------------------------------------- */
