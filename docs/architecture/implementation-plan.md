@@ -765,6 +765,35 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   behaviour, so the hosted demo now blocks a strict **superset** of the local stack — the safe
   direction, but a divergence the header of `safety.js` promises does not exist, and the same fix
   belongs on the Python side.
+- **local safety floor — parity reached, and the higher-stakes half closed (2026-09-04).** The last
+  three lines of the bullet above are now out of date, and this bullet is what closed them.
+  `mqtt/moxie_sdk/safety.py` is the module a **self-hosted stack, the `docker compose` appliance and
+  a real robot** run, and it carried the identical hole: `_ALWAYS` was a `str.maketrans` naming four
+  code points, so `"suicide"` blocked while the same word with a U+00AD, U+2060, U+3164 or a `.`/`-`
+  between each letter did not. `normalize()` now sweeps the **`Cf` category** by predicate
+  (`unicodedata.category(c) == "Cf"`, so a code point nobody thought of is covered the day the
+  interpreter learns about it) plus the four glyphless Hangul fillers, and `_variants()` gained the
+  same narrow fourth form, `([a-z0-9])[^a-z0-9 ]+(?=[a-z0-9])`.
+  **Re-derived against Python, not ported on faith,** and one of the two engines' answers differed.
+  U+180E agrees — `Cf` in CPython 3.12 / Unicode 15.0.0 as in V8. **U+034F CGJ did not.** `safety.js`
+  leaves it alone because `\p{M}` already drops it; Python's old line tested
+  `unicodedata.combining()`, which returns the *canonical combining class*, and CGJ is category `Mn`
+  with **ccc 0** — so it survived, and the spread word blocked in the hosted Function while **not**
+  blocking on a child's own robot. Testing the category is what `\p{M}` meant all along and is what
+  closes it. **The false-positive corpus was re-measured in Python** (`casefold()` and Python's NFKD
+  are not `toLowerCase()` and V8's): 28 innocent sentences, **narrow form 0 false positives, broad
+  form 2** — the same two the JS side found, and that measurement is now an executable test rather
+  than a claim. `sim/tests/test_safety.py` grows 32 evasion characters × 2 shapes, the `Zs`
+  "an exotic space is a *real* space" proof, the 28-sentence guard, and a **parity suite** that runs
+  the repo's own `functions/api/_lib/safety.js` under `node` over a 125-case shared table and asserts
+  `normalize`/`variants`/verdict agreement — the guarantee `safety.js`'s header claims and nothing
+  enforced until now. 167 tests in the file, **40 of them red** against the pre-change module.
+  **Honest gaps.** Intra-letter *spacing* stays open on both sides, pinned as a known-open test for
+  the same reason as before. One divergence remains and is pinned rather than papered over: Python's
+  `casefold()` folds the German sharp S onto `ss` and JS's `toLowerCase()` does not — Python is the
+  stricter side, no table word contains it, and it predates this slice. And the parity test needs
+  `node` on `PATH`; it *skips* rather than fails without it, so on a box with no node the guarantee
+  is unchecked (CI runs 24 `.mjs` suites, so there it is real).
 - **wake alarms / schedule preferences — the shapes are ours, not a capture.** `alarms`
   (`WakeSchedule`) and `schedule_preferences` (`SchedulePreferences.ParentRequest`) are now built and
   parent-editable, but our protos give the *types* and not the *encodings*, and no capture of a real
