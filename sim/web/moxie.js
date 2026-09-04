@@ -1792,7 +1792,16 @@ function buildPanel() {
   document.getElementById('center-btn').addEventListener('click', () => api.centerAll());
 
   const sayInput = document.getElementById('speech-input');
-  const say = () => { api.setSpeech(sayInput.value); sayInput.value = ''; };
+  // When no local Piper sidecar exists this box is the "ask Moxie" control
+  // (cloud-transport.js::adoptSpeechControl), and the visitor's question must not be
+  // painted as MOXIE's speech bubble. Stand down rather than unbind: see that comment.
+  const typedTurnOwnsBox = () => {
+    try { return !!(window.moxieTypedTurn && window.moxieTypedTurn.adopted()); } catch { return false; }
+  };
+  const say = () => {
+    if (typedTurnOwnsBox()) return;
+    api.setSpeech(sayInput.value); sayInput.value = '';
+  };
   document.getElementById('speech-btn').addEventListener('click', say);
   sayInput.addEventListener('keydown', e => { if (e.key === 'Enter') say(); });
 

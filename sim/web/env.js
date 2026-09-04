@@ -87,10 +87,33 @@
   // ears turns the mic from unavailable to available), so the mark has to be removable —
   // and its tooltip replaced, or a stale "needs a local server" title would outlive the
   // claim it was making.
-  function needsBackend(btn, tip, on) {
+  /**
+   * @param {Element|null} btn
+   * @param {string} tip     what to tell a human, on hover and to a screen reader.
+   * @param {boolean} [on]   `false` UNMARKS.
+   * @param {boolean} [dead] the control CANNOT work here — disable it, do not merely hint.
+   *
+   * WHY `dead` EXISTS (measured on the live site, 2026-09-03). A mark was a tooltip and
+   * half opacity, and nothing else: `#speech-btn`, `#tts-test` and `#bus-connect` stayed
+   * fully clickable on the hosted deploy, and clicking them fired a cross-origin request
+   * (:8081 Piper, :9001 MQTT/WS) that this site's own CSP correctly refused — silence for
+   * the visitor and a console error for anyone looking. A control that looks live and
+   * silently fails is worse than one that is visibly unavailable, so a control whose ONLY
+   * job is to reach another origin is now disabled on an origin that may not reach one.
+   *
+   * `dead` is deliberately NOT implied by the mark. `#mic-btn` is marked on a scripted
+   * deploy and must stay clickable — "Listen" really does play a scripted child line
+   * there, which is behaviour, not a dead end. The distinction is the whole point.
+   */
+  function needsBackend(btn, tip, on, dead) {
     if (!btn) return;
-    btn.classList.toggle("needs-backend", on !== false);
+    var marked = on !== false;
+    btn.classList.toggle("needs-backend", marked);
     btn.setAttribute("title", tip);
+    var off = !!(marked && dead);
+    try { btn.disabled = off; } catch (e) {}
+    if (off) btn.setAttribute("aria-disabled", "true");
+    else if (btn.removeAttribute) btn.removeAttribute("aria-disabled");
   }
   function warn(el, html) { if (el) { el.innerHTML = html; el.classList.add("warn"); } }
 
@@ -130,9 +153,21 @@
   // guaranteed-to-fail cross-origin requests and go straight to the hosted-demo
   // annotations — same UI, no wasted requests or pending connections.
   var localTts = false, localStt = false;
+  /* Has the sidecar question been ANSWERED yet? On a hosted origin it is answered the
+   * moment the page loads (those ports cannot be reached from here, so no probe fires).
+   * On a local origin it is only answered when the probe settles — and the answer decides
+   * whether `#speech-btn` stays the Piper "Say" control or becomes the typed turn, so
+   * acting before it lands would flip the button's label and job under a self-hoster who
+   * does have Piper running. `ttsProbed` is what makes that impossible. */
+  var ttsProbed = !isLocal;
   if (isLocal) {
     Promise.all([probe(origin + ":8081/health"), probe(origin + ":8082/health")])
-      .then(function (r) { localTts = r[0]; localStt = r[1]; render(); });
+      .then(function (r) { localTts = r[0]; localStt = r[1]; ttsProbed = true; render(); });
+  }
+
+  /** `cloud-transport.js`'s typed-turn seam, or null on a page/fork without it. */
+  function typedTurn() {
+    try { return window.moxieTypedTurn || null; } catch (e) { return null; }
   }
 
   function render() {
@@ -146,14 +181,39 @@
 
   function apply(tts, stt, snap) {
     // Voice / TTS
-    if (tts) { ttsHint("piper tts &middot; connected", false); }
+    if (tts) {
+      ttsHint("piper tts &middot; connected", false);
+      // A reachable sidecar: everything in this panel is exactly as it has always been.
+      // Written explicitly rather than left alone so the branch is SYMMETRIC — no mark, no
+      // `disabled` and no tooltip from the other branch can survive into this one.
+      needsBackend($("tts-test"), "Speaks a test line through the local Piper TTS server.", false);
+      needsBackend($("tts-base"), "The local Piper TTS server this page is using.", false);
+      needsBackend($("speech-btn"), "Speaks this line through the local Piper TTS server.", false);
+    }
     else {
       // The buttons really do need the local Piper server, cloud voice or not — and they
       // still do in `live`: the hosted voice route only ever speaks text the server
       // itself just wrote (§3.2's ticket, no text field), so "speak arbitrary text" is
       // structurally not something the hosted demo can offer.
-      needsBackend($("tts-test"), "Needs the Piper TTS server (python3 sim/tts/server.py). Not available on the hosted demo.");
-      needsBackend($("speech-btn"), "Speaks arbitrary text via the local Piper TTS server. On the hosted demo only pre-rendered demo lines play.");
+      needsBackend($("tts-test"), "Needs the Piper TTS server (python3 sim/tts/server.py). Not available on the hosted demo.", true, !isLocal);
+      needsBackend($("tts-base"), "Addresses the local Piper TTS server. A page served from another origin cannot reach it (CSP: connect-src 'self').", true, !isLocal);
+      /* `#speech-btn` is the one control here with somewhere better to be. Its Piper job
+       * is impossible without a sidecar, but the box beside it is the most obvious "talk
+       * to Moxie" affordance on the page — so hand it the typed turn rather than leaving
+       * a dead button that silently 'fails' into a CSP error. See
+       * `cloud-transport.js::adoptSpeechControl`. WHAT DECIDES: being in this branch at
+       * all means the sidecar probe came back with no Piper, and `ttsProbed` means it has
+       * actually come back — never a hostname test. Where the turn then GOES is `mode.js`'s
+       * answer, inside the transport. If the transport is absent (a fork that removed it),
+       * the button genuinely cannot do anything and is disabled instead. */
+      var took = ttsProbed && typedTurn() && typedTurn().adopt(true);
+      if (took)
+        needsBackend($("speech-btn"),
+          "Sends your line to Moxie — she answers here. (Speaking arbitrary text needs the local Piper server.)", false);
+      else
+        needsBackend($("speech-btn"),
+          "Speaks arbitrary text via the local Piper TTS server. On the hosted demo only pre-rendered demo lines play.",
+          true, !isLocal && ttsProbed);
       // ...but only say the sim has no voice when it really has neither.
       if (!hasCloudVoice())
         ttsHint(isLocal
@@ -173,17 +233,90 @@
       warn(micSt, isLocal
         ? "no STT server &mdash; run <code>python3 sim/stt/server.py</code> (Listen falls back to a scripted line)"
         : "hosted demo &mdash; Listen plays a scripted child line (no live speech&#8209;to&#8209;text)");
+      // NOT `dead`: "Listen" still publishes a scripted child line here, which is real
+      // behaviour and the fallback this page has always had.
       needsBackend($("mic-btn"), "Live speech-to-text needs the STT server (python3 sim/stt/server.py). On the hosted demo, Listen plays a scripted demo line instead.");
     }
+    // The STT address field only ever points at the local sidecar, so it is dead for the
+    // same reason `#tts-base` is — and arming it on a hosted origin would only produce a
+    // refused request.
+    needsBackend($("stt-base"),
+      stt && isLocal
+        ? "The local speech-to-text server this page is using."
+        : "Addresses the local STT server (python3 sim/stt/server.py). A page served from another origin cannot reach it (CSP: connect-src 'self').",
+      !(stt && isLocal), !isLocal);
     // Live bus / Link (no probe — it's a WebSocket broker connection). This one keeps its
     // mark in EVERY mode, live included: a real robot's MQTT broker genuinely is not
     // available here, and no same-origin route can change that.
+    // `dead` off-localhost: `bridge.js` opens `ws://host:9001`, which a secure page may
+    // not open at all and which `connect-src 'self'` refuses regardless — so the click
+    // could only ever produce a console error. Locally it is a working control.
     needsBackend($("bus-connect"),
-      "Links a REAL robot's MQTT broker over WebSocket (:9001). Needs your self-hosted backend — not available on the hosted demo.");
+      "Links a REAL robot's MQTT broker over WebSocket (:9001). Needs your self-hosted backend — not available on the hosted demo.",
+      true, !isLocal);
+    needsBackend($("bus-host"),
+      "The broker host to link. Needs your self-hosted backend — not available on the hosted demo.",
+      true, !isLocal);
     var busSt = $("bus-status");
     if (!isLocal && busSt && /not connected/i.test(busSt.textContent)) {
       busSt.textContent = "not connected · needs a self-hosted broker"; busSt.classList.add("warn");
     }
+  }
+
+  /* ---- the banner must never sit ON a control (measured in Chrome, 2026-09-03) ----
+   *
+   * At phone widths the HUD rail collapses to `#rail-toggle` ("Controls"), anchored to the
+   * BOTTOM of the viewport — and `#env-banner` is `position: fixed; bottom: …; z-index: 30`
+   * stretched `left:10px; right:10px` under `@media (max-width: 640px)`. It landed exactly
+   * on top of the toggle. At 375x667 on the live site:
+   *
+   *     #rail-toggle           357x48 at y=610, visible, pointer-events:auto
+   *     elementFromPoint(centre) -> div#env-banner            (NOT the toggle)
+   *     tap()                    -> refused, element obscured
+   *     force-click              -> aria-expanded STAYS false
+   *
+   * So on the demo's most likely device the primary control was dead, with no feedback,
+   * until the visitor dismissed a notice that never said it was in the way.
+   *
+   * THE FIX IS LAYOUT, NOT z-index. Raising the toggle over the banner would only move the
+   * collision (the banner's own dismiss X would go under it). The banner is instead LIFTED
+   * clear of whatever the bottom-anchored panel currently occupies, measured rather than
+   * guessed — the panel is ~48 px collapsed and up to 42 vh open, so no constant is right.
+   * At >=900px the rail is a side column, nothing is bottom-anchored, and the lift is 0.
+   *
+   * `sim/test_mobile_layout.mjs` asserts `document.elementFromPoint()` at the toggle's
+   * centre resolves to the toggle at 360/375/414 — the assertion that would have caught
+   * this. A visibility check would not have: the toggle was visible the whole time. */
+  var DRAWER_MQ = "(max-width: 899px)";       // must match the CSS drawer breakpoint
+  function liftBanner() {
+    var root = document.documentElement;
+    if (!root || !root.style || !root.style.setProperty) return;
+    var lift = 0;
+    if (bannerEl) {
+      var drawer = false;
+      try { drawer = !!(window.matchMedia && window.matchMedia(DRAWER_MQ).matches); } catch (e) {}
+      var panel = $("panel");
+      if (drawer && panel && panel.getBoundingClientRect) {
+        var h = panel.getBoundingClientRect().height;
+        if (h > 0) lift = Math.ceil(h) + 8;
+      }
+    }
+    root.style.setProperty("--eb-lift", lift + "px");
+  }
+  function watchLift() {
+    liftBanner();
+    try { window.addEventListener("resize", liftBanner, { passive: true }); } catch (e) {}
+    try { window.addEventListener("orientationchange", liftBanner); } catch (e) {}
+    // The panel's height also changes with no resize event at all — opening the drawer,
+    // a <details> group toggling — so watch the box itself where the browser can.
+    try {
+      var panel = $("panel");
+      if (panel && window.ResizeObserver) new window.ResizeObserver(liftBanner).observe(panel);
+      else if (panel) {
+        var t = $("rail-toggle");
+        if (t) t.addEventListener("click", function () { setTimeout(liftBanner, 0); });
+      }
+    } catch (e) {}
   }
 
   // ---- one-time banner on the hosted demo ----
@@ -223,8 +356,10 @@
     document.body.appendChild(w);
     bannerEl = w;
     paintBanner(modeSnap());
+    watchLift();
     w.querySelector(".eb-x").addEventListener("click", function () {
-      w.remove(); bannerEl = null; try { localStorage.setItem("moxie.envBannerDismissed", "1"); } catch (e) {}
+      w.remove(); bannerEl = null; liftBanner();
+      try { localStorage.setItem("moxie.envBannerDismissed", "1"); } catch (e) {}
     });
   }
 })();

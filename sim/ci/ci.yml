@@ -114,6 +114,26 @@ jobs:
         run: node sim/test_responsive.mjs
       - name: Hosted-deploy env test (no doomed backend probes; skips cleanly if no browser)
         run: node sim/test_env_hosted.mjs
+      - name: Typed-turn test (a typed line -> /api/chat -> real audio; skips cleanly if no browser)
+        # The Web Audio assertions are the reason this is a BROWSER step and not another
+        # fake-DOM one: it reads the peak sample amplitude back out of the AudioBuffer the
+        # browser was handed, so a silent clip cannot pass. It also asserts that clicking
+        # the controls that cannot work on a hosted origin produces no CSP console error —
+        # the defect it was written for. No gateway and no network: /api/* and the :8081
+        # sidecar are answered at the browser. Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_typed_turn.mjs
+      - name: Phone-layout hit test (elementFromPoint on the bottom controls; skips cleanly if no browser)
+        # `#env-banner` sat exactly on top of `#rail-toggle` at phone widths and swallowed
+        # every tap on it, while the toggle stayed visible, sized and pointer-events:auto —
+        # so only a hit test could catch it. Includes a teeth block that restores the old
+        # geometry and requires the collision to reappear.
+        run: node sim/test_mobile_layout.mjs
+      - name: Security headers applied for real (CSP/HSTS from sim/web/_headers; skips cleanly if no browser)
+        # Every other browser suite serves the site with NO headers, so none of them could
+        # see a policy that breaks the page — a CSP that refuses an inline block does not
+        # degrade, it stops the page dead. This one parses the shipped _headers and loads
+        # every page under it. Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_csp.mjs
       - name: Docs-explorer runtime test (Mermaid/search/highlight; skips cleanly if no browser)
         run: node sim/test_docs_explorer.mjs
       - name: Mermaid diagram render audit (no parse errors / clipped labels; skips cleanly if no browser)

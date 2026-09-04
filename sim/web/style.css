@@ -1075,13 +1075,25 @@ button.needs-backend { opacity: 0.5; cursor: help; }
 button.needs-backend::after {
   content: "\2298"; margin-left: 5px; font-size: 0.9em; opacity: 0.8;   /* ⊘ = needs server */
 }
+/* A control that CANNOT work here (env.js's `dead` flag) is disabled, not merely hinted:
+   clicking it could only ever fire a cross-origin request this site's CSP refuses. It has
+   to LOOK unavailable too, or a disabled button reads as a broken one. `input` is included
+   because #tts-base/#stt-base/#bus-host are the fields that arm those requests. */
+button.needs-backend:disabled,
+input.needs-backend:disabled { cursor: not-allowed; }
+input.needs-backend { opacity: 0.5; }
+button.needs-backend:disabled { opacity: 0.38; }
+
 /* server voice (CloudTTSResponse) playing — the Voice panel's status line lights up */
 body.tts-speaking #tts-status { color: var(--cyan); }
 .hint.warn, #bus-status.warn { color: var(--amber); }
 .hint.warn code { color: var(--cyan); }
 #env-banner {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: max(14px, env(safe-area-inset-bottom)); z-index: 30;
+  /* `--eb-lift` is set by env.js from the MEASURED height of the bottom-anchored #panel in
+     drawer mode (0 on desktop). Without it this banner sat exactly on top of #rail-toggle
+     on a phone and swallowed every tap on it — see env.js's `liftBanner`. */
+  bottom: calc(var(--eb-lift, 0px) + max(14px, env(safe-area-inset-bottom))); z-index: 30;
   display: flex; align-items: center; gap: var(--sp-3); max-width: min(920px, 94vw);
   padding: 10px 12px 10px 14px;
   background: rgba(10, 12, 20, 0.94); backdrop-filter: blur(12px);
