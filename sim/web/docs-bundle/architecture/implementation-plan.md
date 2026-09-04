@@ -98,6 +98,47 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **Integration evidence (2026-09-04, sixth pass) — the `week` soak finished, 12/12 bars, and
+  P1's three fixes hold from outside.** P1's soak was killed at 59 of 60 minutes before it wrote a
+  report, so every §5.3 bar was unverified. Run to completion: **3601 s · 4407 turns answered while
+  the broker was up (bar: 2000) · 24 broker restarts · 4 supervisor restarts · 20 mid-write
+  `SIGKILL`s → 12 met, 0 failed, 0 not exercised.** Headline numbers: A1 4407/4407 (100 %); A3 p95
+  **0.62 s** re-subscribe (bar 3 s), max 0.62 s over 24 reconnects; A4 4/4 roster resumes, max
+  1.12 s; A5 0 lost of 10 000 appends across 4 processes at the **default** 2.0 s lock budget, 0
+  refused; A7 RSS **-1.4 %**; A8 fds +0; A9 recent=60 robots=3 roster=3 conn_events=67/400; A12
+  24/24 restarts re-onboarded every robot, max 9.77 s. **A6 passed with 0 unreadable records and 5
+  stray `.tmp` files** — the bar asks only that nothing is unreadable, but a temp file per
+  interrupted write is uncollected state that grows with faults; recorded, not fixed.
+  **§5.4 unchanged and repeated rather than softened:** an hour at a raised rate against a simulator
+  is a **rate substitution**, not a week — it stands in only for failures that scale with *events* —
+  and **no physical Moxie has ever been on this broker**.
+  **The three fixes, confirmed from outside the code that implements them.** The roster ghost:
+  `run_broker_outage.sh` EXIT=0, and with the pre-P1 early-return restored in a scratch copy EXIT=1
+  with `seen_since_connect=False` while `/status` still listed the device. The vision latch: a real
+  broker + a real `mqtt/run.py`, asserting `EventSubscription.active[]` **on the wire** — sent
+  first, suppressed on a repeat, re-sent on A→B, on the **B→A re-entry** and after a broker restart;
+  ceiling unchanged, that proves *we re-subscribe*, never that a robot delivers. The `OverflowError`:
+  at a raised `MOXIE_STORE_LOCK_TIMEOUT_S=30`, **13 346 polls**, refused cleanly and recorded, while
+  the same harness without the clamp still raises at exactly **1 024**.
+  **Bench-roster noise — a harness defect, not a runtime one, and fixed.** The runtime is correct
+  (cap 64, LRU eviction, QoS 0 pushes, `forget()` on unpair, `MOXIE_ROSTER_RESUME=0`); what was
+  wrong is that three SIL scripts booted `mqtt/run.py` against the repo's `mqtt/data`, so a fresh
+  smoke re-pushed config to `d_outage…` ids minted a quarter of an hour earlier. Each now scopes a
+  per-run `MOXIE_DATA_DIR`, guarded generically in `test_roster.py`.
+  **THE GAP this found — `helpers_stack` calls the supervisor ready before it is listening.**
+  `Supervisor.start()` waits for `[runtime] broker connected`, which `_on_connect` prints **before**
+  `c.subscribe(...)`; the SIL robot then publishes its single `/state` a millisecond later and
+  `run_smoke()` never re-announces, so the live one-turn e2e fails as *"no config pushed within
+  timeout"*. Reproduced repeatedly (a second `/state` is answered at once). Rule 23's shape in the
+  readiness contract. Not fixed here: it touches `_on_connect` and the shared harness.
+  **(3) The rest of the stack.** `run_smoke.sh` (1991) ✅ incl. TTS audio + the five scored fields,
+  `--telehealth` (1992) ✅, `run_scenarios.sh` (1993) ✅ 2/2 × 4/4, `run_acl_proof.sh` ✅ 18/18,
+  `run_compose_smoke.sh` ✅ in **both** modes, and **one live gateway turn** through the P1 runtime:
+  the gateway brain answered *"Hello Sam! I'm so happy to see you."* and the robot heard 145 640 B @
+  22050 Hz at spectral flatness **7.1e-02** — `helpers_audio.is_real_speech` **True**, five orders
+  above the 1e-6 floor, so not the placeholder tone. Hermetic suite **4791 passed / 26 skipped /
+  4 xfailed** with `fastapi httpx pynacl` present.
+
 - **Integration evidence (2026-09-03, fifth pass) — the connection rewrite (#94) survives a real
   broker outage; the ROSTER does not.** P0 rewrote how the supervisor connects, reconnects and
   publishes, and every one of its tests uses a fake client or an injected transport. Nothing had
