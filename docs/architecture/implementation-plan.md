@@ -98,6 +98,33 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **The `/api/*` routes carried almost none of the page's security header set — fixed 2026-09-04.**
+  PR #112 gave the static pages HSTS and a real CSP; a live measurement the next day showed the routes that
+  can **spend money** answering with only `nosniff`, `no-store` and `Referrer-Policy` — no HSTS, no CSP, no
+  `Cross-Origin-*`. The cause is the trap this repo had already paid for twice (§10 assumption 27, PR #72):
+  **`sim/web/_headers` is not applied to a Pages *Function* response at all**, so its `/api/*` block is
+  inert documentation and `functions/api/_lib/envelope.js` is the only belt. Every reply `respond()` builds
+  — the success and every refusal alike, because a refusal is the reply a hostile caller sees most — now
+  carries a frozen `API_SECURITY_HEADERS`: HSTS byte-identical to the pages', a JSON **lockdown** CSP
+  (`default-src 'none'; frame-ancestors 'none'; base-uri 'none'` — not the page policy, which governs
+  document loads a JSON body never makes), and `Cross-Origin-Resource-Policy: same-origin`. Applied after
+  the `opts.headers` hatch so a caller cannot weaken them, and built only from constants, so no request
+  header can be echoed back. **What was deliberately rejected is written down and machine-checked** in
+  `REJECTED_SECURITY_HEADERS` — `X-Frame-Options` (redundant with `frame-ancestors`, and JSON has no UI to
+  clickjack), `Permissions-Policy` (governs a *document's* feature use; inert here), COOP/COEP (statements
+  about a page, not an API reply), and `Access-Control-Allow-Origin` (never, §4.3) — because a header list
+  nobody can explain is how the page CSP went months with no `script-src`. Guards: `sim/test_demo_proxy.mjs`
+  now interrogates a real `Response` instead of regexing the source (a rejected header's map key would have
+  satisfied the old regex while never being sent) and fails if a security header the pages ship is neither
+  sent nor explained; the new `sim/test_api_headers.mjs` runs the real handlers behind a real socket and
+  proves teeth *with controls* — a navigated `/api/health` document must have its `fetch()` refused while a
+  CSP-stripped twin must not, and a cross-origin page must load a bare PNG but be refused the CORP-pinned
+  one — then loads the real `index.html` in Chrome and requires the page's own `fetch("/api/health")` to
+  still succeed. **Honest remainder:** `sim/web/_headers`' now-stale comment (it still calls this a
+  follow-up) was left alone — that file was owned by another change in flight — and no header was added to
+  its inert `/api/*` block, deliberately: an inert line that looks live is the trap itself.
+  Detail: [`backlog/live-sim-demo.md` §4.7.1](backlog/live-sim-demo.md).
+
 - **The hosted demo's per-IP windows were free to bypass over IPv6, and its duration cap was not one —
   fixed 2026-09-03.** Four holes in `functions/api/_lib/limits.js` and the three spending routes, all in
   the controls that protect the **self-hosted gateway the demo shares with the owner's video game**, so
