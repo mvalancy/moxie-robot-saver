@@ -113,6 +113,14 @@ try {
     p.on("console", (m) => { if (m.type() === "error") raw.push(m.text()); });
     p.on("pageerror", (e) => raw.push("pageerror: " + e.message));
     p.on("response", (r) => { if (r.status() === 404) notFound.push(r.url()); });
+    // The OPTIONAL local sidecars (Piper on :8081, STT on :8082) are absent for almost
+    // everyone. `audio.js` probes them from a localhost origin ON PURPOSE — that is what a
+    // contributor running `sim/serve.py` with a real Piper gets — and Chrome logs the
+    // refusal as a console error the page cannot suppress. Correlated the same way the
+    // `/api/health` miss below is: by the requests that actually failed, so a refusal to
+    // ANY other host still fails the suite.
+    const refused = [];
+    p.on("requestfailed", (r) => refused.push(r.url()));
     await p.goto(base + "/" + path, { waitUntil: "domcontentloaded", timeout: 30000 });
     // Chrome logs a 404 SUBRESOURCE as a console error, and `sim/web/mode.js` probes the
     // OPTIONAL same-origin capability route `/api/health` on every load. `sim/serve.py`
@@ -124,9 +132,21 @@ try {
     // probe's expected miss. So that one line is separated out PRECISELY — by
     // correlating the console text with the 404 responses actually observed — and any
     // other missing asset still fails, because it lands in `notFound` too.
+    // THIS SUITE PASSED FOR MONTHS ONLY BECAUSE OF STALE LOCAL STATE. It asserts zero
+    // console errors, and on the author's machine two leftover processes happened to be
+    // listening on :8081 and :8082, so the probes succeeded. On a clean runner — and on
+    // any contributor's laptop without Piper — they are refused, two per viewport, and the
+    // suite fails. It had never run in CI to reveal that (no browser was ever installed),
+    // so the whole thing was green on a lie in both directions at once.
+    const SIDECAR = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])?:?(8081|8082)\b/;
     const errors = () => {
       const onlyProbe = notFound.length > 0 && notFound.every((u) => /\/api\/health\b/.test(u));
-      return raw.filter((t) => !(onlyProbe && /status of 404/.test(t)));
+      const onlySidecars = refused.length > 0 && refused.every((u) => SIDECAR.test(u));
+      return raw.filter((t) => {
+        if (onlyProbe && /status of 404/.test(t)) return false;
+        if (onlySidecars && /ERR_CONNECTION_REFUSED|Failed to load resource/.test(t)) return false;
+        return true;
+      });
     };
     return { p, errors, notFound, raw };
   }
