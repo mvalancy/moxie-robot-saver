@@ -1555,21 +1555,25 @@ The build is DONE when all of the below hold together, not milestone-by-mileston
 
 ### Progress against the six — scored 2026-09-04
 
-Scored from checks run that day, not from memory. Updated 2026-09-04 after PR #136: #3's amber was the
-open privacy defect and it is closed, leaving one amber — and #4's is a ceiling no amount of work
-here can lift, so this table cannot reach six green from this room.
+Scored from checks run that day, not from memory. Updated twice on 2026-09-04: #3's amber was the open
+privacy defect and PR #136 closed it; #1 was then **downgraded from 🟢 to 🟡** because the evidence
+originally cited for it does not support it. #4's amber is a ceiling no amount of work here can lift,
+so this table cannot reach six green from this room.
 
 | # | Criterion | | Why that score, and what was actually checked |
 |---|---|---|---|
-| 1 | A child can talk to Moxie end to end | 🟢 | `MOXIE_SIL_PORT=1955 bash sim/run_smoke.sh` round-tripped state→config(paired)→remote-chat→reply through a real broker with **93 812 B @ 22050 Hz** of real TTS audio and a scored reply; `run_scenarios.sh` 2/2, 4/4 turns each; and a live browser probe against `moxie.mattvalancy.com/sim` got a real gateway answer (3.07 s, 67 700 frames, peak 0.78). Not a mock at any hop. **Ceiling: no physical robot, ever, anywhere in this table.** |
+| 1 | A child can talk to Moxie end to end | 🟡 | `MOXIE_SIL_PORT=1955 bash sim/run_smoke.sh` round-tripped state→config(paired)→remote-chat→reply through a real broker with **93 812 B @ 22050 Hz** of real TTS audio and a scored reply; `run_scenarios.sh` 2/2, 4/4 turns each; and a live browser probe against `moxie.mattvalancy.com/sim` got a real gateway answer (3.07 s, 67 700 frames, peak 0.78). **Corrected the same day, downgraded 🟢→🟡 on evidence I had cited myself.** Each half is proven and *the seam between them is not*: `run_smoke.sh` pins `MOXIE_APP=echo` at [line 97](../../sim/run_smoke.sh) with no flag to change it, so its reply is the echo app (`'You said: hello Moxie'`) — a real broker and real TTS around a **mocked brain**. The live gateway suite is the mirror image: `test_live_turn_through_the_runtime` and `test_live_assembled_stack_end_to_end` drive the real `MoxieRuntime` on the real gateway, but the docstring says "minus the broker". Nothing in this repo runs broker + runtime + live brain **together**, which is precisely what "proven by a live scenario, not a mock" asks for. The hosted probe against `moxie.mattvalancy.com` uses the Cloudflare path, not the MQTT backend, so it does not close the seam either. 🟡 until one run covers the whole chain. **Ceiling: no physical robot, ever, anywhere in this table.** |
 | 2 | Data-driven content | 🟢 | Modules, packs (export→import→re-export byte-identical across two runtimes), sandboxed extensions, the adaptive day plan. |
 | 3 | Cloud management + `LoggingPolicy` honored | 🟢 | The console shows state and edits config, telemetry flows, and as of 2026-09-04 the policy is honored on the way to disk for **all four** durable child records: the transcript (#131), the telemetry ring, the daily roll-up and the behaviour log (#136) — with `DELETE /telemetry` and a `NO_DATA` flip that takes back what is already there. **Named residual:** the safety journal degrades to counts-only under `NO_DATA` (so the policy *is* honored forward) but has no erase of its own, so its existing rows survive a flip. That is the "erase always works" promise, not this criterion's — recorded rather than hidden. |
 | 4 | Interchangeable clients | 🟡 | *(the only amber left)* The SIM and the SIL virtual robot are identical against the same backend, proven every run. **No physical Moxie has ever connected to this broker**, so "identically" is proven for one of the two clients the criterion names. Not closable from here. |
 | 5 | One command | 🟢 | The compose smoke passes in the deep tier; `docker compose up` runs broker + supervisor + brain. |
 | 6 | Green + tested | 🟢 | 5 037 hermetic tests, 28 browser suites, the deep tier's 12 checks green on the promotion PR, `python -m build` clean at 0.7.0. The soak — the gate on every promotion — was **red on half its runs until 2026-09-04**; it is exact now (see the entry above), which is what makes this row worth reading. |
 
-**Honest total: ~88 %** (was ~80 % earlier the same day; #3 went green when PR #136 landed) — five
-green, one amber, and that single amber (#4) cannot be moved without hardware that no longer ships. Read the percentage as *"of what this program can reach without a
+**Honest total: ~82 %** — four green, two amber. It went ~80 → ~88 when PR #136 turned #3 green, then
+back to ~82 when criterion #1 was **downgraded on re-reading the evidence I had cited for it** (see
+that row). A number that only ever goes up is a number nobody should trust; this one went down within
+the hour, on a check anyone can repeat: `grep -n MOXIE_APP sim/run_smoke.sh`. Of the two ambers, #1 is
+work and #4 is a ceiling no amount of work here can lift. Read the percentage as *"of what this program can reach without a
 robot in the room"*, not as a fraction of a finished product.
 
 **Live testing:** the brain uses our LiteLLM gateway `https://gateway.graphlings.net/v1` (key in a
