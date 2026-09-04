@@ -705,6 +705,157 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
 }
 
 /* =========================================================================== *
+ * 8b. §4.1 — the floor cannot be walked past with an invisible character
+ * =========================================================================== *
+ * THE BUG THIS SECTION EXISTS FOR. `_lib/safety.js`'s `ALWAYS` stripped exactly four code
+ * points (U+200B/C/D, U+FEFF). Everything else invisible reached the matcher intact, so
+ * `"suicide"` blocked and the same word with a U+00AD SOFT HYPHEN or a U+2060 WORD JOINER
+ * between each letter did NOT — while rendering identically to a reader. `self_harm` is the
+ * FIRST blocking category and this floor runs BEFORE the gateway is called (§4.1), so one
+ * pasted character defeated the whole pre-inference block on a live, child-facing demo.
+ *
+ * WHY THE TRIGGERS BELOW ARE THE MILD ONES. Every case here uses `suicide` /
+ * `kill myself` — the same category, the same code path, the mildest phrasing that proves
+ * the property. This repo is public and nothing is learned by writing a worse sentence.
+ *
+ * These run against `assess()` directly rather than through `/api/chat`: the route contract
+ * (200, no ticket, no upstream call) is section 8's job and is not re-proved 60 times.
+ */
+{
+  const safety = await import(join(repo, "functions", "api", "_lib", "safety.js"));
+  const spread = (word, sep) => word.split("").join(sep);
+
+  // ---- The `Cf` table. Each is injected BETWEEN EVERY LETTER of a word and used as a
+  // word separator inside a phrase; both must block, and the plain form must still block.
+  eq(safety.assess("suicide").blocked, true, "control: plain `suicide` blocks");
+  eq(safety.assess("i want to kill myself").blocked, true, "control: the plain phrase blocks");
+
+  const INVISIBLE = [
+    ["U+00AD SOFT HYPHEN", "­"],            // Cf. The original bug.
+    ["U+061C ARABIC LETTER MARK", "؜"],     // Cf.
+    ["U+180E MONGOLIAN VOWEL SEP", "᠎"],    // Cf since Unicode 6.3 — was Zs. Probed.
+    ["U+200B ZERO WIDTH SPACE", "​"],       // Cf. Was already handled.
+    ["U+200C ZERO WIDTH NON-JOINER", "‌"],  // Cf. Was already handled.
+    ["U+200D ZERO WIDTH JOINER", "‍"],      // Cf. Was already handled.
+    ["U+200E LEFT-TO-RIGHT MARK", "‎"],     // Cf.
+    ["U+200F RIGHT-TO-LEFT MARK", "‏"],     // Cf.
+    ["U+202A LTR EMBEDDING", "‪"],          // Cf.
+    ["U+202E RTL OVERRIDE", "‮"],           // Cf.
+    ["U+2060 WORD JOINER", "⁠"],            // Cf. The other reported bypass.
+    ["U+2061 FUNCTION APPLICATION", "⁡"],   // Cf.
+    ["U+2062 INVISIBLE TIMES", "⁢"],        // Cf.
+    ["U+2063 INVISIBLE SEPARATOR", "⁣"],    // Cf.
+    ["U+2064 INVISIBLE PLUS", "⁤"],         // Cf.
+    ["U+2066 LTR ISOLATE", "⁦"],            // Cf.
+    ["U+2069 POP DIRECTIONAL ISOLATE", "⁩"],// Cf.
+    ["U+FEFF ZERO WIDTH NBSP", "﻿"],        // Cf. Was already handled.
+    ["U+FFF9 INTERLINEAR ANCHOR", "￹"],     // Cf.
+    // NOT `Cf`, and named one at a time because the category does not reach them:
+    ["U+034F COMBINING GRAPHEME JOINER", "͏"], // Mn — already dropped by \p{M}.
+    ["U+115F HANGUL CHOSEONG FILLER", "ᅟ"],    // Lo, but glyphless.
+    ["U+1160 HANGUL JUNGSEONG FILLER", "ᅠ"],   // Lo, but glyphless.
+    ["U+3164 HANGUL FILLER", "ㅤ"],             // Lo — NFKD-folds onto U+1160.
+    ["U+FFA0 HALFWIDTH HANGUL FILLER", "ﾠ"],   // Lo — NFKD-folds onto U+1160.
+    ["U+2800 BRAILLE PATTERN BLANK", "⠀"],     // So — closed by the punctuation variant.
+  ];
+  for (const [name, ch] of INVISIBLE) {
+    ok(safety.assess(spread("suicide", ch)).blocked,
+       `${name} injected between every letter of a blocked word must still block`);
+    ok(safety.assess("i want to " + spread("kill", ch) + " myself").blocked,
+       `${name} injected inside a blocked phrase must still block`);
+  }
+
+  // ---- The `Zs` space separators. These are NOT stripped and MUST NOT BE: NFKD folds
+  // them onto an ordinary U+0020 (U+1680 falls to the `\s+` collapse instead), so an
+  // exotic space behaves as a REAL SPACE — which is the correct answer, because a
+  // no-break space IS a space. The property to pin is therefore that one used as a word
+  // separator does not break a multi-word phrase.
+  const ZS = [
+    ["U+00A0 NO-BREAK SPACE", " "], ["U+2000 EN QUAD", " "],
+    ["U+2003 EM SPACE", " "], ["U+2007 FIGURE SPACE", " "],
+    ["U+200A HAIR SPACE", " "], ["U+202F NARROW NBSP", " "],
+    ["U+205F MEDIUM MATH SPACE", " "], ["U+3000 IDEOGRAPHIC SPACE", "　"],
+    ["U+1680 OGHAM SPACE MARK", " "],
+  ];
+  for (const [name, ch] of ZS) {
+    ok(safety.assess("i want to" + ch + "kill myself").blocked,
+       `${name} used as a word separator must behave as a plain space and still block`);
+    eq(safety.normalize("a" + ch + "b"), "a b",
+       `${name} normalizes to one ordinary space, not to nothing`);
+  }
+  // …and the honest limit of that decision, written down as a test so nobody reads the
+  // table above and thinks intra-letter spacing is covered. `s u i…` renders as
+  // `s u i c i d e`: a VISIBLE evasion, identical to typing real spaces, which this floor
+  // has never caught and cannot without deleting spaces from every utterance.
+  eq(safety.assess(spread("suicide", " ")).blocked, false,
+     "KNOWN AND DELIBERATE: exotic spaces fold onto real spaces, so intra-letter spacing " +
+     "is still open — it is a visible evasion, out of scope, not silently half-closed");
+  eq(safety.assess(spread("suicide", " ")).blocked, false,
+     "…and the plain-space form it is identical to is equally open, which is the point");
+
+  // ---- The punctuation variant: separators a writer put INSIDE a word.
+  for (const text of ["s.u.i.c.i.d.e", "s-u-i-c-i-d-e", "s_u_i_c_i_d_e", "s*u*i*c*i*d*e",
+                      "k.i.l.l myself", "i want to k-i-l-l myself"]) {
+    ok(safety.assess(text).blocked, `${JSON.stringify(text)} must block`);
+  }
+  deep(safety.variants("s.u.i.c.i.d.e"), ["s.u.i.c.i.d.e", "suicide"],
+       "the fourth variant is the de-punctuated form, and duplicates are not re-added");
+
+  // ---- THE FALSE-POSITIVE GUARD, and the reason the punctuation variant is the narrow
+  // one. A filter that blocks ordinary speech is its own failure: a child told "go talk to
+  // a grown-up" for saying something harmless is a real harm, not a safe default.
+  //
+  // The two sentences marked (*) are the ones that made the choice. The obvious transform
+  // — drop ALL non-alphanumerics — also deletes the boundary BETWEEN SENTENCES, folding
+  // `…what i want. To die of laughter…` onto `i want to die` and blocking it as self-harm.
+  // Requiring a letter or digit on both sides of the separator keeps every sentence
+  // boundary intact and still closes `s.u.i.c.i.d.e`. If either of these two ever starts
+  // blocking, the variant has been widened back to the version that was measured and
+  // rejected.
+  for (const text of [
+    "that's what i want. To die of laughter would be great, honestly",   // (*)
+    "i don't know what i want. To not be so shy would be nice",          // (*)
+    "my dad's a well-known chess player and he's twenty-one years old",
+    "i can't wait for my sister-in-law's birthday party...",
+    "it's a state-of-the-art telescope — really, truly amazing",
+    "wait... what? no way!",
+    "let's play hide-and-seek in the back-yard",
+    "my teacher's name is mr. o'brien",
+    "the T-rex was a meat-eater, right?",
+    "i'd like a peanut-butter-and-jelly sandwich, please",
+    "grandpa's ninety-nine and still bakes shiitake mushrooms",
+    "u.s.a. is a country and f.b.i. is an agency",
+    "1-2-3 go! ready-set-go!",
+    "can we do arts-and-crafts? i'm bored...",
+    "we did sex education at school today",
+    "i was killing myself laughing at that",
+    "i am dying to tell you something",
+    "we played flag football at recess",
+  ]) {
+    eq(safety.assess(text).blocked, false,
+       `INNOCENT SENTENCE MUST NOT BLOCK: ${JSON.stringify(text)}`);
+  }
+
+  // ---- `normalize()` is a MATCHING transform, never a display one. It is safe to delete
+  // characters in it only because its output cannot reach a child, a log or the prompt:
+  // `assess()` consumes `variants()` internally and returns a verdict, `redirectFor()`
+  // takes the RAW text and uses only its `.length`, and the spoken line comes out of the
+  // rule table. Pinned here so a future caller that echoes it has to break a test first.
+  const weird = "i want to­ kill​ myself";
+  const v = safety.assess(weird);
+  ok(v.blocked, "the mangled sentence blocks");
+  ok(!JSON.stringify(v).includes("kill"), "the verdict carries NO normalized text at all");
+  eq(v.redirect.text, safety.redirectFor(v.phraseSet, weird).text,
+     "the spoken line is the rule table's, chosen from the RAW text's length");
+  fresh();
+  const r8b = await call(chat, "/api/chat", { text: weird });
+  eq(r8b.body.reason, "blocked", "…and the route blocks it");
+  eq(upstreamCalls(), 0, "…spending nothing, exactly as the plain sentence does");
+  ok(!JSON.stringify(r8b.body).includes("myself"),
+     "the RESPONSE never echoes the utterance, normalized or otherwise");
+}
+
+/* =========================================================================== *
  * 9. §3.3 — the signed context blob
  * =========================================================================== */
 {

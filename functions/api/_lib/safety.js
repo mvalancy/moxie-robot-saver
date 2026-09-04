@@ -53,13 +53,62 @@ import { RULES } from "./safety.rules.js";
  * (:174-192) so the two tables agree about what a word IS. Divergence here would mean a
  * phrase the local stack blocks and the hosted demo does not, which is the worst kind of
  * inconsistency: invisible.
+ *
+ * THE ONE DIVERGENCE THAT NOW EXISTS, AND WHICH WAY IT POINTS. This side strips the whole
+ * Unicode `Cf` category and folds intra-word punctuation; the Python side still strips four
+ * zero-width code points and folds none. So the hosted demo now blocks a STRICT SUPERSET of
+ * what the local stack blocks. That is the safe direction of the two — the public,
+ * child-facing surface is the stricter one — but it is still a divergence, and the fix
+ * belongs in `safety.py::normalize`/`_variants` as well. Recorded here rather than left for
+ * someone to discover, because the header above promises these two agree and right now they
+ * agree only up to this.
  */
 
-/** Curly apostrophes onto `'` (so `don't`/`don’t` are one word) and the zero-width
- *  characters used to split a word invisibly. */
+/** Curly apostrophes onto `'` (so `don't`/`don’t` are one word) and the invisible
+ *  characters used to split a word so a word list cannot see it.
+ *
+ *  WHY THE WHOLE `Cf` CATEGORY AND NOT A HAND-PICKED FEW. This list used to name exactly
+ *  four code points — U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+FEFF — and every other
+ *  invisible formatting character walked straight into the matcher. That is not a
+ *  theoretical hole: `"suicide"` blocked, and the same word with a U+00AD SOFT HYPHEN or a
+ *  U+2060 WORD JOINER between each letter did not, while rendering identically on the
+ *  page. `self_harm` is the FIRST blocking category and this floor runs BEFORE the gateway
+ *  is called, so one invisible character pasted into a public, child-facing demo defeated
+ *  the entire pre-inference block. Naming code points one at a time is how that happened;
+ *  the category is the closed set, so the category is what we strip.
+ *
+ *  VERIFIED IN THIS ENGINE, NOT ASSUMED. `\p{Cf}` is only worth trusting if it covers what
+ *  we think it covers, and one member has moved between categories across Unicode versions
+ *  — U+180E MONGOLIAN VOWEL SEPARATOR was `Zs` until Unicode 6.3. Probed against V8
+ *  11.3 (Node 20 / the Workers runtime), `\p{Cf}` matches all of: U+00AD, U+061C,
+ *  **U+180E**, U+200B–U+200F, U+202A–U+202E, U+2060–U+2064, U+2066–U+2069, U+FEFF and
+ *  U+FFF9–U+FFFB. The four this list used to name are a subset of it.
+ *
+ *  THE FOUR THAT ARE NOT `Cf`, added by hand because the category misses them. U+115F and
+ *  U+1160 (Hangul choseong/jungseong filler) and their compatibility twins U+3164 and
+ *  U+FFA0 are category **`Lo`** — letters — but they have no glyph, which is exactly why
+ *  they are the standard way to make a "blank" name in a chat client. They are placeholders
+ *  for an absent jamo, they carry no meaning in the English the table is written in, and
+ *  they split a word as invisibly as a ZWSP does. (U+3164 and U+FFA0 already NFKD-fold onto
+ *  U+1160 one line above, so the class only has to catch two; all four are written out
+ *  because a reader should not have to know that.)
+ *
+ *  WHAT IS DELIBERATELY LEFT ALONE. **U+034F COMBINING GRAPHEME JOINER** is `Mn`, not `Cf`
+ *  — and it needs nothing here, because `normalize` already drops every `\p{M}` on the
+ *  line above; `test_demo_proxy.mjs` pins that so the coverage cannot be lost by accident.
+ *  The **`Zs` space separators** (U+00A0, U+2000–U+200A, U+202F, U+205F, U+3000) are not
+ *  stripped either, and must not be: NFKD folds every one of them onto an ordinary U+0020
+ *  and U+1680 falls to the `\s+` collapse below (both probed, both pinned by a test), so an
+ *  exotic space becomes a REAL SPACE. That is the right answer — a no-break space IS a
+ *  space — and it means `"i want to\u00a0kill myself"` blocks exactly like the plain
+ *  sentence. It also means `s\u00a0u\u00a0i\u00a0c\u00a0i\u00a0d\u00a0e` does not block,
+ *  and that is not a hole this fix pretends to close: it renders as `s u i c i d e`, so it
+ *  is a VISIBLE evasion identical to typing real spaces, which this floor has never caught
+ *  and cannot catch without deleting spaces from every utterance. Kept out of scope on
+ *  purpose rather than half-closed for the one variant that happens to be exotic. */
 const ALWAYS = [
   [/[’‘ʼ]/g, "'"],
-  [/[​‌‍﻿]/g, ""],
+  [/[\p{Cf}\u115F\u1160\u3164\uFFA0]/gu, ""],
 ];
 
 /** Substitutions people use to slip past a word list (`sh1t`, `$hit`, `f@ck`). Applied
@@ -74,6 +123,29 @@ const LEET_RE = /[01345789@$!|+](?=[a-z])/g;
 /** Three or more of the same character — `fuuuuck`, `killlll`. */
 const RUN_RE = /(.)\1{2,}/g;
 
+/** A run of non-alphanumerics with a letter or digit on BOTH sides, so `s.u.i.c.i.d.e` and
+ *  `s-u-i-c-i-d-e` collapse onto the word they spell. Written with a lookahead and a
+ *  captured left flank rather than a lookbehind, because consuming both flanks would make
+ *  the alternating matches overlap and only fold every other separator.
+ *
+ *  WHY THIS AND NOT `[^a-z0-9 ]` EVERYWHERE, which is the obvious version and the one the
+ *  audit proposed. Stripping ALL punctuation also deletes the boundary BETWEEN sentences,
+ *  and the phrase regexes are written across `\s+`. Measured against a corpus of innocent
+ *  child-shaped sentences, the broad form turned two of them into `self_harm` blocks:
+ *
+ *      "that's what i want. To die of laughter would be great"
+ *      "i don't know what i want. To not be so shy would be nice"
+ *
+ *  both fold onto `... i want to die ...` / `... i want to not be ...` and trip
+ *  `\bi\s+want\s+to\s+(?:die|...)\b`. A child saying either of those is told to go find a
+ *  grown-up, by a robot, for saying something completely ordinary — that is a real harm in
+ *  its own right, not a safe default, and it is the exact failure the module header calls
+ *  out ("it will occasionally catch something innocent"). Requiring a letter or digit on
+ *  both sides keeps every sentence boundary intact (`want.` is followed by a SPACE, so it
+ *  is left alone) while still folding the intra-word separators, which is the whole evasion
+ *  this variant exists for. Same corpus, narrow form: zero false positives. */
+const INWORD_PUNCT_RE = /([a-z0-9])[^a-z0-9 ]+(?=[a-z0-9])/g;
+
 export function normalize(text) {
   if (!text) return "";
   let t = String(text).normalize("NFKD").replace(/\p{M}/gu, "");
@@ -83,14 +155,28 @@ export function normalize(text) {
   return t.replace(/\s+/g, " ").trim();
 }
 
-/** The normalized text plus its de-elongated forms. A run of 3+ identical characters is
- *  collapsed to ONE and to TWO, because either may be the real word (`fuuuuck` → `fuck`,
- *  `killlll` → `kill`). Three cheap regex scans instead of one. */
+/** The normalized text plus its de-elongated and de-punctuated forms.
+ *
+ *  A run of 3+ identical characters is collapsed to ONE and to TWO, because either may be
+ *  the real word (`fuuuuck` → `fuck`, `killlll` → `kill`). The fourth form folds the
+ *  separators a writer put INSIDE a word (`s.u.i.c.i.d.e`, `s-u-i-c-i-d-e`) — see
+ *  `INWORD_PUNCT_RE` for why it is not the broader "drop all punctuation".
+ *
+ *  ADDING A FORM CAN ONLY ADD MATCHES. `matches()` ORs across every form and returns on the
+ *  first hit, so a new variant can never LOSE a block that the base form already had — it
+ *  can only find one more, or (the whole reason each one is measured before it ships) one
+ *  it should not have. That asymmetry is why the false-positive corpus is the gate here and
+ *  the evasion table is not: a missed evasion is the same floor we had, a false positive is
+ *  a new harm. Four cheap regex scans instead of one. */
 export function variants(text) {
   const base = normalize(text);
   if (!base) return [""];
   const out = [base];
-  for (const v of [base.replace(RUN_RE, "$1"), base.replace(RUN_RE, "$1$1")]) {
+  for (const v of [
+    base.replace(RUN_RE, "$1"),
+    base.replace(RUN_RE, "$1$1"),
+    base.replace(INWORD_PUNCT_RE, "$1"),
+  ]) {
     if (!out.includes(v)) out.push(v);
   }
   return out;
