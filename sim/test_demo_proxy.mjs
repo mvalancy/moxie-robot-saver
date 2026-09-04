@@ -1672,6 +1672,196 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   eq(limits.__state().waiting.chat, 0, "and no waiter is stranded");
 }
 
+
+/* =========================================================================== *
+ * 14. WHO IS ASKING — the rate-limit KEY, and the redirect the key rides on
+ * =========================================================================== *
+ * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 (the per-IP rows and what they are
+ * keyed on), §4.2 (nothing upstream is trusted), §4.6 (per-isolate).
+ *
+ * THREE CLAIMS, ALL OF WHICH WERE FALSE BEFORE 2026-09-03:
+ *
+ *   A. **AN IPv6 VISITOR IS ONE VISITOR.** The windows were keyed on the raw address
+ *      string, and a residential IPv6 allocation is a /64 or wider — so one person held
+ *      18 quintillion buckets and every per-IP row in §4.1 was, for them, unlimited. The
+ *      key is now the /64, and the table below pins every awkward form the internet
+ *      actually produces, because THAT is where this kind of fix breaks: get the
+ *      IPv4-mapped row wrong and the entire v4 internet collapses into one bucket.
+ *
+ *   B. **A HEADER THE CALLER TYPES IS NOT AN IDENTITY.** With `CF-Connecting-IP` absent
+ *      the code fell back to `X-Forwarded-For`, which any client sets to anything. That is
+ *      not a weaker limit, it is no limit. It is now behind `DEMO_TRUST_XFF` (unset in
+ *      production), and the default is one SHARED `unknown` bucket — deliberately shared,
+ *      so unidentifiable callers are throttled together rather than each given a lane.
+ *
+ *   C. **THE CREDENTIAL DOES NOT CHASE A `Location`.** All three routes fetched with
+ *      `redirect` unset, i.e. `follow`, carrying the deployment's only key. They now set
+ *      `manual` and read a 3xx as `gateway_unreachable_or_gated` — the door, not the brain.
+ *
+ * Claim A is proved TWICE on purpose: once as a pure table over `ipKey`, and once through
+ * the real windows, because "the function returns the right string" and "two addresses
+ * actually share a bucket" are different claims and only the second one is the control.
+ */
+{
+  fresh();
+
+  // ---- 14a. The address table. Every row is a form that reaches a real edge --- //
+  const KEYS = [
+    // [what arrives, what it must key as, why the row is here]
+    ["203.0.113.9",                     "203.0.113.9",  "plain IPv4 is untouched"],
+    ["  203.0.113.9  ",                 "203.0.113.9",  "whitespace is trimmed"],
+    ["1.2.3.4:5678",                    "1.2.3.4",      "IPv4 with a port loses the port"],
+    ["2001:db8:1:2:3:4:5:6",            "2001:db8:1:2", "a full IPv6 is truncated to its /64"],
+    ["2001:db8:1:2:ffff:ffff:ffff:fff", "2001:db8:1:2", "…and so is another host in the SAME /64"],
+    ["2001:db8:1:3:3:4:5:6",            "2001:db8:1:3", "a DIFFERENT /64 keeps its own key"],
+    ["2001:db8::1",                     "2001:db8:0:0", "a `::` elision expands before truncation"],
+    ["2001:0db8:0000:0000:0000:0000:0000:0001", "2001:db8:0:0", "leading zeros normalise to one key"],
+    ["2001:DB8::1",                     "2001:db8:0:0", "case normalises to one key"],
+    ["::1",                             "0:0:0:0",      "loopback parses rather than falling through"],
+    ["::",                              "0:0:0:0",      "the unspecified address parses too"],
+    ["fe80::1%eth0",                    "fe80:0:0:0",   "a zone index names OUR interface, not the sender"],
+    ["fe80::1%25eth0",                  "fe80:0:0:0",   "…including the percent-encoded spelling"],
+    ["[2001:db8::1]:443",               "2001:db8:0:0", "the bracketed authority form loses brackets and port"],
+    // The row that would be silently catastrophic if it were wrong.
+    ["::ffff:1.2.3.4",                  "1.2.3.4",      "IPv4-MAPPED unmaps to the v4 address, NOT to a /64"],
+    ["::ffff:102:304",                  "1.2.3.4",      "…and so does the same address written in hex"],
+    ["[::ffff:1.2.3.4]:80",             "1.2.3.4",      "…and the bracketed form of it"],
+    ["::ffff:255.255.255.255",          "255.255.255.255", "…at the top of the range"],
+    // Malformed: `unknown`, which SHARES a bucket. Never keyed as itself.
+    [":::1",                            "unknown",      "a triple colon is not an address"],
+    ["2001:db8:::1",                    "unknown",      "…nor is a doubled elision"],
+    ["zz::1",                           "unknown",      "…nor is a non-hex group"],
+    ["2001:db8:1:2:3:4:5:6:7",          "unknown",      "…nor are nine groups"],
+    ["",                                "unknown",      "an empty string is not an address"],
+  ];
+  for (const [raw, want, why] of KEYS) eq(limits.ipKey(raw), want, `ipKey(${JSON.stringify(raw)}): ${why}`);
+
+  // Two things the table asserts jointly and that are worth stating as their own claims.
+  ok(limits.ipKey("::ffff:1.2.3.4") === limits.ipKey("1.2.3.4"),
+     "a v4 client reported as IPv4-mapped keys IDENTICALLY to the same client reported as v4");
+  ok(limits.ipKey("::ffff:1.2.3.4") !== limits.ipKey("::ffff:5.6.7.8"),
+     "…and two DIFFERENT v4 clients still get two buckets (the row that would collapse the v4 internet)");
+
+  // ---- 14b. The key, through the real windows ----------------------------- //
+  // A table is not a control. This is: five turns a minute, spent from five DIFFERENT
+  // addresses inside one /64. Before the fix each got its own bucket and all five were
+  // served; now the sixth request from the sixth address is refused.
+  fresh();
+  const V6 = (n) => "2001:db8:cafe:1::" + n.toString(16);
+  const cfg6 = wire2.readConfig(FULL);
+  eq(cfg6.chatPerMin, 5, "the block is calibrated to the shipped chat_per_min");
+  for (let i = 1; i <= cfg6.chatPerMin; i++) {
+    const turn = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": V6(i) });
+    eq(turn.res.status, 200, `turn ${i} from ${V6(i)} — a fresh address in one /64 — is served`);
+  }
+  const sixth = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": V6(99) });
+  eq(sixth.body.reason, "rate_limited",
+     "THE BYPASS IS CLOSED: a 6th unused IPv6 address in the SAME /64 is refused, not served");
+  eq(sixth.res.status, 429, "…with the §4.5 status for a rate-limited turn");
+
+  // …and the fix is not a blunt instrument: a genuinely different subscriber is unaffected.
+  const neighbour = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "2001:db8:cafe:2::1" });
+  eq(neighbour.res.status, 200, "a DIFFERENT /64 is a different visitor and is served normally");
+
+  // ---- 14c. The refund credits the bucket the charge took ----------------- //
+  // `refundCharges()` puts back exactly the keys `chargeWindows()` incremented, and those
+  // keys embed the derived ip. Changing how the key is derived changes what a refund
+  // credits, so this is asserted rather than assumed: an IPv6 visitor who queues and times
+  // out must get their /64's unit back — and must get back exactly one, not one per
+  // address they happened to use.
+  fresh();
+  const QQ = { ...FULL, DEMO_QUEUE_MAX_WAIT_MS: "40", DEMO_QUEUE_MAX_DEPTH: "4" };
+  const cfgQ = wire2.readConfig(QQ);
+  const holdQ = [];
+  for (let i = 0; i < cfgQ.maxConcurrentChat; i++) {
+    holdQ.push(await limits.admit({
+      request: req("/api/chat", { text: "x" }, { "CF-Connecting-IP": "203.0.113.4" }), cfg: cfgQ, route: "chat" }));
+  }
+  const budgetBefore = limits.__state().budget;
+  const timedOut = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "2001:db8:beef:7::a" }, QQ);
+  eq(timedOut.body.reason, "at_capacity", "the IPv6 visitor waited and was refused");
+  deep(limits.__state().budget, budgetBefore, "the unit budget is back where it was — the charge was refunded");
+  for (const h of holdQ) h.release();
+  // Their whole minute survives, and it survives whichever address in the /64 they come
+  // back on — which is the point: one subscriber, one bucket, refunded once.
+  for (let i = 1; i <= cfgQ.chatPerMin; i++) {
+    const turn = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "2001:db8:beef:7::" + i }, QQ);
+    eq(turn.res.status, 200, `…and the refunded /64 still has all ${cfgQ.chatPerMin} of its minute: turn ${i}`);
+  }
+
+  // ---- 14d. X-Forwarded-For is not an identity ---------------------------- //
+  fresh();
+  const noCf = (xff) => new Request(ORIGIN + "/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: ORIGIN, "Sec-Fetch-Site": "same-origin",
+               "X-Forwarded-For": xff },
+    body: JSON.stringify({ text: "hi" }),
+  });
+  const dfltCfg = wire2.readConfig(FULL);
+  eq(dfltCfg.trustXff, false, "DEMO_TRUST_XFF is OFF by default — production must never set it");
+  eq(limits.clientIp(noCf("9.9.9.9"), dfltCfg), "unknown",
+     "with CF-Connecting-IP absent, a client-supplied X-Forwarded-For is IGNORED");
+  eq(limits.clientIp(noCf("8.8.8.8"), dfltCfg), "unknown",
+     "…and a DIFFERENT forged value keys the same, so rotating the header buys nothing");
+  eq(limits.clientIp(noCf("9.9.9.9")), "unknown",
+     "…and a caller that passes no cfg at all gets the conservative answer, not the trusting one");
+  // Spending the `unknown` bucket proves the sharing is real and not just string equality.
+  for (let i = 1; i <= dfltCfg.chatPerMin; i++) {
+    const r = await chat.onRequestPost({ request: noCf("10.0.0." + i), env: FULL });
+    eq(r.status, 200, `unidentified turn ${i} is served from the SHARED unknown bucket`);
+  }
+  const overflow = await chat.onRequestPost({ request: noCf("10.0.0.250"), env: FULL });
+  eq(overflow.status, 429,
+     "…and the 6th is refused: everything unidentifiable is throttled TOGETHER, which is the intent");
+
+  // The opt-in still works, for `wrangler pages dev` where there is no Cloudflare in front.
+  const trusting = wire2.readConfig({ ...FULL, DEMO_TRUST_XFF: "1" });
+  eq(trusting.trustXff, true, "DEMO_TRUST_XFF=1 turns the local-dev fallback back on");
+  eq(limits.clientIp(noCf("9.9.9.9, 8.8.8.8"), trusting), "9.9.9.9",
+     "…and it reads the FIRST hop, as before");
+  eq(limits.clientIp(noCf("2001:db8:9:9:1:2:3:4"), trusting), "2001:db8:9:9",
+     "…through the same /64 normalisation, so the opt-in cannot re-open the IPv6 hole");
+  // CF-Connecting-IP always wins, so the opt-in cannot be used to override a real edge.
+  eq(limits.clientIp(req("/api/chat", {}, { "X-Forwarded-For": "9.9.9.9" }), trusting), "203.0.113.9",
+     "CF-Connecting-IP OUTRANKS X-Forwarded-For even when the fallback is enabled");
+
+  // ---- 14e. The credential does not follow a redirect --------------------- //
+  fresh();
+  plan = { chat: { status: 200, content: "hi" } };
+  await call(chat, "/api/chat", { text: "hello" });
+  eq(sent.length, 1, "one upstream call was made");
+  eq(sent[0].opt.redirect, "manual",
+     "/api/chat sets redirect:'manual' — the Authorization header is never re-sent to a Location");
+
+  fresh();
+  const turn = await call(chat, "/api/chat", { text: "hello" });
+  sent = [];
+  await call(speech, "/api/speech", { ticket: turn.body.speech[0].ticket });
+  eq(sent.length, 1, "one upstream call was made");
+  eq(sent[0].opt.redirect, "manual", "/api/speech sets redirect:'manual' too");
+
+  // …and an unfollowed 3xx is the DOOR, not the brain. `upstream_down` would send an
+  // operator to restart a model server for a fault that is a tunnel, an Access login flow
+  // or a base URL that bounces http -> https.
+  for (const status of [301, 302, 303, 307, 308]) {
+    fresh();
+    plan = { chat: { status, body: "", headers: { Location: "https://elsewhere.invalid.test/v1/chat/completions" } } };
+    const bounced = await call(chat, "/api/chat", { text: "hello" });
+    eq(bounced.body.reason, "gateway_unreachable_or_gated",
+       `/api/chat reads an upstream ${status} as a door problem, not a brain problem`);
+    eq(bounced.res.status, 503, `…and answers 503 for a ${status}`);
+    eq(sent.length, 1, `…having made exactly ONE upstream call for a ${status} — the redirect was not chased`);
+  }
+  fresh();
+  const turn2 = await call(chat, "/api/chat", { text: "hello" });
+  sent = [];
+  plan = { speech: { status: 302, body: "", headers: { Location: "https://elsewhere.invalid.test/v1/audio/speech" } } };
+  const bouncedTts = await call(speech, "/api/speech", { ticket: turn2.body.speech[0].ticket });
+  eq(bouncedTts.body.reason, "gateway_unreachable_or_gated", "/api/speech reads a 302 the same way");
+  eq(bouncedTts.res.status, 503, "…and answers 503");
+  eq(sent.length, 1, "…and did not chase it either");
+}
+
 /* --------------------------------------------------------------------------- */
 if (fails.length) {
   console.error(`✗ test_demo_proxy: ${fails.length} failure(s)`);
