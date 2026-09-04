@@ -125,6 +125,43 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   changes that. Tables of every awkward address form and every rate/width combination are in
   `sim/test_demo_proxy.mjs` block 14, `sim/test_demo_ears.mjs` A-DUR/A-RDR and `sim/test_wav_decode.mjs`
   block 9.
+- **The most obvious control on the hosted Sim was dead, and the phone's primary control was buried — fixed 2026-09-03.**
+  Measured in Chrome against `https://moxie.mattvalancy.com/sim`, not inferred. **(a) The typed line went
+  nowhere.** `#speech-input` + `#speech-btn` ("Say") drives `moxieAudio.speak()`, whose only route for
+  arbitrary text is the LOCAL Piper sidecar on `:8081` — which cannot exist on a hosted origin and which the
+  site's own `connect-src 'self'` correctly refuses. A visitor typed a sentence, pressed the button, and got
+  `apiCalls: only /api/health · audioDecoded 0 · audioStarted 0` plus a CSP console error. `env.js` already
+  MARKED the button `needs-backend`, but a mark was a tooltip and half opacity: it stayed fully clickable and
+  silently failed. Now, **when and only when no local Piper answers**, `cloud-transport.js::adoptSpeechControl`
+  hands that box the typed turn — "Say" becomes "Ask", the line goes through the same
+  `moxieBridge.sendUserTurn` the microphone uses (so the same `admit()` gate: origin pin, per-IP window,
+  budget, the PR #107 FIFO), and the duplicate injected Talk box stands down so exactly one typed control is
+  ever visible. **With a sidecar reachable, nothing changes at all** — the local engines stay first-class, and
+  the mode (never the hostname) decides. Controls that genuinely *cannot* work off-localhost — `#tts-test`,
+  `#bus-connect`, `#tts-base`, `#stt-base` — are now **disabled**, not hinted; `#mic-btn` deliberately is not,
+  because "Listen" really does play a scripted line there. `audio.js::skipProbe` also stops probing `:8081`
+  from any non-local origin, which removes the CSP violation at its root rather than at the button.
+  **(b) The rail toggle was untappable on a phone.** At 375x667, `#env-banner`
+  (`position: fixed; bottom: …; z-index: 30`, stretched edge-to-edge under `@media (max-width: 640px)`) sat
+  exactly on top of the bottom-anchored `#rail-toggle`: `elementFromPoint()` at its centre returned the
+  banner, `tap()` was refused as obscured, and a forced click left `aria-expanded` false — the toggle was
+  visible, sized and `pointer-events:auto` the whole time, so **no visibility check could have caught it.**
+  Fixed in layout, not z-index: `env.js` measures the panel and lifts the banner clear via `--eb-lift`.
+  **(c) The CSP had no `script-src` at all**, so script execution was unrestricted; it is now
+  `script-src 'self' 'unsafe-inline'` behind `default-src 'self'`, plus `form-action 'none'`,
+  `frame-src 'none'`, `worker-src 'self' blob:` and **HSTS**. Three new browser suites hold all of it:
+  `sim/test_typed_turn.mjs` (56 checks — asserts the **peak sample amplitude** of the buffer handed to Web
+  Audio, so a silent clip cannot pass), `sim/test_mobile_layout.mjs` (48 checks, with a teeth block that
+  restores the old geometry and requires the collision to reappear) and `sim/test_csp.mjs` (37 checks — the
+  first suite in this repo that serves the pages with the **real** `_headers` applied). **Honest gaps:**
+  `'unsafe-inline'` for scripts stays — `_headers` is static so a nonce is impossible, and hashing nine
+  inline blocks plus ten inline `onclick=` attributes needs a build step and a freshness guard; HSTS covers
+  the static pages only, because `_headers` does not apply to Pages *Function* responses (ledger row 27), so
+  `/api/*` still needs it set in `envelope.js`; `/api/*` responses carry no CSP (JSON with `nosniff`, low
+  risk); the root `README.md` embeds a github.com image that `img-src 'self'` correctly refuses, named as a
+  single shrinking exception in `test_csp.mjs`; and `mic.js`'s degraded path still publishes a **scripted
+  child line** through `sendUserTurn`, which on a live page spends a real chat + speech turn on words the
+  visitor never said — the typed path deliberately does not copy that, but the mic's copy is untouched here.
 
 - **The hosted demo refused the eleventh visitor instead of queueing them — fixed 2026-09-03.** At
   `DEMO_MAX_CONCURRENT_CHAT` in-flight turns, `functions/api/_lib/limits.js::admit` answered `at_capacity`
@@ -968,14 +1005,17 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > above was measured with `curl`. On 2026-09-04 the hosted `/sim` was driven with headless Chromium across
 > seven viewports, and three defects appeared that no server-side test could have found:
 >
-> 1. **The only door to the brain is the microphone.** Typing into `#speech-input` and pressing Say never
+> 1. ~~**The only door to the brain is the microphone.**~~ **FIXED — PR #112 (2026-09-04).** Recorded in
+>    full because the *shape* is the lesson, not the bug. Typing into `#speech-input` and pressing Say never
 >    calls `/api/chat` at all — it targets a local Piper sidecar on `:8081`, which CSP correctly blocks, so
 >    nothing plays and the only feedback is a console error. `cloud-transport.js`:339 states it outright
 >    (*"the page has no 'type a sentence to Moxie' control today"*) and `mic.js`:157 is the sole caller of
 >    `sendUserTurn`. A visitor with no microphone, or who denies the permission, **cannot use the demo**.
 >    That is criterion 1 failing on the hosted path for a whole class of visitor, which is why this audit
 >    scores 92% rather than 94% — nothing regressed; the measurement got honest.
-> 2. **On phones the env banner covers the rail toggle.** `document.elementFromPoint()` at the toggle's
+> 2. ~~**On phones the env banner covers the rail toggle.**~~ **FIXED — PR #112 (2026-09-04),** verified on
+>    the preview: `elementFromPoint` at the toggle's centre now returns the toggle at 360/375/414 px and a
+>    real `tap()` opens the rail. The layout suite's teeth restore the old offset and the collision returns. `document.elementFromPoint()` at the toggle's
 >    centre returns `div#env-banner`. The tap does nothing, silently. Recoverable — dismissing the banner
 >    frees it and the mic then works — but nothing tells a visitor that.
 > 3. **The safety floor's hard block is defeated by one invisible character.** Verified against the real
@@ -989,6 +1029,18 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > where a silent clip would fail); **zero horizontal overflow at any of the seven viewports**; no leak of
 > key, gateway host, model id or Tailscale address in the page, any API body, or any header; and
 > `/api/health` reported `inflight: 1` **during an actual in-flight turn**, which the old stub could not do.
+>
+> **UPDATE, same night.** #1 and #2 are fixed and verified on the preview: the Say button became **Ask**,
+> routed through the same `sendUserTurn` → `admit()` gate as the mic (so typing is not a cheaper way to
+> spend the gateway), `/api/chat` is called once with the typed words and `/api/speech` once by ticket,
+> playing a buffer at **peak 0.800 of full scale** — an assertion a silent clip fails. The controls that
+> could never work off-localhost are now **disabled** rather than merely hinted, and the `:8081` probe is
+> gone at the root, so the CSP console error is gone with it. `_headers` gained HSTS and a real
+> `script-src`/`default-src`. **#3, the safety bypass, is fixed in PR #113 but is the more important find.**
+> **Still open and named:** `/api/*` carries no HSTS or CSP (confirmed live — it needs `envelope.js`);
+> `'unsafe-inline'` remains for scripts (14 inline blocks, and a static `_headers` cannot carry a nonce);
+> `mic.js` still spends a full turn on a scripted line the visitor never said; and no *human* has recorded
+> through the hosted mic.
 >
 > **What is still NOT covered:** no *human* has recorded through the hosted mic — this loop used synthesized
 > speech and a hand-built WAV, so it proves the route and the gateway, not `MediaRecorder` in a real browser on

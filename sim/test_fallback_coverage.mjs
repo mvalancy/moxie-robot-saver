@@ -623,10 +623,29 @@ async function runAmbient(script) {
 }
 
 /* --------------------------------------------------------------------------- *
- * 8. §6.2 row 4 — the 1.4 s Piper probe is skipped when degraded, and ONLY then
+ * 8. When the 1.4 s Piper probe fires, and when it must not
  *
  * The real `audio.js` is loaded under a stubbed window and asked to speak a line with no
  * clip. What is asserted is whether a request to the sidecar port actually left the page.
+ *
+ * TWO RULES, and the second one was added on 2026-09-03 after a measurement:
+ *
+ *   1. §6.2 row 4 — skip in `degraded`: a deployment that answered `/api/health` is a real
+ *      deployment of this site with Functions and no sidecar, so the 1.4 s wait is dead
+ *      air. Unchanged.
+ *   2. Skip whenever the page is not on a host from which a LOCALHOST port could be
+ *      reached at all. :8081 is a localhost port; from a public origin the request is not
+ *      merely wasted, it is a violation of this site's own CSP (`connect-src 'self'`,
+ *      sim/web/_headers) and Chrome logs it:
+ *
+ *          Refused to connect to 'https://moxie.mattvalancy.com:8081/tts?text=…'
+ *
+ *      The old rule kept probing in `live`, on the argument that "one wasted probe is the
+ *      cheaper mistake". That argument holds for a wasted request. It does not hold for a
+ *      policy violation, and `live` is exactly the state the hosted deployment is in. So
+ *      the hostname now decides ONE thing here, and honestly — the same one `env.js` has
+ *      always let it decide: whether a localhost sidecar could possibly be reachable.
+ *      Nothing about WHICH VOICE is chosen is decided by a hostname.
  * --------------------------------------------------------------------------- */
 async function probeFired(modeState, opts = {}) {
   const g = globalThis;
@@ -647,7 +666,7 @@ async function probeFired(modeState, opts = {}) {
     getItem: (k) => (k === "moxie.ttsBase" ? (opts.ttsBase || null) : null),
     setItem() {},
   };
-  g.location = { protocol: "https:", hostname: "moxie.example" };
+  g.location = { protocol: "https:", hostname: opts.hostname || "127.0.0.1" };
   g.fetch = (url) => {
     urls.push(String(url));
     if (String(url).endsWith("audio/index.json"))
@@ -662,6 +681,7 @@ async function probeFired(modeState, opts = {}) {
 }
 
 {
+  // --- rule 1: on a host where a sidecar COULD be reachable, the mode decides. ---
   eq(await probeFired("degraded"), false,
      "`degraded` must go clip -> browser voice DIRECTLY: the 1.4 s probe is dead air on a deployment " +
      "that answered /api/health and therefore has no Piper sidecar (§6.2 row 4)");
@@ -669,13 +689,29 @@ async function probeFired(modeState, opts = {}) {
      "`offline` must KEEP the probe — that is exactly what a self-hoster running sim/serve.py gets, " +
      "and their local Piper on :8081 is the whole reason it exists");
   eq(await probeFired("live"), true,
-     "`live` keeps the probe too — that path is only reached when the gateway voice did not arrive");
+     "a LOCAL `live` page keeps the probe — that path is only reached when the gateway voice " +
+     "did not arrive, and a sidecar on this machine really could answer");
   eq(await probeFired(null), true,
      "with no mode machine at all (audio.js loaded standalone) the probe must still run");
   eq(await probeFired("degraded", { ttsBase: "http://127.0.0.1:8081" }), true,
      "an explicit moxie.ttsBase beats the mode — somebody who typed a TTS address asked for the probe");
+  for (const h of ["localhost", "192.168.1.40", "10.0.0.9", "moxie.local"])
+    eq(await probeFired("offline", { hostname: h }), true,
+       `a self-hoster on ${h} still probes — a LAN address is a host a sidecar can live on`);
+
+  // --- rule 2: on a public origin it can never work, whatever the mode says. ---
+  for (const state of ["live", "offline", "degraded", null])
+    eq(await probeFired(state, { hostname: "moxie.example" }), false,
+       `a page served from a public origin must NOT probe :8081 in \`${state}\` — the request ` +
+       "cannot succeed and this site's own connect-src 'self' logs it as a violation");
+  eq(await probeFired("offline", { hostname: "moxie.example", ttsBase: "https://moxie.example:8081" }), false,
+     "…and not even an explicit moxie.ttsBase can arm it there: the address is unreachable either way, " +
+     "so honouring it would only trade a wasted request for a console error");
+
   ok(/skipProbe/.test(audioSrc) && /moxieMode/.test(audioSrc),
-     "the skip must be gated on window.moxieMode, not on a hostname regex");
+     "the mode half of the skip must still be gated on window.moxieMode, not on a hostname regex");
+  ok(/pageCouldReachSidecar/.test(audioSrc),
+     "…and the host half must be a named, documented predicate, not an inline test");
 }
 
 /* --------------------------------------------------------------------------- *
@@ -1030,7 +1066,7 @@ notes.push(`degraded line: ${JSON.stringify(degradedText)} — once on entering 
 notes.push(`manifest: ${clipCount} clips, ${(clipBytes / 1024 / 1024).toFixed(2)} MiB on disk ` +
            `(${Object.keys(manifest.moxie || {}).length} moxie / ${Object.keys(manifest.child || {}).length} child / ` +
            `${Object.keys(manifest.ambient || {}).length} ambient)`);
-notes.push("piper probe: skipped in `degraded`; kept in `offline`, `live`, standalone, and with an explicit ttsBase");
+notes.push("piper probe: local/LAN host — skipped in `degraded`, kept in `offline`, `live`, standalone\n               and with an explicit ttsBase; public origin — never, in any mode (connect-src 'self')");
 
 if (fails.length) {
   console.error(`✗ test_fallback_coverage: ${fails.length} failure(s)`);
