@@ -98,6 +98,26 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **`/api/speech` shipped an upstream 200 body to the visitor, and the leak sweep could not see it
+  (2026-09-03, closed).** `pcmFromAudio` was never told which `response_format` had been asked for, so its
+  raw-PCM fallback — correct **only** under `DEMO_TTS_FORMAT=pcm` — was live under the shipped `wav`
+  default after just three sniffs (empty, `{`/`[`, `<`). Any other 200 (a `text/plain` proxy error, an SSE
+  `data: {"error":…}` frame whose prefix defeats the `{` sniff, an `ID3` mp3, a webm EBML header) came back
+  as `container:"raw"`, was base64'd into `messages[0].payload.audio.buffer` and shipped at **status 200,
+  `reason: null`, `degraded: false`** — a body-disclosure hole, and with an mp3 several seconds of
+  full-scale static in a child's ear, which is the exact harm `_lib/wav.js`'s header claims to prevent.
+  **The test blind spot is the more useful finding:** `assertClean` swept with `text.includes(secret)`, and
+  **base64 defeats substring matching**, so ~1000 sweeps reported clean on responses that carried the key.
+  Fixed by passing `cfg.ttsFormat` down and gating the raw branch on it (absent ⇒ strict `wav`), by a
+  magic-number container refusal mirroring `transcribe.js::audioKind`, and by two headerless-body guards
+  under `pcm` (odd byte length; >90 % printable). `assertClean` in **both** sweep files now decodes
+  `payload.audio.buffer` and sweeps the bytes. Same slice: the per-isolate `spent` set keyed on the raw MAC
+  **string**, and base64url is not canonical — an HMAC's 43rd character carries two bits nothing reads, so
+  four spellings verified and one paid chat turn bought **exactly 4x** TTS per isolate (measured, then
+  pinned); it now keys on canonical bytes. **Honest ceiling:** under `DEMO_TTS_FORMAT=pcm` there is no
+  header and no magic number, so a short opaque binary error blob is still undecidable and would pass —
+  `wav` is the default for that reason.
+
 - **Integration evidence (2026-09-04, sixth pass) — the `week` soak finished, 12/12 bars, and
   P1's three fixes hold from outside.** P1's soak was killed at 59 of 60 minutes before it wrote a
   report, so every §5.3 bar was unverified. Run to completion: **3601 s · 4407 turns answered while

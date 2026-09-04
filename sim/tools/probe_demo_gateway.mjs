@@ -205,7 +205,9 @@ async function speechCall(label, text) {
               magic === "RIFF/WAVE" && !/wav/i.test(res.headers.get("Content-Type") || "")
                 ? "  ⇐ THE CONTENT-TYPE IS A LIE, exactly as tts.py:110-125 records" : "");
   try {
-    const out = pcmFromAudio(bytes, { sampleRate: cfg.ttsSampleRate, channels: 1 });
+    // The format is passed for the same reason the route passes it: without it the
+    // parser cannot tell headerless PCM from a proxy error body (`_lib/wav.js`).
+    const out = pcmFromAudio(bytes, { sampleRate: cfg.ttsSampleRate, channels: 1, format: cfg.ttsFormat });
     console.log("  → pcmFromAudio:", out.container, "|", out.sampleRate, "Hz |", out.channels, "ch |",
                 out.pcm.length, "B PCM |", (out.pcm.length / 2 / out.channels / out.sampleRate).toFixed(2), "s");
     console.log("  → base64 buffer would be:", Math.ceil(out.pcm.length / 3) * 4, "B");
