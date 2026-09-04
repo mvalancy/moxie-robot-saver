@@ -158,6 +158,32 @@ async function assertClean(res, label) {
   // Belt and braces: nothing that looks like a bearer token or a URL scheme, either.
   ok(!/\bBearer\b/i.test(text), `${label}: the body contains the word Bearer`);
   ok(!/https?:\/\//.test(text.replace(/"topic":"[^"]*"/g, "")), `${label}: the body contains a URL`);
+
+  // ---- AND THE SAME SWEEP OVER THE DECODED AUDIO. ---------------------------
+  // `text.includes(secret)` cannot see inside base64, and `messages[0].payload.audio.buffer`
+  // is ~175 KB of it. That blind spot is not hypothetical: it is how a raw-body passthrough
+  // in `/api/speech` survived every sweep in this file reporting CLEAN while returning an
+  // upstream 200 body verbatim to the caller (fixed 2026-09-03, `_lib/wav.js`). A sweep that
+  // stops at the encoding boundary is a sweep that proves the encoding, not the secrecy.
+  // Defensive throughout: a body that is not JSON, a payload that is not JSON, a message
+  // with no audio and an absent buffer are all NOT failures — most responses here have no
+  // audio at all, and this must never turn a refusal into a crash.
+  let __env = null;
+  try { __env = JSON.parse(text); } catch {}
+  const __msgs = __env && Array.isArray(__env.messages) ? __env.messages : [];
+  for (const m of __msgs) {
+    let payload = null;
+    try { payload = JSON.parse(m && m.payload); } catch {}
+    const b64 = payload && payload.audio && typeof payload.audio.buffer === "string" ? payload.audio.buffer : "";
+    if (!b64) continue;
+    let decoded = "";
+    try { decoded = Buffer.from(b64, "base64").toString("latin1"); } catch {}
+    for (const secret of FORBIDDEN) {
+      ok(!decoded.includes(secret),
+         `${label}: the AUDIO BUFFER DECODES to bytes containing ${JSON.stringify(secret.slice(0, 12))}…`);
+    }
+    ok(!/https?:\/\//.test(decoded), `${label}: the audio buffer decodes to something carrying a URL`);
+  }
 }
 
 /** POST to a route, sweep the response, and hand back `{res, body}`. */
@@ -830,6 +856,202 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   plan = { speech: { audio: wav.writeWav(pcmBytes(100), { sampleRate: 22050, channels: 1, bitsPerSample: 8 }) } };
   const eight = await call(speech, "/api/speech", { ticket: c5.body.speech[0].ticket });
   eq(eight.body.reason, "upstream_down", "an 8-bit WAV is upstream_down, not garbage audio");
+
+  /* ------------------------------------------------------------------------- *
+   * 10c. THE RAW-BODY PASSTHROUGH — a 200 that is not the format we asked for
+   * ------------------------------------------------------------------------- *
+   * Closed 2026-09-03. `_lib/wav.js` sniffed exactly three shapes — empty, `{`/`[`, `<` —
+   * and handed EVERYTHING ELSE back as `container:"raw"`, which `speech.js` base64'd
+   * into `messages[0].payload.audio.buffer` and shipped at **status 200, `reason: null`,
+   * `degraded: false`**. Under the shipped `DEMO_TTS_FORMAT=wav` default that is an
+   * upstream body returned verbatim to a visitor, and with an mp3 it is several seconds
+   * of full-scale static in a child's ear.
+   *
+   * Every case below carries the model id and the base URL INSIDE the body, so
+   * `assertClean` — which now decodes the buffer — is the leak half of the assertion and
+   * the `reason` checks are the correctness half.
+   *
+   * The `data: ` frame is the one worth naming: it is what a streaming-capable LiteLLM
+   * front end emits, and its four-character prefix is exactly why the `{` sniff never
+   * fired.
+   * ------------------------------------------------------------------------- */
+  const HOSTILE = "model test-voice-model missing at " + BASE + " key " + KEY;
+  const withMagic = (magic, n) => {
+    const b = new Uint8Array(magic.length + n);
+    for (let i = 0; i < magic.length; i++) b[i] = magic[i];
+    for (let i = 0; i < n; i++) b[magic.length + i] = (i * 7) & 0xff;
+    return b;
+  };
+  for (const [label, body, headers] of [
+    ["a text/plain 200", HOSTILE, { "Content-Type": "text/plain" }],
+    ["an SSE error frame", 'data: {"error":{"message":"' + HOSTILE + '"}}\n\n',
+     { "Content-Type": "text/event-stream" }],
+    ["an mp3 (ID3) body", withMagic([0x49, 0x44, 0x33, 0x03], 400), { "Content-Type": "audio/mpeg" }],
+    ["a webm (EBML) body", withMagic([0x1a, 0x45, 0xdf, 0xa3], 400), { "Content-Type": "audio/webm" }],
+    ["an Ogg body", withMagic([0x4f, 0x67, 0x67, 0x53], 400), { "Content-Type": "audio/ogg" }],
+  ]) {
+    fresh();
+    const cN = await call(chat, "/api/chat", { text: "hi" });
+    plan = { speech: { status: 200, body, headers } };
+    const r = await call(speech, "/api/speech", { ticket: cN.body.speech[0].ticket });
+    eq(r.res.status, 503, `${label} where wav was requested is 503`);
+    eq(r.body.reason, "upstream_down", `${label} -> upstream_down`);
+    eq(r.body.degraded, true, `${label}: the page DEGRADES rather than playing it`);
+    deep(r.body.messages, [], `${label}: NO message, so nothing is base64'd to a visitor`);
+  }
+
+  // …and the raw branch is PRESERVED, because `DEMO_TTS_FORMAT=pcm` is a supported
+  // configuration (spec §3.2 "anything else → treat as raw PCM", §5). The bug was never
+  // that the branch existed — it was that a branch correct only under `pcm` was live
+  // under the default `wav`.
+  fresh();
+  const pcmEnv = { ...FULL, DEMO_TTS_FORMAT: "pcm", DEMO_TTS_SAMPLE_RATE: "16000" };
+  const cPcm = await call(chat, "/api/chat", { text: "hi" }, null, pcmEnv);
+  const headerless = pcmBytes(300);
+  plan = { speech: { status: 200, body: headerless, headers: { "Content-Type": "application/octet-stream" } } };
+  const sPcm = await call(speech, "/api/speech", { ticket: cPcm.body.speech[0].ticket }, null, pcmEnv);
+  eq(JSON.parse(sent[1].opt.body).response_format, "pcm", "the gateway is asked for pcm");
+  eq(sPcm.res.status, 200, "DEMO_TTS_FORMAT=pcm STILL accepts a headerless body");
+  const pPcm = JSON.parse(sPcm.body.messages[0].payload);
+  eq(pPcm.audio.sample_rate, 16000, "…at the CONFIGURED rate — the one case where that is right");
+  ok(Buffer.from(pPcm.audio.buffer, "base64").equals(Buffer.from(headerless)),
+     "…carrying the bytes verbatim, byte for byte");
+
+  // THE CASE THAT ONLY THE FORMAT GATE CATCHES, and therefore the assertion that fails if
+  // `speech.js` ever stops passing `format`. An even-length, high-entropy body with no
+  // magic number and no printable-text signature: under `pcm` that is precisely the audio
+  // we ordered, and under `wav` it is a gateway that ignored `response_format` or an
+  // opaque error blob. NOTHING ABOUT THE BYTES DISTINGUISHES THE TWO — only the format we
+  // asked for does. The magic-number and printable-text guards are real, but they are
+  // defence in depth; this is the gate.
+  const opaque = withMagic([0x00, 0x01, 0xfe, 0xff], 512);
+  fresh();
+  const cOp = await call(chat, "/api/chat", { text: "hi" });
+  plan = { speech: { status: 200, body: opaque } };
+  const rOp = await call(speech, "/api/speech", { ticket: cOp.body.speech[0].ticket });
+  eq(rOp.res.status, 503, "an opaque binary 200 under DEMO_TTS_FORMAT=wav is 503");
+  eq(rOp.body.reason, "upstream_down", "…reason upstream_down");
+  deep(rOp.body.messages, [], "…and it is NEVER base64'd to a visitor as PCM");
+
+  fresh();
+  const cOp2 = await call(chat, "/api/chat", { text: "hi" }, null, pcmEnv);
+  plan = { speech: { status: 200, body: opaque } };
+  const rOp2 = await call(speech, "/api/speech", { ticket: cOp2.body.speech[0].ticket }, null, pcmEnv);
+  eq(rOp2.res.status, 200, "…while THE SAME BYTES under DEMO_TTS_FORMAT=pcm are the audio we ordered");
+  ok(Buffer.from(JSON.parse(rOp2.body.messages[0].payload).audio.buffer, "base64").equals(Buffer.from(opaque)),
+     "…and arrive verbatim — one gate, two configurations, not a new denylist");
+
+  // Even under `pcm` there are two cheap guards, because a headerless body has nothing to
+  // sniff and "is this audio?" is otherwise undecidable.
+  for (const [label, body] of [
+    ["a text/plain body", HOSTILE + " ".repeat(40)],
+    ["an odd byte length", withMagic([0x00], 300)],
+    ["an mp3, from a gateway ignoring response_format", withMagic([0x49, 0x44, 0x33, 0x03], 400)],
+  ]) {
+    fresh();
+    const cQ = await call(chat, "/api/chat", { text: "hi" }, null, pcmEnv);
+    plan = { speech: { status: 200, body } };
+    const r = await call(speech, "/api/speech", { ticket: cQ.body.speech[0].ticket }, null, pcmEnv);
+    eq(r.body.reason, "upstream_down", `${label} is refused even under DEMO_TTS_FORMAT=pcm`);
+    deep(r.body.messages, [], `${label}: …with no message`);
+  }
+
+  // The parser's own contract, exercised directly: ABSENT MEANS STRICT.
+  {
+    const plain = new TextEncoder().encode(HOSTILE);
+    let kinds = [];
+    for (const fb of [{ sampleRate: 22050 }, { sampleRate: 22050, format: "wav" }]) {
+      try { wav.pcmFromAudio(plain, fb); kinds.push("PASSED IT THROUGH"); }
+      catch (e) { kinds.push(e.kind); }
+    }
+    deep(kinds, ["unreadable", "unreadable"],
+         "pcmFromAudio with no format reads STRICT — a caller that does not say gets wav");
+    eq(wav.pcmFromAudio(pcmBytes(50), { sampleRate: 8000, format: "pcm" }).container, "raw",
+       "…and `pcm` still opens the raw branch");
+  }
+
+  /* ------------------------------------------------------------------------- *
+   * 10d. THE SPENT SET KEYS ON BYTES, NOT ON A SPELLING
+   * ------------------------------------------------------------------------- *
+   * base64url is not a canonical encoding. An HMAC-SHA-256 is 32 bytes = 43 base64url
+   * characters = 258 bits, so the LAST CHARACTER carries two bits nothing reads, and four
+   * spellings of one ticket all verify (`_lib/hmac.js::timingSafeEqual` compares decoded
+   * BYTES). The set used to key on the raw string, so one paid chat turn bought four TTS
+   * calls per isolate. `+`/`/`/`=` re-encoding never worked — `bytesFromB64url` refuses
+   * anything outside `[A-Za-z0-9_-]` — so the bypass was exactly 4x, and it was real.
+   * ------------------------------------------------------------------------- */
+  fresh();
+  const cRep = await call(chat, "/api/chat", { text: "hi" });
+  const t0 = cRep.body.speech[0].ticket;
+  const [ver, payloadSeg, macSeg] = t0.split(".");
+  eq(macSeg.length, 43, "an HMAC-SHA-256 is 43 base64url characters");
+  const cfgRep = wire2.readConfig(FULL);
+  const spellings = [];
+  for (const chx of "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_") {
+    const cand = ver + "." + payloadSeg + "." + macSeg.slice(0, -1) + chx;
+    if (cand === t0) continue;
+    if ((await hmac.verifyTicket(cfgRep, cand)).ok) spellings.push(cand);
+  }
+  eq(spellings.length, 3, "THREE other spellings of the same MAC verify — the malleability is real");
+  // A `+`/`/`/`=` re-encoding is NOT one of them, and saying so is the honest half.
+  ok(!(await hmac.verifyTicket(cfgRep, ver + "." + payloadSeg + "." + macSeg + "=")).ok,
+     "…while a padded MAC does not verify at all: the alphabet gate already refused it");
+
+  const before = upstreamCalls();
+  eq((await call(speech, "/api/speech", { ticket: t0 })).res.status, 200, "the ticket is redeemed ONCE");
+  for (const cand of spellings) {
+    const r = await call(speech, "/api/speech", { ticket: cand });
+    eq(r.body.reason, "bad_ticket", "a RE-SPELLED ticket is a replay, not a second turn");
+    deep(r.body.messages, [], "…and produces no audio");
+  }
+  eq(upstreamCalls() - before, 1,
+     "one paid chat turn buys exactly ONE TTS call, whatever the ticket is spelled like");
+
+  /* ------------------------------------------------------------------------- *
+   * 10e. THE SWEEP ITSELF — does `assertClean` actually see inside base64?
+   * ------------------------------------------------------------------------- *
+   * The guard that hid 10c for a thousand sweeps. Proven by feeding the REAL sweep a
+   * response whose buffer decodes to the key and checking it fails, then dropping that
+   * expected failure from the ledger. A test of the test is worth writing exactly once,
+   * and this is the once.
+   * ------------------------------------------------------------------------- */
+  {
+    const poison = (s) => JSON.stringify({
+      messages: [{ topic: "t", payload: JSON.stringify({ audio: { buffer: Buffer.from(s, "latin1").toString("base64") } }) }],
+    });
+    // Two separate poisons, so neither half of the decoded sweep can hide behind the
+    // other: the KEY alone (no URL in it) pins the FORBIDDEN list, the base URL alone pins
+    // the URL regex.
+    for (const [what, secret] of [
+      ["the API key", KEY],
+      // Deliberately a host that is NOT in FORBIDDEN, so this pins the URL regex rather
+      // than being caught a second time by the list above.
+      ["a URL nobody listed", "https://exfil.invalid/leak"],
+    ]) {
+      const at = fails.length;
+      await assertClean(new Response(poison("junk " + secret + " junk"), { status: 200 }), "SELF-TEST");
+      const caught = fails.length - at;
+      fails.length = at;                  // that failure was the point; it is not a failure
+      ok(caught > 0, `assertClean DECODES the buffer — ${what} hidden in base64 is CAUGHT`);
+    }
+
+    // …and every shape that is not audio must neither throw nor false-positive, or the
+    // sweep would fail on the ~1000 refusals that carry no audio at all.
+    for (const b of [
+      "not json at all",
+      "",
+      JSON.stringify({ messages: "nope" }),
+      JSON.stringify({ messages: [null, 42, { payload: "not json" }] }),
+      JSON.stringify({ messages: [{ payload: JSON.stringify({ audio: null }) }] }),
+      JSON.stringify({ messages: [{ payload: JSON.stringify({ audio: { buffer: 42 } }) }] }),
+      JSON.stringify({ messages: [{ payload: JSON.stringify({ audio: { buffer: "" } }) }] }),
+      JSON.stringify({ messages: [{ payload: JSON.stringify({ audio: { buffer: "!!! not base64 !!!" } }) }] }),
+    ]) {
+      const n = fails.length;
+      await assertClean(new Response(b, { status: 200 }), "SELF-TEST benign");
+      eq(fails.length, n, `a body with no usable audio neither throws nor false-positives: ${b.slice(0, 40)}`);
+    }
+  }
 
   // Its own rate limit and its own unit cost.
   fresh();
