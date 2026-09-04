@@ -1113,6 +1113,43 @@ async def content_import(request: Request):
                          body=await request.body() or b"{}")
 
 
+# --- ✍️ Authoring (backlog/content-authoring.md) --------------------------------------
+# Two verbs, and neither of them validates anything here. That is deliberate and it is
+# risk R6: `packs.validate_item` belongs to the route that WRITES, so a direct `curl` at
+# the supervisor's localhost port cannot skip it. A check duplicated in this proxy would
+# be a second validation path — the one thing the whole design refuses (§6.1) — and it
+# would still not be the one that runs.
+
+@app.post("/local/content/item")
+async def content_item(request: Request):
+    """Save one authored item — `{"kind", "data", "phrases", "local_rev", "key"}`.
+
+    The 📦 card's ✏️ and ＋ New. A schedule is refused by kind (a schedule is the one kind
+    of content that reaches the robot, and no Moxie has been served a pack-authored one);
+    a change to `code` or `extension` is refused (the editor shows them, never writes
+    them); a stale `local_rev` is a **409**, because two browser tabs are detected rather
+    than merged. A successful save snapshots into the same one undo slot an import uses.
+    """
+    from .fleet import normalize_content_item_result
+    return _content_call("/item", normalize_content_item_result, method="POST",
+                         body=await request.body() or b"{}")
+
+
+@app.post("/local/content/render")
+async def content_render(request: Request):
+    """Resolve a draft prompt against a sample context — **no model call, no write**.
+
+    The highest-value free feedback the editor can give: the panel is the actual system
+    prompt the brain would be handed, which is the thing a prompt author most needs and
+    could not see at all before. Answers with the same text through the dependency-free
+    renderer too, so an author can tell whether their prompt survives a box without
+    jinja2.
+    """
+    from .fleet import normalize_content_render
+    return _content_call("/render", normalize_content_render, method="POST",
+                         body=await request.body() or b"{}")
+
+
 @app.post("/local/content/undo")
 def content_undo():
     """Put back what the last import replaced — the one operation here that destroys work
