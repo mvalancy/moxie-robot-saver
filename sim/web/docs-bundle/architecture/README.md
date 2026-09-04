@@ -62,7 +62,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   (printable launch cards — a `GO<launch:MOD>` card a child holds up to Moxie, re-scoped from the
   audit's **S** to an **M** after the row's premise turned out to be a real mechanism pointed the wrong
   way: arming the robot's *runtime* QR reader, routing the scanned value into a launch against a closed
-  allowlist, and only then the sheet a parent prints). One page there is the odd one out and
+  allowlist, and only then the sheet a parent prints), and
+  [`backlog/insights.md`](backlog/insights.md) (insights that mean something — where a parent-facing
+  vocabulary comes from when `Packet.event_name` is a free string, which questions a card can honestly
+  answer, and which two charts it refuses to draw). One page there is the odd one out and
   deliberately so:
   [`backlog/community-signals.md`](backlog/community-signals.md) — **the inbound half**, what owners
   holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how
