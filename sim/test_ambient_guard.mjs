@@ -263,6 +263,26 @@ async function settleDegradedLine(page) {
   await page.waitForFunction("window.moxieAmbient.degradedState().said === true", { timeout: 15000 });
   await page.waitForFunction(
     `window.__rec.events.some(e => e.ev === "start" && e.src === "clip")`, { timeout: 15000 });
+
+  /* STOP THE SCHEDULER *BEFORE* WAITING OUT THE ANNOUNCEMENT, NOT AFTER.
+   *
+   * This used to be the other way round, and the two steps were perfectly correlated: the
+   * wait below resolves 1600 ms after the announcement's last sample, which is the exact
+   * instant `moxieBusy()` stops holding ambient off — so the test asked the scheduler to
+   * stop at precisely the moment the scheduler was first allowed to speak, and lost that
+   * race roughly one run in five. Measured on a losing run: `stop()` landed at ~15.1 s and
+   * ambient's own timer had fired at 15.173 s.
+   *
+   * The damage was not a stray quip; it was a MISIDENTIFIED SUBJECT. Block 3 takes "the
+   * first clip after `mark`" to be the scripted reply, so it measured the ambient line
+   * instead, and then reported the real reply — which correctly `stop()`s ambient when it
+   * arrives — as an interruption *of* the reply. Two red assertions about the wrong
+   * object, describing the feature working.
+   *
+   * Stopping first is safe and is not a weakening: `stop()` only prevents FUTURE ticks, it
+   * does not cancel the announcement already in the air, so the wait below still waits out
+   * exactly what it always waited out. It just cannot race any more. */
+  await page.evaluate(() => window.moxieAmbient.stop());
   await page.waitForFunction("!window.moxieAudio.isMoxieBusy(1600)", { timeout: 25000 });
   /* Then QUIET the free-running scheduler, and be honest about why.
    *
@@ -284,7 +304,7 @@ async function settleDegradedLine(page) {
    * So the blocks below drive `tick()` explicitly rather than racing a 11–24 s timer, and
    * assert the promise that was actually made. Asserting the other thing would be a test
    * that fails a few runs in ten for a behaviour nobody claimed. */
-  await page.evaluate(() => window.moxieAmbient.stop());
+  await page.evaluate(() => window.moxieAmbient.stop());   // idempotent; see the note above
 }
 
 try {
