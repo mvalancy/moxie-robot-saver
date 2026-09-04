@@ -454,6 +454,45 @@ that row stays 🟡.
 
 ---
 
+### 2.5 The community scan — 2026-09-03, and the report that turns §2.4's anecdote into a pair
+
+§2.4 reads upstream's **code** and its **issue tracker**. On 2026-09-03 that sweep was widened to the
+places owners actually post — upstream's discussions, both forks' (empty) trackers, and
+`robotsaroundthehouse.com` — and written up as its own evidence-first page:
+**[`backlog/community-signals.md`](backlog/community-signals.md)**. That page carries the method, the
+venues, the dates, and eight findings ranked by how strong the evidence is. Three of them change something
+here:
+
+- **The `license` row is no longer a single anecdote.** A comment on
+  [discussion #35](https://github.com/jbeghtol/openmoxie/discussions/35) dated **2026-02-21** asks how to
+  get *"past the CereProc license check"*, reporting that `cloud_tts` settings arrive but *"the robot still
+  crashes at CereProc init before cloud_tts can kick in."* That is a **second, independent** report five
+  months before [#60](https://github.com/jbeghtol/openmoxie/issues/60), on the same subsystem — and our own
+  recovered [`Cloud.proto`](../reverse-engineering/protocol/recovered-proto/embodied/logging/Cloud.proto):311
+  names that subsystem: `LicenseID { LICENSE_UNKNOWN = 0; cereproc = 1; google_speech = 2; }`, which
+  [`cloud-protocol.md`](../reverse-engineering/protocol/cloud-protocol.md):226 describes as *the TTS/STT
+  license blobs the robot needs to run CereVoice / Google Speech*. §4.4's blocked list should be read with
+  that weight: **two reporters and our own enum**, not one reporter. It also adds a *second* question under
+  the first — not only *"does `license_values: []` satisfy the pull"* but *"does the robot's on-device
+  CereVoice engine come up at all without a record"* — and if the answer is no, it fails **before** any
+  cloud-side voice path runs. Still ⛔ blocked on a physical robot; the evidence just got heavier.
+- **The 801→803 OTA offer this audit's ecosystem relied on has been withdrawn.** Two maintainer comments on
+  [#57](https://github.com/jbeghtol/openmoxie/issues/57) dated **2026-08-29** — after this audit's evidence
+  base — state there is *"no means to update older units over the air except from the owner of the domain"*
+  and that the image cannot be redistributed. See C5 on the signals page; it corrects
+  [`live-hardware-debug.md`](../debugging/live-hardware-debug.md), not this table.
+- **The landscape gained and lost a company.** Moxie was acquired on 2025-12-06 and its servers closed
+  again on 2026-06-30 — a second sunset that [`community-research.md`](../community-research.md) does not
+  carry. Checked and clean for us: **no firmware later than `24.10.803` exists in any public source**, so
+  the RE corpus stamp holds.
+
+**Nothing on the ranked backlog moves because of this scan.** One new build-ready item comes out of it
+(C3, IP-drift detection after pairing) and one verification (C4, STT re-subscribe after a robot sleep/wake);
+both live on the signals page until they are specified. And the scan's own largest gap is named there:
+**r/MoxieRobot, the de-facto hub, could not be read from this environment.**
+
+---
+
 ## 3. The scorecard — HAVE / ADOPT / BEYOND
 
 Read against [`implementation-plan.md`](implementation-plan.md) (status tables + Definition of done) and
@@ -722,8 +761,9 @@ morning" are different claims and conflating them is what wasted the runs:
 **Not ranked, deliberately — and the list grew.** BEYOND #9 (vision events), ADOPT #9's two flagged
 assumptions, the `wakeup` acknowledgement, broker auth A1–A4, every claim in the OTA row, and — new on
 2026-09-03 — **whether an empty `license_values: []` satisfies the robot or crash-loops its Wi-Fi App**
-([§2.4](#24-upstream-re-check-2026-09-03-and-the-one-thing-that-was-new), from an unconfirmed field
-report on upstream's tracker) are **blocked on a physical robot**, not on effort. They are built or specified, unproven, and no amount of
+([§2.4](#24-upstream-re-check-2026-09-03-and-the-one-thing-that-was-new), from a field report on
+upstream's tracker — now corroborated by a second, independent report, see
+[§2.5](#25-the-community-scan-2026-09-03-and-the-report-that-turns-24s-anecdote-into-a-pair)) are **blocked on a physical robot**, not on effort. They are built or specified, unproven, and no amount of
 ranking moves them. *A real Moxie on our broker for an hour would settle more of this page than a week of
 building* — that sentence has been true at every refresh, and it is the single highest-value thing an
 owner could do for this project.
@@ -831,4 +871,4 @@ to check ourselves against.** The mapping:
 build on, and it is still the fastest way for an owner to get a Moxie talking tonight.
 
 ---
-📖 [Docs index](../README.md) · [Implementation plan](implementation-plan.md) · [Community landscape](../community-research.md) · [MQTT & conversation](mqtt-and-conversation.md) · [Backlog briefs](backlog/README.md)
+📖 [Docs index](../README.md) · [Implementation plan](implementation-plan.md) · [Community landscape](../community-research.md) · [Community signals](backlog/community-signals.md) · [MQTT & conversation](mqtt-and-conversation.md) · [Backlog briefs](backlog/README.md)

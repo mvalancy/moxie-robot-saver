@@ -76,6 +76,14 @@ jobs:
         run: bash sim/run_smoke.sh
       - name: SIL scenarios (scripted conversations)
         run: bash sim/run_scenarios.sh
+      # The connection rewrite (production-hardening.md §4.1) is the one thing no unit
+      # test can prove: `retry_first_connection=True`, the CONNACK check, on_disconnect
+      # and the eight `info.rc` publish sites all describe what happens when a REAL
+      # broker goes away from a REAL supervisor process. This harness owns its own
+      # mosquitto container so it can stop and start it, and asserts /status, the drop
+      # counter and the console's 409 across the gap. Needs docker → deep tier only.
+      - name: Broker outage (a real broker taken away from a running supervisor)
+        run: bash sim/run_broker_outage.sh
       - name: Cloud SDK unit + integration tests
         run: python -m pytest sim/tests -q -k "not test_sil and not test_docs" --ignore=sim/tests/test_live_gateway.py
       # HIL against real infra: a live end-to-end turn through the runtime + gateway,
