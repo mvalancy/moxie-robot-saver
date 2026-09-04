@@ -1,5 +1,5 @@
 {
- "generated": "docs-c7efca07f80f",
+ "generated": "docs-a23bef705699",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 218202,
+   "bytes": 224236,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -128,7 +128,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 134326,
+   "bytes": 136384,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -238,7 +238,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 31846,
+   "bytes": 35954,
    "mermaid": 1,
    "headings": [
     "The loop",
