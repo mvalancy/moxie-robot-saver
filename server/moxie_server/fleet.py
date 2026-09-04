@@ -1272,6 +1272,95 @@ def normalize_content_review(payload: Optional[dict]) -> dict:
         return {**empty, "error": f"unreadable review payload: {e}"}
 
 
+def normalize_content_item_result(payload: Optional[dict]) -> dict:
+    """Runtime `POST /content/item` → what the ✍️ editor shows after a Save.
+
+    The same shape discipline as `normalize_content_result`: a card must never be a 500,
+    so every field is coerced and a refusal arrives as a `reason` a person can read rather
+    than as an exception.
+
+    `shadow` is the one field that is *advice* rather than a result (brief §4.4): it names
+    an installed command that answers a phrase the author typed **before** this one would,
+    because commands are tried in name order. It is exact for the phrases typed and claims
+    nothing about any other utterance — the card must repeat that bound, not round it up
+    into "no conflicts".
+    """
+    empty = {"ok": False, "id": "", "key": "", "kind": "", "created": False,
+             "item": {}, "shadow": [], "local_rev": "", "conflict": False,
+             "reload": {}, "undo_available": False, "undo_slots": 1, "reasons": [],
+             "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        shadow = p.get("shadow")
+        reasons = p.get("reasons")
+        reload = p.get("reload") if isinstance(p.get("reload"), dict) else {}
+        ok = bool(p.get("ok"))
+        return {
+            "ok": ok,
+            "id": str(p.get("id") or ""),
+            "key": str(p.get("key") or ""),
+            "kind": str(p.get("kind") or ""),
+            "created": bool(p.get("created")),
+            "item": normalize_content_item(p.get("item")),
+            "shadow": [{"phrase": str((s or {}).get("phrase") or ""),
+                        "id": str((s or {}).get("id") or ""),
+                        "name": str((s or {}).get("name") or ""),
+                        "sentence": str((s or {}).get("sentence") or "")}
+                       for s in shadow if isinstance(s, dict)]
+                      if isinstance(shadow, (list, tuple)) else [],
+            "local_rev": str(p.get("local_rev") or ""),
+            "conflict": bool(p.get("conflict")),
+            "reload": {str(k): (v if isinstance(v, bool) else int(_num(v) or 0))
+                       for k, v in reload.items()},
+            "undo_available": bool(p.get("undo_available")),
+            "undo_slots": int(_num(p.get("undo_slots")) or 1),
+            "reasons": [str(r) for r in reasons] if isinstance(reasons, (list, tuple)) else [],
+            "error": None if ok else (p.get("reason") or p.get("error")
+                                      or "this item could not be saved"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable save payload: {e}"}
+
+
+def normalize_content_render(payload: Optional[dict]) -> dict:
+    """Runtime `POST /content/render` → the ✍️ editor's resolved-prompt panel.
+
+    `portable` is the same draft through the dependency-free renderer, and
+    `portable_identical` is the answer to *"does this prompt mean the same thing on a box
+    without jinja2?"* — the property the guided chip list exists to guarantee. `counts` is
+    marked advisory by the runtime because the renderer's counters are process-global; the
+    card must not present it as a measurement of this render alone.
+    """
+    empty = {"ok": False, "prompt": "", "opener": "", "openers": [], "portable": "",
+             "portable_identical": True, "counts": {}, "counts_advisory": True,
+             "context": {}, "error": "supervisor not reachable"}
+    try:
+        p = payload if isinstance(payload, dict) else {}
+        if not p:
+            return empty
+        counts = p.get("counts") if isinstance(p.get("counts"), dict) else {}
+        context = p.get("context") if isinstance(p.get("context"), dict) else {}
+        openers = p.get("openers")
+        ok = bool(p.get("ok"))
+        return {
+            "ok": ok,
+            "prompt": str(p.get("prompt") or ""),
+            "opener": str(p.get("opener") or ""),
+            "openers": [str(o) for o in openers] if isinstance(openers, (list, tuple)) else [],
+            "portable": str(p.get("portable") or ""),
+            "portable_identical": bool(p.get("portable_identical", True)),
+            "counts": {str(k): int(_num(v) or 0) for k, v in counts.items()},
+            "counts_advisory": bool(p.get("counts_advisory", True)),
+            "context": {str(k): v for k, v in context.items()},
+            "error": None if ok else (p.get("reason") or p.get("error")
+                                      or "this draft could not be resolved"),
+        }
+    except Exception as e:                      # a card must never be a 500
+        return {**empty, "error": f"unreadable render payload: {e}"}
+
+
 def normalize_content_result(payload: Optional[dict]) -> dict:
     """Runtime `POST /content/import` or `/content/undo` → what actually happened.
 
