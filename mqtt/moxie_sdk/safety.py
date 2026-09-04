@@ -132,12 +132,58 @@ class Redirect:
 # normalization — one text in, several comparable forms out
 # ---------------------------------------------------------------------------
 
-# Always-on cleanups: curly apostrophes onto `'` (so `don't`/`don’t` are one word) and
-# the zero-width characters used to split a word invisibly.
-_ALWAYS = str.maketrans({
-    "’": "'", "‘": "'", "ʼ": "'",
-    "​": "", "‌": "", "‍": "", "﻿": "",
-})
+# Always-on cleanup: curly apostrophes onto `'`, so `don't`/`don’t` are one word.
+_ALWAYS = str.maketrans({"’": "'", "‘": "'", "ʼ": "'"})
+
+#: The four glyphless Hangul fillers. They are category **`Lo`** — letters — so the `Cf`
+#: sweep below does not reach them, but they have no glyph, which is exactly why they are
+#: the standard way to make a "blank" name in a chat client. They are placeholders for an
+#: absent jamo, they carry no meaning in the English these tables are written in, and they
+#: split a word as invisibly as a ZWSP does. (Python's NFKD folds U+3164 and U+FFA0 onto
+#: U+1160 before this set is consulted — verified, and pinned by a test — so only two of the
+#: four can actually survive to be caught here. All four are written out because a reader
+#: should not have to know that.)
+_HANGUL_FILLERS = frozenset("\u115f\u1160\u3164\uffa0")
+
+
+def _is_invisible(ch: str) -> bool:
+    r"""True for a character that occupies no width and so can split a word unseen.
+
+    WHY A CATEGORY AND NOT A HAND-PICKED LIST. `_ALWAYS` used to name exactly four code
+    points — U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+FEFF — and every other invisible
+    formatting character walked straight into the matcher. That was not theoretical:
+    `"suicide"` blocked, and the same word with a U+00AD SOFT HYPHEN or a U+2060 WORD
+    JOINER between each letter did **not**, while rendering identically to a reader.
+    `self_harm` is the first blocking category and this floor runs **before** the brain is
+    called (module docstring, :11-13), so one pasted character defeated the entire
+    pre-inference block — on the module a self-hosted stack and a real robot run. Naming
+    code points one at a time is how that happened; `Cf` is the closed set, so the set is
+    what we strip. `functions/api/_lib/safety.js` made the same fix for the hosted demo
+    first; this is the same decision, re-derived against Python's own Unicode data.
+
+    VERIFIED IN THIS RUNTIME, NOT ASSUMED. `unicodedata` (15.0.0 under CPython 3.12) reports
+    category `Cf` for all of U+00AD, U+061C, **U+180E**, U+200B–U+200F, U+202A–U+202E,
+    U+2060–U+2064, U+2066–U+2069, U+FEFF and U+FFF9–U+FFFB. U+180E is the one worth
+    naming: it was `Zs` until Unicode 6.3 and V8 reports it as `Cf` too, so on this point
+    the two engines agree — probed on both sides rather than carried across.
+
+    **AND THE ONE PLACE THEY DID NOT.** `\p{M}` on the JS side is a *category* test, but
+    `unicodedata.combining()` returns the *canonical combining class*, and the two are not
+    the same predicate. U+034F COMBINING GRAPHEME JOINER is category `Mn` with **ccc 0**,
+    so the old line above kept it and `s\u034fu\u034fi\u034fc\u034fi\u034fd\u034fe` did not block here even though
+    the identical string blocks in the Function. Testing the category closes that, and is
+    what `\p{M}` meant all along.
+
+    WHAT IS DELIBERATELY LEFT IN. The `Zs` space separators (U+00A0, U+2000–U+200A, U+202F,
+    U+205F, U+3000) are **not** stripped and must not be: Python's NFKD folds every one of
+    them onto an ordinary U+0020, and U+1680 falls to the `\s+` collapse instead (both
+    probed, both pinned by a test), so an exotic space becomes a REAL space. That is the
+    right answer — a no-break space *is* a space — and it means `"i want to\u00a0kill myself"`
+    blocks exactly like the plain sentence. It also means intra-letter *spacing* stays
+    open, which is a known limit rather than an oversight; see `_variants`.
+    """
+    cat = unicodedata.category(ch)
+    return cat == "Cf" or cat[0] == "M" or ch in _HANGUL_FILLERS
 
 # Character substitutions people use to slip past a word list (`sh1t`, `$hit`, `f@ck`).
 # Applied ONLY where the next character is a letter, so an ordinary `hi!` or `b4` is left
@@ -149,19 +195,32 @@ _LEET_RE = re.compile("[%s]" % re.escape("".join(_LEET)))
 
 _RUN = re.compile(r"(.)\1{2,}")           # three or more of the same character
 
+#: A run of non-alphanumerics with a letter or digit on **both** sides, so `s.u.i.c.i.d.e`
+#: and `s-u-i-c-i-d-e` collapse onto the word they spell. Written with a lookahead and a
+#: captured left flank rather than a lookbehind, because consuming both flanks would make
+#: the alternating matches overlap and fold only every other separator.
+_INWORD_PUNCT = re.compile(r"([a-z0-9])[^a-z0-9 ]+(?=[a-z0-9])")
+
 
 def normalize(text: str) -> str:
-    """Casefolded, accent-stripped, de-leeted text with runs of whitespace collapsed.
+    r"""Casefolded, accent-stripped, de-leeted text with runs of whitespace collapsed.
 
-    `NFKD` + dropping combining marks means `shít` / `ｓｈｉｔ` normalize onto `shit`; the
-    leet map folds `sh1t` / `$hit`. Punctuation that carries meaning for the phrase
-    regexes (`'`) is kept, and ordinary punctuation is left where it is so word
-    boundaries stay where the writer put them.
+    `NFKD` + dropping every `\p{M}` mark means `shít` / `ｓｈｉｔ` normalize onto `shit`; the
+    leet map folds `sh1t` / `$hit`; `_is_invisible` deletes the zero-width characters used
+    to split a word so a word list cannot see it. Punctuation that carries meaning for the
+    phrase regexes (`\'`) is kept, and ordinary punctuation is left where it is so word
+    boundaries stay where the writer put them — the *intra-word* separators are folded in
+    `_variants`, on a form of their own, and for a reason spelled out there.
+
+    This is a MATCHING transform, never a display one. Deleting characters in it is safe
+    only because its output cannot reach a child, a log or a prompt: `assess()` consumes
+    `_variants()` internally and returns a verdict, and the excerpt a parent sees is
+    `redact()`\'s masking of the ORIGINAL text.
     """
     if not text:
         return ""
     t = unicodedata.normalize("NFKD", str(text))
-    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = "".join(c for c in t if not _is_invisible(c))
     t = t.casefold().translate(_ALWAYS)
 
     def _sub(m):
@@ -173,19 +232,53 @@ def normalize(text: str) -> str:
 
 
 def _variants(text: str) -> tuple:
-    """Normalized text plus its de-elongated forms (`fuuuuck`, `killlll`).
+    r"""Normalized text plus its de-elongated and de-punctuated forms.
 
     A run of 3+ identical characters is collapsed to one AND to two, because either may
-    be the real word (`fuuuuck` → `fuck`, `killlll` → `kill`). Both are cheap; matching
-    against all three strings costs one extra regex scan each.
+    be the real word (`fuuuuck` → `fuck`, `killlll` → `kill`). The fourth form folds the
+    separators a writer put INSIDE a word (`s.u.i.c.i.d.e`, `s-u-i-c-i-d-e`) onto the word
+    they spell. All are cheap; matching against each string costs one extra regex scan.
+
+    WHY THE NARROW `_INWORD_PUNCT` AND NOT `[^a-z0-9 ]` EVERYWHERE, which is the obvious
+    version. Stripping ALL punctuation also deletes the boundary BETWEEN SENTENCES, and the
+    phrase regexes are written across `\s+`. **Measured in Python** against a corpus of
+    innocent child-shaped sentences (`sim/tests/test_safety.py::INNOCENT`), the broad form
+    turns two of them into `self_harm` blocks:
+
+        "that\'s what i want. To die of laughter would be great, honestly"
+        "i don\'t know what i want. To not be so shy would be nice"
+
+    Both fold onto `... i want to die ...` / `... i want to not be ...` and trip
+    `\bi\s+want\s+to\s+(?:die|...)\b`. A child saying either is told to go find a grown-up,
+    by a robot, for saying something completely ordinary — that is a real harm in its own
+    right, not a safe default, and it is the exact failure this module\'s docstring calls
+    out ("it will occasionally flag something innocent"). Requiring a letter or digit on
+    both sides keeps every sentence boundary intact (`want.` is followed by a SPACE, so it
+    is left alone) while still folding the intra-word separators, which is the whole
+    evasion this form exists for. Same corpus, narrow form: zero false positives. The JS
+    side reached the same two sentences; the measurement above is Python\'s own, because
+    `casefold()` and Python\'s NFKD are not `toLowerCase()` and V8\'s.
+
+    ADDING A FORM CAN ONLY ADD MATCHES. `_Category.hits` ORs across every form and stops at
+    the first hit, so a new variant can never LOSE a block the base form already had — only
+    find one more, or (the whole reason each is measured before it ships) one it should not
+    have. That asymmetry is why the false-positive corpus is the gate here and the evasion
+    table is not: a missed evasion is the floor we already had; a false positive is a new
+    harm.
+
+    KNOWN AND DELIBERATELY LEFT OPEN: intra-letter *spacing* (`s u i c i d e`). Closing it
+    means deleting spaces from every utterance, and it is a **visible** evasion identical to
+    typing real spaces — which this floor has never caught and cannot catch. Pinned as a
+    known-open test rather than half-closed for the exotic-space variant alone.
     """
     base = normalize(text)
     if not base:
         return ("",)
     one = _RUN.sub(r"\1", base)
     two = _RUN.sub(r"\1\1", base)
+    punct = _INWORD_PUNCT.sub(r"\1", base)
     seen, out = set(), []
-    for v in (base, one, two):
+    for v in (base, one, two, punct):
         if v not in seen:
             seen.add(v)
             out.append(v)
