@@ -98,6 +98,29 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **The hosted demo refused the eleventh visitor instead of queueing them — fixed 2026-09-03.** At
+  `DEMO_MAX_CONCURRENT_CHAT` in-flight turns, `functions/api/_lib/limits.js::admit` answered `at_capacity`
+  on the spot, so a momentary collision between the ~ten people the demo is sized for turned into scripted
+  lines for whoever arrived second. **The ceiling was deliberately NOT raised:** it is matched to the
+  upstream key's `max_parallel_requests`, which protects another service on the same self-hosted gateway,
+  so a bigger number would only move the refusal upstream as a 429 and starve the neighbour — and at ~1.2 s
+  a turn, four slots already serve ~3 turns/second, far above what ten conversational visitors need.
+  Instead `admit()` is now `async` and, at the ceiling, joins a **bounded FIFO** for up to
+  `DEMO_QUEUE_MAX_WAIT_MS` (2 500 ms) with at most `DEMO_QUEUE_MAX_DEPTH` (8) waiting; past the depth, or
+  when the wait expires, it refuses with the same `at_capacity` + `Retry-After: 15` as before — **a queue
+  with no depth cap is just a slower way to fall over.** `release()` *hands the slot over* rather than
+  freeing it, which is what makes the order FIFO by construction: the count never dips, so a late arrival
+  has no gap to slip into. All three routes await it and keep `release()` in a `finally`;
+  **`/api/health` is untouched and still non-`async` with zero upstream calls**, and `sim/test_mode.mjs`
+  now pins both halves of that pair. The charge/refund question the queue forced — a timed-out waiter had
+  paid a rate-limit unit and budget units for a turn it never got — was answered with a **refund** rather
+  than a reordering, because reordering would let an un-rate-limited script occupy queue slots it never
+  earned; the full argument is in `refundCharges()` and in `backlog/live-sim-demo.md` §4.1. **The honest
+  gap:** the FIFO is **per-isolate**, exactly like every counter around it (§4.6) — a fair order among the
+  requests one isolate holds, never a global queue position — and the load-bearing premise (a ~1.2 s turn,
+  which is what makes a depth of 8 deliverable inside 2 500 ms) is inherited from earlier measurements
+  rather than re-measured under real load. Ledger row 28.
+
 - **`/api/health` told the page what it wanted to hear — fixed 2026-09-03.** `functions/api/health.js`
   shipped two LOCAL STUBS that shadowed the real implementations: `budgetState()` returned `null` and
   `loadState()` returned a hard-coded `{inflight: 0}`. Both were honest in P0-a (no spending route was
