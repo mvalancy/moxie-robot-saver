@@ -62,7 +62,7 @@ the one under it and every factor is separately testable)
 
 | factor | weight | signal |
 |---|---|---|
-| parent request | `W_PARENT_REQUEST` 4000 | `SchedulePreferences.parent_requests[]` due today, pinned to the slot nearest its `scheduled_at` |
+| parent request | `W_PARENT_REQUEST` 4000 | `SchedulePreferences.parent_requests[]` due today, pinned to the slot nearest its `scheduled_at` — and **held out of the scored fill until that slot**, so no earlier slot can spend it (see `plan_day`) |
 | FTUE still running | `W_FTUE` 2000 | an onboarding module the child has not finished |
 | coverage / repeat | `-W_TIER` 1000 × times seen | the "nothing repeats until the catalog is exhausted" invariant, now a weight |
 | recency | `RECENCY_SAME_DAY` -300 / `RECENCY_3_DAY` -100 | do not re-offer yesterday's activity |
@@ -902,10 +902,26 @@ def plan_day(inputs: dict) -> tuple:
                 score += W_PARENT_REQUEST
                 codes = ["parent_request"] + [c for c in codes if c != "parent_request"]
             else:
-                candidates = [m for m in pool.values()
+                # A module the parent pinned to a LATER slot is held back for it. Without
+                # this the free choice can score that very module top in an earlier slot,
+                # take it out of the pool, and the pin then silently evaporates: at its own
+                # slot `pin["module_id"] in pool` is False, the branch above never runs, and
+                # the day ships with the requested activity at the wrong time and with no
+                # `parent_request` in its reason codes — the parent is shown an audit trail
+                # that never mentions their request. Which slot wins the race was decided by
+                # the `time_of_day` factor, i.e. by the hour the planner happened to run at
+                # (a calm READING module tops the afternoon board but not the morning one),
+                # so the pin held or vanished depending on the wall clock. Bedtime is
+                # absolute and a parent request is theirs: neither is a scoring suggestion.
+                held = {r["module_id"] for at_slot, r in pinned.items()
+                        if at_slot > slot}
+                free = [m for m in pool.values() if m["module_id"] not in held]
+                if not free:                       # more pins than slots left to fill
+                    free = list(pool.values())
+                candidates = [m for m in free
                               if str(m.get("category") or "") != last_category]
                 if not candidates:
-                    candidates = list(pool.values())
+                    candidates = list(free)
                 best = None
                 for m in candidates:
                     s, f, c = score_module(m, inputs=inputs, slot=prefix_len + slot,

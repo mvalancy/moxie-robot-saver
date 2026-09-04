@@ -109,7 +109,14 @@ browser at all and carry the hermetic suite CI actually runs.
   never comes back, a module quit an hour ago is not re-offered, and a reported
   `mentor_behavior` reaches the store and changes the next plan. Hermetic — the loopback
   above stands in for the broker, the store is a `tmp_path`, and every clock window is
-  computed relative to *now*, so it never depends on the hour it runs at.
+  computed relative to *now*. It does not depend on the hour it runs at, and that is
+  asserted rather than asserted-in-prose: the scenario's parent request is built to land
+  on today's calendar day at all 1440 minutes (two slots ahead, or two behind in the tail
+  of a day), a sibling test walks every one of those minutes to prove it, and the
+  "belongs to tomorrow" contract has its own test built from a constructed instant instead
+  of a branch that only ever ran in CI at 23:4x. The hour-dependence this suite actually
+  caught was in the **planner**, not here — see `test_schedule_planner.py`'s
+  `test_a_parent_request_survives_every_hour_the_planner_could_run_at`.
 - **`test_package_contents.py`** — what `pip install moxie-cloud-sdk` actually gets, which
   no other test can see because every other test runs against the source tree: every
   package on disk is in `[tool.setuptools] packages` (add `moxie_sdk/telehealth/`, forget
