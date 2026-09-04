@@ -47,16 +47,61 @@
 # ship: it serves the site with these headers applied and asserts every page loads with no
 # violation. Moving the inline blocks into files is the real fix and is a separate slice.
 #
+# 2026-09-03 (SECOND PASS) — `script-src` ALSO ALLOWS `https://static.cloudflareinsights.com`.
+#
+# Cloudflare Pages INJECTS its Web Analytics beacon into every HTML response: a
+# `<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/…">` with
+# an SRI hash and a real `data-cf-beacon` token. We do not write that tag and cannot edit
+# it — the platform adds it after our HTML has left this repo. The policy as first shipped
+# refused it, so https://moxie.mattvalancy.com/sim logged
+#
+#     Loading the script '…/beacon.min.js/…' violates the following Content Security Policy
+#     directive: "script-src 'self' 'unsafe-inline'". The action has been blocked.
+#
+# on EVERY page load (measured in Chrome against production, 2026-09-03). Functionally
+# harmless — the site works, the analytics simply never reported — but a permanent console
+# error drowns the next real one, and a quiet console is exactly what found the port-8081
+# bug this policy was written for.
+#
+# The alternative was turning the injection off in the Pages project. Rejected: that edits
+# the owner's ACCOUNT SETTINGS rather than our code, and silently removes analytics they may
+# want. Allowing one first-party Cloudflare host on a Cloudflare-hosted site is a smaller
+# and more legible widening. **DO NOT "TIDY" THIS ENTRY AWAY.** The tag it exists for is not
+# in this repo, so nothing here will look broken when it goes — the console will simply
+# start shouting again on production, where nobody is watching.
+#
+# `connect-src` IS DELIBERATELY UNCHANGED, and that was CHECKED, not assumed. The beacon
+# reports through `navigator.sendBeacon`, and `beacon.min.js` chooses its endpoint as
+# `send.to || (version === undefined ? "https://cloudflareinsights.com/cdn-cgi/rum" : null)`
+# and then falls back to the RELATIVE `/cdn-cgi/rum?…`. The injected tag carries
+# `"version":"2024.11.0"` and no `send.to`, so the report goes SAME-ORIGIN — which
+# `connect-src 'self'` already allows — and the live page loaded with the widened script-src
+# produced no connect-src refusal in 9 s of observation. Note the trap should that ever
+# change: the REPORT host is the bare `cloudflareinsights.com`, NOT the `static.` one, so
+# allowing the script host does not cover it. `sim/test_csp.mjs` block 4 pins both halves —
+# the beacon host runs, and the bare sibling host is still refused.
+#
 # ADDED `Strict-Transport-Security`. NOTE THE TRAP already recorded in this repo (§10
 # assumption 27, proven false the hard way in PR #72): `_headers` does NOT apply to Pages
-# *Function* responses, so this covers the static pages only. The `/api/*` routes need it
-# set in `functions/api/_lib/envelope.js` — reported as a follow-up, not done here.
+# *Function* responses, so everything in this file covers the STATIC PAGES ONLY.
+#
+# The `/api/*` half is DONE, and it is not done here: PR #115 sets it in code, as the frozen
+# `API_SECURITY_HEADERS` in `functions/api/_lib/envelope.js` — HSTS byte-identical to the
+# one above, a JSON-appropriate `default-src 'none'; frame-ancestors 'none'; base-uri 'none'`
+# and `Cross-Origin-Resource-Policy: same-origin`. That file is where those headers live and
+# where they must be changed.
+#
+# **DO NOT add HSTS, CSP or CORP to the `/api/*` block at the bottom of this file to "fix"
+# the asymmetry.** Every such line would be INERT — see that block's own note, settled by a
+# real deploy. Inert lines that look live are the original trap: it is precisely how the two
+# spending routes went months appearing to carry a security policy that never applied to
+# them. A header that protects an `/api/*` response has to be written in `envelope.js`.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: microphone=(self), camera=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'
 
 # HTML — always revalidate so a redeploy's new asset references show up immediately.
 /

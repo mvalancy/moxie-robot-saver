@@ -129,6 +129,26 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   same pair; and `stats.scriptedFree` is a per-page counter, not telemetry — nothing reports how often the
   ears fail on the live site.
 
+- **Our own CSP blocked Cloudflare's injected analytics beacon — fixed 2026-09-04.** Pages **injects** its
+  Web Analytics beacon (`<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/…">`,
+  SRI + a real token) into every HTML response, and the `script-src 'self' 'unsafe-inline'` added the day
+  before refused it — so production logged a CSP violation on **every single page load**. Harmless to the
+  site, corrosive to the console: a permanent error drowns the next real one, and a quiet console is exactly
+  what found the `:8081` defect. `script-src` now names that one host. Turning the injection off in the Pages
+  project was rejected: it edits the owner's account settings rather than our code and silently drops
+  analytics they may want. **`connect-src` was checked, not assumed, and deliberately left at `'self'`:** the
+  beacon reports through `navigator.sendBeacon` to `send.to || (version === undefined ? absolute : null)` and
+  otherwise to the **relative** `/cdn-cgi/rum`, and the injected tag carries `"version":"2024.11.0"`, so the
+  report is same-origin — confirmed against the live page with the widened policy, which produced no
+  connect-src refusal. The trap for anyone revisiting it is that the report host is the **bare**
+  `cloudflareinsights.com`, not the `static.` one. `sim/test_csp.mjs` gained a block that keeps both halves
+  honest: the beacon host loads and runs, the bare sibling host is still refused, `script-src` names exactly
+  one off-origin host, and the same-origin `/cdn-cgi/rum` beacon is permitted while an off-origin one is not.
+  The same pass corrected the file's stale note that the `/api/*` security headers were an open follow-up —
+  they ship in code as `API_SECURITY_HEADERS` (`functions/api/_lib/envelope.js`, PR #115) — and wrote down
+  why the `/api/*` block in `_headers` must never grow them: it is **inert** (ledger row 27), and inert lines
+  that look live are the original trap.
+
 - **The hosted demo's per-IP windows were free to bypass over IPv6, and its duration cap was not one —
   fixed 2026-09-03.** Four holes in `functions/api/_lib/limits.js` and the three spending routes, all in
   the controls that protect the **self-hosted gateway the demo shares with the owner's video game**, so
