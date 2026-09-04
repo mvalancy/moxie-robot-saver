@@ -1,5 +1,5 @@
 {
- "generated": "docs-6677eb45b089",
+ "generated": "docs-5776ea3193c0",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -262,7 +262,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 59374,
+   "bytes": 61740,
    "mermaid": 1,
    "headings": [
     "Where this fits",
