@@ -237,7 +237,17 @@ Every response — success *or* failure — uses **one envelope**, so the client
 
 `reason` is one of: `null` · `rate_limited` · `at_capacity` · `budget_exhausted` · `upstream_down` ·
 `gateway_not_configured` · `timeout` · `bad_request` · `too_long` · `too_short` · `bad_ticket` ·
-`blocked` · `forbidden_origin`. Nothing else. Upstream error bodies and headers are **never** forwarded —
+`blocked` · `forbidden_origin` · `gateway_unreachable_or_gated`. Nothing else.
+
+> **`gateway_unreachable_or_gated` was added by P0-b and this line did not follow it** — found
+> 2026-09-04 by checking the vocabulary the code actually emits against the vocabulary this contract
+> closes. It is not a rogue value: [`sim/web/mode.js`](../../../sim/web/mode.js):51 names it "P0-b's
+> one addition to §3.2's set" and carries it in `REASONS`, so client and server already agreed and
+> only the contract dissented. Worth recording rather than silently editing, because "Nothing else"
+> is a promise to every client, and a closed set that the implementation has quietly outgrown is the
+> most expensive kind of stale documentation: a reader who trusts it writes an exhaustive switch and
+> ships a bug. `mode.js` maps unknown reasons to `null` (:234, :310), which is why this cost nothing
+> in practice — the belt held while the braces were wrong. Upstream error bodies and headers are **never** forwarded —
 they can echo model names, org identifiers and key prefixes.
 
 ---
