@@ -126,8 +126,10 @@ export async function onRequestPost(context) {
   // and its browser voice, and says so. Same reason, so `mode.js` degrades identically.
   if (!cfg.voice) return refusal(cfg, "gateway_not_configured", {});
 
-  // ---- 2. Admission: origin pin, per-IP windows, unit budget, capacity ceiling.
-  const slot = admit({ request, cfg, route: "speech" });
+  // ---- 2. Admission: origin pin, per-IP windows, unit budget, capacity ceiling — and,
+  // since 2026-09-03, a bounded wait behind that ceiling rather than an instant refusal
+  // (`_lib/limits.js::admit`). Awaited; the `finally` below hands the slot on.
+  const slot = await admit({ request, cfg, route: "speech" });
   if (!slot.ok) {
     return refusal(cfg, slot.reason, {
       retryAfterS: slot.retryAfterS,

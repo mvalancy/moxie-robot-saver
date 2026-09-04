@@ -349,15 +349,24 @@ function admissible(url) {
   // cannot be awaiting one. Both counter reads are synchronous map lookups.
   eq(health.onRequestGet.constructor.name, "Function",
      "health.js's handler must not be async — a probe that cannot await cannot call upstream");
+  // The other half of that pair, pinned here because `limits.admit()` BECAME async on
+  // 2026-09-03 when the admission queue landed. The probe and the spending routes share
+  // `_lib/limits.js`, and the temptation on the next change is to make health await
+  // something "just like the routes do". These two assertions together say: the queue may
+  // wait, the probe may not.
+  eq(limits.admit.constructor.name, "AsyncFunction",
+     "limits.admit IS async — it can wait for a concurrency slot (the bounded FIFO of §4.1)");
+  ok(!/\basync\b/.test(src.split("export function onRequestGet")[1] || "async"),
+     "…and no amount of that may leak into health.js's handler body");
 
   // Real in-flight, from the same counter admit() increments.
-  const a1 = limits.admit({ request: admissible(), cfg: lib.readConfig(FULL), route: "chat" });
+  const a1 = await limits.admit({ request: admissible(), cfg: lib.readConfig(FULL), route: "chat" });
   ok(a1.ok, "the test's own admission must be accepted (otherwise the load numbers mean nothing)");
   const busy1 = await probe(FULL);
   deep(busy1.body.load, { level: "ok", inflight: 1, capacity: 4 },
        "one turn in flight is REPORTED as one — the stub would still have said 0");
-  const a2 = limits.admit({ request: admissible(), cfg: lib.readConfig(FULL), route: "chat" });
-  const a3 = limits.admit({ request: admissible(), cfg: lib.readConfig(FULL), route: "chat" });
+  const a2 = await limits.admit({ request: admissible(), cfg: lib.readConfig(FULL), route: "chat" });
+  const a3 = await limits.admit({ request: admissible(), cfg: lib.readConfig(FULL), route: "chat" });
   ok(a2.ok && a3.ok, "three concurrent chat turns fit under the default ceiling of 4");
   const busy3 = await probe(FULL);
   deep(busy3.body.load, { level: "busy", inflight: 3, capacity: 4 },

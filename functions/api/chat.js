@@ -78,7 +78,13 @@ export async function onRequestPost(context) {
   //
   // NOTE the ordering against step 3: admission is charged BEFORE the body is parsed, so
   // a flood of malformed bodies is rate-limited like any other flood.
-  const slot = admit({ request, cfg, route: "chat" });
+  //
+  // AWAITED since 2026-09-03: at capacity `admit()` joins a bounded per-isolate FIFO for
+  // up to `DEMO_QUEUE_MAX_WAIT_MS` instead of refusing outright, so ten visitors colliding
+  // get a slightly slower turn rather than a scripted line. The `finally` below is what
+  // hands the slot to the next person in that queue, so it is load-bearing for everyone
+  // waiting and not just for this request.
+  const slot = await admit({ request, cfg, route: "chat" });
   if (!slot.ok) {
     return refusal(cfg, "chat", slot.reason, {
       retryAfterS: slot.retryAfterS,

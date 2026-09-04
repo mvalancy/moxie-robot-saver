@@ -120,7 +120,8 @@ A public demo that proxies a paid gateway is an open invoice unless it is bounde
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | 5 / 40 / 150 | per visitor IP |
 | `DEMO_SPEECH_PER_MIN` / `_HOUR` | 10 / 80 | |
 | `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | |
-| `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | concurrency, not token count, is what makes a demo feel dead under load |
+| `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | concurrency, not token count, is what makes a demo feel dead under load. **Do not raise these to serve more people** — the chat ceiling is matched to the upstream key's parallel-request limit, which protects whatever else shares your gateway; raising it moves the refusal upstream as a 429. Use the queue below instead. |
+| `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | 2500 / 8 | at the ceiling a request **waits** in a per-isolate FIFO instead of being refused, so ~10 visitors colliding get a slightly slower turn rather than a scripted line. Past the depth, or when the wait expires, it is the same `at_capacity` + `Retry-After: 15` as before. **Set either to `0` to switch the queue off** and get the old instant refusal back. |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | denominated in **request units** (chat 3, speech 2, transcribe 2), because no price sheet exists in this repo to convert to money honestly |
 | `DEMO_CHAT_TIMEOUT_MS` | 20000 | deliberately **below** the measured worst case: a fast honest degrade beats a slow success |
 | `DEMO_TICKET_TTL_S` | 60 | a speech ticket's life — long enough for a slow client, short enough that a leaked one is worthless |

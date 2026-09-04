@@ -1,5 +1,5 @@
 {
- "generated": "docs-fee9a1722c84",
+ "generated": "docs-f28e96257083",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 131822,
+   "bytes": 134072,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -543,7 +543,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 96502,
+   "bytes": 103143,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -1276,7 +1276,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploying the Moxie Sim to Cloudflare Pages",
    "section": "guides",
-   "bytes": 11535,
+   "bytes": 12193,
    "mermaid": 0,
    "headings": [
     "The one thing to understand first",
