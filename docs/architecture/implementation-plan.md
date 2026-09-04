@@ -189,6 +189,59 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   pinned); it now keys on canonical bytes. **Honest ceiling:** under `DEMO_TTS_FORMAT=pcm` there is no
   header and no magic number, so a short opaque binary error blob is still undecidable and would pass —
   `wav` is the default for that reason.
+- **Integration evidence (2026-09-03 21:10 PDT, seventh pass) — the stack is healthy, and the
+  readiness contract PR #103 opened was only half built.** Everything asked of the whole stack came
+  back green on a docker broker: `run_smoke.sh` ✅ (TTS audio 50 934 B @ 22050 Hz + the five scored
+  fields), `run_scenarios.sh` ✅ 2/2 × 4/4, `--telehealth` ✅ enable→start→speak→interrupt→end,
+  hermetic suite **4702 passed / 27 skipped / 4 xfailed creds-free** *and* **4319 / 69 in a venv with
+  no `openai`, `fastapi`, `httpx`, `jinja2` or `PyYAML`**, `python -m build` → wheel + sdist at
+  0.7.0. **Live, 2 gateway calls total:** `test_live_gateway_turn_e2e.py` 5/5 — the gateway brain
+  answered *"Hello there! What's a fun thing you did today?"* and the robot heard **152 296 B @
+  22050 Hz (3.45 s) at spectral flatness 2.013e-02**, `piper-amy`, four orders above the 1e-6 floor,
+  so not the placeholder tone. **Both halves of the creds gate verified**, which is the property that
+  matters: with the key the live tier runs, and with `MOXIE_LLM_API_KEY=` it reports **14 named
+  skips** while the hermetic anti-tone guard in the same file still runs — so the live assertion can
+  never be vacuous.
+  **THE GAP this found — the honest readiness line is not observable.** PR #103 made
+  `[runtime] broker connected` *true* (subscribe, then print) and `test_connect_readiness.py` fences
+  that order of effects. It is not *visible*: the print carries no `flush=True` while the refusal
+  branch three lines above it always has, and **every one of the five things that block on this line
+  reads it from a redirected stdout**, where Python is block-buffered. Four callers each carried
+  `PYTHONUNBUFFERED=1` to compensate — `helpers_stack.py` even says why in a comment — which is four
+  guards covering for one missing keyword, and the fifth caller (this pass's rewrite of
+  `run_smoke.sh`) forgot it and waited the full 40 s for a supervisor that had connected in 0.11 s.
+  Fixed at the source; the environment variable is now belt and the keyword braces.
+  **THE SECOND GAP — `run_smoke.sh` was the last SIL script still guessing at its boot.**
+  `run_scenarios.sh` was converted to polling; the script CI actually gates on kept `sleep 2` +
+  `sleep 3`. Measured here: the broker listens in **0.35 s** and the supervisor is ready **0.11 s**
+  later, so the smoke burned **4.7 s of pure waiting** every run (8.03 s → **3.31 s**) — and was
+  still blind the other way. Reproduced by making `mqtt/run.py` 8 s slow, which is a loaded runner:
+  the old script failed 20 s later as **`no config pushed within timeout`**, naming the config push,
+  the robot and the broker and never the boot that had not happened; the polled script passes the
+  same case. Both waits now live once in [`sim/readiness.sh`](../../sim/readiness.sh), sourced by
+  both scripts, because two copies of a wait are two waits.
+  **THE THIRD GAP, the worst of them — `--telehealth` drove another run's supervisor.**
+  That mode drives the robot over the supervisor's own status HTTP, and the script derived the port
+  from the broker port and called the bind *"best-effort either way"* — true when nothing read it,
+  never revisited when `--telehealth` made it load-bearing. On `MOXIE_SIL_PORT=1930` → `:8930`, held
+  by a stale supervisor from an unrelated run, the runtime logged
+  `status server failed: [Errno 98] Address already in use`, carried on, and the telehealth robot
+  **POSTed its commands into that stranger**, failing 20 s later as
+  `exception: Expecting value: line 1 column 1 (char 0)` — a JSON error blamed on the TeleHealth
+  wire. Both bind outcomes are printed by `_start_status_server`, so both are observable; the script
+  simply did not look. It now does, in ~1 s with the port named, and it honours an operator's
+  `MOXIE_STATUS_PORT` the way `run_scenarios.sh` always has. Same shape as the two above and as the
+  `MOXIE_DATA_DIR` leak the sixth pass closed: an unobserved precondition becoming a false
+  accusation against the subject under test — and here, one run reaching into another run's process.
+  Guarded generically in [`test_harness_readiness.py`](../../sim/tests/test_harness_readiness.py)
+  (8 tests, 5 of which fail on the pre-fix tree), deliberately **not** named `test_sil_*`: both CI
+  tiers select the hermetic suite with `-k "not test_sil"`, so a SIL-prefixed guard about the SIL
+  scripts would have been deselected everywhere it was meant to run.
+  **Honestly not verified:** no physical robot, as everywhere else in this document; the residual
+  paho window between `subscribe()` queuing a packet and the loop writing it is unmeasured (it is
+  microseconds against a robot's TCP+CONNECT round trip, and the fix does not claim to close it);
+  and the sixth pass's stray-`.tmp` finding is still recorded-not-fixed — I left it alone rather than
+  widen this slice.
 
 - **Integration evidence (2026-09-04, sixth pass) — the `week` soak finished, 12/12 bars, and
   P1's three fixes hold from outside.** P1's soak was killed at 59 of 60 minutes before it wrote a
@@ -882,8 +935,11 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > `/api/transcribe` → **200 in 2.93 s**, transcript *"The quick brown fox jumps over the lazy dog. What a fun
 > sentence."* — word-perfect, differing only in the closing punctuation. No key, gateway host, STT model id or
 > Tailscale address in the body or any header. **All three hosted routes are now proven on the public domain.**
-> That response also carried `load.inflight: 1` — the first live evidence that PR #104's counter wiring works,
-> where the old stub could only ever say `0`.
+> That response also carried `load.inflight: 1`, **which is NOT evidence for PR #104 and was briefly recorded
+> here as though it were.** `transcribe.js` takes its `load` from `admit()` in `_lib/limits.js`, which has
+> always reported the real in-flight count; the stub PR #104 replaced was in `health.js` alone. Production
+> serves from `main`, which at the time of this test did not carry #104 at all — so the number proves the
+> admission counter, not the health wiring. Corrected the same evening, before promotion.
 >
 > **What is still NOT covered:** no *human* has recorded through the hosted mic — this loop used synthesized
 > speech and a hand-built WAV, so it proves the route and the gateway, not `MediaRecorder` in a real browser on

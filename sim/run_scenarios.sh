@@ -9,8 +9,12 @@
 # than at the boot. The two conditions are observable, so they are waited *on*: a TCP
 # connect to the broker, and the supervisor's own `[runtime] broker connected` line. Same
 # pattern as `sim/tests/helpers_stack.py`, which is where a pytest gets it.
+#
+# The two waits themselves now live in `sim/readiness.sh`, sourced below, because
+# `run_smoke.sh` needed exactly the same pair and two copies of a wait are two waits.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. sim/readiness.sh
 PORT="${MOXIE_SIL_PORT:-1883}"
 SUP_LOG=/tmp/moxie-supervisor.log
 # ── bench hygiene: this run gets its OWN MOXIE_DATA_DIR ────────────────────────────────
@@ -32,28 +36,6 @@ cleanup(){ for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
            [ -n "${MOXIE_DATA_DIR_OWNED:-}" ] && rm -rf "$MOXIE_DATA_DIR"
            return 0; }
 trap cleanup EXIT
-
-# Wait until something is listening on 127.0.0.1:$1, or give up after $2 seconds.
-wait_for_port(){
-  local port="$1" deadline=$((SECONDS + ${2:-20}))
-  while [ $SECONDS -lt "$deadline" ]; do
-    if python3 -c "import socket,sys; s=socket.socket();
-sys.exit(0 if s.connect_ex(('127.0.0.1', $port)) == 0 else 1)" 2>/dev/null; then return 0; fi
-    sleep 0.2
-  done
-  echo "❌ nothing listening on 127.0.0.1:$port after ${2:-20}s"; return 1
-}
-
-# Wait for a line in the supervisor log — and fail fast if the process died instead.
-wait_for_log(){
-  local needle="$1" pid="$2" deadline=$((SECONDS + ${3:-30}))
-  while [ $SECONDS -lt "$deadline" ]; do
-    grep -qF "$needle" "$SUP_LOG" 2>/dev/null && return 0
-    kill -0 "$pid" 2>/dev/null || { echo "❌ supervisor exited during boot"; tail -20 "$SUP_LOG"; return 1; }
-    sleep 0.2
-  done
-  echo "❌ supervisor never logged '$needle' in ${3:-30}s"; tail -20 "$SUP_LOG"; return 1
-}
 
 if command -v mosquitto >/dev/null 2>&1; then
   sed "s/^listener 1883/listener $PORT/" sim/broker/ci-mosquitto.conf > /tmp/moxie-ci-mosq.conf
