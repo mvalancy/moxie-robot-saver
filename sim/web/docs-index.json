@@ -1,5 +1,5 @@
 {
- "generated": "docs-c58a747f40eb",
+ "generated": "docs-c5c4a05682a8",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -352,7 +352,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 154147,
+   "bytes": 153967,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",

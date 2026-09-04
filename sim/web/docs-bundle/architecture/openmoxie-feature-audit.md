@@ -599,7 +599,6 @@ identity gap. Those five are the live remainder of the scorecard.
 
 ### 3.2 The turn — brain, memory, expressiveness
 
-| Feature | OpenMoxie | Us today | Verdict |
 |---|---|---|---|
 | RemoteChat response | text + markup + `response_actions`; `result` is always `0` | full contract: `ResultCode` enum incl. **`ERROR_OFFLINE`** (robot falls back to its on-device brain), scored output (mood/dialog-act), `Action` passthrough — `moxie_sdk/wire.py`, `types.py` | **HAVE** |
 | LLM provider | upstream `ai_factory.py` — **14 lines, OpenAI only**, no `base_url`. Both forks fixed this independently (§2) | `chat.py::make_openai_chat(base_url, …)` — any OpenAI-compatible endpoint (LiteLLM, Ollama, vLLM, LM Studio), plus `Pacer` + `call_with_backoff` for 429/5xx, plus `WebhookApp` as a language-agnostic second brain | **HAVE** vs upstream; **parity** with Fork A, which also puts the `base_url` in the UI with a connection test |
@@ -615,7 +614,6 @@ identity gap. Those five are the live remainder of the scorecard.
 
 ### 3.3 Content & the session
 
-| Feature | OpenMoxie | Us today | Verdict |
 |---|---|---|---|
 | Content model | `SinglePromptChat` rows, editable in Django admin, multi-CID via `\|` | `content/module.py` dataclasses loaded from JSON files; `content_modules/starter.json` has **1 conversation + 1 global** | **ADOPT** (see below) |
 | **Content authoring UI** | dashboard list + Django admin + the `interact` browser harness | none — edit JSON by hand | **ADOPT** (M) |
@@ -631,7 +629,6 @@ identity gap. Those five are the live remainder of the scorecard.
 
 ### 3.4 Fleet, config, console
 
-| Feature | OpenMoxie | Us today | Verdict |
 |---|---|---|---|
 | Config model | **two-level deep-merge**: `HiveConfiguration.common_config/settings` (fleet) ⊕ `MoxieDevice.robot_config/settings` (per-robot) | one flat `build_robot_cloud_config()` + per-device `_config_overrides`; no fleet-wide layer | **ADOPT** (S) |
 | Config editing UI | robot page: name, pairing, nickname, schedule, volume + brightness sliders | console Settings form: volume, weekday bedtime, wake/touch toggles, validated by `sanitize_config_overrides` | **HAVE** (ours validates; theirs has brightness + schedule pick) |
@@ -647,7 +644,6 @@ identity gap. Those five are the live remainder of the scorecard.
 
 ### 3.5 Engineering & operations
 
-| Feature | OpenMoxie | Us today | Verdict |
 |---|---|---|---|
 | Storage | Django ORM + SQLite, 8 models, 16 migrations | `server/` = SQLite, 8 tables, no ORM. **`mqtt/` has no database at all** — memory + JSON files | **ADOPT** (M) — the robot cloud needs durable content/schedule/progress storage |
 | **Prebuilt images / one-file install** | multi-arch images on Docker Hub; documented install is *download `docker-compose.yml`, run two commands* | root `docker-compose.yml` (one stack, clone+build) **and** a self-contained `docker-compose.images.yml` that pulls multi-arch GHCR images the release workflow pushes on every `v*` tag — *download one file, run one command* | **HAVE** (published at v0.6.0) |
