@@ -58,7 +58,12 @@ A backend + Sim are built from these directly; each cites the study but reads on
   for a week in a house), and [`backlog/content-authoring.md`](backlog/content-authoring.md) (content
   authoring — the verb packs did not ship: where authoring lives, what a non-programmer may and may not
   write, the edit → hear it → keep it loop priced in gateway calls, and why an authored item is exactly
-  as untrusted as an imported one). One page there is the odd one out and deliberately so:
+  as untrusted as an imported one), and [`backlog/qr-launch-cards.md`](backlog/qr-launch-cards.md)
+  (printable launch cards — a `GO<launch:MOD>` card a child holds up to Moxie, re-scoped from the
+  audit's **S** to an **M** after the row's premise turned out to be a real mechanism pointed the wrong
+  way: arming the robot's *runtime* QR reader, routing the scanned value into a launch against a closed
+  allowlist, and only then the sheet a parent prints). One page there is the odd one out and
+  deliberately so:
   [`backlog/community-signals.md`](backlog/community-signals.md) — **the inbound half**, what owners
   holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how
   strong the evidence is rather than how good the feature sounds.
