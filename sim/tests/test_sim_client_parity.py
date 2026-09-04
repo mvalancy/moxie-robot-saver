@@ -256,3 +256,87 @@ def test_both_clients_decode_query_result_with_the_same_proto_field_table():
 
 def test_the_browser_sim_subscribes_to_the_answers_it_asks_for():
     assert 'client.subscribe("/devices/+/commands/query_result")' in BRIDGE
+
+
+# --------------------------------------------------------------------------- #
+# 4. …and the SIL robot's half of that same cloud→robot claim
+# --------------------------------------------------------------------------- #
+# Part 3 above proved the BROWSER SIM acts on `response_actions`. The other client did
+# not: `grep -c response_actions sim/virtual_moxie.py` returned 0 until 2026-09-03, so
+# criterion 4's "interchangeable clients" was false on this channel in the direction
+# nobody had checked — the SIL robot is the client every SIL test, the smoke, the
+# scenarios and the soak actually drive. These hold the two implementations together.
+ACTIONS_GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "goldens",
+                                   "cloud_to_robot_actions.json")
+with open(ACTIONS_GOLDEN_PATH) as _fh:
+    ACTIONS_GOLDEN = json.load(_fh)
+
+BRIDGE_TEST = open(os.path.join(REPO, "sim", "test_bridge.mjs"), encoding="utf-8").read()
+
+
+def _sil():
+    pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
+    import virtual_moxie
+    return virtual_moxie
+
+
+def test_the_sil_robot_acts_on_response_actions_at_all():
+    """The gap this slice closed, asserted the way its browser twin above is."""
+    src = open(os.path.join(REPO, "sim", "virtual_moxie.py"), encoding="utf-8").read()
+    assert "response_actions" in src
+    assert "response_action" in src, "the legacy singular must be read too"
+
+
+def test_all_three_action_vocabularies_are_the_same_list():
+    """`ActionType` (what the server can send), `bridge.js::ACTION_KINDS` (what the
+    browser implements) and `virtual_moxie.ACTION_KINDS` (what the SIL robot implements).
+    Two clients that implement different verbs are not interchangeable."""
+    from moxie_sdk.types import ActionType
+    at = BRIDGE.index("const ACTION_KINDS = [")
+    browser = set(re.findall(r'"([a-z_]+)"', _balanced_list(BRIDGE, at)))
+    assert browser == {a.value for a in ActionType} == set(_sil().ACTION_KINDS), (
+        sorted(browser), sorted(a.value for a in ActionType),
+        sorted(_sil().ACTION_KINDS))
+    assert set(ACTIONS_GOLDEN["action_kinds"]) == browser
+
+
+def test_both_clients_report_what_an_action_did_under_the_same_names():
+    """`bridge.js::actionStats()` and `VirtualMoxie.action_stats()` are the surface every
+    test reads. Same keys, or a test written against one client means something else
+    against the other."""
+    at = BRIDGE.index("actionStats: function ()")
+    browser = set(_keys(_balanced(BRIDGE, BRIDGE.index("{", BRIDGE.index("return", at)))))
+    vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_keys", verbose=False)
+    assert browser == set(vm.action_stats()) == set(ACTIONS_GOLDEN["stat_keys"]), (
+        sorted(browser), sorted(vm.action_stats()))
+
+
+def test_the_two_clients_are_driven_over_the_same_action_script():
+    """The golden's script is the one `sim/test_bridge.mjs` emits at the browser SIM, so
+    `expected_state` really is a claim about both clients and not two separate stories.
+    Pinned by event_id, which is what the browser test names each response by."""
+    for response in ACTIONS_GOLDEN["script"]:
+        eid = response["event_id"]
+        assert f'"{eid}"' in BRIDGE_TEST, (
+            f"golden response {eid} is not in {ACTIONS_GOLDEN['peer_test']}; the two "
+            "clients are no longer being driven over the same script")
+
+
+@pytest.mark.parametrize("client,keys", sorted(ACTIONS_GOLDEN["client_only_keys"].items()))
+def test_the_documented_action_deltas_are_the_only_ones(client, keys):
+    """The allowed divergence, named — the browser stamps a wall-clock `t` it renders in
+    the panel, and the SIL robot keeps `function_args` (the contract's field, which the
+    browser does not read). Everything else about an applied action must match."""
+    shared = set(ACTIONS_GOLDEN["applied_keys"])
+    extra = {k.split("[].", 1)[1] for k in keys}
+    assert not (shared & extra), (client, sorted(shared & extra))
+    if client.endswith("virtual_moxie.py"):
+        vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_d", verbose=False)
+        vm._on_chat_reply({"command": "remote_chat", "event_id": "e",
+                           "output": {"text": ""},
+                           "response_actions": [{"output_type": "GLOBAL",
+                                                 "action": "launch", "module_id": "DM"}]})
+        assert set(vm.action_stats()["applied"][0]) == shared | extra
+    else:
+        at = BRIDGE.index("actionState.applied.push({")
+        assert set(_keys(_balanced(BRIDGE, BRIDGE.index("{", at)))) == shared | extra
