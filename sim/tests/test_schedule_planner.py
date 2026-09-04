@@ -244,6 +244,105 @@ def test_a_request_for_another_day_is_not_scheduled_today():
     assert reqs[0]["due_today"] is False and reqs[0]["slot"] is None
 
 
+def test_the_requested_module_is_held_for_its_slot_not_eaten_by_an_earlier_one():
+    """The scored fill must not spend the parent's module before its own slot arrives.
+
+    The isolated factor is the reservation itself. STORY is the only unseen module in this
+    catalog — the other three have been played nine times each, so `coverage` sinks them —
+    which means the free choice would take STORY first on score alone. It was asked for two
+    slots out. Without the hold, slot 0 takes it, slot 2 finds it gone, and the pin
+    evaporates *silently*: a day carrying the requested activity at the wrong time whose
+    audit trail never mentions that a parent asked for anything."""
+    now = datetime.datetime(2026, 9, 2, 15, 0)
+    catalog = [{"module_id": "STORY", "category": "READING"},
+               {"module_id": "AUDMED", "category": "REGULATION"},
+               {"module_id": "JUKEBOX", "category": "MOVEMENT"},
+               {"module_id": "JOKE", "category": "FUN_TIDBIT"}]
+    played = [_mbh(m, when=now - datetime.timedelta(days=i + 1))
+              for m in ("AUDMED", "JUKEBOX", "JOKE") for i in range(9)]
+    cfg = {"schedule_preferences": {"parent_requests": [
+        {"module_id": "STORY",
+         "scheduled_at": int((now + datetime.timedelta(
+             minutes=2 * SLOT_MINUTES)).timestamp())}]}}
+    _, expl, inputs = plan("d_hold", now=now, effective_config=cfg, catalog=catalog,
+                           mentor_behaviors=played,
+                           template=_gen(generate={"module_count": 3}))
+    assert inputs["parent_requests"][0]["slot"] == 2, inputs["parent_requests"]
+    pinned = [e for e in expl if "parent_request" in e["reason_codes"]]
+    assert [e["module_id"] for e in pinned] == ["STORY"], [
+        (e["module_id"], e["at"], e["reason_codes"]) for e in expl]
+    assert pinned[0]["at"] == "15:20", pinned      # the slot they asked for, not slot 0
+
+
+def test_a_held_module_is_released_when_there_is_nothing_else_left_to_plan():
+    """The hold is a preference between candidates, never a reason to ship a shorter day.
+
+    With one module in the catalog and a request two slots out there is no way to both
+    honour the pin and fill slot 0; the day still gets planned rather than truncated."""
+    now = datetime.datetime(2026, 9, 2, 15, 0)
+    cfg = {"schedule_preferences": {"parent_requests": [
+        {"module_id": "STORY",
+         "scheduled_at": int((now + datetime.timedelta(
+             minutes=2 * SLOT_MINUTES)).timestamp())}]}}
+    sched, expl, _ = plan("d_release", now=now, effective_config=cfg,
+                          catalog=[{"module_id": "STORY", "category": "READING"}],
+                          template=_gen(generate={"module_count": 3}))
+    assert _ids(sched) == ["STORY"] and validate_schedule(sched) == []
+    assert [e["at"] for e in expl] == ["15:00"]
+
+
+def test_a_parent_request_survives_every_hour_the_planner_could_run_at():
+    """The regression this guard exists to hold shut. Which module tops the board in the
+    first scored slot is decided by `time_of_day` and settled by the `(device_id, day,
+    module_id)` tiebreak, so before the hold a parent request could be eaten by an earlier
+    slot in the *afternoon* and survive the morning — green on a developer's machine in
+    PDT, red on a CI runner sitting in UTC, on three unrelated PRs at once.
+
+    So sweep it rather than claim it: every hour of a fixed day, across several device ids
+    (the tiebreak is per device, and it is what decides the race). The clock is injected,
+    so the sweep means the same thing at every hour it is itself run at.
+
+    The scenario is `test_schedule_sil_e2e`'s: FTUE finished, so the pinned spine is one
+    entry and the request resolves to a *scored* slot rather than slot 0; bedtime an hour
+    out; one activity asked for two slots ahead. Both real branches are covered from fixed
+    instants — in the last 20 minutes of a day that request belongs to tomorrow, and the
+    contract there is that it is NOT pinned into today."""
+    day = datetime.datetime(2026, 9, 2)
+    seeded = ([_mbh("WELCOME")] + [_mbh("TNT", content_id=f"tnt{i}") for i in range(9)]
+              + [_mbh("SYSTEMSCHECK") for _ in range(4)])
+    strict = crossed = 0
+    for device_id in ("d_sil-schedule", "d_req", "d1", "d2"):
+        for hour in range(24):
+            for minute in (0, 17, 30, 43, 51):
+                now = day.replace(hour=hour, minute=minute)
+                start = now + datetime.timedelta(minutes=60)
+                cfg = {"weekday_bedtime": [start.strftime("%H:%M"),
+                                           (start + datetime.timedelta(
+                                               hours=8)).strftime("%H:%M")],
+                       "schedule_preferences": {"parent_requests": [
+                           {"module_id": "STORYTELLING",
+                            "scheduled_at": int((now + datetime.timedelta(
+                                minutes=2 * SLOT_MINUTES)).timestamp())}]}}
+                _, expl, inputs = plan(device_id, now=now, effective_config=cfg,
+                                       mentor_behaviors=seeded)
+                req = inputs["parent_requests"][0]
+                pinned = [e for e in expl if "parent_request" in e["reason_codes"]]
+                where = (device_id, now.isoformat(), inputs["bucket"], req,
+                         [(e["module_id"], e["at"], e["reason_codes"]) for e in expl])
+                if (now + datetime.timedelta(
+                        minutes=2 * SLOT_MINUTES)).date() != now.date():
+                    crossed += 1
+                    assert req["due_today"] is False and req["slot"] is None, where
+                    assert pinned == [], where
+                    assert expl and all(e["line"] for e in expl), where
+                    continue
+                strict += 1
+                assert req["due_today"] is True and req["slot"] is not None, where
+                assert [e["module_id"] for e in pinned] == ["STORYTELLING"], where
+                assert pinned[0]["at"] == req["at"], where
+    assert (strict, crossed) == (472, 8), (strict, crossed)   # both branches, really run
+
+
 def test_two_requests_never_collide_on_one_slot():
     now = datetime.datetime(2026, 9, 2, 15, 0)
     when = int(datetime.datetime(2026, 9, 2, 15, 2).timestamp())
