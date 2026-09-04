@@ -217,9 +217,13 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   `content_app._reply_from_volley` plumbing `volley.execution_actions` into an `Action` at all. The wire
   was necessary, not sufficient. **Still honestly missing:** no physical robot has ever been sent one of
   these, so nothing proves a real robot's JSON decoder accepts `function_id` by that spelling
-  (qr-launch-cards.md §7 Q1/Q3), and `sim/web/bridge.js::applyAction` reads only `entry.function` — it
-  ignores `function_id` and never reads args at all, so the **browser SIM still shows an armed `execute`
-  as `(unnamed)`**. That is the other client's half of criterion 4 and is untouched here.
+  (qr-launch-cards.md §7 Q1/Q3). The other client's half of criterion 4 — `sim/web/bridge.js` reading
+  `entry.function` only, so the browser showed an armed `execute` as `(unnamed)` — was **closed
+  2026-09-04**: `applyAction` reads all four spellings in the SIL robot's own precedence order and
+  records the decoded `args`, and `actionStats()` (a second drop site, found by the new suite) stopped
+  projecting them away. `sim/test_action_payload.mjs` drives the real bridge over the golden script the
+  SIL robot is driven over and carries a negative control; §5 of `test_sim_client_parity.py` pins the
+  payload the way §4 pinned the vocabulary.
 
 - **The landing page piled up draw work in a hidden tab until it was unusable — fixed 2026-09-04.** Owner
   report: *"leave it running in a browser for hours and it gets really sluggish... after a day it's filled
