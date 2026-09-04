@@ -611,14 +611,21 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
 
   // The concurrency ceiling. `admit()` is the observable seam: hold four slots and the
   // fifth request is `at_capacity` with §7's numbers on it.
+  //
+  // `DEMO_QUEUE_MAX_DEPTH: "0"` here on purpose. Since 2026-09-03 the default behaviour at
+  // the ceiling is to WAIT (block 13 proves that); zero is the documented escape hatch
+  // that restores the instant refusal, and pinning this block to it keeps it a test of the
+  // CEILING rather than of the queue, and keeps it instantaneous.
   fresh();
+  const NOQ = { ...FULL, DEMO_QUEUE_MAX_DEPTH: "0" };
+  const cfgNoQ = wire2.readConfig(NOQ);
   const held = [];
   for (let i = 0; i < 4; i++) {
-    const slot = limits.admit({ request: req("/api/chat", { text: "x" }), cfg: cfgFull, route: "chat" });
+    const slot = await limits.admit({ request: req("/api/chat", { text: "x" }), cfg: cfgNoQ, route: "chat" });
     eq(slot.ok, true, `slot ${i + 1} of DEMO_MAX_CONCURRENT_CHAT=4 is granted`);
     held.push(slot);
   }
-  const full = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "198.51.100.8" });
+  const full = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "198.51.100.8" }, NOQ);
   eq(full.res.status, 503, "the 5th concurrent chat is 503");
   eq(full.body.reason, "at_capacity", "…with reason at_capacity");
   eq(full.res.headers.get("Retry-After"), "15", "…and Retry-After: 15 (§4.5)");
@@ -1397,6 +1404,272 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   // …and the specific one that was actually absent in production-shaped traffic.
   ok(/["']Referrer-Policy["']\s*:/i.test(code),
      "envelope.js must set Referrer-Policy itself — the preview proved _headers will not");
+}
+
+/* =========================================================================== *
+ * 13. THE ADMISSION QUEUE — a bounded FIFO behind the concurrency ceiling
+ * =========================================================================== *
+ * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 (the two queue variables), §4.5
+ * (`at_capacity` keeps its 503 and its `Retry-After: 15`), §4.6 (per-isolate, and what
+ * that costs), §7 (the capacity signal is unchanged).
+ *
+ * THE THING BEING PROVED. Before 2026-09-03, `DEMO_MAX_CONCURRENT_CHAT` refused the
+ * instant it was reached, so ten visitors colliding for one second got scripted lines.
+ * `admit()` now waits, briefly and in arrival order, behind that ceiling — WITHOUT raising
+ * it, because the ceiling is matched to an upstream key shared with a neighbour service.
+ *
+ * Every assertion below is on a RECORDED fact — `__state().waiting`, `__state().stats.queue`,
+ * an envelope, a counter — rather than on how long something happened to take, with one
+ * deliberate exception (the wait-expired test asserts that time genuinely passed, because
+ * "it waited" is the whole claim). Waits are configured in the tens of milliseconds so the
+ * block runs in well under a second.
+ */
+{
+  /** The queue's own deployment: a short wait, a small depth, and per-IP windows wide
+   *  enough that the WINDOWS are never what refuses us — except in the one test where
+   *  that is the point. */
+  const QENV = {
+    ...FULL,
+    DEMO_QUEUE_MAX_WAIT_MS: "300",
+    DEMO_QUEUE_MAX_DEPTH: "4",
+    DEMO_CHAT_PER_MIN: "100",
+    DEMO_CHAT_PER_HOUR: "1000",
+    DEMO_CHAT_PER_DAY: "1000",
+  };
+  const qcfg = wire2.readConfig(QENV);
+  const admitChat = (cfg, ip) =>
+    limits.admit({ request: req("/api/chat", { text: "x" }, { "CF-Connecting-IP": ip }), cfg, route: "chat" });
+  /** Fill the ceiling from ONE ip, so a queued visitor's own window is untouched. */
+  const fillCeiling = async (cfg) => {
+    const held = [];
+    for (let i = 0; i < 4; i++) held.push(await admitChat(cfg, "203.0.113.4"));
+    return held;
+  };
+
+  // ---- The defaults are the ones env.js reasons about, not accidents ------- //
+  const dflt = wire2.readConfig(FULL);
+  eq(dflt.queueMaxWaitMs, 2500, "DEMO_QUEUE_MAX_WAIT_MS defaults to 2500 ms — two turn-times at the ceiling");
+  eq(dflt.queueMaxDepth, 8, "DEMO_QUEUE_MAX_DEPTH defaults to 8 — what 2500 ms of waiting can actually drain");
+  ok(dflt.queueMaxWaitMs < dflt.chatTimeoutMs,
+     "the maximum wait must stay well under DEMO_CHAT_TIMEOUT_MS, or a queued turn out-waits its own call");
+  eq(wire2.readConfig({ ...FULL, DEMO_QUEUE_MAX_WAIT_MS: "999999" }).queueMaxWaitMs, 2500,
+     "an out-of-range wait falls back to the default (a bad number must never become a bigger cap)");
+  deep(Object.keys(wire2.publicLimits(dflt)), [...wire2.PUBLIC_LIMIT_KEYS],
+       "the queue is server-side only: neither variable joins publicLimits");
+
+  // ---- 13a. FIFO under contention, and no overtaking ---------------------- //
+  fresh();
+  const hold = await fillCeiling(qcfg);
+  eq(limits.__state().inflight.chat, 4, "the ceiling is full");
+
+  const order = [];
+  const track = (tag) =>
+    admitChat(qcfg, "198.51.100." + tag.charCodeAt(0)).then((r) => {
+      order.push(tag + ":" + (r.ok ? "granted" : r.reason));
+      return r;
+    });
+  const wA = track("A"), wB = track("B"), wC = track("C");
+  eq(limits.__state().waiting.chat, 3, "three colliding requests WAIT — they are not refused");
+  eq(limits.__state().inflight.chat, 4, "…and waiting is not in flight: the ceiling is still 4");
+  eq(limits.__state().stats.queue.joined, 3, "…recorded as three joins");
+  eq(upstreamCalls(), 0, "…and a queued request has called nothing yet");
+
+  // A LATE ARRIVAL MUST NOT OVERTAKE. `release()` hands the slot straight to A rather than
+  // freeing it, so D — which asks in the very next statement — finds no free slot and
+  // joins the BACK of the queue. This is the assertion that would catch a queue that is
+  // fair only by scheduling luck.
+  hold[0].release();
+  const wD = track("D");
+  eq(limits.__state().waiting.chat, 3, "a request arriving the instant a slot frees queues BEHIND B and C");
+  eq(limits.__state().inflight.chat, 4, "…because the released slot was handed over, never freed");
+
+  hold[1].release();
+  hold[2].release();
+  hold[3].release();
+  const rescued = await Promise.all([wA, wB, wC, wD]);
+  deep(order, ["A:granted", "B:granted", "C:granted", "D:granted"],
+       "FIFO: the longest-waiting request takes each freed slot, in arrival order");
+  eq(limits.__state().stats.queue.granted, 4, "…four hand-overs recorded");
+  eq(limits.__state().inflight.chat, 4, "the four granted requests hold the four slots");
+  for (const r of rescued) r.release();
+  eq(limits.__state().inflight.chat, 0, "…and every one of them comes back");
+  eq(limits.__state().waiting.chat, 0, "the FIFO is empty and carries no tombstones");
+
+  // ---- 13b. The depth cap refuses IMMEDIATELY ----------------------------- //
+  // A queue with no depth cap is just a slower way to fall over. Past the cap the answer
+  // is the same `at_capacity` this route has always given — and it must arrive at once,
+  // not after a wait, which is why this is raced against a timer.
+  fresh();
+  const DEPTH2 = { ...QENV, DEMO_QUEUE_MAX_DEPTH: "2", DEMO_QUEUE_MAX_WAIT_MS: "5000" };
+  const cfg2 = wire2.readConfig(DEPTH2);
+  const hold2 = await fillCeiling(cfg2);
+  const q1 = admitChat(cfg2, "198.51.100.11"), q2 = admitChat(cfg2, "198.51.100.12");
+  eq(limits.__state().waiting.chat, 2, "the queue is at its depth cap of 2");
+  const raced = await Promise.race([
+    admitChat(cfg2, "198.51.100.13"),
+    new Promise((r) => setTimeout(() => r("still-waiting"), 100)),
+  ]);
+  ok(raced !== "still-waiting", "past DEMO_QUEUE_MAX_DEPTH the refusal is IMMEDIATE — the 3rd waiter never waits");
+  eq(raced.reason, "at_capacity", "…and it is the existing at_capacity reason, not a new one");
+  eq(limits.__state().stats.queue.refusedFull, 1, "…recorded as a depth-cap refusal");
+  eq(limits.__state().stats.queue.joined, 2, "…and it never joined the queue");
+  eq(upstreamCalls(), 0, "a depth-capped refusal makes ZERO upstream calls");
+  hold2[0].release(); hold2[1].release();
+  const drained = await Promise.all([q1, q2]);
+  ok(drained[0].ok && drained[1].ok, "the two that DID fit are served");
+  for (const r of drained) r.release();
+  hold2[2].release(); hold2[3].release();
+
+  // ---- 13c. Switching the queue off restores the pre-2026-09-03 behaviour -- //
+  for (const off of [{ DEMO_QUEUE_MAX_DEPTH: "0" }, { DEMO_QUEUE_MAX_WAIT_MS: "0" }]) {
+    fresh();
+    const cfgOff = wire2.readConfig({ ...QENV, ...off });
+    const heldOff = await fillCeiling(cfgOff);
+    const r = await Promise.race([
+      admitChat(cfgOff, "198.51.100.14"),
+      new Promise((x) => setTimeout(() => x("still-waiting"), 100)),
+    ]);
+    ok(r !== "still-waiting" && r.reason === "at_capacity",
+       `${Object.keys(off)[0]}=0 is the escape hatch: refuse instantly, exactly as before the queue`);
+    eq(limits.__state().stats.queue.joined, 0, "…nothing was ever queued");
+    for (const h of heldOff) h.release();
+  }
+
+  // ---- 13d. The wait expires, through the real route ---------------------- //
+  fresh();
+  const SHORT = { ...QENV, DEMO_QUEUE_MAX_WAIT_MS: "60" };
+  const cfgShort = wire2.readConfig(SHORT);
+  const hold3 = await fillCeiling(cfgShort);
+  // "It waited" is asserted by RACING it, not by reading the wall clock: a duration
+  // measured off the wall clock is a flaky assertion on a loaded runner *and* the thing
+  // `sim/tests/test_clock_dependence.py` exists to keep out of this tree. A request that
+  // is still unanswered at 20 ms of a 60 ms budget cannot have been refused on the spot.
+  const pending = call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "198.51.100.20" }, SHORT);
+  const atTwenty = await Promise.race([
+    pending.then(() => "answered"),
+    new Promise((r) => setTimeout(() => r("still-waiting"), 20)),
+  ]);
+  eq(atTwenty, "still-waiting", "at the ceiling the request WAITS instead of being refused on the spot");
+  eq(limits.__state().waiting.chat, 1, "…and is visibly in the FIFO while it does");
+  const timedOut = await pending;
+  eq(timedOut.res.status, 503, "a wait that expires is still a 503");
+  eq(timedOut.body.reason, "at_capacity", "…with the EXISTING at_capacity reason (§4.5, unchanged)");
+  eq(timedOut.res.headers.get("Retry-After"), "15",
+     "…and §4.5's Retry-After: 15 survives the queue — a saturated ceiling is not a 60 ms problem");
+  eq(timedOut.body.load.level, "full", "…and §7's `full` level is still what the page is told");
+  eq(upstreamCalls(), 0, "a queued-then-expired turn makes ZERO upstream calls");
+  eq(limits.__state().stats.queue.expired, 1, "…recorded as an expiry, not a depth refusal");
+  eq(limits.__state().waiting.chat, 0, "…and the expired waiter removed itself from the FIFO");
+  for (const h of hold3) h.release();
+  eq(limits.__state().inflight.chat, 0, "no slot leaked by the expiry");
+
+  // ---- 13e. THE CHARGE/REFUND DECISION ------------------------------------ //
+  // `admit()` charges the per-IP window and the unit budget BEFORE the concurrency slot,
+  // and that ordering is deliberate (see the file header). Once a request can WAIT and
+  // then be refused, that ordering makes a timed-out visitor pay a rate-limit unit and a
+  // budget unit for a turn they never received — at `chat_per_min: 5`, two timeouts burn
+  // 40 % of their minute on nothing. The fix chosen was a REFUND rather than reordering,
+  // and `_lib/limits.js::refundCharges` carries the argument. This is that decision, tested.
+  fresh();
+  const cfgRef = wire2.readConfig(SHORT);
+  const holdRef = await fillCeiling(cfgRef);
+  const budgetBefore = { ...limits.__state().budget };
+  const stranded = await admitChat(cfgRef, "198.51.100.30");
+  eq(stranded.ok, false, "a request that waits out the clock is refused");
+  deep(limits.__state().budget, budgetBefore,
+       "THE UNIT BUDGET IS REFUNDED: a timed-out waiter must not spend units on a turn it never got");
+  eq(stranded.rateLimit.remaining, cfgRef.chatPerMin,
+     "…and its per-IP window is refunded too, so the X-RateLimit headers it is sent are TRUE after the refund");
+  for (const h of holdRef) h.release();
+
+  // The same thing where a visitor can actually feel it: five turns a minute means five
+  // turns a minute, even when one of them was queued and refused. Without the refund the
+  // fifth of these would be `rate_limited`.
+  fresh();
+  const FIVE = { ...FULL, DEMO_QUEUE_MAX_WAIT_MS: "40", DEMO_QUEUE_MAX_DEPTH: "4" };  // chat_per_min = 5
+  const cfgFive = wire2.readConfig(FIVE);
+  const holdFive = await fillCeiling(cfgFive);
+  const denied = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "198.51.100.40" }, FIVE);
+  eq(denied.body.reason, "at_capacity", "the visitor waited and was refused");
+  for (const h of holdFive) h.release();
+  for (let i = 1; i <= 5; i++) {
+    const turn = await call(chat, "/api/chat", { text: "hi" }, { "CF-Connecting-IP": "198.51.100.40" }, FIVE);
+    eq(turn.res.status, 200, `…and still has all ${cfgFive.chatPerMin} of their minute: turn ${i} is served`);
+  }
+
+  // ---- 13f. …AND THE ORDERING IT PRESERVES -------------------------------- //
+  // The rejected alternative was to move the wait BEFORE the charge. This is why it was
+  // rejected, made executable: a request that today is refused for free must still be
+  // refused for free, and must never occupy a queue slot it has not earned. Under the
+  // reordering, this rate-limited request would sit in the FIFO for the full wait,
+  // displacing a legitimate visitor.
+  fresh();
+  const cfgRl = wire2.readConfig({ ...SHORT, DEMO_CHAT_PER_MIN: "3" });
+  const FLOOD_IP = "198.51.100.50";
+  // Spend this IP's whole minute while there is still capacity, so these are ordinary
+  // charged admissions and not queued ones.
+  for (let i = 0; i < cfgRl.chatPerMin; i++) {
+    const s = await admitChat(cfgRl, FLOOD_IP);
+    ok(s.ok, `the flooding IP's turn ${i + 1} of ${cfgRl.chatPerMin} is served normally`);
+    s.release();
+  }
+  const holdRl = await fillCeiling(cfgRl);
+  const overWindow = await Promise.race([
+    admitChat(cfgRl, FLOOD_IP),
+    new Promise((r) => setTimeout(() => r("still-waiting"), 100)),
+  ]);
+  ok(overWindow !== "still-waiting", "an over-window request is refused INSTANTLY even at the ceiling");
+  eq(overWindow.reason, "rate_limited",
+     "the per-IP window still refuses FIRST — a rate-limited request never reaches the queue");
+  eq(limits.__state().waiting.chat, 0, "…and never occupies a queue slot it has not earned");
+  eq(limits.__state().stats.queue.joined, 0, "…nothing was queued at all on this path");
+  for (const h of holdRl) h.release();
+
+  // ---- 13g. A THROWN path hands its slot on, and leaks nothing ------------ //
+  // `chat.js`:171, `speech.js`:202 and `transcribe.js`:179 all put `release()` in a
+  // `finally`. With a queue behind the ceiling that `finally` is no longer only about this
+  // request's tidiness — it is what the next person in the queue is waiting for.
+  fresh();
+  const holdThrow = await fillCeiling(qcfg);
+  const waitingOnThrow = admitChat(qcfg, "198.51.100.60");
+  eq(limits.__state().waiting.chat, 1, "someone is waiting behind the four in flight");
+  let threw = false;
+  try {
+    try {
+      throw new Error("upstream blew up mid-turn");
+    } finally {
+      holdThrow[0].release(); // exactly the shape of every route's `finally`
+    }
+  } catch {
+    threw = true;
+  }
+  ok(threw, "the modelled route really did throw");
+  const handedOn = await waitingOnThrow;
+  eq(handedOn.ok, true, "a slot released from a THROWN path is HANDED to the longest-waiting request");
+  handedOn.release();
+  holdThrow[1].release(); holdThrow[2].release(); holdThrow[3].release();
+  eq(limits.__state().inflight.chat, 0, "…and nothing is leaked: every slot is back");
+
+  // The route-level equivalent, on the failure the stub can actually produce: an upstream
+  // timeout, with someone queued behind it.
+  fresh();
+  plan = { chat: { throw: "TimeoutError" } };
+  const holdT = [];
+  for (let i = 0; i < 3; i++) holdT.push(await admitChat(qcfg, "203.0.113.4"));
+  const routeP = chat.onRequestPost({
+    request: req("/api/chat", { text: "boom" }, { "CF-Connecting-IP": "198.51.100.70" }), env: QENV });
+  eq(limits.__state().inflight.chat, 4, "the failing turn holds the 4th slot");
+  const behind = admitChat(qcfg, "198.51.100.71");
+  eq(limits.__state().waiting.chat, 1, "…and a visitor is queued behind it");
+  const failed = await routeP;
+  await assertClean(failed, "/api/chat a failing turn with someone queued behind it");
+  eq(failed.status, 504, "the failing turn answers 504 timeout");
+  const nextUp = await behind;
+  eq(nextUp.ok, true, "…and its slot goes straight to the queued visitor");
+  nextUp.release();
+  for (const h of holdT) h.release();
+  eq(limits.__state().inflight.chat, 0, "no slot survives the failure");
+  eq(limits.__state().waiting.chat, 0, "and no waiter is stranded");
 }
 
 /* --------------------------------------------------------------------------- */

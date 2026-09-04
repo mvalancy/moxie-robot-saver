@@ -48,6 +48,8 @@ export const DEFAULTS = Object.freeze({
   DEMO_STT_PER_HOUR: 60,
   DEMO_MAX_CONCURRENT_CHAT: 4,
   DEMO_MAX_CONCURRENT_SPEECH: 8,
+  DEMO_QUEUE_MAX_WAIT_MS: 2500,
+  DEMO_QUEUE_MAX_DEPTH: 8,
   DEMO_UNIT_BUDGET_HOUR: 600,
   DEMO_UNIT_BUDGET_DAY: 4000,
   DEMO_CHAT_TIMEOUT_MS: 20000,
@@ -182,6 +184,12 @@ export const PUBLIC_LIMIT_KEYS = Object.freeze([
   "max_record_ms",
   "max_audio_bytes",
   "min_audio_bytes",
+  // NOT here on purpose: `DEMO_QUEUE_MAX_WAIT_MS` / `DEMO_QUEUE_MAX_DEPTH`. §4.2's rule is
+  // that the browser is told a cap only when the browser has to OBEY it — the way `mic.js`
+  // must obey `max_record_ms`. The queue is entirely server-side and entirely invisible: a
+  // waiting visitor sees one slightly slower turn, and a refused one gets the same
+  // `at_capacity` + `Retry-After` envelope §4.5 already specifies and `mode.js` already
+  // renders. Publishing the numbers would add a public surface with nothing to do.
 ]);
 
 /** The built-in persona. Committed in the open on purpose: it is not a secret, and a
@@ -329,6 +337,36 @@ export function readConfig(env) {
     sttPerHour: int(e, "DEMO_STT_PER_HOUR", 1, 1000000, notes),
     maxConcurrentChat: int(e, "DEMO_MAX_CONCURRENT_CHAT", 1, 10000, notes),
     maxConcurrentSpeech: int(e, "DEMO_MAX_CONCURRENT_SPEECH", 1, 10000, notes),
+    // ---- The admission queue that sits BEHIND those ceilings (`_lib/limits.js::admit`).
+    //
+    // WHY THESE EXIST RATHER THAN A BIGGER CEILING. The owner asked for "a few users able
+    // to actually use the sim live (10 users or so), queued if we are at our limit". The
+    // obvious move — raise `DEMO_MAX_CONCURRENT_CHAT` — is the wrong one: the ceiling is
+    // matched to the upstream key's `max_parallel_requests`, which exists to protect
+    // another service sharing the same self-hosted gateway. Raising it here would not
+    // create capacity, it would only move the refusal upstream and turn it into a 429 that
+    // starves the neighbour. At ~1.2 s a turn, four slots already serve ~3 turns/second —
+    // far more than ten *conversational* visitors need. What actually breaks today is a
+    // momentary collision, and a short bounded wait absorbs exactly that.
+    //
+    // `DEMO_QUEUE_MAX_WAIT_MS` — 2500 ms. Two turn-times at the ceiling, so a burst of
+    //   ~8 collided requests drains inside it. It is deliberately SMALL: it is added to a
+    //   turn a visitor is already waiting on, so 2.5 s + ~1.2 s stays under four seconds
+    //   and far under `DEMO_CHAT_TIMEOUT_MS` (20 000). Tens of seconds would be a hung
+    //   page, which is a worse failure than an honest refusal. Clamped at 10 000 for the
+    //   same reason: no configuration may make the wait rival the upstream timeout.
+    // `DEMO_QUEUE_MAX_DEPTH` — 8. **A queue with no depth cap is just a slower way to fall
+    //   over**: past the depth, the request is refused immediately, exactly as today. 8 is
+    //   the arithmetic of the wait, not a round number — 4 slots x 2500 ms / ~1200 ms per
+    //   turn ≈ 8 requests can actually be served inside the maximum wait, so a ninth
+    //   waiter would be promised a slot the queue cannot deliver. 8 waiting plus 4 in
+    //   flight is 12 visitors mid-turn, which is the "10 users or so" that was asked for.
+    //
+    // EITHER SET TO 0 DISABLES THE QUEUE and restores the pre-2026-09-03 behaviour: at
+    // capacity, refuse instantly. That is the escape hatch a deployment reaches for if a
+    // wait ever proves worse than a refusal, and it needs no code change.
+    queueMaxWaitMs: int(e, "DEMO_QUEUE_MAX_WAIT_MS", 0, 10000, notes),
+    queueMaxDepth: int(e, "DEMO_QUEUE_MAX_DEPTH", 0, 1000, notes),
     unitBudgetHour: int(e, "DEMO_UNIT_BUDGET_HOUR", 0, 100000000, notes),
     unitBudgetDay: int(e, "DEMO_UNIT_BUDGET_DAY", 0, 100000000, notes),
     chatTimeoutMs: int(e, "DEMO_CHAT_TIMEOUT_MS", 1000, 120000, notes),

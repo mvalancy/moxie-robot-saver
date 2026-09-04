@@ -110,8 +110,10 @@ export async function onRequestPost(context) {
 
   // ---- 2. Admission: origin pin, per-IP windows (10/min, 60/hour), unit budget,
   // capacity ceiling. Same order and same helper as the other two routes, so no route can
-  // spend a unit before checking the pin (`_lib/limits.js::admit`).
-  const slot = admit({ request, cfg, route: "transcribe" });
+  // spend a unit before checking the pin (`_lib/limits.js::admit`). Awaited since
+  // 2026-09-03: at capacity it joins a bounded FIFO rather than refusing outright, and the
+  // `finally` below is what hands the slot to whoever is next.
+  const slot = await admit({ request, cfg, route: "transcribe" });
   if (!slot.ok) {
     return refusal(cfg, slot.reason, {
       retryAfterS: slot.retryAfterS,

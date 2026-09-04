@@ -106,5 +106,7 @@ DEMO_STT_MODEL=your-stt-model
 # DEMO_MAX_TTS_CHARS=300, DEMO_CHAT_PER_MIN=5, DEMO_MAX_CONCURRENT_CHAT=4,
 # DEMO_UNIT_BUDGET_HOUR=600, DEMO_CHAT_TIMEOUT_MS=20000, DEMO_TICKET_TTL_S=60,
 # DEMO_MAX_AUDIO_BYTES=500000, DEMO_MIN_AUDIO_BYTES=2000, DEMO_STT_PER_MIN=10,
-# DEMO_STT_PER_HOUR=60, DEMO_STT_TIMEOUT_MS=12000, …
+# DEMO_STT_PER_HOUR=60, DEMO_STT_TIMEOUT_MS=12000,
+# DEMO_QUEUE_MAX_WAIT_MS=2500, DEMO_QUEUE_MAX_DEPTH=8 (the bounded wait behind the
+#   concurrency ceiling — set either to 0 to refuse instantly instead of queueing), …
 # See the spec's §5 for the whole table and why each number is what it is.

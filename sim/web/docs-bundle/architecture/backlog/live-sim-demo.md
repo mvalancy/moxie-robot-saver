@@ -452,6 +452,8 @@ The **single highest-value control** is first, and it is application logic, not 
 | Per-IP transcribe | 10/min · 60/hour | |
 | `DEMO_MAX_CONCURRENT_CHAT` | **4** | At 18‑45 s a completion (`chat.py`:151), 4 in flight is already ~1 turn per 8 s of gateway time. **Concurrency, not token count, is what makes the demo feel dead under load** — this number *is* the capacity indicator. |
 | `DEMO_MAX_CONCURRENT_SPEECH` | 8 | ~1.7 s each; cheap to hold. |
+| `DEMO_QUEUE_MAX_WAIT_MS` | **2 500** | **Live since 2026-09-03.** At the ceiling a request now WAITS in a bounded FIFO instead of being refused on the spot. 2 500 ms is ~two turn-times at the ceiling, and it is added to a turn the visitor is already waiting on — so 2.5 s + ~1.2 s stays under four seconds and far under `DEMO_CHAT_TIMEOUT_MS`. Clamped at 10 000: no configuration may let the wait rival the upstream timeout. |
+| `DEMO_QUEUE_MAX_DEPTH` | **8** | **A queue with no depth cap is just a slower way to fall over.** Past this, refuse immediately with `at_capacity` exactly as before. 8 is the arithmetic of the wait, not a round number: 4 slots x 2 500 ms / ~1 200 ms a turn ≈ 8 requests can actually be served inside the maximum wait, so a ninth waiter would be promised a slot the queue cannot deliver. 8 waiting + 4 in flight = 12 visitors mid-turn. **Either variable set to `0` disables the queue** and restores the pre-2026-09-03 instant refusal — the escape hatch, needing no code change. |
 | `DEMO_CHAT_TIMEOUT_MS` | **20 000** | Deliberately **below** the measured worst case of 45 s: the demo prefers a fast, honest degrade to a slow success. `max_tokens = 160` should keep most completions well inside it. `AbortSignal.timeout`. |
 | `DEMO_SPEECH_TIMEOUT_MS` | 12 000 | 1.7‑6.1 s measured. |
 | `DEMO_STT_TIMEOUT_MS` | 12 000 | 2.5‑2.8 s measured. |
@@ -459,6 +461,38 @@ The **single highest-value control** is first, and it is application logic, not 
 | `DEMO_UNIT_BUDGET_DAY` | **4 000 units** | ≈ 800 full turns/day. |
 | `DEMO_TICKET_TTL_S` | 60 | Long enough for a slow client, short enough that a leaked ticket is worthless. |
 | `DEMO_ENABLED` | `1` | A kill switch that forces degraded **without deleting the secret** — the fastest possible incident response. |
+
+**Why the answer to "let ten people use it" is a queue and not a bigger ceiling.** The obvious move —
+raise `DEMO_MAX_CONCURRENT_CHAT` — is the wrong one. That ceiling is matched to the upstream key's
+`max_parallel_requests`, which exists to protect *another service* sharing the same self-hosted gateway.
+Raising the Worker's number would not create capacity; it would move the refusal upstream and turn it into
+a 429 that starves the neighbour. And it is not needed: at ~1.2 s a turn, four slots already serve ~3
+turns/second, far more than ten *conversational* visitors require. What actually breaks today is a
+momentary collision, and a short bounded wait absorbs exactly that. Hence `DEMO_QUEUE_MAX_WAIT_MS` and
+`DEMO_QUEUE_MAX_DEPTH` above, and hence the ceiling staying at 4.
+
+**The charge/refund decision the queue forced, written down because it is not obvious.** `admit()` charges
+the per-IP window and the unit budget *before* it takes the concurrency slot — the ordering its own header
+calls the point, so that every cheap, free refusal happens before any expensive one. That was safe only
+while the capacity check could not wait. Once a request can wait and then be refused, **a queued-and-timed-
+out visitor has spent a rate-limit unit and a budget unit on a turn they never received** — at 5 chat
+turns a minute, two timeouts burn 40 % of their minute on nothing. Two fixes existed:
+
+* **Refund on the queue's two failure paths — chosen.** The ordering is untouched and the accounting is
+  made true after the fact. Its cost, stated rather than hidden: while a request waits, its charge is
+  held, so a *concurrent* request can be refused on a unit that is about to be given back. That transient
+  over-count is bounded by `DEMO_QUEUE_MAX_DEPTH` × the route's unit cost — 8 × 3 = 24 units against a
+  600-unit hour at the defaults. Bounded, small, conservative.
+* **Reorder so the wait precedes the charge — rejected.** Waiting is *not* free: a queue slot is a scarce
+  bounded resource. Under the reordering, a request that today is refused instantly and for nothing (the
+  6th chat turn in a minute from one IP) would first occupy a queue slot for the full wait, displacing a
+  legitimate visitor, before being charged and refused anyway — letting a script fill the queue with
+  requests it never had the rate-limit budget to make. A new abuse channel in exchange for a fairness fix
+  is a bad trade.
+
+`functions/api/_lib/limits.js::refundCharges` carries the same argument at the code, and
+`sim/test_demo_proxy.mjs` block 13e tests both halves — the budget map is unchanged after a timed-out
+wait, and a visitor who was refused still has all five of their turns that minute.
 
 **Pre-inference safety.** The child's utterance is checked before the brain is called, so a hard-blocked
 turn never reaches a model at all (`safety.py`:11‑13). P0 ships a **small JSON rule table** shipped inside
@@ -524,7 +558,7 @@ counter (§4.6) and the visitor's own browser.
 | Status | `reason` | Sent when | Headers | The SIM does |
 |---|---|---|---|---|
 | **429** | `rate_limited` | per-IP window exceeded | `Retry-After: <s>`, `X-RateLimit-*` | **Soft degrade.** Stays in `live`, shows the *slow down* pill, answers **this** turn from `stub.js`, suppresses live turns until `Retry-After` elapses. |
-| **503** | `at_capacity` | in-flight ≥ `DEMO_MAX_CONCURRENT_CHAT` | `Retry-After: 15` | Shows the *busy* pill with the visitor count language of §7; answers from the stub; retries the health poll after `Retry-After`. |
+| **503** | `at_capacity` | in-flight ≥ `DEMO_MAX_CONCURRENT_CHAT` **and** the queue is full or the wait expired (§4.1) | `Retry-After: 15` | Shows the *busy* pill with the visitor count language of §7; answers from the stub; retries the health poll after `Retry-After`. |
 | **503** | `budget_exhausted` | either budget window is spent | `Retry-After: <s to window reset>` | Full degrade to `degraded`; polls `/api/health` on the backoff schedule. |
 | **503** | `upstream_down` | gateway unreachable, 5xx after retries, or a JSON body where audio was expected | `Retry-After: 60` | Full degrade. |
 | **503** | `gateway_not_configured` | no base URL / key / model, or `DEMO_ENABLED=0` | — | Full degrade, permanently for the session (no poll storm). |
@@ -567,6 +601,19 @@ that do are per-request (`max_tokens`, `DEMO_MAX_INPUT_CHARS`, `DEMO_MAX_TTS_CHA
 they apply to every request no matter which isolate serves it. Second, N is not adversary-controlled in
 any direct way: an attacker does not get to *ask* for a fresh isolate, they get whatever the platform
 hands them, so the multiplier is opportunistic rather than a dial.
+
+**And the admission queue inherits every word of that (added 2026-09-03).** Since the concurrency ceiling
+started *queueing* instead of refusing outright (§4.1), there is a FIFO of waiting requests — and it lives
+in the same place as the counters: **one array in one isolate's memory.** It is therefore a fair order
+*among the requests that isolate happens to be holding*, and **not a global queue position**. Two visitors
+served by two isolates are ordered by neither of them; a visitor cannot be told "you are third in line" in
+any sense that would survive being asked twice. What the queue *does* guarantee, and this is the useful
+part, is the thing that actually breaks under a burst: within an isolate, a slot freed by a finishing turn
+goes to the longest-waiting request and cannot be taken by a later arrival — because `release()` **hands
+the slot over rather than freeing it**, so the count never dips and there is no gap for a late request to
+slip into. The failure mode past `DEMO_QUEUE_MAX_DEPTH` is the honest one and is unchanged from before the
+queue existed: refuse immediately with `at_capacity` and `Retry-After: 15`. A burst larger than the depth
+is refused, not queued, and refused *for free* — the charge is refunded (§4.1).
 
 They stop scripts and accidents, which is most of the real risk. The hard ceilings are (a) the gateway-side
 budget-scoped virtual key, and (b) the caps in §4.1, which bound the cost of every *individual* request
@@ -666,6 +713,7 @@ and `CLOUDFLARE_ACCOUNT_ID` as GitHub secrets; that is an alternative path, expl
 | `DEMO_SPEECH_PER_MIN` / `_HOUR` | var | `10` / `80` | no | §4.1 |
 | `DEMO_STT_PER_MIN` / `_HOUR` | var | `10` / `60` | no | §4.1 |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | var | `4` / `8` | no | §4.1, §7 |
+| `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | var | `2500` / `8` | no | §4.1, §4.6 |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | var | `600` / `4000` | no | §4.1 |
 | `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | var | `20000` / `12000` / `12000` | no | §4.1 |
 | `DEMO_TICKET_TTL_S` | var | `60` | no | §3.2 |
@@ -1050,6 +1098,7 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 | 23 | The Cloudflare **account id is already public** in every commit's check-run URL | **proven** (survey) | Not a credential, but worth knowing given `orchestration-plan.md`:32's "no account id is hard-coded" — nothing in this spec adds it to a file. |
 | 24 | Origin/Referer checks stop only browser hotlinking | **proven by reasoning, stated in the code** | Headers are trivially forged by `curl`. The controls that matter are the caps, the budget and assumption 14. |
 | 25 | The best-effort counter is not a true global ceiling | **proven — and the *reason* given here was itself wrong until 2026-09-03** | Original wording: *"Cache API is per-colo; an isolate map is per-isolate."* **The Cache API leg was VERIFIED ABSENT from the shipped code on 2026-09-03** — `functions/api/_lib/limits.js` keeps one module-scope `Map` per counter (`state.windows`, `state.budget`, `state.inflight`) and consults no cache, no KV and no Durable Object; §4.6 and `functions/api/health.js`'s comment had both described a tier that was never built. The conclusion survives, the multiplier does not: it is **isolates, not colos**, so the effective ceiling is N × the configured number for an N chosen by the platform, and the configured caps are a per-isolate throttle rather than a global budget. Corrected in §4.6 and in the code comment on the same day; the Cache API tier is deliberately **not** added, because assumption 13 is still open and its answer decides which counter is worth building. |
+| 28 | **A short bounded wait is a better answer to "ten people collided" than a bigger concurrency ceiling** | **proven by reasoning and by test; the *premise* remains unverified** | The reasoning: `DEMO_MAX_CONCURRENT_CHAT` is matched to the upstream key's `max_parallel_requests`, which protects a neighbouring service on the same self-hosted gateway, so raising it moves the refusal upstream instead of removing it — while 4 slots at ~1.2 s a turn already serve ~3 turns/second, far above what ten *conversational* visitors ask for. So the ceiling stays and a bounded FIFO sits behind it (§4.1, `_lib/limits.js`). **What is proven** is the mechanism, in `sim/test_demo_proxy.mjs` block 13: FIFO order under contention, no overtaking by a late arrival, the depth cap refusing immediately, the wait expiring into the existing `at_capacity` envelope, a slot released from a thrown path handed to the longest-waiting request, and the charge refunded on both failure paths. **What is NOT proven, and is the load-bearing premise:** the ~1.2 s turn time and the upstream key's actual parallel limit are both taken from earlier measurements and from the deployment's intent, not re-measured here — and if a turn is materially slower than 1.2 s, `DEMO_QUEUE_MAX_DEPTH = 8` promises more than 2 500 ms can deliver and the tail of the queue times out having waited for nothing (it is refunded, but it still waited). Both numbers are variables; re-measure the turn time under real load and re-derive the depth from it. |
 | 26 | A Cloudflare Pages build accepts the `import ... with { type: "json" }` attribute, so a Function may load a `.json` data file | **SETTLED FALSE (2026-09-03)** — it does not | Settled by the only thing that could: a real deploy. P0-b's `_lib/safety.js` loaded its rule table that way; the Pages check went `COMPLETED/FAILURE` on `feat/livesim-live-turn` while the identical check was `success` on `dev`, and that single line was the only structural difference in the Functions tree. **Node 20 accepts the syntax, so all 1637 hermetic tests were green** — this was invisible to every local guard, which is the general lesson: a bundler-specific extension cannot be validated by the runtime the tests use. Fixed by inlining the table as `_lib/safety.rules.js` (a plain `export const RULES`), deleting the `.json` so there is one source of truth, and adding a guard in `sim/test_demo_proxy.mjs` that fails on any `.json` import or import attribute under `functions/` — converting a deploy-only failure into a one-second local one. |
 
 ---
