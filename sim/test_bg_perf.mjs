@@ -189,7 +189,13 @@ ok(now.after.hidden === true, "the page under test was not actually hidden");
 eq(now.frames, 0, "requestAnimationFrame kept running while hidden — the run proves nothing");
 ok(now.armed && now.after.packets >= 0 && now.after.pings >= 0,
    "bg.js never created its packets/pings arrays within 25 s of load — nothing is spawning at all");
-eq(now.after.packets - now.before.packets, 0,
+// `<= 0`, not `=== 0`, and the pings line below has always said so — the asymmetry was the
+// bug. The claim under test is that nothing SPAWNS while hidden. A *decrease* means a frame
+// slipped through as the tab was going hidden and retired an entry, which is the fix working,
+// not a failure: with the producers inside `step()`, a frame that runs both drains and does
+// not spawn. Demanding exact equality made the test depend on whether that last frame landed
+// before or after the visibility flip — it failed CI on an unrelated PR with `2 -> 1`.
+ok(now.after.packets - now.before.packets <= 0,
    `packets grew while the tab was hidden (${now.before.packets} -> ${now.after.packets} in ${HIDDEN_MS / 1000}s)`);
 ok(now.after.pings - now.before.pings <= 0,
    `pings grew while the tab was hidden (${now.before.pings} -> ${now.after.pings} in ${HIDDEN_MS / 1000}s)`);

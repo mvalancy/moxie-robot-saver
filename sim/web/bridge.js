@@ -194,7 +194,9 @@
   // docstring ("this deliberately does not claim the robot acts on what it received").
   // This is the client half of that contract.
   //
-  // Every entry is `{output_type, action, module_id, content_id}`, and the FIRST entry may
+  // Every entry is `{output_type, action, module_id, content_id}` — plus, on an `execute`,
+  // the `function_id` / `function_args` / `action_args` that say WHAT to run and with
+  // what (see `applyAction`) — and the FIRST entry may
   // instead/also carry `event_subscription:{active[], clear}` — the brain asking the robot
   // to push it perception events. An action-less entry is legal and means exactly that,
   // so "no `action` key" is not an error. A legacy singular `response_action` mirrors
@@ -205,7 +207,7 @@
   // server teaching a robot a new verb must not be able to break an old client's turn.
   const ACTION_KINDS = ["launch", "exit", "sleep", "enable_qr", "execute"];
   const actionState = {
-    applied: [],            // [{action, module_id, content_id, function, t}] bounded
+    applied: [],            // [{action, module_id, content_id, function, args, t}] bounded
     unknown: 0,             // action types this client does not implement (skipped safely)
     module_id: "", content_id: "",   // the module the cloud last put us in
     launches: 0, exits: 0,
@@ -214,10 +216,51 @@
     last: "",
   };
 
+  // `RemoteChatAction.action_args` — proto field 10, `repeated ActionArgsEntry{key, value}`
+  // — as the `{key: value}` mapping it encodes. `null` when the field is absent or
+  // unreadable, so the caller falls through to its NEXT spelling rather than recording an
+  // empty object as if the brain had sent one. The exact mirror of
+  // `sim/virtual_moxie.py::VirtualMoxie._action_args`, entry-rejection included: a
+  // non-list is not args at all, and an entry that is not an object — or carries no
+  // `key` — is dropped rather than turned into an `undefined` key. A missing `value`
+  // records `null`, which is what the SIL robot's `e.get("value")` yields, so the two
+  // clients' decoded args survive a JSON round-trip as the same document.
+  function actionArgs(entries) {
+    if (!Array.isArray(entries)) return null;
+    const out = {};
+    let n = 0;
+    for (const e of entries) {
+      if (!e || typeof e !== "object" || Array.isArray(e)) continue;
+      if (e.key === undefined || e.key === null) continue;
+      out[String(e.key)] = e.value === undefined ? null : e.value;
+      n += 1;
+    }
+    return n ? out : null;
+  }
+
   function applyAction(entry) {
     const m = window.moxie;
     const kind = String(entry.action || "").toLowerCase();
     const moduleId = entry.module_id || "", contentId = entry.content_id || "";
+    // 🎬 WHAT AN `execute` IS CALLED, AND WITH WHAT.
+    // `RemoteChat.proto`:255-281 names the fields `function_id` (7), `function_args`
+    // (8, `repeated string`) and `action_args` (10, `repeated ActionArgsEntry{key,value}`),
+    // and since 2026-09-04 `mqtt/moxie_sdk/wire.py::encode_action` emits them: a LIST of
+    // args rides `function_args`, a MAPPING rides `action_args`, the home chosen by type
+    // and never guessed. Until 2026-09-04 this function read `entry.function` alone and no
+    // args at all, so every named `execute` our own server sent rendered here as
+    // `(unnamed)` while `sim/virtual_moxie.py` named it — two clients disagreeing about
+    // the one verb that had just gained a payload, which is exactly what DoD criterion 4
+    // forbids. All four spellings are read, in the SAME order the SIL robot reads them
+    // (`virtual_moxie.py::_apply_action`), so neither client can start preferring a
+    // different spelling of the same action. `undefined`/`null` — not falsiness — is what
+    // makes an args field fall through, because `function_args: []` and `action_args: []`
+    // are things a server can legitimately put on the wire and are not the same as absence.
+    const fn = entry.function_id || entry.function || "";
+    let args = entry.function_args;
+    if (args === undefined || args === null) args = actionArgs(entry.action_args);
+    if (args === undefined || args === null) args = entry.args;
+    const recordedArgs = (args === undefined || args === null) ? [] : args;
     if (ACTION_KINDS.indexOf(kind) < 0) {
       actionState.unknown += 1;
       status(`🎬 ignored unknown action ${JSON.stringify(entry.action)}`);
@@ -254,14 +297,19 @@
         break;
       case "execute":
         // A named on-robot function. We cannot invent a body for it, so it is RECORDED
-        // and shown, never guessed at — an honest no-op beats a wrong animation.
-        status(`🎬 execute ${entry.function || "(unnamed)"}`);
+        // and shown, never guessed at — an honest no-op beats a wrong animation. This
+        // keeps the SIL robot's discipline exactly: nothing is called, no module starts,
+        // and no `RemoteChatRequest.execute_returns[]` is published — that would mean
+        // inventing a return value for a function this client does not have. The status
+        // line is the SIL robot's line character for character, so an operator reading
+        // either client sees the same sentence.
+        status(`🎬 execute ${fn || "(unnamed)"}`);
         break;
       default: break;
     }
     actionState.last = kind;
     actionState.applied.push({ action: kind, module_id: moduleId, content_id: contentId,
-                               function: entry.function || "", t: nowMs() });
+                               function: fn, args: recordedArgs, t: nowMs() });
     if (actionState.applied.length > 40) actionState.applied.shift();
     return true;
   }
@@ -742,13 +790,22 @@
     hasCloudVoice: function () { return cloudVoice; },
 
     /* 🎬 What the cloud's `response_actions` actually DID to this robot, recorded as it
-     * happened: {applied:[{action,module_id,content_id,function,t}], unknown, module_id,
+     * happened: {applied:[{action,module_id,content_id,function,args}], unknown, module_id,
      * content_id, launches, exits, asleep, qr_enabled, subscribed[], last}. `unknown`
      * counts action types this client does not implement — they are skipped, never
-     * thrown. Tests assert this, never a live sample. */
+     * thrown. Tests assert this, never a live sample.
+     *
+     * `args` is here because this projection is the SECOND place the payload could be
+     * dropped, and on 2026-09-04 it was: `applyAction` had been taught to read
+     * `function_args`/`action_args` and this map still copied four keys, so every caller
+     * saw an armed `execute` with no arguments and nothing said otherwise. The reader's
+     * shape is as much of the contract as the writer's — the keys here are exactly
+     * `cloud_to_robot_actions.json`'s `applied_keys`, which is what
+     * `sim/virtual_moxie.py::action_stats()` returns too. */
     actionStats: function () {
       return { applied: actionState.applied.map((a) => ({ action: a.action,
-                 module_id: a.module_id, content_id: a.content_id, function: a.function })),
+                 module_id: a.module_id, content_id: a.content_id, function: a.function,
+                 args: a.args })),
                unknown: actionState.unknown, module_id: actionState.module_id,
                content_id: actionState.content_id, launches: actionState.launches,
                exits: actionState.exits, asleep: actionState.asleep,
