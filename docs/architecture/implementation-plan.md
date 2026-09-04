@@ -98,6 +98,53 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **The fix that made the browser suites run put them on the wrong runner — split 2026-09-04.**
+  PR #120 closed a real hole: eleven suites import [`browser_harness.mjs`](../../sim/browser_harness.mjs),
+  no workflow installed `puppeteer`, `loadPuppeteer()` fell back to scanning `~/Code/*/node_modules` (a
+  developer-machine path a runner cannot have) and `skipper()` exited **0**, so they printed "skipped"
+  on every green run. **None of that is undone** — every one of them still runs on every push and PR,
+  and a missing browser is still a FAILURE under `CI` and a clean skip on a laptop (verified both ways
+  by exit code). What #120 did not weigh is *where*: it loaded eleven Chrome launches onto `sil`, which
+  already runs ~5 000 pytest tests against a real mosquitto broker. The job went **~7–8 min → ~17 min**
+  (runs 11:32:56 → 11:49:28), and the contention started reddening tests that had nothing to do with the
+  change — **PR #125 is documentation-only and failed twice, on two different SIL tests**
+  (`test_roster.py::…do_not_lose_each_others_robots`, "the roster write was refused";
+  `test_schedule_sil_e2e.py::…is_pinned_and_says_so`, `AssertionError: []`), both green locally in under
+  a second. A gate that reddens for reasons unrelated to the diff teaches people to re-run it instead of
+  read it, which is the same disease as a gate that cannot redden at all.
+  So the eleven now run in their own `browser` job in [`sim/ci/ci.yml`](../../sim/ci/ci.yml), with **no
+  `needs:`** — parallel with `sil`, so the tier costs `max()` rather than the sum. The job carries what
+  the suites actually read: checkout, python 3.11 (four of them `spawn("python3", ["sim/serve.py", …])`)
+  and its **own** `build_docs_bundle.py`, because `docs.html` reads the generated bundle and this job
+  must not depend on a freshness claim the other job is still checking. `test_api_headers.mjs` moved
+  **whole**: its socket half is hermetic, but both halves share one ~250-line fixture and one exit code,
+  and a second hand-copy of that fixture is exactly the drift `browser_harness.mjs` exists to prevent —
+  and it already ran *after* the puppeteer install in `sil`, so it is delayed by nothing.
+  **A job the merge gate does not require is the original bug wearing a new hat**, so that is asserted,
+  not assumed: [`scripts/pr-green.sh`](../../scripts/pr-green.sh) now requires each fast-tier job by name
+  (`Docs,SIL,Browser`), and two guards hold it there — one fails if any job in the workflow matches no
+  entry (or any entry matches no job), and one **executes the gate's own decision block** against four
+  synthetic rollups: complete-green passes, and browser-absent, browser-still-running and browser-red all
+  fail. The absent case is re-run with the count floor lowered to 1, because three-jobs-minus-one still
+  clears the old floor of 3 and that clause's pass would otherwise have been luck. Writing that guard
+  caught a defect in this very change: the new job was first named `… (parallel with SIL)`, so the gate's
+  `SIL` entry matched **it**, and a rollup that had lost the broker job would have passed. Each required
+  entry must now match **exactly one** job — none is a stale entry, two lets the wrong job satisfy the
+  gate — and the renamed-back mutant is caught.
+  [`test_ci_browser_suites_actually_run.py`](../../sim/tests/test_ci_browser_suites_actually_run.py) is
+  now **per-job**: with two jobs, a file-wide "install precedes first dispatch" check passes vacuously —
+  `sil`'s install "precedes" `browser`'s dispatches in byte order while doing nothing for them — so each
+  dispatch is resolved to its own job, and it also asserts every browser suite is dispatched at all,
+  reading the *same* `KNOWN_UNRUN` list rather than restating it. **Ratchet shrunk by one:**
+  `sim/test_ambient_guard.mjs` (29 checks) shipped unwired because its PR could not touch the reserved CI
+  file, and is wired here — so the ambient bullet below is out of date on that one point.
+  Mutation-tested, 8/8 caught: install moved last, a browser suite put back in `sil`, the bundle build
+  dropped, `needs:` added, a dispatched suite that does not exist, `setup-python` dropped, `Browser`
+  removed from the gate, the gate's by-name clause deleted. ⚠️ **Honest gap:** the *parallelism itself*
+  is a property of the runner, not of the file — it is asserted structurally (three jobs, no `needs:`)
+  and the wall-clock claim is unverified until the next CI run. ⚠️ `sim/test_a11y.mjs` is also exempt and
+  also wireable, but it exists only on the unmerged `feat/a11y` branch; it needs one step added when that
+  lands.
 - **The hosted Sim was largely unusable with a screen reader — fixed 2026-09-04; two things deliberately
   left undecided.** Measured against the live site in headless Chrome (`page.accessibility.snapshot`),
   **nine** interactive nodes had an **empty accessible name**: the seven motor sliders — `moxie.js`
