@@ -391,6 +391,40 @@ A bare string is still read (and still renders); it simply has no id until the n
   [config contract](config-and-telemetry-contract.md)), so one house rule covers every
   robot on the appliance and a single robot can still be set apart.
 
+  **The switch covers both memories, and saying so is the point.** This section is about
+  the durable *facts* (`MemoryStore`), but the appliance keeps a second thing on disk: the
+  **rolling conversation transcript**, `MoxieRuntime.history` written to
+  `MOXIE_MEMORY_DIR/<device>.json` after every turn. Both compose files set that variable
+  (`/data/memory`), so on a shipped appliance that path is on by default — and until the
+  gate landed it was guarded by nothing but "is the directory configured", which made the
+  sentence above false on the one file that holds the child's words verbatim. It is now
+  resolved through the *same* `memory_policy` callable, so there is one parent switch and
+  not two that could disagree:
+
+  | | `NO_DATA` | `NO_MEDIA` (default) | `FULL` |
+  |---|---|---|---|
+  | durable facts (`memory.json`) | not written | written | written |
+  | rolling transcript (`MOXIE_MEMORY_DIR`) | not written, **and the stored file is deleted** | written | written |
+  | in-memory history (RAM) | kept | kept | kept |
+
+  Three things that table is deliberately saying:
+
+  - **`NO_MEDIA` writes the transcript.** It is the value that withholds an opaque
+    *payload* — telemetry's `event_data`, which could be audio (see the
+    [config contract](config-and-telemetry-contract.md) §③). A transcript has no payload
+    to withhold; it is entirely text the process is already holding to make conversation
+    work. So the choice is binary and it matches the facts store's.
+  - **Flipping to `NO_DATA` removes the transcript already on disk.** Refusing new writes
+    while yesterday's file stays is a half-guarantee, erase is never policy-gated, and
+    that file is not merely stored — the next boot reads it back into RAM and into the
+    next prompt. The sweep runs at startup and on any config edit that could have moved
+    the switch, so the file is gone when the parent presses the button, not at the next
+    turn. (The *facts* store keeps what it stored before the flip, so a parent can still
+    read and erase it; the transcript has no per-item read/erase UI to keep it for.)
+  - **In-memory history is untouched.** This is a persistence gate. A robot that could not
+    remember the previous sentence would not be more private — nothing leaves the process
+    either way — it would just be unable to hold a conversation.
+
 ### `session.summarize(...)`
 
 At the end of a conversation the brain is asked — through the same injected
