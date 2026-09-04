@@ -321,7 +321,7 @@ walkthrough: [child-safety guide](../guides/child-safety.md).
 so a backend that returns `ERROR_OFFLINE` degrades gracefully instead of hanging; also `NOREPLY_*`,
 `REPLY_FORCE_ANCHOR` and `REPLY_FORCE_QUIT`. **Streaming:** chunk a long turn with `chunk_num`
 (`REPLY_PENDING` on every chunk but the last). The ten codes are enumerated in
-[`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#the-response--remotechatresponse) and
+[`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#the-response-remotechatresponse) and
 mirrored by `ResultCode` in [`types.py`](../../mqtt/moxie_sdk/types.py); **there is no `REPLY` or bare
 `QUIT` code** — this paragraph named both until 2026-09-03, and a brain written from it would have
 answered with a value the robot cannot render.

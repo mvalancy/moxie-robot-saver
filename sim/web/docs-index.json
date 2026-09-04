@@ -1,5 +1,5 @@
 {
- "generated": "docs-4fb407fd21f3",
+ "generated": "docs-84032bad8870",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -213,7 +213,7 @@
    "path": "architecture/ai-seam.md",
    "title": "The AI seam — LLM / STT / TTS interface contract",
    "section": "architecture",
-   "bytes": 33011,
+   "bytes": 33010,
    "mermaid": 1,
    "headings": [
     "Why this is the whole game",
