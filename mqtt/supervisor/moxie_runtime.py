@@ -1245,11 +1245,22 @@ class MoxieRuntime:
         self.last_broker_connect = now
         self.last_connect_error = ""
         self._connect_generation += 1
+        # SUBSCRIBE FIRST, THEN SAY SO. `helpers_stack.Supervisor.start()` waits for this
+        # exact line before letting a robot announce itself, so printing it first meant the
+        # supervisor advertised readiness it did not yet have: the SIL robot's single
+        # `/state` could land in the gap and go unheard, and `test_live_gateway_turn_e2e`
+        # failed as "no config pushed within timeout" — twice, and only on a quiet box,
+        # because a busy one is slow enough to lose the race.
+        #
+        # That is this function's own lesson applied to itself. The docstring above
+        # explains why `rc=5` must not print "broker connected"; announcing before
+        # subscribing is the same comfortable lie one step later, and playbook rule 23's
+        # shape — a readiness signal that was true of an earlier moment.
+        for t in self.SUBSCRIPTIONS:
+            c.subscribe(t)
         print(f"[runtime] broker connected rc={rc}")
         self._note("conn", "broker connected" if gap is None
                    else f"broker reconnected after {gap:.1f}s")
-        for t in self.SUBSCRIPTIONS:
-            c.subscribe(t)
         self._record_conn(conn_seam.CONNECT, at=now, gap_s=gap)
         # Off the network thread, and after the subscriptions are in: a config push is a
         # publish, and `_device_connect` has always used the same one-second settle timer
