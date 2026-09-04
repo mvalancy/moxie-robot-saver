@@ -36,9 +36,10 @@
 # NOT REMOVED: `'unsafe-inline'` for scripts. That is the honest gap, and the blocker is
 # specific rather than vague. `_headers` is a STATIC file, so a per-response nonce is
 # impossible — the only route to `script-src 'self'` is SHA-256 hashes for every inline
-# block, and this bundle has nine of them across five pages (sim.html x3 + an importmap,
-# index/setup/cloud/docs x1 each, plus four importmaps) AND ten inline `onclick=`
-# attributes in docs.html/cloud.html, which need `'unsafe-hashes'` plus a hash per handler.
+# block, and this bundle has FOURTEEN of them across five pages (sim.html 4,
+# index/setup/cloud 3 each, docs.html 1 — four of those fourteen are `type="importmap"`)
+# AND TEN inline event-handler attributes (docs.html 9, cloud.html 1), which need
+# `'unsafe-hashes'` plus a hash per handler. Counted, not estimated.
 # Shipping that means a build step that regenerates the hashes plus a CI freshness guard,
 # because a hash that drifts from its block does not degrade — it BLANKS THE PAGE, and no
 # test in this repo would see it (the browser suites serve from `sim/serve.py`, which sends
