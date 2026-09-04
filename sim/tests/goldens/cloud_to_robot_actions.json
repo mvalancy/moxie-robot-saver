@@ -21,7 +21,28 @@
     "",
     "so neither client can start disagreeing about what an action MEANT without a test",
     "going red. Regenerate: drive VirtualMoxie._on_chat_reply over `script` and dump",
-    "`action_stats()`."
+    "`action_stats()`.",
+    "",
+    "`execute_script` / `execute_expected` are the second half, added 2026-09-04. PR #119",
+    "put `function_id` (proto field 7), `function_args` (8) and `action_args` (10) on the",
+    "wire, and `sim/web/bridge.js::applyAction` read `entry.function` alone and no args at",
+    "all -- so our own server's named `execute` rendered in the browser as `(unnamed)`",
+    "while the SIL robot named it. The two clients disagreed about the one verb that had",
+    "just gained a payload. `execute_script` drives BOTH clients over the four responses",
+    "that exercise every spelling (list args, mapping args, the SIM's older `function`,",
+    "an unnamed execute, unreadable args, and args on a non-execute verb) and",
+    "`execute_expected` is the decode both must reach, projected onto `applied_keys`.",
+    "Held from both ends the same way `script` is:",
+    "",
+    "  sim/tests/test_sim_client_parity.py  the SIL robot reaches execute_expected, and",
+    "                                       bridge.js reads the same names in the same",
+    "                                       precedence order",
+    "  sim/test_action_payload.mjs          the REAL bridge.js, driven over this script,",
+    "                                       reaches execute_expected -- with a negative",
+    "                                       control that reverts the fix and must fail",
+    "",
+    "`args` is therefore no longer in `client_only_keys`: both clients record it, under",
+    "that name, and `applied_keys` is where it now lives."
   ],
   "topic_suffix": "commands/remote_chat",
   "reference_client": "sim/virtual_moxie.py",
@@ -32,9 +53,9 @@
 
   "stat_keys": ["applied", "unknown", "module_id", "content_id", "launches", "exits",
                 "asleep", "qr_enabled", "subscribed", "last"],
-  "applied_keys": ["action", "module_id", "content_id", "function"],
+  "applied_keys": ["action", "module_id", "content_id", "function", "args"],
   "client_only_keys": {
-    "sim/virtual_moxie.py": ["applied[].args"],
+    "sim/virtual_moxie.py": [],
     "sim/web/bridge.js": ["applied[].t"]
   },
 
@@ -77,11 +98,83 @@
     }
   ],
 
+  "payload_peer_test": "sim/test_action_payload.mjs",
+
+  "execute_script": [
+    {
+      "_why": "the contract's spelling -- function_id (proto field 7) + function_args (field 8, repeated string), which is what wire.py::encode_action emits for a LIST of args",
+      "command": "remote_chat", "result": "SUCCESS", "event_id": "exec-1",
+      "output": {"text": "", "markup": ""},
+      "response_actions": [
+        {"output_type": "GLOBAL", "action": "execute",
+         "function_id": "eb_enable_qr", "function_args": ["true"]}
+      ]
+    },
+    {
+      "_why": "a MAPPING of args rides action_args (field 10, repeated ActionArgsEntry{key,value}) -- encode_action picks the home by TYPE, so a client must decode both and invent no third convention",
+      "command": "remote_chat", "event_id": "exec-2",
+      "output": {"text": "", "markup": ""},
+      "response_actions": [
+        {"output_type": "GLOBAL", "action": "execute", "function_id": "eb_set_volume",
+         "action_args": [{"key": "level", "value": "3"}, {"key": "fade", "value": "true"}]}
+      ]
+    },
+    {
+      "_why": "the SIM's own older `function` spelling stays accepted, and function_id WINS when both are present -- a client that only understood the one server it was written against would not be a client",
+      "command": "remote_chat", "event_id": "exec-3",
+      "output": {"text": "", "markup": ""},
+      "response_actions": [
+        {"output_type": "GLOBAL", "action": "execute", "function": "eb_legacy_only"},
+        {"output_type": "GLOBAL", "action": "execute",
+         "function_id": "eb_wins", "function": "eb_loses"}
+      ]
+    },
+    {
+      "_why": "an execute with nothing to read records \"\" and [] rather than a guess; an unreadable action_args falls THROUGH rather than recording an empty object as if the brain had sent one; and args are not execute-only on the wire, so a launch that carries them keeps them",
+      "command": "remote_chat", "event_id": "exec-4",
+      "output": {"text": "", "markup": ""},
+      "response_actions": [
+        {"output_type": "GLOBAL", "action": "execute"},
+        {"output_type": "GLOBAL", "action": "execute", "function_id": "eb_junk_args",
+         "action_args": [{"value": "orphan"}, "nonsense", 7]},
+        {"output_type": "GLOBAL", "action": "launch", "module_id": "DRAW",
+         "content_id": "cards", "function_id": "eb_deal", "function_args": ["3", "up"]}
+      ]
+    },
+    {
+      "_why": "a MALFORMED function_args is still PRESENT, and presence is what decides the fall-through: a client that tested falsiness instead of absence would silently promote the action_args underneath it and the two clients would record different arguments for the same message. Both record what field 8 actually held.",
+      "command": "remote_chat", "event_id": "exec-5",
+      "output": {"text": "", "markup": ""},
+      "response_actions": [
+        {"output_type": "GLOBAL", "action": "execute", "function_id": "eb_falsy_args",
+         "function_args": 0, "action_args": [{"key": "shadowed", "value": "yes"}]}
+      ]
+    }
+  ],
+
+  "execute_expected": [
+    {"action": "execute", "module_id": "", "content_id": "", "function": "eb_enable_qr",
+     "args": ["true"]},
+    {"action": "execute", "module_id": "", "content_id": "", "function": "eb_set_volume",
+     "args": {"level": "3", "fade": "true"}},
+    {"action": "execute", "module_id": "", "content_id": "", "function": "eb_legacy_only",
+     "args": []},
+    {"action": "execute", "module_id": "", "content_id": "", "function": "eb_wins",
+     "args": []},
+    {"action": "execute", "module_id": "", "content_id": "", "function": "", "args": []},
+    {"action": "execute", "module_id": "", "content_id": "", "function": "eb_junk_args",
+     "args": []},
+    {"action": "launch", "module_id": "DRAW", "content_id": "cards", "function": "eb_deal",
+     "args": ["3", "up"]},
+    {"action": "execute", "module_id": "", "content_id": "", "function": "eb_falsy_args",
+     "args": 0}
+  ],
+
   "expected_state": {
     "applied": [
-      {"action": "launch", "module_id": "DRAW", "content_id": "default", "function": ""},
-      {"action": "exit", "module_id": "", "content_id": "", "function": ""},
-      {"action": "sleep", "module_id": "", "content_id": "", "function": ""}
+      {"action": "launch", "module_id": "DRAW", "content_id": "default", "function": "", "args": []},
+      {"action": "exit", "module_id": "", "content_id": "", "function": "", "args": []},
+      {"action": "sleep", "module_id": "", "content_id": "", "function": "", "args": []}
     ],
     "unknown": 2,
     "module_id": "",
