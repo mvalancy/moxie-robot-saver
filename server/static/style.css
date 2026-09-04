@@ -100,7 +100,11 @@ footer a{color:var(--brand)}
 
 /* --- insights / telemetry (M6 parent console) --- */
 .insightsbox{margin:14px 0}
-.insights-hd{font-weight:700;font-size:13px;margin-bottom:8px;color:var(--brand)}
+.insights-hd{font-weight:700;font-size:13px;margin-bottom:8px;color:var(--brand);
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* 🧽 Erase history sits at the far end of the header, like the safety queue's
+   "Mark all reviewed" — the same shape for the same kind of verb. */
+.insights-hd .grow{flex:1}
 .evlog{margin-top:10px;max-height:220px;overflow-y:auto;border:1px solid var(--line);
   border-radius:10px;background:var(--bg);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-size:12px}

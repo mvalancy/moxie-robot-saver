@@ -43,6 +43,15 @@
   completion per turn and is the only number comparable to PR #15's 1.52 s. Written
   because [`expressiveness.md`](../../docs/architecture/backlog/expressiveness.md) §2.7
   criterion (f) had a *bench* measurement and said so.
+- **`build_csp_hashes.py`** — regenerates the SHA-256 sources in `sim/web/_headers`' `script-src`
+  from the inline `<script>` blocks in `sim/web/*.html`, and fails the build on an inline
+  `on*=` attribute or a `javascript:` URL (which no hash this policy grants can cover, and
+  which fail *silently* — the handler never fires). `--check` proves the committed header
+  still matches the pages; it runs as its own CI step, again from `sim/tests/test_csp_hashes.py`,
+  and a third time inside `sim/test_csp.mjs`. Three places for one guard is deliberate: a hash
+  that drifts from its block does not degrade, it **blanks the page**, and only Cloudflare Pages
+  ever sends `_headers`, so nothing local would otherwise see it. It owns the hash list and
+  nothing else — every other `script-src` source is carried through untouched.
 - **`check_bundle_fresh.py`** — asserts the committed docs bundle matches `docs/`, so a
   doc edit that forgets `build_docs_bundle.py` fails locally instead of shipping stale.
 - **`probe_demo_gateway.mjs`** — probes a deployed demo's gateway routes from outside,

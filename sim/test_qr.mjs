@@ -11,6 +11,7 @@
  * Run: node sim/test_qr.mjs
  */
 import { readFileSync } from "node:fs";
+import { pageSource } from "./browser_harness.mjs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -92,7 +93,7 @@ for (const cmd of ["serial_number_display", "restore_factory", "reset_network",
   ok(cmd in Q.KNOWN_DEBUG, `KNOWN_DEBUG missing documented command ${cmd}`);
 
 // ---- 4. the HUD panel is actually wired --------------------------------------
-const html = readFileSync(join(here, "web", "sim.html"), "utf8");
+const html = pageSource("sim.html");
 for (const id of ["qr-kind", "qr-make", "qr-canvas", "qr-status", "qr-ssid", "qr-pass"])
   ok(html.includes(`id="${id}"`), `sim.html missing #${id}`);
 ok(/vendor\/qrcode\.js/.test(html), "sim.html must load the vendored qrcode.js");
@@ -103,7 +104,9 @@ ok(html.includes("setup.html"), "sim HUD should link to the full static setup pa
 // setup.html is the phone-first, server-free revival page — the parent-app basics
 // hosted statically. It must reuse qr.js (not reimplement the encoders) so it can
 // never drift from the byte-parity guarantee above.
-const setup = readFileSync(join(here, "web", "setup.html"), "utf8");
+/* Page + its own scripts: the form glue moved from an inline block to `setup.js`
+ * on 2026-09-04 (see `sim/web/_headers`). */
+const setup = pageSource("setup.html");
 ok(setup.includes("vendor/qrcode.js") && setup.includes('src="qr.js"'),
    "setup.html must load the vendored qrcode.js + qr.js");
 ok(setup.includes("moxieQR.encodeWifi") || setup.includes("Q.encodeWifi"),

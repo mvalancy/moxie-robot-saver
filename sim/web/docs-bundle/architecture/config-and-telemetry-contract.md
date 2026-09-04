@@ -356,11 +356,25 @@ shapes, both caps and the filter; the runtime is the only thing that touches dis
 | `robots/<id>/telemetry_packets.json` | a ring of the newest `Packet` envelopes | *"what just happened"* — the event list + the by-event roll-up |
 | `robots/<id>/telemetry_daily.json` | one row per **local calendar day**: a count, counts by `event_name`, and the day's first/last stamp | *"what has been happening"* — a week, a month |
 
+**A third file is under the same switch, and it is not a telemetry record.**
+`robots/<id>/mentor_behaviors.json` is the durable per-child behavioural log — which activity
+was finished, which was quit, which was refused, with a timestamp on each — written by
+`MoxieRuntime.ingest_mentor_behavior` and read by the schedule recommender. It was **ungated
+until 2026-09-04**: a robot whose parent had chosen `NO_DATA` still accumulated a behavioural
+profile on disk while its telemetry and its transcript were being refused. It is gated on
+`telemetry_policy` rather than `memory_policy` because a `MentorBehavior` is a *report the robot
+uploads* on `client-service-activity-log` — the same kind of thing as a `Packet`, and the thing
+`LoggingPolicy` is about — rather than a fact a content module chose to remember (that is
+`MemoryStore`, and see the [content-module contract](content-module-contract.md)). Both resolve
+the parent's one `logging_policy` field either way; only their defaults are separate. Together
+the three files are this appliance's **activity record**, and one switch and one erase cover all
+three.
+
 **The policy filter** (`storable_packet`) **fails closed**:
 
 | `LoggingPolicy` | what is written |
 |---|---|
-| **`NO_DATA`** (0) | **nothing.** No packet, no count, no day row. A restart finds an empty store. |
+| **`NO_DATA`** (0) | **nothing.** No packet, no count, no day row, no behaviour record. A restart finds an empty store — and *moving the switch to `NO_DATA` erases what is already there* (below). |
 | **`NO_MEDIA`** (1) | the envelope, with `event_data` **removed** and `event_data_withheld:"NO_MEDIA"` in its place |
 | **`FULL`** (2) | the whole envelope, `event_data` truncated at 2 KB so one packet cannot blow the ring |
 
@@ -400,6 +414,33 @@ view and the schedule planner's signals all see history rather than only this pr
 place to forget to load it. A robot **known to the store but not currently connected** still answers:
 a parent asking about last week should not need the robot to be on the broker.
 
+**Erasing it — the button that was missing** *(built 2026-09-04)*. Until this landed telemetry had a
+policy gate and **no erasure path at all**: `do_DELETE` accepted only `/memory`, so a parent could
+turn recording off and still be left with every packet, every day row and every behaviour record
+already on disk, with nothing to press. That made the `NO_DATA` row above false the moment the
+switch was *flipped* rather than set, and it made this contract's *"reads and erase always work"*
+false for telemetry. Two paths now, and neither is policy-gated — an erase works under `NO_DATA`,
+`NO_MEDIA` and `FULL` alike:
+
+| the parent does | what happens |
+|---|---|
+| presses **Erase history** on the 📈 Insights card (`DELETE /telemetry?device_id=…` → `MoxieRuntime.erase_telemetry`) | all three files go, and the in-RAM cache goes with them so the console cannot serve a stale hydrate of what was just erased |
+| moves **data sharing to `NO_DATA`** (per robot or fleet-wide) | the same erase runs for every robot the switch now covers — `purge_telemetry`, at boot and on any config edit that could have moved it |
+
+> **Why the flip erases retroactively here, when the *facts* store does not.** The
+> [content-module contract](content-module-contract.md) keeps a robot's stored `MemoryStore` items
+> across a flip to `NO_DATA` on purpose: a memory item is a sentence about the child that a parent
+> may want to read, correct or pin, and there is a UI for exactly that. The activity record has
+> neither property. It is machine events in a bounded ring, the table above promises an empty store
+> under `NO_DATA`, and the Insights card already tells a parent under `NO_DATA` that nothing is
+> being saved — so a surviving ring would make both the table and the card lie. The rolling
+> transcript is erased on the same reasoning. A parent who wants the history gone **without**
+> changing the policy presses the explicit erase, which is why the flip is not the only way.
+>
+> The erase is deliberately **not carved finer** than "this robot's activity record". A `Packet`
+> envelope has no per-item meaning to a parent the way one remembered sentence does, and a partial
+> erase of a bounded ring is a promise nobody could check.
+
 ---
 
 ## What the parent console reads/writes (feature → field map)
@@ -419,6 +460,7 @@ a parent asking about last week should not need the robot to be on the broker.
 | Which robots may be served | the **permit list** — `fleet/permits.json` + `allow_unverified_bots`; the 🔐 Robot access card lists pending robots and permits them in one click |
 | Robot health | `RobotStatus` + `SystemState` |
 | Insights / activity history | persisted `Packet` telemetry — a bounded ring + daily roll-ups, [above](#how-this-server-persists-telemetry-built-v1-2026-09-02) |
+| Erase that history | **Erase history** on the 📈 card → `DELETE /telemetry?device_id=…` — the ring, the day rows and the behaviour log, never policy-gated |
 | Wake a sleeping Moxie | `{"command":"wakeup"}` on `/devices/{id}/commands/wakeup` ([MQTT §3.5](mqtt-and-conversation.md)) — publishes for real; **no acknowledgement exists**, so the console reports *sent*, never *awake* |
 | Reboot the robot | ❌ **not supported.** No cloud→robot reboot command is recovered ([power & system events](../reverse-engineering/protocol/power-and-system-events.md): `STATE_SILENT_REBOOT` is an on-device power state, `ShutdownRequest`/`SystemShutdown` are events the robot *emits*). The console shows the button as unavailable and the endpoint answers **501** rather than inventing a payload |
 | Firmware / OTA status | `robot_firmware_version` + `ota_reboot_required` from `/state`. This appliance serves no `api/ota`, so it **never claims "up to date"** — it reports what the robot said and says no update server is configured |
@@ -447,6 +489,12 @@ writes become a `RobotCloudConfig` push, and the status it shows comes from `/st
 - [ ] Honors `LoggingPolicy` (`NO_DATA`/`NO_MEDIA`/`FULL`) before uploading or staging any telemetry.
 - [ ] **Honors it on the way to disk as well** — `NO_DATA` persists nothing at all, `NO_MEDIA`
       persists no `event_data` payload, and a policy it cannot read fails closed rather than open.
+      "Nothing at all" covers the whole **activity record**, the behaviour log included, not only
+      the two files named `telemetry_*`.
+- [ ] **Gives the parent a way to take it back.** A gate on new writes is half a promise: there is
+      an erase for the stored activity record (`DELETE /telemetry`), it is never policy-gated, and
+      moving the switch to `NO_DATA` runs it for every robot the switch now covers rather than
+      leaving yesterday's packets where they are.
 - [ ] Keeps telemetry **durably and boundedly** if it keeps it at all: a history that dies with the
       process cannot answer "last week", and one that grows without limit is a bug on an appliance.
 - [ ] **Never reports success for a command it did not send.** Publish and say so, or refuse and say

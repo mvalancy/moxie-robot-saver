@@ -70,6 +70,11 @@ RECONNECT_MAX_DELAY_S = 60
 # rolling window, not an archive — the recommender/FTUE checks only need recent activity.
 MAX_MENTOR_BEHAVIORS = 500
 
+# Where that history lives: `robots/<id>/mentor_behaviors.json`. Named here because it is
+# now referenced from three places — the ingest, the read, and the erase — and a privacy
+# erase that missed the file because someone retyped the string would be silent.
+MENTOR_BEHAVIORS_COLLECTION = "mentor_behaviors"
+
 # How long a turn's brain call may run before we say *something*. The robot re-prompts
 # if the cloud stays silent for ~20 s (openmoxie-feature-audit.md:347) and a live gateway
 # turn was measured at 45 s healthy / 18 s degraded (implementation-plan.md:138), so the
@@ -110,19 +115,33 @@ MEMORY_POLICY = LoggingPolicy.NO_MEDIA
 # without. NO_MEDIA keeps the envelope (event name + timestamps + session) and withholds
 # every opaque payload, because `Packet.event_data` is `bytes` with no recovered type
 # vocabulary and a store that guessed "this blob is not audio" would be a privacy
-# incident, not a bug. A parent who sets `logging_policy=NO_DATA` gets **no further**
-# telemetry on disk (`storable_packet` returns None and `_persist_telemetry` writes
-# nothing — not the packet, not a count, not a day row); one who sets FULL gets payloads
-# too. See `moxie_sdk/telemetry.py::storable_packet` and
+# incident, not a bug. A parent who sets `logging_policy=NO_DATA` gets nothing on disk at
+# all (`storable_packet` returns None and `_persist_telemetry` writes nothing — not the
+# packet, not a count, not a day row); one who sets FULL gets payloads too. See
+# `moxie_sdk/telemetry.py::storable_packet` and
 # `docs/architecture/config-and-telemetry-contract.md` §③.
 #
-# "No further" is the honest word and it is narrower than it should be: unlike memory
-# (`erase_memory` / `DELETE /memory`) and the transcript (`purge_transcripts`, which the
-# flip itself triggers), telemetry has **no erasure path at all** — `do_DELETE` accepts
-# only `/memory` — so flipping to NO_DATA leaves the packet ring and the daily roll-up
-# already on disk where they are, with nothing a parent can press to remove them. That
-# is a real gap in the contract's *"erase always works"*, tracked as its own slice; do
-# not read this constant's comment as a claim that it is closed.
+# This constant governs the whole **activity record** — all THREE files in which this
+# appliance writes down what the child did — because a parent has one switch and not
+# three that could disagree:
+#
+#   robots/<id>/telemetry_packets.json   the ring of Packet envelopes
+#   robots/<id>/telemetry_daily.json     the calendar-day roll-up
+#   robots/<id>/mentor_behaviors.json    which activity was finished, quit or refused
+#
+# The third one was ungated until `ingest_mentor_behavior`'s gate landed. It belongs
+# here and not with `MEMORY_POLICY` because a `MentorBehavior` is a *report the robot
+# uploads* on `client-service-activity-log` — the same kind of thing as a `Packet`, and
+# the thing `LoggingPolicy` is about — rather than a fact a content module chose to
+# remember (that is `MemoryStore`, gated on `memory_policy`). Both constants resolve the
+# parent's one `logging_policy` field; only their defaults are separate.
+#
+# And "nothing on disk at all" is now true retroactively as well as going forward:
+# `erase_telemetry` (`DELETE /telemetry?device_id=…`) removes all three files, and
+# `purge_telemetry` runs it for every NO_DATA robot at boot and on any config edit that
+# could have moved the switch. Before that landed there was no erasure path at all —
+# `do_DELETE` accepted only `/memory` — so flipping to NO_DATA stopped new writes and
+# left the ring where it was, with nothing a parent could press.
 TELEMETRY_POLICY = LoggingPolicy.NO_MEDIA
 
 # How long a child must have been out of sight before Moxie says hello on its own when
@@ -297,6 +316,11 @@ class MoxieRuntime:
         # owns the store; the runtime owns the parent's privacy switch. See the memory
         # region below.
         self._wire_memory_policy()
+        # The activity record's boot sweep, the twin of `_load_memory`'s transcript one.
+        # A fleet-wide NO_DATA rule is durable and therefore outlives this process; the
+        # packets it forbids must not outlive it too. Last in `__init__` because it needs
+        # the store, the overrides dict and `effective_config` — all set by now.
+        self.purge_telemetry()
 
     def _build_client(self):
         import paho.mqtt.client as mqtt
@@ -1140,14 +1164,36 @@ class MoxieRuntime:
                                            "reason": str(e)}, 400)
 
             def do_DELETE(self):
-                """`DELETE /memory?device_id=…[&namespace=…[&item=…]]` — a parent erasing
-                what Moxie remembers. With `item`, exactly that one line goes; with only
-                a namespace, one activity; with neither, everything for that robot."""
-                from urllib.parse import urlparse
+                """A parent erasing what this appliance stored about their child.
+
+                `DELETE /memory?device_id=…[&namespace=…[&item=…]]` — what Moxie
+                *remembers*. With `item`, exactly that one line goes; with only a
+                namespace, one activity; with neither, everything for that robot.
+
+                `DELETE /telemetry?device_id=…` — what Moxie *recorded*: the packet ring,
+                the daily roll-up and the mentor-behavior history, all three at once (see
+                `erase_telemetry`). Deliberately not carved finer: a Packet envelope has
+                no per-item meaning to a parent the way one remembered sentence does, and
+                a partial erase of a bounded ring is a promise nobody could check.
+
+                Neither is policy-gated — an erase always works, under every
+                `LoggingPolicy` value."""
+                from urllib.parse import parse_qs, urlparse
                 u = urlparse(self.path)
-                if u.path != "/memory":
-                    self.send_response(404); self.end_headers(); return
-                return self._memory_write(u.query)
+                if u.path == "/memory":
+                    return self._memory_write(u.query)
+                if u.path == "/telemetry":
+                    device_id = (parse_qs(u.query).get("device_id") or [""])[0]
+                    if not device_id:
+                        return self._json_out({"ok": False,
+                                               "error": "device_id is required"}, 400)
+                    try:
+                        out = rt.erase_telemetry(device_id)
+                    except Exception as e:
+                        return self._json_out({"ok": False, "device_id": device_id,
+                                               "error": str(e)}, 400)
+                    return self._json_out(out, 200 if out.get("ok") else 404)
+                self.send_response(404); self.end_headers()
 
             def do_POST(self):
                 """Parent-console writes.
@@ -1962,10 +2008,12 @@ class MoxieRuntime:
         cfg.update(overrides)
         self.store.write_shared(self.FLEET_CONFIG_COLLECTION, cfg)
         self._note("config", f"⚙️  fleet config updated: {', '.join(overrides) or '—'}")
-        # A house rule of `logging_policy=NO_DATA` must take away the transcripts that are
-        # already on disk, for every robot on the box — not just the connected ones the
-        # loop below re-pushes. `purge_transcripts` is a no-op under any other policy.
+        # A house rule of `logging_policy=NO_DATA` must take away what is ALREADY on disk,
+        # for every robot on the box — not just the connected ones the loop below
+        # re-pushes: the rolling transcripts, and the activity record (packet ring, daily
+        # roll-up, mentor behaviors). Both sweeps are no-ops under any other policy.
         self.purge_transcripts()
+        self.purge_telemetry()
         for device_id in list(self.robots):
             self._push_config(device_id)
         return cfg
@@ -2739,6 +2787,101 @@ class MoxieRuntime:
             print(f"[runtime] telemetry write failed: {e}", flush=True)
             return False
 
+    # ---- erasing the activity record (the other half of the privacy contract) ----
+    #
+    # Until this landed, `do_DELETE` accepted only `/memory`. Telemetry had a policy gate
+    # and **no erasure path at all**, so a parent who moved the switch to NO_DATA stopped
+    # new writes and kept every packet already on disk, with nothing to press. §③ of the
+    # config contract says NO_DATA means *"nothing. No packet, no count, no day row. A
+    # restart finds an empty store."* — a sentence that was false the moment the switch
+    # was flipped rather than set.
+    #
+    # Three files, one verb, because they answer one question ("what did the child do")
+    # and an erase that left one of them behind would not be an erase:
+    #
+    #   telemetry_packets.json · telemetry_daily.json · mentor_behaviors.json
+    #
+    # Two decisions a reader will ask about:
+    #
+    #  1. **Flipping to NO_DATA erases retroactively**, exactly as it does for the rolling
+    #     transcript (`purge_transcripts`). The alternative — keep what was stored before
+    #     the flip, as the *facts* store does — was rejected here for two reasons the
+    #     facts store does not share. The contract's own table promises an empty store
+    #     under NO_DATA and the insights card already tells a parent under NO_DATA that
+    #     "nothing is being saved", so a surviving ring makes both of them lie. And a
+    #     memory item is a sentence about the child that a parent may want to read,
+    #     correct or pin (there is a UI for exactly that); a Packet envelope is a machine
+    #     event in a bounded ring with no per-item value to preserve.
+    #  2. **The erase is never policy-gated**, like every other erase here: it works under
+    #     NO_DATA, NO_MEDIA and FULL. A parent who wants the history gone without turning
+    #     recording off presses erase and leaves the switch alone — that is what the
+    #     explicit `DELETE /telemetry` is for, and why the flip is not the only way.
+
+    #: What `erase_telemetry` removes, in the order it removes it. One list, so a fourth
+    #: activity record cannot be added without this erase being told about it.
+    ACTIVITY_COLLECTIONS = (telemetry_seam.PACKETS_COLLECTION,
+                            telemetry_seam.DAILY_COLLECTION,
+                            MENTOR_BEHAVIORS_COLLECTION)
+
+    def erase_telemetry(self, device_id) -> dict:
+        """Forget everything this appliance stored about what one robot's child did.
+
+        Symmetric with `erase_memory`: never policy-gated, idempotent, and it makes the
+        **in-RAM view agree** — `robot.extra["telemetry"]` is dropped rather than left
+        holding the ring we just deleted, so the very next `_telemetry_buffer` hydrates
+        from the (now empty) store instead of serving what a parent just erased."""
+        removed = {c: bool(self.store.delete(device_id, c))
+                   for c in self.ACTIVITY_COLLECTIONS}
+        robot = self.robots.get(device_id)
+        if robot is not None:
+            robot.extra.pop("telemetry", None)     # never serve what we just erased
+        erased = any(removed.values())
+        if erased:
+            self._note("telemetry", "🧽 erased stored activity history")
+            print(f"[runtime] 🧽 erased telemetry for {device_id}: "
+                  f"{', '.join(k for k, v in removed.items() if v)}", flush=True)
+        out = self.telemetry_view(device_id)
+        if not out.get("ok"):
+            # Erasing the last of it is still a hit — a robot that is no longer known to
+            # the store because we just emptied it must not answer 404 to the parent who
+            # emptied it (the same shape `erase_memory` returns).
+            policy = self.telemetry_policy(device_id)
+            out = {"ok": True, "device_id": device_id,
+                   "summary": telemetry_seam.summarize_events([]),
+                   "events": [], "policy": policy.name,
+                   "persisted": policy != LoggingPolicy.NO_DATA,
+                   "connected": robot is not None,
+                   "retention": telemetry_seam.retention(),
+                   "history": telemetry_seam.history_view(telemetry_seam.new_rollup()),
+                   "totals": telemetry_seam.rollup_totals(telemetry_seam.new_rollup())}
+        out["erased"] = erased
+        out["records"] = sorted(k for k, v in removed.items() if v)
+        return out
+
+    def purge_telemetry(self) -> int:
+        """Erase the stored activity record of every robot now under `NO_DATA`.
+
+        Runs at startup and after any config edit that could have flipped the switch —
+        per robot or fleet-wide — so "I turned recording off" means the files are gone
+        *now*, for every robot this box knows about and not only the connected ones. A
+        no-op under any other policy, and best-effort: a store we cannot read must not
+        stop the appliance from coming up."""
+        try:
+            known = set(self.store.devices()) | set(self.robots)
+        except Exception as e:
+            print(f"[runtime] telemetry sweep failed: {e}", flush=True)
+            return 0
+        purged = 0
+        for device_id in sorted(known):
+            if self.telemetry_persists(device_id):
+                continue
+            if self.erase_telemetry(device_id).get("erased"):
+                purged += 1
+        if purged:
+            print(f"[runtime] 🧽 erased the activity record of {purged} robot(s) "
+                  f"under NO_DATA", flush=True)
+        return purged
+
     def telemetry_view(self, device_id, limit: int = 20, days: int = 7) -> dict:
         """The parent console's per-robot insights view (M6): the ring rolled up by
         `summarize_events` + the newest `limit` events + the last `days` days of daily
@@ -2780,10 +2923,12 @@ class MoxieRuntime:
         self._config_overrides.setdefault(device_id, {}).update(overrides)
         self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
         if "logging_policy" in overrides:
-            # The parent just moved the privacy switch. If it landed on NO_DATA, the
-            # transcript already on disk goes now — waiting for the next turn would leave
-            # it there for a robot that is never spoken to again.
+            # The parent just moved the privacy switch. If it landed on NO_DATA, what is
+            # already on disk goes now — waiting for the next turn would leave it there
+            # for a robot that is never spoken to again. Transcript first, then the
+            # activity record (packets, day rows, mentor behaviors).
             self.purge_transcripts()
+            self.purge_telemetry()
         if "face" in overrides:
             # Worth its own line in the console's activity feed: this is the one config
             # edit whose result a child sees on the robot's face.
@@ -4295,7 +4440,7 @@ class MoxieRuntime:
 
         Newest-first mirrors OpenMoxie's field-proven server (`robot_data.py::get_mbh`
         orders by `-timestamp`); our docs record the record shape but not an ordering."""
-        records = self.store.read(device_id, "mentor_behaviors", []) or []
+        records = self.store.read(device_id, MENTOR_BEHAVIORS_COLLECTION, []) or []
         if not isinstance(records, list):
             return []
         return sorted(records, key=lambda r: (r or {}).get("timestamp") or 0, reverse=True)
@@ -4303,11 +4448,32 @@ class MoxieRuntime:
     def ingest_mentor_behavior(self, device_id, report):
         """Store one reported MentorBehavior (`ActivityUpdate.mentor_behavior`, Cloud.proto
         :241 — see wire.parse_mentor_behavior). Returns the stored record, or None if the
-        report carried nothing usable. Publishes nothing: a report is not a query."""
+        report carried nothing usable. Publishes nothing: a report is not a query.
+
+        **Gated on the parent's `LoggingPolicy`.** This is a durable, per-child
+        behavioural log — which activity was finished, which was quit, which was refused,
+        with a timestamp on each — and it was the last thing this appliance wrote about a
+        child with no gate at all, so a `NO_DATA` robot still accumulated a behavioural
+        profile on disk while its telemetry and its transcript were being refused. It is
+        `telemetry_policy` and not `memory_policy` because a `MentorBehavior` is a *report
+        the robot uploads* (`client-service-activity-log`), the same kind of thing as a
+        `Packet`; both resolve the parent's one `logging_policy` field either way — see
+        `TELEMETRY_POLICY`.
+
+        Under `NO_DATA` the record is parsed and returned but never written, so the
+        caller (`_on_activity`) behaves exactly as it did and the turn is unaffected —
+        what changes is only what survives it. The console's live feed line still fires,
+        deliberately: like `ingest_telemetry`'s, and like the in-RAM conversation window
+        `_save_memory`'s gate leaves alone, this is a **persistence** gate. `self.recent`
+        is a 120-entry deque that dies with the process and never reaches disk, and a
+        parent watching their own console lose sight of their own robot would be a
+        privacy theatre with a real cost and no benefit."""
         rec = parse_mentor_behavior(report)
         if rec is None:
             return None
-        self.store.append(device_id, "mentor_behaviors", rec, cap=MAX_MENTOR_BEHAVIORS)
+        if self.telemetry_persists(device_id):
+            self.store.append(device_id, MENTOR_BEHAVIORS_COLLECTION, rec,
+                              cap=MAX_MENTOR_BEHAVIORS)
         self._note("behavior", f"🏁 {rec.get('module_id')}"
                                f"{'/' + rec['content_id'] if rec.get('content_id') else ''}"
                                f" {rec.get('action', '')}".rstrip())

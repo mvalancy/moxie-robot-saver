@@ -161,6 +161,52 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ── THE JOIN ────────────────────────────────────────────────────────────────────
+      # Everything above proves one HALF of DoD #1. `SIL smoke` (above) runs a real
+      # broker, the real supervisor process, real synthesized audio and a real virtual
+      # robot — around a MOCK brain: `MOXIE_APP=echo`, whose reply is literally
+      # `You said: hello Moxie`. The live gateway step (just above) drives a real brain
+      # through the real runtime with NO broker — "minus the broker", says
+      # `test_live_assembled_stack_end_to_end`'s own docstring. Until this step existed,
+      # nothing anywhere ran broker + supervisor + runtime + LIVE BRAIN + TTS + robot in
+      # one process tree, which is exactly what "a child can talk to Moxie end to end,
+      # proven by a live scenario, not a mock" asks for.
+      #
+      # Same dispatch-only gate as the step above, for the same two reasons: it spends a
+      # gateway call, and GitHub withholds secrets from fork PRs. Its own port so it can
+      # never contend with the plain smoke that ran earlier in this job.
+      - name: SIL smoke with a LIVE BRAIN (broker + supervisor + gateway + TTS + robot)
+        if: ${{ github.event_name == 'workflow_dispatch' }}   # spends a gateway call; also fork-safe
+        timeout-minutes: 10
+        env:
+          MOXIE_LLM_API_KEY: ${{ secrets.MOXIE_LLM_API_KEY }}
+          MOXIE_LLM_BASE_URL: ${{ secrets.MOXIE_LLM_BASE_URL }}
+          MOXIE_LLM_MODEL: ${{ secrets.MOXIE_LLM_MODEL }}
+          MOXIE_SIL_PORT: "1885"
+        run: |
+          set -o pipefail
+          bash sim/run_smoke.sh --live-brain | tee live-brain-smoke.log
+          # HONEST GATE, the third in this file. The harness skips with status 0 when
+          # there is no key — right on a laptop and in the fast tier, wrong in a dispatch
+          # that exists to produce this proof. The gateway step above already fails on an
+          # empty MOXIE_LLM_API_KEY, so a skip HERE means something else went missing,
+          # and a silent green would be the DoD-6 gap the other two gates close.
+          if grep -q 'SKIPPED' live-brain-smoke.log; then
+            echo "::error::the live-brain SIL smoke SKIPPED — this tier exists to prove the join, and a skip proves nothing"
+            exit 1
+          fi
+          {
+            echo "### Live-brain SIL smoke (the join: broker + supervisor + live brain + TTS + robot)"
+            echo ""
+            echo "The reply below was written by a model on the gateway, not by the echo"
+            echo "app — \`--reject-echo\` fails the run when it is \`You said: <prompt>\`."
+            echo ""
+            echo '```'
+            grep -E 'live brain reply|spoke [0-9]+ B|^✅|^❌' live-brain-smoke.log \
+              || tail -n 3 live-brain-smoke.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # ---- live VOICE tier: dispatch + `voice: true` ---------------------------------
       # Real speech in and out (sim/tests/test_live_talk_e2e.py). Needs piper-tts +
       # faster-whisper and the two Piper voices, which are git-ignored (63 MB each), so a
