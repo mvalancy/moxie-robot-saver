@@ -7,12 +7,22 @@
 name: CI (deep · main + HIL)
 on:
   pull_request: { branches: [main] }
+  # 03:17 UTC nightly — the soak's home (K1). An odd minute rather than :00 because
+  # GitHub queues the top of the hour and a 60-minute job that starts 20 minutes late is a
+  # 60-minute job whose numbers were taken on a contended runner.
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       voice:
         description: "Also run the live VOICE tier (real Piper speech ⇄ real Whisper; downloads 2 × 63 MB voices)"
         type: boolean
         default: false
+      soak_profile:
+        description: "Soak profile (smoke ~1 min · quick ~5 min · week ~60 min)"
+        type: choice
+        options: [quick, smoke, week]
+        default: quick
 
 jobs:
   docs:
@@ -242,6 +252,39 @@ jobs:
           docker compose -p moxie-smoke     --env-file sim/compose-smoke.env logs --tail 100 || true
           docker compose -p moxie-smoke-img --env-file sim/compose-smoke.env \
             -f docker-compose.images.yml logs --tail 100 || true
+
+  # K1 — `sim/run_soak.sh` meets every §5.3 bar. DEEP TIER AND NIGHTLY, NEVER FAST (R5):
+  # the failure mode this job has is not "too weak", it is "flaky on a loaded runner and
+  # therefore disabled", and a disabled soak proves less than no soak.
+  #
+  # `week` (60 min) on the nightly schedule; `quick` (~5 min) on a promotion PR, so the
+  # gate gets a real fault-injection run without an hour on every promote. The profile is
+  # overridable by dispatch. Read production-hardening.md §5.4 before quoting any number
+  # this job prints: it is an hour at a RAISED RATE against a simulator, it is not a week,
+  # and no physical Moxie has ever been on this broker.
+  soak:
+    name: "Soak — a week in an hour (${{ github.event_name == 'schedule' && 'week' || 'quick' }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install --quiet "paho-mqtt>=2.0"
+      - name: Docker available (the soak restarts a real mosquitto)
+        run: docker info >/dev/null
+      # Pulled explicitly so the image fetch is not counted inside the first broker
+      # restart's reconnect measurement (A3), where it would look like a 30-second outage.
+      - name: Pre-pull the broker image
+        run: docker pull eclipse-mosquitto:2
+      - name: Soak
+        env:
+          SOAK_PROFILE: ${{ github.event.inputs.soak_profile || (github.event_name == 'schedule' && 'week' || 'quick') }}
+        run: bash sim/run_soak.sh --profile "$SOAK_PROFILE" --json soak-result.json
+      - name: Soak result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: soak-result, path: soak-result.json, if-no-files-found: warn }
 
   # The release workflow pushes linux/amd64 + linux/arm64 on a v* tag. A broken arm64
   # build would only surface at release time, which is exactly the wrong moment — so the

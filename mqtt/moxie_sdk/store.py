@@ -121,6 +121,12 @@ DEFAULT_LOCK_TIMEOUT_S = 2.0
 #: bounded, recorded failure §3.2 point 4 accepts, not a silent one.
 LOCK_BACKOFF_BASE_S = 0.0005
 LOCK_BACKOFF_CAP_S = 0.002
+#: Largest exponent the backoff will compute. `2 ** attempt` is an arbitrary-precision
+#: int and this loop iterates `timeout / cap` times — ~1 000 at the default 2.0 s budget
+#: and ~15 000 at 30 s — so without a clamp `LOCK_BACKOFF_BASE_S * (2 ** attempt)` raises
+#: `OverflowError` at `attempt == 1024` and takes the *caller* down rather than timing
+#: out. The cap is already reached at `attempt == 2`, so this discards nothing.
+LOCK_BACKOFF_MAX_SHIFT = 32
 
 _NO_LOCKING_NOTE = (
     "⚠️  cross-process store locking is unavailable on this platform (no fcntl): two "
@@ -354,7 +360,27 @@ class JsonStore:
         asked = 0.0
         attempt = 0
         while asked < self.lock_timeout_s:
-            delay = min(LOCK_BACKOFF_CAP_S, LOCK_BACKOFF_BASE_S * (2 ** attempt))
+            # `2 ** attempt` is an arbitrary-precision **int**, and this loop runs until
+            # the budget is spent — roughly `timeout / LOCK_BACKOFF_CAP_S` times. At
+            # `attempt == 1024` the product overflows a float and raises
+            # `OverflowError: int too large to convert to float`, straight out of
+            # `transaction()`, past `append`'s `except StoreLockTimeout`, into the caller.
+            #
+            # The default budget hides it by 24 polls: 2.0 s / 2 ms = ~1000. **Any** larger
+            # value crosses the cliff — 5 s is ~2 500 polls, 30 s is ~15 000 — and
+            # `config.py` positively invites larger ones, since the only bound it enforces
+            # is `< MOXIE_BRAIN_BUDGET_S`. So a contended writer under a raised timeout
+            # crashed instead of waiting, and did it rarely enough to read as a flake:
+            # found 2026-09-03 as a 1-in-12 failure of `test_t1` (which uses 30 s
+            # deliberately) under load, and it is very likely the unexplained lost append
+            # in the handed-down "999 of 1 000 at 30 s" measurement.
+            #
+            # The clamp costs nothing: the cap is reached at `attempt == 2`
+            # (0.0005 × 4 = 0.002), so every exponent past a handful is already discarded
+            # by the `min`. It is 32 rather than 3 only so the shape stays recognisably
+            # "exponential, capped" to the next reader.
+            delay = min(LOCK_BACKOFF_CAP_S,
+                        LOCK_BACKOFF_BASE_S * (2 ** min(attempt, LOCK_BACKOFF_MAX_SHIFT)))
             delay += random.uniform(0, LOCK_BACKOFF_BASE_S)
             delay = min(delay, self.lock_timeout_s - asked)
             self._sleep(delay)
@@ -493,15 +519,41 @@ class JsonStore:
         across processes — before that fix two appenders lost one item per collision, with
         no error anywhere.
         """
+        return self._append_path(self.path(device_id, collection), item, cap=cap)
+
+    def append_shared(self, collection: str, item, *, cap: int | None = None):
+        """`append()` for the fleet tier (`fleet/<collection>.json`).
+
+        The tier the appliance's own history lives in — the connection ring
+        (`conn_telemetry.py`) is appliance-wide because there is one socket, not one per
+        robot, and two supervisors on one data directory must not lose each other's rows
+        for exactly the reason §3 gives about `safety_events`.
+        """
+        return self._append_path(self.shared_path(collection), item, cap=cap)
+
+    def _append_path(self, path: str, item, *, cap: int | None = None):
+        """Append over an already-resolved record path. None = refused or not written.
+
+        **The write's return value is checked**, and that is a fix rather than a tidy-up.
+        This method used to call `write()` and return `items` regardless, so an `OSError`
+        — a full disk, a read-only `/data`, a permission change — produced a *successful*
+        append of an item that reached no file. That is the same disease as the eight
+        publishes whose `info.rc` nobody read (§4.1 C5) and the CONNACK that logged
+        "connected" for a refusal (C3): a comfortable lie at the one boundary that knows
+        the truth. It also breaks the identity the soak's contention probe is built on —
+        `attempted == on_disk + refused` — which is what makes a *silent* loss
+        distinguishable from a *recorded* refusal at all (§5.3 A5 vs A11).
+        """
         try:
-            with self.transaction(device_id, collection):
-                items = self.read(device_id, collection, [])
+            with self._transaction_path(path):
+                items = self._read_path(path, [])
                 if not isinstance(items, list):
                     items = []
                 items.append(item)
                 if cap is not None and cap >= 0 and len(items) > cap:
                     del items[: len(items) - cap]
-                self.write(device_id, collection, items)
+                if not self._write_path(path, items):
+                    return None
                 return items
         except StoreLockTimeout:
             return None

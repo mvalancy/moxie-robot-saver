@@ -1,5 +1,5 @@
 {
- "generated": "docs-22d525ac4a42",
+ "generated": "docs-3a273c977fd8",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 8835,
+   "bytes": 9318,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 119591,
+   "bytes": 122616,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 105206,
+   "bytes": 106836,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -351,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 118728,
+   "bytes": 120079,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -659,7 +659,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 59276,
+   "bytes": 73560,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",
@@ -688,7 +688,7 @@
     "7. Acceptance criteria",
     "8. Effort and the file list",
     "P0 — **M**, one agent, one sitting, shippable alone — ✅ **shipped 2026-09-03**",
-    "P1 — **M**",
+    "P1 — **M** — ✅ **shipped 2026-09-03**",
     "P2 — **L**",
     "Risks",
     "9. Assumption ledger",

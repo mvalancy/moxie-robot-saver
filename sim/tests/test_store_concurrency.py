@@ -636,3 +636,179 @@ def test_a_transaction_on_one_record_does_not_block_another(tmp_path):
     s.write(DEVICE, COLLECTION, [])
     assert s.lock_path(s.path(DEVICE, "memory")) != s.lock_path(s.path(DEVICE, COLLECTION))
     assert s.lock_path(s.path(DEVICE, "memory")) != s.lock_path(s.path("d_other", "memory"))
+
+
+# --------------------------------------------------------------------------- #
+# T10 — `append` reads the write's return code (production hardening P1)
+# --------------------------------------------------------------------------- #
+#
+# Found while wiring P1's connection ring onto the store. `append()` called `write()` and
+# returned `items` regardless of what it said, so an `OSError` — a full disk, a read-only
+# `/data`, a permission change under a running appliance — produced a **successful** append
+# of an item that reached no file.
+#
+# That is the same disease as the eight `publish()` sites whose `info.rc` nobody read
+# (§4.1 C5) and the CONNACK that logged "broker connected" for a refusal (C3): a
+# comfortable answer at the one boundary that knows the truth. It also breaks the identity
+# the soak's contention probe is built on —
+#
+#     attempted == items_on_disk + refusals
+#
+# — which is the only thing that tells a **recorded refusal** (§3.2 point 4 accepts it,
+# A11 asks it to be recorded) apart from a **silent loss** (A5 forbids it). With `append`
+# lying about a failed write, a lost item looks exactly like a successful one.
+
+def test_t10_append_reports_failure_when_the_write_failed(tmp_path, monkeypatch):
+    """A write that did not land must not come back as a list that says it did."""
+    s = JsonStore(str(tmp_path))
+    assert s.append(DEVICE, COLLECTION, "first") == ["first"]
+
+    monkeypatch.setattr(s, "_write_path", lambda *a, **kw: False)
+    assert s.append(DEVICE, COLLECTION, "second") is None, \
+        "append returned a list for a write that failed"
+    # And the record is unchanged — the failure is refused, never partial.
+    monkeypatch.undo()
+    assert s.read(DEVICE, COLLECTION, []) == ["first"]
+
+
+def test_t10b_a_read_only_data_directory_is_a_refusal_not_a_lie(tmp_path):
+    """The realistic version of T10, end to end through the real write path: an
+    unwritable tree. `None` is the store's own *"nothing was stored"* answer, and it is
+    what the caller already handles for a refused lock."""
+    s = JsonStore(str(tmp_path))
+    s.append(DEVICE, COLLECTION, "first")
+    device_dir = s.device_dir(DEVICE)
+    mode = os.stat(device_dir).st_mode
+    os.chmod(device_dir, 0o500)                   # r-x: no new temp file can be created
+    try:
+        assert s.append(DEVICE, COLLECTION, "second") is None
+    finally:
+        os.chmod(device_dir, mode)
+    assert s.read(DEVICE, COLLECTION, []) == ["first"]
+
+
+def test_t10c_append_shared_reports_the_same_way(tmp_path, monkeypatch):
+    """The fleet tier is where the appliance's own history lives (`conn_events`), so a
+    silent failure there is a connection outage nobody can read about afterwards."""
+    s = JsonStore(str(tmp_path))
+    assert s.append_shared("conn_events", {"kind": "connect"}) == [{"kind": "connect"}]
+    monkeypatch.setattr(s, "_write_path", lambda *a, **kw: False)
+    assert s.append_shared("conn_events", {"kind": "disconnect"}) is None
+
+
+def test_t10d_the_identity_the_soak_rests_on_holds_under_real_contention(tmp_path):
+    """`attempted == on_disk + refused`, proved in-process over threads.
+
+    The soak (`sim/tools/soak.py`) asserts this across **processes** at a rate CI cannot
+    afford; this is the same invariant at a size the fast tier can run, so a regression in
+    it fails in seconds rather than in the nightly job.
+    """
+    s = JsonStore(str(tmp_path))
+    attempted, refused = 200, 0
+    lock = threading.Lock()
+
+    def writer(tag):
+        nonlocal refused
+        for i in range(attempted // 4):
+            if s.append(DEVICE, COLLECTION, f"{tag}-{i}") is None:
+                with lock:
+                    refused += 1
+
+    threads = [threading.Thread(target=writer, args=(t,)) for t in "abcd"]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    on_disk = len(s.read(DEVICE, COLLECTION, []))
+    assert on_disk + refused == attempted, \
+        f"{attempted - on_disk - refused} append(s) vanished without being refused"
+
+
+# --------------------------------------------------------------------------- #
+# T11 — a raised lock budget must time out, not crash the caller
+# --------------------------------------------------------------------------- #
+#
+# Found 2026-09-03 while characterising a reported `test_t1` flake ("failed once under
+# full-suite load, then passed 5/5 isolated"). It is not a flake and it is not starvation.
+#
+# `_wait_flock`'s backoff computed `LOCK_BACKOFF_BASE_S * (2 ** attempt)`, and `2 **
+# attempt` is an arbitrary-precision **int**. The loop runs until the budget is spent —
+# about `timeout / LOCK_BACKOFF_CAP_S` iterations — so:
+#
+#     MOXIE_STORE_LOCK_TIMEOUT_S = 2.0  (default)  →  ~1 000 polls   — 24 short of the cliff
+#     MOXIE_STORE_LOCK_TIMEOUT_S = 5.0             →  ~2 500 polls   — CRASHES
+#     MOXIE_STORE_LOCK_TIMEOUT_S = 30.0            →  ~15 000 polls  — CRASHES
+#
+# At `attempt == 1024` the product overflows a float and raises `OverflowError: int too
+# large to convert to float` — straight out of `transaction()`, **past** `append`'s
+# `except StoreLockTimeout`, into whatever called it. On the paho network thread that is
+# the "never take the MQTT loop down for a store write" property broken outright.
+#
+# Three things make it nasty rather than merely wrong:
+#
+# * **the default hides it by 24 polls**, so nobody sees it until an operator tunes;
+# * **`config.py` invites the tuning** — the only bound it enforces is
+#   `< MOXIE_BRAIN_BUDGET_S`, which is far above the cliff;
+# * **it needs real contention to reach**, so it presents as a rare, load-dependent test
+#   failure rather than as a bug.
+#
+# `test_t1` uses a 30 s budget *deliberately* (so that starvation cannot be mistaken for a
+# lost update), which is precisely why the flake surfaced there first. It is also the most
+# likely explanation for the unexplained single lost append in the handed-down
+# "999 of 1 000 at 30 s" measurement: not a starved waiter, a crashed writer.
+
+@pytest.mark.parametrize("timeout_s", [2.0, 5.0, 30.0, 120.0])
+def test_t11_a_contended_waiter_times_out_at_any_budget(tmp_path, timeout_s):
+    """Whatever the budget, exhausting it is a `StoreLockTimeout` — never an
+    `OverflowError`, and never anything else the caller has not been told to expect.
+
+    The sleep is injected and does nothing, so ~15 000 polls take milliseconds and no wall
+    clock is read (`test_clock_dependence.py`'s ratchet). That also means the test is
+    measuring the **poll count**, which is exactly the axis the bug lives on.
+    """
+    s = JsonStore(str(tmp_path), lock_timeout_s=timeout_s, sleep=lambda _: None)
+    path = s.path(DEVICE, COLLECTION)
+    lock = s.lock_path(path)
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_EX)     # another process holds it
+    try:
+        with pytest.raises(StoreLockTimeout):
+            with s.transaction(DEVICE, COLLECTION):
+                pass
+        # …and the store's own writers turn that into a falsy answer, not a traceback.
+        assert s.append(DEVICE, COLLECTION, "x") is None
+        assert s.write(DEVICE, COLLECTION, ["x"]) is False
+        assert s.lock_timeouts >= 2
+    finally:
+        store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def test_t11b_the_backoff_never_computes_an_unbounded_exponent(tmp_path):
+    """The mechanism, pinned at the line rather than only at the symptom.
+
+    Asserted as a property of the delays themselves — every one is a real float inside
+    `[0, cap + base]` — because the symptom (an `OverflowError`) is reachable only through
+    a poll count that a future refactor of the loop could change without fixing anything.
+    """
+    delays: list = []
+    s = JsonStore(str(tmp_path), lock_timeout_s=30.0, sleep=delays.append)
+    path = s.path(DEVICE, COLLECTION)
+    lock = s.lock_path(path)
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_EX)
+    try:
+        with pytest.raises(StoreLockTimeout):
+            with s.transaction(DEVICE, COLLECTION):
+                pass
+    finally:
+        store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_UN)
+        os.close(fd)
+    assert len(delays) > 1024, (
+        f"only {len(delays)} polls — this budget no longer crosses the overflow cliff, so "
+        "the test has stopped exercising the bug it was written for")
+    ceiling = store_mod.LOCK_BACKOFF_CAP_S + store_mod.LOCK_BACKOFF_BASE_S
+    for d in delays:
+        assert isinstance(d, float) and 0.0 <= d <= ceiling, d

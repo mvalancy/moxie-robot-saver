@@ -204,6 +204,26 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     state`), and only then clean up, in a separate command that runs only when the state is
     literally `MERGED`.** A loop over several PRs must `break` on the first that is not.
 
+23. **A gate result is only true for the commit it was read on — re-read it in the same
+    command that merges.** Made twice on 2026-09-03, once by machine and once by hand. The
+    machine version: a merge watcher read `gate: all` from a run that had already been
+    superseded by a push, and tried to merge; `gh` refused with `UNSTABLE`, so nothing
+    landed unverified, and the watcher was fixed to pin the head SHA and re-check it had not
+    moved. The hand version, an hour later and worse: I read the standing PR green at 10/10,
+    then `dev` took two merges, deep CI restarted, and I merged the promotion on the older
+    read — **the same mistake, in the one place where `gh` will not save you**, because a
+    promotion into `main` is mergeable regardless of whether the deep tier has finished.
+    What bypassed the gate was a test harness, a `ci-deep.yml` line and docs — no runtime
+    code, each already through its own fast CI — and the next deep run went green and
+    validated the changed gate retroactively. That is luck, not process.
+    **So: read the gate and merge in the SAME command, gated on that read** — pin
+    `headRefOid` first, re-read it after the gate check, and refuse if it moved. The
+    generalisation, which is the reason this is a rule rather than a note: **any check whose
+    subject can change between the check and the action is not a check, it is a memory.**
+    That is the same defect as the roster ghost, the vision latch and the wakeup-into-a-dead-
+    socket — a cached belief about a moving thing — and it is the most common bug this
+    project has produced.
+
 ## The layered session loops (24/7 continuity)
 
 Session-scheduled loops keep the project moving while the operator is away; when a session hits a usage

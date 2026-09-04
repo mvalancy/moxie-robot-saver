@@ -276,32 +276,88 @@ function weekBars(history){
   }).join('');
   return `<div class="tweek">${bars}</div>`;
 }
+// 🔌 the appliance's own broker connection (production hardening P1).
+//
+// Appliance-wide, not per-robot: there is ONE socket to the broker, so this strip renders
+// above the per-robot telemetry and — deliberately — in every branch below, including
+// "no robot connected". That case is the one it earns its place in: a card that says only
+// "no robot connected" cannot tell a parent whether the robot is off or the appliance
+// lost its broker four minutes ago, and those need completely different actions.
+//
+// Three states, and "recovered" is deliberately not "healthy": an appliance that dropped
+// nine times this hour and happens to be up right now is not the same thing as one that
+// never dropped. Collapsing them is the comfortable lie this whole slice removes.
+function connGaps(c){
+  if(!c.gaps || !c.gaps.count) return '';
+  const s=n=>n>=60?`${Math.round(n/60)}m`:`${n.toFixed(1)}s`;
+  return ` · ${c.gaps.count} outage${c.gaps.count===1?'':'s'} totalling ${s(c.gaps.total_s)}`
+    +` (longest ${s(c.gaps.max_s)})`;
+}
+function connectionStrip(c){
+  if(!c || !c.ok){
+    return '<div class="connstrip down">🔌 <b>Supervisor not reachable</b>'
+      +' — this card cannot say anything about the connection.</div>';
+  }
+  const dot = c.state==='down' ? 'down' : (c.state==='recovered' ? 'warn' : 'ok');
+  const bits=[];
+  if(c.outages) bits.push(`${c.outages} outage${c.outages===1?'':'s'}`);
+  if(c.refusals) bits.push(`${c.refusals} refused connection${c.refusals===1?'':'s'}`);
+  if(c.drops) bits.push(`${c.drops} dropped message${c.drops===1?'':'s'}`);
+  if(c.lock_timeouts) bits.push(`${c.lock_timeouts} refused save${c.lock_timeouts===1?'':'s'}`);
+  // Every row carries its own timestamp, so a parent reads a sequence rather than a
+  // count — which is the entire difference between this and the six scalars it replaces.
+  const rows=(c.events||[]).map(e=>{
+    const when=e.at?new Date(e.at*1000).toLocaleString():'—';
+    const extra=[];
+    if(e.gap_s!=null) extra.push(`after ${e.gap_s.toFixed(1)}s down`);
+    if(e.waited_s!=null) extra.push(`waited ${e.waited_s.toFixed(1)}s`);
+    if(e.device_id) extra.push(escapeHtml(e.device_id));
+    if(e.reason) extra.push(escapeHtml(e.reason));
+    return `<div class="ev"><span>${escapeHtml(when)}</span> <b>${escapeHtml(e.label)}</b>`
+      +(extra.length?` <span>${extra.join(' · ')}</span>`:'')+'</div>';
+  }).join('');
+  const known=c.roster&&c.roster.known
+    ? ` · ${c.roster.known} robot${c.roster.known===1?'':'s'} known to this box` : '';
+  const note=c.count
+    ? `<p class="tnote">Newest ${c.count} of the last ${c.retention.events} connection `
+      +`events kept on this box${known}.</p>`
+    : `<p class="tnote">Nothing recorded yet${known}.</p>`;
+  return `<div class="connstrip ${dot}">🔌 <b>${escapeHtml(c.verdict||'')}</b>`
+    +`${bits.length?' — '+bits.join(', '):''}${connGaps(c)}`
+    +`${c.last_error?` <span>${escapeHtml(c.last_error)}</span>`:''}</div>`
+    +(rows?`<div class="evlog conn">${rows}</div>`:'')+note;
+}
 async function refreshInsights(deviceId){
   const box=$('#robot-insights'); if(!box) return;
-  if(!deviceId){ box.innerHTML='<div class="live-off">📈 Insights: no robot connected</div>'; return; }
+  // Fetched first and rendered in every branch — see the note above `connectionStrip`.
+  let conn=null;
+  try{ conn=await api('/local/connection',{auth:false}); }catch(e){ conn=null; }
+  const strip=connectionStrip(conn);
+  const render=html=>{ box.innerHTML=strip+html; };
+  if(!deviceId){ render('<div class="live-off">📈 Insights: no robot connected</div>'); return; }
   let t;
   try{ t=await api(`/local/robots/${encodeURIComponent(deviceId)}/telemetry`,{auth:false}); }
-  catch(e){ box.innerHTML='<div class="live-off">📈 Insights: supervisor offline</div>'; return; }
+  catch(e){ render('<div class="live-off">📈 Insights: supervisor offline</div>'); return; }
   if(!t.ok){
-    box.innerHTML=`<div class="live-off">📈 Insights: ${escapeHtml(t.error||'unavailable')}</div>`;
+    render(`<div class="live-off">📈 Insights: ${escapeHtml(t.error||'unavailable')}</div>`);
     return;
   }
   const tot=t.totals||{}, ret=t.retention||{};
   const hd=`<div class="insights-hd">📈 Insights · ${t.count} event${t.count===1?'':'s'} kept`
     +`${tot.total>t.count?` · ${tot.total} all time`:''}</div>`;
   if(t.persisted===false){
-    box.innerHTML=hd+'<div class="live-off">Data sharing is '
+    render(hd+'<div class="live-off">Data sharing is '
       +`${escapeHtml(t.policy||'NO_DATA')}, so nothing is being saved — this card can only `
       +'show what has arrived since the supervisor started, and a restart clears it.</div>'
       +(t.count?`<div class="evlog">${(t.events||[]).map(e=>{
           const when=e.recorded_at?new Date(e.recorded_at*1000).toLocaleString():'—';
           return `<div class="ev"><span>${escapeHtml(when)}</span> <b>${escapeHtml(e.event_name)}</b></div>`;
-        }).join('')}</div>`:'');
+        }).join('')}</div>`:''));
     return;
   }
   if(!t.count && !(tot.total>0)){
-    box.innerHTML=hd+'<div class="live-off">No events yet — Moxie hasn\'t reported any '
-      +'activity. Once it does, this card keeps the history across restarts.</div>';
+    render(hd+'<div class="live-off">No events yet — Moxie hasn\'t reported any '
+      +'activity. Once it does, this card keeps the history across restarts.</div>');
     return;
   }
   const week=weekBars(t.history||[]);
@@ -317,8 +373,8 @@ async function refreshInsights(deviceId){
     +'day'+(tot.dropped_days===1?'':'s')+' have aged out)':''}. `
     +`Data sharing is ${escapeHtml(t.policy||'NO_MEDIA')}`
     +`${t.policy==='NO_MEDIA'?', so event payloads are never written — only what happened and when':''}.`;
-  box.innerHTML=`${hd}${week}<div class="livegrid">${counts}</div>`
-    +`<div class="evlog">${rows}</div><p class="tnote">${note}</p>`;
+  render(`${hd}${week}<div class="livegrid">${counts}</div>`
+    +`<div class="evlog">${rows}</div><p class="tnote">${note}</p>`);
 }
 // safety review queue (ai-seam §2 InputSafety): what the classifier blocked or flagged,
 // on either side of a turn. Excerpts arrive already redacted by the runtime.
