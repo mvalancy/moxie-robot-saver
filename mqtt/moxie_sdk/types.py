@@ -9,7 +9,7 @@ it receives a `Turn` and returns a `Reply`. It never touches the transport.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:                    # a type-only import: `types` stays dependency-free
     from .performance import Performance
@@ -64,11 +64,22 @@ class ActionType(str, Enum):
 
 @dataclass
 class Action:
+    """One `RemoteChatAction` for the robot to carry out.
+
+    `function` / `args` are the `execute` half: `function` is the robot-side function to
+    run and `args` are its arguments. Both reach the wire through
+    `moxie_sdk.wire.encode_action`, which spells them `function_id` (proto field 7) and,
+    **by type**, either `function_args` (field 8, `repeated string` — for a list/tuple) or
+    `action_args` (field 10, `repeated {key, value}` — for a dict). Empty means the keys
+    are not emitted at all. They were silently dropped before 2026-09-04, which made every
+    `execute` this appliance could send arrive unnamed
+    (docs/architecture/backlog/qr-launch-cards.md §P0-a).
+    """
     type: ActionType
     module_id: Optional[str] = None
     content_id: Optional[str] = None
-    function: Optional[str] = None
-    args: dict = field(default_factory=dict)
+    function: Optional[str] = None        # -> function_id
+    args: Any = field(default_factory=dict)   # dict -> action_args; list -> function_args
 
 
 @dataclass

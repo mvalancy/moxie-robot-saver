@@ -98,6 +98,44 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **Every `execute` this appliance could send reached the robot *unnamed* — closed 2026-09-04
+  (the wire half of [qr-launch-cards](backlog/qr-launch-cards.md) §P0-a).**
+  [`wire.py::build_chat_response`](../../mqtt/moxie_sdk/wire.py) serialised an action as exactly
+  `{output_type, action, module_id, content_id}` and dropped `Action.function` / `Action.args`
+  ([`types.py`](../../mqtt/moxie_sdk/types.py)), so the one verb whose whole meaning is *which function*
+  — `execute` — arrived as the word "execute" and nothing else. That is what blocked `eb_enable_qr` from
+  ever reaching a robot, and it is [sandboxed-extensions](backlog/sandboxed-extensions.md)'s **S5** seen
+  from the wire end. A new `wire.py::encode_action` now emits the recovered shape:
+  `function_id` (`RemoteChatAction` field 7, `optional string`) plus — **by the argument's type, not by a
+  guess** — `function_args` (field 8, `repeated string`) for a list or `action_args` (field 10, `repeated
+  ActionArgsEntry{key, value}`) for a dict
+  ([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):255-281,
+  read back by [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md):99).
+  Every value is stringified because both fields are `string` on the wire, and a dict is never flattened
+  into a `k=v` form the proto does not define. **Emitted only when present**, so a launch/exit/sleep is
+  byte-identical to what we sent before and no golden moved. `sim/virtual_moxie.py` now decodes
+  `action_args` as well, and **still records rather than pretends**: nothing is called and no
+  `execute_returns[]` is invented. The test that pinned the defect on purpose
+  (`test_actions_reach_the_robot.py::…_carries_no_function_at_all`) is **flipped, not deleted**, into
+  `…_sends_now_names_the_function_it_wants_run`, which drives the whole hop — build the response, hand it
+  to the SIL robot, ask the robot what it was told to run. **5 new/flipped tests, all 5 red against the
+  pre-change tree.** ⚠️ **Two things this deliberately did NOT do, and one measured correction.** The
+  naming defects stay: `ActionType.EXIT = "exit"` (the enum spells it `exit_module`) and
+  `ENABLE_QR = "enable_qr"` (not an `ActionID` verb at all — the contract's arm is `execute` +
+  `function_id: "eb_enable_qr"`) are renamed by nobody here, because a wire value is a contract change
+  with its own evidence and its own blast radius, and they are now **pinned by a test named for them** so
+  §P0-a's rename must turn it red. And the backlog's claim that this "flips four `xfail(strict)`
+  extension-conformance rows green" is **false, measured not assumed**: all four of
+  `test_ext.py::test_t1_t6_conformance_p1[G2/G3/G5/G6]` still xfail, refused at *load* with
+  *"needs something this appliance cannot grant yet: `act.eb_timer_request`"* — the remaining half is
+  [`ext.py`](../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` / `P1_CAPABILITIES` gate plus
+  `content_app._reply_from_volley` plumbing `volley.execution_actions` into an `Action` at all. The wire
+  was necessary, not sufficient. **Still honestly missing:** no physical robot has ever been sent one of
+  these, so nothing proves a real robot's JSON decoder accepts `function_id` by that spelling
+  (qr-launch-cards.md §7 Q1/Q3), and `sim/web/bridge.js::applyAction` reads only `entry.function` — it
+  ignores `function_id` and never reads args at all, so the **browser SIM still shows an armed `execute`
+  as `(unnamed)`**. That is the other client's half of criterion 4 and is untouched here.
+
 - **The `/api/*` routes carried almost none of the page's security header set — fixed 2026-09-04.**
   PR #112 gave the static pages HSTS and a real CSP; a live measurement the next day showed the routes that
   can **spend money** answering with only `nosniff`, `no-store` and `Referrer-Policy` — no HSTS, no CSP, no
