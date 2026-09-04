@@ -5,7 +5,11 @@
 #   TELEHEALTH:     sim/run_smoke.sh --telehealth   (🎭 puppet round-trip instead)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+# READINESS IS POLLED, NOT SLEPT — see sim/readiness.sh for the two numbers that
+# retired the `sleep 2` + `sleep 3` this script used to boot on.
+. sim/readiness.sh
 PORT="${MOXIE_SIL_PORT:-1883}"
+SUP_LOG=/tmp/moxie-supervisor.log
 # 🎭 --telehealth swaps the conversation round-trip for the puppet one: an operator drives
 # the SIL robot over the supervisor's own status HTTP (the seam the console proxies), and
 # the robot asserts the recovered TeleHealth wire at every step. Same broker, same
@@ -47,12 +51,25 @@ else
     -v "$PWD/sim/broker/ci-mosquitto.conf":/mosquitto/config/mosquitto.conf:ro \
     eclipse-mosquitto:2)
 fi
-sleep 2
+wait_for_port "$PORT" 30
 
 echo "── supervisor (echo app) ──"
 # Derive the status port from the broker port so a leftover supervisor on the default
-# 8930 doesn't make this run's status endpoint fail to bind (it's best-effort either way).
-STATUS_PORT=$((7000 + (PORT % 2000)))
+# 8930 doesn't make this run's status endpoint fail to bind — and honour an operator's
+# own MOXIE_STATUS_PORT, the way run_scenarios.sh always has, because the derivation can
+# collide too and until now this script offered no lever when it did.
+#
+# "Best-effort either way" is what the note here used to say, and it was true when nothing
+# read the endpoint. `--telehealth` made it LOAD-BEARING and the note was never revisited:
+# the operator drives the robot over this exact HTTP port. Observed 2026-09-03 on
+# MOXIE_SIL_PORT=1930 → :8930, a port a stale supervisor from an unrelated run already
+# held: the runtime logged `status server failed: [Errno 98] Address already in use`, kept
+# going, and the telehealth robot POSTed its commands **into the stranger on that port**,
+# failing 20 s later as `exception: Expecting value: line 1 column 1 (char 0)` — a JSON
+# error blamed on the TeleHealth wire. Same shape as the boot race above and as the
+# MOXIE_DATA_DIR leak below: an unobserved precondition turning into a false accusation
+# against the subject under test, and here also a run reaching into another run's process.
+STATUS_PORT="${MOXIE_STATUS_PORT:-$((7000 + (PORT % 2000)))}"
 # The built-in zero-dep "tone" voice by default → the smoke proves the full audio
 # round-trip (supervisor synthesizes → CloudTTSResponse → SIM decodes it). MOXIE_TTS=off
 # to skip; MOXIE_TTS=tone|piper|… otherwise honored.
@@ -64,11 +81,26 @@ TTS_ENGINE="${MOXIE_TTS:-tone}"
 # migration switch a pre-gate deployment uses. The gate itself has its own hermetic
 # tests (sim/tests/test_device_permits.py) and `virtual_moxie.py --expect-unpaired`.
 MOXIE_APP=echo MOXIE_TTS="$TTS_ENGINE" MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT \
-  MOXIE_STATUS_PORT=$STATUS_PORT MOXIE_ALLOW_UNVERIFIED_BOTS=1 \
-  python3 mqtt/run.py >/tmp/moxie-supervisor.log 2>&1 & PIDS+=($!)
-sleep 3
+  MOXIE_STATUS_PORT=$STATUS_PORT MOXIE_ALLOW_UNVERIFIED_BOTS=1 PYTHONUNBUFFERED=1 \
+  python3 mqtt/run.py >"$SUP_LOG" 2>&1 & PIDS+=($!)
+SUP_PID=${PIDS[-1]}
+wait_for_log "[runtime] broker connected" "$SUP_PID" 40
 
 if [ "$MODE" = "telehealth" ]; then
+  # The status endpoint is this mode's subject, so it is checked rather than assumed. The
+  # runtime prints the line only after `HTTPServer(...)` has BOUND, and prints
+  # `status server failed: …` when it has not — so both outcomes are observable and
+  # neither needs a sleep.
+  if grep -q "status server failed" "$SUP_LOG" 2>/dev/null; then
+    echo "❌ the supervisor could not bind its status endpoint on :$STATUS_PORT —"
+    echo "   $(grep -m1 'status server failed' "$SUP_LOG")"
+    echo "   --telehealth drives the robot over that port, so this run would be talking to"
+    echo "   whatever else is listening on it. Re-run with a free MOXIE_STATUS_PORT (or a"
+    echo "   different MOXIE_SIL_PORT, which is what derives it)."
+    exit 1
+  fi
+  wait_for_log "[runtime] status endpoint on http://127.0.0.1:$STATUS_PORT/status" \
+               "$SUP_PID" 10 || exit 1
   echo "── virtual Moxie (🎭 telehealth: operator → PLAY_OUTPUT → robot) ──"
   python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout 20 \
     --telehealth --status-url "http://127.0.0.1:$STATUS_PORT"
@@ -95,5 +127,5 @@ else
     $EXPECT_SCORED $EXPECT_TTS
   rc=$?
 fi
-echo "── supervisor log tail ──"; tail -6 /tmp/moxie-supervisor.log || true
+echo "── supervisor log tail ──"; tail -6 "$SUP_LOG" || true
 exit $rc
