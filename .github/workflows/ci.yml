@@ -1,5 +1,12 @@
 # Moxie FAST CI (dev tier) — INSTALL: copy to .github/workflows/ci.yml
-# Runs on push/PR to dev: quick feedback (docs guards + SIL smoke + unit tests).
+# Runs on push/PR to dev: quick feedback, in THREE PARALLEL JOBS —
+#   docs     · doc-link/consistency guards + the toolkit's protocol round-trips (~1 min)
+#   sil      · the broker-backed round-trip and the whole hermetic pytest suite
+#   browser  · every suite that launches Chrome (see the block above the job)
+# `browser` has no `needs:`, so the tier costs max(sil, browser), not their sum, and a
+# Chrome suite can no longer contend with ~5,000 broker-backed pytest tests on one runner.
+# All three are required by the merge gate — see scripts/pr-green.sh and the guard named
+# in the `browser` job's comment.
 # (pushing under .github/workflows/ needs a token with 'workflow' scope;
 #  kept here as a template so it version-controls without that scope).
 name: CI (fast · dev)
@@ -78,30 +85,6 @@ jobs:
           node sim/test_demo_ears.mjs
           node sim/test_cloud_transport.mjs
           node sim/test_fallback_coverage.mjs
-      # ── THE BROWSER SUITES NEED A BROWSER, AND FOR MONTHS THEY DID NOT HAVE ONE ──
-      # `sim/browser_harness.mjs::loadPuppeteer` imports `puppeteer`, then falls back to
-      # scanning `~/Code/*/node_modules/puppeteer` — a DEVELOPER-MACHINE path that cannot
-      # exist on a runner. `skipper()` then called `process.exit(0)`, so nine suites
-      # printed "skipped — puppeteer not found" and the job stayed GREEN.
-      #
-      # That silently deleted the repo's best guards. `test_typed_turn.mjs` exists because
-      # PR #82 shipped 770 assertions that all read a *file* while Web Audio was stubbed;
-      # its teeth are a real peak-amplitude assertion so a silent clip cannot pass. It had
-      # never executed here. Nor had `test_mic_spend.mjs`, which counts `/api/chat` calls
-      # to prove a refused microphone does not spend the gateway the owner's game shares.
-      # A green badge over assertions that never fired is the exact failure #82 taught.
-      - name: Install a browser for the suites below (without one they would silently skip)
-        run: npm install --no-save --no-audit --no-fund puppeteer
-      - name: /api/* hardening headers, over a socket (skips the browser half if no Chrome)
-        # Runs HERE, with the other money-route guards, because `sim/web/_headers` is INERT
-        # for a Pages Function (settled by a preview deploy, §10 assumption 27): the ONLY
-        # thing that puts HSTS, the lockdown CSP and CORP on an /api/* reply is
-        # functions/api/_lib/envelope.js, and nothing but this suite watches the wire. The
-        # socket half is hermetic — real Functions behind a real node:http server, fetch
-        # stubbed for the fake gateway, no Cloudflare account and no network. The browser
-        # half (CSP + CORP teeth, and the proof the page's own fetch still works) skips
-        # cleanly where no Chrome is available. Guarded by sim/tests/test_ci_test_coverage.py.
-        run: node sim/test_api_headers.mjs
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
       - name: Bridge markup→avatar unit test
@@ -145,52 +128,6 @@ jobs:
         run: python3 sim/tools/check_bundle_fresh.py
       - name: Docs-explorer bundle + wiring test
         run: node sim/test_docs.mjs
-      - name: Responsive UI test (skips cleanly if no browser is available)
-        run: node sim/test_responsive.mjs
-      - name: Hosted-deploy env test (no doomed backend probes; skips cleanly if no browser)
-        run: node sim/test_env_hosted.mjs
-      - name: Typed-turn test (a typed line -> /api/chat -> real audio; skips cleanly if no browser)
-        # The Web Audio assertions are the reason this is a BROWSER step and not another
-        # fake-DOM one: it reads the peak sample amplitude back out of the AudioBuffer the
-        # browser was handed, so a silent clip cannot pass. It also asserts that clicking
-        # the controls that cannot work on a hosted origin produces no CSP console error —
-        # the defect it was written for. No gateway and no network: /api/* and the :8081
-        # sidecar are answered at the browser. Guarded by sim/tests/test_ci_test_coverage.py.
-        run: node sim/test_typed_turn.mjs
-      - name: Phone-layout hit test (elementFromPoint on the bottom controls; skips cleanly if no browser)
-        # `#env-banner` sat exactly on top of `#rail-toggle` at phone widths and swallowed
-        # every tap on it, while the toggle stayed visible, sized and pointer-events:auto —
-        # so only a hit test could catch it. Includes a teeth block that restores the old
-        # geometry and requires the collision to reappear.
-        run: node sim/test_mobile_layout.mjs
-      - name: Mic-spend test (a refused microphone must not buy a chat+speech turn; skips cleanly if no browser)
-        # The audit finding this closes: `mic.js` consoles a failed microphone with a
-        # SCRIPTED CHILD LINE, and that line used to go out through `sendUserTurn` — so a
-        # refused clip, or one refused client-side without ever being uploaded, bought a
-        # full /api/chat + /api/speech on words nobody said. A claim about what the gateway
-        # is BILLED for is a claim about requests that actually left a page, so this counts
-        # them in Chrome, and pairs every "spends nothing" with a Web Audio assertion that
-        # the visitor was still consoled out loud. Guarded by sim/tests/test_ci_test_coverage.py.
-        run: node sim/test_mic_spend.mjs
-      - name: Security headers applied for real (CSP/HSTS from sim/web/_headers; skips cleanly if no browser)
-        # Every other browser suite serves the site with NO headers, so none of them could
-        # see a policy that breaks the page — a CSP that refuses an inline block does not
-        # degrade, it stops the page dead. This one parses the shipped _headers and loads
-        # every page under it. Guarded by sim/tests/test_ci_test_coverage.py.
-        run: node sim/test_csp.mjs
-      - name: Docs-explorer runtime test (Mermaid/search/highlight; skips cleanly if no browser)
-        run: node sim/test_docs_explorer.mjs
-      - name: Mermaid diagram render audit (no parse errors / clipped labels; skips cleanly if no browser)
-        run: node sim/test_mermaid.mjs
-      - name: Background-effects growth test (a hidden tab must pile up nothing; skips cleanly if no browser)
-        # The owner-reported defect: leave the landing page open for hours and it turns
-        # sluggish. bg.js filled `packets`/`pings` from two setIntervals and drained them
-        # only inside the rAF frame — and a browser pauses rAF in a hidden tab while timers
-        # keep firing, so a backgrounded page accumulated draw work with no consumer (0 ->
-        # 44 packets in one minute, measured). This suite backgrounds a real tab, and its
-        # teeth block rebuilds the old producer shape and requires the growth to reappear.
-        # Guarded by sim/tests/test_ci_test_coverage.py.
-        run: node sim/test_bg_perf.mjs
       - name: Run SIL scenarios (scripted conversations)
         run: bash sim/run_scenarios.sh
       - name: SIL + static-site pytest/Playwright suite (all pages, resolutions, controls)
@@ -202,3 +139,131 @@ jobs:
             httpx -r server/requirements.txt
           python3 -m playwright install --with-deps chromium
           python3 -m pytest sim/tests -q
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # THE BROWSER SUITES — THEIR OWN JOB, IN PARALLEL WITH `sil`
+  # ─────────────────────────────────────────────────────────────────────────────
+  # WHY THEY LEFT `sil`. PR #120 fixed a real defect: `browser_harness.mjs::loadPuppeteer`
+  # imports `puppeteer`, then falls back to scanning `~/Code/*/node_modules/puppeteer` — a
+  # DEVELOPER-MACHINE path that cannot exist on a runner — and `skipper()` then called
+  # `process.exit(0)`. No workflow installed puppeteer, so nine suites printed "skipped —
+  # puppeteer not found" on every run and the job stayed GREEN. That silently deleted the
+  # repo's best guards: `test_typed_turn.mjs` exists *because* PR #82 shipped 770 assertions
+  # that all read a file while Web Audio was stubbed, and its peak-amplitude teeth had never
+  # once fired here; nor had `test_mic_spend.mjs`, which counts `/api/chat` calls to prove a
+  # refused microphone does not spend the gateway the owner's game shares. None of that is
+  # undone here — every one of those suites still runs on every push and every PR.
+  #
+  # What #120 did NOT weigh is where it put them. `sil` already runs ~5,000 pytest tests
+  # against a real mosquitto broker; eleven suites that each launch Chrome on top of that
+  # took the job from ~7–8 min to ~17 min (runs 11:32:56 → 11:49:28), and the contention
+  # started reddening UNRELATED tests: PR #125 is documentation-only and failed twice, on
+  # two different SIL tests (`test_roster.py::…do_not_lose_each_others_robots`, "the roster
+  # write was refused"; `test_schedule_sil_e2e.py::…is_pinned_and_says_so`, `AssertionError:
+  # []`), both of which pass locally in under a second. A docs-only change cannot break
+  # either — that is load contention on one runner, and a gate that goes red for reasons
+  # unrelated to the change teaches people to re-run it rather than read it.
+  #
+  # So the browser tier is a SEPARATE JOB with NO `needs:` — it starts at the same moment
+  # `sil` does, on its own runner, and the wall-clock for the fast tier is max(sil, browser)
+  # instead of their sum. Nothing was deleted, weakened or exempted to buy that.
+  #
+  # THE MERGE GATE STILL REQUIRES IT. A job that cannot redden the gate is the same bug in a
+  # new shape, so this is asserted, not assumed: `scripts/pr-green.sh` names the jobs it
+  # requires in the rollup ("SIL" and "Browser"), and
+  # `sim/tests/test_ci_workflows.py::test_the_merge_gate_requires_every_job_in_the_fast_tier`
+  # fails if a fast-tier job's name is not one the gate names. Adding a fourth job without
+  # teaching the gate about it reddens the suite.
+  browser:
+    name: Browser suites — headless Chrome (own runner, no needs:)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install a browser for the suites below (without one they would silently skip)
+        # FIRST, and asserted to be first by sim/tests/test_ci_browser_suites_actually_run.py,
+        # which checks it PER JOB: the original defect was an install step that existed and
+        # sat ~40 lines after every browser step had already run and skipped. With two jobs
+        # a file-wide ordering check would pass vacuously — one job's install "precedes"
+        # another job's dispatch in byte order while doing nothing for it — so the guard now
+        # resolves each dispatch to its own job and requires the install there.
+        run: npm install --no-save --no-audit --no-fund puppeteer
+      - name: Build docs bundle for the explorer
+        # `test_docs_explorer.mjs`, `test_mermaid.mjs`, `test_csp.mjs` and
+        # `test_responsive.mjs` all load `docs.html`, which reads `sim/web/docs-index.json`
+        # and `sim/web/docs-bundle/**`. Those ARE committed, and `sil` proves the committed
+        # copy matches a rebuild (`check_bundle_fresh.py`) — but this job must not depend on
+        # a claim another job is still in the middle of checking, and passing an artefact
+        # between jobs would re-serialise exactly what the split just parallelised. The
+        # builder is stdlib-only and takes under a second, so this job simply rebuilds it.
+        run: python3 sim/tools/build_docs_bundle.py
+      - name: /api/* hardening headers, over a socket AND in a browser
+        # MOVED WHOLE, not split. `sim/web/_headers` is INERT for a Pages Function (settled
+        # by a preview deploy, §10 assumption 27): the only thing that puts HSTS, the
+        # lockdown CSP and CORP on an /api/* reply is functions/api/_lib/envelope.js, and
+        # nothing but this suite watches the wire. Its socket half is hermetic and could in
+        # principle stay in `sil` — but the two halves share one ~250-line fixture (the real
+        # route handlers behind a real node:http server, with `fetch` stubbed for the fake
+        # gateway) and one exit code, and a second hand-copy of that fixture is precisely how
+        # the three duplicated puppeteer blocks that `browser_harness.mjs` exists to replace
+        # came about. Splitting it would also cost nothing it does not already cost: in `sil`
+        # this step already ran AFTER the puppeteer install, so moving it here delays its
+        # socket half by no more than it was delayed before. Guarded by
+        # sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_api_headers.mjs
+      - name: Responsive UI test (a missing browser FAILS here — see browser_harness.mjs)
+        run: node sim/test_responsive.mjs
+      - name: Hosted-deploy env test (no doomed backend probes)
+        run: node sim/test_env_hosted.mjs
+      - name: Typed-turn test (a typed line -> /api/chat -> real audio)
+        # The Web Audio assertions are the reason this is a BROWSER step and not another
+        # fake-DOM one: it reads the peak sample amplitude back out of the AudioBuffer the
+        # browser was handed, so a silent clip cannot pass. It also asserts that clicking
+        # the controls that cannot work on a hosted origin produces no CSP console error —
+        # the defect it was written for. No gateway and no network: /api/* and the :8081
+        # sidecar are answered at the browser. Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_typed_turn.mjs
+      - name: Phone-layout hit test (elementFromPoint on the bottom controls)
+        # `#env-banner` sat exactly on top of `#rail-toggle` at phone widths and swallowed
+        # every tap on it, while the toggle stayed visible, sized and pointer-events:auto —
+        # so only a hit test could catch it. Includes a teeth block that restores the old
+        # geometry and requires the collision to reappear.
+        run: node sim/test_mobile_layout.mjs
+      - name: Mic-spend test (a refused microphone must not buy a chat+speech turn)
+        # The audit finding this closes: `mic.js` consoles a failed microphone with a
+        # SCRIPTED CHILD LINE, and that line used to go out through `sendUserTurn` — so a
+        # refused clip, or one refused client-side without ever being uploaded, bought a
+        # full /api/chat + /api/speech on words nobody said. A claim about what the gateway
+        # is BILLED for is a claim about requests that actually left a page, so this counts
+        # them in Chrome, and pairs every "spends nothing" with a Web Audio assertion that
+        # the visitor was still consoled out loud. Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_mic_spend.mjs
+      - name: Ambient self-talk must not cut off a live answer
+        # WIRED HERE FOR THE FIRST TIME. It shipped with PR #124 deliberately unwired,
+        # because the pass that wrote it could not touch `sim/ci/ci.yml` — a concurrent
+        # pass held that file — and it has sat in `KNOWN_UNRUN` in
+        # sim/tests/test_ci_test_coverage.py ever since, guarding the fix for ambient
+        # chatter talking over a gateway answer (sim/web/ambient.js + audio.js) while being
+        # executed by nobody. This job is that file's owner, so the exemption is now gone
+        # from the ratchet and the suite runs on every push and every PR.
+        run: node sim/test_ambient_guard.mjs
+      - name: Security headers applied for real (CSP/HSTS from sim/web/_headers)
+        # Every other browser suite serves the site with NO headers, so none of them could
+        # see a policy that breaks the page — a CSP that refuses an inline block does not
+        # degrade, it stops the page dead. This one parses the shipped _headers and loads
+        # every page under it. Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_csp.mjs
+      - name: Docs-explorer runtime test (Mermaid/search/highlight)
+        run: node sim/test_docs_explorer.mjs
+      - name: Mermaid diagram render audit (no parse errors / clipped labels)
+        run: node sim/test_mermaid.mjs
+      - name: Background-effects growth test (a hidden tab must pile up nothing)
+        # The owner-reported defect: leave the landing page open for hours and it turns
+        # sluggish. bg.js filled `packets`/`pings` from two setIntervals and drained them
+        # only inside the rAF frame — and a browser pauses rAF in a hidden tab while timers
+        # keep firing, so a backgrounded page accumulated draw work with no consumer (0 ->
+        # 44 packets in one minute, measured). This suite backgrounds a real tab, and its
+        # teeth block rebuilds the old producer shape and requires the growth to reappear.
+        # Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_bg_perf.mjs
