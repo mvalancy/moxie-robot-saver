@@ -318,7 +318,19 @@ def test_the_shipped_clock_extension_answers_on_the_wire_with_no_model_call(lab,
     before = lab["brain"].count
     text = alice.ask("what time is it")
     assert text.startswith("The time is "), text
-    assert text.rstrip().endswith(("A M", "P M")), text
+    # `AY M`, not `A M`. That is the shipped program's own spelling
+    # (`content_modules/starter.json`, G1's `half` binding) — a TTS pronunciation hint so
+    # the voice says "ay-em" instead of the word "am". Getting it wrong made this test
+    # **wall-clock dependent**: it passed every afternoon and failed after midnight UTC,
+    # which is exactly how it first went red here (`The time is 1:18 AY M`).
+    #
+    # Both halves are accepted because *which* one appears is a fact about the hour, not
+    # about the feature under test — this test's claim is "an extension answered on the
+    # wire for zero model calls", and `sim/tests/data/ext_conformance.json` is where the
+    # exact rendering is pinned. Note `sim/tests/test_clock_dependence.py` cannot catch
+    # this class: it scans test sources for `datetime.now` and friends, and here the clock
+    # is read by the *extension* inside the runtime while the test only reads the result.
+    assert text.rstrip().endswith(("AY M", "P M")), text
     assert lab["brain"].count == before, (
         f"the clock extension cost {lab['brain'].count - before} model call(s) — "
         "the point of an extension is that it costs none")
