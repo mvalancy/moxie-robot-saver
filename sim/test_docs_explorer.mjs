@@ -10,52 +10,22 @@
 //   node sim/test_docs_explorer.mjs
 //   PUPPETEER_PATH=/dir/with/node_modules/puppeteer node sim/test_docs_explorer.mjs
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import net from "node:net";
-import { skipper } from "./browser_harness.mjs";
+import { requireBrowser, makeChecks, finish } from "./browser_harness.mjs";
 
+const LABEL = "docs-explorer tests";
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
 
-async function loadPuppeteer() {
-  try { return (await import("puppeteer")).default; } catch {}
-  const bases = [];
-  if (process.env.PUPPETEER_PATH) bases.push(process.env.PUPPETEER_PATH);
-  try {
-    const code = join(homedir(), "Code");
-    for (const d of readdirSync(code))
-      if (existsSync(join(code, d, "node_modules", "puppeteer", "package.json"))) bases.push(join(code, d));
-  } catch {}
-  for (const base of bases) {
-    try { return createRequire(join(base, "index.js"))("puppeteer"); } catch {}
-  }
-  return null;
-}
-function findChrome() {
-  const cands = [];
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) cands.push(process.env.PUPPETEER_EXECUTABLE_PATH);
-  try {
-    const root = join(homedir(), ".cache", "puppeteer", "chrome");
-    for (const v of readdirSync(root)) {
-      for (const sub of ["chrome-linux64/chrome", "chrome-linux/chrome"]) {
-        const p = join(root, v, sub);
-        if (existsSync(p)) cands.push(p);
-      }
-    }
-  } catch {}
-  cands.push("/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser");
-  return cands.find(existsSync) || null;
-}
-const skip = skipper("docs-explorer tests");
-
-const puppeteer = await loadPuppeteer();
-if (!puppeteer) skip("puppeteer not found (set PUPPETEER_PATH to a dir containing node_modules/puppeteer)");
-const chrome = findChrome();
-if (!chrome) skip("no Chrome binary (set PUPPETEER_EXECUTABLE_PATH, or `npx puppeteer browsers install chrome`)");
+/* Browser discovery lives in ONE place. This file used to carry its own copy of
+ * `loadPuppeteer` + `findChrome`, and a second copy is exactly how the defect this branch
+ * exists to fix survived unnoticed: the scan for `node_modules/puppeteer` under `~/Code`
+ * is a developer-machine path that cannot exist on a runner, so every CI run skipped and
+ * the badge stayed green. `requireBrowser` is that discovery plus the rule that a missing
+ * browser is a FAILURE under CI, and it cannot drift from what the other suites do. */
+const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
 
 const port = await new Promise((res) => {
   const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
@@ -71,8 +41,11 @@ async function waitUp(n = 50) {
 }
 function cleanup() { try { server.kill("SIGKILL"); } catch {} }
 
-const fails = [];
-const ok = (c, m) => { if (!c) fails.push(m); };
+/* `makeChecks` rather than a local two-liner, for the COUNT. A conditional assertion that
+ * stops running (see check 7 below, which used to sit inside a bare `if`) leaves no trace
+ * at all when the only output is "no failures"; "N checks passed" changes when coverage
+ * silently drops, which is the failure this whole branch is about. */
+const { fails, ok, count } = makeChecks();
 
 if (!(await waitUp())) { cleanup(); skip("serve.py did not come up"); }
 
@@ -86,6 +59,35 @@ try {
   const errs = [];
   page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
   page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
+
+  /* THE PUBLIC INTERNET IS NOT A TEST DEPENDENCY — the third shape of the same defect.
+   *
+   * `test_responsive.mjs` and `test_env_hosted.mjs` asserted zero console errors and
+   * passed only because the author's :8081/:8082 sidecars happen to answer. This suite
+   * asserts zero console errors (check 10, below) and passes only because GITHUB ANSWERS:
+   * `README.md` embeds an `<img>` from `github.com/user-attachments`, that README is
+   * bundled into `sim/web/docs-bundle/_root/README.md`, and `docs.html` renders it with no
+   * CSP to refuse it. On a runner behind an egress proxy — or on the day that attachment
+   * URL rots — the fetch fails, Chrome logs an error the page cannot suppress, and this
+   * goes red for a reason that has nothing to do with the docs explorer.
+   *
+   * These are LOCAL-SERVER suites. So every off-origin http(s) request is aborted here,
+   * which makes the suite hermetic in BOTH directions: it can no longer depend on the
+   * network being up, and it can no longer quietly start depending on a new remote asset.
+   * Exactly as many refusals are then forgiven as were provoked, and no more — the rule
+   * the two fixes above established — so a console error from anything else still fails.
+   * `data:` and `blob:` are untouched: they never leave the page. */
+  const blocked = { n: 0, urls: [] };
+  await page.setRequestInterception(true);
+  page.on("request", (r) => {
+    if (r.isInterceptResolutionHandled()) return;
+    const u = r.url();
+    if (/^https?:/.test(u) && !u.startsWith(base)) {
+      blocked.n++; if (blocked.urls.length < 5) blocked.urls.push(u);
+      return r.abort("blockedbyclient");
+    }
+    return r.continue();
+  });
 
   // 1) tree populates + home markdown renders
   await page.goto(base + "/docs.html", { waitUntil: "domcontentloaded" });
@@ -117,9 +119,19 @@ try {
 
   // 3) code highlighting applies (hljs token spans)
   await page.goto(base + "/docs.html#reverse-engineering/hardware/hardware-map.md", { waitUntil: "domcontentloaded" });
-  await page.waitForFunction('document.querySelectorAll("article pre code").length>0', { timeout: 8000 }).catch(() => {});
-  const tokenSpans = await page.evaluate(() =>
-    document.querySelectorAll("article pre code .hljs-keyword, article pre code .hljs-string, article pre code .hljs-comment, article pre code .hljs-number, article pre code .hljs-title, article pre code .hljs-attr").length);
+  /* Wait for the TOKENS, not merely for the `<code>` that will hold them. Waiting on the
+   * container and then reading the spans assumes highlight.js finishes inside whatever
+   * slack the machine happens to leave — this check went red the moment request
+   * interception (below) slowed the page down, and would do the same on a slow runner.
+   * Waiting on the assertion's own subject removes the machine-speed term without
+   * weakening it: if the highlighting never happens the wait simply expires and the
+   * assertion still fails. */
+  const HLJS = 'article pre code .hljs-keyword, article pre code .hljs-string, ' +
+               'article pre code .hljs-comment, article pre code .hljs-number, ' +
+               'article pre code .hljs-title, article pre code .hljs-attr';
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length > 0, { timeout: 8000 }, HLJS)
+    .catch(() => {});
+  const tokenSpans = await page.evaluate((sel) => document.querySelectorAll(sel).length, HLJS);
   ok(tokenSpans > 0, "code blocks should be syntax-highlighted");
 
   // 4) full-text search filters the tree for a body-only term
@@ -146,7 +158,11 @@ try {
   });
   const iDoc = reOrder.indexOf("runtime-control.md"), iReadme = reOrder.indexOf("README.md");
   ok(iDoc === 0, `search should rank the documenting doc first in its section (got ${reOrder.slice(0, 3).join(", ")})`);
-  ok(iReadme === -1 || iDoc < iReadme, "the documenting doc should outrank the section README");
+  /* `iReadme === -1 || iDoc < iReadme` was satisfiable by the README simply not being in
+   * the section at all (`-1`), i.e. by the ranking having nothing to rank. Both must be
+   * present for "outranks" to mean anything. */
+  ok(iReadme > 0 && iDoc < iReadme,
+     `the documenting doc should outrank the section README (doc ${iDoc}, README ${iReadme})`);
 
   // 5) opening a search hit highlights the term in the doc + scrolls to it
   await page.evaluate(() => { const q = document.getElementById("q"); q.value = ""; q.dispatchEvent(new Event("input")); });
@@ -188,6 +204,10 @@ try {
     if (l) { l.click(); return true; }
     return false;
   });
+  /* Not `if (clickedAnchor)` any more. That bare guard meant a link which stopped matching
+   * took TWO assertions with it and said nothing — a coverage hole that reports as a pass,
+   * which is the precise failure this branch exists to close. */
+  ok(clickedAnchor, "the cross-doc heading link should still exist in the rendered doc");
   if (clickedAnchor) {
     await new Promise((r) => setTimeout(r, 1400));
     const anc = await page.evaluate(() => ({
@@ -221,15 +241,20 @@ try {
   ok(copyInfo.label === "Copied", `clicking Copy should give feedback (got "${copyInfo.label}")`);
   ok(copyInfo.onMermaid === 0, "Mermaid diagrams must not get a Copy button");
 
-  ok(errs.length === 0, `console errors: ${errs.slice(0, 4).join(" | ")}`);
+  /* Forgive exactly the off-origin refusals this suite caused itself, and nothing else. */
+  const OFF_ORIGIN = /Failed to load resource: net::ERR_BLOCKED_BY_CLIENT/;
+  let forgive = blocked.n;
+  const notable = errs.filter((e) => {
+    if (forgive > 0 && OFF_ORIGIN.test(e)) { forgive--; return false; }
+    return true;
+  });
+  ok(notable.length === 0, `console errors: ${notable.slice(0, 4).join(" | ")}`);
+  /* …and say what was cut off, so a doc that quietly grows a remote dependency is visible
+   * in the log rather than silently tolerated. */
+  if (blocked.n) console.log(`   (blocked ${blocked.n} off-origin request(s): ${blocked.urls.join(", ")})`);
 } finally {
   await browser.close();
   cleanup();
 }
 
-if (fails.length) {
-  console.log("❌ docs-explorer tests FAILED:");
-  for (const f of fails) console.log("   -", f);
-  process.exit(1);
-}
-console.log("✅ docs-explorer tests OK — tree, markdown, Mermaid, code highlighting, full-text search + in-doc highlight/scroll all work, no console errors");
+finish(LABEL, { fails, count });

@@ -188,7 +188,10 @@ const server = http.createServer(async (req, res) => {
 
   if (p === "/api/health" || p === "/nocsp/health") {
     const request = new Request(url.href, { method: "GET", headers: req.headers });
-    const out = health.onRequestGet({ request, env: ENV });
+    // `await`: `pipe()` calls `webRes.arrayBuffer()`, so a handler that ever becomes async
+    // would throw here instead of failing an assertion. It works today only because
+    // functions/api/health.js happens to be synchronous — which is not a contract.
+    const out = await health.onRequestGet({ request, env: ENV });
     // `/nocsp/health` is the CONTROL for the CSP arm: byte-identical body, no policy.
     return pipe(out, res, { drop: p === "/nocsp/health" ? ["content-security-policy"] : [] });
   }

@@ -138,7 +138,10 @@ try {
     // any contributor's laptop without Piper — they are refused, two per viewport, and the
     // suite fails. It had never run in CI to reveal that (no browser was ever installed),
     // so the whole thing was green on a lie in both directions at once.
-    const SIDECAR = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])?:?(8081|8082)\b/;
+    // Host AND colon are both required. With them optional, `http://8081.evil.com/x` also
+    // matched — cosmetic here, but the same laxness in test_env_hosted.mjs forgave a
+    // refusal to a genuinely foreign host, so both files now use the strict form.
+    const SIDECAR = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]):(8081|8082)(\/|$)/;
     const errors = () => {
       const onlyProbe = notFound.length > 0 && notFound.every((u) => /\/api\/health\b/.test(u));
       const onlySidecars = refused.length > 0 && refused.every((u) => SIDECAR.test(u));
@@ -211,9 +214,22 @@ try {
       // no internal scroll (a single-column panel is allowed to scroll).
       ok(s.clippedGroups === 0, `[sim ${label}] ${s.clippedGroups} control group(s) off-screen`);
       ok(s.panelWidth > 0 && s.panelWidth < s.innerW * 0.7, `[sim ${label}] control panel is ${Math.round(s.panelWidth / s.innerW * 100)}% of width`);
-      if (s.columns > 1) {
-        ok(s.railScroll <= 2, `[sim ${label}] multi-col rail scrolls internally by ${s.railScroll}px (controls not all visible)`);
-      }
+      /* THE MULTI-COLUMN ASSERTION THAT WAS DELETED HERE, and why deleting beats keeping.
+       *
+       * `s.columns` is `parseInt(getComputedStyle(rail).columnCount)`, and that computes to
+       * "auto" — so NaN — at every width this loop visits. `NaN > 1` is false, so the guard
+       * never opened and the assertion inside it has never once executed. It is not merely
+       * dead: measured, the rail's internal overflow is 1492-1738px, so if the guard ever
+       * DID open the assertion would fail on a layout that is working exactly as designed.
+       *
+       * Designed, deliberately: `sim/web/style.css` (the `@media (min-width: 900px)` block)
+       * abandoned the multi-column rail on purpose — "~4 non-splittable control groups into
+       * 3 columns is inherently fragile … a single scrolling column always fits with zero
+       * clipped groups". A single-column panel is ALLOWED to scroll, which the comment above
+       * already says. So this guarded a layout the CSS stopped producing, and it read as
+       * coverage while providing none — the same lie, in miniature, that this whole branch
+       * is about. What actually holds the panel honest are the two assertions above it:
+       * no clipped group, and the panel stays under 70% of the width. */
     }
     await p.close();
   }

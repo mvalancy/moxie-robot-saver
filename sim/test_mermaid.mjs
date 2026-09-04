@@ -12,48 +12,21 @@
 //
 //   node sim/test_mermaid.mjs
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import net from "node:net";
-import { skipper } from "./browser_harness.mjs";
+import { requireBrowser } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
 
-async function loadPuppeteer() {
-  try { return (await import("puppeteer")).default; } catch {}
-  const bases = [];
-  if (process.env.PUPPETEER_PATH) bases.push(process.env.PUPPETEER_PATH);
-  try {
-    const code = join(homedir(), "Code");
-    for (const d of readdirSync(code))
-      if (existsSync(join(code, d, "node_modules", "puppeteer", "package.json"))) bases.push(join(code, d));
-  } catch {}
-  for (const base of bases) { try { return createRequire(join(base, "index.js"))("puppeteer"); } catch {} }
-  return null;
-}
-function findChrome() {
-  const cands = [];
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) cands.push(process.env.PUPPETEER_EXECUTABLE_PATH);
-  try {
-    const root = join(homedir(), ".cache", "puppeteer", "chrome");
-    for (const v of readdirSync(root))
-      for (const sub of ["chrome-linux64/chrome", "chrome-linux/chrome"]) {
-        const p = join(root, v, sub); if (existsSync(p)) cands.push(p);
-      }
-  } catch {}
-  cands.push("/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser");
-  return cands.find(existsSync) || null;
-}
-const skip = skipper("mermaid tests");
-
-const puppeteer = await loadPuppeteer();
-if (!puppeteer) skip("puppeteer not found");
-const chrome = findChrome();
-if (!chrome) skip("no Chrome binary");
+/* Browser discovery lives in ONE place. This file used to carry its own copy of
+ * `loadPuppeteer` + `findChrome` — and a second copy is exactly how the defect this
+ * branch exists to fix survived: the scan for `node_modules/puppeteer` under `~/Code` is a
+ * developer-machine path that cannot exist on a runner, so every CI run skipped and
+ * stayed green. `requireBrowser` is the same discovery plus the rule that a missing
+ * browser is a FAILURE under CI, and it cannot drift from the other suites' copy. */
+const { puppeteer, chrome, skip } = await requireBrowser("mermaid tests");
 
 const port = await new Promise((res) => {
   const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
@@ -117,6 +90,29 @@ try {
   await browser.close();
   cleanup();
 }
+
+/* A TEST THAT CANNOT FAIL IS NOT A TEST — the floor under the whole loop.
+ *
+ * `docs` is `idx.files.filter(f => f.mermaid > 0)`. If that field ever stops being
+ * written (a `build_docs_bundle.py` change, a schema rename, an index that failed to
+ * rebuild), the filter returns EMPTY, the loop body never executes, not one diagram is
+ * rendered, and this file prints "✅ mermaid tests OK — 0 diagrams across 0 docs" and
+ * exits 0. That is the same shape as the defect this branch was opened for: a green
+ * badge over assertions that never fired. Demonstrated, not theorised — filtering on a
+ * field that does not exist exits 0 with the success banner.
+ *
+ * So the counts are a tripwire, not a target. They sit well under today's numbers (63
+ * diagrams across 46 docs) because the point is to catch a COLLAPSE — the index losing
+ * the field, or half the docs falling out of the bundle — not to freeze the doc tree.
+ * If a legitimate reorganisation ever takes the tree below these, move them and say so
+ * in the commit; that is a decision worth making on purpose. */
+const FLOOR_DOCS = 25, FLOOR_SVG = 35;
+if (docs.length < FLOOR_DOCS)
+  fails.push(`only ${docs.length} docs claim a Mermaid diagram (floor ${FLOOR_DOCS}) — ` +
+             `docs-index.json's "mermaid" field looks broken, so this suite rendered almost nothing`);
+if (totalSvg < FLOOR_SVG)
+  fails.push(`only ${totalSvg} diagrams actually rendered (floor ${FLOOR_SVG}) — ` +
+             `the loop ran but the page produced no SVG`);
 
 if (fails.length) {
   console.log("❌ mermaid tests FAILED:");
