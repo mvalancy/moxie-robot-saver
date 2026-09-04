@@ -126,7 +126,11 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   entry (or any entry matches no job), and one **executes the gate's own decision block** against four
   synthetic rollups: complete-green passes, and browser-absent, browser-still-running and browser-red all
   fail. The absent case is re-run with the count floor lowered to 1, because three-jobs-minus-one still
-  clears the old floor of 3 and that clause's pass would otherwise have been luck.
+  clears the old floor of 3 and that clause's pass would otherwise have been luck. Writing that guard
+  caught a defect in this very change: the new job was first named `… (parallel with SIL)`, so the gate's
+  `SIL` entry matched **it**, and a rollup that had lost the broker job would have passed. Each required
+  entry must now match **exactly one** job — none is a stale entry, two lets the wrong job satisfy the
+  gate — and the renamed-back mutant is caught.
   [`test_ci_browser_suites_actually_run.py`](../../sim/tests/test_ci_browser_suites_actually_run.py) is
   now **per-job**: with two jobs, a file-wide "install precedes first dispatch" check passes vacuously —
   `sil`'s install "precedes" `browser`'s dispatches in byte order while doing nothing for them — so each

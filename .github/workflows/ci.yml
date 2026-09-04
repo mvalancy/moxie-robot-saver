@@ -175,7 +175,7 @@ jobs:
   # fails if a fast-tier job's name is not one the gate names. Adding a fourth job without
   # teaching the gate about it reddens the suite.
   browser:
-    name: Browser suites — headless Chrome (parallel with SIL)
+    name: Browser suites — headless Chrome (own runner, no needs:)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

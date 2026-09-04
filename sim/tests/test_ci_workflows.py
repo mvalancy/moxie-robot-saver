@@ -586,10 +586,17 @@ def test_the_merge_gate_requires_every_job_in_the_fast_tier(fast):
     assert not unrequired, (
         "these fast-tier jobs are in no REQUIRED_JOBS entry of scripts/pr-green.sh, so a "
         "PR could merge while they were absent from the rollup: " + ", ".join(unrequired))
-    dead = [req for req in required if not any(req in n for n in names.values())]
-    assert not dead, (
-        f"scripts/pr-green.sh requires {dead}, which matches no job in sim/ci/ci.yml — "
-        "either the job was renamed (fix the gate) or the entry is stale (delete it)")
+    # Each entry must match EXACTLY ONE job. Matching none is a stale entry; matching two
+    # is worse, because the gate's "is it in the rollup?" test is then satisfied by the
+    # WRONG job and the right one can be absent. That is not hypothetical — the first cut
+    # of this split named the new job "… (parallel with SIL)", so the `SIL` entry matched
+    # the browser job and a rollup that had lost the broker job would have passed.
+    for req in required:
+        hits = sorted(f"{jid} ({n})" for jid, n in names.items() if req in n)
+        assert len(hits) == 1, (
+            f"scripts/pr-green.sh's required entry {req!r} matches {len(hits)} jobs in "
+            f"sim/ci/ci.yml ({hits or 'none'}). One entry, one job: a stale entry proves "
+            f"nothing, and an ambiguous one lets the wrong job satisfy the gate.")
 
 
 def test_the_gate_actually_goes_RED_when_the_browser_job_is_missing_or_failing(fast, tmp_path):
