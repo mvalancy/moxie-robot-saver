@@ -654,3 +654,72 @@ def test_no_timer_in_the_editor_can_reach_a_model():
             f"a timer in the editor calls something other than the free render: {line!r}"
     assert "saveItem" in editor and "sv.onclick=saveItem" in editor.replace(" ", ""), \
         "Save is not bound to a click"
+
+
+# --------------------------------------------------------------------------- #
+# The console proxy, end to end — the URL, the body and the status code
+# --------------------------------------------------------------------------- #
+# Everything above drives the SUPERVISOR route directly, deliberately: that is where the
+# validation lives (R6). But a proxy with a typo in its path is a card that silently 503s
+# on a real appliance and passes every test in this file, so the two hops are joined here
+# once. `importorskip` because the hermetic tier has no fastapi.
+
+@pytest.fixture
+def console(rt, base, tmp_path, monkeypatch):
+    """The real console app in-process, pointed at the real supervisor above."""
+    pytest.importorskip("fastapi", reason="the console app")
+    pytest.importorskip("httpx", reason="fastapi's TestClient")
+    monkeypatch.setenv("MOXIE_DB", str(tmp_path / "console.db"))
+    monkeypatch.setenv("MOXIE_SUPERVISOR_STATUS", base)
+    sys.path.insert(0, os.path.join(REPO, "server"))
+    try:
+        from fastapi.testclient import TestClient
+        from moxie_server import main
+    except Exception as e:                      # pynacl / segno not in this env
+        pytest.skip(f"console app not importable: {e}")
+    main.STATUS_URL = base                      # read from the env at import time
+    with TestClient(main.app) as c:
+        yield c
+
+
+@needs_runtime
+def test_the_console_proxies_a_save_and_a_render(console, rt):
+    """Both proxies, both hops, and the shape the card reads.
+
+    `/local/content/item` is the only one that writes, so the assertion that matters is
+    the last: what came back through two normalizers is the same item the supervisor put
+    in the overlay."""
+    r = console.post("/local/content/item",
+                     json={"kind": "conversation", "data": conversation()})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["ok"] is True and out["created"] is True
+    assert out["id"] == "conversation:BEDTIME/default"
+    assert out["item"]["name"] == "Bedtime wind-down"
+    assert out["item"]["local_edited"] is True
+    assert out["error"] is None
+    assert out["undo_slots"] == 1, "the card must be told there is exactly one step back"
+    assert "conversation:BEDTIME/default" in rt._content_overlay()
+
+    r2 = console.post("/local/content/render",
+                      json={"kind": "conversation", "data": conversation(),
+                            "context": {"nickname": "Ada"}})
+    assert r2.status_code == 200, r2.text
+    v = r2.json()
+    assert v["ok"] is True and "Ada" in v["prompt"]
+    assert v["counts_advisory"] is True and v["portable_identical"] is True
+
+
+@needs_runtime
+def test_the_console_forwards_a_refusal_as_a_sentence_not_a_500(console):
+    """A card must never be a 500. A schedule is refused by the supervisor with a reason,
+    and the proxy has to carry the status code AND the sentence through — `error` is what
+    the card renders, so a normalizer that dropped it would leave a parent with a silent
+    failure."""
+    r = console.post("/local/content/item",
+                     json={"kind": "schedule", "data": {"name": "Morning", "schedule": {}}})
+    assert r.status_code == 400, r.text
+    out = r.json()
+    assert out["ok"] is False
+    assert "robot" in (out["error"] or "").lower(), out
+    assert out["item"] == {} or not out["item"].get("id"), out
