@@ -23,11 +23,40 @@
 # and no page loads a subresource from another origin (only anchor hrefs and the canonical
 # links point off-site). The nonce/hash pass that lets `script-src 'self'` land is P1, and
 # it must be verified on a preview deploy before it ships.
+#
+# 2026-09-03 — WHAT THIS PASS ADDED, and the one thing it deliberately did not.
+#
+# ADDED `script-src 'self' 'unsafe-inline'` (and `default-src 'self'` behind it). The
+# policy above had NO `script-src` and NO `default-src`, so script execution was entirely
+# unrestricted: an injected `<script src="https://evil/x.js">` would have run. It cannot
+# now — combined with `connect-src 'self'` (which already has a measured kill on this site:
+# it is what refused the port-8081 fetch), the loader AND the exfiltration halves of the
+# usual XSS payload are both closed.
+#
+# NOT REMOVED: `'unsafe-inline'` for scripts. That is the honest gap, and the blocker is
+# specific rather than vague. `_headers` is a STATIC file, so a per-response nonce is
+# impossible — the only route to `script-src 'self'` is SHA-256 hashes for every inline
+# block, and this bundle has FOURTEEN of them across five pages (sim.html 4,
+# index/setup/cloud 3 each, docs.html 1 — four of those fourteen are `type="importmap"`)
+# AND TEN inline event-handler attributes (docs.html 9, cloud.html 1), which need
+# `'unsafe-hashes'` plus a hash per handler. Counted, not estimated.
+# Shipping that means a build step that regenerates the hashes plus a CI freshness guard,
+# because a hash that drifts from its block does not degrade — it BLANKS THE PAGE, and no
+# test in this repo would see it (the browser suites serve from `sim/serve.py`, which sends
+# no `_headers` at all). `sim/test_csp.mjs` closes exactly that hole for the policy we DO
+# ship: it serves the site with these headers applied and asserts every page loads with no
+# violation. Moving the inline blocks into files is the real fix and is a separate slice.
+#
+# ADDED `Strict-Transport-Security`. NOTE THE TRAP already recorded in this repo (§10
+# assumption 27, proven false the hard way in PR #72): `_headers` does NOT apply to Pages
+# *Function* responses, so this covers the static pages only. The `/api/*` routes need it
+# set in `functions/api/_lib/envelope.js` — reported as a follow-up, not done here.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: microphone=(self), camera=(), geolocation=()
-  Content-Security-Policy: connect-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'
 
 # HTML — always revalidate so a redeploy's new asset references show up immediately.
 /

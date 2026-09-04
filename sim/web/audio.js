@@ -187,7 +187,31 @@
    *
    * An address a human typed always wins over the mode — `setTtsBase` or a `moxie.ttsBase`
    * already in localStorage means somebody asked for this probe on purpose. */
+  /* THE SECOND SKIP, AND THE ONE THAT WAS A REAL BUG (measured 2026-09-03).
+   * :8081 is a LOCALHOST port. From any other origin the probe is not merely wasted — it
+   * is a cross-origin request this site's own CSP (`connect-src 'self'`, sim/web/_headers)
+   * refuses, and Chrome logs the refusal as a console error:
+   *
+   *     Refused to connect to 'https://moxie.mattvalancy.com:8081/tts?text=…'
+   *
+   * The old comment above argued "one wasted probe is the cheaper mistake" and therefore
+   * kept probing in `live`. That reasoning holds for a wasted request; it does not hold
+   * for a policy violation, and `live` is exactly the state the hosted deployment is in.
+   * So the hostname decides ONE thing here, and honestly — the same one it decides in
+   * `env.js`: whether a localhost sidecar could possibly be reachable from this browser at
+   * all. A self-hoster on localhost / a LAN address / *.local is unaffected and still
+   * probes in every state; nothing about which VOICE is chosen is decided here. */
+  function pageCouldReachSidecar() {
+    try {
+      var h = (location && location.hostname) || "";
+      return h === "" ||
+        /^(localhost|127\.|0\.0\.0\.0|::1|\[::1\]|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) ||
+        /\.local$|\.lan$/.test(h);
+    } catch (e) { return false; }
+  }
+
   function skipProbe() {
+    if (!pageCouldReachSidecar()) return true;
     if (ttsBaseExplicit) return false;
     try {
       return !!(window.moxieMode && typeof window.moxieMode.state === "function" &&

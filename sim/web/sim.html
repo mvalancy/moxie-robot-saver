@@ -347,8 +347,17 @@
     var test = document.getElementById("tts-test");
     var st = document.getElementById("tts-status");
     function speak(t) { if (t && window.moxieAudio) window.moxieAudio.speak(t); }
-    if (say) say.addEventListener("click", function () { speak((inp && inp.value || "").trim()); });
-    if (inp) inp.addEventListener("keydown", function (e) { if (e.key === "Enter") speak(inp.value.trim()); });
+    /* When there is no local Piper sidecar, `cloud-transport.js` takes this box over as
+     * the "ask Moxie" control (see its `adoptSpeechControl`) — because "speak arbitrary
+     * text" is structurally not something a hosted deploy can offer, and a button that
+     * looks live and silently fails is worse than one that is honest. These two listeners
+     * are left in place and STAND DOWN instead of being removed: the phrase chips below
+     * hold a reference to `inp`, and removing/replacing the nodes would break them. */
+    function typedTurnOwnsBox() {
+      try { return !!(window.moxieTypedTurn && window.moxieTypedTurn.adopted()); } catch (e) { return false; }
+    }
+    if (say) say.addEventListener("click", function () { if (typedTurnOwnsBox()) return; speak((inp && inp.value || "").trim()); });
+    if (inp) inp.addEventListener("keydown", function (e) { if (e.key === "Enter" && !typedTurnOwnsBox()) speak(inp.value.trim()); });
     // Tap-to-play chips from the pre-cached phrase set — guaranteed to make sound
     // on the static deploy (no TTS server needed).
     var chips = document.getElementById("speech-chips");
@@ -359,7 +368,10 @@
           b.className = "chip"; b.type = "button";
           b.textContent = p.length > 30 ? p.slice(0, 28) + "…" : p;
           b.title = p;
-          b.addEventListener("click", function () { if (inp) inp.value = p; speak(p); });
+          // Chips always play their pre-cached clip. They only pre-fill the box when the
+          // box is still the TTS control — dropping Moxie's own line into an "ask Moxie"
+          // input would read as the visitor's question.
+          b.addEventListener("click", function () { if (inp && !typedTurnOwnsBox()) inp.value = p; speak(p); });
           chips.appendChild(b);
         });
       });

@@ -98,6 +98,71 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **The hosted demo's per-IP windows were free to bypass over IPv6, and its duration cap was not one —
+  fixed 2026-09-03.** Four holes in `functions/api/_lib/limits.js` and the three spending routes, all in
+  the controls that protect the **self-hosted gateway the demo shares with the owner's video game**, so
+  the thing at stake is a neighbour's capacity rather than a bill. **(1) `clientIp` keyed the rate-limit
+  bucket on the raw address string.** On IPv4 that is one person; on IPv6 it is one *interface*, and a
+  residential allocation is a /64 or wider — so a single visitor held 2⁶⁴ buckets and every per-IP row in
+  `backlog/live-sim-demo.md` §4.1 was, for them, unlimited, defeated by a `for` loop. The key is now the
+  **first four hextets**, with `::ffff:a.b.c.d` **unmapped to the v4 address rather than truncated** —
+  truncating it would have given every IPv4 visitor the same `0:0:0:ffff` prefix and collapsed the v4
+  internet into one bucket, which is the way this fix usually breaks. **(2) With `CF-Connecting-IP`
+  absent it fell back to `X-Forwarded-For`,** which the caller types; that fallback now needs
+  `DEMO_TRUST_XFF` (unset in production) and otherwise keys as `unknown`, deliberately **one shared
+  bucket** so unidentifiable callers are throttled together. **(3) `DEMO_MAX_AUDIO_BYTES` was never a
+  duration cap, and STT is billed by duration** — the same 500 KB is ~15 s of 16 kHz 16-bit PCM but 62 s
+  at 8 kHz 8-bit and ~125 s at 4-bit, all well-formed WAVs. `/api/transcribe` now reads a RIFF header
+  server-side (`_lib/wav.js::wavDurationMs`) and refuses `too_long` above `DEMO_MAX_RECORD_MS` with zero
+  upstream calls. **(4) All three routes fetched with `redirect` unset,** i.e. `follow`, carrying the only
+  credential; they now set `redirect: "manual"` and read a 3xx as `gateway_unreachable_or_gated` —
+  a tunnel that redirects is a door problem, not a brain problem. **The honest gaps, both stated in the
+  code:** the duration cap covers **WAV only** — webm/Opus and the rest hide their length in a bitstream
+  and reading it means shipping a decoder at a hostile upload — so it is total today only because
+  `DEMO_STT_FORMATS` ships as `wav` alone, and a fork that widens it re-opens the gap silently; and
+  defect (2) was **latent, not live** (Cloudflare always sets `CF-Connecting-IP`), closed because it would
+  open the moment anything sat in front. Every counter is still **per-isolate** (§4.6); nothing here
+  changes that. Tables of every awkward address form and every rate/width combination are in
+  `sim/test_demo_proxy.mjs` block 14, `sim/test_demo_ears.mjs` A-DUR/A-RDR and `sim/test_wav_decode.mjs`
+  block 9.
+- **The most obvious control on the hosted Sim was dead, and the phone's primary control was buried — fixed 2026-09-03.**
+  Measured in Chrome against `https://moxie.mattvalancy.com/sim`, not inferred. **(a) The typed line went
+  nowhere.** `#speech-input` + `#speech-btn` ("Say") drives `moxieAudio.speak()`, whose only route for
+  arbitrary text is the LOCAL Piper sidecar on `:8081` — which cannot exist on a hosted origin and which the
+  site's own `connect-src 'self'` correctly refuses. A visitor typed a sentence, pressed the button, and got
+  `apiCalls: only /api/health · audioDecoded 0 · audioStarted 0` plus a CSP console error. `env.js` already
+  MARKED the button `needs-backend`, but a mark was a tooltip and half opacity: it stayed fully clickable and
+  silently failed. Now, **when and only when no local Piper answers**, `cloud-transport.js::adoptSpeechControl`
+  hands that box the typed turn — "Say" becomes "Ask", the line goes through the same
+  `moxieBridge.sendUserTurn` the microphone uses (so the same `admit()` gate: origin pin, per-IP window,
+  budget, the PR #107 FIFO), and the duplicate injected Talk box stands down so exactly one typed control is
+  ever visible. **With a sidecar reachable, nothing changes at all** — the local engines stay first-class, and
+  the mode (never the hostname) decides. Controls that genuinely *cannot* work off-localhost — `#tts-test`,
+  `#bus-connect`, `#tts-base`, `#stt-base` — are now **disabled**, not hinted; `#mic-btn` deliberately is not,
+  because "Listen" really does play a scripted line there. `audio.js::skipProbe` also stops probing `:8081`
+  from any non-local origin, which removes the CSP violation at its root rather than at the button.
+  **(b) The rail toggle was untappable on a phone.** At 375x667, `#env-banner`
+  (`position: fixed; bottom: …; z-index: 30`, stretched edge-to-edge under `@media (max-width: 640px)`) sat
+  exactly on top of the bottom-anchored `#rail-toggle`: `elementFromPoint()` at its centre returned the
+  banner, `tap()` was refused as obscured, and a forced click left `aria-expanded` false — the toggle was
+  visible, sized and `pointer-events:auto` the whole time, so **no visibility check could have caught it.**
+  Fixed in layout, not z-index: `env.js` measures the panel and lifts the banner clear via `--eb-lift`.
+  **(c) The CSP had no `script-src` at all**, so script execution was unrestricted; it is now
+  `script-src 'self' 'unsafe-inline'` behind `default-src 'self'`, plus `form-action 'none'`,
+  `frame-src 'none'`, `worker-src 'self' blob:` and **HSTS**. Three new browser suites hold all of it:
+  `sim/test_typed_turn.mjs` (56 checks — asserts the **peak sample amplitude** of the buffer handed to Web
+  Audio, so a silent clip cannot pass), `sim/test_mobile_layout.mjs` (48 checks, with a teeth block that
+  restores the old geometry and requires the collision to reappear) and `sim/test_csp.mjs` (37 checks — the
+  first suite in this repo that serves the pages with the **real** `_headers` applied). **Honest gaps:**
+  `'unsafe-inline'` for scripts stays — `_headers` is static so a nonce is impossible, and hashing nine
+  inline blocks plus ten inline `onclick=` attributes needs a build step and a freshness guard; HSTS covers
+  the static pages only, because `_headers` does not apply to Pages *Function* responses (ledger row 27), so
+  `/api/*` still needs it set in `envelope.js`; `/api/*` responses carry no CSP (JSON with `nosniff`, low
+  risk); the root `README.md` embeds a github.com image that `img-src 'self'` correctly refuses, named as a
+  single shrinking exception in `test_csp.mjs`; and `mic.js`'s degraded path still publishes a **scripted
+  child line** through `sendUserTurn`, which on a live page spends a real chat + speech turn on words the
+  visitor never said — the typed path deliberately does not copy that, but the mic's copy is untouched here.
+
 - **The hosted demo refused the eleventh visitor instead of queueing them — fixed 2026-09-03.** At
   `DEMO_MAX_CONCURRENT_CHAT` in-flight turns, `functions/api/_lib/limits.js::admit` answered `at_capacity`
   on the spot, so a momentary collision between the ~ten people the demo is sized for turned into scripted
@@ -161,6 +226,59 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   pinned); it now keys on canonical bytes. **Honest ceiling:** under `DEMO_TTS_FORMAT=pcm` there is no
   header and no magic number, so a short opaque binary error blob is still undecidable and would pass —
   `wav` is the default for that reason.
+- **Integration evidence (2026-09-03 21:10 PDT, seventh pass) — the stack is healthy, and the
+  readiness contract PR #103 opened was only half built.** Everything asked of the whole stack came
+  back green on a docker broker: `run_smoke.sh` ✅ (TTS audio 50 934 B @ 22050 Hz + the five scored
+  fields), `run_scenarios.sh` ✅ 2/2 × 4/4, `--telehealth` ✅ enable→start→speak→interrupt→end,
+  hermetic suite **4702 passed / 27 skipped / 4 xfailed creds-free** *and* **4319 / 69 in a venv with
+  no `openai`, `fastapi`, `httpx`, `jinja2` or `PyYAML`**, `python -m build` → wheel + sdist at
+  0.7.0. **Live, 2 gateway calls total:** `test_live_gateway_turn_e2e.py` 5/5 — the gateway brain
+  answered *"Hello there! What's a fun thing you did today?"* and the robot heard **152 296 B @
+  22050 Hz (3.45 s) at spectral flatness 2.013e-02**, `piper-amy`, four orders above the 1e-6 floor,
+  so not the placeholder tone. **Both halves of the creds gate verified**, which is the property that
+  matters: with the key the live tier runs, and with `MOXIE_LLM_API_KEY=` it reports **14 named
+  skips** while the hermetic anti-tone guard in the same file still runs — so the live assertion can
+  never be vacuous.
+  **THE GAP this found — the honest readiness line is not observable.** PR #103 made
+  `[runtime] broker connected` *true* (subscribe, then print) and `test_connect_readiness.py` fences
+  that order of effects. It is not *visible*: the print carries no `flush=True` while the refusal
+  branch three lines above it always has, and **every one of the five things that block on this line
+  reads it from a redirected stdout**, where Python is block-buffered. Four callers each carried
+  `PYTHONUNBUFFERED=1` to compensate — `helpers_stack.py` even says why in a comment — which is four
+  guards covering for one missing keyword, and the fifth caller (this pass's rewrite of
+  `run_smoke.sh`) forgot it and waited the full 40 s for a supervisor that had connected in 0.11 s.
+  Fixed at the source; the environment variable is now belt and the keyword braces.
+  **THE SECOND GAP — `run_smoke.sh` was the last SIL script still guessing at its boot.**
+  `run_scenarios.sh` was converted to polling; the script CI actually gates on kept `sleep 2` +
+  `sleep 3`. Measured here: the broker listens in **0.35 s** and the supervisor is ready **0.11 s**
+  later, so the smoke burned **4.7 s of pure waiting** every run (8.03 s → **3.31 s**) — and was
+  still blind the other way. Reproduced by making `mqtt/run.py` 8 s slow, which is a loaded runner:
+  the old script failed 20 s later as **`no config pushed within timeout`**, naming the config push,
+  the robot and the broker and never the boot that had not happened; the polled script passes the
+  same case. Both waits now live once in [`sim/readiness.sh`](../../sim/readiness.sh), sourced by
+  both scripts, because two copies of a wait are two waits.
+  **THE THIRD GAP, the worst of them — `--telehealth` drove another run's supervisor.**
+  That mode drives the robot over the supervisor's own status HTTP, and the script derived the port
+  from the broker port and called the bind *"best-effort either way"* — true when nothing read it,
+  never revisited when `--telehealth` made it load-bearing. On `MOXIE_SIL_PORT=1930` → `:8930`, held
+  by a stale supervisor from an unrelated run, the runtime logged
+  `status server failed: [Errno 98] Address already in use`, carried on, and the telehealth robot
+  **POSTed its commands into that stranger**, failing 20 s later as
+  `exception: Expecting value: line 1 column 1 (char 0)` — a JSON error blamed on the TeleHealth
+  wire. Both bind outcomes are printed by `_start_status_server`, so both are observable; the script
+  simply did not look. It now does, in ~1 s with the port named, and it honours an operator's
+  `MOXIE_STATUS_PORT` the way `run_scenarios.sh` always has. Same shape as the two above and as the
+  `MOXIE_DATA_DIR` leak the sixth pass closed: an unobserved precondition becoming a false
+  accusation against the subject under test — and here, one run reaching into another run's process.
+  Guarded generically in [`test_harness_readiness.py`](../../sim/tests/test_harness_readiness.py)
+  (8 tests, 5 of which fail on the pre-fix tree), deliberately **not** named `test_sil_*`: both CI
+  tiers select the hermetic suite with `-k "not test_sil"`, so a SIL-prefixed guard about the SIL
+  scripts would have been deselected everywhere it was meant to run.
+  **Honestly not verified:** no physical robot, as everywhere else in this document; the residual
+  paho window between `subscribe()` queuing a packet and the loop writing it is unmeasured (it is
+  microseconds against a robot's TCP+CONNECT round trip, and the fix does not claim to close it);
+  and the sixth pass's stray-`.tmp` finding is still recorded-not-fixed — I left it alone rather than
+  widen this slice.
 
 - **Integration evidence (2026-09-04, sixth pass) — the `week` soak finished, 12/12 bars, and
   P1's three fixes hold from outside.** P1's soak was killed at 59 of 60 minutes before it wrote a
@@ -597,6 +715,29 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   (`MoxieRuntime(app, safety=…)`) without the runtime changing. Also unproven on hardware: no
   capture shows how a physical Moxie reacts to `input.safety` — we populate it because the
   contract says a kid-facing backend should, not because we have seen the robot act on it.
+- **hosted safety floor — the invisible-character bypass is closed (2026-09-03); the local one is
+  not.** The bullet above lists "obfuscation past its normalizer" as a known limit, and on the
+  hosted side one specific case of it was not a limit but a hole: `functions/api/_lib/safety.js`'s
+  `ALWAYS` stripped exactly four zero-width code points (U+200B/C/D, U+FEFF), so `"suicide"` blocked
+  and the same word with a U+00AD SOFT HYPHEN or a U+2060 WORD JOINER between each letter did not —
+  identical on screen, and `self_harm` is the FIRST blocking category on a live child-facing demo.
+  `ALWAYS` now strips the whole Unicode **`Cf`** category (probed against V8 11.3 rather than assumed
+  — including U+180E, which was `Zs` before Unicode 6.3) plus the four glyphless Hangul fillers
+  (U+115F/U+1160/U+3164/U+FFA0), which are `Lo` and so outside it; `variants()` gained a fourth form
+  that folds separators a writer put *inside* a word, closing `s.u.i.c.i.d.e` and `s-u-i-c-i-d-e`.
+  **The narrow transform was chosen on measurement:** dropping *all* punctuation, the obvious version,
+  also deletes the boundary between sentences and turned two innocent corpus sentences ("that's what
+  i want. To die of laughter would be great") into `self_harm` blocks — a child told to go find a
+  grown-up for saying something ordinary is a real harm, not a safe default. `sim/test_demo_proxy.mjs`
+  carries the 25-character evasion table, the `Zs` proof (an exotic space folds onto a *real* space,
+  which is correct) and an 18-sentence false-positive guard; 47 of its assertions are red against the
+  pre-change module. **Two honest gaps.** Intra-letter *spacing* (`s u i c i d e`) is still open and
+  deliberately so — it renders visibly, is identical to typing real spaces, and closing it means
+  deleting spaces from every utterance; a test pins it as known rather than leaving it to be
+  discovered. And `mqtt/moxie_sdk/safety.py::normalize`/`_variants` still carry the old narrow
+  behaviour, so the hosted demo now blocks a strict **superset** of the local stack — the safe
+  direction, but a divergence the header of `safety.js` promises does not exist, and the same fix
+  belongs on the Python side.
 - **wake alarms / schedule preferences — the shapes are ours, not a capture.** `alarms`
   (`WakeSchedule`) and `schedule_preferences` (`SchedulePreferences.ParentRequest`) are now built and
   parent-editable, but our protos give the *types* and not the *encodings*, and no capture of a real
@@ -824,7 +965,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   product code and `functions/` are unswept; and monotonic-clock load flakiness (playbook rule 11's
   disease) is deliberately out of that guard's scope and still unfenced.
 
-## DoD progress (audited 2026-09-03 21:05 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 94%** (done = all six 🟢)
+## DoD progress (audited 2026-09-04 00:40 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 92%** (done = all six 🟢)
 
 > **Criterion 6 is green, and it was earned in the place it used to be false.** The day the merge gate was a
 > `grep` is fixed and the fix has since caught a genuine red; the three flake classes are fenced by ratchets that
@@ -859,6 +1000,47 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > always reported the real in-flight count; the stub PR #104 replaced was in `health.js` alone. Production
 > serves from `main`, which at the time of this test did not carry #104 at all — so the number proves the
 > admission counter, not the health wiring. Corrected the same evening, before promotion.
+>
+> **DRIVING THE LIVE PAGE IN A REAL BROWSER MOVED THIS SCORE DOWN, AND THAT IS THE POINT.** Everything
+> above was measured with `curl`. On 2026-09-04 the hosted `/sim` was driven with headless Chromium across
+> seven viewports, and three defects appeared that no server-side test could have found:
+>
+> 1. ~~**The only door to the brain is the microphone.**~~ **FIXED — PR #112 (2026-09-04).** Recorded in
+>    full because the *shape* is the lesson, not the bug. Typing into `#speech-input` and pressing Say never
+>    calls `/api/chat` at all — it targets a local Piper sidecar on `:8081`, which CSP correctly blocks, so
+>    nothing plays and the only feedback is a console error. `cloud-transport.js`:339 states it outright
+>    (*"the page has no 'type a sentence to Moxie' control today"*) and `mic.js`:157 is the sole caller of
+>    `sendUserTurn`. A visitor with no microphone, or who denies the permission, **cannot use the demo**.
+>    That is criterion 1 failing on the hosted path for a whole class of visitor, which is why this audit
+>    scores 92% rather than 94% — nothing regressed; the measurement got honest.
+> 2. ~~**On phones the env banner covers the rail toggle.**~~ **FIXED — PR #112 (2026-09-04),** verified on
+>    the preview: `elementFromPoint` at the toggle's centre now returns the toggle at 360/375/414 px and a
+>    real `tap()` opens the rail. The layout suite's teeth restore the old offset and the collision returns. `document.elementFromPoint()` at the toggle's
+>    centre returns `div#env-banner`. The tap does nothing, silently. Recoverable — dismissing the banner
+>    frees it and the mic then works — but nothing tells a visitor that.
+> 3. **The safety floor's hard block is defeated by one invisible character.** Verified against the real
+>    module: `"suicide"` blocks, the same word with U+00AD SOFT HYPHEN or U+2060 WORD JOINER between each
+>    letter does **not** (U+200B is handled). `safety.js`:60-63 strips four zero-width characters and misses
+>    the rest of the Unicode format class. `self_harm` is the first blocking category and this floor runs
+>    *before* the gateway, so the pre-inference block is what fails.
+>
+> **What the same sweep proved GOOD**, so the score is not read as decay: mic → STT → brain → TTS works end
+> to end on the public domain in 3/3 runs, with audio decoded and played (asserted at the Web Audio layer,
+> where a silent clip would fail); **zero horizontal overflow at any of the seven viewports**; no leak of
+> key, gateway host, model id or Tailscale address in the page, any API body, or any header; and
+> `/api/health` reported `inflight: 1` **during an actual in-flight turn**, which the old stub could not do.
+>
+> **UPDATE, same night.** #1 and #2 are fixed and verified on the preview: the Say button became **Ask**,
+> routed through the same `sendUserTurn` → `admit()` gate as the mic (so typing is not a cheaper way to
+> spend the gateway), `/api/chat` is called once with the typed words and `/api/speech` once by ticket,
+> playing a buffer at **peak 0.800 of full scale** — an assertion a silent clip fails. The controls that
+> could never work off-localhost are now **disabled** rather than merely hinted, and the `:8081` probe is
+> gone at the root, so the CSP console error is gone with it. `_headers` gained HSTS and a real
+> `script-src`/`default-src`. **#3, the safety bypass, is fixed in PR #113 but is the more important find.**
+> **Still open and named:** `/api/*` carries no HSTS or CSP (confirmed live — it needs `envelope.js`);
+> `'unsafe-inline'` remains for scripts (14 inline blocks, and a static `_headers` cannot carry a nonce);
+> `mic.js` still spends a full turn on a scripted line the visitor never said; and no *human* has recorded
+> through the hosted mic.
 >
 > **What is still NOT covered:** no *human* has recorded through the hosted mic — this loop used synthesized
 > speech and a hand-built WAV, so it proves the route and the gateway, not `MediaRecorder` in a real browser on

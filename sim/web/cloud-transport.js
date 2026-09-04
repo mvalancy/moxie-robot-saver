@@ -335,22 +335,169 @@
     transportStats: function () { return JSON.parse(JSON.stringify(stats)); },
   });
 
-  /* ---- the one piece of UI this slice needs ------------------------------ *
-   * The page has no "type a sentence to Moxie" control today: `#speech-input`/`#speech-btn`
-   * make MOXIE say a line (a TTS test), and the only thing that has ever sent a CHILD turn
-   * is `mic.js`. The definition of done is that a stranger "types or speaks a sentence", so
-   * typing needs a box.
+  /* ---- the typed turn, and the ONE control that carries it ---------------- *
+   * A typed line is a spoken line without the STT leg. `mic.js`:157 hands a transcript to
+   * `window.moxieBridge.sendUserTurn(text)` and EVERYTHING downstream — the transcript
+   * row, the chat message, the speech ticket, playback, the mouth — follows from there.
+   * So the typed path is not a second flow; it is the same call with the microphone
+   * removed, and there is deliberately no second copy of it in this file.
+   *
+   * WHICH CONTROL CARRIES IT. `sim.html` has had a text box in the Voice panel since long
+   * before this transport existed: `#speech-input` + `#speech-btn` ("Say"), whose job is
+   * to make MOXIE say arbitrary text through the LOCAL Piper sidecar on :8081. On a hosted
+   * deployment that sidecar cannot exist, and this site's own CSP (`connect-src 'self'`,
+   * `sim/web/_headers`) correctly refuses the request — so a visitor typed a sentence into
+   * the most obvious box on the page, pressed the button, and got silence plus a console
+   * error. Measured in Chrome against the live site on 2026-09-03:
+   *
+   *     apiCalls: only /api/health      audioDecoded: 0   audioStarted: 0
+   *     Refused to connect to 'https://…:8081/tts?text=…' — connect-src 'self'
+   *
+   * `env.js` already MARKED that button `needs-backend`, but a mark is a tooltip and a
+   * half-opacity: the button stayed fully clickable and silently failed. A dead control
+   * that looks alive is worse than one that is visibly unavailable.
+   *
+   * So when the local Piper voice is NOT available — and only then — `env.js` calls
+   * `adopt()` below and that box becomes the typed turn: "Say" becomes "Ask", and the
+   * line goes to Moxie instead of through a sidecar that is not there. When a real Piper
+   * IS reachable the button is untouched and behaves exactly as it always has; the owner's
+   * standing rule is that the local engines stay first-class options, and this is
+   * additive, never a replacement. THE MODE DECIDES, NOT THE HOSTNAME: `env.js` asks
+   * `mode.js` and its own sidecar probe, and hands the answer here.
+   *
+   * The injected `#chat-sub` box below remains the fallback for any page that has no
+   * `#speech-input` to adopt (and for the transport's own unit test). Exactly one typed
+   * control is ever visible: adopting hides the injected one and moves `#chat-status`
+   * across, so the "thinking…" line and every refusal still land under the control the
+   * visitor actually used.
+   */
+  var talkSec = null;        // the injected "Talk" section, when one had to be made
+  var adopted = false;       // true once #speech-input/#speech-btn carry the typed turn
+
+  /** The client-side ceiling on one line. `§4.1` enforces it server-side too, on purpose;
+   *  this half exists so the page can say WHY before it spends a request — an over-long
+   *  line must never reach `admit()` at all. */
+  function maxChars() {
+    var m = mode();
+    var lim = (m && m.limits) ? m.limits() : {};
+    var n = Number(lim && lim.max_input_chars);
+    return (isFinite(n) && n > 0) ? n : 500;
+  }
+
+  /**
+   * The one typed path, shared by whichever control is carrying it.
+   *
+   * It inherits the whole spend story for free: `sendUserTurn` above sends a turn to the
+   * live brain ONLY when `canSpendLiveTurn()` says so, and the server's `admit()` — origin
+   * pin, per-IP window, budget, the bounded FIFO queue — is the same gate the microphone
+   * passes. Typing is not a cheaper way to spend the gateway than speaking.
+   *
+   * When the page is NOT live it falls through `inner.sendUserTurn` to `stub.js`, which
+   * costs nothing and is the scripted behaviour the site has today. Note what it does NOT
+   * do: it never invents a line. `mic.js`'s degraded path publishes a SCRIPTED CHILD LINE
+   * through this same call, which on a live page spends a full chat + speech turn on words
+   * the visitor never said. Nothing here can do that — the only text that reaches
+   * `sendUserTurn` is text a human typed.
+   *
+   * @returns {boolean} whether the line was sent.
+   */
+  function sendTyped(text) {
+    var t = String(text == null ? "" : text).trim();
+    if (!t) return false;
+    var max = maxChars();
+    if (t.length > max) {
+      status("that is a bit long — " + max + " characters at most.");
+      return false;
+    }
+    status("");
+    window.moxieBridge.sendUserTurn(t);
+    return true;
+  }
+
+  /** `#chat-status` — `status()`'s target — wherever the typed control ended up. */
+  function ensureStatus(section) {
+    var st = document.getElementById("chat-status");
+    if (!st) {
+      st = document.createElement("p");
+      st.id = "chat-status";
+      st.className = "hint";
+      st.setAttribute("aria-live", "polite");
+    }
+    if (section && section.appendChild) section.appendChild(st);
+    return st;
+  }
+
+  function submitFrom(input) {
+    if (!input) return false;
+    if (!sendTyped(input.value || "")) return false;
+    input.value = "";
+    return true;
+  }
+
+  /**
+   * Hand `#speech-input` / `#speech-btn` the typed turn.
+   *
+   * ONE-WAY ON PURPOSE. The only input that can change the answer is `env.js`'s sidecar
+   * probe, which resolves exactly once per session, and `env.js` withholds the call until
+   * it has resolved — so there is no "un-adopt" to get wrong, and no window in which the
+   * button's label and its behaviour could disagree. `adopt(false)` is therefore a query,
+   * not a command.
+   *
+   * The two existing listeners on those elements (`moxie.js`'s `setSpeech`, `sim.html`'s
+   * `wireAudio`) are NOT removed — they ask `moxieTypedTurn.adopted()` and stand down.
+   * That is deliberately explicit rather than clever: replacing the nodes would silently
+   * break `sim.html`'s phrase chips, which hold a reference to the input, and a
+   * capture-phase interceptor would make the page's behaviour depend on listener ordering.
+   *
+   * @returns {boolean} whether this page has such a control at all.
+   */
+  function adoptSpeechControl() {
+    if (adopted) return true;
+    var btn = document.getElementById("speech-btn");
+    var inp = document.getElementById("speech-input");
+    if (!btn || !inp) return false;
+
+    var sec = btn.closest ? btn.closest("section.sub") : null;
+    /* The status line follows the control: "thinking…", every refusal reason and the
+     * over-long warning have to appear under the box the visitor actually used. Note the
+     * ORDER this runs in — `env.js` renders synchronously while the document is still
+     * parsing, so adoption normally happens BEFORE `injectTalkUI` would have made a
+     * `#chat-status` at all. Hence `ensureStatus`, and hence `injectTalkUI`'s early-out:
+     * when this control was adopted, the duplicate box is never built in the first place. */
+    ensureStatus(sec);
+    // ...and if one was already built (a page that adopts late), it goes away, so the
+    // panel never shows two text inputs that look like they do the same thing. It did, on
+    // the live site, and the visitor reliably tried the top one — the dead one.
+    if (talkSec) talkSec.hidden = true;
+
+    btn.textContent = "Ask";
+    btn.setAttribute("title",
+      "Sends your line to Moxie — she answers here. (Speaking arbitrary text needs the local Piper server.)");
+    btn.removeAttribute("disabled");
+    btn.disabled = false;
+    inp.setAttribute("placeholder", "say something to moxie…");
+    inp.setAttribute("maxlength", String(maxChars()));
+    inp.removeAttribute("disabled");
+    inp.disabled = false;
+    var hint = sec && sec.querySelector ? sec.querySelector("h3 .hint") : null;
+    if (hint) hint.textContent = "tap a phrase · or ask her";
+
+    btn.addEventListener("click", function () { submitFrom(inp); });
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") submitFrom(inp); });
+    adopted = true;
+    return true;
+  }
+
+  /* The injected fallback box. Kept for any page with no `#speech-input` to adopt — and
+   * it is what the transport's own unit test drives. It works in EVERY mode: with no live
+   * brain the turn goes to `stub.js` through `inner.sendUserTurn`.
    *
    * It is injected from here rather than added to `sim.html` for two reasons: it keeps
-   * `sim.html`'s edit to the single `<script>` tag §9's file table budgets, and it means the
-   * control exists exactly when the transport does. `env.js` already established this
-   * pattern — it injects the env badge and the banner the same way.
-   *
-   * It works in EVERY mode: with no live brain the turn goes to `stub.js` through
-   * `inner.sendUserTurn`, which is a strict improvement on today's page (you could not type
-   * to Moxie at all), and it is why the box carries no mode-dependent copy of its own.
-   */
+   * `sim.html`'s edit to the single `<script>` tag §9's file table budgets, and it means
+   * the control exists exactly when the transport does. `env.js` already established this
+   * pattern — it injects the env badge and the banner the same way. */
   function injectTalkUI() {
+    if (adopted) return;                        // the page already has a typed control
     if (document.getElementById("chat-send")) return;
     var mic = document.getElementById("mic-btn");
     var host = mic && mic.closest ? mic.closest("section.sub") : null;
@@ -388,20 +535,10 @@
     sec.appendChild(row);
     sec.appendChild(p);
     host.parentNode.insertBefore(sec, host);
+    talkSec = sec;
 
-    function submit() {
-      var t = (input.value || "").trim();
-      if (!t) return;
-      // The cap is enforced server-side too (§4.1 enforces it twice on purpose); this is
-      // only so the page can say why before spending a request.
-      var lim = mode() && mode().limits ? mode().limits() : {};
-      var max = Number(lim.max_input_chars) || 500;
-      if (t.length > max) { status("that is a bit long — " + max + " characters at most."); return; }
-      input.value = "";
-      window.moxieBridge.sendUserTurn(t);
-    }
-    send.addEventListener("click", submit);
-    input.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
+    send.addEventListener("click", function () { submitFrom(input); });
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") submitFrom(input); });
   }
 
   try {
@@ -411,6 +548,16 @@
       injectTalkUI();
     }
   } catch (e) {}
+
+  /* The seam `env.js` uses to hand the typed turn a control. Published BEFORE the honesty
+   * guard below for the same reason that flag is set last: nothing may be able to adopt a
+   * control while the transport is only half-wired. */
+  window.moxieTypedTurn = {
+    adopt: function (on) { return on === false ? adopted : adoptSpeechControl(); },
+    adopted: function () { return adopted; },
+    send: sendTyped,
+    maxChars: maxChars,
+  };
 
   /* THE HONESTY GUARD (`mode.js`:29-35). This flag is what tells `mode.js` that a
    * configured deployment may finally be PAINTED as live, because something is now loaded
