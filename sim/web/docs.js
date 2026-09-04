@@ -131,16 +131,47 @@
     for(var i=0;i<hs.length;i++){ if(slugify(hs[i].textContent)===id) return hs[i]; }
     return null;
   }
+  /* Collapse "a/b/../c" style segments onto a base directory. Shared by the link and the
+     image rewrites below, which resolve in two different path spaces. */
+  function joinPath(baseDir, rel){
+    var parts=(baseDir?baseDir.split("/"):[]);
+    rel.split("/").forEach(function(seg){ if(seg===".."){parts.pop();} else if(seg==="."||seg===""){} else {parts.push(seg);} });
+    return parts.join("/");
+  }
+  /* The REPO path of a doc, from its path in the bundle — the inverse of what
+     `sim/tools/build_docs_bundle.py` does when it copies: the docs/ tree is flattened onto
+     the bundle root, and the two top-level docs are namespaced under `_root/`. */
+  function repoPathOf(bundlePath){
+    return bundlePath.indexOf("_root/")===0 ? bundlePath.slice(6) : "docs/"+bundlePath;
+  }
+  /* A doc's <img src> is written REPO-relative, because GitHub renders the same Markdown
+     straight out of the repo. This page serves it from `docs-bundle/`, a different depth,
+     so the raw string resolves against `/docs.html` and 404s (or, for the off-site URL this
+     replaced, is refused by `img-src 'self' data: blob:` — see
+     docs/architecture/backlog/vendor-the-readme-hero.md). Resolve it against the doc's own
+     repo path instead, then map that onto the URL serving the same bytes: `sim/web/` IS the
+     site root (wrangler.toml `pages_build_output_dir`), so the prefix simply comes off.
+     That is the whole rule, and it is why doc images live under `sim/web/img/` — anything
+     else has no served URL to map to, which `sim/tests/test_no_offsite_images.py` enforces
+     at commit time rather than leaving to a browser months later. */
+  function fixImages(root, fromPath){
+    var repoDir=repoPathOf(fromPath).replace(/\/?[^/]*$/,"");
+    Array.prototype.forEach.call(root.querySelectorAll("img[src]"),function(img){
+      var src=img.getAttribute("src");
+      if(!src||/^([a-z][a-z0-9+.-]*:|\/\/|\/)/i.test(src)) return;   // absolute / data: / blob: — leave alone
+      var abs=joinPath(repoDir, src);
+      if(abs.indexOf("sim/web/")===0) img.setAttribute("src", abs.slice(8));
+    });
+  }
   function fixLinks(root, fromPath){
     var baseDir=fromPath.indexOf("/")>=0?fromPath.replace(/\/[^/]*$/,""):"";
+    fixImages(root, fromPath);
     Array.prototype.forEach.call(root.querySelectorAll("a[href]"),function(a){
       var href=a.getAttribute("href");
       if(/^(https?:|mailto:|#)/.test(href)){ if(/^https?:/.test(href)){a.target="_blank";a.rel="noopener";} return; }
       var hash=""; var m=href.match(/#.*$/); if(m){ hash=m[0]; href=href.slice(0,m.index); }
       if(!href||!/\.(md|tsv|dts)$/i.test(href)) return;   // .md docs + bundled .tsv/.dts manifests
-      var parts=(baseDir?baseDir.split("/"):[]);
-      href.split("/").forEach(function(seg){ if(seg===".."){parts.pop();} else if(seg==="."||seg===""){} else {parts.push(seg);} });
-      var target=parts.join("/");
+      var target=joinPath(baseDir, href);
       var hit=idx.files.some(function(f){return f.path===target;})?target:(idx.files.some(function(f){return f.path==="_root/"+target;})?"_root/"+target:null);
       if(hit){ var frag=hash; a.setAttribute("href","#"+hit); if(frag) a.dataset.anchor=frag; a.onclick=function(ev){ ev.preventDefault(); openDoc(hit, frag); }; }
     });
