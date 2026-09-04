@@ -98,6 +98,50 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **Ambient self-talk talked over the live answer a visitor had just paid for — fixed 2026-09-04.**
+  [`ambient.js::tick`](../../sim/web/ambient.js) fires every 11–24 s and its `perform()` calls
+  `moxieAudio.speak()`, which calls `stop()` **unconditionally**; nothing checked whether Moxie was
+  mid-answer. A live turn is ~1.2 s of `/api/chat` plus 2–3 s of `/api/speech`, and the reply audio
+  itself **measured 4.78 s (105 332 frames @ 22 050 Hz)** on a real turn against the hosted site — so a
+  visitor's answer sat squarely inside the ambient window and was very likely cut off mid-sentence and
+  replaced by a non-sequitur. The worst possible moment for it: brain, voice and mouth all work, and then
+  she talks over herself, which a stranger reasonably reads as "this is broken".
+  **The guard is on the BROAD predicate, deliberately.** [`audio.js`](../../sim/web/audio.js) has two:
+  the exported `isSpeaking()` reports only the server-TTS flag, and is right for its one caller
+  (`cloud-transport.js`'s late-audio drop). Guarding on it would have missed a playing **clip** — which
+  is what the degraded and scripted paths speak, and what ambient itself speaks — leaving the fallback
+  deployments, the ones with least room to look broken, entirely unguarded. So the private
+  `moxieIsSpeaking()` (`speaking || (current && currentWho !== "child")`) is now exported as
+  `isMoxieSpeaking`, alongside `isMoxieBusy(graceMs)`, and `tick()` stands down via the file's existing
+  `schedule(false); return;` idiom — so a long answer costs one quip, never ambient itself.
+  **The tail needed a timestamp, not a flag.** `onended` fires at the end of the *audio*, not the end of
+  the *sentence*, and there is a **measured ~385 ms seam** (`stop()` at t=13633 → next clip start at
+  t=14018) in which `speak()` has cut the old clip and not yet fetched-and-decoded the new one, where even
+  the broad predicate reads false while Moxie is plainly mid-reply. So every end of her voice stamps
+  `spokeUntil`, and ambient asks `isMoxieBusy(1600)`.
+  **A second hole, found while proving the first, is closed in the same change:** during the ~4 s a turn
+  spends in flight she is genuinely *silent*, so ambient is right to start — and `ttsPump` then did
+  `current = src` over the live quip, merely **forgetting** it rather than stopping it, so the gateway
+  answer played on top of it. Two Moxies at once, the same defect from the other side, and one the ambient
+  guard cannot close. The server voice now cuts a local voice on arrival, exactly as `speak()` makes Moxie
+  win over the child prop. ⚠️ **Honest gaps.** The `bridge.js` half is untouched (it is not this slice's
+  file), so nothing tells ambient a turn is *in flight* — the fix is the answer cutting the quip on
+  arrival, not the quip never starting; and the one-time `degraded` announcement
+  ([live-sim-demo.md](backlog/live-sim-demo.md) §6.2) is deliberately **not** guarded, because its
+  retry hooks have no "speech ended" edge to re-arm on and a guard there could strand it.
+  **Proof is at the Web Audio layer, in real Chrome** — [`sim/test_ambient_guard.mjs`](../../sim/test_ambient_guard.mjs),
+  29 checks: the two voices are told apart by how their buffer was *built* (`createBuffer` = gateway PCM,
+  `decodeAudioData` = clip), and the assertions are that the answer's node was never `stop()`ed before its
+  audio ran out and that no clip started inside its 4.78 s window — plus a **negative control** proving the
+  same drive with the guard bypassed *does* cut it, so the silence is the guard working rather than the
+  fixture failing to fire. That shape is the PR #82 lesson (770 assertions that all read a file while Web
+  Audio was stubbed; a silent clip passed every one), so peak sample amplitude is asserted throughout.
+  **The suite is deliberately UNWIRED from CI** and listed in
+  [`test_ci_test_coverage.py::KNOWN_UNRUN`](../../sim/tests/test_ci_test_coverage.py) with the date and
+  reason: a concurrent pass is rewriting `sim/ci/ci.yml` and all nine existing browser suites, and a
+  colliding tier edit would fight the template/installed parity guard. Wire it into the deep tier
+  (needs a browser, ~90 s) once that lands.
+
 - **Every `execute` this appliance could send reached the robot *unnamed* — closed 2026-09-04
   (the wire half of [qr-launch-cards](backlog/qr-launch-cards.md) §P0-a).**
   [`wire.py::build_chat_response`](../../mqtt/moxie_sdk/wire.py) serialised an action as exactly
