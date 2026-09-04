@@ -124,7 +124,27 @@ BLOCKED = 0
 STRIPPED = 0
 
 
-def _minimal_render(template: str, context: dict) -> str:
+def _tally(counts: dict, fn, template: str, context: dict) -> str:
+    """Run `fn(template, context)` and add ITS `BLOCKED`/`STRIPPED` movement to `counts`.
+
+    The one line `backlog/content-authoring.md` §9 asks for, and the reason it is a
+    *delta* rather than a private counter: `BLOCKED` and `STRIPPED` are module-level
+    integers that the turn loop also moves (`content_app.py` renders every prompt through
+    the same function), so a concurrent turn pollutes any window taken around this one.
+    Narrowing the window to a single call is all a caller can honestly get without a lock
+    around the renderer — and a lock is exactly what §5.1 forbids, because the turn loop
+    calls it too. So the authoring route labels what it reports `counts_advisory: true`
+    and this helper stays three lines instead of becoming a second counting mechanism.
+    """
+    before = (BLOCKED, STRIPPED)
+    try:
+        return fn(template, context)
+    finally:
+        counts["blocked"] = counts.get("blocked", 0) + BLOCKED - before[0]
+        counts["stripped"] = counts.get("stripped", 0) + STRIPPED - before[1]
+
+
+def _minimal_render(template: str, context: dict, counts: dict = None) -> str:
     """Render `template` with no jinja2 installed, emitting **no template syntax**.
 
     A tiny single-pass scanner rather than a second template engine. One principle
@@ -202,6 +222,8 @@ def _minimal_render(template: str, context: dict) -> str:
         hope.
     """
     global STRIPPED
+    if counts is not None:
+        return _tally(counts, _minimal_render, template, context)
     if not template:
         return ""
 
@@ -336,7 +358,7 @@ def _sandbox():
                             keep_trailing_newline=True)
 
 
-def render_prompt(template: str, context: dict) -> str:
+def render_prompt(template: str, context: dict, counts: dict = None) -> str:
     """Render `template` over `context` (e.g. {'volley': v, 'session': s}).
 
     Prefers Jinja2 if available; the minimal fallback handles `{{ dotted.path }}` and
@@ -362,7 +384,13 @@ def render_prompt(template: str, context: dict) -> str:
     counts every refusal in `BLOCKED`: a pack that trips it is broken or hostile, and
     either way it is worth seeing. A `SecurityError` can still be raised for unsafe
     *operations* rather than attributes, and that falls through to the minimal renderer,
-    which reaches nothing and emits no template syntax."""
+    which reaches nothing and emits no template syntax.
+
+    `counts`, when given, receives this call's own `blocked`/`stripped` movement (`_tally`)
+    — the out-parameter `backlog/content-authoring.md` §5.1 asks for so `POST
+    /content/render` need not read two process-global integers by hand."""
+    if counts is not None:
+        return _tally(counts, render_prompt, template, context)
     if not template:
         return ""
     try:

@@ -391,11 +391,120 @@
            your own wording. An imported pack cannot execute anything: a `code` block
            travels as inert text and is flagged as such. -->
       <div class="card hidden" id="content-card">
-        <h2>📦 Content packs</h2>
-        <p class="muted">What Moxie can talk about, as a file you can share. Export what
-          this Moxie has, or open somebody else's pack — you see exactly what it would
-          change before anything is installed, and you can undo the last one.</p>
+        <h2>📦 Content</h2>
+        <p class="muted">What Moxie can talk about. Write your own conversation or command,
+          export what this Moxie has as a file you can share, or open somebody else's pack —
+          you see exactly what it would change before anything is installed, and you can
+          undo the last one.</p>
         <div id="content-head" class="muted"></div>
+        <div class="row" id="content-new">
+          <button id="btn-ed-new-conversation" class="ghost">＋ New conversation</button>
+          <button id="btn-ed-new-global" class="ghost">＋ New command</button>
+        </div>
+        <!-- ✍️ The editor (docs/architecture/backlog/content-authoring.md §4.1). Three
+             progressively-disclosed surfaces, and the disclosure IS the answer to "the
+             console is not a developer environment": the default surface is a name, an
+             opening line and a text box with insert-chips, and a parent never opens the
+             other two. The raw surface is a WINDOW, not an editor — read-only in P0 by
+             design (risk R1), because a card that starts with one JSON textarea ends as a
+             JSON textarea. -->
+        <div id="ed-panel" class="ed-panel hidden">
+          <div class="ed-hd"><b id="ed-title">New conversation</b>
+            <span id="ed-id" class="muted"></span></div>
+          <label class="ed-f">Name
+            <input id="ed-name" type="text" autocomplete="off"
+                   placeholder="Bedtime wind-down"></label>
+          <div class="row" id="ed-identity">
+            <label class="ed-f grow">Module id
+              <input id="ed-module-id" type="text" autocomplete="off"
+                     placeholder="BEDTIME"></label>
+            <label class="ed-f grow">Content id
+              <input id="ed-content-id" type="text" autocomplete="off"
+                     placeholder="default"></label>
+          </div>
+          <div id="ed-identity-note" class="muted"></div>
+
+          <div id="ed-conv">
+            <label class="ed-f">Opening lines — one per line, Moxie picks one
+              <textarea id="ed-opener" rows="2"
+                        placeholder="Ready to wind down?"></textarea></label>
+            <label class="ed-f">What Moxie should know for this chat
+              <textarea id="ed-prompt" rows="9"
+                        placeholder="You are Moxie at bedtime…"></textarea></label>
+            <div id="ed-chips" class="ed-chips"></div>
+            <div class="row">
+              <button id="btn-ed-render" class="ghost">Show what Moxie will be told</button>
+              <span id="ed-render-note" class="muted"></span>
+            </div>
+            <pre id="ed-render" class="ed-render hidden"></pre>
+          </div>
+
+          <div id="ed-glob" class="hidden">
+            <label class="ed-f">Phrases that should set it off — one per line
+              <textarea id="ed-phrases" rows="4"
+                        placeholder="what time is it"></textarea></label>
+            <div id="ed-phrases-note" class="muted"></div>
+          </div>
+
+          <div id="ed-shadow" class="muted"></div>
+
+          <details class="ed-more"><summary>Advanced</summary>
+            <div id="ed-adv-conv">
+              <div class="row">
+                <label class="ed-f grow">Model
+                  <input id="ed-model" type="text" autocomplete="off"
+                         placeholder="(this appliance's own)"></label>
+                <label class="ed-f">Reply length
+                  <input id="ed-max-tokens" type="number" min="1"></label>
+                <label class="ed-f">Temperature
+                  <input id="ed-temperature" type="number" step="0.1" min="0"></label>
+              </div>
+              <div class="row">
+                <label class="ed-f">Turns of history
+                  <input id="ed-max-history" type="number" min="0"></label>
+                <label class="ed-f">Turns before wrapping up
+                  <input id="ed-max-volleys" type="number" min="0"></label>
+              </div>
+              <div class="row">
+                <label class="ed-f grow">Memory namespace
+                  <input id="ed-memory-ns" type="text" autocomplete="off"
+                         placeholder="(remembers nothing)"></label>
+                <label class="ed-f ed-check"><input id="ed-memory-on" type="checkbox">
+                  Remember what this chat learned</label>
+              </div>
+            </div>
+            <div id="ed-adv-glob" class="hidden">
+              <label class="ed-f">Pattern — the regular expression the phrases compile to
+                <input id="ed-pattern" type="text" autocomplete="off"></label>
+              <div class="row">
+                <label class="ed-f grow">Entity groups
+                  <input id="ed-entity-groups" type="text" autocomplete="off"
+                         placeholder="1"></label>
+                <label class="ed-f">Action
+                  <input id="ed-action" type="number" min="0"></label>
+              </div>
+              <div class="muted">Entity groups and action mean nothing on their own — they
+                are read by a handler or an extension, and this appliance ships neither for
+                a command you write here.</div>
+            </div>
+          </details>
+
+          <details class="ed-more" id="ed-carries"><summary>What this item carries</summary>
+            <div id="ed-carries-body" class="muted"></div>
+          </details>
+
+          <details class="ed-more"><summary>Raw</summary>
+            <div class="muted" id="ed-raw-note"></div>
+            <textarea id="ed-raw" class="ed-raw" rows="10" readonly
+                      aria-label="This item as JSON, read-only"></textarea>
+          </details>
+
+          <div class="row">
+            <button id="btn-ed-save" class="primary grow">Save</button>
+            <button id="btn-ed-cancel" class="ghost grow">Cancel</button>
+          </div>
+          <div id="ed-status" class="muted"></div>
+        </div>
         <div id="content-list"></div>
         <div class="row">
           <input id="content-name" class="grow" type="text" autocomplete="off"

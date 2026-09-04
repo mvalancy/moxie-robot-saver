@@ -248,6 +248,14 @@ jobs:
         # executed by nobody. This job is that file's owner, so the exemption is now gone
         # from the ratchet and the suite runs on every push and every PR.
         run: node sim/test_ambient_guard.mjs
+      # The accessibility suite, wired here for the same reason the ambient guard is: it
+      # was written UNWIRED only because this job did not exist yet and its CI file was
+      # held by another pass. That reason is gone, so parking it in KNOWN_UNRUN would now
+      # be the very thing the ratchet exists to prevent — a suite that names itself as
+      # "not run" and quietly stays that way. 63 checks, asserted against the real
+      # accessibility tree by identity rather than by count.
+      - name: Accessibility — the page's own a11y tree (names, live region, noscript)
+        run: node sim/test_a11y.mjs
       - name: Security headers applied for real (CSP/HSTS from sim/web/_headers)
         # Every other browser suite serves the site with NO headers, so none of them could
         # see a policy that breaks the page — a CSP that refuses an inline block does not

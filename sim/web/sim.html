@@ -34,8 +34,36 @@
 </head>
 <body data-bus="idle">
 
-<!-- 3D stage (moxie.js mounts the renderer canvas here) -->
-<div id="app"></div>
+<!-- No JavaScript: the SIL is a live WebGL app, so there is no in-page fallback to
+     degrade to — the model, her voice and the comms log are all built in the browser.
+     Say that plainly and point at the parts of this project that DO work without it. -->
+<noscript>
+  <div id="noscript-notice">
+    <h2>MOXIE &middot; SIL needs JavaScript</h2>
+    <p>This page is a live WebGL simulation of the Moxie robot: the 3&#8209;D model, her
+      voice and the comms log are all rendered in your browser, so with scripting turned
+      off there is genuinely nothing here to show.</p>
+    <p>These parts of the project do not need it:</p>
+    <ul>
+      <li><a href="./">The landing hub</a> &mdash; plain HTML, and it lists every experience.</li>
+      <li><a href="https://github.com/mvalancy/moxie-robot-saver/tree/main/docs">The docs in the
+        repository</a> &mdash; the reverse&#8209;engineering write&#8209;ups as Markdown.
+        (The in&#8209;browser <a href="docs.html">docs explorer</a> needs JavaScript too.)</li>
+    </ul>
+    <p>Fan project. Not affiliated with Embodied,&nbsp;Inc.; &ldquo;Moxie&rdquo; is their trademark.</p>
+  </div>
+</noscript>
+
+<!-- 3D stage (moxie.js mounts the renderer canvas here).
+     WHY role="img" AND NOT aria-hidden. This canvas is the SUBJECT of the page, so
+     hiding it would tell a screen-reader user that nothing is here — the page would be
+     a control panel for an absent robot. But a static `alt` would be a lie: the view is
+     re-rendered every frame and her pose, face and heart LED change constantly. So the
+     name describes what the view IS, and says where the changing content is written
+     down in text (the comms log, which is the page's one live region). -->
+<div id="app" role="img"
+     aria-label="Live 3-D view of Moxie, a small teal robot with a round screen face. Her pose and expression change as she moves; anything she says is written as text in the comms log, in the Link panel.">
+</div>
 
 <!-- HUD overlay: topbar / notice / stage+rail laid out as a grid over the canvas -->
 <div id="hud">
@@ -145,7 +173,7 @@
           <h3>Heart LED<span class="hint">chest indicator</span></h3>
           <div class="row">
             <label class="chk"><input id="led-on" type="checkbox"><span>power</span></label>
-            <input id="led-color" type="color" value="#ff5577">
+            <input id="led-color" type="color" value="#ff5577" aria-label="Heart LED colour">
           </div>
         </section>
       </details>
@@ -157,7 +185,8 @@
           <h3>Speech<span class="hint">tap a phrase &middot; real voice</span></h3>
           <div id="speech-chips" class="chips"></div>
           <div class="row">
-            <input id="speech-input" type="text" placeholder="transmit line&hellip;" autocomplete="off">
+            <input id="speech-input" type="text" placeholder="transmit line&hellip;" autocomplete="off"
+                   aria-label="Message to Moxie">
             <button id="speech-btn">Say</button>
           </div>
         </section>
@@ -165,9 +194,13 @@
         <section class="sub">
           <h3>Audio<span class="hint">pre-cached voice &middot; sfx</span></h3>
           <label class="chk"><input id="audio-on" type="checkbox" checked><span>sound</span></label>
-          <p class="hint" style="margin-top:6px">Tap phrases above play shipped audio (no server). Free text uses your browser's voice, or a local Piper service if you run one.</p>
+          <!-- Painted by env.js from the mode snapshot (see its `paintVoiceNote`). The text
+               here is the no-JS / env.js-absent resting value, and is the one branch that is
+               still literally true then: with no script running, nothing has adopted the box. -->
+          <p id="voice-note" class="hint" style="margin-top:6px">Tap phrases above play shipped audio (no server). Free text uses your browser&#39;s voice, or a local Piper service if you run one.</p>
           <div class="row" style="margin-top:8px">
-            <input id="tts-base" type="text" placeholder="http://127.0.0.1:8081 (optional Piper)">
+            <input id="tts-base" type="text" placeholder="http://127.0.0.1:8081 (optional Piper)"
+                   aria-label="Local Piper text-to-speech server address">
             <button id="tts-test">Test</button>
           </div>
           <p id="tts-status" class="hint">optional local Piper service</p>
@@ -177,7 +210,8 @@
           <h3>Mic<span class="hint">talk to moxie</span></h3>
           <div class="row">
             <button id="mic-btn">Listen</button>
-            <input id="stt-base" type="text" placeholder="http://127.0.0.1:8082">
+            <input id="stt-base" type="text" placeholder="http://127.0.0.1:8082"
+                   aria-label="Local speech-to-text server address">
           </div>
           <p id="mic-status" class="hint">click to start / stop recording</p>
         </section>
@@ -189,7 +223,8 @@
         <section class="sub">
           <h3>Live bus<span class="hint">MQTT&#47;WS :9001</span></h3>
           <div class="row">
-            <input id="bus-host" type="text" placeholder="broker host" autocomplete="off">
+            <input id="bus-host" type="text" placeholder="broker host" autocomplete="off"
+                   aria-label="MQTT broker host">
             <button id="bus-connect">Link</button>
           </div>
           <p id="bus-status">not connected</p>
@@ -209,7 +244,32 @@
 
         <section class="sub sub-log">
           <h3>Comms log<span class="hint">child &harr; moxie</span></h3>
-          <div id="transcript"></div>
+          <!-- THE PAGE'S ONE LIVE REGION, and the choice of WHICH element is the whole
+               accessibility design here.
+               #transcript carries exactly two things (the bus bridge's `addTranscript`,
+               in the file loaded below): a child
+               turn — what the visitor typed into Ask, said into the mic, or a scripted
+               demo line they pressed Play on — and Moxie's answer to it. Every one of
+               those is a direct consequence of something the visitor just did, which is
+               precisely what a screen reader should read out unprompted.
+               It deliberately does NOT carry the ambient self-talk. Moxie says an
+               unprompted quip every 11-24 s; those go to #bubble via moxie.setSpeech()
+               and never reach this element (measured: 40 s of ambient quips, transcript
+               row count unchanged). Announcing them would be exhausting and would talk
+               over the answer the visitor actually asked for — so #bubble is left as a
+               plain, readable region: NOT live, and NOT aria-hidden either, so someone
+               can still browse to it and read the current quip if they want it. Marking
+               it live would also announce the typewriter reveal one character at a time
+               ("Do y", "Do you", "Do you e" ...), which is what it literally does.
+               aria-relevant includes `text` because a streamed reply arrives as several
+               chunks appended to the SAME row (addTranscript's `append` path); with
+               additions-only, every sentence after the first would be silent.
+               tabindex="0" because this box scrolls (max-height 200px, overflow auto)
+               and contains nothing focusable, so without it a keyboard-only user cannot
+               scroll back through the conversation at all. -->
+          <div id="transcript" role="log" aria-live="polite"
+               aria-relevant="additions text" aria-atomic="false" tabindex="0"
+               aria-label="Comms log — what you and Moxie say to each other"></div>
         </section>
 
         <section class="sub">
@@ -225,7 +285,7 @@
         <section class="sub">
           <h3>Revive a robot<span class="hint">endpoint QR</span></h3>
           <div class="row">
-            <select id="qr-kind">
+            <select id="qr-kind" aria-label="QR code type">
               <option value="OPEN_MOXIE">home &rarr; OPEN_MOXIE</option>
               <option value="EMBODIED_LOCAL">home &rarr; EMBODIED_LOCAL</option>
               <option value="serial_number_display">show serial number</option>
@@ -235,10 +295,14 @@
             <button id="qr-make">Make</button>
           </div>
           <div class="row" id="qr-wifi" style="display:none;margin-top:6px">
-            <input id="qr-ssid" type="text" placeholder="SSID" autocomplete="off">
-            <input id="qr-pass" type="text" placeholder="password" autocomplete="off">
+            <input id="qr-ssid" type="text" placeholder="SSID" autocomplete="off"
+                   aria-label="Wi-Fi network name (SSID)">
+            <input id="qr-pass" type="text" placeholder="password" autocomplete="off"
+                   aria-label="Wi-Fi password">
           </div>
-          <canvas id="qr-canvas" style="display:none;margin-top:8px;width:100%;max-width:220px;border-radius:6px;image-rendering:pixelated"></canvas>
+          <canvas id="qr-canvas" role="img"
+                  aria-label="Generated QR code. Its exact payload is printed as text just below."
+                  style="display:none;margin-top:8px;width:100%;max-width:220px;border-radius:6px;image-rendering:pixelated"></canvas>
           <p id="qr-status" class="hint">hold the code up to Moxie&#39;s camera</p>
           <p class="hint" style="margin-top:6px"><a href="setup.html" style="color:var(--cyan)">full setup page &rarr;</a> &middot; Wi&#8209;Fi + server, phone&#8209;friendly</p>
           <p class="hint" style="margin-top:4px"><a href="cloud.html" style="color:var(--cyan)">parent cloud console &rarr;</a> &middot; example dashboard</p>
@@ -338,6 +402,43 @@
   if (window.moxie) wireScene();
   else window.addEventListener("moxie-ready", wireScene, { once: true });
 
+  /* Name the motor sliders.
+   *
+   * `moxie.js::buildPanel` writes each row as
+   *     <label><span>4 · Head tilt (nod)</span><span class="val">16384</span></label>
+   *     <input type="range" …>
+   * — the <label> WRAPS neither the input nor carries a `for`, so it labels nothing, and
+   * the seven sliders reach the accessibility tree as `slider ""`. Measured on the live
+   * site 2026-09-04: those seven, plus #led-color and #qr-kind, were the only interactive
+   * nodes on the page with an empty accessible name. A sighted user reads the text an
+   * inch away; a screen-reader user is told "slider, 16384" seven times.
+   *
+   * Fixed here rather than in moxie.js because this file already owns the HUD glue, and
+   * because the fix is one attribute copied from text the panel already renders — there
+   * is no second source of truth to drift. It runs from a MutationObserver rather than
+   * on `moxie-ready`: that event is dispatched BEFORE buildPanel() appends anything, so a
+   * ready-handler would run against an empty #motors. */
+  (function labelMotors() {
+    var host = document.getElementById("motors");
+    if (!host) return;
+    function pass() {
+      var rows = host.querySelectorAll(".motor");
+      for (var i = 0; i < rows.length; i++) {
+        var input = rows[i].querySelector('input[type="range"]');
+        var name = rows[i].querySelector("label span");
+        if (!input || !name || input.getAttribute("aria-label")) continue;
+        // "4 · Head tilt (nod)" -> "Head tilt (nod), motor 4" — the joint first, because
+        // that is what the control does; the index second, because it is how the docs and
+        // the window.moxie API address it.
+        var txt = name.textContent.replace(/\s+/g, " ").trim();
+        var m = /^(\d+)\s*·\s*(.+)$/.exec(txt);
+        input.setAttribute("aria-label", m ? (m[2] + ", motor " + m[1]) : txt);
+      }
+    }
+    pass();                                   // in case the panel is already built
+    try { new MutationObserver(pass).observe(host, { childList: true }); } catch (e) {}
+  })();
+
   // Audio: SAY speaks via Piper; mute toggle; TTS endpoint + test.
   (function wireAudio() {
     var say = document.getElementById("speech-btn");
@@ -368,6 +469,10 @@
           b.className = "chip"; b.type = "button";
           b.textContent = p.length > 30 ? p.slice(0, 28) + "…" : p;
           b.title = p;
+          // The visible label is truncated to fit the chip, and a truncated label is a
+          // truncated accessible name ("Happy birthday! I hope your …"). The name is the
+          // whole line; the ellipsis is a layout constraint, not part of the phrase.
+          b.setAttribute("aria-label", p);
           // Chips always play their pre-cached clip. They only pre-fill the box when the
           // box is still the TTS control — dropping Moxie's own line into an "ask Moxie"
           // input would read as the visitor's question.
