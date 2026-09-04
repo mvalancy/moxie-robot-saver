@@ -1258,7 +1258,18 @@ class MoxieRuntime:
         # shape — a readiness signal that was true of an earlier moment.
         for t in self.SUBSCRIPTIONS:
             c.subscribe(t)
-        print(f"[runtime] broker connected rc={rc}")
+        # …and FLUSHED, for the same reason it is printed last. This line is not log
+        # decoration: `helpers_stack.Supervisor.start()`, `sim/run_smoke.sh`,
+        # `sim/run_scenarios.sh`, `sim/run_broker_outage.sh` and `sim/tools/soak.py` all
+        # BLOCK on it. Every one of them redirects this process's stdout to a file, where
+        # Python is block-buffered, so without this the line sits in an 8 KB buffer and a
+        # waiter times out on a supervisor that connected long ago — a boot failure
+        # disguised as a slow boot. Four callers each carried `PYTHONUNBUFFERED=1` to
+        # compensate; that is four guards covering for one missing keyword, and the fifth
+        # caller (a straightforward rewrite of run_smoke.sh, 2026-09-03) forgot it and
+        # waited the full 40 s. The refusal branch above has always flushed; the success
+        # branch not flushing was the asymmetry.
+        print(f"[runtime] broker connected rc={rc}", flush=True)
         self._note("conn", "broker connected" if gap is None
                    else f"broker reconnected after {gap:.1f}s")
         self._record_conn(conn_seam.CONNECT, at=now, gap_s=gap)

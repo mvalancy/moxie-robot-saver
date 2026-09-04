@@ -29,12 +29,19 @@
  *  5. THE MODEL IS SERVER-FIXED. Nothing from the request reaches the upstream body except
  *     the audio itself: no `model`, no `language`, no `prompt`, no `temperature`,
  *     no `response_format`. §4.1's single highest-value control, applied here too.
- *  6. THE DURATION CEILING IS NOT HERE, AND CANNOT BE. §4.1 is explicit that 500 KB is
- *     ~15 s of 16 kHz PCM but **minutes** of webm/Opus, which is what `MediaRecorder`
- *     actually produces. A Function only ever sees a finished upload, so the honest
- *     ceiling on STT duration is `DEMO_MAX_RECORD_MS` — published in this route's own
- *     `limits` and enforced by `sim/web/mic.js`'s hard stop. **The byte cap alone is not
- *     a cost ceiling for the ears, and this comment exists so nobody later thinks it is.**
+ *  6. THE DURATION CEILING IS ENFORCED HERE FOR WAV, AND ONLY FOR WAV. **The byte cap
+ *     alone is not a cost ceiling for the ears** — STT is priced by duration, and 500 KB
+ *     is ~15 s of 16 kHz 16-bit PCM but 62 s at 8 kHz 8-bit, ~125 s of 4-bit ADPCM, and
+ *     *minutes* of webm/Opus. Since 2026-09-03 a RIFF/WAVE body has its declared playing
+ *     time read out of its own header (`_lib/wav.js::wavDurationMs`) and is refused
+ *     `too_long` above `DEMO_MAX_RECORD_MS`, before any upstream call — step 4c below.
+ *     For the compressed containers the duration lives in a bitstream and reading it
+ *     means shipping a decoder, which a Function must not do to a hostile upload; for
+ *     those the ceiling is still only the byte cap plus `sim/web/mic.js`'s hard stop,
+ *     which a caller who is not using our page never runs. **What makes that gap
+ *     theoretical rather than live is `DEMO_STT_FORMATS`, which defaults to `wav` alone
+ *     (deviation (2) below), so today every forwarded request IS duration-capped — and a
+ *     fork that widens it re-opens the gap with no warning from the code.**
  *  7. NOTHING IS STORED, LOGGED OR CACHED. §9's P1 line says it for the caching idea and
  *     it is worth repeating here: **do not cache STT — that is a privacy problem, not a
  *     saving.** A child's voice arrives, becomes text, and is forgotten. There is no
@@ -48,8 +55,9 @@
  * OpenAI-compatible gateway names the model and often the key prefix.
  *
  * ZERO UPSTREAM CALLS ON EVERY REFUSAL PATH: unconfigured, no STT model, forbidden origin,
- * rate-limited, over budget, at capacity, over the byte cap, under the byte floor, and an
- * unrecognised container. All return before the one `fetch()`.
+ * rate-limited, over budget, at capacity, over the byte cap, under the byte floor, an
+ * unrecognised container, a container this gateway does not take, and a WAV whose own
+ * header declares more than `DEMO_MAX_RECORD_MS`. All return before the one `fetch()`.
  *
  * ===========================================================================
  * TWO DELIBERATE DEVIATIONS FROM §3.2, both documented at their site.
@@ -92,6 +100,7 @@
 import { readConfig, modeOf, publicLimits, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
 import { admit, budgetState, loadOf, noteUpstreamCall, readAudioBody } from "./_lib/limits.js";
+import { wavDurationMs } from "./_lib/wav.js";
 import { joinUrl } from "./_lib/wire.js";
 
 export async function onRequestPost(context) {
@@ -140,6 +149,30 @@ export async function onRequestPost(context) {
     // `upstream_down` and degrade the brain and the voice along with the ears.
     if (!cfg.sttFormats.includes(kind.ext)) {
       return refusal(cfg, "bad_request", { load: slot.load, rateLimit: slot.rateLimit });
+    }
+
+    // ---- 4c. …and how LONG does it say it is? **STT IS PRICED BY DURATION, AND THE BYTE
+    // CAP IS NOT A DURATION CAP** — point 6 of this file's header says so, and until
+    // 2026-09-03 that was the end of it. It is only the end of it for the CONTAINERS WE
+    // CANNOT CHEAPLY READ. A RIFF/WAVE declares its own playing time in four header
+    // integers, so for that one container the cap is enforceable here, server-side, before
+    // the upload becomes a paid request — and `DEMO_STT_FORMATS` defaults to `wav` alone,
+    // so on the shipped configuration that is every request that reaches the gateway.
+    //
+    // The gap this closes is not small: 500 KB of 16 kHz 16-bit mono is the ~15 s §4.1
+    // assumed, but the SAME 500 KB of 8 kHz 8-bit is 62 s, and of 4-bit ADPCM ~125 s. All
+    // are well-formed files; none was refused before; each costs what its duration costs.
+    //
+    // `null` means the header could not be read (not RIFF, no `fmt `/`data`, a zero rate),
+    // and is treated as NO OPINION rather than as "short" — such a body is left to the
+    // container allowlist and the byte caps exactly as before. **Nothing here decodes
+    // audio**: it is a chunk walk over integers, which is all a hostile upload should ever
+    // be subjected to inside a Function.
+    if (kind.ext === "wav") {
+      const dur = wavDurationMs(body.bytes);
+      if (dur && dur.ms > cfg.maxRecordMs) {
+        return refusal(cfg, "too_long", { load: slot.load, rateLimit: slot.rateLimit });
+      }
     }
 
     // ---- 5. The one upstream call.
@@ -361,6 +394,25 @@ async function callGateway(cfg, bytes, kind) {
       headers,
       body: form,
       signal: AbortSignal.timeout(cfg.sttTimeoutMs),
+      // ---- REDIRECTS ARE NOT FOLLOWED, AND A 3xx IS A DOOR PROBLEM.
+      //
+      // `fetch`'s default is `follow`. This request carries the deployment's ONLY
+      // credential on an `Authorization` header (plus the `CF-Access-*` pair when a
+      // service token is configured), so following a 3xx means re-issuing it at whatever
+      // host the `Location` names. The Fetch standard does strip `Authorization` across an
+      // origin change — but a same-origin redirect keeps it, a 307/308 replays the BODY
+      // with it, and none of that is a property this file should be depending on a runtime
+      // to get right for it. `manual` removes the question: the 3xx is returned as-is and
+      // is answered below, with nothing re-sent anywhere.
+      //
+      // And a 3xx from the gateway is not an ambiguous signal. **A tunnel that redirects
+      // is a door problem, not a brain problem** — an Access login flow, a moved or
+      // renamed endpoint, a `DEMO_GATEWAY_BASE_URL` configured as `http://` that the host
+      // bounces to `https://`. Every one of those is fixed at the door, which is exactly
+      // what `gateway_unreachable_or_gated` tells an operator (`_lib/envelope.js`), and
+      // none is fixed by restarting a model server, which is what `upstream_down` would
+      // have sent them off to do.
+      redirect: "manual",
     });
   } catch (err) {
     const timedOut = err && (err.name === "TimeoutError" || err.name === "AbortError");
@@ -370,6 +422,12 @@ async function callGateway(cfg, bytes, kind) {
   // The gateway's own limiter, before anything else: a 429 is a 429 whatever body it
   // carries, and it is the one upstream status with a number worth passing on.
   if (res.status === 429) return { ok: false, reason: "rate_limited", retryAfterS: retryAfterOf(res) };
+
+  // A redirect, unfollowed — see `redirect: "manual"` above. It is answered HERE rather
+  // than left to `reasonForUpstreamStatus`, whose table has no 3xx row and whose catch-all
+  // is `upstream_down`: that would degrade the whole page (§6.3) and point an operator at
+  // the model server for a fault that is at the door.
+  if (res.status >= 300 && res.status < 400) return { ok: false, reason: "gateway_unreachable_or_gated" };
 
   let text;
   try {

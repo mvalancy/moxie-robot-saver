@@ -180,16 +180,52 @@ def robot(stack):
     r.close()
 
 
-# ================================================================ the restart ==
-def test_the_supervisor_writes_both_collections_to_disk(stack, robot):
-    """Three packets in, two files on disk — the ring and the daily roll-up."""
-    for i, name in enumerate(("module_started", "module_finished", "battery_report")):
-        robot.telemetry(name, PAYLOAD, session_id=f"s-{i}")
-    ring = _wait(lambda: (_packets(stack.data_dir) or None) if
-                 len(_packets(stack.data_dir) or []) >= 3 else None,
+#: The three events every test below is *about*. Named once so the assertions and the
+#: fixture that sends them cannot drift apart.
+EVENTS = ("module_started", "module_finished", "battery_report")
+
+
+@pytest.fixture(scope="module")
+def history(stack, robot):
+    """Three telemetry packets, **on disk**, for DEVICE.
+
+    This used to be the body of the first test, which made every later test in the file
+    silently depend on that one having run. It was not a theoretical dependency: running
+    `test_the_buffer_is_a_cache_hydrated_on_first_touch` on its own — the first thing
+    anyone does with a red CI line — booted a clean stack that had never been sent a
+    packet and failed **deterministically** as a bare `assert 0 == 3`, which reads exactly
+    like the durable-telemetry guarantee being broken. It cost two control runs on
+    2026-09-03 before the shape was recognised. The precondition is now established by a
+    fixture, so any subset of this file runs the same as the whole of it.
+
+    Idempotent on purpose: if the ring already holds three, it sends nothing, so ordinary
+    whole-file runs behave exactly as they always have."""
+    if len(_packets(stack.data_dir) or []) < 3:
+        for i, name in enumerate(EVENTS):
+            robot.telemetry(name, PAYLOAD, session_id=f"s-{i}")
+    return _wait(lambda: (_packets(stack.data_dir) or None)
+                 if len(_packets(stack.data_dir) or []) >= 3 else None,
                  what="three envelopes in telemetry_packets.json")
-    assert [p["event_name"] for p in ring] == ["module_started", "module_finished",
-                                               "battery_report"]
+
+
+@pytest.fixture(scope="module")
+def restarted(stack, robot, history):
+    """The robot gone and a **new `mqtt/run.py` process** over the same MOXIE_DATA_DIR.
+
+    The other half of the implicit ordering: two tests need the supervisor to have been
+    restarted, and both used to get it from whichever of them pytest happened to run
+    first. Module-scoped, so the restart still happens exactly once per file run."""
+    robot.close()                                   # nothing to re-populate RAM from
+    sup = stack.restart_supervisor()
+    print(f"\n[restart] new supervisor status port {sup.status_port}")
+    return sup
+
+
+# ================================================================ the restart ==
+def test_the_supervisor_writes_both_collections_to_disk(stack, history):
+    """Three packets in, two files on disk — the ring and the daily roll-up."""
+    ring = history
+    assert [p["event_name"] for p in ring] == list(EVENTS)
     daily = _daily(stack.data_dir)
     assert daily and daily["total"] == 3, daily
     day = sorted(daily["days"])[-1]
@@ -197,7 +233,7 @@ def test_the_supervisor_writes_both_collections_to_disk(stack, robot):
     assert daily["days"][day]["by_event"]["module_started"] == 1
 
 
-def test_the_first_supervisor_serves_the_history_it_just_stored(stack, robot):
+def test_the_first_supervisor_serves_the_history_it_just_stored(stack, history):
     v = _telemetry_view(stack.supervisor)
     assert v["ok"] is True and v["connected"] is True
     assert v["policy"] == "NO_MEDIA" and v["persisted"] is True
@@ -206,7 +242,7 @@ def test_the_first_supervisor_serves_the_history_it_just_stored(stack, robot):
     assert len(v["history"]) == 7 and v["history"][-1]["count"] == 3
 
 
-def test_telemetry_survives_a_real_supervisor_restart(stack, robot):
+def test_telemetry_survives_a_real_supervisor_restart(stack, restarted):
     """**The claim.** Kill `mqtt/run.py`, disconnect the robot, start a new supervisor
     over the same `MOXIE_DATA_DIR`, and ask it what happened last week.
 
@@ -215,10 +251,7 @@ def test_telemetry_survives_a_real_supervisor_restart(stack, robot):
     history that only appears once the device re-announces itself is a cache, not a
     history.
     """
-    robot.close()                                   # nothing to re-populate RAM from
-    sup = stack.restart_supervisor()
-    print(f"\n[restart] new supervisor status port {sup.status_port}")
-
+    sup = restarted
     snap = http_json(f"{_status_url(sup)}/status")
     assert not any(r["device_id"] == DEVICE for r in snap.get("robots", [])), \
         "the robot must be absent for this to be a durability proof"
@@ -238,12 +271,12 @@ def test_telemetry_survives_a_real_supervisor_restart(stack, robot):
     assert v["retention"]["packets"] >= 3
 
 
-def test_the_buffer_is_a_cache_hydrated_on_first_touch(stack):
+def test_the_buffer_is_a_cache_hydrated_on_first_touch(stack, restarted):
     """`telemetry_count` in the status snapshot is the RAM buffer's length. After a
     restart the new process has an empty buffer, so a reconnecting robot must show 3 —
     the hydration path (`_telemetry_buffer`) reading the ring off disk. A 0 here would
     mean the console's fleet card silently disagrees with its own insights card."""
-    sup = stack.supervisor
+    sup = restarted
     r = Robot(stack.port).connect()
     try:
         r.announce()
@@ -254,22 +287,62 @@ def test_the_buffer_is_a_cache_hydrated_on_first_touch(stack):
         # so the first row that exists can legitimately have `firmware: None`. Asserting
         # on first sight made this test racy: it passed locally and on the next dev
         # commit, and failed once in CI with `assert None == '24.10.803'` (run
-        # 33723272949, the PR #59 merge). Waiting on the *populated* row costs nothing
-        # and keeps both assertions strict — a wrong value still returns the row and
-        # fails below, and a value that never arrives times out with a named reason.
+        # 33723272949, the PR #59 merge).
+        #
+        # THAT WAIT GUARDED THE WRONG CONDITION, and the second CI red said so. It also
+        # required `telemetry_count is not None` — but the field is
+        # `len(self._telemetry_buffer(...))` (`moxie_runtime.py`:533) and a length is
+        # never None, so the clause could not fail and a row that had hydrated *nothing*
+        # sailed through it into a bare `assert 0 == 3` below. A predicate that cannot be
+        # false is not a wait; it is a comment with a runtime cost.
+        #
+        # Hydration is also not a race to wait on. It happens on the FIRST `/status` that
+        # includes this robot — the same call that builds the row — so by the time any row
+        # exists the buffer is already whatever it is going to be. Waiting longer cannot
+        # change a 0 into a 3; it can only turn a real defect into a timeout that names
+        # nothing. So the wait covers the genuinely asynchronous part (the row, and the
+        # firmware that arrives a beat later) and hydration is ASSERTED, with the two
+        # failure modes told apart by name.
+        seen = {}
+
         def _populated():
             row = next((x for x in http_json(f"{_status_url(sup)}/status").get("robots", [])
                         if x["device_id"] == DEVICE), None)
-            if row is None or row.get("firmware") in (None, "") \
-                    or row.get("telemetry_count") is None:
+            if row is not None:
+                seen["row"] = row               # remember it, so a timeout can say why
+            if row is None or row.get("firmware") in (None, ""):
                 return None
             return row
 
-        row = _wait(_populated,
-                    what="the reconnected robot in /status with its firmware reported "
-                         "and its telemetry count hydrated")
-        print(f"[hydration] telemetry_count={row['telemetry_count']} firmware={row['firmware']}")
-        assert row["telemetry_count"] == 3, row
+        try:
+            row = _wait(_populated,
+                        what="the reconnected robot to appear in /status with the "
+                             "firmware from its state message")
+        except AssertionError:
+            # The CI red this replaces was `…; last=None`, which cannot distinguish "the
+            # supervisor never saw the robot at all" from "it saw it but no state message
+            # arrived". Those have different causes and only one of them is about MQTT
+            # delivery, so the timeout now says which.
+            row = seen.get("row")
+            if row is None:
+                raise AssertionError(
+                    f"the restarted supervisor never listed {DEVICE} in /status at all — "
+                    f"the robot's CONNECT was not seen (broker log watch) and no /state "
+                    f"was ingested. Supervisor log tail:\n"
+                    f"{os.linesep.join(sup.text().splitlines()[-15:])}") from None
+            raise AssertionError(
+                f"the row appeared but its firmware never did (state message not "
+                f"ingested within the timeout); row={row!r}") from None
+
+        print(f"[hydration] telemetry_count={row['telemetry_count']} "
+              f"firmware={row['firmware']}")
+        assert row["telemetry_count"] == 3, (
+            f"the reconnected robot's status row says it holds "
+            f"{row['telemetry_count']} telemetry events, not 3. The ring on disk holds "
+            f"{len(_packets(stack.data_dir) or [])}. A 0 with a populated ring means "
+            f"`_telemetry_buffer` cached an empty read instead of hydrating — the fleet "
+            f"card would then disagree with the insights card for this robot, for the "
+            f"life of the process. row={row!r}")
         assert row["firmware"] == FIRMWARE
     finally:
         r.close()

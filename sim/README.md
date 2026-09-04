@@ -34,6 +34,8 @@ needed), or use `--profile demo` to watch a scripted conversation play out — t
 ## Without Docker
 ```sh
 bash sim/run_smoke.sh          # broker + supervisor + one round-trip (needs mosquitto or docker)
+                               #   --telehealth   the puppet round-trip instead
+                               #   MOXIE_SIL_PORT / MOXIE_STATUS_PORT pick free ports
 bash sim/run_soak.sh           # the SIL soak: fault injection + 12 numeric bars (needs docker)
                                #   --profile smoke|quick|week   (~1 min / ~5 min / 60 min)
                                #   --only-contention            (the store half; no broker needed)
@@ -41,6 +43,8 @@ bash sim/run_acl_proof.sh      # the broker ACL, against a real mosquitto (needs
 bash sim/run_broker_outage.sh  # stop and start a real broker under a live supervisor (needs docker)
 cd sim/web && python3 -m http.server 8080   # serve the UI, then run a broker+supervisor separately
 ```
+
+The boot of every script above is **waited on, never slept through**: [`readiness.sh`](readiness.sh) holds the two waits (a TCP connect to the broker, the supervisor's own `[runtime] broker connected` line) that `run_smoke.sh` and `run_scenarios.sh` both source. A fixed `sleep` is wrong in both directions — it wastes seconds on a warm box and, on a loaded one, turns a boot that had not finished into a timeout blamed on the robot.
 
 ## What's real vs simulated
 The firmware is the **contract, not the runtime** — we don't boot the RK3288 Android image (it needs
