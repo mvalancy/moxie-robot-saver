@@ -98,6 +98,28 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **`/api/health` told the page what it wanted to hear — fixed 2026-09-03.** `functions/api/health.js`
+  shipped two LOCAL STUBS that shadowed the real implementations: `budgetState()` returned `null` and
+  `loadState()` returned a hard-coded `{inflight: 0}`. Both were honest in P0-a (no spending route was
+  deployed) and became a lie the moment `chat.js` and `speech.js` landed with `_lib/limits.js` behind
+  them: the probe **could not answer `budget_exhausted` at all**, so a new visitor's page painted **LIVE
+  on an over-budget deployment** and §7's BUSY pill could never fire — and after every spend refusal the
+  next 30-second poll re-armed the page to `live` because health kept saying everything was fine. Now it
+  imports `budgetState`/`loadOf` from `_lib/limits.js` and answers from the real counters, with §4.5's
+  `Retry-After` on the `budget_exhausted` row. **The hard invariant holds:** `/api/health` still makes
+  **zero** upstream calls — both reads are synchronous in-memory map lookups, `onRequestGet` is not
+  `async` (a handler that cannot await cannot call upstream), and `sim/test_mode.mjs` asserts
+  `limits.__state().stats.upstreamCalls === 0` across every probe as well as no `fetch(` in the source.
+  **The honest gap, now written down in three places instead of contradicted in three places:** the answer
+  is **that isolate's view**, not the deployment's. §4.6 and assumption-ledger row 25 had claimed the
+  counters were "an in-isolate map plus the per-colo Cache API" — **the Cache API leg was never
+  implemented**, verified against the shipped code on 2026-09-03 — so the multiplier is *isolates*, not
+  colos, and the configured caps are a **per-isolate throttle, not a global budget**. The document was
+  corrected rather than the tier built, because §10 assumption 13 (is KV or a Durable Object available on
+  this plan?) is still open and decides which counter is worth building. `sim/web/mode.js` was
+  **deliberately not changed** — see §4.6's "why a spend refusal opens no separate client-side suppression
+  window".
+
 - **Integration evidence (2026-09-04, sixth pass) — the `week` soak finished, 12/12 bars, and
   P1's three fixes hold from outside.** P1's soak was killed at 59 of 60 minutes before it wrote a
   report, so every §5.3 bar was unverified. Run to completion: **3601 s · 4407 turns answered while

@@ -39,6 +39,10 @@ const deep = (a, b, m) => eq(JSON.stringify(a), JSON.stringify(b), m);
 const lib = await import(join(repo, "functions", "api", "_lib", "env.js"));
 const env2 = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
 const health = await import(join(repo, "functions", "api", "health.js"));
+// The REAL counters the probe now reads. `__reset`/`__state`/`__exhaustBudget` exist for
+// exactly this: driving the module's in-isolate state from a test without 200 real calls and
+// without leaking one case's counters into the next (limits.js:93, :102, :262).
+const limits = await import(join(repo, "functions", "api", "_lib", "limits.js"));
 
 /** A fully-configured deployment. These strings exist only inside this test, use
  *  `.invalid.test` (RFC 6761 reserved, unresolvable) and are deliberately shaped so the
@@ -259,7 +263,16 @@ async function probe(env) {
   const text = await res.text();
   return { res, text, body: JSON.parse(text) };
 }
+
+/** The smallest thing `limits.admit()` will accept: `Sec-Fetch-Site: same-origin` is what the
+ *  origin pin asks for when there is no `Origin` header (limits.js::checkOrigin), and a fixed
+ *  IP keeps every admission in ONE per-IP window so the windows are not what refuses us. */
+function admissible(url) {
+  return { url: url || "https://probe.invalid.test/api/chat",
+           headers: new Headers({ "Sec-Fetch-Site": "same-origin", "CF-Connecting-IP": "203.0.113.9" }) };
+}
 {
+  limits.__reset();   // a fresh isolate, so the numbers below are this block's and no one else's
   const bare = await probe({});
   // Always 200, so that a NON-200 unambiguously means "the route is absent".
   eq(bare.res.status, 200, "/api/health is always 200, even when nothing is configured");
@@ -277,7 +290,8 @@ async function probe(env) {
   eq(bare.res.headers.get("retry-after"), null, "gateway_not_configured sets no Retry-After");
   deep(Object.keys(bare.body), [...env2.PUBLIC_KEYS], "the probe body is exactly PUBLIC_KEYS");
   deep(bare.body.load, { level: "ok", inflight: 0, capacity: 4 },
-       "§7: inflight is 0 because in P0-a it IS 0 — no spending route is deployed");
+       "§7: inflight is 0 because THIS ISOLATE is idle — a real read of limits.js's counter after "
+       + "__reset(), not the hard-coded 0 the P0-a stub returned regardless of what was in flight");
   deep(bare.body.limits,
        { max_input_chars: 500, max_tts_chars: 300, max_tokens: 160, chat_per_min: 5,
          max_record_ms: 15000, max_audio_bytes: 500000, min_audio_bytes: 2000 },
@@ -313,6 +327,73 @@ async function probe(env) {
   // The probe must not be a spending route by accident: health.js may not call fetch.
   const src = readFileSync(join(repo, "functions", "api", "health.js"), "utf8");
   ok(!/\bfetch\s*\(/.test(src), "health.js must make NO gateway call, ever (a 30 s poll must cost nothing)");
+
+  // ------------------------------------------------------------------------- //
+  // 3a. The probe reads the REAL counters (2026-09-03).
+  //
+  // Until this date health.js carried two LOCAL STUBS that shadowed limits.js:
+  // `budgetState()` returned `null` and `loadState()` returned a hard-coded
+  // `{inflight: 0}`. They were honest in P0-a — no spending route was deployed — and a lie
+  // from the moment chat.js and speech.js landed: `/api/health` could never answer
+  // `budget_exhausted`, so a new visitor's page painted LIVE on an over-budget deployment
+  // and §7's BUSY pill could never fire. These assertions are what stops them coming back.
+  // ------------------------------------------------------------------------- //
+
+  // No stub may shadow the real implementation again, and the import must be the real one.
+  ok(/from\s+"\.\/_lib\/limits\.js"/.test(src),
+     "health.js must import its counters from _lib/limits.js, not define its own");
+  ok(!/function\s+budgetState\s*\(/.test(src) && !/function\s+loadState\s*\(/.test(src),
+     "health.js must define NO local budgetState/loadState stub (that is the P0-a defect)");
+
+  // The strongest form of "no gateway call": `onRequestGet` is not an async function, so it
+  // cannot be awaiting one. Both counter reads are synchronous map lookups.
+  eq(health.onRequestGet.constructor.name, "Function",
+     "health.js's handler must not be async — a probe that cannot await cannot call upstream");
+
+  // Real in-flight, from the same counter admit() increments.
+  const a1 = limits.admit({ request: admissible(), cfg: lib.readConfig(FULL), route: "chat" });
+  ok(a1.ok, "the test's own admission must be accepted (otherwise the load numbers mean nothing)");
+  const busy1 = await probe(FULL);
+  deep(busy1.body.load, { level: "ok", inflight: 1, capacity: 4 },
+       "one turn in flight is REPORTED as one — the stub would still have said 0");
+  const a2 = limits.admit({ request: admissible(), cfg: lib.readConfig(FULL), route: "chat" });
+  const a3 = limits.admit({ request: admissible(), cfg: lib.readConfig(FULL), route: "chat" });
+  ok(a2.ok && a3.ok, "three concurrent chat turns fit under the default ceiling of 4");
+  const busy3 = await probe(FULL);
+  deep(busy3.body.load, { level: "busy", inflight: 3, capacity: 4 },
+       "§7: 3 of 4 is >= 60%, so the probe reports `busy` and the BUSY pill can finally fire");
+  a1.release(); a2.release(); a3.release();
+  const idle = await probe(FULL);
+  deep(idle.body.load, { level: "ok", inflight: 0, capacity: 4 },
+       "released slots are given back, so the probe does not stick at busy");
+
+  // A6: an exhausted budget is REPORTED, which is the whole point of the slice.
+  limits.__reset();
+  const fullCfg = lib.readConfig(FULL);
+  limits.__exhaustBudget(fullCfg);
+  const spent = await probe(FULL);
+  eq(spent.res.status, 200, "a spent budget is STILL 200 — rule 2: non-200 means the route is absent");
+  eq(spent.body.mode, "degraded", "a spent budget degrades the probe");
+  eq(spent.body.reason, "budget_exhausted", "...and says exactly why (the stub could never say this)");
+  eq(spent.body.degraded, true, "...with degraded set, so env.js paints the scripted badge");
+  ok(spent.body.retry_after_s > 0,
+     `§4.5: budget_exhausted carries seconds-to-window-reset (got ${spent.body.retry_after_s})`);
+  eq(spent.res.headers.get("retry-after"), String(spent.body.retry_after_s),
+     "the header and the body agree, so a client may pace itself from either");
+  eq(spent.res.headers.get("x-moxie-mode"), "degraded", "X-Moxie-Mode follows the real mode");
+
+  // Configuration outranks the counters: an unconfigured deployment must not start blaming
+  // a budget it never had. modeOf checks `configured` first and this pins that order.
+  const spentBare = await probe({});
+  eq(spentBare.body.reason, "gateway_not_configured",
+     "an exhausted budget does not overwrite gateway_not_configured — configuration is checked first");
+
+  // THE HARD INVARIANT, proved at runtime rather than by reading the source: every route
+  // calls limits.noteUpstreamCall() immediately before its fetch(), so a non-zero count here
+  // would mean some probe above reached the gateway. Every probe in this block, zero calls.
+  eq(limits.__state().stats.upstreamCalls, 0,
+     "/api/health made ZERO upstream calls across every probe in this block");
+  limits.__reset();   // leave no counters behind for section 4
 }
 
 // --------------------------------------------------------------------------- //
@@ -840,5 +921,7 @@ console.log("✅ mode tests OK — /api/health answers gateway_not_configured wi
   + "(one request, no poll storm, page byte-identical to today); the envelope is a fixed key allowlist "
   + "with no URL, key or model id in any body or header; boot→offline on an absent/malformed route; "
   + "live/degraded/busy/budget badges and copy per §7; 429 soft-degrades without leaving live; "
+  + "the probe reads the REAL limits.js counters (busy at 3/4, budget_exhausted with its "
+  + "Retry-After) and still makes zero upstream calls; "
   + "3 strikes → degraded; 30 s→5 min backoff; never polls while hidden; env.js drives the badge, "
   + "pill, banner and needs-backend marks from the MODE, not the hostname");
