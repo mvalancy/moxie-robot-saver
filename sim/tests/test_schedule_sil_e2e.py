@@ -24,6 +24,16 @@ The discipline that keeps that honest: the `served` fixture reads the clock **on
 hands the instant to everything that has to agree about it, because two reads either side
 of local midnight answer for different days (see `_bedtime_body`).
 
+The pinning test earned its keep on 2026-09-04: it went red on three unrelated PRs at
+once and green on every local run, because the recommender — not the test — was reading
+the hour. A parent request pinned to a later slot could be taken by the free choice in an
+earlier one (`time_of_day` puts a calm module top of the afternoon board, not the morning
+one), and the pin then evaporated with no error anywhere: the day shipped the requested
+activity at the wrong time and its audit trail never mentioned the parent. Fixed in
+`schedule.plan_day` (a pinned module is held for its slot); swept across every hour with
+an injected clock in `test_schedule_planner.py`; and the scenario here is now built to
+land today at every minute of the day, so the strict branch is the only branch.
+
 Live-verified 2026-09-02 against a real mosquitto + `mqtt/run.py` + `sim/virtual_moxie.py
 --query schedule` before being written down (v0.7.0 RC integration pass).
 """
@@ -96,26 +106,55 @@ def _stack(tmp_path, *, device_id=DEV):
     return rt, vm, dev
 
 
+#: How far apart the fixture's clock read and the runtime's own may drift and still agree
+#: about which calendar day the parent asked for. The two reads are milliseconds apart in
+#: practice; five minutes is slack, not a guess.
+CLOCK_SLACK_MINUTES = 5
+
+
+def _request_lands_today(now, request_in_minutes=2 * SLOT_MINUTES) -> bool:
+    """Does an activity `request_in_minutes` from `now` fall on *today's* calendar day?"""
+    return (now + datetime.timedelta(minutes=request_in_minutes)).date() == now.date()
+
+
+def _request_offset(now, request_in=2 * SLOT_MINUTES) -> int:
+    """Signed minutes from `now` to the instant the scenario asks its activity for —
+    chosen so the answer is **always today**, at every one of the 1440 minutes of a day.
+
+    Two slots ahead normally. In the tail of a day two slots ahead is *tomorrow*, which is
+    a different contract entirely (`test_a_request_for_tomorrow_is_not_pinned_into_today`
+    owns that one, from an instant it constructs rather than waits for), so the ask flips
+    to two slots *behind* instead — still today, and still a pin, because a request earlier
+    than now lands in the first slot by contract (`parent_requests_due`). One direction is
+    always available: a day is a great deal longer than 40 minutes.
+
+    This is why the pinning test below has no "if the clock says so" arm any more. A branch
+    that only runs in the last 20 minutes of a day is a branch nobody has ever watched pass,
+    and the strict half is the half that asserts the product behaviour."""
+    return request_in if _request_lands_today(
+        now, request_in + CLOCK_SLACK_MINUTES) else -request_in
+
+
 def _bedtime_body(minutes_ahead=60, request_in=2 * SLOT_MINUTES, module="STORYTELLING",
-                  now=None):
+                  now=None, request_at=None):
     """Parent input for `POST /config?scope=fleet`, always relative to *now*: bedtime
     starts an hour out (so the tail of the plan falls inside it), and one activity is
-    requested two slots from now.
+    requested a couple of slots away — see `_request_offset` for which side of now.
+    `request_at` overrides that instant outright, for the tests that need a request on a
+    different calendar day.
 
-    `now` is a parameter, not a fresh clock read, because the caller has to be able to
-    ask a second question about *the same instant* — `_request_lands_today` decides which
-    branch of `test_the_parent_request_is_pinned_and_says_so` is real, and two independent
-    `datetime.now()` calls straddling the "20 minutes before midnight" line answer for
-    different days. Narrow (sub-second, once a night) and free to remove."""
+    `now` is a parameter, not a fresh clock read, because the caller has to be able to ask
+    a second question about *the same instant*: two independent `datetime.now()` calls
+    straddling local midnight answer for different days."""
     now = now or datetime.datetime.now()
     start = now + datetime.timedelta(minutes=minutes_ahead)
     end = start + datetime.timedelta(hours=8)
+    when = request_at if request_at is not None else now + datetime.timedelta(
+        minutes=_request_offset(now, request_in))
     return {"weekday_bedtime": [start.strftime("%H:%M"), end.strftime("%H:%M")],
             "weekend_bedtime": [start.strftime("%H:%M"), end.strftime("%H:%M")],
             "schedule_preferences": {"parent_requests": [
-                {"module_id": module,
-                 "scheduled_at": int((now + datetime.timedelta(
-                     minutes=request_in)).timestamp())}]}}
+                {"module_id": module, "scheduled_at": int(when.timestamp())}]}}
 
 
 def _hhmm(value) -> int:
@@ -219,35 +258,21 @@ def test_the_day_is_actually_truncated_by_bedtime(served):
 # --------------------------------------------------------------------------- #
 # The parent's request outranks the recommender
 # --------------------------------------------------------------------------- #
-def _request_lands_today(now, request_in_minutes=2 * SLOT_MINUTES) -> bool:
-    """Does the scenario's parent request fall on *today's* calendar day?
-
-    It usually does, and then the request is pinned. In the last ~20 minutes of a day it
-    cannot: `_bedtime_body` asks for an activity `request_in` minutes out, and at 23:48
-    that is 00:08 **tomorrow**, which is not today's plan. The planner is right to leave
-    it unpinned; the old assertion was simply wrong for that window, and it failed on
-    untouched `dev` at 23:48 (its own docstring claimed it "never depends on the hour it
-    runs at"). So the test asserts whichever branch is real.
-
-    `now` is the fixture's own instant, not a fresh read — this function answers a
-    question *about the config that was posted*, and re-reading the clock here could
-    answer it about a different day than the one the config was built for."""
-    return (now + datetime.timedelta(minutes=request_in_minutes)).date() == now.date()
-
-
 def test_the_parent_request_is_pinned_and_says_so(served):
+    """The strict branch, and it is now the ONLY branch — `_request_offset` builds an ask
+    that lands today at every minute of the day, so this asserts the product behaviour on
+    every run instead of on 1420 minutes out of 1440.
+
+    What it is really guarding, since PR #128: the pin has to *survive the scored fill*.
+    The recommender scores `time_of_day`, so the requested module can top the board in an
+    earlier slot; when it did, the free choice took it, the pin found the pool empty at its
+    own slot and the day shipped with the parent's activity at the wrong time and no
+    `parent_request` in its reason codes — visible only in the afternoon, which is why
+    three unrelated PRs went red in UTC while every local run stayed green.
+    `test_schedule_planner` sweeps the same claim across every hour with the clock injected;
+    this one asserts it through the real wire."""
     pinned = [e for e in served["view"]["explanations"]
               if "parent_request" in (e.get("reason_codes") or [])]
-    if not _request_lands_today(served["now"]):
-        # The scenario is not constructible in the tail of a day. Assert the *other*
-        # real behaviour instead of skipping: a request that belongs to tomorrow is
-        # absent from today's plan, and today's plan still explains every entry it has.
-        assert pinned == [], \
-            f"a request landing tomorrow must not be pinned into today's plan: {pinned}"
-        assert served["view"]["explanations"], "the plan must still explain itself"
-        assert all(e.get("line") for e in served["view"]["explanations"]), \
-            "every entry needs its explanation line even when no request is pinned"
-        return
     assert len(pinned) == 1, pinned
     assert pinned[0]["module_id"] == "STORYTELLING", pinned
     assert "parent" in pinned[0]["line"].lower(), pinned[0]["line"]
@@ -255,6 +280,50 @@ def test_the_parent_request_is_pinned_and_says_so(served):
     assert "STORYTELLING" in robot_ids, robot_ids
     request = served["view"]["inputs"]["parent_requests"][0]
     assert request["due_today"] is True and request["slot"] is not None, request
+
+
+def test_the_scenario_this_file_posts_lands_today_at_every_minute_of_a_day():
+    """The claim `_request_offset` makes, checked rather than asserted in prose — because
+    it is the claim that lets the test above have a single strict branch.
+
+    Nothing here reads a clock: it walks all 1440 minutes of one constructed day. Both
+    directions have to be real, or the flip is dead code that never runs."""
+    day = datetime.datetime(2026, 9, 2)
+    minutes = [day + datetime.timedelta(minutes=i) for i in range(1440)]
+    asked = {m: m + datetime.timedelta(minutes=_request_offset(m)) for m in minutes}
+    strayed = [m.strftime("%H:%M") for m, when in asked.items() if when.date() != m.date()]
+    assert not strayed, f"the ask left today's calendar day at {strayed}"
+    flipped = [m.strftime("%H:%M") for m in minutes if _request_offset(m) < 0]
+    assert flipped and flipped[0] == "23:35" and flipped[-1] == "23:59", flipped
+    assert len(flipped) == 2 * SLOT_MINUTES + CLOCK_SLACK_MINUTES, flipped
+
+
+def test_a_request_for_tomorrow_is_not_pinned_into_today(tmp_path):
+    """The other real branch of the same contract, built rather than waited for.
+
+    It used to be reachable only in the last 20 minutes of a day — so in practice it ran
+    unwatched, in CI, at 23:4x. Posting a request stamped a whole day out asserts the same
+    thing at any hour: a request that belongs to tomorrow is absent from today's plan, and
+    today's plan still explains every entry it does have."""
+    rt, vm, dev = _stack(tmp_path)
+    base = status_server(rt)
+    now = datetime.datetime.now()
+    applied = http_json(f"{base}/config?scope=fleet", method="POST", body=_bedtime_body(
+        now=now, request_at=now + datetime.timedelta(days=1)))
+    assert applied["ok"], applied
+    wire = vm.query("schedule", timeout=5.0)
+    view = http_json(f"{base}/schedule?device_id={dev}")
+
+    request = view["inputs"]["parent_requests"][0]
+    assert request["due_today"] is False and request["slot"] is None, request
+    pinned = [e for e in view["explanations"]
+              if "parent_request" in (e.get("reason_codes") or [])]
+    assert pinned == [], \
+        f"a request landing tomorrow must not be pinned into today's plan: {pinned}"
+    assert view["explanations"], "the plan must still explain itself"
+    assert all(e.get("line") for e in view["explanations"]), \
+        "every entry needs its explanation line even when no request is pinned"
+    assert wire["provided_schedule"], "the robot was served an EMPTY day"
 
 
 # --------------------------------------------------------------------------- #
