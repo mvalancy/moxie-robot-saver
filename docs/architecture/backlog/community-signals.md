@@ -323,6 +323,43 @@ class**, not #60's cause. Recorded here so a future scan does not double-count i
 
 ---
 
+### C9 — Tell a pre-801 robot from a broken server by *looking at its screen*
+
+**Rank 5= · scan 2, 2026-09-04 · maintainer-stated, in the same thread as C5 · 📄 a triage rule, no code**
+
+**What it is.** Deeper in [issue #57](https://github.com/jbeghtol/openmoxie/issues/57) the maintainer
+gives a positive identification for firmware generation that needs **no broker, no logs and no network at
+all**: *both* 24.10.801 and 24.10.803 render the string **`OpenMoxie`** on the robot's QR-scan screen, so
+**its absence means the unit is pre-801** — for which, per C5, there is no OTA path and only a flash.
+
+**Why this is worth a section of its own rather than a line under C5.** C5's rule is a *negative* one —
+"the broker never sees a TCP connection" — and it is diagnostic only once you own a broker, have pointed
+the robot at it, and have ruled out your own misconfiguration. A first-time owner cannot tell *"this robot
+is too old"* from *"I set the server up wrong"*, and those two produce identical evidence: silence. This
+rule separates them **before** anything is set up, by reading a word off a screen. The two together are a
+proper triage pair:
+
+| What you see | What it means |
+|---|---|
+| No `OpenMoxie` string on the QR-scan screen | **Pre-801.** No OTA path exists. Stop; flashing is the only route (C5) |
+| `OpenMoxie` present, magnifying glass, back to the scan screen, **zero TCP at the broker** | An 801/803 unit that never reached you — network, DNS or QR payload |
+| `OpenMoxie` present, TCP connects, **TLS fails** | An 801/803 unit that reached you and rejected the certificate |
+
+**Evidence weight.** Maintainer-stated, in a closed thread, corroborated by the reporter's own observation
+in the same exchange. That puts it above [#60](https://github.com/jbeghtol/openmoxie/issues/60)'s lone
+anecdote and beside C5's `n = 2`.
+
+**What we would do.** One row in [`revive-your-moxie.md`](../../guides/revive-your-moxie.md)'s
+troubleshooting and one in [`live-hardware-debug.md`](../../debugging/live-hardware-debug.md), beside the
+zero-TCP line that is already there. **No ranked item moves** — nobody has to build anything, which is
+exactly why it is filed here rather than on the audit's §4.4.
+
+**Honest limit:** we have not seen this screen. Our own unit's behaviour is recorded in
+`live-hardware-debug.md` and the *string* is not among what was recorded, so this is upstream's
+observation carried faithfully, not ours confirmed.
+
+---
+
 ## 3. Where the community's problem is one we have already solved
 
 The brief asked for this to be said plainly, because it is a **marketing and documentation** finding
@@ -350,6 +387,12 @@ knows exists.
 - **No firmware past `24.10.803`**, including through the entire Moxie Robots, Inc. period. Our corpus
   stamp holds (**C2**).
 - **Neither fork has an issue tracker with anything in it.** Both returned empty for `state=all`.
+- **Scan 2, 2026-09-04 — nothing new anywhere on GitHub.** Upstream, both forks and the whole **40-fork**
+  network were re-read at their live heads; **zero forks pushed after 2026-09-03**. The newest activity of
+  any kind in upstream's tracker — issue, PR or comment — is **2026-08-29**, which is *before* scan 1, and
+  the newest discussion update is #35 on 2026-02-23. **C9 above is the only thing this scan added, and it
+  came from re-reading a thread scan 1 had already cited rather than from anything new being posted.**
+  The venue gaps below are unchanged and unattempted.
 
 **Gaps, named:**
 
@@ -372,7 +415,7 @@ knows exists.
 
 ## 5. What this changes on the audit's ranking
 
-Nothing is re-ranked here — [§4.4](../openmoxie-feature-audit.md#44-the-open-backlog-re-ranked-2026-09-03)
+Nothing is re-ranked here — [§4.4](../openmoxie-feature-audit.md#44-the-open-backlog-re-ranked-2026-09-04)
 remains the one place to look for *"what should I build next."* What this scan hands it:
 
 | Finding | Where it lands |
