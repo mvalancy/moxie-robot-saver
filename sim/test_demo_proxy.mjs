@@ -45,6 +45,9 @@ const wav = await import(join(repo, "functions", "api", "_lib", "wav.js"));
 const wire = await import(join(repo, "functions", "api", "_lib", "wire.js"));
 const hmac = await import(join(repo, "functions", "api", "_lib", "hmac.js"));
 const wire2 = await import(join(repo, "functions", "api", "_lib", "env.js"));
+/** The response builder itself. Imported at the top because the header guards below
+ *  ask a REAL `Response` what it carries rather than regexing the source. */
+const env0 = await import(join(repo, "functions", "api", "_lib", "envelope.js"));
 
 /* --------------------------------------------------------------------------- *
  * The fake deployment
@@ -1543,18 +1546,160 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   ok(declared.length >= 3,
      `the /api/* block names at least 3 headers, found ${declared.length}`);
 
-  // strip comments so the prose above (which names these headers) cannot satisfy the check
-  const code = envelopeSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  const missing = declared.filter(
-    (h) => !new RegExp(`["']${h}["']\\s*:`, "i").test(code));
+  /* THE CHECK IS ON A REAL RESPONSE, NOT ON THE SOURCE TEXT.
+   *
+   * It used to be a regex for `"Name":` over the comment-stripped file, and that was
+   * fine until `envelope.js` gained `REJECTED_SECURITY_HEADERS` — a map whose KEYS are
+   * header names in exactly that syntax. A rejected header would then have satisfied the
+   * regex while never being sent, i.e. the guard would have passed on the precise
+   * situation it exists to catch. Asking a built `Response` what headers it carries is
+   * immune to that, and to every other way source text can lie about behaviour. */
+  const sample = env0.respond({ ok: true, mode: "live" });
+  const sent = [...sample.headers.keys()].map((h) => h.toLowerCase());
+  const missing = declared.filter((h) => !sent.includes(h.toLowerCase()));
   deep(missing, [],
        `_headers does NOT apply to Pages Functions (settled 2026-09-03), so every header ` +
        `in its /api/* block must also be set in functions/api/_lib/envelope.js. Missing ` +
-       `from the code: ${missing.join(", ")}. Add them to the Headers() in respond().`);
+       `from a real response: ${missing.join(", ")}. Add them to API_SECURITY_HEADERS.`);
 
   // …and the specific one that was actually absent in production-shaped traffic.
-  ok(/["']Referrer-Policy["']\s*:/i.test(code),
+  ok(sent.includes("referrer-policy"),
      "envelope.js must set Referrer-Policy itself — the preview proved _headers will not");
+
+  /* ---------------------------------------------------------------------------- *
+   * EVERY SECURITY HEADER THE PAGES SHIP IS EITHER SENT HERE OR EXPLAINED AWAY.
+   * ---------------------------------------------------------------------------- *
+   * The failure this closes is the one that produced a page CSP with no `script-src`
+   * for months: a header list nobody could explain. `/api/*` is a JSON API, not a
+   * document tree, so several page headers are genuinely pointless here — but
+   * "pointless" has to be WRITTEN DOWN and machine-held, or it is indistinguishable
+   * from "forgotten". So: for each security header in the `/*` block, envelope.js must
+   * either send it or carry a reason in `REJECTED_SECURITY_HEADERS`.
+   */
+  const pageBlock = {};
+  {
+    let inGlob = false;
+    for (const raw of lines) {
+      const l = raw.replace(/\s+$/, "");
+      if (!l || l.trimStart().startsWith("#")) continue;
+      if (!/^\s/.test(l)) { inGlob = l.trim() === "/*"; continue; }
+      if (!inGlob) continue;
+      const i = l.indexOf(":");
+      if (i > 0) pageBlock[l.slice(0, i).trim()] = l.slice(i + 1).trim();
+    }
+  }
+  const SECURITY = /^(content-security-policy|strict-transport-security|permissions-policy|referrer-policy|x-content-type-options|x-frame-options|cross-origin-)/i;
+  const pageSecurity = Object.keys(pageBlock).filter((h) => SECURITY.test(h));
+  ok(pageSecurity.length >= 4,
+     `the /* block ships at least 4 security headers, found ${pageSecurity.length}`);
+  ok(!!env0.API_SECURITY_HEADERS && !!env0.REJECTED_SECURITY_HEADERS,
+     "envelope.js must export API_SECURITY_HEADERS and REJECTED_SECURITY_HEADERS — one place " +
+     "for the /api/* header set, and one place for the reason each omission is deliberate");
+  const rejected = Object.keys(env0.REJECTED_SECURITY_HEADERS || {}).map((h) => h.toLowerCase());
+  const unexplained = pageSecurity.filter(
+    (h) => !sent.includes(h.toLowerCase()) && !rejected.includes(h.toLowerCase()));
+  deep(unexplained, [],
+       `every security header the PAGES ship must be either set on an /api/* response or ` +
+       `listed in envelope.js's REJECTED_SECURITY_HEADERS with the reason. Neither: ` +
+       `${unexplained.join(", ")}`);
+
+  // A rejection must be a real decision, not a placeholder…
+  for (const [h, why] of Object.entries(env0.REJECTED_SECURITY_HEADERS || {})) {
+    ok(typeof why === "string" && why.length >= 60,
+       `REJECTED_SECURITY_HEADERS["${h}"] must carry a real reason, not a stub`);
+    // …and it must actually be absent, or the map is documenting a fiction.
+    ok(!sent.includes(h.toLowerCase()),
+       `${h} is listed as REJECTED but a real response carries it`);
+  }
+
+  /* HSTS must be BYTE-IDENTICAL to the pages'. "Both set HSTS" is not the property —
+   * one origin, one max-age. A shorter max-age on the API would silently shorten the
+   * pin for anyone whose first (or only) touch is a probe or a bookmarked route. */
+  if (pageBlock["Strict-Transport-Security"]) {
+    eq(sample.headers.get("Strict-Transport-Security"), pageBlock["Strict-Transport-Security"],
+       "the API's HSTS must match the pages' exactly — one origin, one policy");
+  }
+
+  /* The API CSP is NOT the page CSP, deliberately: `script-src`/`connect-src`/`img-src`
+   * govern a document's loads and a JSON body loads nothing. What it must be is a
+   * lockdown, and `default-src 'none'` is the whole point of it. */
+  const apiCsp = sample.headers.get("Content-Security-Policy") || "";
+  ok(/default-src\s+'none'/.test(apiCsp),
+     `the /api/* CSP must be a lockdown (default-src 'none') — got ${JSON.stringify(apiCsp)}`);
+  ok(/frame-ancestors\s+'none'/.test(apiCsp),
+     "…with frame-ancestors 'none', which does NOT fall back to default-src");
+  ok(/base-uri\s+'none'/.test(apiCsp),
+     "…and base-uri 'none', which does not fall back either");
+  ok(apiCsp !== pageBlock["Content-Security-Policy"],
+     "the API CSP must not be a copy of the page CSP — a page policy is meaningless on JSON");
+
+  // The values are constants, never anything derived from a request (§4.2, C1).
+  const envelopeCode = envelopeSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  ok(!/headers\.set\([^)]*request\.headers/.test(envelopeCode),
+     "no request header may ever be echoed back into a response header");
+}
+
+/* --------------------------------------------------------------------------- *
+ * THE HARDENING SET RIDES A REFUSAL, NOT JUST A SUCCESS
+ * ===========================================================================
+ * A refusal is the response a hostile caller sees MOST, so a header set that only
+ * applies on the happy path is not a header set. Every status the route table can
+ * produce is checked here — 200, the 403 origin pin, the 429 window, the 503 upstream
+ * failure and the 400 malformed request — through the REAL route handlers.
+ */
+{
+  fresh();
+  const cases = [];
+  cases.push(["200 success", await call(chat, "/api/chat", { text: "hi" })]);
+  cases.push(["400 bad_request", await call(chat, "/api/chat", { text: "" })]);
+  cases.push(["403 forbidden_origin",
+              await call(chat, "/api/chat", { text: "hi" }, { Origin: "https://evil.invalid.test" })]);
+  fresh();
+  plan = { chat: { status: 500, body: "boom" } };
+  cases.push(["503 upstream_down", await call(chat, "/api/chat", { text: "hi" })]);
+  fresh();
+  {
+    const cfgEnv = { ...FULL, DEMO_CHAT_PER_MIN: "1" };
+    await call(chat, "/api/chat", { text: "hi" }, null, cfgEnv);
+    cases.push(["429 rate_limited", await call(chat, "/api/chat", { text: "hi" }, null, cfgEnv)]);
+  }
+  // /api/health too: it is the only GET, the only always-200 route, and the one the
+  // page polls every 30 s — so it is the response most often in a proxy's hands.
+  const healthMod = await import(join(repo, "functions", "api", "health.js"));
+  cases.push(["health 200", { res: healthMod.onRequestGet({ env: {} }), body: null }]);
+
+  /* The names are written out rather than read back from the module: the NAMES are the
+   * contract, so a build that stopped exporting the set must fail as a named assertion
+   * here rather than crash. The VALUES still come from the module — restating a policy
+   * value in a test is how a suite passes while the shipped header says something else. */
+  const REQUIRED = ["X-Content-Type-Options", "Referrer-Policy", "Strict-Transport-Security",
+                    "Content-Security-Policy", "Cross-Origin-Resource-Policy"];
+  const SENT = env0.API_SECURITY_HEADERS || {};
+  const seen = new Set();
+  for (const [label, { res }] of cases) {
+    seen.add(res.status);
+    for (const h of REQUIRED) {
+      const got = res.headers.get(h);
+      ok(got !== null && got !== "", `${label} is MISSING ${h}`);
+      if (SENT[h]) eq(got, SENT[h], `${label} carries ${h} unchanged`);
+    }
+    for (const h of Object.keys(env0.REJECTED_SECURITY_HEADERS || {})) {
+      eq(res.headers.get(h), null, `${label} does NOT carry the rejected ${h}`);
+    }
+    eq(res.headers.get("Cache-Control"), "no-store", `${label} is still no-store`);
+  }
+  ok(seen.has(200) && seen.has(400) && seen.has(403) && seen.has(429) && seen.has(503),
+     `the hardening set was proved on 200/400/403/429/503, saw ${[...seen].sort().join("/")}`);
+
+  /* A caller may not weaken the set through the `opts.headers` hatch. Nothing passes it
+   * today; the hatch is what makes the guarantee worth asserting rather than assuming. */
+  const forced = env0.respond(
+    { ok: true },
+    { headers: { "Content-Security-Policy": "default-src *", "Cross-Origin-Resource-Policy": "cross-origin" } });
+  eq(forced.headers.get("Content-Security-Policy"), SENT["Content-Security-Policy"] || null,
+     "opts.headers cannot weaken the API CSP");
+  eq(forced.headers.get("Cross-Origin-Resource-Policy"), "same-origin",
+     "opts.headers cannot weaken CORP");
 }
 
 /* =========================================================================== *
