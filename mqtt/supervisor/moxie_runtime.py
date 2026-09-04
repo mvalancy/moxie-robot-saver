@@ -36,6 +36,7 @@ from moxie_sdk import performance as performance_seam   # the behavior planner (
 from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
 from moxie_sdk import brains as brain_seam             # 🧠 which brain, per robot
 from moxie_sdk.content import packs as content_packs  # 📦 content packs (ADOPT #5)
+from moxie_sdk.content import render                  # ✍️ the prompt template sandbox
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
 from markup import make_markup, perform  # the behavior planner / markup floor seam
 
@@ -950,7 +951,9 @@ class MoxieRuntime:
 
             def _content(self, path: str):
                 """📦 `POST /content/review` (the pack itself), `POST /content/import`
-                (`{"pack", "accept", "expect_digest"}`) and `POST /content/undo`.
+                (`{"pack", "accept", "expect_digest"}`) and `POST /content/undo`; ✍️
+                `POST /content/item` (`{"kind", "data", "phrases", "local_rev"}`) and
+                `POST /content/render` (`{"kind", "data", "context"}`).
 
                 Review writes nothing; import is the one verb that changes the store, and
                 it refuses with **409** when `expect_digest` does not match the body now
@@ -974,6 +977,21 @@ class MoxieRuntime:
                     body = _json.loads(raw or b"{}") or {}
                     if not isinstance(body, dict):
                         raise ValueError("expected a JSON object")
+                    if path == "/content/render":
+                        # ✍️ Rung 1: resolve the draft prompt. Reads nothing, writes
+                        # nothing, calls no brain — so it cannot fail with anything but a
+                        # malformed draft.
+                        out = rt.content_render(body)
+                        return self._json_out(out, 200 if out.get("ok") else 400)
+                    if path == "/content/item":
+                        # ✍️ Rung 4: keep it. The one authoring verb that writes, and the
+                        # one that owns `validate_item` — deliberately HERE and not in the
+                        # console proxy, so a direct `curl` at this port cannot skip it
+                        # (brief R6).
+                        out = rt.content_save_item(body)
+                        if out.get("ok"):
+                            return self._json_out(out, 200)
+                        return self._json_out(out, 409 if out.get("conflict") else 400)
                     out = rt.content_import(body.get("pack"),
                                             body.get("accept") or [],
                                             str(body.get("expect_digest") or ""))
@@ -1035,6 +1053,14 @@ class MoxieRuntime:
                 next turn; a body whose digest is not the reviewed one is **409**.
                 `POST /content/undo` puts the snapshot back. See `_content`.
 
+                `POST /content/item` with `{"kind", "data", …}` saves ONE authored item —
+                the ✍️ editor's Save. It validates exactly as an import does, snapshots
+                what it replaced into the same one undo slot, writes the overlay and
+                reloads, so the next turn uses it. A schedule is refused by kind, a change
+                to `code` or `extension` is refused, and a stale `local_rev` is **409**.
+                `POST /content/render` resolves a draft prompt against a sample context
+                and calls **no brain** — see `content_save_item` / `content_render`.
+
                 `POST /preview?device_id=…` with `{"text": "…"}` rehearses one line:
                 the behavior planner stages it and the supervisor publishes it as an
                 ordinary `remote_chat`, so the SIM (or a robot paired as a rehearsal
@@ -1061,7 +1087,8 @@ class MoxieRuntime:
                     # `{"edit": {"namespace", "item", "text"}}`, a parent correcting one
                     # remembered line instead of losing the whole activity to it.
                     return self._memory_write(urlparse(self.path).query)
-                if path in ("/content/review", "/content/import", "/content/undo"):
+                if path in ("/content/review", "/content/import", "/content/undo",
+                            "/content/item", "/content/render"):
                     return self._content(path)
                 if path == "/preview":
                     # `POST /preview?device_id=…` `{"text": …, "speak": false}` — the
@@ -3843,6 +3870,266 @@ class MoxieRuntime:
         self._note("content", "📦 undo — content restored")
         return {"ok": True, "restored": len(items), "reload": reload,
                 "label": str(backup.get("label") or ""), "undo_available": False}
+
+    # ---- ✍️ content authoring (backlog/content-authoring.md) ----
+    # Packs made content **shippable**; these two verbs make it **writable**. The design
+    # decision they rest on is that an authored item is exactly as untrusted as an
+    # imported one *because it enters through the same functions* (brief §6.1) — so there
+    # is no "we wrote this one" branch anywhere below, and the only genuinely new safety
+    # code in the whole slice is the `validate_item` call in `content_save_item`.
+    #
+    # Why that one call is the load-bearing line (§6.3): `packs.mark_edited` calls
+    # `normalize_data` and **not** `validate_item` — `apply_pack` does that itself before
+    # writing. So a save that skipped it would let an authored global with a
+    # non-compiling `pattern` reach `Global.from_dict`, which compiles at LOAD, and a
+    # throw inside the loader takes down `reload_content()` for every item at once.
+    # `sim/tools/authoring_mutation_check.py` deletes the call and requires
+    # `test_a_bad_pattern_is_refused_with_validate_items_own_sentence` to go red.
+    #
+    # What is deliberately absent here: `POST /content/try`. P0 makes **no brain call**
+    # (brief §9's "not in P0" list), so there is no budget, no counter and no 429 in this
+    # region — `config.AUTHOR_TRY_BUDGET` is declared for P1 and consumed by nobody yet.
+
+    #: Item kinds the editor may write. `schedule` is absent on purpose and refused by
+    #: name below: it is the one kind that reaches the robot as `ContentSchedule`, and no
+    #: physical Moxie has ever been served a pack-authored one (brief §0), so a
+    #: parent-facing button must not put an unobserved wire behaviour behind it.
+    AUTHORABLE_KINDS = ("conversation", "global")
+
+    def content_save_item(self, body) -> dict:
+        """✍️ Save one authored item — validate, snapshot, write the overlay, reload.
+
+        The verb the 📦 card's ✏️ and ＋ New both call. Everything it enforces is a
+        refusal, and each refusal is a sentence rather than a status code:
+
+        * a **schedule** is refused by kind (§0/§4.5), naming the robot as the reason;
+        * a change to **`code`** or **`extension`** is refused (§4.5) — both round-trip a
+          save untouched and neither is authorable in any phase, so the editor shows them
+          and the route makes that structural;
+        * `validate_item`'s own sentence is returned verbatim for anything it refuses,
+          because a paraphrase here would be a second validator (§6.1);
+        * a stale `local_rev` is a **409** with the import conflict's own wording (R7):
+          two tabs are *detected*, never merged, and the one undo slot is not a fix for
+          that and must not be described as one.
+
+        On success it takes the same one-slot snapshot an import takes, so
+        `POST /content/undo` restores an authored save with no new mechanism, and calls
+        `reload_content()` so disk and memory never disagree about what Moxie says next
+        (§6.5). The answer carries the shadow check for a command (§4.4) — advice, never a
+        refusal, and scoped to the phrases the author actually typed.
+        """
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "expected a JSON object",
+                    "reason": "The editor sent something that is not an item."}
+        kind = str(body.get("kind") or "")
+        if kind == "schedule":
+            return {"ok": False, "error": "a schedule cannot be authored here",
+                    "reason": "A schedule is the one kind of content that is sent to the "
+                              "robot itself, and no Moxie has ever been given one that "
+                              "came from a pack. Until that has been watched on real "
+                              "hardware, this editor will not write one."}
+        if kind not in self.AUTHORABLE_KINDS:
+            return {"ok": False, "error": f"unknown item kind {kind!r}",
+                    "reason": "This editor writes conversations and commands."}
+        try:
+            data = content_packs.normalize_data(kind, body.get("data"))
+        except content_packs.PackError as e:
+            return {"ok": False, "error": str(e), "reason": str(e)}
+
+        key = content_packs.item_key(kind, data)
+        ident = content_packs.full_key(kind, key)
+        asked = str(body.get("key") or "")
+        items = self.content_items()
+        if asked and content_packs.full_key(kind, asked) != ident \
+                and content_packs.full_key(kind, asked) in items:
+            return {"ok": False,
+                    "error": "this item's identity is locked",
+                    "reason": "A conversation is identified by its module and content "
+                              "ids, and a command by its name. Changing one makes a NEW "
+                              "item rather than editing this one — save it under the new "
+                              "name and the old one stays where it is."}
+
+        before = items.get(ident)
+        refusal = self._refuse_unwritable_fields(kind, data, before)
+        if refusal:
+            return refusal
+
+        # §6.3 — the one `if`. `mark_edited` normalizes; it does not validate.
+        reasons = content_packs.validate_item(
+            {"kind": kind, "key": key, "data": data,
+             "source_version": content_packs.source_version_of(before or {})})
+        if reasons:
+            return {"ok": False, "error": reasons[0], "reason": reasons[0],
+                    "reasons": reasons}
+
+        expected = str(body.get("local_rev") or "")
+        if expected and before is not None \
+                and expected != content_packs.local_rev({"kind": kind, **before}):
+            return {"ok": False, "conflict": True,
+                    "error": "this is not the version you opened",
+                    "reason": "Somebody else saved this item while you were editing it. "
+                              "Open it again before saving, or your change would quietly "
+                              "replace theirs."}
+
+        shadow = (content_packs.shadow_check(data, items, body.get("phrases"))
+                  if kind == "global" else [])
+
+        with self._content_lock:
+            overlay = self._content_overlay()
+            self.store.write_shared(self.CONTENT_BACKUP_COLLECTION, {
+                "items": overlay, "packs": self._content_packs(),
+                "label": f"before editing {data.get('name') or key}",
+                "at": int(time.time())})
+            merged = content_packs.mark_edited(overlay, ident, data)
+            if not self._write_content_overlay(merged):
+                return {"ok": False, "error": "could not write the content overlay",
+                        "reason": "The appliance could not save this item."}
+            reload = self.reload_content()
+        self._note("content", f"✍️ saved {ident}")
+        rows = content_packs.inventory({ident: merged[ident]},
+                                       known_names=self._known_child_names())
+        return {"ok": True, "id": ident, "key": key, "kind": kind,
+                "created": before is None,
+                "item": rows[0] if rows else {},
+                "local_rev": content_packs.local_rev({"kind": kind, **merged[ident]}),
+                "shadow": shadow, "reload": reload, "undo_available": True,
+                "undo_slots": 1}
+
+    @staticmethod
+    def _refuse_unwritable_fields(kind: str, data: dict, before) -> dict:
+        """`code` and `extension` survive a save untouched, or the save does not happen.
+
+        Not a warning: the property that makes a pack safe is structural (§6.5), and an
+        editor that could *change* an extension would be the text→AST surface
+        `backlog/sandboxed-extensions.md` P1 owns — with a second compiler, which that
+        brief already refused in its own §7.4. So the card shows both fields read-only and
+        this refuses anything else, for a new item as much as an edited one (a parent
+        cannot *create* a `code` block either).
+        """
+        base = content_packs.normalize_data(kind, (before or {}).get("data")) if before \
+            else content_packs.normalize_data(kind, {})
+        if content_packs.canonical(data.get("extension") or {}) \
+                != content_packs.canonical(base.get("extension") or {}):
+            return {"ok": False,
+                    "error": "an extension cannot be edited here",
+                    "reason": "This item carries a sandboxed program. The editor shows "
+                              "what it does and never changes it — see "
+                              "docs/architecture/backlog/sandboxed-extensions.md for the "
+                              "surface that will."}
+        if str(data.get("code") or "") != str(base.get("code") or ""):
+            return {"ok": False,
+                    "error": "a code block cannot be edited here",
+                    "reason": "This appliance never runs a content module's Python `code`, "
+                              "so there is nothing here that could write one. It travels "
+                              "as inert text and the editor leaves it exactly as it found "
+                              "it — see docs/architecture/backlog/sandboxed-extensions.md "
+                              "for behaviour this appliance CAN run."}
+        return {}
+
+    #: The sample values rung 1 renders against. A prompt is a template over exactly three
+    #: top-level names — `volley`, `session` and `presence` (`content_app.py`:312 for the
+    #: opener, :371 for the prompt) — and that closed list is what makes the chip list
+    #: closeable at all (§4.3).
+    RENDER_SAMPLE_FACTS = ("likes drawing dinosaurs",
+                           "is learning to whistle",
+                           "was nervous about the school play")
+
+    def content_render(self, body) -> dict:
+        """👁️ Resolve a draft prompt against a sample context. **No brain, no store.**
+
+        Rung 1 of the loop (§5.1), and the highest-value free feedback we can give: the
+        panel is *the actual system prompt the brain would receive*, which is the thing a
+        prompt author most needs and today cannot see at all. `render_prompt` is a pure
+        function over a plain dict, so this route is one call and a made-up context.
+
+        It renders **twice**, and that is a decision worth defending. The second pass is
+        `render._minimal_render` — the dependency-free renderer a bare
+        `pip install moxie-cloud-sdk` without the `content` extra lands on. Reporting only
+        `render.STRIPPED` around the real call would report **zero** on every appliance we
+        ship (the container installs jinja2), i.e. a counter that can never fire where it
+        matters. Rendering both answers the question §4.3 actually promises — *does this
+        prompt mean the same thing off this box?* — and `portable_identical: false` is the
+        signal that an author has typed past the guided grammar.
+
+        `counts_advisory` is `true` and stays true: `render.BLOCKED` / `render.STRIPPED`
+        are process-global integers the turn loop also moves, so even the narrow window
+        `render._tally` takes is polluted by a concurrent turn. The fix is not a lock
+        around the renderer (§5.1 forbids it — the turn loop calls it too); the fix is
+        saying so.
+        """
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "expected a JSON object",
+                    "reason": "The editor sent something that is not a draft."}
+        kind = str(body.get("kind") or "conversation")
+        if kind != "conversation":
+            return {"ok": False, "error": f"{kind} items have no prompt to resolve",
+                    "reason": "Only a conversation has a prompt. A command matches "
+                              "phrases, and you can see what it would catch beside it."}
+        try:
+            data = content_packs.normalize_data("conversation", body.get("data"))
+        except content_packs.PackError as e:
+            return {"ok": False, "error": str(e), "reason": str(e)}
+
+        ctx = body.get("context") if isinstance(body.get("context"), dict) else {}
+        known = self._known_child_names()
+        nickname = str(ctx.get("nickname") or (known[0] if known else "Sam"))
+        face = bool(ctx.get("face_present", True))
+        overflow = bool(ctx.get("overflow", False))
+        namespace = str((data.get("memory") or {}).get("namespace") or "") or "memory_chat"
+        facts = ctx.get("facts")
+        facts = ([str(f) for f in facts] if isinstance(facts, (list, tuple))
+                 else list(self.RENDER_SAMPLE_FACTS))
+        sample = {"nickname": nickname, "face_present": face, "overflow": overflow,
+                  "namespace": namespace, "facts": facts}
+        context = self._render_context(sample)
+
+        counts, portable_counts = {}, {}
+        prompt = render.render_prompt(data.get("prompt") or "", context, counts=counts)
+        portable = render._minimal_render(data.get("prompt") or "", context,
+                                          counts=portable_counts)
+        opener = render.render_prompt((data.get("opener") or "").split("|")[0], context)
+        return {
+            "ok": True,
+            "prompt": prompt,
+            "opener": opener.replace("<opener>", "").strip(),
+            "openers": [o for o in (data.get("opener") or "").split("|") if o.strip()],
+            "portable": portable,
+            "portable_identical": portable == prompt,
+            "counts": {"blocked": counts.get("blocked", 0) + portable_counts.get("blocked", 0),
+                       "stripped": portable_counts.get("stripped", 0)},
+            "counts_advisory": True,
+            "context": sample,
+        }
+
+    @staticmethod
+    def _render_context(sample: dict) -> dict:
+        """The three top-level names a prompt template may see, filled with sample values.
+
+        Plain dicts rather than a live `Volley`/`Session`: `render_prompt` walks dotted
+        paths over dicts and objects alike, and a made-up turn must not be able to reach
+        anything real. `FactList` is used for the facts so `{{ …facts }}` renders as
+        bullet lines here exactly as it does on a turn, instead of as a list repr.
+        """
+        from moxie_sdk.content.memory import FactList
+        return {
+            "volley": {
+                "speech": "Tell me about my day",
+                "config": {"child_pii": {"nickname": sample["nickname"],
+                                         "pronouns": "they/them", "birthday": "",
+                                         "notes": ""}},
+                "request": {"input_vars": {}},
+                "entities": [],
+                "persist_data": {sample["namespace"]: {"facts": FactList(sample["facts"])}},
+                "local_data": {},
+            },
+            "session": {"overflow": sample["overflow"], "total_volleys": 3,
+                        "history": [], "module_id": "", "content_id": ""},
+            "presence": {"known": True, "face_present": sample["face_present"],
+                         "faces_seen": 1, "flickers": 0, "events": 2,
+                         "line": ("Someone is in front of Moxie right now."
+                                  if sample["face_present"]
+                                  else "Nobody is in front of Moxie.")},
+        }
 
     def _ingest_notify(self, device_id, rcr):
         h = self.history.setdefault(device_id, [])

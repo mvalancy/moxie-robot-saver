@@ -1,5 +1,5 @@
 {
- "generated": "docs-0e81bd46887d",
+ "generated": "docs-854f790349be",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 12110,
+   "bytes": 12612,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 194111,
+   "bytes": 200999,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -262,7 +262,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 54526,
+   "bytes": 59374,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -287,6 +287,7 @@
     "source_version`, `local_rev`, and the review that does not clobber",
     "Storage, the overlay, and the reload",
     "The routes",
+    "Authoring — writing an item instead of importing one *(P0 built 2026-09-04)*",
     "Content delivery (assets)",
     "Minimum viable vs full",
     "Conformance checklist"
@@ -351,7 +352,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 129360,
+   "bytes": 130743,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",

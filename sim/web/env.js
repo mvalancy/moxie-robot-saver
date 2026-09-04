@@ -131,6 +131,52 @@
     el.classList.toggle("warn", !!isWarn);
   }
 
+  /* ---- the Voice panel's standing note (#voice-note) ----
+   *
+   * WHY IT MOVED HERE. That <p> was written when typing into the Speech box could only
+   * ever reach a local Piper sidecar or `speechSynthesis`, and it said so: "Free text
+   * uses your browser's voice, or a local Piper service if you run one." PR #112 changed
+   * what the box does — with no sidecar, `cloud-transport.js::adoptSpeechControl` renames
+   * "Say" to "Ask" and routes the line to Moxie — but nothing updated the paragraph, so
+   * on the live site (measured 2026-09-04: state=live, liveTurns=true, button reading
+   * "Ask") the panel described the opposite of what the button beside it does.
+   *
+   * It is painted from the SAME two facts `apply()` already uses to decide the button —
+   * whether a local Piper answered, and `mode.js`'s snapshot — so the note and the button
+   * cannot disagree; there is no third source of truth to drift.
+   *
+   * It is written directly, unlike `#tts-status`. That element is shared with audio.js's
+   * live "speaking" indicator, so env.js hands audio.js a resting hint instead of racing
+   * it (see `ttsHint` below). Nothing else writes #voice-note, so there is nothing to
+   * hand off to — the ownership is the same, the hand-off is simply unnecessary. */
+  var VOICE_NOTE_PIPER =
+    "Tap phrases above play shipped audio (no server). Free text uses your browser&#39;s " +
+    "voice, or a local Piper service if you run one.";
+  var VOICE_NOTE_LIVE =
+    "Tap a phrase above to play shipped audio. Type a line and press <b>Ask</b> &mdash; " +
+    "Moxie answers here, in her own voice.";
+  var VOICE_NOTE_SCRIPTED =
+    "Tap a phrase above to play shipped audio. Type a line and press <b>Ask</b> &mdash; " +
+    "Moxie answers here with a pre&#8209;scripted line; this deploy has no live brain.";
+
+  /**
+   * @param {boolean} piper  a local Piper sidecar answered — the box is still "Say".
+   * @param {boolean} asks   the box was adopted as the typed turn — it now says "Ask".
+   * @param {object|null} snap
+   */
+  function paintVoiceNote(piper, asks, snap) {
+    var el = $("voice-note");
+    if (!el) return;                                   // a fork that removed the note
+    var live = !!(snap && snap.state === "live" && snap.liveTurns);
+    // Not adopted and no Piper = the button is the old, disabled "Say": the shipped
+    // wording is still the honest description of what free text can do (nothing here).
+    var want = piper ? VOICE_NOTE_PIPER
+             : !asks ? VOICE_NOTE_PIPER
+             : live  ? VOICE_NOTE_LIVE
+                     : VOICE_NOTE_SCRIPTED;
+    if (el.innerHTML !== want) el.innerHTML = want;
+  }
+
   // Is a server voice available? Then "no TTS server" is simply untrue — the
   // Piper sidecar is only one of the two ways this sim gets a voice.
   function hasCloudVoice() {
@@ -189,6 +235,7 @@
       needsBackend($("tts-test"), "Speaks a test line through the local Piper TTS server.", false);
       needsBackend($("tts-base"), "The local Piper TTS server this page is using.", false);
       needsBackend($("speech-btn"), "Speaks this line through the local Piper TTS server.", false);
+      paintVoiceNote(true, false, snap);
     }
     else {
       // The buttons really do need the local Piper server, cloud voice or not — and they
@@ -214,6 +261,9 @@
         needsBackend($("speech-btn"),
           "Speaks arbitrary text via the local Piper TTS server. On the hosted demo only pre-rendered demo lines play.",
           true, !isLocal && ttsProbed);
+      // `took` is what the button itself was decided from one line up, so the note can
+      // never claim a typed line reaches Moxie on a page where it does not.
+      paintVoiceNote(false, !!took, snap);
       // ...but only say the sim has no voice when it really has neither.
       if (!hasCloudVoice())
         ttsHint(isLocal
