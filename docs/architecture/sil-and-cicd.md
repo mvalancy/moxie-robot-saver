@@ -229,7 +229,7 @@ Everything above is hermetic: it runs with no key, no network brain and no voice
 is what keeps the fast tier fast and green. That leaves one honest gap — a green CI run has
 never actually talked to the brain or made a sound. The **deep tier**
 ([`sim/ci/ci-deep.yml`](../../sim/ci/ci-deep.yml), mirrored at `.github/workflows/ci-deep.yml`)
-closes it with two **manual-dispatch-only** steps.
+closes it with **manual-dispatch-only** steps.
 
 ```sh
 gh workflow run ci-deep.yml --ref dev                  # live gateway suites
@@ -240,6 +240,7 @@ gh workflow run ci-deep.yml --ref dev -f voice=true    # …plus the live VOICE 
 |---|---|---|---|
 | **Live gateway** (every dispatch) | `test_live_gateway.py` + `test_live_action_tags.py` + `test_live_content_e2e.py`, one `pytest -q -ra` | secrets `MOXIE_LLM_API_KEY` / `MOXIE_LLM_BASE_URL` / `MOXIE_LLM_MODEL` | **≈12–13 real gateway completions** |
 | **Live voice** (`-f voice=true`) | `test_live_talk_e2e.py` | the above + `piper-tts`, `faster-whisper`, `numpy`, and the two Piper voices | ~1 completion + ~126 MB of models on a cold cache |
+| **Live-brain SIL smoke** (every dispatch) | `sim/run_smoke.sh --live-brain` — broker + supervisor + runtime + live brain + TTS + virtual robot in **one process tree** | the same three gateway secrets | **1 completion** |
 
 **Why manual.** A dispatch spends **real gateway calls against a real budget/rate limit** —
 about a dozen per run, plus one more with `voice=true`. That is the whole reason these steps
@@ -247,6 +248,16 @@ are `workflow_dispatch` only and not part of the PR gate: CI should not bill the
 every push. (The same `if:` also makes the fork-safety explicit — GitHub withholds secrets
 from fork PRs, so a fork can never reach these steps.) Run one before promoting `dev → main`,
 or whenever a change touches the prompt, the content modules, or the voice path.
+
+**The join.** The hermetic smoke above is real at every layer *except* the brain
+(`MOXIE_APP=echo`, reply `You said: hello Moxie`), and `test_live_gateway.py` is a real brain
+with no broker — "minus the broker", says its own docstring. `sim/run_smoke.sh --live-brain`
+is the one invocation that runs both halves together, and `virtual_moxie --reject-echo` is what
+makes it a claim about the AI seam rather than about the five layers around it: the run **fails**
+if the reply is the echo app's own answer, which is what a silent fallback to `echo` would
+produce while passing every other assertion. `MOXIE_SMOKE_APP=llm|content` picks the brain;
+with no key the harness **skips with status 0** and says so, so it is safe to type anywhere —
+and for exactly that reason the deep tier's step fails on its own `SKIPPED` line.
 
 **What it proves.** That the gateway answers; that the shipped prompt still makes the model
 emit `<exit>` / `<launch:…>` action tags at the asserted *rate* (the check that caught a 0/5
@@ -274,6 +285,12 @@ one for `~/.cache/huggingface`, since faster-whisper downloads `base.en` itself)
 # one-shot local proof (broker + supervisor + virtual robot):
 bash sim/run_smoke.sh
 # → ✅ SIL round-trip OK — state→config(paired)→remote-chat→reply
+
+# the same round-trip with a REAL brain instead of the echo app (needs a gateway key in
+# the environment or a git-ignored mqtt/.env; skips with status 0 and says why without one):
+bash sim/run_smoke.sh --live-brain
+# → 🧠 live brain reply: "Hello there! I'm so happy to see you. How was your morning?"
+# → ✅ SIL round-trip OK — … (🧠 live brain: the reply is not the echo app's)
 ```
 
 ---
