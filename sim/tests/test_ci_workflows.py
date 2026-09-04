@@ -29,7 +29,10 @@ absent (both venv shapes install it; the fast tier installs it too).
 """
 from __future__ import annotations
 
+import json
 import os
+import re
+import sys
 
 import pytest
 
@@ -241,19 +244,40 @@ def _node_steps(job: dict) -> list:
     return out
 
 
+def _tier_node_steps(tier: dict) -> list:
+    """(job_id, index, script) across EVERY job of the tier.
+
+    The suites used to live in one job, so `_node_steps(fast["jobs"]["sil"])` was the
+    whole tier. It is not any more: the eleven Chrome-launching suites moved to a
+    parallel `browser` job, because eleven browsers on top of ~5,000 broker-backed pytest
+    tests took `sil` from ~7–8 min to ~17 min and started reddening unrelated tests
+    through load contention. A guard that kept reading only `sil` would have quietly
+    stopped covering them — the same failure it exists to prevent.
+    """
+    out = []
+    for job_id, job in tier["jobs"].items():
+        for i, script in _node_steps(job):
+            out.append((job_id, i, script))
+    return out
+
+
 @pytest.mark.parametrize("script", STATIC_SITE_NODE_TESTS)
 def test_the_fast_tier_runs_the_static_site_honesty_tests(fast, script):
-    scripts = [s for _, s in _node_steps(fast["jobs"]["sil"])]
-    assert script in scripts, (
-        f"{script} is not run by the fast tier; the honest-indicator contract would be "
-        f"unproven on every push. Wired scripts: {scripts}")
+    wired = {s: j for j, _, s in _tier_node_steps(fast)}
+    assert script in wired, (
+        f"{script} is not run by ANY job of the fast tier; the honest-indicator contract "
+        f"would be unproven on every push. Wired scripts: {sorted(wired)}")
 
 
 def test_every_node_test_the_fast_tier_names_actually_exists(fast):
     """A rename or a typo in a `run:` line fails the job with "Cannot find module", which
-    reads as a broken runner rather than as a broken workflow. Cheap to assert here."""
-    missing = [s for _, s in _node_steps(fast["jobs"]["sil"])
-               if not os.path.exists(os.path.join(REPO, s))]
+    reads as a broken runner rather than as a broken workflow. Cheap to assert here.
+
+    It also forbids PRE-WIRING a suite that does not exist yet — tempting when a sibling
+    branch is about to add one, and a guaranteed red `dev` if that branch does not land.
+    """
+    missing = sorted({s for _, _, s in _tier_node_steps(fast)
+                      if not os.path.exists(os.path.join(REPO, s))})
     assert not missing, missing
 
 
@@ -284,7 +308,7 @@ def test_no_hermetic_edge_test_needs_a_gateway_key_or_a_cloudflare_account(fast)
     may reference a real credential or a deploy secret. A step that suddenly needed one
     would silently skip on a fork (or, worse, put a key in a workflow file).
     """
-    steps = _steps(fast["jobs"]["sil"])
+    steps = [s for job in fast["jobs"].values() for s in _steps(job)]
     for script in STATIC_SITE_NODE_TESTS:
         step = next((s for s in steps if script in (s.get("run") or "")), None)
         assert step is not None, f"{script} is not wired into the fast tier"
@@ -467,3 +491,160 @@ def test_every_live_suite_is_dispatched_by_some_tier():
         "someone's laptop: " + ", ".join(missing) + ". Add them to the deep tier's "
         "creds-only invocation, or list them in EXEMPT with a reason."
     )
+
+
+# --------------------------------------------------------------------------- #
+# The split: the browser suites are a PARALLEL job, and the gate still requires it
+# --------------------------------------------------------------------------- #
+#
+# PR #120 fixed a real defect — nine Chrome-launching suites had never executed in CI —
+# but it put them inside `sil`, which already runs ~5,000 pytest tests against a real
+# mosquitto broker. Measured consequence: the job went from ~7–8 min to ~17 min (runs at
+# 11:32:56 → 11:49:28), and UNRELATED tests began failing. PR #125 is documentation-only
+# and failed twice on two different SIL tests — `test_roster.py::…do_not_lose_each_others_
+# robots` ("the roster write was refused") and `test_schedule_sil_e2e.py::…is_pinned_and_
+# says_so` (`AssertionError: []`) — both of which pass locally, 3/3 and 2/2, in under a
+# second. A docs-only change cannot break either; that is load contention on one runner.
+#
+# The suites therefore run in their own job. These guards hold the two properties that
+# make the split real rather than cosmetic: it must actually be PARALLEL, and the merge
+# gate must still be able to go red because of it.
+
+GATE = os.path.join(REPO, "scripts", "pr-green.sh")
+
+
+def _gate_source() -> str:
+    with open(GATE) as fh:
+        return fh.read()
+
+
+def _required_jobs() -> list:
+    """The `REQUIRED_JOBS=` line of the gate, parsed."""
+    m = re.search(r'^REQUIRED_JOBS="([^"]*)"', _gate_source(), re.M)
+    assert m, "scripts/pr-green.sh no longer declares REQUIRED_JOBS (update this guard)"
+    return [s for s in m.group(1).split(",") if s]
+
+
+def _gate_decision_script(tmp_path) -> str:
+    """The gate's REAL decision block, lifted out of its heredoc so it can be executed.
+
+    Restating the logic here would prove nothing about the script anybody actually runs —
+    that is the whole lesson of a guard that reads a file instead of the wire.
+    """
+    src = _gate_source()
+    body = re.search(r"<<'PY'\n(.*?)\nPY\n", src, re.S)
+    assert body, "cannot find the gate's python block (update this guard)"
+    p = os.path.join(str(tmp_path), "gate_decision.py")
+    with open(p, "w") as fh:
+        fh.write(body.group(1))
+    return p
+
+
+def test_the_browser_suites_run_in_their_own_job_in_parallel(fast):
+    """No `needs:` — the split only buys wall-clock if the job starts when `sil` does."""
+    jobs = fast["jobs"]
+    browser = jobs.get("browser")
+    assert browser is not None, "the fast tier has no `browser` job any more"
+    for job_id, job in jobs.items():
+        assert "needs" not in job, (
+            f"job `{job_id}` declares `needs: {job.get('needs')}` — the fast tier's three "
+            f"jobs are deliberately independent, so the tier costs max(), not sum()")
+
+
+def test_no_job_runs_both_the_broker_suite_and_a_browser_suite(fast):
+    """The regression this split exists to prevent, stated as an invariant.
+
+    Re-adding one `node sim/test_csp.mjs` to `sil` would silently restore the contention
+    (and the ~9 extra minutes) without anyone editing a comment.
+    """
+    browser_suites = {
+        p for p in os.listdir(os.path.join(REPO, "sim"))
+        if p.startswith("test_") and p.endswith(".mjs")
+        and any(k in open(os.path.join(REPO, "sim", p), encoding="utf-8").read()
+                for k in ("loadPuppeteer", "requireBrowser"))
+    }
+    assert browser_suites, "found no browser suites — has the harness API been renamed?"
+    for job_id, job in fast["jobs"].items():
+        runs = "\n".join(s.get("run") or "" for s in _steps(job))
+        heavy = "pytest sim/tests" in runs or "run_smoke.sh" in runs
+        here = sorted(s for _, s in _node_steps(job)
+                      if os.path.basename(s) in browser_suites)
+        assert not (heavy and here), (
+            f"job `{job_id}` runs the broker-backed suite AND browser suites {here}. "
+            f"That is the shape that took the SIL job to ~17 minutes and started "
+            f"reddening documentation-only PRs; keep the browsers in their own job.")
+
+
+def test_the_merge_gate_requires_every_job_in_the_fast_tier(fast):
+    """A job the gate does not require is a suite that cannot redden the gate — the
+    original bug wearing a new hat. So the list is checked in BOTH directions: no job
+    unnamed, and no name that matches no job (a stale entry would look like coverage)."""
+    names = {job_id: job["name"] for job_id, job in fast["jobs"].items()}
+    required = _required_jobs()
+    unrequired = sorted(f"{jid} ({n})" for jid, n in names.items()
+                        if not any(req in n for req in required))
+    assert not unrequired, (
+        "these fast-tier jobs are in no REQUIRED_JOBS entry of scripts/pr-green.sh, so a "
+        "PR could merge while they were absent from the rollup: " + ", ".join(unrequired))
+    dead = [req for req in required if not any(req in n for n in names.values())]
+    assert not dead, (
+        f"scripts/pr-green.sh requires {dead}, which matches no job in sim/ci/ci.yml — "
+        "either the job was renamed (fix the gate) or the entry is stale (delete it)")
+
+
+def test_the_gate_actually_goes_RED_when_the_browser_job_is_missing_or_failing(fast, tmp_path):
+    """Teeth, run against the gate's own decision code rather than a restatement of it.
+
+    Four rollups, one property each: a complete green rollup passes; the same rollup with
+    the browser job absent fails (the case `MIN` alone would have missed, since two of the
+    three remaining checks still met the old default); the browser job still running fails;
+    and the browser job red fails. If any of those passed, the split would have handed the
+    repo a job whose result nobody has to wait for.
+    """
+    import subprocess
+
+    script = _gate_decision_script(tmp_path)
+    names = [job["name"] for job in fast["jobs"].values()]
+    assert len(names) >= 3, names
+    browser = next(n for n in names if "Browser" in n)
+
+    def rollup(**over):
+        out = []
+        for n in names:
+            r = {"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"}
+            r.update(over.get(n, {}))
+            out.append(r)
+        return [r for r in out if r.get("conclusion") != "__ABSENT__"]
+
+    def run(rs, need="3"):
+        return subprocess.run(
+            [sys.executable, script, json.dumps(rs), need, ",".join(_required_jobs())],
+            capture_output=True, text=True)
+
+    green = run(rollup())
+    assert green.returncode == 0, green.stdout + green.stderr
+
+    # MISSING, twice. With the default floor the count clause happens to catch it, which
+    # is luck rather than design — three jobs minus one is two, and the floor is three. So
+    # the second call sets the floor to 1, isolating the by-NAME clause: that is the one
+    # that has to carry the weight, because the floor stops helping the moment the tier
+    # gains a fourth check (a Pages preview deploy already adds one on some PRs).
+    absent = run(rollup(**{browser: {"conclusion": "__ABSENT__"}}))
+    assert absent.returncode != 0, (
+        "the gate passed a rollup with the browser job MISSING — a suite that cannot "
+        "redden the gate is exactly the bug this split had to avoid:\n" + absent.stdout)
+
+    absent_no_floor = run(rollup(**{browser: {"conclusion": "__ABSENT__"}}), need="1")
+    assert absent_no_floor.returncode != 0, (
+        "with the count floor lowered, the gate passed a rollup that never listed the "
+        "browser job at all — the by-name requirement is doing nothing:\n"
+        + absent_no_floor.stdout)
+    assert "Browser" in absent_no_floor.stdout, absent_no_floor.stdout
+
+    running = run(rollup(**{browser: {"status": "IN_PROGRESS", "conclusion": None}}))
+    assert running.returncode != 0, (
+        "the gate passed while the browser job was still running:\n" + running.stdout)
+
+    red = run(rollup(**{browser: {"conclusion": "FAILURE"}}))
+    assert red.returncode != 0, (
+        "the gate passed with the browser job RED:\n" + red.stdout)
