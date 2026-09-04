@@ -184,8 +184,11 @@
     if (tts) {
       ttsHint("piper tts &middot; connected", false);
       // A reachable sidecar: everything in this panel is exactly as it has always been.
+      // Written explicitly rather than left alone so the branch is SYMMETRIC — no mark, no
+      // `disabled` and no tooltip from the other branch can survive into this one.
       needsBackend($("tts-test"), "Speaks a test line through the local Piper TTS server.", false);
       needsBackend($("tts-base"), "The local Piper TTS server this page is using.", false);
+      needsBackend($("speech-btn"), "Speaks this line through the local Piper TTS server.", false);
     }
     else {
       // The buttons really do need the local Piper server, cloud voice or not — and they
@@ -198,10 +201,11 @@
        * is impossible without a sidecar, but the box beside it is the most obvious "talk
        * to Moxie" affordance on the page — so hand it the typed turn rather than leaving
        * a dead button that silently 'fails' into a CSP error. See
-       * `cloud-transport.js::adoptSpeechControl`. THE MODE DECIDES: `ttsProbed` is the
-       * sidecar answer, not a hostname test, and the turn itself is routed by
-       * `mode.js` inside the transport. If the transport is absent (a fork that removed
-       * it), the button genuinely cannot do anything and is disabled instead. */
+       * `cloud-transport.js::adoptSpeechControl`. WHAT DECIDES: being in this branch at
+       * all means the sidecar probe came back with no Piper, and `ttsProbed` means it has
+       * actually come back — never a hostname test. Where the turn then GOES is `mode.js`'s
+       * answer, inside the transport. If the transport is absent (a fork that removed it),
+       * the button genuinely cannot do anything and is disabled instead. */
       var took = ttsProbed && typedTurn() && typedTurn().adopt(true);
       if (took)
         needsBackend($("speech-btn"),
