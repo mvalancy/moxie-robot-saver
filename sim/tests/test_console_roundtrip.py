@@ -406,6 +406,7 @@ class FakeSupervisor:
         self.permit_posts: list = []
         self.config_posts: list = []
         self.telemetry_queries: list = []
+        self.telemetry_erases: list = []
         self.safety_queries: list = []
         self.memory_queries: list = []
         self.memory_erases: list = []
@@ -542,9 +543,25 @@ class FakeSupervisor:
                 self.end_headers()
 
             def do_DELETE(self):
-                """`DELETE /memory?device_id=…[&namespace=…[&item=…]]` — the parent's
-                erase, finest cut first: one item, one activity, or everything."""
+                """The parent's two erases.
+
+                `DELETE /memory?device_id=…[&namespace=…[&item=…]]` — what Moxie
+                *remembers*, finest cut first: one item, one activity, or everything.
+
+                `DELETE /telemetry?device_id=…` — what Moxie *recorded*: the packet ring,
+                the daily roll-up and the mentor-behavior log, through the REAL
+                `erase_telemetry`, so the console's proxy is tested against the verb that
+                actually deletes rather than against a double that returns `{"ok":true}`.
+                """
                 u = urlparse(self.path)
+                if u.path == "/telemetry":
+                    device_id = (parse_qs(u.query).get("device_id") or [""])[0]
+                    outer.telemetry_erases.append(device_id)
+                    if not device_id:
+                        return self._out({"ok": False,
+                                          "error": "device_id is required"}, 400)
+                    out = outer.runtime.erase_telemetry(device_id)
+                    return self._out(out, 200 if out.get("ok") else 404)
                 if u.path != "/memory":
                     self.send_response(404)
                     self.end_headers()
@@ -1012,6 +1029,54 @@ def test_telemetry_for_an_unknown_device_is_a_404(client):
     t = r.json()
     assert t["ok"] is False and t["by_event"] == [] and t["events"] == []
     assert t["error"]
+
+
+# --------------------------------------------------------------------------- #
+# DELETE /local/robots/{id}/telemetry — 🧽 the Erase history button
+# --------------------------------------------------------------------------- #
+# The privacy contract's *"reads and erase always work"* had no telemetry half at all
+# until 2026-09-04: the supervisor's `do_DELETE` accepted only `/memory`, so a parent
+# could turn recording off and still be left with every packet already on disk. These two
+# drive the console's proxy against the REAL `erase_telemetry`, and assert on the
+# supervisor's own store afterwards — a 200 is not evidence that anything was deleted.
+
+def _seed_activity(rt):
+    """Three real activity records on the fake supervisor's runtime: a packet (which
+    writes the ring AND the day roll-up) and a finished mission."""
+    from moxie_sdk import telemetry as T
+    rt.ingest_telemetry(DEVICE, json.dumps(
+        T.build_packet("wake", b"", moxie_id=DEVICE, recorded_at=1756800000)))
+    rt._on_activity(DEVICE, json.dumps(
+        {"timestamp": 1756800000,
+         "mentor_behavior": {"module_id": "MODULE_MISSION", "action": "COMPLETED"}}))
+    return [T.PACKETS_COLLECTION, T.DAILY_COLLECTION, "mentor_behaviors"]
+
+
+def test_erasing_telemetry_from_the_console_really_empties_the_store(client, supervisor):
+    rt, collections = supervisor.runtime, _seed_activity(supervisor.runtime)
+    assert all(rt.store.read(DEVICE, c, None) is not None for c in collections)
+
+    r = client.delete(f"/local/robots/{DEVICE}/telemetry")
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["ok"] is True and out["erased"] is True
+    assert out["records"] == sorted(collections)
+    assert supervisor.telemetry_erases[-1] == DEVICE
+    # the assertion that matters: the supervisor's store, read back
+    assert all(rt.store.read(DEVICE, c, None) is None for c in collections)
+    assert rt.mentor_behaviors(DEVICE) == []
+
+
+def test_erasing_telemetry_is_graceful_when_the_supervisor_is_down(client, monkeypatch):
+    """503 with the console's own shape and `erased:false` — never a 500, and never a
+    claim that something was deleted by a call that never arrived."""
+    import moxie_server.main as M
+    monkeypatch.setattr(M, "STATUS_URL", "http://127.0.0.1:1/status")
+    r = client.delete(f"/local/robots/{DEVICE}/telemetry")
+    assert r.status_code == 503, r.text
+    out = r.json()
+    assert out["ok"] is False and out["erased"] is False and out["records"] == []
+    assert out["error"]
 
 
 # --------------------------------------------------------------------------- #

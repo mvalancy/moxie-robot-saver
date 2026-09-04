@@ -692,6 +692,41 @@ def robot_telemetry(device_id: str, limit: int = 20, days: int = 7):
              "detail": str(e)}))
 
 
+@app.delete("/local/robots/{device_id}/telemetry")
+def forget_telemetry(device_id: str):
+    """Erase the robot's stored activity history — the packet ring, the daily roll-up and
+    the mentor-behavior log — through the supervisor's `DELETE /telemetry`.
+
+    The counterpart of the 🧠 memory erase, and the button the privacy contract's *"erase
+    always works"* was missing for telemetry: until it existed a parent could turn
+    recording off but not take back what had already been recorded. Never policy-gated.
+    `erased` says whether anything was actually there; `records` names what went."""
+    import urllib.request, urllib.error
+    from urllib.parse import quote
+    from .fleet import normalize_telemetry
+    url = (STATUS_URL.rsplit("/status", 1)[0] +
+           f"/telemetry?device_id={quote(device_id)}")
+    try:
+        req = urllib.request.Request(url, method="DELETE")
+        with urllib.request.urlopen(req, timeout=3) as r:
+            raw = json.loads(r.read().decode())
+        out = normalize_telemetry(raw)
+        out["erased"] = bool(raw.get("erased"))
+        out["records"] = list(raw.get("records") or [])
+        return out
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode() or "{}")
+        out = normalize_telemetry(body)
+        out["erased"], out["records"] = False, []
+        return JSONResponse(status_code=e.code, content=out)
+    except Exception as e:
+        out = normalize_telemetry({"ok": False, "device_id": device_id,
+                                   "error": "supervisor not reachable",
+                                   "detail": str(e)})
+        out["erased"], out["records"] = False, []
+        return JSONResponse(status_code=503, content=out)
+
+
 @app.get("/local/connection")
 def appliance_connection(limit: int = 30):
     """🔌 The appliance's own broker connection: the live state beside the durable history

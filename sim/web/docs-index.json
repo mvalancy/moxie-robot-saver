@@ -1,5 +1,5 @@
 {
- "generated": "docs-d79ba63e73b4",
+ "generated": "docs-491d562ffc2b",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 211970,
+   "bytes": 216330,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -238,7 +238,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 31846,
+   "bytes": 35954,
    "mermaid": 1,
    "headings": [
     "The loop",
