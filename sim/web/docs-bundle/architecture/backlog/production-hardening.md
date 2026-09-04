@@ -591,6 +591,34 @@ Every row landed, plus one the plan did not anticipate — a **defect class**, n
 | 4 | The **connection telemetry stream** (16th collection, `fleet/conn_events.json`) — seven kinds, gap durations, `waited_s` on a lock timeout — on `GET /conn`, `/status`'s `connection_health`, and a strip on the console's 📈 card | `mqtt/moxie_sdk/conn_telemetry.py`, `server/moxie_server/fleet.py`, `server/static/app.js` |
 | 5 | The **SIGTERM/SIGINT handler** → `request_stop()` → `disconnect()` | `moxie_runtime.py::_install_signal_handlers` |
 
+#### What `MOXIE_STORE_LOCK_TIMEOUT_S = 2.0` can and cannot carry — measured, on purpose
+
+The soak's contention probe runs *N* processes against **one** record and reports the identity
+`attempted == on_disk + refused`, so a **recorded refusal** (§3.2 point 4 accepts it; A11 asks it to be
+recorded) is never confused with a **silent loss** (A5 forbids it). Measured 2026-09-03 at the default
+2.0 s budget:
+
+| Condition | Refused | Lost |
+|---|--:|--:|
+| 4 × 250, idle box | **0** of 1 000 | 0 |
+| 4 × 250, 12 CPU burners on 24 cores | **1** of 1 000 | 0 |
+| 4 × 250, inside a live 5-minute soak | **2** of 1 000 | 0 |
+| 8 × 250 | **2** of 2 000 (0.10 %) | 0 |
+| 4 × 1 000 | **1** of 4 000 (0.03 %) | 0 |
+| 16 × 100 | **7** of 1 600 (0.44 %) | 0 |
+
+**The handed-down measurement — 811 of 1 000 surviving at 2.0 s — did not reproduce here**, and the
+divergence is the finding rather than a discrepancy to explain away: the refusal rate is
+**load-dependent, not only contention-dependent**. So *"the default carries 4 × 250"* is not a portable
+claim, which is why the harness reports a **rate** and asserts an **identity** instead of a count.
+
+Stated honestly, then: at household rates the default carries everything; at these deliberately abusive
+rates it carries ≥ 99.5 %, and **every** shortfall was a recorded refusal, never a lost write. What it
+cannot carry is a promise — `flock` has no queue, so the tail is geometric and more budget buys more
+polls, never certainty. **A13 is therefore still unsettled by this**: what a *real appliance* does over a
+week is a different distribution, and P1 built the instrument (`lock_timeout` rows with `waited_s`) rather
+than the answer.
+
 One more thing P1 found, and it is the sharpest argument in this brief for *"a test for every fix, proven
 in both directions"*: **A25**, an `OverflowError` in P0's own lock backoff that fires for **any**
 `MOXIE_STORE_LOCK_TIMEOUT_S` above ~2.05 s — which the A13 guard invites. It arrived as a reported *"flake"*

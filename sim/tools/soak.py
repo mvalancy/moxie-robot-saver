@@ -36,12 +36,36 @@ Real mosquitto (a container), a real `mqtt/run.py`, real virtual robots on a rea
 The contention measurement, and why it is deliberate
 ----------------------------------------------------
 A measurement handed to this slice, 4 processes × 250 appends contending on **one**
-record: **811 of 1 000 survived at the default 2.0 s timeout**, 999 of 1 000 at 30 s. So
-the disclosed limit is real — `flock` has no queue, a `LOCK_NB` waiter takes whatever gap
-the holder leaves, and a starved waiter times out (A21).
+record: **811 of 1 000 survived at the default 2.0 s timeout**, 999 of 1 000 at 30 s.
+`flock` has no queue — a `LOCK_NB` waiter takes whatever gap the holder leaves — so a
+starved waiter timing out is a real, disclosed limit (A21).
 
-This harness therefore **measures that on purpose rather than discovering it**, and adds
-the one check that turns the number into a verdict:
+**This harness did not reproduce those numbers, and the divergence is itself the finding.**
+Measured here, same 4 × 250 shape on one record at the default 2.0 s budget:
+
+    idle box                    0 refused of 1 000
+    12 CPU burners (24 cores)   1 refused of 1 000
+    inside a live 5-min soak    2 refused of 1 000
+    8 × 250                     2 refused of 2 000    (0.10 %)
+    4 × 1 000                   1 refused of 4 000    (0.03 %)
+    16 × 100                    7 refused of 1 600    (0.44 %)
+
+So the refusal rate is **load-dependent, not only contention-dependent**, which is why
+"the default carries 4 × 250" is not a portable claim and this harness reports a rate
+instead of asserting a count. What the default can carry, stated honestly: at household
+rates, everything; at these deliberately abusive rates, ~99.6 % or better, with every
+refusal **recorded**. What it cannot carry is a promise, because `flock` has no queue and
+the tail is geometric — more budget buys more polls, never certainty.
+
+**And the handed-down "one append still failed at 30 s" turned out not to be starvation
+at all.** Chasing it found an `OverflowError` in the backoff: `2 ** attempt` is an
+arbitrary-precision int, the loop runs ≈ `timeout / cap` times, and at attempt 1024 the
+product overflows a float and crashes the *writer* — reachable at any budget above ~2.05 s
+and hidden at the default by 24 polls. Fixed in `store.py` (A25); see
+`sim/tests/test_store_concurrency.py::test_t11_*`.
+
+This harness therefore **measures contention on purpose rather than discovering it**, and
+adds the one check that turns the number into a verdict:
 
     attempted  ==  items_on_disk  +  refusals
 

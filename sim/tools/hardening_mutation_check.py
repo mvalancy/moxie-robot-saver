@@ -47,9 +47,13 @@ MUTATIONS = [
      "            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)",
      "            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)",
      STORE_TESTS, "t1_two_processes"),
+    # Anchor updated 2026-09-03: P1 moved `append`'s body into `_append_path` so the fleet
+    # tier could share it (`append_shared`), and added the write's return-code check the
+    # original never had. The mutation is the same one — do the read-modify-write with no
+    # lock around it.
     ("T1  append reads and writes outside the transaction", STORE,
-     "            with self.transaction(device_id, collection):\n                items = self.read(device_id, collection, [])",
-     "            with contextlib.nullcontext():\n                items = self.read(device_id, collection, [])",
+     "            with self._transaction_path(path):\n                items = self._read_path(path, [])",
+     "            with contextlib.nullcontext():\n                items = self._read_path(path, [])",
      STORE_TESTS, "t1_two_processes"),
     # T1b's job is *"if this ever passes, the harness is not racing"*, so the mutation
     # that proves it has teeth is one that stops the harness racing — not one that adds a
@@ -159,9 +163,14 @@ MUTATIONS = [
     ("S4b drop the connection fields from /status", RT,
      '                "broker_connected": self.broker_connected,',
      '                "broker_connected": True,', CONN_TESTS, "s4b"),
+    # Anchor updated 2026-09-03: the `if device_id not in self.robots:` guard is gone —
+    # `_device_connect` is idempotent per broker connection now (it has to be, or a robot
+    # returning after a broker restart is never re-onboarded), so `_on_event` calls it
+    # unconditionally. Deleting the call is still exactly C6 undone.
     ("S7  _on_event goes back to an ephemeral RobotContext (C6 undone)", RT,
-     "        if device_id not in self.robots:\n            self._device_connect(device_id)",
-     "        if False:\n            self._device_connect(device_id)", CONN_TESTS, "s7"),
+     "        self._device_connect(device_id)\n        robot = self.robots.get(device_id) or RobotContext(device_id=device_id, child=self.child)",
+     "        robot = self.robots.get(device_id) or RobotContext(device_id=device_id, child=self.child)",
+     CONN_TESTS, "s7"),
     ("S2b keepalive back to a literal nobody chose", RT,
      "KEEPALIVE_S = 30", "KEEPALIVE_S = 60", CONN_TESTS, "s2b"),
 ]
@@ -186,7 +195,14 @@ def main() -> int:
                      "MOXIE_LLM_BASE_URL": "", "MOXIE_VOICE_BASE_URL": "",
                      "MOXIE_STT_BASE_URL": "",
                      "HOME": str(pathlib.Path.home()), "PYTHONDONTWRITEBYTECODE": "1"})
-            if r.returncode == 0:
+            # Ported back from `hardening_p1_mutation_check.py` (2026-09-03): a `-k`
+            # selector that matched nothing exits 0 and would read as "caught" forever.
+            # Three of this table's anchors had gone stale against P1's refactors, which
+            # is the same rot one step earlier.
+            if "no tests ran" in r.stdout or " 0 passed" in r.stdout.replace("selected", ""):
+                print(f"  NO-OP       {name}  (selector {sel!r} matched no test)")
+                noop += 1
+            elif r.returncode == 0:
                 print(f"  NOT CAUGHT  {name}")
                 missed += 1
             else:
