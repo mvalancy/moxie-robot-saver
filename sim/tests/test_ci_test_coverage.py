@@ -53,16 +53,6 @@ KNOWN_UNRUN = {
     "sim/test_presence_bridge.mjs":
         "2026-09-02: same fire — the browser SIM's vision-event bridge (6 events, the "
         "greeting record, badge + toggle). Passes locally, run by nobody.",
-    "sim/test_ambient_guard.mjs":
-        "2026-09-04: written UNWIRED on purpose. It guards the fix for ambient self-talk "
-        "cutting off a live gateway answer (sim/web/ambient.js + audio.js). A concurrent "
-        "pass is rewriting sim/ci/ci.yml, .github/workflows/ci.yml, sim/browser_harness.mjs "
-        "and all nine existing browser suites — it is auditing them for hidden dependence "
-        "on local machine state, after the finding that nine suites had never actually run "
-        "in CI. Editing the tier here would collide with that work and fight the "
-        "template/installed parity guard. 29 checks, verified green four consecutive runs "
-        "locally: PUPPETEER_PATH=… node sim/test_ambient_guard.mjs. Wire it into the deep "
-        "tier (it needs a browser, ~90 s) as soon as that pass lands.",
     "sim/run_acl_proof.sh":
         "2026-09-02 (found by this guard): the broker ACL proof from PR #44 — 18 checks "
         "against a real eclipse-mosquitto:2.0.20, the only thing that holds the pattern "
