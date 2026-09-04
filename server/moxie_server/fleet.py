@@ -253,6 +253,102 @@ def normalize_telemetry(payload: Optional[dict]) -> dict:
     }
 
 
+# --- 🔌 the broker connection's durable history (production hardening P1) ------------
+# The supervisor's `GET /conn`, normalized for the 📈 card's connection strip.
+#
+# The card already showed a robot's *telemetry*. What it could not show is the appliance's
+# own connection, because until P1 there was nothing to show: six live scalars in the
+# supervisor's RAM, erased by the restart that is usually the interesting event. These
+# rows are the history behind them, so a parent whose Moxie "went quiet last Tuesday" has
+# something to look at other than a green dot that is green again now.
+
+#: One human sentence per row kind. The card renders these rather than the raw `kind`,
+#: because the audience is a parent, and `connect_fail` is jargon for "we could not reach
+#: the broker". Keyed by the seam's own constants (`moxie_sdk/conn_telemetry.py`).
+CONNECTION_LABELS = {
+    "connect": "Connected to the broker",
+    "disconnect": "Lost the broker connection",
+    "connect_fail": "Could not reach the broker",
+    "refused": "The broker refused the connection",
+    "publish_drop": "A message was dropped",
+    "lock_timeout": "A save was refused (another process held the file)",
+    "shutdown": "Stopped cleanly",
+}
+
+#: The verdict sentence for `health.state`. Three states and no fourth — see
+#: `conn_telemetry.health`, and note that "recovered" is deliberately not "healthy": an
+#: appliance that dropped nine times this hour and happens to be up is not the same thing
+#: as one that never dropped, and a card that called both "healthy" would be the
+#: comfortable lie this whole slice exists to remove.
+CONNECTION_STATES = {
+    "steady": "Connected, with nothing to report",
+    "recovered": "Connected now — but it has not been the whole time",
+    "down": "Not connected to the broker",
+}
+
+
+def normalize_connection_event(e: Optional[dict]) -> dict:
+    """One connection row → the card's shape. Tolerates a row from a newer runtime."""
+    e = e if isinstance(e, dict) else {}
+    kind = str(e.get("kind") or "unknown")
+    row = {"kind": kind,
+           "label": CONNECTION_LABELS.get(kind, kind.replace("_", " ")),
+           "at": int(_num(e.get("at")) or 0),
+           "reason": str(e.get("reason") or ""),
+           "device_id": str(e.get("device_id") or "")}
+    # Present only when the row's kind means them — the absent-key contract the seam
+    # builds rows with, carried through rather than flattened into zeros a card would
+    # render as "0s outage" and "waited 0s".
+    if e.get("gap_s") is not None:
+        row["gap_s"] = float(_num(e.get("gap_s")) or 0.0)
+    if e.get("waited_s") is not None:
+        row["waited_s"] = float(_num(e.get("waited_s")) or 0.0)
+    return row
+
+
+def normalize_connection(payload: Optional[dict]) -> dict:
+    """Runtime `GET /conn` → the console's connection view.
+
+    Same tolerance contract as `normalize_telemetry`: a None/error body (supervisor down)
+    is `ok:false` plus an empty view, never an exception and never an empty history
+    rendered as if the appliance had been quiet.
+    """
+    p = payload if isinstance(payload, dict) else {}
+    ok = bool(p.get("ok"))
+    summary = p.get("summary") if isinstance(p.get("summary"), dict) else {}
+    health = p.get("health") if isinstance(p.get("health"), dict) else {}
+    gaps = summary.get("gaps") if isinstance(summary.get("gaps"), dict) else {}
+    retention = p.get("retention") if isinstance(p.get("retention"), dict) else {}
+    roster = p.get("roster") if isinstance(p.get("roster"), dict) else {}
+    state = str(health.get("state") or ("steady" if ok else ""))
+    return {
+        "ok": ok,
+        # The live half — what is true now.
+        "connected": bool(p.get("connected")) if ok else False,
+        "state": state if ok else "",
+        "verdict": CONNECTION_STATES.get(state, "") if ok else "",
+        "last_error": str(p.get("last_error") or "") if ok else "",
+        "uptime_s": int(_num(p.get("uptime_s")) or 0) if ok else 0,
+        # The recorded half — what has happened.
+        "count": int(_num(summary.get("count")) or 0) if ok else 0,
+        "outages": int(_num(health.get("outages")) or 0) if ok else 0,
+        "refusals": int(_num(health.get("refusals")) or 0) if ok else 0,
+        "drops": int(_num(health.get("drops")) or 0) if ok else 0,
+        "lock_timeouts": int(_num(health.get("lock_timeouts")) or 0) if ok else 0,
+        "gaps": {"count": int(_num(gaps.get("count")) or 0),
+                 "total_s": float(_num(gaps.get("total_s")) or 0.0),
+                 "max_s": float(_num(gaps.get("max_s")) or 0.0),
+                 "p95_s": float(_num(gaps.get("p95_s")) or 0.0)},
+        "events": [normalize_connection_event(e) for e in (p.get("events") or [])] if ok else [],
+        "retention": {"events": int(_num(retention.get("events")) or 0)},
+        # How many robots this appliance has ever served — the roster, beside the
+        # connection, because "it is connected and knows about three robots" and "it is
+        # connected and knows about none" are very different states to be in.
+        "roster": {"known": int(_num(roster.get("known")) or 0)},
+        "error": None if ok else (p.get("error") or "supervisor not reachable"),
+    }
+
+
 # --- console actions: which buttons are real -----------------------------------------
 # Three parent-console endpoints used to report success for things they never did:
 # `POST robots/{id}/wakeup` and `POST robots/{id}/reboot` both published nothing and

@@ -462,9 +462,19 @@ reaches a gateway and the soak costs nothing.
 | **A10** | Unhandled exceptions or tracebacks in the supervisor log | **0** |
 | **A11** | Store writes that failed on lock timeout | **0** at these rates — and if non-zero, each one **recorded**, which is the property that actually matters |
 
+| **A12** | Every robot `/status` lists is **re-onboarded** after a broker restart — no ghost left half-connected | **100 %**, and **0 ghosts** |
+
 A2, A8 and A11 are the three that would have been left out of a spec written in a hurry, and they are the
 three that catch the bugs this brief exists to prevent: a silent loss, a leaked descriptor, a swallowed
 failure.
+
+**A12 is new, added 2026-09-03 by P1, and it was not written from a spec — it was written from a bug.**
+`sim/run_broker_outage.sh` phase 5c found (4/4 runs) that a robot returning after a broker restart was
+never re-onboarded; the eleven bars above all passed while it happened, because every one of them is about
+the *appliance* and none of them asks whether the **robot** got anything. It is measured against a live
+stack rather than in a unit test, and it fails on the faithful regression: with `_device_connect`'s old
+early-return restored, the `smoke` profile reports **`0/1 restarts re-onboarded every robot · STILL
+GHOSTS: [d_…]`** and the soak exits non-zero.
 
 ### 5.4 What the soak cannot prove — read this before quoting any number above
 
@@ -478,6 +488,16 @@ It proves **our** half. It cannot prove, and must never be described as proving:
 - anything at all about a week. It is an hour, at a raised rate, against a simulator. **A real Moxie on
   our broker for an hour would settle more of this page than a week of building** — the audit's sentence,
   and it is as true here as anywhere.
+
+**And now that the soak exists, one more sentence it needs.** *"A week in an hour"* is a **rate
+substitution**, and P1's own experience is the argument for saying so out loud: the store contention the
+harness measures is **load-dependent, not only contention-dependent**, and the same 4 × 250 configuration
+produced 0 refusals on an idle box, 2 under a live soak, and (in a measurement handed to this slice) 189
+on a busier one. A rate can stand in for a duration only for the failures that scale with *events*. It
+cannot stand in for the ones that scale with *time* — a slow leak, a clock rolling over, a certificate
+expiring, a log filling a disk — and this harness does not look for any of those. **A12 exists because a
+whole class of defect sat underneath eleven green bars**, and there is no reason to think it was the last
+one.
 
 ---
 
@@ -522,7 +542,10 @@ Hermetic first. Every one runs with no network, no broker and no sleeping.
    today's, `.lock` sidecars aside.
 6. The image gains **no dependency** and the Dockerfile is unchanged.
 7. `sim/run_soak.sh --profile week` exists, runs on a laptop, and reports every §5.3 number — pass or
-   fail, printed, not inferred.
+   fail, printed, not inferred. ✅ **shipped 2026-09-03**; `quick` and `smoke` profiles exist for a
+   laptop and a pre-push check, because a soak nobody can run is a soak nobody runs (R5).
+9. A robot that comes back after a broker restart is **re-onboarded** — config pushed, `app.on_connect`
+   fired — and one that does not come back is **labelled**, never silently listed as present (A12, A22).
 8. This page's §9 ledger is updated in the same PR that ships each phase, and the audit's §4.4 row 3
    status is flipped there too (the backlog README's house rule).
 
@@ -556,15 +579,95 @@ connection telemetry stream, no SIGTERM handler, and no console change.
 Deliberately **not** in P0: the soak harness, the durable roster, connection telemetry, the SIGTERM
 handler, any console change, and every word about SQLite.
 
-### P1 — **M**
+### P1 — **M** — ✅ **shipped 2026-09-03**
 
-`sim/run_soak.sh` + the `week` profile + the nightly deep-tier job (K1) · a **durable robot roster** (a
-15th collection) so a restart re-pushes config to every robot it has *ever* seen rather than waiting for
-an event · a **connection telemetry stream** (connects, disconnects, CONNACK reason codes, gap durations,
-dropped publishes) on the existing `JsonStore` telemetry shape, surfaced as rows on the console's 📈 card
-· a **SIGTERM handler** that calls `disconnect()` so the broker logs a clean close instead of a 45 s
-keepalive timeout (which is also what makes `_device_disconnect`'s regex fire promptly) · `MOXIE_STORE_LOCK_TIMEOUT_S`
-retuned from a week of real `ext_events`-style data rather than from this brief's guess (A13).
+Every row landed, plus one the plan did not anticipate — a **defect class**, not a feature (below).
+
+| # | What | Where |
+|--:|---|---|
+| 1 | `sim/run_soak.sh` + `sim/tools/soak.py`, three profiles (`smoke` ~1 min · `quick` ~5 min · `week` 60 min = §5.2's table) computing **every §5.3 bar**, plus **A12** (new, below) | `sim/run_soak.sh`, `sim/tools/soak.py` |
+| 2 | The nightly deep-tier job (K1) — `week` on a 03:17 UTC cron, `quick` on a promotion PR, **never the fast tier** (R5) | `sim/ci/ci-deep.yml` |
+| 3 | The **durable robot roster** (15th collection, `fleet/roster.json`) + `resume_roster()` on every successful CONNACK | `mqtt/moxie_sdk/roster.py` |
+| 4 | The **connection telemetry stream** (16th collection, `fleet/conn_events.json`) — seven kinds, gap durations, `waited_s` on a lock timeout — on `GET /conn`, `/status`'s `connection_health`, and a strip on the console's 📈 card | `mqtt/moxie_sdk/conn_telemetry.py`, `server/moxie_server/fleet.py`, `server/static/app.js` |
+| 5 | The **SIGTERM/SIGINT handler** → `request_stop()` → `disconnect()` | `moxie_runtime.py::_install_signal_handlers` |
+
+#### What `MOXIE_STORE_LOCK_TIMEOUT_S = 2.0` can and cannot carry — measured, on purpose
+
+The soak's contention probe runs *N* processes against **one** record and reports the identity
+`attempted == on_disk + refused`, so a **recorded refusal** (§3.2 point 4 accepts it; A11 asks it to be
+recorded) is never confused with a **silent loss** (A5 forbids it). Measured 2026-09-03 at the default
+2.0 s budget:
+
+| Condition | Refused | Lost |
+|---|--:|--:|
+| 4 × 250, idle box | **0** of 1 000 | 0 |
+| 4 × 250, 12 CPU burners on 24 cores | **1** of 1 000 | 0 |
+| 4 × 250, inside a live 5-minute soak | **2** of 1 000 | 0 |
+| 8 × 250 | **2** of 2 000 (0.10 %) | 0 |
+| 4 × 1 000 | **1** of 4 000 (0.03 %) | 0 |
+| 16 × 100 | **7** of 1 600 (0.44 %) | 0 |
+
+**The handed-down measurement — 811 of 1 000 surviving at 2.0 s — did not reproduce here**, and the
+divergence is the finding rather than a discrepancy to explain away: the refusal rate is
+**load-dependent, not only contention-dependent**. So *"the default carries 4 × 250"* is not a portable
+claim, which is why the harness reports a **rate** and asserts an **identity** instead of a count.
+
+Stated honestly, then: at household rates the default carries everything; at these deliberately abusive
+rates it carries ≥ 99.5 %, and **every** shortfall was a recorded refusal, never a lost write. What it
+cannot carry is a promise — `flock` has no queue, so the tail is geometric and more budget buys more
+polls, never certainty. **A13 is therefore still unsettled by this**: what a *real appliance* does over a
+week is a different distribution, and P1 built the instrument (`lock_timeout` rows with `waited_s`) rather
+than the answer.
+
+One more thing P1 found, and it is the sharpest argument in this brief for *"a test for every fix, proven
+in both directions"*: **A25**, an `OverflowError` in P0's own lock backoff that fires for **any**
+`MOXIE_STORE_LOCK_TIMEOUT_S` above ~2.05 s — which the A13 guard invites. It arrived as a reported *"flake"*
+and was not one. And the probe that found it **had the same disease it exists to detect**: a crashed writer
+was silently excluded from `attempted`, so the identity still balanced and `lost` read 0 while a writer had
+died. Ten clean-looking probe runs went past before the crash was printed rather than counted.
+
+**Not done, and it is the row that was always going to be hardest:** A13 is **unchanged**.
+`MOXIE_STORE_LOCK_TIMEOUT_S = 2.0` is still *chosen, not measured* — P1 built the instrument
+(`lock_timeout` rows carrying `waited_s`), and an instrument is not a measurement. Retuning it still needs
+a week of a real appliance, which is the same thing §0 says nobody has.
+
+#### The defect class P1 actually found
+
+Two bugs reported a day apart turned out to be **one** bug, and the generalisation is worth more than
+either fix: **a cached belief about the robot's state outliving the robot's actual state.**
+
+| | The cached belief | What made it false | What it cost |
+|---|---|---|---|
+| **The roster ghost** | `_device_connect`'s `if device_id in self.robots: return` — *"already onboarded"* | the only thing that removed a robot was `_device_disconnect`, driven by a `$SYS/broker/log` line — **which dies with the broker** (A15) | a robot returning with the same id after a broker restart got **no config push and no `app.on_connect`**, silently, for the rest of the session — while `/status` listed it as present |
+| **The vision/STT latch** | `_vision_subscribed[device] = module` — *"already subscribed"* | *"events are automatically unsubscribed when the module exits"* (RemoteModuleAPI §Unsubscribing) — a sentence the latch's **own docstring quoted** | after a module exit, a sleep/wake or an outage the robot had dropped the subscription while we still believed we held it; vision and QR events went nowhere, with nothing logged on either side |
+
+Both now clear through one method, `_forget_robot_state()`, called wherever **connection continuity to
+that robot breaks**. The lifetimes differ and the shorter is a **strict subset**: everything that breaks
+continuity clears both; the vision latch has one extra invalidator (a module exit) that says nothing about
+whether the robot is connected.
+
+**Why the roster is not simply cleared on disconnect** — the obvious fix, and wrong three ways:
+
+1. **It claims knowledge we do not have.** Our socket died; the robot's did not necessarily. *"The
+   supervisor dropped, therefore the robot is gone"* is a belief, and a `/status` that reports beliefs as
+   observations is the disease this whole brief exists to cure.
+2. **It stampedes on a blip.** A 200 ms flap would drop every robot and re-onboard the lot on their next
+   packet — N config pushes and N `on_connect`s at a broker that has just come back.
+3. **It would have to lie about the conversation.** Removal runs through `_device_disconnect`, which fires
+   `app.on_disconnect` and `_end_conversation`. Ending a child's session because *we* lost the broker is a
+   worse error than the one being fixed.
+
+So membership is kept and **confirmation** is cleared (`_seen_since_connect`). Nothing happens until a
+robot gives real evidence (a `/state`, an event), and then exactly one robot is re-onboarded — reusing its
+`RobotContext`, so history, presence and the telemetry buffer survive. Ghosts are **labelled**
+(`seen_since_connect: false` on `/status`), not deleted.
+
+The asymmetry that settles the whole design: both caches are pure optimisation. Being wrong by
+*forgetting* costs one redundant message. Being wrong by *remembering* costs a half-connected robot, or
+eyes that never report, **with nothing logged either way**.
+
+**Ceiling, unchanged and worth repeating here:** no physical robot has ever sent this appliance a vision
+event. The tests prove *we re-subscribe*; they cannot prove a robot then delivers.
 
 ### P2 — **L**
 
@@ -592,12 +695,23 @@ should be driven by a feature, not by this page.
 
 ## 9. Assumption ledger
 
-**Twenty-one rows: seven proven, seven inferred, one measured, six unverified.** A different six —
+**Twenty-five rows: seven proven, seven inferred, one measured, four FALSE-and-fixed-or-recorded, six
+unverified.** The three new rows (A22, A23, A24) are not assumptions at all — they are **defects P1
+found**, kept in this table rather than in a changelog because the table is what the next agent reads, and
+*"this was believed and was not true"* is the most useful kind of row here. A different six —
 **A4, A5, A6, A7, A17 and A20** — need a **physical robot**, and that set deliberately cuts across the
 states: A4 and A7 are *inferred* and still hardware-gated, because an inference from upstream is not a
 measurement. That second number is the honest ceiling on this whole area and it does not move by
 building — **P0 shipping did not move it: the two rows P0 settled — A12 and A8 — are both about our own filesystem, and not one of the six hardware-gated rows budged.**
 
+> **P1 shipped 2026-09-03.** The soak exists and **runs**: `quick` (5 min) measured **1 046 turns
+> answered while the broker was up, 0 lost**, reconnect **p95 0.62 s / max 0.62 s** over 4 broker
+> restarts, roster resume **≤ 1.02 s** over 2 SIGTERM restarts, **0 lost updates** across 4 processes ×
+> 250 appends on one record, RSS **+3.2 %**, file descriptors **+0**, **0** tracebacks. **A22 and A23 are
+> new and are both defects rather than assumptions.** **A13 and A14 are still unchanged** — P1 built the
+> instrument that would settle A13 (`lock_timeout` rows with `waited_s`) and an instrument is not a
+> measurement. **Not one of the six hardware-gated rows moved, again.**
+>
 > **P0 shipped 2026-09-03.** A12 → shipped; **A21 is new and is the only measured number here**;
 > A13 and A14 are explicitly **unchanged** — the lock timeout and the reconnect ceiling remain
 > *chosen*, and P1's connection telemetry is still what would measure them. **A8 was settled while
@@ -623,6 +737,10 @@ building — **P0 shipping did not move it: the two rows P0 settled — A12 and 
 | A13 | `MOXIE_STORE_LOCK_TIMEOUT_S = 2.0` is the right number | **unverified — chosen, not measured** *(unchanged by P0)* | It is an env var, and P1's connection telemetry is what measures it. The only defensible claim today is *"strictly inside the turn budget"*, which T6 now enforces at startup. **The backoff *cadence* inside that budget is now measured** (see A21) — the budget itself is not. |
 | A14 | `max_delay=60` is the right reconnect ceiling | **unverified — chosen** *(unchanged by P0)* | Between paho's 120 and Fork A's 30, reasoned from a router reboot taking 30‑60 s (§4.1 C1). A week of real gap durations (P1 telemetry) settles it. S5 pins the ladder we configured (1, 2, 4, …, 60), not that 60 is right. |
 | A21 | The lock **backoff cadence** — 0.5 ms base, 2 ms cap — is fast enough that a contended writer is not starved out to the timeout | **measured 2026-09-03** *(new, found while building P0)* | `flock` has **no queue**: a `LOCK_NB` waiter takes whatever gap the holder leaves, so a process appending in a tight loop starves a coarse poller. Measured, two processes × 500 `append`s on one collection, three cadences × two runs: 10 ms/200 ms refused ~5 of 1 000 appends; 0.5 ms/10 ms refused ~2; 0.5 ms/2 ms refused **0**. Recorded on the constants in `store.py`. It is still a *poll*: fairness is not guaranteed, and a starved waiter times out — the bounded, **recorded** failure §3.2 point 4 accepts (T5), not a silent one. This is the one number in this brief that is measured rather than chosen. |
+| A22 | A robot returning with the **same device id** after a broker restart is re-onboarded | **FALSE — it was not. Defect, found 2026-09-03, fixed by P1** | `_device_connect` early-returned on `device_id in self.robots`, and the only thing that removed a robot was `_device_disconnect` — driven by a `$SYS/broker/log` line, which dies with the broker (A15). Reproduced 4/4 by `sim/run_broker_outage.sh` phase 5c. The appliance answered the robot's turns while it had had **no config push and no `app.on_connect`**, and `/status` listed it as present throughout. Fixed by separating *membership* from *confirmation* (`_seen_since_connect`); now pinned by the soak's **A12** against a live stack, by 8 hermetic tests, and — independently — by the harness that found it: [`sim/run_broker_outage.sh`](../../../sim/run_broker_outage.sh) phase 5c, **now fatal by default** (it shipped advisory, with a note handing the file to this slice). Flipping it exposed a second problem worth more than the first: **5c passed with the fix reverted**, because its assertion was *"a SIL round-trip works"* and a round-trip only needs a config push — which P1's own **roster resume** supplies on every reconnect. Two mechanisms satisfied the proxy; the robot conversed and `app.on_connect` never fired. (And non-deterministically: two runs of the same reverted code passed once and failed once.) 5c now asserts `/status`'s per-robot `seen_since_connect`, the one field only `_device_connect` sets, because the roster resume deliberately does not claim presence it has no evidence for. **A feature of this slice was masking the defect of this slice** — the same lesson as R10 and A12: assert the property, never a proxy another mechanism can satisfy. **This row is the reason A12 exists**: the other eleven bars all passed while it was happening, because every one of them asks about the appliance and none asked whether the *robot* got anything. |
+| A23 | Our record of a robot's **vision/STT subscription** stays true while the robot holds it | **FALSE — the latch was never cleared. Defect, found 2026-09-03, fixed by P1** | `_vision_subscribed[device] = module` was set and never cleared, while the recovered contract says *"events are automatically unsubscribed when the module exits"* (RemoteModuleAPI §Unsubscribing) — quoted in the latch's own docstring. So after a module exit, a sleep/wake or an outage the robot had dropped the subscription and we never re-sent `EventSubscription.active[]`. External corroboration rather than ours alone: four independent owner reports of *"crossed ears"*, and upstream [`jbeghtol/openmoxie` PR #59](https://github.com/jbeghtol/openmoxie/pull/59) diagnoses the sleep/wake variant identically (MIT, © Justin Beghtol — read as prior art, no code copied). Same fix as A22, deliberately: both are a cached belief outliving the robot's state. **Still hardware-gated in the direction that matters** — no physical robot has ever sent this appliance a vision event, so the tests prove *we re-subscribe*, never that a robot then delivers. |
+| A24 | The `.tmp` a `SIGKILL`ed writer leaves behind is cleaned up | **FALSE — measured 2026-09-03, not fixed** | The soak's kill probe reports `stray_tmp_files`: 10 mid-write `SIGKILL`s leave **2** orphaned `<record>.<pid>.tmp` files. Harmless for correctness — the record itself is whole (A6 is 0/0), and `_write_path` only unlinks its temp on an `OSError` it survives — but it is unbounded growth on a long-lived appliance and therefore an A9 problem in slow motion. Not fixed here because the safe sweep is not obvious: the temp name carries a pid, pids recycle, and deleting another live writer's scratch file is a worse bug than leaking one. Recorded rather than rounded away. |
+| A25 | The lock backoff is safe at **any** `MOXIE_STORE_LOCK_TIMEOUT_S` an operator may set | **FALSE — `OverflowError` above ~2.05 s. Defect, found 2026-09-03, fixed by P1** | `_wait_flock` computed `LOCK_BACKOFF_BASE_S * (2 ** attempt)`, and `2 ** attempt` is an arbitrary-precision **int**. The loop runs ≈ `timeout / LOCK_BACKOFF_CAP_S` times, so at `attempt == 1024` the product overflows a float and raises `OverflowError` **out of `transaction()`, past `append`'s `except StoreLockTimeout`, into the caller** — on the paho thread, that is *"never take the MQTT loop down for a store write"* broken outright. **The default hides it by 24 polls** (2.0 s / 2 ms ≈ 1 000); 5 s is ~2 500 and 30 s is ~15 000, and A13's own guard (`< MOXIE_BRAIN_BUDGET_S`) positively invites the larger value. Found by chasing a reported *"`test_t1` flake"* — `test_t1` uses 30 s deliberately, so that starvation cannot be mistaken for a lost update, which is exactly why it surfaced there. Reproduced 1-in-12 under load, 12/12 clean after clamping the exponent. **This is very probably the unexplained single lost append in A21's "999 of 1 000 at 30 s": not a starved waiter, a crashed writer.** |
 | A15 | `$SYS/broker/log` is live-only and is **not** replayed on re-subscribe, so a supervisor restart cannot recover the connected set from it | **proven** | mosquitto publishes log lines as they happen; `mqtt-and-conversation.md` §3.4. This is the entire reason C6 exists. |
 | A16 | 3 concurrent virtual robots and 2 000 turns/hour represent a household week | **inferred** | ~100 turns/day is a heavy child; 3 robots is more than one house has. Both are knobs in `run_soak.sh`. |
 | A17 | A real Moxie's `d_<uuid>` client id is **stable across reconnects**, so per-device state (`_turn_seq`, memory, permits) survives one | **unverified — needs hardware** | The id is the device id and is presumed stable, but nothing in our corpus proves it does not rotate. If it rotates, C6, the permits gate and every per-device collection are wrong in the same way. |

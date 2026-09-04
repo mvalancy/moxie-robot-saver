@@ -86,10 +86,23 @@ def _snapshot(overrides: dict, fleet: dict = None) -> dict:
         "last_connect_error": "",
         "publish_drops": 0,
         "store_lock_timeouts": 0,
+        # 🤖 / 🔌 added by production hardening P1: how many robots this appliance has
+        # ever served (so a restart re-pushes config instead of waiting for an event), and
+        # the durable connection history's one-line verdict. `steady` is the honest
+        # headline for the healthy, idle appliance this fake describes — `recovered` would
+        # imply an outage it has not had.
+        "roster": {"known": 1, "oldest_first_seen": 1.0, "newest_last_seen": 1.0},
+        "connection_health": {"state": "steady", "outages": 0, "refusals": 0,
+                              "drops": 0, "lock_timeouts": 0},
         "face_catalog": face_catalog(),
         "robots": [{
             "device_id": DEVICE, "child": "Sam", "firmware": "3.6.4",
             "permitted": True, "pending": False, "permit_label": "",
+            # Have we heard from this robot on the CURRENT broker connection (production
+            # hardening P1)? A robot that was served before a broker restart and has not
+            # spoken since is a ghost — labelled rather than deleted, because our socket
+            # dying is evidence about us and not about the robot.
+            "seen_since_connect": True,
             "battery_level": 91, "audio_volume": 0.4, "wifi_ssid": "Home",
             "mode": "normal", "ota_reboot_required": False,
             "config_overrides": dict(overrides),
@@ -399,6 +412,7 @@ class FakeSupervisor:
         self.memory_edits: list = []
         self.telehealth_queries: list = []
         self.schedule_queries: list = []
+        self.conn_queries: list = []
         self.voice_queries: list = []
         self.voice_posts: list = []
         self.content_queries: list = []
@@ -470,6 +484,18 @@ class FakeSupervisor:
                     outer.memory_queries.append(device_id)
                     out = outer.runtime.memory_view(device_id)
                     return self._out(out, 200 if out.get("ok") else 404)
+                if u.path == "/conn":
+                    # 🔌 The REAL `conn_view` off the runtime under test — the durable
+                    # connection history beside the live scalars (production hardening
+                    # P1). Served from the real object rather than a literal, so the
+                    # console is proved against the payload it will actually receive.
+                    q = parse_qs(u.query)
+                    try:
+                        limit = int((q.get("limit") or ["30"])[0])
+                    except ValueError:
+                        limit = 30
+                    outer.conn_queries.append(u.query)
+                    return self._out(outer.runtime.conn_view(limit=limit))
                 if u.path == "/telehealth":
                     q = parse_qs(u.query)
                     device_id = (q.get("device_id") or [""])[0]
@@ -2196,3 +2222,104 @@ def test_the_insights_card_renders_the_week_and_the_retention_footer(client):
     css = _static(client, "/style.css")
     for cls in (".tweek", ".tbar", ".tday.zero", ".tnote"):
         assert cls in css, f"{cls} has no styling, so the week will not render"
+
+
+# --------------------------------------------------------------------------- #
+# 🔌 The appliance's own broker connection (production hardening P1)
+# --------------------------------------------------------------------------- #
+#
+# The 📈 card could say what one robot reported. It could not say whether the appliance
+# had a broker at all — six live scalars in the supervisor's RAM, erased by the restart
+# that is usually the interesting event. `GET /local/connection` is the durable history
+# behind them, and the card renders it as a strip above the per-robot half.
+
+def test_the_connection_view_carries_the_live_state_and_the_history(client, supervisor):
+    """Both halves, because neither answers alone: "is it down now" and "has it been
+    flapping" are different questions and an operator has both."""
+    supervisor.runtime._record_conn("connect")
+    supervisor.runtime._record_conn("disconnect", reason="connection lost")
+    supervisor.runtime._record_conn("connect", gap_s=4.5)
+
+    c = client.get("/local/connection").json()
+    assert c["ok"] is True
+    assert c["count"] == 3
+    assert c["outages"] == 1
+    assert c["gaps"]["count"] == 1 and c["gaps"]["max_s"] == 4.5
+    assert [e["kind"] for e in c["events"]][0] == "connect"      # newest first
+    assert supervisor.conn_queries, "the console never asked the supervisor"
+
+
+def test_every_row_kind_gets_a_sentence_a_parent_can_read(client, supervisor):
+    """`connect_fail` is jargon for "we could not reach the broker". A card that rendered
+    the raw `kind` would be showing a parent the wire vocabulary."""
+    from moxie_sdk import conn_telemetry as conn
+    for kind in conn.KINDS:
+        supervisor.runtime._record_conn(kind)
+    c = client.get("/local/connection").json()
+    labels = {e["kind"]: e["label"] for e in c["events"]}
+    for kind in conn.KINDS:
+        assert labels.get(kind), f"{kind} has no sentence"
+        assert labels[kind] != kind, f"{kind} renders as its own wire name"
+
+
+def test_a_supervisor_that_is_down_says_so_rather_than_looking_quiet(client):
+    """The most important thing this route can say, and the reason it is fetched in every
+    branch of the card: "no robot connected" and "the appliance lost its broker" need
+    completely different actions from a parent."""
+    from moxie_server.fleet import normalize_connection
+    view = normalize_connection(None)
+    assert view["ok"] is False
+    assert view["connected"] is False
+    assert view["error"] == "supervisor not reachable"
+    assert view["events"] == [] and view["count"] == 0
+    # …and it must not manufacture a verdict for a supervisor it never reached.
+    assert view["verdict"] == "" and view["state"] == ""
+
+
+def test_recovered_is_not_rendered_as_healthy():
+    """An appliance that dropped nine times this hour and happens to be up right now is
+    not the same thing as one that never dropped. Collapsing the two is the comfortable
+    lie this whole slice exists to remove, and it is one word away at all times."""
+    from moxie_server.fleet import normalize_connection
+    steady = normalize_connection({"ok": True, "connected": True,
+                                   "health": {"state": "steady"}})
+    recovered = normalize_connection({"ok": True, "connected": True,
+                                      "health": {"state": "recovered", "outages": 9}})
+    assert steady["verdict"] != recovered["verdict"]
+    assert "not been the whole time" in recovered["verdict"]
+    assert recovered["connected"] is True, "it IS up — the verdict is about its history"
+
+
+def test_a_row_without_a_gap_does_not_render_a_zero_second_outage():
+    """The seam's absent-key contract, carried through instead of flattened. A first
+    connect with `gap_s: 0.0` would read as an outage that never happened."""
+    from moxie_server.fleet import normalize_connection_event
+    assert "gap_s" not in normalize_connection_event({"kind": "connect", "at": 1})
+    assert normalize_connection_event({"kind": "connect", "at": 1, "gap_s": 0.0})["gap_s"] == 0.0
+    assert "waited_s" not in normalize_connection_event({"kind": "connect", "at": 1})
+
+
+def test_the_connection_view_survives_a_payload_from_a_newer_runtime():
+    """Same tolerance contract as `normalize_telemetry`. A console that raised on an
+    unfamiliar row would go blank at exactly the wrong upgrade."""
+    from moxie_server.fleet import normalize_connection
+    view = normalize_connection({"ok": True, "connected": True,
+                                 "events": [None, "nope", {"kind": "brand_new", "at": 5}],
+                                 "summary": "not a dict", "health": []})
+    assert view["ok"] is True
+    assert view["events"][-1]["label"] == "brand new"
+
+
+def test_the_insights_card_renders_the_connection_strip(client):
+    """Structural, like its neighbours: a route the card never reads would pass every API
+    assertion above and leave the parent's page unchanged."""
+    js = _static(client, "/app.js")
+    for token in ("/local/connection", "connectionStrip", "c.verdict", "c.gaps",
+                  "e.waited_s", "roster"):
+        assert token in js, f"the connection strip never reads {token}"
+    # …and it must render in the no-robot branch, which is the case it earns its place in.
+    assert js.index("connectionStrip") < js.index("Insights: no robot connected"), \
+        "the strip is built after the no-robot early return, so it never shows there"
+    css = _static(client, "/style.css")
+    for cls in (".connstrip", ".connstrip.warn", ".connstrip.down"):
+        assert cls in css, f"{cls} has no styling, so the strip will not render"

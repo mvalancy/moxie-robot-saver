@@ -63,3 +63,28 @@
   is what a plausible patch actually looks like. All 35 are caught; the run that got there found
   **five** holes, four of them the same disease: two guards each covering for the other's absence, so
   neither was individually load-bearing. Run it after touching either file.
+- **`hardening_p1_mutation_check.py`** — the same proof for production hardening **P1**: **66
+  mutations** across `moxie_sdk/roster.py`, `moxie_sdk/conn_telemetry.py`, `store.py::_append_path`, the
+  connection/shutdown/onboarding regions of `supervisor/moxie_runtime.py` and the console's connection
+  normalizer. Several are deliberately *plausible patches rather than deletions*, because that is what a
+  regression looks like in review — the roster resume marking rostered robots as **connected** (a status
+  field reporting a belief instead of an observation), `gap_since` returning `0.0` instead of `None` for a
+  first connect, the shutdown row written *after* `disconnect()`, and `_stopping` hard-wired True, which
+  passes *"a clean stop is not an outage"* while silently erasing every real outage. Four of them found
+  real holes: a test that asserted the roster's key negative property about **a code
+  path it never called**, a missing-lock mutation no single-writer test could ever see, and
+  `JsonStore.append` ignoring its own write's return code — plus an `OverflowError` in the lock backoff that had been reported as a *flake* (`2 ** attempt` past 1024). One benign finding worth keeping: a property
+  guarded **twice**, where neither guard is individually load-bearing — so the mutation had to remove both
+  at once. The checker also reports a `-k` selector that matched **no test** as a NO-OP, because a renamed
+  test is how a mutation table rots into reporting "caught" forever.
+- **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
+  ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
+  a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.
+  Three profiles (`smoke` ~1 min · `quick` ~5 min · `week` 60 min) and **twelve** numeric bars printed
+  pass or fail, never inferred — with §5.4 under every report, because *"a week in an hour"* is a **rate
+  substitution** and not a duration. Two design points: every turn is stamped with whether the broker was
+  up **when it was issued** (A1 counts only those; a bare pass/fail could not tell a bug from an injected
+  fault), and the contention probe checks an **identity** rather than a survival count —
+  `attempted == on_disk + refused`, which is the only thing that distinguishes a *silent loss* (A5, must
+  be 0) from the *recorded refusal* §3.2 point 4 explicitly accepts. It restarts the supervisor with
+  **SIGTERM**, so the clean-shutdown path is exercised by the harness and not only by a unit test.

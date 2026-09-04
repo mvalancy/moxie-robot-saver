@@ -14,7 +14,11 @@ Nothing here writes to the tree permanently — each mutation is reverted in a `
 earlier mutation can shadow a later one, and a guard reads as un-caught when it is fine.
 """
 import pathlib, subprocess
-WT = pathlib.Path("/home/scubasonar/Code/moxie-robot/wt-ext")
+# Resolved from this file, like every other checker here. It used to be the literal path
+# of the worktree it was written in (`.../wt-ext`), which stopped existing when that slice
+# was merged — so this tool could not run **anywhere**, silently, until
+# `sim/tests/test_mutation_tables.py` asked whether its anchors still resolved.
+WT = pathlib.Path(__file__).resolve().parents[2]
 EXT = WT / "mqtt/moxie_sdk/content/ext.py"
 REN = WT / "mqtt/moxie_sdk/content/render.py"
 CA  = WT / "mqtt/moxie_sdk/content/content_app.py"
@@ -103,24 +107,34 @@ MUTATIONS = [
   "        if len(pattern) > MAX_PATTERN_CHARS:", "        if False:", "x12_a_pathological"),
 ]
 
-caught = missed = noop = 0
-for name, path, old, new, sel in MUTATIONS:
-    src = path.read_text()
-    if old not in src:
-        print(f"  NO-OP       {name}  (anchor not found)"); noop += 1; continue
-    backup = src
-    path.write_text(src.replace(old, new, 1))
-    try:
-        r = subprocess.run([str(WT / ".venv/bin/python"), "-m", "pytest",
-                            "sim/tests/test_ext_escapes.py", "-q", "-k", sel,
-                            "-p", "no:cacheprovider"],
-                           cwd=WT, capture_output=True, text=True,
-                           env={"PATH": "/usr/bin:/bin", "MOXIE_LLM_API_KEY": "",
-                                "HOME": "/home/scubasonar", "PYTHONDONTWRITEBYTECODE": "1"})
-        if r.returncode == 0:
-            print(f"  NOT CAUGHT  {name}"); missed += 1
-        else:
-            print(f"  caught      {name}"); caught += 1
-    finally:
-        path.write_text(backup)
-print(f"\nMUTATIONS: {caught} caught, {missed} missed, {noop} no-op")
+# The runner lives in `main()` behind a `__main__` guard, like the other four
+# checkers. It used to be bare module-level code, so **importing** this file ran
+# twenty-eight mutations against the working tree — which is exactly what
+# `sim/tests/test_mutation_tables.py` did on its first draft, from inside pytest.
+def main() -> int:
+    caught = missed = noop = 0
+    for name, path, old, new, sel in MUTATIONS:
+        src = path.read_text()
+        if old not in src:
+            print(f"  NO-OP       {name}  (anchor not found)"); noop += 1; continue
+        backup = src
+        path.write_text(src.replace(old, new, 1))
+        try:
+            r = subprocess.run([str(WT / ".venv/bin/python"), "-m", "pytest",
+                                "sim/tests/test_ext_escapes.py", "-q", "-k", sel,
+                                "-p", "no:cacheprovider"],
+                               cwd=WT, capture_output=True, text=True,
+                               env={"PATH": "/usr/bin:/bin", "MOXIE_LLM_API_KEY": "",
+                                    "HOME": "/home/scubasonar", "PYTHONDONTWRITEBYTECODE": "1"})
+            if r.returncode == 0:
+                print(f"  NOT CAUGHT  {name}"); missed += 1
+            else:
+                print(f"  caught      {name}"); caught += 1
+        finally:
+            path.write_text(backup)
+    print(f"\nMUTATIONS: {caught} caught, {missed} missed, {noop} no-op")
+    return 1 if (missed or noop) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

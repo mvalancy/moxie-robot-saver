@@ -68,6 +68,17 @@ try: print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))
 except Exception: print("")' "$SNAP" "$1" 2>/dev/null
 }
 
+# robot_field <device_id> <key> — one field of one robot out of the last snapshot.
+# Added 2026-09-03: 5c needed a property only ONE mechanism can satisfy (see its note).
+robot_field() {
+  $PY -c 'import json,sys
+try:
+    robots = json.load(open(sys.argv[1])).get("robots") or []
+    row = next((r for r in robots if r.get("device_id") == sys.argv[2]), None)
+    print("" if row is None else row.get(sys.argv[3], ""))
+except Exception: print("")' "$SNAP" "$1" "$2" 2>/dev/null
+}
+
 # wait_for <key> <value> <seconds> — poll /status until key == value.
 wait_for() {
   local key="$1" want="$2" secs="$3" i=0
@@ -176,27 +187,49 @@ $PY sim/virtual_moxie.py --host 127.0.0.1 --port "$PORT" --device-id "${DEVICE}b
   --timeout 25 --quiet || fail "the SIL round-trip failed AFTER the reconnect"
 ok "SIL round-trip SUCCESS after the outage (a robot the appliance had not seen)"
 
-# ── 5c · the RETURNING robot — a real defect this harness found ────────────────────────
+# ── 5c · the RETURNING robot — a real defect this harness found, now FIXED ─────────────
 # The robot that was talking when the broker died comes back with the same device id.
-# `_device_connect` early-returns for a device already in `self.robots`, and the only
-# thing that ever removes one is `_device_disconnect`, which fires off a `$SYS/broker/log`
-# line — a line that died with the broker. So after a broker restart the roster is stale
-# and the returning robot is never re-onboarded: no config push, no `app.on_connect`.
-# `_on_disconnect` bumps `_turn_seq` (it stales in-flight turns) but does not clear the
-# roster. Reported, not fixed: `mqtt/supervisor/moxie_runtime.py` is owned by the
-# hardening P1 slice. Set MOXIE_OUTAGE_STRICT_ROSTER=1 to make this fatal once it is.
+#
+# The defect (found here, 4/4 runs): `_device_connect` early-returned for a device already
+# in `self.robots`, and the only thing that ever removed one was `_device_disconnect`,
+# which fires off a `$SYS/broker/log` line — a line that died with the broker. So after a
+# broker restart the returning robot was never re-onboarded: no config push, no
+# `app.on_connect`, while `/status` went on listing it as present.
+#
+# **Fixed 2026-09-03 by production-hardening P1**, which is the slice this comment used to
+# hand the file to. `moxie_runtime.py` now separates *membership* (`self.robots` — who
+# have we served) from *confirmation* (`_seen_since_connect` — who have we heard from on
+# THIS socket); a disconnect clears only the second, so nothing happens until a robot
+# gives real evidence and then exactly one robot is re-onboarded, reusing its
+# `RobotContext` so the child's conversation survives. See `_device_connect`'s docstring
+# for why clearing `self.robots` instead is the wrong fix.
+#
+# **So this check is now FATAL by default**, which is the whole point of a regression
+# guard: the switch that made it advisory is what let the defect sit. `MOXIE_OUTAGE_STRICT_ROSTER=0`
+# downgrades it to a warning for someone bisecting an unrelated failure — it is not a way
+# to live with a red.
 echo "── 5c · the RETURNING robot (same device id) ──"
+# The assertion is `/status`'s `seen_since_connect` for THIS robot, not merely that a turn
+# worked — and that is a correction, not a flourish. A round-trip only needs a config
+# push, and hardening P1's *roster resume* re-pushes config to every rostered robot on
+# every reconnect. So with the re-onboarding fix reverted this check still PASSED: two
+# mechanisms satisfied the proxy, the robot conversed, and `app.on_connect` never fired.
+# `seen_since_connect` is the one thing only `_device_connect` sets — the roster resume
+# deliberately does not, because it has no evidence the robot is there. Verified by
+# reverting the fix: the turn still succeeds, this field stays False.
 if $PY sim/virtual_moxie.py --host 127.0.0.1 --port "$PORT" --device-id "$DEVICE" \
-     --timeout 15 --quiet; then
-  ok "the returning robot was re-onboarded"
+     --timeout 15 --quiet && { snap; [ "$(robot_field "$DEVICE" seen_since_connect)" = "True" ]; }; then
+  ok "the returning robot was re-onboarded (seen_since_connect=True)"
 else
-  echo "   ⚠️  FINDING · the returning robot got NO config push after the broker restart."
+  echo "   ⚠️  FINDING · the returning robot was not re-onboarded after the broker restart."
   echo "      The supervisor still lists it as connected: the \$SYS/broker/log line that"
   echo "      would have called _device_disconnect died with the broker, so _device_connect"
   echo "      early-returns on 'device already in self.robots'. Stale roster + no re-onboard."
   echo "      → mqtt/supervisor/moxie_runtime.py:_device_connect / _on_disconnect"
-  if [ "${MOXIE_OUTAGE_STRICT_ROSTER:-0}" = "1" ]; then
-    fail "MOXIE_OUTAGE_STRICT_ROSTER=1 and the returning robot was not re-onboarded"
+  if [ "${MOXIE_OUTAGE_STRICT_ROSTER:-1}" = "1" ]; then
+    fail "the returning robot was not re-onboarded — this REGRESSED (fixed by hardening P1;
+      see moxie_runtime.py::_device_connect and _seen_since_connect). Set
+      MOXIE_OUTAGE_STRICT_ROSTER=0 only to bisect an unrelated failure."
   fi
   FINDINGS=1
 fi

@@ -33,6 +33,9 @@ needed), or use `--profile demo` to watch a scripted conversation play out — t
 ## Without Docker
 ```sh
 bash sim/run_smoke.sh          # broker + supervisor + one round-trip (needs mosquitto or docker)
+bash sim/run_soak.sh           # the SIL soak: fault injection + 12 numeric bars (needs docker)
+                               #   --profile smoke|quick|week   (~1 min / ~5 min / 60 min)
+                               #   --only-contention            (the store half; no broker needed)
 bash sim/run_acl_proof.sh      # the broker ACL, against a real mosquitto (needs docker)
 bash sim/run_broker_outage.sh  # stop and start a real broker under a live supervisor (needs docker)
 cd sim/web && python3 -m http.server 8080   # serve the UI, then run a broker+supervisor separately
