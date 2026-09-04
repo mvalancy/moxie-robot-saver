@@ -56,9 +56,34 @@ export function findChrome() {
   return cands.find(existsSync) || null;
 }
 
-/** Skip the whole suite, green. `label` names it in the log. */
+/**
+ * Skip the whole suite. Green on a contributor's laptop; RED under CI.
+ *
+ * WHY THE ASYMMETRY. A clean skip is right for someone who just cloned the repo and has
+ * no browser — the other 18 suites still tell them something. It is exactly WRONG in CI,
+ * where a skip is indistinguishable from a pass in the badge, and where the browser suites
+ * are the ones guarding the live public site. For months `npm install puppeteer` was in no
+ * workflow file, so nine suites printed "skipped — puppeteer not found" on every green run
+ * and the merge gate quietly lost its best assertions — the same shape as PR #82, whose 770
+ * assertions all read a file while Web Audio was stubbed. `test_typed_turn.mjs` was written
+ * to close exactly that hole and had never once executed here.
+ *
+ * So: under `CI`, a missing browser is a FAILURE, not a skip. If the install step above ever
+ * breaks, the tier reddens and says so instead of deleting five minutes of coverage in
+ * silence. A test that cannot fail is not a test, and a skip that cannot be seen is not a skip.
+ */
 export function skipper(label) {
-  return (msg) => { console.log(`ℹ️  ${label} skipped —`, msg); process.exit(0); };
+  return (msg) => {
+    if (process.env.CI) {
+      console.error(`❌ ${label} CANNOT SKIP UNDER CI — ${msg}`);
+      console.error(`   This suite guards the live site and must actually run. Install a`);
+      console.error(`   browser in the workflow (see "Install a browser for the suites`);
+      console.error(`   below" in sim/ci/ci.yml) rather than letting the gate go green blind.`);
+      process.exit(1);
+    }
+    console.log(`ℹ️  ${label} skipped —`, msg);
+    process.exit(0);
+  };
 }
 
 /**

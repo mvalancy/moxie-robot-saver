@@ -78,6 +78,20 @@ jobs:
           node sim/test_demo_ears.mjs
           node sim/test_cloud_transport.mjs
           node sim/test_fallback_coverage.mjs
+      # ── THE BROWSER SUITES NEED A BROWSER, AND FOR MONTHS THEY DID NOT HAVE ONE ──
+      # `sim/browser_harness.mjs::loadPuppeteer` imports `puppeteer`, then falls back to
+      # scanning `~/Code/*/node_modules/puppeteer` — a DEVELOPER-MACHINE path that cannot
+      # exist on a runner. `skipper()` then called `process.exit(0)`, so nine suites
+      # printed "skipped — puppeteer not found" and the job stayed GREEN.
+      #
+      # That silently deleted the repo's best guards. `test_typed_turn.mjs` exists because
+      # PR #82 shipped 770 assertions that all read a *file* while Web Audio was stubbed;
+      # its teeth are a real peak-amplitude assertion so a silent clip cannot pass. It had
+      # never executed here. Nor had `test_mic_spend.mjs`, which counts `/api/chat` calls
+      # to prove a refused microphone does not spend the gateway the owner's game shares.
+      # A green badge over assertions that never fired is the exact failure #82 taught.
+      - name: Install a browser for the suites below (without one they would silently skip)
+        run: npm install --no-save --no-audit --no-fund puppeteer
       - name: /api/* hardening headers, over a socket (skips the browser half if no Chrome)
         # Runs HERE, with the other money-route guards, because `sim/web/_headers` is INERT
         # for a Pages Function (settled by a preview deploy, §10 assumption 27): the ONLY

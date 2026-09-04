@@ -28,6 +28,7 @@ import { dirname, join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import net from "node:net";
+import { skipper } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -57,7 +58,7 @@ function findChrome() {
   cands.push("/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser");
   return cands.find(existsSync) || null;
 }
-function skip(m) { console.log("ℹ️  env-hosted test skipped —", m); process.exit(0); }
+const skip = skipper("env-hosted test");
 
 const puppeteer = await loadPuppeteer();
 if (!puppeteer) skip("puppeteer not found (set PUPPETEER_PATH)");

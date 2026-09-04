@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import net from "node:net";
+import { skipper } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -49,7 +50,7 @@ function findChrome() {
   cands.push("/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser");
   return cands.find(existsSync) || null;
 }
-function skip(msg) { console.log("ℹ️  docs-explorer tests skipped —", msg); process.exit(0); }
+const skip = skipper("docs-explorer tests");
 
 const puppeteer = await loadPuppeteer();
 if (!puppeteer) skip("puppeteer not found (set PUPPETEER_PATH to a dir containing node_modules/puppeteer)");

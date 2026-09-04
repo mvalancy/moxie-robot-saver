@@ -291,6 +291,15 @@ const puppeteer = await loadPuppeteer();
 const chrome = findChrome();
 if (!puppeteer || !chrome) {
   server.close();
+  // The socket half genuinely ran, so this is a PARTIAL skip — but under CI it is still a
+  // failure. The browser half is the part that proves the page's own `fetch("/api/health")`
+  // survives CORP, which no socket test can show. A run that quietly drops it while the
+  // badge stays green is the hole this repo already fell into once (see browser_harness.mjs).
+  if (process.env.CI) {
+    console.error(`❌ ${LABEL}: no Chrome under CI — the socket half ran (${count()} checks) but`);
+    console.error(`   the browser half is the one that proves the page can still fetch its own API.`);
+    process.exit(1);
+  }
   console.log(`⏭  ${LABEL}: no Chrome available — socket half ran (${count()} checks), browser half skipped`);
   process.exit(0);
 }
