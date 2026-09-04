@@ -19,12 +19,18 @@ Hermetic and instant: no broker, no network, no gateway (`LLMApp` takes the cann
 `client=` seam PR #21 added, so not even the `openai` import is needed), no sleeps —
 the loopback is synchronous.
 
-WHAT THIS DELIBERATELY DOES NOT CLAIM: that the robot *acts* on what it received.
-`sim/virtual_moxie.py` reads `output.text` and the audio and ignores `response_actions`
-entirely, and so does the browser SIM's bridge — no simulator client launches a module or
-exits on a cloud action today. That is a real gap in DoD criterion 4 ("interchangeable
-clients"), filed as such; the tests below pin the delivery half so a client-side
-implementation has something to build against.
+WHAT THIS FILE CLAIMS, AND WHERE THE REST OF IT LIVES. This file is the DELIVERY half:
+every assertion below reads `payload["response_actions"]` off the wire the robot was
+handed. That the robot then *acts* on it — launches the module, leaves it, records the
+execute — is asserted in `test_actions_reach_the_robot.py` against the client's own state
+(`VirtualMoxie.action_stats()`), and for the browser SIM in `sim/test_bridge.mjs` against
+`bridge.js::actionStats()`. Both are held to one script in
+`sim/tests/goldens/cloud_to_robot_actions.json`.
+
+(This paragraph used to say that neither SIM client acted on `response_actions`. That
+stopped being true of the browser SIM when `bridge.js::applyAction` landed in PR #52, and
+of the SIL robot on 2026-09-03 — the gap it described in DoD criterion 4 is closed, and
+the docstring outlived it by a day.)
 """
 import json
 import os
