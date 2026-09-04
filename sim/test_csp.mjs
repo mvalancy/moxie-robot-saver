@@ -16,16 +16,29 @@
  * requires the policy to REFUSE it. Without that, a green run would be equally consistent
  * with "the policy is correct" and "no policy arrived at all".
  *
- * WHAT IS DELIBERATELY NOT ASSERTED: `script-src` without `'unsafe-inline'`. The bundle has
- * nine inline `<script>` blocks across five pages plus ten inline `onclick=` attributes,
- * and `_headers` is a static file, so a per-response nonce is impossible and the only route
- * is a SHA-256 hash per block plus a build step and a freshness guard. `sim/web/_headers`
- * records that as the specific blocker. What IS asserted is the half that ships today: no
- * script from any other origin can load, and nothing can be sent to any other origin.
+ * 2026-09-04 — `'unsafe-inline'` IS NOW ASSERTED GONE, and that changed what this file has
+ * to do. Blocks 1–4 answered "can a script from ELSEWHERE run?". Blocks 5–8 answer "can a
+ * script written INTO this page run?", which is the other half of XSS and the half that was
+ * open until 2026-09-04. Three things are new and load-bearing:
+ *
+ *   · block 6 recomputes every SHA-256 in `script-src` from the pages ON DISK. It is a
+ *     second, independent implementation of `sim/tools/build_csp_hashes.py` — deliberately
+ *     in another language — so the generator cannot satisfy its own guard. A hash that
+ *     drifts BLANKS THE PAGE, in production, where nothing local would see it;
+ *   · block 7 INJECTS an inline `<script>` and an inline `onerror=` and requires both to be
+ *     refused. Under the old policy both ran;
+ *   · block 8 DRIVES each page rather than looking at it — the docs explorer searches, the
+ *     SIM takes a typed turn and makes a QR code, the setup page encodes one — with a
+ *     `securitypolicyviolation` listener installed before any page script runs. Thirteen
+ *     inline blocks became thirteen `<script src>` tags in this pass, and a page whose glue
+ *     failed to load still paints its markup and its CSS. "It looked fine" is not evidence.
  *
  *   node sim/test_csp.mjs
  */
-import { requireBrowser, serveWeb, pagesHeaders, makeChecks, finish } from "./browser_harness.mjs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { requireBrowser, serveWeb, pagesHeaders, makeChecks, finish, web } from "./browser_harness.mjs";
 
 const LABEL = "CSP + security-headers test";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
@@ -87,6 +100,19 @@ const PAGES = [
 async function load(path) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
+  /* The violation EVENT, not its console rendering, and installed before a single page
+   * script runs. A console line is a sentence to regex; `securitypolicyviolation` carries
+   * the directive and the blocked URI, and it fires for refusals that log nothing at all. */
+  await page.evaluateOnNewDocument(() => {
+    window.__cspViolations = [];
+    document.addEventListener("securitypolicyviolation", (e) => {
+      window.__cspViolations.push({
+        directive: e.effectiveDirective || e.violatedDirective,
+        blocked: e.blockedURI,
+        sample: (e.sample || "").slice(0, 60),
+      });
+    });
+  });
   const errs = [], notFound = [];
   page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
   page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
@@ -277,6 +303,249 @@ try {
        "…and an off-origin report would still be refused — connect-src keeps its teeth");
     await page.close();
   }
+  /* =====================================================================
+   * 5. THE POLICY HAS NO INLINE ESCAPE HATCH LEFT.
+   *
+   * `'unsafe-inline'` in `script-src` is the whole XSS loader problem: with it, any markup
+   * an attacker lands on the page executes. It stood in this policy from 2026-09-03 to
+   * 2026-09-04 and `_headers` called it "the honest gap". Read off the shipped file.
+   * =================================================================== */
+  {
+    const csp = H["Content-Security-Policy"] || "";
+    const scriptSrc = (csp.split(";").find((d) => d.trim().startsWith("script-src")) || "").trim();
+    ok(!/'unsafe-inline'/.test(scriptSrc),
+       `script-src must NOT carry 'unsafe-inline' (got ${JSON.stringify(scriptSrc)})`);
+    /* `'unsafe-hashes'` is the OTHER hatch, and it is not needed here: it exists only to
+     * let hashes cover inline event-handler ATTRIBUTES, and this bundle has none (block 6
+     * proves that from the files rather than trusting this line). It is asserted anyway
+     * because it is the obvious thing a future pass would reach for. */
+    ok(!/'unsafe-hashes'/.test(csp), "the CSP must NOT carry 'unsafe-hashes' anywhere");
+    ok(!/'unsafe-eval'/.test(csp), "…nor 'unsafe-eval'");
+    /* The ONLY quoted sources permitted in script-src: 'self' and SHA-256 hashes. Anything
+     * else quoted is a keyword, and every script-src keyword other than 'self' is a
+     * widening. `'strict-dynamic'` in particular would make the host allowance below
+     * meaningless, which is exactly the kind of change that reads as tightening. */
+    const quoted = scriptSrc.split(/\s+/).filter((t) => t.startsWith("'"));
+    const stray = quoted.filter((t) => t !== "'self'" && !/^'sha256-[A-Za-z0-9+/]+={0,2}'$/.test(t));
+    eq(JSON.stringify(stray), "[]",
+       `script-src's quoted sources must be 'self' + sha256 hashes only (stray: ${stray.join(" ")})`);
+  }
+
+  /* =====================================================================
+   * 6. THE HASHES MATCH THE PAGES ON DISK — the blank-page guard.
+   *
+   * THIS IS THE ASSERTION THE WHOLE SLICE HANGS ON. A hash that drifts from the block it
+   * covers does not degrade: the browser refuses the block and the page goes BLANK, in
+   * production, because a static `_headers` is only ever sent by Pages. `sim/tools/
+   * build_csp_hashes.py` generates the header; this recomputes it INDEPENDENTLY, in a
+   * different language, from the same files — so a bug in the generator cannot satisfy its
+   * own guard. `sim/tests/test_csp_hashes.py` is the fast, browser-free version of this.
+   * =================================================================== */
+  {
+    const INLINE = /<script(?![^>]*\ssrc\s*=)([^>]*)>([\s\S]*?)<\/script>/g;
+    const pages = readdirSync(web).filter((f) => f.endsWith(".html")).sort();
+    ok(pages.length === 5, `expected the five shipped pages, got ${pages.length}: ${pages}`);
+
+    const blocks = [];
+    const handlers = [];
+    for (const name of pages) {
+      const src = readFileSync(join(web, name), "utf8");
+      for (const m of src.matchAll(INLINE))
+        blocks.push({ name, attrs: (m[1] || "").trim(), body: m[2],
+                      line: src.slice(0, m.index).split("\n").length });
+      /* The inline event-handler ATTRIBUTE — `<button onclick="f()">` — is the one thing no
+       * hash in this policy can rescue, and its failure mode is the nastiest on the page:
+       * it does not throw, it simply never fires. NOTE WHAT THIS DOES NOT MATCH, because
+       * `_headers` was wrong about it until 2026-09-04 and counted ten of these: an
+       * `el.onclick = function(){}` in a .js file assigns a function OBJECT and is not an
+       * inline script at all. Only markup is scanned here, which is the whole distinction. */
+      for (const m of src.matchAll(/<[^>!][^>]*?\son[a-z]+\s*=\s*["'][^"']*["'][^>]*>/gi))
+        handlers.push(`${name}:${src.slice(0, m.index).split("\n").length}`);
+      for (const m of src.matchAll(/(?:href|src|action|formaction)\s*=\s*["']\s*javascript:/gi))
+        handlers.push(`${name}:${src.slice(0, m.index).split("\n").length} javascript: URL`);
+    }
+    eq(JSON.stringify(handlers), "[]",
+       `no shipped page may carry an inline on*= attribute or javascript: URL — ` +
+       `they need 'unsafe-hashes', which this policy does not grant, and they fail SILENTLY ` +
+       `(found: ${handlers.join(", ")})`);
+
+    /* The surface, pinned by name. Thirteen of the original fourteen inline blocks were
+     * moved into files rather than hashed — a file cannot drift. The one that remains
+     * cannot be a file in any browser: `<script type="importmap" src>` was dropped from the
+     * spec. If this count ever grows, the fix is almost always another file, not another
+     * hash, and this is where that decision gets forced into the open. */
+    eq(blocks.length, 1,
+       `exactly ONE inline <script> should remain on the whole site — ` +
+       `${blocks.map((b) => `${b.name}:${b.line}`).join(", ")}`);
+    ok(blocks.every((b) => b.name === "sim.html" && /type="importmap"/.test(b.attrs)),
+       "…and it is sim.html's importmap, the one block that genuinely cannot be external");
+
+    const want = blocks.map((b) =>
+      "'sha256-" + createHash("sha256").update(b.body, "utf8").digest("base64") + "'").sort();
+    const csp = H["Content-Security-Policy"] || "";
+    const scriptSrc = (csp.split(";").find((d) => d.trim().startsWith("script-src")) || "").trim();
+    const have = scriptSrc.split(/\s+/).filter((t) => t.startsWith("'sha256-")).sort();
+    eq(JSON.stringify(have), JSON.stringify(want),
+       "script-src's hashes must equal a fresh SHA-256 of every inline block on disk — " +
+       "A MISMATCH BLANKS THE PAGE. Run: python3 sim/tools/build_csp_hashes.py");
+  }
+
+  /* =====================================================================
+   * 7. TEETH FOR THE NEW HALF — an inline <script> is REFUSED.
+   *
+   * Block 3 proves an off-ORIGIN script cannot load. That was already true before this
+   * pass. What was NOT true is this: until 2026-09-04 an attacker who could land markup on
+   * the page — a reflected parameter, a poisoned doc, a compromised fixture — got
+   * execution for free, because `'unsafe-inline'` ran whatever was written. This is the
+   * assertion that goes red the moment that keyword comes back.
+   * =================================================================== */
+  {
+    const { page, errs } = await load("sim.html");
+    eq(cspErrors(errs).length, 0, "inline teeth: the page is clean before anything is injected");
+
+    const ran = await page.evaluate(() => {
+      const s = document.createElement("script");
+      s.textContent = "window.__inlineRan = 'ran';";
+      document.head.appendChild(s);
+      return window.__inlineRan || null;
+    });
+    eq(ran, null,
+       "inline teeth: an injected inline <script> does NOT execute — with 'unsafe-inline' it would have");
+
+    /* The same thing by the route an XSS payload actually takes. `innerHTML` never runs a
+     * plain <script>, so this uses the classic `<img onerror>`, which DOES fire — and which
+     * `'unsafe-hashes'` would have re-enabled. Two different doors, one lock. */
+    const fired = await page.evaluate(() => new Promise((resolve) => {
+      window.__handlerRan = null;
+      const d = document.createElement("div");
+      d.innerHTML = '<img src="data:," onerror="window.__handlerRan = \'ran\'">';
+      document.body.appendChild(d);
+      setTimeout(() => resolve(window.__handlerRan), 600);
+    }));
+    eq(fired, null, "inline teeth: an injected inline event-handler attribute does NOT fire either");
+
+    await new Promise((r) => setTimeout(r, 400));
+    ok(cspErrors(errs).length >= 1,
+       "inline teeth: …and the browser logged the refusals, so the policy really is in force");
+
+    /* THE OTHER HALF OF THE SAME QUESTION, and the reason this is not just a tightening
+     * nobody checked: the ONE block that IS hashed still runs. `window.moxie` exists only
+     * if the ES module graph resolved through sim.html's importmap — so if that hash were
+     * wrong, this page would be the blank one. */
+    ok(await page.evaluate(() => !!window.moxie),
+       "…while the HASHED importmap still resolved: three.js loaded and the SIM booted");
+    await page.close();
+  }
+
+  /* =====================================================================
+   * 8. EVERY PAGE STILL *WORKS*, not merely renders — under the new policy.
+   *
+   * A CSP that blanks a page is worse than `'unsafe-inline'`, and "it looked fine" is not
+   * evidence: thirteen inline blocks became thirteen `<script src>` tags, and a page whose
+   * glue silently failed to load still paints its markup, its CSS and its background. So
+   * each page is DRIVEN here — the docs explorer searches, the SIM takes a typed turn and
+   * makes a QR code, the setup page encodes one, the console renders its fixture — with a
+   * `securitypolicyviolation` listener installed BEFORE any page script runs.
+   *
+   * That listener is the strict part. Block 2 reads the CONSOLE, which is a rendering of
+   * the violation; this reads the EVENT, which is the violation itself, and carries the
+   * directive and blocked URI rather than a sentence to regex.
+   * =================================================================== */
+  {
+    /** Violations the page recorded, minus the one pre-existing img-src refusal. */
+    const violations = (p) => p.evaluate(() =>
+      (window.__cspViolations || []).filter((v) => !/user-attachments/.test(v.blocked || "")));
+    const show = (vs) => vs.map((v) => `${v.directive} ⟵ ${v.blocked}${v.sample ? " «" + v.sample + "»" : ""}`).join(" | ");
+
+    /* --- sim.html: a typed turn end to end, and the QR card ------------------- */
+    {
+      const { page } = await load("sim.html");
+      await page.type("#speech-input", "hello moxie");
+      await page.click("#speech-btn");
+      await new Promise((r) => setTimeout(r, 3500));
+      const t = await page.evaluate(() => (document.getElementById("transcript") || {}).textContent || "");
+      ok(/hello moxie/.test(t) && /Moxie/.test(t),
+         `sim.html: a typed turn reaches the transcript AND is answered (got ${JSON.stringify(t.slice(0, 90))})`);
+
+      await page.click("#qr-make");
+      await new Promise((r) => setTimeout(r, 900));
+      const qr = await page.evaluate(() => {
+        const c = document.getElementById("qr-canvas");
+        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let dark = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] < 128) dark++;
+        return { dark, status: (document.getElementById("qr-status") || {}).textContent || "" };
+      });
+      ok(qr.dark > 500, `sim.html: the QR card actually drew a code (${qr.dark} dark px)`);
+      ok(/\{/.test(qr.status), `sim.html: …and reported the payload it encoded (${qr.status.slice(0, 40)})`);
+      const v = await violations(page);
+      eq(v.length, 0, `sim.html: ZERO securitypolicyviolation events across a whole turn — ${show(v)}`);
+      await page.close();
+    }
+
+    /* --- docs.html: search, then open a hit ----------------------------------- */
+    {
+      const { page } = await load("docs.html");
+      await page.type("#q", "projectorfanpid");        // a body-only term: search must have run
+      await new Promise((r) => setTimeout(r, 1200));
+      const hits = await page.evaluate(() => document.querySelectorAll("#tree a").length);
+      ok(hits > 0, `docs.html: full-text search filters the tree (got ${hits} hits)`);
+      await page.evaluate(() => { const a = document.querySelector("#tree a"); if (a) a.click(); });
+      await new Promise((r) => setTimeout(r, 1400));
+      const doc = await page.evaluate(() => ({
+        len: (document.querySelector("article") || { textContent: "" }).textContent.length,
+        marks: document.querySelectorAll("article mark, article .hl, article em").length }));
+      ok(doc.len > 2000, `docs.html: the hit opens and renders Markdown (${doc.len} chars)`);
+      ok(doc.marks > 0, "docs.html: …with the search term highlighted in it");
+      const v = await violations(page);
+      eq(v.length, 0, `docs.html: ZERO securitypolicyviolation events — ${show(v)}`);
+      await page.close();
+    }
+
+    /* --- setup.html: encode a Wi-Fi code -------------------------------------- */
+    {
+      const { page } = await load("setup.html");
+      await page.type("#ssid", "TestNet");
+      await page.click("#go-wifi");
+      await new Promise((r) => setTimeout(r, 700));
+      const out = await page.evaluate(() => {
+        const c = document.getElementById("cv-wifi");
+        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let dark = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] < 128) dark++;
+        return { dark, payload: (document.getElementById("pl-wifi") || {}).textContent || "" };
+      });
+      ok(out.dark > 500, `setup.html: the Wi-Fi QR drew (${out.dark} dark px)`);
+      ok(/"ssid":\s*"TestNet"/.test(out.payload),
+         `setup.html: …encoding the SSID that was typed (${out.payload.slice(0, 50)})`);
+      const v = await violations(page);
+      eq(v.length, 0, `setup.html: ZERO securitypolicyviolation events — ${show(v)}`);
+      await page.close();
+    }
+
+    /* --- cloud.html + index.html: their glue ran ------------------------------ */
+    {
+      const { page } = await load("cloud.html");
+      const c = await page.evaluate(() => ({
+        tabs: document.querySelectorAll(".tab").length,
+        body: (document.querySelector("[data-panel]") || { textContent: "" }).textContent.length }));
+      eq(c.tabs, 5, "cloud.html: the console built its five tabs from the fixture");
+      ok(c.body > 100, `cloud.html: …and rendered a panel (${c.body} chars)`);
+      const v1 = await violations(page);
+      eq(v1.length, 0, `cloud.html: ZERO securitypolicyviolation events — ${show(v1)}`);
+      await page.close();
+
+      const { page: ip } = await load("index.html");
+      // The sparkles are built by home.js and by nothing else, so their presence is a
+      // direct witness that the extracted file ran (the CSS alone paints none).
+      const n = await ip.evaluate(() => document.querySelectorAll("#bg .spark").length);
+      ok(n > 0, `index.html: home.js ran — it built ${n} sparkles`);
+      const v2 = await violations(ip);
+      eq(v2.length, 0, `index.html: ZERO securitypolicyviolation events — ${show(v2)}`);
+      await ip.close();
+    }
+  }
+
 } catch (e) {
   fails.push("threw: " + (e && e.stack ? e.stack.split("\n").slice(0, 4).join(" / ") : e));
 } finally {

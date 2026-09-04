@@ -126,6 +126,14 @@ jobs:
         run: python3 sim/tools/build_docs_bundle.py
       - name: Docs bundle is fresh (committed bundle matches a rebuild of docs/)
         run: python3 sim/tools/check_bundle_fresh.py
+      - name: CSP hashes match the pages (a stale hash BLANKS the live page)
+        # `sim/web/_headers` pins a SHA-256 for the one inline <script> the site still has
+        # (sim.html's importmap; the other thirteen became files on 2026-09-04). A static
+        # `_headers` is only ever sent by Pages, so a hash that drifts from its block is
+        # invisible to every other suite here and refuses the block IN PRODUCTION. This is
+        # the generator's own --check; sim/tests/test_csp_hashes.py runs it again from
+        # pytest and sim/test_csp.mjs asserts it a third time in a real browser.
+        run: python3 sim/tools/build_csp_hashes.py --check
       - name: Docs-explorer bundle + wiring test
         run: node sim/test_docs.mjs
       - name: Run SIL scenarios (scripted conversations)

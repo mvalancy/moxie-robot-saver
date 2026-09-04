@@ -8,6 +8,7 @@
  * them. Run: node sim/test_cloud.mjs
  */
 import { readFileSync } from "node:fs";
+import { pageSource } from "./browser_harness.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -68,7 +69,10 @@ ok(d.notifications && Array.isArray(d.notifications.data) &&
    "notifications must be {data:[], meta:{unread:N}}");
 
 // ---- cloud.html actually consumes the fixture -------------------------------
-const html = readFileSync(join(web, "cloud.html"), "utf8");
+/* The page AND the scripts it loads. `cloud.html`'s console glue lived inline until
+ * 2026-09-04, when dropping `'unsafe-inline'` from `script-src` moved it to
+ * `cloud.js`; grepping the .html alone would now be checking an empty room. */
+const html = pageSource("cloud.html");
 ok(html.includes('fetch("fixtures/cloud.json")'), "cloud.html must fetch fixtures/cloud.json");
 for (const panel of ["overview", "missions", "conversations", "robot", "notifications"])
   ok(html.includes(`data-panel="${panel}"`), `cloud.html missing #${panel} panel`);

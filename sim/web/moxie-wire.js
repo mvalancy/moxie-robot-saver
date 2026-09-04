@@ -5,7 +5,15 @@
  *   import { mountMoxieWire } from "./moxie-wire.js";
  *   mountMoxieWire(document.getElementById("wire"), { opacity: 0.18 });
  */
-import * as THREE from "three";
+/* The VENDORED path, not the bare specifier `"three"`, and that is load-bearing.
+ * index/setup/cloud used to carry a `<script type="importmap">` whose only job was to
+ * resolve that one word — an inline block, so it could only run under
+ * `script-src 'unsafe-inline'` or a SHA-256 hash that blanks the page when it drifts.
+ * Naming the file deletes all three maps. (`sim.html` still needs its own importmap:
+ * `moxie.js` pulls three/addons, and the vendored addons import bare `"three"`
+ * themselves — see `sim/web/_headers`.)
+ */
+import * as THREE from "./vendor/three/three.module.js";
 
 // Body silhouette (lathe profile), simplified from moxie.js bodyProfilePts:
 // base → speaker → chest seam (steps out) → upper chest tapering to the neck.

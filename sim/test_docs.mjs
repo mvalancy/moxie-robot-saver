@@ -10,6 +10,7 @@
  * Run: node sim/test_docs.mjs
  */
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { pageSource } from "./browser_harness.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -87,7 +88,11 @@ for (const v of ["marked.min.js", "mermaid.min.js", "highlight.min.js"])
 }
 
 // ---- docs.html wiring ----
-const html = readFileSync(join(web, "docs.html"), "utf8");
+/* Page + its own scripts: the explorer's 405-line inline block became `docs.js` on
+ * 2026-09-04 so `script-src` could drop `'unsafe-inline'` (see `sim/web/_headers`).
+ * `vendor/` is excluded by `pageSource`, so `mermaid.render` below still has to be
+ * OUR call and cannot be satisfied by the library's own copy of the string. */
+const html = pageSource("docs.html");
 ok(html.includes("vendor/marked.min.js") && html.includes("vendor/mermaid.min.js"),
    "docs.html must load the vendored marked + mermaid");
 ok(html.includes("docs-index.json"), "docs.html must fetch docs-index.json");
