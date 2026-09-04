@@ -93,6 +93,8 @@
    * never on a live timing (playbook rule 11). */
   var stats = {
     turns: 0, live: 0, delegated: 0, fallbacks: 0,
+    scripted: 0,             // consolation lines the PAGE chose (mic.js's degraded turn)
+    scriptedFree: 0,         // ...of those, the ones a live page answered for FREE
     chatOk: 0, chatRefused: 0, chatErrors: 0,
     speechOk: 0, speechRefused: 0, speechErrors: 0,
     voiceFirst: 0,           // the TTS message was routed BEFORE the chat message
@@ -324,6 +326,44 @@
       return liveTurn(t);
     },
 
+    /**
+     * A line the PAGE chose, not words a visitor said — and therefore a line that must
+     * cost nothing.
+     *
+     * `mic.js` consoles a visitor whose clip was too long, or whose transcription was
+     * refused or failed, with a SCRIPTED CHILD LINE so the conversation still runs and the
+     * button is never dead (spec §6). Nobody spoke those words. Routed through
+     * `sendUserTurn` — which is what it did before — that consolation bought a full
+     * `POST /api/chat` and `POST /api/speech` out of a budget the whole demo shares, on
+     * every path where a refusal changes no mode: `bad_request`, `too_long`, `too_short`,
+     * the client-side over-size gate that never even uploaded, and the first two of the
+     * three transport errors it takes to degrade the page. (`rate_limited`, `at_capacity`,
+     * `budget_exhausted` and `upstream_down` were free only by accident — they happen to
+     * shut `canSpendLiveTurn()` on their way past `mode.js`.)
+     *
+     * Same three-way ordering as `sendUserTurn`, with the middle one replaced:
+     *   1. A connected MQTT broker still gets it. That is a self-hoster's OWN backend, it
+     *      costs this demo nothing, and it is the behaviour they have today.
+     *   2. Nothing spendable -> `inner.sendUserTurn`, i.e. `stub.js`, free and unchanged.
+     *   3. A LIVE page -> the local echo plus the stub answer, assembled here: the same
+     *      transcript row, the same child clip, the same 450 ms beat as (2), and NOT ONE
+     *      REQUEST.
+     *
+     * The visitor cannot tell (2) and (3) apart. The gateway can.
+     */
+    sendScriptedTurn: function (text) {
+      var t = String(text == null ? "" : text).trim();
+      if (!t) return Promise.resolve();
+      stats.scripted++;
+      if (inner.isLive() || !canSpendLiveTurn()) {
+        inner.sendUserTurn(t);
+        return Promise.resolve();
+      }
+      stats.scriptedFree++;
+      echoUser(t);
+      return fallbackReply(t);
+    },
+
     /** Live means "a brain will answer this turn", from either transport (§3.5). */
     isLive: function () {
       var m = mode();
@@ -394,10 +434,11 @@
    *
    * When the page is NOT live it falls through `inner.sendUserTurn` to `stub.js`, which
    * costs nothing and is the scripted behaviour the site has today. Note what it does NOT
-   * do: it never invents a line. `mic.js`'s degraded path publishes a SCRIPTED CHILD LINE
-   * through this same call, which on a live page spends a full chat + speech turn on words
-   * the visitor never said. Nothing here can do that — the only text that reaches
-   * `sendUserTurn` is text a human typed.
+   * do: it never invents a line — the only text that reaches `sendUserTurn` from here is
+   * text a human typed. `mic.js`'s degraded path publishes a line the page invented, and
+   * used to publish it through this same call, which on a live page spent a full chat +
+   * speech turn on words the visitor never said; it goes through `sendScriptedTurn` above
+   * now, which is the same rule this function has always followed, written down.
    *
    * @returns {boolean} whether the line was sent.
    */

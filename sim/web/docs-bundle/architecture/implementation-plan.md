@@ -124,6 +124,56 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   follow-up) was left alone — that file was owned by another change in flight — and no header was added to
   its inert `/api/*` block, deliberately: an inert line that looks live is the trap itself.
   Detail: [`backlog/live-sim-demo.md` §4.7.1](backlog/live-sim-demo.md).
+- **A failed microphone bought a chat + speech turn on words nobody said — fixed 2026-09-04.** `mic.js`
+  consoles a visitor whose ears failed with a **scripted child line**, so the button is never dead
+  (`backlog/live-sim-demo.md` §6). That line is a line the *page* chose — and it went out through
+  `window.moxieBridge.sendUserTurn`, which on a hosted deployment is `cloud-transport.js`'s wrapper. So a
+  clip the route refused, or one `mic.js` refused **client-side without ever uploading it**, still bought a
+  `POST /api/chat` **and** a `POST /api/speech` out of the budget the demo shares with the owner's video
+  game. **Proven, not argued:** the new `sim/test_mic_spend.mjs` counts the requests that actually leave a
+  real Chrome page, and against the pre-change file it recorded `chat 1, speech 1` on three separate
+  degraded paths. Now the consolation goes through a new `moxieBridge.sendScriptedTurn`, which keeps
+  `sendUserTurn`'s three-way ordering with the middle case replaced: a connected MQTT broker still gets the
+  line (a self-hoster's own backend, unchanged), a page with nothing spendable still answers from `stub.js`,
+  and a **live** page gets the local echo plus the stub answer — the same transcript row, the same child
+  clip, the same 450 ms beat, **and no request at all**. A real transcript is untouched and still spends
+  exactly one of each. **The audit's description was broader than the code**, and the narrowing is on the
+  record: a **denied or unsupported microphone** reaches `start()`'s `catch`, which shows an honest status
+  line and stops — it never reached the fallback, so it never spent anything, before or after; likewise a
+  clip under `min_audio_bytes` (`(too short)`) and an empty transcript (`(nothing heard)`). Those three are
+  silent *and* free and were deliberately left alone rather than given a consolation line they never had.
+  The paths that really did pay were the ones where a refusal changes no mode — `bad_request`, `too_short`,
+  `too_long`, the client-side over-size gate, and the first two of the three transport errors it takes to
+  degrade the page; `rate_limited`, `at_capacity`, `budget_exhausted` and `upstream_down` were free only by
+  accident, because they happen to shut `canSpendLiveTurn()` on their way through `mode.js`. Held by three
+  suites at three altitudes: `sim/test_mic_spend.mjs` (54 checks in Chrome — every "spends nothing" paired
+  with a **Web Audio** assertion that the visitor was still consoled *out loud*, peak amplitude and all, so
+  deleting the consolation line could never pass), `sim/test_demo_ears.mjs` B5b (mic.js picks the free seam
+  on seven degraded paths) and `sim/test_cloud_transport.mjs` 6b (the seam itself costs nothing), plus a
+  source-level guard that `mic.js`'s fallback may never again name `sendUserTurn`. **Honest gaps:** the
+  scripted repertoire is still the two lines we have child audio for, so a visitor who fails twice hears the
+  same pair; and `stats.scriptedFree` is a per-page counter, not telemetry — nothing reports how often the
+  ears fail on the live site.
+
+- **Our own CSP blocked Cloudflare's injected analytics beacon — fixed 2026-09-04.** Pages **injects** its
+  Web Analytics beacon (`<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/…">`,
+  SRI + a real token) into every HTML response, and the `script-src 'self' 'unsafe-inline'` added the day
+  before refused it — so production logged a CSP violation on **every single page load**. Harmless to the
+  site, corrosive to the console: a permanent error drowns the next real one, and a quiet console is exactly
+  what found the `:8081` defect. `script-src` now names that one host. Turning the injection off in the Pages
+  project was rejected: it edits the owner's account settings rather than our code and silently drops
+  analytics they may want. **`connect-src` was checked, not assumed, and deliberately left at `'self'`:** the
+  beacon reports through `navigator.sendBeacon` to `send.to || (version === undefined ? absolute : null)` and
+  otherwise to the **relative** `/cdn-cgi/rum`, and the injected tag carries `"version":"2024.11.0"`, so the
+  report is same-origin — confirmed against the live page with the widened policy, which produced no
+  connect-src refusal. The trap for anyone revisiting it is that the report host is the **bare**
+  `cloudflareinsights.com`, not the `static.` one. `sim/test_csp.mjs` gained a block that keeps both halves
+  honest: the beacon host loads and runs, the bare sibling host is still refused, `script-src` names exactly
+  one off-origin host, and the same-origin `/cdn-cgi/rum` beacon is permitted while an off-origin one is not.
+  The same pass corrected the file's stale note that the `/api/*` security headers were an open follow-up —
+  they ship in code as `API_SECURITY_HEADERS` (`functions/api/_lib/envelope.js`, PR #115) — and wrote down
+  why the `/api/*` block in `_headers` must never grow them: it is **inert** (ledger row 27), and inert lines
+  that look live are the original trap.
 
 - **The hosted demo's per-IP windows were free to bypass over IPv6, and its duration cap was not one —
   fixed 2026-09-03.** Four holes in `functions/api/_lib/limits.js` and the three spending routes, all in
