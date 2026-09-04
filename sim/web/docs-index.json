@@ -1,5 +1,5 @@
 {
- "generated": "docs-6677eb45b089",
+ "generated": "docs-81a2632c508d",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 197070,
+   "bytes": 200999,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
