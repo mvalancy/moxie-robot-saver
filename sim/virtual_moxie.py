@@ -30,7 +30,7 @@ Usage:
   python3 sim/virtual_moxie.py --expect-unpaired    # assert the device allowlist gates us
 """
 from __future__ import annotations
-import argparse, json, sys, threading, time, uuid
+import argparse, json, re, sys, threading, time, uuid
 
 try:
     import paho.mqtt.client as mqtt
@@ -46,6 +46,31 @@ FIRMWARE = "24.10.803"           # the analyzed build; robot reports this in /st
 #: included. `signals` is plural on the wire (the field is `repeated`) even though the
 #: planner's own dict spells it `signal`.
 SCORED_FIELDS = ("mood", "mood_intensity", "dialog_act", "emotion", "signals")
+
+#: The prompt the standing smoke speaks. A constant because `--reject-echo` has to
+#: reconstruct the *exact* answer the built-in echo app would have given to it, and a
+#: prompt that drifted away from that reconstruction would silently disarm the check.
+SMOKE_PROMPT = "hello Moxie"
+
+#: What `moxie_sdk/apps/echo_app.py` answers with — the no-brain app every smoke has run
+#: against since the first one. `--reject-echo` exists because a round-trip that is real
+#: at every other layer (real broker, real supervisor, real TTS, real robot) proves
+#: nothing about the AI seam while this string is the reply.
+ECHO_TEMPLATE = "You said: {speech}"
+
+
+def is_echo_reply(text: str, prompt: str = SMOKE_PROMPT) -> bool:
+    """Whether `text` is the built-in echo app's verbatim answer to `prompt`.
+
+    Markup is stripped before comparing. `MOXIE_EXPRESSIVE` can dress a reply in
+    `<mark …>` tags on the way out, and an echoed line wearing markup is still an echoed
+    line — the claim under test is *no model was consulted*, not how the words were
+    decorated. Anything else — including an empty reply — is not the echo app, and is
+    left for the assertions that already cover it.
+    """
+    bare = re.sub(r"<[^>]*>", "", text or "").strip()
+    return bare == ECHO_TEMPLATE.format(speech=prompt).strip()
+
 
 #: 🎬 The action verbs this client implements — `RemoteChatAction.ActionID` as our server
 #: can spell it (`mqtt/moxie_sdk/types.py::ActionType`), and exactly the five
@@ -69,12 +94,13 @@ ACTION_KINDS = ("launch", "exit", "sleep", "enable_qr", "execute")
 class VirtualMoxie:
     def __init__(self, host: str, port: int, device_id: str | None = None,
                  timeout: float = 15.0, verbose: bool = True, expect_tts: bool = False,
-                 expect_scored: bool = False):
+                 expect_scored: bool = False, reject_echo: bool = False):
         self.host, self.port, self.timeout = host, port, timeout
         self.device_id = device_id or f"d_{uuid.uuid4()}"
         self.verbose = verbose
         self.expect_tts = expect_tts        # also assert a CloudTTSResponse (audio) arrives
         self.expect_scored = expect_scored  # ...and that every response carries its score
+        self.reject_echo = reject_echo      # ...and that a real brain, not `echo`, wrote it
         self.got_config = threading.Event()
         self.got_reply = threading.Event()
         self.got_tts = threading.Event()
@@ -732,8 +758,8 @@ class VirtualMoxie:
             event_id = str(uuid.uuid4())
             self.client.publish(self.t_event("remote-chat"), json.dumps(
                 {"event_id": event_id, "command": "prompt", "backend": "router",
-                 "speech": "hello Moxie"}))
-            self.log("→ events/remote-chat prompt: 'hello Moxie'")
+                 "speech": SMOKE_PROMPT}))
+            self.log(f"→ events/remote-chat prompt: {SMOKE_PROMPT!r}")
 
             # 4) wait for the reply, assert it has text
             if not self.got_reply.wait(self.timeout):
@@ -743,6 +769,23 @@ class VirtualMoxie:
             if not text:
                 self.errors.append("remote_chat reply had empty output.text")
                 return False
+
+            # 4b) (optional) assert a real brain — not the built-in echo app — wrote it.
+            # Every other layer of this smoke has always been real (a broker on a socket,
+            # the supervisor process, synthesized audio, this robot decoding the wire);
+            # the brain was the one mock left, and `MOXIE_APP=echo` was pinned in
+            # `run_smoke.sh` with no way to change it. `--reject-echo` is what makes
+            # `run_smoke.sh --live-brain` a claim about the AI seam rather than about
+            # five layers around a stub. See docs/architecture/implementation-plan.md,
+            # Definition of done #1.
+            if self.reject_echo:
+                if is_echo_reply(text, SMOKE_PROMPT):
+                    self.errors.append(
+                        f"the reply is the echo app's own answer ({text!r}) — this run "
+                        f"was supposed to be driven by a real brain, so the supervisor "
+                        f"is still on MOXIE_APP=echo (or fell back to it)")
+                    return False
+                self.log(f"🧠 live brain reply: {text!r}")
 
             # 5) (optional) assert the appliance SCORED the line it sent us. The five
             # fields are the difference between a speaker and a performance, and until
@@ -854,6 +897,10 @@ def main():
                     help="also assert every RemoteChatResponse of the turn carries the "
                          "scored output the contract specifies (mood, mood_intensity, "
                          "dialog_act, emotion, signals) — streamed chunks included")
+    ap.add_argument("--reject-echo", action="store_true",
+                    help="assert the reply was NOT written by the built-in echo app "
+                         "(`You said: <prompt>`) — what makes a live-brain smoke a claim "
+                         "about the AI seam rather than about the layers around it")
     ap.add_argument("--expect-unpaired", action="store_true",
                     help="assert the server treats us as PENDING (device allowlist): a "
                          "non-'paired' pairing_status and no child_pii; prints the config")
@@ -883,7 +930,8 @@ def main():
     args = ap.parse_args()
 
     vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet,
-                      expect_tts=args.expect_tts, expect_scored=args.expect_scored)
+                      expect_tts=args.expect_tts, expect_scored=args.expect_scored,
+                      reject_echo=args.reject_echo)
 
     if args.expect_unpaired:
         ok = False
@@ -976,7 +1024,11 @@ def main():
     except Exception as e:
         vm.errors.append(f"exception: {e}")
     if ok:
-        print("✅ SIL round-trip OK — state→config(paired)→remote-chat→reply")
+        # The default line is unchanged, byte for byte — `--reject-echo` only ADDS the
+        # half a reader cannot otherwise see (that a model, not the stub, answered).
+        print("✅ SIL round-trip OK — state→config(paired)→remote-chat→reply"
+              + (" (🧠 live brain: the reply is not the echo app's)"
+                 if args.reject_echo else ""))
         sys.exit(0)
     print("❌ SIL round-trip FAILED:")
     for e in vm.errors:

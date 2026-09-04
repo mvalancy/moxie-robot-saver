@@ -1,5 +1,5 @@
 {
- "generated": "docs-a23bef705699",
+ "generated": "docs-b3a9931e3570",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 224236,
+   "bytes": 229401,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -869,7 +869,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 22066,
+   "bytes": 23508,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",

@@ -3,6 +3,9 @@
 # Mirrors CI. Uses the mosquitto binary if present, else docker.
 #   PORT override:  MOXIE_SIL_PORT=18831 sim/run_smoke.sh
 #   TELEHEALTH:     sim/run_smoke.sh --telehealth   (🎭 puppet round-trip instead)
+#   LIVE BRAIN:     sim/run_smoke.sh --live-brain   (🧠 a real model, not the echo app;
+#                   MOXIE_SMOKE_APP=llm|content picks which; SKIPS with status 0 when
+#                   there is no gateway key)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 # READINESS IS POLLED, NOT SLEPT — see sim/readiness.sh for the two numbers that
@@ -14,8 +17,119 @@ SUP_LOG=/tmp/moxie-supervisor.log
 # the SIL robot over the supervisor's own status HTTP (the seam the console proxies), and
 # the robot asserts the recovered TeleHealth wire at every step. Same broker, same
 # supervisor, same harness — only the subject under test changes.
+# 🧠 --live-brain swaps the built-in echo app for a REAL brain on the gateway. That was
+# the ONE mocked layer left in this harness: the broker is a broker, the supervisor is
+# the supervisor process, the audio is synthesized and decoded, the robot decodes the
+# wire — and then `MOXIE_APP=echo` was pinned below with no lever, so the whole run
+# proved five real layers around the string `You said: hello Moxie`. Meanwhile
+# sim/tests/test_live_gateway.py drives a real brain with no broker. Nothing ran BOTH
+# halves in one process tree, which is what "a child can talk to Moxie end to end,
+# proven by a live scenario, not a mock" asks for
+# (docs/architecture/implementation-plan.md, Definition of done #1).
+#
+# `MOXIE_SMOKE_APP` picks WHICH brain — `content` (the shipped starter modules, the
+# production default) unless told otherwise, `llm` for the free-form companion. The flag
+# and the variable are two halves of one lever, not two levers: without --live-brain the
+# variable is ignored and this script behaves byte for byte as it always has.
 MODE="smoke"
-for arg in "$@"; do case "$arg" in --telehealth) MODE="telehealth";; esac; done
+LIVE_BRAIN=""
+for arg in "$@"; do case "$arg" in
+  --telehealth) MODE="telehealth";;
+  --live-brain) LIVE_BRAIN=1;;
+esac; done
+#: The brain the supervisor below is started with. `echo` unless --live-brain says
+#: otherwise — the default must stay exactly what every existing caller and CI job has
+#: been getting since this script was written.
+SMOKE_APP="echo"
+REJECT_ECHO=""
+DOTENV=""
+CHAT_TIMEOUT=20
+
+if [ -n "$LIVE_BRAIN" ]; then
+  if [ "$MODE" = "telehealth" ]; then
+    echo "❌ --live-brain and --telehealth are mutually exclusive."
+    echo "   The puppet round-trip never consults a brain — the OPERATOR supplies the"
+    echo "   words — so a live-brain telehealth run would spend a gateway call and prove"
+    echo "   nothing about the AI seam. Run them as two invocations."
+    exit 2
+  fi
+  SMOKE_APP="${MOXIE_SMOKE_APP:-content}"
+  if [ "$SMOKE_APP" = "echo" ]; then
+    echo "❌ MOXIE_SMOKE_APP=echo with --live-brain is a contradiction: --live-brain"
+    echo "   exists to get OFF the echo app. Drop the flag, or name a real brain."
+    exit 2
+  fi
+
+  # ── credentials ───────────────────────────────────────────────────────────────────
+  # Resolved exactly the way sim/tests/helpers_runtime.load_repo_dotenv resolves them,
+  # and for the same reason: `mqtt/.env` is git-ignored, so it exists in the MAIN
+  # checkout and NOT in a `git worktree` — and a live tier that silently skips in every
+  # worktree is the PR #12 finding all over again. This tree's file first, then the main
+  # checkout's. A linked worktree's `.git` is a FILE holding
+  # `gitdir: <main>/.git/worktrees/<name>`; in the main checkout it is a directory.
+  MAIN_CHECKOUT="$ROOT"
+  if [ -f "$ROOT/.git" ]; then
+    gitdir="$(sed -n 's/^gitdir: //p' "$ROOT/.git" | head -1)"
+    case "$gitdir" in */.git/worktrees/*) MAIN_CHECKOUT="${gitdir%%/.git/worktrees/*}";; esac
+  fi
+  for cand in "$ROOT" "$MAIN_CHECKOUT"; do
+    if [ -f "$cand/mqtt/.env" ]; then DOTENV="$cand/mqtt/.env"; break; fi
+  done
+
+  # THE ENVIRONMENT WINS OVER THE DOTENV, because `config._load_env()` uses `setdefault`
+  # and so an explicitly-empty MOXIE_LLM_API_KEY stays empty even next to a populated
+  # `mqtt/.env`. This gate has to make the same call: otherwise
+  # `MOXIE_LLM_API_KEY= sim/run_smoke.sh --live-brain` would boot a supervisor with no
+  # key, 401 at the first turn, and report a *failure* where the contract says *skip*.
+  # Values are tested for emptiness and never read into a variable, printed or logged.
+  HAVE_KEY=""
+  if [ -n "${MOXIE_LLM_API_KEY+x}" ]; then
+    if [ -n "$MOXIE_LLM_API_KEY" ]; then HAVE_KEY=1; fi
+  elif [ -n "${LITELLM_MASTER_KEY+x}" ]; then
+    if [ -n "$LITELLM_MASTER_KEY" ]; then HAVE_KEY=1; fi
+  elif [ -n "$DOTENV" ] && \
+       grep -qE '^[[:space:]]*(MOXIE_LLM_API_KEY|LITELLM_MASTER_KEY)=[^[:space:]#]' "$DOTENV"; then
+    HAVE_KEY=1
+  fi
+  # A key with nowhere to send it is not a gateway. `config._require_llm_base` EXITS the
+  # supervisor when a model brain has no base URL, so an unset one has to skip here too —
+  # a hard exit inside the supervisor would surface as "broker connected never appeared",
+  # which blames the wrong layer.
+  HAVE_BASE=""
+  if [ -n "${MOXIE_LLM_BASE_URL+x}" ]; then
+    if [ -n "$MOXIE_LLM_BASE_URL" ]; then HAVE_BASE=1; fi
+  elif [ -n "$DOTENV" ] && grep -qE '^[[:space:]]*MOXIE_LLM_BASE_URL=[^[:space:]#]' "$DOTENV"; then
+    HAVE_BASE=1
+  fi
+
+  if [ -z "$HAVE_KEY" ] || [ -z "$HAVE_BASE" ]; then
+    # SKIP LOUDLY, WITH STATUS 0 — the contract sim/tests/test_live_gateway.py has
+    # honoured since it was written, and the reason CI stays green on a runner with no
+    # secret. A live path that reddens the build wherever a key is absent is worse than
+    # no live path: it gets deleted, or worse, everybody learns to ignore the red.
+    echo "⏭️  SKIPPED — sim/run_smoke.sh --live-brain needs a gateway and this box has:"
+    echo "     MOXIE_LLM_API_KEY   $([ -n "$HAVE_KEY" ]  && echo present || echo "MISSING or empty")"
+    echo "     MOXIE_LLM_BASE_URL  $([ -n "$HAVE_BASE" ] && echo present || echo "MISSING or empty")"
+    echo "   (from the environment, or a git-ignored mqtt/.env in this tree or the main"
+    echo "    checkout${DOTENV:+ — read $DOTENV}.)"
+    echo "   Exit status is 0 ON PURPOSE. Nothing was started and no gateway call was"
+    echo "   spent — and NOTHING WAS PROVEN. A tier that needs this proof must check for"
+    echo "   the secret itself before invoking us; see sim/ci/ci-deep.yml."
+    exit 0
+  fi
+
+  # Point the supervisor's own loader at the file we found, so a run from a `git
+  # worktree` reads the main checkout's key instead of finding no `mqtt/.env` beside
+  # `config.py` and booting brainless. An operator's own MOXIE_DOTENV is left alone.
+  if [ -n "$DOTENV" ] && [ -z "${MOXIE_DOTENV:-}" ]; then export MOXIE_DOTENV="$DOTENV"; fi
+  # The robot must assert the reply is not the echo app's own answer, or this mode is
+  # just the ordinary smoke with a slower brain and no way to tell the difference.
+  REJECT_ECHO="--reject-echo"
+  # A model on the far side of the internet is not a dict lookup. The default 20 s is
+  # sized for the echo app; a first token from a cold gateway can take longer than that,
+  # and a timeout here would read as "the appliance did not answer".
+  CHAT_TIMEOUT=60
+fi
 # ── bench hygiene: this run gets its OWN MOXIE_DATA_DIR ────────────────────────────────
 # The harness mints a throwaway `d_<uuid>` on every invocation, and the supervisor's data
 # directory defaults to the repo's `mqtt/data` — so without this line every SIL script on
@@ -67,7 +181,7 @@ else
 fi
 wait_for_port "$PORT" 30
 
-echo "── supervisor (echo app) ──"
+echo "── supervisor ($SMOKE_APP app) ──"
 # Derive the status port from the broker port so a leftover supervisor on the default
 # 8930 doesn't make this run's status endpoint fail to bind — and honour an operator's
 # own MOXIE_STATUS_PORT, the way run_scenarios.sh always has, because the derivation can
@@ -94,7 +208,7 @@ TTS_ENGINE="${MOXIE_TTS:-tone}"
 # round-trip, not the gate. So the lab runs in the documented open mode — exactly the
 # migration switch a pre-gate deployment uses. The gate itself has its own hermetic
 # tests (sim/tests/test_device_permits.py) and `virtual_moxie.py --expect-unpaired`.
-MOXIE_APP=echo MOXIE_TTS="$TTS_ENGINE" MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT \
+MOXIE_APP="$SMOKE_APP" MOXIE_TTS="$TTS_ENGINE" MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT \
   MOXIE_STATUS_PORT=$STATUS_PORT MOXIE_ALLOW_UNVERIFIED_BOTS=1 PYTHONUNBUFFERED=1 \
   python3 mqtt/run.py >"$SUP_LOG" 2>&1 & PIDS+=($!)
 SUP_PID=${PIDS[-1]}
@@ -136,10 +250,21 @@ else
   EXPECT_SCORED="--expect-scored"
   case "${MOXIE_EXPRESSIVE:-planner}" in off) EXPECT_SCORED="";; esac
   [ "${MOXIE_AUTOMARKUP:-1}" = "0" ] && EXPECT_SCORED=""
-  echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}${EXPECT_SCORED:+ + scored output}) ──"
-  python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout 20 \
-    $EXPECT_SCORED $EXPECT_TTS
+  echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}${EXPECT_SCORED:+ + scored output}${REJECT_ECHO:+ + 🧠 live brain}) ──"
+  python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout $CHAT_TIMEOUT \
+    $EXPECT_SCORED $EXPECT_TTS $REJECT_ECHO
   rc=$?
+fi
+# SECRET HYGIENE, and it runs BEFORE the tail is printed. --live-brain is the first mode
+# of this harness that puts a real gateway key into a child process's environment, and the
+# next line copies that child's log to stdout — which on a CI runner is a public build
+# log. Nothing in the supervisor prints a credential today; "today" is not a guarantee, so
+# it is checked rather than trusted. The checker never prints the value it looks for.
+if [ -n "$LIVE_BRAIN" ]; then
+  if ! python3 sim/tools/assert_no_secret_in_log.py "$SUP_LOG" "$DOTENV"; then
+    echo "   Refusing to print the supervisor log tail — read $SUP_LOG yourself."
+    exit 3
+  fi
 fi
 echo "── supervisor log tail ──"; tail -6 "$SUP_LOG" || true
 exit $rc
