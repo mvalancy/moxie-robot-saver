@@ -238,6 +238,25 @@ async function callGateway(cfg, body) {
       headers: Object.assign(upstreamHeaders(cfg, "application/json"), { Accept: "application/json" }),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(cfg.chatTimeoutMs),
+      // ---- REDIRECTS ARE NOT FOLLOWED, AND A 3xx IS A DOOR PROBLEM.
+      //
+      // `fetch`'s default is `follow`. This request carries the deployment's ONLY
+      // credential on an `Authorization` header (plus the `CF-Access-*` pair when a
+      // service token is configured), so following a 3xx means re-issuing it at whatever
+      // host the `Location` names. The Fetch standard does strip `Authorization` across an
+      // origin change — but a same-origin redirect keeps it, a 307/308 replays the BODY
+      // with it, and none of that is a property this file should be depending on a runtime
+      // to get right for it. `manual` removes the question: the 3xx is returned as-is and
+      // is answered below, with nothing re-sent anywhere.
+      //
+      // And a 3xx from the gateway is not an ambiguous signal. **A tunnel that redirects
+      // is a door problem, not a brain problem** — an Access login flow, a moved or
+      // renamed endpoint, a `DEMO_GATEWAY_BASE_URL` configured as `http://` that the host
+      // bounces to `https://`. Every one of those is fixed at the door, which is exactly
+      // what `gateway_unreachable_or_gated` tells an operator (`_lib/envelope.js`), and
+      // none is fixed by restarting a model server, which is what `upstream_down` would
+      // have sent them off to do.
+      redirect: "manual",
     });
   } catch (err) {
     // An abort is OUR timeout firing; anything else is an unreachable gateway. Neither
@@ -248,6 +267,12 @@ async function callGateway(cfg, body) {
 
   if (res.status === 429) {
     return { ok: false, reason: "rate_limited", retryAfterS: retryAfterOf(res) };
+  }
+  // A redirect, unfollowed — see `redirect: "manual"` above for why this is the door and
+  // not the brain. Checked BEFORE `res.ok`, which is false for a 3xx and would otherwise
+  // swallow it into `upstream_down`.
+  if (res.status >= 300 && res.status < 400) {
+    return { ok: false, reason: "gateway_unreachable_or_gated" };
   }
   if (!res.ok) {
     // 4xx and 5xx alike. The body is NOT read: an unknown-model 400 names the model, and
