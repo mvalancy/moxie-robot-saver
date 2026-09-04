@@ -302,6 +302,20 @@ EXT_MAX_VALUE_BYTES = _env_int("MOXIE_EXT_MAX_VALUE_BYTES", 16384)
 EXT_MAX_TOTAL_BYTES = _env_int("MOXIE_EXT_MAX_TOTAL_BYTES", 262144)
 EXT_MAX_BREACHES = _env_int("MOXIE_EXT_MAX_BREACHES", 3)
 
+# ---- ✍️ content authoring (docs/architecture/backlog/content-authoring.md §5.2) ----
+# The editor's paid rung — one press of *Try it*, one brain call — is **P1**, and nothing
+# in this tree reads these two yet. They are declared in P0 anyway so a deployment can set
+# them before the button exists rather than discovering the lever the day it bites.
+#
+# The budget counts **calls, not tokens**, and that is forced rather than chosen: nothing
+# in this codebase does token accounting — `moxie_sdk/chat.py` captures no `usage`, keeps
+# no spend total and caches no response, and its `Pacer` is an adaptive self-throttle that
+# reacts to the gateway's own 429s (politeness, not a budget). Counting presses is the only
+# lever that exists, and a reader should not mistake it for cost control (assumption A6:
+# both numbers are chosen, not measured, which is exactly why they are env vars).
+AUTHOR_TRY_BUDGET = _env_int("MOXIE_AUTHOR_TRY_BUDGET", 40)        # tries per rolling hour
+AUTHOR_TRY_MAX_TOKENS = _env_int("MOXIE_AUTHOR_TRY_MAX_TOKENS", 300)  # cap on a draft's own
+
 #: **Carved out of the turn, not added to it.** An extension gets a slice of a child's
 #: patience, not a claim on it: 0.25 s is 4 % of `BRAIN_BUDGET_S`, and if both the
 #: `global` and the `turn.before` hook run, 8 %. The assertion below is the honest part of
