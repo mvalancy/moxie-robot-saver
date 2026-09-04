@@ -36,7 +36,7 @@ from .. import automarkup as _automarkup
 from .. import safety as _safety
 from .. import vocab
 from ..store import MemoryStore
-from ..types import Turn, Reply, RobotContext
+from ..types import Turn, Reply, RobotContext, Action, ActionType
 from .module import ContentModule
 from .volley import Volley, Session
 from .memory import default_classifier, note_used, provenance, wrap_facts
@@ -175,11 +175,13 @@ class ContentApp(MoxieApp):
 
     @staticmethod
     def _reply_from_volley(v: Volley) -> Reply:
-        # M2: a global handler drives text/markup. Plumbing volley.execution_actions
-        # (eb_timer_request etc.) into RemoteChatAction is a later slice.
         # Handler output goes through the same tag parse as model output, so a module
         # can end a session by writing "<exit>" into set_output (moxie_sdk/actions.py).
         text, actions = parse_action_tags(v.output_text or "")
+        # …and `volley.execution_actions` — what a global handler or a sandboxed
+        # extension asked the robot to *run* — becomes `execute` RemoteChatActions.
+        # Brief S5's gap, closed 2026-09-04; see `execution_actions_of`.
+        actions += execution_actions_of(v)
         markup = parse_action_tags(v.output_markup)[0] if v.output_markup else None
         # A module may author its own markup — that is honoured as written. But a handler
         # that only set `output_markup` to a plain line would bypass the runtime's markup
@@ -361,7 +363,12 @@ class ContentApp(MoxieApp):
                                  key=f"{conv.module_id}/{conv.content_id}",
                                  data={"extension": conv.extension,
                                        "memory": conv.memory})
-        if pre is not None and pre.handled and v.output_text is not None:
+        if pre is not None and pre.handled and (v.output_text is not None
+                                                or v.execution_actions):
+            # `or v.execution_actions` mirrors the globals path above: a rule that answers
+            # the turn by *doing* something — arming the QR scanner, cancelling a timer —
+            # has handled it just as much as one that spoke, and dropping the action here
+            # would be the S5 gap reopening one branch lower down.
             self._save_persist_data(turn.robot.device_id, v.persist_data,
                                     json.dumps({}, sort_keys=True))
             return self._reply_from_volley(v)
@@ -392,6 +399,11 @@ class ContentApp(MoxieApp):
         # The model may drive the robot from inside its own line (see actions.py):
         # lift the tags out as actions, speak only the remainder.
         text, actions = parse_action_tags(text)
+        # A `turn.before` extension that acted but did **not** handle the turn still gets
+        # its action out: the model answers the child, and the robot does the thing the
+        # pack asked for. Losing it here would mean "act" only worked when a pack also
+        # took the whole turn.
+        actions += execution_actions_of(v)
         if not text and not actions:
             return Reply(text="Tell me more!")
         return Reply(text=text, actions=actions)
@@ -623,7 +635,8 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
                       content_id: str = "") -> dict:
     """Apply one extension's effect list, in order, subject to every cap in §6.3.
 
-    Returns `{"spoke", "wrote", "dropped_markup", "blocked"}` for the caller and the log.
+    Returns `{"spoke", "wrote", "dropped_markup", "blocked", "acted"}` for the caller and
+    the log.
 
     Two things are worth reading twice. **`say` goes through the same output-side safety
     classifier and the same `annotate` floor a model's line does** — an extension does not
@@ -632,7 +645,7 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
     key**: the `(device_id, namespace)` pair is supplied here, by us, so the write cannot
     reach another module's namespace or another child's robot (X9).
     """
-    spoke = wrote = dropped = 0
+    spoke = wrote = dropped = acted = 0
     blocked = False
     for eff in effects or []:
         kind = eff.get("kind")
@@ -679,12 +692,86 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
                         wrote += 1 if memory.save(device_id, data) else 0
             except Exception as e:            # a broken memory file must not end a turn
                 print(f"[ext] memory write failed ({e}); continuing", flush=True)
-        elif kind in ("act", "subscribe", "brain"):
-            # Unreachable in P0 — the capability is refused at load (brief S5). Kept as an
-            # explicit refusal rather than a silent drop so the day the wire lands, the
-            # gap is a line to fill in and not a bug to find.
+        elif kind == "act":
+            # The pack asked the robot to run something. The name was already checked
+            # against `ext.ACTION_WORDS` at load *and* charged an `act.<name>` grant — this
+            # is the second, host-side check on the same closed table, because the value
+            # that ends up as a `function_id` on a wire to a robot in a child's room should
+            # be bounded by the code that puts it there and not only by the code that let
+            # it in (qr-launch-cards.md §P0-b).
+            name = str(eff.get("name") or "")
+            if name not in ext.ACTION_WORDS:      # pragma: no cover - load already refused
+                print(f"[ext] {name!r} is not an action this appliance knows; "
+                      f"ignored", flush=True)
+                continue
+            volley.add_execution_action(name, [str(a) for a in (eff.get("args") or [])])
+            acted += 1
+        elif kind in ("subscribe", "brain"):
+            # Still unreachable — both capabilities are refused at load (`ext
+            # .P1_CAPABILITIES` says which and why). Kept as an explicit refusal rather
+            # than a silent drop so the day each one lands, the gap is a line to fill in
+            # and not a bug to find.
             print(f"[ext] {kind} is not plumbed yet; ignored", flush=True)
-    return {"spoke": spoke, "wrote": wrote, "dropped_markup": dropped, "blocked": blocked}
+    return {"spoke": spoke, "wrote": wrote, "dropped_markup": dropped, "blocked": blocked,
+            "acted": acted}
+
+
+def robot_functions() -> frozenset:
+    """The robot-side functions this appliance will ever name on the wire — **the keys of
+    `ext.ACTION_WORDS`, and nothing else**.
+
+    One table, so a function is nameable exactly when somebody has written the sentence a
+    parent reads before granting it: a name with no words cannot be declared, cannot be
+    granted, and cannot be emitted. Two tables could drift; this one cannot.
+
+    The bound is the safety property, not the tidiness one.
+    `docs/architecture/backlog/qr-launch-cards.md` §P0-b makes the argument for the
+    launch-card catalogue — *"a QR code is an input any stranger can print and leave on a
+    table in front of a child"* — and an authored content pack is the same kind of input by
+    a longer route. Widening this set is a code change in a file a reviewer reads, which is
+    the brake risk R1 asks for.
+    """
+    return frozenset(ext.ACTION_WORDS)
+
+
+def execution_actions_of(volley: Volley) -> list:
+    """`volley.execution_actions` → `Action`s the wire can carry. Brief S5's other half.
+
+    Every one goes out as **`execute` + `function_id`**, which is what the recovered
+    contract actually defines: `RemoteChatAction.ActionID.execute` (= 6) with `function_id`
+    (field 7) and `repeated function_args` (field 8) — RemoteChat.proto:255-281, read back
+    by `remote-chat-protocol.md`:99 as *"`execute` — run a robot-side
+    `function_id(function_args…)`"*. `wire.encode_action` spells it, and because `args` is
+    a **list** it lands in `function_args` rather than `action_args` (the type-decided
+    mapping #119 introduced; a dict would be the other one). So `eb_enable_qr` reaches a
+    robot as `qr-launch-cards.md` §P0-a's worked example spells it:
+
+        {"action": "execute", "function_id": "eb_enable_qr", "function_args": ["true"]}
+
+    …and *not* as `ActionType.ENABLE_QR`, whose `"enable_qr"` is not an `ActionID` verb at
+    all. That enum member is a known naming defect, filed in §P0-a and pinned by
+    `test_actions_reach_the_robot.py`; this function simply does not use it.
+
+    **The name is checked against the closed set here too.** `ext.validate` already refuses
+    an unknown action at load and charges an `act.<name>` grant for a known one, so this is
+    the second gate on the same table — deliberately, because this is the last function
+    before a string becomes a `function_id` addressed to a robot, and a Python global
+    handler calling `add_execution_action` never passed through the validator at all.
+    """
+    known = robot_functions()
+    out = []
+    for entry in getattr(volley, "execution_actions", None) or []:
+        name = str((entry or {}).get("name") or "")
+        if name not in known:
+            print(f"[content] {name!r} is not a robot function this appliance names; "
+                  f"dropped (see execution_actions_of)", flush=True)
+            continue
+        args = (entry or {}).get("args") or []
+        if not isinstance(args, (list, tuple)):
+            args = [args]
+        out.append(Action(type=ActionType.EXECUTE, function=name,
+                          args=[str(a) for a in args]))
+    return out
 
 
 def ext_namespace(kind: str, key: str, data: dict) -> str:
@@ -709,11 +796,17 @@ EXT_EVENTS_COLLECTION = "ext_events"
 EXT_EVENTS_CAP = 50
 
 
-#: What a **shipped-by-us** extension may be granted on top of `ext.DEFAULT_GRANTS`. Not
-#: `act`/`subscribe`/`brain` (those are P1 and refused at load whoever asks), and not
-#: `child.profile` (a birthday and free-text notes are the highest-value PII on the
-#: appliance, and no shipped activity needs them). Widening this list is a code change in
-#: a file a reviewer reads — which is exactly the brake acceptance criterion 5 asks for.
+#: What a **shipped-by-us** extension may be granted on top of `ext.DEFAULT_GRANTS`.
+#:
+#: Not `subscribe`/`brain` (still refused at load whoever asks — see `ext.P1_CAPABILITIES`)
+#: and not `child.profile` (a birthday and free-text notes are the highest-value PII on the
+#: appliance, and no shipped activity needs them).
+#:
+#: And **not `act.<name>` either, though it is now grantable.** Since 2026-09-04 an `act`
+#: reaches the robot, so the old reason ("it is P1") has expired — but "the appliance can
+#: honour it" is not "every program we ship may do it". Nothing we ship needs one yet, and
+#: the day one does, adding that single `act.<name>` is a code change in a file a reviewer
+#: reads — which is exactly the brake acceptance criterion 5 asks for.
 SHIPPED_EXTRA_GRANTS = frozenset({"clock", "random", "memory.read", "memory.write",
                                   "presence", "markup"})
 

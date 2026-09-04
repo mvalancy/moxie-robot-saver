@@ -136,6 +136,47 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   ignores `function_id` and never reads args at all, so the **browser SIM still shows an armed `execute`
   as `(unnamed)`**. That is the other client's half of criterion 4 and is untouched here.
 
+- **A content extension can now ACT — the other half of S5, closed 2026-09-04. Two of the four
+  `xfail(strict=True)` conformance rows flip green; the other two do not, and I measured which.**
+  #119 (above) put `function_id`/`function_args` on the wire and correctly reported that the four rows
+  did **not** flip: *"the wire was necessary, not sufficient."* The remainder was two things, and this is
+  them. (1) [`ext.py`](../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` refused **any** `act.*` capability
+  at load, so a pack could not declare one however well the wire behaved; `act` is now out of
+  `P1_CAPABILITIES`, whose docstring records for each survivor *which host is still missing*.
+  (2) `execution_actions` appeared **nowhere** in `mqtt/moxie_sdk/**` — there was no path from a pack's
+  `act` statement to a `RemoteChatAction`. New `content_app.execution_actions_of()` turns each
+  `volley.execution_actions` entry into `Action(EXECUTE, function=name, args=[str…])`, and
+  `_reply_from_volley` appends them to `Reply.actions`; the args are a **list**, so #119's type-decided
+  mapping lands them in `function_args` and no third convention was invented. Every robot function goes
+  out as **`execute` + `function_id`** — including `eb_enable_qr`, which is what the recovered `ActionID`
+  enum actually defines; `ActionType.ENABLE_QR` is routed *around*, not renamed, and its tripwire test is
+  untouched. **Measured result: `test_t1_t6_conformance[G2]` and `[G3]` pass and are un-xfailed in the
+  same commit. `[G5]` and `[G6]` still xfail** — G5 needs `brain`, G6 needs `subscribe` (its `act` half is
+  done; nothing joins `Volley.subscriptions` to `RemoteChatAction.EventSubscription`, so the capability
+  would still do nothing) — and `P1_REASON` is now a per-row dict naming exactly that, instead of one
+  stale sentence about a wire that now exists. **The bound is the security argument.**
+  `ext.ACTION_WORDS` is simultaneously the allowlist of nameable `function_id`s and the source of the
+  sentence a parent reads, so a robot function nobody wrote English for cannot be declared, granted or
+  emitted — [qr-launch-cards](backlog/qr-launch-cards.md) §P0-b's *"the catalog is a closed allowlist, and
+  this is a safety property, not tidiness"*, applied to packs. It is checked twice: at load, and again in
+  `execution_actions_of`, because that is the last function before a string becomes a `function_id`
+  addressed to a robot in a child's room, and a Python global handler calling `add_execution_action` never
+  met the validator at all. `DEFAULT_GRANTS` and `SHIPPED_EXTRA_GRANTS` still contain **no** `act.*`:
+  grantable is not granted. **11 new tests** (`sim/tests/test_ext_act.py`, the chain link by link) plus a
+  rewritten X10 pair; 6 mutations checked by hand and 3 new rows in `sim/tools/ext_mutation_check.py`,
+  which now runs **30/30 caught**. ⚠️ **One escape test needed editing and that deserves saying out loud:**
+  `test_x10_p1_capabilities_are_declared_rendered_and_refused` made its point with `act` as the example of
+  a capability that cannot do anything — which is precisely what stopped being true. Its invariants (a
+  still-P1 capability is refused; `evaluate()` has no `allow_p1` door) are unchanged and now assert on
+  `brain`; the `act` half was replaced by two tests that assert *more* — the three gates (bounded name,
+  declared, granted), each a **load** refusal, and the host-boundary check. ⚠️ **An honesty gap this
+  opened:** an imported pack declaring `act.*` now reviews without the *"…but not yet on this appliance"*
+  line, yet still is not granted, so it fails at load and the parent learns of it through the `ext_events`
+  ring — exactly as an imported pack declaring `clock` does today. Which grants a parent may hand out is
+  the console card, still P1. **Still honestly missing:** no physical robot has ever been sent one of
+  these (qr-launch-cards §7 Q1/Q3), and `subscribe`/`brain`/`turn.after`/`session.end`/the text compiler/
+  the JS evaluator/the console card — the rest of §P1 — are untouched.
+
 - **The `/api/*` routes carried almost none of the page's security header set — fixed 2026-09-04.**
   PR #112 gave the static pages HSTS and a real CSP; a live measurement the next day showed the routes that
   can **spend money** answering with only `nosniff`, `no-store` and `Referrer-Policy` — no HSTS, no CSP, no
