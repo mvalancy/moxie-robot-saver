@@ -98,6 +98,43 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **The landing page piled up draw work in a hidden tab until it was unusable — fixed 2026-09-04.** Owner
+  report: *"leave it running in a browser for hours and it gets really sluggish... after a day it's filled
+  with streaking points in the background and very slow, refresh fixes it."* In `sim/web/bg.js` the
+  **producers** were two `setInterval`s (`spawnPacket` every 900 ms, a hub radar ping every 2600 ms) and the
+  only **consumer** — the `packets.splice` / `pings.splice` that retire an entry — lived inside `step()`,
+  which re-arms through `requestAnimationFrame`. A browser **pauses rAF in a hidden tab and keeps timers
+  running**, so a backgrounded page filled two arrays nothing drained, and every entry came due at once on
+  the frame the visitor returned to: each packet is a `shadowBlur` arc and each ping a stroked circle,
+  redrawn *every* frame until it retires. `refresh fixes it` is the tell — the state is two module-scope
+  arrays, nothing browser- or GPU-level. **Reproduced, not argued.** A headless page is never actually
+  backgrounded (`document.hidden` stays false), which is how a first attempt at this measurement talked
+  itself into a result it had not got; opening a **second** page and `bringToFront()`ing it makes the first
+  genuinely hidden — `document.hidden` true, **zero** rAF frames delivered — and 20 minutes there took
+  `packets` 0 → **876** and `pings` 0 → **463**, linear at ~43 and ~23 per minute, while a 20-minute
+  **visible** control on the same build stayed at 0–3 and 2–3 with a flat heap. Compressed (bg.js's interval
+  delays scaled, the rAF consumer held) 90 simulated minutes reached **4,059 packets + 2,298 pings**, and the
+  screenshot is the owner's sentence: dots strung along every edge plus stacks of overlapping radar rings.
+  Recovery cost the visitor 4.9 s (23 min hidden) to 6.6 s (90 min) of frames at 50–100 ms. Over a real day
+  the backlog is between **~2,600 entries** (Chrome's own policy — 1 Hz while hidden, then intensive
+  throttling to ~1/min after 5 minutes) and **~96,000** with no throttling at all; the low end already
+  exceeds the ~1,500 that reproduces the reported look, so the symptom does not depend on which regime
+  applies. **The fix is structural, not a bound:** both spawners now run from *inside* `step()` off an
+  elapsed-time accumulator, so producers and consumer share one clock and stop together — there is no timer
+  left to fire in a hidden tab. `SPAWN_CREDIT_MS` caps what one frame may bank (returning after four hours
+  credits one frame, not four hours) and `MAX_PACKETS`/`MAX_PINGS` are a ceiling no scheduler can defeat.
+  Measured after: **zero** growth and zero interval ticks at every simulated duration up to 1,440 minutes,
+  recovery 25–35 ms. Guard: the new `sim/test_bg_perf.mjs` (15 checks) backgrounds a real tab and requires
+  no growth; its teeth block rebuilds the old producer shape **out of the shipped file** and requires the
+  growth to reappear, so a box that cannot background a tab skips green rather than passing on nothing, and
+  a revert of the in-frame spawner is a **failure**, never a skip. Against the pre-fix file it exits 1 with
+  9 failures. **Deliberately not changed:** the `pg.a *= 0.972` ping fade is per-frame while its radius is
+  per-`dt`, so a ping lives ~113 *frames* — 1.9 s at 60 fps, 3.8 s and a ring twice the size at 30. The
+  time-based form was written, screenshotted and reverted: it is bit-identical at 60 fps but visibly shrinks
+  the rings below it, this page is the front door, and `MAX_PINGS` already removes the only harm it caused.
+  The reasoning is recorded at the line. The page's ~80–100 ms resting frame time is real and separate; in
+  software-rendered headless the same band appears with `bg.js` removed **entirely**, so it is not obviously
+  bg.js's to fix and a stable attribution needs a GPU-backed browser.
 - **The `/api/*` routes carried almost none of the page's security header set — fixed 2026-09-04.**
   PR #112 gave the static pages HSTS and a real CSP; a live measurement the next day showed the routes that
   can **spend money** answering with only `nosniff`, `no-store` and `Referrer-Policy` — no HSTS, no CSP, no
