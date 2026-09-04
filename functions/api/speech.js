@@ -50,12 +50,21 @@
  * AND THE LAST RULE, which is the one that keeps a child from hearing static: **SNIFF THE
  * BYTES, NEVER THE CONTENT-TYPE** (`_lib/wav.js`, transcribed from `tts.py`:110-145). A
  * JSON body where audio was expected is `upstream_down`, never handed to a visitor as
- * noise.
+ * noise — and, since 2026-09-03, so is EVERY other body that is not the format this route
+ * asked for. `cfg.ttsFormat` is now passed to `pcmFromAudio`, because until then it was
+ * not: under the shipped `DEMO_TTS_FORMAT=wav` default a 200 that was neither RIFF, JSON
+ * nor HTML — a `text/plain` proxy error, an SSE `data: {"error":…}` frame, an mp3 — took
+ * the headerless-PCM branch that is only correct under `DEMO_TTS_FORMAT=pcm`, and was
+ * base64'd into `messages[0].payload.audio.buffer` and shipped at status 200 with
+ * `reason: null` and `degraded: false`. That is both a body-disclosure hole and, with an
+ * mp3, several seconds of full-scale static in a child's ear. `sim/test_demo_proxy.mjs`
+ * §10c pins each shape, and its `assertClean` sweep now DECODES the buffer, which is why
+ * the hole survived ~1000 sweeps that all reported clean: base64 defeats substring search.
  */
 import { readConfig, modeOf, publicLimits, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
 import { admit, budgetState, loadOf, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
-import { b64FromBytes, verifyTicket } from "./_lib/hmac.js";
+import { b64FromBytes, b64urlFromBytes, bytesFromB64url, verifyTicket } from "./_lib/hmac.js";
 import { buildCloudTtsResponse, joinUrl, ttsMessage } from "./_lib/wire.js";
 import { AudioBodyError, pcmFromAudio } from "./_lib/wav.js";
 
@@ -69,8 +78,8 @@ import { AudioBodyError, pcmFromAudio } from "./_lib/wav.js";
  * 60-second TTL bounds how long even that is possible. This set is a cheap extra that
  * stops the obvious loop (one ticket, a thousand redemptions) inside one isolate.
  *
- * Keyed on the MAC segment, not the whole ticket, and bounded so a long-lived isolate
- * cannot grow it without limit.
+ * Keyed on the ticket's CANONICAL BYTES (`replayKey`), not on the string the caller sent,
+ * and bounded so a long-lived isolate cannot grow it without limit.
  */
 const spent = new Set();
 const SPENT_MAX = 2000;
@@ -78,6 +87,32 @@ const SPENT_MAX = 2000;
 /** Tests only. */
 export function __resetSpent() {
   spent.clear();
+}
+
+/**
+ * The canonical form of a ticket, for the `spent` set only — never for verification.
+ *
+ * **A base64url segment is not a canonical encoding of its bytes**, and the set used to key
+ * on the raw string. An HMAC-SHA-256 is 32 bytes, which is 43 base64url characters, and 43
+ * characters carry 258 bits — so the FINAL CHARACTER has two bits nothing reads. Four
+ * distinct strings therefore decode to the same MAC, and `_lib/hmac.js::timingSafeEqual`
+ * compares DECODED BYTES (:174-176), so all four verify. Measured against the real module
+ * on 2026-09-03: one minted ticket, four spellings, four `spent` entries, four redemptions
+ * off one paid chat turn per isolate. Re-encoding with `+`/`/`/`=` does NOT work — the
+ * `/^[A-Za-z0-9_-]+$/` gate in `bytesFromB64url` (:86-89) refuses those outright — so the
+ * bypass was exactly 4x, not unbounded.
+ *
+ * Decoding and re-encoding collapses those four onto one key. BOTH segments are
+ * canonicalised, not just the MAC: the payload is signed and so cannot vary in practice,
+ * but keying on the whole artefact means that stops being a fact this function relies on.
+ *
+ * Never throws: `bytesFromB64url` answers `null` on anything malformed (:86-89), and a
+ * ticket that malformed has already failed `verifyTicket` above.
+ */
+function replayKey(ticket) {
+  const parts = String(ticket || "").split(".");
+  const canon = (s) => b64urlFromBytes(bytesFromB64url(s) || new Uint8Array(0));
+  return canon(parts[1]) + "." + canon(parts[2]);
 }
 
 export async function onRequestPost(context) {
@@ -122,10 +157,10 @@ export async function onRequestPost(context) {
       return refusal(cfg, "too_long", { load: slot.load, rateLimit: slot.rateLimit });
     }
 
-    const mac = ticket.split(".")[2] || "";
-    if (spent.has(mac)) return refusal(cfg, "bad_ticket", { load: slot.load, rateLimit: slot.rateLimit });
+    const key = replayKey(ticket);
+    if (spent.has(key)) return refusal(cfg, "bad_ticket", { load: slot.load, rateLimit: slot.rateLimit });
     if (spent.size >= SPENT_MAX) spent.clear(); // bounded; see the note on `spent`
-    spent.add(mac);
+    spent.add(key);
 
     // ---- 5. The one upstream call.
     const upstream = await callGateway(cfg, v.claims.text);
@@ -222,12 +257,17 @@ async function callGateway(cfg, text) {
   try {
     // SNIFF THE BYTES. `Content-Type` is not consulted anywhere in this file, on purpose:
     // our gateway labels a valid Piper WAV `audio/mpeg` (§2.2, observed live 2026-09-02).
-    const out = pcmFromAudio(raw, { sampleRate: cfg.ttsSampleRate, channels: 1 });
+    // ...AND TELL IT WHAT WE ASKED FOR. `cfg.ttsFormat` is the `response_format` on the
+    // body two lines above; without it `wav.js` cannot tell "the headerless PCM I ordered"
+    // from "a text/plain error the proxy invented", and until 2026-09-03 it took the
+    // second for the first under the shipped `wav` default (see `_lib/wav.js`'s header).
+    const out = pcmFromAudio(raw, { sampleRate: cfg.ttsSampleRate, channels: 1, format: cfg.ttsFormat });
     if (!out.pcm.length) return { ok: false, reason: "upstream_down" };
     return { ok: true, pcm: out.pcm, sampleRate: out.sampleRate, channels: out.channels };
   } catch (err) {
-    // A JSON error body, an HTML page, an unreadable WAV, or a bit depth `audio.js` cannot
-    // decode. The page degrades and says the same thing to a VISITOR in every case, and
+    // A JSON error body, an HTML page, a container we can name but not decode, a
+    // non-RIFF body where `wav` was asked for, an unreadable WAV, or a bit depth
+    // `audio.js` cannot decode. The page degrades and says the same thing to a VISITOR in every case, and
     // NOTHING from the error — which for a JSON body would contain a model id — reaches
     // the response. The one distinction that is drawn is for the OPERATOR: an HTML body
     // where audio was expected is a Cloudflare Access login page in front of the tunnel,
