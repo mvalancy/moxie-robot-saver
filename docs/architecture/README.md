@@ -55,7 +55,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   with no restart, and an explicit `MOXIE_APP` that pins the appliance's own), and
   [`backlog/production-hardening.md`](backlog/production-hardening.md) (production hardening — the
   cross-process store decision made rather than deferred, MQTT reconnection, and a soak that stands in
-  for a week in a house). One page there is the odd one out and deliberately so:
+  for a week in a house), and [`backlog/content-authoring.md`](backlog/content-authoring.md) (content
+  authoring — the verb packs did not ship: where authoring lives, what a non-programmer may and may not
+  write, the edit → hear it → keep it loop priced in gateway calls, and why an authored item is exactly
+  as untrusted as an imported one). One page there is the odd one out and deliberately so:
   [`backlog/community-signals.md`](backlog/community-signals.md) — **the inbound half**, what owners
   holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how
   strong the evidence is rather than how good the feature sounds.
