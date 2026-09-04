@@ -126,6 +126,8 @@ async function load(url, opts = {}) {
   page.on("console", (m) => { if (m.type() === "error") raw.push(m.text()); });
   page.on("pageerror", (e) => raw.push("PAGEERR " + e.message));
   page.on("response", (r) => { if (r.status() === 404) notFound.push(r.url()); });
+  const refused = [];
+  page.on("requestfailed", (r) => refused.push(r.url()));
   page.on("request", (r) => {
     const u = r.url();
     if (/:808[12]\/health\b/.test(u)) sidecar.push(u);       // the doomed sidecar probes
@@ -183,7 +185,20 @@ async function load(url, opts = {}) {
   // loosely: `notFound` is still asserted by URL, so any OTHER missing asset fails.
   const expected404 = (u) => /\/api\/health\b/.test(u) || (opts.noTransport && /cloud-transport\.js/.test(u));
   const onlyProbe404 = notFound.length > 0 && notFound.every(expected404);
-  const errs = raw.filter((t) => !(onlyProbe404 && /status of 404/.test(t)));
+  // AND the doomed sidecar probes themselves. This file already TRACKS them (`sidecar`,
+  // above) because they are the expected behaviour of a localhost load — `audio.js` asks
+  // Piper :8081 and STT :8082 whether they are there, on purpose. What it did not do is
+  // tolerate the CONSOLE ERROR Chrome logs when the port is dead, which is the normal case
+  // for everyone without those services running. That went unnoticed because this suite had
+  // never executed in CI (no browser was ever installed), and on the author's machine two
+  // stale processes happened to be listening — so it passed on local accident, twice over.
+  // Correlated with requests that actually failed, so a refusal to any OTHER host still fails.
+  const onlySidecarRefusals = refused.length > 0 && refused.every((u) => /:808[12]\b/.test(u));
+  const errs = raw.filter((t) => {
+    if (onlyProbe404 && /status of 404/.test(t)) return false;
+    if (onlySidecarRefusals && /ERR_CONNECTION_REFUSED|Failed to load resource/.test(t)) return false;
+    return true;
+  });
   return { errs, raw, notFound, sidecar, api, ...info };
 }
 
