@@ -186,14 +186,40 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   ok(!/headers\.get\(\s*["']Content-Type/i.test(speechSrc),
      "speech.js never reads the upstream Content-Type either");
 
-  // A raw-PCM body (DEMO_TTS_FORMAT=pcm) has no header to ask, so the CONFIGURED rate is
-  // the right answer — and it is the only case where that is true.
+  // A raw-PCM body has no header to ask, so the CONFIGURED rate is the right answer — and
+  // it is the only case where that is true.
+  //
+  // THE FORMAT IS NOW EXPLICIT, and the distinction is the thing to get right: `format` is
+  // `DEMO_TTS_FORMAT`, i.e. OUR OWN CONFIGURATION and the same string this deployment put
+  // in `response_format` on the outbound request. It is NOT read from the upstream reply,
+  // and it is not a Content-Type. So §2.2's rule is completely untouched by it — no
+  // property of the RESPONSE has become an input to the decision. What changed is that the
+  // reader is told what was ORDERED, which is the one thing byte-sniffing cannot recover:
+  // headerless PCM and an opaque error blob are the same bytes.
   const pcm = makePcm(64, 1);
-  const raw = wav.pcmFromAudio(pcm, { sampleRate: 16000, channels: 1 });
-  eq(raw.container, "raw", "a non-RIFF body is treated as the raw PCM we asked for");
+  const raw = wav.pcmFromAudio(pcm, { sampleRate: 16000, channels: 1, format: "pcm" });
+  eq(raw.container, "raw", "under DEMO_TTS_FORMAT=pcm a non-RIFF body is the raw PCM we asked for");
   eq(raw.sampleRate, 16000, "…at the CONFIGURED rate");
   eq(raw.channels, 1, "…and the configured channel count");
   ok(raw.pcm.every((b, i) => b === pcm[i]), "…with the bytes untouched");
+
+  // AND THE COMPANION, which is the regression this file exists to hold from now on. The
+  // SAME bytes under the shipped `wav` default are refused, because under `wav` a
+  // non-RIFF 200 is not audio we ordered — it is a proxy's text/plain error, an SSE
+  // `data: {"error":…}` frame, or an mp3 from a gateway that ignored `response_format`.
+  // Returned as `container:"raw"` it was base64'd into `messages[0].payload.audio.buffer`
+  // and shipped at status 200 with `reason: null` — an upstream body handed to a visitor,
+  // and full-scale static in a child's ear. An ABSENT format reads the same strict way, so
+  // a future caller that forgets to say gets the safe answer rather than the leaky one.
+  for (const [label, fb] of [
+    ["DEMO_TTS_FORMAT=wav", { sampleRate: 16000, channels: 1, format: "wav" }],
+    ["an ABSENT format", { sampleRate: 16000, channels: 1 }],
+  ]) {
+    let threw = null;
+    try { wav.pcmFromAudio(pcm, fb); } catch (e) { threw = e; }
+    ok(threw instanceof wav.AudioBodyError, `under ${label} a non-RIFF body RAISES`);
+    eq(threw && threw.kind, "unreadable", `…of kind unreadable (${label})`);
+  }
 }
 
 /* =========================================================================== *
@@ -258,8 +284,15 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   // A `<` that is not a document is NOT html: PCM whose first byte happens to be 0x3c must
   // still be treated as audio, so the sniff checks for a real tag rather than one byte.
   const ltFirst = new Uint8Array([0x3c, 0x00, 0x7f, 0x01, 0x02, 0x03]);
-  eq(wav.pcmFromAudio(ltFirst, { sampleRate: 22050 }).container, "raw",
+  eq(wav.pcmFromAudio(ltFirst, { sampleRate: 22050, format: "pcm" }).container, "raw",
      "PCM starting with 0x3c is not mistaken for HTML");
+  // Under `wav` it is refused like any other non-RIFF body — but the CLAIM ABOVE still
+  // holds, and this is how: the kind is `unreadable`, never `html`. The route maps those
+  // two onto different reasons and tells the operator to fix different things (a service
+  // token vs. a gateway), so a mis-diagnosis here would send someone the wrong way.
+  let ltThrew = null;
+  try { wav.pcmFromAudio(ltFirst, { sampleRate: 22050 }); } catch (e) { ltThrew = e; }
+  eq(ltThrew && ltThrew.kind, "unreadable", "…and under wav it is `unreadable`, NOT a false `html` diagnosis");
 
   // A body that merely CONTAINS a brace is fine — the sniff is on the first byte, not a
   // substring search, so PCM whose first sample happens to be 0x7b is not misread.
@@ -268,8 +301,11 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   try { wav.pcmFromAudio(braceFirst, { sampleRate: 22050 }); } catch (e) { braceThrew = e; }
   ok(braceThrew instanceof wav.AudioBodyError, "PCM starting with 0x7b is (conservatively) refused");
   const braceInside = new Uint8Array([0x00, 0x7b, 0x01, 0x02]);
-  eq(wav.pcmFromAudio(braceInside, { sampleRate: 22050 }).container, "raw",
+  eq(wav.pcmFromAudio(braceInside, { sampleRate: 22050, format: "pcm" }).container, "raw",
      "…but a brace BYTE inside PCM is not a JSON sniff");
+  let insideThrew = null;
+  try { wav.pcmFromAudio(braceInside, { sampleRate: 22050 }); } catch (e) { insideThrew = e; }
+  eq(insideThrew && insideThrew.kind, "unreadable", "…and under wav it is `unreadable`, not a false `json` diagnosis");
 }
 
 /* =========================================================================== *
@@ -281,7 +317,11 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   // A LIST/INFO chunk before `data` — a very common encoder habit. A reader that assumed
   // the data started at byte 44 would return the LIST text as audio.
   {
-    const list = new TextEncoder().encode("INFOISFT" + " ".repeat(4) + "Lavf");
+    // `\u0000` as an ESCAPE, not a literal NUL byte. A single raw NUL in a source file makes
+    // `grep` classify the whole file as binary and skip it silently — which is exactly how
+    // this file's 21 `pcmFromAudio` call sites stayed invisible to the sweep that was meant
+    // to find every caller before `format` was introduced. It cost a red CI run.
+    const list = new TextEncoder().encode("INFOISFT" + "\u0000".repeat(4) + "Lavf");
     const total = 4 + 24 + (8 + list.length) + (8 + pcm.length);
     const file = new Uint8Array(8 + total);
     const view = new DataView(file.buffer);
@@ -344,13 +384,22 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
     eq(threw && threw.kind, "unreadable", `…of kind unreadable (no ${label})`);
   }
 
-  // A RIFF that is not WAVE (an AVI, say) is not a WAV — it falls through to raw, which is
-  // the conservative outcome: `audio.js` will decode noise-shaped garbage rather than the
-  // route crashing, and the wrong-format case is a misconfiguration, not an attack.
+  // A RIFF that is not WAVE (an AVI, say) is not a WAV, and THIS COMMENT USED TO SAY THE
+  // WRONG THING. It said falling through to raw was "the conservative outcome: `audio.js`
+  // will decode noise-shaped garbage rather than the route crashing". Decoding noise-shaped
+  // garbage IS the failure mode — it is several seconds of full-scale static played to a
+  // child, and it is the exact harm `wav.js`'s header says the module exists to prevent.
+  // Refusing is the conservative outcome. Under the shipped `wav` default it is now refused;
+  // under `pcm` it still falls through, because there the caller really did ask for
+  // headerless bytes and an AVI header is only four unlucky bytes of them.
   {
     const file = wav.writeWav(pcm, { sampleRate: 22050, channels: 1, bitsPerSample: 16 });
     asciiAt(file, 8, "AVI ");
-    eq(wav.pcmFromAudio(file, { sampleRate: 22050 }).container, "raw", "RIFF-but-not-WAVE is not parsed as a WAV");
+    let aviThrew = null;
+    try { wav.pcmFromAudio(file, { sampleRate: 22050 }); } catch (e) { aviThrew = e; }
+    eq(aviThrew && aviThrew.kind, "unreadable", "RIFF-but-not-WAVE under wav is REFUSED, not played as noise");
+    eq(wav.pcmFromAudio(file, { sampleRate: 22050, format: "pcm" }).container, "raw",
+       "…while under pcm it is still not parsed as a WAV");
   }
 
   // A wild header rate is clamped into the window `audio.js`:617-618 accepts, so a strange
