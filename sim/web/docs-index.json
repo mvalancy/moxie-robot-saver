@@ -1,5 +1,5 @@
 {
- "generated": "docs-88b950819290",
+ "generated": "docs-0d64ec0ddd45",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 6926,
+   "bytes": 7333,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 17254,
+   "bytes": 14009,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -128,7 +128,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 139548,
+   "bytes": 140663,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -823,6 +823,21 @@
     "Risks",
     "10. Assumption ledger",
     "11. Did this brief remove the decision it owed?"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/vendor-the-readme-hero.md",
+   "title": "The README hero is an off-site image, and the live docs page cannot load it",
+   "section": "architecture",
+   "bytes": 3214,
+   "mermaid": 0,
+   "headings": [
+    "The finding",
+    "Why it is worth fixing rather than allow-listing",
+    "The brief",
+    "Acceptance",
+    "Honest note"
    ],
    "kind": "md"
   },
