@@ -36,6 +36,7 @@ from moxie_sdk import performance as performance_seam   # the behavior planner (
 from moxie_sdk import voice_settings as voice_seam       # 🎚️ which voice / which ears
 from moxie_sdk import brains as brain_seam             # 🧠 which brain, per robot
 from moxie_sdk.content import packs as content_packs  # 📦 content packs (ADOPT #5)
+from moxie_sdk.content import render                  # ✍️ the prompt template sandbox
 from moxie_sdk.cloud_config import LoggingPolicy         # the child-privacy gate
 from markup import make_markup, perform  # the behavior planner / markup floor seam
 
@@ -92,6 +93,14 @@ SAFETY_JOURNAL_POLICY = LoggingPolicy.NO_MEDIA
 # *robot uploads*. Memory is text our own server derives from turns that already reached
 # it, so it defaults to NO_MEDIA (allowed) — and a parent who explicitly sets
 # `logging_policy=NO_DATA` turns writing off entirely (reads and erase still work).
+#
+# This constant governs **both** durable memories, because a child's parent has one
+# switch and not two: the module facts in `moxie_sdk/store.py::MemoryStore` (gated in
+# `MemoryStore.writes_allowed`, resolved from `memory_policy`) *and* the rolling
+# conversation transcript under `MOXIE_MEMORY_DIR` (gated in `_save_memory`, resolved
+# from `transcript_persists` → the same `memory_policy`). The transcript was ungated
+# until the gate below landed, which made this comment's promise false on the one path
+# that stores the child's words verbatim.
 MEMORY_POLICY = LoggingPolicy.NO_MEDIA
 
 # Telemetry's own LoggingPolicy default, for the same reason as the two above: what a
@@ -101,9 +110,19 @@ MEMORY_POLICY = LoggingPolicy.NO_MEDIA
 # without. NO_MEDIA keeps the envelope (event name + timestamps + session) and withholds
 # every opaque payload, because `Packet.event_data` is `bytes` with no recovered type
 # vocabulary and a store that guessed "this blob is not audio" would be a privacy
-# incident, not a bug. A parent who sets `logging_policy=NO_DATA` gets nothing on disk at
-# all; one who sets FULL gets payloads too. See `moxie_sdk/telemetry.py::storable_packet`
-# and `docs/architecture/config-and-telemetry-contract.md` §③.
+# incident, not a bug. A parent who sets `logging_policy=NO_DATA` gets **no further**
+# telemetry on disk (`storable_packet` returns None and `_persist_telemetry` writes
+# nothing — not the packet, not a count, not a day row); one who sets FULL gets payloads
+# too. See `moxie_sdk/telemetry.py::storable_packet` and
+# `docs/architecture/config-and-telemetry-contract.md` §③.
+#
+# "No further" is the honest word and it is narrower than it should be: unlike memory
+# (`erase_memory` / `DELETE /memory`) and the transcript (`purge_transcripts`, which the
+# flip itself triggers), telemetry has **no erasure path at all** — `do_DELETE` accepts
+# only `/memory` — so flipping to NO_DATA leaves the packet ring and the daily roll-up
+# already on disk where they are, with nothing a parent can press to remove them. That
+# is a real gap in the contract's *"erase always works"*, tracked as its own slice; do
+# not read this constant's comment as a claim that it is closed.
 TELEMETRY_POLICY = LoggingPolicy.NO_MEDIA
 
 # How long a child must have been out of sight before Moxie says hello on its own when
@@ -169,6 +188,12 @@ class MoxieRuntime:
         self._seen_since_connect: set = set()
         self.robots: dict[str, RobotContext] = {}
         self.history: dict[str, list] = {}
+        # Parent-console config editing: per-device RobotCloudConfig overrides. Declared
+        # HERE, before `_load_memory()`, because the transcript's privacy gate resolves
+        # through `memory_policy` → `effective_config`, which reads this dict — and the
+        # boot sweep must be able to ask "is this robot under NO_DATA?" before it puts a
+        # single stored transcript back into RAM.
+        self._config_overrides = {}
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
         self._max_memory = int(os.environ.get("MOXIE_MEMORY_TURNS", "40"))
         self._load_memory()
@@ -199,8 +224,7 @@ class MoxieRuntime:
         self._transcriber = None
         self._stt_sessions = {}
         self._stt_uuid = {}      # utterance uuid per device (set on any frame that has one)
-        # Parent-console config editing: per-device RobotCloudConfig overrides.
-        self._config_overrides = {}
+        # (`self._config_overrides` is declared above, before `_load_memory()`.)
         # Device allowlist (the pairing gate). A robot that is not permitted is tracked
         # as *pending* and served a minimal, child-free config — see `_push_config` and
         # `_serve_unpermitted`. `None` = read the policy at call time (env, then the
@@ -301,16 +325,124 @@ class MoxieRuntime:
         return self.client
 
     # ---- conversation memory (survives restarts) ----
+    #
+    # THIS IS THE SECOND MEMORY, AND IT IS THE ONE THAT HOLDS THE CHILD'S OWN WORDS.
+    #
+    # `MemoryStore` (below) keeps a handful of durable *facts* a module derived from a
+    # conversation. This keeps the **rolling transcript** — every line, as said — and
+    # `MOXIE_MEMORY_DIR` writes it to disk. Both compose files set that variable
+    # (`docker-compose.yml`, `docker-compose.images.yml` → `/data/memory`), so on a
+    # shipped appliance this path is ON by default.
+    #
+    # It used to be guarded by nothing but `if not self._memory_dir`, while this file's
+    # own comments and `docs/architecture/content-module-contract.md` both promised that
+    # `LoggingPolicy.NO_DATA` means nothing about the child is written. That was a stated
+    # guarantee the code did not keep. These four methods are the gate that keeps it.
+    #
+    # Three decisions, written down because a reader will ask about each:
+    #
+    #  1. **`NO_MEDIA` (the default) writes the transcript; only `NO_DATA` stops it.**
+    #     Telemetry's `NO_MEDIA` withholds `event_data` because that field is opaque
+    #     `bytes` that could be audio or video — literal media a gate cannot classify. A
+    #     transcript has no such payload: it is *entirely* text this process is already
+    #     holding in RAM to make conversation work. So there is nothing to withhold and
+    #     the choice is binary, and it is made the same way long-term memory and the
+    #     safety journal make it (`MEMORY_POLICY`, `SAFETY_JOURNAL_POLICY`): allowed
+    #     under `NO_MEDIA`/`FULL`, refused under `NO_DATA`. Deciding otherwise would mean
+    #     the *default* deployment loses conversational continuity across a restart while
+    #     still storing derived facts about the same child — stricter in name and not in
+    #     substance.
+    #
+    #  2. **Flipping to `NO_DATA` deletes the file that is already there.** Refusing new
+    #     writes and leaving yesterday's transcript on disk is a half-guarantee, and the
+    #     contract is explicit that *"reads and erase always work"* — erasure is never
+    #     policy-gated, so removing it is always permitted. It is also load-bearing:
+    #     `_load_memory` reads that file straight back into RAM and into the next prompt,
+    #     so a file left behind is not merely stored, it is still *in use*. The sweep runs
+    #     at boot and after any config edit that could have flipped the switch, and the
+    #     write path removes the file too, so no single missed hook leaves it lying about.
+    #
+    #  3. **In-memory history is NOT gated.** This is a *persistence* gate. The rolling
+    #     window in RAM is what lets Moxie hold the thread of the conversation it is in;
+    #     a robot that forgot the previous sentence would not be more private, it would
+    #     be broken. Nothing about the child leaves this process either way, and the
+    #     window dies with it. The privacy question is what survives on disk.
+    #
+    # The gate resolves through `memory_policy` — the same per-device callable the
+    # runtime installs on `MemoryStore` — rather than a new constant or a new resolver,
+    # so a parent has one switch, not two that could disagree.
+
     def _memory_path(self, device_id: str) -> str:
         safe = "".join(c for c in device_id if c.isalnum() or c in "-_")
         return os.path.join(self._memory_dir, f"{safe}.json")
 
+    def transcript_persists(self, device_id) -> bool:
+        """False under `NO_DATA` — this robot's transcript is never written to disk, and
+        anything already there is removed. Resolved per call from the **effective**
+        (`fleet ⊕ per-robot`) config, so a parent flipping the switch on a live robot
+        takes effect on the very next turn with no restart."""
+        return self.memory_policy(device_id) != LoggingPolicy.NO_DATA
+
+    def _unlink(self, path: str) -> bool:
+        """Remove one file. True if it was there. Best-effort by design: this runs on the
+        MQTT thread, and a file we cannot delete must not cost the child their turn."""
+        try:
+            os.remove(path)
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError as e:
+            print(f"[runtime] transcript erase failed ({path}): {e}", flush=True)
+            return False
+
+    def _forget_transcript(self, device_id: str) -> bool:
+        """Delete this robot's on-disk transcript (and any half-written `.tmp` beside
+        it). Never policy-gated — an erase always works — and idempotent."""
+        if not self._memory_dir:
+            return False
+        path = self._memory_path(device_id)
+        gone = self._unlink(path)
+        self._unlink(path + ".tmp")          # a crash mid-save must not leave a copy
+        if gone:
+            print(f"[runtime] 🧽 erased on-disk transcript for {device_id} (NO_DATA)",
+                  flush=True)
+        return gone
+
+    def purge_transcripts(self) -> int:
+        """Remove every stored transcript whose robot is now under `NO_DATA`.
+
+        Called at startup and after any config edit that could have flipped the switch,
+        so "I turned recording off" means the file is gone *now* — not at the next turn,
+        and not only for the robots that happen to be connected."""
+        if not self._memory_dir or not os.path.isdir(self._memory_dir):
+            return 0
+        removed = 0
+        try:
+            names = os.listdir(self._memory_dir)
+        except OSError as e:
+            print(f"[runtime] transcript sweep failed: {e}", flush=True)
+            return 0
+        for name in names:
+            if not name.endswith(".json") or self.transcript_persists(name[:-5]):
+                continue
+            self.history.pop(name[:-5], None)     # do not keep serving what we just erased
+            if self._unlink(os.path.join(self._memory_dir, name)):
+                removed += 1
+        if removed:
+            print(f"[runtime] 🧽 erased {removed} stored transcript(s) under NO_DATA",
+                  flush=True)
+        return removed
+
     def _load_memory(self):
-        """Restore per-device conversation history from disk, if configured."""
+        """Restore per-device conversation history from disk, if configured — for the
+        robots whose parents allow it. The `NO_DATA` sweep runs FIRST, so a fleet-wide
+        rule (which is durable, and therefore outlives the process) is honoured across a
+        restart instead of being undone by one."""
         if not self._memory_dir:
             return
         try:
             os.makedirs(self._memory_dir, exist_ok=True)
+            self.purge_transcripts()
             for name in os.listdir(self._memory_dir):
                 if not name.endswith(".json"):
                     continue
@@ -322,8 +454,14 @@ class MoxieRuntime:
             print(f"[runtime] memory load failed: {e}")
 
     def _save_memory(self, device_id: str):
-        """Persist one robot's history (trimmed) so it survives a restart."""
+        """Persist one robot's history (trimmed) so it survives a restart — **unless the
+        parent's `LoggingPolicy` says nothing about this child may be stored**, in which
+        case we write nothing and remove whatever is already there (see decisions 1-3
+        above). `self.history` is untouched either way: the conversation still works."""
         if not self._memory_dir:
+            return
+        if not self.transcript_persists(device_id):
+            self._forget_transcript(device_id)
             return
         h = self.history.get(device_id) or []
         if len(h) > self._max_memory:
@@ -950,7 +1088,9 @@ class MoxieRuntime:
 
             def _content(self, path: str):
                 """📦 `POST /content/review` (the pack itself), `POST /content/import`
-                (`{"pack", "accept", "expect_digest"}`) and `POST /content/undo`.
+                (`{"pack", "accept", "expect_digest"}`) and `POST /content/undo`; ✍️
+                `POST /content/item` (`{"kind", "data", "phrases", "local_rev"}`) and
+                `POST /content/render` (`{"kind", "data", "context"}`).
 
                 Review writes nothing; import is the one verb that changes the store, and
                 it refuses with **409** when `expect_digest` does not match the body now
@@ -974,6 +1114,21 @@ class MoxieRuntime:
                     body = _json.loads(raw or b"{}") or {}
                     if not isinstance(body, dict):
                         raise ValueError("expected a JSON object")
+                    if path == "/content/render":
+                        # ✍️ Rung 1: resolve the draft prompt. Reads nothing, writes
+                        # nothing, calls no brain — so it cannot fail with anything but a
+                        # malformed draft.
+                        out = rt.content_render(body)
+                        return self._json_out(out, 200 if out.get("ok") else 400)
+                    if path == "/content/item":
+                        # ✍️ Rung 4: keep it. The one authoring verb that writes, and the
+                        # one that owns `validate_item` — deliberately HERE and not in the
+                        # console proxy, so a direct `curl` at this port cannot skip it
+                        # (brief R6).
+                        out = rt.content_save_item(body)
+                        if out.get("ok"):
+                            return self._json_out(out, 200)
+                        return self._json_out(out, 409 if out.get("conflict") else 400)
                     out = rt.content_import(body.get("pack"),
                                             body.get("accept") or [],
                                             str(body.get("expect_digest") or ""))
@@ -1035,6 +1190,14 @@ class MoxieRuntime:
                 next turn; a body whose digest is not the reviewed one is **409**.
                 `POST /content/undo` puts the snapshot back. See `_content`.
 
+                `POST /content/item` with `{"kind", "data", …}` saves ONE authored item —
+                the ✍️ editor's Save. It validates exactly as an import does, snapshots
+                what it replaced into the same one undo slot, writes the overlay and
+                reloads, so the next turn uses it. A schedule is refused by kind, a change
+                to `code` or `extension` is refused, and a stale `local_rev` is **409**.
+                `POST /content/render` resolves a draft prompt against a sample context
+                and calls **no brain** — see `content_save_item` / `content_render`.
+
                 `POST /preview?device_id=…` with `{"text": "…"}` rehearses one line:
                 the behavior planner stages it and the supervisor publishes it as an
                 ordinary `remote_chat`, so the SIM (or a robot paired as a rehearsal
@@ -1061,7 +1224,8 @@ class MoxieRuntime:
                     # `{"edit": {"namespace", "item", "text"}}`, a parent correcting one
                     # remembered line instead of losing the whole activity to it.
                     return self._memory_write(urlparse(self.path).query)
-                if path in ("/content/review", "/content/import", "/content/undo"):
+                if path in ("/content/review", "/content/import", "/content/undo",
+                            "/content/item", "/content/render"):
                     return self._content(path)
                 if path == "/preview":
                     # `POST /preview?device_id=…` `{"text": …, "speak": false}` — the
@@ -1798,6 +1962,10 @@ class MoxieRuntime:
         cfg.update(overrides)
         self.store.write_shared(self.FLEET_CONFIG_COLLECTION, cfg)
         self._note("config", f"⚙️  fleet config updated: {', '.join(overrides) or '—'}")
+        # A house rule of `logging_policy=NO_DATA` must take away the transcripts that are
+        # already on disk, for every robot on the box — not just the connected ones the
+        # loop below re-pushes. `purge_transcripts` is a no-op under any other policy.
+        self.purge_transcripts()
         for device_id in list(self.robots):
             self._push_config(device_id)
         return cfg
@@ -2611,6 +2779,11 @@ class MoxieRuntime:
         RobotCloudConfig and re-publish it. Overrides persist across re-pushes."""
         self._config_overrides.setdefault(device_id, {}).update(overrides)
         self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
+        if "logging_policy" in overrides:
+            # The parent just moved the privacy switch. If it landed on NO_DATA, the
+            # transcript already on disk goes now — waiting for the next turn would leave
+            # it there for a robot that is never spoken to again.
+            self.purge_transcripts()
         if "face" in overrides:
             # Worth its own line in the console's activity feed: this is the one config
             # edit whose result a child sees on the robot's face.
@@ -3843,6 +4016,266 @@ class MoxieRuntime:
         self._note("content", "📦 undo — content restored")
         return {"ok": True, "restored": len(items), "reload": reload,
                 "label": str(backup.get("label") or ""), "undo_available": False}
+
+    # ---- ✍️ content authoring (backlog/content-authoring.md) ----
+    # Packs made content **shippable**; these two verbs make it **writable**. The design
+    # decision they rest on is that an authored item is exactly as untrusted as an
+    # imported one *because it enters through the same functions* (brief §6.1) — so there
+    # is no "we wrote this one" branch anywhere below, and the only genuinely new safety
+    # code in the whole slice is the `validate_item` call in `content_save_item`.
+    #
+    # Why that one call is the load-bearing line (§6.3): `packs.mark_edited` calls
+    # `normalize_data` and **not** `validate_item` — `apply_pack` does that itself before
+    # writing. So a save that skipped it would let an authored global with a
+    # non-compiling `pattern` reach `Global.from_dict`, which compiles at LOAD, and a
+    # throw inside the loader takes down `reload_content()` for every item at once.
+    # `sim/tools/authoring_mutation_check.py` deletes the call and requires
+    # `test_a_bad_pattern_is_refused_with_validate_items_own_sentence` to go red.
+    #
+    # What is deliberately absent here: `POST /content/try`. P0 makes **no brain call**
+    # (brief §9's "not in P0" list), so there is no budget, no counter and no 429 in this
+    # region — `config.AUTHOR_TRY_BUDGET` is declared for P1 and consumed by nobody yet.
+
+    #: Item kinds the editor may write. `schedule` is absent on purpose and refused by
+    #: name below: it is the one kind that reaches the robot as `ContentSchedule`, and no
+    #: physical Moxie has ever been served a pack-authored one (brief §0), so a
+    #: parent-facing button must not put an unobserved wire behaviour behind it.
+    AUTHORABLE_KINDS = ("conversation", "global")
+
+    def content_save_item(self, body) -> dict:
+        """✍️ Save one authored item — validate, snapshot, write the overlay, reload.
+
+        The verb the 📦 card's ✏️ and ＋ New both call. Everything it enforces is a
+        refusal, and each refusal is a sentence rather than a status code:
+
+        * a **schedule** is refused by kind (§0/§4.5), naming the robot as the reason;
+        * a change to **`code`** or **`extension`** is refused (§4.5) — both round-trip a
+          save untouched and neither is authorable in any phase, so the editor shows them
+          and the route makes that structural;
+        * `validate_item`'s own sentence is returned verbatim for anything it refuses,
+          because a paraphrase here would be a second validator (§6.1);
+        * a stale `local_rev` is a **409** with the import conflict's own wording (R7):
+          two tabs are *detected*, never merged, and the one undo slot is not a fix for
+          that and must not be described as one.
+
+        On success it takes the same one-slot snapshot an import takes, so
+        `POST /content/undo` restores an authored save with no new mechanism, and calls
+        `reload_content()` so disk and memory never disagree about what Moxie says next
+        (§6.5). The answer carries the shadow check for a command (§4.4) — advice, never a
+        refusal, and scoped to the phrases the author actually typed.
+        """
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "expected a JSON object",
+                    "reason": "The editor sent something that is not an item."}
+        kind = str(body.get("kind") or "")
+        if kind == "schedule":
+            return {"ok": False, "error": "a schedule cannot be authored here",
+                    "reason": "A schedule is the one kind of content that is sent to the "
+                              "robot itself, and no Moxie has ever been given one that "
+                              "came from a pack. Until that has been watched on real "
+                              "hardware, this editor will not write one."}
+        if kind not in self.AUTHORABLE_KINDS:
+            return {"ok": False, "error": f"unknown item kind {kind!r}",
+                    "reason": "This editor writes conversations and commands."}
+        try:
+            data = content_packs.normalize_data(kind, body.get("data"))
+        except content_packs.PackError as e:
+            return {"ok": False, "error": str(e), "reason": str(e)}
+
+        key = content_packs.item_key(kind, data)
+        ident = content_packs.full_key(kind, key)
+        asked = str(body.get("key") or "")
+        items = self.content_items()
+        if asked and content_packs.full_key(kind, asked) != ident \
+                and content_packs.full_key(kind, asked) in items:
+            return {"ok": False,
+                    "error": "this item's identity is locked",
+                    "reason": "A conversation is identified by its module and content "
+                              "ids, and a command by its name. Changing one makes a NEW "
+                              "item rather than editing this one — save it under the new "
+                              "name and the old one stays where it is."}
+
+        before = items.get(ident)
+        refusal = self._refuse_unwritable_fields(kind, data, before)
+        if refusal:
+            return refusal
+
+        # §6.3 — the one `if`. `mark_edited` normalizes; it does not validate.
+        reasons = content_packs.validate_item(
+            {"kind": kind, "key": key, "data": data,
+             "source_version": content_packs.source_version_of(before or {})})
+        if reasons:
+            return {"ok": False, "error": reasons[0], "reason": reasons[0],
+                    "reasons": reasons}
+
+        expected = str(body.get("local_rev") or "")
+        if expected and before is not None \
+                and expected != content_packs.local_rev({"kind": kind, **before}):
+            return {"ok": False, "conflict": True,
+                    "error": "this is not the version you opened",
+                    "reason": "Somebody else saved this item while you were editing it. "
+                              "Open it again before saving, or your change would quietly "
+                              "replace theirs."}
+
+        shadow = (content_packs.shadow_check(data, items, body.get("phrases"))
+                  if kind == "global" else [])
+
+        with self._content_lock:
+            overlay = self._content_overlay()
+            self.store.write_shared(self.CONTENT_BACKUP_COLLECTION, {
+                "items": overlay, "packs": self._content_packs(),
+                "label": f"before editing {data.get('name') or key}",
+                "at": int(time.time())})
+            merged = content_packs.mark_edited(overlay, ident, data)
+            if not self._write_content_overlay(merged):
+                return {"ok": False, "error": "could not write the content overlay",
+                        "reason": "The appliance could not save this item."}
+            reload = self.reload_content()
+        self._note("content", f"✍️ saved {ident}")
+        rows = content_packs.inventory({ident: merged[ident]},
+                                       known_names=self._known_child_names())
+        return {"ok": True, "id": ident, "key": key, "kind": kind,
+                "created": before is None,
+                "item": rows[0] if rows else {},
+                "local_rev": content_packs.local_rev({"kind": kind, **merged[ident]}),
+                "shadow": shadow, "reload": reload, "undo_available": True,
+                "undo_slots": 1}
+
+    @staticmethod
+    def _refuse_unwritable_fields(kind: str, data: dict, before) -> dict:
+        """`code` and `extension` survive a save untouched, or the save does not happen.
+
+        Not a warning: the property that makes a pack safe is structural (§6.5), and an
+        editor that could *change* an extension would be the text→AST surface
+        `backlog/sandboxed-extensions.md` P1 owns — with a second compiler, which that
+        brief already refused in its own §7.4. So the card shows both fields read-only and
+        this refuses anything else, for a new item as much as an edited one (a parent
+        cannot *create* a `code` block either).
+        """
+        base = content_packs.normalize_data(kind, (before or {}).get("data")) if before \
+            else content_packs.normalize_data(kind, {})
+        if content_packs.canonical(data.get("extension") or {}) \
+                != content_packs.canonical(base.get("extension") or {}):
+            return {"ok": False,
+                    "error": "an extension cannot be edited here",
+                    "reason": "This item carries a sandboxed program. The editor shows "
+                              "what it does and never changes it — see "
+                              "docs/architecture/backlog/sandboxed-extensions.md for the "
+                              "surface that will."}
+        if str(data.get("code") or "") != str(base.get("code") or ""):
+            return {"ok": False,
+                    "error": "a code block cannot be edited here",
+                    "reason": "This appliance never runs a content module's Python `code`, "
+                              "so there is nothing here that could write one. It travels "
+                              "as inert text and the editor leaves it exactly as it found "
+                              "it — see docs/architecture/backlog/sandboxed-extensions.md "
+                              "for behaviour this appliance CAN run."}
+        return {}
+
+    #: The sample values rung 1 renders against. A prompt is a template over exactly three
+    #: top-level names — `volley`, `session` and `presence` (`content_app.py`:312 for the
+    #: opener, :371 for the prompt) — and that closed list is what makes the chip list
+    #: closeable at all (§4.3).
+    RENDER_SAMPLE_FACTS = ("likes drawing dinosaurs",
+                           "is learning to whistle",
+                           "was nervous about the school play")
+
+    def content_render(self, body) -> dict:
+        """👁️ Resolve a draft prompt against a sample context. **No brain, no store.**
+
+        Rung 1 of the loop (§5.1), and the highest-value free feedback we can give: the
+        panel is *the actual system prompt the brain would receive*, which is the thing a
+        prompt author most needs and today cannot see at all. `render_prompt` is a pure
+        function over a plain dict, so this route is one call and a made-up context.
+
+        It renders **twice**, and that is a decision worth defending. The second pass is
+        `render._minimal_render` — the dependency-free renderer a bare
+        `pip install moxie-cloud-sdk` without the `content` extra lands on. Reporting only
+        `render.STRIPPED` around the real call would report **zero** on every appliance we
+        ship (the container installs jinja2), i.e. a counter that can never fire where it
+        matters. Rendering both answers the question §4.3 actually promises — *does this
+        prompt mean the same thing off this box?* — and `portable_identical: false` is the
+        signal that an author has typed past the guided grammar.
+
+        `counts_advisory` is `true` and stays true: `render.BLOCKED` / `render.STRIPPED`
+        are process-global integers the turn loop also moves, so even the narrow window
+        `render._tally` takes is polluted by a concurrent turn. The fix is not a lock
+        around the renderer (§5.1 forbids it — the turn loop calls it too); the fix is
+        saying so.
+        """
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "expected a JSON object",
+                    "reason": "The editor sent something that is not a draft."}
+        kind = str(body.get("kind") or "conversation")
+        if kind != "conversation":
+            return {"ok": False, "error": f"{kind} items have no prompt to resolve",
+                    "reason": "Only a conversation has a prompt. A command matches "
+                              "phrases, and you can see what it would catch beside it."}
+        try:
+            data = content_packs.normalize_data("conversation", body.get("data"))
+        except content_packs.PackError as e:
+            return {"ok": False, "error": str(e), "reason": str(e)}
+
+        ctx = body.get("context") if isinstance(body.get("context"), dict) else {}
+        known = self._known_child_names()
+        nickname = str(ctx.get("nickname") or (known[0] if known else "Sam"))
+        face = bool(ctx.get("face_present", True))
+        overflow = bool(ctx.get("overflow", False))
+        namespace = str((data.get("memory") or {}).get("namespace") or "") or "memory_chat"
+        facts = ctx.get("facts")
+        facts = ([str(f) for f in facts] if isinstance(facts, (list, tuple))
+                 else list(self.RENDER_SAMPLE_FACTS))
+        sample = {"nickname": nickname, "face_present": face, "overflow": overflow,
+                  "namespace": namespace, "facts": facts}
+        context = self._render_context(sample)
+
+        counts, portable_counts = {}, {}
+        prompt = render.render_prompt(data.get("prompt") or "", context, counts=counts)
+        portable = render._minimal_render(data.get("prompt") or "", context,
+                                          counts=portable_counts)
+        opener = render.render_prompt((data.get("opener") or "").split("|")[0], context)
+        return {
+            "ok": True,
+            "prompt": prompt,
+            "opener": opener.replace("<opener>", "").strip(),
+            "openers": [o for o in (data.get("opener") or "").split("|") if o.strip()],
+            "portable": portable,
+            "portable_identical": portable == prompt,
+            "counts": {"blocked": counts.get("blocked", 0) + portable_counts.get("blocked", 0),
+                       "stripped": portable_counts.get("stripped", 0)},
+            "counts_advisory": True,
+            "context": sample,
+        }
+
+    @staticmethod
+    def _render_context(sample: dict) -> dict:
+        """The three top-level names a prompt template may see, filled with sample values.
+
+        Plain dicts rather than a live `Volley`/`Session`: `render_prompt` walks dotted
+        paths over dicts and objects alike, and a made-up turn must not be able to reach
+        anything real. `FactList` is used for the facts so `{{ …facts }}` renders as
+        bullet lines here exactly as it does on a turn, instead of as a list repr.
+        """
+        from moxie_sdk.content.memory import FactList
+        return {
+            "volley": {
+                "speech": "Tell me about my day",
+                "config": {"child_pii": {"nickname": sample["nickname"],
+                                         "pronouns": "they/them", "birthday": "",
+                                         "notes": ""}},
+                "request": {"input_vars": {}},
+                "entities": [],
+                "persist_data": {sample["namespace"]: {"facts": FactList(sample["facts"])}},
+                "local_data": {},
+            },
+            "session": {"overflow": sample["overflow"], "total_volleys": 3,
+                        "history": [], "module_id": "", "content_id": ""},
+            "presence": {"known": True, "face_present": sample["face_present"],
+                         "faces_seen": 1, "flickers": 0, "events": 2,
+                         "line": ("Someone is in front of Moxie right now."
+                                  if sample["face_present"]
+                                  else "Nobody is in front of Moxie.")},
+        }
 
     def _ingest_notify(self, device_id, rcr):
         h = self.history.setdefault(device_id, [])

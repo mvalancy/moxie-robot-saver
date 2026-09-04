@@ -106,14 +106,17 @@ So the choice is not "sandbox or no sandbox". It is:
 | S2 | The class's own docstring names the gap: *"arbitrary `code`-string execution from module JSON is deliberately NOT done here — a sandboxing concern deferred; built-in/registered handlers cover the safe cases."* | [`content_app.py`](../../../mqtt/moxie_sdk/content/content_app.py) module docstring |
 | S3 | A `Volley` is the whole outbound surface: `set_output(text, markup)`, `add_execution_action(name, args)`, `update_subscriptions(events)`, plus `persist_data` (durable, module-namespaced) and `local_data` (per-turn scratch, *never* written anywhere). | [`volley.py`](../../../mqtt/moxie_sdk/content/volley.py) |
 | S4 | Inbound context is `speech`, `entities` (regex capture groups), `request["input_vars"]` (robot-supplied), `config["child_pii"]` and `persist_data`. That is the complete fact base an extension could ever read. | [`volley.py`](../../../mqtt/moxie_sdk/content/volley.py) · [`content_app.py`](../../../mqtt/moxie_sdk/content/content_app.py) `_volley()` |
-| S5 | **`volley.execution_actions` is not yet plumbed to the wire.** `_reply_from_volley` says so: *"M2: a global handler drives text/markup. Plumbing `volley.execution_actions` (`eb_timer_request` etc.) into `RemoteChatAction` is a later slice."* | [`content_app.py`](../../../mqtt/moxie_sdk/content/content_app.py) `_reply_from_volley()` |
+| S5 | ~~**`volley.execution_actions` is not yet plumbed to the wire.**~~ ✅ **closed 2026-09-04.** `execution_actions_of()` turns each `{name, args}` into `Action(EXECUTE, function_id=name, function_args=args)`, `_reply_from_volley` appends them to `Reply.actions`, and `wire.encode_action` carries `function_id`/`function_args` (#119). The name is bounded by `ext.ACTION_WORDS` at both gates. | [`content_app.py`](../../../mqtt/moxie_sdk/content/content_app.py) `execution_actions_of()` · [`wire.py`](../../../mqtt/moxie_sdk/wire.py) `encode_action()` |
 | S6 | A global handler that writes `persist_data` has it saved for it, guarded by a before/after JSON comparison — so "did this program change durable state?" is already a solved question. | [`content_app.py`](../../../mqtt/moxie_sdk/content/content_app.py) `_save_persist_data()` |
 | S7 | Handler output goes through the same `parse_action_tags` + `annotate` path as model output, so an extension writing `"<exit>"` ends the session and an extension writing a bare markup line still gets the markup floor. | [`content_app.py`](../../../mqtt/moxie_sdk/content/content_app.py) `_reply_from_volley()` |
 
-**S5 is the single most important scoping fact in this brief.** Because actions are not on the wire
-yet, a P0 extension runtime that shipped `act` would be shipping a capability that cannot do anything.
-P0 therefore *validates and refuses* `act`/`subscribe` and lands them in P1 alongside the
-`RemoteChatAction` plumbing. That is what keeps P0 to one sitting.
+**S5 was the single most important scoping fact in this brief** — and it is now closed for `act`.
+Because actions were not on the wire, a P0 extension runtime that shipped `act` would have been
+shipping a capability that could not do anything; P0 therefore *validated and refused* it. Since
+**2026-09-04** an `act` is honoured end to end (S5 above), so the refusal is gone and G2/G3 of §8 are
+plain passing tests. `subscribe` and `brain` are unchanged: each is still a capability with no host, so
+each is still declared, rendered and refused out loud — see `ext.P1_CAPABILITIES`, which now records
+*which* host is missing for each one.
 
 ### 2.2 The pack format — what an extension will ride inside
 
@@ -489,7 +492,7 @@ the host applies that list after the program returns, in order, subject to every
 | `markup` | Validated against `vocab.py` (M3): an unknown mark id, a malformed `cmd:` payload or an out-of-catalogue asset is **dropped**, and the drop is counted (`automarkup.dropped_ids()` already exists for this). Never passed through unchecked. |
 | `remember` / `forget` | `MemoryStore.merge` / `erase_item` on `(device_id, own_namespace)`. Bounded and provenance-stamped by the store (M5); a `NO_DATA` policy drops it *at the store* (M6) and the extension is told so it can still speak. |
 | `scratch` | `volley.local_data` — per-turn, never written anywhere (S3). |
-| `act` | One `volley.add_execution_action(name, args)`. **P1**, because S5. Name must be in the closed action allowlist *and* individually granted. |
+| `act` | One `volley.add_execution_action(name, args)`, which `content_app.execution_actions_of` turns into an `execute` `RemoteChatAction` carrying `function_id`/`function_args`. Name must be in the closed action allowlist (`ext.ACTION_WORDS`, checked at load **and** at the host boundary) *and* individually granted. ✅ **2026-09-04.** |
 | `subscribe` | `volley.update_subscriptions(events)` from the closed event vocabulary ([`vision.md`](../vision.md) §7). **P1.** |
 | `handled` | Suppresses the model call for this turn (the `True`/`False` return of upstream's `pre_process`). |
 | `note` | One capped log line. |
@@ -537,8 +540,8 @@ The consequence a parent gets: the list they were shown is exactly, provably, wh
 | `memory.write` | Merge / delete in **its own namespace** | **refused** | Writing is how a pack makes a wrong fact sticky. Bounded by the store, dropped under `NO_DATA`. |
 | `presence` | `presence.face_present`, `presence.line` | **refused** | Whether a child is in the room is a physical-world observation. No corpus behaviour needs it; something will, and it should be asked for. |
 | `markup` | Author raw behaviour markup (catalogue-validated) | **refused** | The one capability that reaches the robot's *body*. Validation makes a bad id harmless; a *valid* id can still make Moxie lurch or blare, so a human should agree to it. |
-| `act.<name>` | One execution action, **per name**, from a closed allowlist (`eb_timer_request`, `eb_enable_qr`, `eb_wake`, …) | **refused**, **P1** | Per-name, not per-category: "can set a timer" and "can turn on the camera" are not the same sentence to a parent. Blocked on S5 regardless. |
-| `subscribe` | Subscribe to robot events from the closed vocabulary | **refused**, **P1** | Pairs with `act`; a scanner you cannot read from is pointless, and vice versa. |
+| `act.<name>` | One execution action, **per name**, from a closed allowlist (`eb_timer_request`, `eb_enable_qr`, `eb_wake`) | **refused** (grantable ✅ 2026-09-04) | Per-name, not per-category: "can set a timer" and "can turn on the camera" are not the same sentence to a parent. The allowlist **is** `ACTION_WORDS`, so the set of nameable functions equals the set somebody wrote parent-facing English for. |
+| `subscribe` | Subscribe to robot events from the closed vocabulary | **refused**, **P1** | Pairs with `act`; a scanner you cannot read from is pointless, and vice versa. Still P1 after `act` landed: nothing joins `Volley.subscriptions` to `RemoteChatAction.EventSubscription`, so the effect has no host. |
 | `brain` | **One** model call per turn, prompt built from the extension's template, both sides safety-checked, charged to the turn budget | **refused**, **P1** | It costs money, it costs latency inside a 6 s budget (M1), and it is the one capability whose output is not predictable from the AST. Rate: 1 per turn, hard. |
 | `schedule.request` | Ask that a module be *offered* (feeds the recommender's parent-request channel; never sets the day) | **refused**, **P1** | A pack that could set the day could fill it with itself. Requesting is reviewable; deciding is not delegated. |
 
@@ -759,19 +762,22 @@ expressive enough, the regression suite, and the cross-host contract.
 | # | Upstream hook | Ports to | Needs |
 |--:|---|---|---|
 | G1 | `MoxieTime.get_response` | One rule, no `when`. `let hour = {"%": [{"var":"clock.local.hour"}, 12]}` etc.; one `say` with `concat` + `if` for AY M / P M. | `clock` |
-| G2 | `MoxieTimers` set | The §4.1 example verbatim. | `clock`, `memory.write`, `act.eb_timer_request` (P1) |
-| G3 | `MoxieTimers` status/cancel | Two rules. `when {"==": [{"var":"entities.0"}, "status"]}` → the h/m/s sentence via three `let`s, a `list` of parts, `compact`, `join`. Second rule → `act` cancel + `forget`. | `clock`, `memory.read`, `memory.write`, `act.eb_timer_request` (P1) |
+| G2 | `MoxieTimers` set | The §4.1 example verbatim. | `clock`, `memory.write`, `act.eb_timer_request` — ✅ **passing 2026-09-04** |
+| G3 | `MoxieTimers` status/cancel | Two rules. `when {"==": [{"var":"entities.0"}, "status"]}` → the h/m/s sentence via three `let`s, a `list` of parts, `compact`, `join`. Second rule → `act` cancel + `forget`. | `clock`, `memory.read`, `memory.write`, `act.eb_timer_request` — ✅ **passing 2026-09-04** |
 | G4 | `MoxieTimers` wake (`pre_process`) | One rule, `when {"var": "session.is_empty"}`. `forget` the fired timer id, `scratch` the id, `markup` with `repeat(mark, 3)` + `<break time="1s"/>`, `say` the plain line, `handled`. **The `time.sleep(0.5)` is dropped** (§5.3). | `memory.write`, `markup` |
 | G5 | `MemoryChat` opener | One rule; `random.pick` over `{"var":"memory.summaries"}`; one `brain` call with a template. **P1** (needs the `brain` capability). | `memory.read`, `random`, `brain` |
-| G6 | `MoxieGo` QR | Three rules: no speech → arm the scanner; `speech == "eb-qr-event"` and `starts_with($eb_qr_value, "GO")` → `say` with a `slice`; else → re-arm. | `act.eb_enable_qr`, `subscribe` (both P1) |
+| G6 | `MoxieGo` QR | Three rules: no speech → arm the scanner; `speech == "eb-qr-event"` and `starts_with($eb_qr_value, "GO")` → `say` with a `slice`; else → re-arm. | `act.eb_enable_qr` (done), `subscribe` (**still P1** — the row is blocked on this half alone) |
 
 **What this table proves and what it does not.** G1, G3's sentence-building and G4's markup are fully
-expressible in P0's grammar with no `act` — so **P0 can ship a working, shipped-by-us example** (G1, the
-clock, is the natural one) without waiting on S5. G2, G3's actions, G5 and G6 are gated on P1 by
-capability, not by expressiveness: the *programs* validate under P0's grammar today, which is the point
-worth checking early. A build agent should write all six ASTs in P0 and mark the four whose
-capabilities are not yet grantable as `xfail` with the reason — so the day `act` lands, the tests turn
-green rather than needing to be written.
+expressible in P0's grammar with no `act` — so **P0 could ship a working, shipped-by-us example** (G1,
+the clock) without waiting on S5. The other four were gated by *capability*, not by expressiveness: the
+programs validated under P0's grammar from day one, and all four were written then and marked
+`xfail(strict=True)` with the reason. That bet paid on **2026-09-04**: `act` landed, and **G2 and G3
+turned green with no test to write** — the strict marker caught the XPASS and forced the reason to be
+corrected. **G5 and G6 remain `xfail`**, and the reason is now per-row rather than one shared sentence:
+G5 needs `brain` and its one-call budget; G6 needs `subscribe`, whose effect still has no host (nothing
+joins `Volley.subscriptions` to `RemoteChatAction.EventSubscription` — the supervisor fills that field
+from its own vision bookkeeping instead). G6's `act` half is done.
 
 ---
 
@@ -803,7 +809,7 @@ A sandbox is worth exactly what its escape tests are worth.
 
 | # | Name | Asserts |
 |--:|---|---|
-| T1‑T6 | `test_conformance_<G1..G6>` | Each §8 row reproduces its golden effect list byte-for-byte from `ext_conformance.json`. G2/G5/G6 `xfail` until P1's capabilities exist, with the reason in the marker. |
+| T1‑T6 | `test_conformance_<G1..G6>` | Each §8 row reproduces its golden effect list byte-for-byte from `ext_conformance.json`. G1/G2/G3/G4 pass (G2, G3 since 2026-09-04); **G5 and G6 `xfail(strict=True)`** until `brain` and `subscribe` exist, each with its own reason in `test_ext.py::P1_REASON`. |
 | T7 | `test_the_same_inputs_give_byte_identical_effects` | 100 runs of G1 and G3 at a fixed injected clock and seed; one golden. |
 | T8 | `test_a_breach_does_not_end_the_turn` | A full `ContentApp.respond()` with a poisoned `on: global` extension returns the **conversation's** reply (S1's fall-through), and with a poisoned `turn.before` returns the model's line. No exception escapes `respond()`. |
 | T9 | `test_three_breaches_quarantine_for_the_session` | The 4th turn does not evaluate the extension at all (assert the step counter never advances), and one `ext_events` entry exists — not four. |
@@ -861,10 +867,20 @@ A sandbox is worth exactly what its escape tests are worth.
     the capability table with defaults, the limits, and the failure behaviour — and its *"`code` is data,
     never behaviour"* section is amended rather than contradicted: `code` is still never executed.
 
-**P1 adds:** the wire plumbing for `act`/`subscribe` (S5), the `brain` capability with its one-call
-budget, `turn.after` and `session.end`, the text surface that compiles to the AST outside the trust
-boundary, the JS evaluator passing the same conformance file in `workerd`, and the console card showing
-grants and *"this extension stopped working"*.
+**P1 adds:** ~~the wire plumbing for `act`~~ (✅ 2026-09-04 — S5, G2, G3), the wire plumbing for
+`subscribe` (still open: `Volley.subscriptions` → `RemoteChatAction.EventSubscription`, which unblocks
+G6), the `brain` capability with its one-call budget (unblocks G5), `turn.after` and `session.end`, the
+text surface that compiles to the AST outside the trust boundary, the JS evaluator passing the same
+conformance file in `workerd`, and the console card showing grants and *"this extension stopped
+working"*.
+
+**One honest note about what `act` landing did and did not change for a parent.** An imported pack
+declaring `act.eb_timer_request` now *installs and reviews* without the *"…but not yet on this
+appliance"* line, because the appliance genuinely can honour it. It still is not **granted**:
+`act.<name>` is in neither `ext.DEFAULT_GRANTS` nor `content_app.SHIPPED_EXTRA_GRANTS`, so such a pack
+is refused at load by the grant check and the parent hears about it through the `ext_events` ring —
+exactly as an imported pack declaring `clock` behaves today. Deciding which grants a parent may hand
+out is the **console card**, and that is still P1.
 
 **P2 adds:** a second runtime (Wasm) behind the same capability table, opt-in, honestly labelled as
 un-reviewable; publisher signatures once there is a trust root worth having (P6); and a schedule-request
@@ -894,7 +910,9 @@ Not in P0, deliberately: `act`, `subscribe`, `brain`, `schedule.request`, `turn.
 the text surface, the JS evaluator, the console card, signatures, and any attempt to run `code`.
 
 ### P1 — **M**
-`act`/`subscribe` with the `RemoteChatAction` plumbing that S5 defers · the `brain` capability · the
+~~`act`~~ ✅ **shipped 2026-09-04** (S5 closed; G2/G3 green) · `subscribe`, which still needs a **host**
+— `Volley.subscriptions` and `wire.build_chat_response(subscribe_events=…)` both exist and nothing joins
+them, so the capability could not do anything and is still refused at load · the `brain` capability · the
 text→AST compiler (outside the trust boundary) · `sim/web` or `functions/` JS evaluator + the shared
 conformance run in `workerd` · the console card (grants, breaches, quarantine) · `turn.after` and
 `session.end`.

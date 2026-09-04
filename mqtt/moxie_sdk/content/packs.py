@@ -753,9 +753,16 @@ def extension_warnings(data: dict) -> list:
        *may* do; these tell them what it *will* do, which is the difference between a
        permissions dialog and a review.
     3. **An honest note when it will install but not run** — either because the program is
-       malformed, or because it needs `act`/`subscribe`/`brain`, which this appliance
-       cannot grant yet (brief S5). Saying nothing here would repeat the exact mistake the
-       `code` warning exists to avoid.
+       malformed, or because it needs a capability this appliance cannot grant yet
+       (`ext.P1_CAPABILITIES`: `subscribe`, `brain`, `schedule.request`; **`act` left that
+       set on 2026-09-04** and no longer triggers the note). Saying nothing here would
+       repeat the exact mistake the `code` warning exists to avoid.
+
+       What this note does **not** cover is a capability the appliance *can* honour but has
+       not *granted* — an imported pack asking for `clock`, or now for `act.<name>`. That
+       one installs, reviews cleanly, and is refused at load by the grant check, which the
+       parent sees through the `ext_events` ring. Which grants a parent may hand out is the
+       console card, and that is still P1.
     """
     block = (data or {}).get("extension") or {}
     if not block:
@@ -878,6 +885,123 @@ def mark_edited(items: dict, ident: str, data: dict) -> dict:
     entry["data"] = normalize_data(kind, data)
     out[ident] = entry
     return out
+
+
+# --------------------------------------------------------------------------- #
+# ✍️ Authoring — the phrase list, and the shadow a name order casts
+# (backlog/content-authoring.md §4.3, §4.4)
+# --------------------------------------------------------------------------- #
+# A parent will not write a regular expression, so the guided surface for a command is a
+# **list of phrases**, and these two functions are the whole grammar of that surface: one
+# compiles a list into the `pattern` the loader already understands, the other reads one
+# back so an item can be re-opened in the guided view. Neither is a second validator —
+# what they produce still goes through `normalize_data` and `validate_item` like anything
+# else — and the round trip is deliberately *partial*: a pattern that was hand-written in
+# the advanced field does not decompile, which is exactly the "the guided view can no
+# longer round-trip this item" case the card has to say out loud (brief §3.3).
+
+#: `re.escape` escapes a space, which is correct and unreadable — a parent who opens the
+#: advanced field should see `(what time is it|the time)`, not `what\ time\ is\ it`. A
+#: space is not a metacharacter, so putting it back changes nothing about what matches.
+def _escape_phrase(phrase: str) -> str:
+    return re.escape(str(phrase or "").strip()).replace("\\ ", " ")
+
+
+def compile_phrases(phrases) -> str:
+    """A parent's phrase list → one alternation the loader compiles.
+
+    Every phrase is escaped, so a command called *"what's up?"* is a literal rather than a
+    broken regex; the whole is wrapped in one group so `entity_groups` keeps meaning what
+    it meant. An empty list is an empty pattern — a global with no pattern never fires,
+    which is the honest answer to "a command with nothing to match".
+    """
+    parts = [_escape_phrase(p) for p in (phrases or []) if str(p or "").strip()]
+    return "(" + "|".join(parts) + ")" if parts else ""
+
+
+def phrases_of(pattern: str) -> list:
+    """The inverse of `compile_phrases`, or `[]` when the pattern was not written by it.
+
+    Decided by **re-compiling**: a pattern decompiles only if `compile_phrases` of the
+    parts reproduces it byte for byte. Anything else — a hand-written regex, a character
+    class, a quantifier — comes back empty rather than half-understood, because a guided
+    surface that silently mangles an author's regex is worse than one that admits it
+    cannot show it.
+    """
+    text = str(pattern or "")
+    if not (text.startswith("(") and text.endswith(")")):
+        return []
+    parts = text[1:-1].split("|")
+    out = []
+    for part in parts:
+        try:
+            out.append(re.sub(r"\\(.)", r"\1", part))
+        except re.error:
+            return []
+    return out if compile_phrases(out) == text else []
+
+
+def source_version_of(entry) -> int:
+    """An installed entry's author-owned version counter — the public name for
+    `_source_version`, so the authoring route can hand `validate_item` the version an item
+    already has instead of inventing one."""
+    return _source_version(entry)
+
+
+def shadow_check(draft: dict, installed: dict, phrases=None) -> list:
+    """Which installed command answers the author's own phrases *before* this one does.
+
+    `match_global` returns the **first** pattern that fires and `module_data` builds the
+    list `sorted(kind:key)`, so a global's precedence is alphabetical by its `name`
+    (assumption A4, proven by reading both). A parent naming a command *"Ask the time"*
+    therefore beats one named *"Time"*, and nothing on the screen would say so.
+
+    **The honest bound, which the caller must repeat to the author** (A5): this is exact
+    for the phrases actually typed, and it is nothing more than that. Deciding whether two
+    arbitrary regular expressions overlap is not something we will do, and a card that
+    reported *"no conflicts"* as a statement about all utterances would be lying. One row
+    per shadowed phrase, naming the earliest command that takes it.
+
+    Pure: reads the mapping, compiles patterns, writes nothing, and takes no clock.
+    """
+    data = draft if isinstance(draft, dict) else {}
+    name = str(data.get("name") or "")
+    mine = full_key("global", name)
+    typed = phrases if phrases is not None else phrases_of(data.get("pattern"))
+    typed = [str(p) for p in (typed or []) if str(p or "").strip()]
+    if not typed:
+        return []
+
+    earlier = []
+    for full, entry in sorted((installed or {}).items()):
+        if not full.startswith("global:") or full >= mine:
+            continue                      # a later name loses the race — not a shadow
+        e = entry if isinstance(entry, dict) else {}
+        try:
+            other = normalize_data("global", e.get("data"))
+        except PackError:
+            continue
+        pattern = other.get("pattern") or ""
+        if not pattern:
+            continue
+        try:
+            earlier.append((full, other.get("name") or split_key(full)[1],
+                            re.compile(pattern, re.I)))
+        except re.error:
+            continue                      # an uninstallable neighbour cannot shadow
+
+    rows = []
+    for phrase in typed:
+        for full, other_name, rx in earlier:
+            if rx.search(phrase):
+                rows.append({
+                    "phrase": phrase, "id": full, "name": other_name,
+                    "sentence": f"\u201c{phrase}\u201d will be answered by "
+                                f"{other_name} before this one gets a turn, "
+                                f"because commands are tried in name order.",
+                })
+                break                     # the FIRST match is the one that wins
+    return rows
 
 
 # --------------------------------------------------------------------------- #

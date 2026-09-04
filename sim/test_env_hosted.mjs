@@ -28,6 +28,7 @@ import { dirname, join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import net from "node:net";
+import { skipper } from "./browser_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -57,7 +58,7 @@ function findChrome() {
   cands.push("/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser");
   return cands.find(existsSync) || null;
 }
-function skip(m) { console.log("ℹ️  env-hosted test skipped —", m); process.exit(0); }
+const skip = skipper("env-hosted test");
 
 const puppeteer = await loadPuppeteer();
 if (!puppeteer) skip("puppeteer not found (set PUPPETEER_PATH)");
@@ -125,6 +126,8 @@ async function load(url, opts = {}) {
   page.on("console", (m) => { if (m.type() === "error") raw.push(m.text()); });
   page.on("pageerror", (e) => raw.push("PAGEERR " + e.message));
   page.on("response", (r) => { if (r.status() === 404) notFound.push(r.url()); });
+  const refused = [];
+  page.on("requestfailed", (r) => refused.push(r.url()));
   page.on("request", (r) => {
     const u = r.url();
     if (/:808[12]\/health\b/.test(u)) sidecar.push(u);       // the doomed sidecar probes
@@ -144,7 +147,12 @@ async function load(url, opts = {}) {
       return r.continue();
     });
   }
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 }).catch((e) => errs.push("NAV " + e.message));
+  // `raw`, not `errs`: `errs` is a `const` declared further down in this same function, so
+  // pushing to it here is a temporal-dead-zone ReferenceError — this handler exists for a
+  // navigation that failed, and it would have replaced that named failure with a stack
+  // trace. Reproduced by aborting the navigation. A slow runner that hits the 15 s cap
+  // lands here, which is exactly the machine this suite had never run on.
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 }).catch((e) => raw.push("NAV " + e.message));
   await new Promise((r) => setTimeout(r, 3000));  // give the probes (if any) time to fire
   const info = await page.evaluate(() => {
     const q = (sel) => document.querySelector(sel);
@@ -180,9 +188,36 @@ async function load(url, opts = {}) {
   // `noTransport` withholds cloud-transport.js ON PURPOSE, so its 404 is part of the
   // fixture rather than a fault — forgiven by the same correlation rule and no more
   // loosely: `notFound` is still asserted by URL, so any OTHER missing asset fails.
+  /** A localhost sidecar, by host AND port — see the note under `onlySidecarRefusals`. */
+  const SIDECAR = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]):(8081|8082)(\/|$)/;
   const expected404 = (u) => /\/api\/health\b/.test(u) || (opts.noTransport && /cloud-transport\.js/.test(u));
   const onlyProbe404 = notFound.length > 0 && notFound.every(expected404);
-  const errs = raw.filter((t) => !(onlyProbe404 && /status of 404/.test(t)));
+  // AND the doomed sidecar probes themselves. This file already TRACKS them (`sidecar`,
+  // above) because they are the expected behaviour of a localhost load — `audio.js` asks
+  // Piper :8081 and STT :8082 whether they are there, on purpose. What it did not do is
+  // tolerate the CONSOLE ERROR Chrome logs when the port is dead, which is the normal case
+  // for everyone without those services running. That went unnoticed because this suite had
+  // never executed in CI (no browser was ever installed), and on the author's machine two
+  // stale processes happened to be listening — so it passed on local accident, twice over.
+  // Correlated with requests that actually failed, so a refusal to any OTHER host still fails.
+  //
+  // ANCHORED ON THE HOST, not merely on the port. `/:808[12]\b/` tested the whole URL, so a
+  // refusal to `http://evil.test:8081/x.png` was forgiven too — proved by injecting exactly
+  // that, which reddens `test_responsive.mjs` and left this one green. The sidecars are
+  // LOCALHOST services; a refusal to anything else is a real page fault.
+  //
+  // And forgiven ONE FOR ONE rather than by a flag: `refused` is the list of requests that
+  // actually failed, so the budget is its length. A page that refused two sidecar probes
+  // and then also refused something else can no longer hide the third behind the first two.
+  let budget = refused.filter((u) => SIDECAR.test(u)).length;
+  const allSidecars = refused.length > 0 && refused.every((u) => SIDECAR.test(u));
+  const errs = raw.filter((t) => {
+    if (onlyProbe404 && /status of 404/.test(t)) return false;
+    if (allSidecars && budget > 0 && /ERR_CONNECTION_REFUSED|Failed to load resource/.test(t)) {
+      budget--; return false;
+    }
+    return true;
+  });
   return { errs, raw, notFound, sidecar, api, ...info };
 }
 

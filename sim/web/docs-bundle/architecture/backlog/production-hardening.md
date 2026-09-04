@@ -677,6 +677,16 @@ before it wrote a report, so every bar below had been **unverified** until now.
 
 **The `week` soak, completed — every §5.3 bar as printed:**
 
+> Kept **verbatim** as it was printed on 2026-09-04, including two lines the tool no longer
+> emits in this form. A1 and A2 were re-accounted later the same day (see the
+> implementation plan entry *"the promotion gate was red half the time"*): "up" is now
+> decided from the fault injector's recorded windows rather than from two samples of
+> `sup.connected`, and A2's budget is spent by turns **lost** to an outage rather than by
+> every turn that crossed one, which is what §5.3's wording says and what this run's own
+> `18 turns crossed … (budget 84)` line was quietly conflating. Rewriting the block to the
+> new format would be inventing a run that never happened; this run's *verdicts* are
+> unaffected, because 18 crossings against a budget of 84 is green under either reading.
+
 ```
 SOAK REPORT · profile=week · 3601s elapsed
 ==============================================================================

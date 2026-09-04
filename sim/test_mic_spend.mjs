@@ -31,6 +31,16 @@
  * here is paired with one that the visitor was still consoled OUT LOUD: the child's line
  * on the page, its pre-rendered clip audible, and Moxie's answer after it.
  *
+ * WHAT THE FIRST REAL CI RUN OF THIS FILE FOUND, having never once executed before it.
+ * "Consoled out loud" was written as `started >= 2` — two AudioBufferSourceNodes, counted.
+ * That was wrong twice over. It could not say WHICH two sounds happened, so an ambient
+ * quip standing in for Moxie's answer satisfied it (demonstrated: abort her clip and the
+ * old assertion still passed); and the count was read after a fixed 3 s sleep, so on a
+ * runner where this suite takes 122 s against 53 s here, her clip had not finished
+ * fetching yet and the count read 1. Both are now fixed at the root: `settleAudio` waits
+ * for the sound instead of assuming the machine was quick, and `spoke()` asserts the two
+ * SHIPPED CLIPS by identity. See those two functions for the measurements.
+ *
  * SIX SCENARIOS, all on the same hosted+live page:
  *   1. a transcription REFUSED by the route  — consoled, audible, ZERO chat/speech
  *   2. a clip over max_audio_bytes           — consoled, audible, ZERO of everything,
@@ -48,6 +58,7 @@
  *   node sim/test_mic_spend.mjs
  */
 import { join } from "node:path";
+import { readFileSync, statSync } from "node:fs";
 import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo } from "./browser_harness.mjs";
 
 const LABEL = "mic-spend test";
@@ -76,6 +87,31 @@ const LIMITS = JSON.parse(HEALTH_LIVE).limits;
 const EID = "sim-micspend01";
 const REPLY = "That sounds like a wonderful day!";
 const TONE = pcmToneBase64({ seconds: 0.3, rate: 22050, freq: 440, amp: 0.8 });
+
+/* ---- the two utterances a consoled visitor must actually HEAR ------------- *
+ *
+ * `mic.js::fallback` publishes a scripted CHILD line and `stub.js` answers it, and BOTH
+ * are spoken the same way: `audio.js::playUrl` fetches the pre-rendered clip this site
+ * ships for that exact sentence, decodes it, and schedules it. Neither goes near the
+ * :8081 Piper sidecar or `speechSynthesis` — the page is served from a hosted origin here,
+ * where `audio.js::skipProbe` refuses to probe a localhost port at all.
+ *
+ * The files are looked up in the SHIPPED MANIFEST rather than named here, so re-rendering
+ * the clips (`sim/tools/prerender_audio.py`) moves the assertion with them instead of
+ * quietly rotting it, and a line that loses its clip fails loudly rather than going mute.
+ * Their byte sizes are what `spoke()` matches on — see the instrument in `open()`. */
+const CHILD_LINE = "Thank you Moxie!";
+const MOXIE_LINE = "You're so welcome. I love celebrating with you!";
+const MANIFEST = JSON.parse(readFileSync(join(repo, "sim", "web", "audio", "index.json"), "utf8"));
+function shippedClip(group, text) {
+  const rel = (MANIFEST[group] || {})[text];
+  if (!rel) throw new Error(`no ${group} clip shipped for ${JSON.stringify(text)} — ` +
+                            `sim/web/audio/index.json can no longer speak this line`);
+  return { group, text, rel, bytes: statSync(join(repo, "sim", "web", "audio", rel)).size };
+}
+const CHILD_CLIP = shippedClip("child", CHILD_LINE);
+const MOXIE_CLIP = shippedClip("moxie", MOXIE_LINE);
+const CLIP_NAME = new Map([[CHILD_CLIP.bytes, "the child's line"], [MOXIE_CLIP.bytes, "Moxie's answer"]]);
 
 const chatBody = JSON.stringify(envelope.envelope({
   ok: true, mode: "live", voice: true, ears: true,
@@ -128,15 +164,29 @@ async function open(opts) {
    * `start()` is where the GATEWAY voice lands (`audio.js` builds the buffer by hand from
    * int16 PCM), `decodeAudioData` is where a pre-rendered CLIP lands — the child's
    * consolation line and Moxie's stubbed answer both arrive that way. The peak amplitude
-   * of every buffer that was scheduled is recorded, so a silent one cannot pass. */
+   * of every buffer that was scheduled is recorded, so a silent one cannot pass.
+   *
+   * EVERY SCHEDULED BUFFER IS ALSO TAGGED WITH THE FILE IT CAME FROM, and that is what
+   * makes the "both were consoled OUT LOUD" claim checkable rather than countable. See
+   * `spoke()` below: `decodeAudioData` is handed the exact bytes `playUrl` fetched, so
+   * recording `byteLength` before the call (the ArrayBuffer is DETACHED by it, so after is
+   * too late) and carrying it to the AudioBuffer through a WeakMap names the clip — the
+   * child's `audio/child/*.mp3` and Moxie's `audio/moxie/*.mp3` have different sizes, and
+   * this suite reads both from the shipped manifest rather than hard-coding them. */
   await page.evaluateOnNewDocument(() => {
-    window.__audio = { created: 0, decoded: 0, started: 0, peak: 0, rate: 0, frames: 0 };
+    window.__audio = { created: 0, decoded: 0, started: 0, peak: 0, rate: 0, frames: 0, plays: [] };
     const C = window.AudioContext || window.webkitAudioContext;
     if (!C) return;
+    const src = new WeakMap();               // AudioBuffer -> bytes of the file it decoded from
     const cb = C.prototype.createBuffer;
     C.prototype.createBuffer = function (...a) { window.__audio.created++; return cb.apply(this, a); };
     const da = C.prototype.decodeAudioData;
-    C.prototype.decodeAudioData = function (...a) { window.__audio.decoded++; return da.apply(this, a); };
+    C.prototype.decodeAudioData = function (...a) {
+      window.__audio.decoded++;
+      const bytes = a[0] && a[0].byteLength;               // read BEFORE decode detaches it
+      const p = da.apply(this, a);
+      return p && p.then ? p.then((b) => { try { src.set(b, bytes); } catch (e) {} return b; }) : p;
+    };
     const cbs = C.prototype.createBufferSource;
     C.prototype.createBufferSource = function () {
       const node = cbs.call(this);
@@ -151,6 +201,9 @@ async function open(opts) {
           let p = 0;
           for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > p) p = v; }
           if (p > window.__audio.peak) window.__audio.peak = p;
+          let bytes = null;
+          try { bytes = src.has(b) ? src.get(b) : null; } catch (e) {}
+          window.__audio.plays.push({ bytes: bytes, frames: b.length, rate: b.sampleRate, peak: p });
         }
         return start(...a);
       };
@@ -212,8 +265,11 @@ const spend = (reqs) => ({
  * ever opened, and the caps, the size gates and the fallback are the REAL ones. Passing
  * `size: null` opens nothing at all, which is what a denied permission looks like from
  * `start()`'s point of view.
+ *
+ * @param {{utterances?: number}} [opts] — how many sounds this scenario expects. Given,
+ *   the fixed settle below is followed by a WAIT for them; see `settleAudio`.
  */
-async function press(page, size) {
+async function press(page, size, opts) {
   await page.evaluate((n) => {
     window.moxieMic.setCapture(() => {
       if (n === null) return Promise.reject(new Error("NotAllowedError"));
@@ -234,8 +290,65 @@ async function press(page, size) {
   await new Promise((r) => setTimeout(r, 250));
   await page.click("#mic-btn");
   // The whole degraded turn is bounded by cloud-transport's 450 ms stub beat plus the
-  // clip fetch; the live one by the 2.5 s speech wait. 3 s covers both with room.
+  // clip fetch; the live one by the 2.5 s speech wait. 3 s is the floor for the SPEND
+  // assertions — a request that should never have happened has this long to appear.
   await new Promise((r) => setTimeout(r, 3000));
+  if (opts && opts.utterances) await settleAudio(page, opts.utterances);
+}
+
+/**
+ * Wait until the sound has actually been scheduled, instead of assuming a fast machine
+ * made it in time.
+ *
+ * WHY THIS EXISTS — the third suite on this branch to be green only by local accident,
+ * and the only one of the three whose accident was not a listening port. `test_responsive`
+ * and `test_env_hosted` passed because :8081 and :8082 happen to answer on the author's
+ * box. This one passed because the author's box is FAST.
+ *
+ * Measured, by delaying `audio/*` delivery by 1 s against an otherwise untouched suite:
+ * `mic.js`'s scripted child line is spoken at once, and `stub.js`'s answer follows one
+ * `FALLBACK_MS` (450 ms) later and then pays for its OWN manifest lookup, clip fetch and
+ * `decodeAudioData` before `start()` fires. On this machine Moxie's clip started ~2.5 s
+ * after the second click, inside the 3 s settle with ~1.4 s to spare. On the CI runner —
+ * where the same suite takes 122 s against 53 s here — it landed AFTER the snapshot, so
+ * `window.__audio.started` read 1 and the "BOTH were spoken" assertion failed. The clip
+ * that made it was the child's; Moxie's answer was still being fetched. Scenario 1 is the
+ * only one that pays that cold: it is the first page to touch `audio/index.json` and both
+ * mp3s, and scenarios 2-6 inherit a warm HTTP cache from it. That is exactly why the
+ * IDENTICAL assertion in scenario 2 stayed green while this one went red.
+ *
+ * The wait does NOT weaken anything, and that is the point of putting it here rather than
+ * lowering the count to `>= 1`. If the sound never comes the wait simply expires and the
+ * assertion below still fails — now with a message naming what WAS heard. What it removes
+ * is the machine-speed term: a real regression fails on every box, and a slow box does
+ * not invent one. It only ever EXTENDS the settle, so the "spends nothing" assertions
+ * paired with it get more time to catch a stray request, never less.
+ */
+async function settleAudio(page, n, ms = 15000) {
+  await page.waitForFunction((k) => window.__audio.started >= k, { timeout: ms }, n)
+    .catch(() => {});
+}
+
+/** Everything that actually reached the speakers, as a visitor would have heard it. */
+const heard = (s) => ((s.audio && s.audio.plays) || [])
+  .map((p) => `${(p.frames / (p.rate || 1)).toFixed(2)}s@${p.peak.toFixed(2)} ` +
+              (p.bytes == null ? "(synthesized)" : `(${CLIP_NAME.get(p.bytes) || p.bytes + "B, unknown clip"})`))
+  .join(" + ") || "SILENCE";
+
+/**
+ * That EXACT shipped clip reached Web Audio, and was audible when it did.
+ *
+ * This replaced `started >= 2`, which was both too weak and too fragile: it could not tell
+ * "the child spoke twice" from "both spoke", it paired with a single global `peak` that
+ * one loud clip satisfied for all of them, and it was the assertion the runner broke. The
+ * bytes come from the manifest on disk and are carried to the AudioBuffer by the
+ * instrument, so this says which UTTERANCE was heard rather than how many sounds happened
+ * — the distinction PR #82 cost us, where 770 assertions read a file while Web Audio was
+ * stubbed and a silent clip passed every one.
+ */
+function spoke(s, clip, why) {
+  const hit = ((s.audio && s.audio.plays) || []).find((p) => p.bytes === clip.bytes && p.peak > 0.05);
+  ok(!!hit, `${why} — heard: ${heard(s)}`);
 }
 
 /** What a visitor would see and hear. */
@@ -275,7 +388,7 @@ try {
     const live = await page.evaluate(() => window.moxieMode.canSpendLiveTurn());
     eq(live, true, "the page is live and a turn IS spendable — the gate is open, not closed");
 
-    await press(page, 40000);
+    await press(page, 40000, { utterances: 2 });
     const s = await page.evaluate(snapshot);
     const paid = spend(reqs);
 
@@ -287,10 +400,8 @@ try {
     ok(s.chatText.includes("Thank you Moxie!"),
        `…the child's line is on the page (transcript ${JSON.stringify(s.chatText.slice(-120))})`);
     ok(s.chatText.includes("You're so welcome"), "…and Moxie answers it, from stub.js");
-    ok(s.audio.started >= 2,
-       `…and BOTH were actually spoken through Web Audio (started=${s.audio.started})`);
-    ok(s.audio.peak > 0.05,
-       `…audibly, from the pre-rendered clips (peak ${s.audio.peak.toFixed(3)})`);
+    spoke(s, CHILD_CLIP, "…and the child's line was SPOKEN, from the clip this site ships for it");
+    spoke(s, MOXIE_CLIP, "…and so was Moxie's answer — BOTH of them, audibly, not one");
     eq(s.transport && s.transport.scriptedFree, 1, "…recorded as a scripted line answered for free");
     eq(s.transport && s.transport.live, 0, "…and no live turn was ever opened");
     eq(notable(errs, aborted, 1).length, 0,
@@ -307,7 +418,7 @@ try {
    * ===================================================================== */
   {
     const { page, errs, reqs, aborted } = await open({ transcribe: "ok" });
-    await press(page, LIMITS.max_audio_bytes + 1);
+    await press(page, LIMITS.max_audio_bytes + 1, { utterances: 2 });
     const s = await page.evaluate(snapshot);
     const paid = spend(reqs);
 
@@ -318,8 +429,8 @@ try {
     eq(s.stats.fallbacks, 1, "…and the visitor is still consoled");
     ok(/too long/.test(s.status), `…and told why (got ${JSON.stringify(s.status)})`);
     ok(s.chatText.includes("Thank you Moxie!"), "…with the scripted line on the page");
-    ok(s.audio.started >= 2, `…spoken aloud (started=${s.audio.started})`);
-    ok(s.audio.peak > 0.05, `…audibly (peak ${s.audio.peak.toFixed(3)})`);
+    spoke(s, CHILD_CLIP, "…spoken aloud, from its own clip");
+    spoke(s, MOXIE_CLIP, "…and answered aloud too");
     eq(notable(errs, aborted).length, 0,
        `no console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
     await page.close();
@@ -333,7 +444,7 @@ try {
    * ===================================================================== */
   {
     const { page, reqs } = await open({ transcribe: "dead" });
-    await press(page, 40000);
+    await press(page, 40000, { utterances: 2 });
     const s = await page.evaluate(snapshot);
     const paid = spend(reqs);
 
@@ -341,7 +452,7 @@ try {
     eq(paid.speech, 0, "…and no /api/speech");
     eq(s.stats.fallbacks, 1, "…and still consoles the visitor");
     ok(s.chatText.includes("Thank you Moxie!"), "…with a scripted child line on the page");
-    ok(s.audio.started >= 1, `…that really played (started=${s.audio.started})`);
+    spoke(s, CHILD_CLIP, "…that really played");
     await page.close();
   }
 
@@ -354,7 +465,7 @@ try {
    * ===================================================================== */
   {
     const { page, errs, reqs, aborted } = await open({ transcribe: "ok" });
-    await press(page, 40000);
+    await press(page, 40000, { utterances: 1 });
     const s = await page.evaluate(snapshot);
     const paid = spend(reqs);
 

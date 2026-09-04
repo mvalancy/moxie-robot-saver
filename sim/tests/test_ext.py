@@ -55,8 +55,26 @@ def run_row(row, *, allow_p1=False):
 # T1–T6 — the six §8 hooks reproduce their goldens byte for byte
 # --------------------------------------------------------------------------- #
 
-P1_REASON = ("needs act/subscribe/brain, which P0 refuses at load because "
-             "volley.execution_actions is not on the RemoteChatAction wire yet (brief S5)")
+#: What is still missing, per row, now that `act` is real. Named precisely, because a
+#: stale `xfail` reason is a lie the suite tells every time it runs.
+#:
+#: * **G5** needs `brain` — one model call per turn from inside a pack, with the budget
+#:   brief §5.1 requires before a pack may spend money and latency inside the 6 s turn.
+#: * **G6** needs `subscribe`. Its *matched* rule emits only a `say`, but the pack
+#:   **declares** `subscribe` and declared-equals-used is a load condition (§5, X10), so
+#:   the row cannot run until the capability is honoured. The effect has no host: nothing
+#:   joins `Volley.subscriptions` to `wire.build_chat_response(subscribe_events=…)` — the
+#:   supervisor fills `EventSubscription` from its own vision bookkeeping instead
+#:   (`moxie_runtime.py::_publish_chat`).
+#:
+#: `act` is **not** on this list any more (2026-09-04): brief S5 is closed for it, and
+#: G2/G3 below are plain tests.
+P1_REASON = {
+    "G5": "needs the `brain` capability and its one-call-per-turn budget (brief §5.1)",
+    "G6": ("needs `subscribe`: nothing joins Volley.subscriptions to "
+           "RemoteChatAction.EventSubscription yet, so the capability could not do "
+           "anything and is still refused at load"),
+}
 
 
 @pytest.mark.parametrize("name", ["G1", "G4"])
@@ -83,25 +101,49 @@ def test_t1_t6_conformance_p0(name):
 
 @pytest.mark.parametrize("name", ["G2", "G3", "G5", "G6"])
 def test_t1_t6_conformance_p1_grammar_is_already_valid(name):
-    """T2/T3/T5/T6, the half that can pass today — **the programs validate now**.
+    """T2/T3/T5/T6, the half that could pass before the wire — **the programs validate**.
 
-    §8's point worth checking early: these four are gated on P1 by *capability*, not by
-    expressiveness. Their grammar is accepted by P0's validator, so the day the wire lands
-    the `xfail` below turns green rather than needing to be written.
+    §8's point worth checking early: these four were gated by *capability*, not by
+    expressiveness. Their grammar was accepted by the validator all along, which is why
+    two of them turned green below the moment `act` was plumbed rather than needing to be
+    written that day.
     """
     row = ROWS[name]
     assert E.validate(row["ast"], allow_p1=True) == []
     assert row["expected_effects"], "the golden must exist now, not later"
 
 
-@pytest.mark.xfail(strict=True, reason=P1_REASON)
-@pytest.mark.parametrize("name", ["G2", "G3", "G5", "G6"])
-def test_t1_t6_conformance_p1(name):
-    """T2/T3/T5/T6 — will pass when `act`/`subscribe`/`brain` become grantable (P1).
+@pytest.mark.parametrize("name", ["G2", "G3"])
+def test_t1_t6_conformance_act(name):
+    """T2/T3 — the two `act` hooks reproduce their effect list byte for byte. ✅ 2026-09-04.
 
-    `strict=True` on purpose: the day someone makes these grantable and forgets to remove
-    the marker, an XPASS fails the suite and says so.
+    These were `xfail(strict=True)` from the day the evaluator landed, on brief S5: *"the
+    single most important scoping fact in this brief"* — `volley.execution_actions` was
+    not on the wire, so an `act` capability could not do anything and was refused at load
+    rather than shipped as a lie. Two changes closed it: `wire.encode_action` learned to
+    carry `function_id`/`function_args` (#119), and `content_app.execution_actions_of`
+    turns an effect into an `execute` `Action`.
+
+    G2 is `MoxieTimers` set — the §4.1 worked example verbatim: a `remember`, an
+    `act.eb_timer_request` with two `function_args`, and a sentence. G3 is its
+    status/cancel sibling, three `let`s deep into an h/m/s line.
     """
+    row = ROWS[name]
+    r = run_row(row)
+    assert r.ok, r.reason
+    assert r.effects == row["expected_effects"], r.effects
+    assert r.handled == row["expected_handled"]
+
+
+@pytest.mark.parametrize("name", ["G5", "G6"])
+def test_t1_t6_conformance_still_p1(name, request):
+    """T5/T6 — still `xfail`, and the reason names **only** what is actually missing.
+
+    `strict=True` on purpose: the day someone makes one of these grantable and forgets to
+    remove the marker, an XPASS fails the suite and says so. That is exactly how G2/G3
+    were caught the day `act` landed.
+    """
+    request.node.add_marker(pytest.mark.xfail(strict=True, reason=P1_REASON[name]))
     row = ROWS[name]
     r = run_row(row)
     assert r.ok, r.reason
@@ -135,14 +177,9 @@ def test_t7_the_same_inputs_give_byte_identical_effects(name):
     port checkable against this very file.
     """
     row = ROWS[name]
-    E._is_p1_backup = E._is_p1
-    try:
-        E._is_p1 = lambda cap: False        # G3 needs `act`; the *determinism* is the test
-        first = json.dumps(run_row(row).effects, sort_keys=True)
-        for _ in range(100):
-            assert json.dumps(run_row(row).effects, sort_keys=True) == first
-    finally:
-        E._is_p1 = E._is_p1_backup
+    first = json.dumps(run_row(row).effects, sort_keys=True)
+    for _ in range(100):
+        assert json.dumps(run_row(row).effects, sort_keys=True) == first
     assert json.loads(first) == row["expected_effects"]
 
 
@@ -712,15 +749,43 @@ def test_t18_the_shipped_activity_reviews_in_english():
 
 
 def test_a_pack_needing_p1_installs_and_says_it_will_not_run():
-    """The honest counterpart: a pack whose program needs `act` still installs — exactly as
-    one carrying `code` does — and the review says, in words, that it will not run here.
+    """The honest counterpart: a pack whose program needs a capability this appliance
+    still cannot honour installs — exactly as one carrying `code` does — and the review
+    says, in words, that it will not run here.
 
     Saying nothing would repeat the mistake the `code` ⚠️ exists to avoid (P5): a parent
     who ticks something and gets nothing deserves to be told.
+
+    The example moved from G2 to G5 on 2026-09-04: G2 wanted `act`, and `act` is real now,
+    so it is no longer an example of anything. G5 wants `brain`, which still is not.
+    """
+    data = P.normalize_data("conversation", {"module_id": "M", "content_id": "c",
+                                             "prompt": "hi",
+                                             "extension": ROWS["G5"]["ast"]})
+    warnings = P.extension_warnings(data)
+    assert any(w.startswith("…but not yet on this appliance") for w in warnings), warnings
+    assert any("ask the AI a question of its own" in w for w in warnings), warnings
+    assert P.validate_item({"kind": "conversation", "key": "M/c", "data": data}) == []
+
+
+def test_a_pack_that_acts_now_reviews_as_something_this_appliance_can_run():
+    """G2's review, after the wire landed — and the honest half of what changed.
+
+    The *"…but not yet on this appliance"* line is **gone**, because the appliance can now
+    honour `act`. What has not changed is that it still is not *granted*: `act.<name>` is
+    in neither `DEFAULT_GRANTS` nor `content_app.SHIPPED_EXTRA_GRANTS`, so an imported pack
+    that declares one is refused at load by the grant check and reported to the parent
+    through the `ext_events` ring, exactly as an imported pack declaring `clock` is today.
+    Which grants a parent may hand out is the console card, and that is still P1.
     """
     data = P.normalize_data("global", {"name": "Timer", "pattern": "set a timer",
                                        "extension": ROWS["G2"]["ast"]})
     warnings = P.extension_warnings(data)
-    assert any(w.startswith("…but not yet on this appliance") for w in warnings), warnings
-    assert any("set or cancel a timer" in w for w in warnings), warnings
+    assert not any(w.startswith("…but not yet on this appliance") for w in warnings), warnings
+    assert "this activity can ask Moxie to set or cancel a timer" in warnings, warnings
     assert P.validate_item({"kind": "global", "key": "Timer", "data": data}) == []
+    # …and the grant is still a real gate, not a formality.
+    assert "act.eb_timer_request" not in E.DEFAULT_GRANTS
+    assert "act.eb_timer_request" not in CA.SHIPPED_EXTRA_GRANTS
+    refused = E.validate(ROWS["G2"]["ast"], grants=E.DEFAULT_GRANTS | CA.SHIPPED_EXTRA_GRANTS)
+    assert refused and "has not been granted: act.eb_timer_request" in refused[0]

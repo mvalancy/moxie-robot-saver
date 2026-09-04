@@ -84,6 +84,7 @@ rather than a test, run from the deep tier (K1) and never from the fast one (R5)
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -319,6 +320,69 @@ class Supervisor:
             return None
 
 
+
+# --------------------------------------------------------------------------- #
+# What "the broker was up" actually means
+# --------------------------------------------------------------------------- #
+
+class Outages:
+    """The windows in which an injected fault was in flight, recorded BY THE INJECTOR.
+
+    §5.3 defines A1 as *"counting only turns issued while the broker was up"* and A2 as
+    *"turns **lost** because of a drop"*. Deciding the first from `sup.connected` sampled
+    once before a turn and once after it cannot express that: a broker restart that opens
+    and closes inside one turn's 8 s reply window is invisible to both samples, so the
+    turn is filed as "issued while up" and its perfectly legitimate loss is charged
+    against a bar that is 100 % by definition. That is the whole of the intermittent
+    `❌ A1 = 100%` this gate produced on roughly half its runs — 1 or 2 turns of ~982, on
+    commits whose diffs were docs — and it is the same shape as the readiness bugs
+    recorded above: an interval inferred from its endpoints instead of observed.
+
+    So the fault injector records what it did. A turn is compared against the actual
+    windows rather than against a sample of them, and the two `sup.connected` reads are
+    kept as a SECOND signal — they still catch an outage nobody scheduled, which is a real
+    finding this must never stop noticing.
+
+    WHERE A WINDOW ENDS is a judgement, and widening it moves turns out of A1's reach, so
+    it is drawn at the first moment a turn could actually be answered: for a broker
+    restart, when the supervisor has resubscribed AND every robot has been re-onboarded
+    (a robot that has not been re-onboarded cannot converse, and how long that takes is
+    A12's bar, not A1's — charging it to A1 would be counting it twice); for a supervisor
+    restart, when it reports a connection. Nothing wider: an outage window is an excuse,
+    and every second of one is a second in which a real defect cannot be seen.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._closed: list = []          # [(start, end)] monotonic
+        self._open: dict = {}            # token -> start, for a fault still in flight
+        self._next = 0
+
+    @contextlib.contextmanager
+    def window(self):
+        with self._lock:
+            tok = self._next
+            self._next += 1
+            self._open[tok] = time.monotonic()
+        try:
+            yield
+        finally:
+            with self._lock:
+                start = self._open.pop(tok)
+                self._closed.append((start, time.monotonic()))
+
+    def overlaps(self, a: float, b: float) -> bool:
+        """Did any fault window touch [a, b]? An open window runs to +inf."""
+        with self._lock:
+            if any(start <= b for start in self._open.values()):
+                return True
+            return any(start <= b and a <= end for start, end in self._closed)
+
+    def count(self) -> int:
+        with self._lock:
+            return len(self._closed) + len(self._open)
+
+
 # --------------------------------------------------------------------------- #
 # The robots
 # --------------------------------------------------------------------------- #
@@ -326,20 +390,25 @@ class Supervisor:
 class RobotDriver(threading.Thread):
     """One virtual robot, talking until told to stop.
 
-    Every turn is stamped with **whether the broker was up when it was issued**, because
-    A1 counts only those and A2 counts the others. A driver that recorded a bare
-    success/failure would be unable to tell a bug from an injected fault.
+    Every turn is stamped with **whether a fault was in flight for any part of it**, from
+    the injector's own record (see `Outages`) and from two `sup.connected` samples. A1
+    counts only the clean turns; A2 counts the ones a fault actually cost. A driver that
+    recorded a bare success/failure would be unable to tell a bug from an injected fault,
+    and one that sampled only the endpoints cannot tell a bug from a fault it slept
+    through.
     """
 
-    def __init__(self, host, port, gap_s, up_probe, device_id=None):
+    def __init__(self, host, port, gap_s, up_probe, outages, device_id=None):
         super().__init__(daemon=True)
         self.host, self.port, self.gap_s = host, port, gap_s
         self._up = up_probe
+        self._outages = outages
         self.device_id = device_id or f"d_{uuid.uuid4()}"
         self.stop_flag = threading.Event()
-        self.turns_up_ok = 0            # issued while up, answered
-        self.turns_up_lost = 0          # issued while up, not answered  → A1/A2
-        self.turns_down = 0             # issued while down — never counted against A1
+        self.turns_up_ok = 0            # clean throughout, answered
+        self.turns_up_lost = 0          # clean throughout, not answered → A1 fails
+        self.turns_down = 0             # touched a fault, answered or not
+        self.turns_down_lost = 0        # touched a fault AND was lost → A2's budget
         self.session_failures = 0       # could not connect / no config: not a turn at all
         self.errors: list = []
 
@@ -377,6 +446,7 @@ class RobotDriver(threading.Thread):
     def _turn(self, vm) -> bool:
         """One prompt → reply. Returns False when the session looks dead."""
         was_up = self._up()
+        t_start = time.monotonic()
         vm._reset_turn()
         try:
             vm.client.publish(vm.t_event("remote-chat"), json.dumps(
@@ -386,12 +456,18 @@ class RobotDriver(threading.Thread):
             self.errors.append(f"publish: {e}")
             return False
         answered = vm.got_reply.wait(8.0)
+        t_end = time.monotonic()
         still_up = self._up()
-        if not was_up or not still_up:
-            # Issued or completed across an injected outage. A2's territory, not A1's —
-            # and deliberately counted whether it was answered or not, because "it worked
-            # anyway" is not evidence about a bar that is only about the up case.
+        # Three signals, unioned: the injector's own record of what it did, and the two
+        # endpoint samples that still catch an outage nobody scheduled.
+        if not was_up or not still_up or self._outages.overlaps(t_start, t_end):
+            # A fault touched this turn, so it says nothing about A1 either way. §5.3's A2
+            # is "turns **lost** because of a drop", so only the LOST ones spend its
+            # budget; one that was answered anyway is the system working through a fault,
+            # which is the opposite of a finding.
             self.turns_down += 1
+            if not answered:
+                self.turns_down_lost += 1
             return answered or still_up
         if answered:
             self.turns_up_ok += 1
@@ -576,9 +652,10 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
         sup.start()
         t0 = time.monotonic()
         up = sup.connected
+        outages = Outages()
 
         for _ in range(cfg["robots"]):
-            d = RobotDriver("127.0.0.1", port, cfg["turn_gap_s"], up)
+            d = RobotDriver("127.0.0.1", port, cfg["turn_gap_s"], up, outages)
             d.start()
             drivers.append(d)
 
@@ -607,14 +684,20 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
                 baseline = {"rss_kb": sup.rss_kb(), "fds": sup.fds(),
                             "at_s": round(time.monotonic() - t0, 1)}
             if what == "broker":
-                listening = broker.restart()
-                took = _wait_until(sup.connected, 90)
-                # A12 — the robots are talking continuously, so every one of them should
-                # be re-onboarded within a few seconds of the broker coming back. Before
-                # the `_device_connect` fix this NEVER became true: the robot was already
-                # in `self.robots`, so it was never re-onboarded and `/status` listed it
-                # as present while it had had no config push and no `app.on_connect`.
-                reonboard = _wait_until(lambda: _all_robots_seen(sup), 15.0)
+                # The window covers the restart AND the recovery, because a turn issued
+                # in either part is a turn the fault cost. It closes at re-onboarding,
+                # not at `sup.connected`: an un-re-onboarded robot cannot converse, and
+                # how long that takes is A12's bar (asserted below) rather than A1's.
+                with outages.window():
+                    listening = broker.restart()
+                    took = _wait_until(sup.connected, 90)
+                    # A12 — the robots are talking continuously, so every one of them
+                    # should be re-onboarded within a few seconds of the broker coming
+                    # back. Before the `_device_connect` fix this NEVER became true: the
+                    # robot was already in `self.robots`, so it was never re-onboarded and
+                    # `/status` listed it as present while it had had no config push and
+                    # no `app.on_connect`.
+                    reonboard = _wait_until(lambda: _all_robots_seen(sup), 15.0)
                 reconnects.append({"listening_after_s": round(listening, 2),
                                    "resubscribed_after_s": None if took is None else round(took, 2),
                                    "reonboarded_after_s": None if reonboard is None else round(reonboard, 2),
@@ -624,7 +707,9 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
                       f"{'NEVER' if took is None else f'{took:.1f}s'}", flush=True)
             else:
                 known_before = sup.status().get("roster", {}).get("known", 0)
-                took = sup.restart()
+                # SIGTERM'd: it cannot answer until it reports a connection again.
+                with outages.window():
+                    took = sup.restart()
                 # A4: after a supervisor restart every robot it has ever seen is re-pushed
                 # config **without waiting for an event**. The roster resume is on a 1 s
                 # settle timer, so the window here is the bar (5 s) plus that.
@@ -655,6 +740,7 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
             turns={"up_ok": sum(d.turns_up_ok for d in drivers),
                    "up_lost": sum(d.turns_up_lost for d in drivers),
                    "during_outage": sum(d.turns_down for d in drivers),
+                   "lost_during_outage": sum(d.turns_down_lost for d in drivers),
                    "session_failures": sum(d.session_failures for d in drivers)},
             broker_restarts=broker.restarts, supervisor_restarts=sup.restarts,
             dirty_stops=sup.dirty_stops,
@@ -786,17 +872,27 @@ def grade(r: dict) -> list:
     outages = r["broker_restarts"]
     # Two halves, and the second is the one §5.3 says is the real bar: *"an unrecorded loss
     # is a failure even if the count is 0"*. So a green A2 needs BOTH a bounded number of
-    # turns crossing an outage — at most one per robot per injected fault, since a robot
+    # turns LOST to an outage — at most one per robot per injected fault, since a robot
     # can only lose the turn it was mid-way through — AND a `disconnect` row for every
     # broker restart. A run that lost nothing because nothing was injected fails the
     # second half, which is exactly what it should do.
+    #
+    # THE BUDGET IS SPENT BY LOSSES, NOT BY CROSSINGS, and that sentence above is why:
+    # "a robot can only lose the turn it was mid-way through" is a statement about losing.
+    # This used to be fed `during_outage`, every turn that *touched* a fault whether it was
+    # answered or not, which the budget's own reasoning cannot bound — a several-second
+    # window simply contains several turns, and answering them all is the system working.
+    # With the exact windows of `Outages` that mismatch became unmissable; with sampled
+    # endpoints it merely made A1 and A2 trade failures back and forth, which is what the
+    # gate had been doing.
     budget = r["config"]["robots"] * (outages + r["supervisor_restarts"])
     bars.append(("A2", f"turns lost to a drop ≤ 1 per robot per fault (≤{budget}), each recorded",
-                 f"{t['during_outage']} turns crossed an outage (budget {budget}) · "
+                 f"{t['lost_during_outage']} lost of {t['during_outage']} that crossed an "
+                 f"outage (budget {budget}) · "
                  f"{recorded} disconnects and {drops} dropped publishes recorded "
                  f"for {outages} broker restarts",
                  None if not outages else
-                 (t["during_outage"] <= budget and recorded >= outages)))
+                 (t["lost_during_outage"] <= budget and recorded >= outages)))
 
     took = [x["resubscribed_after_s"] for x in r["reconnects"]
             if x["resubscribed_after_s"] is not None]
@@ -899,7 +995,8 @@ def report(r: dict) -> bool:
     print("=" * 78)
     t = r["turns"]
     print(f"  turns: {t['up_ok']} answered while up · {t['up_lost']} lost while up · "
-          f"{t['during_outage']} crossed an outage · {t['session_failures']} session failures")
+          f"{t['during_outage']} crossed an outage ({t['lost_during_outage']} of them lost) · "
+          f"{t['session_failures']} session failures")
     print(f"  faults injected: {r['broker_restarts']} broker restarts · "
           f"{r['supervisor_restarts']} supervisor restarts (SIGTERM; "
           f"{r['dirty_stops']} needed a SIGKILL) · {r['kills'].get('kills')} mid-write SIGKILLs")

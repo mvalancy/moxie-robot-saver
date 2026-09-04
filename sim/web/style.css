@@ -1162,3 +1162,44 @@ body.tts-speaking #tts-status { color: var(--cyan); }
   #topbar h1            { font-size: 19px; }
   #topbar .tag          { font-size: 12px; }
 }
+
+/* ---- accessibility: the no-JS fallback and the comms-log focus ring --------
+ *
+ * #noscript-notice only ever renders inside <noscript>, i.e. when scripting is off. The
+ * page's own chrome (#hud, the 3D stage) is still in the document then but is inert and
+ * empty, so this panel is drawn OVER it rather than beside it. */
+#noscript-notice {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--sp-3, 10px);
+  padding: 8vh 6vw;
+  background: var(--bg, #0a0a0f);
+  color: var(--text, #dfe7ef);
+  font-size: 15px;
+  line-height: 1.6;
+}
+#noscript-notice h2 {
+  margin: 0 0 var(--sp-2, 6px);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  color: var(--cyan, #00f0ff);
+}
+#noscript-notice p { margin: 0; max-width: 60ch; }
+#noscript-notice ul { margin: 0; padding-left: 1.2em; max-width: 60ch; }
+#noscript-notice li { margin-bottom: var(--sp-2, 6px); }
+#noscript-notice a { color: var(--cyan, #00f0ff); }
+
+/* #transcript is `tabindex="0"` so a keyboard-only visitor can scroll back through the
+ * conversation — it scrolls and holds nothing focusable. A tab stop with no visible ring
+ * is a worse bug than the one it fixes, so it gets the same ring the buttons use. */
+#transcript:focus-visible {
+  outline: 2px solid var(--cyan, #00f0ff);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

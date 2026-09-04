@@ -391,6 +391,40 @@ A bare string is still read (and still renders); it simply has no id until the n
   [config contract](config-and-telemetry-contract.md)), so one house rule covers every
   robot on the appliance and a single robot can still be set apart.
 
+  **The switch covers both memories, and saying so is the point.** This section is about
+  the durable *facts* (`MemoryStore`), but the appliance keeps a second thing on disk: the
+  **rolling conversation transcript**, `MoxieRuntime.history` written to
+  `MOXIE_MEMORY_DIR/<device>.json` after every turn. Both compose files set that variable
+  (`/data/memory`), so on a shipped appliance that path is on by default — and until the
+  gate landed it was guarded by nothing but "is the directory configured", which made the
+  sentence above false on the one file that holds the child's words verbatim. It is now
+  resolved through the *same* `memory_policy` callable, so there is one parent switch and
+  not two that could disagree:
+
+  | | `NO_DATA` | `NO_MEDIA` (default) | `FULL` |
+  |---|---|---|---|
+  | durable facts (`memory.json`) | not written | written | written |
+  | rolling transcript (`MOXIE_MEMORY_DIR`) | not written, **and the stored file is deleted** | written | written |
+  | in-memory history (RAM) | kept | kept | kept |
+
+  Three things that table is deliberately saying:
+
+  - **`NO_MEDIA` writes the transcript.** It is the value that withholds an opaque
+    *payload* — telemetry's `event_data`, which could be audio (see the
+    [config contract](config-and-telemetry-contract.md) §③). A transcript has no payload
+    to withhold; it is entirely text the process is already holding to make conversation
+    work. So the choice is binary and it matches the facts store's.
+  - **Flipping to `NO_DATA` removes the transcript already on disk.** Refusing new writes
+    while yesterday's file stays is a half-guarantee, erase is never policy-gated, and
+    that file is not merely stored — the next boot reads it back into RAM and into the
+    next prompt. The sweep runs at startup and on any config edit that could have moved
+    the switch, so the file is gone when the parent presses the button, not at the next
+    turn. (The *facts* store keeps what it stored before the flip, so a parent can still
+    read and erase it; the transcript has no per-item read/erase UI to keep it for.)
+  - **In-memory history is untouched.** This is a persistence gate. A robot that could not
+    remember the previous sentence would not be more private — nothing leaves the process
+    either way — it would just be unable to hold a conversation.
+
 ### `session.summarize(...)`
 
 At the end of a conversation the brain is asked — through the same injected
@@ -783,6 +817,8 @@ appliance, not of one robot:
 | `POST /content/review` | the pack file's own bytes | per-item rows + `expect_digest`; **writes nothing** |
 | `POST /content/import` | `{"pack", "accept": ["kind:key", …], "expect_digest"}` | the applied/skipped summary, or **409** |
 | `POST /content/undo` | — | what was restored |
+| `POST /content/item` | `{"kind", "data", "phrases", "key", "local_rev"}` | ✍️ one authored item saved — see *Authoring* below |
+| `POST /content/render` | `{"kind": "conversation", "data", "context"}` | ✍️ a draft prompt resolved; **no model call, no write** |
 
 `pack` may be the parsed object **or the file's raw text**, and the console sends the text:
 re-encoding in a browser turns `1.0` into `1` and would make a good file report as tampered.
@@ -798,6 +834,72 @@ reaches the robot (as `ContentSchedule`). No physical robot has ever been served
 a real robot does with an entry naming a module its firmware lacks — ignore it, skip the day,
 or fail the query — is **unobserved**; the review warns on any `module_id` outside the
 recovered on-board catalog rather than refusing it.
+
+### Authoring — writing an item instead of importing one *(P0 built 2026-09-04)*
+
+Packs made content **shippable**; these two routes make it **writable**. The design is
+[`backlog/content-authoring.md`](backlog/content-authoring.md); what a module author needs to
+know is here.
+
+**The rule the whole surface rests on: an authored item is exactly as untrusted as an imported
+one, because it enters through the same functions.** There is no "we wrote this one, so it is
+fine" branch anywhere. `POST /content/item` runs `normalize_data` (the positive allowlist) and
+`validate_item` (identity, the `pattern` cap and `re.compile`, `ext.validate`, `source_version`)
+before it writes — the second of those explicitly, because `packs.mark_edited` normalizes and
+does **not** validate, and a `pattern` that does not compile would otherwise reach
+`Global.from_dict`, which compiles at *load*, and take down the next `reload_content()`.
+A save then snapshots into the same one-slot backup an import uses, writes the overlay once
+and reloads, so `POST /content/undo` restores an authored save with no new mechanism.
+
+**What an author may write, and what the editor refuses:**
+
+| Kind | Written | Shown, never written | Refused |
+|---|---|---|---|
+| `conversation` | `name`, `module_id`/`content_id` (locked after the first save), `opener`, `prompt`, `model`, `max_tokens`, `temperature`, `max_history`, `max_volleys`, `memory` | `code`, `extension` | — |
+| `global` | `name`, `pattern` (as a **phrase list**, or as a regex under Advanced), `entity_groups`, `action` | `code`, `extension` | — |
+| `schedule` | — | — | **the whole kind** |
+
+`code` and `extension` **round-trip a save byte-identical**, and changing either is a refusal
+rather than a warning: this appliance never executes `code` in any phase, and the text→AST
+surface for extensions belongs to [`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md),
+not to a second compiler here. A **schedule** is refused by kind for the reason directly above
+this section — it is the one item kind that reaches the robot, and no physical Moxie has ever
+been served a pack-authored one.
+
+**The chip list is closed, and closed at exactly the two portable forms.** The prompt box
+offers four insert-chips, and each writes either a bare `{{ dotted.path }}` or an
+`{% if dotted.path %}`:
+
+| Chip | Inserts |
+|---|---|
+| the child's name | `{{ volley.config.child_pii.nickname }}` |
+| what Moxie remembers | `{{ volley.persist_data.<ns>.facts }}` (`<ns>` is the item's own memory namespace) |
+| someone is in the room | `{% if presence.face_present %} … {% endif %}` |
+| the chat has run long | `{% if session.overflow %} … {% endif %}` |
+
+That is not an arbitrary restriction: those two forms are the intersection the dependency-free
+fallback renders **identically** to the jinja2 sandbox (*For a module author*, above). So a
+prompt written with the chips renders the same on this appliance and on a bare
+`pip install moxie-cloud-sdk` without the `content` extra — by construction, not by discipline.
+Anything richer is allowed and not prevented; `POST /content/render` renders the draft through
+*both* renderers and answers `portable_identical: false` when they disagree, which is the only
+honest way to report it (reading `render.STRIPPED` around the real call reports zero on every
+appliance that ships jinja2, i.e. all of them). Those counts stay **advisory**: `BLOCKED` and
+`STRIPPED` are process-global and the turn loop moves them too.
+
+**A command's precedence is its name.** `match_global` returns the first pattern that fires and
+`module_data` sorts by `kind:key`, so globals are tried **alphabetically by `name`** — a command
+called *Ask the time* beats one called *Time*, and nothing on screen would otherwise say so. On
+save, `packs.shadow_check` runs the author's own phrase list against every installed global that
+sorts earlier and names the one that would answer first. It is **exact for the phrases typed and
+claims nothing more**: whether two arbitrary regular expressions overlap is not a question this
+appliance answers.
+
+**What authoring does not have, stated so nobody looks for it:** no history (`undo` is one slot,
+so saving twice loses the first version), no second author and no collaboration (two tabs are
+detected by `local_rev` and answered with a **409**, never merged), no deletion (`merge_items`
+only adds or replaces), and no authoring on the hosted Sim at all — that tier is stateless and
+childless by design, so a visitor hears authored content and never writes it.
 
 ## Content delivery (assets)
 

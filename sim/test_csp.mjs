@@ -87,12 +87,15 @@ const PAGES = [
 async function load(path) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
-  const errs = [];
+  const errs = [], notFound = [];
   page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
   page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
+  // Which URLs actually 404'd, so the console line can be correlated with a real response
+  // instead of forgiven on the strength of its text (see the loop below).
+  page.on("response", (r) => { if (r.status() === 404) notFound.push(r.url()); });
   const res = await page.goto(`${HOST}/${path}`, { waitUntil: "domcontentloaded", timeout: 20000 });
   await new Promise((r) => setTimeout(r, 2500));
-  return { page, errs, headers: res.headers() };
+  return { page, errs, headers: res.headers(), notFound };
 }
 
 try {
@@ -131,7 +134,7 @@ try {
    * 2. Every page still works with that policy actually applied.
    * =================================================================== */
   for (const [path, probe] of PAGES) {
-    const { page, errs, headers } = await load(path);
+    const { page, errs, headers, notFound } = await load(path);
     ok((headers["content-security-policy"] || "").includes("script-src"),
        `${path}: the browser really received the policy`);
     ok((headers["strict-transport-security"] || "").includes("max-age"),
@@ -140,9 +143,25 @@ try {
        `${path}: NOTHING was refused by the policy — ${cspErrors(errs).slice(0, 3).join(" | ")}`);
     ok(await page.evaluate(probe),
        `${path}: its scripts actually ran under the policy (the inline blocks were not refused)`);
-    // Anything else on the console is a page fault, not a policy one, and is worth knowing.
-    const other = errs.filter((e) => !POLICY_LINE.test(e) && !isKnown(e) &&
-                                     !/Failed to load resource: the server responded with a status of 404/.test(e));
+    /* Anything else on the console is a page fault, not a policy one, and is worth knowing.
+     *
+     * ONE 404 IS EXPECTED AND ONLY ONE: this harness is a static server, so `mode.js`'s
+     * `GET /api/health` capability probe misses — that is the honest behaviour of a fork
+     * with no Functions, and the site is built to be byte-identical when it happens. The
+     * filter used to drop EVERY "status of 404" line, which meant any missing asset on any
+     * shipped page slipped past the strictest console assertion this suite has. It is now
+     * correlated with the 404 RESPONSES actually observed, and forgiven one for one, so a
+     * genuinely missing file still fails. (`test_env_hosted.mjs` already worked this way;
+     * this file did not.) */
+    const expected404 = notFound.every((u) => /\/api\/health\b/.test(u));
+    let budget = expected404 ? notFound.length : 0;
+    const other = errs.filter((e) => {
+      if (POLICY_LINE.test(e) || isKnown(e)) return false;
+      if (budget > 0 && /Failed to load resource: the server responded with a status of 404/.test(e)) {
+        budget--; return false;
+      }
+      return true;
+    });
     eq(other.length, 0, `${path}: no other console errors — ${other.slice(0, 3).join(" | ")}`);
     await page.close();
   }

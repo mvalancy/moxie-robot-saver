@@ -1,5 +1,5 @@
 {
- "generated": "docs-f82e810450b7",
+ "generated": "docs-7d491c0e4d3a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 6664,
+   "bytes": 6926,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 12110,
+   "bytes": 17254,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,14 +109,14 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 174539,
+   "bytes": 208012,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-04 00:40 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 92%** (done = all six 🟢)",
+    "DoD progress (audited 2026-09-04 08:15 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 92%** (done = all six 🟢)",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 130091,
+   "bytes": 133373,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -262,7 +262,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 54526,
+   "bytes": 61740,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -287,6 +287,7 @@
     "source_version`, `local_rev`, and the review that does not clobber",
     "Storage, the overlay, and the reload",
     "The routes",
+    "Authoring — writing an item instead of importing one *(P0 built 2026-09-04)*",
     "Content delivery (assets)",
     "Minimum viable vs full",
     "Conformance checklist"
@@ -351,7 +352,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 129360,
+   "bytes": 153967,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -372,6 +373,7 @@
     "2.3 What the forks tell us",
     "2.4 Upstream re-check — 2026-09-03, and the one thing that *was* new",
     "2.5 The community scan — 2026-09-03, and the report that turns §2.4's anecdote into a pair",
+    "2.6 Upstream re-check — 2026-09-04. Nothing moved, and that is the whole finding",
     "3. The scorecard — HAVE / ADOPT / BEYOND",
     "3.0 ⚠️ This scorecard is a frozen snapshot — these rows are superseded",
     "3.1 Onboarding & transport",
@@ -383,11 +385,16 @@
     "4.1 Top 10 ADOPT — port the idea, credit the source",
     "4.2 Top 10 BEYOND — what we should build instead",
     "4.3 Backlog — the build briefs",
-    "4.4 The open backlog, re-ranked — 2026-09-03",
+    "4.4 The open backlog, re-ranked — 2026-09-04",
+    "What this table got wrong, three times in twelve hours",
+    "Shipped since the last refresh — corrections first, so nobody rebuilds them",
+    "In flight right now — do not assign",
+    "The ranking",
+    "The single most valuable next slice — content authoring P0",
+    "Not ranked, deliberately — the ceilings no ranking moves",
     "5. The honest ledger",
     "Where OpenMoxie (and its forks) are genuinely ahead of us",
-    "Where we are already ahead",
-    "6. How this feeds the build"
+    "Where we are already ahead"
    ],
    "kind": "md"
   },
@@ -593,7 +600,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)",
    "section": "architecture",
-   "bytes": 85508,
+   "bytes": 88017,
    "mermaid": 0,
    "headings": [
     "0. The boundary, stated first — this is cloud-side, and only cloud-side",
@@ -659,7 +666,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 81731,
+   "bytes": 82521,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",
@@ -749,7 +756,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 26016,
+   "bytes": 28286,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
@@ -769,10 +776,60 @@
    "kind": "md"
   },
   {
+   "path": "architecture/backlog/insights.md",
+   "title": "Insights that mean something — the vocabulary this history does not have (BEYOND #5)",
+   "section": "architecture",
+   "bytes": 50089,
+   "mermaid": 0,
+   "headings": [
+    "0. The ceiling, stated first",
+    "1. Why this is 🟡 today, and exactly what a spec has to remove",
+    "2. What is actually true today — verified on `origin/dev` at `ff2059a`",
+    "2.1 The store, the caps, and the gate",
+    "2.2 The card",
+    "2.3 The scored fields are on every published turn — and are written down nowhere",
+    "2.4 `mentor_behaviors` — recovered, durable, and today ungated",
+    "2.5 Two live findings, made while writing this page",
+    "2.6 Prior art, verified",
+    "3. The vocabulary — four options, compared, then one chosen",
+    "3.1 The comparison",
+    "3.2 The choice",
+    "3.3 What we are giving up, said plainly",
+    "4. What a parent actually sees",
+    "4.1 Five questions; three answered, two refused",
+    "4.2 The card",
+    "4.3 The refusals, and why refusing is the design",
+    "5. The event vocabulary, exactly",
+    "5.1 Four names, and nothing else",
+    "5.2 Why the meaning lives in the name and never in the payload",
+    "5.3 What the day row gains — one key",
+    "5.4 The reserved-prefix guard",
+    "6. The privacy contract — how aggregation stays inside it",
+    "6.1 The four rules",
+    "6.2 What a `NO_DATA` household sees",
+    "6.3 Erasure — the leg that does not exist yet",
+    "6.4 Two preconditions, both small, both required before the card ships",
+    "6.5 What an insights layer must never gain",
+    "7. Tests",
+    "7.1 Pure — `sim/tests/test_telemetry.py` (extended)",
+    "7.2 Runtime — `sim/tests/test_insights.py` (new)",
+    "7.3 What only a real deployment can settle",
+    "8. Acceptance criteria",
+    "9. Effort and the file list",
+    "P0 — **S/M**, one agent, one sitting, shippable alone",
+    "P1 — **M**",
+    "P2 — **L**",
+    "Risks",
+    "10. Assumption ledger",
+    "11. Did this brief remove the decision it owed?"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/backlog/community-signals.md",
    "title": "Community signals — what owners actually hit, ranked by evidence",
    "section": "architecture",
-   "bytes": 29578,
+   "bytes": 32638,
    "mermaid": 0,
    "headings": [
     "1. What was searched, and when",
@@ -785,6 +842,7 @@
     "C6 — There are impostors now, and from the outside we look like one",
     "C7 — Setup failures cluster into three environmental causes, two of them pre-emptable",
     "C8 — A first-run expectation nobody has written down: the first boot is slow",
+    "C9 — Tell a pre-801 robot from a broken server by *looking at its screen*",
     "3. Where the community's problem is one we have already solved",
     "4. Verified nothing-new, and honest gaps",
     "5. What this changes on the audit's ranking"
