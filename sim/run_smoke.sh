@@ -12,9 +12,29 @@ PORT="${MOXIE_SIL_PORT:-1883}"
 # supervisor, same harness — only the subject under test changes.
 MODE="smoke"
 for arg in "$@"; do case "$arg" in --telehealth) MODE="telehealth";; esac; done
+# ── bench hygiene: this run gets its OWN MOXIE_DATA_DIR ────────────────────────────────
+# The harness mints a throwaway `d_<uuid>` on every invocation, and the supervisor's data
+# directory defaults to the repo's `mqtt/data` — so without this line every SIL script on
+# the box shares one durable roster, and a run inherits the device ids of every unrelated
+# run before it. Observed 2026-09-03: a fresh `run_smoke.sh` re-pushed config to two
+# `d_outage…` ids minted by `run_broker_outage.sh` a quarter of an hour earlier, on a
+# different broker. That is noise, but it is also a hermeticity hole of exactly the shape
+# `run_broker_outage.sh` phase 5c was rewritten to close — a leftover mechanism quietly
+# satisfying an assertion the test did not intend, in this case "a config push happened".
+# `sim/tools/soak.py` has always done this; these scripts had not. An operator who sets
+# MOXIE_DATA_DIR keeps theirs, and only a directory this script created is removed.
+MOXIE_DATA_DIR_OWNED=""
+if [ -z "${MOXIE_DATA_DIR:-}" ]; then
+  MOXIE_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/moxie-smoke-data-XXXXXX")"
+  MOXIE_DATA_DIR_OWNED=1
+fi
+export MOXIE_DATA_DIR
+
 PIDS=(); BROKER_CID=""
 cleanup(){ for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
-           [ -n "$BROKER_CID" ] && docker rm -f "$BROKER_CID" >/dev/null 2>&1 || true; }
+           [ -n "$BROKER_CID" ] && docker rm -f "$BROKER_CID" >/dev/null 2>&1
+           [ -n "${MOXIE_DATA_DIR_OWNED:-}" ] && rm -rf "$MOXIE_DATA_DIR"
+           return 0; }
 trap cleanup EXIT
 
 echo "── broker on :$PORT ──"

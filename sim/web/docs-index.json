@@ -1,5 +1,5 @@
 {
- "generated": "docs-d0f9223c4e86",
+ "generated": "docs-31061b533064",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 122616,
+   "bytes": 126405,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -659,7 +659,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 73560,
+   "bytes": 81731,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",

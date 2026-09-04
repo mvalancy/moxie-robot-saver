@@ -669,6 +669,107 @@ eyes that never report, **with nothing logged either way**.
 **Ceiling, unchanged and worth repeating here:** no physical robot has ever sent this appliance a vision
 event. The tests prove *we re-subscribe*; they cannot prove a robot then delivers.
 
+#### Independent verification, 2026-09-04 — integration pass 11
+
+P1's own tests pass; this pass confirmed the same three behaviours **from outside the code that
+implements them**, and finished the job P1 could not: its `week` soak was killed at 59 of 60 minutes,
+before it wrote a report, so every bar below had been **unverified** until now.
+
+**The `week` soak, completed — every §5.3 bar as printed:**
+
+```
+SOAK REPORT · profile=week · 3601s elapsed
+==============================================================================
+  turns: 4407 answered while up · 0 lost while up · 18 crossed an outage · 0 session failures
+  faults injected: 24 broker restarts · 4 supervisor restarts (SIGTERM; 0 needed a SIGKILL) · 20 mid-write SIGKILLs
+  store contention: 4 processes × 2500 appends on ONE record, timeout=2.0 (default)s
+    attempted 10000 = on disk 10000 + refused 0 + LOST 0   (lost must be 0)
+------------------------------------------------------------------------------
+  ✅ A1  turn success while the broker was up = 100%
+        measured: 4407/4407 (100.0%)
+  ✅ A2  turns lost to a drop ≤ 1 per robot per fault (≤84), each recorded
+        measured: 18 turns crossed an outage (budget 84) · 24 disconnects and 10 dropped publishes recorded for 24 broker restarts
+  ✅ A3  broker up → re-subscribed: p95 ≤ 3s, max ≤ 65s
+        measured: p95 0.62s · max 0.62s · n=24
+  ✅ A4  robots re-pushed config after a supervisor restart, within 5s
+        measured: 4/4 restarts resumed the roster · max 1.12s
+  ✅ A5  lost updates across processes = 0 (and no writer crashed)
+        measured: 0 lost of 10000 attempted (10000 on disk + 0 refused)
+  ✅ A6  unreadable/truncated records after mid-write SIGKILLs = 0
+        measured: 0 unreadable after 20 kills · 5 stray .tmp
+  ✅ A7  supervisor RSS growth ≤ 10% (baseline → end)
+        measured: 39096kB → 38532kB (-1.4%)
+  ✅ A8  open file descriptors ≤ +5 (the flock fds must not leak)
+        measured: 5 → 5 (+0)
+  ✅ A9  bounded state at the end
+        measured: recent=60 robots=3 roster=3 conn_events=67/400
+  ✅ A12  every robot is re-onboarded after a broker restart (no ghost left half-connected)
+        measured: 24/24 restarts re-onboarded every robot · max 9.77s
+  ✅ A10  unhandled exceptions / tracebacks in the supervisor log = 0
+        measured: 0
+  ✅ A11  store writes refused on lock timeout — 0 at these rates, and if non-zero, each one RECORDED
+        measured: 0 refused (0.00%) · supervisor's own store_lock_timeouts=0
+------------------------------------------------------------------------------
+✅ SOAK PASSED · 12 met · 0 failed · 0 not exercised
+```
+
+**One observation the bars do not grade.** A6 passed with **0 unreadable records** and **5 stray `.tmp` files** left by the `SIGKILL`ed writers. The bar asks only that nothing is unreadable, and nothing was — but a temp file per interrupted write is state that grows with faults and nothing collects it, which is A9's question asked about a file the harness does not count. Recorded here rather than fixed, because it is a real observation and not a failure.
+
+**Read §5.4 before quoting any of that.** An hour at a raised rate against a simulator is a **rate
+substitution**, not a week; it stands in only for the failures that scale with *events*, never for the
+ones that scale with *time* (a slow leak, a clock rolling over, a certificate expiring, a log filling a
+disk) — and **no physical Moxie has ever been on this broker**. The run also shared its box with a
+4 789-test suite and the verifications below, which §5.4's own load-dependence paragraph says is exactly
+the thing that moves the contention numbers.
+
+**The three fixes, verified independently:**
+
+| Fix | How it was confirmed from outside | Verdict |
+|---|---|---|
+| The roster ghost | `sim/run_broker_outage.sh` **EXIT=0**; then the pre-P1 early-return restored in a scratch copy → **EXIT=1**, with the probe reading `seen_since_connect=False` while `/status` still listed the device. The round-trip *itself* also failed under the revert (`no config pushed within timeout`), which is stronger than the comment's claim that only the field goes False | **holds** |
+| The vision latch | a real mosquitto + a real `mqtt/run.py` + a real MQTT client, asserting `EventSubscription.active[]` **on the wire**: present on the first reply, absent on a repeat of the same module (the latch works), present again on A→B, on the **B→A re-entry** a key-only latch would miss, and after a broker restart | **holds** |
+| The `OverflowError` | at a **raised** `MOXIE_STORE_LOCK_TIMEOUT_S = 30` (A13's own invitation) against a real cross-process `flock` holder: **13 346 polls**, no `OverflowError`, refused cleanly and recorded in `lock_timeouts`; the same harness with `LOCK_BACKOFF_MAX_SHIFT` removed still raises `OverflowError: int too large to convert to float` at exactly **1 024**, and the shipped sleep at 5 s crosses the cliff at 2 226 polls | **holds** |
+
+**Honest ceiling on the middle row, restated because it is the one that invites overclaiming:** no robot
+has ever sent this appliance a vision event. That test proves **we re-subscribe**. It cannot prove that
+anything then delivers.
+
+#### The bench-roster noise — a harness defect, not a runtime one
+
+P1 flagged that a bench accumulates throwaway `d_<uuid>` ids and did not fix it. The verdict, so nobody
+re-files it: **the runtime is correct and must not be changed.** In a household every id in
+`fleet/roster.json` is a robot the appliance really served; the roster is capped at `MAX_DEVICES = 64`
+with least-recently-seen eviction; a resume push is a QoS 0 publish the broker discards when nobody is
+listening; un-permitting calls `forget()`; and `MOXIE_ROSTER_RESUME=0` turns the whole thing off. An
+age-based expiry would cost a robot quiet for a month its config on the next restart — which is the
+feature — to remove noise that exists only on a bench.
+
+**What is real is harness hermeticity, and it was fixed.** `sim/run_smoke.sh`, `run_scenarios.sh` and
+`run_broker_outage.sh` all booted `mqtt/run.py` against the repo's default `mqtt/data`, so one script's
+throwaway ids reached the next script's roster resume: observed live, a fresh smoke opening by pushing
+config to two `d_outage…` ids minted a quarter of an hour earlier on a different broker. That is the
+shape phase 5c exists to close — a leftover mechanism satisfying an assertion the test did not intend.
+Each now scopes a per-run `MOXIE_DATA_DIR` the way `sim/tools/soak.py` always has, guarded generically in
+`test_roster.py` so the next SIL script that forgets fails the suite instead of somebody's bench.
+
+#### An unfixed finding: `helpers_stack` calls the supervisor ready before it is listening
+
+Found while running the live one-turn e2e. `Supervisor.start()` waits for the log line
+`[runtime] broker connected` — which `_on_connect` prints **before** it issues `c.subscribe(...)`. The
+SIL robot then connects and publishes its single `/state` about a millisecond later, and
+`virtual_moxie.run_smoke()` never re-announces, so a `/state` that lands before the subscriptions are in
+effect is a QoS 0 datagram nobody will ever hear about: the supervisor logs no `🤖 robot connected`, the
+robot waits out its whole timeout, and the test fails as *"no config pushed within timeout"*.
+
+Load-dependent, and measured: **4/4 failures** while the soak and the full suite were both running,
+**0/9** at moderate load, and in the failing runs a second `/state` published afterwards was answered
+immediately. It is the same defect as everything else on this page — **a check whose subject can change
+between the check and the action is not a check, it is a memory** (orchestration-plan rule 23) — here in
+the readiness contract rather than in the runtime. The honest fix is a readiness signal that means
+*"subscribed"*, not *"CONNACK"*; it is **not** to make the SIL robot retry, which would hide the window
+rather than close it. Left unfixed on purpose: it touches `_on_connect` and the shared `helpers_stack`,
+and the `week` soak was running against that runtime.
+
 ### P2 — **L**
 
 A `MOXIE_STORE=sqlite` backend behind the **unchanged** five-method API, if and only if a caller appears
