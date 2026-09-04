@@ -782,7 +782,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   product code and `functions/` are unswept; and monotonic-clock load flakiness (playbook rule 11's
   disease) is deliberately out of that guard's scope and still unfenced.
 
-## DoD progress (audited 2026-09-03 07:40 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 93%** (done = all six 🟢)
+## DoD progress (audited 2026-09-03 21:05 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 94%** (done = all six 🟢)
 
 > **Criterion 6 is green, and it was earned in the place it used to be false.** The day the merge gate was a
 > `grep` is fixed and the fix has since caught a genuine red; the three flake classes are fenced by ratchets that
@@ -792,8 +792,23 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > stack passes in **both** compose modes, the wheel carries its data files, and a live turn answered through the
 > real gateway brain **and** the real gateway voice (`piper-amy`, 141 kB @ 22050 Hz, flatness 7.35e-02 — speech,
 > not a tone). Criterion 1 stays honestly amber: its ceiling is a physical robot we have never had, and the
-> hosted mic→gateway join still has no human recording through it. **Nothing here has been verified against a
-> real Cloudflare deployment** — that is owner-blocked on three variables and named in Known gaps, not hidden.
+> hosted mic→gateway join still has no human recording through it.
+>
+> **The "nothing verified against a real Cloudflare deployment" gap closed on 2026-09-03 and is recorded here
+> exactly as far as it goes.** The five `DEMO_*` variables are set on Production (all as `secret_text` — the API
+> silently drops `plain_text` on this project, which cost two false confirmations before a read-back caught it),
+> Preview is deliberately empty, and the public domain now answers for real: `GET /api/health` → `mode: live`;
+> `POST /api/chat` → **200 in 1.23 s** with *"Hello there! My name is Moxie. What's yours?"* and behaviour
+> markup; `POST /api/speech` → **200 in 2.76 s, 257 742 bytes** redeemed against that turn's ticket. A leak sweep
+> over both bodies and every header found no key, no gateway host, no model id and no Tailscale address. Environment
+> separation is proven for the first time — the keyless preview answers `gateway_not_configured` while Production
+> answers `live`, a control that was impossible while neither had variables (assumption 11 can close).
+>
+> **What that does NOT cover, stated so nobody reads it wider than it is:** `/api/transcribe` has **never been
+> exercised against the live deployment** — chat and voice were, ears were not — so criterion 1's hosted
+> mic→gateway join remains unproven on the deployed path as well as by a human. And a 39-agent adversarial audit
+> of that live surface returned **23 confirmed findings (0 critical, 0 high)**; two are fixed (PR #104, PR #105),
+> the rest are filed. A deployment that answers is not the same as a deployment that is finished.
 
 | # | Criterion | Status | Notes |
 |--:|---|---|---|

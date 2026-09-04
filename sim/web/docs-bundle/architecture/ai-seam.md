@@ -316,10 +316,15 @@ as the 🛡️ Safety panel. Under LoggingPolicy `NO_DATA` the journal keeps **c
 no excerpts — and the block still happens, because blocking is not recording. Parent-facing
 walkthrough: [child-safety guide](../guides/child-safety.md).
 
-**Result codes (`ResultCode`, required):** `REPLY` on success; `ERROR_OFFLINE` triggers the robot's
+**Result codes (`ResultCode`, required):** `SUCCESS` (value **0**) on success; `ERROR_OFFLINE` triggers the robot's
 **local fallback** (see [`offline-and-brain-state.md`](../reverse-engineering/protocol/offline-and-brain-state.md)) —
 so a backend that returns `ERROR_OFFLINE` degrades gracefully instead of hanging; also `NOREPLY_*`,
-`REPLY_FORCE_ANCHOR`, `QUIT`. **Streaming:** chunk a long turn with `chunk_num`.
+`REPLY_FORCE_ANCHOR` and `REPLY_FORCE_QUIT`. **Streaming:** chunk a long turn with `chunk_num`
+(`REPLY_PENDING` on every chunk but the last). The ten codes are enumerated in
+[`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#the-response--remotechatresponse) and
+mirrored by `ResultCode` in [`types.py`](../../mqtt/moxie_sdk/types.py); **there is no `REPLY` or bare
+`QUIT` code** — this paragraph named both until 2026-09-03, and a brain written from it would have
+answered with a value the robot cannot render.
 
 **Taxonomies** (closed sets the brain scores into): `DialogAct`×22, `EmotionState`×7, `Signal`×9,
 `Urgency`×3 — enumerated in [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md#taxonomies).
