@@ -98,6 +98,37 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **A failed microphone bought a chat + speech turn on words nobody said — fixed 2026-09-04.** `mic.js`
+  consoles a visitor whose ears failed with a **scripted child line**, so the button is never dead
+  (`backlog/live-sim-demo.md` §6). That line is a line the *page* chose — and it went out through
+  `window.moxieBridge.sendUserTurn`, which on a hosted deployment is `cloud-transport.js`'s wrapper. So a
+  clip the route refused, or one `mic.js` refused **client-side without ever uploading it**, still bought a
+  `POST /api/chat` **and** a `POST /api/speech` out of the budget the demo shares with the owner's video
+  game. **Proven, not argued:** the new `sim/test_mic_spend.mjs` counts the requests that actually leave a
+  real Chrome page, and against the pre-change file it recorded `chat 1, speech 1` on three separate
+  degraded paths. Now the consolation goes through a new `moxieBridge.sendScriptedTurn`, which keeps
+  `sendUserTurn`'s three-way ordering with the middle case replaced: a connected MQTT broker still gets the
+  line (a self-hoster's own backend, unchanged), a page with nothing spendable still answers from `stub.js`,
+  and a **live** page gets the local echo plus the stub answer — the same transcript row, the same child
+  clip, the same 450 ms beat, **and no request at all**. A real transcript is untouched and still spends
+  exactly one of each. **The audit's description was broader than the code**, and the narrowing is on the
+  record: a **denied or unsupported microphone** reaches `start()`'s `catch`, which shows an honest status
+  line and stops — it never reached the fallback, so it never spent anything, before or after; likewise a
+  clip under `min_audio_bytes` (`(too short)`) and an empty transcript (`(nothing heard)`). Those three are
+  silent *and* free and were deliberately left alone rather than given a consolation line they never had.
+  The paths that really did pay were the ones where a refusal changes no mode — `bad_request`, `too_short`,
+  `too_long`, the client-side over-size gate, and the first two of the three transport errors it takes to
+  degrade the page; `rate_limited`, `at_capacity`, `budget_exhausted` and `upstream_down` were free only by
+  accident, because they happen to shut `canSpendLiveTurn()` on their way through `mode.js`. Held by three
+  suites at three altitudes: `sim/test_mic_spend.mjs` (54 checks in Chrome — every "spends nothing" paired
+  with a **Web Audio** assertion that the visitor was still consoled *out loud*, peak amplitude and all, so
+  deleting the consolation line could never pass), `sim/test_demo_ears.mjs` B5b (mic.js picks the free seam
+  on seven degraded paths) and `sim/test_cloud_transport.mjs` 6b (the seam itself costs nothing), plus a
+  source-level guard that `mic.js`'s fallback may never again name `sendUserTurn`. **Honest gaps:** the
+  scripted repertoire is still the two lines we have child audio for, so a visitor who fails twice hears the
+  same pair; and `stats.scriptedFree` is a per-page counter, not telemetry — nothing reports how often the
+  ears fail on the live site.
+
 - **The hosted demo's per-IP windows were free to bypass over IPv6, and its duration cap was not one —
   fixed 2026-09-03.** Four holes in `functions/api/_lib/limits.js` and the three spending routes, all in
   the controls that protect the **self-hosted gateway the demo shares with the owner's video game**, so

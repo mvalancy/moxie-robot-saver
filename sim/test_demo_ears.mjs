@@ -910,11 +910,16 @@ function bootMic(o) {
   };
   void RealBlob;
 
-  const published = [];
+  const published = [];   // reached window.moxieBridge.sendUserTurn — THE PAID PATH
+  const scripted = [];    // reached window.moxieBridge.sendScriptedTurn — the free one
+  const routed = [];      // reached window.moxieBridge.route — free, and answers nothing
   const spoken = [];
   globalThis.window = {
     addEventListener() {},
-    moxieBridge: { sendUserTurn: (t) => published.push(t) },
+    moxieBridge: Object.assign({
+      sendUserTurn: (t) => published.push(t),
+      route: (topic, payload) => routed.push([topic, payload]),
+    }, (typeof opts.bridge === "function" ? opts.bridge({ published, scripted, routed }) : opts.bridge) || {}),
     moxieAudio: { sfx: (n) => spoken.push(n) },
     moxieStub: {
       enabled: true,
@@ -954,7 +959,7 @@ function bootMic(o) {
   if (!opts.realCapture) {
     mic.setCapture(() => Promise.resolve({ recorder: rec, stream: { getTracks: () => [] } }));
   }
-  return { mic, rec, posts, notes, published, els, bodyAttrs, audioCtx, gum,
+  return { mic, rec, posts, notes, published, scripted, routed, els, bodyAttrs, audioCtx, gum,
            statusText: () => els["mic-status"].textContent };
 }
 
@@ -1148,6 +1153,89 @@ function bootMic(o) {
   await flush();
   await flush();
   ok(nostub.statusText().length > 0, "with no stub either, the status line is still honest, never blank");
+}
+
+/* --------------------------------------------------------------------------- *
+ * B5b. THE CONSOLATION LINE MAY NOT SPEND A LIVE TURN
+ * --------------------------------------------------------------------------- *
+ * The scripted child line is a line THE PAGE CHOSE. Published through
+ * `moxieBridge.sendUserTurn` it is indistinguishable from a transcript, and on a hosted
+ * live page `cloud-transport.js` takes it to `POST /api/chat` and `POST /api/speech` —
+ * a full paid turn on words nobody said. Here we prove `mic.js` sends it down the free
+ * seam instead; `sim/test_cloud_transport.mjs` block 6b proves the seam costs nothing, and
+ * `sim/test_mic_spend.mjs` proves the whole thing in Chrome by counting real requests.
+ * --------------------------------------------------------------------------- */
+{
+  const liveBridge = (rec) => ({ sendScriptedTurn: (t) => rec.scripted.push(t) });
+  const LIVE = { canSpendLiveTurn: () => true };
+
+  // Every degraded path a live page can reach, including the two that never even upload.
+  const paths = [
+    ["a refusal the mode ignores (bad_request)",
+     { mode: LIVE, answer: () => ({ status: 400, json: { ok: false, reason: "bad_request" } }) }],
+    ["a server too_short",
+     { mode: LIVE, answer: () => ({ status: 400, json: { ok: false, reason: "too_short" } }) }],
+    ["a server too_long",
+     { mode: LIVE, answer: () => ({ status: 400, json: { ok: false, reason: "too_long" } }) }],
+    ["a timeout (only the THIRD of which degrades the page)",
+     { mode: LIVE, answer: () => ({ status: 504, json: { ok: false, reason: "timeout" } }) }],
+    ["a network failure with no envelope",
+     { mode: LIVE, answer: () => ({ reject: true }) }],
+    ["an unparseable non-2xx",
+     { mode: LIVE, answer: () => ({ status: 500, text: "boom" }) }],
+    ["a clip over max_audio_bytes, refused CLIENT-side with no upload at all",
+     { mode: LIVE, recorder: { size: 900000 } }],
+  ];
+  for (const [label, opts] of paths) {
+    const w = bootMic(Object.assign({ bridge: liveBridge }, opts));
+    await w.mic.start();
+    await advance(15001);
+    await flush();
+    await flush();
+    eq(w.mic.stats().fallbacks, 1, `${label}: the visitor is still consoled with a scripted line`);
+    eq(w.scripted.length, 1, `${label}: …through the FREE scripted seam`);
+    deep(w.published, [],
+         `${label}: …AND NOT ONE WORD REACHED sendUserTurn — no /api/chat, no /api/speech`);
+  }
+
+  // A REAL transcript on the very same live page still spends its turn, exactly as before.
+  {
+    const w = bootMic({ mode: LIVE, bridge: liveBridge,
+                        answer: () => ({ status: 200, json: { transcript: "hi moxie" } }) });
+    await w.mic.start();
+    await advance(15001);
+    await flush();
+    deep(w.published, ["hi moxie"], "a real transcript STILL goes through sendUserTurn — the paid path is for words");
+    deep(w.scripted, [], "…and never through the scripted seam");
+    eq(w.mic.stats().transcripts, 1, "…recorded as a transcript");
+  }
+
+  // A page that CANNOT spend takes exactly the path it takes today: sendUserTurn, which is
+  // bridge.js's own and answers from stub.js for free. Nothing here needed changing.
+  {
+    const w = bootMic({ answer: () => ({ reject: true }) });      // no canSpendLiveTurn at all
+    await w.mic.start();
+    await advance(15001);
+    await flush();
+    await flush();
+    eq(w.published.length, 1, "with nothing spendable the scripted line still goes through sendUserTurn");
+    deep(w.routed, [], "…and nothing was routed around it");
+  }
+
+  // Belt and braces: a live page whose transport wrapped the bridge WITHOUT offering the
+  // seam must still not pay. The line is echoed locally instead.
+  {
+    const w = bootMic({ mode: LIVE, answer: () => ({ reject: true }) });
+    await w.mic.start();
+    await advance(15001);
+    await flush();
+    await flush();
+    deep(w.published, [], "a live page with no scripted seam STILL does not reach sendUserTurn");
+    eq(w.routed.length, 1, "…the line is echoed locally instead");
+    const echo = w.routed[0] || ["", "{}"];
+    eq(echo[0], "/devices/d_sim/events/remote-chat", "…on the child-utterance topic");
+    ok(String(JSON.parse(echo[1] || "{}").speech || "").length > 0, "…carrying the scripted words");
+  }
 }
 
 /* --------------------------------------------------------------------------- *

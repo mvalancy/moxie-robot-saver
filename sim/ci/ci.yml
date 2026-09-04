@@ -128,6 +128,15 @@ jobs:
         # so only a hit test could catch it. Includes a teeth block that restores the old
         # geometry and requires the collision to reappear.
         run: node sim/test_mobile_layout.mjs
+      - name: Mic-spend test (a refused microphone must not buy a chat+speech turn; skips cleanly if no browser)
+        # The audit finding this closes: `mic.js` consoles a failed microphone with a
+        # SCRIPTED CHILD LINE, and that line used to go out through `sendUserTurn` — so a
+        # refused clip, or one refused client-side without ever being uploaded, bought a
+        # full /api/chat + /api/speech on words nobody said. A claim about what the gateway
+        # is BILLED for is a claim about requests that actually left a page, so this counts
+        # them in Chrome, and pairs every "spends nothing" with a Web Audio assertion that
+        # the visitor was still consoled out loud. Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_mic_spend.mjs
       - name: Security headers applied for real (CSP/HSTS from sim/web/_headers; skips cleanly if no browser)
         # Every other browser suite serves the site with NO headers, so none of them could
         # see a policy that breaks the page — a CSP that refuses an inline block does not
