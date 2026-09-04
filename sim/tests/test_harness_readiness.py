@@ -289,3 +289,50 @@ def test_the_status_rows_telemetry_count_is_a_length_and_never_none():
         "a robot with no telemetry at all still reports a number, not None — so a wait "
         "predicate gated on `telemetry_count is not None` is vacuous and waits for "
         "nothing. Gate on the value you mean, or assert it with a named reason.")
+
+
+# ---------------------------------------------------------------------------
+# TEARDOWN MUST NOT RACE, AND MUST NOT FAIL A PASSING RUN
+#
+# Observed in CI (PR #111, run against a tree where the scenarios all passed):
+#
+#     ✅ SIL scenarios OK — 2/2 scenarios passed
+#     rm: cannot remove '/tmp/moxie-scenarios-data-A41rj3/fleet': Directory not empty
+#     ##[error]Process completed with exit code 1
+#
+# Two independent defects, both of the shape this file exists to catch — a step
+# that trusts something it never confirmed:
+#
+#   1. `kill` only REQUESTS an exit. Since the supervisor grew a SIGTERM handler it
+#      flushes state on the way out, so `rm -rf` could walk the tree while a dying
+#      process was still writing into it. The graceful-shutdown work made the race
+#      likely; it did not create it.
+#   2. Under `bash -e` the failing `rm` aborted the cleanup function BEFORE its
+#      `return 0`, so a teardown problem was reported as a test failure.
+# ---------------------------------------------------------------------------
+def test_sil_scripts_wait_for_their_children_before_deleting_the_data_dir():
+    """Signal, confirm gone, then remove — and never let teardown fail the run."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    for name in ("run_scenarios.sh", "run_smoke.sh"):
+        src = (root / "sim" / name).read_text()
+        body = src[src.index("cleanup()"):]
+        body = body[:body.index("trap cleanup EXIT")]
+
+        assert "kill -0" in body, (
+            f"{name}: cleanup deletes MOXIE_DATA_DIR without confirming its children "
+            f"are gone. `kill` only requests an exit; a supervisor with a SIGTERM "
+            f"handler keeps writing while `rm -rf` walks the tree."
+        )
+        # the wait must be bounded, or a wedged child hangs the CI job for ever
+        assert re.search(r"seq 1 \d+", body), (
+            f"{name}: the wait for children must be bounded — an unbounded loop "
+            f"trades a flaky red for a hung job."
+        )
+        rm_line = next((l for l in body.splitlines() if "rm -rf" in l), "")
+        assert "|| true" in rm_line, (
+            f"{name}: `rm -rf` in cleanup must not be able to fail the run — under "
+            f"`bash -e` it aborts the function before `return 0`, so a teardown "
+            f"problem is reported as a test failure. Got: {rm_line.strip()!r}"
+        )
