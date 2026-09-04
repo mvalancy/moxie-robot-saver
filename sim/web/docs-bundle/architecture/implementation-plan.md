@@ -854,8 +854,11 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > `/api/transcribe` → **200 in 2.93 s**, transcript *"The quick brown fox jumps over the lazy dog. What a fun
 > sentence."* — word-perfect, differing only in the closing punctuation. No key, gateway host, STT model id or
 > Tailscale address in the body or any header. **All three hosted routes are now proven on the public domain.**
-> That response also carried `load.inflight: 1` — the first live evidence that PR #104's counter wiring works,
-> where the old stub could only ever say `0`.
+> That response also carried `load.inflight: 1`, **which is NOT evidence for PR #104 and was briefly recorded
+> here as though it were.** `transcribe.js` takes its `load` from `admit()` in `_lib/limits.js`, which has
+> always reported the real in-flight count; the stub PR #104 replaced was in `health.js` alone. Production
+> serves from `main`, which at the time of this test did not carry #104 at all — so the number proves the
+> admission counter, not the health wiring. Corrected the same evening, before promotion.
 >
 > **What is still NOT covered:** no *human* has recorded through the hosted mic — this loop used synthesized
 > speech and a hand-built WAV, so it proves the route and the gateway, not `MediaRecorder` in a real browser on
