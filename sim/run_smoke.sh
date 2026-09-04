@@ -35,9 +35,23 @@ fi
 export MOXIE_DATA_DIR
 
 PIDS=(); BROKER_CID=""
+# TEARDOWN MUST NEVER FAIL A PASSING RUN, and it must not race the processes it
+# just signalled. Both halves were real: `kill` only REQUESTS an exit, and since the
+# supervisor grew a SIGTERM handler it flushes state on the way out — so a plain
+# `kill` followed by an immediate `rm -rf` could delete the tree while a dying
+# process was still writing into it, which surfaces as
+# `rm: cannot remove '.../fleet': Directory not empty`. Under `bash -e` that failing
+# `rm` aborted this function BEFORE its `return 0`, turning a green run red: CI
+# reported a failure for a run whose scenarios had all passed.
+# So: signal, WAIT for the processes to actually be gone (bounded — never hang a
+# CI job on a wedged child), then remove, and swallow anything teardown still hits.
 cleanup(){ for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
+           for p in "${PIDS[@]:-}"; do
+             for _ in $(seq 1 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
+             kill -9 "$p" 2>/dev/null || true
+           done
            [ -n "$BROKER_CID" ] && docker rm -f "$BROKER_CID" >/dev/null 2>&1
-           [ -n "${MOXIE_DATA_DIR_OWNED:-}" ] && rm -rf "$MOXIE_DATA_DIR"
+           [ -n "${MOXIE_DATA_DIR_OWNED:-}" ] && rm -rf "$MOXIE_DATA_DIR" 2>/dev/null || true
            return 0; }
 trap cleanup EXIT
 
