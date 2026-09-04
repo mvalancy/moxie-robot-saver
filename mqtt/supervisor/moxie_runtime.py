@@ -93,6 +93,14 @@ SAFETY_JOURNAL_POLICY = LoggingPolicy.NO_MEDIA
 # *robot uploads*. Memory is text our own server derives from turns that already reached
 # it, so it defaults to NO_MEDIA (allowed) — and a parent who explicitly sets
 # `logging_policy=NO_DATA` turns writing off entirely (reads and erase still work).
+#
+# This constant governs **both** durable memories, because a child's parent has one
+# switch and not two: the module facts in `moxie_sdk/store.py::MemoryStore` (gated in
+# `MemoryStore.writes_allowed`, resolved from `memory_policy`) *and* the rolling
+# conversation transcript under `MOXIE_MEMORY_DIR` (gated in `_save_memory`, resolved
+# from `transcript_persists` → the same `memory_policy`). The transcript was ungated
+# until the gate below landed, which made this comment's promise false on the one path
+# that stores the child's words verbatim.
 MEMORY_POLICY = LoggingPolicy.NO_MEDIA
 
 # Telemetry's own LoggingPolicy default, for the same reason as the two above: what a
@@ -102,9 +110,19 @@ MEMORY_POLICY = LoggingPolicy.NO_MEDIA
 # without. NO_MEDIA keeps the envelope (event name + timestamps + session) and withholds
 # every opaque payload, because `Packet.event_data` is `bytes` with no recovered type
 # vocabulary and a store that guessed "this blob is not audio" would be a privacy
-# incident, not a bug. A parent who sets `logging_policy=NO_DATA` gets nothing on disk at
-# all; one who sets FULL gets payloads too. See `moxie_sdk/telemetry.py::storable_packet`
-# and `docs/architecture/config-and-telemetry-contract.md` §③.
+# incident, not a bug. A parent who sets `logging_policy=NO_DATA` gets **no further**
+# telemetry on disk (`storable_packet` returns None and `_persist_telemetry` writes
+# nothing — not the packet, not a count, not a day row); one who sets FULL gets payloads
+# too. See `moxie_sdk/telemetry.py::storable_packet` and
+# `docs/architecture/config-and-telemetry-contract.md` §③.
+#
+# "No further" is the honest word and it is narrower than it should be: unlike memory
+# (`erase_memory` / `DELETE /memory`) and the transcript (`purge_transcripts`, which the
+# flip itself triggers), telemetry has **no erasure path at all** — `do_DELETE` accepts
+# only `/memory` — so flipping to NO_DATA leaves the packet ring and the daily roll-up
+# already on disk where they are, with nothing a parent can press to remove them. That
+# is a real gap in the contract's *"erase always works"*, tracked as its own slice; do
+# not read this constant's comment as a claim that it is closed.
 TELEMETRY_POLICY = LoggingPolicy.NO_MEDIA
 
 # How long a child must have been out of sight before Moxie says hello on its own when
@@ -170,6 +188,12 @@ class MoxieRuntime:
         self._seen_since_connect: set = set()
         self.robots: dict[str, RobotContext] = {}
         self.history: dict[str, list] = {}
+        # Parent-console config editing: per-device RobotCloudConfig overrides. Declared
+        # HERE, before `_load_memory()`, because the transcript's privacy gate resolves
+        # through `memory_policy` → `effective_config`, which reads this dict — and the
+        # boot sweep must be able to ask "is this robot under NO_DATA?" before it puts a
+        # single stored transcript back into RAM.
+        self._config_overrides = {}
         self._memory_dir = os.environ.get("MOXIE_MEMORY_DIR", "").strip()
         self._max_memory = int(os.environ.get("MOXIE_MEMORY_TURNS", "40"))
         self._load_memory()
@@ -200,8 +224,7 @@ class MoxieRuntime:
         self._transcriber = None
         self._stt_sessions = {}
         self._stt_uuid = {}      # utterance uuid per device (set on any frame that has one)
-        # Parent-console config editing: per-device RobotCloudConfig overrides.
-        self._config_overrides = {}
+        # (`self._config_overrides` is declared above, before `_load_memory()`.)
         # Device allowlist (the pairing gate). A robot that is not permitted is tracked
         # as *pending* and served a minimal, child-free config — see `_push_config` and
         # `_serve_unpermitted`. `None` = read the policy at call time (env, then the
@@ -302,16 +325,124 @@ class MoxieRuntime:
         return self.client
 
     # ---- conversation memory (survives restarts) ----
+    #
+    # THIS IS THE SECOND MEMORY, AND IT IS THE ONE THAT HOLDS THE CHILD'S OWN WORDS.
+    #
+    # `MemoryStore` (below) keeps a handful of durable *facts* a module derived from a
+    # conversation. This keeps the **rolling transcript** — every line, as said — and
+    # `MOXIE_MEMORY_DIR` writes it to disk. Both compose files set that variable
+    # (`docker-compose.yml`, `docker-compose.images.yml` → `/data/memory`), so on a
+    # shipped appliance this path is ON by default.
+    #
+    # It used to be guarded by nothing but `if not self._memory_dir`, while this file's
+    # own comments and `docs/architecture/content-module-contract.md` both promised that
+    # `LoggingPolicy.NO_DATA` means nothing about the child is written. That was a stated
+    # guarantee the code did not keep. These four methods are the gate that keeps it.
+    #
+    # Three decisions, written down because a reader will ask about each:
+    #
+    #  1. **`NO_MEDIA` (the default) writes the transcript; only `NO_DATA` stops it.**
+    #     Telemetry's `NO_MEDIA` withholds `event_data` because that field is opaque
+    #     `bytes` that could be audio or video — literal media a gate cannot classify. A
+    #     transcript has no such payload: it is *entirely* text this process is already
+    #     holding in RAM to make conversation work. So there is nothing to withhold and
+    #     the choice is binary, and it is made the same way long-term memory and the
+    #     safety journal make it (`MEMORY_POLICY`, `SAFETY_JOURNAL_POLICY`): allowed
+    #     under `NO_MEDIA`/`FULL`, refused under `NO_DATA`. Deciding otherwise would mean
+    #     the *default* deployment loses conversational continuity across a restart while
+    #     still storing derived facts about the same child — stricter in name and not in
+    #     substance.
+    #
+    #  2. **Flipping to `NO_DATA` deletes the file that is already there.** Refusing new
+    #     writes and leaving yesterday's transcript on disk is a half-guarantee, and the
+    #     contract is explicit that *"reads and erase always work"* — erasure is never
+    #     policy-gated, so removing it is always permitted. It is also load-bearing:
+    #     `_load_memory` reads that file straight back into RAM and into the next prompt,
+    #     so a file left behind is not merely stored, it is still *in use*. The sweep runs
+    #     at boot and after any config edit that could have flipped the switch, and the
+    #     write path removes the file too, so no single missed hook leaves it lying about.
+    #
+    #  3. **In-memory history is NOT gated.** This is a *persistence* gate. The rolling
+    #     window in RAM is what lets Moxie hold the thread of the conversation it is in;
+    #     a robot that forgot the previous sentence would not be more private, it would
+    #     be broken. Nothing about the child leaves this process either way, and the
+    #     window dies with it. The privacy question is what survives on disk.
+    #
+    # The gate resolves through `memory_policy` — the same per-device callable the
+    # runtime installs on `MemoryStore` — rather than a new constant or a new resolver,
+    # so a parent has one switch, not two that could disagree.
+
     def _memory_path(self, device_id: str) -> str:
         safe = "".join(c for c in device_id if c.isalnum() or c in "-_")
         return os.path.join(self._memory_dir, f"{safe}.json")
 
+    def transcript_persists(self, device_id) -> bool:
+        """False under `NO_DATA` — this robot's transcript is never written to disk, and
+        anything already there is removed. Resolved per call from the **effective**
+        (`fleet ⊕ per-robot`) config, so a parent flipping the switch on a live robot
+        takes effect on the very next turn with no restart."""
+        return self.memory_policy(device_id) != LoggingPolicy.NO_DATA
+
+    def _unlink(self, path: str) -> bool:
+        """Remove one file. True if it was there. Best-effort by design: this runs on the
+        MQTT thread, and a file we cannot delete must not cost the child their turn."""
+        try:
+            os.remove(path)
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError as e:
+            print(f"[runtime] transcript erase failed ({path}): {e}", flush=True)
+            return False
+
+    def _forget_transcript(self, device_id: str) -> bool:
+        """Delete this robot's on-disk transcript (and any half-written `.tmp` beside
+        it). Never policy-gated — an erase always works — and idempotent."""
+        if not self._memory_dir:
+            return False
+        path = self._memory_path(device_id)
+        gone = self._unlink(path)
+        self._unlink(path + ".tmp")          # a crash mid-save must not leave a copy
+        if gone:
+            print(f"[runtime] 🧽 erased on-disk transcript for {device_id} (NO_DATA)",
+                  flush=True)
+        return gone
+
+    def purge_transcripts(self) -> int:
+        """Remove every stored transcript whose robot is now under `NO_DATA`.
+
+        Called at startup and after any config edit that could have flipped the switch,
+        so "I turned recording off" means the file is gone *now* — not at the next turn,
+        and not only for the robots that happen to be connected."""
+        if not self._memory_dir or not os.path.isdir(self._memory_dir):
+            return 0
+        removed = 0
+        try:
+            names = os.listdir(self._memory_dir)
+        except OSError as e:
+            print(f"[runtime] transcript sweep failed: {e}", flush=True)
+            return 0
+        for name in names:
+            if not name.endswith(".json") or self.transcript_persists(name[:-5]):
+                continue
+            self.history.pop(name[:-5], None)     # do not keep serving what we just erased
+            if self._unlink(os.path.join(self._memory_dir, name)):
+                removed += 1
+        if removed:
+            print(f"[runtime] 🧽 erased {removed} stored transcript(s) under NO_DATA",
+                  flush=True)
+        return removed
+
     def _load_memory(self):
-        """Restore per-device conversation history from disk, if configured."""
+        """Restore per-device conversation history from disk, if configured — for the
+        robots whose parents allow it. The `NO_DATA` sweep runs FIRST, so a fleet-wide
+        rule (which is durable, and therefore outlives the process) is honoured across a
+        restart instead of being undone by one."""
         if not self._memory_dir:
             return
         try:
             os.makedirs(self._memory_dir, exist_ok=True)
+            self.purge_transcripts()
             for name in os.listdir(self._memory_dir):
                 if not name.endswith(".json"):
                     continue
@@ -323,8 +454,14 @@ class MoxieRuntime:
             print(f"[runtime] memory load failed: {e}")
 
     def _save_memory(self, device_id: str):
-        """Persist one robot's history (trimmed) so it survives a restart."""
+        """Persist one robot's history (trimmed) so it survives a restart — **unless the
+        parent's `LoggingPolicy` says nothing about this child may be stored**, in which
+        case we write nothing and remove whatever is already there (see decisions 1-3
+        above). `self.history` is untouched either way: the conversation still works."""
         if not self._memory_dir:
+            return
+        if not self.transcript_persists(device_id):
+            self._forget_transcript(device_id)
             return
         h = self.history.get(device_id) or []
         if len(h) > self._max_memory:
@@ -1825,6 +1962,10 @@ class MoxieRuntime:
         cfg.update(overrides)
         self.store.write_shared(self.FLEET_CONFIG_COLLECTION, cfg)
         self._note("config", f"⚙️  fleet config updated: {', '.join(overrides) or '—'}")
+        # A house rule of `logging_policy=NO_DATA` must take away the transcripts that are
+        # already on disk, for every robot on the box — not just the connected ones the
+        # loop below re-pushes. `purge_transcripts` is a no-op under any other policy.
+        self.purge_transcripts()
         for device_id in list(self.robots):
             self._push_config(device_id)
         return cfg
@@ -2638,6 +2779,11 @@ class MoxieRuntime:
         RobotCloudConfig and re-publish it. Overrides persist across re-pushes."""
         self._config_overrides.setdefault(device_id, {}).update(overrides)
         self._note("config", f"⚙️  config updated: {', '.join(overrides)}")
+        if "logging_policy" in overrides:
+            # The parent just moved the privacy switch. If it landed on NO_DATA, the
+            # transcript already on disk goes now — waiting for the next turn would leave
+            # it there for a robot that is never spoken to again.
+            self.purge_transcripts()
         if "face" in overrides:
             # Worth its own line in the console's activity feed: this is the one config
             # edit whose result a child sees on the robot's face.
