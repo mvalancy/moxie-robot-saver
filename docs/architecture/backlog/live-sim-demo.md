@@ -543,12 +543,53 @@ this contract exists to prevent.
 
 ### 4.6 Counters, honestly
 
-P0's per-IP and global counters are **best-effort**: an in-isolate map plus the Cache API, which is
-per-colo and per-isolate. **They are not a hard global ceiling, and the spec says so in the code comment.**
+P0's per-IP and global counters are **best-effort**: **an in-isolate map, and nothing else.**
+**They are not a hard global ceiling, and the spec says so in the code comment.**
+
+**Corrected 2026-09-03.** Every earlier revision of this section said "an in-isolate map plus the Cache
+API, which is per-colo and per-isolate". **The Cache API leg was never implemented** — `_lib/limits.js`
+holds one `Map` per counter in module scope and consults nothing else — so the multiplier is *isolates*,
+not colos, and that is a materially weaker guarantee than the sentence promised. Anyone sizing the spend
+risk off the old wording would have got it wrong in the unsafe direction. The Cache API tier is **not**
+being added here: §10 assumption 13 (is KV or a Durable Object even available on this plan?) is still
+open, and its answer changes which counter is worth building, so the honest move today is to correct the
+document rather than to ship a second best-effort tier. Ledger row 25 records this.
+
+**The practical consequence, exactly.** Every cap in §4.1 that is enforced by a counter — the per-IP
+windows, the concurrency ceiling and the unit budget — is enforced *once per isolate*. With N isolates
+serving the deployment, the effective ceiling is up to **N × the configured number**, and N is chosen by
+Cloudflare, is not observable from inside a Function, and changes with traffic and with isolate
+recycling. So the configured caps are a **per-isolate throttle, not a global budget**: a value that
+reliably stops one script hammering one endpoint, and that places no upper bound at all on the
+deployment's total spend. Two things are worth being exact about in the other direction, because
+overstating this would be its own error. First, *nothing here bounds cost by itself anyway* — the caps
+that do are per-request (`max_tokens`, `DEMO_MAX_INPUT_CHARS`, `DEMO_MAX_TTS_CHARS`, the timeouts), and
+they apply to every request no matter which isolate serves it. Second, N is not adversary-controlled in
+any direct way: an attacker does not get to *ask* for a fresh isolate, they get whatever the platform
+hands them, so the multiplier is opportunistic rather than a dial.
+
 They stop scripts and accidents, which is most of the real risk. The hard ceilings are (a) the gateway-side
 budget-scoped virtual key, and (b) the caps in §4.1, which bound the cost of every *individual* request
 regardless of how many arrive. P1 replaces the counter with a KV or Durable Object single-writer counter —
 **after** the dashboard confirms which of those this account and plan actually has (§10).
+
+`GET /api/health` reports `budget_exhausted` and the real `load.inflight` from these same counters (P0-b
+wired it on 2026-09-03; before that it returned a hard-coded `null`/`0` and could never say either). It is
+therefore honest about **the isolate that answered the probe** and silent about every other one — which is
+the same limit as above, restated where a reader of §3.2 will meet it.
+
+**Why a spend refusal opens no separate client-side suppression window**, since the asymmetry with §4.5's
+429 row looks like an oversight and is not. `rate_limited` and `at_capacity` keep `mode.js` in `live` and
+pace it with `suppressUntil`; `budget_exhausted` instead leaves `live` outright, which is the *stronger*
+response — it stops every live turn, not just paced ones. Recovery is already gated on the server's own
+number: `note()` reschedules the next `/api/health` poll to the received `Retry-After`, so the earliest a
+page can re-arm to `live` is that instant, and (now that the probe is honest) an isolate whose budget is
+still spent answers `budget_exhausted` again and the page stays degraded. Adding a suppression window on
+top would produce a state `mode.js::surface()` has no copy for — `state: "live"` with `liveTurns: false`
+paints the LIVE badge with an empty message while `env.js`:203 marks the page `needs-backend` — i.e. a new
+dishonesty in place of the one being removed. The residual imprecision is the poll ceiling, and it is
+named rather than hidden: `POLL_MAX_MS` clamps the reschedule to 5 minutes, so a `Retry-After` longer than
+that is re-checked early. The re-check costs a probe, not a gateway call.
 
 ### 4.7 Headers to add to `sim/web/_headers`
 
@@ -1008,7 +1049,7 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 | 22 | `deploy-cloudflare.md`:19's claim that the child's voice is audible is **false** | **proven** | `bridge.js`:434‑446 — `handleUserTurn` never speaks. Fix in P1. |
 | 23 | The Cloudflare **account id is already public** in every commit's check-run URL | **proven** (survey) | Not a credential, but worth knowing given `orchestration-plan.md`:32's "no account id is hard-coded" — nothing in this spec adds it to a file. |
 | 24 | Origin/Referer checks stop only browser hotlinking | **proven by reasoning, stated in the code** | Headers are trivially forged by `curl`. The controls that matter are the caps, the budget and assumption 14. |
-| 25 | The best-effort counter is not a true global ceiling | **proven** | Cache API is per-colo; an isolate map is per-isolate. Said out loud in §4.6 and in the code comment. |
+| 25 | The best-effort counter is not a true global ceiling | **proven — and the *reason* given here was itself wrong until 2026-09-03** | Original wording: *"Cache API is per-colo; an isolate map is per-isolate."* **The Cache API leg was VERIFIED ABSENT from the shipped code on 2026-09-03** — `functions/api/_lib/limits.js` keeps one module-scope `Map` per counter (`state.windows`, `state.budget`, `state.inflight`) and consults no cache, no KV and no Durable Object; §4.6 and `functions/api/health.js`'s comment had both described a tier that was never built. The conclusion survives, the multiplier does not: it is **isolates, not colos**, so the effective ceiling is N × the configured number for an N chosen by the platform, and the configured caps are a per-isolate throttle rather than a global budget. Corrected in §4.6 and in the code comment on the same day; the Cache API tier is deliberately **not** added, because assumption 13 is still open and its answer decides which counter is worth building. |
 | 26 | A Cloudflare Pages build accepts the `import ... with { type: "json" }` attribute, so a Function may load a `.json` data file | **SETTLED FALSE (2026-09-03)** — it does not | Settled by the only thing that could: a real deploy. P0-b's `_lib/safety.js` loaded its rule table that way; the Pages check went `COMPLETED/FAILURE` on `feat/livesim-live-turn` while the identical check was `success` on `dev`, and that single line was the only structural difference in the Functions tree. **Node 20 accepts the syntax, so all 1637 hermetic tests were green** — this was invisible to every local guard, which is the general lesson: a bundler-specific extension cannot be validated by the runtime the tests use. Fixed by inlining the table as `_lib/safety.rules.js` (a plain `export const RULES`), deleting the `.json` so there is one source of truth, and adding a guard in `sim/test_demo_proxy.mjs` that fails on any `.json` import or import attribute under `functions/` — converting a deploy-only failure into a one-second local one. |
 
 ---
