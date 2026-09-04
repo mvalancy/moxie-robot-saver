@@ -340,3 +340,128 @@ def test_the_documented_action_deltas_are_the_only_ones(client, keys):
     else:
         at = BRIDGE.index("actionState.applied.push({")
         assert set(_keys(_balanced(BRIDGE, BRIDGE.index("{", at)))) == shared | extra
+
+
+# --------------------------------------------------------------------------- #
+# 5. …and the PAYLOAD of the one verb that carries one
+# --------------------------------------------------------------------------- #
+# Section 4 proved the two clients implement the same LIST of verbs. That is not enough
+# once a verb gains a payload, and on 2026-09-04 it was not: PR #119 put `function_id`
+# (RemoteChat.proto field 7), `function_args` (8, `repeated string`) and `action_args`
+# (10, `repeated ActionArgsEntry{key, value}`) on the wire, `sim/virtual_moxie.py` decoded
+# all of them, and `sim/web/bridge.js::applyAction` read `entry.function` alone and no args
+# at all — so our own server's named `execute` rendered in the browser as `(unnamed)` while
+# the SIL robot named it. Same vocabulary, different meaning: two clients that agree on the
+# word `execute` and disagree on what was executed are not interchangeable.
+#
+# The golden's `execute_script` drives BOTH clients over every spelling and
+# `execute_expected` is the decode both must reach. Here that is asserted of the SIL robot
+# (for real, by running it) and of the browser (structurally, so a Python-only CI run still
+# catches drift); `sim/test_action_payload.mjs` runs the real bridge over the same script
+# and carries the negative control.
+
+APPLY_ACTION = _balanced(BRIDGE, BRIDGE.index("{", BRIDGE.index("function applyAction(entry) {")))
+PAYLOAD_TEST_PATH = os.path.join(REPO, *ACTIONS_GOLDEN["payload_peer_test"].split("/"))
+PAYLOAD_TEST = open(PAYLOAD_TEST_PATH, encoding="utf-8").read()
+
+
+def test_the_sil_robot_decodes_the_execute_payload_exactly_as_the_golden_says():
+    """The reference client, run — so `execute_expected` cannot go stale the way a
+    hand-written expectation would. This is the document the browser is held to."""
+    vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_payload", verbose=False)
+    for response in ACTIONS_GOLDEN["execute_script"]:
+        vm._on_chat_reply({k: v for k, v in response.items() if k != "_why"})
+    keys = ACTIONS_GOLDEN["applied_keys"]
+    got = [{k: a[k] for k in keys} for a in vm.action_stats()["applied"]]
+    assert got == ACTIONS_GOLDEN["execute_expected"], got
+
+
+@pytest.mark.parametrize("field", ["function_id", "function_args", "action_args"])
+def test_the_browser_sim_reads_every_field_the_contract_puts_an_execute_in(field):
+    """`bridge.js`:258 used to read `entry.function` and nothing else. Each of these three
+    is a field our own `wire.py::encode_action` emits, so a client that skips one is a
+    client that mis-reads a message this appliance actually sends."""
+    assert f"entry.{field}" in APPLY_ACTION, (
+        f"bridge.js::applyAction never reads `entry.{field}` — the SIL robot does, so an "
+        f"`execute` carrying it means two different things to the two clients")
+
+
+def test_both_clients_prefer_the_contracts_spelling_in_the_same_order():
+    """`function_id` first, the SIM's older `function` second, `""` last. Order is the
+    assertion: a client that preferred the other spelling would name a *different*
+    function whenever a server sent both, and no vocabulary test could see it."""
+    assert re.search(r'entry\.function_id\s*\|\|\s*entry\.function\s*\|\|\s*""', APPLY_ACTION)
+    src = open(os.path.join(REPO, "sim", "virtual_moxie.py"), encoding="utf-8").read()
+    assert re.search(r'entry\.get\("function_id"\)\s*or\s*entry\.get\("function"\)\s*or\s*""', src)
+
+
+def test_the_browser_sim_falls_through_on_ABSENCE_not_on_falsiness():
+    """`function_args: []` and `action_args: []` are things a server may legitimately put
+    on the wire, and they are not the same as the field being missing. The SIL robot tests
+    `is None`; a browser that wrote `entry.function_args || …` would silently promote an
+    empty list into the next spelling and the two clients would disagree on an edge the
+    golden's `exec-4` covers."""
+    for nxt in ("actionArgs(entry.action_args)", "entry.args"):
+        assert f"if (args === undefined || args === null) args = {nxt};" in APPLY_ACTION, (
+            f"the fall-through to `{nxt}` must test ABSENCE, not falsiness, to match the "
+            "SIL robot's `is None` — the golden's `exec-5` is the message the two clients "
+            "would otherwise decode differently")
+    assert not re.search(r"entry\.function_args\s*\|\|", APPLY_ACTION)
+    assert "if (!args)" not in APPLY_ACTION
+
+
+def test_the_browser_sim_decodes_action_args_into_the_mapping_it_encodes():
+    """`repeated ActionArgsEntry{key, value}` → `{key: value}`, with the SIL robot's own
+    rejections: a non-list is not args, and an entry that is not an object or carries no
+    `key` is dropped rather than becoming an `undefined` key. `null` (not `{}`) on nothing
+    readable, so the caller falls through instead of recording args the brain never sent."""
+    body = _balanced(BRIDGE, BRIDGE.index("{", BRIDGE.index("function actionArgs(entries) {")))
+    assert "if (!Array.isArray(entries)) return null;" in body
+    assert "e.key === undefined || e.key === null" in body
+    assert "return n ? out : null;" in body
+
+
+def test_both_clients_record_an_applied_action_under_the_same_keys_in_the_same_order():
+    """`args` moved out of `client_only_keys` when the browser learned to read it. This
+    pins the ORDER too, which is how every other envelope in this file is held."""
+    at = BRIDGE.index("actionState.applied.push({")
+    browser = _keys(_balanced(BRIDGE, BRIDGE.index("{", at)))
+    assert browser == ACTIONS_GOLDEN["applied_keys"] + ["t"], browser
+    vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_ord", verbose=False)
+    vm._on_chat_reply({"command": "remote_chat", "event_id": "e", "output": {"text": ""},
+                       "response_actions": [{"output_type": "GLOBAL", "action": "execute",
+                                             "function_id": "f", "function_args": ["a"]}]})
+    assert list(vm.action_stats()["applied"][0]) == ACTIONS_GOLDEN["applied_keys"]
+
+
+def test_the_browser_sims_actionStats_does_not_drop_the_payload_on_the_way_out():
+    """The SECOND place the payload can be lost, and on 2026-09-04 it was: `applyAction`
+    had been taught to read the args and `actionStats()` still copied four keys, so every
+    caller saw an unarmed `execute` and nothing said otherwise. The reader's shape is as
+    much of the contract as the writer's — found by `sim/test_action_payload.mjs`."""
+    at = BRIDGE.index("actionStats: function ()")
+    projection = _balanced(BRIDGE, BRIDGE.index("({", BRIDGE.index("applied:", at)) + 1)
+    assert _keys(projection) == ACTIONS_GOLDEN["applied_keys"], _keys(projection)
+
+
+def test_the_two_clients_are_driven_over_the_same_execute_script():
+    """As with `script` above: the browser half must be the SAME responses, or
+    `execute_expected` is two separate stories rather than one claim about both clients."""
+    for response in ACTIONS_GOLDEN["execute_script"]:
+        assert response["event_id"], response
+    assert "execute_script" in PAYLOAD_TEST and "execute_expected" in PAYLOAD_TEST, (
+        f"{ACTIONS_GOLDEN['payload_peer_test']} must drive the browser over this golden, "
+        "not over a script of its own")
+    assert "applied_keys" in PAYLOAD_TEST, (
+        "the browser comparison must be projected onto the golden's shared keys")
+
+
+def test_the_payload_suite_carries_a_negative_control():
+    """A browser assertion that cannot fail is what this repo learned to distrust: nine
+    suites skipped for months and stayed green. The peer test reverts the fix in the
+    bridge source and requires the same comparison to go red — and asserts its own
+    mutations actually changed the source, because a `replace()` that matched nothing
+    would make the control vacuous in exactly the way it exists to catch."""
+    assert "NEGATIVE CONTROL" in PAYLOAD_TEST
+    assert "mutated nothing" in PAYLOAD_TEST, (
+        "the control must prove it changed the source before trusting that it failed")

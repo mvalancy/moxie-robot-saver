@@ -81,7 +81,7 @@ with a greeting or `ResultCode.NOREPLY_ACK` and **never** carries an action.
 > `execute_returns[]`. The test written to pin the defect
 > (`sim/tests/test_actions_reach_the_robot.py`) was flipped into the assertion of the fixed behaviour.
 >
-> **Three things this piece still owes**, and none of them is the wire:
+> **Three things this piece still owed**, and none of them is the wire. **Two are still open:**
 > 1. **`ENABLE_QR` still serialises as the string `enable_qr`** and is *not* routed through
 >    `execute` + `function_id: "eb_enable_qr"`. The rename below is untouched and is now **pinned by a
 >    test named for it**, so making it will turn a test red and have to say why. `EXIT` likewise (§7 R3).
@@ -91,6 +91,22 @@ with a greeting or `ResultCode.NOREPLY_ACK` and **never** carries an action.
 >    appliance cannot grant yet: `act.eb_timer_request`"* — so *"this slice flips four rows green"* was a
 >    claim and the wire was **necessary, not sufficient**: the gate was
 >    [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` / `P1_CAPABILITIES` plus
+>    `content_app._reply_from_volley`.
+> 3. ~~**The browser SIM still cannot read it.**~~ — **fixed 2026-09-04.**
+>    [`bridge.js::applyAction`](../../../sim/web/bridge.js) now reads `function_id` before the SIM's
+>    older `function`, and decodes `function_args` (proto field 8, a list) and `action_args` (field 10,
+>    a `{key, value}` list) into the same `args` the SIL robot records — falling through on
+>    **absence**, not falsiness, so a `function_args` a server really sent is never silently replaced
+>    by the `action_args` beneath it. It keeps the reference client's discipline exactly: it records,
+>    and it does not pretend. Nothing is called, no module starts, and no `execute_returns[]` is
+>    published. **A second drop site turned up while fixing it** and is the finding worth keeping —
+>    `moxieBridge.actionStats()` re-projected each applied action onto four keys, so a correct
+>    `applyAction` would still have handed every caller an `execute` with no arguments. The writer's
+>    half of a contract is not the whole contract. Held from both ends by
+>    [`sim/test_action_payload.mjs`](../../../sim/test_action_payload.mjs) — the real bridge driven
+>    over the same golden script the SIL robot is driven over, with a negative control that reverts
+>    the fix and must go red — and by §5 of
+>    [`test_sim_client_parity.py`](../../../sim/tests/test_sim_client_parity.py).
 >    `content_app._reply_from_volley`. PR #121 then built the remainder — `content_app
 >    .execution_actions_of` turns an effect into an `execute` `Action` — and measured **two of four**, not
 >    four: G2/G3 pass in `test_t1_t6_conformance_act`, while **G5 needs `brain`** and **G6 needs

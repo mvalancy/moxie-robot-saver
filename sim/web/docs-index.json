@@ -1,5 +1,5 @@
 {
- "generated": "docs-116a0bc96e03",
+ "generated": "docs-112b0aa34dcb",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 185172,
+   "bytes": 185528,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -755,7 +755,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 26843,
+   "bytes": 28286,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
