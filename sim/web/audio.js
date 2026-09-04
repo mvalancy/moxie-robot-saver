@@ -26,7 +26,14 @@
  * back in a stranger's voice. See the block comment on speakClipOnly.
  *
  * Exposes window.moxieAudio = { speak, speakClipOnly, sfx, setEnabled, setTtsBase,
- *                               getClipPhrases, playCloudTTS, decodeCloudTTS, isSpeaking }.
+ *                               getClipPhrases, playCloudTTS, decodeCloudTTS, isSpeaking,
+ *                               isMoxieSpeaking, isMoxieBusy }.
+ *
+ * THREE SPEAKING PREDICATES, AND THEY ARE NOT INTERCHANGEABLE. `isSpeaking()` is narrow
+ * — the server-TTS flag only. `isMoxieSpeaking()` is broad — any voice of hers, by any
+ * of the three routes above, excluding the child prop. `isMoxieBusy(ms)` is broad plus a
+ * grace beat past her last syllable. Anything asking "may I make a sound right now?"
+ * wants the last of the three; see the block comment on `isMoxieBusy`.
  */
 (function () {
   "use strict";
@@ -43,6 +50,10 @@
    * session (see speakClipOnly); anything else — null included — is MOXIE herself, and
    * Moxie is never interrupted by the prop. Cleared by stop() and by playback ending. */
   var currentWho = null;
+  /* Wall-clock ms of the last moment Moxie's OWN voice was live. Stamped by noteSpoke()
+   * at every point her audio ends, and read only through `isMoxieBusy(graceMs)` — see
+   * the block comment there for why the tail needs a timestamp and not just a flag. */
+  var spokeUntil = 0;
 
   function actx() {
     if (!ctx) { var C = window.AudioContext || window.webkitAudioContext; ctx = C ? new C() : null; }
@@ -76,6 +87,7 @@
 
   // ---- speech (Piper) with mouth sync ----
   function stop() {
+    noteSpoke();             // whatever we are about to cut, her voice was live until now
     stopCloudTTS();          // cancel any queued/playing server audio too
     if (current) { try { current.pause ? current.pause() : current.stop(); } catch (e) {} current = null; }
     currentWho = null;
@@ -89,6 +101,41 @@
    * This is the one asymmetry that keeps the two voices off each other — see
    * speakClipOnly's ORDERING note. */
   function moxieIsSpeaking() { return speaking || (!!current && currentWho !== "child"); }
+
+  /* Remember that her voice was live as of NOW. Called at every point Moxie's audio
+   * ends or is cut — so `spokeUntil` is the instant of her last syllable, give or take
+   * one event loop turn. Deliberately a no-op when she was not speaking, so a `stop()`
+   * on silence (or on a child clip) does not push the grace beat out. */
+  function noteSpoke() { if (moxieIsSpeaking()) spokeUntil = Date.now(); }
+
+  /* Is Moxie's voice unavailable right now — either live, or still inside the grace
+   * beat after her last syllable? THE PREDICATE AMBIENT SELF-TALK ASKS.
+   *
+   * Two parts, and both are load-bearing:
+   *
+   *   SPEAKING — `moxieIsSpeaking()`, the BROAD predicate, not the exported
+   *     `isSpeaking()`. `isSpeaking()` reports only `speaking`, the server-TTS flag, and
+   *     is right for its one caller (cloud-transport.js's late-audio drop, which is
+   *     asking specifically whether cloud audio is already in the air). It is wrong
+   *     here: it is blind to a clip, a Piper stream and the browser voice, and a clip is
+   *     exactly what ambient itself plays and what the degraded and scripted paths play.
+   *     Guarding on it would leave the fallback deployments — the ones with no live
+   *     brain, where the demo has least room to look broken — completely unguarded.
+   *
+   *   GRACE — the tail. `moxieIsSpeaking()` goes false on `onended`, which is the
+   *     sample after her last syllable, not the beat after her last WORD. An ambient
+   *     quip landing in that window does not overlap the answer but still reads as
+   *     interrupting it: the visitor is a few hundred ms into hearing a sentence end,
+   *     and a non-sequitur arrives on top of the silence they were reading it in. A
+   *     boolean cannot express "recently", so the end is timestamped and the caller
+   *     names the beat it wants.
+   *
+   * `graceMs` omitted or 0 gives the bare "is she speaking" answer. */
+  function isMoxieBusy(graceMs) {
+    if (moxieIsSpeaking()) return true;
+    var g = +graceMs || 0;
+    return g > 0 && spokeUntil > 0 && (Date.now() - spokeUntil) < g;
+  }
 
   /* Fetch an audio URL, decode it, play it, and drive the mouth from its envelope.
    *
@@ -120,7 +167,7 @@
         }
         src.onended = function () {
           if (driveMouth) cancelAnimationFrame(raf);
-          if (current === src) { current = null; currentWho = null; }
+          if (current === src) { noteSpoke(); current = null; currentWho = null; }
           if (driveMouth && window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(0);
         };
         src.start(0);
@@ -327,6 +374,7 @@
       u.onend = u.onerror = function () {
         clearInterval(mo);
         if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(0);
+        noteSpoke();
         current = null;
       };
       current = { stop: function () { clearInterval(mo); window.speechSynthesis.cancel(); } };
@@ -363,7 +411,7 @@
           raf = requestAnimationFrame(pump);
         }
         src.onended = function () {
-          cancelAnimationFrame(raf); current = null;
+          cancelAnimationFrame(raf); noteSpoke(); current = null;
           if (window.moxie && window.moxie.setMouthOpen) window.moxie.setMouthOpen(0);
         };
         src.start(0); pump();
@@ -718,6 +766,26 @@
       item.resolve({ played: false, reason: "decode-error: " + (e && e.message), decoded: d });
       return ttsPump();
     }
+    /* THE OTHER HALF OF THE AMBIENT FIX — the answer cuts a local voice already in the air.
+     *
+     * `current` may still hold a LOCAL voice: an ambient quip, a Piper stream, the browser
+     * voice, or a child clip. Assigning `current = src` on top of it merely FORGETS it —
+     * nothing ever stops it — so it keeps playing underneath the answer. Two Moxies at
+     * once is the same defect ambient.js's `moxieBusy` guard fixes from the other side.
+     *
+     * That guard cannot close this one. It stops ambient starting while she is SPEAKING,
+     * but a turn is ~1.2 s of /api/chat plus 2–3 s of /api/speech during which she is
+     * genuinely silent and ambient is right to start — and then the answer lands on top.
+     * So the answer closes it on arrival: the server voice is the thing the visitor asked
+     * for, and it wins, exactly as `speak()`'s unconditional `stop()` makes Moxie win over
+     * the child prop (see speakClipOnly's ORDERING note).
+     *
+     * A cloud chunk is never what gets cut here — `finish()` clears `current` before it
+     * pumps the next chunk — so a chunked utterance still plays through intact. */
+    if (current && current !== src) {
+      try { current.stop ? current.stop() : current.pause(); } catch (e) {}
+      currentWho = null;
+    }
     ttsPlaying = item; current = src;
     beginUtterance(d);                     // a NEW event resets the stats below
     setSpeaking(true, d);
@@ -753,6 +821,7 @@
     function finish() {
       if (done) return;
       done = true;
+      noteSpoke();          // stamped per chunk; the last one is the end of the utterance
       clearTimeout(guard);
       cancelAnimationFrame(raf);
       if (current === src) current = null;
@@ -806,7 +875,16 @@
     // --- server voice (CloudTTSResponse on /devices/{id}/commands/tts) ---
     playCloudTTS: playCloudTTS,       // decode + play; resolves when it finished
     decodeCloudTTS: decodeCloudTTS,   // pure wire decode (unit-tested in node)
+    /* NARROW: the server-TTS flag alone. Blind to a clip, a Piper stream and the browser
+     * voice. Keep using it only where the question really is "is CLOUD audio in the air"
+     * (cloud-transport.js's late-audio drop). For "may I make a sound right now?" — what
+     * ambient.js asks — use isMoxieBusy. */
     isSpeaking: function () { return speaking; },
+    // BROAD: any voice of MOXIE's — clip, Piper, browser voice or server TTS. Not the child.
+    isMoxieSpeaking: moxieIsSpeaking,
+    /* Broad, plus a grace beat past her last syllable. `isMoxieBusy(1600)` is "she is
+     * speaking, or stopped less than 1.6 s ago". See the block comment on the function. */
+    isMoxieBusy: isMoxieBusy,
     speakingInfo: function () { return speakingInfo; },   // summary, no PCM
     hasCloudVoice: function () { return cloudVoice; },    // a CloudTTSResponse has arrived
     setTtsHint: setTtsHint,           // resting text of #tts-status (never clobbers speaking)

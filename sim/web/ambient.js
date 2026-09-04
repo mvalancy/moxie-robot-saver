@@ -121,9 +121,40 @@
     return true;
   }
 
+  /* MOXIE IS MID-ANSWER — the one thing ambient must never talk over.
+   *
+   * A live turn is roughly 1.2 s of `/api/chat` plus 2–3 s of `/api/speech`, and the
+   * reply audio itself measured 4.78 s (105 332 frames @ 22 050 Hz) against the hosted
+   * site. That whole span sits inside the 11–24 s ambient window, so without this guard
+   * a visitor's answer is very likely cut off mid-sentence and replaced by a
+   * non-sequitur — `perform()` calls `moxieAudio.speak()`, which calls `stop()`
+   * unconditionally. It is the worst possible moment for it: everything up to that point
+   * worked, and then she talks over herself.
+   *
+   * `isMoxieBusy` is the BROAD predicate (see audio.js). The narrow exported
+   * `isSpeaking()` would only see server TTS and would miss a playing CLIP — which is
+   * what the degraded and scripted paths play, and what ambient itself plays.
+   *
+   * THE GRACE BEAT. 1600 ms past her last syllable, because `onended` fires at the end
+   * of the audio, not the end of the sentence: quipping the instant playback stops still
+   * reads as stepping on her, and the pause after an answer is where a listener puts the
+   * full stop. It is short enough that an idle page stays alive.
+   *
+   * A LONG ANSWER IS NOT A LOST QUIP. The refusal takes the file's existing guard idiom —
+   * `schedule(false); return;`, the same as the hidden-tab and liveness-off paths — so
+   * ambient re-arms for another 11–24 s rather than stopping. Nothing here can make her
+   * permanently silent; the worst case is one skipped quip during a conversation, which
+   * is the correct behaviour anyway: she should be quiet while someone is talking to her. */
+  var SPEAK_GRACE_MS = 1600;
+  function moxieBusy() {
+    var a = window.moxieAudio;
+    try { return !!(a && a.isMoxieBusy && a.isMoxieBusy(SPEAK_GRACE_MS)); } catch (e) { return false; }
+  }
+
   function tick() {
     if (!running) return;
     if (document.hidden || !livenessOn()) { schedule(false); return; }
+    if (moxieBusy()) { schedule(false); return; }
     var m = window.moxie, ln = nextLine();
     if (!m || !ln) { schedule(false); return; }
     perform(ln, "ambient");
