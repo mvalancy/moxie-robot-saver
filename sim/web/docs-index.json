@@ -1,5 +1,5 @@
 {
- "generated": "docs-67246475119a",
+ "generated": "docs-c1eb14920e40",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 6236,
+   "bytes": 6664,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 10971,
+   "bytes": 12110,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 114736,
+   "bytes": 116881,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -351,7 +351,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 124346,
+   "bytes": 129360,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -742,6 +742,29 @@
     "10. Assumption ledger",
     "11. Did this brief remove the decision it owed?",
     "12. What this brief is not"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/qr-launch-cards.md",
+   "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
+   "section": "architecture",
+   "bytes": 23589,
+   "mermaid": 0,
+   "headings": [
+    "0. The two facts that set the scope",
+    "0.1 The setup app's QR grammar is closed, so a launch card cannot ride it",
+    "0.2 The second scanner is the real path, and it reaches us",
+    "1. The seam — exactly what is missing, in three pieces",
+    "P0-a — the arm (`eb_enable_qr` onto the wire) · **S**",
+    "P0-b — the route (`$eb_qr_value` → a launch action) · **S/M**",
+    "P0-c — the sheet · **S**",
+    "2. The vocabularies (nothing outside them reaches the wire or the paper)",
+    "3. Prior art — OpenMoxie (MIT), described and credited, never copied",
+    "4. Tests",
+    "5. Acceptance criteria",
+    "6. Effort and the files an agent touches",
+    "7. Risks, and the honest ceiling"
    ],
    "kind": "md"
   },
