@@ -23,6 +23,15 @@ That history is what [`../moxie_sdk/schedule.py`](../moxie_sdk/schedule.py) read
 day plan skips activities the child already finished — and so first-time-user onboarding
 ends instead of repeating forever.
 
+> ⚠️ It is also a **durable per-child behavioural log**, and until 2026-09-04 it was
+> written with no privacy gate at all — a robot whose parent had chosen `NO_DATA` went on
+> accumulating one. It is now under the same switch and the same erase as the two
+> `telemetry_*` records beside it (`MoxieRuntime.telemetry_policy` /
+> `erase_telemetry`); the three together are the **activity record**, and the rules are in
+> [`config-and-telemetry-contract.md`](../../docs/architecture/config-and-telemetry-contract.md)
+> §③. Deleting these files by hand is always safe, which is the same thing the parent's
+> 🧽 *Erase history* button does.
+
 ## Configuration
 
 `MOXIE_DATA_DIR` overrides the location (point it at a volume in the compose stack).

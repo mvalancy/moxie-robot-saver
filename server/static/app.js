@@ -333,7 +333,14 @@ async function refreshInsights(deviceId){
   let conn=null;
   try{ conn=await api('/local/connection',{auth:false}); }catch(e){ conn=null; }
   const strip=connectionStrip(conn);
-  const render=html=>{ box.innerHTML=strip+html; };
+  // Wiring the 🧽 button inside `render` rather than after each call: this function
+  // returns early from four branches, and an erase button that works in three of them is
+  // worse than none — a parent would learn it sometimes does nothing.
+  const render=html=>{
+    box.innerHTML=strip+html;
+    const b=box.querySelector('#btn-telemetry-forget');
+    if(b) armErase(b, 'Click again to erase', ()=>eraseTelemetry(deviceId));
+  };
   if(!deviceId){ render('<div class="live-off">📈 Insights: no robot connected</div>'); return; }
   let t;
   try{ t=await api(`/local/robots/${encodeURIComponent(deviceId)}/telemetry`,{auth:false}); }
@@ -343,8 +350,13 @@ async function refreshInsights(deviceId){
     return;
   }
   const tot=t.totals||{}, ret=t.retention||{};
+  // 🧽 Only when there is something to erase — a button that always answers "nothing was
+  // stored" teaches a parent to distrust it.
+  const forget=(t.count||tot.total>0)
+    ? '<span class="grow"></span><button id="btn-telemetry-forget" class="ghost tiny">'
+      +'Erase history</button>' : '';
   const hd=`<div class="insights-hd">📈 Insights · ${t.count} event${t.count===1?'':'s'} kept`
-    +`${tot.total>t.count?` · ${tot.total} all time`:''}</div>`;
+    +`${tot.total>t.count?` · ${tot.total} all time`:''}${forget}</div>`;
   if(t.persisted===false){
     render(hd+'<div class="live-off">Data sharing is '
       +`${escapeHtml(t.policy||'NO_DATA')}, so nothing is being saved — this card can only `
@@ -376,6 +388,28 @@ async function refreshInsights(deviceId){
   render(`${hd}${week}<div class="livegrid">${counts}</div>`
     +`<div class="evlog">${rows}</div><p class="tnote">${note}</p>`);
 }
+// 🧽 Erase this robot's stored activity history — the packet ring, the daily roll-up and
+// the mentor-behavior log, in one supervisor call.
+//
+// The telemetry half of the privacy contract's "reads and erase always work". Until the
+// supervisor grew `DELETE /telemetry` there was no erasure path at all, so a parent could
+// turn recording off and still be left with every packet already on disk and nothing to
+// press. Two clicks (armErase), like the 🧠 memory erases, because it cannot be undone.
+async function eraseTelemetry(deviceId){
+  let msg='';
+  try{
+    const r=await api('/local/robots/'+encodeURIComponent(deviceId)+'/telemetry',
+                      {method:'DELETE',auth:false});
+    msg = r.erased ? '🧽 Erased the stored activity history — the events, the daily '
+                     +'counts and the finished-activity log are gone from this box.'
+                   : 'Nothing was stored to erase.';
+  }catch(e){ msg='⚠️ '+(e.message||'erase failed'); }
+  await refreshInsights(deviceId);
+  const box=$('#robot-insights');
+  if(box) box.insertAdjacentHTML('beforeend',
+                                 '<p class="tnote">'+escapeHtml(msg)+'</p>');
+}
+
 // safety review queue (ai-seam §2 InputSafety): what the classifier blocked or flagged,
 // on either side of a turn. Excerpts arrive already redacted by the runtime.
 async function refreshSafety(deviceId){
