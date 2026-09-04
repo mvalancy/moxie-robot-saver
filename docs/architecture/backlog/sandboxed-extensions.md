@@ -910,7 +910,9 @@ Not in P0, deliberately: `act`, `subscribe`, `brain`, `schedule.request`, `turn.
 the text surface, the JS evaluator, the console card, signatures, and any attempt to run `code`.
 
 ### P1 — **M**
-`act`/`subscribe` with the `RemoteChatAction` plumbing that S5 defers · the `brain` capability · the
+~~`act`~~ ✅ **shipped 2026-09-04** (S5 closed; G2/G3 green) · `subscribe`, which still needs a **host**
+— `Volley.subscriptions` and `wire.build_chat_response(subscribe_events=…)` both exist and nothing joins
+them, so the capability could not do anything and is still refused at load · the `brain` capability · the
 text→AST compiler (outside the trust boundary) · `sim/web` or `functions/` JS evaluator + the shared
 conformance run in `workerd` · the console card (grants, breaches, quarantine) · `turn.after` and
 `session.end`.
