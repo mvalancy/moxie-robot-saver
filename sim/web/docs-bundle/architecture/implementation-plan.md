@@ -905,7 +905,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   product code and `functions/` are unswept; and monotonic-clock load flakiness (playbook rule 11's
   disease) is deliberately out of that guard's scope and still unfenced.
 
-## DoD progress (audited 2026-09-03 21:05 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 94%** (done = all six 🟢)
+## DoD progress (audited 2026-09-04 00:40 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 92%** (done = all six 🟢)
 
 > **Criterion 6 is green, and it was earned in the place it used to be false.** The day the merge gate was a
 > `grep` is fixed and the fix has since caught a genuine red; the three flake classes are fenced by ratchets that
@@ -940,6 +940,32 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > always reported the real in-flight count; the stub PR #104 replaced was in `health.js` alone. Production
 > serves from `main`, which at the time of this test did not carry #104 at all — so the number proves the
 > admission counter, not the health wiring. Corrected the same evening, before promotion.
+>
+> **DRIVING THE LIVE PAGE IN A REAL BROWSER MOVED THIS SCORE DOWN, AND THAT IS THE POINT.** Everything
+> above was measured with `curl`. On 2026-09-04 the hosted `/sim` was driven with headless Chromium across
+> seven viewports, and three defects appeared that no server-side test could have found:
+>
+> 1. **The only door to the brain is the microphone.** Typing into `#speech-input` and pressing Say never
+>    calls `/api/chat` at all — it targets a local Piper sidecar on `:8081`, which CSP correctly blocks, so
+>    nothing plays and the only feedback is a console error. `cloud-transport.js`:339 states it outright
+>    (*"the page has no 'type a sentence to Moxie' control today"*) and `mic.js`:157 is the sole caller of
+>    `sendUserTurn`. A visitor with no microphone, or who denies the permission, **cannot use the demo**.
+>    That is criterion 1 failing on the hosted path for a whole class of visitor, which is why this audit
+>    scores 92% rather than 94% — nothing regressed; the measurement got honest.
+> 2. **On phones the env banner covers the rail toggle.** `document.elementFromPoint()` at the toggle's
+>    centre returns `div#env-banner`. The tap does nothing, silently. Recoverable — dismissing the banner
+>    frees it and the mic then works — but nothing tells a visitor that.
+> 3. **The safety floor's hard block is defeated by one invisible character.** Verified against the real
+>    module: `"suicide"` blocks, the same word with U+00AD SOFT HYPHEN or U+2060 WORD JOINER between each
+>    letter does **not** (U+200B is handled). `safety.js`:60-63 strips four zero-width characters and misses
+>    the rest of the Unicode format class. `self_harm` is the first blocking category and this floor runs
+>    *before* the gateway, so the pre-inference block is what fails.
+>
+> **What the same sweep proved GOOD**, so the score is not read as decay: mic → STT → brain → TTS works end
+> to end on the public domain in 3/3 runs, with audio decoded and played (asserted at the Web Audio layer,
+> where a silent clip would fail); **zero horizontal overflow at any of the seven viewports**; no leak of
+> key, gateway host, model id or Tailscale address in the page, any API body, or any header; and
+> `/api/health` reported `inflight: 1` **during an actual in-flight turn**, which the old stub could not do.
 >
 > **What is still NOT covered:** no *human* has recorded through the hosted mic — this loop used synthesized
 > speech and a hand-built WAV, so it proves the route and the gateway, not `MediaRecorder` in a real browser on
