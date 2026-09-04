@@ -63,6 +63,18 @@ KNOWN_UNRUN = {
         "template/installed parity guard. 29 checks, verified green four consecutive runs "
         "locally: PUPPETEER_PATH=… node sim/test_ambient_guard.mjs. Wire it into the deep "
         "tier (it needs a browser, ~90 s) as soon as that pass lands.",
+    "sim/test_a11y.mjs":
+        "2026-09-04: written UNWIRED on purpose, same fire as test_ambient_guard.mjs "
+        "above. It guards the accessibility semantics of sim/web/sim.html (accessible "
+        "names for the nine controls that had none, role=log + aria-live on the comms "
+        "log, the <noscript> block, the rail drawer's announced state) and the "
+        "mode-driven Voice-panel copy in sim/web/env.js. The concurrent pass rewriting "
+        "sim/ci/ci.yml, .github/workflows/ci.yml, sim/browser_harness.mjs and every "
+        "existing browser suite (PR #120) owns those files, so wiring it here would "
+        "collide with it and fight the template/installed parity guard. 63 checks, "
+        "green locally and proven RED against the pre-change page (33 assertion "
+        "failures, no crash): PUPPETEER_PATH=... node sim/test_a11y.mjs — needs a "
+        "browser, ~2 min. Wire it into the deep tier as soon as #120 lands.",
     "sim/run_acl_proof.sh":
         "2026-09-02 (found by this guard): the broker ACL proof from PR #44 — 18 checks "
         "against a real eclipse-mosquitto:2.0.20, the only thing that holds the pattern "

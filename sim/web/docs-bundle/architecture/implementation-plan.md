@@ -98,6 +98,47 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **The hosted Sim was largely unusable with a screen reader — fixed 2026-09-04; two things deliberately
+  left undecided.** Measured against the live site in headless Chrome (`page.accessibility.snapshot`),
+  **nine** interactive nodes had an **empty accessible name**: the seven motor sliders — `moxie.js`
+  writes their joint names into a `<label>` that carries no `for` and does not wrap its `<input>`, so it
+  labels nothing — plus `#led-color` and `#qr-kind`. Six more were named only by a `placeholder`, and
+  three (`#tts-base`, `#stt-base`, `#bus-host`) by `env.js`'s two-sentence CSP `title`, read out as the
+  control's name. There was **no live region anywhere**, so Moxie's answers arrived silently, and **no
+  `<noscript>` in the bundle** — a WebGL page that renders as a blank void with scripting off.
+  This matters on the merits and not as an audit line: the robot this demo is about was widely used by
+  autistic children, and by children with communication differences.
+  **The live-region decision is the substantive one.** `role="log" aria-live="polite"` went on
+  [`#transcript`](../../sim/web/sim.html) and **nowhere else**. That element carries exactly the child's
+  turn and Moxie's answer to it (`bridge.js::addTranscript`) — every row a direct consequence of
+  something the visitor just did. The **ambient self-talk is not in it**: `ambient.js` speaks through
+  `moxie.setSpeech()` into `#bubble`, and 40 s of measured quips left the log's row count unchanged. So
+  the exhausting outcome — a `polite` region announcing an idle quip every 11–24 s, over the answer the
+  visitor actually asked for — is structurally impossible rather than filtered. `#bubble` is left
+  **neither live nor `aria-hidden`**: hiding it would delete the only route a screen-reader user has to
+  the self-talk, and making it live would announce the typewriter reveal one character at a time
+  (`"Do y"`, `"Do you"`, `"Do you e"` — measured). `aria-relevant` includes `text` because a streamed
+  reply appends to the **same row**, so additions-only would have silenced every sentence after the
+  first. The WebGL stage is `role="img"` with a name, **not** `aria-hidden`: it is the subject of the
+  page, but a static `alt` would be a lie about a view re-rendered every frame, so the name says what
+  the view *is* and points at the log where the changing content is written in text.
+  Finding 2 in the same pass: the Voice panel still said *"Free text uses your browser's voice, or a
+  local Piper service if you run one"* — copy from before PR #112 made that button **Ask** and routed a
+  typed line to the cloud. It is now `#voice-note`, painted by `env.js::paintVoiceNote` from the **same
+  two facts** that decide the button (the Piper sidecar probe, and `mode.js`'s snapshot), so the two
+  cannot disagree.
+  **Two things deliberately NOT decided here.** (1) `prefers-reduced-motion` is honoured by `bg.js`,
+  `moxie-wire.js` and `moxie.js`'s typewriter, but **not** by [`life.js`](../../sim/web/life.js) or
+  [`ambient.js`](../../sim/web/ambient.js) — measured under an emulated `reduce`: the motor targets
+  still move and the quips still gesture. Honouring it there would switch off Moxie's *imaginary life*,
+  which is the page's headline behaviour and a product decision, not an attribute. (2) `#qr-status`,
+  `#bus-status` and `#presence-state` are the only feedback several buttons give and are in no live
+  region; making them `role="status"` would announce a full QR payload string on every Make. Both are
+  open. **Guarded by `sim/test_a11y.mjs`** — 63 checks, identity not counts (a table of
+  selector → exact accessible name, read from Chrome's own AX tree), proven **red against the
+  pre-change page with 33 assertion failures**. Not yet wired into a tier (PR #120 owns `sim/ci/ci.yml`);
+  registered in `sim/tests/test_ci_test_coverage.py::KNOWN_UNRUN` with its date and reason.
+
 - **Ambient self-talk talked over the live answer a visitor had just paid for — fixed 2026-09-04.**
   [`ambient.js::tick`](../../sim/web/ambient.js) fires every 11–24 s and its `perform()` calls
   `moxieAudio.speak()`, which calls `stop()` **unconditionally**; nothing checked whether Moxie was
