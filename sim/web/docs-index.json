@@ -1,5 +1,5 @@
 {
- "generated": "docs-41e04c4618bf",
+ "generated": "docs-08eef87eecdb",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 167004,
+   "bytes": 170625,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -749,14 +749,14 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 23589,
+   "bytes": 26016,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
     "0.1 The setup app's QR grammar is closed, so a launch card cannot ride it",
     "0.2 The second scanner is the real path, and it reaches us",
     "1. The seam — exactly what is missing, in three pieces",
-    "P0-a — the arm (`eb_enable_qr` onto the wire) · **S**",
+    "P0-a — the arm (`eb_enable_qr` onto the wire) · **S** — 🟡 **half done (2026-09-04)**",
     "P0-b — the route (`$eb_qr_value` → a launch action) · **S/M**",
     "P0-c — the sheet · **S**",
     "2. The vocabularies (nothing outside them reaches the wire or the paper)",

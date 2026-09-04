@@ -70,7 +70,32 @@ with a greeting or `ResultCode.NOREPLY_ACK` and **never** carries an action.
    the sheet
 ```
 
-### P0-a — the arm (`eb_enable_qr` onto the wire) · **S**
+### P0-a — the arm (`eb_enable_qr` onto the wire) · **S** — 🟡 **half done (2026-09-04)**
+
+> **The wire half of this piece is built and shipped.**
+> [`wire.py`](../../../mqtt/moxie_sdk/wire.py) grew `encode_action`, which emits the recovered shape
+> below: `function_id` (field 7) plus, **by the argument's type**, `function_args` (field 8, `repeated
+> string`) for a list or `action_args` (field 10, `repeated ActionArgsEntry{key, value}`) for a dict.
+> Both are omitted when empty, so no existing response changed. `sim/virtual_moxie.py` decodes all four
+> spellings and records the name it was asked to run — it still calls nothing and sends no
+> `execute_returns[]`. The test written to pin the defect
+> (`sim/tests/test_actions_reach_the_robot.py`) was flipped into the assertion of the fixed behaviour.
+>
+> **Three things this piece still owes**, and none of them is the wire:
+> 1. **`ENABLE_QR` still serialises as the string `enable_qr`** and is *not* routed through
+>    `execute` + `function_id: "eb_enable_qr"`. The rename below is untouched and is now **pinned by a
+>    test named for it**, so making it will turn a test red and have to say why. `EXIT` likewise (§7 R3).
+> 2. **`volley.execution_actions` is still not plumbed** — the first bullet under this box. The four
+>    `xfail(strict)` rows in `sim/tests/test_ext.py` were **measured after the wire landed and all four
+>    still xfail**, refused at load with *"needs something this appliance cannot grant yet:
+>    `act.eb_timer_request`"*. The earlier note that this slice "flips four rows green" was a claim, and
+>    the measurement says the wire was necessary but not sufficient: the gate is
+>    [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` / `P1_CAPABILITIES` plus
+>    `content_app._reply_from_volley`.
+> 3. **The browser SIM still cannot read it.** [`bridge.js`](../../../sim/web/bridge.js):258 reads
+>    `entry.function` only — not `function_id`, and no args at all — so an armed `execute` renders as
+>    `(unnamed)` there while the SIL robot names it. Two clients that disagree is exactly what DoD
+>    criterion 4 forbids.
 
 The runtime reader **is not always scanning**: the brain turns it on for a moment of content
 ([`qr-commands.md`](../../reverse-engineering/protocol/qr-commands.md):309-311, and
@@ -82,9 +107,9 @@ MOXIE_GO/QR-enabled module (`eb_enable_qr` + `eb-qr-event` subscription)"*). Tod
   actions … not plumbed onto the wire"* row (ADOPT, **S**), and the blocker
   [`sandboxed-extensions.md`](sandboxed-extensions.md) calls **S5** (its `act.*` capabilities are
   *refused at load* because of it — [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py):177-181).
-* [`wire.py::build_chat_response`](../../../mqtt/moxie_sdk/wire.py):82-85 builds each action as
+* ~~[`wire.py::build_chat_response`](../../../mqtt/moxie_sdk/wire.py) builds each action as
   `{output_type, action, module_id, content_id}` and **silently drops** `Action.function` /
-  `Action.args` ([`types.py`](../../../mqtt/moxie_sdk/types.py):66-71).
+  `Action.args`~~ — **fixed 2026-09-04**; see the box above.
 
 **The recovered shape is already pinned, so this is transcription, not research.**
 [`RemoteChat.proto`](../../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):255-281
@@ -202,7 +227,7 @@ Hermetic first; nothing below needs a broker, a network or a sleep.
 | T6 | A QR turn carrying a valid card publishes `result=SUCCESS` with **one** launch action on the robot's own `event_id`, and writes **nothing** to conversation history (the invariant `test_presence_runtime.py`:110-113 pins for face events) | `test_launch_cards_runtime.py` |
 | T7 | A QR turn carrying an unrecognised value still answers `NOREPLY_ACK` — an unknown card is silence, never a stall | `test_launch_cards_runtime.py` |
 | T8 | A card scanned during an absence does not also fire the unprompted greeting twice (`_greeting_for` and the launch are independent) | `test_launch_cards_runtime.py` |
-| T9 | `Action(EXECUTE, function="eb_enable_qr", args=["true"])` serialises to `{"action":"execute","function_id":"eb_enable_qr","function_args":["true"]}`; `ENABLE_QR` serialises to the **same** shape and never to the string `enable_qr` | `test_launch_cards.py` (wire half) |
+| T9 | `Action(EXECUTE, function="eb_enable_qr", args=["true"])` serialises to `{"action":"execute","function_id":"eb_enable_qr","function_args":["true"]}` — ✅ **done 2026-09-04**, asserted key for key in `test_actions_reach_the_robot.py::test_the_briefs_own_worked_example_is_the_shape_that_goes_out`; `ENABLE_QR` serialising to the **same** shape and never to the string `enable_qr` is ❌ **still owed**, and the current (wrong) spelling is pinned by `…::test_the_naming_defects_p0a_still_owns_are_pinned_here_not_fixed` | `test_actions_reach_the_robot.py` (wire half, shipped) · `test_launch_cards.py` (the `ENABLE_QR` half) |
 | T10 | SIL round trip: the real `MoxieRuntime` + the real `sim/virtual_moxie.py` over `helpers_runtime.loopback()` — the robot publishes an `eb-qr-event` carrying `GO<launch:DM>` and ends up **holding** the launch action in the recovered shape | `test_launch_cards_sil.py`, in the idiom of `test_e2e_actions_to_robot.py` |
 | T11 | The sheet route returns one card per catalog id, each payload decodes back to its own id, and the page contains no id outside the catalog | `test_launch_cards.py` |
 | T12 | Browser↔Python byte parity for the card payload string, the way `sim/test_qr.mjs` already asserts it for the seven revival payloads | `sim/test_qr.mjs` |

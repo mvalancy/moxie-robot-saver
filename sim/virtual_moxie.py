@@ -272,22 +272,43 @@ class VirtualMoxie:
                 self.actions["subscribed"].append(name)
         self.log(f"🎬 event subscription: {', '.join(self.actions['subscribed']) or '(none)'}")
 
+    @staticmethod
+    def _action_args(entries):
+        """`RemoteChatAction.action_args` — `repeated ActionArgsEntry{key, value}`, proto
+        field 10 — as the `{key: value}` mapping it encodes. `None` when the field is
+        absent or unreadable, so the caller falls through to its next spelling rather than
+        recording an empty dict as if the brain had sent one."""
+        if not isinstance(entries, list):
+            return None
+        pairs = [(e.get("key"), e.get("value")) for e in entries if isinstance(e, dict)]
+        return {str(k): v for k, v in pairs if k is not None} or None
+
     def _apply_action(self, entry: dict) -> bool:
         """Act on one `RemoteChatAction`. Returns False for a verb we do not implement.
 
         `function` is read from `function_id` first and the SIM's `function` second.
-        `RemoteChat.proto`:255-281 names the fields `function_id` / `function_args`, and
-        that is what a real robot decodes; `sim/web/bridge.js`:258 reads `entry.function`.
-        **Today our own server emits NEITHER** — `build_chat_response` drops
-        `Action.function`/`Action.args` on the floor, so every `execute` we can send
-        arrives unnamed. Recorded as `""` rather than guessed; see the note in
-        docs/architecture/implementation-plan.md and qr-launch-cards.md §P0-a.
+        `RemoteChat.proto`:255-281 names the fields `function_id` (7) / `function_args`
+        (8) / `action_args` (10), and that is what a real robot decodes;
+        `sim/web/bridge.js`:258 reads `entry.function`.
+
+        **Since 2026-09-04 our own server emits the contract's spelling** —
+        `wire.py::encode_action` sends `function_id` plus `function_args` (a list) or
+        `action_args` (a dict), so an `execute` we send arrives NAMED and this client
+        records the name it was given. All four spellings are still accepted, because a
+        client that only understood the one server it was written against would not be a
+        client. An `execute` with nothing to read still records `""` rather than a guess.
+
+        **It records; it does not run.** No function is called and no
+        `RemoteChatRequest.execute_returns[]` is published — we would have to invent a
+        return value for a function this headless client does not have.
         """
         kind = str(entry.get("action") or "").lower()
         module_id = entry.get("module_id") or ""
         content_id = entry.get("content_id") or ""
         function = entry.get("function_id") or entry.get("function") or ""
         args = entry.get("function_args")
+        if args is None:
+            args = self._action_args(entry.get("action_args"))
         if args is None:
             args = entry.get("args")
         if kind not in ACTION_KINDS:
