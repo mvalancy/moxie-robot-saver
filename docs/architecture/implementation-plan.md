@@ -98,6 +98,158 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **Every `execute` this appliance could send reached the robot *unnamed* — closed 2026-09-04
+  (the wire half of [qr-launch-cards](backlog/qr-launch-cards.md) §P0-a).**
+  [`wire.py::build_chat_response`](../../mqtt/moxie_sdk/wire.py) serialised an action as exactly
+  `{output_type, action, module_id, content_id}` and dropped `Action.function` / `Action.args`
+  ([`types.py`](../../mqtt/moxie_sdk/types.py)), so the one verb whose whole meaning is *which function*
+  — `execute` — arrived as the word "execute" and nothing else. That is what blocked `eb_enable_qr` from
+  ever reaching a robot, and it is [sandboxed-extensions](backlog/sandboxed-extensions.md)'s **S5** seen
+  from the wire end. A new `wire.py::encode_action` now emits the recovered shape:
+  `function_id` (`RemoteChatAction` field 7, `optional string`) plus — **by the argument's type, not by a
+  guess** — `function_args` (field 8, `repeated string`) for a list or `action_args` (field 10, `repeated
+  ActionArgsEntry{key, value}`) for a dict
+  ([`RemoteChat.proto`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):255-281,
+  read back by [`remote-chat-protocol.md`](../reverse-engineering/protocol/remote-chat-protocol.md):99).
+  Every value is stringified because both fields are `string` on the wire, and a dict is never flattened
+  into a `k=v` form the proto does not define. **Emitted only when present**, so a launch/exit/sleep is
+  byte-identical to what we sent before and no golden moved. `sim/virtual_moxie.py` now decodes
+  `action_args` as well, and **still records rather than pretends**: nothing is called and no
+  `execute_returns[]` is invented. The test that pinned the defect on purpose
+  (`test_actions_reach_the_robot.py::…_carries_no_function_at_all`) is **flipped, not deleted**, into
+  `…_sends_now_names_the_function_it_wants_run`, which drives the whole hop — build the response, hand it
+  to the SIL robot, ask the robot what it was told to run. **5 new/flipped tests, all 5 red against the
+  pre-change tree.** ⚠️ **Two things this deliberately did NOT do, and one measured correction.** The
+  naming defects stay: `ActionType.EXIT = "exit"` (the enum spells it `exit_module`) and
+  `ENABLE_QR = "enable_qr"` (not an `ActionID` verb at all — the contract's arm is `execute` +
+  `function_id: "eb_enable_qr"`) are renamed by nobody here, because a wire value is a contract change
+  with its own evidence and its own blast radius, and they are now **pinned by a test named for them** so
+  §P0-a's rename must turn it red. And the backlog's claim that this "flips four `xfail(strict)`
+  extension-conformance rows green" is **false, measured not assumed**: all four of
+  `test_ext.py::test_t1_t6_conformance_p1[G2/G3/G5/G6]` still xfail, refused at *load* with
+  *"needs something this appliance cannot grant yet: `act.eb_timer_request`"* — the remaining half is
+  [`ext.py`](../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` / `P1_CAPABILITIES` gate plus
+  `content_app._reply_from_volley` plumbing `volley.execution_actions` into an `Action` at all. The wire
+  was necessary, not sufficient. **Still honestly missing:** no physical robot has ever been sent one of
+  these, so nothing proves a real robot's JSON decoder accepts `function_id` by that spelling
+  (qr-launch-cards.md §7 Q1/Q3), and `sim/web/bridge.js::applyAction` reads only `entry.function` — it
+  ignores `function_id` and never reads args at all, so the **browser SIM still shows an armed `execute`
+  as `(unnamed)`**. That is the other client's half of criterion 4 and is untouched here.
+
+- **The landing page piled up draw work in a hidden tab until it was unusable — fixed 2026-09-04.** Owner
+  report: *"leave it running in a browser for hours and it gets really sluggish... after a day it's filled
+  with streaking points in the background and very slow, refresh fixes it."* In `sim/web/bg.js` the
+  **producers** were two `setInterval`s (`spawnPacket` every 900 ms, a hub radar ping every 2600 ms) and the
+  only **consumer** — the `packets.splice` / `pings.splice` that retire an entry — lived inside `step()`,
+  which re-arms through `requestAnimationFrame`. A browser **pauses rAF in a hidden tab and keeps timers
+  running**, so a backgrounded page filled two arrays nothing drained, and every entry came due at once on
+  the frame the visitor returned to: each packet is a `shadowBlur` arc and each ping a stroked circle,
+  redrawn *every* frame until it retires. `refresh fixes it` is the tell — the state is two module-scope
+  arrays, nothing browser- or GPU-level. **Reproduced, not argued.** A headless page is never actually
+  backgrounded (`document.hidden` stays false), which is how a first attempt at this measurement talked
+  itself into a result it had not got; opening a **second** page and `bringToFront()`ing it makes the first
+  genuinely hidden — `document.hidden` true, **zero** rAF frames delivered — and 20 minutes there took
+  `packets` 0 → **876** and `pings` 0 → **463**, linear at ~43 and ~23 per minute, while a 20-minute
+  **visible** control on the same build stayed at 0–3 and 2–3 with a flat heap. Compressed (bg.js's interval
+  delays scaled, the rAF consumer held) 90 simulated minutes reached **4,059 packets + 2,298 pings**, and the
+  screenshot is the owner's sentence: dots strung along every edge plus stacks of overlapping radar rings.
+  Recovery cost the visitor 4.9 s (23 min hidden) to 6.6 s (90 min) of frames at 50–100 ms. Over a real day
+  the backlog is between **~2,600 entries** (Chrome's own policy — 1 Hz while hidden, then intensive
+  throttling to ~1/min after 5 minutes) and **~96,000** with no throttling at all; the low end already
+  exceeds the ~1,500 that reproduces the reported look, so the symptom does not depend on which regime
+  applies. **The fix is structural, not a bound:** both spawners now run from *inside* `step()` off an
+  elapsed-time accumulator, so producers and consumer share one clock and stop together — there is no timer
+  left to fire in a hidden tab. `SPAWN_CREDIT_MS` caps what one frame may bank (returning after four hours
+  credits one frame, not four hours) and `MAX_PACKETS`/`MAX_PINGS` are a ceiling no scheduler can defeat.
+  Measured after: **zero** growth and zero interval ticks at every simulated duration up to 1,440 minutes,
+  recovery 25–35 ms. Guard: the new `sim/test_bg_perf.mjs` (15 checks) backgrounds a real tab and requires
+  no growth; its teeth block rebuilds the old producer shape **out of the shipped file** and requires the
+  growth to reappear, so a box that cannot background a tab skips green rather than passing on nothing, and
+  a revert of the in-frame spawner is a **failure**, never a skip. Against the pre-fix file it exits 1 with
+  9 failures. **Deliberately not changed:** the `pg.a *= 0.972` ping fade is per-frame while its radius is
+  per-`dt`, so a ping lives ~113 *frames* — 1.9 s at 60 fps, 3.8 s and a ring twice the size at 30. The
+  time-based form was written, screenshotted and reverted: it is bit-identical at 60 fps but visibly shrinks
+  the rings below it, this page is the front door, and `MAX_PINGS` already removes the only harm it caused.
+  The reasoning is recorded at the line. The page's ~80–100 ms resting frame time is real and separate; in
+  software-rendered headless the same band appears with `bg.js` removed **entirely**, so it is not obviously
+  bg.js's to fix and a stable attribution needs a GPU-backed browser.
+- **The `/api/*` routes carried almost none of the page's security header set — fixed 2026-09-04.**
+  PR #112 gave the static pages HSTS and a real CSP; a live measurement the next day showed the routes that
+  can **spend money** answering with only `nosniff`, `no-store` and `Referrer-Policy` — no HSTS, no CSP, no
+  `Cross-Origin-*`. The cause is the trap this repo had already paid for twice (§10 assumption 27, PR #72):
+  **`sim/web/_headers` is not applied to a Pages *Function* response at all**, so its `/api/*` block is
+  inert documentation and `functions/api/_lib/envelope.js` is the only belt. Every reply `respond()` builds
+  — the success and every refusal alike, because a refusal is the reply a hostile caller sees most — now
+  carries a frozen `API_SECURITY_HEADERS`: HSTS byte-identical to the pages', a JSON **lockdown** CSP
+  (`default-src 'none'; frame-ancestors 'none'; base-uri 'none'` — not the page policy, which governs
+  document loads a JSON body never makes), and `Cross-Origin-Resource-Policy: same-origin`. Applied after
+  the `opts.headers` hatch so a caller cannot weaken them, and built only from constants, so no request
+  header can be echoed back. **What was deliberately rejected is written down and machine-checked** in
+  `REJECTED_SECURITY_HEADERS` — `X-Frame-Options` (redundant with `frame-ancestors`, and JSON has no UI to
+  clickjack), `Permissions-Policy` (governs a *document's* feature use; inert here), COOP/COEP (statements
+  about a page, not an API reply), and `Access-Control-Allow-Origin` (never, §4.3) — because a header list
+  nobody can explain is how the page CSP went months with no `script-src`. Guards: `sim/test_demo_proxy.mjs`
+  now interrogates a real `Response` instead of regexing the source (a rejected header's map key would have
+  satisfied the old regex while never being sent) and fails if a security header the pages ship is neither
+  sent nor explained; the new `sim/test_api_headers.mjs` runs the real handlers behind a real socket and
+  proves teeth *with controls* — a navigated `/api/health` document must have its `fetch()` refused while a
+  CSP-stripped twin must not, and a cross-origin page must load a bare PNG but be refused the CORP-pinned
+  one — then loads the real `index.html` in Chrome and requires the page's own `fetch("/api/health")` to
+  still succeed. **Honest remainder:** `sim/web/_headers`' now-stale comment (it still calls this a
+  follow-up) was left alone — that file was owned by another change in flight — and no header was added to
+  its inert `/api/*` block, deliberately: an inert line that looks live is the trap itself.
+  Detail: [`backlog/live-sim-demo.md` §4.7.1](backlog/live-sim-demo.md).
+- **A failed microphone bought a chat + speech turn on words nobody said — fixed 2026-09-04.** `mic.js`
+  consoles a visitor whose ears failed with a **scripted child line**, so the button is never dead
+  (`backlog/live-sim-demo.md` §6). That line is a line the *page* chose — and it went out through
+  `window.moxieBridge.sendUserTurn`, which on a hosted deployment is `cloud-transport.js`'s wrapper. So a
+  clip the route refused, or one `mic.js` refused **client-side without ever uploading it**, still bought a
+  `POST /api/chat` **and** a `POST /api/speech` out of the budget the demo shares with the owner's video
+  game. **Proven, not argued:** the new `sim/test_mic_spend.mjs` counts the requests that actually leave a
+  real Chrome page, and against the pre-change file it recorded `chat 1, speech 1` on three separate
+  degraded paths. Now the consolation goes through a new `moxieBridge.sendScriptedTurn`, which keeps
+  `sendUserTurn`'s three-way ordering with the middle case replaced: a connected MQTT broker still gets the
+  line (a self-hoster's own backend, unchanged), a page with nothing spendable still answers from `stub.js`,
+  and a **live** page gets the local echo plus the stub answer — the same transcript row, the same child
+  clip, the same 450 ms beat, **and no request at all**. A real transcript is untouched and still spends
+  exactly one of each. **The audit's description was broader than the code**, and the narrowing is on the
+  record: a **denied or unsupported microphone** reaches `start()`'s `catch`, which shows an honest status
+  line and stops — it never reached the fallback, so it never spent anything, before or after; likewise a
+  clip under `min_audio_bytes` (`(too short)`) and an empty transcript (`(nothing heard)`). Those three are
+  silent *and* free and were deliberately left alone rather than given a consolation line they never had.
+  The paths that really did pay were the ones where a refusal changes no mode — `bad_request`, `too_short`,
+  `too_long`, the client-side over-size gate, and the first two of the three transport errors it takes to
+  degrade the page; `rate_limited`, `at_capacity`, `budget_exhausted` and `upstream_down` were free only by
+  accident, because they happen to shut `canSpendLiveTurn()` on their way through `mode.js`. Held by three
+  suites at three altitudes: `sim/test_mic_spend.mjs` (54 checks in Chrome — every "spends nothing" paired
+  with a **Web Audio** assertion that the visitor was still consoled *out loud*, peak amplitude and all, so
+  deleting the consolation line could never pass), `sim/test_demo_ears.mjs` B5b (mic.js picks the free seam
+  on seven degraded paths) and `sim/test_cloud_transport.mjs` 6b (the seam itself costs nothing), plus a
+  source-level guard that `mic.js`'s fallback may never again name `sendUserTurn`. **Honest gaps:** the
+  scripted repertoire is still the two lines we have child audio for, so a visitor who fails twice hears the
+  same pair; and `stats.scriptedFree` is a per-page counter, not telemetry — nothing reports how often the
+  ears fail on the live site.
+
+- **Our own CSP blocked Cloudflare's injected analytics beacon — fixed 2026-09-04.** Pages **injects** its
+  Web Analytics beacon (`<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/…">`,
+  SRI + a real token) into every HTML response, and the `script-src 'self' 'unsafe-inline'` added the day
+  before refused it — so production logged a CSP violation on **every single page load**. Harmless to the
+  site, corrosive to the console: a permanent error drowns the next real one, and a quiet console is exactly
+  what found the `:8081` defect. `script-src` now names that one host. Turning the injection off in the Pages
+  project was rejected: it edits the owner's account settings rather than our code and silently drops
+  analytics they may want. **`connect-src` was checked, not assumed, and deliberately left at `'self'`:** the
+  beacon reports through `navigator.sendBeacon` to `send.to || (version === undefined ? absolute : null)` and
+  otherwise to the **relative** `/cdn-cgi/rum`, and the injected tag carries `"version":"2024.11.0"`, so the
+  report is same-origin — confirmed against the live page with the widened policy, which produced no
+  connect-src refusal. The trap for anyone revisiting it is that the report host is the **bare**
+  `cloudflareinsights.com`, not the `static.` one. `sim/test_csp.mjs` gained a block that keeps both halves
+  honest: the beacon host loads and runs, the bare sibling host is still refused, `script-src` names exactly
+  one off-origin host, and the same-origin `/cdn-cgi/rum` beacon is permitted while an off-origin one is not.
+  The same pass corrected the file's stale note that the `/api/*` security headers were an open follow-up —
+  they ship in code as `API_SECURITY_HEADERS` (`functions/api/_lib/envelope.js`, PR #115) — and wrote down
+  why the `/api/*` block in `_headers` must never grow them: it is **inert** (ledger row 27), and inert lines
+  that look live are the original trap.
+
 - **The hosted demo's per-IP windows were free to bypass over IPv6, and its duration cap was not one —
   fixed 2026-09-03.** Four holes in `functions/api/_lib/limits.js` and the three spending routes, all in
   the controls that protect the **self-hosted gateway the demo shares with the owner's video game**, so
@@ -738,6 +890,35 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   behaviour, so the hosted demo now blocks a strict **superset** of the local stack — the safe
   direction, but a divergence the header of `safety.js` promises does not exist, and the same fix
   belongs on the Python side.
+- **local safety floor — parity reached, and the higher-stakes half closed (2026-09-04).** The last
+  three lines of the bullet above are now out of date, and this bullet is what closed them.
+  `mqtt/moxie_sdk/safety.py` is the module a **self-hosted stack, the `docker compose` appliance and
+  a real robot** run, and it carried the identical hole: `_ALWAYS` was a `str.maketrans` naming four
+  code points, so `"suicide"` blocked while the same word with a U+00AD, U+2060, U+3164 or a `.`/`-`
+  between each letter did not. `normalize()` now sweeps the **`Cf` category** by predicate
+  (`unicodedata.category(c) == "Cf"`, so a code point nobody thought of is covered the day the
+  interpreter learns about it) plus the four glyphless Hangul fillers, and `_variants()` gained the
+  same narrow fourth form, `([a-z0-9])[^a-z0-9 ]+(?=[a-z0-9])`.
+  **Re-derived against Python, not ported on faith,** and one of the two engines' answers differed.
+  U+180E agrees — `Cf` in CPython 3.12 / Unicode 15.0.0 as in V8. **U+034F CGJ did not.** `safety.js`
+  leaves it alone because `\p{M}` already drops it; Python's old line tested
+  `unicodedata.combining()`, which returns the *canonical combining class*, and CGJ is category `Mn`
+  with **ccc 0** — so it survived, and the spread word blocked in the hosted Function while **not**
+  blocking on a child's own robot. Testing the category is what `\p{M}` meant all along and is what
+  closes it. **The false-positive corpus was re-measured in Python** (`casefold()` and Python's NFKD
+  are not `toLowerCase()` and V8's): 28 innocent sentences, **narrow form 0 false positives, broad
+  form 2** — the same two the JS side found, and that measurement is now an executable test rather
+  than a claim. `sim/tests/test_safety.py` grows 32 evasion characters × 2 shapes, the `Zs`
+  "an exotic space is a *real* space" proof, the 28-sentence guard, and a **parity suite** that runs
+  the repo's own `functions/api/_lib/safety.js` under `node` over a 125-case shared table and asserts
+  `normalize`/`variants`/verdict agreement — the guarantee `safety.js`'s header claims and nothing
+  enforced until now. 167 tests in the file, **40 of them red** against the pre-change module.
+  **Honest gaps.** Intra-letter *spacing* stays open on both sides, pinned as a known-open test for
+  the same reason as before. One divergence remains and is pinned rather than papered over: Python's
+  `casefold()` folds the German sharp S onto `ss` and JS's `toLowerCase()` does not — Python is the
+  stricter side, no table word contains it, and it predates this slice. And the parity test needs
+  `node` on `PATH`; it *skips* rather than fails without it, so on a box with no node the guarantee
+  is unchecked (CI runs 24 `.mjs` suites, so there it is real).
 - **wake alarms / schedule preferences — the shapes are ours, not a capture.** `alarms`
   (`WakeSchedule`) and `schedule_preferences` (`SchedulePreferences.ParentRequest`) are now built and
   parent-editable, but our protos give the *types* and not the *encodings*, and no capture of a real
@@ -1053,7 +1234,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 | 1 | Talk end-to-end (mic→STT→brain→markup→TTS→SIM/robot) | 🟡 ~90% | **Every link is built and live-proven with real speech through the real runtime** (PR #12): Piper "child" audio → zmqSTT protobuf frames → faster-whisper → brain (gateway, live) → spec `RemoteChatResponse` → Piper Amy `CloudTTSResponse` → re-heard at overlap 1.00 (and, since 2026-09-02, the same round trip through the **gateway voice** at overlap 1.00 — `piper-amy`, 22050 Hz, 1.69 s); the browser SIM decodes and **plays** it with mouth animation (PR #11); markup/actions reach the client. Remaining: the same loop on a **physical Moxie** (needs the operator's robot; the SIM stands in). Brain latency is no longer silence *or* a wait: a slow turn speaks a filler inside `MOXIE_BRAIN_BUDGET_S` (live: 3.0 s / 17.9 s) and the answer itself now **streams** a sentence at a time (live: first words at 1.52 s, whole answer at 4.38 s), with the filler timer re-arming per chunk. Remaining honesty: no capture proves a *physical* robot plays chunk 2 of an `event_id` (see Known gaps) |
 | 2 | Data-driven content | 🟢 | M2 engine + ContentApp, e2e-tested |
 | 3 | Cloud management (console + config/telemetry) | 🟢 | RobotCloudConfig + RobotStatus + status snapshot + Packet telemetry + LoggingPolicy gate 🟢. The console surfaces **live state** (`/local/fleet`), **edits config** (Settings form → `POST /local/robots/{id}/config` → runtime `POST /config` → `update_config` re-pushes `RobotCloudConfig`), and shows **telemetry insights** (`summarize_events` → runtime `GET /telemetry` → `GET /local/robots/{id}/telemetry` → the 📈 Insights panel) — all three live-verified against a real broker. It also **browses and erases long-term memory** (`normalize_memory` → runtime `GET`/`DELETE /memory` → `GET /local/robots/{id}/memory` + `DELETE …/memory[/{namespace}]` → the 🧠 What Moxie remembers card), so BEYOND #4's floor is a parent-facing screen rather than `curl` — live-verified: seeded facts read back per activity with date/module provenance, a namespace erase confirmed on disk and in the next read. **Today's plan (2026-09-02, BEYOND #7):** the 📅 schedule card reads `GET /local/robots/{id}/schedule` → runtime `GET /schedule`, so the recommender's *"why this activity today"* line is a screen rather than a `curl` — one row per entry the robot was served, `—` for untimed fixtures, and a footer naming the constraints (bedtime window and the slots it cost, pinned parent requests, and that telemetry carries no module signal). Read-only: the day is changed from ⚙️ Settings. **Durable telemetry + honest buttons (2026-09-02) — the two deductions below are closed.** Telemetry is persisted per robot as a 500-envelope ring plus 35 days of daily roll-ups, `LoggingPolicy`-filtered **on the way to disk** as well as off the robot (`NO_DATA` writes nothing; `NO_MEDIA`, the default, withholds every opaque `event_data`), hydrated on first touch so `telemetry_count`, the insights view and the planner all see history — live-proven by sending three packets to one supervisor and reading them back through the **next** one with the robot not reconnected, and the 📈 card now renders a zero-filled week with its real retention window and lifetime total. And the console stopped reporting success for nothing: `wakeup` publishes the recovered `{"command":"wakeup"}` on `/devices/{id}/commands/wakeup` and reports *sent*, never *awake* (the corpus has no acknowledgement); `reboot` answers **501** with its citation, because no cloud→robot reboot command is recovered, and the button is shown unavailable rather than flashing "Sent!"; `ota_status` reports the robot's own `robot_firmware_version` + `ota_reboot_required` and **never** the old hard-coded `"up_to_date"` — this appliance serves no `api/ota` and says so. Caveats: memory erase or correct any single remembered line (PR #33). **Puppet mode (2026-09-02, ADOPT #7):** the 🎭 Be Moxie card drives `POST /local/robots/{id}/telehealth` → runtime `POST /telehealth` → `commands/telehealth`, so a remote grown-up speaks through the robot with a mood they picked; SIL-verified end to end (`sim/run_smoke.sh --telehealth`), never on hardware| **Both 2026-09-02 deductions are closed — back to 🟢** (the audit's ranked #2 slice, shipped the same evening): telemetry is durable and survives a restart, and no console endpoint reports success for something it did not do. **What is honestly still missing** (named, not hidden): the durable store is still JSON files, not a database (ADOPT #8 stays 🟡 — no schema, no migrations, no concurrent writers); BEYOND #5's interesting half — *sessions, activity mix, mood trend, "what did we talk about this week"* — needs a vocabulary this history cannot express, because `Packet.event_name` is a free string and our corpus recovers no module-scoped events, so it must come from `mentor_behaviors` or from events we emit ourselves; typed `event_data` decoding (`LogDevice`/`LogUser`) is undone; and, as everywhere else in this table, **no physical robot has ever been managed by this console** — every verification is against the SIL/virtual robot through a real broker.
-| 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; SIM round-trips the real protocol | **Earned 2026-09-02 (PR #52):** until then the browser SIM read no `response_actions` and published no `client-service-activity-log` at all, so this row was true only cloud→robot. Both clients now publish the same envelopes, held from **both ends** against `sim/tests/goldens/robot_to_cloud_activity.json`; the one allowed divergence is *which* robot and *when*.
+| 4 | Interchangeable SIM/robot clients | 🟢 | backend is client-agnostic; both SIM clients round-trip the real protocol **and act on it** | **2026-09-02 (PR #52)** fixed the robot→cloud direction: both clients publish the same `client-service-activity-log` envelopes, held from **both ends** against [`sim/tests/goldens/robot_to_cloud_activity.json`](../../sim/tests/goldens/robot_to_cloud_activity.json); the one allowed divergence is *which* robot and *when*. **That row's 🟢 was not fully earned, and this is the correction (2026-09-03).** It described the cloud→robot direction as the half that had always been true. On `response_actions` it was not: `grep -c response_actions sim/virtual_moxie.py` returned **0**, so the SIL robot — the client every SIL test, the smoke, the scenarios and the soak actually drive — read the brain's `launch`/`exit`/`sleep`/`execute` and did nothing with them, while [`bridge.js::applyAction`](../../sim/web/bridge.js) had acted on them since PR #52. Two clients that disagree about what an action *means* are not interchangeable, and no test could assert a robot had **acted on** a launch — only that the runtime published one. **Now closed:** `virtual_moxie.py` applies every verb `ActionType` can send, mirroring `applyAction` state for state, and reports it through `action_stats()` — the same keys `actionStats()` reports. Held from both ends against [`sim/tests/goldens/cloud_to_robot_actions.json`](../../sim/tests/goldens/cloud_to_robot_actions.json): the four responses `sim/test_bridge.mjs` drives the browser SIM over, and the state that file already asserts the browser reached, are the state the SIL robot must reach (`sim/tests/test_actions_reach_the_robot.py`, 18 tests — **all 18 red against the pre-change file**; plus 6 three-way parity tests in `test_sim_client_parity.py` pinning `ActionType` == `bridge.js::ACTION_KINDS` == `virtual_moxie.ACTION_KINDS` and one stat-key shape). **How far this goes, exactly:** the SIL robot *records* — it enters/leaves a module, sleeps, arms QR, and logs an `execute` by name. It does **not** run a module, does **not** call the function, and sends **no** `execute_returns[]`, because it would have to invent a return value; a stub that records is honest, a stub that pretends is not. **Two wire defects found, reported, not renamed:** `ActionType.EXIT = "exit"` and `ENABLE_QR = "enable_qr"` are verbs the recovered `ActionID` enum does not define (`exit_module`; `execute`+`function_id:"eb_enable_qr"`), and `build_chat_response` drops `Action.function`/`args` entirely, so every `execute` this appliance can send reaches a robot **unnamed** — pinned by a test named for it. All three are contract changes owned by [qr-launch-cards](backlog/qr-launch-cards.md) §P0-a / §7 R3, not harness changes. **Still honestly missing:** no physical robot has ever received one of these actions, and nothing proves a real robot's JSON decoder accepts enum *names* at all (§7 Q3). |
 | 5 | One-command stack | 🟢 | `docker compose up` (repo root) = broker + supervisor + parent console, one `.env`, healthchecks + named volumes. **Proven** by [`sim/run_compose_smoke.sh`](../../sim/run_compose_smoke.sh): build → health → `virtual_moxie --expect-tts` round-trip through the composed broker → the robot visible in the console's `/local/fleet` → `down -v`; shape asserted hermetically by `sim/tests/test_compose.py`. Guide: [`../guides/one-command-stack.md`](../guides/one-command-stack.md). Prebuilt path (2026-09-02): [`docker-compose.images.yml`](../../docker-compose.images.yml) is self-contained (broker config inlined, no repo file referenced), so the documented install is *download one file + `docker compose up`*; the release workflow publishes the three multi-arch images to GHCR on every `v*` tag, and `MOXIE_SMOKE_MODE=images sim/run_compose_smoke.sh` runs the full round-trip against it with `pull_policy: never`. Caveats (documented, not hidden): the images **publish on tag and nothing has been tagged yet**, so the registry pull is verified at v0.6.0 (all three multi-arch publishes green); the `content`/`llm` brains still need a gateway key to say anything real (keyless → the "brain got fuzzy" fallback, which is why the smoke uses `echo`); and the `voice`/`stt` profiles each need one `.env` line + `up --build` on the *clone* path — a prebuilt supervisor cannot grow those wheels |
 | 6 | Green + live-tested | 🟢 | Three-tier CI green incl. the compose-stack deep job; hermetic suite **4020 passed / 16 skipped**, and — the property that matters — **identical with and without a real `mqtt/.env` present** (2026-09-03), the shape in which twelve tests previously asserted nothing. **Live-proven against real infra:** LLM turn, action tags 3/3, content module e2e, console↔runtime round-trip, real speech end to end (Piper→whisper 1.00; gateway voice→whisper 1.00), and a full runtime turn through the gateway brain + gateway voice re-verified 2026-09-03 (`piper-amy`, 141544 B @ 22050 Hz, 3.21 s, flatness 7.35e-02). **One-command stack green in BOTH compose modes** (build and images, each a full robot round-trip with TTS audio through the composed supervisor); `python -m build` produces a wheel carrying every `moxie_sdk/*.json`. The deploy-only failure class is now caught locally: the guard forbidding `.json` imports and import attributes under `functions/` was **mutation-tested with 9 mutants** (both attribute forms, bare/dynamic/`require` json imports, a stray `.json` file, and a file nothing imports) — all caught, and it strips comments so its own documentation cannot trip it. | **Deduction (2026-09-02), now closed:** for one day the merge gate was `gh pr checks | grep`, which read a not-yet-listed job as green — PRs #43–#48 merged ~2 min after opening while their 6-minute SIL job still ran. Fixed: `scripts/pr-green.sh` reads the status rollup and requires every check COMPLETED + SUCCESS with the SIL job present (playbook rules 16, 15c); it caught a genuine red on PR #52 the next day. **Still honestly missing:** no test has ever run against a *real Cloudflare deployment* (owner-blocked — see Known gaps), and there is no physical-robot HIL job on a self-hosted runner. Both are outside this criterion's wording and neither is hidden.
 
@@ -1074,6 +1255,16 @@ stream mid-answer, and a one-chunk answer is still byte-identical to the reply w
 **Live-proven:** first sentence at **1.52 s**, whole answer at **4.38 s**, four chunks on one `event_id` —
 where a child previously heard nothing until 4.38 s (and until 17.9 s on the day PR #12 measured).
 `MOXIE_STREAMING=0` restores the old path.
+
+**Actions reach the robot — 🟢 done (2026-09-03).** The SIL robot now *acts* on `response_actions`
+instead of ignoring them, so criterion 4's cloud→robot half is asserted rather than assumed. Grounded in
+[remote-chat-protocol](../reverse-engineering/protocol/remote-chat-protocol.md) §`RemoteChatAction` and
+matched verb for verb to the browser SIM's shipped `applyAction`, with a two-ended golden
+([`cloud_to_robot_actions.json`](../../sim/tests/goldens/cloud_to_robot_actions.json)) so the two clients
+cannot drift about what an action *meant*. It records and never pretends: no module is started, no function
+is called, no `execute_returns[]` is invented. This was the harness half
+[qr-launch-cards](backlog/qr-launch-cards.md) §4 asks for before a QR→launch feature can be proven end to
+end even in SIL, and it retires that section's note that `test_e2e_actions_to_robot.py`'s docstring is stale.
 
 **Safety (2026-09-02, this slice).** The answer is fast; now it is checked. `InputSafety` is enforced on
 both sides of a turn — the child's utterance before any model call, and every streamed chunk before it is

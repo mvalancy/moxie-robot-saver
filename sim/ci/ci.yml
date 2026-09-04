@@ -78,6 +78,16 @@ jobs:
           node sim/test_demo_ears.mjs
           node sim/test_cloud_transport.mjs
           node sim/test_fallback_coverage.mjs
+      - name: /api/* hardening headers, over a socket (skips the browser half if no Chrome)
+        # Runs HERE, with the other money-route guards, because `sim/web/_headers` is INERT
+        # for a Pages Function (settled by a preview deploy, §10 assumption 27): the ONLY
+        # thing that puts HSTS, the lockdown CSP and CORP on an /api/* reply is
+        # functions/api/_lib/envelope.js, and nothing but this suite watches the wire. The
+        # socket half is hermetic — real Functions behind a real node:http server, fetch
+        # stubbed for the fake gateway, no Cloudflare account and no network. The browser
+        # half (CSP + CORP teeth, and the proof the page's own fetch still works) skips
+        # cleanly where no Chrome is available. Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_api_headers.mjs
       - name: Run SIL smoke (state→config(paired)→remote-chat→reply)
         run: bash sim/run_smoke.sh
       - name: Bridge markup→avatar unit test
@@ -128,6 +138,15 @@ jobs:
         # so only a hit test could catch it. Includes a teeth block that restores the old
         # geometry and requires the collision to reappear.
         run: node sim/test_mobile_layout.mjs
+      - name: Mic-spend test (a refused microphone must not buy a chat+speech turn; skips cleanly if no browser)
+        # The audit finding this closes: `mic.js` consoles a failed microphone with a
+        # SCRIPTED CHILD LINE, and that line used to go out through `sendUserTurn` — so a
+        # refused clip, or one refused client-side without ever being uploaded, bought a
+        # full /api/chat + /api/speech on words nobody said. A claim about what the gateway
+        # is BILLED for is a claim about requests that actually left a page, so this counts
+        # them in Chrome, and pairs every "spends nothing" with a Web Audio assertion that
+        # the visitor was still consoled out loud. Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_mic_spend.mjs
       - name: Security headers applied for real (CSP/HSTS from sim/web/_headers; skips cleanly if no browser)
         # Every other browser suite serves the site with NO headers, so none of them could
         # see a policy that breaks the page — a CSP that refuses an inline block does not
@@ -138,6 +157,15 @@ jobs:
         run: node sim/test_docs_explorer.mjs
       - name: Mermaid diagram render audit (no parse errors / clipped labels; skips cleanly if no browser)
         run: node sim/test_mermaid.mjs
+      - name: Background-effects growth test (a hidden tab must pile up nothing; skips cleanly if no browser)
+        # The owner-reported defect: leave the landing page open for hours and it turns
+        # sluggish. bg.js filled `packets`/`pings` from two setIntervals and drained them
+        # only inside the rAF frame — and a browser pauses rAF in a hidden tab while timers
+        # keep firing, so a backgrounded page accumulated draw work with no consumer (0 ->
+        # 44 packets in one minute, measured). This suite backgrounds a real tab, and its
+        # teeth block rebuilds the old producer shape and requires the growth to reappear.
+        # Guarded by sim/tests/test_ci_test_coverage.py.
+        run: node sim/test_bg_perf.mjs
       - name: Run SIL scenarios (scripted conversations)
         run: bash sim/run_scenarios.sh
       - name: SIL + static-site pytest/Playwright suite (all pages, resolutions, controls)

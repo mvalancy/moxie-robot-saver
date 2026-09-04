@@ -320,9 +320,11 @@ try {
    * 3. HOSTED + DEGRADED — the fallback answers and spends nothing.
    *
    * Note what is NOT copied from `mic.js` here: its degraded path publishes a SCRIPTED
-   * CHILD LINE through the same `sendUserTurn`, which on a live page spends a whole
-   * chat + speech turn on words the visitor never said. The typed path can never do
-   * that — the only text that reaches `sendUserTurn` is text a human typed.
+   * CHILD LINE, which it used to publish through this same `sendUserTurn` — spending, on a
+   * live page, a whole chat + speech turn on words the visitor never said. The typed path
+   * never could: the only text that reaches `sendUserTurn` is text a human typed. `mic.js`
+   * now goes through `sendScriptedTurn` instead, and `sim/test_mic_spend.mjs` counts the
+   * requests to prove it.
    * ===================================================================== */
   {
     const { page, errs, reqs, bodies, aborted } = await open(HOSTED, { health: HEALTH_BARE });

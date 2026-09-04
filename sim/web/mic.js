@@ -35,8 +35,30 @@
  *
  * Either way the transcript is published to the bus as a child utterance on
  * `/devices/<id>/events/remote-chat`, exactly as a real robot would, so the backend brain
- * answers it and Moxie speaks the reply — and on ANY failure the page falls back to a
- * scripted child line rather than showing a dead button (spec §6).
+ * answers it and Moxie speaks the reply — and when the ears themselves fail the page falls
+ * back to a scripted child line rather than showing a dead button (spec §6).
+ *
+ * ===========================================================================
+ * THE CONSOLATION LINE IS FREE, AND HAS TO BE.
+ *
+ * The scripted fallback is a line THE PAGE CHOSE, not words a visitor said. It used to go
+ * out through `window.moxieBridge.sendUserTurn`, which on a hosted deployment is
+ * `cloud-transport.js`'s wrapper — so a clip the route refused as `bad_request`, or one
+ * this file refused itself for being over `max_audio_bytes` without ever uploading it,
+ * still bought a `POST /api/chat` AND a `POST /api/speech` out of a budget the whole demo
+ * shares, on words nobody spoke. `publishScripted` below sends it through
+ * `sendScriptedTurn` instead: the same bubble, the same child clip, the same stub answer
+ * after the same 450 ms beat, and not one request. **Only a REAL transcript may spend a
+ * live turn** — which is the rule `cloud-transport.js`'s typed control already followed.
+ *
+ * Not every failure gets a consolation line, and the three that do not are deliberate
+ * rather than an oversight. All three are silent AND free, and none of them ever reached
+ * the paid path:
+ *   • a denied or unsupported microphone (`start()`'s `catch`) shows an honest status line
+ *     and stops. There is nothing to console with: the visitor was never recorded.
+ *   • a clip under `min_audio_bytes` is `(too short)` — a slipped button, not a turn.
+ *   • an empty transcript is `(nothing heard)` — the ears worked; there were no words.
+ * ===========================================================================
  *
  * ===========================================================================
  * THE 15-SECOND HARD STOP, AND WHY IT IS IN THE BROWSER.
@@ -150,15 +172,45 @@
     var b = document.getElementById("bus-status"); if (b && t) b.textContent = t;
   }
 
+  /** The topic a child's utterance rides, exactly as `bridge.js` publishes it. */
+  var USER_TOPIC = "/devices/d_sim/events/remote-chat";
+
+  /** WORDS THE VISITOR ACTUALLY SAID. This is the paid path on a live deployment, and it
+   *  is meant to be: a real transcript is exactly what the demo exists to spend on. */
   function publishUtterance(text) {
     // Prefer the bridge's live MQTT client if it exposed one; otherwise just
     // render locally so the loop is still visible without a broker.
     if (window.moxieBridge && window.moxieBridge.sendUserTurn) {
       window.moxieBridge.sendUserTurn(text);
     } else if (window.moxieBridge && window.moxieBridge.route) {
-      window.moxieBridge.route("/devices/d_sim/events/remote-chat",
-        JSON.stringify({ command: "prompt", speech: text }));
+      window.moxieBridge.route(USER_TOPIC, JSON.stringify({ command: "prompt", speech: text }));
     }
+  }
+
+  /**
+   * A LINE THIS PAGE CHOSE — the consolation for a turn the ears could not deliver. See
+   * the header: it must reach the page exactly as a child's turn does and cost exactly
+   * nothing, because nobody said it.
+   *
+   * `cloud-transport.js` owns the seam, because it is the only file that knows whether a
+   * turn would be paid for: a connected MQTT broker is a self-hoster's own backend and
+   * still gets the line, a page with nothing spendable still answers from `stub.js`, and
+   * a LIVE page gets the local echo plus the stub answer with no request at all.
+   *
+   * With no transport loaded there is nothing to wrap `sendUserTurn`, so it is
+   * `bridge.js`'s own and already free — today's path, unchanged. The `canSpendLiveTurn`
+   * guard below is belt and braces for a future transport that wraps the bridge without
+   * offering the seam: the line is still shown and still spoken, and still free.
+   */
+  function publishScripted(text) {
+    var b = window.moxieBridge;
+    if (b && typeof b.sendScriptedTurn === "function") { b.sendScriptedTurn(text); return; }
+    var m = mode();
+    if (m && m.canSpendLiveTurn && m.canSpendLiveTurn() && b && typeof b.route === "function") {
+      b.route(USER_TOPIC, JSON.stringify({ command: "prompt", speech: text }));
+      return;
+    }
+    publishUtterance(text);
   }
 
   /**
@@ -268,7 +320,8 @@
    * The degraded answer: a scripted child line, so the conversation still runs. Cycles
    * through the lines we actually have audio for. This is the path that has always been
    * here (and the reason §6.1 lists "mic.js's scripted-child fallback" as reused as-is);
-   * all that is new is that the STATUS LINE can now say why.
+   * what is new is that the STATUS LINE can say why, and that the line goes out through
+   * `publishScripted` — a consolation prize must not cost a live turn.
    */
   function fallback(why) {
     stats.fallbacks++;
@@ -278,7 +331,7 @@
         var text = lines[(window.moxieMic._n = (window.moxieMic._n || 0) + 1) % lines.length];
         status(why ? why + ' — heard (scripted): "' + text.slice(0, 24) + '"'
                    : 'heard (scripted): "' + text.slice(0, 36) + '"');
-        publishUtterance(text);
+        publishScripted(text);
         return text;
       });
     }

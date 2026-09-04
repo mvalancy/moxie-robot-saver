@@ -678,6 +678,81 @@ mermaid, highlight.js, qrcode) — but `sim.html` and the docs explorer contain 
 nonce/hash pass is P1.** Do not ship a CSP that breaks the site to look thorough. Verify on a preview before
 merging: a broken `docs.html` is a worse outcome than a missing header.
 
+#### 4.7.1 The `/api/*` half, which `_headers` cannot reach — DONE
+
+**The sketch above is half wrong, and the wrong half is the one that matters.** Assumption 27 (§10) is now
+**settled false**: Cloudflare Pages does not apply `_headers` to a *Function* response at all. So the
+`/api/*` block above never protected a single route reply, and a measurement of the live deployment on
+2026-09-03 — right after the page set landed — showed exactly that:
+
+| header | `/sim.html` (static) | `/api/health` (Function) |
+|---|---|---|
+| `x-content-type-options` | ✅ | ✅ *(set in code)* |
+| `cache-control: no-store` | — | ✅ *(set in code)* |
+| `referrer-policy` | ✅ | ✅ *(set in code, since PR #72)* |
+| `strict-transport-security` | ✅ | ❌ |
+| `content-security-policy` | ✅ | ❌ |
+| `cross-origin-*`, `permissions-policy` | partly | ❌ |
+
+Every header in the ✅ column for the Function is one `functions/api/_lib/envelope.js` sets itself. That is
+the whole rule: **for `/api/*`, code is the only belt.**
+
+**What now ships on every `/api/*` reply** — success, `forbidden_origin` 403, `rate_limited` 429,
+`upstream_down` 503, `bad_request` 400 alike — from `envelope.js`'s exported `API_SECURITY_HEADERS`:
+
+```
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'
+Cross-Origin-Resource-Policy: same-origin
+```
+
+Applied **after** the `opts.headers` hatch, so a caller cannot weaken them, and built only from frozen
+constants — no request header is ever echoed back (§4.2, C1).
+
+**HSTS** is byte-identical to the pages' so the origin speaks with one voice; a test compares the two
+strings rather than merely checking both exist. No `preload` token: that is an origin-wide, hard-to-reverse
+submission and is the site owner's call. It is not a localhost trap either — a browser ignores HSTS
+received over plain `http`, so `wrangler pages dev` cannot be pinned to https by it.
+
+**The CSP is deliberately NOT the page CSP.** `script-src`/`connect-src`/`img-src` govern what a *document*
+may load and a JSON body loads nothing, so copying the page policy here would be decoration. The lockdown
+form costs nothing and closes one real class: a browser that ends up treating the reply as a document (a
+direct navigation, a content-type slip). Only three directives, because every *fetching* directive falls
+back to `default-src` — `frame-ancestors` and `base-uri` are named because they do not. Its one observable
+cost is that a browser's built-in JSON viewer may render `/api/health` as plain text.
+
+**Rejected, each with the reason, in `envelope.js`'s exported `REJECTED_SECURITY_HEADERS`:**
+
+| header | why not |
+|---|---|
+| `X-Frame-Options` | Redundant with, and weaker than, `frame-ancestors 'none'`; and a JSON body has no UI to clickjack. `_headers` made the same call for the pages. |
+| `Permissions-Policy` | Inert. It governs a *document's* use of powerful features; an API reply is never such a document. Copying `microphone=(self)…` here would add bytes to a 30 s poll and change nothing. The mic policy that matters is the one on the page, which already ships. |
+| `Cross-Origin-Opener-Policy` | Only meaningful on a top-level document response. |
+| `Cross-Origin-Embedder-Policy` | Describes what a document may embed; an API reply embeds nothing. Cross-origin isolation, if ever wanted, is a decision for the pages' `_headers` together with COOP. |
+| `Access-Control-Allow-Origin` | Never, in any form (§4.3) — listed so it cannot be added by someone tidying the set. |
+
+`Cross-Origin-Resource-Policy: same-origin` **cannot break the site**, and that is tested rather than
+argued: CORP is consulted only for a *cross*-origin response, and every call this site makes to these
+routes is same-origin by construction (`checkOrigin` would already have refused anything else, and no
+`Access-Control-Allow-Origin` is ever sent). `sim/test_api_headers.mjs` loads the real `index.html` in
+Chrome under the real page CSP and requires an in-page `fetch("/api/health")` to succeed.
+
+**Guards.** `sim/test_demo_proxy.mjs` asks a real `Response` what it carries (not a source regex — a
+rejected header's map key would have satisfied the old regex while never being sent) and requires that every
+security header the *pages* ship is either sent on `/api/*` or carries a written reason. `sim/test_api_headers.mjs`
+runs the real handlers behind a real socket and asserts the set on 200/400/403/429, then proves teeth with
+controls: a navigated `/api/health` document must have its `fetch()` refused while a CSP-stripped twin must
+not, and a cross-origin page must load a bare PNG but be refused the CORP-pinned one.
+
+**What `sim/web/_headers` would gain, if it were not owned by another change in flight.** Nothing
+functional — the `/api/*` block there is inert. Only the comment above it, which currently says the API
+headers "need to be set in `functions/api/_lib/envelope.js` — reported as a follow-up, not done here", is
+now stale and should say *done*, naming `API_SECURITY_HEADERS`. Deliberately **not** proposed: adding HSTS,
+CSP or CORP lines to that `/api/*` block. They would be inert, and an inert line that looks live is the
+exact trap assumption 27 cost this repo two passes to escape.
+
 ---
 
 ## 5. Configuration surface
