@@ -56,14 +56,29 @@ DEMO_STT_MODEL=your-stt-model
 # webm), widen it: DEMO_STT_FORMATS=wav,webm,ogg,mp4,mp3,flac
 # DEMO_STT_FORMATS=wav
 
-# How long the browser is allowed to record, in ms. THIS IS THE ONLY HONEST CEILING ON
-# WHAT THE EARS CAN COST, and it is why it is here rather than being left to a default:
-# `DEMO_MAX_AUDIO_BYTES` (500 000) is ~15 s of 16 kHz PCM but MINUTES of the webm/Opus a
-# browser's MediaRecorder actually produces, and a Pages Function only ever sees the
-# finished upload. The value is published in `/api/health`'s `limits` and `sim/web/mic.js`
-# stops the recorder on it. Lower it to make a public demo cheaper; the page obeys
-# immediately, with no redeploy of anything but the variable.
+# How long a recording may be, in ms. THIS, NOT `DEMO_MAX_AUDIO_BYTES`, IS THE CEILING ON
+# WHAT THE EARS CAN COST. STT is billed by DURATION, and 500 000 bytes is ~15 s of 16 kHz
+# 16-bit PCM but 62 s at 8 kHz 8-bit, ~125 s at 4-bit, and MINUTES of webm/Opus — every
+# one of those a well-formed upload. Since 2026-09-03 this number is enforced in two
+# places: `sim/web/mic.js` hard-stops the recorder on it, AND `/api/transcribe` reads a
+# RIFF/WAVE upload's own header server-side and refuses `too_long` before any upstream
+# call. The server-side half covers WAV only — the compressed containers hide their
+# duration in a bitstream, and a Function must not decode a hostile upload to find it —
+# which is total in practice only because DEMO_STT_FORMATS above ships as `wav` alone.
+# Widen that list and this stops being a real ceiling for whatever you added.
+# The value is also published in `/api/health`'s `limits`. Lower it to make a public demo
+# cheaper; the page obeys immediately, with no redeploy of anything but the variable.
 # DEMO_MAX_RECORD_MS=15000
+
+# Trust `X-Forwarded-For` when `CF-Connecting-IP` is absent. LEAVE THIS UNSET IN
+# PRODUCTION. Every per-IP window is keyed on `CF-Connecting-IP` (IPv6 truncated to its
+# /64), the one address header Cloudflare sets itself and overwrites on the way in.
+# `X-Forwarded-For` is a string the CALLER types, so wherever this fallback is reachable
+# the per-IP limits are not limits: one process rotates the header and holds an unbounded
+# supply of buckets. It exists for `wrangler pages dev`, where there is no Cloudflare in
+# front. Unset, a caller we cannot identify keys as `unknown` — ONE BUCKET SHARED BY ALL
+# OF THEM, which is the conservative direction and is the intent.
+# DEMO_TRUST_XFF=1
 
 # ---------------------------------------------------------------------------
 # A gateway behind a CLOUDFLARE TUNNEL

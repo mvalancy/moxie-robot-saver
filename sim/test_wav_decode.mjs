@@ -482,6 +482,109 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
   eq(view.getUint32(40, true), pcm.length, "…and the right data size");
 }
 
+
+/* =========================================================================== *
+ * 9. HOW LONG DOES A WAV SAY IT IS? — `wavDurationMs`, the ears' duration cap
+ * =========================================================================== *
+ * Spec: docs/architecture/backlog/live-sim-demo.md §4.1 (`DEMO_MAX_AUDIO_BYTES` and the
+ * paragraph that says a byte cap is not a duration cap), §4.5 (`too_long`).
+ *
+ * THE CLAIM. §4.1 derived 500 KB from one measurement — ~32 KB/s for 16 kHz 16-bit mono —
+ * and then described the cap as "≈ 15 s". **That arithmetic is true of exactly one
+ * format.** STT is billed by DURATION, and every other legal WAV declares more seconds in
+ * the same bytes: halve the rate and it doubles, halve the width and it doubles again.
+ * The table below is the evidence, computed by the real parser at the real cap.
+ *
+ * The parser is a chunk walk over integers and nothing else. It NEVER decodes: a hostile
+ * upload has to be measurable without being interpreted, which is the whole reason this is
+ * a header read and not a decoder.
+ */
+{
+  /** A WAV of exactly `dataLen` audio bytes at an arbitrary rate/width — including widths
+   *  `writeWav` cannot produce, because 8-bit is precisely the case being caught. */
+  const wavAt = (rate, ch, bits, dataLen) => {
+    const out = new Uint8Array(44 + dataLen);
+    const v = new DataView(out.buffer);
+    const a = (at, str) => { for (let i = 0; i < str.length; i++) out[at + i] = str.charCodeAt(i); };
+    a(0, "RIFF"); v.setUint32(4, 36 + dataLen, true); a(8, "WAVE");
+    a(12, "fmt "); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, ch, true); v.setUint32(24, rate, true);
+    v.setUint32(28, Math.floor(rate * ch * bits / 8), true);
+    v.setUint16(32, Math.max(1, Math.floor(ch * bits / 8)), true); v.setUint16(34, bits, true);
+    a(36, "data"); v.setUint32(40, dataLen, true);
+    return out;
+  };
+
+  // ---- 9a. The same 500 KB, four ways ------------------------------------- //
+  const CAP_BYTES = 500000;
+  const audio = CAP_BYTES - 44;
+  const rows = [
+    [16000, 1, 16,  15624, "16 kHz 16-bit mono — the ONE format §4.1's ~15 s was derived from"],
+    [ 8000, 1, 16,  31247, "8 kHz 16-bit mono — the same bytes, TWICE the billable duration"],
+    [ 8000, 1,  8,  62495, "8 kHz 8-bit mono — FOUR times, and still a perfectly ordinary WAV"],
+    [ 8000, 1,  4, 124989, "8 kHz 4-bit — EIGHT times; the byte cap bought nothing at all"],
+    [16000, 2, 16,   7812, "stereo halves it again: channels are counted, not assumed"],
+  ];
+  for (const [rate, ch, bits, wantMs, why] of rows) {
+    const d = wav.wavDurationMs(wavAt(rate, ch, bits, audio));
+    ok(d !== null, `a ${rate}/${bits}-bit/${ch}ch WAV is measurable: ${why}`);
+    eq(d && d.ms, wantMs, `a ${rate} Hz / ${bits}-bit / ${ch}ch WAV at the byte cap — ${why}`);
+  }
+  // The point of the whole exercise, as one assertion. `DEMO_MAX_RECORD_MS` is 15 000 ms,
+  // so three of those five rows are over the ceiling the demo believes it enforces.
+  const baseline = wav.wavDurationMs(wavAt(16000, 1, 16, audio)).ms;
+  ok(wav.wavDurationMs(wavAt(8000, 1, 8, audio)).ms >= 3.99 * baseline,
+     "A BYTE CAP IS NOT A DURATION CAP: one upload SIZE spans a 4x range of billable seconds");
+  ok(wav.wavDurationMs(wavAt(8000, 1, 4, audio)).ms >= 7.99 * baseline,
+     "…and an 8x range once a 4-bit width is allowed, all of it inside DEMO_MAX_AUDIO_BYTES");
+
+  // ---- 9b. The fields it reads, and the one it refuses to ----------------- //
+  const d = wav.wavDurationMs(wavAt(16000, 1, 16, 32000));
+  eq(d.sampleRate, 16000, "the rate comes from nSamplesPerSec");
+  eq(d.channels, 1, "…the channel count from nChannels");
+  eq(d.bitsPerSample, 16, "…the width from wBitsPerSample");
+  eq(d.dataBytes, 32000, "…and the length from the data chunk");
+  eq(d.ms, 1000, "…which multiply out to one second");
+
+  // `nAvgBytesPerSec` is redundant and is the field a hostile file would inflate to
+  // under-declare its own length. It must not be consulted.
+  const lying = wavAt(8000, 1, 8, audio);
+  new DataView(lying.buffer).setUint32(28, 1000000, true); // "1 MB/s", i.e. "half a second"
+  ok(wav.wavDurationMs(lying).ms > 60000,
+     "a LYING nAvgBytesPerSec is ignored: duration comes from rate x channels x width");
+
+  // ---- 9c. A truncated data chunk is measured on what ARRIVED ------------- //
+  const short = wavAt(16000, 1, 16, 32000).subarray(0, 44 + 16000);
+  ok(wav.wavDurationMs(short).ms < 600,
+     "a data chunk that CLAIMS more than arrived is measured on the bytes actually sent");
+
+  // ---- 9d. Chunks before `fmt `/`data`, which real encoders insert -------- //
+  const base = wavAt(16000, 1, 16, 32000);
+  const list = new Uint8Array(base.length + 12);
+  list.set(base.subarray(0, 12), 0);
+  const lv = new DataView(list.buffer);
+  for (let i = 0; i < 4; i++) list[12 + i] = "LIST".charCodeAt(i);
+  lv.setUint32(16, 4, true);
+  list.set(base.subarray(12), 24);
+  lv.setUint32(4, list.length - 8, true);
+  const dl = wav.wavDurationMs(list);
+  ok(dl && dl.ms === 1000, "a LIST chunk before fmt/data is walked past, not tripped over");
+
+  // ---- 9e. NO OPINION is not "short" -------------------------------------- //
+  // Every one of these must return null so the caller can tell "I measured it and it is
+  // fine" from "I could not measure it". A caller that treats null as within-cap has
+  // misread the contract, and the route does not.
+  eq(wav.wavDurationMs(new Uint8Array(0)), null, "an empty body is not measurable");
+  eq(wav.wavDurationMs(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4, 5, 6, 7, 8])), null,
+     "a webm/Matroska body is not measurable — the duration is in a bitstream, not a header");
+  eq(wav.wavDurationMs(new TextEncoder().encode("OggS........................")), null,
+     "…nor is an Ogg one");
+  eq(wav.wavDurationMs(wavAt(0, 1, 16, 32000)), null, "a zero sample rate yields no opinion, not a divide");
+  eq(wav.wavDurationMs(wavAt(16000, 1, 0, 32000)), null, "…and neither does a zero bit width");
+  const noData = wavAt(16000, 1, 16, 0);
+  eq(wav.wavDurationMs(noData.subarray(0, 44)), null, "a WAV with an empty data chunk yields no opinion");
+}
+
 /* --------------------------------------------------------------------------- */
 if (fails.length) {
   console.error(`✗ test_wav_decode: ${fails.length} failure(s)`);

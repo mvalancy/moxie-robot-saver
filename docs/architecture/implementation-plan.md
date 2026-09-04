@@ -98,6 +98,34 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **The hosted demo's per-IP windows were free to bypass over IPv6, and its duration cap was not one —
+  fixed 2026-09-03.** Four holes in `functions/api/_lib/limits.js` and the three spending routes, all in
+  the controls that protect the **self-hosted gateway the demo shares with the owner's video game**, so
+  the thing at stake is a neighbour's capacity rather than a bill. **(1) `clientIp` keyed the rate-limit
+  bucket on the raw address string.** On IPv4 that is one person; on IPv6 it is one *interface*, and a
+  residential allocation is a /64 or wider — so a single visitor held 2⁶⁴ buckets and every per-IP row in
+  `backlog/live-sim-demo.md` §4.1 was, for them, unlimited, defeated by a `for` loop. The key is now the
+  **first four hextets**, with `::ffff:a.b.c.d` **unmapped to the v4 address rather than truncated** —
+  truncating it would have given every IPv4 visitor the same `0:0:0:ffff` prefix and collapsed the v4
+  internet into one bucket, which is the way this fix usually breaks. **(2) With `CF-Connecting-IP`
+  absent it fell back to `X-Forwarded-For`,** which the caller types; that fallback now needs
+  `DEMO_TRUST_XFF` (unset in production) and otherwise keys as `unknown`, deliberately **one shared
+  bucket** so unidentifiable callers are throttled together. **(3) `DEMO_MAX_AUDIO_BYTES` was never a
+  duration cap, and STT is billed by duration** — the same 500 KB is ~15 s of 16 kHz 16-bit PCM but 62 s
+  at 8 kHz 8-bit and ~125 s at 4-bit, all well-formed WAVs. `/api/transcribe` now reads a RIFF header
+  server-side (`_lib/wav.js::wavDurationMs`) and refuses `too_long` above `DEMO_MAX_RECORD_MS` with zero
+  upstream calls. **(4) All three routes fetched with `redirect` unset,** i.e. `follow`, carrying the only
+  credential; they now set `redirect: "manual"` and read a 3xx as `gateway_unreachable_or_gated` —
+  a tunnel that redirects is a door problem, not a brain problem. **The honest gaps, both stated in the
+  code:** the duration cap covers **WAV only** — webm/Opus and the rest hide their length in a bitstream
+  and reading it means shipping a decoder at a hostile upload — so it is total today only because
+  `DEMO_STT_FORMATS` ships as `wav` alone, and a fork that widens it re-opens the gap silently; and
+  defect (2) was **latent, not live** (Cloudflare always sets `CF-Connecting-IP`), closed because it would
+  open the moment anything sat in front. Every counter is still **per-isolate** (§4.6); nothing here
+  changes that. Tables of every awkward address form and every rate/width combination are in
+  `sim/test_demo_proxy.mjs` block 14, `sim/test_demo_ears.mjs` A-DUR/A-RDR and `sim/test_wav_decode.mjs`
+  block 9.
+
 - **The hosted demo refused the eleventh visitor instead of queueing them — fixed 2026-09-03.** At
   `DEMO_MAX_CONCURRENT_CHAT` in-flight turns, `functions/api/_lib/limits.js::admit` answered `at_capacity`
   on the spot, so a momentary collision between the ~ten people the demo is sized for turned into scripted
@@ -900,7 +928,7 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   product code and `functions/` are unswept; and monotonic-clock load flakiness (playbook rule 11's
   disease) is deliberately out of that guard's scope and still unfenced.
 
-## DoD progress (audited 2026-09-03 21:05 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 94%** (done = all six 🟢)
+## DoD progress (audited 2026-09-04 00:40 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 92%** (done = all six 🟢)
 
 > **Criterion 6 is green, and it was earned in the place it used to be false.** The day the merge gate was a
 > `grep` is fixed and the fix has since caught a genuine red; the three flake classes are fenced by ratchets that
@@ -935,6 +963,32 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > always reported the real in-flight count; the stub PR #104 replaced was in `health.js` alone. Production
 > serves from `main`, which at the time of this test did not carry #104 at all — so the number proves the
 > admission counter, not the health wiring. Corrected the same evening, before promotion.
+>
+> **DRIVING THE LIVE PAGE IN A REAL BROWSER MOVED THIS SCORE DOWN, AND THAT IS THE POINT.** Everything
+> above was measured with `curl`. On 2026-09-04 the hosted `/sim` was driven with headless Chromium across
+> seven viewports, and three defects appeared that no server-side test could have found:
+>
+> 1. **The only door to the brain is the microphone.** Typing into `#speech-input` and pressing Say never
+>    calls `/api/chat` at all — it targets a local Piper sidecar on `:8081`, which CSP correctly blocks, so
+>    nothing plays and the only feedback is a console error. `cloud-transport.js`:339 states it outright
+>    (*"the page has no 'type a sentence to Moxie' control today"*) and `mic.js`:157 is the sole caller of
+>    `sendUserTurn`. A visitor with no microphone, or who denies the permission, **cannot use the demo**.
+>    That is criterion 1 failing on the hosted path for a whole class of visitor, which is why this audit
+>    scores 92% rather than 94% — nothing regressed; the measurement got honest.
+> 2. **On phones the env banner covers the rail toggle.** `document.elementFromPoint()` at the toggle's
+>    centre returns `div#env-banner`. The tap does nothing, silently. Recoverable — dismissing the banner
+>    frees it and the mic then works — but nothing tells a visitor that.
+> 3. **The safety floor's hard block is defeated by one invisible character.** Verified against the real
+>    module: `"suicide"` blocks, the same word with U+00AD SOFT HYPHEN or U+2060 WORD JOINER between each
+>    letter does **not** (U+200B is handled). `safety.js`:60-63 strips four zero-width characters and misses
+>    the rest of the Unicode format class. `self_harm` is the first blocking category and this floor runs
+>    *before* the gateway, so the pre-inference block is what fails.
+>
+> **What the same sweep proved GOOD**, so the score is not read as decay: mic → STT → brain → TTS works end
+> to end on the public domain in 3/3 runs, with audio decoded and played (asserted at the Web Audio layer,
+> where a silent clip would fail); **zero horizontal overflow at any of the seven viewports**; no leak of
+> key, gateway host, model id or Tailscale address in the page, any API body, or any header; and
+> `/api/health` reported `inflight: 1` **during an actual in-flight turn**, which the old stub could not do.
 >
 > **What is still NOT covered:** no *human* has recorded through the hosted mic — this loop used synthesized
 > speech and a hand-built WAV, so it proves the route and the gateway, not `MediaRecorder` in a real browser on

@@ -312,6 +312,19 @@ export function readConfig(env) {
     persona: str(e, "DEMO_PERSONA", DEFAULT_PERSONA),
     deviceId: str(e, "DEMO_DEVICE_ID", DEFAULTS.DEMO_DEVICE_ID),
     allowedOrigins: origins(e),
+    // ---- `DEMO_TRUST_XFF` — OFF, AND IT MUST STAY OFF IN PRODUCTION.
+    //
+    // `_lib/limits.js::clientIp` keys every per-IP window on `CF-Connecting-IP`, the one
+    // address header Cloudflare sets itself and overwrites on the way in. When that header
+    // is ABSENT there is no trustworthy address at all: `X-Forwarded-For` is a string the
+    // caller types, so a fallback to it is not a weaker limit, it is NO limit — one
+    // process rotates the header and owns an unbounded supply of rate-limit buckets.
+    //
+    // So the fallback is opt-in and the default is to key the request as `unknown`, which
+    // is a SINGLE SHARED BUCKET for every unidentifiable caller (see `clientIp`). Set this
+    // ONLY for a local `wrangler pages dev`, where there is no Cloudflare in front and
+    // nobody hostile behind. Setting it on a public deployment hands the per-IP tier away.
+    trustXff: bool(e, "DEMO_TRUST_XFF", false),
     maxTokens: int(e, "DEMO_MAX_TOKENS", 1, 4096, notes),
     maxInputChars: int(e, "DEMO_MAX_INPUT_CHARS", 1, 20000, notes),
     maxTtsChars: int(e, "DEMO_MAX_TTS_CHARS", 1, 20000, notes),

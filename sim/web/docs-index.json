@@ -1,5 +1,5 @@
 {
- "generated": "docs-6d5d05d7333a",
+ "generated": "docs-ae1e83cdfb22",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,14 +109,14 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 142554,
+   "bytes": 147592,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
     "Current state (honest)",
     "Build order (each milestone = a shippable, CI-green slice)",
     "Known gaps (audited, honest)",
-    "DoD progress (audited 2026-09-03 21:05 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 94%** (done = all six 🟢)",
+    "DoD progress (audited 2026-09-04 00:40 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 92%** (done = all six 🟢)",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
     "Working rules (build loops)"
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 116881,
+   "bytes": 120121,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -543,7 +543,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 103143,
+   "bytes": 108383,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",

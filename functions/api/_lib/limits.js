@@ -160,19 +160,177 @@ export function noteUpstreamCall() {
  * ---------------------------------------------------------------------------- */
 
 /**
- * The visitor's IP, keyed on `CF-Connecting-IP` (§4.1) — the header Cloudflare itself
- * sets and a client cannot forge through Cloudflare. `X-Forwarded-For`'s first hop is
- * read only as a fallback for a local `wrangler pages dev`, where there is no Cloudflare
- * in front. An absent IP is keyed as `unknown` and therefore SHARES one bucket with every
- * other anonymous caller, which is the conservative direction.
+ * Normalize an address into a RATE-LIMIT KEY — not into a canonical IP, which is a
+ * different job with a different answer.
+ *
+ * ============================================================================
+ * WHY A RAW ADDRESS IS THE WRONG KEY, AND THIS IS THE WHOLE BUG.
+ *
+ * IPv4 hands a residential visitor ONE address, so `ip -> bucket` is `person -> bucket`
+ * and every per-IP window in §4.1 means what it says. **IPv6 does not.** A residential
+ * allocation is a /64 at the very least (often a /56 or /48), so one visitor owns
+ * 18 446 744 073 709 551 616 source addresses and can pick a fresh one per request at
+ * zero cost. Keyed on the raw string, `chat_per_min: 5` becomes `chat_per_min: infinity`
+ * for anyone on IPv6 — the entire per-IP tier defeated by a `for` loop, no botnet, no
+ * proxy, no skill. That is not a theoretical hole; it is the default behaviour of a
+ * consumer ISP.
+ *
+ * So the key is the FIRST FOUR HEXTETS (the /64), which is the smallest unit that
+ * corresponds to *a subscriber* rather than *an interface*. It is deliberately COARSER
+ * than the address: two people behind one /64 (a household, a phone hotspot) share a
+ * bucket, exactly as two people behind one IPv4 NAT already do. Sharing is the
+ * conservative direction and it is the direction IPv4 has always erred in.
+ *
+ * WHAT THIS IS NOT: it is not a /48 or /56, which would be the *truly* subscriber-sized
+ * prefix on many ISPs. A /64 was chosen because it is the one boundary every RFC 4291
+ * deployment agrees on (it is the interface-identifier split), while /48-vs-/56 varies by
+ * ISP and guessing wrong there groups unrelated customers. If the demo is ever actually
+ * attacked from many /64s of one allocation, widening this to three hextets is a
+ * one-character change — and the tests below say what each form must key as.
+ * ============================================================================
+ *
+ * The awkward real-world forms, all of which reach here in some deployment:
+ *
+ *   `203.0.113.9`            IPv4                  -> unchanged
+ *   `1.2.3.4:5678`           IPv4 with a port      -> `1.2.3.4`
+ *   `2001:db8:1:2:3:4:5:6`   full IPv6             -> `2001:db8:1:2`
+ *   `2001:db8::1`            elided IPv6           -> `2001:db8:0:0`
+ *   `::1`                    loopback              -> `0:0:0:0`
+ *   `fe80::1%eth0`           a zone index          -> `fe80:0:0:0`
+ *   `[2001:db8::1]:443`      bracketed, with port  -> `2001:db8:0:0`
+ *   `::ffff:1.2.3.4`         IPv4-MAPPED           -> `1.2.3.4`   (NOT a /64)
+ *   `::ffff:102:304`         the same address      -> `1.2.3.4`
+ *
+ * **The IPv4-mapped row is the one that would silently be wrong.** `::ffff:a.b.c.d` is
+ * how a dual-stack listener reports an IPv4 client, and every such address shares the
+ * `0:0:0:ffff` prefix — so truncating it to a /64 would collapse *the entire IPv4
+ * internet* into one bucket and rate-limit every v4 visitor against every other one.
+ * It is unmapped back to the v4 address instead, which keys identically to the same
+ * client arriving as plain v4.
+ *
+ * Anything containing `:` that does not parse keys as `unknown` rather than as itself:
+ * a malformed address is either a bug or a forgery attempt, and neither one has earned a
+ * bucket of its own. (Through Cloudflare this cannot happen — `CF-Connecting-IP` is
+ * always a canonical address — so this branch is the fallback path's seatbelt.)
  */
-export function clientIp(request) {
+export function ipKey(raw) {
+  let s = String(raw == null ? "" : raw).trim();
+  if (!s) return "unknown";
+  if (!s.includes(":")) return s; // plain IPv4 or a hostname: keyed as-is, unchanged.
+
+  // `1.2.3.4:5678` — an IPv4 with a port, which some proxies write. Strip the port; do
+  // NOT try this for a bare IPv6, where a trailing `:n` is a hextet, not a port.
+  const v4port = /^(\d{1,3}(?:\.\d{1,3}){3}):\d{1,5}$/.exec(s);
+  if (v4port) return v4port[1];
+
+  // `[addr]` or `[addr]:port` — the RFC 3986 authority form.
+  if (s.startsWith("[")) {
+    const close = s.indexOf("]");
+    if (close < 0) return "unknown";
+    s = s.slice(1, close);
+  }
+  // `%eth0` / `%25eth0` — a zone index identifies an INTERFACE on the receiving host and
+  // says nothing about the sender, so it is not part of the identity.
+  const pct = s.indexOf("%");
+  if (pct >= 0) s = s.slice(0, pct);
+
+  const groups = expandV6(s);
+  if (!groups) return "unknown";
+
+  // IPv4-mapped (`::ffff:0:0/96`) — unmap rather than truncate. See above.
+  if (groups[0] === 0 && groups[1] === 0 && groups[2] === 0 && groups[3] === 0 &&
+      groups[4] === 0 && groups[5] === 0xffff) {
+    return [groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff].join(".");
+  }
+  // The /64. Lower-case hex, no leading zeros — one address has exactly one key.
+  return groups.slice(0, 4).map((g) => g.toString(16)).join(":");
+}
+
+/** Expand an IPv6 literal to eight 16-bit groups, or `null` if it is not one. Written out
+ *  rather than delegated to `new URL("http://[" + s + "]")`, which accepts some forms and
+ *  normalises others differently across runtimes — and a rate-limit key that depends on
+ *  the runtime is a key that changes when Cloudflare updates workerd. */
+function expandV6(input) {
+  const s = String(input).toLowerCase();
+  if (!s || s.length > 45 || !/^[0-9a-f:.]+$/.test(s)) return null;
+  if (s.indexOf(":::") >= 0) return null;
+
+  const halves = s.split("::");
+  if (halves.length > 2) return null; // at most ONE elision, RFC 4291 §2.2
+  const elided = halves.length === 2;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = elided ? (halves[1] ? halves[1].split(":") : []) : [];
+  if (!elided && head.length !== 8) return null;
+
+  const parts = head.concat(tail);
+  const out = [];
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.indexOf(".") >= 0) {
+      // A dotted quad is legal only as the LAST element, where it stands for two hextets.
+      if (i !== parts.length - 1) return null;
+      const q = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(p);
+      if (!q) return null;
+      const b = [Number(q[1]), Number(q[2]), Number(q[3]), Number(q[4])];
+      if (b.some((n) => n > 255)) return null;
+      out.push((b[0] << 8) | b[1], (b[2] << 8) | b[3]);
+      continue;
+    }
+    if (!/^[0-9a-f]{1,4}$/.test(p)) return null;
+    out.push(parseInt(p, 16));
+  }
+  if (out.length > 8) return null;
+  if (!elided) return out.length === 8 ? out : null;
+
+  // Splice the zeros back in at the elision. `::` must stand for AT LEAST one group.
+  const headLen = head.reduce((n, p) => n + (p.indexOf(".") >= 0 ? 2 : 1), 0);
+  const fill = 8 - out.length;
+  if (fill < 1) return null;
+  return out.slice(0, headLen).concat(new Array(fill).fill(0), out.slice(headLen));
+}
+
+/**
+ * The visitor's IP, as a RATE-LIMIT KEY (§4.1).
+ *
+ * `CF-Connecting-IP` is the source of truth: Cloudflare sets it on every request and
+ * OVERWRITES whatever the client sent, so it is the one address header a visitor cannot
+ * forge from outside. It is passed through `ipKey()`, which collapses an IPv6 address to
+ * its /64 — see that function for why a raw IPv6 string is not a key at all.
+ *
+ * ============================================================================
+ * `X-Forwarded-For` IS A CLIENT-WRITABLE STRING AND IS IGNORED BY DEFAULT.
+ *
+ * Until 2026-09-03 the absent-`CF-Connecting-IP` case fell back to `X-Forwarded-For`'s
+ * first hop, for the benefit of a local `wrangler pages dev`. That is a header ANY caller
+ * can set to anything, so wherever the fallback is reachable the per-IP windows are not a
+ * limit at all: one process rotates the header and holds an unbounded supply of buckets.
+ *
+ * On the live deployment it is NOT reachable — Cloudflare always sets `CF-Connecting-IP`,
+ * so the fallback is dead code in production — but "unreachable in today's topology" is a
+ * property of the topology, not of this file. Put any proxy, tunnel or preview host in
+ * front and the hole opens with no code change and no warning. So the fallback now needs
+ * an explicit `DEMO_TRUST_XFF`, WHICH MUST STAY UNSET IN PRODUCTION, and the default is
+ * to fall through to `unknown`.
+ *
+ * **`unknown` IS ONE SHARED BUCKET, AND THAT IS THE INTENT.** Every caller we cannot
+ * identify is counted TOGETHER against one set of windows — throttled as a group rather
+ * than each handed a free lane. The failure mode is that unidentifiable callers contend
+ * with each other, which is the correct direction: the alternative (a bucket each) is
+ * precisely the unbounded bypass this change closes.
+ * ============================================================================
+ *
+ * @param {Request} request
+ * @param {{trustXff?: boolean}} [cfg] the deployment config. Absent ⇒ XFF is not trusted.
+ */
+export function clientIp(request, cfg) {
   const h = request && request.headers;
   if (!h) return "unknown";
   const cf = h.get("CF-Connecting-IP");
-  if (cf) return String(cf).trim();
-  const xff = h.get("X-Forwarded-For");
-  if (xff) return String(xff).split(",")[0].trim() || "unknown";
+  if (cf) return ipKey(cf);
+  if (cfg && cfg.trustXff) {
+    const xff = h.get("X-Forwarded-For");
+    if (xff) return ipKey(String(xff).split(",")[0]);
+  }
   return "unknown";
 }
 
@@ -648,7 +806,7 @@ export async function admit(o) {
   const origin = checkOrigin(request, cfg);
   if (!origin.ok) return { ...refuse("forbidden_origin"), load };
 
-  const ip = clientIp(request);
+  const ip = clientIp(request, cfg);
   const win = chargeWindows(ip, route, cfg, nowS);
   if (!win.ok) {
     return { ...refuse("rate_limited", { retryAfterS: win.retryAfterS, rateLimit: win.rateLimit }), load };

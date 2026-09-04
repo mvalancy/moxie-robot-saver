@@ -289,3 +289,112 @@ export function writeWav(pcm, { sampleRate, channels, bitsPerSample }) {
   out.set(pcm, 44);
   return out;
 }
+
+/* ---------------------------------------------------------------------------- *
+ * How LONG is this WAV? — the one duration a Function can actually measure
+ * ---------------------------------------------------------------------------- */
+
+/**
+ * The playing time a RIFF/WAVE body DECLARES, in milliseconds, or `null` if this is not a
+ * WAV whose header can be read.
+ *
+ * ============================================================================
+ * WHY THIS EXISTS: A BYTE CAP IS NOT A DURATION CAP, AND STT IS PRICED BY DURATION.
+ *
+ * `DEMO_MAX_AUDIO_BYTES` (500 000) was derived in §4.1 from ONE measurement — 193 358 B
+ * for 6.04 s of 16 kHz 16-bit mono, i.e. ~32 KB/s — which makes 500 KB read like "about
+ * 15 seconds". That arithmetic holds for exactly that one format. **Every other legal WAV
+ * declares more seconds in the same bytes**, and the header is what the transcriber
+ * believes:
+ *
+ *     16 kHz, 16-bit, mono   32 000 B/s   500 KB ->  ~15 s   (the assumed case)
+ *      8 kHz, 16-bit, mono   16 000 B/s   500 KB ->  ~31 s
+ *      8 kHz,  8-bit, mono    8 000 B/s   500 KB ->  ~62 s
+ *      8 kHz,  4-bit ADPCM    4 000 B/s   500 KB -> ~125 s
+ *
+ * None of those is malformed, none is exotic, and every one of them is a legitimate file
+ * a `curl` can post today. The byte ceiling therefore buys a *four-to-eight-fold* looser
+ * duration ceiling than §4.1 claims it does, and `DEMO_MAX_RECORD_MS` — the number that
+ * is actually supposed to bound STT cost — was enforced ONLY in `sim/web/mic.js`, in the
+ * browser, where a caller who is not using our page simply does not run it.
+ *
+ * A WAV header is four fixed-offset integers behind a chunk walk this file already does,
+ * so for this ONE container the duration is knowable server-side for free, before the
+ * upload is forwarded. `transcribe.js` calls this and refuses `too_long` above the cap.
+ *
+ * **AND HERE IS WHAT IT DOES NOT COVER, stated rather than implied.** webm/Opus,
+ * ogg/Opus, mp4/AAC, mp3 and FLAC carry their duration in a bitstream, not in a header
+ * field — reading it means walking pages, parsing frame headers, or shipping a decoder,
+ * and a decoder is exactly what a Function must not do to a hostile upload. For those
+ * containers the honest ceiling is still the byte cap plus `mic.js`'s hard stop, and it is
+ * still not a duration cap. **The reason this closes the hole in practice rather than
+ * merely narrowing it is `DEMO_STT_FORMATS`, which defaults to `wav` ALONE** (see
+ * `env.js::sttFormats`: the gateway answered HTTP 500 to all three compressed containers
+ * when they were probed on 2026-09-03). Under the shipped configuration, WAV is the only
+ * container that reaches the gateway at all — so on this deployment the duration cap is
+ * total. A fork that widens `DEMO_STT_FORMATS` re-opens exactly the gap this comment
+ * describes, and gets no warning from the code, which is why it is written down here.
+ * ============================================================================
+ *
+ * The duration is computed from `nSamplesPerSec x nChannels x wBitsPerSample`, NOT from
+ * the header's own `nAvgBytesPerSec` field: that field is redundant, is ignored by most
+ * decoders, and is the one a hostile file would inflate to under-declare its own length.
+ * The three fields used are the three a decoder actually reads.
+ *
+ * Returns `null` — meaning "no opinion", never "it is short" — for a body that is not
+ * RIFF/WAVE, has no `fmt ` or `data` chunk, or declares a rate/width of zero. A caller
+ * must treat `null` as *unknown duration*, not as *within the cap*.
+ *
+ * @param {Uint8Array|ArrayBuffer} raw
+ * @returns {{ms:number, sampleRate:number, channels:number, bitsPerSample:number,
+ *            dataBytes:number, formatTag:number}|null}
+ */
+export function wavDurationMs(raw) {
+  const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw || 0);
+  if (bytes.length < 12) return null;
+  if (fourcc(bytes, 0) !== "RIFF" || fourcc(bytes, 8) !== "WAVE") return null;
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let pos = 12;
+  let fmt = null;
+  let dataBytes = null;
+  // The same chunk walk as `pcmFromAudio` — real encoders insert LIST/INFO/fact chunks and
+  // an odd-sized chunk carries a pad byte that is not counted in its size. Deliberately a
+  // SEPARATE walk rather than a call into that function: `pcmFromAudio` throws on anything
+  // that is not 16-bit, and 8-bit is precisely the case this exists to catch.
+  while (pos + 8 <= bytes.length) {
+    const id = fourcc(bytes, pos);
+    const size = view.getUint32(pos + 4, true);
+    const body = pos + 8;
+    if (size > bytes.length - body) {
+      // Truncated final chunk. A `data` chunk that CLAIMS more than arrived is measured on
+      // what arrived: a header may not buy duration the upload did not pay bytes for.
+      if (id === "data" && dataBytes === null) dataBytes = bytes.length - body;
+      break;
+    }
+    if (id === "fmt " && size >= 16 && !fmt) {
+      fmt = {
+        formatTag: view.getUint16(body, true),
+        channels: view.getUint16(body + 2, true),
+        sampleRate: view.getUint32(body + 4, true),
+        bitsPerSample: view.getUint16(body + 14, true),
+      };
+    } else if (id === "data" && dataBytes === null) {
+      dataBytes = size;
+    }
+    pos = body + size + (size % 2);
+  }
+
+  if (!fmt || dataBytes === null || dataBytes <= 0) return null;
+  const channels = fmt.channels || 1;
+  const bytesPerSecond = (fmt.sampleRate * channels * fmt.bitsPerSample) / 8;
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return null;
+  return {
+    ms: Math.round((dataBytes / bytesPerSecond) * 1000),
+    sampleRate: fmt.sampleRate,
+    channels,
+    bitsPerSample: fmt.bitsPerSample,
+    dataBytes,
+    formatTag: fmt.formatTag,
+  };
+}
