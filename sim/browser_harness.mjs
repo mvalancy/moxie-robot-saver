@@ -140,6 +140,39 @@ export function pagesHeaders() {
   return out;
 }
 
+/**
+ * A page's HTML **plus the source of its own scripts**, as one string to grep.
+ *
+ * WHY THIS EXISTS. Until 2026-09-04 every page carried its behaviour in an inline
+ * `<script>`, so a suite could assert "cloud.html fetches fixtures/cloud.json" by grepping
+ * the .html file. Dropping `'unsafe-inline'` from `script-src` moved all of that into
+ * sibling `.js` files, and those greps would have gone quietly false — the CODE still does
+ * the thing, the FILE no longer mentions it.
+ *
+ * So the unit of inspection is now the page *and what it loads*. That is strictly stronger
+ * than the old grep: a page that dropped the `<script src>` tag entirely would keep its
+ * behaviour "in the repo" but lose it on screen, and this notices, because it follows the
+ * tags the page actually carries.
+ *
+ * `vendor/` is DELIBERATELY EXCLUDED. Concatenating the minified libraries would make the
+ * assertions vacuous in the worst way — `mermaid.render` appears inside `mermaid.min.js`,
+ * so "docs.html must render mermaid" would pass for a page that never called it.
+ *
+ * @param {string} name e.g. "cloud.html"
+ * @returns {string} the HTML followed by each first-party script it references, in order.
+ */
+export function pageSource(name) {
+  const html = readFileSync(join(web, name), "utf8");
+  const parts = [html];
+  for (const m of html.matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) {
+    const ref = m[1].split("?")[0].replace(/^\.\//, "");
+    if (/^[a-z]+:|^\/\//i.test(ref) || ref.startsWith("vendor/") || ref.includes("..")) continue;
+    const f = join(web, ref);
+    if (existsSync(f)) parts.push(`\n/* ==== ${ref} (loaded by ${name}) ==== */\n` + readFileSync(f, "utf8"));
+  }
+  return parts.join("\n");
+}
+
 async function freePort() {
   return new Promise((res) => {
     const s = net.createServer();

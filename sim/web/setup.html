@@ -7,9 +7,6 @@
 <title>Moxie Setup — revive your robot</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a0a0f'/><path d='M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z' fill='%2312b5b0'/><ellipse cx='50' cy='49' rx='20' ry='18' fill='%23f4feff'/><circle cx='43' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='57' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='44.4' cy='46.4' r='1.3' fill='%2300f0ff'/><circle cx='58.4' cy='46.4' r='1.3' fill='%2300f0ff'/></svg>">
 <link rel="stylesheet" href="./vendor/fonts/fonts.css">
-<script type="importmap">
-{ "imports": { "three": "./vendor/three/three.module.js" } }
-</script>
 <link rel="canonical" href="https://moxie.mattvalancy.com/setup.html">
 <style>
   /* Phone-first parent-app "basics": the two QR codes that re-home a robot,
@@ -82,7 +79,7 @@
 </style>
 </head>
 <body>
-<div id="wire-bg" aria-hidden="true"></div>
+<div id="wire-bg" aria-hidden="true" data-opacity="0.13"></div>
 <div class="wrap">
   <header>
     <span class="dot"></span>
@@ -173,34 +170,8 @@
 
 <script src="./vendor/qrcode.js"></script>
 <script src="qr.js"></script>
-<script>
-(function(){
-  "use strict";
-  var Q = window.moxieQR;
-  function show(kind, payload){
-    var cv = document.getElementById("cv-"+kind);
-    Q.render(cv, payload, 5);
-    document.getElementById("pl-"+kind).textContent = payload;
-    document.getElementById("out-"+kind).style.display = "block";
-  }
-  document.getElementById("go-wifi").addEventListener("click", function(){
-    var ssid = document.getElementById("ssid").value.trim();
-    var pl = document.getElementById("pl-wifi");
-    if(!ssid){ document.getElementById("out-wifi").style.display="block";
-      pl.textContent="Enter your network name (SSID) first."; return; }
-    show("wifi", Q.encodeWifi(ssid, document.getElementById("pass").value, {
-      hidden: document.getElementById("hidden").checked,
-      band: document.getElementById("band").value }));
-  });
-  document.getElementById("go-ep").addEventListener("click", function(){
-    show("ep", Q.encodeEndpoint(document.getElementById("endpoint").value));
-  });
-})();
-</script>
-<script type="module">
-  import { mountMoxieWire } from "./moxie-wire.js";
-  try { mountMoxieWire(document.getElementById("wire-bg"), { opacity: 0.13 }); } catch (e) {}
-</script>
+<script src="setup.js"></script>
+<script type="module" src="wire-bg.js"></script>
 <script src="bg.js" data-density="0.7"></script>
 </body>
 </html>
