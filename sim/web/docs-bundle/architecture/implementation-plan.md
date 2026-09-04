@@ -846,9 +846,20 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
 > separation is proven for the first time — the keyless preview answers `gateway_not_configured` while Production
 > answers `live`, a control that was impossible while neither had variables (assumption 11 can close).
 >
-> **What that does NOT cover, stated so nobody reads it wider than it is:** `/api/transcribe` has **never been
-> exercised against the live deployment** — chat and voice were, ears were not — so criterion 1's hosted
-> mic→gateway join remains unproven on the deployed path as well as by a human. And a 39-agent adversarial audit
+> **The ears were closed the same evening, as a loop rather than a probe.** `/api/transcribe` had never been
+> exercised against the live deployment; it now has been, by making Moxie listen to herself. One live chat turn
+> (*"The quick brown fox jumps over the lazy dog. What a fun sentence!"*), redeemed for audio through
+> `/api/speech` (237 800 B PCM @ 22 050 Hz, 5.39 s), resampled to the **16 kHz mono RIFF/WAVE** the gateway
+> actually accepts (§10 assumption 15: it rejects webm/Opus, ogg/Opus and mp4/AAC), and posted back to
+> `/api/transcribe` → **200 in 2.93 s**, transcript *"The quick brown fox jumps over the lazy dog. What a fun
+> sentence."* — word-perfect, differing only in the closing punctuation. No key, gateway host, STT model id or
+> Tailscale address in the body or any header. **All three hosted routes are now proven on the public domain.**
+> That response also carried `load.inflight: 1` — the first live evidence that PR #104's counter wiring works,
+> where the old stub could only ever say `0`.
+>
+> **What is still NOT covered:** no *human* has recorded through the hosted mic — this loop used synthesized
+> speech and a hand-built WAV, so it proves the route and the gateway, not `MediaRecorder` in a real browser on
+> a real microphone. And a 39-agent adversarial audit
 > of that live surface returned **23 confirmed findings (0 critical, 0 high)**; two are fixed (PR #104, PR #105),
 > the rest are filed. A deployment that answers is not the same as a deployment that is finished.
 
