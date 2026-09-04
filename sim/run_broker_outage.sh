@@ -37,9 +37,23 @@ DEVICE="d_outage$$"
 SUP_LOG="${TMPDIR:-/tmp}/moxie-outage-supervisor.log"
 SUP_PID=""
 
+# ── bench hygiene: this run gets its OWN MOXIE_DATA_DIR ────────────────────────────────
+# Same reason as `run_smoke.sh`, where the note lives: the harness mints a throwaway
+# `d_<uuid>` per invocation and the supervisor's data dir defaults to the repo's
+# `mqtt/data`, so without this every SIL script on the box shares one durable roster and
+# inherits the device ids of every unrelated run before it. An operator's MOXIE_DATA_DIR
+# is kept, and only a directory this script created is removed.
+MOXIE_DATA_DIR_OWNED=""
+if [ -z "${MOXIE_DATA_DIR:-}" ]; then
+  MOXIE_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/moxie-outage-data-XXXXXX")"
+  MOXIE_DATA_DIR_OWNED=1
+fi
+export MOXIE_DATA_DIR
+
 cleanup() {
   [ -n "$SUP_PID" ] && kill "$SUP_PID" 2>/dev/null
   docker rm -f "$CID_NAME" >/dev/null 2>&1
+  [ -n "${MOXIE_DATA_DIR_OWNED:-}" ] && rm -rf "$MOXIE_DATA_DIR"
   return 0
 }
 trap cleanup EXIT

@@ -675,3 +675,59 @@ def test_the_roster_resume_reaches_robots_the_outage_made_unconfirmed(tmp_path):
     rt.client.published.clear()
     assert "d_bear" in rt.resume_roster()
     assert CONFIG.format(d="d_bear") in [t for (t, _) in rt.client.published]
+
+
+# ── the bench half: one run's throwaway device ids must not reach the next run ──────────
+#
+# A live observation, 2026-09-03 (feat/integration-11), turned into a guard. The SIL
+# scripts each mint a throwaway `d_<uuid>` per invocation, and the supervisor's data
+# directory defaults to the repo's `mqtt/data` — so a fresh `sim/run_smoke.sh` started by
+# re-pushing config to two `d_outage…` ids that `sim/run_broker_outage.sh` had minted a
+# quarter of an hour earlier, against a different broker, from a roster neither script
+# owned.
+#
+# **The runtime is not the defect and must not be "fixed".** In a household every id in
+# this file is a robot the appliance really has served, the roster is capped at
+# `MAX_DEVICES` with least-recently-seen eviction, each resume push is a QoS 0 publish the
+# broker discards when nobody is listening, un-permitting calls `forget()`, and
+# `MOXIE_ROSTER_RESUME=0` turns the whole thing off. Trading that for an age-based expiry
+# would cost a robot that has been quiet for a month its config on the next restart —
+# which is the feature — to remove noise that exists only on a bench.
+#
+# The defect is **harness hermeticity**, and it is the shape `run_broker_outage.sh` phase
+# 5c was rewritten to close: a leftover mechanism quietly satisfying an assertion the test
+# did not intend, here "a config push happened". `sim/tools/soak.py` had always scoped its
+# own `MOXIE_DATA_DIR`; the three scripts that boot a supervisor had not. So this guard is
+# about the *scripts*, and it generalises — a new SIL script that boots `mqtt/run.py`
+# without scoping its data directory fails here rather than on somebody's bench.
+def test_every_sil_script_that_boots_a_supervisor_scopes_its_own_data_dir():
+    sim_dir = os.path.join(REPO, "sim")
+    offenders = []
+    for name in sorted(os.listdir(sim_dir)):
+        if not name.endswith(".sh"):
+            continue
+        src = open(os.path.join(sim_dir, name), encoding="utf-8").read()
+        code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+        if "mqtt/run.py" not in code:
+            continue                      # boots no supervisor: nothing to scope
+        if "MOXIE_DATA_DIR" not in code:
+            offenders.append(name)
+    assert not offenders, (
+        f"{offenders} boot mqtt/run.py without scoping MOXIE_DATA_DIR, so they share the "
+        f"repo's mqtt/data — and one run's throwaway d_<uuid> ids reach the next run's "
+        f"roster resume. Add the per-run mktemp block sim/run_smoke.sh carries.")
+
+
+def test_the_scoped_data_dir_is_removed_only_when_the_script_created_it():
+    """The cleanup must never delete an operator's own `MOXIE_DATA_DIR`.
+
+    A `rm -rf "$MOXIE_DATA_DIR"` guarded by nothing would do exactly that the first time
+    somebody ran the smoke against a real data directory to reproduce a bug."""
+    for name in ("run_smoke.sh", "run_scenarios.sh", "run_broker_outage.sh"):
+        src = open(os.path.join(REPO, "sim", name), encoding="utf-8").read()
+        assert 'MOXIE_DATA_DIR="$(mktemp -d' in src, name
+        assert 'rm -rf "$MOXIE_DATA_DIR"' in src, name
+        for line in src.splitlines():
+            if 'rm -rf "$MOXIE_DATA_DIR"' in line:
+                assert "MOXIE_DATA_DIR_OWNED" in line, \
+                    f"{name}: the removal is not gated on having created the directory"
