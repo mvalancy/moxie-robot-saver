@@ -650,6 +650,29 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   (`MoxieRuntime(app, safety=…)`) without the runtime changing. Also unproven on hardware: no
   capture shows how a physical Moxie reacts to `input.safety` — we populate it because the
   contract says a kid-facing backend should, not because we have seen the robot act on it.
+- **hosted safety floor — the invisible-character bypass is closed (2026-09-03); the local one is
+  not.** The bullet above lists "obfuscation past its normalizer" as a known limit, and on the
+  hosted side one specific case of it was not a limit but a hole: `functions/api/_lib/safety.js`'s
+  `ALWAYS` stripped exactly four zero-width code points (U+200B/C/D, U+FEFF), so `"suicide"` blocked
+  and the same word with a U+00AD SOFT HYPHEN or a U+2060 WORD JOINER between each letter did not —
+  identical on screen, and `self_harm` is the FIRST blocking category on a live child-facing demo.
+  `ALWAYS` now strips the whole Unicode **`Cf`** category (probed against V8 11.3 rather than assumed
+  — including U+180E, which was `Zs` before Unicode 6.3) plus the four glyphless Hangul fillers
+  (U+115F/U+1160/U+3164/U+FFA0), which are `Lo` and so outside it; `variants()` gained a fourth form
+  that folds separators a writer put *inside* a word, closing `s.u.i.c.i.d.e` and `s-u-i-c-i-d-e`.
+  **The narrow transform was chosen on measurement:** dropping *all* punctuation, the obvious version,
+  also deletes the boundary between sentences and turned two innocent corpus sentences ("that's what
+  i want. To die of laughter would be great") into `self_harm` blocks — a child told to go find a
+  grown-up for saying something ordinary is a real harm, not a safe default. `sim/test_demo_proxy.mjs`
+  carries the 25-character evasion table, the `Zs` proof (an exotic space folds onto a *real* space,
+  which is correct) and an 18-sentence false-positive guard; 47 of its assertions are red against the
+  pre-change module. **Two honest gaps.** Intra-letter *spacing* (`s u i c i d e`) is still open and
+  deliberately so — it renders visibly, is identical to typing real spaces, and closing it means
+  deleting spaces from every utterance; a test pins it as known rather than leaving it to be
+  discovered. And `mqtt/moxie_sdk/safety.py::normalize`/`_variants` still carry the old narrow
+  behaviour, so the hosted demo now blocks a strict **superset** of the local stack — the safe
+  direction, but a divergence the header of `safety.js` promises does not exist, and the same fix
+  belongs on the Python side.
 - **wake alarms / schedule preferences — the shapes are ours, not a capture.** `alarms`
   (`WakeSchedule`) and `schedule_preferences` (`SchedulePreferences.ParentRequest`) are now built and
   parent-editable, but our protos give the *types* and not the *encodings*, and no capture of a real
