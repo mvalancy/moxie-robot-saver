@@ -234,6 +234,36 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     socket — a cached belief about a moving thing — and it is the most common bug this
     project has produced.
 
+24. **`git merge-base --is-ancestor` is the WRONG merged-ness test in this repo — ask the PR.**
+    Every merge here is `--squash`, and a squash lands a *new* commit on `dev` whose parent is not
+    the branch, so the branch is never an ancestor of `dev` no matter how thoroughly it merged. On
+    2026-09-05 all four stale remote branches (`feat/bg-hidden`, `feat/mic-proof`, `feat/qr-parity`,
+    `feat/tts-cache`) reported "unmerged, 1–4 commits ahead" by ancestry while their PRs (#151–#154)
+    all showed `mergedAt` set and `dev` was strictly ahead of each. Believing ancestry means either
+    keeping dead branches forever, or — far worse — learning to delete on a signal that is wrong in
+    the other direction too. **Test with `gh pr list --head feat/<x> --state all --json mergedAt`,
+    and corroborate with `git diff --stat origin/dev origin/feat/<x>` showing `dev` ahead.**
+
+25. **`gh pr merge --squash --delete-branch` silently leaves the REMOTE branch behind if a worktree
+    still holds the local one.** Seen twice on 2026-09-05, on #156 and again on #157: the command
+    merges, then aborts its cleanup with `failed to delete local branch feat/<x>: cannot delete
+    branch used by worktree at …` — and because the local delete failed, the remote delete never
+    ran. The merge succeeded, so nothing looks wrong; the branch just accumulates. **Remove the
+    worktree BEFORE the merge, and afterwards verify with
+    `git ls-remote --heads origin 'refs/heads/feat/*'` rather than trusting `--delete-branch`.**
+    This is rule 22's shape again — cleanup chained behind a merge in one command.
+
+26. **`pytest.importorskip` skips only on `ModuleNotFoundError`, so a stub that raises
+    `ImportError` is the WRONG instrument for simulating an absent package.** While verifying
+    #157 I blocked numpy with a `numpy/__init__.py` containing `raise ImportError(...)`; the test
+    at `test_speech_guard.py:180` then FAILED where the agent had measured a skip, which looked
+    like a defect in the branch. It was my instrument: pytest deliberately propagates an
+    `ImportError` from a module that *exists but fails to import*, precisely so it cannot mask a
+    broken install. "Broken on import" and "not installed" are different states. **To simulate
+    absence, make the module genuinely unfindable** — a `sys.meta_path` finder whose `find_spec`
+    raises `ModuleNotFoundError` for that name — which reproduced the agent's `15 passed, 1
+    skipped` exactly.
+
 ## The layered session loops (24/7 continuity)
 
 Session-scheduled loops keep the project moving while the operator is away; when a session hits a usage
@@ -691,8 +721,73 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
 - **2026-09-05 — PROMOTED, and the live page carries the day's work.** `dev`→`main` (#147, 12/12 green at the read head, 14 commits). Verified on production rather than assumed: the served `bg.js` carries the hidden-tab guard, `/api/health` is `mode: live` and not degraded, and a real browser turn played **3.44 s / 75 892 frames @ 22050 Hz, peak 0.97** with one utterance, nothing started inside the answer and zero console errors. Now live that was not this morning: the owner's background-leak bug fully closed (the residual stray ping included), `script-src` without `'unsafe-inline'`, cross-isolate rate limiting (measured on production: cap 5, 1-7 served, 8-9 refused), `NO_DATA` erasure that takes back what is already on disk, the vendored hero, the supervisor handshake fix that was blocking these promotions, and a TTS response cache. **Live-page items merged since the owner's steer:** #150 supervisor SUBACK, #153 hosted ears at overlap 1.00 through the live route, #154 hidden-tab banking, #152 speech cache. **Owner-blocked and unchanged:** Turnstile needs a Cloudflare site key + secret — the only real anti-abuse control and the one ranked item no agent can start.
 - **2026-09-05 — I HAD THE CLOUDFLARE API ALL ALONG, and four "owner-blocked" rows were wrong.** The owner asked *"I thought you already had that API?"* — they were right, and I had never tried it. A Cloudflare MCP tool is available this session, account-scoped to `824da717…`. Read calls succeed. What that settles, each verified rather than argued:
   * **§10 assumption 13 is CLOSED, not "dashboard-only".** `GET /accounts/{id}/storage/kv/namespaces` returns **200 with two namespaces** — one of them literally `lesson_plans_rate_limit`, i.e. the rate-limit-in-KV pattern is already in use on this account. Two agents and I recorded this as unsettleable from here. It was one GET away. **The P1 single-writer counter is not blocked on plan availability.**
-  * **Turnstile is not owner-blocked for discovery** — `GET /accounts/{id}/challenges/widgets` returns 200 with **zero** widgets. Whether the token may *create* one is untested; `/accounts/{id}/tokens/permission_groups` answers **9109 Unauthorized** and `/user/tokens/verify` answers **1000 Invalid API Token**, so write scope cannot be enumerated in advance — only attempted.
+  * **Turnstile is not owner-blocked AT ALL** (settled 2026-09-05; the sentence this replaces was
+    written when the account had no widget). The write scope could not be *enumerated* — that part was
+    right, `/accounts/{id}/tokens/permission_groups` answers **9109** and `/user/tokens/verify` answers
+    **1000** — so it was **attempted**, one method at a time. The shape is odd enough to record:
+      * `GET    /challenges/widgets/{sitekey}` → **200, and the response INCLUDES `secret`.** This is the
+        fact that unblocked the slice: an existing widget's secret is readable, so it can be piped into a
+        Pages variable inside a single call and never enter a transcript or a shell history.
+      * `POST   /challenges/widgets` → **200** (probe widget created, then deleted).
+      * `DELETE /challenges/widgets/{sitekey}` → **200**.
+      * `PATCH  /challenges/widgets/{sitekey}` → **10405 Method not allowed for this authentication
+        scheme.** So this token can create and destroy a widget but not amend one. **Do not read a
+        `10405` as "read-only token"** — `PATCH /pages/projects/{name}` succeeds.
+  * **Turnstile hostnames cover subdomains automatically.** Cloudflare's hostname-management page:
+    *"adding a hostname automatically authorizes all of its subdomains."* So `mattvalancy.com` on the
+    widget already authorises `moxie.mattvalancy.com`, and no dashboard edit was ever needed. `*.pages.dev`
+    is NOT covered, which is why branch previews cannot pass a real challenge and the integration must
+    stay inert there.
+  * **Pages `env_vars` PATCH MERGES, it does not replace** — proven on the *preview* config, which held
+    zero variables so a "replace" verdict could destroy nothing: two sequential single-key PATCHes left
+    both keys present, and `null` deletes a key. This mattered because the five production `DEMO_*` values
+    are `secret_text` and are **not** returned by a GET; under replace semantics, writing one variable
+    would have destroyed four secrets recoverable from nowhere.
   * **The "three Production variables are owner-blocked" note is stale.** The Pages project `moxie-robot-saver` (serving `moxie.mattvalancy.com`, production branch `main`, output `sim/web`) has **five** secrets set: `DEMO_CHAT_MODEL`, `DEMO_GATEWAY_API_KEY`, `DEMO_GATEWAY_BASE_URL`, `DEMO_STT_MODEL`, `DEMO_TTS_MODEL`. That is *why* the site is live; the doc was describing a state that ended before it was written.
   * **Assumption 11 upgraded from inferred to verified** — preview `env_vars` is empty in the API, which is the keyless-preview claim measured at the source instead of deduced from a 503.
   * **No KV/DO/D1/R2 binding on either environment**, matching exactly what #144's in-Function probe measured (five `env` keys). The probe was right; the *conclusion drawn from it* — that availability was unknowable — was not.
 **The lesson is mine, not the docs'.** I recorded "owner-blocked" five separate times without once checking the tool list for an API I had been given. The standing rule that a preview deploy settles "deploy-only" questions needed a sibling: **check what access you actually have before declaring a thing blocked on someone else.**
+
+- **2026-09-05 — TURNSTILE NEEDED NOTHING FROM THE OWNER, and I was one message from saying it did.**
+  The owner asked *"your api key should let you reconfigure this?"*. `PATCH` on the widget answered
+  **10405 Method not allowed for this authentication scheme**, and I read that as a read-only token —
+  wrong twice over. `POST` and `DELETE` on the same resource answer 200, `PATCH /pages/projects/{name}`
+  succeeds, and **`GET /challenges/widgets/{sitekey}` returns the `secret` field**, so the widget secret
+  was readable all along and went straight into the Pages production variables inside one call, never
+  touching this transcript, a shell history or a tracked file. I had also concluded the live site's
+  tokens would carry an unauthorised hostname because `moxie.mattvalancy.com` was absent from the
+  widget's domains; Cloudflare authorises **all subdomains** of a listed hostname, so `mattvalancy.com`
+  already covered it. Full write scope and the subdomain rule are now recorded in the Cloudflare
+  section above, and playbook rule 26 is the third correction from the same day. The owner's widget was
+  never touched — no rotation, no second widget.
+  **Enforcement is deliberately OFF while the code lands:** the secret was removed again, because
+  `*.pages.dev` is not an authorised hostname so previews cannot rehearse Turnstile, and arming it on
+  merge would have made production the first real test with every visitor as the subject. Re-arming is
+  one proven call once the client half is verified live.
+
+- **2026-09-05 — #156 and #157 merged; four false "blocker" claims and one process failure corrected.**
+  #156 (audit refresh) was `CONFLICTING` only in the two GENERATED files, resolved by regeneration, not
+  by hand-merging JSON. #157 declared every test dependency once — and found something better than its
+  brief asked for: `test_live_gateway_turn_e2e.py`'s `test_the_placeholder_tone_fails_the_speech_guard`
+  is **creds-free** and exists so the live speech assertion cannot pass on tone output, yet it sat behind
+  a module-scope `importorskip("numpy")` while **no pytest tier installed numpy** — the anti-vacuity
+  guard was itself vacuous on every push since it was written. The agent also **rejected the fix its
+  brief suggested** (`importorskip`) with a better argument than the brief had: `helpers_audio.py`'s
+  numpy-freeness is deliberate, so a skip deletes the proof on exactly the deployment shape it covers.
+  It grew a stdlib twin instead and added a guard that reddens if anyone applies the rejected fix later.
+  Creds-free suite 5164 → **5259 passed / 29 skipped**, reproduced independently on the merged tree.
+  **The process failure:** the owner's chat-first steer of 2026-09-04 was written down in NO planning
+  document — it survived only in a chat transcript and six uncommitted files in `wt-chat-first`. Now
+  recorded as ⓪ in the implementation plan, verbatim, with "gamify this for regular people" explicitly
+  flagged as NOT specified enough to build. An owner instruction with work already spent against it was
+  one lost session away from vanishing.
+
+- **2026-09-05 — hygiene + live validation.** Four stale remote branches deleted on PR-state evidence
+  after ancestry testing proved misleading (playbook rule 24); `gh pr merge --delete-branch` left the
+  remote behind twice (rule 25). Child-privacy contract re-verified CONFORMANT against the code —
+  `ACTIVITY_COLLECTIONS` names `MENTOR_BEHAVIORS_COLLECTION`, so `erase_telemetry` reaches the safety
+  journal, and the plan's two "last gaps" contradicted its own line 1368. `ingest_telehealth_event` was
+  nearly filed as a third ungated durable store; it writes only in-memory state. Production validated
+  end to end after the env-var writes: `mode: live`, a real turn (`result=SUCCESS`, `backend=router`),
+  and a redeemed ticket yielding **130 164 PCM bytes @ 22050 Hz, ~2.95 s, peak 1.00, 93 % non-zero**.
+  Ticket TTL measured at ~1 minute, which is why a late redemption answers `bad_ticket`.
