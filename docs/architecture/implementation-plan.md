@@ -1595,6 +1595,37 @@ moved**, again.
 
 **Most valuable next slice — RE-RANKED 2026-09-05 ON THE OWNER'S STEER: the live public page is the goal.** The owner asked *"when will Moxie Sim be live with AI on our public page? That should be the goal you drive towards"*. The answer to the literal question is **it already is** — verified that day: `/api/health` reports `mode: live`, a real turn returned *"Hi there! I love mornings because the sun makes everything glow!"* (`backend: router`, `result: SUCCESS`), and a browser played **2.69 s / 59 252 frames @ 22050 Hz, peak 0.97**, zero console errors. But the steer stands as a *priority* instruction, and this ranking now obeys it: **anything that makes a stranger's visit to `moxie.mattvalancy.com/sim` better, safer or cheaper outranks anything that serves a robot none of us has.**
 
+**⓪ THE OWNER'S SECOND STEER, AND IT OUTRANKS EVERY NUMBERED ITEM BELOW — recorded
+2026-09-05, having been recorded NOWHERE until then.** This is a process failure worth
+naming: the instruction below was given on 2026-09-04, work was started on it in a
+worktree, and no line of it reached this plan or the backlog. An explicit owner
+instruction that lives only in a chat transcript and a dirty worktree is one lost session
+away from being lost entirely. Verbatim:
+
+> *"To be clear the live sim on moxie.mattvalancy.com is a bit confusing for users, it
+> should be more like a chatgpt/claude interface with text box at the bottom and mic
+> button next to the text box's send button. So people can chat with moxie live. The
+> engineering debug panel on the right side needs to be optional, not required for
+> interactions. Gamify this for regular people."*
+
+Four separable pieces, and only the first three are specified enough to build:
+**(a)** a chat composer pinned to the bottom — text field, send button, mic button beside
+it; **(b)** the engineering rail (`<aside id="panel">`) optional rather than required, which
+is the load-bearing half — production measurement on a 390×844 phone found the Talk box
+`0×0` on load and, after tapping `CONTROLS`, at `y=2095`, i.e. ~2000 px below the fold, so
+the turn *works* and is merely unreachable; **(c)** none of the six visible controls says
+anything like "talk to Moxie". **(d) "Gamify this for regular people" is NOT yet
+specified** and must not be guessed at — it needs its own brief and the owner's steer on
+what the game *is*.
+
+Work in progress, deliberately preserved rather than resumed blind: `wt-chat-first`
+carries 6 uncommitted files (~33 KB — `sim.html`, `style.css`, `rail.js`, `moxie.js`,
+`env.js`, `cloud-transport.js`) from an agent that died on the usage limit at "Now the
+CSS", snapshotted to a patch on 2026-09-05. `feat/mobile-talk` (+2 commits, unmerged) is
+its superseded predecessor and its 95-check test infrastructure is worth mining, not
+merging. Whoever picks this up: the composer must land as a small diff in the send path,
+because Turnstile's client half attaches a token there too.
+
 ① **A human voice through the hosted mic.** The STT path is built, wired and tested, and **no human has ever spoken into it on the hosted site** — the single largest untested surface on the page a visitor actually uses. Everything else on this list is smaller than this. ② **Turnstile** ([`backlog/live-sim-demo.md`](backlog/live-sim-demo.md) P1) — a bot can still spend the gateway budget inside the per-IP caps; the caps bound the blast radius, they do not stop it. **NOT owner-blocked — that claim was wrong, corrected 2026-09-05.** The widget already existed, and `GET /accounts/{id}/challenges/widgets/{sitekey}` **returns the `secret`**, so the session's Cloudflare token could read it and write it into the Pages production variables without it passing through a transcript. Two further reasoning errors are recorded in the commit: Turnstile hostnames cover subdomains automatically (so `mattvalancy.com` already authorised the sim host), and a `10405` on `PATCH` is about the method on that resource, not a read-only token — `POST`/`DELETE` on the same widget and `PATCH /pages/projects` all succeed. *In flight 2026-09-05.* ③ **A TTS cache** — the demo re-synthesises identical phrases on every visit, which is the cheapest cost win available and needs no owner. ④ **The hour/day windows and the unit budget on the Cache API tier** — the minute window is shared per-colo since PR #146, the rest are still one isolate's `Map`, so the *spend* ceiling is the loosest of the four. ⑤ **`'unsafe-inline'` in `style-src`** — a much smaller hole than the script one closed in #137, and honestly labelled as such.
 
 **Demoted by the same steer, and this is the honest part:** the QR launch-card line (P0-c's printable sheet, the browser-SIM leg) is real, well-tested work that serves a **physical robot nobody in this project has ever connected**. It stays specified and stays green; it is no longer next. Broker auth ([`backlog/security-broker-auth.md`](backlog/security-broker-auth.md)) is likewise robot-side and still blocked on assumptions A1-A4.
@@ -1647,7 +1678,7 @@ so this table cannot reach six green from this room.
 | 3 | Cloud management + `LoggingPolicy` honored | 🟢 | The console shows state and edits config, telemetry flows, and as of 2026-09-04 the policy is honored on the way to disk for **all four** durable child records: the transcript (#131), the telemetry ring, the daily roll-up and the behaviour log (#136) — with `DELETE /telemetry` and a `NO_DATA` flip that takes back what is already there. **Named residual:** the safety journal degrades to counts-only under `NO_DATA` (so the policy *is* honored forward) but has no erase of its own, so its existing rows survive a flip. That is the "erase always works" promise, not this criterion's — recorded rather than hidden. |
 | 4 | Interchangeable clients | 🟡 | The SIM and the SIL virtual robot are identical against the same backend, proven every run. **No physical Moxie has ever connected to this broker**, so "identically" is proven for one of the two clients the criterion names. Not closable from here. |
 | 5 | One command | 🟢 | The compose smoke passes in the deep tier; `docker compose up` runs broker + supervisor + brain. |
-| 6 | Green + tested | 🟢 | 5 037 hermetic tests, 28 browser suites, the deep tier's 12 checks green on the promotion PR, `python -m build` clean at 0.7.0. The soak — the gate on every promotion — was **red on half its runs until 2026-09-04**, and is exact now. **Downgraded 🟢→🟡 and back to 🟢 within the day, on the gate's reliability rather than the tests':** the SIL job produced two intermittent reds on PR diffs that could not touch them, both green on re-run — one of them a shutdown test that finishes in under 2 s locally and could not finish in 30 s on the runner. Every test passes; the *gate* reddens on unrelated work, and by this project's own standing rule that is a latent race, not noise. A gate you re-run is not green in the sense this criterion means, because it teaches the next reader to merge through red. **PR #143 reproduced BOTH and neither was a loose timeout** — the shutdown check read `proc.poll()` immediately after stdout EOF, which can answer `None` for a process the kernel has already reaped (3 of 6 runs under load, verdict reached in ~0.05 s, so the 30 s it blamed never elapsed); and every SIL client published `/state` before its SUBSCRIBE landed, against a config push that is **QoS 0 and not retained**, so losing that race deletes the message and no timeout is ever long enough. Neither bound was widened. Back to 🟢. |
+| 6 | Green + tested | 🟢 | 5 164 hermetic tests (measured 2026-09-05; 5 037 was the 09-04 count), 28 browser suites, the deep tier's 12 checks green on the promotion PR, `python -m build` clean at 0.7.0. The soak — the gate on every promotion — was **red on half its runs until 2026-09-04**, and is exact now. **Downgraded 🟢→🟡 and back to 🟢 within the day, on the gate's reliability rather than the tests':** the SIL job produced two intermittent reds on PR diffs that could not touch them, both green on re-run — one of them a shutdown test that finishes in under 2 s locally and could not finish in 30 s on the runner. Every test passes; the *gate* reddens on unrelated work, and by this project's own standing rule that is a latent race, not noise. A gate you re-run is not green in the sense this criterion means, because it teaches the next reader to merge through red. **PR #143 reproduced BOTH and neither was a loose timeout** — the shutdown check read `proc.poll()` immediately after stdout EOF, which can answer `None` for a process the kernel has already reaped (3 of 6 runs under load, verdict reached in ~0.05 s, so the 30 s it blamed never elapsed); and every SIL client published `/state` before its SUBSCRIBE landed, against a config push that is **QoS 0 and not retained**, so losing that race deletes the message and no timeout is ever long enough. Neither bound was widened. Back to 🟢. |
 
 **Honest total: ~90 %** — five green, one amber. This number has now moved six times in one day
 (~80 → ~88 → ~82 → ~90 → ~85 → ~90) and **that is the point, not a defect in the scoring**: three of those
