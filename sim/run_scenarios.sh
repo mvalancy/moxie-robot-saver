@@ -64,7 +64,15 @@ wait_for_port "$PORT" 30
 : > "$SUP_LOG"
 MOXIE_APP=echo MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT MOXIE_ALLOW_UNVERIFIED_BOTS=1 MOXIE_STATUS_PORT=${MOXIE_STATUS_PORT:-$((7000 + ((PORT + 1) % 2000)))} PYTHONUNBUFFERED=1 python3 mqtt/run.py >"$SUP_LOG" 2>&1 & PIDS+=($!)
 SUP_PID=${PIDS[-1]}
-wait_for_log "[runtime] broker connected" "$SUP_PID" 40
+# THE SUBACK, NOT THE CONNACK. `[runtime] broker connected` means the supervisor ASKED
+# for its topics — `subscribe()` only queues a packet — so a robot that announced itself on
+# that line published `/state` into a broker with no matching subscription, and the QoS-0,
+# non-retained config push that answers it was never generated. That is the HIL red
+# `❌ scenario 'basic-conversation': 0/4 turns OK — no config pushed within timeout` with
+# `motion-demo` green in the same job: a startup race, which is why the first scenario is
+# the one that loses it and why no timeout here can be big enough. See `_on_subscribe` in
+# mqtt/supervisor/moxie_runtime.py, and PR #143 for the identical fix on the robot side.
+wait_for_log "[runtime] subscriptions acknowledged by the broker" "$SUP_PID" 40
 
 rc=0; total=0; failed=0
 for s in sim/scenarios/*.json; do

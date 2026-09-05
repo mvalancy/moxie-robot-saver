@@ -17,11 +17,27 @@
 # which names the config push, the robot and the broker — everything except the boot that
 # had not happened. Two copies of a wait are two waits, so the copies live here once.
 #
-# `[runtime] broker connected` is an HONEST readiness signal as of PR #103: `_on_connect`
-# subscribes and *then* prints (`sim/tests/test_connect_readiness.py` asserts that order
-# of effects). Waiting on it therefore means what it says. The status endpoint is bound
-# before the broker connect is even attempted (`MoxieRuntime.run`), so a script that waits
-# for this line — `run_smoke.sh --telehealth` does — has its status HTTP up as well.
+# WHICH LINE TO WAIT FOR, AND WHY IT IS NOT THE OBVIOUS ONE. PR #103 made
+# `[runtime] broker connected` honest about its own claim — `_on_connect` subscribes and
+# *then* prints — and that is still true. It is the wrong needle anyway: `subscribe()`
+# generates a mid, queues a SUBSCRIBE packet and returns, and under `loop_forever()` the
+# bytes leave on the network thread after the callback. So the line means "we asked", not
+# "the broker agreed", and a robot booted on it announces `/state` into a broker holding
+# no matching subscription. The supervisor answers a `/state` with a config push at QoS 0,
+# not retained, so the loser of that race does not get a late config — it gets none, ever.
+# A bigger timeout cannot recover a message nobody stored. (2026-09-05, HIL:
+# `0/4 turns OK — no config pushed within timeout` on the FIRST scenario while the second
+# passed 4/4. PR #143 is the same fix on the robot's side of the same wire.)
+#
+# So the harnesses wait for `[runtime] subscriptions acknowledged by the broker`, printed
+# from the runtime's `_on_subscribe` — an observation of the SUBACK rather than an
+# estimate of it. It is a SECOND line, deliberately: `broker_connected` in `/status`, the
+# console's connection card and the rc=5 guards all still mean the CONNACK, and
+# redefining the first line would have quietly moved the ground under them.
+#
+# The status endpoint is bound before the broker connect is even attempted
+# (`MoxieRuntime.run`), so a script that waits for either line — `run_smoke.sh
+# --telehealth` does — has its status HTTP up as well.
 
 # Wait until something is listening on 127.0.0.1:$1, or give up after $2 seconds.
 wait_for_port(){

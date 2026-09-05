@@ -650,3 +650,29 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   to catch in the code; it does not get an exemption because I wrote it. The finding above stands on
   its own evidence (the file and line numbers, and the first-scenario/second-scenario split); only the
   claim about what I did with the job is withdrawn.
+- **2026-09-05 — FIXED, and reproduced first.** The supervisor now has an `on_subscribe`, subscribes in
+  **one** call (`c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])` — one SUBSCRIBE, one SUBACK, nothing
+  to count) and prints a **second** readiness line, `[runtime] subscriptions acknowledged by the
+  broker`, from the ack itself. `run_scenarios.sh`, `run_smoke.sh`, `helpers_stack.Supervisor.start()`
+  and `sim/tools/soak.py` (via a new `/status` field, `broker_subscribed`) all key on that instead.
+  `[runtime] broker connected` is unchanged and still means the CONNACK — `/status`, the console's
+  connection card and the rc=5 guards all read it for exactly that, so it was added *beside*, never
+  redefined. **No timeout was widened**, because the message is deleted rather than delayed.
+  **Reproduced before it was fixed, which the previous entry could not do.** The robot-side trick from
+  #143 (sleep inside `on_connect` before subscribing) proves nothing here: `_on_connect` prints its
+  readiness line *after* the subscribe loop, so a sleep there delays the line too and the gap never
+  opens. The supervisor's gap is on the **wire**, after the callback returns. So a TCP relay now sits
+  in front of the broker and holds the SUBSCRIBE packet for 3 s with nothing in the appliance patched
+  (`sim/tests/test_sil_supervisor_readiness.py`). Against `origin/dev`, waiting on the old line, the
+  scenario ends:
+  `[virtual-moxie] → state (software_version=24.10.803)` / `❌ scenario 'basic-conversation': 0/4 turns
+  OK — no config pushed within timeout` — the HIL red, verbatim, on demand. Same relay, same hold, on
+  the fixed tree waiting on the new line: **4/4 turns OK**.
+  **And a third run that matters more than either:** the fixed runtime, booted on the OLD line, still
+  fails 0/4. The runtime change alone does not fix this — the harnesses had to be moved onto the new
+  signal too, which is why "add an `on_subscribe`" would have been a half-fix that reviewed well.
+  12 tests go red on the pre-change tree (7 in `test_connect_readiness.py`, 3 in
+  `test_harness_readiness.py`, both SIL readiness tests); 5094 hermetic pass after, and 5093 in an
+  `openai`/`fastapi`-free venv. `run_scenarios.sh` run **8× consecutively: 8/8 green**, because one green
+  run of an intermittent failure proves very little. 38 mutations, 0 missed, including three new rows on
+  the SUBACK gate.

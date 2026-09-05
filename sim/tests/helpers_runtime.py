@@ -133,6 +133,11 @@ class FakeClient:
         #: broker never saw. Kept apart from `published` for exactly that reason.
         self.dropped: list = []
         self.subscribed: list = []
+        #: How many `subscribe()` CALLS were made, as distinct from how many topics they
+        #: covered. One call is one SUBACK, which is what lets the runtime treat the ack
+        #: as a single unambiguous event (see `_on_subscribe`).
+        self.subscribe_calls = 0
+        self._mid = 0
         #: Whether there is a socket. **True by default**: a `FakeClient` stands in for a
         #: working transport, which is what every existing suite that drives a turn
         #: assumes. `drop()` is how a test says otherwise. (The runtime's own
@@ -152,8 +157,17 @@ class FakeClient:
         return FakeInfo(MQTT_ERR_SUCCESS)
 
     def subscribe(self, topic, qos=0):
-        self.subscribed.append(topic)
-        return (MQTT_ERR_SUCCESS, 1)
+        """paho's signature: ONE topic, or the `[(topic, qos), …]` list the runtime sends
+        so that one SUBSCRIBE is answered by one SUBACK. `subscribed` stays a flat list of
+        topics either way — what a test asks is *which topics*, not how they were batched.
+        """
+        self.subscribe_calls += 1
+        if isinstance(topic, str):
+            self.subscribed.append(topic)
+        else:
+            self.subscribed.extend(t if isinstance(t, str) else t[0] for t in topic)
+        self._mid += 1
+        return (MQTT_ERR_SUCCESS, self._mid)
 
     def is_connected(self) -> bool:
         return self.connected
@@ -170,10 +184,22 @@ class FakeClient:
             return rc
 
     def up(self, rc=0):
-        """A successful CONNACK: the socket is live and the runtime re-subscribes."""
+        """A successful CONNACK: the socket is live, the runtime re-subscribes, and the
+        broker acknowledges — **in that order**.
+
+        The SUBACK is delivered *after* `_on_connect` returns because that is where a real
+        one arrives: `subscribe()` only queues the packet, and paho writes it on the
+        network thread once the callback is done. A double that acknowledged inside
+        `subscribe()` would quietly close the very window this models — the one in which
+        the supervisor is connected and deaf, where a robot's `/state` and the QoS-0
+        config answering it are both lost (see `_on_subscribe` in `moxie_runtime.py`).
+        """
+        before = len(self.subscribed)
         self.connected = True
         if self.runtime is not None:
             self.runtime._on_connect(self, None, {}, self._reason(rc), None)
+            if len(self.subscribed) > before:     # a refusal subscribes nothing to ack
+                self.runtime._on_subscribe(self, None, self._mid, [0], None)
         return self
 
     def drop(self, rc=7):
