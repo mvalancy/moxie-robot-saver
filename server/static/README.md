@@ -19,5 +19,21 @@ dependencies** (works fully offline). Served at `/` by the FastAPI server.
 
 The QR image itself is rendered server-side (`/local/pairing/qr.png`) so the client stays tiny.
 
+## What is actually tested in a browser
+
+Almost none of it, and that is worth knowing before you trust a card here. Every other headless
+suite in this repo drives [`sim/web`](../../sim/web/) — the public simulator — so until 2026-09-04
+**no browser had ever loaded this folder**, and each card was asserted only by Python *route* tests
+that can prove what the server answers and nothing about whether a button wires itself up.
+
+[`sim/test_console_insights.mjs`](../../sim/test_console_insights.mjs) closes that for **📈 Insights**:
+it serves this folder statically, answers every `/local/*` call at the browser (so it needs neither
+fastapi nor a supervisor), and sweeps all six render paths of `refreshInsights` — including the
+two-click **Erase history** button, asserted on the intercepted `DELETE` rather than on its label.
+
+Still uncovered by any browser: 🔐 Robot access, ⚙️ Settings, 🛡️ Safety, 🎨 Moxie's look, 🎭 Be Moxie,
+📅 Today's plan, 🧠 What Moxie remembers, 🎚️ Voice, 📦 Content, 🧠 Brain and the live-state list —
+plus the returning-parent entry path (a stored `moxie_token` auto-enters the app on load).
+
 ---
 📖 [Back to top](../../README.md) · [Server README →](../README.md)

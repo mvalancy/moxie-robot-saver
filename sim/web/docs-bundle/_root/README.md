@@ -14,7 +14,7 @@ wear it**. Reviving the original experience is the floor; a full **brain transpl
 shell** — is the ceiling.
 
 <p align="center">
-  <img width="712" alt="Moxie SIL simulator" src="https://github.com/user-attachments/assets/81f325da-725c-4902-9d1f-9233f0b5cf97" />
+  <img width="712" alt="Moxie SIL simulator" src="sim/web/img/sim-hero.png" />
 </p>
 
 > 🗂️ **Repo layout:** see [`STRUCTURE.md`](STRUCTURE.md) — three domains (robot · parent app · server app).

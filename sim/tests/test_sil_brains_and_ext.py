@@ -163,8 +163,11 @@ class Robot:
         self.vm = VirtualMoxie("127.0.0.1", port, timeout=timeout, verbose=False)
         self.vm.client.connect("127.0.0.1", port, 30)
         self.vm.client.loop_start()
-        self.vm.client.publish(self.vm.t_state, json.dumps(
-            {"software_version": "24.10.803", "state": "config"}))
+        # `announce()` and not a bare publish: the config that answers a `/state` is a
+        # QoS-0, non-retained message, so a robot that announces itself before its
+        # SUBSCRIBE has been acknowledged is deaf to the only answer it gets — see
+        # `virtual_moxie.VirtualMoxie.announce`.
+        assert self.vm.announce(), self.vm.errors
         assert self.vm.got_config.wait(timeout), "no config pushed"
         assert (self.vm.config_payload or {}).get("pairing_status") == "paired", \
             self.vm.config_payload

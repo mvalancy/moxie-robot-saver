@@ -65,7 +65,12 @@ A backend + Sim are built from these directly; each cites the study but reads on
   allowlist, and only then the sheet a parent prints), and
   [`backlog/insights.md`](backlog/insights.md) (insights that mean something — where a parent-facing
   vocabulary comes from when `Packet.event_name` is a free string, which questions a card can honestly
-  answer, and which two charts it refuses to draw). One page there is the odd one out and
+  answer, and which two charts it refuses to draw), and
+  [`backlog/vendor-the-readme-hero.md`](backlog/vendor-the-readme-hero.md) (**shipped 2026-09-04** —
+  the one defect that had stood between the live site and a clean browser console: the README's hero
+  image was hosted on `github.com`, which `img-src 'self' data: blob:` correctly refuses. Vendored
+  rather than allow-listed, and the guard against the next one — `sim/tests/test_no_offsite_images.py`
+  — is worth more than the image). One page there is the odd one out and
   deliberately so:
   [`backlog/community-signals.md`](backlog/community-signals.md) — **the inbound half**, what owners
   holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how

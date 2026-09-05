@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 
 import pytest
@@ -67,8 +68,16 @@ class Robot:
         self.device_id = device_id
         self.port = port
         self.received: list = []
+        self.subscribed = threading.Event()
+        self._pending_subs: set = set()
         self._c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=device_id)
         self._c.on_message = self._on_message
+        self._c.on_subscribe = self._on_subscribe
+
+    def _on_subscribe(self, c, u, mid, reason_codes=None, properties=None):
+        self._pending_subs.discard(mid)
+        if not self._pending_subs:
+            self.subscribed.set()
 
     def _on_message(self, c, u, msg):
         try:
@@ -80,16 +89,25 @@ class Robot:
     def connect(self) -> "Robot":
         self._c.connect("127.0.0.1", self.port, keepalive=30)
         self._c.loop_start()
-        self._c.subscribe(f"/devices/{self.device_id}/commands/#")
+        self._pending_subs = {self._c.subscribe(f"/devices/{self.device_id}/commands/#")[1]}
         return self
 
     def announce(self, **status):
         """`/devices/<id>/state` — the RobotStatus that makes this robot visible and
-        carries the only OTA facts the recovered protocol gives us."""
+        carries the only OTA facts the recovered protocol gives us.
+
+        Waits for the SUBACK first. This client sends its SUBSCRIBE from the CALLING
+        thread, so today it is ahead of the announcement on the wire by construction —
+        but "safe because of packet ordering nobody asserted" is one refactor (moving the
+        subscribe into `on_connect`, where every other client has it) away from the
+        lost-config race that cost the SIL job two intermittent reds. So the wait is
+        explicit here too."""
         body = {"robot_firmware_version": FIRMWARE, "battery_level": 88,
                 "audio_volume": 0.5, "wifi_ssid": "Lab", "mode": "normal",
                 "ota_reboot_required": False}
         body.update(status)
+        assert self.subscribed.wait(30), \
+            f"{self.device_id}: the broker never acknowledged our subscription"
         self._c.publish(f"/devices/{self.device_id}/state", json.dumps(body), qos=1).wait_for_publish(5)
 
     def telemetry(self, event_name: str, event_data: bytes = b"", **kw):

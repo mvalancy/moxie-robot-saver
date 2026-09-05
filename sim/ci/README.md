@@ -22,6 +22,32 @@ cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml .github/workflows/
 | **`ci-deep.yml`** | deep (main) + HIL | PR → `main`, **manual dispatch** | everything above, plus the packaged build, the compose stack, and the **live tiers** below |
 | **`release.yml`** | release | tag `v*` | sdist+wheel, version==tag, GitHub Release |
 
+## What the fast tier's `sil` job actually runs (measured 2026-09-04)
+
+Recorded because it was assumed twice and is cheap to check:
+
+| Step | Selection | Collected |
+|---|---|---|
+| *Hermetic pytest, EARLY* | `-k "not test_sil and not test_docs" --ignore=test_live_gateway.py` | **5,077** |
+| *SIL + static-site pytest/Playwright suite* | `pytest sim/tests -q` (unfiltered) | **5,187** |
+
+So the job runs the hermetic suite **twice**, and the second run re-executes 5,077 tests
+to reach exactly **110 new ones**: the 106 `test_sil*` / `test_docs*` tests the `-k`
+deselects, plus the 4 in `test_live_gateway.py` the `--ignore` drops. Every browser-backed
+*pytest* test in the repo — the ones taking conftest's `page` / `browser` fixtures, i.e.
+`test_sil.py` and `test_sil_child_voice.py` — is inside those 106, so splitting the job on
+that line is mechanically available.
+
+**It is deliberately not split.** The duplication is real waste, but it is not free to
+remove: `sim/tests/test_ci_workflows.py::test_the_fast_tier_runs_the_whole_pytest_suite`
+requires one *unfiltered* fast-tier invocation, and it was written after the #43–#46
+post-mortem precisely to forbid a `-k`-filtered tier. What it defends is that somewhere in
+the tier every test runs under the fullest dependency set, which is what turns a future
+`importorskip` into a red rather than a skip. The two intermittent reds this measurement
+was taken for turned out to be latent races (see the `test_sil_handshake.py` and
+`test_clean_shutdown.py` docstrings) and were fixed at the source, so paying a proven
+invariant for ~2 minutes would be buying nothing.
+
 ## The live tiers in `ci-deep.yml`
 
 Everything else in CI is hermetic. Two steps are not, and both are **`workflow_dispatch`

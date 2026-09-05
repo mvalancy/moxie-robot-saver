@@ -97,6 +97,25 @@ try {
   ok(await page.evaluate(() => !!document.querySelector("article h1, article h2, article p")),
      "home document markdown should render");
 
+  /* 1a) …INCLUDING its hero image, from this origin, actually decoded.
+   *
+   * The home document is README.md and its hero used to be an `<img>` from
+   * `github.com/user-attachments` — refused by the shipped `img-src` in production and
+   * aborted by the interceptor above in here, which is why the preamble names it. Vendored
+   * 2026-09-04 to `sim/web/img/sim-hero.png`. Two things are asserted and neither is "an
+   * `<img>` is present": the src must have been REMAPPED (the README writes it repo-relative
+   * as `sim/web/img/…` so GitHub renders it; this page is served FROM `sim/web`, so
+   * `docs.js` has to strip that prefix or the URL 404s), and the bytes must have DECODED —
+   * `naturalWidth` is 0 for a broken-image icon and 0 for a blocked one. */
+  const hero = await page.evaluate(() => {
+    const i = document.querySelector("article img");
+    return i ? { src: i.getAttribute("src"), w: i.naturalWidth, h: i.naturalHeight } : null;
+  });
+  ok(hero && /^img\//.test(hero.src || ""),
+     `the README hero should be remapped onto the site root (got ${hero && hero.src})`);
+  ok(hero && hero.w > 0 && hero.h > 0,
+     `the README hero should actually decode (got ${JSON.stringify(hero)})`);
+
   // 1b) the reverse-engineering section is sub-grouped by folder (Protocol / Runtime / Firmware / …)
   const subheads = await page.$$eval(".subhead", (els) => els.map((e) => e.textContent));
   ok(subheads.some((t) => /Protocol/.test(t)) && subheads.some((t) => /Runtime/.test(t)) &&
@@ -252,6 +271,14 @@ try {
   /* …and say what was cut off, so a doc that quietly grows a remote dependency is visible
    * in the log rather than silently tolerated. */
   if (blocked.n) console.log(`   (blocked ${blocked.n} off-origin request(s): ${blocked.urls.join(", ")})`);
+  /* The interceptor exists so the suite cannot DEPEND on the network. This asserts the
+   * stronger property it was always one step away from: the explorer does not REACH for
+   * the network at all. Until the README hero was vendored on 2026-09-04 this counted 3
+   * (the same attachment URL, once per render of the home doc) and the forgiveness loop
+   * above quietly absorbed all three. A doc that grows a remote asset now fails here
+   * instead of being logged and tolerated. */
+  ok(blocked.n === 0,
+     `the docs explorer should make ZERO off-origin requests (blocked ${blocked.n}: ${blocked.urls.join(", ")})`);
 } finally {
   await browser.close();
   cleanup();
