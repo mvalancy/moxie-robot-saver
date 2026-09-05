@@ -791,3 +791,41 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   end to end after the env-var writes: `mode: live`, a real turn (`result=SUCCESS`, `backend=router`),
   and a redeemed ticket yielding **130 164 PCM bytes @ 22050 Hz, ~2.95 s, peak 1.00, 93 % non-zero**.
   Ticket TTL measured at ~1 minute, which is why a late redemption answers `bad_ticket`.
+
+- **2026-09-05 — SIX PRs MERGED (#156-#161), and the two the owner asked for are both in.**
+  `dev` `8bf39af`, zero stale remote branches, 12 commits ahead of `main`.
+  **#160 Turnstile** — the owner's explicit request, and it needed **nothing** from them: the widget
+  API returns an existing widget's `secret` on a plain `GET`, so it went into the Pages production
+  variables inside one call and never touched a transcript; Turnstile authorises subdomains
+  automatically, so no dashboard edit was ever required; their widget was not rotated or replaced.
+  Five adversarial reviewers found **two blockers that would have shipped** — a wrong secret silently
+  disabling the whole control (Cloudflare answers **HTTP 400** for `invalid-input-secret`, which the
+  fail-open branch swallowed) and a memoised failed script load bricking live chat for the page's
+  life — plus the fact that **my brief was under-scoped**: I wrote "the one route that spends money"
+  and `/api/transcribe` spends too. 57/57 mutation rows, a table stricter than the repo's other five
+  because it requires the check that *names* the deleted guard to be the failing one.
+  **#161 subscribe-inbound** — a subscribed event now wakes the pack that asked for it, through the
+  local evaluator, at **zero model calls**, proven from a recorded counter (`moxie_sdk.chat.
+  note_model_call()`, the Python twin of `noteUpstreamCall`) with a control turn first so a zero is
+  proof the counter works rather than proof it was never wired. Its own harness corrected its test:
+  routing to `respond` left the assertion green because a matched rule is *also* free — the costly
+  case is a subscribed event with **no** rule, where a brain answers a robot's eye.
+  **Both halves of `subscribe` are nonetheless reachable by no parent**: it is in neither
+  `DEFAULT_GRANTS` nor `SHIPPED_EXTRA_GRANTS`. Recorded in `backlog/sandboxed-extensions.md` as a
+  decision, not a gap — a pack that can subscribe can ask the robot's *eyes* to report to it.
+
+- **2026-09-05 — DoD #2 re-verified LIVE rather than trusted.** The INTEGRATION tier's suggested gap
+  ("does a content module run live e2e?") was **already covered** — `test_live_content_e2e.py` exists
+  and `run_smoke.sh --live-brain` defaults to the `content` app — so briefing it would have been
+  manufactured work. Ran it instead: `result=SUCCESS len(text)=135 len(markup)=1724`, a real reply
+  from `gateway.graphlings.net`, plus a live global handler (*"set a timer for 5 minutes"* → *"Okay!
+  A timer for 5 minutes. Go!"*) and the `EventSubscription` from #159/#161 visibly firing. It runs in
+  under 3 s because it is **deliberately frugal — one live completion for the whole module** — which
+  is documented in its own docstring; the speed was checked before it was believed, since "a passing
+  run that proved nothing" is exactly what #157 found in the anti-vacuity guard.
+
+- **Turnstile enforcement is OFF and stays off until the owner says otherwise.** The secret is
+  deliberately absent from production, so #160 merging changed nothing for visitors (verified:
+  `mode=live`, `degraded=false`, `turnstile=None`). `*.pages.dev` is not an authorised hostname, so
+  no preview can rehearse a real challenge — production is necessarily the first live test, which is
+  why arming it is one API call the owner gets to time.
