@@ -16,6 +16,61 @@ ChatFn = Callable[[list], str]      # messages [{role,content}] -> assistant tex
 StreamFn = Callable[[list], Iterator[str]]   # messages -> a trickle of text deltas
 
 
+# ---- the recorded upstream-call counter ----------------------------------- #
+#
+# 💰 **Why a counter and not a stub.** Several properties in this appliance are of the
+# form *"this path must never cost a model call"* — the loudest is presence: a vision
+# event is answered by `moxie_runtime._on_vision_turn` and is "never assessed as a
+# child's utterance, never enters history, **never costs a model call**"
+# (docs/architecture/vision.md §7.1), because `eb-found-face` fires every time a child
+# moves around a room and routing it to a brain would turn presence into a billing event.
+#
+# A test can *assert* that by handing the app a brain double that fails when called — and
+# that proves only that **this** double was not called. It says nothing about a second
+# path, a retry inside `call_with_backoff`, or a stream opened somewhere else in the same
+# turn. The edge already learned this lesson and solved it the other way round:
+# `functions/api/_lib/limits.js::noteUpstreamCall()` sits immediately before the one
+# `fetch()` in each route, and `sim/tests/test_live_hosted_ears.py` asserts
+# `upstream_calls == 1` against that RECORD rather than against a stub's silence. This is
+# the same instrument on the Python side, in the same position: immediately before the
+# call that becomes an HTTP request to the gateway.
+#
+# **What it counts, exactly, and what it does not.** One increment per *request attempt*
+# on the chat/completions seam — so a `call_with_backoff` retry counts again, which is
+# right: each attempt is a request the gateway may bill. Opening a stream counts once; its
+# deltas do not. It does **not** cover `moxie_sdk/tts.py` or `moxie_sdk/stt.py`, whose
+# gateway calls are a different budget with a different shape (a spoken line is
+# synthesized identically whether a greeting, a pack rule or a brain produced it). The
+# name says `model`, not `gateway`, so that boundary is in the identifier rather than in a
+# comment somebody has to find.
+#
+# It is process-global and deliberately not thread-local: the runtime answers turns on a
+# worker pool, and a test that drives one turn wants the count for the whole process. The
+# GIL makes `+= 1` on an int safe enough for a diagnostic counter; this is not a billing
+# ledger and must never become one.
+
+_MODEL_CALLS = {"chat": 0, "stream": 0}
+
+
+def note_model_call(kind: str = "chat") -> None:
+    """Record one request attempt against the model endpoint. Called immediately before
+    the call that performs it — never after, so a call that raises is still counted."""
+    _MODEL_CALLS[kind] = _MODEL_CALLS.get(kind, 0) + 1
+
+
+def model_calls(kind: str = "") -> int:
+    """How many model requests this process has attempted (`kind=""` → all of them)."""
+    if kind:
+        return int(_MODEL_CALLS.get(kind, 0))
+    return sum(_MODEL_CALLS.values())
+
+
+def reset_model_calls() -> None:
+    """Zero the counter. For tests, which take a reading before and after."""
+    for key in list(_MODEL_CALLS):
+        _MODEL_CALLS[key] = 0
+
+
 # ---- error classification ------------------------------------------------- #
 
 def _mro_names(e: Exception) -> set:
@@ -129,16 +184,27 @@ def _default_on_backoff(attempt, delay, err):
 def make_openai_chat(base_url: str, api_key: str, model: str = "graphling-medium",
                      max_tokens: int = 200, temperature: float = 0.8, *,
                      max_retries: int = 4, on_backoff=_default_on_backoff,
-                     pacer: Optional[Pacer] = None) -> ChatFn:
+                     pacer: Optional[Pacer] = None, client=None) -> ChatFn:
     """Build a chat(messages)->str over an OpenAI-compatible endpoint, with graceful
     rate-limit backoff + adaptive pacing. Raises on failure after retries (the caller
-    decides offline vs rate-limited vs soft — see the is_* helpers)."""
-    from openai import OpenAI          # lazy import so the SDK has no hard dep
-    client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
+    decides offline vs rate-limited vs soft — see the is_* helpers).
+
+    `client` is the injection seam of playbook rule 9: pass anything exposing
+    `.chat.completions.create(...)` and no `openai` client is constructed and no socket is
+    opened. It exists so a test can drive **this function**, counter and backoff included,
+    rather than a re-implementation of it — which is the difference between asserting the
+    real seam spends nothing and asserting a double stayed quiet."""
+    if client is None:
+        from openai import OpenAI      # lazy import so the SDK has no hard dep
+        client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
     _pacer = pacer if pacer is not None else Pacer()
 
     def chat(messages: list) -> str:
         def _once():
+            # Immediately before the request, never after: a call that raises still cost
+            # the gateway an attempt, and this counter's whole job is to be believed when
+            # it reads zero (`note_model_call`).
+            note_model_call("chat")
             resp = client.chat.completions.create(
                 model=model, messages=messages,
                 max_tokens=max_tokens, temperature=temperature)
@@ -193,6 +259,10 @@ def stream_completion(client, model: str, messages: list, *, max_tokens: int = 2
     is to fall back (see `LLMApp.respond_stream`, which restarts on the non-streaming
     path when the stream dies before it produced anything)."""
     def _open():
+        # One increment per *opening* attempt — the deltas that follow are the same
+        # request, and a retried open is a second request. Same position as the
+        # non-streaming seam above.
+        note_model_call("stream")
         return client.chat.completions.create(
             model=model, messages=messages, max_tokens=max_tokens,
             temperature=temperature, stream=True)
@@ -217,10 +287,13 @@ def stream_completion(client, model: str, messages: list, *, max_tokens: int = 2
 def make_openai_stream(base_url: str, api_key: str, model: str = "graphling-medium",
                        max_tokens: int = 200, temperature: float = 0.8, *,
                        max_retries: int = 4, on_backoff=_default_on_backoff,
-                       pacer: Optional[Pacer] = None) -> StreamFn:
-    """`make_openai_chat`'s streaming twin: `stream(messages) -> Iterator[str]`."""
-    from openai import OpenAI          # lazy import so the SDK has no hard dep
-    client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
+                       pacer: Optional[Pacer] = None, client=None) -> StreamFn:
+    """`make_openai_chat`'s streaming twin: `stream(messages) -> Iterator[str]`.
+
+    `client` is the same rule-9 seam, for the same reason."""
+    if client is None:
+        from openai import OpenAI      # lazy import so the SDK has no hard dep
+        client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
     _pacer = pacer if pacer is not None else Pacer()
 
     def stream(messages: list) -> Iterator[str]:
