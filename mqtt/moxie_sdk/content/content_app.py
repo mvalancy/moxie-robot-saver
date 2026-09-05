@@ -190,7 +190,13 @@ class ContentApp(MoxieApp):
         # or `<usel` unchanged, so authored markup is never touched.
         if markup and _automarkup_enabled():
             markup = annotate(markup)
-        return Reply(text=text, markup=markup, actions=actions)
+        # …and `volley.subscriptions` — what a handler or extension asked to *perceive*.
+        # Symmetric with the actions above: `act` is the outbound half of `MoxieGo`'s
+        # opening move and `subscribe` is the inbound half, and a scanner you cannot read
+        # from is pointless (brief §5.1). The runtime merges this into its own vision
+        # subscription; see `moxie_runtime._publish_chat`.
+        return Reply(text=text, markup=markup, actions=actions,
+                     subscribe=subscriptions_of(v))
 
 
     # ---- sandboxed extensions (BEYOND #6) ----
@@ -343,7 +349,13 @@ class ContentApp(MoxieApp):
                 # A global (OpenMoxie's timer is the canonical one) may write durable
                 # state; that is what `persist_data` is for.
                 self._save_persist_data(turn.robot.device_id, v.persist_data, before)
-                if v.output_text is not None or v.execution_actions:
+                # `or v.subscriptions` for the same reason `or v.execution_actions` is
+                # here: a global whose whole job is to arm a perception has produced
+                # something, and falling through to the conversation would build a FRESH
+                # volley and drop it on the floor. That is the S5 gap in its third
+                # location, so it is closed in the same shape.
+                if (v.output_text is not None or v.execution_actions
+                        or v.subscriptions):
                     return self._reply_from_volley(v)
             # matched but nothing produced output → fall through to conversation
 
@@ -364,7 +376,8 @@ class ContentApp(MoxieApp):
                                  data={"extension": conv.extension,
                                        "memory": conv.memory})
         if pre is not None and pre.handled and (v.output_text is not None
-                                                or v.execution_actions):
+                                                or v.execution_actions
+                                                or v.subscriptions):
             # `or v.execution_actions` mirrors the globals path above: a rule that answers
             # the turn by *doing* something — arming the QR scanner, cancelling a timer —
             # has handled it just as much as one that spoke, and dropping the action here
@@ -404,9 +417,13 @@ class ContentApp(MoxieApp):
         # pack asked for. Losing it here would mean "act" only worked when a pack also
         # took the whole turn.
         actions += execution_actions_of(v)
+        # Same for the subscription: `MoxieGo`'s opening move arms the scanner AND asks to
+        # be told what it sees, and neither half is conditional on the pack also taking
+        # the turn. Losing it here would mean "subscribe" only worked when a pack spoke.
+        subscribe = subscriptions_of(v)
         if not text and not actions:
-            return Reply(text="Tell me more!")
-        return Reply(text=text, actions=actions)
+            return Reply(text="Tell me more!", subscribe=subscribe)
+        return Reply(text=text, actions=actions, subscribe=subscribe)
 
     # ---- end of conversation: write what is worth remembering ----
     def _memory_conversation(self, robot: RobotContext):
@@ -635,8 +652,8 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
                       content_id: str = "") -> dict:
     """Apply one extension's effect list, in order, subject to every cap in §6.3.
 
-    Returns `{"spoke", "wrote", "dropped_markup", "blocked", "acted"}` for the caller and
-    the log.
+    Returns `{"spoke", "wrote", "dropped_markup", "blocked", "acted", "subscribed"}` for
+    the caller and the log.
 
     Two things are worth reading twice. **`say` goes through the same output-side safety
     classifier and the same `annotate` floor a model's line does** — an extension does not
@@ -645,7 +662,7 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
     key**: the `(device_id, namespace)` pair is supplied here, by us, so the write cannot
     reach another module's namespace or another child's robot (X9).
     """
-    spoke = wrote = dropped = acted = 0
+    spoke = wrote = dropped = acted = subscribed = 0
     blocked = False
     for eff in effects or []:
         kind = eff.get("kind")
@@ -706,14 +723,27 @@ def apply_ext_effects(effects, *, volley: Volley, memory=None, device_id: str = 
                 continue
             volley.add_execution_action(name, [str(a) for a in (eff.get("args") or [])])
             acted += 1
-        elif kind in ("subscribe", "brain"):
-            # Still unreachable — both capabilities are refused at load (`ext
-            # .P1_CAPABILITIES` says which and why). Kept as an explicit refusal rather
-            # than a silent drop so the day each one lands, the gap is a line to fill in
-            # and not a bug to find.
+        elif kind == "subscribe":
+            # The pack asked to *perceive* something. `add_subscriptions`, never
+            # `update_subscriptions`: an extension may add an event and may never remove
+            # one — see `Volley.add_subscriptions` for the asymmetry, and
+            # `moxie_runtime._publish_chat` for the same rule against the supervisor's own
+            # vision set one layer up. The names are bounded again in `subscriptions_of`,
+            # for the same reason `act` is bounded twice: that is the last function before
+            # a string becomes an `EventSubscription.active[]` entry on a wire to a robot
+            # in a child's room.
+            events = [str(e) for e in (eff.get("events") or [])]
+            volley.add_subscriptions(events)
+            subscribed += len(events)
+        elif kind == "brain":
+            # Still unreachable — `brain` is refused at load (`ext.P1_CAPABILITIES` says
+            # why: it needs the one-call-per-turn budget). Kept as an explicit refusal
+            # rather than a silent drop so the day it lands, the gap is a line to fill in
+            # and not a bug to find. `subscribe` was the other half of this branch until
+            # 2026-09-05 and is now handled above.
             print(f"[ext] {kind} is not plumbed yet; ignored", flush=True)
     return {"spoke": spoke, "wrote": wrote, "dropped_markup": dropped, "blocked": blocked,
-            "acted": acted}
+            "acted": acted, "subscribed": subscribed}
 
 
 def robot_functions() -> frozenset:
@@ -771,6 +801,46 @@ def execution_actions_of(volley: Volley) -> list:
             args = [args]
         out.append(Action(type=ActionType.EXECUTE, function=name,
                           args=[str(a) for a in args]))
+    return out
+
+
+def robot_events() -> frozenset:
+    """The robot events this appliance will ever ask to be pushed — **`ext
+    .SUBSCRIBE_EVENTS`, and nothing else**. `robot_functions()`'s inbound twin.
+
+    One table again, for the same reason: the set of nameable events equals the set
+    recovered from the robot's own catalog (vision.md §1.1-1.2), so a pack cannot ask to
+    be woken by a string somebody invented. Widening it is a code change in a file a
+    reviewer reads.
+    """
+    return frozenset(ext.SUBSCRIBE_EVENTS)
+
+
+def subscriptions_of(volley: Volley) -> list:
+    """`volley.subscriptions` → the event names a `Reply` may carry.
+
+    The last function before a pack's string becomes an
+    `RemoteChatAction.EventSubscription.active[]` entry, and therefore the place the closed
+    vocabulary is checked a **second** time. `ext._st_subscribe` already refuses an unknown
+    event at load, so in a pack's path this is belt and braces — but
+    `Volley.update_subscriptions` is also the *contract's* API for a registered Python
+    global handler (`content-module-contract.md` §"What module code may do"), and that
+    caller never met the validator. `execution_actions_of` makes exactly this argument for
+    `act`; both gates exist because the value's destination is a robot in a child's room.
+
+    Order is the volley's, duplicates are dropped, and an unknown name is dropped **loudly**
+    — the same shape and the same log idiom as a refused `function_id`.
+    """
+    known = robot_events()
+    out: list = []
+    for raw in getattr(volley, "subscriptions", None) or []:
+        name = str(raw)
+        if name not in known:
+            print(f"[content] {name!r} is not a robot event this appliance names; "
+                  f"dropped (see subscriptions_of)", flush=True)
+            continue
+        if name not in out:
+            out.append(name)
     return out
 
 

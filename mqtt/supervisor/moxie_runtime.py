@@ -3267,6 +3267,66 @@ class MoxieRuntime:
               f"{', '.join(presence_seam.VISION_EVENTS)}", flush=True)
         return list(presence_seam.VISION_EVENTS)
 
+    def _merge_subscriptions(self, device_id, mine, asked):
+        """The supervisor's own `EventSubscription.active[]` list **⊕** what this reply
+        asked for. Returns the merged list, or None when there is nothing to send.
+
+        **The direction is the whole point, and getting it wrong is silent.** `mine` is
+        the runtime's vision subscription — the events `presence.py` needs for
+        arrived/left, the greeting rule and QR launch cards. `asked` is a *request* from
+        the app layer, which in practice means a sandboxed content pack that declared
+        `subscribe` (`content_app.subscriptions_of` → `Reply.subscribe`). A pack must be
+        able to say *"also tell me about this"*; it must not be able to say *"only tell me
+        about this"*, because the appliance's own behaviour is downstream of `mine` and a
+        shorter list would switch it off. So `mine` is copied first and every entry of it
+        survives, unconditionally, whatever the pack asked for.
+
+        The failure this shape exists to prevent is worse than a missing event, which is
+        why it is worth spelling out. `_vision_subscription` **latches**
+        (`_vision_subscribed[device] = module`) at the moment it hands the list over: it
+        believes the list has been sent. An implementation that let `asked` win — `asked
+        or mine`, or a `dict` update in the other order — would set that latch and then
+        publish a list without the vision events in it, and the runtime would never ask
+        again for that `(device, module)`. Presence would go quiet with nothing logged.
+        That is the cached-belief defect the playbook keeps re-finding, so the merge is
+        one function with one direction and a test that fails if the direction flips.
+
+        Two gates apply to `asked` and to neither `mine` (already gated in
+        `_vision_subscription`) nor the merge:
+
+        * **`MOXIE_VISION=0`.** The operator's kill switch is above a content pack. If
+          this appliance is not asking the robot for perception events, a pack cannot ask
+          on its behalf.
+        * **The pairing gate.** An unpermitted robot is served nothing (`is_permitted`),
+          and "nothing" includes a request to start pushing us what its camera sees.
+
+        Names are bounded a third time against `presence_seam.VISION_EVENTS` — not for
+        tidiness: `_on_remote_chat` / `_on_event` can only route an event from that
+        catalog, so an event outside it would be a subscription this runtime could not
+        act on if the robot honoured it.
+        """
+        merged = list(mine or [])
+        if asked:
+            if not self.vision:
+                print(f"[runtime] 👁️  {device_id} asked for "
+                      f"{', '.join(str(e) for e in asked)} but vision is off "
+                      f"(MOXIE_VISION=0); refused", flush=True)
+            elif not self.is_permitted(device_id):
+                print(f"[runtime] 👁️  refusing an event subscription for unpermitted "
+                      f"{device_id}", flush=True)
+            else:
+                for event in asked:
+                    name = str(event)
+                    if name not in presence_seam.VISION_EVENTS:
+                        print(f"[runtime] 👁️  {name!r} is not an event this appliance "
+                              f"can route; dropped", flush=True)
+                        continue
+                    if name not in merged:
+                        merged.append(name)
+                        self._note("vision", f"a content pack asked to be told about "
+                                             f"{name} on {device_id}")
+        return merged or None
+
     def _turn_worker(self, device_id, event_id, speech, turn, seq):
         """`_handle_turn` with an in-flight marker around it.
 
@@ -3484,7 +3544,12 @@ class MoxieRuntime:
                            actions=reply.actions, end_turn=reply.end_turn,
                            result=reply.result_code, chunk_num=chunk,
                            is_completed=None if chunk is None else True,
-                           scored=scored)
+                           scored=scored,
+                           # What this reply asked to PERCEIVE (`Reply.subscribe`, filled
+                           # by a content pack's `subscribe` statement). Merged into the
+                           # runtime's own vision subscription inside `_publish_chat`,
+                           # which is the only place that merge is allowed to happen.
+                           subscribe=reply.subscribe)
         self._maybe_synthesize(device_id, markup, event_id, chunk_num=chunk or 0)
         # `<exit>` in the model's own line (or a handler's) ended the activity: this
         # worker is already off the MQTT loop, so summarize inline.
@@ -5113,18 +5178,27 @@ class MoxieRuntime:
     def _publish_chat(self, device_id, event_id, backend, text, markup="",
                       actions=None, end_turn=False, result=ResultCode.SUCCESS,
                       modules=None, mood=None, dialog_act=None,
-                      chunk_num=None, is_completed=None, safety=None, scored=None):
+                      chunk_num=None, is_completed=None, safety=None, scored=None,
+                      subscribe=None):
         # Ask the robot to start pushing us its vision events, once per module. It rides
         # a spoken reply because that is the only cloud→robot message the contract gives
         # a `RemoteChatAction` to hang `EventSubscription` on — and it is attached only to
         # a plain, action-free closing reply so no reply that already carries a
         # launch/exit changes shape (see `_vision_subscription`).
-        subscribe = None
+        mine = None
         if (self.vision and modules is None and backend == "router" and not actions
                 and result == ResultCode.SUCCESS and chunk_num in (None, 0)
                 and self._vision_subscribed.get(device_id) !=
                     (getattr(self.robots.get(device_id), "module_id", None) or "")):
-            subscribe = self._vision_subscription(device_id)
+            mine = self._vision_subscription(device_id)
+        # `subscribe` is what the *app* asked for on this reply (`Reply.subscribe` — in
+        # practice a content pack's `subscribe` statement). It is merged INTO the
+        # runtime's own list, never over it, and unlike `mine` it is not restricted to an
+        # action-free reply: `MoxieGo`'s opening move is an `act` and a `subscribe`
+        # together, so a gate that dropped one whenever the other was present would make
+        # the pair unusable. `build_chat_response` already hangs the subscription on
+        # `response_actions[0]` whatever else that entry carries.
+        subscribe = self._merge_subscriptions(device_id, mine, subscribe)
         # `scored` is the seam's answer for this line (`_stage`); explicit mood/
         # dialog_act arguments still win, because a caller that passed one meant it.
         sc = dict(scored or {})

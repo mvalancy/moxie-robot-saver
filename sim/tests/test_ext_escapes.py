@@ -858,6 +858,13 @@ def test_x10_p1_capabilities_are_declared_rendered_and_refused():
     is the one used here. Nothing about the invariant moved: the last two lines — *a
     still-P1 capability is refused, and `evaluate()` has no `allow_p1` door* — are the
     escape property, and they are unchanged and still assert on `E.P1_CAPABILITIES`.
+
+    **`subscribe` left the set on 2026-09-05**, the same way and for the same reason, so
+    the assertion below no longer names it: `Volley.subscriptions` had no consumer, and
+    now it has one (`content_app.subscriptions_of` → `Reply.subscribe` →
+    `moxie_runtime._publish_chat`'s merge). Its own three gates are asserted in
+    `test_x10_a_subscribe_is_bounded_declared_and_granted_or_it_does_not_load` below —
+    again, *more* than this test was claiming, not less.
     """
     e = ext([{"do": [{"brain": {"prompt": "hi"}}, {"say": "ok"}]}],
             caps=("say", "brain"))
@@ -866,7 +873,9 @@ def test_x10_p1_capabilities_are_declared_rendered_and_refused():
     assert reasons and "cannot grant yet" in reasons[0]
     r = E.evaluate(e, facts(), grants=E.DEFAULT_GRANTS | {"brain"})
     assert not r.ok and r.effects == [], "evaluate() has no allow_p1 door"
-    assert "brain" in E.P1_CAPABILITIES and "subscribe" in E.P1_CAPABILITIES
+    assert "brain" in E.P1_CAPABILITIES
+    assert "subscribe" not in E.P1_CAPABILITIES, \
+        "subscribe has a host since 2026-09-05; a capability with a host is not P1"
 
 
 def test_x10_an_act_is_bounded_declared_and_granted_or_it_does_not_load():
@@ -947,6 +956,86 @@ def test_x10_the_host_will_not_name_a_function_the_table_does_not():
     out = CA.execution_actions_of(v2)
     assert [a.function for a in out] == ["eb_enable_qr"]
     assert CA.robot_functions() == frozenset(E.ACTION_WORDS)
+
+
+def test_x10_a_subscribe_is_bounded_declared_and_granted_or_it_does_not_load():
+    """`subscribe`'s three gates, the twin of the `act` test above.
+
+    A `subscribe` is not free just because the wire exists. It is refused at **load**,
+    never at runtime, unless all three hold:
+
+    1. **The event is in the closed vocabulary.** `ext.SUBSCRIBE_EVENTS` is the recovered
+       vision catalog (vision.md §1.1-1.2) and nothing else, so a pack cannot ask to be
+       woken by a string somebody invented. The same argument `qr-launch-cards.md` §P0-b
+       makes for the launch-card catalogue, pointed the other way down the wire: an
+       *input* a stranger's pack can arrange to receive is as much a surface as an output
+       it can send.
+    2. **The pack declared it.** Declared-equals-used is a load condition (§5), so the
+       grant list a parent reads is provably the program's reach.
+    3. **The host granted it.** `subscribe` is in neither `DEFAULT_GRANTS` nor
+       `content_app.SHIPPED_EXTRA_GRANTS`; grantable is not granted, and an ungranted
+       capability means the program never runs at all (§4.2's *"absent, not refused"*).
+    """
+    from moxie_sdk.content import content_app as CA
+    good = ext([{"do": [{"subscribe": ["eb-qr-event"]}, {"say": "ok"}]}],
+               caps=("say", "subscribe"))
+
+    # 1 — an event outside the closed catalog is not a program, at load. The last two are
+    #     the homoglyph and whitespace shapes X8 worries about for capability names.
+    for bogus in ("eb-shell", "eb_qr_event", "eb-qr-event ", "EB-QR-EVENT", "",
+                  "eb\u2011qr\u2011event", "*"):
+        bad = ext([{"do": [{"subscribe": [bogus]}, {"say": "ok"}]}],
+                  caps=("say", "subscribe"))
+        assert E.validate(bad, allow_p1=True), bogus
+        assert E.validate(bad), bogus
+    assert set(E.SUBSCRIBE_EVENTS) == {"eb-found-face", "eb-lost-target", "eb-lost-face",
+                                       "eb-qr-event", "eb-dr-event", "eb-br-event"}, (
+        "widening the event vocabulary is a reviewer's decision, not a diff's")
+
+    # 2 — used but not declared: a load refusal, not a runtime one.
+    undeclared = ext([{"do": [{"subscribe": ["eb-found-face"]}, {"say": "ok"}]}],
+                     caps=("say",))
+    reasons = E.validate(undeclared, allow_p1=True)
+    assert reasons and "did not declare" in reasons[0], reasons
+    r = E.evaluate(undeclared, facts(), grants=E.DEFAULT_GRANTS | {"subscribe"})
+    assert not r.ok and r.effects == [], "an undeclared subscribe must never reach an effect"
+
+    # 3 — declared and known, but not granted: still nothing runs.
+    ungranted = E.validate(good, grants=E.DEFAULT_GRANTS | CA.SHIPPED_EXTRA_GRANTS)
+    assert ungranted and "has not been granted" in ungranted[0], ungranted
+    assert "subscribe" not in set(E.DEFAULT_GRANTS) | set(CA.SHIPPED_EXTRA_GRANTS)
+    r = E.evaluate(good, facts(), grants=E.DEFAULT_GRANTS)
+    assert not r.ok and r.effects == []
+
+    # …and with all three satisfied it runs, and says so in words a parent reads.
+    assert E.validate(good, grants=E.DEFAULT_GRANTS | {"subscribe"}) == []
+    r = E.evaluate(good, facts(), grants=E.DEFAULT_GRANTS | {"subscribe"})
+    assert r.ok and r.effects[0] == {"kind": "subscribe", "events": ["eb-qr-event"]}
+    assert "Can listen for things the robot notices" in E.grant_list(good)
+
+
+def test_x10_the_host_will_not_name_an_event_the_table_does_not():
+    """The second gate on the event table, at the host boundary — the exact twin of
+    `test_x10_the_host_will_not_name_a_function_the_table_does_not` above, and load-bearing
+    for the same reason: `subscriptions_of` is the last function before a string becomes an
+    `EventSubscription.active[]` entry addressed to a robot in a child's room.
+
+    Two ways in, both checked. An effect list handed straight to `apply_ext_effects` is
+    what a future evaluator bug would produce. `volley.update_subscriptions` is the
+    *contract's* API for a registered Python global handler
+    (`content-module-contract.md` §"What module code may do"), and that caller never met
+    the validator at all — which is why the gate cannot live only in `ext.py`.
+    """
+    from moxie_sdk.content import content_app as CA
+    v = Volley("hi")
+    CA.apply_ext_effects([{"kind": "subscribe", "events": ["eb-shell", "eb-found-face"]},
+                          {"kind": "subscribe", "events": ["../eb-qr-event"]}], volley=v)
+    assert CA.subscriptions_of(v) == ["eb-found-face"]
+
+    v2 = Volley("hi")
+    v2.update_subscriptions(["eb-timer-event", "eb-qr-event"])
+    assert CA.subscriptions_of(v2) == ["eb-qr-event"]
+    assert CA.robot_events() == frozenset(E.SUBSCRIBE_EVENTS)
 
 
 # --------------------------------------------------------------------------- #

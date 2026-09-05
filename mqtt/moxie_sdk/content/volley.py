@@ -98,8 +98,30 @@ class Volley:
         self.execution_actions.append({"name": name, "args": args or []})
 
     def update_subscriptions(self, events) -> None:
-        """Subscribe to robot input events for later turns."""
+        """Subscribe to robot input events for later turns — **replacing** the list.
+
+        The contract's own verb (`content-module-contract.md` §"What module code may do"),
+        kept as it was because a registered Python handler is *our* code and owns the whole
+        volley: it may legitimately say "these and only these".
+        """
         self.subscriptions = list(events or [])
+
+    def add_subscriptions(self, events) -> None:
+        """Ask for these events **as well as** whatever is already on this volley.
+
+        The asymmetry with `update_subscriptions` above is the point, and it is the same
+        asymmetry the runtime enforces one layer up. A sandboxed extension is a stranger's
+        program: it may *add* a perception it wants and must never be able to *remove* one
+        somebody else is relying on — not another rule's within this turn, and (in
+        `moxie_runtime._publish_chat`) not the supervisor's vision subscription either. So
+        the effect applier calls this and never the replacing form.
+
+        Order is preserved and duplicates are dropped, so two rules asking for
+        `eb-qr-event` produce one entry rather than an `active[]` list with it twice.
+        """
+        for e in events or []:
+            if e not in self.subscriptions:
+                self.subscriptions.append(e)
 
     # ---- inbound convenience ----
     def input_var(self, key: str, default=None):

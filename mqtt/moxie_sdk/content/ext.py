@@ -178,6 +178,26 @@ ACTION_WORDS = {
     "eb_wake": "Can wake Moxie up",
 }
 
+#: The closed event vocabulary a `subscribe` statement may name — the twin of
+#: `ACTION_WORDS` on the *inbound* side, and the same argument: an event nobody has
+#: recovered from the robot's own catalog cannot be declared, cannot be granted and
+#: cannot be put on the wire in an `EventSubscription.active[]` list.
+#:
+#: **These six strings are a TRANSCRIPTION of `moxie_sdk.presence.VISION_EVENTS`, not an
+#: import of it, and that is deliberate.** X7 makes this module's import list a security
+#: boundary — `ext.py` imports `math`, `re`, `unicodedata` and nothing else, asserted by
+#: parsing its own source — so reaching into `presence` (which imports `os` for its
+#: hysteresis knobs) to borrow a tuple would trade a real invariant for a saved line.
+#: The duplication is held honest from the other direction instead, by
+#: `test_ext_subscribe.py::test_the_subscribable_events_are_exactly_the_recovered_vision_catalog`,
+#: which fails the moment the two lists disagree. Two tables plus an equality test is
+#: strictly better here than one table plus a widened import boundary.
+#:
+#: Recovered catalog: docs/architecture/vision.md §1.1-1.2 (`eb-lost-face` is the alias
+#: RemoteModuleAPI lists for `eb-lost-target`, which is why both appear).
+SUBSCRIBE_EVENTS = ("eb-found-face", "eb-lost-target", "eb-lost-face",
+                    "eb-qr-event", "eb-dr-event", "eb-br-event")
+
 #: Granted with no parent action at all (§5.1's "granted" column, and acceptance
 #: criterion 5). Everything else needs an explicit grant, which at P0 means a caller
 #: passing a wider `grants` set — there is deliberately no env var and no console control,
@@ -194,15 +214,20 @@ DEFAULT_GRANTS = frozenset({"say", "handled", "session", "child.nickname"})
 #: carries `function_id` / `function_args` (RemoteChat.proto:255-281). Brief S5 — *"the
 #: single most important scoping fact in this brief"* — is therefore closed for `act`.
 #:
+#: `subscribe` **left this set on 2026-09-05** and is now honoured: a `subscribe` effect
+#: reaches `volley.subscriptions` (merging, never replacing), `content_app
+#: .subscriptions_of` bounds it by `SUBSCRIBE_EVENTS` and turns it into `Reply.subscribe`,
+#: and `moxie_runtime._publish_chat` **merges** it into the supervisor's own vision
+#: subscription before `wire.build_chat_response(subscribe_events=…)` puts it in
+#: `RemoteChatAction.EventSubscription.active[]`. The direction of that merge is the
+#: safety property: a pack may add an event it wants to perceive and can never remove one
+#: the runtime's presence/greeting behaviour depends on.
+#:
 #: What is left, and why each is still refused:
-#:   * `subscribe` — the effect has no host that consumes it. `Volley.subscriptions`
-#:     exists and `wire.build_chat_response(subscribe_events=…)` exists, but nothing
-#:     joins them: the supervisor fills `EventSubscription` from its **own** vision
-#:     bookkeeping (`moxie_runtime.py::_publish_chat`), not from a volley.
 #:   * `brain` — needs the one-call-per-turn budget of brief §5.1 before a pack may
 #:     spend money and latency inside the 6 s turn.
 #:   * `schedule.request` — needs the recommender's parent-request channel (P2).
-P1_CAPABILITIES = frozenset({"subscribe", "brain", "schedule.request"})
+P1_CAPABILITIES = frozenset({"brain", "schedule.request"})
 
 def _is_p1(cap: str) -> bool:
     """True for a capability this appliance declares, renders and **refuses**. One
@@ -718,12 +743,31 @@ class _Validator:
         self.expr(body["prompt"], f"{where}.brain.prompt")
 
     def _st_subscribe(self, s, where):
+        """`{"subscribe": [event, …]}` — bounded by the closed vocabulary, at load.
+
+        The `act` shape exactly (`_st_act` above): the name is checked against a table in
+        this file rather than at runtime, so a pack that names an event the robot's
+        recovered catalog does not have is **not a program** and never installs. The
+        second, host-side check on the same table lives in
+        `content_app.subscriptions_of`, because that is the last function before a string
+        becomes an `EventSubscription.active[]` entry addressed to a robot — and because a
+        Python global handler calling `volley.update_subscriptions` never met this
+        validator at all.
+
+        Events are compared **literally**, not through `normal_name`: these are wire
+        strings with hyphens in them (`eb-found-face`), not identifiers, so the identifier
+        grammar would reject every legal one. The homoglyph argument X8 makes for
+        capability names is answered here by the membership test itself — a
+        confusable-looking `eb‑qr‑event` (U+2011 hyphens) is simply not in the tuple.
+        """
         events = s["subscribe"]
         if not isinstance(events, list) or not events or len(events) > MAX_SUBSCRIPTIONS:
             return self.fail(f"{where}.subscribe: expected 1..{MAX_SUBSCRIPTIONS} events")
         for e in events:
-            if not isinstance(e, str) or not e or len(e) > 64:
-                return self.fail(f"{where}.subscribe: {e!r} is not an event name")
+            if not isinstance(e, str) or e not in SUBSCRIBE_EVENTS:
+                return self.fail(f"{where}.subscribe: {e!r} is not an event this "
+                                 f"appliance can ask the robot for "
+                                 f"({', '.join(SUBSCRIBE_EVENTS)})")
 
 
 def validate(ext, *, grants=None, allow_p1: bool = False) -> list:
@@ -734,10 +778,12 @@ def validate(ext, *, grants=None, allow_p1: bool = False) -> list:
     that would fail under a *newer* validator — simply stops loading rather than running
     under old rules (T17).
 
-    `allow_p1` checks the **grammar only**, skipping the P0 refusal of `act`/`subscribe`/
-    `brain`: it is how §8's four not-yet-grantable conformance ASTs are proven valid today
-    rather than written the day the robot-action wire lands. Never pass it from a code
-    path that then evaluates.
+    `allow_p1` checks the **grammar only**, skipping the refusal of the capabilities that
+    still have no host (`brain`, `schedule.request`): it is how §8's not-yet-grantable
+    conformance ASTs are proven valid today rather than written the day their host lands.
+    `act` left that set on 2026-09-04 and `subscribe` on 2026-09-05, so `allow_p1` no
+    longer changes the verdict for either. Never pass it from a code path that then
+    evaluates.
 
     `grants` is the host's granted capability set. When given, a declared capability the
     host does not grant is a load refusal too: "absent, not refused, when not granted"
