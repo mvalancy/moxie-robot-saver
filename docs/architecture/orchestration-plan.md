@@ -264,6 +264,36 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     raises `ModuleNotFoundError` for that name — which reproduced the agent's `15 passed, 1
     skipped` exactly.
 
+27. **A design note inside the code is only true as of the commit that wrote it — before executing a
+    pre-written spec, check what landed since.** `functions/api/_lib/limits.js`:939 says the unit
+    budget is "one more `match` + `put`" and that "**the same fail-open rules apply verbatim**." That
+    was true when written and became FALSE hours later, when PR #160 added `slot.refundBudget()`: a
+    refund is a write that can be **lost**, and a lost refund leaves a visitor charged for a turn that
+    never happened, so the shared budget exhausts early and starts refusing people who should be
+    served. That is failing **CLOSED** — the exact direction the same paragraph rejects the
+    concurrency ceiling for. An agent following the note literally would have built a fail-closed
+    counter while believing it was following the design, and the note would have vouched for it.
+    **This repo's greatest strength — long explanatory comments that carry the reasoning — is also
+    the trap:** a paragraph that argues for its conclusion is far more persuasive than a stale
+    one-liner, and nothing in it announces that the world moved. Treat an in-code spec like a cached
+    belief about a moving thing (rule 23's shape): re-derive its premises against `git log` for the
+    files it reasons about before you build on it.
+
+28. **Do not merge, edit or run suites inside an agent's worktree until you have confirmed it is
+    idle — a completion notification does not mean the agent has stopped.** On 2026-09-05 I received
+    `feat/composer`'s report, merged `origin/dev` into its worktree, and ran the browser suites there.
+    The agent was still verifying. It noticed, correctly reported "another agent is operating in this
+    worktree", and had to re-derive from `git` whether the reserved paths that appeared in its
+    `git status` were its own edits or an in-flight merge — they were mine. No harm resulted (it
+    re-verified the merged tree and everything held), but **a concurrent write during another actor's
+    verification run is the one failure mode neither side can detect from inside it**, and the report
+    it was writing could have described a tree that no longer existed.
+    The notification's own note says it plainly: *"A task-notification fires each time this agent stops
+    with no live background children of its own… the same task-id may notify more than once."* Stopping
+    is not finishing. **Before touching `wt-<slice>`: confirm the tree is clean AND that no further
+    notification is expected**, or do the merge-forward in a throwaway worktree off the same branch and
+    push from there. Integration is not urgent enough to race an agent that is still measuring.
+
 ## The layered session loops (24/7 continuity)
 
 Session-scheduled loops keep the project moving while the operator is away; when a session hits a usage
