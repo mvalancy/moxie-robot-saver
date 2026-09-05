@@ -216,11 +216,18 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   The fix was a stdlib twin (`spectral_flatness_stdlib`, a 20-line radix-2 FFT) rather than
   a third `importorskip`, which would have deleted the proof on exactly the machine shape it
   is about. This file asserts the twin rejects a real tone (8.968e-10), accepts synthetic
-  broadband audio (1.177e-01) and a **real recorded clip** (1.068e-02 vs the numpy path's
-  6.931e-03), agrees with the numpy implementation in both directions, computes with numpy
-  forcibly unimportable in a subprocess, and — the class guard — that no numpy-free suite
-  calls a helper which reaches numpy, with the numpy-only set derived from
-  `helpers_audio.py`'s own call graph so a new helper joins it automatically.
+  broadband audio (1.177e-01) and a **real recorded voice** (3.073e-02 on the stdlib path,
+  3.200e-03 on the numpy one — `goldens/real_voice_22050_mono.wav`, read with `wave` so it
+  needs no decoder), agrees with the numpy implementation in both directions, computes with
+  numpy forcibly unimportable in a subprocess, and — the class guards — that no numpy-free
+  suite calls a helper which reaches numpy (the numpy-only set is derived from
+  `helpers_audio.py`'s own call graph, so a new helper joins it automatically) and that **no
+  test in this directory shells out to an undeclared external binary**. That last one exists
+  because the first version of the recorded-voice test called `ffmpeg` and reddened CI, in
+  the very change that made `requirements-hermetic.txt` the single source of truth — a
+  binary is invisible to a guard that reads `pip install` lines, so the five programs the
+  suite may spawn (`mosquitto`, `docker`, `node`, `git`, `bash`) are declared in
+  `DECLARED_BINARIES` with their reason and their provider. Eleven mutants, 11/11 caught.
 - **`test_ext_escapes.py`** — X1–X12, the escape suite for [sandboxed content
   extensions](../../docs/architecture/backlog/sandboxed-extensions.md) (BEYOND #6). Its own file,
   apart from the behaviour tests, because a reviewer asking *"can a stranger's content pack hurt

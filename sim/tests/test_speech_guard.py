@@ -38,12 +38,17 @@ credentials, no gateway, no model wheels and (for the load-bearing half) no nump
   3. the two implementations return the same verdict, with orders of magnitude to spare;
   4. the stdlib one still computes with numpy forcibly unimportable, and the numpy one
      then raises a message that names the twin instead of a bare `ModuleNotFoundError`;
-  5. a real recorded voice (one of the committed prerendered clips) clears the floor on
-     both implementations — where `ffmpeg` is available to decode it;
-  6. **no numpy-free suite calls a numpy-only helper.** That last one is the guard for the
+  5. a REAL recorded voice clears the floor on both implementations, by a margin this file
+     also asserts — read from a committed mono PCM16 WAV with the `wave` module, so it
+     needs no decoder. The first version of this test shelled out to `ffmpeg` and reddened
+     CI (run 33985062379), which is the joke writing itself: a change about declaring every
+     dependency once, depending on an undeclared external binary. See `RECORDED_VOICE`;
+  6. **no numpy-free suite calls a numpy-only helper.** That one is the guard for the
      defect *class* rather than for the instance, and it is the one that fails on the
      pre-fix tree. Its numpy-only set is derived from `helpers_audio.py`'s own call graph,
-     so a new helper that reaches numpy joins it without anyone remembering to.
+     so a new helper that reaches numpy joins it without anyone remembering to;
+  7. **no test in `sim/tests` shells out to an undeclared external binary** — the general
+     form of the ffmpeg mistake, which is now impossible to repeat quietly.
 
 Deliberately NOT named `test_sil_*`: both CI tiers select with `-k "not test_sil"`, so a
 SIL-prefixed guard would be deselected in every tier it is meant to run in.
@@ -57,6 +62,7 @@ import random
 import struct
 import subprocess
 import sys
+import wave
 
 import pytest
 
@@ -92,8 +98,8 @@ def _speech_shaped(samples: int, sample_rate: int = 22050) -> bytes:
     A voiced excitation whose f0 wanders, seven inharmonically-spaced overtones standing in
     for formants, additive noise standing in for fricatives, and an envelope that goes to
     silence a third of the time. Seeded, so it is the same buffer on every machine and in
-    every run. It is NOT a recording — test 5 does that where ffmpeg can decode one — it is
-    the positive control that needs no external tool.
+    every run. It is NOT a recording — test 5 uses a real one, committed as a WAV — it is
+    the positive control that needs no fixture at all.
 
     `samples` is passed in rather than defaulted so the caller can make this buffer exactly
     as long as the tone it is compared against; that turns the length control below into an
@@ -246,41 +252,85 @@ def test_the_numpy_only_predicate_names_its_stdlib_twin_when_numpy_is_absent():
 
 
 # --------------------------------------------------------------------------- #
-# 5. a real recorded voice, where a decoder is available
+# 5. a real recorded voice — read with the standard library, no decoder needed
 # --------------------------------------------------------------------------- #
-#: One of the prerendered clips the static SIM plays — real synthesized speech, committed,
-#: 26 KB. It is mp3, so decoding it needs `ffmpeg`; the tests above are the unconditional
-#: ones and this is additive coverage on the real article, which is why its absence is a
-#: skip and not a hole. (Runners have ffmpeg; a minimal container may not.)
-_REAL_CLIP = os.path.join(REPO, "sim", "web", "audio", "moxie", "3667ba11ce7655ed.mp3")
+#: A real voice, committed in a form `wave` can read: 0.75 s of the SIM's own prerendered
+#: Moxie speech, mono PCM16 @ 22050 Hz, 33 118 B.
+#:
+#: IT USED TO BE THE MP3, DECODED BY SHELLING OUT TO `ffmpeg`, and that was wrong in this
+#: PR of all PRs: a change about declaring every dependency exactly once, which added a
+#: test that depended on an undeclared external binary. CI run 33985062379 duly failed with
+#: `FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'` — the runner has no
+#: ffmpeg — with everything else green.
+#:
+#: Both easy fixes were refused for reasons this file already argues. A `shutil.which`
+#: skip converts a loud red into a silent pass, which is precisely what
+#: `test_a_numpy_free_suite_declares_itself_so` exists to prevent. `apt-get install ffmpeg`
+#: puts a heavyweight system package on every run of the tier to decode ONE fixture, and it
+#: cannot be declared in `requirements-hermetic.txt`, the single source of truth this PR
+#: just created. So the dependency was REMOVED instead of skipped — the same move as
+#: `spectral_flatness_stdlib` itself: store the fixture in a form the stdlib can read.
+#:
+#: WHY 0.75 s AND WHY THIS OFFSET: it is the shortest window that keeps a comfortable
+#: margin in BOTH implementations. Measured across candidate trims of the loudest window —
+#: 0.25 s scored 2.980e-04 (298x the floor), 0.50 s 3.878e-04 (388x), and this one
+#: 3.073e-02 on the stdlib path (30 727x) and 3.200e-03 on the numpy path (3 200x), the
+#: smaller of which is the one that matters. Anyone trimming this further must re-state the
+#: margin here: a fixture whose flatness creeps toward 1e-6 makes the assertion vacuous
+#: without failing, and `test_the_recorded_fixture_clears_the_floor_by_orders_of_magnitude`
+#: below fails if the smaller margin drops under 100x.
+RECORDED_VOICE = os.path.join(HERE, "goldens", "real_voice_22050_mono.wav")
+RECORDED_RATE = 22050
+
+#: The floor multiple the fixture must keep on the WEAKER of the two implementations.
+RECORDED_MIN_MARGIN = 100
 
 
-def test_a_real_recorded_voice_clears_the_floor_on_both_implementations(tmp_path):
-    """Synthetic broadband audio is a positive control, not a voice. This is a voice —
-    the same Piper-family speech the SIM actually plays — and both implementations must
-    place it far above the floor. Measured 2026-09-05: stdlib 1.068e-02, numpy 6.931e-03."""
-    if not os.path.exists(_REAL_CLIP):
-        pytest.skip(f"{os.path.relpath(_REAL_CLIP, REPO)} is not in this checkout")
-    raw = tmp_path / "clip.pcm"
-    decode = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", _REAL_CLIP, "-f", "s16le",
-         "-acodec", "pcm_s16le", "-ac", "1", "-ar", "22050", str(raw), "-y"],
-        capture_output=True, text=True)
-    if decode.returncode != 0:
-        pytest.skip(f"ffmpeg could not decode the clip ({decode.stderr.strip()[:120]})")
-    pcm = raw.read_bytes()
-    assert len(pcm) > 40000, len(pcm)                # ~1 s at 22050 Hz, or it decoded wrong
+def _recorded_voice() -> bytes:
+    """The fixture's PCM frames, via `wave` — stdlib, no subprocess, no optional package."""
+    with wave.open(RECORDED_VOICE, "rb") as clip:
+        assert clip.getnchannels() == 1, clip.getnchannels()
+        assert clip.getsampwidth() == 2, clip.getsampwidth()
+        assert clip.getframerate() == RECORDED_RATE, clip.getframerate()
+        return clip.readframes(clip.getnframes())
+
+
+def test_a_real_recorded_voice_clears_the_floor_on_both_implementations():
+    """Synthetic broadband audio is a positive control, not a voice. This is a voice — the
+    same Piper-family speech the SIM actually plays — and the stdlib half of this assertion
+    runs UNCONDITIONALLY: no ffmpeg, no numpy, no network, nothing to skip on."""
+    pcm = _recorded_voice()
+    assert len(pcm) == 33074, len(pcm)          # the committed fixture, not a truncated read
     flat = A.spectral_flatness_stdlib(pcm)
     print(f"[guard] recorded stdlib={flat:.3e} floor={A.SPEECH_FLATNESS_FLOOR:.0e}")
     assert A.is_real_speech_stdlib(pcm), (
         f"a REAL recorded voice scored {flat:.3e}, below the floor — the stdlib estimator "
         f"would fail every live suite that uses it")
+    numpy_flat = None
     try:
         numpy_flat = A.spectral_flatness(pcm)
     except ModuleNotFoundError:
-        return                                       # tests 1–4 already stand without it
+        return                                  # tests 1-4 already stand without numpy
     print(f"[guard] recorded numpy ={numpy_flat:.3e}")
     assert A.is_real_speech(pcm), numpy_flat
+
+
+def test_the_recorded_fixture_clears_the_floor_by_orders_of_magnitude():
+    """The anti-vacuity half, and the guard against a future trim. A shorter or quieter clip
+    would still PASS the test above while creeping toward the floor, at which point "a real
+    voice is recognised as speech" stops being a measurement. Measured 2026-09-05: 30 727x
+    (stdlib) and 3 200x (numpy)."""
+    pcm = _recorded_voice()
+    margins = [A.spectral_flatness_stdlib(pcm) / A.SPEECH_FLATNESS_FLOOR]
+    try:
+        margins.append(A.spectral_flatness(pcm) / A.SPEECH_FLATNESS_FLOOR)
+    except ModuleNotFoundError:
+        pass
+    assert min(margins) > RECORDED_MIN_MARGIN, (
+        f"the recorded fixture only clears the speech floor by {min(margins):.0f}x on its "
+        f"weaker implementation. It cleared 3 200x when it was committed; a fixture this "
+        f"close to the floor makes the assertion above vacuous without failing it. Restore "
+        f"a longer/louder span and re-state the margin at RECORDED_VOICE.")
 
 
 # --------------------------------------------------------------------------- #
@@ -411,3 +461,105 @@ def test_every_other_caller_of_a_numpy_only_helper_requires_numpy():
     assert not unguarded, (
         "these files call numpy-only audio helpers without requiring numpy at module "
         f"scope, and are not on the numpy-free list either: {unguarded}")
+
+
+# --------------------------------------------------------------------------- #
+# 7. no test may shell out to an UNDECLARED external binary
+# --------------------------------------------------------------------------- #
+#: Every external program the suite is allowed to invoke, and why. A binary is not a python
+#: package, so it cannot live in `sim/tests/requirements-hermetic.txt` — which means the only
+#: honest place to declare one is a list a reviewer reads, with the tier that provides it
+#: named beside it.
+#:
+#: THIS LIST EXISTS BECAUSE OF ONE LINE OF MINE. The first version of test 5 above decoded an
+#: mp3 by calling `ffmpeg`, in a change whose entire subject was declaring dependencies once.
+#: CI has no ffmpeg, so run 33985062379 failed with `FileNotFoundError` and nothing in the
+#: repo had objected beforehand: the dependency guards in `test_ci_workflows.py` read
+#: `pip install` lines, and an external binary is invisible to them by construction. So this
+#: is the same closure one layer out — the workflows declare the python packages, this
+#: declares the programs.
+#:
+#: `sys.executable` is deliberately absent: re-entering THIS interpreter is not an external
+#: dependency, and it is how the numpy-blocked subprocess above works.
+DECLARED_BINARIES = {
+    # apt-get in sim/ci/ci.yml's sil job; helpers_stack falls back to docker without it.
+    "mosquitto": "the real broker the SIL tests round-trip through",
+    # preinstalled on ubuntu-latest runners and required by the deep tier's compose jobs.
+    "docker": "the broker/compose fallback when no mosquitto binary is present",
+    # preinstalled on the runners; the fast tier already runs ~20 `node sim/test_*.mjs` steps.
+    "node": "the JS-side harnesses (safety probes, the hosted-ears transcribe harness)",
+    # a git checkout is the premise of every job in every tier.
+    "git": "listing tracked files, so a guard scans what we SHIP, not what is lying around",
+    # the shell the SIL scripts are written in, and the one `run:` uses.
+    "bash": "sim/run_smoke.sh and friends, driven as subprocesses by the SIL suites",
+}
+
+
+def _spawned_binaries() -> dict:
+    """{binary: [files]} for every literal argv[0] the suite hands to `subprocess`.
+
+    Only the literal, first-element string forms are resolved — `subprocess.run(["ffmpeg",
+    ...])` and `run([node, ...])` where `node` is a module-level string constant. A binary
+    named through a computed expression escapes, which is worth stating rather than
+    implying; the point is to make the accidental case loud, and the accidental case is
+    always a literal.
+    """
+    tests = os.path.join(REPO, "sim", "tests")
+    found = {}
+    for name in sorted(os.listdir(tests)):
+        if not name.endswith(".py"):
+            continue
+        tree = ast.parse(open(os.path.join(tests, name)).read())
+        # module-level `NODE = "node"`-style constants, so `run([node, ...])` resolves
+        consts = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) \
+                    and isinstance(node.value.value, str):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        consts[target.id] = node.value.value
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("run", "Popen", "check_output", "call",
+                                           "check_call")
+                    and node.args):
+                continue
+            argv = node.args[0]
+            if not isinstance(argv, (ast.List, ast.Tuple)) or not argv.elts:
+                continue
+            head = argv.elts[0]
+            if isinstance(head, ast.Constant) and isinstance(head.value, str):
+                program = head.value
+            elif isinstance(head, ast.Name) and head.id in consts:
+                program = consts[head.id]
+            else:
+                continue                    # sys.executable, an f-string, a path expression
+            program = os.path.basename(program)
+            if program and not program.startswith(("/", ".")):
+                found.setdefault(program, []).append(name)
+    return found
+
+
+def test_the_binary_scan_found_the_programs_we_know_the_suite_spawns():
+    """Anti-vacuity, same as every other derived set in this file: a scan that came back
+    empty would make the guard below pass forever. `mosquitto` and `docker` are certainties
+    (`helpers_stack.py` boots a real broker one way or the other)."""
+    found = _spawned_binaries()
+    for known in ("mosquitto", "docker"):
+        assert known in found, (known, sorted(found))
+
+
+def test_no_test_shells_out_to_an_undeclared_external_binary():
+    """The general form of the ffmpeg mistake. An external program is a dependency that no
+    requirements file can carry, so it must be declared HERE, with the reason and the tier
+    that provides it — or not used."""
+    undeclared = {program: sorted(set(files))
+                  for program, files in _spawned_binaries().items()
+                  if program not in DECLARED_BINARIES}
+    assert not undeclared, (
+        f"these tests spawn external binaries that DECLARED_BINARIES does not name: "
+        f"{undeclared}. CI runners have a specific, small set of programs; one that is not "
+        f"there fails the job with FileNotFoundError, and no `pip install` guard can see it "
+        f"coming. Either read the fixture with the standard library (see RECORDED_VOICE for "
+        f"how that went) or add the program here with its reason and its provider.")
+
