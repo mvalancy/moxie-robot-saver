@@ -1638,6 +1638,34 @@ its superseded predecessor and its 95-check test infrastructure is worth mining,
 merging. Whoever picks this up: the composer must land as a small diff in the send path,
 because Turnstile's client half attaches a token there too.
 
+**(a), (b) and (c) SHIPPED 2026-09-05 on `feat/composer`; (d) did not and must not until
+the owner steers it.** `sim/web/sim.html` grew a `#chat-dock` — the page's own bottom row,
+not panel content — carrying `#chat-cue` (the sentence that names the action), the moved
+`#transcript`, and one row holding `#speech-input` with `#mic-btn` and `#speech-btn`
+beside it. The four controls were **moved, not copied**: every listener on this page binds
+by id, so re-parenting changed no behaviour and there is no second box to disagree with
+the first — which
+[`backlog/mobile-first-visit.md`](backlog/mobile-first-visit.md) names as the trap. The
+rail is untouched apart from what left it: still a full-height column at ≥ 900 px, still a
+drawer that starts closed below that, `rail.js` unchanged — **a phone-first fix, not a
+desktop teardown**, which is why *optional* here means "never required", not "removed".
+**Proven, not asserted:** `sim/test_mobile_layout.mjs` went **66 → 222 checks**, and the
+new blocks were run against the pre-change page first — **81 failures of 206**, the
+message box reporting `0x0` at four phone widths, which is the production measurement
+reproduced in a test before the fix existed. Every check is a **rect plus an
+`elementFromPoint()` hit test on a cold load with no tap and no scroll**, because
+`getElementById` was truthy the whole time the box was two thousand pixels below the
+fold. Its teeth put the dock back inside the collapsed rail and require `0x0` to return.
+`sim/test_a11y.mjs`'s keyboard block was **inverted on purpose**: the same two ids it used
+to prove *unreachable* behind a shut drawer it now proves *reachable* with the drawer
+shut. Two further teeth blocks were **re-aimed** — the Turnstile holder's and the hosted
+banner's collision teeth both pointed at `#rail-toggle`, which is no longer the lowest
+control on the page, and would have gone quietly green while measuring nothing.
+**What was deliberately NOT built:** the opener chips from
+[`backlog/gamify-the-public-sim.md`](backlog/gamify-the-public-sim.md) §5 🅐. They are
+cheap and they are the seam a game would attach to, and that is exactly why they wait for
+(d)'s brief rather than arriving as a side effect of this one.
+
 ① **A human voice through the hosted mic.** The STT path is built, wired and tested, and **no human has ever spoken into it on the hosted site** — the single largest untested surface on the page a visitor actually uses. Everything else on this list is smaller than this. ~~② **Turnstile**~~ — **BUILT 2026-09-05** and no longer owner-blocked: the widget and both variables exist in production, `POST /api/chat` verifies a token before its one gateway call, and enforcement is config-gated so previews and forks stay inert (`functions/api/_lib/turnstile.js`). What it does *not* do is bound the bill — it removes the cheapest attack (a loop with no browser) and leaves a determined one with a real browser to the per-IP caps and the unit budget, which is why ④ below did not move.
 
 ③ **A TTS cache** — the demo re-synthesises identical phrases on every visit, which is the cheapest cost win available and needs no owner. ④ **The hour/day windows and the unit budget on the Cache API tier** — the minute window is shared per-colo since PR #146, the rest are still one isolate's `Map`, so the *spend* ceiling is the loosest of the four. ⑤ **`'unsafe-inline'` in `style-src`** — a much smaller hole than the script one closed in #137, and honestly labelled as such.

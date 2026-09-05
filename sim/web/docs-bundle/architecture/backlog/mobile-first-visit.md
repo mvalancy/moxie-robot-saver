@@ -1,7 +1,21 @@
 # 📱 On a phone, the Talk box is 2 095 px below the fold
 
-> **Filed 2026-09-05 from measurements against production · 🟢 build-ready · effort S/M.**
+> **Filed 2026-09-05 from measurements against production · ✅ BUILT 2026-09-05 on
+> `feat/composer` · effort S/M as filed.**
 > Not broken — **buried**. The distinction is the whole point of this document.
+>
+> **What shipped, and what this page is now for.** `sim/web/sim.html` grew `#chat-dock`:
+> the page's own bottom grid row, holding a one-line cue that names the action, the
+> `#transcript` moved out of the rail, and one row with `#speech-input`, `#mic-btn` and
+> `#speech-btn` in it. The four controls were **moved, not copied** — this document's own
+> "Suggested shape" below asked for exactly that and warned that a second control is the
+> trap. The rail keeps everything else and is otherwise untouched: `rail.js` is
+> byte-unchanged, the drawer still starts closed below 900 px, the desktop column is still
+> a permanent column. **The acceptance list below was met as written**, and the checks that
+> met it are in `sim/test_mobile_layout.mjs` (66 → 222). **Left for the reader:** the
+> measurements in this page are still the production ones taken before the fix. Nobody has
+> re-measured `moxie.mattvalancy.com/sim` after a deploy, so treat every number below as
+> the *defect*, not as the current state.
 
 ## What a first-time phone visitor actually gets
 
@@ -46,6 +60,9 @@ below the fold — **after** the page has already spoken to the visitor.
 - **Do not "fix" it by opening the drawer on load.** `sim/test_mobile_layout.mjs` deliberately asserts
   the closed-drawer start below 900 px; that decision was made for a reason and there is a test that
   will tell you so. If it should change, change the test *and* argue it.
+  *(Obeyed. The drawer still starts closed at every phone width, and the shipped fix asserts
+  that it is closed on a cold load and stays closed through a whole typed turn — the
+  composer is reachable **because it left the drawer**, not because the drawer opened.)*
 - **Do not move the whole rail.** The controls are a legitimate side panel on desktop; this is about
   the *one* control a first-time visitor needs.
 
@@ -62,9 +79,20 @@ with its own state. The drawer keeps everything else.
 - Assert on the **rect in the viewport**, not on the element existing — this whole finding is the
   difference between those two.
 - 360 px and 414 px behave the same; desktop ≥ 900 px is **unchanged**, pinned by a test.
+  *(Met with one honest qualification: the rail on desktop is byte-for-byte the column it
+  was — same width, same open-by-default, `rail.js` untouched — and `sim/test_responsive.mjs`
+  is green across all seven viewports with the canvas still full-bleed. What did change on
+  desktop is that the composer is there too, at the bottom of the stage column, centred and
+  capped at 760 px. That is not "unchanged"; it is the same fix applied at a width that did
+  not need it, and it is deliberate — one composer, not a phone-only special case.)*
 - Whatever the new affordance is, it must not fire before `window.moxie` exists, or the first tap is
   swallowed.
-- `sim/test_mobile_layout.mjs` (48 checks) stays green or its change is argued in the PR.
+- `sim/test_mobile_layout.mjs` (48 checks when this was filed, 66 by the time it was built)
+  stays green or its change is argued in the PR. *(It is green at **222** checks. Two of its
+  teeth blocks were re-aimed and the change is argued in place, in the file: the hosted
+  banner's collision teeth and the Turnstile holder's both hit-tested `#rail-toggle`, which
+  stopped being the lowest control on the page the moment the composer took the bottom row,
+  so both would have reported "no collision" and gone green while measuring nothing.)*
 
 ## Honest note
 

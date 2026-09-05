@@ -177,9 +177,12 @@ try {
     ok(reopened.self,
        `${label}: the handle is STILL reachable with the drawer open (got ${reopened.hit})`);
 
-    // Scroll a real control into the rail's view and check the same way.
+    /* Scroll a real control into the rail's view and check the same way. This used to
+     * drive `#mic-btn`; the mic moved out of the drawer and into the page's composer on
+     * 2026-09-05 (block 6 hit-tests it there, on a page nobody has tapped), so the
+     * control driven here is one that is still genuinely INSIDE the drawer. */
     const ctrl = await page.evaluate(() => {
-      const b = document.getElementById("mic-btn");
+      const b = document.getElementById("center-btn");
       b.scrollIntoView({ block: "center" });
       const r = b.getBoundingClientRect();
       const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
@@ -187,7 +190,7 @@ try {
                hit: hit ? (hit.id ? "#" + hit.id : hit.tagName) : "null",
                w: Math.round(r.width), h: Math.round(r.height) };
     });
-    ok(ctrl.self, `${label}: #mic-btn inside the open drawer is hittable (got ${ctrl.hit})`);
+    ok(ctrl.self, `${label}: #center-btn inside the open drawer is hittable (got ${ctrl.hit})`);
     ok(ctrl.h >= 40, `${label}: …at a real touch size (${ctrl.w}x${ctrl.h})`);
 
     /* --- 3. no horizontal overflow, at every one of these widths ---------- */
@@ -258,16 +261,25 @@ try {
     ok(drew.y > drew.vh * 0.25 && drew.y + drew.h < drew.vh * 0.75,
        `${label}: …centred vertically, clear of both strips (y=${drew.y} h=${drew.h} vh=${drew.vh})`);
 
+    // The composer is bottom-anchored at every width since 2026-09-05, so it is the
+    // control a `bottom: 16px` widget would land on now. Both are asserted.
+    const box = await page.evaluate(hitTest, "#speech-input");
+    ok(box.self,
+       `${label}: …and the message box owns its own centre too (got ${box.hit})`);
+
     /* TEETH, in the same block: put the pre-fix geometry back and require the collision to
      * return. Without this the assertions above are equally consistent with "the fix works"
-     * and "the fake widget has no size". */
+     * and "the fake widget has no size". It is aimed at `#speech-input` rather than
+     * `#rail-toggle` because that is where the pre-fix holder now lands: the handle moved
+     * up the page when the composer took the bottom row, so a test still aimed at the
+     * handle would report "no collision" and quietly stop having teeth. */
     const broken = await page.evaluate((fn) => {
       const holder = document.getElementById("turnstile-holder");
       holder.setAttribute("style",
         "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:70;" +
         "display:flex;justify-content:center;pointer-events:auto");
       // eslint-disable-next-line no-eval
-      return (0, eval)("(" + fn + ")")("#rail-toggle");
+      return (0, eval)("(" + fn + ")")("#speech-input");
     }, hitTest.toString());
     eq(broken.self, false,
        `${label}: teeth — with the holder back at bottom:16px the collision RETURNS ` +
@@ -290,23 +302,264 @@ try {
     const page = await load(375, 667);
     const fixed = await page.evaluate(hitTest, "#rail-toggle");
     ok(fixed.self, "teeth: with the lift applied the toggle owns its own centre");
+    // ...and so does the box that is actually bottom-anchored now.
+    const boxFixed = await page.evaluate(hitTest, "#speech-input");
+    ok(boxFixed.self, "teeth: …and so does the message box below it");
     const lift = await page.evaluate(() =>
       getComputedStyle(document.documentElement).getPropertyValue("--eb-lift").trim());
     ok(/^\d+px$/.test(lift) && parseInt(lift, 10) > 0,
        `teeth: env.js measured a real lift, not a constant (--eb-lift: ${JSON.stringify(lift)})`);
 
+    /* Aimed at `#speech-input`: `#chat-dock` is the bottom row of the HUD grid since
+     * 2026-09-05, so the rail handle is no longer the lowest thing on the page and a
+     * `--eb-lift: 0` banner reaches the composer instead. A teeth block still aimed at
+     * the handle would find no collision and report green while measuring nothing. */
     const broken = await page.evaluate((fn) => {
       document.documentElement.style.setProperty("--eb-lift", "0px");
       // eslint-disable-next-line no-eval
-      return (0, eval)("(" + fn + ")")("#rail-toggle");
+      return (0, eval)("(" + fn + ")")("#speech-input");
     }, hitTest.toString());
     eq(broken.self, false,
        `teeth: with --eb-lift back at 0 the collision RETURNS (hit ${broken.hit}) — ` +
        "if this passes, the assertion above is not measuring anything");
-    ok(/env-banner/.test(broken.hit),
-       `teeth: …and it is the banner that swallows the tap (got ${broken.hit})`);
+    /* The banner or anything INSIDE it. Aimed at the composer this now resolves to
+     * `span.eb-text` — the banner's own copy, which is a wider box than the dismiss row
+     * the rail handle used to collide with. A tap swallowed by the banner's text is
+     * swallowed by the banner; demanding the exact `div#env-banner` would be asserting
+     * which child happened to be under one particular coordinate. */
+    ok(/env-banner|\beb-/.test(broken.hit),
+       `teeth: …and it is the banner LAYER that swallows the tap (got ${broken.hit})`);
     await page.close();
   }
+
+  /* =====================================================================
+   * 6. THE COMPOSER — REACHABLE ON THE FIRST PAINTED FRAME.
+   *
+   * THE DEFECT THIS BLOCK EXISTS FOR (measured against
+   * `https://moxie.mattvalancy.com/sim` in a fresh incognito profile, real iOS UA,
+   * 390x844, and written up in docs/architecture/backlog/mobile-first-visit.md):
+   *
+   *     #speech-input on load            0 x 0        (present in the DOM, inside <aside id="panel">)
+   *     after tapping CONTROLS           262x40 at y = 2095   (~2000 px below an 844 px fold)
+   *     after scrollIntoView             y = 663, and the turn COMPLETES normally
+   *
+   * So the turn always worked. It was UNREACHABLE — buried at the bottom of a
+   * scrolling engineering drawer behind a button labelled `CONTROLS`, on a page whose
+   * six visible controls (Hub, ALIVE, GITHUB, CONTROLS, Run it locally, X) said nothing
+   * about talking to Moxie at all. She speaks unprompted at ~7 s, so a visitor heard her
+   * and had no visible way to answer.
+   *
+   * WHY THE ASSERTION IS A RECT AND A HIT TEST, NEVER `element.exists`. That distinction
+   * IS the finding: `document.getElementById("speech-input")` was truthy the entire time
+   * the box was 0x0 and two thousand pixels below the fold. So every check below asks
+   * three separate questions and needs all three: does the box have a non-zero rect, does
+   * that rect lie INSIDE the initial viewport, and does `elementFromPoint()` at its centre
+   * come back as the box itself (the banner and the Turnstile challenge have each already
+   * swallowed a bottom-anchored control on this page — blocks 1 and 4 above).
+   *
+   * AND IT IS MEASURED ON A COLD LOAD: no `page.tap()`, no `scrollIntoView`, no drawer.
+   * `railShut` is re-read after every measurement so a check can never be satisfied by a
+   * rail that quietly opened itself — "the composer is reachable" and "the rail is
+   * required" must not both be true.
+   * =================================================================== */
+
+  /**
+   * Is `sel` reachable by a visitor who has done NOTHING but load the page?
+   *
+   * Deliberately returns the raw numbers as well as the verdicts: a failure message that
+   * says `262x40 at y=2095 of 844` is the measurement this whole slice exists to fix,
+   * and a bare `false` would make the next reader take the same production screenshots
+   * again.
+   */
+  const reach = (sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return { found: false, sel };
+    const cs = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
+    const hit = (r.width > 0 && r.height > 0) ? document.elementFromPoint(cx, cy) : null;
+    return {
+      found: true, sel,
+      w: Math.round(r.width), h: Math.round(r.height),
+      top: Math.round(r.top), bottom: Math.round(r.bottom),
+      left: Math.round(r.left), right: Math.round(r.right),
+      vw, vh,
+      shown: cs.display !== "none" && cs.visibility !== "hidden" && r.width > 0 && r.height > 0,
+      // `+0.5` because a fractional layout can put `bottom` a hair past an integer height.
+      inFold: r.width > 0 && r.height > 0 &&
+              r.top >= 0 && r.bottom <= vh + 0.5 && r.left >= -0.5 && r.right <= vw + 0.5,
+      self: !!hit && (hit === el || el.contains(hit)),
+      hit: hit ? (hit.id ? "#" + hit.id : hit.tagName.toLowerCase()) : "null",
+      text: (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 90),
+      scrollY: window.scrollY,
+    };
+  };
+
+  /** The whole verdict for one control, in one line, with the numbers in the message. */
+  function reachable(label, m, what) {
+    ok(m.found, `${label}: ${what} (${m.sel}) exists at all`);
+    ok(m.shown,
+       `${label}: ${what} has a real box — got ${m.w}x${m.h} (inside a collapsed rail it is 0x0)`);
+    ok(m.inFold,
+       `${label}: ${what} is INSIDE the first viewport — y=${m.top}..${m.bottom} of ${m.vh} ` +
+       `(the production defect measured 262x40 at y=2095 of 844)`);
+    ok(m.self, `${label}: …and a tap at its centre reaches it, not ${m.hit}`);
+    eq(m.scrollY, 0, `${label}: …with the page never scrolled (scrollY=${m.scrollY})`);
+  }
+
+  for (const [label, w, h] of [["iPhone 12  390x844", 390, 844], ...PHONES]) {
+    const page = await load(w, h);
+
+    // Nothing has been tapped. Say so out loud, and keep saying it.
+    const railShut = () => page.evaluate(() => ({
+      expanded: document.getElementById("rail-toggle").getAttribute("aria-expanded"),
+      scroll: getComputedStyle(document.getElementById("rail-scroll")).display,
+    }));
+    const cold = await railShut();
+    eq(cold.expanded, "false", `${label}: the engineering rail is CLOSED on a cold load`);
+    eq(cold.scroll, "none", `${label}: …and its contents are display:none, not merely off-screen`);
+
+    /* ---- AC1: the text field and the send button, on first paint ---- */
+    reachable(label, await page.evaluate(reach, "#speech-input"), "the message box");
+    reachable(label, await page.evaluate(reach, "#speech-btn"), "the send button");
+
+    /* ---- AC4: the mic is BESIDE send, not in a panel three screens away ---- */
+    const mic = await page.evaluate(reach, "#mic-btn");
+    reachable(label, mic, "the mic button");
+    const beside = await page.evaluate(() => {
+      const m = document.getElementById("mic-btn"), s = document.getElementById("speech-btn");
+      const i = document.getElementById("speech-input");
+      if (!m || !s || !i) return { ok: false };
+      const mr = m.getBoundingClientRect(), sr = s.getBoundingClientRect(), ir = i.getBoundingClientRect();
+      return {
+        ok: true,
+        sameRow: m.parentElement === s.parentElement && m.parentElement === i.parentElement,
+        // "beside", measured: their vertical centres agree and the horizontal gap is a
+        // gutter, not a layout away.
+        gap: Math.round(Math.min(Math.abs(sr.left - mr.right), Math.abs(mr.left - sr.right))),
+        dy: Math.round(Math.abs((mr.top + mr.height / 2) - (sr.top + sr.height / 2))),
+      };
+    });
+    ok(beside.ok && beside.sameRow,
+       `${label}: the mic, the box and send are ONE row — the same parent, not three panels`);
+    ok(beside.gap >= 0 && beside.gap <= 24,
+       `${label}: the mic sits beside send — ${beside.gap}px between them`);
+    ok(beside.dy <= 6, `${label}: …on the same line (${beside.dy}px of vertical drift)`);
+
+    /* ---- AC2: something on first paint TELLS a stranger they can talk ----
+     * The measured gap was not only geometric: of the six controls a phone visitor could
+     * see, not one named the action. A placeholder inside a box is not enough on its own
+     * — it disappears the moment anything is typed and it is not read as page copy — so
+     * the affordance asserted here is a real, visible element with real words in it. */
+    const cue = await page.evaluate(reach, "#chat-cue");
+    reachable(label, cue, "the 'talk to Moxie' cue");
+    ok(/talk to moxie/i.test(cue.text || ""),
+       `${label}: …and it names the action in plain language — got ${JSON.stringify(cue.text)}`);
+    const ph = await page.evaluate(() =>
+      (document.getElementById("speech-input") || {}).placeholder || "");
+    ok(/moxie/i.test(ph), `${label}: the box's own placeholder names her too — got ${JSON.stringify(ph)}`);
+
+    const after = await railShut();
+    eq(after.expanded, "false",
+       `${label}: NOTHING above opened the rail — every measurement was on the cold page`);
+
+    await page.close();
+  }
+
+  /* =====================================================================
+   * 7. THE RAIL IS OPTIONAL — a whole turn without it, and it still works.
+   *
+   * Two halves, and the second is what stops "optional" from becoming "removed".
+   * The turn here is SCRIPTED: `/api/health` answers `degraded` (see `load()`), so
+   * `cloud-transport.js` delegates to `stub.js` and not one request leaves the page.
+   * =================================================================== */
+  {
+    const page = await load(390, 844);
+
+    // ---- (a) a full typed turn with the drawer NEVER opened ----
+    await page.evaluate(() => { document.getElementById("speech-input").value = "hello moxie"; });
+    await page.tap("#speech-btn");            // tap(), so an obscured button still fails here
+    await page.waitForFunction(
+      () => [...document.querySelectorAll("#transcript .turn")].some((r) => /\buser\b/.test(r.className)),
+      { timeout: 15000 });
+    await page.waitForSelector("#transcript .turn.moxie", { timeout: 15000 });
+    const turn = await page.evaluate(() => ({
+      rows: [...document.querySelectorAll("#transcript .turn")].map((r) => ({
+        who: r.className, msg: (r.querySelector(".msg") || r).textContent.trim() })),
+      expanded: document.getElementById("rail-toggle").getAttribute("aria-expanded"),
+      railDisplay: getComputedStyle(document.getElementById("rail-scroll")).display,
+      inputCleared: document.getElementById("speech-input").value === "",
+    }));
+    ok(turn.rows.some((r) => /\buser\b/.test(r.who) && r.msg === "hello moxie"),
+       `a typed line lands in the log verbatim — got ${JSON.stringify(turn.rows)}`);
+    ok(turn.rows.some((r) => /\bmoxie\b/.test(r.who) && r.msg.length > 0),
+       `…and Moxie answers it — got ${JSON.stringify(turn.rows)}`);
+    ok(turn.inputCleared, "…and the box empties, so the next line does not double up");
+    eq(turn.expanded, "false", "THE WHOLE TURN COMPLETED WITH THE RAIL NEVER OPENED");
+    eq(turn.railDisplay, "none", "…and the rail was display:none for all of it");
+    // The conversation is where the visitor is looking, not in a drawer.
+    const log = await page.evaluate(reach, "#transcript");
+    ok(log.inFold, `the comms log is in the first viewport too — y=${log.top}..${log.bottom} of ${log.vh}`);
+
+    // ---- (b) OPTIONAL IS NOT REMOVED: the rail still opens and still works ----
+    await page.tap("#rail-toggle");
+    await new Promise((r) => setTimeout(r, 600));
+    const opened = await page.evaluate(() => ({
+      expanded: document.getElementById("rail-toggle").getAttribute("aria-expanded"),
+      railH: Math.round(document.getElementById("rail-scroll").getBoundingClientRect().height),
+      groups: document.querySelectorAll("#rail-scroll .group").length,
+    }));
+    eq(opened.expanded, "true", "the rail still opens on demand");
+    ok(opened.railH > 0 && opened.groups >= 4,
+       `…with all its groups intact (${opened.groups} groups, ${opened.railH}px)`);
+    /* A control inside it still does its job. `#axes-on` is chosen because its effect is
+     * a DETERMINISTIC DOM change (`#axis-legend` loses `hidden`) rather than an eased
+     * animation — a motor assertion would race the liveness loop and teach the next
+     * reader to widen a timeout. */
+    const worked = await page.evaluate(async () => {
+      const cb = document.getElementById("axes-on");
+      const lg = document.getElementById("axis-legend");
+      if (!cb || !lg) return { hit: "missing" };
+      cb.scrollIntoView({ block: "center" });
+      const r = cb.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+      if (!hit || !(hit === cb || cb.contains(hit))) return { hit: hit ? hit.id || hit.tagName : "null" };
+      const was = lg.hidden;
+      cb.click();
+      await new Promise((s) => setTimeout(s, 200));
+      return { hit: "self", was, now: lg.hidden };
+    });
+    eq(worked.hit, "self", `…and a control inside it is hittable (got ${worked.hit})`);
+    ok(worked.was === true && worked.now === false,
+       "…and really works — ticking 'show axes' revealed the axis legend");
+
+    // ...and the composer did not move out from under the visitor when the rail opened.
+    const stillThere = await page.evaluate(reach, "#speech-input");
+    ok(stillThere.inFold && stillThere.self,
+       `the message box is STILL reachable with the rail open — y=${stillThere.top}..${stillThere.bottom} ` +
+       `of ${stillThere.vh}, hit ${stillThere.hit}`);
+
+    /* ---- TEETH. Put the composer back where it was and require the bug to return. ----
+     * Without this, everything in blocks 6-7 is equally consistent with "the fix works"
+     * and "the selectors match nothing" — a mistake this repo has shipped before. The
+     * mutation is the exact pre-2026-09-05 arrangement: the whole dock inside
+     * `#rail-scroll`, drawer shut. */
+    const broken = await page.evaluate((fn) => {
+      document.getElementById("hud").classList.add("rail-closed");
+      document.getElementById("rail-scroll").appendChild(document.getElementById("chat-dock"));
+      // eslint-disable-next-line no-eval
+      return (0, eval)("(" + fn + ")")("#speech-input");
+    }, reach.toString());
+    eq(broken.inFold, false,
+       `teeth — back inside the collapsed rail the box is unreachable again (${broken.w}x${broken.h} ` +
+       `at y=${broken.top}); if this passes, nothing in blocks 6-7 is being measured`);
+    eq(broken.shown, false,
+       `teeth — …and it is 0x0, which is exactly what production measured (${broken.w}x${broken.h})`);
+
+    await page.close();
+  }
+
 } catch (e) {
   fails.push("threw: " + (e && e.stack ? e.stack.split("\n").slice(0, 4).join(" / ") : e));
 } finally {
