@@ -154,12 +154,31 @@ def config_values(text: str) -> list:
     return values
 
 
+#: Directory names that are never OUR shipped code, pruned from the walk below.
+#:
+#: `.venv` / `site-packages` / `build` / `dist` / `.eggs` joined the list on 2026-09-05, and
+#: the trigger was a recipe this repo hands to its own agents: `cd mqtt && python3 -m venv
+#: .venv && .venv/bin/pip install build && python -m build` — the standard "does the SDK
+#: still package?" check. It leaves `mqtt/.venv/` and `mqtt/build/` behind (both git-ignored,
+#: so nothing else notices), and this guard then walked pip's vendored urllib3, rich and
+#: pygments and reported 37 files' worth of `github.com`, `numpy.org` and
+#: `urllib3.readthedocs.io` as shipped deployment defaults. One red test, zero defects, and
+#: the accusation was against third-party code we do not ship. `.gitignore` already knows
+#: all five names; this list is that knowledge, applied to the walk.
+NOT_OUR_CODE = ("node_modules", "__pycache__", "docs-bundle", "vendor",
+                ".venv", "site-packages", "build", "dist", ".eggs")
+
+
 def _walk(root: str, suffixes, skip_tests=True):
     base = os.path.join(REPO, root)
     for dirpath, dirnames, filenames in os.walk(base):
         rel = os.path.relpath(dirpath, REPO)
-        if any(part in rel.split(os.sep) for part in ("node_modules", "__pycache__",
-                                                      "docs-bundle", "vendor")):
+        # Pruned rather than merely skipped: the `continue` below already skipped every
+        # descendant (their rel path carries the same component), but os.walk still
+        # DESCENDED into them — thousands of files inside a venv, on every run.
+        dirnames[:] = [d for d in dirnames
+                       if d not in NOT_OUR_CODE and not d.endswith(".egg-info")]
+        if any(part in rel.split(os.sep) for part in NOT_OUR_CODE):
             continue
         if skip_tests and (rel.endswith("tests") or os.sep + "tests" + os.sep in rel + os.sep):
             continue
