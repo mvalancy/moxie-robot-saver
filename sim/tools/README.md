@@ -16,7 +16,7 @@
   **ordered** map, so sorting the keys would silently reorder every program in the file — the
   escape suite caught exactly that.
 - **`ext_mutation_check.py`** — the other direction of *"a test for every feature"*. It removes each
-  of **28 guards** the extension sandbox rests on — the `_`-segment path refusal, the fact-root
+  of **28 guards** the extension sandbox rests on ⚠️ *(unverified as of 2026-09-05 and left rather than guessed at — the table has **30 rows** across **12 distinct guard ids** (`X1`–`X12`), so 28 matches neither unit; whoever knows what it enumerated should correct it)* — the `_`-segment path refusal, the fact-root
   refusal, the step and wall-clock budgets, the byte caps, both depth caps, the injected clock and
   seed, the NFKC identity check, the memory-key grammar, the host-supplied namespace, the two
   capability-equality checks, the all-or-nothing effect list, the jinja2 sandbox, the pattern cap —
@@ -81,7 +81,7 @@
   reasons and SUBACKs a subscription it will never deliver on, so a proof written against acks would pass
   on a broker with no ACL at all.
 - **`hardening_mutation_check.py`** — the same proof for [production
-  hardening](../../docs/architecture/backlog/production-hardening.md) P0: **35 mutations** across
+  hardening](../../docs/architecture/backlog/production-hardening.md) P0: **38 mutations** across
   `moxie_sdk/store.py`'s cross-process lock and the connection region of
   `supervisor/moxie_runtime.py`. Two of them are deliberately the *half-done fixes* the brief warns
   about rather than deleted guards — `connect_async` without `retry_first_connection=True` (a no-op
@@ -179,3 +179,32 @@
   `attempted == on_disk + refused`, which is the only thing that distinguishes a *silent loss* (A5, must
   be 0) from the *recorded refusal* §3.2 point 4 explicitly accepts. It restarts the supervisor with
   **SIGTERM**, so the clean-shutdown path is exercised by the harness and not only by a unit test.
+
+---
+
+## An anchor must match exactly once
+
+A mutation row locates its target by a code snippet and applies `replace(old, new, 1)`. If that
+snippet appears **more than once in the file**, the row patches whichever copy comes first — so it
+can report `caught` while having proved nothing about the guard it names.
+
+Not hypothetical. Audited 2026-09-05 across all nine tables: **311 rows, 308 unique, 3 ambiguous** —
+`ext` X1 and X10, and `hardening` S4. Each was anchored on a line that a *deliberate twin guard* also
+carries: a load-time refusal beside its runtime belt-and-braces, the function half beside the event
+half, `_connack_failed` beside `_suback_failed`. All three happened to hit the intended block **by
+line order alone**.
+
+**The split was causal, not stylistic**, and that is the part worth keeping. The four tables whose
+runners already refused a non-unique anchor had **zero** ambiguous rows; the five without that check
+held all three — and `subscribe`'s S4, which targets the *other* half of `ext` X10's pair, was written
+disambiguated from the start **because its own table forced it**. The property is only reliably true
+where something mechanically insists on it.
+
+So it is insisted on in two places now: every runner prints `AMBIGUOUS` and exits 1, and
+`sim/tests/test_mutation_tables.py` enforces uniqueness for **every table, including ones not yet
+written**, in about a second. That second place matters because the mutation checkers are **not in
+CI** — that fast-tier test is the only automated guard over them.
+
+A related trap the same audit found: ambiguity silently disabled the *captured-mutation* half of
+`test_mutation_tables.py`, which only looks for the replacement once the original is gone. An
+ambiguous original still matches at the twin, so the check passed while measuring nothing.
