@@ -45,6 +45,36 @@ class MoxieApp:
         `respond`, so an app that never heard of streaming behaves exactly as before."""
         return None
 
+    # --- optional: be WOKEN by something the robot noticed ---
+    def perceive(self, turn: Turn) -> Optional[Reply]:
+        """A subscribed robot event reached the server — answer it, or return **None**.
+
+        `turn.speech` is the event name (`eb-qr-event`, `eb-found-face`, …) rather than
+        words a child said, exactly as the robot delivers it: a subscribed event arrives
+        as the `speech` of an ordinary `RemoteChatRequest`
+        (docs/architecture/vision.md §7.1). `turn.input_vars` carries whatever rode with
+        it — `$eb_qr_value` for a scanned card, and so on.
+
+        **The contract this hook exists to keep, and it is not a style note: an
+        implementation of `perceive` must not call a model.** `eb-found-face` fires every
+        time a child walks back into frame; a brain call per event would turn a child
+        moving around a room into a bill, which is why the runtime diverts perception away
+        from `respond` in the first place. `ContentApp.perceive` therefore runs only the
+        *local* extension evaluator — pure, budgeted, no network — and the property is
+        asserted from `moxie_sdk.chat.model_calls()`, a recorded counter, rather than from
+        a silent stub.
+
+        Returning None means "I have nothing to say about that", and the runtime carries
+        on with its own presence handling (the greeting rule, a 🎴 launch card, or a
+        `NOREPLY_ACK`) exactly as if this hook did not exist. The default does precisely
+        that, so an app that never heard of perception is unaffected.
+
+        The runtime calls this **only** for an event the app itself asked for, on the
+        module it asked under (`Reply.subscribe` → `EventSubscription.active[]`), never
+        under `MOXIE_VISION=0`, and never for a robot the pairing gate has not permitted.
+        """
+        return None
+
     # --- optional lifecycle hooks ---
     def on_connect(self, robot: RobotContext) -> None:
         """Called when a robot comes online (after config is pushed)."""

@@ -291,8 +291,19 @@ def test_a_child_utterance_through_the_runtime_on_gateway_ears_brain_and_voice()
     # The pinned voice must have produced SPEECH, not the placeholder tone. `ToneSynthesizer`
     # emits the same mono PCM16 at the same rate, so only the spectrum separates them — and
     # this is the assertion that makes "a pinned engine still speaks on the wire" a fact.
-    assert A.is_real_speech(spoken["audio"]), (
+    #
+    # `_stdlib`, and that is the whole point of this file. Until 2026-09-05 this line read
+    # `A.is_real_speech(...)`, which reaches numpy — a package this suite deliberately does
+    # NOT require, because the deployment it proves is a hosted box with nothing but
+    # `openai` (see test 2 and `helpers_audio.resample_pcm16_stdlib`). Measured that day:
+    # the turn itself was perfectly healthy — word overlap 1.00, a real reply, 203 612 B of
+    # audio @ 22050 Hz — and then this assertion died with `ModuleNotFoundError: No module
+    # named 'numpy'` from `helpers_audio.py:157`, four gateway calls in. Adding
+    # `importorskip("numpy")` at the top of the file would have hidden it by deleting the
+    # entire gateway-ears proof on exactly the machine shape it is about; the measurement
+    # grew a numpy-free twin instead, asserted verdict-equal by `test_speech_guard.py`.
+    assert A.is_real_speech_stdlib(spoken["audio"]), (
         f"the pinned gateway voice put tone-shaped audio on the wire "
-        f"(flatness {A.spectral_flatness(spoken['audio']):.3e} <= "
+        f"(flatness {A.spectral_flatness_stdlib(spoken['audio']):.3e} <= "
         f"{A.SPEECH_FLATNESS_FLOOR:.0e})")
     assert len(tts_msgs) == 1, f"the turn spent {len(tts_msgs)} voice calls, budgeted 1"

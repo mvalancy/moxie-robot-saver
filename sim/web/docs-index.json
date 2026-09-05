@@ -1,5 +1,5 @@
 {
- "generated": "docs-ccf3f6a2e13b",
+ "generated": "docs-247b770db0b0",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 7771,
+   "bytes": 8761,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 15441,
+   "bytes": 17354,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 244797,
+   "bytes": 257276,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -128,7 +128,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 166520,
+   "bytes": 185196,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -146,7 +146,7 @@
    "path": "architecture/rest-api-contract.md",
    "title": "Parent-app server — REST services contract",
    "section": "architecture",
-   "bytes": 9071,
+   "bytes": 12022,
    "mermaid": 0,
    "headings": [
     "What this server is",
@@ -263,7 +263,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 61740,
+   "bytes": 64836,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -353,7 +353,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 153967,
+   "bytes": 167460,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -375,6 +375,7 @@
     "2.4 Upstream re-check — 2026-09-03, and the one thing that *was* new",
     "2.5 The community scan — 2026-09-03, and the report that turns §2.4's anecdote into a pair",
     "2.6 Upstream re-check — 2026-09-04. Nothing moved, and that is the whole finding",
+    "2.7 Upstream re-check — 2026-09-05. Fourth consecutive nothing",
     "3. The scorecard — HAVE / ADOPT / BEYOND",
     "3.0 ⚠️ This scorecard is a frozen snapshot — these rows are superseded",
     "3.1 Onboarding & transport",
@@ -386,16 +387,15 @@
     "4.1 Top 10 ADOPT — port the idea, credit the source",
     "4.2 Top 10 BEYOND — what we should build instead",
     "4.3 Backlog — the build briefs",
-    "4.4 The open backlog, re-ranked — 2026-09-04",
-    "What this table got wrong, three times in twelve hours",
+    "4.4 The open backlog, re-ranked — 2026-09-05",
+    "What this table got wrong — three times in twelve hours, and five more found on 2026-09-05",
     "Shipped since the last refresh — corrections first, so nobody rebuilds them",
     "In flight right now — do not assign",
     "The ranking",
-    "The single most valuable next slice — content authoring P0",
+    "The single most valuable next slice — the spend ceilings on the Cache API tier",
     "Not ranked, deliberately — the ceilings no ranking moves",
     "5. The honest ledger",
-    "Where OpenMoxie (and its forks) are genuinely ahead of us",
-    "Where we are already ahead"
+    "Where OpenMoxie (and its forks) are genuinely ahead of us"
    ],
    "kind": "md"
   },
@@ -551,7 +551,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 129307,
+   "bytes": 148049,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -577,6 +577,7 @@
     "4.5 What a 429 / 503 looks like, and how the SIM reacts",
     "4.6 Counters, honestly",
     "4.7 Headers to add to `sim/web/_headers`",
+    "4.8 The synthesised-audio cache — `/api/speech` stops paying twice for a line (built 2026-09-05)",
     "5. Configuration surface",
     "The table",
     "dev.vars.example` (committed at the repo root; `.dev.vars` itself must be git-ignored)",
@@ -592,8 +593,7 @@
     "8.3 Acceptance criteria",
     "9. Effort and file list",
     "P0 — shippable alone, one agent, one sitting",
-    "P1 — M",
-    "P2 — L"
+    "P1 — M"
    ],
    "kind": "md"
   },
@@ -601,7 +601,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)",
    "section": "architecture",
-   "bytes": 88017,
+   "bytes": 93181,
    "mermaid": 0,
    "headings": [
     "0. The boundary, stated first — this is cloud-side, and only cloud-side",
@@ -830,7 +830,7 @@
    "path": "architecture/backlog/mobile-first-visit.md",
    "title": "On a phone, the Talk box is 2 095 px below the fold",
    "section": "architecture",
-   "bytes": 3766,
+   "bytes": 6090,
    "mermaid": 0,
    "headings": [
     "What a first-time phone visitor actually gets",
@@ -883,6 +883,49 @@
    "kind": "md"
   },
   {
+   "path": "architecture/backlog/gamify-the-public-sim.md",
+   "title": "Gamify the public sim — evidence for a decision the owner kept",
+   "section": "architecture",
+   "bytes": 51229,
+   "mermaid": 0,
+   "headings": [
+    "0. What the owner needs to decide",
+    "1. ⚠️ The precondition: gamification before reachability is decoration",
+    "2. Q1 — Who actually visits, and what do they want first?",
+    "2.1 The honest headline: nobody has published this, and we do not measure it",
+    "2.2 The proxy that does exist: forum thread view counts",
+    "2.3 The developer cohort is provably the smallest — by an order of magnitude",
+    "2.4 The \"never owned one\" cohort is real, non-technical, and arrives referred",
+    "2.5 The cold-traffic engine has a name and a date: M3GAN 2.0",
+    "2.6 So which cohort is largest?",
+    "3. Q2 — What did people love that a web chat page could actually deliver?",
+    "3.1 The marketed core was **missions**, and the child was cast as Moxie's **helper**",
+    "3.2 The one concrete emotional beat anyone published",
+    "3.3 Our own recovered vocabulary corroborates the press record exactly",
+    "3.4 Honest counter-finding: the one thread that asked this question directly yielded almost nothing",
+    "4. Q3 — What confuses or disappoints people about revival demos?",
+    "4.1 Verified at source: the revival is a **subset**, and the missing parts are the expressive ones",
+    "4.2 Reported but **NOT verified at source**: \"a bare bones version of Moxie\"",
+    "4.3 Verified, peer-reviewed, and directly on the point: the revival is *too technical*",
+    "4.4 An experienced owner wanted the **structure removed** — and this is the best argument against gamifying",
+    "4.5 We look like an impostor, and that is a first-30-seconds problem",
+    "4.6 A tension inside our own page, named because nobody else will",
+    "5. Q4 — Five candidate directions",
+    "Say hi\" — the reachable first turn *(the precondition, not really a game)*",
+    "Moxie's Missions\" — three missions from the recovered vocabulary",
+    "Knock-knock — the smallest real game, and the only one with a working precedent",
+    "Thinking out loud — turn the latency into the play",
+    "Bring your Moxie home\" — gamify the on-ramp, not the play",
+    "6. Ranking, and a recommendation the owner should overrule freely",
+    "The single recommendation",
+    "7. What was searched, and what came back empty",
+    "r/MoxieRobot: upgrade this gap from \"unreachable\" to \"structurally unavailable to agents\"",
+    "8. What this page could not establish",
+    "9. Where this lands on the audit"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/static-experience.md",
    "title": "The Moxie experience as one static site",
    "section": "architecture",
@@ -919,7 +962,7 @@
    "path": "architecture/vision.md",
    "title": "13 — Camera & Vision: can we pipe Moxie's camera into a local CV/VLM stack?",
    "section": "architecture",
-   "bytes": 27250,
+   "bytes": 29871,
    "mermaid": 0,
    "headings": [
     "0. TL;DR / Verdict",
@@ -1390,7 +1433,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploying the Moxie Sim to Cloudflare Pages",
    "section": "guides",
-   "bytes": 12983,
+   "bytes": 14010,
    "mermaid": 0,
    "headings": [
     "The one thing to understand first",

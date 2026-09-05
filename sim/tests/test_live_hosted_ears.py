@@ -50,9 +50,10 @@ gateway's own voice through `config.build_synthesizer()` — the idiom
 records as **word overlap 1.00 for gateway TTS → gateway STT at both 22050 Hz and 16 kHz**
 (the AI-seam STT/TTS rows, and the 2026-09-02 entry). Synthesised speech is real speech as
 far as this route is concerned: it is broadband voiced audio with formants and silences,
-not the placeholder tone (asserted below via `helpers_audio.is_real_speech` where numpy is
-present, and structurally by `synth.voice_name` where it is not). What it is *not* is a
-child in a room with a laptop microphone — see the top of this docstring.
+not the placeholder tone (asserted below via `helpers_audio.is_real_speech_stdlib` — the
+numpy-free twin, so the check holds on the numpy-free box this file is about, and not only
+where a Whisper wheel happens to have dragged numpy in). What it is *not* is a child in a
+room with a laptop microphone — see the top of this docstring.
 
 The two backends being the same vendor is a real caveat and it is why the DECOY CONTROL
 below exists: a gateway that simply echoed its own synthesis input would also score 1.00,
@@ -326,21 +327,22 @@ def _assert_no_credential(blob, *, where):
 # --------------------------------------------------------------------------- #
 def test_the_audio_we_upload_is_actually_speech(spoken):
     """A tone would sail through every structural check in this file and transcribe to
-    nothing, so the audio is checked before it is trusted. Where numpy is installed this
-    is `is_real_speech` (tone ~3e-12 flatness, a voice ~5e-2); where it is not, the
-    `voice_name`/`failed` assertions in the fixture are what stand, and the empty-transcript
-    assertion downstream is what would catch a tone anyway."""
+    nothing, so the audio is checked before it is trusted.
+
+    This used to be `is_real_speech` inside a `try: … except ImportError: pytest.skip(…)`,
+    because the predicate needed numpy and THIS FILE MUST RUN WITHOUT IT — the deployment
+    it proves is a hosted box that installed nothing but `openai`. So on exactly the
+    machine shape the file exists for, its first assertion skipped. Since 2026-09-05 the
+    measurement has a stdlib twin (`helpers_audio.spectral_flatness_stdlib`, verdict-equal
+    to the numpy one and asserted so hermetically by `test_speech_guard.py`), so the check
+    is unconditional everywhere: tone ~8e-10, a real voice ~1e-2, floor 1e-6."""
     assert len(spoken["wav"]) > 2000, "under DEMO_MIN_AUDIO_BYTES — the route would refuse it free"
     assert len(spoken["wav"]) < 500000, "over DEMO_MAX_AUDIO_BYTES — the route would refuse it free"
     assert A.duration_s(spoken["pcm"], UPLOAD_RATE) < 15.0, "over DEMO_MAX_RECORD_MS"
     assert spoken["wav"][:4] == b"RIFF" and spoken["wav"][8:12] == b"WAVE"
-    try:
-        flat = A.spectral_flatness(spoken["pcm"])
-    except ImportError:
-        pytest.skip("numpy absent — the tone/speech spectral check did not run (the "
-                    "gateway-voice assertions in the fixture still did)")
+    flat = A.spectral_flatness_stdlib(spoken["pcm"])
     print(f"[ears] spectral flatness {flat:.3e} (floor {A.SPEECH_FLATNESS_FLOOR:.0e})")
-    assert A.is_real_speech(spoken["pcm"]), (
+    assert A.is_real_speech_stdlib(spoken["pcm"]), (
         f"the audio about to be uploaded is tone-shaped ({flat:.3e}) — this test would "
         f"have proven nothing about speech")
 

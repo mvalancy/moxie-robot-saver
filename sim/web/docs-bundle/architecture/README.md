@@ -78,7 +78,18 @@ A backend + Sim are built from these directly; each cites the study but reads on
   deliberately so:
   [`backlog/community-signals.md`](backlog/community-signals.md) — **the inbound half**, what owners
   holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how
-  strong the evidence is rather than how good the feature sounds.
+  strong the evidence is rather than how good the feature sounds. A second page shares that outward
+  gaze and adds a rule of its own:
+  [`backlog/gamify-the-public-sim.md`](backlog/gamify-the-public-sim.md) — evidence for the **one part
+  of the owner's chat-first steer that was deliberately left open**, *"Gamify this for regular
+  people"*. It answers who actually visits a page like ours, what people loved that a web chat could
+  deliver, and what disappoints them about revival demos — **every claim carrying a URL and a date, and
+  an explicit "no evidence found" where the sources are silent** — then prices five candidate
+  directions with a test plan and a counter-argument each. It **does not choose the game**: two
+  questions in its §0 are the owner's to answer. Its §1 is the part to read first even if you skip the
+  rest, because it is a precondition rather than a proposal — the Talk box measures `0 × 0` on load and
+  `y = 2 095` after `CONTROLS`, so anything gamified onto a surface the visitor cannot reach is
+  decoration.
 - [`static-experience.md`](static-experience.md) — the **combined static site**: parent app + simulator +
   cloud UI on Cloudflare Pages, and the roadmap to the real end-to-end system.
 - [`sil-and-cicd.md`](sil-and-cicd.md) — the simulator's design + the test/CI layers that guard it.

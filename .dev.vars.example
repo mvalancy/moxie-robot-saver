@@ -117,11 +117,69 @@ DEMO_STT_MODEL=your-stt-model
 # in-flight 60-second tickets, which is harmless.
 # DEMO_TICKET_SECRET=
 
+# ---------------------------------------------------------------------------
+# THE BOT CONTROL — CLOUDFLARE TURNSTILE (optional, and OFF by default)
+# ---------------------------------------------------------------------------
+# What it adds that nothing else here can: every other cap in this file bounds the
+# COST of a request that has already been made, and none of them can tell a child
+# from a script. `POST /api/chat` AND `POST /api/transcribe` each verify a Turnstile
+# token immediately before their one gateway call, which removes a
+# loop-with-no-browser from the set of things that can drain the demo's budget at
+# all. See functions/api/_lib/turnstile.js.
+#
+# ONE PAIR OF VARIABLES, TWO WIDGET ACTIONS. The two routes do not cost the same — a
+# chat turn is 160 completion tokens, a microphone turn is up to DEMO_MAX_RECORD_MS
+# of billable speech-to-text — so each requires its own `action` back (`chat` and
+# `transcribe`, in TURNSTILE_ACTIONS) and the page renders one widget per action.
+# Nothing to configure: the actions are constants in code on both sides, and a token
+# minted for one route is refused by the other.
+#
+# BOTH OR NEITHER, exactly like the Access pair above, and for the same reason: a
+# SECRET with no SITEKEY refuses every visitor (no browser can mint a token), and a
+# SITEKEY with no SECRET renders a widget nothing verifies. Either alone is reported
+# in `missing`, so every route answers `gateway_not_configured` and spends nothing.
+#
+# The SITEKEY is a PUBLIC value — it ships to every visitor in the widget markup — so
+# it is a plain variable, and the browser learns it from /api/health rather than from
+# shipped HTML (a sitekey in this public repo would be one deployment's sitekey, and
+# every fork and preview would render a widget bound to a domain list they are not
+# on). The SECRET is a SECRET binding in production (an encrypted variable, or
+# `npx wrangler pages secret put DEMO_TURNSTILE_SECRET`).
+#
+# LEAVE BOTH UNSET ON BRANCH PREVIEWS. Turnstile authorizes a hostname and all of its
+# subdomains, and a preview deployment's platform-assigned hostname is not on the
+# widget's domain list — so a real challenge there could never pass, and a preview
+# that enforced would be a preview nobody can use. Unset, the whole thing is inert:
+# no widget, no third-party script, no verification call.
+#
+# Get a pair from the Cloudflare dashboard -> Turnstile -> Add widget. For local
+# development use Cloudflare's DOCUMENTED DUMMY KEYS instead of a real widget
+# (developers.cloudflare.com/turnstile/troubleshooting/testing/):
+#   sitekey 1x00000000000000000000BB           always passes, invisible
+#   secret  1x0000000000000000000000000000000AA always passes validation
+#   secret  2x0000000000000000000000000000000AA always FAILS validation
+#   secret  3x0000000000000000000000000000000AA "token already spent"
+#
+# DEMO_TURNSTILE_SITEKEY=1x00000000000000000000BB
+# DEMO_TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+
+# Optional. The hostnames a solved challenge may have been served from, comma
+# separated. UNSET IS THE RIGHT ANSWER for almost everyone: the default allowance is
+# the hostname of the request being answered, which needs no configuration, works on
+# any domain, and — unlike a literal list — can never hand production a `localhost`
+# allowance by omission. Set it only when the widget is shared across hostnames that
+# are not each other's request host. A URL is accepted and reduced to its hostname.
+# The match is EXACT: no suffix matching, so a subdomain of a listed host is NOT
+# allowed even though Turnstile itself would authorize it.
+# DEMO_TURNSTILE_HOSTS=demo.example.com,example.com
+
 # Everything else has a default: DEMO_MAX_TOKENS=160, DEMO_MAX_INPUT_CHARS=500,
 # DEMO_MAX_TTS_CHARS=300, DEMO_CHAT_PER_MIN=5, DEMO_MAX_CONCURRENT_CHAT=4,
 # DEMO_UNIT_BUDGET_HOUR=600, DEMO_CHAT_TIMEOUT_MS=20000, DEMO_TICKET_TTL_S=60,
 # DEMO_MAX_AUDIO_BYTES=500000, DEMO_MIN_AUDIO_BYTES=2000, DEMO_STT_PER_MIN=10,
 # DEMO_STT_PER_HOUR=60, DEMO_STT_TIMEOUT_MS=12000,
 # DEMO_QUEUE_MAX_WAIT_MS=2500, DEMO_QUEUE_MAX_DEPTH=8 (the bounded wait behind the
-#   concurrency ceiling — set either to 0 to refuse instantly instead of queueing), …
+#   concurrency ceiling — set either to 0 to refuse instantly instead of queueing),
+# DEMO_TURNSTILE_TIMEOUT_MS=2000 (the deadline on the one siteverify call; a slow
+#   answer is treated as no answer, which FAILS OPEN — see turnstile.js), …
 # See the spec's §5 for the whole table and why each number is what it is.

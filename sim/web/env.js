@@ -152,12 +152,17 @@
   var VOICE_NOTE_PIPER =
     "Tap phrases above play shipped audio (no server). Free text uses your browser&#39;s " +
     "voice, or a local Piper service if you run one.";
+  /* "…at the bottom" rather than "…here": since 2026-09-05 the box these two sentences
+   * describe is the page's composer and is NOT beside this note any more (the phrase
+   * chips still are, so "above" is still true of them). The note stayed in the rail
+   * because it is about the chips and the voice; only the pointer had to move. */
   var VOICE_NOTE_LIVE =
-    "Tap a phrase above to play shipped audio. Type a line and press <b>Ask</b> &mdash; " +
-    "Moxie answers here, in her own voice.";
+    "Tap a phrase above to play shipped audio. Type in the message box at the bottom and " +
+    "press <b>Ask</b> &mdash; Moxie answers there, in her own voice.";
   var VOICE_NOTE_SCRIPTED =
-    "Tap a phrase above to play shipped audio. Type a line and press <b>Ask</b> &mdash; " +
-    "Moxie answers here with a pre&#8209;scripted line; this deploy has no live brain.";
+    "Tap a phrase above to play shipped audio. Type in the message box at the bottom and " +
+    "press <b>Ask</b> &mdash; Moxie answers there with a pre&#8209;scripted line; this " +
+    "deploy has no live brain.";
 
   /**
    * @param {boolean} piper  a local Piper sidecar answered — the box is still "Say".
@@ -330,26 +335,50 @@
    *
    * THE FIX IS LAYOUT, NOT z-index. Raising the toggle over the banner would only move the
    * collision (the banner's own dismiss X would go under it). The banner is instead LIFTED
-   * clear of whatever the bottom-anchored panel currently occupies, measured rather than
-   * guessed — the panel is ~48 px collapsed and up to 42 vh open, so no constant is right.
-   * At >=900px the rail is a side column, nothing is bottom-anchored, and the lift is 0.
+   * clear of whatever is bottom-anchored, measured rather than guessed — the panel is
+   * ~48 px collapsed and up to 42 vh open, and the composer grows with the conversation,
+   * so no constant is right. (The last line of this paragraph used to read "at >=900 px
+   * nothing is bottom-anchored and the lift is 0"; that stopped being true on 2026-09-05,
+   * when the composer became the HUD grid's bottom row at every width. See below.)
    *
    * `sim/test_mobile_layout.mjs` asserts `document.elementFromPoint()` at the toggle's
    * centre resolves to the toggle at 360/375/414 — the assertion that would have caught
    * this. A visibility check would not have: the toggle was visible the whole time. */
   var DRAWER_MQ = "(max-width: 899px)";       // must match the CSS drawer breakpoint
+
+  /* WHAT IS BOTTOM-ANCHORED CHANGED ON 2026-09-05, and getting this wrong is not
+   * cosmetic. This used to measure `#panel` alone, and only in drawer mode, because the
+   * collapsed rail handle was the lowest thing on the page and at >=900 px nothing was
+   * bottom-anchored at all. Both halves of that are now false: `#chat-dock` — the
+   * conversation and the box a visitor types into — is the bottom row of the HUD grid at
+   * EVERY width, and in drawer mode the rail stacks directly above it.
+   *
+   * So the lift is measured from the TOP of the highest box in that bottom stack, and a
+   * box only counts when it really is down there (`bottom` in the lower half of the
+   * viewport) — which is what keeps the desktop side column, whose bottom is also low but
+   * whose top is not, out of the sum. `#panel` is only ever offered in drawer mode for
+   * the same reason.
+   *
+   * The control this banner would otherwise swallow is now the composer, i.e. the one
+   * control the whole page exists for. */
   function liftBanner() {
     var root = document.documentElement;
     if (!root || !root.style || !root.style.setProperty) return;
     var lift = 0;
     if (bannerEl) {
+      var H = window.innerHeight || 0;
+      var top = H;
       var drawer = false;
       try { drawer = !!(window.matchMedia && window.matchMedia(DRAWER_MQ).matches); } catch (e) {}
-      var panel = $("panel");
-      if (drawer && panel && panel.getBoundingClientRect) {
-        var h = panel.getBoundingClientRect().height;
-        if (h > 0) lift = Math.ceil(h) + 8;
+      var boxes = [$("chat-dock")];
+      if (drawer) boxes.push($("panel"));       // stacked above the dock, drawer mode only
+      for (var i = 0; i < boxes.length; i++) {
+        var el = boxes[i];
+        if (!el || !el.getBoundingClientRect) continue;
+        var r = el.getBoundingClientRect();
+        if (r.height > 0 && r.bottom > H * 0.5 && r.top < top) top = r.top;
       }
+      if (H > 0 && top < H) lift = Math.ceil(H - top) + 8;
     }
     root.style.setProperty("--eb-lift", lift + "px");
   }
@@ -357,12 +386,16 @@
     liftBanner();
     try { window.addEventListener("resize", liftBanner, { passive: true }); } catch (e) {}
     try { window.addEventListener("orientationchange", liftBanner); } catch (e) {}
-    // The panel's height also changes with no resize event at all — opening the drawer,
-    // a <details> group toggling — so watch the box itself where the browser can.
+    // These boxes also change height with no resize event at all — opening the drawer, a
+    // <details> group toggling, the conversation growing a row — so watch them where the
+    // browser can, and fall back to the toggle click where it cannot.
     try {
-      var panel = $("panel");
-      if (panel && window.ResizeObserver) new window.ResizeObserver(liftBanner).observe(panel);
-      else if (panel) {
+      var watched = 0, ids = ["panel", "chat-dock"];
+      for (var i = 0; i < ids.length; i++) {
+        var el = $(ids[i]);
+        if (el && window.ResizeObserver) { new window.ResizeObserver(liftBanner).observe(el); watched++; }
+      }
+      if (!watched) {
         var t = $("rail-toggle");
         if (t) t.addEventListener("click", function () { setTimeout(liftBanner, 0); });
       }

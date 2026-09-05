@@ -16,13 +16,31 @@
   **ordered** map, so sorting the keys would silently reorder every program in the file — the
   escape suite caught exactly that.
 - **`ext_mutation_check.py`** — the other direction of *"a test for every feature"*. It removes each
-  of **28 guards** the extension sandbox rests on — the `_`-segment path refusal, the fact-root
+  of **28 guards** the extension sandbox rests on ⚠️ *(unverified as of 2026-09-05 and left rather than guessed at — the table has **30 rows** across **12 distinct guard ids** (`X1`–`X12`), so 28 matches neither unit; whoever knows what it enumerated should correct it)* — the `_`-segment path refusal, the fact-root
   refusal, the step and wall-clock budgets, the byte caps, both depth caps, the injected clock and
   seed, the NFKC identity check, the memory-key grammar, the host-supplied namespace, the two
   capability-equality checks, the all-or-nothing effect list, the jinja2 sandbox, the pattern cap —
   and requires the corresponding test to go **red**. All 28 are caught. Run it by hand after
   touching `ext.py`, `render.py`, `content_app.py`'s host half or `packs.py`'s pattern cap; a green
   suite proves a guard is *present*, and only this proves it is *load-bearing*.
+- **`subscribe_mutation_check.py`** — the same proof for the `subscribe` capability's **25 guards**:
+  the load-time event allowlist, the width of `ext.SUBSCRIBE_EVENTS`, the P1 gate, both host
+  boundaries, both de-duplications, the two **merge-direction** rows, `MOXIE_VISION`, the pairing
+  gate, four *set-but-never-sent* shapes, and — since the inbound half landed on 2026-09-05 — nine
+  more for being **woken**: the subscribed-only gate, its module keying, both inbound gates, the
+  record and *where* it is written, the module-exit forget, the empty-answer fall-through, and S17,
+  which routes a perceived event to `app.respond` instead of to the pack's local evaluator. S17 is
+  the sharpest row in the file because every visible behaviour survives it — the pack answers, the
+  child hears a line, the wire is well formed — and the only thing that notices is
+  `moxie_sdk.chat.model_calls()`. **25/25 caught.** A separate table from
+  `ext_mutation_check.py` because half these guards live in `mqtt/supervisor/moxie_runtime.py`, which
+  that checker's single-file runner cannot see. Two rows earn the file on their own: a merge in which a
+  content pack's event list **replaces** the supervisor's fails *silently*, because
+  `_vision_subscription` latches *"subscribed"* for a `(device, module)` at the moment it hands its
+  list over — so presence, the greeting rule and launch cards would go quiet with nothing logged. The
+  run also found a **weak test**: rows S12/S13 left the wire assertion green in its first draft,
+  because every grantable event is in the runtime's own list and the assertion was satisfied without
+  the pack's contribution at all.
 - **`build_performance_goldens.py`** — regenerates
   [`../tests/goldens/performance.json`](../tests/goldens/), the behavior planner's 22
   dialog-act goldens as JSON `Performance` objects **plus** the markup each renders to
@@ -63,7 +81,7 @@
   reasons and SUBACKs a subscription it will never deliver on, so a proof written against acks would pass
   on a broker with no ACL at all.
 - **`hardening_mutation_check.py`** — the same proof for [production
-  hardening](../../docs/architecture/backlog/production-hardening.md) P0: **35 mutations** across
+  hardening](../../docs/architecture/backlog/production-hardening.md) P0: **38 mutations** across
   `moxie_sdk/store.py`'s cross-process lock and the connection region of
   `supervisor/moxie_runtime.py`. Two of them are deliberately the *half-done fixes* the brief warns
   about rather than deleted guards — `connect_async` without `retry_first_connection=True` (a no-op
@@ -86,6 +104,70 @@
   guarded **twice**, where neither guard is individually load-bearing — so the mutation had to remove both
   at once. The checker also reports a `-k` selector that matched **no test** as a NO-OP, because a renamed
   test is how a mutation table rots into reporting "caught" forever.
+- **`turnstile_mutation_check.py`** — the same proof for the **Cloudflare Turnstile bot control**
+  in front of `POST /api/chat` **and** `POST /api/transcribe`: **57 mutations** across
+  [`functions/api/_lib/turnstile.js`](../../functions/api/_lib/turnstile.js), the guard step in
+  [`chat.js`](../../functions/api/chat.js) and [`transcribe.js`](../../functions/api/transcribe.js),
+  the budget refund in [`_lib/limits.js`](../../functions/api/_lib/limits.js), the sitekey's one
+  delivery path in [`health.js`](../../functions/api/health.js), `_lib/env.js`'s config pair, the
+  app-script cache list in [`sim/web/_headers`](../../sim/web/_headers), and the three browser files —
+  [`sim/web/turnstile.js`](../../sim/web/turnstile.js),
+  [`cloud-transport.js`](../../sim/web/cloud-transport.js) and [`mic.js`](../../sim/web/mic.js).
+  **IT NEVER TOUCHES THE CHECKOUT**: it hardlink-copies `functions/` and `sim/` into a throwaway
+  directory (~0.2 s, because hardlinks copy metadata and not bytes), replaces the files it mutates with
+  real copies so no write can reach the original inode, and runs `node` there. The first version rewrote
+  the live worktree and restored it in a `finally` — which left mandatory check 2 **disabled in the tree**
+  after a run that was killed, and made two concurrent runs redden each other's suites on rows that had
+  no defect behind them. **It is STRICTER than the five tables above,
+  deliberately**: they run `pytest -k <selector>` and treat any non-zero exit as *caught*, which for a
+  security control is too weak — a mutation that broke some unrelated assertion would read as caught
+  while the guard it targeted went unexercised. This one runs `node sim/test_turnstile.mjs` and requires
+  the selector to appear in **a failing check's own label**, so a row is caught only when the check that
+  *names that guard* is the one that reddened. That strictness paid for itself on the first run: four
+  rows came back **NOT CAUGHT or WRONG CHECK**, and each was a real hole in the tests — a `success:false`
+  case that was actually being refused by the *action* check (so deleting the success check changed
+  nothing), a suffix-matching mutation that only touched the `DEMO_TURNSTILE_HOSTS` branch no test
+  exercised, a `!res.ok` deletion that fell open by accident because the 500 in the fixture had an empty
+  body, and a `publicTurnstile` mutation invisible because no test configured a sitekey **without** a
+  secret. Rows include both halves of the fail-open/fail-closed split (a control that lets the refused
+  case through, and a Cloudflare outage that takes the whole demo down), the concurrency-slot release
+  **and its negative control** — the release neutered in `limits.js`, so *"the in-flight count is back to
+  zero"* cannot pass on a counter that is always zero — and the plausible-patch shape the other tables
+  favour: the refusal hoisted *outside* the `try` whose `finally` returns the slot, which reads as tidier
+  and leaks a slot for ever. One row is caught by **hanging** (no deadline on the verification call, which
+  holds a concurrency slot) and says so, because "it never finished" is a different fact from "it went
+  red". Pass a row name to re-check one without waiting out that hang:
+  `python3 sim/tools/turnstile_mutation_check.py D3e`.
+  The 2026-09-05 review pass added 29 rows and they found five more holes of the same kind: the action
+  compared with `startsWith` or case-folded (both served a `chat-newsletter` token on the expensive
+  route and both passed green), the ears verifying nothing at all, a refusal that kept the units
+  admission charged (a *free* budget drain in place of a paid one), `/api/health` no longer publishing
+  the sitekey — the browser's ONLY source of it — with **eleven** suites still green, and a client that
+  memoised a failed script load and so disabled every turn for the life of the page. `sim/tests/
+  test_mutation_tables.py` now also pins the row COUNT stated in the docs against the table, because a
+  README that said 26 while the table held 28 is how a reader loses the ability to tell a table that grew
+  from a selector that silently stopped matching.
+- **`unit_budget_mutation_check.py`** — the same proof for the **shared unit budget** of
+  [`live-sim-demo.md` §4.6.2](../../docs/architecture/backlog/live-sim-demo.md): every guard the
+  per-colo spend ceiling rests on, all of them in
+  [`functions/api/_lib/limits.js`](../../functions/api/_lib/limits.js), checked against
+  [`sim/test_demo_proxy.mjs`](../test_demo_proxy.mjs) §15i.
+  `python3 sim/tools/unit_budget_mutation_check.py        # 16 rows; every one must say "caught"`
+  (about 25 s; pass a row name — `U3` — to re-check one in ~1.5 s). It inherits
+  `turnstile_mutation_check.py`'s **strictness** (the selector must appear in a *failing check's own
+  label*, so a row is caught only when the check that names that guard is the one that reddened) and its
+  **throwaway hardlink tree**, and it adds one thing the other six do not have: **an AMBIGUOUS verdict
+  when an anchor matches more than one place.** That is not a refinement invented on paper — on this
+  table's first run, row `U5`'s anchor matched the per-IP window sub-tier's fail-open block *as well as*
+  the budget sub-tier's, because the two were byte-identical; `str.replace(old, new, 1)` mutated the
+  first, and the row spent an entire run checking a guard it is not about. The other tables here share
+  that latent defect. Two rows are the shipped form of a **rejected design** rather than a typo: `U1`
+  charges the colo at admission and refunds only locally (the reading of §4.6.1's *"the same fail-open
+  rules apply verbatim"* that re-opens the free drain), and `U3` keeps the unpublished units to retry
+  them, which reads as resilience and double-charges whenever a `put` lands and then times out. The
+  second run also found a test defect the first hid: `U3`'s own assertion could never be the failing one,
+  because the over-publish crossed the 12-unit ceiling three checks earlier — so the row is now driven at
+  the production ceiling, out of the way.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.
@@ -97,3 +179,32 @@
   `attempted == on_disk + refused`, which is the only thing that distinguishes a *silent loss* (A5, must
   be 0) from the *recorded refusal* §3.2 point 4 explicitly accepts. It restarts the supervisor with
   **SIGTERM**, so the clean-shutdown path is exercised by the harness and not only by a unit test.
+
+---
+
+## An anchor must match exactly once
+
+A mutation row locates its target by a code snippet and applies `replace(old, new, 1)`. If that
+snippet appears **more than once in the file**, the row patches whichever copy comes first — so it
+can report `caught` while having proved nothing about the guard it names.
+
+Not hypothetical. Audited 2026-09-05 across all nine tables: **311 rows, 308 unique, 3 ambiguous** —
+`ext` X1 and X10, and `hardening` S4. Each was anchored on a line that a *deliberate twin guard* also
+carries: a load-time refusal beside its runtime belt-and-braces, the function half beside the event
+half, `_connack_failed` beside `_suback_failed`. All three happened to hit the intended block **by
+line order alone**.
+
+**The split was causal, not stylistic**, and that is the part worth keeping. The four tables whose
+runners already refused a non-unique anchor had **zero** ambiguous rows; the five without that check
+held all three — and `subscribe`'s S4, which targets the *other* half of `ext` X10's pair, was written
+disambiguated from the start **because its own table forced it**. The property is only reliably true
+where something mechanically insists on it.
+
+So it is insisted on in two places now: every runner prints `AMBIGUOUS` and exits 1, and
+`sim/tests/test_mutation_tables.py` enforces uniqueness for **every table, including ones not yet
+written**, in about a second. That second place matters because the mutation checkers are **not in
+CI** — that fast-tier test is the only automated guard over them.
+
+A related trap the same audit found: ambiguity silently disabled the *captured-mutation* half of
+`test_mutation_tables.py`, which only looks for the replacement once the original is gone. An
+ambiguous original still matches at the twin, so the check passed while measuring nothing.

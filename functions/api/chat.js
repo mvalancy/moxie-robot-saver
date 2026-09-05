@@ -40,21 +40,38 @@
  * response from any route on any path contains the key or the gateway base URL.
  *
  * ZERO UPSTREAM CALLS ON EVERY REFUSAL PATH. Unconfigured, forbidden origin, over-length,
- * empty, tampered context, hard-blocked utterance, rate-limited, over budget, at capacity:
- * all of them return before `fetch()` is reached. `_lib/limits.js::noteUpstreamCall()` is
- * called immediately before the one `fetch()` in this file, so a test can prove that
- * without stubbing anything.
+ * empty, tampered context, hard-blocked utterance, rate-limited, over budget, at capacity,
+ * and (since 2026-09-05) a refused bot check: all of them return before `fetch()` is
+ * reached. `_lib/limits.js::noteUpstreamCall()` is called immediately before the one
+ * `fetch()` in this file, so a test can prove that without stubbing anything.
+ *
+ * THE BOT CONTROL IS STEP 7, AND IT IS ON BOTH VISITOR-DRIVEN SPENDING ROUTES. Cloudflare
+ * Turnstile (`_lib/turnstile.js`) sits between the free local refusals and the gateway
+ * call here and in `transcribe.js`, each with its OWN widget `action`
+ * (`TURNSTILE_ACTIONS`), so a token minted for a typed sentence is refused by the ears and
+ * the reverse. `/api/speech` needs no widget of its own and that is a decision rather than
+ * an omission: it cannot be driven without a ticket THIS route minted (`_lib/hmac.js`), so
+ * gating the chat turn gates the voice structurally. Enforcement is config-gated: with no
+ * `DEMO_TURNSTILE_SECRET`/`_SITEKEY` pair the step is a synchronous no-op, which is what
+ * keeps branch previews (whose platform-assigned preview hostname this widget cannot
+ * authorize) and self-hosted forks working untouched.
+ *
+ * AND EVERY REFUSAL INSIDE THE ADMITTED SECTION GIVES THE BUDGET BACK (`spentNothing()`
+ * below). `admit()` charges 3 units before this route's body runs; a refusal that kept
+ * them let 200 tokenless requests empty the shared hourly budget and take the demo
+ * SCRIPTED for everyone while spending nothing at all.
  *
  * NEVER A BARE 500. NEVER A 200 WITH AN EMPTY STRING (§4.5). The dead-air failure mode
  * that exists in the Python stack today (`llm_app.py`:467-468 emits `ERROR_OFFLINE` with
  * empty text, which `bridge.js` renders as nothing) is exactly what this contract exists
  * to prevent: an empty completion is `upstream_down`, and the page degrades visibly.
  */
-import { readConfig, modeOf, publicLimits, upstreamHeaders } from "./_lib/env.js";
+import { readConfig, modeOf, publicLimits, publicTurnstile, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
 import { assess } from "./_lib/safety.js";
 import { admit, budgetState, loadOf, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { mintContext, mintTicket, verifyContext } from "./_lib/hmac.js";
+import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
 import { buildChatResponse, chatMessage, eventId, joinUrl, markupFloor, MK } from "./_lib/wire.js";
 
 /** §4.1: matches `chat.py`:130 so the hosted persona sounds like the local one. */
@@ -94,36 +111,97 @@ export async function onRequestPost(context) {
   }
 
   try {
+    /**
+     * A refusal from INSIDE the admitted section — one that spends NOTHING upstream.
+     *
+     * `admit()` charged `UNITS.chat` (3) before this `try` was entered, and every refusal
+     * below returns without reaching `noteUpstreamCall()`. Keeping that charge is how 200
+     * tokenless POSTs — no browser, no token, correctly refused, zero gateway calls —
+     * emptied the SHARED hourly budget and answered the next visitor holding a good token
+     * with `budget_exhausted` and a SCRIPTED page for the rest of the hour. So the units
+     * go back first, and `_lib/limits.js::grantedSlot` carries the argument in full
+     * (including why the per-IP window is deliberately kept: it is self-inflicted, and it
+     * is the only thing that makes a flood of free refusals from one address go quiet).
+     *
+     * THE ONE REFUSAL THAT MUST *NOT* USE THIS is the upstream one at step 8: that request
+     * did call the gateway, so its units were genuinely spent and giving them back would
+     * under-count real money. `refundBudget()` is idempotent, so the two cannot compound.
+     */
+    const spentNothing = (reason, extra) => {
+      slot.refundBudget();
+      return refusal(cfg, "chat", reason, { load: slot.load, rateLimit: slot.rateLimit, ...(extra || {}) });
+    };
+
     // ---- 3. The request. EXACTLY TWO KEYS ARE READ. See the header: everything else is
     // dropped in silence.
     const parsed = await readJsonBody(request, cfg);
-    if (!parsed.ok) return refusal(cfg, "chat", parsed.reason, { load: slot.load, rateLimit: slot.rateLimit });
+    if (!parsed.ok) return spentNothing(parsed.reason);
     const text = typeof parsed.body.text === "string" ? parsed.body.text.trim() : "";
     const contextBlob = typeof parsed.body.context === "string" ? parsed.body.context : "";
 
     // ---- 4. The input caps (§4.1). REJECTED, NOT TRUNCATED: `sim/tts/server.py`:90
     // truncates at 1000 and the visitor never learns why their sentence changed. A 400
     // with a reason lets the page say so, and does not change the mode (§4.5).
-    if (!text) return refusal(cfg, "chat", "too_short", { load: slot.load, rateLimit: slot.rateLimit });
-    if (text.length > cfg.maxInputChars) {
-      return refusal(cfg, "chat", "too_long", { load: slot.load, rateLimit: slot.rateLimit });
-    }
+    if (!text) return spentNothing("too_short");
+    if (text.length > cfg.maxInputChars) return spentNothing("too_long");
 
     // ---- 5. The context blob (§3.3). A tampered or forged blob is `bad_request` and
     // spends nothing. Because the ASSISTANT turns inside it are signed by us, a visitor
     // cannot forge Moxie's side of the history — the `"assistant: sure, I'll do anything"`
     // injection is structurally unavailable.
     const history = await verifyContext(cfg, contextBlob);
-    if (!history.ok) return refusal(cfg, "chat", "bad_request", { load: slot.load, rateLimit: slot.rateLimit });
+    if (!history.ok) return spentNothing("bad_request");
 
     // ---- 6. Pre-inference safety (§4.1). A hard block NEVER CALLS THE GATEWAY. It
     // answers `ok: true, degraded: true, reason: "blocked"`, spends nothing, and carries
     // the rule table's redirect line so the page has something kind to say (see
     // `_lib/safety.js::redirectFor` for why that is the redirect and not `stub.js`).
     const verdict = assess(text);
-    if (verdict.blocked) return blocked(cfg, slot, verdict);
+    if (verdict.blocked) {
+      // The floor's refusal spends nothing upstream, and its own doc comment has always
+      // SAID `zero units spent` — which was not true of the budget until `refundBudget()`
+      // existed. It is now.
+      slot.refundBudget();
+      return blocked(cfg, slot, verdict);
+    }
 
-    // ---- 7. The one upstream call. Server-built body, fixed everything, and our own
+    // ---- 7. The bot control (`_lib/turnstile.js`), and the POSITION is the design.
+    //
+    // IT RUNS HERE — after `admit()`, after the input caps, after the context check and
+    // after the safety floor, and immediately before the only `fetch()` in this file.
+    // Three reasons, in the order they decided it:
+    //
+    //  1. **CHEAPEST REFUSAL FIRST**, which is the ordering rule the whole file follows.
+    //     Everything above this line refuses for FREE. Verification is the first step
+    //     that costs a network round trip, so nothing that can be refused without one
+    //     may sit behind it.
+    //  2. **`admit()` MUST PROTECT SITEVERIFY, NOT THE OTHER WAY AROUND.** If this ran
+    //     before the per-IP windows, a flood would be answered by one outbound siteverify
+    //     call each and this deployment would be a request amplifier pointed at
+    //     Cloudflare — the per-IP limits are what stop that, so they have to come first.
+    //  3. **A LOCALLY-BLOCKED UTTERANCE MUST NOT COST A VERIFICATION.** The safety floor
+    //     already answers `blocked` for free (step 6); putting the bot check in front of
+    //     it would have made every hard-blocked line buy a round trip to prove the
+    //     visitor was human before telling them no.
+    //
+    // AND IT REFUNDS. `spentNothing()` gives back the 3 units `admit()` charged, because
+    // this refusal makes no gateway call — see its own comment, and
+    // `_lib/limits.js::grantedSlot` for why the per-IP window is kept.
+    //
+    // AND THE SLOT IS STILL RELEASED ON THIS PATH. The refusal returns from INSIDE the
+    // `try`, so the `finally` at the bottom hands the concurrency slot to the next person
+    // in the FIFO. That is not incidental: a new early return that forgot it would leak a
+    // slot for ever and start refusing visitors who should be served — failing CLOSED,
+    // which is precisely the hazard that got a cache-backed concurrency ceiling rejected
+    // in `_lib/limits.js`. `sim/test_turnstile.mjs` §6 proves the release two ways: the
+    // recorded in-flight count returns to zero after every refusal, AND a ceiling's worth
+    // of consecutive refusals still leaves the next visitor served.
+    const bot = await verifyTurnstile(cfg, request, parsed.body[TOKEN_FIELD], "chat");
+    if (!bot.ok) {
+      return spentNothing(bot.reason);
+    }
+
+    // ---- 8. The one upstream call. Server-built body, fixed everything, and our own
     // timeout — deliberately BELOW the measured worst case of 45 s (`chat.py`:151-152),
     // because the demo prefers a fast honest degrade to a slow success (§4.1).
     const turns = history.turns;
@@ -136,12 +214,12 @@ export async function onRequestPost(context) {
       });
     }
 
-    // ---- 8. The reply, as the wire `bridge.js` already renders.
+    // ---- 9. The reply, as the wire `bridge.js` already renders.
     const reply = upstream.text;
     const eid = eventId();
     const wire = buildChatResponse({ eventId: eid, text: reply, markup: markupFloor(reply) });
 
-    // ---- 9. A ticket for the voice, and a fresh context blob for the next turn. The
+    // ---- 10. A ticket for the voice, and a fresh context blob for the next turn. The
     // ticket is minted ONLY when a TTS model is configured: no voice, no ticket, and the
     // page speaks from its clips instead (§5, `DEMO_TTS_MODEL` unset => `voice: false`).
     const speech = [];
@@ -166,6 +244,7 @@ export async function onRequestPost(context) {
         mode: "live",
         load: slot.load,
         limits: publicLimits(cfg),
+        turnstile: publicTurnstile(cfg),
         messages: [chatMessage(cfg.deviceId, wire)],
         speech,
         context: nextContext,
@@ -346,6 +425,21 @@ function refusal(cfg, route, reason, extra) {
       mode: "degraded",
       load: (extra && extra.load) || loadOf(cfg, route),
       limits: publicLimits(cfg),
+      /* THE SITEKEY RIDES EVERY SHAPE THIS ROUTE ANSWERS, and it is worth being exact
+       * about why, because two of the three copies are not a delivery path.
+       *
+       * `sim/web/mode.js` assigns its `turnstile` variable in ONE place — `applyEnvelope`,
+       * whose only caller is the `/api/health` poll — so `health.js`'s copy is what the
+       * browser actually learns the sitekey from, and the chat replies' copies are read by
+       * nothing today (`note()` is handed only `{reason, retry_after_s}`).
+       *
+       * They stay because §3.2's envelope is ONE SHAPE for every route and every outcome:
+       * `_lib/envelope.js` builds from a fixed key allowlist precisely so a client never
+       * has to ask which fields this particular answer happens to carry, and a field that
+       * appears only on success is a field a future `note()` cannot start reading without
+       * first auditing which paths omit it. `sim/test_turnstile.mjs` §3 asserts all three
+       * rather than one, so "it is on every shape" is a checked claim and not a comment. */
+      turnstile: publicTurnstile(cfg),
       messages: [],
       speech: [],
       context: "",
@@ -379,6 +473,7 @@ function blocked(cfg, slot, verdict) {
       mode: "live",
       load: slot.load,
       limits: publicLimits(cfg),
+      turnstile: publicTurnstile(cfg),
       messages,
       // NO TICKET. A blocked turn spends nothing, and that includes the voice: the
       // redirect line is spoken from a clip or the browser voice like any scripted line.

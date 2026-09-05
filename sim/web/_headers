@@ -126,12 +126,53 @@
 # real deploy. Inert lines that look live are the original trap: it is precisely how the two
 # spending routes went months appearing to carry a security policy that never applied to
 # them. A header that protects an `/api/*` response has to be written in `envelope.js`.
+#
+# 2026-09-05 — `https://challenges.cloudflare.com` IN THREE DIRECTIVES, FOR THE BOT CONTROL.
+#
+# Cloudflare Turnstile now guards `POST /api/chat` (`functions/api/_lib/turnstile.js`, and
+# `sim/web/turnstile.js` is the browser half). The widget is a third-party script that
+# draws inside a third-party iframe and talks to its own origin, so it needs THREE
+# allowances and each one fails differently if it is missing:
+#
+#   · `script-src`  — without it `api.js` never loads. The failure is SILENT in the worst
+#     way: no widget renders, `getToken()` resolves `null`, and every send answers "try
+#     again" while the console carries one refusal nobody is watching.
+#   · `frame-src`   — was `'none'`, and is now EXACTLY this host. Turnstile renders its
+#     challenge in an iframe; with `'none'` the script loads, reports no error a page can
+#     see, and simply never produces a token. This is the one directive in the policy that
+#     had to be LOOSENED rather than extended, and the loosening is one host: no site but
+#     this one may be framed, and nothing on this site frames anything else (the paragraph
+#     above still holds — no page uses `<object>`/`<embed>`).
+#   · `connect-src` — the widget posts its own telemetry and fetches challenge material
+#     from its origin. THIS IS THE DIRECTIVE TO BE CAREFUL WITH: `connect-src 'self'` has
+#     a MEASURED kill on this site — it is what refused the port-8081 fetch that made the
+#     typed turn a dead control — and it is the half of an XSS payload that stops
+#     exfiltration. So it is widened by EXACTLY ONE HOST and nothing else, and
+#     `sim/test_csp.mjs` block 3 still proves an arbitrary off-origin `fetch` is refused.
+#
+# WHY NOT self-host the widget script. Because it cannot be self-hosted: Turnstile's
+# script must be served from `challenges.cloudflare.com` for the challenge to be valid,
+# which is the same "the tag is not in this repo" situation as the analytics beacon above.
+#
+# HOST-EXACT, LIKE THE BEACON. Note the near-neighbour trap the beacon entry already
+# records, because this host has one too: the ALLOWED host is
+# `challenges.cloudflare.com`, and a bare `cloudflare.com` or a `challenges.` on any other
+# domain is NOT allowed and must not be added "for symmetry". `sim/test_csp.mjs` block 9
+# pins all three directives by name and proves a sibling host is still refused.
+#
+# AND THE SITEKEY IS NOT IN THIS REPO. The widget's public sitekey arrives from the
+# deployment at runtime, on `/api/health`'s envelope (`functions/api/_lib/env.js::
+# publicTurnstile` argues why). A sitekey written into `sim/web/sim.html` would be THIS
+# deployment's sitekey in a public repo, and every fork and every branch preview would
+# render a widget bound to a domain list they are not on — which is also why a preview
+# enforces nothing: `*.pages.dev` is not an authorized hostname for this widget, so a
+# challenge there could never pass and the Turnstile variables are deliberately unset.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: microphone=(self), camera=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-D2XnioWKWXcIE2epN670TChceWuJD92o/6GT7rIBAsw=' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-D2XnioWKWXcIE2epN670TChceWuJD92o/6GT7rIBAsw=' https://static.cloudflareinsights.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' https://challenges.cloudflare.com; img-src 'self' data: blob:; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'
 
 # HTML — always revalidate so a redeploy's new asset references show up immediately.
 /
@@ -186,6 +227,13 @@
 /docs.js
   Cache-Control: no-cache
 /wire-bg.js
+  Cache-Control: no-cache
+# NEW 2026-09-05 — the browser half of the Turnstile bot control. THE LIST IS THE WHOLE
+# MECHANISM (see the note above this block): a script missing from it is served with
+# Pages' default caching, so a redeploy could leave a visitor running yesterday's
+# `turnstile.js` — one that mints a token for the wrong `action`, or none at all —
+# against today's `/api/chat`. `sim/test_csp.mjs` block 9 asserts this entry exists.
+/turnstile.js
   Cache-Control: no-cache
 
 # Rendered imagery + docs bundle — short cache so overwrites propagate fast.

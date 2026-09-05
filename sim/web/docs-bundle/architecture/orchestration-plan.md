@@ -55,6 +55,16 @@ integration:  push feat branch → PR into dev (fast CI) → merge → standing 
 - **Clean-room:** build from `docs/architecture/` + `docs/reverse-engineering/`; the vendor app is forbidden; OpenMoxie is allowed + credited.
 - **Secrets:** never print/commit keys; `mqtt/.env` stays untracked; staged diff must contain no `sk-…`.
 - **Attribution:** commit messages end with the `Co-Authored-By` + `Claude-Session` lines the orchestrator provides.
+- **Venv:** `python3 -m venv .venv && .venv/bin/pip install -q -r sim/tests/requirements.txt`
+  — and **never** a hand-written package list. That file (plus the browser-free
+  `sim/tests/requirements-hermetic.txt` it wraps, which is what both CI tiers install) is the
+  ONE declaration of what the suite needs. The recipe in these briefs used to hand-list
+  packages and it was missing `pyyaml`, `numpy` **and** `-r server/requirements.txt`, so every
+  agent briefed from it started with a red suite, two phantom failures and a silently-skipped
+  speech guard — for no reason. Add `build` when the brief asks for a package build, and
+  `piper-tts faster-whisper` only for local-voice work (≈2 GB).
+  `sim/tests/test_ci_workflows.py::test_the_agent_brief_protocol_points_at_the_declared_test_list`
+  fails if this bullet drifts back into a list.
 - **Quality gates:** a test for every feature; hermetic suite green (`python -m pytest sim/tests -q -k "not test_sil and not test_docs" --ignore=sim/tests/test_live_gateway.py`); doc guards (`build_docs_bundle` + `check-doc-links` + `check-doc-consistency` + `node sim/test_docs.mjs`); SIL smoke on a **free** port when the runtime changed (`MOXIE_SIL_PORT=19xx bash sim/run_smoke.sh`); never kill processes you didn't start.
 - **Report:** branch, commits, what shipped, tests/counts, guard + smoke results, live observations, honest gaps — under 400 words.
 
@@ -223,6 +233,66 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     That is the same defect as the roster ghost, the vision latch and the wakeup-into-a-dead-
     socket — a cached belief about a moving thing — and it is the most common bug this
     project has produced.
+
+24. **`git merge-base --is-ancestor` is the WRONG merged-ness test in this repo — ask the PR.**
+    Every merge here is `--squash`, and a squash lands a *new* commit on `dev` whose parent is not
+    the branch, so the branch is never an ancestor of `dev` no matter how thoroughly it merged. On
+    2026-09-05 all four stale remote branches (`feat/bg-hidden`, `feat/mic-proof`, `feat/qr-parity`,
+    `feat/tts-cache`) reported "unmerged, 1–4 commits ahead" by ancestry while their PRs (#151–#154)
+    all showed `mergedAt` set and `dev` was strictly ahead of each. Believing ancestry means either
+    keeping dead branches forever, or — far worse — learning to delete on a signal that is wrong in
+    the other direction too. **Test with `gh pr list --head feat/<x> --state all --json mergedAt`,
+    and corroborate with `git diff --stat origin/dev origin/feat/<x>` showing `dev` ahead.**
+
+25. **`gh pr merge --squash --delete-branch` silently leaves the REMOTE branch behind if a worktree
+    still holds the local one.** Seen twice on 2026-09-05, on #156 and again on #157: the command
+    merges, then aborts its cleanup with `failed to delete local branch feat/<x>: cannot delete
+    branch used by worktree at …` — and because the local delete failed, the remote delete never
+    ran. The merge succeeded, so nothing looks wrong; the branch just accumulates. **Remove the
+    worktree BEFORE the merge, and afterwards verify with
+    `git ls-remote --heads origin 'refs/heads/feat/*'` rather than trusting `--delete-branch`.**
+    This is rule 22's shape again — cleanup chained behind a merge in one command.
+
+26. **`pytest.importorskip` skips only on `ModuleNotFoundError`, so a stub that raises
+    `ImportError` is the WRONG instrument for simulating an absent package.** While verifying
+    #157 I blocked numpy with a `numpy/__init__.py` containing `raise ImportError(...)`; the test
+    at `test_speech_guard.py:180` then FAILED where the agent had measured a skip, which looked
+    like a defect in the branch. It was my instrument: pytest deliberately propagates an
+    `ImportError` from a module that *exists but fails to import*, precisely so it cannot mask a
+    broken install. "Broken on import" and "not installed" are different states. **To simulate
+    absence, make the module genuinely unfindable** — a `sys.meta_path` finder whose `find_spec`
+    raises `ModuleNotFoundError` for that name — which reproduced the agent's `15 passed, 1
+    skipped` exactly.
+
+27. **A design note inside the code is only true as of the commit that wrote it — before executing a
+    pre-written spec, check what landed since.** `functions/api/_lib/limits.js`:939 says the unit
+    budget is "one more `match` + `put`" and that "**the same fail-open rules apply verbatim**." That
+    was true when written and became FALSE hours later, when PR #160 added `slot.refundBudget()`: a
+    refund is a write that can be **lost**, and a lost refund leaves a visitor charged for a turn that
+    never happened, so the shared budget exhausts early and starts refusing people who should be
+    served. That is failing **CLOSED** — the exact direction the same paragraph rejects the
+    concurrency ceiling for. An agent following the note literally would have built a fail-closed
+    counter while believing it was following the design, and the note would have vouched for it.
+    **This repo's greatest strength — long explanatory comments that carry the reasoning — is also
+    the trap:** a paragraph that argues for its conclusion is far more persuasive than a stale
+    one-liner, and nothing in it announces that the world moved. Treat an in-code spec like a cached
+    belief about a moving thing (rule 23's shape): re-derive its premises against `git log` for the
+    files it reasons about before you build on it.
+
+28. **Do not merge, edit or run suites inside an agent's worktree until you have confirmed it is
+    idle — a completion notification does not mean the agent has stopped.** On 2026-09-05 I received
+    `feat/composer`'s report, merged `origin/dev` into its worktree, and ran the browser suites there.
+    The agent was still verifying. It noticed, correctly reported "another agent is operating in this
+    worktree", and had to re-derive from `git` whether the reserved paths that appeared in its
+    `git status` were its own edits or an in-flight merge — they were mine. No harm resulted (it
+    re-verified the merged tree and everything held), but **a concurrent write during another actor's
+    verification run is the one failure mode neither side can detect from inside it**, and the report
+    it was writing could have described a tree that no longer existed.
+    The notification's own note says it plainly: *"A task-notification fires each time this agent stops
+    with no live background children of its own… the same task-id may notify more than once."* Stopping
+    is not finishing. **Before touching `wt-<slice>`: confirm the tree is clean AND that no further
+    notification is expected**, or do the merge-forward in a throwaway worktree off the same branch and
+    push from there. Integration is not urgent enough to race an agent that is still measuring.
 
 ## The layered session loops (24/7 continuity)
 
@@ -678,3 +748,114 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   run of an intermittent failure proves very little. 38 mutations, 0 missed, including three new rows on
   the SUBACK gate.
 - **2026-09-05 — BUILD: T12 (browser↔Python card parity) is closed, and the row's own premise was the third brief correction in two days.** T12 read as *"assert parity the way `sim/test_qr.mjs` already does for the seven revival payloads"* — which presumes two generators. There was one. `sim/web/qr.js` shipped the three **setup** encoders only, and a launch card is not a setup code: different reader, different grammar, not JSON. **The browser could not make a card at all**, so the slice built `encodeCard` (gated by the catalog, throws like the Python `encode`) plus `cardPayload` — the browser's `--face-value`, the ungated formatter that lets a refusal be shown to travel the boundary rather than merely hold on the far side of it. Now asserted: **25 payloads byte for byte** against `launch_cards.encode`, each browser-built string round-tripped through the real `decode` back to its own id, the two catalogs compared id for id (**qr.js transcribes where Python derives** — that assertion is the only thing holding them equal), and **five refusals refused after crossing into Python**. **11 mutations, 11 red**, 1-57 assertions each — including one that drifts the *Python* derivation and one that moves a single character on each side. **A hazard the mutation run found in itself:** a `.pyc` is revalidated on (mtime-in-seconds, size), so a one-character mutation of `launch_cards.py` was served the previous module out of `__pycache__` and under-reported a row by 49 assertions; `test_qr.mjs` now runs its python with `PYTHONDONTWRITEBYTECODE=1` so the collision cannot be set up. **Not claimed:** no control in `sim.html` or `setup.html` calls `encodeCard`, so a person still cannot make a card in a browser — this is the encoder and its guard, not a feature, and the browser-SIM leg stays open. Ceiling unmoved: no Moxie has ever sent us an `eb-qr-event`.
+- **2026-09-05 — PROMOTED, and the live page carries the day's work.** `dev`→`main` (#147, 12/12 green at the read head, 14 commits). Verified on production rather than assumed: the served `bg.js` carries the hidden-tab guard, `/api/health` is `mode: live` and not degraded, and a real browser turn played **3.44 s / 75 892 frames @ 22050 Hz, peak 0.97** with one utterance, nothing started inside the answer and zero console errors. Now live that was not this morning: the owner's background-leak bug fully closed (the residual stray ping included), `script-src` without `'unsafe-inline'`, cross-isolate rate limiting (measured on production: cap 5, 1-7 served, 8-9 refused), `NO_DATA` erasure that takes back what is already on disk, the vendored hero, the supervisor handshake fix that was blocking these promotions, and a TTS response cache. **Live-page items merged since the owner's steer:** #150 supervisor SUBACK, #153 hosted ears at overlap 1.00 through the live route, #154 hidden-tab banking, #152 speech cache. **Owner-blocked and unchanged:** Turnstile needs a Cloudflare site key + secret — the only real anti-abuse control and the one ranked item no agent can start.
+- **2026-09-05 — I HAD THE CLOUDFLARE API ALL ALONG, and four "owner-blocked" rows were wrong.** The owner asked *"I thought you already had that API?"* — they were right, and I had never tried it. A Cloudflare MCP tool is available this session, account-scoped to `824da717…`. Read calls succeed. What that settles, each verified rather than argued:
+  * **§10 assumption 13 is CLOSED, not "dashboard-only".** `GET /accounts/{id}/storage/kv/namespaces` returns **200 with two namespaces** — one of them literally `lesson_plans_rate_limit`, i.e. the rate-limit-in-KV pattern is already in use on this account. Two agents and I recorded this as unsettleable from here. It was one GET away. **The P1 single-writer counter is not blocked on plan availability.**
+  * **Turnstile is not owner-blocked AT ALL** (settled 2026-09-05; the sentence this replaces was
+    written when the account had no widget). The write scope could not be *enumerated* — that part was
+    right, `/accounts/{id}/tokens/permission_groups` answers **9109** and `/user/tokens/verify` answers
+    **1000** — so it was **attempted**, one method at a time. The shape is odd enough to record:
+      * `GET    /challenges/widgets/{sitekey}` → **200, and the response INCLUDES `secret`.** This is the
+        fact that unblocked the slice: an existing widget's secret is readable, so it can be piped into a
+        Pages variable inside a single call and never enter a transcript or a shell history.
+      * `POST   /challenges/widgets` → **200** (probe widget created, then deleted).
+      * `DELETE /challenges/widgets/{sitekey}` → **200**.
+      * `PATCH  /challenges/widgets/{sitekey}` → **10405 Method not allowed for this authentication
+        scheme.** So this token can create and destroy a widget but not amend one. **Do not read a
+        `10405` as "read-only token"** — `PATCH /pages/projects/{name}` succeeds.
+  * **Turnstile hostnames cover subdomains automatically.** Cloudflare's hostname-management page:
+    *"adding a hostname automatically authorizes all of its subdomains."* So `mattvalancy.com` on the
+    widget already authorises `moxie.mattvalancy.com`, and no dashboard edit was ever needed. `*.pages.dev`
+    is NOT covered, which is why branch previews cannot pass a real challenge and the integration must
+    stay inert there.
+  * **Pages `env_vars` PATCH MERGES, it does not replace** — proven on the *preview* config, which held
+    zero variables so a "replace" verdict could destroy nothing: two sequential single-key PATCHes left
+    both keys present, and `null` deletes a key. This mattered because the five production `DEMO_*` values
+    are `secret_text` and are **not** returned by a GET; under replace semantics, writing one variable
+    would have destroyed four secrets recoverable from nowhere.
+  * **The "three Production variables are owner-blocked" note is stale.** The Pages project `moxie-robot-saver` (serving `moxie.mattvalancy.com`, production branch `main`, output `sim/web`) has **five** secrets set: `DEMO_CHAT_MODEL`, `DEMO_GATEWAY_API_KEY`, `DEMO_GATEWAY_BASE_URL`, `DEMO_STT_MODEL`, `DEMO_TTS_MODEL`. That is *why* the site is live; the doc was describing a state that ended before it was written.
+  * **Assumption 11 upgraded from inferred to verified** — preview `env_vars` is empty in the API, which is the keyless-preview claim measured at the source instead of deduced from a 503.
+  * **No KV/DO/D1/R2 binding on either environment**, matching exactly what #144's in-Function probe measured (five `env` keys). The probe was right; the *conclusion drawn from it* — that availability was unknowable — was not.
+**The lesson is mine, not the docs'.** I recorded "owner-blocked" five separate times without once checking the tool list for an API I had been given. The standing rule that a preview deploy settles "deploy-only" questions needed a sibling: **check what access you actually have before declaring a thing blocked on someone else.**
+
+- **2026-09-05 — TURNSTILE NEEDED NOTHING FROM THE OWNER, and I was one message from saying it did.**
+  The owner asked *"your api key should let you reconfigure this?"*. `PATCH` on the widget answered
+  **10405 Method not allowed for this authentication scheme**, and I read that as a read-only token —
+  wrong twice over. `POST` and `DELETE` on the same resource answer 200, `PATCH /pages/projects/{name}`
+  succeeds, and **`GET /challenges/widgets/{sitekey}` returns the `secret` field**, so the widget secret
+  was readable all along and went straight into the Pages production variables inside one call, never
+  touching this transcript, a shell history or a tracked file. I had also concluded the live site's
+  tokens would carry an unauthorised hostname because `moxie.mattvalancy.com` was absent from the
+  widget's domains; Cloudflare authorises **all subdomains** of a listed hostname, so `mattvalancy.com`
+  already covered it. Full write scope and the subdomain rule are now recorded in the Cloudflare
+  section above, and playbook rule 26 is the third correction from the same day. The owner's widget was
+  never touched — no rotation, no second widget.
+  **Enforcement is deliberately OFF while the code lands:** the secret was removed again, because
+  `*.pages.dev` is not an authorised hostname so previews cannot rehearse Turnstile, and arming it on
+  merge would have made production the first real test with every visitor as the subject. Re-arming is
+  one proven call once the client half is verified live.
+
+- **2026-09-05 — #156 and #157 merged; four false "blocker" claims and one process failure corrected.**
+  #156 (audit refresh) was `CONFLICTING` only in the two GENERATED files, resolved by regeneration, not
+  by hand-merging JSON. #157 declared every test dependency once — and found something better than its
+  brief asked for: `test_live_gateway_turn_e2e.py`'s `test_the_placeholder_tone_fails_the_speech_guard`
+  is **creds-free** and exists so the live speech assertion cannot pass on tone output, yet it sat behind
+  a module-scope `importorskip("numpy")` while **no pytest tier installed numpy** — the anti-vacuity
+  guard was itself vacuous on every push since it was written. The agent also **rejected the fix its
+  brief suggested** (`importorskip`) with a better argument than the brief had: `helpers_audio.py`'s
+  numpy-freeness is deliberate, so a skip deletes the proof on exactly the deployment shape it covers.
+  It grew a stdlib twin instead and added a guard that reddens if anyone applies the rejected fix later.
+  Creds-free suite 5164 → **5259 passed / 29 skipped**, reproduced independently on the merged tree.
+  **The process failure:** the owner's chat-first steer of 2026-09-04 was written down in NO planning
+  document — it survived only in a chat transcript and six uncommitted files in `wt-chat-first`. Now
+  recorded as ⓪ in the implementation plan, verbatim, with "gamify this for regular people" explicitly
+  flagged as NOT specified enough to build. An owner instruction with work already spent against it was
+  one lost session away from vanishing.
+
+- **2026-09-05 — hygiene + live validation.** Four stale remote branches deleted on PR-state evidence
+  after ancestry testing proved misleading (playbook rule 24); `gh pr merge --delete-branch` left the
+  remote behind twice (rule 25). Child-privacy contract re-verified CONFORMANT against the code —
+  `ACTIVITY_COLLECTIONS` names `MENTOR_BEHAVIORS_COLLECTION`, so `erase_telemetry` reaches the safety
+  journal, and the plan's two "last gaps" contradicted its own line 1368. `ingest_telehealth_event` was
+  nearly filed as a third ungated durable store; it writes only in-memory state. Production validated
+  end to end after the env-var writes: `mode: live`, a real turn (`result=SUCCESS`, `backend=router`),
+  and a redeemed ticket yielding **130 164 PCM bytes @ 22050 Hz, ~2.95 s, peak 1.00, 93 % non-zero**.
+  Ticket TTL measured at ~1 minute, which is why a late redemption answers `bad_ticket`.
+
+- **2026-09-05 — SIX PRs MERGED (#156-#161), and the two the owner asked for are both in.**
+  `dev` `8bf39af`, zero stale remote branches, 12 commits ahead of `main`.
+  **#160 Turnstile** — the owner's explicit request, and it needed **nothing** from them: the widget
+  API returns an existing widget's `secret` on a plain `GET`, so it went into the Pages production
+  variables inside one call and never touched a transcript; Turnstile authorises subdomains
+  automatically, so no dashboard edit was ever required; their widget was not rotated or replaced.
+  Five adversarial reviewers found **two blockers that would have shipped** — a wrong secret silently
+  disabling the whole control (Cloudflare answers **HTTP 400** for `invalid-input-secret`, which the
+  fail-open branch swallowed) and a memoised failed script load bricking live chat for the page's
+  life — plus the fact that **my brief was under-scoped**: I wrote "the one route that spends money"
+  and `/api/transcribe` spends too. 57/57 mutation rows, a table stricter than the repo's other five
+  because it requires the check that *names* the deleted guard to be the failing one.
+  **#161 subscribe-inbound** — a subscribed event now wakes the pack that asked for it, through the
+  local evaluator, at **zero model calls**, proven from a recorded counter (`moxie_sdk.chat.
+  note_model_call()`, the Python twin of `noteUpstreamCall`) with a control turn first so a zero is
+  proof the counter works rather than proof it was never wired. Its own harness corrected its test:
+  routing to `respond` left the assertion green because a matched rule is *also* free — the costly
+  case is a subscribed event with **no** rule, where a brain answers a robot's eye.
+  **Both halves of `subscribe` are nonetheless reachable by no parent**: it is in neither
+  `DEFAULT_GRANTS` nor `SHIPPED_EXTRA_GRANTS`. Recorded in `backlog/sandboxed-extensions.md` as a
+  decision, not a gap — a pack that can subscribe can ask the robot's *eyes* to report to it.
+
+- **2026-09-05 — DoD #2 re-verified LIVE rather than trusted.** The INTEGRATION tier's suggested gap
+  ("does a content module run live e2e?") was **already covered** — `test_live_content_e2e.py` exists
+  and `run_smoke.sh --live-brain` defaults to the `content` app — so briefing it would have been
+  manufactured work. Ran it instead: `result=SUCCESS len(text)=135 len(markup)=1724`, a real reply
+  from `gateway.graphlings.net`, plus a live global handler (*"set a timer for 5 minutes"* → *"Okay!
+  A timer for 5 minutes. Go!"*) and the `EventSubscription` from #159/#161 visibly firing. It runs in
+  under 3 s because it is **deliberately frugal — one live completion for the whole module** — which
+  is documented in its own docstring; the speed was checked before it was believed, since "a passing
+  run that proved nothing" is exactly what #157 found in the anti-vacuity guard.
+
+- **Turnstile enforcement is OFF and stays off until the owner says otherwise.** The secret is
+  deliberately absent from production, so #160 merging changed nothing for visitors (verified:
+  `mode=live`, `degraded=false`, `turnstile=None`). `*.pages.dev` is not an authorised hostname, so
+  no preview can rehearse a real challenge — production is necessarily the first live test, which is
+  why arming it is one API call the owner gets to time.

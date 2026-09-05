@@ -286,12 +286,22 @@ const audioSrc = readFileSync(join(web, "audio.js"), "utf8");
     ok(html.includes(f), `sim.html must load ${f} — the fallback is not wired without it`);
     ok(existsSync(join(web, f)), `${f} must exist`);
   }
-  ok(html.indexOf("stub.js") < html.indexOf("bridge.js"), "stub.js loads before bridge.js");
-  ok(html.indexOf("bridge.js") < html.indexOf("cloud-transport.js"),
+  /* ORDER IS MEASURED ON THE `<script src>` TAGS, not on the first mention of a filename
+   * anywhere in the document. `indexOf("cloud-transport.js")` was only ever a PROXY for
+   * load order, and on 2026-09-05 sim.html's composer comment started naming the files
+   * whose listeners bind to the controls it moved — so the prose came first and the proxy
+   * reported the wrong order for a page whose script block had not changed at all. A
+   * load-order check a COMMENT can flip is not measuring load order. */
+  const loadsAt = (f) => html.indexOf('src="' + f);
+  for (const f of ["stub.js", "bridge.js", "cloud-transport.js"])
+    ok(loadsAt(f) > -1, `sim.html has a <script src> for ${f}`);
+  ok(loadsAt("stub.js") < loadsAt("bridge.js"), "stub.js loads before bridge.js");
+  ok(loadsAt("bridge.js") < loadsAt("cloud-transport.js"),
      "cloud-transport.js loads after bridge.js (it wraps what bridge.js published)");
   // §7 below drives `ambient.js`'s degraded announcer through `window.moxieMode`, which
   // only exists because mode.js ran first. In the page that is load ORDER, not luck.
-  ok(html.indexOf("mode.js") < html.indexOf("ambient.js"),
+  ok(loadsAt("mode.js") > -1 && loadsAt("ambient.js") > -1 &&
+     loadsAt("mode.js") < loadsAt("ambient.js"),
      "mode.js must load before ambient.js — the degraded line subscribes to window.moxieMode at load");
 
   // `stub.js` must still be ENABLED. `bridge.js`:693 and `cloud-transport.js` both gate

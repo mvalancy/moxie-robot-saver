@@ -44,6 +44,7 @@ const limits = await import(join(repo, "functions", "api", "_lib", "limits.js"))
 const wav = await import(join(repo, "functions", "api", "_lib", "wav.js"));
 const wire = await import(join(repo, "functions", "api", "_lib", "wire.js"));
 const hmac = await import(join(repo, "functions", "api", "_lib", "hmac.js"));
+const ttscache = await import(join(repo, "functions", "api", "_lib", "ttscache.js"));
 const wire2 = await import(join(repo, "functions", "api", "_lib", "env.js"));
 /** The response builder itself. Imported at the top because the header guards below
  *  ask a REAL `Response` what it carries rather than regexing the source. */
@@ -135,10 +136,15 @@ function req(path, body, headers) {
   });
 }
 
-/** Reset every counter AND the per-isolate spent-ticket set, so each block starts clean. */
+/** Reset every counter AND the per-isolate spent-ticket set, so each block starts clean.
+ *
+ *  It resets the AUDIO CACHE'S COUNTERS but not any store: that is the isolate boundary.
+ *  §16's hit tests turn on exactly this distinction — a fresh isolate reading an entry the
+ *  previous one wrote — the same way §15b's do for the counter tier. */
 function fresh() {
   limits.__reset();
   speech.__resetSpent();
+  ttscache.__resetTtsCache();
   sent = [];
   plan = {};
 }
@@ -2199,7 +2205,7 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   function fakeCache(opts) {
     const o = opts || {};
     const store = new Map();
-    const log = { match: 0, put: 0, keys: [] };
+    const log = { match: 0, put: 0, keys: [], puts: [] };
     const hang = () => new Promise(() => {});
     return {
       log,
@@ -2221,6 +2227,17 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
         if (o.matchThrowsSync) throw new Error("match threw synchronously");
         if (o.matchHangs) return hang();
         if (o.matchRejects) return Promise.reject(new Error("match rejected"));
+        // THE BUDGET ENTRY, WITHOUT READING THE CLOCK. `/api/chat` derives its own hour
+        // bucket from `Date.now()`, so a test that pre-seeded that exact key would have to
+        // read the wall clock too — which `sim/tests/test_clock_dependence.py` refuses on
+        // sight, and rightly: the result would then depend on which side of an hour
+        // boundary the suite happened to run. `unitsCount` answers whatever hour the route
+        // asks for, which is the same assertion with no clock in it.
+        if (o.unitsCount !== undefined && String(key).indexOf("/__moxie/rl/units/") >= 0) {
+          return Promise.resolve(new Response(JSON.stringify({ n: o.unitsCount }), {
+            headers: { "Content-Type": "application/json", "Cache-Control": "max-age=3600" },
+          }));
+        }
         const e = store.get(String(key));
         if (!e) return Promise.resolve(undefined);
         const h = { "Content-Type": "application/json", "Cache-Control": "max-age=" + e.maxAge };
@@ -2229,14 +2246,21 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
       },
       put(key, res) {
         log.put += 1;
+        log.puts.push(String(key));
         if (o.putThrowsSync) throw new Error("put threw synchronously");
         if (o.putHangs) return hang();
         if (o.putRejects) return Promise.reject(new Error("put rejected"));
-        return (async () => {
+        const write = (async () => {
           const body = await res.text();
           const cc = /max-age=(\d+)/.exec(res.headers.get("Cache-Control") || "");
           store.set(String(key), { body, maxAge: cc ? Number(cc[1]) : 0 });
         })();
+        // THE WRITE THAT LANDS AND THEN NEVER TELLS YOU. This is not a hypothetical
+        // shape: a `put` that has committed and whose promise is then lost to a deadline
+        // is exactly what makes "retry the unpublished units" a DOUBLE COUNT, which is an
+        // overcount, which refuses a visitor who should be served. §15i-f drives it.
+        if (o.putStoresThenHangs) return write.then(() => hang());
+        return write;
       },
     };
   }
@@ -2362,12 +2386,30 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     const c = fakeCache();
     const r = await admitWith(ON, c, "198.51.100.20");
     eq(r.ok, true, "an admitted request");
-    eq(c.log.match, 1, "…reads the shared entry exactly ONCE");
-    eq(c.log.put, 1, "…and writes it back exactly ONCE");
-    ok(c.log.match + c.log.put <= 3, "…so the whole tier costs at most the three ops that were measured");
-    eq(cacheStats().ops, 2, "…recorded as two completed cache ops");
+    eq(c.log.match, 2, "…reads TWO shared entries: the per-IP minute window, then the unit budget's hour");
+    eq(c.log.put, 1,
+       "…and writes exactly ONE of them back — the window. The budget publishes only what this " +
+       "isolate already OWES, and a first admission owes nothing yet (§15i)");
+    ok(c.log.match + c.log.put <= 3,
+       "…so an isolate's FIRST turn still costs the three ops §4.6.1 row h measured");
+    eq(cacheStats().ops, 2, "…recorded as two completed cache ops for the window half");
     eq(cacheStats().wrote, 1, "…one of them a write");
+    eq(cacheStats().units.ops, 1, "…and one for the budget half: the read, with nothing to publish");
+    eq(cacheStats().units.wrote, 0, "…which wrote nothing");
     r.release();
+
+    // The SECOND turn in the same isolate is the four-op case: the first one's 3 units are
+    // now in the ledger, so the budget half publishes them. This is the whole latency cost
+    // of the second sub-tier, asserted rather than intended.
+    {
+      const c2 = fakeCache();
+      fresh();
+      (await admitWith(ON, c2, "198.51.100.22")).release();
+      const before = c2.log.match + c2.log.put;
+      (await admitWith(ON, c2, "198.51.100.23")).release();
+      eq(c2.log.match + c2.log.put - before, 4,
+         "a turn whose isolate owes units costs FOUR ops: two window, one budget read, one budget write");
+    }
 
     fresh();
     const full = fakeCache().seed(ORIGIN + "/__moxie/rl/chat/x/0", 99);
@@ -2405,7 +2447,7 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
       ["a match that HANGS FOR EVER", () => fakeCache({ matchHangs: true }).seed(KEY, 99), { timeouts: 1 }],
       ["an entry whose body is NOT JSON", () => fakeCache({ bodyOverride: "<html>nope" }).seed(KEY, 99), { miss: 1 }],
       ["an entry whose count is not a number", () => fakeCache({ bodyOverride: '{"n":"many"}' }).seed(KEY, 99), { miss: 1 }],
-      ["a store with NO METHODS AT ALL", () => ({ log: { match: 0, put: 0, keys: [] } }), { errors: 1 }],
+      ["a store with NO METHODS AT ALL", () => ({ log: { match: 0, put: 0, keys: [], puts: [] } }), { errors: 1 }],
     ];
     for (const [label, make, want] of modes) {
       fresh();
@@ -2479,8 +2521,9 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     const sixth = await admitWith(ON, c, "198.51.100.40", "chat", 2000);
     eq(sixth.ok, false, "the 6th turn in a minute is refused by the in-isolate map, as before");
     eq(sixth.reason, "rate_limited", "…as rate_limited");
-    eq(c.log.match, ON.chatPerMin,
-       "…and the tier was consulted 5 times, not 6: a free refusal never pays for a cache round trip");
+    eq(c.log.match, ON.chatPerMin * 2,
+       "…and the tier was consulted for 5 turns, not 6 (two reads each, one per sub-tier): " +
+       "a free refusal never pays for a cache round trip");
 
     // The same for the origin pin, which is the cheapest refusal of all.
     fresh();
@@ -2499,7 +2542,7 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     fresh();
     const c = fakeCache();
     (await admitWith(ON, c, "203.0.113.99", "chat", 3000)).release();
-    eq(c.log.keys.length, 1, "one admitted turn asks the cache for exactly one key");
+    eq(c.log.keys.length, 2, "one admitted turn asks the cache for two keys: the window's, then the budget's");
     const key = c.log.keys[0] || "";
     ok(key.startsWith(ORIGIN + "/__moxie/rl/chat/"),
        `the entry lives on our OWN origin, under a non-route prefix — got ${key}`);
@@ -2550,7 +2593,7 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
       plan = { chat: { content: "hi" } };
       const first = await call(chat, "/api/chat", { text: "hello" });
       eq(first.res.status, 200, "a served turn, with the tier reading the real caches.default");
-      eq(c.log.match, 1, "…which consulted the global store");
+      eq(c.log.match, 2, "…which consulted the global store for both sub-tiers");
       const key = c.log.keys[0] || "no-key";
 
       // Now stand the shared count at the ceiling, as five turns from another isolate
@@ -2566,6 +2609,1006 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
       delete globalThis.caches;
     }
     eq(typeof caches, "undefined", "the global is put back, so no later block inherits a cache");
+  }
+
+  /* ---- 15i. THE UNIT BUDGET SUB-TIER — the deployment's HOUR, shared across a colo -- //
+   *
+   * Spec: live-sim-demo.md §4.1 (`DEMO_UNIT_BUDGET_HOUR`), §4.6.1 (which orders this tier
+   * second, after the per-IP window), §4.5 (`budget_exhausted` is a 503 with a
+   * `Retry-After`).
+   *
+   * THE ONE THING THIS BLOCK EXISTS TO PROVE, and it is not "the counter adds up".
+   * `_lib/limits.js::sharedBudgetVerdict` carries the argument; the assertions are here.
+   * The window sub-tier fails open because every write it makes is a `prev + 1`. The unit
+   * budget has `slot.refundBudget()` underneath it, and a refund is a `prev - cost`: LOSE
+   * ONE AND THE COUNTER IS TOO HIGH, which refuses a visitor who should have been served.
+   * That is the direction §15's own notes say this tier may never fail in — it is why the
+   * concurrency ceiling was refused a place here.
+   *
+   * So the shipped design has no refund write at all: units reach the colo only after a
+   * request has been RELEASED WITHOUT A REFUND, held until then in this isolate's own
+   * ledger (`__state().units`). Everything below is that property, from both sides:
+   *
+   *   1. the budget really is shared — 15i-b drives it from two isolate-like contexts and
+   *      shows the second refused on the first's spend;
+   *   2. every failure mode is an UNDERCOUNT — 15i-d, each one by name, against an entry
+   *      a WORKING cache would have refused on;
+   *   3. NO LOST WRITE CAN REFUSE A VISITOR WHO SHOULD BE SERVED — 15i-e, including the
+   *      nastiest shape: a `put` that lands and then times out, which is what makes
+   *      "retry the unpublished units" a double charge.
+   */
+  const UNITS_HOUR = 12;                       // 4 chat turns, so the arithmetic is readable
+  const TWELVE = wire2.readConfig({ ...FULL, DEMO_UNIT_BUDGET_HOUR: String(UNITS_HOUR) });
+  const FAST12 = wire2.readConfig({
+    ...FULL, DEMO_UNIT_BUDGET_HOUR: String(UNITS_HOUR), DEMO_CACHE_TIMEOUT_MS: "10",
+  });
+  /** Hour bucket 2 — `nowS` 7200 — and its entry, spelled out rather than derived so a
+   *  wrong key shows up as a wrong STRING rather than as an assertion that quietly agrees
+   *  with the code it is checking. */
+  const HOUR2 = 7200;
+  const UK = ORIGIN + "/__moxie/rl/units/2";
+
+  // ---- 15i-a. THE KEY: one entry per DEPLOYMENT per hour, and no visitor in it -- //
+  {
+    const shapes = limits.__keyShapes();
+    eq(shapes.prefix, "/__moxie/rl/", "both sub-tiers live under one prefix a reader can grep for");
+    ok(!shapes.routes.includes(shapes.units),
+       `'${shapes.units}' is not a route name, so a window key can never spell a budget key by route`);
+    ok(shapes.windowArity !== shapes.unitsArity,
+       "…and the two shapes have different ARITY, which is the byte-level half of the same argument");
+
+    fresh();
+    const c = fakeCache();
+    (await admitWith(TWELVE, c, "203.0.113.50", "chat", HOUR2)).release();
+    eq(c.log.keys.length, 2, "an admitted turn reads the window entry, then the budget entry");
+    eq(c.log.keys[1], UK, "the budget entry is origin + prefix + 'units' + the HOUR bucket");
+    ok(!String(c.log.keys[1]).includes("203.0.113.50"), "…with no visitor's address in it");
+    ok(!/(chat|speech|transcribe)/.test(String(c.log.keys[1]).slice((ORIGIN + "/__moxie/rl/").length)),
+       "…and no route either: the 3-vs-2 unit difference rides in the increment, not the key");
+
+    fresh();
+    const c2 = fakeCache();
+    (await admitWith(TWELVE, c2, "203.0.113.50", "chat", HOUR2 + 3600)).release();
+    ok((c2.log.keys[1] || "") !== UK, "…and the next HOUR keys a different entry, so nothing stale is believable");
+  }
+
+  // ---- 15i-b. IT IS SHARED: isolate B is refused on isolate A's spend --------- //
+  //
+  // `__reset()` between them is the isolate boundary, exactly as §15b uses it: a brand new
+  // `Map` and a brand new LEDGER, the same colo cache. Four addresses rather than one, so
+  // the per-IP window never gets a word in and the only thing that can refuse is the
+  // budget.
+  {
+    const shared = fakeCache();
+    fresh();
+    for (let i = 1; i <= 4; i++) {
+      const r = await admitWith(TWELVE, shared, "198.51.100." + i, "chat", HOUR2);
+      eq(r.ok, true, `isolate A turn ${i} is admitted — 12 units is exactly four chat turns`);
+      r.release();
+    }
+    eq(shared.count(UK), 9,
+       "isolate A published 9 of the 12 units it spent: the ledger publishes on the NEXT admission, " +
+       "so the last turn's 3 are still unpublished. THAT LAG IS THE DESIGN, and it undercounts");
+    deep(limits.__state().units, { pending: 3, bucket: 2 },
+         "…and those 3 sit in this isolate's ledger as a RECORDED fact, not an inference");
+    eq(cacheStats().units.published, 9, "…9 units recorded as handed to the colo");
+    eq(cacheStats().units.wrote, 3, "…in three writes: turn 1 owed nothing, turns 2-4 owed 3 each");
+    const entry = shared.store.get(UK) || {};
+    eq(entry.maxAge, 3600,
+       "the budget entry's max-age is ONE HOUR — its own window — so an entry that outlives its own " +
+       "hour would be read as this hour's, and this is what stops that");
+    deep(JSON.parse(entry.body || "null"), { n: 9 },
+         "…and the stored body is a bare count: the entry sits under a URL an outsider could ask for");
+
+    fresh(); // ---- a different isolate: fresh Map, fresh ledger, SAME colo cache.
+    deep(limits.__state().units, { pending: 0, bucket: -1 }, "the new isolate's ledger starts empty");
+    const b1 = await admitWith(TWELVE, shared, "198.51.100.11", "chat", HOUR2);
+    eq(b1.ok, true, "isolate B's first turn is admitted — the colo has been told about 9 of 12");
+    b1.release();
+
+    const budgetBefore = JSON.stringify(limits.__state().budget);
+    const b2 = await admitWith(TWELVE, shared, "198.51.100.12", "chat", HOUR2);
+    eq(b2.ok, false,
+       "isolate B's SECOND is REFUSED — its own map has seen 3 units and would allow it; the colo has seen 12");
+    eq(b2.reason, "budget_exhausted", "…as budget_exhausted, the reason the in-isolate budget gives for the same fact");
+    ok(b2.retryAfterS >= 1 && b2.retryAfterS <= 3600, `…with a Retry-After inside the hour, got ${b2.retryAfterS}`);
+    eq(upstreamCalls(), 0, "…having called nothing upstream");
+    eq(cacheStats().units.refused, 1, "…recorded as one budget-tier refusal");
+
+    // The refusal costs the visitor nothing and costs the colo nothing.
+    eq(limits.__state().inflight.chat, 0, "a budget-tier refusal leaves NO concurrency slot held");
+    eq(JSON.stringify(limits.__state().budget), budgetBefore,
+       "…and refunds the in-isolate units it charged, exactly as the window tier's refusal does");
+    eq(shared.count(UK), 9, "…and PUBLISHES NOTHING: a request that was refused spent nothing to report");
+    eq(cacheStats().units.published, 0, "…recorded as zero units published by this isolate");
+
+    // The control that makes the assertion above about the TIER rather than the arithmetic.
+    const OFF12 = wire2.readConfig({ ...FULL, DEMO_UNIT_BUDGET_HOUR: String(UNITS_HOUR), DEMO_CACHE_COUNTER: "0" });
+    fresh();
+    (await admitWith(OFF12, shared, "198.51.100.11", "chat", HOUR2)).release();
+    const off2 = await admitWith(OFF12, shared, "198.51.100.12", "chat", HOUR2);
+    eq(off2.ok, true, "CONTROL: with the tier off, that same second turn is admitted — the map alone allows it");
+    off2.release();
+  }
+
+  // ---- 15i-c. THE FREE DRAIN, CLOSED STRUCTURALLY ---------------------------- //
+  //
+  // `sim/test_turnstile.mjs` §12's attack, aimed at the SHARED counter instead of the
+  // isolate's: 200 requests that admission charges and the route body then refuses. Under
+  // the design this file rejected — charge the colo at admission, refund only locally —
+  // 200 x 3 units is exactly `DEMO_UNIT_BUDGET_HOUR`, and every isolate in the colo would
+  // then read an exhausted hour for an attack that made no gateway call. Here the colo is
+  // never told, because there is nothing to un-tell.
+  {
+    fresh();
+    const c = fakeCache();
+    const PROD = wire2.readConfig(FULL);
+    eq(PROD.unitBudgetHour, 600, "the hourly budget is production's 600…");
+    let drainRefusals = 0;
+    for (let i = 0; i < 200; i++) {
+      const s = await admitWith(PROD, c, "198.51.100." + (i % 250), "chat", HOUR2);
+      if (!s.ok) drainRefusals += 1;
+      s.refundBudget();   // exactly what `chat.js`'s `spentNothing` does
+      s.release();
+    }
+    eq(drainRefusals, 0, "all 200 are ADMITTED first — the drain is what the ROUTE BODY refuses, not admission");
+    eq(c.count(UK), null, "200 charged-then-refunded requests wrote NOTHING to the colo's hour");
+    eq(c.log.puts.filter((k) => k.indexOf("/units/") >= 0).length, 0,
+       "…not one `put` on the budget entry, which is the structural half of the claim");
+    eq(cacheStats().units.published, 0, "…zero units published");
+    deep(limits.__state().units, { pending: 0, bucket: 2 }, "…and an empty ledger: nothing settled, so nothing is owed");
+    deep(limits.__state().budget, {}, "…while the in-isolate budget is also whole, as §12 already required");
+
+    const visitor = await admitWith(PROD, c, "203.0.113.77", "chat", HOUR2);
+    eq(visitor.ok, true, "…and the next real visitor is SERVED rather than budget_exhausted");
+    visitor.release();
+  }
+
+  // ---- 15i-d. FAIL OPEN — every failure mode, asserted in that direction ------ //
+  //
+  // Each case stands the colo's hour AT its ceiling, so a WORKING cache refuses. The
+  // required answer in every one is `ok: true`.
+  {
+    // The positive control first: with a working cache the seed really does refuse, so
+    // every `ok: true` below is a statement about the failure and not about the fixture.
+    fresh();
+    const working = fakeCache().seed(UK, UNITS_HOUR, undefined, 3600);
+    const refused = await admitWith(FAST12, working, "198.51.100.60", "chat", HOUR2);
+    eq(refused.ok, false, "CONTROL: a working cache holding a spent hour REFUSES");
+    eq(refused.reason, "budget_exhausted", "…as budget_exhausted");
+
+    const modes = [
+      ["a match that THROWS SYNCHRONOUSLY", () => fakeCache({ matchThrowsSync: true }).seed(UK, UNITS_HOUR), { errors: 1 }],
+      ["a match that REJECTS", () => fakeCache({ matchRejects: true }).seed(UK, UNITS_HOUR), { errors: 1 }],
+      ["a match that HANGS FOR EVER", () => fakeCache({ matchHangs: true }).seed(UK, UNITS_HOUR), { timeouts: 1 }],
+      ["an entry whose body is NOT JSON", () => fakeCache({ bodyOverride: "<html>nope" }).seed(UK, UNITS_HOUR), { miss: 1 }],
+      ["an entry whose count is not a number", () => fakeCache({ bodyOverride: '{"n":"lots"}' }).seed(UK, UNITS_HOUR), { miss: 1 }],
+      ["a STALE entry, past its own max-age", () => fakeCache().seed(UK, UNITS_HOUR, 999999, 3600), { stale: 1 }],
+      ["a store with NO METHODS AT ALL", () => ({ log: { match: 0, put: 0, keys: [], puts: [] } }), { errors: 1 }],
+      ["a cache MISS — nobody has written the hour yet", () => fakeCache(), { miss: 1 }],
+    ];
+    for (const [label, make, want] of modes) {
+      fresh();
+      const c = make();
+      const r = await admitWith(FAST12, c, "198.51.100.60", "chat", HOUR2);
+      eq(r.ok, true, `BUDGET FAILS OPEN: ${label} must still ADMIT a visitor the working cache refused`);
+      eq(r.reason, null, `BUDGET FAILS OPEN: ${label} carries no refusal reason`);
+      eq(cacheStats().units.refused, 0, `BUDGET FAILS OPEN: ${label} records no budget-tier refusal`);
+      for (const [k, v] of Object.entries(want)) {
+        eq(cacheStats().units[k], v, `…and ${label} is recorded as units.${k}`);
+      }
+      if (r.ok) r.release();
+      eq(limits.__state().inflight.chat, 0, `…and ${label} leaks no concurrency slot`);
+    }
+
+    // A read that failed must NOT then publish over a live count. The ledger is KEPT when
+    // no write was attempted, which is safe precisely because nothing can have landed.
+    fresh();
+    const c = fakeCache({ matchRejects: true });
+    const first = await admitWith(FAST12, c, "198.51.100.61", "chat", HOUR2);
+    first.release();
+    const second = await admitWith(FAST12, c, "198.51.100.62", "chat", HOUR2);
+    eq(second.ok, true, "a failed budget READ admits");
+    eq(c.log.puts.filter((k) => k.indexOf("/units/") >= 0).length, 0,
+       "…and writes nothing to the budget entry, so a live hour is never reset to this isolate's share");
+    deep(limits.__state().units, { pending: 3, bucket: 2 },
+         "…and the unpublished units are KEPT, because a read that failed attempted no write to lose");
+    second.release();
+  }
+
+  // ---- 15i-e. NO LOST WRITE CAN REFUSE A VISITOR WHO SHOULD BE SERVED --------- //
+  //
+  // The property the whole design is for, from four directions.
+  {
+    // (1) THERE IS NO REFUND WRITE TO LOSE. The strongest form of the claim: not "the
+    //     refund rarely fails" but "no cache operation happens on a refund at all".
+    fresh();
+    const c = fakeCache();
+    const s = await admitWith(TWELVE, c, "198.51.100.70", "chat", HOUR2);
+    const at = { match: c.log.match, put: c.log.put };
+    s.refundBudget();
+    s.release();
+    eq(c.log.match, at.match, "a refund performs no cache READ…");
+    eq(c.log.put, at.put, "…and no cache WRITE: there is no shared refund that could be lost");
+    deep(limits.__state().units, { pending: 0, bucket: 2 },
+         "…and nothing reached the ledger either, so the colo will never hear about it");
+
+    // (2) A LOST PUBLISH LOSES SPEND, NEVER GAINS IT. Eight turns really spent across four
+    //     isolates; with every `put` rejecting, the colo learns nothing and the ninth
+    //     visitor is SERVED. The control shows the same eight turns DO refuse when the
+    //     writes land, which is what makes this a statement about the lost write.
+    for (const [label, opts, wantLast] of [
+      ["with every publish REJECTED", { putRejects: true }, true],
+      ["CONTROL, with the publishes landing", {}, false],
+    ]) {
+      fresh();
+      const cc = fakeCache(opts);
+      let admitted = 0;
+      let last = null;
+      for (let iso = 0; iso < 4; iso++) {
+        fresh(); // a new isolate every two turns, so the in-isolate map never decides
+        for (let t = 0; t < 2; t++) {
+          last = await admitWith(FAST12, cc, "198.51.100.1" + iso + t, "chat", HOUR2);
+          if (last.ok) {
+            admitted += 1;
+            last.release();
+          }
+        }
+      }
+      if (wantLast) {
+        eq(admitted, 8, `${label}: all eight turns are admitted — a lost write can only UNDERCOUNT`);
+        eq(cc.count(UK), null, `${label}: and the colo's hour was never written at all`);
+      } else {
+        eq(admitted, 7, `${label}: the eighth turn is REFUSED, which is what the lost writes above prevented`);
+        eq(last.reason, "budget_exhausted", `${label}: as budget_exhausted`);
+      }
+    }
+
+    // (3) A PUBLISH THAT LANDS AND THEN TIMES OUT IS NOT PUBLISHED TWICE.
+    //     The failure that would make the obvious "keep the units and retry" design wrong:
+    //     the write committed, the promise was lost to the deadline, and retrying the same
+    //     units would charge the colo for them a second time — an OVERCOUNT, which refuses
+    //     somebody. The ledger is therefore cleared on every ATTEMPT, confirmed or not.
+    //     Driven at PRODUCTION's 600-unit ceiling rather than this block's 12, and that is
+    //     not incidental: under the retry design the over-publish crosses 12 by the fourth
+    //     turn, so the suite reddens on "isolate A turn 4 is admitted" and the assertion
+    //     that NAMES the double charge is never the one that fails. A guard whose own check
+    //     cannot be the failing one proves nothing (`turnstile_mutation_check.py`'s rule),
+    //     and this row is why the ceiling here is out of the way.
+    fresh();
+    const slow = fakeCache({ putStoresThenHangs: true });
+    for (let i = 1; i <= 4; i++) {
+      (await admitWith(FAST, slow, "198.51.100.7" + i, "chat", HOUR2)).release();
+    }
+    eq(slow.count(UK), 9,
+       "four turns, three publishes that all LANDED and all timed out: the colo holds 9 units, not 18");
+    eq(cacheStats().units.timeouts, 3, "…recorded as three timed-out writes");
+    eq(cacheStats().units.wrote, 0, "…none of which this file may claim to have confirmed");
+    eq(cacheStats().units.published, 9, "…while 9 units really did leave this isolate");
+    deep(limits.__state().units, { pending: 3, bucket: 2 }, "…and only the last turn's 3 are still owed");
+
+    // (4) THE HOUR ROLL DROPS RATHER THAN MOVES. Units charged in one hour must never be
+    //     published against another: that would be spend recorded against an hour that did
+    //     not spend it, which refuses somebody in the hour that inherits it.
+    fresh();
+    const roll = fakeCache();
+    (await admitWith(TWELVE, roll, "198.51.100.40", "chat", HOUR2)).release();
+    deep(limits.__state().units, { pending: 3, bucket: 2 }, "an unpublished 3 units, charged in hour 2");
+    const next = await admitWith(TWELVE, roll, "198.51.100.41", "chat", HOUR2 + 3600);
+    eq(next.ok, true, "…and the first admission of hour 3 is served");
+    next.release();
+    eq(roll.count(ORIGIN + "/__moxie/rl/units/3"), null,
+       "…with hour 2's crumbs DROPPED, never carried into hour 3's entry");
+    eq(cacheStats().units.dropped, 3, "…and the drop recorded rather than left silent");
+    deep(limits.__state().units, { pending: 3, bucket: 3 }, "…the ledger now belongs to hour 3");
+
+    // (5) `release()` THEN `refundBudget()` — the ordering no route performs today and
+    //     nothing structurally prevents. The units come back out of the ledger, which is
+    //     safe only because the ledger has not been shown to anybody.
+    fresh();
+    const late = fakeCache();
+    const l = await admitWith(TWELVE, late, "198.51.100.42", "chat", HOUR2);
+    l.release();
+    deep(limits.__state().units, { pending: 3, bucket: 2 }, "a released turn settles its units into the ledger");
+    l.refundBudget();
+    deep(limits.__state().units, { pending: 0, bucket: 2 },
+         "…and a refund AFTER the release takes them straight back out again");
+    eq(late.log.puts.filter((k) => k.indexOf("/units/") >= 0).length, 0, "…having published nothing in between");
+  }
+
+  // ---- 15i-h. THE ORDER: the per-IP window first, the deployment's budget second - //
+  //
+  // A visitor over their own MINUTE, in a colo whose HOUR is also spent. Both sub-tiers
+  // would refuse and the order decides which answer they get, which is not cosmetic:
+  // `rate_limited` is a 429 the browser paces itself against (§4.5) while
+  // `budget_exhausted` is a 503 that paints the page SCRIPTED for everybody. Answering a
+  // per-visitor condition with a deployment-wide verdict is the wrong information, and it
+  // would also make the two tiers disagree about what the same request earns.
+  {
+    fresh();
+    const learn = fakeCache();
+    (await admitWith(TWELVE, learn, "198.51.100.90", "chat", HOUR2)).release();
+    const WKEY = learn.log.keys[0] || "no-key";
+
+    fresh();
+    const both = fakeCache().seed(WKEY, TWELVE.chatPerMin).seed(UK, UNITS_HOUR, undefined, 3600);
+    const r = await admitWith(TWELVE, both, "198.51.100.90", "chat", HOUR2);
+    eq(r.ok, false, "a request both sub-tiers would refuse is refused…");
+    eq(r.reason, "rate_limited",
+       "…and a spent colo hour AND a spent minute answers rate_limited: the per-visitor condition wins, " +
+       "because a 429 paces one browser where a 503 paints the whole page scripted");
+    eq(cacheStats().units.checked, 0,
+       "…with the budget entry not even read, the window having already said no");
+  }
+
+  // ---- 15i-f. THE SEAMS: off, absent, and uncapped -------------------------- //
+  {
+    fresh();
+    const c = fakeCache();
+    const OFF12 = wire2.readConfig({ ...FULL, DEMO_UNIT_BUDGET_HOUR: "12", DEMO_CACHE_COUNTER: "0" });
+    (await admitWith(OFF12, c, "198.51.100.80", "chat", HOUR2)).release();
+    eq(c.log.match + c.log.put, 0, "DEMO_CACHE_COUNTER=0 makes ZERO cache calls for the budget half too");
+    eq(cacheStats().units.checked, 0, "…recorded as never checked");
+
+    fresh();
+    const c2 = fakeCache();
+    const NOBUDGET = wire2.readConfig({ ...FULL, DEMO_UNIT_BUDGET_HOUR: "0" });
+    (await admitWith(NOBUDGET, c2, "198.51.100.81", "chat", HOUR2)).release();
+    eq(cacheStats().units.checked, 0, "with no hourly ceiling there is nothing to mirror, so the sub-tier never runs");
+    eq(c2.log.keys.filter((k) => k.indexOf("/units/") >= 0).length, 0, "…and no budget entry is ever asked for");
+    deep(limits.__state().units, { pending: 0, bucket: -1 },
+         "…and an uncapped deployment accrues nothing, so it can never publish anything");
+  }
+
+  // ---- 15i-g. THE WHOLE ROUTE, THROUGH THE REAL `caches.default` ------------- //
+  {
+    fresh();
+    // The colo's hour stands AT its ceiling, as other isolates would have left it —
+    // answered for whatever hour the route's own clock names, so this block asserts the
+    // same thing with no wall-clock read of its own.
+    const c = fakeCache({ unitsCount: UNITS_HOUR });
+    globalThis.caches = { default: c };
+    try {
+      plan = { chat: { content: "hi" } };
+      const env12 = { ...FULL, DEMO_UNIT_BUDGET_HOUR: String(UNITS_HOUR) };
+      const spent = await call(chat, "/api/chat", { text: "hello" }, {}, env12);
+      eq(spent.res.status, 503, "/api/chat answers 503 when the COLO's shared hour is spent");
+      eq(spent.body.reason, "budget_exhausted", "…with the §4.5 reason");
+      eq(spent.body.mode, "degraded", "…and a degraded page, which is what §7 says a spent budget looks like");
+      ok(Number(spent.res.headers.get("Retry-After")) >= 1, "…and a Retry-After the client can obey");
+      eq(upstreamCalls(), 0, "…having spent nothing upstream");
+      eq(limits.__state().inflight.chat, 0, "…and leaking no concurrency slot");
+    } finally {
+      delete globalThis.caches;
+    }
+    eq(typeof caches, "undefined", "the global is put back, so no later block inherits a cache");
+  }
+}
+
+/* =========================================================================== *
+ * 16. THE SYNTHESISED-AUDIO CACHE — `/api/speech` stops paying twice for a line
+ * =========================================================================== *
+ *
+ * Spec: docs/architecture/backlog/live-sim-demo.md §4.8 (this tier), §4.6.1 (the Cache API
+ * measurement it is built on), §3.2 (the route contract it may not change), §4.1 (the caps
+ * it sits behind), §4.5 (the status table it must not add a status to).
+ *
+ * Synthesis is the most expensive thing this deployment does — 131 348 B and 1 091 ms for
+ * one 30-character line, measured against the real gateway — and the audio for a given
+ * (gateway, model, voice, format, rate, exact text) is the same audio every time. So
+ * `_lib/ttscache.js` keeps it in `caches.default`.
+ *
+ * FIVE PROPERTIES, AND EVERY ONE OF THEM IS ASSERTED RATHER THAN INTENDED:
+ *
+ *   1. **A HIT IS BYTE-IDENTICAL TO A MISS.** Not "about the same length" — the same
+ *      bytes, compared as bytes, with the same declared rate and channel count. 16b.
+ *   2. **A HIT COSTS ZERO UPSTREAM CALLS.** Asserted on the intercepted request log, not
+ *      on a counter that could itself be wrong. 16b.
+ *   3. **EVERY FAILURE COSTS EXACTLY ONE SYNTHESIS — TODAY'S BEHAVIOUR.** Miss, stale, a
+ *      `match` that throws / rejects / hangs, a body read that does the same, an entry
+ *      that will not decode, a `put` that fails every way, a store with no methods, no
+ *      `caches` global at all. Each by name, each driven through the WHOLE ROUTE, and each
+ *      required to answer the identical 200 with the identical audio. 16e.
+ *   4. **NOTHING BUT A SUCCESSFUL SYNTHESIS IS STORED.** An upstream 500, a 429, a
+ *      redirect, a JSON error body, an Access login page, an empty body, a `text/plain`
+ *      proxy error and a timeout: none of them leaves an entry behind, and the next good
+ *      turn for the same text still synthesises. 16c.
+ *   5. **THE CAPS DECIDE FIRST.** A cache hit is a cheaper way to serve a request that was
+ *      already going to be served, never a way to serve one that was not: an over-length
+ *      ticket, a forged one, a replayed one, a rate-limited visitor and a forbidden origin
+ *      all refuse without touching the cache at all. 16f.
+ *
+ * And what this section deliberately does NOT assert, because it is not true: any hit
+ * rate. The cache is per-colo, a cold colo pays full price, and the demo's scripted copy
+ * never reaches this route in the first place (there is no text field — `chat.js`:150 is
+ * the only place a ticket is minted, from a live gateway reply). What can be shown here is
+ * that a repeat is free and that a miss costs one `match`; what a real hit rate would be
+ * is not measurable from a preview, because a preview is keyless and this route refuses
+ * before it reaches the cache.
+ */
+{
+  /** A fake `caches.default` that stores BYTES, because this tier stores audio.
+   *
+   *  The failure switches are the same three SHAPES `fakeCache` uses in §15 — a
+   *  synchronous throw, a rejected promise, a promise that never settles — plus the ones
+   *  only an audio cache can have: a body read that fails the same three ways, and an
+   *  entry whose bytes are not the WAV we wrote. */
+  function audioCache(opts) {
+    const o = opts || {};
+    const store = new Map();
+    const log = { match: 0, put: 0, keys: [], calls: [] };
+    const hang = () => new Promise(() => {});
+    const body = (bytes, maxAge, ageS) => {
+      const h = { "Content-Type": "audio/wav", "Cache-Control": "max-age=" + maxAge };
+      if (ageS !== undefined) h.Age = String(ageS);
+      const res = new Response(bytes, { headers: h });
+      if (o.readThrowsSync) res.arrayBuffer = () => { throw new Error("body read threw synchronously"); };
+      if (o.readRejects) res.arrayBuffer = () => Promise.reject(new Error("body read rejected"));
+      if (o.readHangs) res.arrayBuffer = () => hang();
+      return res;
+    };
+    return {
+      log,
+      store,
+      /** Pre-load an entry as another isolate in this colo would have written it. */
+      seed(key, bytes, maxAge, ageS) {
+        store.set(String(key), { bytes, maxAge: maxAge === undefined ? 86400 : maxAge, ageS });
+        return this;
+      },
+      bytes(key) {
+        const e = store.get(String(key));
+        return e ? e.bytes : null;
+      },
+      match(key) {
+        log.match += 1;
+        log.keys.push(String(key));
+        log.calls.push({ op: "match", key: String(key) });
+        if (o.matchThrowsSync) throw new Error("match threw synchronously");
+        if (o.matchHangs) return hang();
+        if (o.matchRejects) return Promise.reject(new Error("match rejected"));
+        if (o.matchReturnsJunk) return Promise.resolve({ notAResponse: true });
+        const e = store.get(String(key));
+        if (!e) return Promise.resolve(undefined);
+        return Promise.resolve(body(o.bodyOverride === undefined ? e.bytes : o.bodyOverride, e.maxAge, e.ageS));
+      },
+      put(key, res) {
+        log.put += 1;
+        log.calls.push({ op: "put", key: String(key) });
+        if (o.putThrowsSync) throw new Error("put threw synchronously");
+        if (o.putHangs) return hang();
+        if (o.putRejects) return Promise.reject(new Error("put rejected"));
+        return (async () => {
+          const buf = new Uint8Array(await res.arrayBuffer());
+          const cc = /max-age=(\d+)/.exec(res.headers.get("Cache-Control") || "");
+          store.set(String(key), { bytes: buf, maxAge: cc ? Number(cc[1]) : 0 });
+        })();
+      },
+    };
+  }
+
+  /* ONE STORE, TWO TIERS. `caches.default` is shared: `_lib/limits.js`'s per-IP counter
+   * writes `/__moxie/rl/...` on every ADMITTED turn and this tier writes `/__moxie/tts/...`.
+   * They must not be counted together or an assertion about one is really about both — so
+   * every count below is filtered by prefix, and 16g asserts the two prefixes coexist. */
+  const TTS_PREFIX = "/__moxie/tts/";
+  const ttsCalls = (c, op) => c.log.calls.filter((x) => x.op === op && x.key.includes(TTS_PREFIX)).length;
+  const ttsKeys = (c) => c.log.calls.filter((x) => x.op === "match" && x.key.includes(TTS_PREFIX)).map((x) => x.key);
+  const ttsEntries = (c) => [...c.store.keys()].filter((k) => String(k).includes(TTS_PREFIX));
+  const ttsOps = (c) => ttsCalls(c, "match") + ttsCalls(c, "put");
+
+  const cstats = () => ttscache.__ttsCacheState();
+  /** Install a fake as the GLOBAL `caches.default` — the branch production takes — run the
+   *  body, and always put the global back. Everything in this section drives the real
+   *  route through the real lookup; nothing injects a store behind the route's back. */
+  async function withCache(store, fn) {
+    globalThis.caches = { default: store };
+    try {
+      return await fn();
+    } finally {
+      delete globalThis.caches;
+    }
+  }
+  /** How many times the gateway was asked to SYNTHESISE, from the intercepted request log
+   *  rather than from a counter — the same evidence the rest of this file uses. */
+  const synths = () => sent.filter((s) => String(s.url).endsWith("/audio/speech")).length;
+  /** One whole turn: a chat reply with a fixed line, then that line spoken.
+   *
+   *  A THROW IS RECORDED, NOT PROPAGATED. On Cloudflare an unhandled exception out of a
+   *  Function handler is a 500 carrying the platform's own HTML error page — not a
+   *  degrade, no `reason` for `mode.js` to render, and a visitor who sees a broken site
+   *  rather than a quiet fallback. That is the WORST outcome this tier could produce, so
+   *  "the route did not throw" is an assertion here rather than a crashed test run. */
+  async function turn(line, env, text) {
+    plan = { chat: { content: line }, speech: plan.speech };
+    const c = await call(chat, "/api/chat", { text: text || "say it" }, null, env);
+    let s;
+    try {
+      s = await call(speech, "/api/speech", { ticket: c.body.speech[0].ticket }, null, env);
+    } catch (err) {
+      ok(false, `POST /api/speech THREW instead of answering: ${err && err.message}`);
+      s = { res: new Response("{}", { status: 599 }), body: { messages: [] } };
+    }
+    const msgs = (s.body && s.body.messages) || [];
+    return { chat: c, speech: s, payload: msgs[0] ? JSON.parse(msgs[0].payload) : null };
+  }
+  const audioOf = (t) => (t.payload && t.payload.audio ? t.payload.audio : {});
+  const bytesOf = (t) => Buffer.from(audioOf(t).buffer || "", "base64");
+
+  const LINE = "Twinkle, twinkle, little star.";
+  /** The working deployment for this section. `DEMO_CACHE_COUNTER=0` switches OFF the
+   *  OTHER tier that shares `caches.default` — §15's per-IP counter — for one reason only:
+   *  it keeps its own count in the same fake store across the `fresh()` calls that stand in
+   *  for isolate boundaries here, so leaving it on would rate-limit this section's own
+   *  fixtures and every op count below would be a count of two tiers. It is §15's subject,
+   *  not this one's. 16a runs the SHIPPED defaults with both tiers on, and 16g asserts the
+   *  two of them share one store without reading each other's entries. */
+  const VOICED = { ...FULL, DEMO_TTS_VOICE: "amy", DEMO_CACHE_COUNTER: "0" };
+  /** The clamp floor, so a hang costs 50 ms per assertion rather than a whole second. */
+  const FAST = { ...VOICED, DEMO_TTS_CACHE_TIMEOUT_MS: "50" };
+
+  // ---- 16a. THE SEAM: the switch, and the runtime with no cache at all ----- //
+  {
+    const ON = wire2.readConfig(FULL);
+    const OFF = wire2.readConfig({ ...FULL, DEMO_TTS_CACHE: "0" });
+    eq(ON.ttsCache, true, "DEMO_TTS_CACHE defaults ON — the tier ships enabled");
+    eq(OFF.ttsCache, false, "DEMO_TTS_CACHE=0 switches the audio cache off with no code change");
+    eq(ON.ttsCacheTtlS, 86400, "DEMO_TTS_CACHE_TTL_S defaults to one day");
+    eq(ON.ttsCacheTimeoutMs, 1000, "DEMO_TTS_CACHE_TIMEOUT_MS defaults to 1000 ms — 4x the counter tier's");
+    eq(wire2.readConfig({ ...FULL, DEMO_TTS_CACHE_TTL_S: "0" }).ttsCacheTtlS, 86400,
+       "…and an out-of-range TTL falls back to the default rather than becoming a stranger one");
+    eq(wire2.readConfig({ ...FULL, DEMO_TTS_CACHE_TTL_S: "99999999" }).ttsCacheTtlS, 86400, "…in both directions");
+    eq(wire2.readConfig({ ...FULL, DEMO_TTS_CACHE_TIMEOUT_MS: "1" }).ttsCacheTimeoutMs, 1000,
+       "…and a 1 ms deadline would switch the tier off by stealth, so it is refused too");
+    eq(wire2.readConfig({ ...FULL, DEMO_TTS_CACHE_TIMEOUT_MS: "60000" }).ttsCacheTimeoutMs, 1000,
+       "…as would a deadline that out-waits DEMO_SPEECH_TIMEOUT_MS");
+    for (const k of ["tts_cache", "tts_cache_ttl_s", "DEMO_TTS_CACHE", "DEMO_TTS_CACHE_TTL_S"]) {
+      ok(!(k in wire2.publicLimits(ON)), `the audio cache is server-side only: ${k} is not published to the browser`);
+    }
+
+    // NO `caches` GLOBAL. This is the default under bare node, so every other section in
+    // this file has already been running the pre-change route — but say it once, on
+    // purpose, because "exactly today's behaviour" is the whole promise of this tier.
+    fresh();
+    eq(typeof caches, "undefined", "bare node has no caches global — the absent-cache path is the default one");
+    const plain = await turn(LINE);
+    eq(plain.speech.res.status, 200, "with NO cache reachable at all, /api/speech answers exactly as before");
+    eq(synths(), 1, "…having synthesised exactly once");
+    eq(cstats().checked, 0, "…having consulted no cache at all");
+    eq(ttscache.ttsStore(wire2.readConfig(FULL)), null, "…and ttsStore() answers null, which is the seam");
+
+    // THE KILL SWITCH: a cache is right there, and the route does not touch it.
+    fresh();
+    const c = audioCache();
+    await withCache(c, async () => {
+      const off1 = await turn(LINE, { ...FULL, DEMO_TTS_CACHE: "0" });
+      eq(off1.speech.res.status, 200, "DEMO_TTS_CACHE=0 still serves the turn");
+      eq(ttsOps(c), 0, "…and makes ZERO audio-cache calls — the switch is a seam, not a filter");
+      eq(cstats().checked, 0, "…recorded as never checked");
+      fresh();
+      const off2 = await turn(LINE, { ...FULL, DEMO_TTS_CACHE: "0" });
+      eq(synths(), 1, "…so the SAME line synthesises again, which is the pre-change behaviour exactly");
+      deep([...bytesOf(off2)], [...bytesOf(off1)], "…and answers the same audio the gateway just made");
+    });
+    eq(ttscache.ttsStore(wire2.readConfig({ ...FULL, DEMO_TTS_CACHE: "0" })), null,
+       "ttsStore() answers null for a switched-off deployment even with a global cache present");
+  }
+
+  // ---- 16b. THE HIT: byte-identical audio, zero upstream calls, one op ----- //
+  {
+    fresh();
+    const colo = audioCache();
+    await withCache(colo, async () => {
+      const first = await turn(LINE, VOICED);
+      eq(first.speech.res.status, 200, "the first visitor to a colo gets a synthesised line");
+      eq(synths(), 1, "…which cost one upstream synthesis");
+      eq(ttsCalls(colo, "match"), 1, "…one cache read");
+      eq(ttsCalls(colo, "put"), 1, "…and one cache write");
+      eq(cstats().miss, 1, "…recorded as a miss");
+      eq(cstats().wrote, 1, "…and a write");
+      eq(cstats().ops, 2, "…two completed cache ops on a miss");
+      const key = ttsKeys(colo)[0];
+
+      // THE STORED ENTRY IS THE AUDIO, ROUND-TRIPPED THROUGH THE REAL DECODER. If the
+      // envelope lost a sample or a rate, the byte comparison below would still pass while
+      // a child heard the wrong thing, so the entry itself is decoded and compared.
+      const stored = wav.pcmFromAudio(colo.bytes(key), { format: "wav" });
+      deep([...stored.pcm], [...bytesOf(first)], "the STORED entry decodes to exactly the PCM that was served");
+      eq(stored.sampleRate, audioOf(first).sample_rate, "…carrying the same sample rate");
+      eq(stored.channels, audioOf(first).channels, "…and the same channel count");
+
+      // A NEW ISOLATE, THE SAME COLO CACHE. And the stub is told to answer with DIFFERENT
+      // audio from here on, so audio that still matches the first turn can only have come
+      // out of the cache — a hit proven by content, not by a counter.
+      fresh();
+      plan = { speech: { audio: wav.writeWav(pcmBytes(77), { sampleRate: 8000, channels: 1, bitsPerSample: 16 }) } };
+      const second = await turn(LINE, VOICED);
+      eq(second.speech.res.status, 200, "a second isolate serving the same line answers 200");
+      eq(second.speech.body.reason, null, "…with no reason");
+      eq(second.speech.body.degraded, false, "…and not degraded: a hit is an ordinary success");
+      eq(synths(), 0, "A HIT COSTS ZERO UPSTREAM CALLS — nothing was posted to /audio/speech");
+      eq(sent.length, 1, "…the only outbound request in the turn was the chat completion");
+      eq(ttsCalls(colo, "put"), 1, "…and a hit writes nothing back: still the one write from the miss");
+      eq(cstats().hit, 1, "…recorded as a hit");
+      eq(cstats().ops, 1, "…one cache op for a hit, two for a miss");
+
+      // BYTES, NOT LENGTHS.
+      const a = bytesOf(first);
+      const b = bytesOf(second);
+      ok(a.length > 100, `there is real audio to compare, got ${a.length} bytes`);
+      eq(b.length, a.length, "the hit returns the same number of PCM bytes");
+      eq(Buffer.compare(a, b), 0, "THE HIT IS BYTE-IDENTICAL TO THE MISS — compared as bytes");
+      eq(audioOf(second).buffer, audioOf(first).buffer, "…so the base64 on the wire is identical too");
+      eq(audioOf(second).sample_rate, audioOf(first).sample_rate, "…as is the declared sample rate");
+      eq(audioOf(second).channels, audioOf(first).channels, "…and the declared channel count");
+      eq(audioOf(second).sample_rate, 22050, "…which is the FIRST synthesis's rate, not the stub's new 8000");
+
+      // The rest of the envelope is the turn's own, never the cached turn's: the event id
+      // comes from THIS ticket, or two visitors would share one event.
+      const e2 = JSON.parse(second.chat.body.messages[0].payload).event_id;
+      eq(second.payload.event_id, e2, "the event id is THIS turn's, not the one whose audio was cached");
+      ok(second.payload.event_id !== first.payload.event_id, "…and the two turns do not share an event id");
+      deep(Object.keys(second.payload).sort(), ["audio", "chunk_num", "event_id", "marks", "request_source"],
+           "…and the CloudTTSResponse field set is unchanged by the cache");
+
+      // THE TTL IS THE CONFIGURED ONE, carried on the entry itself — it is both the
+      // cache's eviction clock and `readCachedAudio`'s own staleness test, so the two can
+      // only agree if this is the number written.
+      eq(colo.store.get(key).maxAge, 86400, "the entry carries DEMO_TTS_CACHE_TTL_S as its max-age");
+    });
+
+    // THE HEADER'S OWN RATE SURVIVES THE ROUND TRIP. `/api/speech` carries the WAV's rate,
+    // not the configured one (§2.2, §10) — a 16 kHz voice on a deployment configured for
+    // 22 050 must still play at 16 kHz on the SECOND visitor as well as the first, or the
+    // cache turns a correct answer into a chipmunk. The entry is the only place that rate
+    // can live, which is why the stored body is a WAV and not a bag of samples.
+    fresh();
+    const odd = audioCache();
+    await withCache(odd, async () => {
+      plan = { speech: { audio: wav.writeWav(pcmBytes(64), { sampleRate: 16000, channels: 1, bitsPerSample: 16 }) } };
+      const a = await turn("A sixteen kilohertz line.", VOICED);
+      eq(audioOf(a).sample_rate, 16000, "the miss carries the WAV header's 16000, not the configured 22050");
+      fresh();
+      plan = { speech: { audio: wav.writeWav(pcmBytes(9), { sampleRate: 44100, channels: 1, bitsPerSample: 16 }) } };
+      const b = await turn("A sixteen kilohertz line.", VOICED);
+      eq(synths(), 0, "…the repeat is a hit");
+      eq(audioOf(b).sample_rate, 16000,
+         "…and the HIT carries the STORED 16000 too — not the configured rate, and not the stub's new one");
+      eq(audioOf(b).channels, 1, "…with the stored channel count");
+      eq(Buffer.compare(bytesOf(b), bytesOf(a)), 0, "…and byte-identical samples");
+    });
+
+    // A CUSTOM TTL is honoured, so the knob is a knob.
+    fresh();
+    const ttl = audioCache();
+    await withCache(ttl, async () => {
+      await turn(LINE, { ...VOICED, DEMO_TTS_CACHE_TTL_S: "3600" });
+      const k = ttsEntries(ttl)[0];
+      eq(ttl.store.get(k).maxAge, 3600, "DEMO_TTS_CACHE_TTL_S=3600 writes max-age=3600");
+    });
+  }
+
+  // ---- 16c. NEVER CACHE ANYTHING BUT A SUCCESSFUL SYNTHESIS --------------- //
+  //
+  // Each of these is a way the gateway can answer badly. Not one of them may leave an
+  // entry behind: a cached refusal is a refusal every visitor to that colo inherits for a
+  // day, and a cached partial body is static in a child's ear on every future hit.
+  {
+    const badly = [
+      ["an upstream 500", { status: 500 }],
+      ["an upstream 429", { status: 429 }],
+      ["a 3xx redirect, unfollowed", { status: 302 }],
+      ["a JSON error body where audio was expected", { status: 200, body: JSON.stringify({ error: "nope" }) }],
+      ["an HTML Access login page", { status: 200, body: "<!DOCTYPE html><html><body>login</body></html>" }],
+      ["an empty 200 body", { status: 200, body: "" }],
+      ["a text/plain proxy error", { status: 200, body: "upstream connect error or disconnect" }],
+      ["a gateway timeout", { throw: "TimeoutError" }],
+      ["a network failure", { throw: "TypeError" }],
+    ];
+    for (const [label, sp] of badly) {
+      fresh();
+      const c = audioCache();
+      await withCache(c, async () => {
+        plan = { speech: sp };
+        const t = await turn(LINE, VOICED);
+        eq(t.speech.body.ok, false, `${label}: the visitor is told the voice is degraded`);
+        eq(t.speech.body.degraded, true, `…${label} degrades`);
+        eq(ttsCalls(c, "put"), 0, `NEVER CACHE A NON-SUCCESS: ${label} writes NOTHING to the cache`);
+        deep(ttsEntries(c), [], `…${label} leaves the audio store empty`);
+        eq(cstats().wrote, 0, `…${label} is recorded as no write`);
+
+        // …and the failure did not poison the key either: the next good turn for the same
+        // line still synthesises and still succeeds.
+        fresh();
+        plan = {};
+        const good = await turn(LINE, VOICED);
+        eq(good.speech.res.status, 200, `…and after ${label} the next turn for that line is served normally`);
+        eq(synths(), 1, `…by synthesising it, because ${label} cached nothing to serve from`);
+        eq(ttsEntries(c).length, 1, `…and THAT one is stored`);
+      });
+    }
+  }
+
+  // ---- 16d. THE KEY: everything that changes the audio is in it ----------- //
+  //
+  // A key that ignores the voice serves one child a line in somebody else's voice, on
+  // every hit, for as long as the entry lives. So each component is varied ALONE, twice:
+  // once at the key itself, and once end to end, where the required answer is that the
+  // second configuration MISSES and pays for its own synthesis.
+  {
+    const R = req("/api/speech", { ticket: "x" });
+    const keyFor = (env, text) => ttscache.ttsCacheKey(wire2.readConfig(env), R, text === undefined ? LINE : text);
+    const base = await keyFor(VOICED);
+
+    ok(base.startsWith(ORIGIN + "/__moxie/tts/"),
+       `the entry lives on our OWN origin under a non-route prefix — got ${base}`);
+    const digest = base.slice((ORIGIN + "/__moxie/tts/").length);
+    ok(/^[0-9a-f]{64}$/.test(digest), `…and the whole 256-bit HMAC, untruncated, got ${digest.length} hex chars`);
+    ok(!base.includes("Twinkle") && !base.toLowerCase().includes("twinkle"),
+       "the TEXT is never in a cache key — the entry is keyed, not readable");
+    ok(!base.includes("gw.invalid.test") && !base.includes("test-voice-model") && !base.includes("amy"),
+       "…and neither is the gateway, the model or the voice");
+    eq(await keyFor(VOICED), base, "the same inputs key the same entry, or nothing would ever hit");
+
+    const variants = [
+      ["the MODEL", { ...VOICED, DEMO_TTS_MODEL: "other-voice-model" }, undefined],
+      ["the VOICE", { ...VOICED, DEMO_TTS_VOICE: "ryan" }, undefined],
+      ["the FORMAT", { ...VOICED, DEMO_TTS_FORMAT: "pcm" }, undefined],
+      ["the SAMPLE RATE", { ...VOICED, DEMO_TTS_SAMPLE_RATE: "16000" }, undefined],
+      ["the GATEWAY", { ...VOICED, DEMO_GATEWAY_BASE_URL: "https://other.invalid.test/v1" }, undefined],
+      ["the TEXT", VOICED, "Twinkle, twinkle, little star"],
+      ["ONE COMMA of the text", VOICED, "Twinkle twinkle, little star."],
+      ["the CASE of the text", VOICED, "twinkle, twinkle, little star."],
+    ];
+    const seenKeys = new Map([[base, "the base configuration"]]);
+    for (const [label, env, text] of variants) {
+      const k = await keyFor(env, text);
+      ok(k !== base, `changing ${label} changes the cache key`);
+      ok(!seenKeys.has(k), `…and ${label} does not collide with ${seenKeys.get(k) || ""}`);
+      seenKeys.set(k, label);
+    }
+    // Length-prefixed, so no two component boundaries can be slid into each other.
+    ok((await keyFor({ ...VOICED, DEMO_TTS_MODEL: "ab", DEMO_TTS_VOICE: "c" })) !==
+       (await keyFor({ ...VOICED, DEMO_TTS_MODEL: "a", DEMO_TTS_VOICE: "bc" })),
+       "the components are length-prefixed: 'ab'+'c' and 'a'+'bc' are different keys");
+
+    // END TO END. Warm the colo under one voice, then ask for the same line under another:
+    // it must MISS and synthesise, because the alternative is a child hearing the wrong one.
+    for (const [label, env] of [
+      ["a different VOICE", { ...VOICED, DEMO_TTS_VOICE: "ryan" }],
+      ["a different MODEL", { ...VOICED, DEMO_TTS_MODEL: "other-voice-model" }],
+      ["a different SAMPLE RATE", { ...VOICED, DEMO_TTS_SAMPLE_RATE: "16000" }],
+      ["a different FORMAT", { ...VOICED, DEMO_TTS_FORMAT: "pcm" }],
+    ]) {
+      fresh();
+      const colo = audioCache();
+      await withCache(colo, async () => {
+        await turn(LINE, VOICED);
+        eq(synths(), 1, `warming the colo under the base configuration synthesises once (${label})`);
+        fresh();
+        const other = await turn(LINE, env);
+        eq(other.speech.res.status, 200, `${label} still serves the line`);
+        eq(synths(), 1, `${label} MISSES and pays for its own synthesis — it is never served the base voice`);
+        eq(cstats().hit, 0, `…recorded as no hit for ${label}`);
+        eq(ttsEntries(colo).length, 2, `…and ${label} stores a SECOND entry rather than overwriting the first`);
+      });
+    }
+
+    // The control: the same configuration, twice, DOES hit. Without this the four
+    // assertions above would also pass on a cache that never hits at all.
+    fresh();
+    const colo = audioCache();
+    await withCache(colo, async () => {
+      await turn(LINE, VOICED);
+      fresh();
+      await turn(LINE, VOICED);
+      eq(synths(), 0, "CONTROL: the SAME configuration and the same line hits, so the misses above mean something");
+      eq(ttsEntries(colo).length, 1, "…and stores exactly one entry");
+    });
+  }
+
+  // ---- 16e. FAIL OPEN — every failure mode, through the whole route -------- //
+  //
+  // Each case is required to answer the SAME 200 with the SAME bytes a run with no cache
+  // at all produces, having synthesised exactly once. That is a stronger requirement than
+  // "does not crash": it is "costs nothing but a synthesis", which is the design
+  // constraint, asserted literally.
+  {
+    // The reference: one turn with no cache in the picture at all.
+    fresh();
+    const reference = await turn(LINE, FAST);
+    const REF = bytesOf(reference);
+    eq(synths(), 1, "the reference turn, with no cache, synthesises once");
+    ok(REF.length > 100, "…and produces real audio to compare against");
+
+    // Learn the key this configuration and line use, so the corrupt-entry cases can seed it.
+    fresh();
+    const learn = audioCache();
+    await withCache(learn, () => turn(LINE, FAST));
+    const KEY = ttsKeys(learn)[0] || "no-key";
+    const GOOD = learn.bytes(KEY);
+    ok(GOOD && GOOD.length > 100, "…and a good entry to corrupt");
+
+    const modes = [
+      ["a cache MISS", () => audioCache(), { miss: 1 }],
+      ["a STALE entry, past its own max-age", () => audioCache().seed(KEY, GOOD, 86400, 999999), { stale: 1 }],
+      ["a match that THROWS SYNCHRONOUSLY", () => audioCache({ matchThrowsSync: true }).seed(KEY, GOOD), { errors: 1 }],
+      ["a match that REJECTS", () => audioCache({ matchRejects: true }).seed(KEY, GOOD), { errors: 1 }],
+      ["a match that HANGS FOR EVER", () => audioCache({ matchHangs: true }).seed(KEY, GOOD), { timeouts: 1 }],
+      ["a match that answers something that is not a Response", () => audioCache({ matchReturnsJunk: true }), { corrupt: 1 }],
+      ["a body read that THROWS SYNCHRONOUSLY", () => audioCache({ readThrowsSync: true }).seed(KEY, GOOD), { errors: 1 }],
+      ["a body read that REJECTS", () => audioCache({ readRejects: true }).seed(KEY, GOOD), { errors: 1 }],
+      ["a body read that HANGS FOR EVER", () => audioCache({ readHangs: true }).seed(KEY, GOOD), { timeouts: 1 }],
+      ["an entry whose bytes are NOT a WAV", () => audioCache({ bodyOverride: new Uint8Array([1, 2, 3, 4, 5, 6]) }).seed(KEY, GOOD), { corrupt: 1 }],
+      ["an entry that is an HTML page", () => audioCache({ bodyOverride: "<!DOCTYPE html><html></html>" }).seed(KEY, GOOD), { corrupt: 1 }],
+      ["an entry that is a JSON error body", () => audioCache({ bodyOverride: '{"error":"gone"}' }).seed(KEY, GOOD), { corrupt: 1 }],
+      ["an entry that is EMPTY", () => audioCache({ bodyOverride: new Uint8Array(0) }).seed(KEY, GOOD), { corrupt: 1 }],
+      ["an entry TRUNCATED mid-body", () => audioCache({ bodyOverride: GOOD.slice(0, 30) }).seed(KEY, GOOD), { corrupt: 1 }],
+      // Two errors, not one: with no `match` AND no `put`, both halves of the tier fail —
+      // and both of them fall open, which is the point of listing it.
+      ["a store with NO METHODS AT ALL", () => ({ log: { match: 0, put: 0, keys: [], calls: [] }, store: new Map() }), { errors: 2, wrote: 0 }],
+      ["a put that THROWS SYNCHRONOUSLY", () => audioCache({ putThrowsSync: true }), { errors: 1, miss: 1 }],
+      ["a put that REJECTS", () => audioCache({ putRejects: true }), { errors: 1, miss: 1 }],
+      ["a put that HANGS FOR EVER", () => audioCache({ putHangs: true }), { timeouts: 1, miss: 1 }],
+    ];
+    for (const [label, make, want] of modes) {
+      fresh();
+      const c = make();
+      await withCache(c, async () => {
+        const t = await turn(LINE, FAST);
+        eq(t.speech.res.status, 200, `FAIL OPEN: ${label} must still answer the ordinary 200`);
+        eq(t.speech.body.reason, null, `FAIL OPEN: ${label} carries no refusal reason`);
+        eq(t.speech.body.degraded, false, `FAIL OPEN: ${label} does not degrade the page`);
+        eq(synths(), 1, `FAIL OPEN: ${label} costs EXACTLY ONE synthesis — no more, and no refusal`);
+        eq(Buffer.compare(bytesOf(t), REF), 0, `FAIL OPEN: ${label} returns exactly the audio a cacheless run returns`);
+        eq(limits.__state().inflight.speech, 0, `…and ${label} leaks no concurrency slot`);
+        for (const [k, v] of Object.entries(want)) eq(cstats()[k], v, `…and ${label} is recorded as ${k}`);
+      });
+    }
+
+    // A `caches` GLOBAL THAT THROWS ON ACCESS — a runtime that has the name and not the
+    // thing. `ttsStore` must answer null rather than let the getter escape into the route.
+    fresh();
+    Object.defineProperty(globalThis, "caches", {
+      configurable: true,
+      get() { throw new Error("no cache on this runtime"); },
+    });
+    try {
+      eq(ttscache.ttsStore(wire2.readConfig(FAST)), null, "a caches global that THROWS answers null, not an exception");
+      const t = await turn(LINE, FAST);
+      eq(t.speech.res.status, 200, "FAIL OPEN: a caches global that throws still serves the turn");
+      eq(synths(), 1, "…with exactly one synthesis");
+      eq(Buffer.compare(bytesOf(t), REF), 0, "…and exactly the cacheless audio");
+    } finally {
+      delete globalThis.caches;
+    }
+    eq(typeof caches, "undefined", "the global is put back, so no later block inherits a cache");
+
+    // A KEY THAT CANNOT BE DERIVED. The last seatbelt: whatever went wrong, no key means no
+    // cache, which means one synthesis.
+    fresh();
+    const noKey = await ttscache.ttsCacheKey(wire2.readConfig(FAST), { url: "not a url" }, LINE);
+    eq(noKey, "", "a request whose URL will not parse yields NO key rather than throwing");
+    eq(await ttscache.readCachedAudio(audioCache(), wire2.readConfig(FAST), ""), null,
+       "…and an empty key reads nothing, which is a miss");
+  }
+
+  // ---- 16f. THE CAPS DECIDE FIRST — a hit is not a way past one ----------- //
+  //
+  // Every refusal on this route already costs zero upstream calls (§1, §10). It must also
+  // cost zero CACHE calls, for a stronger reason than latency: if the cache were consulted
+  // before the caps, a warm entry would be a way to be served audio while refused — and
+  // `DEMO_MAX_TTS_CHARS`, the ticket TTL and the replay set would all stop meaning what
+  // they say.
+  {
+    fresh();
+    const colo = audioCache();
+    await withCache(colo, async () => {
+      // Warm the entry under the shipped configuration.
+      const warm = await turn(LINE, VOICED);
+      eq(warm.speech.res.status, 200, "the line is warm in this colo");
+      const warmed = ttsCalls(colo, "match");
+
+      // 1. The CONFIGURATION GOT TIGHTER. The same warm line, redeemed under a
+      //    DEMO_MAX_TTS_CHARS below its length, is `too_long` — not a free cache hit.
+      fresh();
+      const tight = { ...VOICED, DEMO_MAX_TTS_CHARS: String(LINE.length - 1) };
+      plan = { chat: { content: LINE } };
+      const c1 = await call(chat, "/api/chat", { text: "say it" }, null, VOICED);
+      const before = ttsOps(colo);
+      const s1 = await call(speech, "/api/speech", { ticket: c1.body.speech[0].ticket }, null, tight);
+      eq(s1.res.status, 400, "an over-length ticket is refused even though the audio is sitting in the cache");
+      eq(s1.body.reason, "too_long", "…as too_long");
+      deep(s1.body.messages, [], "…with no audio at all");
+      eq(ttsOps(colo) - before, 0, "…and the audio cache was not touched: the cap decides first");
+
+      // 2. A FORGED TICKET. Nothing is looked up for a caller who never paid for a turn.
+      fresh();
+      const b2 = ttsOps(colo);
+      const forged = await call(speech, "/api/speech", { ticket: "v1.AAAA.BBBB" }, null, VOICED);
+      eq(forged.body.reason, "bad_ticket", "a forged ticket is bad_ticket");
+      eq(ttsOps(colo) - b2, 0, "…and touches no cache entry");
+
+      // 3. A REPLAYED TICKET. The per-isolate spent set still decides before the cache.
+      fresh();
+      plan = { chat: { content: LINE } };
+      const c3 = await call(chat, "/api/chat", { text: "say it" }, null, VOICED);
+      await call(speech, "/api/speech", { ticket: c3.body.speech[0].ticket }, null, VOICED);
+      const b3 = ttsOps(colo);
+      const replay = await call(speech, "/api/speech", { ticket: c3.body.speech[0].ticket }, null, VOICED);
+      eq(replay.body.reason, "bad_ticket", "a replayed ticket is refused inside the isolate that spent it");
+      eq(ttsOps(colo) - b3, 0, "…without a cache call");
+
+      // 4. A FORBIDDEN ORIGIN — the cheapest refusal of all.
+      fresh();
+      const b4 = ttsOps(colo);
+      const hotlinked = await call(speech, "/api/speech", { ticket: "v1.a.b" },
+        { Origin: "https://evil.invalid.test", "Sec-Fetch-Site": "cross-site" }, VOICED);
+      eq(hotlinked.body.reason, "forbidden_origin", "a hotlinked request is forbidden_origin");
+      eq(ttsOps(colo) - b4, 0, "…and never reaches the cache");
+
+      // 5. A RATE-LIMITED VISITOR. DEMO_SPEECH_PER_MIN turns, then a refusal — and the
+      //    refusal is free of cache calls even though every one of those turns was a hit.
+      fresh();
+      const limited = { ...VOICED, DEMO_SPEECH_PER_MIN: "2" };
+      plan = { chat: { content: LINE } };
+      const tickets = [];
+      for (let i = 0; i < 3; i++) {
+        const c = await call(chat, "/api/chat", { text: "say it" }, null, limited);
+        tickets.push(c.body.speech[0].ticket);
+      }
+      await call(speech, "/api/speech", { ticket: tickets[0] }, null, limited);
+      await call(speech, "/api/speech", { ticket: tickets[1] }, null, limited);
+      const b5 = ttsOps(colo);
+      const rl = await call(speech, "/api/speech", { ticket: tickets[2] }, null, limited);
+      eq(rl.res.status, 429, "the third speech turn in the minute is rate-limited");
+      eq(rl.body.reason, "rate_limited", "…as rate_limited");
+      eq(ttsOps(colo) - b5, 0, "…and a rate-limited visitor makes no cache call either");
+
+      ok(warmed >= 1, "…and the warm entry that made all of that meaningful was really read at least once");
+    });
+  }
+
+  // ---- 16g. TWO TIERS, ONE STORE, THE SHIPPED DEFAULTS -------------------- //
+  //
+  // `caches.default` is not this tier's private store: `_lib/limits.js`'s per-IP counter
+  // writes into the same place on every admitted turn. Everything above switches that one
+  // off so its op counts are about one tier; this block turns both on, as a deployment
+  // ships them, and asserts they cannot read or overwrite each other. The two prefixes are
+  // what keeps them apart, and a prefix is only a separation if something checks it.
+  {
+    fresh();
+    const shared = audioCache();
+    await withCache(shared, async () => {
+      const t = await turn(LINE, { ...FULL, DEMO_TTS_VOICE: "amy" });
+      eq(t.speech.res.status, 200, "with BOTH tiers on and one store, a turn is served normally");
+      const rl = [...shared.store.keys()].filter((k) => String(k).includes("/__moxie/rl/"));
+      const tts = ttsEntries(shared);
+      ok(rl.length >= 1, `the counter tier wrote its own entries, got ${rl.length}`);
+      eq(tts.length, 1, "…and the audio tier wrote exactly one of its own");
+      ok(rl.every((k) => !tts.includes(k)), "…and not one key is shared between the two tiers");
+      ok(tts.every((k) => k.startsWith(ORIGIN + "/__moxie/tts/")), "…the audio prefix is its own");
+      ok(rl.every((k) => k.startsWith(ORIGIN + "/__moxie/rl/")), "…and so is the counter's");
+
+      // The counter's body is a JSON integer and the audio tier's is a RIFF/WAVE. Feeding
+      // either to the other is exactly the mix-up the prefixes prevent, so prove the audio
+      // reader refuses a counter entry rather than handing a child `{"n":1}` as samples.
+      let asAudio = "it threw";
+      try {
+        asAudio = await ttscache.readCachedAudio(shared, wire2.readConfig(FULL), rl[0]);
+      } catch (err) {
+        // `readCachedAudio` MAY NOT THROW, ever. Its whole contract is "audio, or null" —
+        // an exception here escapes into `/api/speech` and becomes a 500 with the
+        // platform's HTML error page instead of a synthesis.
+        ok(false, `readCachedAudio THREW on an entry it did not write: ${err && err.message}`);
+      }
+      eq(asAudio, null, "the audio reader refuses a COUNTER entry: JSON is not audio, and it says so by missing");
+
+      // And a second turn still hits its own entry with both tiers live.
+      fresh();
+      const again = await turn(LINE, { ...FULL, DEMO_TTS_VOICE: "amy" });
+      eq(synths(), 0, "…and with both tiers on, the repeat is still a hit costing zero synthesis");
+      eq(Buffer.compare(bytesOf(again), bytesOf(t)), 0, "…returning the same bytes");
+    });
   }
 }
 

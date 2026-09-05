@@ -1,0 +1,62 @@
+# THE test-dependency list. This is the ONE place a package the pytest suite needs is
+# named, and every CI job that runs `pytest sim/tests` installs exactly this.
+#
+# WHY IT EXISTS AT ALL. Until 2026-09-05 the same list was hand-written in FIVE places —
+# `sim/ci/ci.yml` twice (the early hermetic step and the whole-suite step), `sim/ci/ci-deep.yml`
+# three times (the hermetic step and the two live steps) — and a sixth, longer copy sat in
+# `sim/tests/requirements.txt`, which CI did not use. No two copies were the same, and not
+# one of the differences was a decision. Each was drift, and each cost something real:
+#
+#   · NEITHER hermetic tier installed numpy, so `test_live_gateway_turn_e2e.py` and
+#     `test_live_telehealth_voice.py` — which open with `importorskip("numpy")` — skipped
+#     WHOLESALE on every push. That deleted `test_the_placeholder_tone_fails_the_speech_guard`,
+#     a CREDS-FREE test whose entire purpose is to prove the live speech assertion cannot
+#     pass on `ToneSynthesizer` output. Measured on 2026-09-05, hermetic selector, no creds:
+#     23 skipped / 5242 passed without numpy → 29 skipped / 5243 passed with it. That single
+#     restored pass is the anti-vacuity guard, and it had never once run in CI.
+#   · the deep tier lacked `pyyaml` (the compose parity guards) and `httpx` + the console's
+#     own requirements (all 55 `test_console_roundtrip.py` tests, DoD criterion 3's
+#     acceptance suite) until PR #34 and PR #47 each found one the hard way.
+#   · the venv recipe pasted into every agent brief omitted `pyyaml`, `numpy` AND
+#     `-r server/requirements.txt`, so every agent started with a red suite and two
+#     silently-skipped guards for no reason at all.
+#
+# The shape of every one of those is the trap this repo has now hit four times: a missing
+# package makes the tests that need it `importorskip` themselves away — a skip that reads
+# as a pass, which is worse than a loud failure.
+#
+# HOW SINGLENESS IS ENFORCED (`sim/tests/test_ci_workflows.py`):
+#   (a) every CI job that runs `pytest sim/tests` installs this file before it;
+#   (b) no such job re-declares a package this file already names;
+#   (c) every third-party module the suite imports ANYWHERE — including inside a helper
+#       *function*, which is exactly how numpy stayed invisible for two days — is declared
+#       here or is on a named, reasoned exception list;
+#   (d) the venv recipe in `docs/architecture/orchestration-plan.md` points at this file
+#       rather than hand-listing packages, so a brief cannot re-create the drift.
+#
+# WHAT IS DELIBERATELY NOT HERE:
+#   · `playwright` — `requirements.txt` beside this file is "this list plus the browser
+#     driver". The two hermetic runs deselect `test_sil*`/`test_docs*`, i.e. everything that
+#     touches a browser, so they do not need it and should not pay for it.
+#   · `piper-tts` / `faster-whisper` — ~2 GB of local model wheels plus two 63 MB voices,
+#     installed only by the deep tier's opt-in `voice: true` step. Named in
+#     `test_ci_workflows.py::DELIBERATELY_OPTIONAL` so guard (c) treats them as a decision
+#     rather than an omission.
+
+# ── the appliance's and the console's OWN declared dependencies ─────────────────────────
+# Referenced rather than copied, for the same reason this file exists: the suite imports
+# the supervisor and the console, so what they need it needs, and each list stays owned by
+# the thing that actually runs it. `paho-mqtt` matters most of the three the supervisor
+# declares — `sim/virtual_moxie.py` calls `sys.exit()` (not `raise ImportError`) without it,
+# so its absence surfaces as a hard error in an unrelated-looking test.
+-r ../../mqtt/requirements.txt
+# fastapi + uvicorn + pynacl + segno. `test_console_roundtrip.py` opens with
+# `importorskip("fastapi")`: without this line all 55 of its tests are one green skip.
+-r ../../server/requirements.txt
+
+# ── the suite's own tools ───────────────────────────────────────────────────────────────
+pytest>=8
+pyyaml         # the CI-workflow guards in test_ci_workflows.py + the compose parity guards
+httpx          # fastapi's TestClient, which every console round-trip is driven through
+protobuf       # the compiled-proto oracles; without it they importorskip past themselves
+numpy          # helpers_audio's spectral-flatness speech/tone guard (see the note above)

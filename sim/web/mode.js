@@ -37,6 +37,14 @@
  * NO SECRET IS INVOLVED. The route never returns a gateway URL, a key, or a model id
  * (§4.2), and this file contains no hostname of any kind: the base is `location.origin`,
  * so a fork on any domain works with zero configuration (C3).
+ *
+ * ONE PUBLIC VALUE DOES COME BACK, as of 2026-09-05: the Cloudflare Turnstile SITEKEY,
+ * `""` when the bot control is not enforced. It is not a secret — it ships to every
+ * visitor in the widget markup either way — and it arrives HERE rather than being written
+ * into `sim.html` for the C3 reason above: a sitekey in a public repo is *this*
+ * deployment's sitekey, which every fork and every branch preview would then render a
+ * widget for and be refused by. `sim/web/turnstile.js` reads it through
+ * `window.moxieMode.turnstile()` and is the only caller.
  */
 (function () {
   "use strict";
@@ -56,10 +64,17 @@
   // is coerced to `null` below, which `note()` would then read as a HEALTHY turn.
   // The visitor sees the same badge and the same copy as `upstream_down`; only an
   // operator reading the reason learns anything.
+  // The two `turnstile_*` reasons are the 2026-09-05 bot-control slice's additions, and
+  // they MUST be here for the same reason `gateway_unreachable_or_gated` must: an unknown
+  // reason is coerced to `null` twelve lines below, and `note()` would then read a REFUSED
+  // turn as a healthy one — resetting the strike count and, worse, painting LIVE over a
+  // deployment whose every turn is being refused. `functions/api/_lib/envelope.js` is the
+  // other half of this list and says what each one means.
   var REASONS = ["rate_limited", "at_capacity", "budget_exhausted", "upstream_down",
                  "gateway_unreachable_or_gated",
                  "gateway_not_configured", "timeout", "bad_request", "too_long",
-                 "too_short", "bad_ticket", "blocked", "forbidden_origin"];
+                 "too_short", "bad_ticket", "blocked", "forbidden_origin",
+                 "turnstile_failed", "turnstile_misconfigured"];
 
   // ---- §7's visitor-facing copy, and it lives HERE rather than on the server ----
   // Two reasons. It has to be honest in `offline` too, where there is no server to send
@@ -78,6 +93,15 @@
     // Not in §7's table because §7 assumes the transport exists. P0-a ships without it,
     // and saying nothing would be the dishonest option.
     no_transport: "Moxie’s live brain is configured, but this build has no live transport yet — she’s answering from her recorded lines.",
+    // The bot control, in two voices for the two very different faults behind it.
+    // `turnstile_failed` is per-turn and the page STAYS live — a token that expired
+    // (they last 300 s and are single-use) is not a broken deployment, and the next send
+    // mints a fresh one. `turnstile_misconfigured` is the deployment's own secret or
+    // hostname list being wrong, which refuses EVERY visitor identically until someone
+    // fixes it, so it reads like the other unreachable rows: honest, scripted, and no
+    // pretence that the next tap will work.
+    turnstile_failed: "Moxie needs to check you’re a real person — give that another try.",
+    turnstile_misconfigured: "Moxie’s visitor check isn’t set up right on this deployment, so she’s answering from her recorded lines.",
   };
 
   // ---- state ---------------------------------------------------------------
@@ -86,6 +110,11 @@
   var limits = {};
   var load = { level: "ok", inflight: 0, capacity: 0 };
   var voice = false, ears = false;
+  // The PUBLIC Turnstile sitekey the deployment published, or "" for "not enforced".
+  // `sim/web/turnstile.js` renders a widget only for a non-empty value, so this one string
+  // is the whole switch — nothing in the page decides it from a hostname (C3), and a fork
+  // or a branch preview that sets no Turnstile variables simply never sees a widget.
+  var turnstile = "";
   var sticky = false;            // offline, and gateway_not_configured: never poll again
   var suppressUntil = 0;         // a 429/503 Retry-After window: no live turns until then
   var strikes = 0;               // consecutive transport errors (§6.3)
@@ -130,6 +159,10 @@
       if (!hasTransport()) return { badge: BADGE_SCRIPTED, message: COPY.no_transport };
       if (now() < suppressUntil && reason === "rate_limited")
         return { badge: BADGE_LIVE, message: COPY.rate_limited };
+      // Still LIVE, with a line that tells the visitor what to do about it. A bot check
+      // that did not pass is this turn's problem, not the deployment's.
+      if (reason === "turnstile_failed")
+        return { badge: BADGE_LIVE, message: COPY.turnstile_failed };
       if (load.level === "full") return { badge: BADGE_BUSY, message: COPY.full };
       if (load.level === "busy") return { badge: BADGE_BUSY, message: COPY.busy };
       return { badge: BADGE_LIVE, message: "" };
@@ -140,6 +173,10 @@
       if (reason === "upstream_down" || reason === "timeout" ||
           reason === "gateway_unreachable_or_gated")
         return { badge: BADGE_SCRIPTED, message: COPY.unreachable };
+      // Its own copy rather than `COPY.unreachable`: the brain is fine, the DOOR is
+      // misconfigured, and an operator reading the page should be told which.
+      if (reason === "turnstile_misconfigured")
+        return { badge: BADGE_SCRIPTED, message: COPY.turnstile_misconfigured };
       if (reason === "at_capacity") return { badge: BADGE_BUSY, message: COPY.full };
       // gateway_not_configured (and anything unknown): today's copy, unchanged. §7 is
       // explicit that this row keeps the existing wording — env.js owns it.
@@ -161,6 +198,7 @@
       limits: limits,
       voice: voice,
       ears: ears,
+      turnstile: turnstile,
       liveTurns: canSpendLiveTurn(),
       retryAfterS: retryAfterS(),
     };
@@ -171,7 +209,7 @@
     // Only fire on a real change: env.js re-renders on every event, and a 30-second
     // heartbeat that changed nothing must not repaint the topbar.
     var key = [snap.state, snap.reason, snap.badge, snap.message, snap.level,
-               snap.voice, snap.ears, snap.liveTurns].join("|");
+               snap.voice, snap.ears, snap.turnstile, snap.liveTurns].join("|");
     if (key === lastKey) return;
     lastKey = key;
     for (var i = 0; i < listeners.length; i++) {
@@ -242,6 +280,7 @@
     };
     voice = !!body.voice;
     ears = !!body.ears;
+    turnstile = typeof body.turnstile === "string" ? body.turnstile : "";
     var retry = Number(body.retry_after_s);
     setState(body.mode === "live" ? "live" : "degraded", r);
     emit();                                   // load/limits can change with no state change
@@ -313,7 +352,11 @@
 
     if (r === "forbidden_origin") { absent(); return snapshot(); }   // §4.5: treated as offline
     if (r === "gateway_not_configured") { setState("degraded", r); clear(); return snapshot(); }
-    if (r === "budget_exhausted" || r === "upstream_down" || r === "gateway_unreachable_or_gated") {
+    // A misconfigured bot control refuses every visitor until a variable changes, so it
+    // degrades exactly like a dead gateway: SCRIPTED page, honest copy, and the poll
+    // rescheduled off the server's own `Retry-After` (60 s) rather than hammering it.
+    if (r === "budget_exhausted" || r === "upstream_down" ||
+        r === "gateway_unreachable_or_gated" || r === "turnstile_misconfigured") {
       setState("degraded", r);
       schedule(retryMs || POLL_MIN_MS);
       return snapshot();
@@ -349,9 +392,28 @@
         r === "bad_ticket" || r === "blocked") {
       return snapshot();                      // input/safety outcome: never a mode change
     }
+    if (r === "turnstile_failed") {
+      // SOFT, like `rate_limited` and for the same reason: the deployment is healthy and
+      // the next send mints a fresh token. But UNLIKE `rate_limited` there is no
+      // suppression window — telling the page to stop spending for ten seconds would
+      // punish a visitor for a token that expired, and the retry that fixes it is
+      // immediate. `reason` is set so the LIVE badge can carry the "give that another
+      // try" line, and `emit()` is what paints it.
+      strikes = 0;
+      reason = "turnstile_failed";
+      emit();
+      return snapshot();
+    }
     // A clean turn: the deployment is healthy.
     strikes = 0;
     delay = POLL_MIN_MS;
+    // ...and a lingering per-turn note is cleared by the turn that succeeded, rather than
+    // by the next 30-second poll. `rate_limited` clears itself in `surface()` when its
+    // suppression window expires; `turnstile_failed` has no window (a fresh token is a
+    // tap away, so suppressing spend would punish the visitor for a stale token), which
+    // means the copy would otherwise sit under a working box saying "give that another
+    // try" for up to half a minute after they had.
+    if (state === "live" && reason === "turnstile_failed") { reason = null; emit(); }
     if (state === "degraded" && !sticky) { setState("live", null); schedule(delay); }
     return snapshot();
   }
@@ -378,6 +440,9 @@
     limits: function () { return limits; },
     voice: function () { return voice; },
     ears: function () { return ears; },
+    /** The PUBLIC Turnstile sitekey this deployment published, or "" for "not enforced".
+     *  `sim/web/turnstile.js` is the only caller. */
+    turnstile: function () { return turnstile; },
     apiBase: apiBase,
     hasTransport: hasTransport,
     canSpendLiveTurn: canSpendLiveTurn,

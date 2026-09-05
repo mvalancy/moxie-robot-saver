@@ -33,6 +33,22 @@
  * malformed body, forged ticket, expired ticket, over-length ticket text, replayed ticket,
  * rate-limited, over budget, at capacity. All return before the one `fetch()`.
  *
+ * AND SINCE 2026-09-05, ZERO UPSTREAM CALLS ON A CACHE HIT TOO (`_lib/ttscache.js`, §4.8).
+ * The audio for a given (gateway, model, voice, format, rate, exact text) is the same audio
+ * every time, and making it is the most expensive thing here — 131 348 B and 1 091 ms for
+ * one 30-character line, measured. So it is kept in `caches.default` and served back.
+ * **The cache sits AFTER every cap on this route, never before one:** admission, the
+ * ticket, the TTL and the `DEMO_MAX_TTS_CHARS` re-check all still decide first, so a hit
+ * is a cheaper way to serve a request that was already going to be served — never a way to
+ * serve one that was not. Every failure it can have — miss, stale, a `match` or `put` that
+ * throws, rejects or hangs, no `caches` global, an entry that will not decode — falls
+ * through to exactly the `callGateway` below. Nothing but a successful synthesis is ever
+ * stored. `DEMO_TTS_CACHE=0` removes it entirely, with no cache call at all.
+ *
+ * What it is NOT: global. It is per-colo, so a colo that has not heard a line pays for it;
+ * and the hit rate is NOT measured, because a preview is keyless and this route refuses
+ * before it reaches the cache (the same limitation §4.6.1 recorded for the counter tier).
+ *
  * MEASURED AGAINST THE REAL GATEWAY (`sim/tools/probe_demo_gateway.mjs`, 2026-09-02):
  * a 30-character line returned **131 348 B of RIFF/WAVE in 1 091 ms** — 22 050 Hz mono,
  * 131 304 B of PCM, 2.98 s of audio — labelled `audio/mpeg`, confirming §2.2's
@@ -67,6 +83,7 @@ import { admit, budgetState, loadOf, noteUpstreamCall, readJsonBody } from "./_l
 import { b64FromBytes, b64urlFromBytes, bytesFromB64url, verifyTicket } from "./_lib/hmac.js";
 import { buildCloudTtsResponse, joinUrl, ttsMessage } from "./_lib/wire.js";
 import { AudioBodyError, pcmFromAudio } from "./_lib/wav.js";
+import { readCachedAudio, ttsCacheKey, ttsStore, writeCachedAudio } from "./_lib/ttscache.js";
 
 /**
  * Best-effort single-redemption, per isolate.
@@ -139,48 +156,84 @@ export async function onRequestPost(context) {
   }
 
   try {
+    /** A refusal from inside the admitted section — one that spends NOTHING upstream, and
+     *  therefore hands back the `UNITS.speech` (2) `admit()` charged before this `try` was
+     *  entered. The same helper, and the same argument, as `chat.js::spentNothing`.
+     *
+     *  THIS ROUTE HAS NO BOT CONTROL AND IT NEEDED THIS ANYWAY. The drain that made the
+     *  chat route refund does not need a token to work here: a forged `ticket` is refused
+     *  `bad_ticket` for free and with zero gateway calls, so ~300 of them across a spread
+     *  of addresses emptied `DEMO_UNIT_BUDGET_HOUR` and took the whole demo SCRIPTED — the
+     *  identical attack through the door next to the window, and closing one without the
+     *  other would have been theatre. (Nothing here needs a widget: the ticket is what
+     *  gates this route, and `/api/chat` — which does have a widget — is the only thing
+     *  that can mint one.) */
+    const spentNothing = (reason, extra) => {
+      slot.refundBudget();
+      return refusal(cfg, reason, { load: slot.load, rateLimit: slot.rateLimit, ...(extra || {}) });
+    };
+
     // ---- 3. The request. ONE key is read; everything else is dropped (§3.2).
     const parsed = await readJsonBody(request, cfg);
-    if (!parsed.ok) return refusal(cfg, parsed.reason, { load: slot.load, rateLimit: slot.rateLimit });
+    if (!parsed.ok) return spentNothing(parsed.reason);
     const ticket = typeof parsed.body.ticket === "string" ? parsed.body.ticket : "";
-    if (!ticket) return refusal(cfg, "bad_ticket", { load: slot.load, rateLimit: slot.rateLimit });
+    if (!ticket) return spentNothing("bad_ticket");
 
     // ---- 4. The ticket. A forged signature, a malformed artefact and an expired one are
     // all `bad_ticket`, and none of them reaches the gateway. The signature is checked
     // BEFORE the payload is parsed (`_lib/hmac.js::verifyClaims`), so a forged blob never
     // reaches the JSON parser.
     const v = await verifyTicket(cfg, ticket);
-    if (!v.ok) return refusal(cfg, "bad_ticket", { load: slot.load, rateLimit: slot.rateLimit });
+    if (!v.ok) return spentNothing("bad_ticket");
 
     // The re-check §3.2 asks for. A `too_long` rather than a `bad_ticket` because the
     // ticket is perfectly valid — the CONFIGURATION got tighter, and the page deserves to
     // be told which of the two it is.
-    if (v.claims.text.length > cfg.maxTtsChars) {
-      return refusal(cfg, "too_long", { load: slot.load, rateLimit: slot.rateLimit });
-    }
+    if (v.claims.text.length > cfg.maxTtsChars) return spentNothing("too_long");
 
     const key = replayKey(ticket);
-    if (spent.has(key)) return refusal(cfg, "bad_ticket", { load: slot.load, rateLimit: slot.rateLimit });
+    if (spent.has(key)) return spentNothing("bad_ticket");
     if (spent.size >= SPENT_MAX) spent.clear(); // bounded; see the note on `spent`
     spent.add(key);
 
-    // ---- 5. The one upstream call.
-    const upstream = await callGateway(cfg, v.claims.text);
-    if (!upstream.ok) {
-      return refusal(cfg, upstream.reason, {
-        retryAfterS: upstream.retryAfterS,
-        load: slot.load,
-        rateLimit: slot.rateLimit,
-      });
+    // ---- 4b. THE AUDIO CACHE (`_lib/ttscache.js`, §4.8). AFTER every cap above, so a
+    // cache hit can never be a way past `DEMO_MAX_TTS_CHARS`, the origin pin, the per-IP
+    // windows, the unit budget or the ticket — a visitor still has to be admitted and
+    // still has to hold a valid, unspent, in-date ticket to hear anything at all. All this
+    // removes is the SECOND payment for a sentence we have already made.
+    //
+    // With `DEMO_TTS_CACHE=0`, or on any runtime without a `caches` global (bare `node`),
+    // `ttsStore` returns null and the three lines below cost one comparison: no key is
+    // derived, no cache is called, and step 5 is the function it has always been.
+    const store = ttsStore(cfg);
+    const cacheKey = store ? await ttsCacheKey(cfg, request, v.claims.text) : "";
+    let audio = store ? await readCachedAudio(store, cfg, cacheKey) : null;
+
+    // ---- 5. The one upstream call — NOT MADE AT ALL on a cache hit.
+    if (!audio) {
+      const upstream = await callGateway(cfg, v.claims.text);
+      if (!upstream.ok) {
+        return refusal(cfg, upstream.reason, {
+          retryAfterS: upstream.retryAfterS,
+          load: slot.load,
+          rateLimit: slot.rateLimit,
+        });
+      }
+      audio = { pcm: upstream.pcm, sampleRate: upstream.sampleRate, channels: upstream.channels };
+      // ONLY A SUCCESSFUL SYNTHESIS IS EVER STORED. This line is unreachable from every
+      // refusal, every upstream error, every undecodable body and every empty one: each of
+      // those returned above. Never awaited for its result — a failed write is not the
+      // visitor's problem, they already have their audio.
+      if (store) await writeCachedAudio(store, cfg, cacheKey, audio);
     }
 
     // ---- 6. The `CloudTTSResponse` `audio.js` decodes itself, carrying the WAV header's
     // OWN rate and channels (§2.2) — that is how the payload stays truthful when the voice
     // changes under us.
     const wire = buildCloudTtsResponse({
-      buffer: b64FromBytes(upstream.pcm),
-      channels: upstream.channels,
-      sampleRate: upstream.sampleRate,
+      buffer: b64FromBytes(audio.pcm),
+      channels: audio.channels,
+      sampleRate: audio.sampleRate,
       eventId: v.claims.eventId,
       chunkNum: v.claims.chunkNum,
     });

@@ -1,11 +1,23 @@
 # 🌐 Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears
 
-**State: P0-a + P0-b built (2026-09-02); P1's EARS and P1's FALLBACK VOICE built (2026-09-03).**
+**State: P0-a + P0-b built (2026-09-02); P1's EARS and P1's FALLBACK VOICE built (2026-09-03);
+P1's BOT CONTROL built (2026-09-05).**
 Both P0 tables in §9 are implemented and green; `POST /api/transcribe` + the client recording cap
 ship with them; and all four rows of §6.2 are built — the 9 stub clips, the 8 filler clips, the one
 degraded line and the skipped Piper probe, with `test_fallback_coverage.mjs` extended from 414 to
-717 assertions to hold them. The rest of P1 (exact counters, Turnstile, the TTS cache, a nonce CSP,
-the recovery line §6.3 mentions) and all of P2 are not shipped. This is the file
+717 assertions to hold them. **Turnstile ships as of 2026-09-05** (§4.1's bot control, in
+`functions/api/_lib/turnstile.js` and `sim/web/turnstile.js`) — with one deliberate deviation from
+this document's sketch, recorded at §9's P1 row: a **fresh token per send** rather than *"Turnstile
+before the first paid call of a session, then a short-lived signed session cookie."* It guards **both**
+visitor-driven spending routes, each with its own widget `action`: `POST /api/chat` (`chat`, in the JSON
+body) and `POST /api/transcribe` (`transcribe`, on an `X-Turnstile-Response` header, because that body is
+raw audio). The ears were not deferred in the end and could not be: with the per-IP windows at 10/min and
+60/hour and **no daily window**, an unguarded `/api/transcribe` left 15 minutes of billable
+speech-to-text per hour reachable from one address. Every refusal inside the admitted section also
+**refunds the units `admit()` charged** (`slot.refundBudget()`), because a refusal that kept them let 200
+tokenless requests empty the shared hourly budget and take the demo scripted for everyone while spending
+nothing itself — a free drain in place of a paid one. The rest of P1
+(exact counters, a nonce CSP, the recovery line §6.3 mentions) and all of P2 are not shipped. This is the file
 [`../orchestration-plan.md`](../orchestration-plan.md):34 points at (`backlog/live-sim-demo.md`) and that
 did not exist until now.
 **Owner outcome:** *full cloud service* — outcome 1's public face.
@@ -557,7 +569,13 @@ becomes defence in depth. Whether it can is **unverified** from this repo (§10)
 
 **Stated plainly in the code comment and here:** *this stops browser hotlinking only. `curl` forges these
 headers trivially.* It is a cheap first filter under the caps, the budget and the gateway-side key budget —
-never a control to rely on. Bot detection (Turnstile) is P1.
+never a control to rely on. Bot detection (Turnstile) was P1 and **is now built** — `functions/api/_lib/
+turnstile.js`, verified on `POST /api/chat` **and `POST /api/transcribe`** immediately before each one's
+gateway call, with a different widget `action` required back from each so neither route's token is
+spendable on the other. Note what that does
+and does not change about the sentence above: the origin pin is still forgeable and still not a control to
+rely on, and Turnstile removes the **cheapest** attack (a loop with no browser) rather than bounding the
+bill. What bounds the bill is still the caps, the budget and a gateway-side key budget.
 
 ### 4.4 Demo mode — what is absent, not merely refused
 
@@ -604,9 +622,11 @@ this contract exists to prevent.
 
 P0's per-IP and global counters are **best-effort**. They were **an in-isolate map, and nothing else**
 until 2026-09-04, when the per-IP **minute** window gained the Cache API tier of §4.6.1 — measured
-first, then built. **Every other counter here is still that map alone**: the hour and day windows, the
-concurrency ceiling, the FIFO and the unit budget, so `/api/health`'s `budget` and `load` are exactly as
-narrow as this paragraph has always said.
+first, then built — and **2026-09-05, when the unit budget's HOUR joined it (§4.6.2)**. **Every other
+counter here is still that map alone**: the hour and day *per-IP* windows, the unit budget's **day**
+ceiling, the concurrency ceiling and the FIFO. `/api/health`'s `budget` and `load` are read from the
+in-isolate map and are **not** told about either shared tier — a probe that awaited a cache would be a
+probe that can hang — so they stay exactly as narrow as this paragraph has always said.
 
 > **This sentence is corrected the same day the code changed, and that is the point.** Ledger row 25
 > records the last time this paragraph drifted: it claimed a Cache API tier existed when none did, and
@@ -628,8 +648,11 @@ assumption 13 (is KV or a Durable Object even available on this plan?) was still
 changes which counter is worth building. **That reason has since been retired — by measurement rather
 than by the dashboard.** §4.6.1 has the numbers and the resulting recommendation.
 
-**The practical consequence, exactly.** Every cap in §4.1 that is enforced by a counter — the per-IP
-windows, the concurrency ceiling and the unit budget — is enforced *once per isolate*. With N isolates
+**The practical consequence, exactly** (and it is now the *floor* rather than the whole picture: the
+per-IP minute window and the unit budget's hour are additionally counted per-colo, §4.6.1 and §4.6.2,
+which removes the isolate multiplier for those two and leaves it for everything else). Every cap in §4.1
+that is enforced by a counter — the per-IP windows, the concurrency ceiling and the unit budget — is
+enforced *at least* once per isolate. With N isolates
 serving the deployment, the effective ceiling is up to **N × the configured number**, and N is chosen by
 Cloudflare and changes with traffic and with isolate recycling. **"N is not observable from inside a
 Function" was wrong, and §4.6.1 replaces it with a measurement: 41 sequential requests from one client on
@@ -657,10 +680,12 @@ is refused, not queued, and refused *for free* — the charge is refunded (§4.1
 
 They stop scripts and accidents, which is most of the real risk. The hard ceilings are (a) the gateway-side
 budget-scoped virtual key, and (b) the caps in §4.1, which bound the cost of every *individual* request
-regardless of how many arrive. The Cache API tier of §4.6.1 was **built on 2026-09-04** and covers the per-IP minute window only — deliberately, because an undercounted window costs a few extra turns while an undercounted budget costs money. The next counter to build needs
-no binding and no owner action; a KV or Durable Object single-writer counter stays P1 and stays gated on
-the dashboard half of §10 assumption 13, because it is the only one of the three that is a true global
-ceiling.
+regardless of how many arrive. The Cache API tier of §4.6.1 was **built on 2026-09-04** and covered the per-IP minute window only —
+deliberately, because an undercounted window costs a few extra turns while an undercounted budget costs
+money. **The unit budget's hour followed on 2026-09-05 (§4.6.2)**, and it is *not* the same change made
+twice: a budget can be REFUNDED and a window cannot, which turns out to decide the whole design. A KV or
+Durable Object single-writer counter stays P1 and stays gated on the dashboard half of §10 assumption 13,
+because it is the only one of the three that is a true global ceiling.
 
 #### 4.6.1 The Cache API tier, measured rather than assumed (2026-09-05)
 
@@ -727,7 +752,61 @@ candidate that gives a true single-writer counter, so P1 is unchanged and still 
 Two implementation notes for whoever builds it: key the entry by a **coarse time bucket** (`…/ip/<hash>/<minute>`)
 so the hot key rotates and a stale entry expires itself; and apply the tier to the **per-IP window**
 before the **unit budget**, since an undercounted window costs a few extra turns while an undercounted
-budget costs money.
+budget costs money. **Both were followed, and the second note came with a third clause that was WRONG —
+see §4.6.2.** The code comment that carried it said the budget would be *"one more `match` + `put` … and
+the same fail-open rules apply verbatim"*. It is not verbatim, because `slot.refundBudget()` did not
+exist when it was written.
+
+#### 4.6.2 The unit budget on the shared tier, and the refund that changed the design (2026-09-05)
+
+The per-IP minute window fails open because **every write it makes is a `prev + 1`**: lose one and the
+stored value is smaller than the truth, so somebody is served who might have been refused. Cheap.
+
+The unit budget has `slot.refundBudget()` underneath it (the P0 refund that closed the tokenless free
+drain — 200 refused POSTs used to empty `DEMO_UNIT_BUDGET_HOUR`). A refund written to a shared entry is a
+**`prev - cost`**, and a lost `prev - cost` is an **OVERCOUNT**: the visitor stays charged for a turn that
+never happened, the colo's hour empties early, and real visitors are answered `budget_exhausted` with the
+page painted SCRIPTED. That is failing **closed** — the exact property for which §4.6.1 refused to put
+the *concurrency ceiling* on this tier ("an eventually-consistent counter cannot hold a resource that
+must be given back"). A refund is a resource being given back.
+
+**So the shipped design never writes a charge it might have to un-write.** `admit()` only *reads* the
+shared entry. The units are held in the isolate's own ledger (`state.units` in
+[`_lib/limits.js`](../../../functions/api/_lib/limits.js)) and are added to it **only by `release()`, and
+only when `refundBudget()` was not called** — that is, only when the request really reached the gateway.
+The next admission's cache round trip publishes the ledger with a `put(seen + owed)`, and the ledger is
+cleared whether or not that write is confirmed (a `put` that timed out may have landed, and re-publishing
+the same units would be a double charge).
+
+| Property | How it is obtained |
+|---|---|
+| No lost write can refuse a visitor who should be served | **There is no refund write at all.** Not "rarely lost" — a refund performs zero cache operations. |
+| A refused request costs the colo nothing | It never settles, so the ledger never learns about it. 200 tokenless POSTs publish **zero** units. |
+| A lost publish only ever undercounts | Every published value is `seen + owed`, and losing it loses spend. |
+| A confirmed-or-not publish is never counted twice | The ledger is cleared on the **attempt**, not on the confirmation. |
+| Hour-boundary spend lands on the hour that spent it | The ledger carries the bucket the charge was made in; anything else is **dropped**, never moved. |
+
+**Three alternatives were rejected**, each of which is a reasonable-sounding sentence: (a) *charge shared,
+refund isolate-local* — the literal reading of "verbatim", and it re-opens the free drain in the shared
+dimension, where 200 × 3 units is exactly the 600-unit hour; (b) *store a signed net so a lost refund is
+bounded* — it is not bounded, each lost refund is permanent for the hour and the attacker picks how many;
+(c) *refund the shared tier anyway* — which would make "every error is an undercount" false, and that
+sentence is the reason this tier was allowed to exist at all.
+
+**What it costs, stated.** The colo's entry lags its real spend by whatever its isolates have not
+published — at most one settled request each, plus whatever is in flight — which is bounded by
+`DEMO_MAX_CONCURRENT_*` + `DEMO_QUEUE_MAX_DEPTH` per isolate and is in the *permissive* direction. An
+isolate recycled with units in its ledger takes them to the grave (an undercount, recorded as
+`cache.units.dropped`). A served turn now issues up to **four** cache ops rather than two — two window,
+one budget read, one conditional budget write — which by row h's own per-op cost (~15 ms) extrapolates to
+~59 ms; that is an extrapolation, not a measurement. A **refused** turn issues three and writes nothing.
+Only the **hour** is mirrored; `DEMO_UNIT_BUDGET_DAY` remains purely in-isolate and no sentence may call
+it shared.
+
+**And the thing not to conclude, again.** This is still not a global ceiling. It is per-colo, a burst
+still loses writes, and the lag above is real. `sim/test_demo_proxy.mjs` §15i drives it from two
+isolate-like contexts and asserts every failure mode admits;
+`sim/tools/unit_budget_mutation_check.py` proves those assertions are load-bearing.
 
 `GET /api/health` reports `budget_exhausted` and the real `load.inflight` from these same counters (P0-b
 wired it on 2026-09-03; before that it returned a hard-coded `null`/`0` and could never say either). It is
@@ -847,6 +926,93 @@ now stale and should say *done*, naming `API_SECURITY_HEADERS`. Deliberately **n
 CSP or CORP lines to that `/api/*` block. They would be inert, and an inert line that looks live is the
 exact trap assumption 27 cost this repo two passes to escape.
 
+
+### 4.8 The synthesised-audio cache — `/api/speech` stops paying twice for a line (built 2026-09-05)
+
+**The cheapest saving available on the live page, and it needs nothing from anybody.** Until now
+`POST /api/speech` re-synthesised a sentence from scratch every single time it was asked for it. Synthesis
+is the most expensive thing this deployment does — the 2026-09-02 gateway probe measured **131 348 B and
+1 091 ms for one 30-character line** (§3.2) — and the audio for a given voice and a given string is the
+same audio every time. `functions/api/_lib/ttscache.js` keeps it in `caches.default` and serves it back.
+The mechanism is the one §4.6.1 measured and the counter tier of §4.6 already ships on; nothing here is
+re-measured and nothing here is re-argued.
+
+**What it costs, as a count of ops.** A **miss** is one `match` + one `put`, plus the synthesis it was
+always going to pay for. A **hit** is one `match`, **zero upstream calls**, and no write. §4.6.1 row h
+bounded three cache ops at ≤ 44 ms, so the miss overhead is a few tens of milliseconds against ~1 100 ms.
+
+**The cache key, and why each component is in it.** A key that leaves out something which changes the audio
+is *worse than no cache*: it serves one child a line in somebody else's voice, reliably, for as long as the
+entry lives. The key is the full untruncated 256-bit HMAC (`hmac.js::keyedTag` under its own domain label
+`TTS_CACHE_INFO`) of a **length-prefixed** join of:
+
+| component | why it is in the key |
+|---|---|
+| entry-format tag `v1` | if what is stored stops being a 16-bit RIFF/WAVE, old entries must not be read as if it were |
+| `DEMO_GATEWAY_BASE_URL` | the same model *name* on a different gateway is a different Piper build and a different voice |
+| `DEMO_TTS_MODEL` | on our gateway the model **is** the voice — it is encoded in the model id (`config.py`:91-92) |
+| `DEMO_TTS_VOICE` | the `voice` field actually sent; it can be overridden independently of the model |
+| `DEMO_TTS_FORMAT` | `wav` vs `pcm` is the `response_format` and changes how the answer is decoded |
+| `DEMO_TTS_SAMPLE_RATE` | under `pcm` there is no header and this number *is* the playback rate — the same bytes at 16 kHz and 22.05 kHz are two different voices |
+| the exact text | the point. Not trimmed, not lowercased, not normalised: two strings differing by a comma are two recordings |
+
+Length-prefixed because `"ab"+"c"` and `"a"+"bc"` are otherwise the same string. Keyed rather than plain
+because a Cache API entry sits under a URL on this deployment's own origin, so an unkeyed digest would let
+an outsider enumerate audio by guessing sentences. Untruncated because a counter-tag collision merely
+merges two rate-limit buckets while a collision here would play the wrong words. Deliberately **not** in
+the key: the persona and `DEMO_MAX_TTS_CHARS` (they shape what the text *is*, and the final text is already
+there), the ticket's `event_id`/`chunk_num` (they identify the turn, not the audio — including them would
+make every key unique and the cache useless), and the visitor.
+
+**Where it sits: after every cap, never before one.** Admission (§4.1), the ticket, its TTL and the
+`DEMO_MAX_TTS_CHARS` re-check all decide first. A hit is a cheaper way to serve a request that was
+*already going to be served* — never a way to serve one that was not — and an over-length, forged, expired,
+replayed, rate-limited or hotlinked request makes **zero cache calls**, exactly as it makes zero upstream
+ones.
+
+**Fail-open, and nothing but a success is stored.** Every failure mode — a miss, a stale entry, a `match`
+that throws / rejects / hangs, a body read that does the same, an entry that will not decode, a `put` that
+fails any of those ways, a store with no methods, a `caches` global that throws, no `caches` global at all —
+falls through to exactly the `fetch()` the route made before this existed. Nothing here can produce a
+refusal and nothing here can throw into the route. And the write happens on one path only: after the
+gateway returned `ok` **and** `wav.js` decoded the body into non-empty 16-bit PCM. An upstream 500, a 429,
+an unfollowed redirect, a JSON error body, an Access login page, an empty body, a `text/plain` proxy error
+and a timeout each leave **no entry behind**, so a bad minute at the gateway cannot become a day of bad
+audio for a colo.
+
+**The stored body is a WAV, not raw PCM plus headers.** The rate and channel count are properties of the
+audio, so they live inside it: the entry is self-describing, it survives a cache that declines to keep a
+custom header, and — the part that matters — the hit path decodes with `pcmFromAudio`, the *same* function
+the miss path decodes the gateway's answer with. "The hit is byte-identical to the miss" is then a property
+of one decoder rather than a claim about two, and `sim/test_demo_proxy.mjs` §16b asserts it as bytes.
+
+**The switch:** `DEMO_TTS_CACHE=0` restores the pre-2026-09-05 route exactly, with no cache call at all —
+the same escape hatch, in the same idiom, as `DEMO_CACHE_COUNTER=0`. It is a **separate** switch on purpose:
+the two tiers fail in opposite directions (an undercounting rate limiter lets someone through; a wrong
+cache key plays a child the wrong voice), and nobody should have to disable a rate limiter to disable a
+cache. They share `caches.default` and are kept apart by their key prefixes — `/__moxie/rl/` and
+`/__moxie/tts/` — which §16g asserts rather than assumes.
+
+#### What this does **not** do — read this before quoting a saving
+
+1. **It is per-colo.** Cloudflare's cache "does not replicate outside of the originating data center"
+   (§4.6.1). Each colo keeps its own copy and a cold colo pays full price for every line.
+2. **A cold start still pays.** The first visitor to a colo, the first after `DEMO_TTS_CACHE_TTL_S`
+   (86 400 s), and the first after any configuration change all pay for a synthesis.
+3. **The hit rate is NOT measured, and cannot be measured from a preview.** A branch preview carries no
+   `DEMO_*` secrets, so `/api/speech` answers `gateway_not_configured` and returns long before the cache —
+   the identical limitation §4.6.1 recorded for the counter tier. What is bounded is the **cost** (one
+   extra `match` on a miss), not the saving.
+4. **And the premise this slice was proposed under was wrong in one respect, so it is written down rather
+   than quietly dropped.** The demo's scripted copy — the fallback lines, the degraded announcement, the
+   ambient quips — **never reaches this route** and therefore is never cached. `/api/speech` has no text
+   field (§3.2); the text arrives inside a ticket and `chat.js`:150 is the only place a ticket is ever
+   minted, from a **live gateway reply**. A hard-blocked turn deliberately mints none, and every scripted
+   line is spoken from a clip or the browser voice. So there is no arithmetic to do over the scripted copy:
+   what this tier can deduplicate is **repeated gateway replies**, which at `TEMPERATURE = 0.8` repeat by
+   chance rather than by construction. The saving is real, bounded below by zero, and **unquantified** —
+   quantifying it needs a counter on a keyed deployment, which is a different slice.
+
 ---
 
 ## 5. Configuration surface
@@ -899,9 +1065,17 @@ and `CLOUDFLARE_ACCOUNT_ID` as GitHub secrets; that is an alternative path, expl
 | `DEMO_STT_PER_MIN` / `_HOUR` | var | `10` / `60` | no | §4.1 |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | var | `4` / `8` | no | §4.1, §7 |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | var | `2500` / `8` | no | §4.1, §4.6 |
+| `DEMO_CACHE_COUNTER` / `DEMO_CACHE_TIMEOUT_MS` | var | on / `250` | no | The cross-isolate tier: the per-IP minute window of §4.6.1 **and** the unit budget's hour of §4.6.2. `0` switches both off. |
+| `DEMO_TTS_CACHE` | var | on | no | §4.8 — cache synthesised speech in `caches.default`, so a line already made is not made again. `0` restores the pre-2026-09-05 route with **no cache call at all**. Per-colo, fail-open, and it stores nothing but a successful synthesis. |
+| `DEMO_TTS_CACHE_TTL_S` | var | `86400` | no | §4.8 — the `max-age` on a stored entry and the staleness test on the way back out. Clamped 60..604 800. |
+| `DEMO_TTS_CACHE_TIMEOUT_MS` | var | `1000` | no | §4.8 — the deadline on **each** cache op (lookup, body read, write). Four times the counter tier's, because this one moves up to ~1.3 MB and is weighed against a ~1 100 ms synthesis rather than a free decision. Clamped 50..5 000, so it can neither out-wait `DEMO_SPEECH_TIMEOUT_MS` nor switch the tier off by stealth. |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | var | `600` / `4000` | no | §4.1 |
 | `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | var | `20000` / `12000` / `12000` | no | §4.1 |
 | `DEMO_TICKET_TTL_S` | var | `60` | no | §3.2 |
+| `DEMO_TURNSTILE_SECRET` | **secret** | — | no | §4.1's bot control. **Both or neither with the sitekey below**, exactly like the Access pair: a secret with no sitekey refuses every visitor (no browser can mint a token) and a sitekey with no secret is a widget nothing verifies, so either alone is reported in `missing` and the deployment reads as unconfigured. Unset ⇒ the check is a synchronous no-op. |
+| `DEMO_TURNSTILE_SITEKEY` | var | — | no | The widget's **public** sitekey — it ships to every visitor in the widget markup either way, which is why it is a var and not a secret. The browser learns it from `/api/health`'s `turnstile` field, **never from shipped HTML**: a sitekey committed to this repo would be one deployment's, and every fork and preview would render a widget bound to a domain list they are not on. **Leave both unset on Preview** — a preview's platform-assigned hostname is not on the widget's domain list, so a real challenge there could never pass. |
+| `DEMO_TURNSTILE_HOSTS` | var | the request's own hostname | no | The hostnames a solved challenge may have been served from, comma separated; a URL is reduced to its hostname. **Unset is the right answer for almost everyone**, and the default is not a literal list on purpose: "this deployment's own host" needs no configuration, works on any domain (C3), and — unlike a list — can never hand production a `localhost` allowance by omission. The match is **exact**: a subdomain of a listed host is refused even though Turnstile itself authorizes it. |
+| `DEMO_TURNSTILE_TIMEOUT_MS` | var | `2000` | no | The deadline on the one `siteverify` call. Sized against the **concurrency slot**, not the visitor's patience: the check runs with a slot held, so a hung endpoint would otherwise keep it — and everyone in the FIFO behind it — for the length of `DEMO_CHAT_TIMEOUT_MS`. A slow answer is treated as no answer, which **fails open**. Clamped 100..10 000, so it can neither out-wait the route it guards nor switch the check off by stealth. |
 
 ### `.dev.vars.example` (committed at the repo root; `.dev.vars` itself must be git-ignored)
 
@@ -1196,7 +1370,8 @@ attribute anywhere under `functions/`. See assumption 26.
 **Not settled, and it cannot be from here:** §10's assumptions 8-13 (unchanged) —
 all fail safe, and one preview `curl` settles them.
 **Best-effort by design, and said out loud in the code:** the per-IP windows, the
-concurrency ceiling and the unit budget are in-process, so they stop scripts and
+concurrency ceiling and the unit budget are in-process — the per-IP *minute* window and
+the unit budget's *hour* additionally per-colo (§4.6.1, §4.6.2) — so they stop scripts and
 accidents but are not a hard global ceiling (§4.6); the ceilings that hold are the
 per-request caps, the ticket, and a budget-scoped gateway key (§10 assumption 14).
 
@@ -1236,8 +1411,22 @@ clips + 8 filler clips + the degraded line, and `test_fallback_coverage.mjs` ext
 skip the 1.4 s Piper probe when degraded~~ — **all four BUILT 2026-09-03** (branch `feat/fallback-voice`;
 452 596 bytes of MP3, zero gateway calls, and see §6.2 for the four ways they turned out differently) ·
 **exact** counters on KV or a Durable
-Object once the dashboard says which exists · Turnstile before the first paid call of a session, then a
-short-lived signed session cookie · a TTS response cache keyed on `sha256(model + " " + normalized_text)`
+Object once the dashboard says which exists · ~~Turnstile before the first paid call of a session, then a
+short-lived signed session cookie~~ — **BUILT 2026-09-05, and NOT with the session cookie.** The token is
+minted **per send** instead, and the cookie half was dropped rather than deferred. Three reasons, in the
+order they decided it: (1) a Turnstile token is **single-use and lives 300 seconds**, so a
+once-per-session token would work for exactly the first turn of a conversation and be refused by
+Cloudflare as `timeout-or-duplicate` for every turn after it — the sketch's shape only works *because*
+of the cookie, which makes the cookie load-bearing rather than an optimisation; (2) a signed session
+cookie is a **second credential format** to mint, verify, expire and get wrong, next to the speech ticket
+and the context blob that already exist (`_lib/hmac.js`) — and its whole benefit is saving one ~30 ms
+edge round trip on a turn that costs ~1 200 ms upstream; (3) demo mode is explicit in §4.4 that this
+deployment sets **no cookies at all**, and a session cookie is the one thing on that list a visitor's
+browser would notice. So: `sim/web/turnstile.js` renders one invisible widget **per action** (the chat
+one eagerly, the microphone one on first use) and calls `reset()` + `execute()` per send, which is
+Cloudflare's documented way to obtain a fresh token from an existing widget — except while a challenge is
+still on the visitor's screen, where the later send WAITS for it rather than resetting the half-finished
+puzzle the page's own "try me once more" invited them to keep working on · a TTS response cache keyed on `sha256(model + " " + normalized_text)`
 (the demo's line inventory is small and repetitive — `audio/index.json` is the same idea shipped
 statically); **do not cache STT** — that is a privacy problem, not a saving · a nonce/hash pass so
 `script-src 'self'` can be added · fix `deploy-cloudflare.md`:10, :19, :57, :65, :71‑82 and

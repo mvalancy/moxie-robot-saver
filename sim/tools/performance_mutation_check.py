@@ -141,10 +141,14 @@ MUTATIONS = [
     ("M35 validate lets a bool through as a mood", P,
      "        if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):",
      "        if (mood is not None and mood not in vocab.MOOD_IDS):"),
+    # Anchor repaired 2026-09-05: the non-streamed publish grew a `subscribe=` argument
+    # (a content pack's event subscription), so `scored=scored` is no longer the last one
+    # and the old anchor stopped matching. Repaired rather than deleted — a stale row
+    # proves nothing, and `sim/tests/test_mutation_tables.py` is what noticed.
     ("M37 a publish path forgets to score (the coverage guard)", R,
      '                           is_completed=None if chunk is None else True,\n'
-     "                           scored=scored)",
-     "                           is_completed=None if chunk is None else True)"),
+     "                           scored=scored,\n",
+     "                           is_completed=None if chunk is None else True,\n"),
     ("M29 a streamed chunk publishes without its score", R,
      "                           is_completed=None if solo else bool(final),\n"
      "                           scored=scored)",

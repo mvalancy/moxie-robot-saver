@@ -67,11 +67,15 @@ jobs:
       - name: Install deps (broker client + brain/test)
         run: |
           # Tier parity (playbook rule 9): the deep tier runs the SAME hermetic suite as
-          # the fast tier, so it needs the SAME test deps — pyyaml (compose + workflow
-          # guards) and the console's own requirements + httpx (the 55 console
-          # round-trip tests) were missing here. Guarded by test_ci_workflows.py.
-          pip install --quiet "paho-mqtt>=2.0" pytest openai jinja2 pyyaml httpx \
-            -r server/requirements.txt
+          # the fast tier, so it needs the SAME test deps. That used to be enforced by
+          # hand-copying the list, and the copies never matched — pyyaml (compose +
+          # workflow guards), then httpx + the console's own requirements (the 55 console
+          # round-trip tests), then numpy (the creds-free speech guard) each went missing
+          # here and were each found the hard way. Both tiers now install the SAME FILE,
+          # so "parity" is not a property anyone has to maintain:
+          # sim/tests/requirements-hermetic.txt is the one declaration. Guarded by
+          # test_ci_workflows.py, which reads the jobs rather than trusting this comment.
+          pip install --quiet -r sim/tests/requirements-hermetic.txt
       - name: SIL smoke (state→config→remote-chat→reply)
         run: bash sim/run_smoke.sh
       - name: SIL scenarios (scripted conversations)
@@ -117,8 +121,10 @@ jobs:
           fi
           # test_live_gateway_tts transcribes the gateway's own audio back, so this tier
           # needs the ASR wheels (~1 min). The 63 MB Piper VOICES stay in the voice tier —
-          # this suite makes the gateway do the speaking.
-          pip install --quiet faster-whisper numpy
+          # this suite makes the gateway do the speaking. `numpy` is NOT named here any
+          # more: it is a hermetic test dep (the speech/tone guard), declared once in
+          # sim/tests/requirements-hermetic.txt and installed by this job's first step.
+          pip install --quiet faster-whisper
           # All the creds-only live suites in ONE invocation: the gateway/runtime turns,
           # the action-tag RATE check (does the shipped prompt still make the model emit
           # <exit>/<launch:…>), the shipped starter.json end-to-end on the wire, the
@@ -247,7 +253,10 @@ jobs:
           MOXIE_LLM_MODEL: ${{ secrets.MOXIE_LLM_MODEL }}
         run: |
           set -euo pipefail
-          pip install --quiet piper-tts faster-whisper numpy
+          # numpy is a hermetic test dep now (declared once in
+          # sim/tests/requirements-hermetic.txt, installed by this job's first step), so
+          # only the two heavy local-model wheels are named here.
+          pip install --quiet piper-tts faster-whisper
           # Pinned URLs + recorded sha256, idempotent on a warm actions/cache hit.
           python3 sim/ci/fetch_piper_voices.py
           python -m pytest sim/tests/test_live_talk_e2e.py -q -ra -s | tee live-voice.log

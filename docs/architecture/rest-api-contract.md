@@ -39,6 +39,46 @@ recovery phrase via Argon2id) is the key; the server never sees plaintext or the
 **keeps this exactly** — it is zero-knowledge, the owner holds the keys. Details:
 [`crypto-and-keys.md`](../reverse-engineering/phone/crypto-and-keys.md).
 
+> ### ⚠️ CONFORMANCE GAP FILED 2026-09-05 — one code path stores the seed and the recovery phrase in the clear
+>
+> **This is filed, not fixed, because the fix is a product decision the owner should make.**
+>
+> `server/moxie_server/db.py` declares `pairings(… , seed_hex TEXT, phrase TEXT)`, and the two writers
+> of that table disagree with each other — which is the strongest evidence that the posture is a
+> choice rather than an oversight:
+>
+> * [`main.py`](../../server/moxie_server/main.py):249 (the phone-facing pairing call) writes
+>   `VALUES(?,?,?,?,0,?,NULL,NULL)` — the seed and phrase columns are **deliberately NULL**.
+> * [`main.py`](../../server/moxie_server/main.py):425 (the local setup flow that mints the QR for our
+>   own web UI) writes `…, keys.seed.hex(), phrase)` — **both in plaintext**.
+>
+> **Why it matters, stated precisely rather than dramatically.** Per
+> [`crypto.py`](../../server/moxie_server/crypto.py):5-10, the recovery phrase is the Argon2id input to
+> `derive_seed()`, and that single 32-byte seed deterministically yields the Ed25519 signing key, the
+> X25519 box keypair **and** the XSalsa20-Poly1305 key — the one that encrypts child PII. The
+> `secret_keys(user_id, pubkey_b64, sealed_b64)` table exists so the server holds only copies *sealed*
+> to the account's public keys. On path B the raw seed is stored beside them, so on that path the
+> sealing protects nothing: anyone who can read `moxie.db` — a backup, a synced folder, a shared host —
+> can derive every key and decrypt every child record. It also means the phrase is recoverable by
+> someone who never knew it, which is the property the escrow design exists to prevent.
+>
+> **The honest counter-argument, which is why this is a decision and not a bug report.** This is a
+> **self-hosted appliance**: the owner runs the box and holds the keys, so the vendor-cloud threat model
+> does not transfer unchanged. Persisting the phrase is what makes *"restore your child's data"* work for
+> an owner who did not write it down, and [`first-time-setup.md`](../guides/first-time-setup.md):26
+> promises exactly that. Removing it without replacing it would silently delete a recovery path.
+>
+> **What the owner needs to decide, in one sentence:** should the local server keep the recovery phrase
+> so a forgotten phrase is survivable, or discard it after showing it once so that reading `moxie.db`
+> never yields child PII? If the former, this contract's *"must preserve"* wording is what should change
+> — and the deviation belongs here, in the open. If the latter, path B should mirror path A's `NULL,
+> NULL` and the setup guide should tell the owner the phrase is the only copy.
+>
+> Not filed as a defect against either path: path A already conforms, and path B may be doing what the
+> product wants. What is *not* defensible is the current state, where the two disagree and neither the
+> contract nor the setup guide says so.
+
+
 ## Minimum viable server (the pairing-critical path)
 
 The floor — implement these and a robot can pair. Everything else is enhancement.

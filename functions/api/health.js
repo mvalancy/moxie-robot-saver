@@ -66,7 +66,7 @@
  * `gateway_not_configured`, and the page is exactly today's static demo. A branch preview
  * with no secrets is therefore automatically safe.
  */
-import { readConfig, modeOf, publicLimits } from "./_lib/env.js";
+import { readConfig, modeOf, publicLimits, publicTurnstile } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
 import { budgetState, loadOf } from "./_lib/limits.js";
 
@@ -104,6 +104,24 @@ export function onRequestGet(context) {
       // (`limits.js::capacityOf` says why). This isolate's count — see the header.
       load: loadOf(cfg, "chat"),
       limits: publicLimits(cfg),
+      // ---- HOW THE BROWSER LEARNS THE TURNSTILE SITEKEY, and why it is here.
+      //
+      // The page needs a sitekey to render the widget at all, and a sitekey is a PUBLIC
+      // value — it ships to every visitor either way. What it may NOT be is written into
+      // `sim/web/sim.html`, because that would put THIS deployment's sitekey in a public
+      // repo and hand every fork and every branch preview a widget bound to a domain list
+      // they are not on: tokens that can never verify, visitors refused, and the only fix
+      // an edit to shipped HTML (C3). So it is published on the surface the page already
+      // polls, exactly like `mode`, `voice` and `ears` — and it is `""` whenever the
+      // control is not enforced (`_lib/env.js::publicTurnstile`), so the browser cannot
+      // render a widget the server is not going to check.
+      //
+      // It rides the PROBE and not only the spending route on purpose: `sim/web/
+      // turnstile.js` loads Cloudflare's script and renders the widget as soon as
+      // `mode.js` reports a sitekey, so the challenge is already solved and waiting by the
+      // time a visitor presses Send. Learning it from the chat reply would be one turn too
+      // late — every first turn would spend a round trip finding out it needed a token.
+      turnstile: publicTurnstile(cfg),
       // The two payload lists exist so the client has one shape (§3.2). A probe carries
       // no messages and mints no ticket.
       messages: [],

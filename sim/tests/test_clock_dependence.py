@@ -130,6 +130,19 @@ REVIEWED: dict = {
         "RELATIVE — a ticket is aged `Date.now()/1000 - 61` to make it one second past a "
         "60 s expiry. The subject IS the age, and 61 s from any instant is expired at "
         "every hour. (RESERVED file: owned by the live-Sim ears slice, 2026-09-03.)"),
+    "sim/test_turnstile.mjs": (
+        ("Date.now",),
+        "RELATIVE — an ELAPSED TIME, and it is the subject of the assertion rather than "
+        "an input to it. §5 stubs a `siteverify` that NEVER answers and requires the "
+        "route's own `DEMO_TURNSTILE_TIMEOUT_MS` deadline to end the wait: `elapsed = "
+        "Date.now() - started` must be at least the 120 ms deadline that was configured "
+        "and well under the route's 20 s upstream timeout. A configured deadline that is "
+        "never passed to `fetch` looks identical in every other assertion in that file, "
+        "which is what the row is for (mutation row D3e). Both bounds are durations "
+        "between two reads of one clock, so they hold at every minute of a day; a clock "
+        "that jumped would redden the suite rather than hide a hang. NOTE the check was "
+        "already unreviewed when this file arrived on 2026-09-05 — the guard was red at "
+        "the commit that added the suite, and this row is the fix."),
     "sim/test_mode.mjs": (
         ("Date.now",),
         "DETERMINISTIC — it *overrides* `Date.now = () => clock` and steps `clock` by "
@@ -184,6 +197,14 @@ REVIEWED: dict = {
         "now at all 1440 minutes, asserted by the same exhaustive test. Its "
         "`pytest.skip(\"the synthetic window wrapped onto now\")` was removed here: it "
         "could never fire, and a skip that cannot fire is an escape hatch for a regression."),
+    "sim/tests/test_ext_subscribe.py::_seed_absent": (
+        ("time.time",),
+        "RELATIVE — a third copy of the same helper, for the same reason: the two A2 "
+        "regressions below it prove that a woken content pack which matches nothing "
+        "leaves the greeting rule exactly as it was, and the greeting is scored as an AGE "
+        "against `greet_after_s`. A pinned epoch would make the robot absent for years, "
+        "which is a state the rule answers identically to the one under test — so the "
+        "regression would pass without asserting anything."),
     "sim/tests/test_presence_sil.py::_seed_absent": (
         ("time.time",),
         "RELATIVE — offsets from now, for the same reason as the runtime suite's "
@@ -331,6 +352,37 @@ class _Scan(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+#: Lines that are ENTIRELY a comment. Anything else — including a code line with a
+#: trailing `// note` — is still scanned, so nothing is hidden by appending a comment.
+_JS_COMMENT_LINE = re.compile(r"^\s*(?://|\*|/\*)")
+
+
+def js_constructs(src: str) -> tuple:
+    """The clock constructs a `.mjs` suite READS, ignoring the ones it merely NAMES.
+
+    **THE GUARD MUST ASSERT OVER CODE, NOT OVER THE WHOLE FILE** — orchestration-plan
+    rule 17, which this file had the same defect as. It was recorded for the fast tier's
+    audio test (`!src.includes("moxie_sdk")` over all of `bridge.js`, which failed on a
+    comment *citing* where a wire shape came from) and the shape here is identical: a
+    comment explaining *why a block does not read the clock* would itself be counted as a
+    clock read, so the house style of saying why — the whole reason these files are
+    readable — was penalised.
+
+    It surfaced on 2026-09-05 in `sim/test_demo_proxy.mjs` §15i-g, whose fake cache
+    answers the shared budget entry for whatever hour the ROUTE's own clock names,
+    precisely so the suite reads no clock. The comment saying so named the construct, and
+    this scanner reported the suite as an unreviewed clock reader.
+
+    Verified in BOTH directions, which is the other half of rule 17 and is what
+    `test_the_comment_strip_does_not_hide_a_real_clock_read` below exists for: a genuine
+    read on a code line — including one with a trailing comment — is still found, and
+    stripping comment-only lines changes the verdict for **no other file in `sim/*.mjs`**
+    (checked across the tree when this was written).
+    """
+    code = "\n".join(ln for ln in src.splitlines() if not _JS_COMMENT_LINE.match(ln))
+    return tuple(sorted(n for n, p in JS_CLOCK_PATTERNS if p.search(code)))
+
+
 def _scan() -> dict:
     """`{"path::scope": (constructs…)}` for every wall-clock read in the test tree."""
     found: dict = {}
@@ -344,8 +396,7 @@ def _scan() -> dict:
     for path in sorted(glob.glob(os.path.join(REPO, "sim", "*.mjs"))):
         rel = os.path.relpath(path, REPO)
         with open(path) as fh:
-            src = fh.read()
-        constructs = tuple(sorted(n for n, p in JS_CLOCK_PATTERNS if p.search(src)))
+            constructs = js_constructs(fh.read())
         if constructs:
             found[rel] = constructs
     return found
@@ -364,6 +415,25 @@ def test_every_wall_clock_read_in_the_test_tree_has_been_reviewed():
         + "\n\nDecide per test whether it is genuinely time-independent. Make it "
           "deterministic, or assert both real branches, or keep it clock-relative WITH "
           "the reason written down — then add the row. See this module's docstring.")
+
+
+def test_the_comment_strip_does_not_hide_a_real_clock_read():
+    """Direction 2 for `js_constructs`: the strip must not become a way to smuggle one in.
+
+    A guard that was loosened is a guard that has to prove it still bites. All four
+    constructs are checked on a code line, one is checked on a code line that CARRIES a
+    trailing comment, and the negative case is a line that is nothing but prose.
+    """
+    for name, snippet in (
+        ("Date.now", "const t = Date.now();"),
+        ("new Date()", "const d = new Date();"),
+        ("getHours/getMinutes", "const h = d.getHours();"),
+        ("toISOString", "const s = d.toISOString();"),
+    ):
+        assert js_constructs(snippet) == (name,), f"{name} on a bare code line must be found"
+    assert js_constructs("const t = Date.now(); // a trailing comment hides nothing") == ("Date.now",)
+    assert js_constructs("  // this block deliberately never calls Date.now()") == ()
+    assert js_constructs(" * the route derives its hour from Date.now(), we do not") == ()
 
 
 def test_the_reviewed_list_can_only_shrink():

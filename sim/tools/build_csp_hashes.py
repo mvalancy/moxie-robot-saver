@@ -22,6 +22,25 @@ fix is almost always to move the new block into a `.js` file, not to accept the 
     python3 sim/tools/build_csp_hashes.py --check    # exit 1 if it is out of date
 
 Exit 0 = header matches the pages. Exit 1 = drift (or a block that no hash can rescue).
+
+=============================================================================
+LOOKING FOR THE OFF-ORIGIN HOST LIST? IT IS NOT IN THIS FILE, AND THAT IS ON PURPOSE.
+
+Twice now (the Cloudflare analytics beacon in 2026-09-03, Turnstile's
+`https://challenges.cloudflare.com` in 2026-09-05) a pass has needed to allow one more
+third-party host, and the obvious-looking move is to add it to a constant here and let the
+generator emit the whole directive. **Do not.** `script_src()` below carries every
+non-hash source THROUGH from the committed header for the reason written there: a host
+allowance is a policy decision argued out in `sim/web/_headers` and pinned by
+`sim/test_csp.mjs`, and a generator that rebuilt the directive from its own constant would
+silently overwrite that argument the first time the two disagreed.
+
+So the division of labour is: **hosts are edited in `sim/web/_headers`, next to the
+paragraph that justifies them; hashes are NEVER typed anywhere.** After changing a host,
+run this tool (not `--check`) so the line you commit is one the generator produced, then
+`--check` to prove it. `frame-src` and `connect-src` are not touched by this tool at all —
+it owns `script-src`'s hashes and nothing else.
+=============================================================================
 """
 import base64
 import hashlib
