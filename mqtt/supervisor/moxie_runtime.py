@@ -27,6 +27,7 @@ from moxie_sdk.store import JsonStore, MemoryStore       # durable per-robot JSO
 from moxie_sdk.filler import pick_filler                 # "let me think" lines + markup
 from moxie_sdk import safety as safety_seam              # InputSafety classifier (ai-seam §2)
 from moxie_sdk import presence as presence_seam          # vision events -> presence (vision.md)
+from moxie_sdk import launch_cards as cards_seam         # 🎴 a scanned QR -> one launch
 from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire (audit ADOPT #7)
 from moxie_sdk import telemetry as telemetry_seam        # 📈 Packet envelope + durable history
 from moxie_sdk import conn_telemetry as conn_seam        # 🔌 the broker connection's own history
@@ -171,6 +172,14 @@ class MoxieRuntime:
         #: object is not a connection — that confusion is what let the wakeup route
         #: report success into a dead socket.
         self.broker_connected = False
+        #: Set only when the broker has **acknowledged** our subscriptions (the SUBACK),
+        #: cleared on every disconnect. `broker_connected` is the CONNACK; this is one
+        #: handshake later, and between the two the appliance is connected and deaf — a
+        #: robot's `/state` lands on a broker with no matching subscription and is dropped,
+        #: taking the QoS-0 config push that would have answered it with it. Anything that
+        #: gates *robot traffic* on readiness waits for this; anything that reports *the
+        #: connection* still reads `broker_connected`.
+        self.subscriptions_acked = threading.Event()
         self.last_broker_connect = 0.0
         self.last_broker_disconnect = 0.0
         self.last_connect_error = ""
@@ -339,6 +348,10 @@ class MoxieRuntime:
             self.client.username_pw_set(username, password)
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
+        # The SUBACK. Without this callback the appliance could only ever *assume* it was
+        # subscribed, which is what made `[runtime] broker connected` a promise the
+        # runtime had no way to keep (see `_on_subscribe`).
+        self.client.on_subscribe = self._on_subscribe
         # After a successful first connect paho already reconnects on its own; what it
         # does NOT do is tell anyone. These two callbacks are the difference between "the
         # appliance recovered" and "nobody knows why the robot went quiet" (§4.1 C4).
@@ -725,6 +738,11 @@ class MoxieRuntime:
                 # of the transport: a status page reports what happened, and the two only
                 # ever differ for a test double with no socket to have an opinion about.
                 "broker_connected": self.broker_connected,
+                # …and whether the broker has ACKNOWLEDGED our subscriptions, which is the
+                # field a harness should gate robot traffic on. `broker_connected` alone
+                # was `sim/tools/soak.py`'s readiness wait — and its `resubscribed_after_s`
+                # metric, a name that already claimed the thing the signal did not prove.
+                "broker_subscribed": self.subscriptions_acked.is_set(),
                 "last_broker_connect": self.last_broker_connect,
                 "last_broker_disconnect": self.last_broker_disconnect,
                 "last_connect_error": self.last_connect_error,
@@ -1417,6 +1435,25 @@ class MoxieRuntime:
             return False
 
     @staticmethod
+    def _suback_failed(rc) -> bool:
+        """True when one entry of a SUBACK **refused** a filter.
+
+        The twin of `_connack_failed`, and it exists for the twin reason: an
+        acknowledgement is not a yes. MQTT 3.1.1 returns `0x80` where a granted QoS would
+        be; MQTT 5 returns a `ReasonCode` whose `is_failure` says so. A broker ACL that
+        does not grant the supervisor `/devices/+/state` (security-broker-auth.md §2.2)
+        answers exactly like this, and an appliance that armed readiness on it would be
+        deaf and confident — `broker connected rc=5` again, one callback later.
+        """
+        failed = getattr(rc, "is_failure", None)
+        if failed is not None:
+            return bool(failed)
+        try:
+            return int(rc) >= 128
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
     def _connack_reason(rc) -> str:
         """`connack_string(rc)` when paho is importable, else the code as written."""
         try:
@@ -1466,8 +1503,25 @@ class MoxieRuntime:
         # explains why `rc=5` must not print "broker connected"; announcing before
         # subscribing is the same comfortable lie one step later, and playbook rule 23's
         # shape — a readiness signal that was true of an earlier moment.
-        for t in self.SUBSCRIPTIONS:
-            c.subscribe(t)
+        #
+        # …AND IT WAS STILL A LIE, ONE STEP FURTHER ALONG (2026-09-05). `subscribe()` does
+        # not subscribe: it generates a mid, queues a SUBSCRIBE packet and returns, and
+        # under `loop_forever()` the bytes leave on the network thread *after* this
+        # callback returns. So the line below has always meant **"we asked"**, never "the
+        # broker agreed" — and a robot that announces itself in that gap publishes
+        # `/state` into a broker with no matching subscription. The answer to a `/state`
+        # is a config push at **QoS 0, not retained** (`_publish`; QoS 1 refused on
+        # purpose, production-hardening.md §4.3), so losing that race does not delay the
+        # message, it DELETES it. That is why no timeout is ever long enough, and it is
+        # the same defect PR #143 fixed on the robot side of the same wire.
+        #
+        # ONE call, not four: a list subscribe is one SUBSCRIBE packet answered by one
+        # SUBACK, so `_on_subscribe` has a single unambiguous event to wait for and
+        # nothing has to count acknowledgements. (`_on_connect` is the only `subscribe()`
+        # call site in the runtime — `test_connect_readiness.py` pins that, because a
+        # second one would make an unmatched SUBACK arm this event early.)
+        self.subscriptions_acked.clear()   # a reconnect re-subscribes: re-arm, not latch
+        c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])
         # …and FLUSHED, for the same reason it is printed last. This line is not log
         # decoration: `helpers_stack.Supervisor.start()`, `sim/run_smoke.sh`,
         # `sim/run_scenarios.sh`, `sim/run_broker_outage.sh` and `sim/tools/soak.py` all
@@ -1479,6 +1533,13 @@ class MoxieRuntime:
         # caller (a straightforward rewrite of run_smoke.sh, 2026-09-03) forgot it and
         # waited the full 40 s. The refusal branch above has always flushed; the success
         # branch not flushing was the asymmetry.
+        #
+        # ITS MEANING IS UNCHANGED and deliberately so: *"a CONNACK said yes and we have
+        # asked for our topics"*. Everything that reads it for that — `/status`'s
+        # `broker_connected`, the console's connection card, `test_connection_resilience`'s
+        # rc=5 guard — is still right. What must NOT key on it is anything that then puts
+        # traffic on the bus expecting us to hear it; that waits for the SUBACK line in
+        # `_on_subscribe` below.
         print(f"[runtime] broker connected rc={rc}", flush=True)
         self._note("conn", "broker connected" if gap is None
                    else f"broker reconnected after {gap:.1f}s")
@@ -1488,6 +1549,48 @@ class MoxieRuntime:
         # for the same reason. Blocking the MQTT loop on a roster-sized burst of publishes
         # would stall every robot the reconnect just recovered.
         self._schedule_roster_resume()
+
+    def _on_subscribe(self, c, u, mid, reason_codes=None, properties=None):
+        """The SUBACK. **This** is the moment the supervisor can hear a robot.
+
+        Everything that boots a robot against this appliance must wait for the line
+        printed here rather than for `broker connected` one callback earlier. The
+        difference is not milliseconds of politeness: between the two, a `/state` is
+        delivered to nobody, its config answer is never generated, and the robot waits out
+        a timeout for a message that does not exist. Observed as
+        `❌ scenario 'basic-conversation': 0/4 turns OK — no config pushed within timeout`
+        with the *second* scenario green in the same job — first-fails-second-passes is a
+        startup race, never a scenario bug.
+
+        Signature carries defaults for both paho callback API versions: VERSION2 passes
+        `(client, userdata, mid, reason_code_list, properties)`, VERSION1 `(client,
+        userdata, mid, granted_qos)`.
+
+        Idempotent, because one SUBSCRIBE gets one SUBACK but nothing about MQTT forbids a
+        broker from being generous; the *first* ack is the one that made us audible.
+
+        And an ack can say **no**. A SUBACK carries one code per filter, and `0x80` (MQTT
+        5: a failure `ReasonCode`) is a refusal — which is what a broker ACL that does not
+        grant this credential `/devices/+/state` returns. Arming readiness on that would
+        be the original bug with an extra callback in front of it, so a refusal is said out
+        loud and readiness is withheld: the harnesses then time out with the reason
+        printed above them, instead of a robot silently failing to be heard.
+        """
+        refused = [str(rc) for rc in (reason_codes or []) if self._suback_failed(rc)]
+        if refused:
+            print(f"[runtime] ⛔ the broker REFUSED {len(refused)} of "
+                  f"{len(self.SUBSCRIPTIONS)} subscriptions ({', '.join(refused)}) — "
+                  f"this appliance cannot hear its robots", flush=True)
+            self._note("error", f"⛔ broker refused {len(refused)} subscription(s): "
+                                f"{', '.join(refused)}")
+            return                       # readiness NOT armed: we really are deaf
+        if self.subscriptions_acked.is_set():
+            return
+        self.subscriptions_acked.set()
+        # Flushed for exactly the reason the line above it is: every waiter reads this
+        # from a redirected, block-buffered stdout.
+        print(f"[runtime] subscriptions acknowledged by the broker "
+              f"({len(self.SUBSCRIPTIONS)} topics)", flush=True)
 
     def _on_disconnect(self, c, u, flags=None, rc=None, props=None):
         """The socket went away. Two jobs, and the second is the subtle one.
@@ -1508,6 +1611,11 @@ class MoxieRuntime:
         """
         was = self.broker_connected
         self.broker_connected = False
+        # Our subscriptions died with the socket (the SIL/CI brokers run `clean_session`),
+        # so the SUBACK we hold is a belief about a connection that no longer exists —
+        # the same class as `_forget_robot_state()` below. Re-armed, not latched: the next
+        # `_on_connect` re-subscribes and the next SUBACK re-earns it.
+        self.subscriptions_acked.clear()
         self.last_broker_disconnect = time.time()
         reason = self._connack_reason(rc) if rc is not None else "connection lost"
         for device_id in set(self._turn_seq) | set(self.robots):
@@ -2999,23 +3107,51 @@ class MoxieRuntime:
         """A vision event that arrived as a chat turn — the protocol-faithful path.
 
         We answer the request the robot is waiting on, and we never spend a brain call on
-        it: either the greeting below (`SUCCESS`) or `NOREPLY_ACK` — ResultCode 6,
+        it: a greeting, a 🎴 launch card, both, or `NOREPLY_ACK` — ResultCode 6,
         "acknowledge only, no spoken line" (remote-chat-protocol.md:60), which is exactly
-        the contract's field for "heard you, saying nothing"."""
+        the contract's field for "heard you, saying nothing".
+
+        The card is the first thing in this appliance that *acts* on a perception event
+        rather than merely noticing it. Honest ceiling: no physical Moxie has ever sent us
+        an `eb-qr-event`, so this path is exercised only by the SIL robot and the browser
+        SIM (docs/architecture/backlog/qr-launch-cards.md §7)."""
         event_id = rcr.get("event_id")
         backend = rcr.get("backend", "router")
-        signals = self._ingest_vision(device_id, robot, name, rcr.get("input_vars") or {})
+        input_vars = rcr.get("input_vars") or {}
+        signals = self._ingest_vision(device_id, robot, name, input_vars)
+        # 🎴 A printed launch card. This is the ONLY place a scanned QR value is in scope
+        # while a reply is being built, so the route lives here and nowhere else: a vision
+        # event is intercepted before any brain sees it (`:2908` — never handed to a brain,
+        # never written to history) and `MoxieApp.on_event` cannot shape a reply. The
+        # decoder is pure and closed (`moxie_sdk/launch_cards.py`); everything it refuses —
+        # an unknown module id, `<sleep>`, `<exit>`, `<launch_if_confirmed:…>`, a value with
+        # no `GO` marker — arrives here as None and is simply a QR we noticed and ignored.
+        card = cards_seam.decode_event(name, input_vars)
         greeting = self._greeting_for(device_id, robot, signals)
-        if greeting is None:
+        if greeting is None and card is None:
             return self._publish_chat(device_id, event_id, backend, "", markup="",
                                       result=ResultCode.NOREPLY_ACK)
-        text, markup = greeting
-        self._note("chat", f"hello (unprompted): '{text[:40]}'")
-        print(f"[runtime] 👋 {device_id} walked back in -> '{text}'", flush=True)
-        _, greet_scored = self._stage(text, turn_key=event_id, markup=markup)
+        # A card and a hello are independent, and a turn may carry both: a child who walks
+        # back in holding a card gets one greeting and one launch on one reply, never two
+        # replies and never a doubled hello.
+        text, markup = greeting if greeting is not None else ("", "")
+        if greeting is not None:
+            self._note("chat", f"hello (unprompted): '{text[:40]}'")
+            print(f"[runtime] 👋 {device_id} walked back in -> '{text}'", flush=True)
+        if card is not None:
+            self._note("vision", f"🎴 launch card -> {card.module_id}")
+            print(f"[runtime] 🎴 {device_id} scanned a launch card -> {card.module_id}",
+                  flush=True)
+        # No invented line for a card on its own: the reply carries the launch and stays
+        # silent, so a child never hears a decoding artefact.
+        greet_scored = None
+        if text:
+            _, greet_scored = self._stage(text, turn_key=event_id, markup=markup)
         self._publish_chat(device_id, event_id, backend, text, markup,
+                           actions=[card] if card is not None else None,
                            result=ResultCode.SUCCESS, scored=greet_scored)
-        self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
+        if text:
+            self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
         return None
 
     def _greeting_for(self, device_id, robot, signals):

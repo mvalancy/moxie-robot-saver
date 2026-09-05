@@ -136,6 +136,17 @@ jobs:
           # URL is empty, and STT had none. Neither needs a new secret: both fall back to
           # MOXIE_VOICE_BASE_URL / MOXIE_LLM_API_KEY, which this step already requires
           # above, and faster-whisper + numpy + paho are already installed in this job.
+          #
+          # test_live_hosted_ears is the newest of these and the only one that is not about
+          # the Python seam: it puts REAL SPOKEN WORDS through `functions/api/transcribe.js`
+          # — the route the hosted page's microphone posts to — which every other test of
+          # that route exercises with a stubbed `fetch` and a 440 Hz tone. It shells out to
+          # `node` for the route module (preinstalled on ubuntu-latest; the test skips with
+          # a loud reason if it is ever absent) and spends 2 calls: one /audio/speech to say
+          # a fixed sentence, one /audio/transcriptions to read it back. Its second tier
+          # POSTs at a real deployment and skips unless MOXIE_DEMO_ORIGIN names one — no
+          # host is hard-coded (C3), so this tier proves the ROUTE here and the SITE only
+          # where someone points it at one.
           # `-ra` so any skip is printed with its reason rather than hiding behind a dot.
           python -m pytest sim/tests/test_live_gateway.py \
                            sim/tests/test_live_action_tags.py \
@@ -144,11 +155,12 @@ jobs:
                            sim/tests/test_live_voice_picker.py \
                            sim/tests/test_live_gateway_stt.py \
                            sim/tests/test_live_telehealth_voice.py \
-                           sim/tests/test_live_gateway_turn_e2e.py -q -ra -s | tee live-gateway.log
+                           sim/tests/test_live_gateway_turn_e2e.py \
+                           sim/tests/test_live_hosted_ears.py -q -ra -s | tee live-gateway.log
           {
             echo "### Live gateway tier (creds-only)"
             echo ""
-            echo "Suites: \`test_live_gateway\` · \`test_live_action_tags\` · \`test_live_content_e2e\` · \`test_live_gateway_tts\` · \`test_live_voice_picker\` · \`test_live_gateway_stt\` · \`test_live_telehealth_voice\` · \`test_live_gateway_turn_e2e\`"
+            echo "Suites: \`test_live_gateway\` · \`test_live_action_tags\` · \`test_live_content_e2e\` · \`test_live_gateway_tts\` · \`test_live_voice_picker\` · \`test_live_gateway_stt\` · \`test_live_telehealth_voice\` · \`test_live_gateway_turn_e2e\` · \`test_live_hosted_ears\`"
             echo ""
             echo '```'
             tail -n 1 live-gateway.log

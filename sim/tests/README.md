@@ -148,9 +148,24 @@ browser at all and carry the hermetic suite CI actually runs.
   `content_id`, an `exit`, no stray action on an ordinary answer, and the same through
   `WebhookApp` (whose bogus action type is dropped, not forwarded). Hermetic and instant:
   `LLMApp`'s `client=` seam takes a canned completion, so there is no broker, no network
-  and no `openai` import. Its docstring records what it deliberately does **not** claim —
-  no SIM client *acts* on an action yet (neither `virtual_moxie.py` nor `sim/web/bridge.js`
-  reads `response_actions`), which is a live DoD criterion-4 gap.
+  and no `openai` import. It is the **delivery** half only: that a SIM client then *acts* on
+  what it was handed is asserted in `test_actions_reach_the_robot.py` (SIL, against
+  `VirtualMoxie.action_stats()`) and `sim/test_bridge.mjs` (browser, against
+  `bridge.js::actionStats()`) — both clients have read `response_actions` since PR #52 /
+  PR #116, closing the DoD criterion-4 gap this entry used to describe.
+- **`test_launch_cards_sil.py`** — 🎴 T10, the launch-card round trip on a wire. The other two
+  card suites are units: `test_launch_cards.py` is the decoder, `test_launch_cards_runtime.py`
+  is `_on_vision_turn` read back off a `FakeClient`. Here a real `sim/virtual_moxie.py`
+  publishes an `eb-qr-event` carrying `GO<launch:DM>` through `helpers_runtime.loopback()`
+  and the assertions are on the **robot's own** `action_stats()` — written by
+  `_apply_action`, which only runs because a payload arrived on `commands/remote_chat`. The
+  refusals travel the same wire and are the point: `launch_if_confirmed`, `sleep`, `exit`, an
+  id outside the catalog, a lowercased `go` marker, an over-long value and two smuggling
+  shapes each leave the robot holding **nothing** *and* answer `NOREPLY_ACK` on the scan's own
+  `event_id`, so a refused card is silence rather than a stall. Held in both directions by
+  `sim/tools/launch_card_mutation_check.py`, whose M15–M19 mutate the **client** — 18 of its
+  19 rows redden this file on its own. Honest ceiling in its docstring: no physical Moxie has
+  ever sent us an `eb-qr-event`, and a SIL robot is not a robot.
 - **`test_ci_workflows.py`** — the CI harness, guarded as code. Written after four PRs
   (#43–#46) were merged on checks that had not concluded, leaving `dev` red for hours while
   the PR-side runs — which had failed identically — were believed green. It asserts that
@@ -285,6 +300,20 @@ browser at all and carry the hermetic suite CI actually runs.
   against a cloud with no settle timer and require the config to be LOST, and a sweep of
   every `.py` under `sim/` that drives a real broker and publishes a `/state` — which is
   discovered, not listed, and whose own teeth name the four clients it must be seeing.
+- **`test_sil_supervisor_readiness.py`** — 🔌 *the same rule, the other end of the wire.*
+  The promotion PR's HIL job went red as `❌ scenario 'basic-conversation': 0/4 turns OK —
+  no config pushed within timeout` while `motion-demo`, the **second** scenario in the same
+  job, passed 4/4: first-fails-second-passes is a startup race. `subscribe()` does not
+  subscribe — it queues a packet — so `[runtime] broker connected`, printed straight after
+  it, meant *"we asked"*, and until 2026-09-05 the supervisor had no `on_subscribe` at all.
+  A robot booted on that line announces into a broker holding no matching subscription and
+  its QoS-0 config answer is never generated. **The robot-side trick does not reproduce
+  this one**: a sleep before the subscribe also delays the readiness line, so the gap never
+  opens — the supervisor's gap is on the wire, *after* the callback returns. So this file
+  puts a TCP relay in front of the broker and holds the SUBSCRIBE packet for 3 s with
+  nothing in the appliance patched. Two cases: the shipped supervisor booted on the SUBACK
+  line serves the robot through that hold, and the **teeth** — the identical run booted on
+  `[runtime] broker connected` loses the config outright, which is the HIL red on demand.
 - **`test_sil_performance_e2e.py`** — the behavior planner with a **broker** between it
   and the client. #92 proved its criterion (c) "through the real runtime", which is an
   in-process runtime with a fake MQTT client; a scored field dropped by `json.dumps`, by
@@ -342,6 +371,22 @@ browser at all and carry the hermetic suite CI actually runs.
   the gateway does the speaking); skips cleanly without them or without a voice URL. **In
   CI** it rides in the same creds-only dispatch step as the three suites above, which also
   fails on an empty `MOXIE_VOICE_BASE_URL`.
+- **`test_live_hosted_ears.py` + `helpers_route.mjs`** — the only test that puts **real
+  spoken words through `functions/api/transcribe.js`**, the route the hosted page's
+  microphone posts to. Everything else about that route is proven with a stubbed `fetch`
+  and a 440 Hz tone ([`../test_demo_ears.mjs`](../test_demo_ears.mjs),
+  [`../test_mic_spend.mjs`](../test_mic_spend.mjs)), and `test_live_gateway_stt.py`'s
+  overlap-1.00 proof goes through the *Python* seam and never touches the route. Two
+  tiers: **A** runs the route MODULE against the real gateway (`helpers_route.mjs` is the
+  Python↔JS bridge — it builds the `Request`, calls `onRequestPost`, and reports
+  `_lib/limits.js`'s own upstream-call counter so the spend is measured, not assumed);
+  **B** POSTs the same WAV at a real deployment named by `MOXIE_DEMO_ORIGIN` (**no host is
+  hard-coded** — C3 — so it skips loudly when unset). 3 gateway calls for a full run;
+  `MOXIE_EARS_WAV=<file>` reuses a previous run's audio and makes it 2. The floor is 0.7,
+  the same number `test_live_gateway_stt.py` uses, and a **decoy sentence scored against
+  the same transcript must stay under 0.35** — that control is what stops the floor being
+  a test that passes on any transcript at all. **It proves the route, not a person:** no
+  human has ever spoken into the hosted microphone, and this file does not change that.
 - **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper
   speech in, real Piper speech out, read back by real faster-whisper. Tier 1 round-trips
   Moxie's own voice through Whisper (and proves the built-in `ToneSynthesizer` would

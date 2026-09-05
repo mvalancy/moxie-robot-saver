@@ -99,6 +99,16 @@ robot-cloud layer builds on its groundwork:
   no `exec`, no host objects and a declared capability set, specified in
   [`docs/architecture/backlog/sandboxed-extensions.md`](docs/architecture/backlog/sandboxed-extensions.md).
   Not one line of their code is in this tree; the ported *behaviours* are credited here.
+- the **🎴 launch-card payload form** — that a printed QR carrying `GO<launch:MODULE>` is a thing a
+  child can hold up to start an activity, and that the `GO` marker is what separates it from any other
+  code the camera happens to see (`site/data/qr/extract.py` prints a sheet of them; the `MoxieGo`
+  content module reads `$eb_qr_value`, checks `startswith("GO")` and slices the payload back into its
+  own reply so the module's tag-ingest turns it into an action). We take the **idea and the payload
+  form**. The decoder is ours and differs where it matters:
+  [`mqtt/moxie_sdk/launch_cards.py`](mqtt/moxie_sdk/launch_cards.py) resolves a scanned value to a typed
+  `Action` **in the runtime** rather than round-tripping it through text a child could hear, and admits
+  only a **closed catalog derived from `schedule.py`** — refusing `<sleep>`, `<exit>` and
+  `<launch_if_confirmed:…>` even though the shared tag grammar parses all three.
 
 > When we vendor any OpenMoxie source into this repo, its MIT `LICENSE` and copyright notice are
 > included alongside it (see `mqtt/` third-party notices as that code lands). Nothing here is a

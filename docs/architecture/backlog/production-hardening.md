@@ -762,7 +762,7 @@ shape phase 5c exists to close — a leftover mechanism satisfying an assertion 
 Each now scopes a per-run `MOXIE_DATA_DIR` the way `sim/tools/soak.py` always has, guarded generically in
 `test_roster.py` so the next SIL script that forgets fails the suite instead of somebody's bench.
 
-#### An unfixed finding: `helpers_stack` calls the supervisor ready before it is listening
+#### ~~An unfixed finding: `helpers_stack` calls the supervisor ready before it is listening~~ — CLOSED 2026-09-05
 
 Found while running the live one-turn e2e. `Supervisor.start()` waits for the log line
 `[runtime] broker connected` — which `_on_connect` prints **before** it issues `c.subscribe(...)`. The
@@ -779,6 +779,22 @@ the readiness contract rather than in the runtime. The honest fix is a readiness
 *"subscribed"*, not *"CONNACK"*; it is **not** to make the SIL robot retry, which would hide the window
 rather than close it. Left unfixed on purpose: it touches `_on_connect` and the shared `helpers_stack`,
 and the `week` soak was running against that runtime.
+
+**CLOSED 2026-09-05, and the paragraph above under-diagnosed it by one step.** PR #103 made
+`_on_connect` subscribe *before* printing, which was read as the fix — but `subscribe()` only queues a
+SUBSCRIBE packet, so the line still meant *"we asked"* and the window stayed open on the wire. It
+resurfaced as an HIL red on the promotion PR (`0/4 turns OK — no config pushed within timeout` on the
+**first** scenario, `motion-demo` green at 4/4 on the second), which is the signature of a startup race
+rather than a scenario bug. The honest fix this section asked for now exists: the runtime has a real
+`on_subscribe`, subscribes in **one** call so a single SUBACK covers the set, and prints a **second**
+line — `[runtime] subscriptions acknowledged by the broker` — that `run_scenarios.sh`, `run_smoke.sh`,
+`helpers_stack.Supervisor.start()` and `sim/tools/soak.py` (through the new `/status` field
+`broker_subscribed`) all key on. `[runtime] broker connected` is untouched and still means the CONNACK.
+No timeout was widened: a QoS-0 config push that was never generated cannot be waited for.
+Reproduced before it was fixed, and reproducible on demand, by holding the supervisor's SUBSCRIBE packet
+on the wire with a TCP relay — [`test_sil_supervisor_readiness.py`](../../../sim/tests/test_sil_supervisor_readiness.py),
+the mirror of PR #143's robot-side [`test_sil_handshake.py`](../../../sim/tests/test_sil_handshake.py).
+Three mutation rows (S9, S9b, S9c) hold the new gate.
 
 ### P2 — **L**
 

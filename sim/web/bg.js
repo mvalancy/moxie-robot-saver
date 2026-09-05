@@ -89,8 +89,34 @@
     pings.push({ x: h.x, y: h.y, r: 2, a: 0.5 });
   }
 
-  /** Bank `ms` of elapsed time and spawn whatever that buys. Called once per frame. */
+  /** Bank `ms` of elapsed time and spawn whatever that buys. Called once per frame.
+   *
+   * A HIDDEN TAB BANKS NOTHING, AND THE ACCUMULATORS DO NOT CARRY ACROSS THE BOUNDARY.
+   * Moving the producers into the frame loop already stopped the original pile-up, because
+   * a real browser pauses `requestAnimationFrame` in a background tab. That is the belt,
+   * and it is what the owner's "streaking points after a day" needed. This is the braces,
+   * for two holes the belt leaves:
+   *
+   *   1. `pingAcc` SURVIVES the transition. A tab hidden with the accumulator already at
+   *      ~2 500 ms of the 2 600 ms ping interval needs one more frame — up to 250 ms — to
+   *      tip over and emit a ping nobody is there to see. That is exactly the
+   *      `pings grew while the tab was hidden (1 -> 2 in 20s)` this file's own guard caught
+   *      in CI on 2026-09-05, on a PR whose diff was `functions/api/` and could not reach
+   *      this file.
+   *   2. `requestAnimationFrame` is not reliably paused everywhere this page runs. Headless
+   *      Chrome never truly backgrounds a tab, which is why the guard has to simulate
+   *      hiding at all — and a mechanism that works only because the browser stops calling
+   *      us is a mechanism we do not control. `document.hidden` is the part we do.
+   *
+   * The check lives HERE rather than at the `spawn(...)` call site because that call's
+   * shape is itself asserted: `sim/test_bg_perf.mjs` greps `step()` for it to catch a
+   * regression to `setInterval` producers. Restructuring the call site to add this guard
+   * trips that assertion — which is the guard working, and worth leaving intact.
+   *
+   * Zeroing rather than freezing is deliberate: a returning visitor gets the animation
+   * resuming from now, not a burst paying out the time they spent elsewhere. */
   function spawn(ms) {
+    if (typeof document !== "undefined" && document.hidden) { packetAcc = 0; pingAcc = 0; return; }
     packetAcc += ms; pingAcc += ms;
     while (packetAcc >= PACKET_MS) { packetAcc -= PACKET_MS; spawnPacket(); }
     while (pingAcc >= PING_MS) { pingAcc -= PING_MS; spawnPing(); }

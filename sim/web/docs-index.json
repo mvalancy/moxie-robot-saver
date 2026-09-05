@@ -1,5 +1,5 @@
 {
- "generated": "docs-02c4337297c7",
+ "generated": "docs-ccf3f6a2e13b",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 7375,
+   "bytes": 7771,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 14528,
+   "bytes": 15441,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 238057,
+   "bytes": 244797,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -128,7 +128,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 154310,
+   "bytes": 166520,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -551,7 +551,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 125374,
+   "bytes": 129307,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -667,7 +667,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 82521,
+   "bytes": 84035,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",
@@ -757,7 +757,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 28286,
+   "bytes": 40880,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
@@ -765,7 +765,7 @@
     "0.2 The second scanner is the real path, and it reaches us",
     "1. The seam — exactly what is missing, in three pieces",
     "P0-a — the arm (`eb_enable_qr` onto the wire) · **S** — 🟡 **half done (2026-09-04)**",
-    "P0-b — the route (`$eb_qr_value` → a launch action) · **S/M**",
+    "P0-b — the route (`$eb_qr_value` → a launch action) · **S/M** — ✅ **shipped 2026-09-04**",
     "P0-c — the sheet · **S**",
     "2. The vocabularies (nothing outside them reaches the wire or the paper)",
     "3. Prior art — OpenMoxie (MIT), described and credited, never copied",
@@ -823,6 +823,23 @@
     "Risks",
     "10. Assumption ledger",
     "11. Did this brief remove the decision it owed?"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/mobile-first-visit.md",
+   "title": "On a phone, the Talk box is 2 095 px below the fold",
+   "section": "architecture",
+   "bytes": 3766,
+   "mermaid": 0,
+   "headings": [
+    "What a first-time phone visitor actually gets",
+    "The sequence, measured",
+    "Why this is filed as the top live-page item",
+    "What NOT to do",
+    "Suggested shape, to argue with rather than follow",
+    "Acceptance",
+    "Honest note"
    ],
    "kind": "md"
   },
@@ -902,7 +919,7 @@
    "path": "architecture/vision.md",
    "title": "13 — Camera & Vision: can we pipe Moxie's camera into a local CV/VLM stack?",
    "section": "architecture",
-   "bytes": 27071,
+   "bytes": 27250,
    "mermaid": 0,
    "headings": [
     "0. TL;DR / Verdict",

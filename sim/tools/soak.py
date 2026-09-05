@@ -269,12 +269,30 @@ class Supervisor:
         self.proc = subprocess.Popen([sys.executable, os.path.join(REPO, "mqtt", "run.py")],
                                      cwd=REPO, env=env, stdout=self.log,
                                      stderr=subprocess.STDOUT)
-        assert _wait_until(self.connected, 90) is not None, \
-            "the supervisor never reported a broker connection"
+        # SUBSCRIBED, not merely connected. `broker_connected` is the CONNACK; the
+        # drivers below announce robots the moment this returns, and between the CONNACK
+        # and the SUBACK the supervisor hears nothing — the `/state` is dropped and the
+        # QoS-0 config answering it is never sent (see `_on_subscribe` in
+        # moxie_runtime.py). A soak that boots on the CONNACK measures its own startup
+        # race and calls it a lost turn.
+        assert _wait_until(self.subscribed, 90) is not None, \
+            "the supervisor never reported acknowledged subscriptions"
 
     def connected(self) -> bool:
         try:
             return bool(_http_json(f"{self.status_url}/status", timeout=1)["broker_connected"])
+        except Exception:
+            return False
+
+    def subscribed(self) -> bool:
+        """CONNACK **and** SUBACK — the only state in which a robot can be heard.
+
+        Kept separate from `connected()` on purpose: A1's turn accounting samples
+        `connected` as *"was there a socket"*, and that question is unchanged.
+        """
+        try:
+            return bool(_http_json(f"{self.status_url}/status",
+                                   timeout=1)["broker_subscribed"])
         except Exception:
             return False
 
@@ -296,7 +314,11 @@ class Supervisor:
             self.proc.wait(timeout=10)
 
     def restart(self) -> float:
-        """SIGTERM, restart, and return the seconds until it reports a connection."""
+        """SIGTERM, restart, and return the seconds until it can be heard.
+
+        `start()` waits for the SUBACK, so this is the whole boot an operator cares about
+        — a supervisor that has connected but not subscribed cannot serve a robot.
+        """
         self.stop(clean=True)
         started = time.monotonic()
         self.start()
@@ -696,7 +718,10 @@ def run_soak(profile: str, *, minutes: float | None = None, port: int | None = N
                 # how long that takes is A12's bar (asserted below) rather than A1's.
                 with outages.window():
                     listening = broker.restart()
-                    took = _wait_until(sup.connected, 90)
+                    # `resubscribed_after_s` below is this number's name, and until
+                    # 2026-09-05 it was measured with `sup.connected` — the CONNACK, one
+                    # handshake short of what the field claimed. `subscribed` is the ack.
+                    took = _wait_until(sup.subscribed, 90)
                     # A12 — the robots are talking continuously, so every one of them
                     # should be re-onboarded within a few seconds of the broker coming
                     # back. Before the `_device_connect` fix this NEVER became true: the

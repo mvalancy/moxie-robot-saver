@@ -133,6 +133,24 @@ def parse_action_tags(text: str) -> Tuple[str, List[Action]]:
     return tidy_spoken_text(_TAG_RE.sub(_sub, text)), actions
 
 
+def tag_names(text: str) -> List[str]:
+    """The names of the tags we recognise in `text`, lowercased, in the order they appear.
+
+    The half `parse_action_tags` throws away. It exists because the returned `Action` does
+    **not** remember which tag produced it: `LAUNCH_IF_CONFIRMED_AS` (above) maps
+    `<launch_if_confirmed:MOD>` onto the very same `ActionType.LAUNCH` a plain
+    `<launch:MOD>` produces, so a caller that must treat the two differently cannot do it
+    by inspecting the `Action`. `launch_cards.decode` is that caller — a printed card may
+    say `launch` and nothing else, and "of type LAUNCH" is not the same question.
+
+    Malformed tags are listed too (`<launch>` yields `["launch"]` and no action): the
+    question here is what the card *said*, not what it produced. Names we do not own are
+    not listed, exactly as they are not stripped. Pure, and total on any string.
+    """
+    return [m.group(1).lower() for m in _TAG_RE.finditer(text or "")
+            if m.group(1).lower() in KNOWN_TAGS]
+
+
 # The paragraph we show the model so it actually uses the tags. Kept short, kid-safe,
 # and explicit that tags are silent — a model that explains the tag out loud is worse
 # than one that never uses it.
