@@ -61,7 +61,7 @@ trap cleanup EXIT
 fail() {
   echo "❌ $*"
   echo "── /status (final) ──"; snap
-  for k in broker_connected last_broker_connect last_broker_disconnect \
+  for k in broker_connected broker_subscribed last_broker_connect last_broker_disconnect \
            last_connect_error publish_drops store_lock_timeouts; do
     printf '   %-24s %s\n' "$k" "$(field "$k")"
   done
@@ -250,8 +250,11 @@ fi
 
 snap
 echo "── final /status broker fields ──"
-for k in broker_connected last_broker_connect last_broker_disconnect last_connect_error \
-         publish_drops store_lock_timeouts; do
+# `broker_subscribed` rides along in both dumps (2026-09-05): the CONNACK and the SUBACK
+# are one handshake apart, and an appliance that reconnected but never re-subscribed looks
+# identical here to a healthy one — connected, no error, and unable to hear a robot.
+for k in broker_connected broker_subscribed last_broker_connect last_broker_disconnect \
+         last_connect_error publish_drops store_lock_timeouts; do
   printf '   %-24s %s\n' "$k" "$(field "$k")"
 done
 echo "✅ broker-outage proof PASSED (cold start · reconnect · honest /status · 409 · a turn after)"
