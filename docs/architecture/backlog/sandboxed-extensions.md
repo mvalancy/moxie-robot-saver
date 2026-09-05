@@ -913,6 +913,25 @@ is refused at load by the grant check and the parent hears about it through the 
 exactly as an imported pack declaring `clock` behaves today. Deciding which grants a parent may hand
 out is the **console card**, and that is still P1.
 
+**AND THE SAME IS TRUE OF `subscribe`, BOTH HALVES OF IT — say so plainly, because two slices in
+two days can read as a shipped feature.** The outbound half (2026-09-05, PR #159: a pack's requested
+events merge *into* the supervisor's `EventSubscription`, never over it) and the inbound half
+(2026-09-05, `feat/subscribe-inbound`: a subscribed event wakes the pack that asked for it, through
+the local evaluator, at zero model calls) are both built, both tested, and **neither is reachable by
+any parent today.** `subscribe` is in neither `ext.DEFAULT_GRANTS` (`say`, `handled`, `session`,
+`child.nickname`) nor `content_app.SHIPPED_EXTRA_GRANTS` (`clock`, `random`, `memory.read`,
+`memory.write`, `presence`, `markup`), and `supervisor/config.py` passes no `ext_grants` at all, so
+the grant check refuses such a pack at load. The capability is exercised from tests and from nowhere
+else.
+
+That is **not** an oversight to be quietly patched by appending one string to a frozenset. A pack
+that can subscribe is a pack that can ask the robot's *eyes* to report to it, which is the most
+privacy-adjacent grant in the table — it belongs to the same console-card decision as `act`, and to
+[`config-and-telemetry-contract`](../config-and-telemetry-contract.md)'s `LoggingPolicy` question of what a parent is agreeing to. The
+honest status is therefore: **the mechanism is done and the authorisation is not**, and the audit
+row that calls this "the one that makes the sandbox *perceive*" should be read as *"can perceive,
+once a parent is given a way to say yes."*
+
 **P2 adds:** a second runtime (Wasm) behind the same capability table, opt-in, honestly labelled as
 un-reviewable; publisher signatures once there is a trust root worth having (P6); and a schedule-request
 channel.
