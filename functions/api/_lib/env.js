@@ -50,6 +50,8 @@ export const DEFAULTS = Object.freeze({
   DEMO_MAX_CONCURRENT_SPEECH: 8,
   DEMO_QUEUE_MAX_WAIT_MS: 2500,
   DEMO_QUEUE_MAX_DEPTH: 8,
+  DEMO_CACHE_COUNTER: "1",
+  DEMO_CACHE_TIMEOUT_MS: 250,
   DEMO_UNIT_BUDGET_HOUR: 600,
   DEMO_UNIT_BUDGET_DAY: 4000,
   DEMO_CHAT_TIMEOUT_MS: 20000,
@@ -380,6 +382,25 @@ export function readConfig(env) {
     // wait ever proves worse than a refusal, and it needs no code change.
     queueMaxWaitMs: int(e, "DEMO_QUEUE_MAX_WAIT_MS", 0, 10000, notes),
     queueMaxDepth: int(e, "DEMO_QUEUE_MAX_DEPTH", 0, 1000, notes),
+    // ---- The CROSS-ISOLATE tier that sits ON TOP of the per-IP window
+    // (`_lib/limits.js::admit`, and the long comment there for what it is worth).
+    //
+    // `DEMO_CACHE_COUNTER` — ON. It costs one `caches.default.match()` plus one `put()`
+    //   per ADMITTED request and nothing at all on any refusal path, needs no binding, and
+    //   is a no-op wherever `caches.default` is absent (bare `node`, some local dev
+    //   runtimes) — which is why the default can be "on" without making a fork's tests
+    //   depend on a Cloudflare runtime. Set it to `0` to switch the tier off and get
+    //   exactly the pre-2026-09-05 in-isolate behaviour back; that is the escape hatch,
+    //   and it needs no code change.
+    // `DEMO_CACHE_TIMEOUT_MS` — 250 ms, the deadline on EACH of those two cache ops.
+    //   The measurement it is sized against: three cache ops on a preview cost ≤44 ms
+    //   (live-sim-demo.md §4.6.1 row h), so 250 ms is ~5x the whole measured budget for
+    //   one op — generous enough that a merely slow colo still gets counted, small enough
+    //   that a wedged cache costs a fifth of a second on a ~1.2 s turn rather than hanging
+    //   it. Clamped 10..2000 for that reason: no configuration may let a counter that is
+    //   explicitly best-effort out-wait the call it is guarding.
+    cacheCounter: bool(e, "DEMO_CACHE_COUNTER", true),
+    cacheTimeoutMs: int(e, "DEMO_CACHE_TIMEOUT_MS", 10, 2000, notes),
     unitBudgetHour: int(e, "DEMO_UNIT_BUDGET_HOUR", 0, 100000000, notes),
     unitBudgetDay: int(e, "DEMO_UNIT_BUDGET_DAY", 0, 100000000, notes),
     chatTimeoutMs: int(e, "DEMO_CHAT_TIMEOUT_MS", 1000, 120000, notes),

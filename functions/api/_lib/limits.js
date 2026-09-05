@@ -8,7 +8,7 @@
  * ============================================================================
  * READ THIS BEFORE TRUSTING A NUMBER IN THIS FILE.
  *
- * **THE P0 COUNTERS ARE BEST-EFFORT AND IN-PROCESS. THEY ARE NOT A GLOBAL CEILING.**
+ * **THE P0 COUNTERS ARE BEST-EFFORT. THEY ARE NOT A GLOBAL CEILING.**
  *
  * A Cloudflare Worker isolate is not a shared counter. The state below lives in one
  * isolate's memory: Cloudflare runs many isolates, in many colos, and recycles them
@@ -17,9 +17,26 @@
  * several budgets. §4.6 says this out loud and this comment is the code half of that
  * promise.
  *
+ * **SINCE 2026-09-05 ONE — AND ONLY ONE — OF THOSE COUNTS IS ALSO KEPT IN THE CACHE API:
+ * the per-IP MINUTE window.** That tier is described in full further down, at
+ * `sharedWindowVerdict`, and the three facts that matter are these. It is **per-colo**,
+ * so it removes the *isolate* multiplier (measured >= 7) and leaves the *colo* one. **A
+ * burst defeats it** — 31 concurrent increments stored 9 — while a paced sustained drain,
+ * which is the traffic a counter actually exists to stop, lost 0 of 41. And **every one of
+ * its errors is an undercount**, so it can only ever let someone through, never wrongly
+ * refuse them. The in-isolate `Map` below is unchanged and still decides FIRST: the cache
+ * tier only ever ADDS refusals, and with `DEMO_CACHE_COUNTER=0` — or on any runtime with
+ * no `caches.default` — `admit()` is exactly the function it was before it existed.
+ *
+ * **So: still not a global ceiling, and no sentence anywhere may call it one.** The wrong
+ * version of that sentence has already been written once about this file (ledger row 25:
+ * §4.6 described a Cache API tier for months while the code had none, and the spend risk
+ * was sized off it in the unsafe direction). Do not write the second one.
+ *
  * What these counters ARE good for, which is most of the real risk: they stop scripts and
  * accidents. A loop hammering one endpoint from one machine hits one isolate and is
- * refused.
+ * refused — and now, in the colo that answered it, is refused even when the platform
+ * spreads it across several isolates.
  *
  * What actually bounds the worst case, and where the real ceilings live:
  *   1. A **budget-scoped virtual key** on the gateway itself (§4.2's deployment
@@ -36,7 +53,10 @@
  *
  * P1 replaces the counters with a KV or Durable Object single-writer counter — AFTER the
  * dashboard confirms which of those this account and plan actually has (§10 assumption
- * 13). Until then, do not write a doc sentence that calls these a hard limit.
+ * 13, whose *runtime* half is now measured and whose *dashboard* half is not). A Durable
+ * Object is still the only candidate that gives a TRUE single-writer count; the Cache API
+ * tier does not retire that plan and does not weaken the sentence above it. Until then,
+ * do not write a doc sentence that calls any of this a hard limit.
  * ============================================================================
  *
  * WHY THE ORIGIN PIN IS IN THIS FILE. It is request admission, in the same family as the
@@ -54,6 +74,10 @@
  * every counter above it** — see the queue section further down, which says exactly what
  * that order does and does not promise.
  */
+
+/** The keyed one-way tag for the cross-isolate tier's cache key — see that section, and
+ *  `./hmac.js::keyedTag` for why the visitor's address may not appear in a URL unkeyed. */
+import { COUNTER_INFO, keyedTag } from "./hmac.js";
 
 /**
  * §4.1's request-unit denomination. **Units, not dollars, and the reason is in the spec:**
@@ -91,6 +115,13 @@ const state = {
     /** joined = queued at all; granted = got a slot from a release; expired = waited out
      *  the clock; refusedFull = never queued because the depth cap was already reached. */
     queue: { joined: 0, granted: 0, expired: 0, refusedFull: 0 },
+    /** The cross-isolate tier, as RECORDED facts (playbook rule 11). `ops` counts the
+     *  actual Cache API round trips, which is the number the latency budget is spent in;
+     *  `errors` + `timeouts` + `stale` are every way the tier failed open. */
+    cache: {
+      checked: 0, ops: 0, hit: 0, miss: 0, stale: 0,
+      allowed: 0, refused: 0, wrote: 0, errors: 0, timeouts: 0,
+    },
   },
 };
 
@@ -129,6 +160,10 @@ export function __reset() {
     refusals: {},
     upstreamCalls: 0,
     queue: { joined: 0, granted: 0, expired: 0, refusedFull: 0 },
+    cache: {
+      checked: 0, ops: 0, hit: 0, miss: 0, stale: 0,
+      allowed: 0, refused: 0, wrote: 0, errors: 0, timeouts: 0,
+    },
   };
 }
 
@@ -772,6 +807,287 @@ function grantedSlot(route, capacity, rateLimit) {
   };
 }
 
+/* ---------------------------------------------------------------------------- *
+ * §4.6.1 — the Cache API tier: a SECOND per-IP minute window, shared across the
+ *          isolates of ONE COLO
+ * ---------------------------------------------------------------------------- *
+ *
+ * ============================================================================
+ * WHAT THIS TIER IS, STATED AS PLAINLY AS THE HEADER STATES THE REST.
+ *
+ * **IT IS NOT A GLOBAL CEILING AND NOTHING MAY CALL IT ONE.** It is a second,
+ * best-effort per-IP minute window kept in `caches.default`. Three things are true of it
+ * at once and all three have to be said together, because the previous version of this
+ * document said only the flattering one and that single wrong sentence is what made
+ * someone size the spend risk in the unsafe direction:
+ *
+ *   1. **It is PER-COLO.** Cloudflare's cache "does not replicate outside of the
+ *      originating data center", so each colo keeps its own count. A visitor who reaches
+ *      two colos gets two windows. What it removes is the *isolate* multiplier — measured
+ *      at >= 7 for one client on one path (§4.6.1) — not the colo one.
+ *   2. **A BURST DEFEATS IT.** It is an unlocked read-modify-write, so concurrent writes
+ *      overwrite each other: the probe stored 9 of 31 concurrent increments, losing about
+ *      two thirds. Sequentially it lost 0 of 41 — and *sequential* is the traffic a
+ *      counter exists to stop (a paced drain over hours), while a burst is already bounded
+ *      by `DEMO_MAX_CONCURRENT_CHAT` and `DEMO_QUEUE_MAX_DEPTH`.
+ *   3. **EVERY ERROR IS AN UNDERCOUNT, SO IT FAILS OPEN.** Every write is some observed
+ *      `prev + 1`, so the stored value can never exceed the truth. A lost write, a cache
+ *      miss, a timeout, a throw, a stale entry — every one of them lets a visitor through
+ *      who should perhaps have been refused, and NONE of them can refuse a visitor who
+ *      should have been allowed. That is the direction this file must fail in, and
+ *      `sim/test_demo_proxy.mjs` §14 asserts it for each failure mode by name.
+ *
+ * **THE IN-ISOLATE `Map` STAYS UNDERNEATH, UNCHANGED, AND DECIDES FIRST.** That is the
+ * property that makes this safe rather than merely likely to be safe: this tier only ever
+ * ADDS refusals. Switch it off with `DEMO_CACHE_COUNTER=0`, or run it where
+ * `caches.default` does not exist (bare `node`), and `admit()` is byte-for-byte the
+ * function it was before — the `if (!store)` line below returns the same `grantedSlot()`
+ * synchronously, with no cache call and no extra `await`.
+ * ============================================================================
+ *
+ * WHAT IT COUNTS, AND WHY THAT AND NOT SOMETHING ELSE.
+ *
+ * The **per-IP MINUTE window** (`chat_per_min` and its two siblings), and only that.
+ * §4.6.1's implementation note asks for exactly this: *"apply the tier to the per-IP
+ * window before the unit budget, since an undercounted window costs a few extra turns
+ * while an undercounted budget costs money"* — put the lossy counter where being wrong is
+ * cheap. Three candidates were considered and two rejected:
+ *
+ *   * The **hour and day windows** — rejected on the latency budget. Each extra key is
+ *     another `match` + `put`; §4.6.1 row h measured three cache ops at <=44 ms and this
+ *     tier gets two. The minute is also the bucket that rotates fastest, so a hot key is
+ *     never long-lived and a stale one expires itself.
+ *   * The **unit budget** — deliberately next, not now. Same op cost, and §4.6.1 orders it
+ *     second. When it is built it is one more `match` + `put` on the key
+ *     `.../units/<hour bucket>` and the same fail-open rules apply verbatim.
+ *   * The **concurrency ceiling** — rejected outright, and this one is not a budget
+ *     question. A slot must be RELEASED, so a lost write would leak a slot for ever: the
+ *     counter would drift upward and start refusing visitors who should be allowed. That
+ *     is failing CLOSED, which is the one direction this tier may never fail in. An
+ *     eventually-consistent counter cannot hold a resource that must be given back.
+ *
+ * WHERE IT SITS IN `admit()`, AND WHY NOT EARLIER. It runs LAST, after the concurrency
+ * slot has been taken, and it is the only `await` on the fast path. Earlier would have
+ * been worse in two specific ways. It would have put a ~30 ms network round trip in front
+ * of refusals that are free today (the origin pin, the in-isolate window), so a script
+ * being refused would cost more than a visitor being served. And it would have inserted an
+ * `await` before the FIFO join, breaking the property the queue section calls the point:
+ * everything that decides runs synchronously, so a late arrival cannot overtake. Running
+ * last costs the refusal path one slot held for the length of one cache round trip, which
+ * `handOffOrRelease()` then passes straight to whoever is waiting.
+ */
+
+/** The path prefix of the tier's cache entries, on this deployment's OWN origin — the
+ *  form the probe measured (§4.6.1). It is not a Function route and holds no secret: the
+ *  body is `{"n":<integer>}` and the visitor appears only as a keyed one-way tag, because
+ *  a Cache API entry lives under a URL an outsider could in principle ask for. */
+const CACHE_PATH = "/__moxie/rl/";
+
+/** 96 bits of tag. Long enough that a collision is not a thing that happens; short enough
+ *  that the key stays readable in a log. A collision would merge two visitors into one
+ *  bucket, which throttles them together — the conservative direction. */
+const CACHE_TAG_HEX = 24;
+
+/** The two ways a cache op can fail to answer. Distinct symbols so the caller can record
+ *  WHICH happened; both fail open. */
+const CACHE_TIMEOUT = Symbol("cache-timeout");
+const CACHE_ERROR = Symbol("cache-error");
+/** A hit whose `Age` has passed its own `max-age`. A real cache would not serve one; the
+ *  fake in the tests does, and the answer must be "treat it as absent". */
+const CACHE_STALE = Symbol("cache-stale");
+
+/**
+ * Run one cache operation under a hard deadline, and NEVER reject.
+ *
+ * A hung `match()` is the failure mode that would actually hurt: it is not an error the
+ * runtime reports, it is a promise that simply never settles, and without this wrapper it
+ * would hold a concurrency slot and the visitor's turn open until the route's own timeout.
+ * So every outcome — a value, a throw, a synchronous throw from `run()` itself, or the
+ * clock — resolves this promise exactly once. The timer is cleared on every settled path,
+ * so a hung op leaves no handle behind and cannot keep a `node` test alive.
+ */
+function withDeadline(ms, run) {
+  return new Promise((resolve) => {
+    let done = false;
+    let timer = null;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      resolve(v);
+    };
+    timer = setTimeout(() => {
+      timer = null;
+      finish(CACHE_TIMEOUT);
+    }, Math.max(1, ms));
+    let started;
+    try {
+      started = run();
+    } catch {
+      finish(CACHE_ERROR);
+      return;
+    }
+    Promise.resolve(started).then(finish, () => finish(CACHE_ERROR));
+  });
+}
+
+/** The store this admission should use: the injected one in a test, `caches.default` on
+ *  the real runtime, or `null` — which is the "behave exactly as before" path. */
+function sharedStore(o, cfg) {
+  if (!cfg || !cfg.cacheCounter) return null;
+  if (o && "cache" in o) return o.cache || null; // tests inject a fake with the same surface
+  try {
+    return (typeof caches !== "undefined" && caches && caches.default) || null;
+  } catch {
+    return null; // a runtime that throws on the global is a runtime without a cache
+  }
+}
+
+/** `https://<own origin>/__moxie/rl/<route>/<tag>/<minute bucket>` */
+function cacheKeyUrl(request, route, tag, minuteBucket) {
+  const origin = new URL(request.url).origin;
+  return origin + CACHE_PATH + route + "/" + tag + "/" + minuteBucket;
+}
+
+/** Read the stored count. Returns an integer, `CACHE_STALE`, or `null` for "no usable
+ *  entry" — and every one of those three means "start from zero", which is fail-open. */
+async function readCount(store, key) {
+  const hit = await store.match(key);
+  if (!hit) return null;
+  const age = Number(hit.headers.get("Age"));
+  const cc = /max-age\s*=\s*(\d+)/i.exec(hit.headers.get("Cache-Control") || "");
+  const maxAge = cc ? Number(cc[1]) : 0;
+  if (Number.isFinite(age) && maxAge > 0 && age >= maxAge) return CACHE_STALE;
+  let body = null;
+  try {
+    body = await hit.json();
+  } catch {
+    return null; // an entry we cannot parse is an entry we do not have
+  }
+  const n = body && Number(body.n);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+/**
+ * The tier's verdict for one admission: `null` to allow (which is also every failure
+ * path), or a refusal descriptor.
+ *
+ * TWO CACHE OPS, ON THE ADMITTED PATH ONLY. One `match` and one `put` when the visitor is
+ * allowed; one `match` and NO `put` when the visitor is refused (a refusal spends nothing,
+ * so it counts nothing); and no `put` when the read itself failed, because writing `1`
+ * after a failed read would RESET a live count to one — a much larger undercount than
+ * simply not writing. §4.6.1 row h measured three ops at <=44 ms; this stays under that.
+ */
+async function sharedWindowVerdict(store, request, { ip, route, cfg, nowS }) {
+  const limit = windowLimits(cfg, route).min;
+  if (!limit) return null; // this route has no per-minute cap to mirror
+  const c = state.stats.cache;
+  const b = bucket(nowS, SCALES.min);
+  const resetAt = (b + 1) * SCALES.min;
+
+  const tag = await keyedTag(cfg, COUNTER_INFO, ip + "|" + route, CACHE_TAG_HEX);
+  const key = cacheKeyUrl(request, route, tag, b);
+  c.checked += 1;
+
+  // ---- op 1: read.
+  const seen = await withDeadline(cfg.cacheTimeoutMs, () => readCount(store, key));
+  if (seen === CACHE_TIMEOUT) {
+    c.timeouts += 1;
+    c.allowed += 1;
+    return null; // FAIL OPEN
+  }
+  if (seen === CACHE_ERROR) {
+    c.errors += 1;
+    c.allowed += 1;
+    return null; // FAIL OPEN
+  }
+  c.ops += 1;
+  let used = 0;
+  if (seen === CACHE_STALE) c.stale += 1;
+  else if (typeof seen === "number") {
+    c.hit += 1;
+    used = seen;
+  } else c.miss += 1;
+
+  if (used >= limit) {
+    c.refused += 1;
+    return {
+      retryAfterS: Math.max(1, resetAt - nowS),
+      // The same numbers `chargeWindows()` sends on its own refusal, so a visitor cannot
+      // tell the two tiers apart and `chat.py`'s backoff loop needs no new case.
+      rateLimit: { limit, remaining: 0, reset: resetAt },
+    };
+  }
+
+  // ---- op 2: write back. Unlocked and on purpose — a lost update undercounts (2).
+  // `max-age` is one window, so an entry outlives its own bucket by at most that and then
+  // evicts itself; the key already carries the bucket, so nothing stale can be believed.
+  const wrote = await withDeadline(cfg.cacheTimeoutMs, () =>
+    store.put(
+      key,
+      new Response(JSON.stringify({ n: used + 1 }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "max-age=" + SCALES.min,
+        },
+      }),
+    ),
+  );
+  if (wrote === CACHE_TIMEOUT) c.timeouts += 1;
+  else if (wrote === CACHE_ERROR) c.errors += 1;
+  else {
+    c.ops += 1;
+    c.wrote += 1;
+  }
+  c.allowed += 1;
+  return null;
+}
+
+/**
+ * Grant the slot — consulting the shared tier first when there is one.
+ *
+ * NOT `async`, deliberately. With no cache (switched off, or a runtime without one) this
+ * returns the very same object the pre-2026-09-05 code returned, from the same call, with
+ * no promise and no extra microtask: "exactly as it does today" is a property of the code
+ * path, not a claim about it.
+ */
+function grantOrShared(o, ctx) {
+  const store = sharedStore(o, ctx.cfg);
+  if (!store) return grantedSlot(ctx.route, ctx.capacity, ctx.win.rateLimit);
+  return sharedThenGrant(store, o, ctx);
+}
+
+/** The async half of `grantOrShared`. Holds the slot across the cache round trip and
+ *  hands it back — to the next waiter, via `handOffOrRelease` — if the tier refuses. */
+async function sharedThenGrant(store, o, ctx) {
+  const { route, capacity, cfg, win, budget, ip, nowS } = ctx;
+  let verdict = null;
+  try {
+    verdict = await sharedWindowVerdict(store, o.request, { ip, route, cfg, nowS });
+  } catch {
+    // The last seatbelt. `sharedWindowVerdict` already swallows every cache error, so
+    // reaching here means something else threw — a fake with a hostile surface, a URL that
+    // will not parse, a `crypto.subtle` that is not there. It still may not cost a visitor
+    // their turn: allow, and record it.
+    state.stats.cache.errors += 1;
+    verdict = null;
+  }
+  if (!verdict) return grantedSlot(route, capacity, win.rateLimit);
+
+  // Refused by the shared tier. Give the slot back FIRST — it is the scarce thing and
+  // somebody may be queued for it — then refund the charge, exactly as the `at_capacity`
+  // path does, so the request that was not served has not spent anything.
+  handOffOrRelease(route);
+  refundCharges(win.charged, budget.charged, budget.cost);
+  return {
+    ...refuse("rate_limited", { retryAfterS: verdict.retryAfterS, rateLimit: verdict.rateLimit }),
+    load: { inflight: state.inflight[route] || 0, capacity },
+  };
+}
+
 /**
  * Origin -> per-IP windows -> unit budget -> concurrency, in that order, once.
  *
@@ -789,11 +1105,20 @@ function grantedSlot(route, capacity, rateLimit) {
  * that cannot await cannot call upstream, and `sim/test_mode.mjs` asserts that
  * structurally.
  *
- * The two refusals that can now happen AFTER the windows and the budget were charged —
- * the depth cap, and the wait expiring — refund what they charged. `refundCharges()`
- * carries the whole argument for refunding rather than reordering.
+ * The refusals that can happen AFTER the windows and the budget were charged — the depth
+ * cap, the wait expiring, and (since 2026-09-05) the shared cache tier — refund what they
+ * charged. `refundCharges()` carries the whole argument for refunding rather than
+ * reordering.
  *
- * @param {{request: Request, cfg: object, route: "chat"|"speech"|"transcribe", nowS?: number}} o
+ * **AND THE CACHE TIER RUNS LAST, AFTER THE SLOT IS TAKEN (2026-09-05).** It is the only
+ * `await` on the fast path and the only one that touches anything outside this isolate.
+ * `grantOrShared()` is the seam: with no cache it returns the same `grantedSlot()` this
+ * function has always returned, synchronously. See `sharedWindowVerdict` for what the tier
+ * is, what it is not, and why it may not run any earlier than this.
+ *
+ * @param {{request: Request, cfg: object, route: "chat"|"speech"|"transcribe", nowS?: number,
+ *          cache?: {match: Function, put: Function}|null}} o `cache` is a TEST seam only:
+ *   the routes never pass it, and on the real runtime the store is `caches.default`.
  * @returns {Promise<{ok: boolean, reason: string|null, retryAfterS: number,
  *            rateLimit: {limit:number,remaining:number,reset:number}|null,
  *            load: {inflight:number,capacity:number}, release: () => void}>}
@@ -827,7 +1152,7 @@ export async function admit(o) {
   // future edit breaks that invariant.
   if (waiting.length === 0 && (state.inflight[route] || 0) < capacity) {
     state.inflight[route] = (state.inflight[route] || 0) + 1;
-    return grantedSlot(route, capacity, win.rateLimit);
+    return grantOrShared(o, { route, capacity, cfg, win, budget, ip, nowS });
   }
 
   // ---- At capacity. Refuse immediately when the queue is switched off (either value 0 —
@@ -864,5 +1189,5 @@ export async function admit(o) {
     state.stats.queue.expired += 1;
     return refusal();
   }
-  return grantedSlot(route, capacity, win.rateLimit);
+  return grantOrShared(o, { route, capacity, cfg, win, budget, ip, nowS });
 }

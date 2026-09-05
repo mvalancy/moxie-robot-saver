@@ -602,7 +602,20 @@ this contract exists to prevent.
 
 ### 4.6 Counters, honestly
 
-P0's per-IP and global counters are **best-effort**: **an in-isolate map, and nothing else.**
+P0's per-IP and global counters are **best-effort**. They were **an in-isolate map, and nothing else**
+until 2026-09-04, when the per-IP **minute** window gained the Cache API tier of §4.6.1 — measured
+first, then built. **Every other counter here is still that map alone**: the hour and day windows, the
+concurrency ceiling, the FIFO and the unit budget, so `/api/health`'s `budget` and `load` are exactly as
+narrow as this paragraph has always said.
+
+> **This sentence is corrected the same day the code changed, and that is the point.** Ledger row 25
+> records the last time this paragraph drifted: it claimed a Cache API tier existed when none did, and
+> anyone sizing the spend risk off it got the answer wrong in the *unsafe* direction. The drift this
+> time would have been in the safe direction — the document understating what is enforced — but a
+> document that is wrong in a safe direction still teaches the next reader to distrust it, and the next
+> drift after that may not be safe. The agent that built the tier could not edit this file (it was
+> reserved for an open PR) and flagged both stale sentences in its report rather than leaving them; the
+> fix landed with the same merge.
 **They are not a hard global ceiling, and the spec says so in the code comment.**
 
 **Corrected 2026-09-03.** Every earlier revision of this section said "an in-isolate map plus the Cache
@@ -644,7 +657,7 @@ is refused, not queued, and refused *for free* — the charge is refunded (§4.1
 
 They stop scripts and accidents, which is most of the real risk. The hard ceilings are (a) the gateway-side
 budget-scoped virtual key, and (b) the caps in §4.1, which bound the cost of every *individual* request
-regardless of how many arrive. The next counter to build is the **Cache API tier of §4.6.1**, which needs
+regardless of how many arrive. The Cache API tier of §4.6.1 was **built on 2026-09-04** and covers the per-IP minute window only — deliberately, because an undercounted window costs a few extra turns while an undercounted budget costs money. The next counter to build needs
 no binding and no owner action; a KV or Durable Object single-writer counter stays P1 and stays gated on
 the dashboard half of §10 assumption 13, because it is the only one of the three that is a true global
 ceiling.
