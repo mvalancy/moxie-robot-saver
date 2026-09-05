@@ -1,5 +1,5 @@
 {
- "generated": "docs-05cf2b27e586",
+ "generated": "docs-ccf3f6a2e13b",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 7375,
+   "bytes": 7771,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 14943,
+   "bytes": 15441,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -823,6 +823,23 @@
     "Risks",
     "10. Assumption ledger",
     "11. Did this brief remove the decision it owed?"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/mobile-first-visit.md",
+   "title": "On a phone, the Talk box is 2 095 px below the fold",
+   "section": "architecture",
+   "bytes": 3766,
+   "mermaid": 0,
+   "headings": [
+    "What a first-time phone visitor actually gets",
+    "The sequence, measured",
+    "Why this is filed as the top live-page item",
+    "What NOT to do",
+    "Suggested shape, to argue with rather than follow",
+    "Acceptance",
+    "Honest note"
    ],
    "kind": "md"
   },

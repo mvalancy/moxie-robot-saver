@@ -66,6 +66,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   [`backlog/insights.md`](backlog/insights.md) (insights that mean something — where a parent-facing
   vocabulary comes from when `Packet.event_name` is a free string, which questions a card can honestly
   answer, and which two charts it refuses to draw), and
+  [`backlog/mobile-first-visit.md`](backlog/mobile-first-visit.md) (measured against production and now
+  the top live-page item: on a 390 px phone the Talk box is `0 × 0` on load and still at y = 2 095 after
+  the `CONTROLS` drawer opens, while Moxie speaks unprompted at ~7 s — she talks and the visitor cannot
+  answer; **not broken, buried**, and the turn completes once scrolled to), and
   [`backlog/vendor-the-readme-hero.md`](backlog/vendor-the-readme-hero.md) (**shipped 2026-09-04** —
   the one defect that had stood between the live site and a clean browser console: the README's hero
   image was hosted on `github.com`, which `img-src 'self' data: blob:` correctly refuses. Vendored
