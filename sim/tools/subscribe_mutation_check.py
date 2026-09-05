@@ -143,8 +143,20 @@ MUTATIONS = [
     # event must reach the pack's LOCAL evaluator and never a brain, because
     # `eb-found-face` fires every time a child moves around the room (vision.md §7.1). It
     # is written as "route the event to `respond` instead", which is the *plausible* wrong
-    # implementation — it looks like reuse, it produces a perfectly good reply, and the
-    # only thing that notices is the recorded model-call counter.
+    # implementation — it looks like reuse, and it produces a perfectly good reply.
+    #
+    # **S17 corrected the test it was meant to protect, which is the whole argument for
+    # running these by hand.** In its first draft the zero-model-call test drove only a
+    # QR event that the pack HAD a rule for — and under S17 that spends nothing, because
+    # `ContentApp.respond` runs the same `turn.before` extension, the rule handles the
+    # turn and the model is never reached. The counter agreed with the wrong
+    # implementation and the row was caught by six unrelated behaviour tests instead. The
+    # case that actually costs money is a subscribed event with **no** matching rule: the
+    # extension matches nothing, the conversation runs, and a brain answers a robot's eye
+    # — which is `eb-found-face` on any pack that subscribed to it, i.e. every time a
+    # child walks back into frame. That turn is now step 4 of the test, with the counter
+    # asserted BEFORE the reply shape so the counter is provably the guard. Measured
+    # after the fix: `an unmatched perception event spent 1 model call(s)`.
     ("S17 a perceived event is routed to `app.respond` — i.e. to a BRAIN", R,
      "            reply = perceive(turn)",
      "            reply = app.respond(turn)"),

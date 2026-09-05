@@ -679,6 +679,24 @@ def test_a_woken_pack_costs_zero_model_calls_and_a_counter_says_so():
     assert C.model_calls() == before, \
         f"a perception event spent {C.model_calls() - before} model call(s)"
 
+    # 4) THE SHARP EDGE, and the mutation harness is what found it. Routing a perceived
+    #    event through `app.respond` instead of `perceive` costs NOTHING in step 3 —
+    #    the pack's own rule handles the turn and the model is never reached — so a
+    #    counter checked only there would agree with the wrong implementation. The case
+    #    that costs money is a subscribed event with **no rule for it**: the extension
+    #    matches nothing, the conversation runs, and a brain answers a robot's eye. That
+    #    is `eb-found-face` on any pack that subscribed to it for its own reasons, i.e.
+    #    the exact event that fires every time a child walks back into frame. The counter
+    #    assertion comes FIRST here so that it, and not the reply shape, is the guard.
+    _fresh_pool(rt)
+    with rt._presence_lock:
+        rt._pack_subscribed[dev][FOUND] = "CHAT"
+    before = C.model_calls()
+    resp = drive_turn(rt, dev, FOUND, event_id="e4")
+    assert C.model_calls() == before, \
+        f"an unmatched perception event spent {C.model_calls() - before} model call(s)"
+    assert resp["result"] == "NOREPLY_ACK", resp
+
 
 def test_the_counter_is_wired_to_the_real_gateway_seam():
     """The counter's own anti-vacuity test. If `note_model_call` were dead code the test
