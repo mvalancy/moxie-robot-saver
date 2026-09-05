@@ -31,11 +31,17 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 PY = ROOT / ".venv/bin/python"
 if not PY.exists():
     PY = pathlib.Path(sys.executable)
-TESTS = ["sim/tests/test_launch_cards.py", "sim/tests/test_launch_cards_runtime.py"]
+TESTS = ["sim/tests/test_launch_cards.py", "sim/tests/test_launch_cards_runtime.py",
+         # T10's SIL round trip. Added to the SAME run rather than given a checker of its
+         # own, because the point of the rows below is comparative: a guard that reddens
+         # the unit suites but leaves the wire green is a guard whose SIL test is not
+         # actually asserting on the wire, and only one run can show that.
+         "sim/tests/test_launch_cards_sil.py"]
 
 L = "mqtt/moxie_sdk/launch_cards.py"
 A = "mqtt/moxie_sdk/actions.py"
 R = "mqtt/supervisor/moxie_runtime.py"
+V = "sim/virtual_moxie.py"
 
 MUTATIONS = [
     # ---- the allowlist itself: the safety property this feature exists for ----
@@ -98,6 +104,32 @@ MUTATIONS = [
     ("M14 the card is decoded as if every vision event were the QR one", R,
      "        card = cards_seam.decode_event(name, input_vars)",
      "        card = cards_seam.decode_event(\"eb-qr-event\", input_vars)"),
+
+    # ---- the CLIENT half (T10): the SIL robot's own end of the round trip ----
+    # M1-M14 all mutate the SERVER. A SIL test could pass every one of them and still be
+    # reading the runtime's own publish record rather than the robot's state, so these
+    # five break the ROBOT instead. A row here that leaves the suite green means the SIL
+    # test is not on the wire.
+    ("M15 the SIL robot stops consuming response_actions — back to reading only text", V,
+     "        self._on_actions(payload)",
+     "        _ = payload  # self._on_actions(payload)"),
+    ("M16 a launch is recorded without the module id — WHICH activity is lost", V,
+     "            self.actions[\"module_id\"] = module_id\n"
+     "            self.actions[\"content_id\"] = content_id",
+     "            self.actions[\"module_id\"] = \"\"\n"
+     "            self.actions[\"content_id\"] = content_id"),
+    ("M17 send_face_event drops the marker payload — the card never leaves the robot", V,
+     "        if input_vars is None:\n"
+     "            input_vars = self.value_vars(name, value)",
+     "        if input_vars is None and False:\n"
+     "            input_vars = self.value_vars(name, value)"),
+    ("M18 every marker payload is published under the QR key (an ArUco id reads as a card)",
+     V,
+     "        key = cls.EVENT_VALUE_KEYS.get(name)",
+     "        key = \"$eb_qr_value\" if name in cls.EVENT_VALUE_KEYS else None"),
+    ("M19 --face-value is accepted and then not sent", V,
+     "                self.send_face_event(kind, value=value)",
+     "                self.send_face_event(kind)"),
 ]
 
 
