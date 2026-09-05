@@ -35,7 +35,29 @@
  * Adding a reason is a CONTRACT CHANGE, so it is made in exactly two places and nowhere
  * else: here, and `sim/web/mode.js`'s matching list — where an unknown reason is coerced
  * to `null` and would therefore be misread as a HEALTHY turn. That is why the client half
- * is not optional. */
+ * is not optional.
+ *
+ * THE TWO TURNSTILE REASONS ARE TWO AND NOT ONE FOR THE SAME KIND OF REASON
+ * `gateway_unreachable_or_gated` exists (`./turnstile.js`'s header argues it in full):
+ *
+ *   `turnstile_failed`        — the VISITOR's token is bad. Missing, expired (they are
+ *                               single-use and live 300 s), replayed, or minted by a
+ *                               widget with another action. The page answers this one
+ *                               turn from the stub and the mode does NOT change: a
+ *                               visitor whose token went stale is not a broken
+ *                               deployment. Status 403 rather than 400, because nothing
+ *                               is wrong with what they TYPED.
+ *   `turnstile_misconfigured` — OUR configuration is bad: the secret Cloudflare received
+ *                               is not the widget's, our request was malformed, or the
+ *                               solved hostname is not one this deployment allows. It
+ *                               fails identically for EVERY visitor until someone fixes
+ *                               it, so it degrades the page like `upstream_down` — 503,
+ *                               `Retry-After: 60`, SCRIPTED badge. **This is how the
+ *                               secret gets validated in production without anyone
+ *                               printing it:** deploy, type one sentence, read the
+ *                               reason. Nothing from Cloudflare's reply is forwarded to
+ *                               produce it — no `error-codes`, no hostname, no timestamp.
+ */
 export const REASONS = Object.freeze([
   "rate_limited",
   "at_capacity",
@@ -50,6 +72,8 @@ export const REASONS = Object.freeze([
   "bad_ticket",
   "blocked",
   "forbidden_origin",
+  "turnstile_failed",
+  "turnstile_misconfigured",
 ]);
 
 /** Exactly the keys a response body may contain. The allowlist IS the security control. */
@@ -62,6 +86,13 @@ export const PUBLIC_KEYS = Object.freeze([
   "mode",
   "load",
   "limits",
+  // The PUBLIC Turnstile sitekey, or `""` when the bot control is not enforced
+  // (`./env.js::publicTurnstile`, which argues why it is published here rather than
+  // written into the HTML). It is on the ENVELOPE and not inside `limits` because
+  // `limits` is `PUBLIC_LIMIT_KEYS` — a closed set of CAPS the browser must obey — and a
+  // sitekey is not a cap. It rides every response for the same reason `mode` does: the
+  // page must be able to learn it from the probe it already makes.
+  "turnstile",
   "messages",
   "speech",
   "context",
@@ -87,6 +118,12 @@ export const STATUS_FOR = Object.freeze({
   // nothing (§4.1). The client answers from the scripted repertoire.
   blocked: 200,
   forbidden_origin: 403,
+  // 403, not 400: a refused bot check is not a complaint about the visitor's SENTENCE,
+  // and `mode.js` must not treat it as an input error the page should explain as one.
+  turnstile_failed: 403,
+  // 503 with the same shape as `upstream_down`: a wrong secret refuses every visitor
+  // identically, so the honest thing is a degraded page rather than a per-turn hiccup.
+  turnstile_misconfigured: 503,
 });
 
 /** §4.5's `Retry-After` column. `null` = send no header. `rate_limited` and
@@ -105,6 +142,12 @@ export const RETRY_AFTER_FOR = Object.freeze({
   bad_ticket: null,
   blocked: null,
   forbidden_origin: null,
+  // No header: a fresh token is a click away, and telling a visitor to wait 60 s for one
+  // would be false. The page mints a new one on the next send.
+  turnstile_failed: null,
+  // 60 s, matching `upstream_down`: the fix is a deployment change, so re-asking sooner
+  // than that cannot help and only costs requests.
+  turnstile_misconfigured: 60,
 });
 
 /* ============================================================================ *
@@ -308,6 +351,12 @@ export function envelope(partial) {
     mode: p.mode === "live" ? "live" : "degraded",
     load: normalizeLoad(p.load),
     limits: plainObject(p.limits),
+    // A STRING, never null, and `""` is "not enforced" — the envelope has no nullable
+    // string field anywhere else (`context`, `transcript` and `message` all use `""` for
+    // absent), and one field with a different absence convention is a field a client
+    // reads wrongly. `sim/web/turnstile.js` renders a widget only for a non-empty value,
+    // which makes the two conventions behave identically at the only place it matters.
+    turnstile: typeof p.turnstile === "string" ? p.turnstile : "",
     messages: wireList(p.messages),
     speech: speechList(p.speech),
     context: typeof p.context === "string" ? p.context : "",

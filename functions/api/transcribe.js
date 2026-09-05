@@ -42,7 +42,16 @@
  *     theoretical rather than live is `DEMO_STT_FORMATS`, which defaults to `wav` alone
  *     (deviation (2) below), so today every forwarded request IS duration-capped — and a
  *     fork that widens it re-opens the gap with no warning from the code.**
- *  7. NOTHING IS STORED, LOGGED OR CACHED. §9's P1 line says it for the caching idea and
+ *  7. **AND SINCE 2026-09-05, A BOT CONTROL IN FRONT OF THE MONEY.** Everything above
+ *     bounds the cost of a request that has already been made; none of it can tell a
+ *     child from a `curl` loop, and `_lib/limits.js::checkOrigin` says so in capitals.
+ *     Cloudflare Turnstile (`_lib/turnstile.js`) is step 4d, with its OWN widget
+ *     `action` — `TURNSTILE_ACTIONS.transcribe` — so a token the page minted for a typed
+ *     sentence is not spendable on the ears. It is config-gated (no secret, no
+ *     enforcement), so previews and forks are untouched. **This route is the more
+ *     expensive of the two to leave open**: 60 requests/hour x 15 s is 15 minutes of
+ *     billable STT from one address, with no daily window at all to stop it.
+ *  8. NOTHING IS STORED, LOGGED OR CACHED. §9's P1 line says it for the caching idea and
  *     it is worth repeating here: **do not cache STT — that is a privacy problem, not a
  *     saving.** A child's voice arrives, becomes text, and is forgotten. There is no
  *     store to write to anyway (§2.6).
@@ -56,8 +65,11 @@
  *
  * ZERO UPSTREAM CALLS ON EVERY REFUSAL PATH: unconfigured, no STT model, forbidden origin,
  * rate-limited, over budget, at capacity, over the byte cap, under the byte floor, an
- * unrecognised container, a container this gateway does not take, and a WAV whose own
- * header declares more than `DEMO_MAX_RECORD_MS`. All return before the one `fetch()`.
+ * unrecognised container, a container this gateway does not take, a WAV whose own header
+ * declares more than `DEMO_MAX_RECORD_MS`, and a refused bot check. All return before the
+ * one `fetch()`, and every one of them **REFUNDS THE UNITS `admit()` CHARGED**
+ * (`spentNothing()` below): a refusal that kept them let a flood of 2 KB uploads empty the
+ * shared hourly budget and take the whole demo scripted while spending nothing itself.
  *
  * ===========================================================================
  * TWO DELIBERATE DEVIATIONS FROM §3.2, both documented at their site.
@@ -100,6 +112,7 @@
 import { readConfig, modeOf, publicLimits, upstreamHeaders } from "./_lib/env.js";
 import { respond } from "./_lib/envelope.js";
 import { admit, budgetState, loadOf, noteUpstreamCall, readAudioBody } from "./_lib/limits.js";
+import { tokenFromHeader, verify as verifyTurnstile } from "./_lib/turnstile.js";
 import { wavDurationMs } from "./_lib/wav.js";
 import { joinUrl } from "./_lib/wire.js";
 
@@ -132,24 +145,32 @@ export async function onRequestPost(context) {
   }
 
   try {
+    /** A refusal from inside the admitted section — one that spends NOTHING upstream, and
+     *  therefore hands back the `UNITS.transcribe` (2) `admit()` charged before this `try`
+     *  was entered. Same helper, same argument and same one exception as
+     *  `chat.js::spentNothing`: the step-6 upstream refusal below does NOT use it, because
+     *  that request reached the gateway and its units were really spent. */
+    const spentNothing = (reason, extra) => {
+      slot.refundBudget();
+      return refusal(cfg, reason, { load: slot.load, rateLimit: slot.rateLimit, ...(extra || {}) });
+    };
+
     // ---- 3. The body: raw audio bytes, bounded at both ends. `too_short` is the
     // no-cost floor and is the most common refusal a real demo will serve.
     const body = await readAudioBody(request, cfg);
-    if (!body.ok) return refusal(cfg, body.reason, { load: slot.load, rateLimit: slot.rateLimit });
+    if (!body.ok) return spentNothing(body.reason);
 
     // ---- 4. What IS this? Sniffed from the bytes, with the declared type as a fallback
     // and an allowlist as the answer. An unrecognised body never becomes a paid request.
     const kind = audioKind(body.bytes, request.headers.get("Content-Type"));
-    if (!kind) return refusal(cfg, "bad_request", { load: slot.load, rateLimit: slot.rateLimit });
+    if (!kind) return spentNothing("bad_request");
 
     // ---- 4b. …and is it a container THIS GATEWAY takes? `DEMO_STT_FORMATS` defaults to
     // `wav` alone because that is what was measured (see `_lib/env.js::sttFormats` for the
     // four-container probe of 2026-09-03). This check is free, per-turn, and — crucially —
     // keeps a rejected container from becoming an upstream **500**, which would map to
     // `upstream_down` and degrade the brain and the voice along with the ears.
-    if (!cfg.sttFormats.includes(kind.ext)) {
-      return refusal(cfg, "bad_request", { load: slot.load, rateLimit: slot.rateLimit });
-    }
+    if (!cfg.sttFormats.includes(kind.ext)) return spentNothing("bad_request");
 
     // ---- 4c. …and how LONG does it say it is? **STT IS PRICED BY DURATION, AND THE BYTE
     // CAP IS NOT A DURATION CAP** — point 6 of this file's header says so, and until
@@ -170,10 +191,35 @@ export async function onRequestPost(context) {
     // be subjected to inside a Function.
     if (kind.ext === "wav") {
       const dur = wavDurationMs(body.bytes);
-      if (dur && dur.ms > cfg.maxRecordMs) {
-        return refusal(cfg, "too_long", { load: slot.load, rateLimit: slot.rateLimit });
-      }
+      if (dur && dur.ms > cfg.maxRecordMs) return spentNothing("too_long");
     }
+
+    // ---- 4d. THE BOT CONTROL (`_lib/turnstile.js`), and it is HERE for the same three
+    // reasons `chat.js` step 7 sets out at length — cheapest refusal first, `admit()` in
+    // front of siteverify rather than behind it, and nothing that can be refused locally
+    // buying a network round trip. So it runs after the byte caps, after the container
+    // sniff and after the duration ceiling, and immediately before the only `fetch()` in
+    // this file.
+    //
+    // WHY THIS ROUTE NEEDED IT AT ALL, stated plainly because the first draft of the
+    // Turnstile slice left it out: **the ears are the more expensive half.** STT is priced
+    // by duration, the per-IP windows here are 10/min and 60/hour with NO daily cap, and
+    // `DEMO_MAX_RECORD_MS` is 15 s — so 60 x 15 s = 15 minutes of billable transcription
+    // per hour from ONE address, ~1,440 calls a day, for ever, driven by a `curl` loop
+    // with a 2 KB RIFF header and a forged `Origin`. `_lib/limits.js::checkOrigin` says
+    // in capitals what the origin pin is worth against that (*"curl FORGES THESE HEADERS
+    // TRIVIALLY"*), which is the whole reason this file is what it is.
+    //
+    // THE TOKEN ARRIVES ON A HEADER, NOT IN THE BODY: the body is raw audio bytes and
+    // there is no field to put it in (`_lib/turnstile.js::TOKEN_HEADER` carries the two
+    // rejected alternatives and why).
+    //
+    // AND IT IS A **DIFFERENT ACTION** FROM THE CHAT TURN. `TURNSTILE_ACTIONS.transcribe`
+    // is what check 2 requires back here, so a token the page minted for a typed sentence
+    // is refused by the ears exactly as a stranger's would be — which is the point of
+    // having an action check at all when the two routes do not cost the same.
+    const bot = await verifyTurnstile(cfg, request, tokenFromHeader(request), "transcribe");
+    if (!bot.ok) return spentNothing(bot.reason);
 
     // ---- 5. The one upstream call.
     const upstream = await callGateway(cfg, body.bytes, kind);

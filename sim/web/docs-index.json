@@ -1,5 +1,5 @@
 {
- "generated": "docs-9f9c42663335",
+ "generated": "docs-de0a5b1d4242",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 252641,
+   "bytes": 254322,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -551,7 +551,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 137509,
+   "bytes": 142776,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",

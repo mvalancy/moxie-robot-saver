@@ -61,6 +61,7 @@ export const DEFAULTS = Object.freeze({
   DEMO_SPEECH_TIMEOUT_MS: 12000,
   DEMO_STT_TIMEOUT_MS: 12000,
   DEMO_TICKET_TTL_S: 60,
+  DEMO_TURNSTILE_TIMEOUT_MS: 2000,
 });
 
 /** The two optional Cloudflare Access service-token variables.
@@ -91,6 +92,38 @@ export const REQUIRED_FOR_LIVE = Object.freeze([
   "DEMO_GATEWAY_BASE_URL",
   "DEMO_GATEWAY_API_KEY",
   "DEMO_CHAT_MODEL",
+]);
+
+/** The Cloudflare Turnstile pair, and the third variable that tunes it.
+ *
+ *  WHY IT IS A PAIR AND WHY HALF IS A MISCONFIGURATION. `DEMO_TURNSTILE_SECRET` is what
+ *  the Function verifies a token WITH; `DEMO_TURNSTILE_SITEKEY` is what the BROWSER needs
+ *  to mint one at all (it is a public value — it ships to every visitor either way, which
+ *  is why it is a plain variable and not a secret). Configure only the secret and every
+ *  visitor is refused, because no browser can produce a token; configure only the sitekey
+ *  and the page renders a widget whose token nothing checks — a bot control that is
+ *  theatre. Neither half is a partial control, so `readConfig` reports the missing one in
+ *  `missing` and every route answers `gateway_not_configured` and spends nothing. That is
+ *  exactly the rule `ACCESS_VARS` above already establishes for a service token, applied
+ *  to the same class of mistake.
+ *
+ *  ENFORCEMENT IS OFF WITH NEITHER SET, AND THAT IS THE DEFAULT ON PURPOSE (C5). A branch
+ *  preview has neither, and it MUST NOT have them: Turnstile authorizes a hostname and
+ *  all of its subdomains, and the platform-assigned PREVIEW hostname is not on this
+ *  widget's domain list — so a real challenge on a preview URL could never pass, and a
+ *  preview that enforced would be a preview nobody can use. (Which preview host that is
+ *  is deployment CONFIG and is deliberately not named in this tree, C3; `docs/guides/
+ *  deploy-cloudflare.md` is where the deployment's own names live.) A self-hosted fork
+ *  with no Cloudflare account is the same case with the same answer.
+ *
+ *  `DEMO_TURNSTILE_HOSTS` is deliberately NOT in this pair: it is optional, and its
+ *  default is not a literal but *the hostname of the request being answered*
+ *  (`./turnstile.js::hostAllowed` says why at length — chiefly that a default of "this
+ *  deployment's own host" can never hand production a `localhost` allowance by omission).
+ */
+export const TURNSTILE_VARS = Object.freeze([
+  "DEMO_TURNSTILE_SECRET",
+  "DEMO_TURNSTILE_SITEKEY",
 ]);
 
 /**
@@ -252,6 +285,37 @@ function origins(env) {
 }
 
 /**
+ * `DEMO_TURNSTILE_HOSTS` — comma separated bare hostnames, lower-cased.
+ *
+ * EMPTY MEANS "the hostname of the request being answered", which is the same idiom
+ * `origins()` above uses for `DEMO_ALLOWED_ORIGINS` and is what lets a fork on any domain
+ * work with zero configuration (C3). `./turnstile.js::hostAllowed` is where that default
+ * is applied and where the argument for it lives.
+ *
+ * A value with a scheme or a path is tolerated and reduced to its hostname — `https://
+ * moxie.example.com/sim` becomes `moxie.example.com` — because the thing a person has in
+ * their clipboard when they set this variable is a URL, and silently comparing a full URL
+ * against a bare hostname would fail for every visitor with no reason anyone could read.
+ */
+function turnstileHosts(env) {
+  const raw = str(env, "DEMO_TURNSTILE_HOSTS", "");
+  const out = [];
+  for (const part of String(raw).split(",")) {
+    let v = part.trim().toLowerCase();
+    if (!v) continue;
+    if (v.includes("/")) {
+      try {
+        v = new URL(v.includes("://") ? v : "https://" + v).hostname.toLowerCase();
+      } catch {
+        continue;
+      }
+    }
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+
+/**
  * Read the whole DEMO_* surface off a Pages `context.env`.
  * @param {Record<string,unknown>} env
  * @returns {object} the validated config. `baseUrl`/`apiKey`/`ticketSecret` are
@@ -278,6 +342,10 @@ export function readConfig(env) {
   const accessId = str(e, "DEMO_GATEWAY_ACCESS_CLIENT_ID", "");
   const accessSecret = str(e, "DEMO_GATEWAY_ACCESS_CLIENT_SECRET", "");
 
+  // Cloudflare Turnstile — optional, but BOTH OR NEITHER (see TURNSTILE_VARS).
+  const turnstileSecret = str(e, "DEMO_TURNSTILE_SECRET", "");
+  const turnstileSitekey = str(e, "DEMO_TURNSTILE_SITEKEY", "");
+
   const missing = [];
   if (!baseUrl) missing.push("DEMO_GATEWAY_BASE_URL");
   if (!apiKey) missing.push("DEMO_GATEWAY_API_KEY");
@@ -294,6 +362,23 @@ export function readConfig(env) {
     missing.push("DEMO_GATEWAY_ACCESS_CLIENT_ID");
     notes.push("DEMO_GATEWAY_ACCESS_CLIENT_SECRET is set without its client id: a Cloudflare " +
                "Access service token needs BOTH halves, so the gateway is treated as unconfigured");
+  }
+  // Half a Turnstile pair, for the reasons TURNSTILE_VARS spells out: a secret with no
+  // sitekey refuses every visitor, and a sitekey with no secret is a widget nothing
+  // checks. Named in `missing` so C5's fail-safe path handles it — the deployment reads
+  // as unconfigured and spends nothing — and noted so an operator reading `/api/health`
+  // server-side can see WHICH half is absent without anyone reading the secret.
+  if (turnstileSecret && !turnstileSitekey) {
+    missing.push("DEMO_TURNSTILE_SITEKEY");
+    notes.push("DEMO_TURNSTILE_SECRET is set without DEMO_TURNSTILE_SITEKEY: the browser " +
+               "cannot mint a token without the public sitekey, so every visitor would be " +
+               "refused. The deployment is treated as unconfigured until both are set.");
+  }
+  if (turnstileSitekey && !turnstileSecret) {
+    missing.push("DEMO_TURNSTILE_SECRET");
+    notes.push("DEMO_TURNSTILE_SITEKEY is set without DEMO_TURNSTILE_SECRET: the page would " +
+               "render a widget whose token nothing verifies, which is a bot control in " +
+               "appearance only. The deployment is treated as unconfigured until both are set.");
   }
 
   const cfg = {
@@ -440,7 +525,32 @@ export function readConfig(env) {
     // WHETHER a service token is in play, never what it is (§4.2). A route needs this to
     // decide whether to add the two headers; nothing else may know.
     accessToken: !!(accessId && accessSecret),
+    // ---- Cloudflare Turnstile (`./turnstile.js`).
+    //
+    // `turnstileSitekey` is a PUBLIC value and is enumerable on purpose: the browser
+    // cannot render a widget without it, so it is published on the same surface the page
+    // already learns `mode` from (`publicTurnstile` below, `/api/health`). The SECRET is
+    // non-enumerable with the API key, further down.
+    //
+    // `turnstileTimeoutMs` — 2 000, the deadline on the one siteverify call. It is sized
+    // against the CONCURRENCY SLOT and not against the visitor's patience: the call
+    // happens with a slot held, so a hung endpoint would otherwise keep that slot, and
+    // everyone in the FIFO behind it, waiting for `DEMO_CHAT_TIMEOUT_MS` (20 000). Two
+    // seconds is generous for a Cloudflare edge endpoint, and a slow answer is treated as
+    // no answer — which fails OPEN (`./turnstile.js`'s header says why). Clamped
+    // 100..10 000 so no configuration can let a check that is explicitly best-effort
+    // out-wait the route it guards, nor switch it off by stealth with a deadline nothing
+    // can meet.
+    turnstileSitekey,
+    turnstileHosts: turnstileHosts(e),
+    turnstileTimeoutMs: int(e, "DEMO_TURNSTILE_TIMEOUT_MS", 100, 10000, notes),
   };
+
+  // WHETHER the bot control is enforced, never the secret (§4.2). Both halves, or it is
+  // off — see TURNSTILE_VARS. `configured` is deliberately NOT part of this: enforcement
+  // is a property of the Turnstile pair alone, so `/api/health` on a deployment with a
+  // Turnstile pair and no gateway still tells the browser the sitekey it would need.
+  cfg.turnstile = !!(turnstileSecret && turnstileSitekey);
 
   // Voice and ears are "configured at all" (§3.2), which means the gateway itself is
   // configured too: a TTS model with no gateway to call is not a voice.
@@ -461,6 +571,13 @@ export function readConfig(env) {
     // The derivation itself is P0-b's functions/api/_lib/hmac.js (HKDF); this only
     // carries the configured material.
     ["ticketSecret", str(e, "DEMO_TICKET_SECRET", "")],
+    // The Turnstile widget's SECRET. Non-enumerable for exactly the same reason as the
+    // gateway key: `JSON.stringify(cfg)` is the shape of every accidental leak, and this
+    // value must never be in one. It appears in ONE place — the form body of the single
+    // `fetch` in `./turnstile.js` — and nowhere else: not in a response, not in a header,
+    // not in a note, not in an error string. `sim/test_turnstile.mjs` asserts both halves
+    // (invisible to JSON, absent from every response on every path).
+    ["turnstileSecret", turnstileSecret],
   ]) {
     Object.defineProperty(cfg, name, { value, enumerable: false, writable: false, configurable: false });
   }
@@ -502,6 +619,32 @@ export function upstreamHeaders(cfg, contentType) {
     h["CF-Access-Client-Secret"] = cfg.accessClientSecret;
   }
   return h;
+}
+
+/**
+ * The Turnstile SITEKEY the browser needs, or `""` when the control is not enforced.
+ *
+ * ============================================================================
+ * WHY THE SITEKEY IS PUBLISHED BY THE SERVER AND NOT WRITTEN INTO THE HTML.
+ *
+ * A sitekey is a public value: it ships to every visitor in the widget markup either way,
+ * and Cloudflare's own docs treat it as such. So this is not about secrecy at all — it is
+ * about C3, *nothing hard-coded to our gateway or our domain.* A sitekey in
+ * `sim/web/sim.html` would be **this deployment's** sitekey in a **public repo**, which
+ * means every fork and every branch preview would render a widget bound to a domain list
+ * they are not on, mint tokens that can never verify, and refuse their own visitors — and
+ * the only fix would be editing shipped HTML. Publishing it on the surface the page
+ * already reads (`/api/health`, via `./envelope.js`'s `turnstile` field) means a fork sets
+ * one variable, a preview sets none and the widget simply never appears, and the page's
+ * behaviour follows the deployment instead of the checkout.
+ *
+ * It returns `""` — not the sitekey — whenever enforcement is off, so the browser cannot
+ * render a widget the server is not going to check. That is the same asymmetry
+ * `publicLimits` has: the page is told a thing only when the page has to act on it.
+ * ============================================================================
+ */
+export function publicTurnstile(cfg) {
+  return cfg && cfg.turnstile ? String(cfg.turnstileSitekey || "") : "";
 }
 
 /** The caps the page may know, and nothing else (§4.2 / PUBLIC_LIMIT_KEYS). */
