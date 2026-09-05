@@ -584,26 +584,72 @@ class VirtualMoxie:
     # wire: that IS the protocol-faithful shape.
     FACE_EVENTS = {"found": "eb-found-face", "lost": "eb-lost-target"}
 
-    def send_face_event(self, kind: str, input_vars: dict | None = None) -> str:
-        """Publish one vision event. `kind` is `found`/`lost` or a raw `eb-*` name."""
+    #: The three vision events that carry a **semantic payload** as well as a name, and
+    #: the `input_vars` key each one rides in on: a scanned QR string, an ArUco fiducial
+    #: id, a Moxie book cover (docs/architecture/vision.md:73-74 and the table in
+    #: `moxie_sdk/presence.py`:16-19). The `$`-prefixed spelling is the one
+    #: RemoteModuleAPI's catalog documents.
+    #:
+    #: A **second copy** of `presence.VALUE_KEYS` on purpose. This file is the ROBOT half
+    #: of the pair and must not import the server SDK — the same reason `_play_tts`
+    #: decodes the base64 `AudioBuffer` off the wire instead of calling the SDK's codec.
+    #: A robot that borrowed the server's constants could not detect the server changing
+    #: them, which is exactly what a client-side test is for.
+    EVENT_VALUE_KEYS = {"eb-qr-event": "$eb_qr_value",
+                        "eb-dr-event": "$eb_dr_value",
+                        "eb-br-event": "$eb_br_value"}
+
+    @classmethod
+    def value_vars(cls, name: str, value) -> dict | None:
+        """`input_vars` carrying `value` for a marker event — or None.
+
+        None (rather than `{}`) for an event with no value slot and for an empty value, so
+        `send_face_event` keeps publishing the bare envelope a plain `eb-found-face` uses
+        instead of an empty `input_vars` no real robot would send.
+        """
+        key = cls.EVENT_VALUE_KEYS.get(name)
+        if not key or value in (None, ""):
+            return None
+        return {key: str(value)}
+
+    def send_face_event(self, kind: str, input_vars: dict | None = None,
+                        value=None) -> str:
+        """Publish one vision event. `kind` is `found`/`lost` or a raw `eb-*` name.
+
+        `value` is the marker payload — the string the camera READ — and is routed to the
+        right `input_vars` key for the event by `value_vars`. That is the whole difference
+        between "the robot saw a QR code" and "the robot saw *this* QR code", and it is
+        what a launch card travels in. An explicit `input_vars` wins, so a test can still
+        hand over a hand-built envelope (`test_presence_sil.py` does).
+        """
         name = self.FACE_EVENTS.get(kind, kind)
         event_id = str(uuid.uuid4())
         payload = {"event_id": event_id, "command": "prompt", "backend": "router",
                    "speech": name, "module_name": "virtual-moxie"}
+        if input_vars is None:
+            input_vars = self.value_vars(name, value)
         if input_vars:
             payload["input_vars"] = input_vars
         self.client.publish(self.t_event("remote-chat"), json.dumps(payload))
-        self.log(f"→ events/remote-chat vision event: {name!r}")
+        self.log(f"→ events/remote-chat vision event: {name!r}"
+                 + (f" carrying {value!r}" if value not in (None, "") else ""))
         return event_id
 
-    def run_face_events(self, kinds, gap: float = 0.0) -> bool:
+    def run_face_events(self, kinds, gap: float = 0.0, value=None) -> bool:
         """Announce, then play a list of vision events, asserting the server answers each.
 
         A server that has nothing to say answers `NOREPLY_ACK` (ResultCode 6, "acknowledge
         only, no spoken line") — the contract still requires *a* response, because "the
         remote module must produce some response for this input to continue the
         interaction". A hello is a `SUCCESS` with real `output.text`. Both count as
-        answered; `self.face_replies` records which was which."""
+        answered; `self.face_replies` records which was which.
+
+        `value` is the marker payload every event in `kinds` carries (`--face-value`) —
+        a scanned QR string for `eb-qr-event`, an ArUco id for `eb-dr-event`, a book cover
+        for `eb-br-event`. Each row of `face_replies` also records the **actions this
+        robot applied** during that event's turn, which is how a card scan shows up as
+        something the robot RECEIVED rather than only as something the server logged.
+        """
         self.face_replies = []
         self.client.connect(self.host, self.port, 30)
         self.client.loop_start()
@@ -616,15 +662,19 @@ class VirtualMoxie:
                 if i and gap:
                     time.sleep(gap)
                 self._reset_turn()
-                self.send_face_event(kind)
+                before = len(self.actions["applied"])
+                self.send_face_event(kind, value=value)
                 if not self.got_reply.wait(self.timeout):
                     self.errors.append(f"{kind!r}: no response to the vision event")
                     continue
                 resp = self.reply_payload or {}
                 text = (resp.get("output") or {}).get("text", "")
+                applied = [dict(a) for a in self.actions["applied"][before:]]
                 self.face_replies.append({"kind": kind, "result": resp.get("result"),
-                                          "text": text, "event_id": resp.get("event_id")})
-                self.log(f"   {kind}: result={resp.get('result')} text={text[:60]!r}")
+                                          "text": text, "event_id": resp.get("event_id"),
+                                          "actions": applied})
+                self.log(f"   {kind}: result={resp.get('result')} text={text[:60]!r}"
+                         + (f" actions={applied}" if applied else ""))
             return not self.errors
         finally:
             self.client.loop_stop()
@@ -995,6 +1045,11 @@ def main():
                          "subscribed perception event (docs/architecture/vision.md).")
     ap.add_argument("--face-gap", type=float, default=0.0,
                     help="with --face-event: seconds to wait between events")
+    ap.add_argument("--face-value", default=None,
+                    help="with --face-event: the payload a MARKER event carries, sent as "
+                         "input_vars['$eb_qr_value'] / ['$eb_dr_value'] / ['$eb_br_value'] "
+                         "for eb-qr-event / eb-dr-event / eb-br-event. A 🎴 launch card is "
+                         "a QR value: --face-event eb-qr-event --face-value 'GO<launch:DM>'")
     ap.add_argument("--telehealth", action="store_true",
                     help="🎭 drive the puppet/telehealth round-trip instead of the smoke "
                          "test: an operator enables Be Moxie over the supervisor's status "
@@ -1034,13 +1089,16 @@ def main():
         kinds = [k.strip() for k in args.face_event.split(",") if k.strip()]
         ok = False
         try:
-            ok = vm.run_face_events(kinds, gap=args.face_gap)
+            ok = vm.run_face_events(kinds, gap=args.face_gap, value=args.face_value)
         except Exception as e:
             vm.errors.append(f"exception: {e}")
         for rep in vm.face_replies:
             spoke = f" → {rep['text']!r}" if rep["text"] else " (silent)"
+            did = "".join(f" 🎬 {a['action']}"
+                          + (f" {a['module_id']}" if a["module_id"] else "")
+                          for a in rep.get("actions") or [])
             print(f"{'✅' if rep['result'] else '❌'} {rep['kind']}: "
-                  f"{rep['result']}{spoke}")
+                  f"{rep['result']}{spoke}{did}")
         for e in vm.errors:
             print("   -", e)
         sys.exit(0 if ok else 1)
