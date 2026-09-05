@@ -1,5 +1,5 @@
 {
- "generated": "docs-0a85f60be996",
+ "generated": "docs-38d4aef2df8a",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -128,7 +128,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 162879,
+   "bytes": 164678,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -757,7 +757,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 35421,
+   "bytes": 38721,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
@@ -902,7 +902,7 @@
    "path": "architecture/vision.md",
    "title": "13 — Camera & Vision: can we pipe Moxie's camera into a local CV/VLM stack?",
    "section": "architecture",
-   "bytes": 27071,
+   "bytes": 27250,
    "mermaid": 0,
    "headings": [
     "0. TL;DR / Verdict",

@@ -148,9 +148,24 @@ browser at all and carry the hermetic suite CI actually runs.
   `content_id`, an `exit`, no stray action on an ordinary answer, and the same through
   `WebhookApp` (whose bogus action type is dropped, not forwarded). Hermetic and instant:
   `LLMApp`'s `client=` seam takes a canned completion, so there is no broker, no network
-  and no `openai` import. Its docstring records what it deliberately does **not** claim —
-  no SIM client *acts* on an action yet (neither `virtual_moxie.py` nor `sim/web/bridge.js`
-  reads `response_actions`), which is a live DoD criterion-4 gap.
+  and no `openai` import. It is the **delivery** half only: that a SIM client then *acts* on
+  what it was handed is asserted in `test_actions_reach_the_robot.py` (SIL, against
+  `VirtualMoxie.action_stats()`) and `sim/test_bridge.mjs` (browser, against
+  `bridge.js::actionStats()`) — both clients have read `response_actions` since PR #52 /
+  PR #116, closing the DoD criterion-4 gap this entry used to describe.
+- **`test_launch_cards_sil.py`** — 🎴 T10, the launch-card round trip on a wire. The other two
+  card suites are units: `test_launch_cards.py` is the decoder, `test_launch_cards_runtime.py`
+  is `_on_vision_turn` read back off a `FakeClient`. Here a real `sim/virtual_moxie.py`
+  publishes an `eb-qr-event` carrying `GO<launch:DM>` through `helpers_runtime.loopback()`
+  and the assertions are on the **robot's own** `action_stats()` — written by
+  `_apply_action`, which only runs because a payload arrived on `commands/remote_chat`. The
+  refusals travel the same wire and are the point: `launch_if_confirmed`, `sleep`, `exit`, an
+  id outside the catalog, a lowercased `go` marker, an over-long value and two smuggling
+  shapes each leave the robot holding **nothing** *and* answer `NOREPLY_ACK` on the scan's own
+  `event_id`, so a refused card is silence rather than a stall. Held in both directions by
+  `sim/tools/launch_card_mutation_check.py`, whose M15–M19 mutate the **client** — 18 of its
+  19 rows redden this file on its own. Honest ceiling in its docstring: no physical Moxie has
+  ever sent us an `eb-qr-event`, and a SIL robot is not a robot.
 - **`test_ci_workflows.py`** — the CI harness, guarded as code. Written after four PRs
   (#43–#46) were merged on checks that had not concluded, leaving `dev` red for hours while
   the PR-side runs — which had failed identically — were believed green. It asserts that
