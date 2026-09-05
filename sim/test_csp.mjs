@@ -43,6 +43,12 @@ import { requireBrowser, serveWeb, pagesHeaders, makeChecks, finish, web } from 
 const LABEL = "CSP + security-headers test";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
 const { fails, ok, eq, count } = makeChecks();
+const deep = (a, b, m) => eq(JSON.stringify(a), JSON.stringify(b), m);
+
+/** Turnstile's widget host. Named ONCE so every assertion below is about the same string,
+ *  and so the near-neighbour trap is visible: the allowance is `challenges.cloudflare.com`
+ *  exactly — a bare `cloudflare.com` is a DIFFERENT host and is still refused (block 9). */
+const TURNSTILE = "https://challenges.cloudflare.com";
 
 const site = await serveWeb({ headers: true });
 const H = pagesHeaders();
@@ -132,23 +138,41 @@ try {
     const csp = H["Content-Security-Policy"] || "";
     ok(/(^|;\s*)script-src\s+'self'/.test(csp),
        `_headers must pin script-src to 'self' (got ${JSON.stringify(csp)})`);
-    ok(/(^|;\s*)connect-src\s+'self'\s*(;|$)/.test(csp),
-       "connect-src stays exactly 'self' — it is what refused the port-8081 fetch");
+    /* `connect-src` IS THE ONE WITH A MEASURED KILL ON THIS SITE — it is what refused the
+     * port-8081 fetch that made the typed turn a dead control, and it is the exfiltration
+     * half of an XSS payload. It used to be asserted as EXACTLY `'self'`. It is now
+     * `'self'` plus ONE named host, because Turnstile's widget talks to its own origin
+     * (`sim/web/_headers`, 2026-09-05); the assertion is written as an exhaustive list
+     * rather than a loosened regex so that widening it again is a diff to this line. */
+    const connectSrc = (csp.split(";").find((d) => d.trim().startsWith("connect-src")) || "").trim();
+    deep(connectSrc.split(/\s+/).slice(1), ["'self'", TURNSTILE],
+       "connect-src is 'self' plus EXACTLY the Turnstile host — nothing else may exfiltrate");
 
-    /* THE ONE OFF-ORIGIN SCRIPT HOST, asserted by name. Cloudflare Pages injects its Web
-     * Analytics beacon into every HTML response and we cannot edit that tag, so the policy
-     * has to allow the host or log a violation on every single page load. `_headers` carries
-     * the full reasoning; this pins it so it cannot be "tidied" away silently. */
+    /* THE OFF-ORIGIN SCRIPT HOSTS, asserted by name and exhaustively. Cloudflare Pages
+     * injects its Web Analytics beacon into every HTML response and we cannot edit that
+     * tag, so the policy has to allow the host or log a violation on every single page
+     * load; Turnstile's `api.js` cannot be self-hosted at all (the challenge is only valid
+     * served from Cloudflare's own host). `_headers` carries the full reasoning for both;
+     * this pins them so neither can be "tidied" away silently and no THIRD can arrive
+     * without editing this line. */
     ok(/(^|;\s*)script-src\s[^;]*\bhttps:\/\/static\.cloudflareinsights\.com\b/.test(csp),
        "script-src allows Cloudflare's injected analytics beacon host");
-    // ...and ONLY that one. Every other scheme-ful source in script-src would be a widening
-    // nobody argued for, and this is where it gets caught.
+    ok(/(^|;\s*)script-src\s[^;]*\bhttps:\/\/challenges\.cloudflare\.com\b/.test(csp),
+       "script-src allows Turnstile's widget host (without it the widget never renders)");
     const scriptSrc = (csp.split(";").find((d) => d.trim().startsWith("script-src")) || "").trim();
     const hosts = scriptSrc.split(/\s+/).slice(1).filter((t) => /:/.test(t) && !/^'/.test(t));
-    eq(JSON.stringify(hosts), JSON.stringify(["https://static.cloudflareinsights.com"]),
-       "…and script-src names EXACTLY that one off-origin host, no other");
-    ok(!/cloudflareinsights/.test(csp.split(";").find((d) => d.trim().startsWith("connect-src")) || ""),
-       "connect-src does NOT name it: the beacon reports to a SAME-ORIGIN /cdn-cgi/rum (see _headers)");
+    eq(JSON.stringify(hosts), JSON.stringify(["https://static.cloudflareinsights.com", TURNSTILE]),
+       "…and script-src names EXACTLY those two off-origin hosts, no other");
+    ok(!/cloudflareinsights/.test(connectSrc),
+       "connect-src does NOT name the beacon: it reports to a SAME-ORIGIN /cdn-cgi/rum (see _headers)");
+    /* `frame-src` WAS `'none'` AND IS NOW EXACTLY ONE HOST. Turnstile draws its challenge
+     * in an iframe, and with `'none'` the script loads, reports nothing a page can see and
+     * simply never produces a token — the silent failure this assertion exists to notice
+     * if the host is ever removed, and the widening this assertion bounds if another is
+     * ever added. No page on this site frames anything else. */
+    const frameSrc = (csp.split(";").find((d) => d.trim().startsWith("frame-src")) || "").trim();
+    deep(frameSrc.split(/\s+/).slice(1), [TURNSTILE],
+       "frame-src is EXACTLY the Turnstile host — nothing else on this site may be framed");
     for (const d of ["object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'none'"])
       ok(csp.includes(d), `_headers must carry ${d}`);
     const hsts = H["Strict-Transport-Security"] || "";
@@ -564,6 +588,107 @@ try {
       eq(v2.length, 0, `index.html: ZERO securitypolicyviolation events — ${show(v2)}`);
       await ip.close();
     }
+  }
+
+  /* =====================================================================
+   * 9. THE TURNSTILE HOST — allowed in three directives, and by name ONLY.
+   *
+   * The same shape as block 4's beacon proof, for the same reason: an allowance nobody
+   * checks is how a policy quietly becomes a wildcard. Three things are proven here and
+   * each maps to one way the widget fails SILENTLY if the policy is wrong:
+   *
+   *   · a SCRIPT from `challenges.cloudflare.com` runs — without it `api.js` never loads,
+   *     no widget renders, and every send answers "try again";
+   *   · an IFRAME from that host is allowed — `frame-src 'none'` let the script load and
+   *     then produced no token at all, which is the nastiest of the three;
+   *   · a script and an iframe from the BARE `cloudflare.com`, one label away, are still
+   *     REFUSED. The allowance is host-exact.
+   *
+   * Answered at the browser, so this suite still touches no network: a CSP refusal happens
+   * BEFORE the request is issued, so a load that reaches the interceptor at all is a load
+   * the policy permitted.
+   *
+   * It ALSO asserts the `_headers` cache entry for `turnstile.js`, which is a different
+   * class of trap in the same file: the app-script no-cache list is the whole mechanism,
+   * and a client script missing from it is served with Pages' default caching — so a
+   * redeploy can leave a visitor running yesterday's token minter against today's route.
+   * =================================================================== */
+  {
+    // The no-cache entry, read off the file we ship (not a restated copy of it).
+    ok(/^\/turnstile\.js\n\s+Cache-Control:\s*no-cache$/m.test(readFileSync(join(web, "_headers"), "utf8")),
+       "_headers gives turnstile.js its own no-cache entry — the app-script list IS the mechanism");
+
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1440, height: 900 });
+    const errs = [];
+    page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
+    page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
+    await page.setRequestInterception(true);
+    page.on("request", (r) => {
+      if (r.isInterceptResolutionHandled()) return;
+      const u = r.url();
+      if (/^https:\/\/challenges\.cloudflare\.com\//.test(u))
+        return r.respond({ status: 200, contentType: "text/javascript", headers: CORS,
+                           body: "window.__turnstileHost = 'ran';" });
+      if (/^https:\/\/cloudflare\.com\//.test(u))
+        return r.respond({ status: 200, contentType: "text/javascript", headers: CORS,
+                           body: "window.__bareCloudflare = 'ran';" });
+      return r.continue();
+    });
+    await page.goto(`${HOST}/sim.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const injectScript = (src) => page.evaluate((u) => new Promise((resolve) => {
+      const s2 = document.createElement("script");
+      s2.src = u;
+      s2.onload = () => resolve("loaded");
+      s2.onerror = () => resolve("refused");
+      document.head.appendChild(s2);
+      setTimeout(() => resolve("timeout"), 3000);
+    }), src);
+
+    eq(await injectScript("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"), "loaded",
+       "Turnstile's widget script LOADS — script-src allows its host");
+    eq(await page.evaluate(() => window.__turnstileHost || null), "ran", "…and actually executed");
+
+    eq(await injectScript("https://cloudflare.com/turnstile/v0/api.js"), "refused",
+       "…while the BARE cloudflare.com is still refused: the allowance is host-exact");
+    eq(await page.evaluate(() => window.__bareCloudflare || null), null, "…and never ran");
+
+    /* The iframe half. `frame-src` refusals do not fire `onerror` on an `<iframe>` at all,
+     * so the witness is the `securitypolicyviolation` EVENT — which carries the directive
+     * and the blocked URI rather than a sentence to regex. The listener is installed here
+     * rather than relying on `load()`'s, because this block builds its own page. */
+    const framed = await page.evaluate((allowed, refused) => new Promise((resolve) => {
+      const seen = [];
+      document.addEventListener("securitypolicyviolation", (e) => {
+        seen.push({ d: e.effectiveDirective || e.violatedDirective, u: e.blockedURI });
+      });
+      for (const u of [allowed, refused]) {
+        const f = document.createElement("iframe");
+        f.src = u;
+        f.style.display = "none";
+        document.body.appendChild(f);
+      }
+      setTimeout(() => resolve(seen), 1200);
+    }), "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/", "https://cloudflare.com/frame");
+    ok(!framed.some((v) => /frame/.test(v.d || "") && /challenges\.cloudflare\.com/.test(v.u || "")),
+       `frame-src PERMITS the Turnstile iframe — with 'none' the widget mints no token at all (${JSON.stringify(framed)})`);
+    ok(framed.some((v) => /frame/.test(v.d || "") && /^https:\/\/cloudflare\.com/.test(v.u || "")),
+       `…while an iframe from the bare cloudflare.com is REFUSED (${JSON.stringify(framed)})`);
+
+    /* And `connect-src`'s one host, both directions. The widened directive must permit the
+     * widget's own origin and must still refuse everybody else — the port-8081 kill this
+     * directive is famous for on this site has to survive the widening. */
+    eq(await page.evaluate(() =>
+         fetch("https://challenges.cloudflare.com/turnstile/v0/ping", { mode: "cors" })
+           .then(() => "sent").catch(() => "blocked")), "sent",
+       "connect-src PERMITS the widget's own origin");
+    eq(await page.evaluate(() =>
+         fetch("https://exfil.invalid.test/x", { mode: "cors" })
+           .then(() => "sent").catch(() => "blocked")), "blocked",
+       "…and connect-src keeps its teeth for every other host");
+    await page.close();
   }
 
 } catch (e) {

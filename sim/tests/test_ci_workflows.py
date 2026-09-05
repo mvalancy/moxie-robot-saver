@@ -191,7 +191,7 @@ def test_the_early_hermetic_step_installs_protobuf(fast):
 #:
 #: `test_mode.mjs` is the mode machine and the honesty guard behind the badge (spec
 #: docs/architecture/backlog/live-sim-demo.md §6.3/§7); `test_env_hosted.mjs` is the
-#: rendered page in every one of those modes. The six live-turn tests are the guards on
+#: rendered page in every one of those modes. The seven live-turn tests are the guards on
 #: the THREE routes that can spend money: `test_demo_proxy.mjs` (the caps, the origin pin,
 #: and the sweep proving the gateway key and base URL never appear in ANY response, on any
 #: path), `test_demo_tickets.mjs` (forgery, expiry, replay, tampering, the constant-time
@@ -200,11 +200,17 @@ def test_the_early_hermetic_step_installs_protobuf(fast):
 #: NO upstream call is made at all — the per-IP windows, the timeout, an unset
 #: `DEMO_STT_MODEL` spending nothing, and the 15-second recording cap proven to stop a
 #: FAKE recorder, because the byte cap is not a duration cap for a compressed container),
+#: `test_turnstile.mjs` (the BOT CONTROL: the three mandatory siteverify checks each
+#: refusing on their own, the deliberate fail-closed-on-a-verdict / fail-open-on-a-
+#: transport-failure split, the concurrency slot proven to come back on the new refusal
+#: path — a leaked slot fails CLOSED — and zero siteverify calls behind every cheaper
+#: refusal, so `admit()` cannot be turned into a request amplifier),
 #: `test_cloud_transport.mjs` (the voice-first ordering, on an injected clock) and
 #: `test_fallback_coverage.mjs` (a degraded page has a real voice for the lines it plays).
 #:
 #: Every one is hermetic — the Functions are imported as ES modules with a plain object as
-#: `context.env` and a stubbed `fetch`; no Cloudflare account and NO GATEWAY KEY is needed
+#: `context.env` and a stubbed `fetch`; no Cloudflare account, NO GATEWAY KEY and no
+#: Turnstile widget or secret is needed
 #: by any of them, and none may ever be. `test_demo_ears.mjs` drives `sim/web/mic.js` with
 #: an injected clock and a fake recorder, so it opens NO MICROPHONE either.
 #: `test_env_hosted.mjs` skips cleanly with no browser. So there is no excuse for any of
@@ -217,6 +223,7 @@ STATIC_SITE_NODE_TESTS = (
     "sim/test_demo_tickets.mjs",
     "sim/test_wav_decode.mjs",
     "sim/test_demo_ears.mjs",
+    "sim/test_turnstile.mjs",
     "sim/test_cloud_transport.mjs",
     "sim/test_fallback_coverage.mjs",
 )
@@ -230,6 +237,7 @@ EARLY_NODE_TESTS = (
     "sim/test_demo_tickets.mjs",
     "sim/test_wav_decode.mjs",
     "sim/test_demo_ears.mjs",
+    "sim/test_turnstile.mjs",
     "sim/test_cloud_transport.mjs",
 )
 

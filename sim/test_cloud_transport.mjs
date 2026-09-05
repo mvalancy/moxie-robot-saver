@@ -859,7 +859,172 @@ async function say(text, ms) {
 }
 
 /* =========================================================================== *
- * 7. Nothing in the client holds a secret, a key or a hostname
+ * 7. THE BOT-CONTROL SEAM — one fresh token per send, and never a dead Send
+ * =========================================================================== *
+ * `sim/web/turnstile.js` owns the widget; this file owns the send path; the join between
+ * them is ONE line in `liveTurn`. What is proven here is only the join, in all three of
+ * its states, because that is the part `sim/test_turnstile.mjs` cannot see:
+ *
+ *   · the module is ABSENT — every page that does not load `turnstile.js`, which is the
+ *     state this whole test file has always run in. The turn must go out exactly as it
+ *     did before the bot control existed: the control lives on the SERVER, and a page
+ *     with no minter is a page the server is not asking one of.
+ *   · the module returns a TOKEN — it must land in the body under Cloudflare's own field
+ *     name, and a SECOND turn must carry a SECOND token (they are single-use).
+ *   · the module returns NULL — enforcement is on and no token could be got. NO REQUEST
+ *     MAY BE MADE, and the page must still say something. A silent dead Send is the exact
+ *     failure this transport was written to fix (`#speech-btn` into a missing sidecar),
+ *     and re-introducing it through the bot control would be the same bug wearing a hat.
+ * =========================================================================== */
+{
+  /** A fake `window.moxieTurnstile`, installed after boot so the real module is not
+   *  needed. `hand` is what `getToken()` resolves to; `calls` counts the asks. */
+  function minter(hand) {
+    const calls = { n: 0 };
+    globalThis.window.moxieTurnstile = {
+      getToken: function () {
+        calls.n += 1;
+        return Promise.resolve(typeof hand === "function" ? hand(calls.n) : hand);
+      },
+    };
+    return calls;
+  }
+
+  /* ---- ABSENT: byte-identical to the behaviour before the control existed --- */
+  {
+    const world = await boot({ answer: (path) => path === "/api/health"
+      ? { status: 200, json: envelope() }
+      : { status: 200, json: envelope({ messages: [chatMsg("Hi!", "e1")], speech: [] }) } });
+    ok(!globalThis.window.moxieTurnstile, "no turnstile.js loaded: the module really is absent");
+    await say("hello");
+    const chatPost = world.spy.fetches.find((f) => f[0] === "/api/chat");
+    ok(!!chatPost, "the turn still reaches /api/chat with no minter present");
+    deep(Object.keys(chatPost[1]).sort(), ["context", "text"],
+         "…and the body is EXACTLY what it was before the bot control: no empty token field");
+    eq(globalThis.window.moxieBridge.transportStats().chatOk, 1, "…and the turn succeeded");
+    eq(globalThis.window.moxieBridge.transportStats().botUnavailable, 0, "…with nothing refused locally");
+  }
+
+  /* ---- A TOKEN: it lands where the route reads it, and it is FRESH each send - */
+  {
+    const world = await boot({ answer: (path) => path === "/api/health"
+      ? { status: 200, json: envelope() }
+      : { status: 200, json: envelope({ messages: [chatMsg("Hi!", "e1")], speech: [] }) } });
+    const calls = minter((n) => "tok-" + n);
+    await say("hello");
+    await say("hello again");
+    const posts = world.spy.fetches.filter((f) => f[0] === "/api/chat");
+    eq(posts.length, 2, "two turns, two posts");
+    eq(calls.n, 2, "…and the minter was asked once per turn, not once per page");
+    eq(posts[0][1]["cf-turnstile-response"], "tok-1",
+       "the token rides Cloudflare's own field name, which is what the route reads");
+    eq(posts[1][1]["cf-turnstile-response"], "tok-2",
+       "…and the SECOND turn carries a SECOND token: they are single-use");
+    eq(globalThis.window.moxieBridge.transportStats().botTokens, 2, "both sends are recorded");
+    // The rest of the body is untouched — the token is additive, not a rewrite.
+    deep(Object.keys(posts[0][1]).sort(), ["cf-turnstile-response", "context", "text"],
+         "…and nothing else about the request changed");
+  }
+
+  /* ---- NULL: no request, and Moxie says one honest sentence ---------------- */
+  {
+    const world = await boot({ answer: (path) => path === "/api/health"
+      ? { status: 200, json: envelope() }
+      : { status: 200, json: envelope({ messages: [chatMsg("Hi!", "e1")], speech: [] }) } });
+    minter(null);
+    await say("hello");
+    const posts = world.spy.fetches.filter((f) => f[0] === "/api/chat");
+    eq(posts.length, 0, "a token that could not be minted makes NO /api/chat request at all");
+    const st = globalThis.window.moxieBridge.transportStats();
+    eq(st.botUnavailable, 1, "…it is recorded as a local refusal");
+    eq(st.chatOk, 0, "…nothing succeeded");
+    eq(st.chatErrors, 0, "…and it is NOT reported as a transport error: nothing was sent");
+
+    /* THE PART THAT MATTERS: the page did not go quiet. The child's line is in the
+     * transcript AND so is Moxie's — through the same `route()` a real reply takes. */
+    const rows = world.spy.transcript.join(" | ");
+    ok(/hello/.test(rows), "the child's line is still echoed to the transcript");
+    ok(/visitor check/i.test(rows),
+       `…and Moxie ANSWERS with an honest sentence rather than nothing (${JSON.stringify(rows.slice(0, 160))})`);
+    ok(/try/i.test((world.els["chat-status"] || {}).textContent || ""),
+       "…with the status line under the box telling the visitor what to do");
+    ok(world.spy.speak.length > 0 || world.spy.setSpeech.length > 0,
+       "…and she says it out loud, like any other line");
+  }
+
+  /* ---- a minter that THROWS is the null case, not an exception ------------- */
+  {
+    const world = await boot({ answer: (path) => path === "/api/health"
+      ? { status: 200, json: envelope() }
+      : { status: 200, json: envelope({ messages: [chatMsg("Hi!", "e1")], speech: [] }) } });
+    globalThis.window.moxieTurnstile = { getToken: function () { throw new Error("boom"); } };
+    await say("hello");
+    eq(world.spy.fetches.filter((f) => f[0] === "/api/chat").length, 0,
+       "a minter that throws sends nothing…");
+    eq(globalThis.window.moxieBridge.transportStats().botUnavailable, 1,
+       "…and is handled as the same honest refusal, not as an unhandled rejection");
+    delete globalThis.window.moxieTurnstile;
+  }
+
+  /* ---- and a REFUSAL from the server still answers, as every refusal must --- */
+  {
+    /* `refusing` is flipped mid-block, so the SAME page sees a refusal and then a good
+     * turn. It has to live on the opts object `boot()` was handed — `makeWorld` returns
+     * the spy, not its options, so assigning to the returned object would set a field the
+     * fetch stub never reads (and the assertion below would then be measuring the refusal
+     * a second time while appearing to measure a recovery). */
+    let refusing = true;
+    const world = await boot({ answer: (path) => {
+      if (path === "/api/health") return { status: 200, json: envelope() };
+      if (refusing) {
+        return { status: 403, json: envelope({ ok: false, degraded: true,
+                                               reason: "turnstile_failed", mode: "degraded" }) };
+      }
+      return { status: 200, json: envelope({ messages: [chatMsg("Hi!", "e2")], speech: [] }) };
+    } });
+    minter("tok-x");
+    await say("hello");
+    const st = globalThis.window.moxieBridge.transportStats();
+    eq(st.chatRefused, 1, "a server-side turnstile_failed is a refusal like any other…");
+    ok(st.fallbacks >= 1, "…answered from stub.js for this one turn");
+    // §6.3: the mode STAYS live — a stale token is not a broken deployment.
+    eq(globalThis.window.moxieMode.state(), "live", "…and the page STAYS live");
+    eq(globalThis.window.moxieMode.badge(), "HOSTED DEMO · LIVE", "…with the LIVE badge intact");
+    ok(/real person/i.test(globalThis.window.moxieMode.message()),
+       `…and copy that tells the visitor to try again (${JSON.stringify(globalThis.window.moxieMode.message())})`);
+    ok(world.spy.transcript.join(" ").length > 0, "…and the transcript is not empty");
+
+    /* AND THE NOTE IS CLEARED BY THE TURN THAT SUCCEEDS, not by the next 30 s poll.
+     * `turnstile_failed` carries no suppression window — a fresh token is a tap away — so
+     * nothing else would clear it, and the copy would sit under a working box telling the
+     * visitor to try again for up to half a minute after they already had. */
+    refusing = false;
+    await say("hello once more");
+    eq(globalThis.window.moxieMode.reason(), null,
+       "a successful turn clears the bot-check note immediately");
+    eq(globalThis.window.moxieMode.message(), "",
+       "…so the copy under the box goes back to saying nothing");
+  }
+
+  /* ---- while turnstile_misconfigured degrades the whole page ---------------- */
+  {
+    await boot({ answer: (path) => path === "/api/health"
+      ? { status: 200, json: envelope() }
+      : { status: 503, json: envelope({ ok: false, degraded: true, reason: "turnstile_misconfigured",
+                                        mode: "degraded", retry_after_s: 60 }) } });
+    minter("tok-y");
+    await say("hello");
+    eq(globalThis.window.moxieMode.state(), "degraded",
+       "a MISCONFIGURED control degrades the page — it will refuse every visitor identically");
+    eq(globalThis.window.moxieMode.badge(), "HOSTED DEMO · SCRIPTED", "…with the SCRIPTED badge");
+    ok(/isn’t set up right/i.test(globalThis.window.moxieMode.message()),
+       `…and copy that names the deployment, not the visitor (${JSON.stringify(globalThis.window.moxieMode.message())})`);
+    delete globalThis.window.moxieTurnstile;
+  }
+}
+
+/* =========================================================================== *
+ * 8. Nothing in the client holds a secret, a key or a hostname
  * =========================================================================== */
 {
   ok(!/sk-[A-Za-z0-9_-]{8}/.test(SRC.transport), "cloud-transport.js contains no key-shaped string");

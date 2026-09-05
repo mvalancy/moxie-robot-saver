@@ -1,11 +1,15 @@
 # 🌐 Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears
 
-**State: P0-a + P0-b built (2026-09-02); P1's EARS and P1's FALLBACK VOICE built (2026-09-03).**
+**State: P0-a + P0-b built (2026-09-02); P1's EARS and P1's FALLBACK VOICE built (2026-09-03);
+P1's BOT CONTROL built (2026-09-05).**
 Both P0 tables in §9 are implemented and green; `POST /api/transcribe` + the client recording cap
 ship with them; and all four rows of §6.2 are built — the 9 stub clips, the 8 filler clips, the one
 degraded line and the skipped Piper probe, with `test_fallback_coverage.mjs` extended from 414 to
-717 assertions to hold them. The rest of P1 (exact counters, Turnstile, the TTS cache, a nonce CSP,
-the recovery line §6.3 mentions) and all of P2 are not shipped. This is the file
+717 assertions to hold them. **Turnstile ships as of 2026-09-05** (§4.1's bot control, in
+`functions/api/_lib/turnstile.js` and `sim/web/turnstile.js`) — with one deliberate deviation from
+this document's sketch, recorded at §9's P1 row: a **fresh token per send** rather than *"Turnstile
+before the first paid call of a session, then a short-lived signed session cookie."* The rest of P1
+(exact counters, a nonce CSP, the recovery line §6.3 mentions) and all of P2 are not shipped. This is the file
 [`../orchestration-plan.md`](../orchestration-plan.md):34 points at (`backlog/live-sim-demo.md`) and that
 did not exist until now.
 **Owner outcome:** *full cloud service* — outcome 1's public face.
@@ -557,7 +561,11 @@ becomes defence in depth. Whether it can is **unverified** from this repo (§10)
 
 **Stated plainly in the code comment and here:** *this stops browser hotlinking only. `curl` forges these
 headers trivially.* It is a cheap first filter under the caps, the budget and the gateway-side key budget —
-never a control to rely on. Bot detection (Turnstile) is P1.
+never a control to rely on. Bot detection (Turnstile) was P1 and **is now built** — `functions/api/_lib/
+turnstile.js`, verified on `POST /api/chat` immediately before its one gateway call. Note what that does
+and does not change about the sentence above: the origin pin is still forgeable and still not a control to
+rely on, and Turnstile removes the **cheapest** attack (a loop with no browser) rather than bounding the
+bill. What bounds the bill is still the caps, the budget and a gateway-side key budget.
 
 ### 4.4 Demo mode — what is absent, not merely refused
 
@@ -993,6 +1001,10 @@ and `CLOUDFLARE_ACCOUNT_ID` as GitHub secrets; that is an alternative path, expl
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | var | `600` / `4000` | no | §4.1 |
 | `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | var | `20000` / `12000` / `12000` | no | §4.1 |
 | `DEMO_TICKET_TTL_S` | var | `60` | no | §3.2 |
+| `DEMO_TURNSTILE_SECRET` | **secret** | — | no | §4.1's bot control. **Both or neither with the sitekey below**, exactly like the Access pair: a secret with no sitekey refuses every visitor (no browser can mint a token) and a sitekey with no secret is a widget nothing verifies, so either alone is reported in `missing` and the deployment reads as unconfigured. Unset ⇒ the check is a synchronous no-op. |
+| `DEMO_TURNSTILE_SITEKEY` | var | — | no | The widget's **public** sitekey — it ships to every visitor in the widget markup either way, which is why it is a var and not a secret. The browser learns it from `/api/health`'s `turnstile` field, **never from shipped HTML**: a sitekey committed to this repo would be one deployment's, and every fork and preview would render a widget bound to a domain list they are not on. **Leave both unset on Preview** — a preview's platform-assigned hostname is not on the widget's domain list, so a real challenge there could never pass. |
+| `DEMO_TURNSTILE_HOSTS` | var | the request's own hostname | no | The hostnames a solved challenge may have been served from, comma separated; a URL is reduced to its hostname. **Unset is the right answer for almost everyone**, and the default is not a literal list on purpose: "this deployment's own host" needs no configuration, works on any domain (C3), and — unlike a list — can never hand production a `localhost` allowance by omission. The match is **exact**: a subdomain of a listed host is refused even though Turnstile itself authorizes it. |
+| `DEMO_TURNSTILE_TIMEOUT_MS` | var | `2000` | no | The deadline on the one `siteverify` call. Sized against the **concurrency slot**, not the visitor's patience: the check runs with a slot held, so a hung endpoint would otherwise keep it — and everyone in the FIFO behind it — for the length of `DEMO_CHAT_TIMEOUT_MS`. A slow answer is treated as no answer, which **fails open**. Clamped 100..10 000, so it can neither out-wait the route it guards nor switch the check off by stealth. |
 
 ### `.dev.vars.example` (committed at the repo root; `.dev.vars` itself must be git-ignored)
 
@@ -1327,8 +1339,20 @@ clips + 8 filler clips + the degraded line, and `test_fallback_coverage.mjs` ext
 skip the 1.4 s Piper probe when degraded~~ — **all four BUILT 2026-09-03** (branch `feat/fallback-voice`;
 452 596 bytes of MP3, zero gateway calls, and see §6.2 for the four ways they turned out differently) ·
 **exact** counters on KV or a Durable
-Object once the dashboard says which exists · Turnstile before the first paid call of a session, then a
-short-lived signed session cookie · a TTS response cache keyed on `sha256(model + " " + normalized_text)`
+Object once the dashboard says which exists · ~~Turnstile before the first paid call of a session, then a
+short-lived signed session cookie~~ — **BUILT 2026-09-05, and NOT with the session cookie.** The token is
+minted **per send** instead, and the cookie half was dropped rather than deferred. Three reasons, in the
+order they decided it: (1) a Turnstile token is **single-use and lives 300 seconds**, so a
+once-per-session token would work for exactly the first turn of a conversation and be refused by
+Cloudflare as `timeout-or-duplicate` for every turn after it — the sketch's shape only works *because*
+of the cookie, which makes the cookie load-bearing rather than an optimisation; (2) a signed session
+cookie is a **second credential format** to mint, verify, expire and get wrong, next to the speech ticket
+and the context blob that already exist (`_lib/hmac.js`) — and its whole benefit is saving one ~30 ms
+edge round trip on a turn that costs ~1 200 ms upstream; (3) demo mode is explicit in §4.4 that this
+deployment sets **no cookies at all**, and a session cookie is the one thing on that list a visitor's
+browser would notice. So: `sim/web/turnstile.js` renders one invisible widget and calls
+`reset()` + `execute()` per send, which is Cloudflare's documented way to obtain a fresh token from an
+existing widget · a TTS response cache keyed on `sha256(model + " " + normalized_text)`
 (the demo's line inventory is small and repetitive — `audio/index.json` is the same idea shipped
 statically); **do not cache STT** — that is a privacy problem, not a saving · a nonce/hash pass so
 `script-src 'self'` can be added · fix `deploy-cloudflare.md`:10, :19, :57, :65, :71‑82 and

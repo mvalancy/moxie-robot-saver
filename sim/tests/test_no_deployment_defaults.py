@@ -51,6 +51,27 @@ _NOWHERE = re.compile(
 #: entry here is a decision someone has to argue for in review, which is the point.
 ALLOWED_HOSTS = {
     "huggingface.co": "the public Piper voice registry (a model download, like PyPI)",
+    # Added 2026-09-05 with the Turnstile bot control, and it is the `huggingface.co`
+    # class rather than the "somebody's appliance" class this file exists to catch:
+    #
+    #   * it is a PLATFORM ENDPOINT, not a deployment. Every Turnstile user on earth
+    #     posts to the same `/turnstile/v0/siteverify` and loads the same
+    #     `/turnstile/v0/api.js`; there is no per-account host and nothing here that
+    #     could name ours.
+    #   * IT CANNOT BE MADE CONFIGURABLE, which is the usual remedy this file pushes
+    #     towards. A challenge is only valid when the widget script is served from this
+    #     host, and the token can only be verified here — a `DEMO_TURNSTILE_URL`
+    #     variable would be a variable with exactly one legal value, and pointing it
+    #     anywhere else would silently switch the bot control off.
+    #   * the thing this file actually guards against is untouched: the SITEKEY and the
+    #     SECRET are deployment config and appear nowhere in the tree. The sitekey
+    #     reaches the browser from `/api/health` at runtime (see
+    #     `functions/api/_lib/env.js::publicTurnstile`), and `sim/test_turnstile.mjs`
+    #     §10 asserts no shipped page or script carries one.
+    "challenges.cloudflare.com":
+        "Cloudflare Turnstile's own widget + siteverify endpoint — a platform endpoint "
+        "identical for every user of the product, and one that cannot be substituted: a "
+        "challenge is only valid served from this host and a token only verifiable here",
 }
 
 _URL = re.compile(r"https?://([A-Za-z0-9_.\-]+)")

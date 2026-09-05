@@ -86,6 +86,30 @@
   guarded **twice**, where neither guard is individually load-bearing — so the mutation had to remove both
   at once. The checker also reports a `-k` selector that matched **no test** as a NO-OP, because a renamed
   test is how a mutation table rots into reporting "caught" forever.
+- **`turnstile_mutation_check.py`** — the same proof for the **Cloudflare Turnstile bot control**
+  in front of `POST /api/chat`: **26 mutations** across
+  [`functions/api/_lib/turnstile.js`](../../functions/api/_lib/turnstile.js), the guard step in
+  [`chat.js`](../../functions/api/chat.js), `_lib/env.js`'s config pair and the browser half,
+  [`sim/web/turnstile.js`](../../sim/web/turnstile.js). **It is STRICTER than the five tables above,
+  deliberately**: they run `pytest -k <selector>` and treat any non-zero exit as *caught*, which for a
+  security control is too weak — a mutation that broke some unrelated assertion would read as caught
+  while the guard it targeted went unexercised. This one runs `node sim/test_turnstile.mjs` and requires
+  the selector to appear in **a failing check's own label**, so a row is caught only when the check that
+  *names that guard* is the one that reddened. That strictness paid for itself on the first run: four
+  rows came back **NOT CAUGHT or WRONG CHECK**, and each was a real hole in the tests — a `success:false`
+  case that was actually being refused by the *action* check (so deleting the success check changed
+  nothing), a suffix-matching mutation that only touched the `DEMO_TURNSTILE_HOSTS` branch no test
+  exercised, a `!res.ok` deletion that fell open by accident because the 500 in the fixture had an empty
+  body, and a `publicTurnstile` mutation invisible because no test configured a sitekey **without** a
+  secret. Rows include both halves of the fail-open/fail-closed split (a control that lets the refused
+  case through, and a Cloudflare outage that takes the whole demo down), the concurrency-slot release
+  **and its negative control** — the release neutered in `limits.js`, so *"the in-flight count is back to
+  zero"* cannot pass on a counter that is always zero — and the plausible-patch shape the other tables
+  favour: the refusal hoisted *outside* the `try` whose `finally` returns the slot, which reads as tidier
+  and leaks a slot for ever. One row is caught by **hanging** (no deadline on the verification call, which
+  holds a concurrency slot) and says so, because "it never finished" is a different fact from "it went
+  red". Pass a row name to re-check one without waiting out that hang:
+  `python3 sim/tools/turnstile_mutation_check.py D3e`.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.

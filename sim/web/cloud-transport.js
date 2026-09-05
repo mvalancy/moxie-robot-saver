@@ -102,6 +102,8 @@
     lateSpeechDropped: 0,    // TTS arrived after the local voice had already started
     lateSpeechPlayed: 0,     // TTS arrived late but nothing was speaking, so it played
     blocked: 0,
+    botTokens: 0,            // sends that carried a fresh Turnstile token
+    botUnavailable: 0,       // sends REFUSED locally because no token could be minted
     reasons: [],             // every reason the server gave, in order
     order: [],               // "tts" / "chat" / "stub", in the order they were routed
   };
@@ -263,12 +265,93 @@
     });
   }
 
+  /* ---- the bot control (§4.1's Turnstile slice) --------------------------- *
+   * `sim/web/turnstile.js` owns the whole widget lifecycle and hands this file ONE
+   * promise of a string. THE SEAM IS ONE LINE IN `liveTurn` DELIBERATELY: a parallel
+   * branch is rewriting this composer, so the widget must not be tangled into the send
+   * path it is rewriting.
+   *
+   * Three outcomes, and the middle one is the interesting one:
+   *   ""      — this deployment does not enforce it (a fork, a preview, a local page, or
+   *             any page that simply does not load `turnstile.js`). Send as-is; the field
+   *             goes out empty and the server's own config gate ignores it.
+   *   "<tok>" — a fresh single-use token for THIS send.
+   *   null    — enforcement is on and no token could be got. DO NOT SEND.
+   *
+   * A MISSING MODULE IS THE `""` CASE, not the `null` one. `sim/test_cloud_transport.mjs`
+   * loads this file without `turnstile.js`, and so does any page that never added the
+   * script tag — and in both the honest answer is "this page has no bot control", not
+   * "this page cannot talk to Moxie". The control lives on the SERVER; this half only
+   * supplies a token when the server has said it wants one.
+   */
+  function botToken() {
+    var t;
+    try { t = window.moxieTurnstile; } catch (e) { t = null; }
+    if (!t || typeof t.getToken !== "function") return Promise.resolve("");
+    try {
+      return Promise.resolve(t.getToken()).then(function (tok) {
+        return typeof tok === "string" ? tok : null;
+      }, function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+  }
+
+  /* The marks a locally-composed Moxie line needs to have a face and a gesture. Same
+   * format as `stub.js`'s `MK` (and `functions/api/_lib/wire.js`'s), written out here as
+   * two constants because this file has exactly one line of its own to say and importing
+   * a builder for it would be a module system this page does not have. Mood 1 and
+   * `Gesture_Question` read as a puzzled shrug, which is what this actually is. */
+  var MK_MOOD = '<mark name="cmd:playback-mood,data:{+mood+:1,+intensity+:1}"/>';
+  var MK_SHRUG = '<mark name="cmd:behaviour-tree,data:{+transition+:0.5,+duration+:1.0,' +
+                 '+repeat+:1,+blocking+:false,+action+:0,+eventName+:+Gesture_Question+,' +
+                 '+category+:+BehaviourTree+,+behaviour+:++,+Track+:++}"/>';
+
+  /* THE ONE LINE MOXIE SAYS WHEN A TOKEN COULD NOT BE MINTED.
+   *
+   * NEVER A SILENT DEAD SEND. This is the whole reason this function exists rather than a
+   * bare `return`: the visitor typed a sentence, pressed a button, and the request was
+   * refused BY THIS PAGE before it left. If nothing appeared, the page would look exactly
+   * like the `#speech-btn`-into-a-missing-sidecar bug that this transport was written to
+   * fix — a control that seems alive and silently does nothing. So the child's line is
+   * already echoed (`liveTurn` echoes before asking for a token), Moxie answers in her own
+   * voice through the SAME `route()` a real reply takes, and the status line under the box
+   * says what to do. NO REQUEST IS MADE and nothing is spent. */
+  var BOT_LINE = "Hmm, my visitor check did not answer just now. Try me once more!";
+
+  function botUnavailable(text) {
+    stats.botUnavailable++;
+    status("Moxie could not finish her visitor check — try that again in a moment.");
+    stats.order.push("stub");
+    inner.route("/devices/d_sim/commands/remote_chat", JSON.stringify({
+      command: "remote_chat", result: "OK", backend: "router",
+      output: { text: BOT_LINE, markup: MK_MOOD + MK_SHRUG + BOT_LINE },
+    }));
+    return Promise.resolve();
+  }
+
   /* ---- the live turn ----------------------------------------------------- */
   function liveTurn(text) {
     stats.live++;
     status("thinking…");
     echoUser(text);
-    return post("/api/chat", { text: text, context: contextBlob }, CHAT_FETCH_MS).then(function (res) {
+    // The bot control, in one line. `""` means this deployment does not enforce it.
+    return botToken().then(function (tok) {
+      if (tok === null) return botUnavailable(text);
+      if (tok) stats.botTokens++;
+      return chatPost(text, tok);
+    });
+  }
+
+  /** The POST itself, unchanged from before the bot control existed except for the field
+   *  it now carries. Split out of `liveTurn` so the token step above is a wrapper rather
+   *  than a re-indentation of everything below it — see `botToken`'s note on the seam. */
+  function chatPost(text, token) {
+    var payload = { text: text, context: contextBlob };
+    // Cloudflare's own form-field name, kept even though this is JSON: it is the name
+    // every Turnstile example verifies, and `functions/api/_lib/turnstile.js::TOKEN_FIELD`
+    // is the other half of the pair. Absent (rather than empty) when there is no control,
+    // so an unenforced deployment sends byte-identically to how it always did.
+    if (token) payload["cf-turnstile-response"] = token;
+    return post("/api/chat", payload, CHAT_FETCH_MS).then(function (res) {
       if (!res.body) {
         stats.chatErrors++;
         noteTransportError();

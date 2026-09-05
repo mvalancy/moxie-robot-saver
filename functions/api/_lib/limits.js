@@ -616,6 +616,15 @@ export function loadOf(cfg, route) {
  * The body-size ceiling, DERIVED from the caps so an override scales it: the largest
  * legitimate body is one utterance plus one context blob, and base64 plus JSON escaping
  * costs under 3x. Everything above it is refused unread.
+ *
+ * CHECKED WHEN `/api/chat` GREW A THIRD FIELD (2026-09-05, the Turnstile token): a
+ * Cloudflare Turnstile response token is documented at up to 2 048 bytes, and the default
+ * ceiling here is `4096 + 3 * (500 + 1500)` = 10 096 — so a maximal utterance, a maximal
+ * context blob AND a maximal token together come to roughly half of it. The flat 4 096
+ * term, which exists for JSON syntax, absorbs the new field with room to spare and no
+ * change was needed. Worth re-doing that arithmetic before adding a FOURTH field: the
+ * failure mode is a `too_long` refusal that blames the visitor's sentence for a byte
+ * budget their sentence had nothing to do with.
  */
 export function maxJsonBodyBytes(cfg) {
   return 4096 + 3 * (cfg.maxInputChars + cfg.maxContextChars);

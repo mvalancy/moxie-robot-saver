@@ -22,6 +22,7 @@ Spec: [`../docs/architecture/backlog/live-sim-demo.md`](../docs/architecture/bac
 | [`api/_lib/wire.js`](api/_lib/wire.js) | — | `build_chat_response`'s field set and `build_cloud_tts_response`'s, transcribed from `mqtt/moxie_sdk/`; the minimal markup floor built from the three mark templates `stub.js` already emits. |
 | [`api/_lib/ttscache.js`](api/_lib/ttscache.js) | — | The synthesised-audio cache behind `/api/speech` (spec §4.8). A **hit makes zero upstream calls**; a miss costs one extra `match`. Keyed on the gateway, model, voice, format, sample rate and the **exact** text, under the full untruncated HMAC — a key that ignored the voice would serve one child a line in another's. **Fails open** on every failure, stores nothing but a successful synthesis, and `DEMO_TTS_CACHE=0` removes it entirely. **Per-colo, not global; a cold colo pays.** |
 | [`api/_lib/wav.js`](api/_lib/wav.js) | — | RIFF walker → `{pcm, rate, channels}`, carrying the header's **own** rate out. Refuses 8/24-bit, a JSON body, and an HTML page. |
+| [`api/_lib/turnstile.js`](api/_lib/turnstile.js) | — | The **bot control**: one Cloudflare Turnstile `siteverify` call between the free local refusals and the gateway call on `POST /api/chat`. All **three** mandatory checks — `success`, our own `action`, and a hostname allowlist that defaults to *the request's own hostname* so production can never be handed a `localhost` allowance by omission. **Fails CLOSED on a verdict of "no" and OPEN on a Cloudflare transport failure**, deliberately: the spend is already capped above it, and a third-party outage must not zero the public demo. Two refusal reasons, because "our secret is wrong" and "your token is bad" have opposite fixes. Off entirely unless both `DEMO_TURNSTILE_SECRET` and `DEMO_TURNSTILE_SITEKEY` are set. |
 | [`api/_lib/safety.js`](api/_lib/safety.js) + [`api/_lib/safety.rules.js`](api/_lib/safety.rules.js) | — | The pre-inference floor. A hard block never calls the gateway, so it is a safety control and a cost control in one rule. **A floor, not a filter.** The rule table is a plain data module, not JSON — see below. |
 
 `api/_lib/` holds helpers, not routes. A leading underscore is Pages' convention for
@@ -55,13 +56,52 @@ it would answer 405 rather than run.
    the body *and* in every header.
 2. **Every refusal path makes zero upstream calls.** Unconfigured, half-credentialled,
    forbidden origin, over-length, empty, tampered context, hard-blocked utterance,
-   rate-limited, over budget, at capacity: all of them return before `fetch()`.
-   `api/_lib/limits.js::noteUpstreamCall()` sits immediately before the one `fetch()` in
-   each route, so that is a recorded fact rather than an inference.
+   rate-limited, over budget, at capacity, **a refused bot check**: all of them return
+   before `fetch()`. `api/_lib/limits.js::noteUpstreamCall()` sits immediately before the
+   one `fetch()` in each route, so that is a recorded fact rather than an inference. The
+   converse is asserted too, and it is the ordering rule the bot control had to obey:
+   every refusal *cheaper* than Turnstile makes **zero `siteverify` calls**, so a blocked
+   utterance never buys a round trip to prove the visitor is human, and `admit()` — not
+   Cloudflare — is what absorbs a flood.
 3. **`/api/speech` cannot become a free text-to-speech API.** It has no text field. The
    text is inside the ticket's signature, so the only text this deployment will ever
    synthesize is text it wrote itself in the last `DEMO_TICKET_TTL_S` seconds — a
    structural property, not a counter.
+
+## The bot control: Cloudflare Turnstile
+
+Everything else in this tree bounds the **cost** of a request that has already been made.
+None of it can tell a child from a script — `api/_lib/limits.js::checkOrigin` says so in
+capitals, because `curl` forges an `Origin` header trivially. Turnstile is the piece that
+can, and it guards `POST /api/chat` alone: `/api/speech` cannot be driven without a ticket
+that route minted, so gating the chat turn gates the voice structurally, and
+`/api/transcribe` is left to a later slice with **its own widget `action`** so a chat token
+never becomes spendable on the ears.
+
+* **Both or neither.** `DEMO_TURNSTILE_SECRET` (a **secret** binding) plus
+  `DEMO_TURNSTILE_SITEKEY` (a plain variable — a sitekey is public). Exactly one of the
+  pair is a misconfiguration and is reported in `missing`, for the same reason half an
+  Access token is: a secret with no sitekey refuses every visitor because no browser can
+  mint a token, and a sitekey with no secret renders a widget nothing verifies.
+* **The sitekey reaches the browser from `/api/health`**, on the envelope's `turnstile`
+  field, and is `""` whenever the control is not enforced. It is deliberately **not** in
+  any shipped HTML: a sitekey committed here would be *this* deployment's sitekey in a
+  public repo, and every fork and every branch preview would render a widget bound to a
+  domain list they are not on.
+* **Previews enforce nothing, and must not.** Turnstile authorizes a hostname and all of
+  its subdomains; a preview deployment's platform-assigned hostname is not on the widget's
+  list, so a real challenge there could never pass. Leave both variables unset on preview
+  and the whole thing is inert — no widget, no third-party script, no verification call.
+* **Two reasons, opposite fixes.** `turnstile_failed` (403) is the visitor's token —
+  missing, expired, replayed, wrong action; the page answers that one turn from the stub
+  and **stays live**. `turnstile_misconfigured` (503, `Retry-After: 60`) is ours — a wrong
+  secret, a malformed request, a hostname we do not allow; it degrades the page, because it
+  will refuse every visitor identically until a variable changes. **That second reason is
+  how the production secret gets validated without anyone printing it:** deploy, type one
+  sentence, read the reason.
+* **Nothing from Cloudflare's reply is forwarded** — not the `error-codes`, not the
+  hostname, not the timestamp. `sim/test_turnstile.mjs` sweeps every response for the
+  widget secret *and* for every documented error-code string.
 
 ## A gateway behind a Cloudflare Tunnel
 
@@ -114,13 +154,32 @@ node sim/test_mode.mjs             # the mode machine + the probe
 node sim/test_demo_proxy.mjs       # the caps, the origin pin, the no-leak sweep
 node sim/test_demo_tickets.mjs     # forgery, expiry, replay, tampering, constant-time
 node sim/test_wav_decode.mjs       # both halves of the audio contract, sample for sample
+node sim/test_turnstile.mjs        # the bot control: three checks, both halves of the
+                                   # fail-open/closed split, the slot release, zero cost
 node sim/test_cloud_transport.mjs  # the voice-first ordering, on an injected clock
 node sim/test_fallback_coverage.mjs
 ```
 
-Not one of them may ever require a Cloudflare account or a gateway key, and
-`sim/tests/test_ci_workflows.py` asserts that the steps running them reference no
-credential at all.
+Not one of them may ever require a Cloudflare account, a gateway key **or a Turnstile
+widget**, and `sim/tests/test_ci_workflows.py` asserts that the steps running them
+reference no credential at all. `sim/test_turnstile.mjs` uses Cloudflare's own
+[documented dummy keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/)
+as fixtures and stubs `siteverify` to answer what each of those keys is documented to
+answer, so the tests are written against the published contract rather than against
+somebody's recollection of it.
+
+The guards are also proven in the other direction:
+
+```sh
+python3 sim/tools/turnstile_mutation_check.py        # 26 rows; every one must say "caught"
+python3 sim/tools/turnstile_mutation_check.py D3     # …or re-check one row
+```
+
+Each row deletes one guard and requires **the check that names that guard** to redden —
+stricter than the other mutation tables in this repo, which accept any non-zero exit. That
+strictness earned its keep immediately: it found four assertions that passed with their
+guard removed, including a `success:false` case that was actually being refused by the
+*action* check.
 
 ## Unverified
 
