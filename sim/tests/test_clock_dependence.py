@@ -153,6 +153,13 @@ REVIEWED: dict = {
         "RELATIVE — presence is scored as an AGE against `greet_after_s`, so the seeded "
         "state is offsets from now. A pinned epoch would make every robot absent for "
         "years and the suite would assert nothing."),
+    "sim/tests/test_launch_cards_runtime.py::_seed_absent": (
+        ("time.time",),
+        "RELATIVE — same reason as its `test_presence_runtime.py` twin: a robot's absence "
+        "is an AGE measured against `greet_after_s`, so the seeded record is offsets from "
+        "now. The two card tests that use it assert the OPPOSITE of a greeting (a scan is "
+        "not a sighting, so no hello is due however long the robot has been away), which "
+        "a pinned epoch could not distinguish from the clock simply not mattering."),
     "sim/tests/test_presence_runtime.py::test_a_bedtime_window_that_wraps_midnight_is_understood": (
         ("datetime.now",),
         "RELATIVE (but hour-independent) — only today's *date* is borrowed; hour and "
