@@ -19,9 +19,28 @@ The directory has grown a second, larger family: plain pytest files that need no
 browser at all and carry the hermetic suite CI actually runs.
 
 ```bash
+python3 -m venv .venv && .venv/bin/pip install -q -r sim/tests/requirements.txt
 .venv/bin/python -m pytest sim/tests -q -k "not test_sil and not test_docs" \
   --ignore=sim/tests/test_live_gateway.py      # the hermetic suite
 ```
+
+## The two requirements files — and why there are exactly two
+
+**`requirements-hermetic.txt` is the ONE declaration** of what the suite needs, and every CI
+job that runs `pytest sim/tests` installs that exact file. **`requirements.txt` is that file
+plus `playwright`**, and nothing else: it is what `run.sh`, an agent's venv and the fast
+tier's whole-suite step use. The two `-k "not test_sil and not test_docs"` runs deselect
+every browser-driving test, so they should not pay for a ~35 MB wheel — that single
+difference is the only reason the split exists, and `test_ci_workflows.py` fails if the
+files ever differ by anything else.
+
+Neither file names `paho-mqtt`, `openai`, `jinja2`, `fastapi`, `pynacl` or `segno` itself:
+it pulls in `mqtt/requirements.txt` and `server/requirements.txt`, because the suite imports
+the supervisor and the console, so what they need it needs — and each list stays owned by
+the thing that actually runs it. Never hand-write a package list in a workflow step or an
+agent brief again; four separate defects came out of doing that, all in the same shape
+(a missing package makes the tests that need it `importorskip` themselves away, which is a
+skip that reads as a pass). Read either file's header for the whole post-mortem.
 
 - **`helpers_runtime.py`** — the shared harness for anything that drives a turn
   through the real `MoxieRuntime`: a `FakeClient` that records publishes,
@@ -174,9 +193,41 @@ browser at all and carry the hermetic suite CI actually runs.
   `paths:` filter and no cancelling `concurrency` (so a green PR and a red push can never
   be legitimate), that at least one fast-tier pytest runs the WHOLE suite (playbook rule
   9), that the hermetic suite runs *before* the browser install so a failure beats a
-  two-minute merge gate, and that both tiers install the same hermetic test deps —
-  including the console's own `server/requirements.txt`, without which all 55
-  `test_console_roundtrip.py` tests silently `importorskip` in CI, as they had been doing.
+  two-minute merge gate, and — since 2026-09-05 — that **every test dependency is declared
+  exactly once**. That last family replaced a parity check between hand-written lists,
+  because parity between copies was never the property we wanted: the list lived in five
+  workflow steps, no two the same, and each difference cost something (`server/requirements.txt`
+  missing, so all 55 `test_console_roundtrip.py` tests silently `importorskip`ed; `pyyaml`
+  missing from the deep tier; `numpy` missing from BOTH hermetic tiers, which deleted the
+  creds-free tone/speech guard from every push). Now `sim/tests/requirements-hermetic.txt`
+  is the one declaration, every job that runs `pytest sim/tests` installs it, no job may
+  re-declare a package it owns, every third-party module the suite imports **anywhere** —
+  including inside a helper *function*, which is how numpy hid — must be in it, and the
+  agent-brief recipe in `docs/architecture/orchestration-plan.md` must point at it rather
+  than hand-list. Nine mutants, 9/9 caught.
+- **`test_speech_guard.py`** — the tone/speech predicate, guarded, and the rule that keeps a
+  numpy-free suite numpy-free. `ToneSynthesizer` emits 22050 Hz mono PCM16 exactly like a
+  real voice, so only the spectrum separates them, and `helpers_audio.is_real_speech` is
+  what every live audio assertion leans on. It needed numpy — while two of its callers
+  (`test_live_gateway_stt.py`, `test_live_hosted_ears.py`) exist to prove the CLOUD ears
+  work on a box that installed nothing but `openai`. The result was measured on 2026-09-05:
+  a complete healthy live turn (overlap 1.00, 203 612 B @ 22050 Hz) that then died with
+  `ModuleNotFoundError` on its last line, four gateway calls in, while its siblings skipped.
+  The fix was a stdlib twin (`spectral_flatness_stdlib`, a 20-line radix-2 FFT) rather than
+  a third `importorskip`, which would have deleted the proof on exactly the machine shape it
+  is about. This file asserts the twin rejects a real tone (8.968e-10), accepts synthetic
+  broadband audio (1.177e-01) and a **real recorded voice** (3.073e-02 on the stdlib path,
+  3.200e-03 on the numpy one — `goldens/real_voice_22050_mono.wav`, read with `wave` so it
+  needs no decoder), agrees with the numpy implementation in both directions, computes with
+  numpy forcibly unimportable in a subprocess, and — the class guards — that no numpy-free
+  suite calls a helper which reaches numpy (the numpy-only set is derived from
+  `helpers_audio.py`'s own call graph, so a new helper joins it automatically) and that **no
+  test in this directory shells out to an undeclared external binary**. That last one exists
+  because the first version of the recorded-voice test called `ffmpeg` and reddened CI, in
+  the very change that made `requirements-hermetic.txt` the single source of truth — a
+  binary is invisible to a guard that reads `pip install` lines, so the five programs the
+  suite may spawn (`mosquitto`, `docker`, `node`, `git`, `bash`) are declared in
+  `DECLARED_BINARIES` with their reason and their provider. Eleven mutants, 11/11 caught.
 - **`test_ext_escapes.py`** — X1–X12, the escape suite for [sandboxed content
   extensions](../../docs/architecture/backlog/sandboxed-extensions.md) (BEYOND #6). Its own file,
   apart from the behaviour tests, because a reviewer asking *"can a stranger's content pack hurt
@@ -396,9 +447,12 @@ browser at all and carry the hermetic suite CI actually runs.
   `RemoteChatResponse` → `CloudTTSResponse` → transcribed back. `helpers_audio.py` holds
   the PCM maths (resample, spectral flatness, ZCR), the word-overlap scorer and the
   frame encoder. **Deliberately not in `requirements.txt`**: `piper-tts` and
-  `faster-whisper` are heavy, so the file skips at collection when they (or the
-  git-ignored `sim/tts/voices/*.onnx`, or a gateway key) are absent. To run it:
-  `pip install piper-tts faster-whisper numpy`, then
+  `faster-whisper` are ~2 GB of local model wheels, so the file skips at collection when
+  they (or the git-ignored `sim/tts/voices/*.onnx`, or a gateway key) are absent — they are
+  the only two entries on `test_ci_workflows.py`'s `DELIBERATELY_OPTIONAL` list, which is
+  what stops the coverage guard treating them as an omission. `numpy` is no longer among
+  them: it is a declared test dep, because the creds-free speech guard needs it. To run it:
+  `pip install -r sim/tests/requirements.txt piper-tts faster-whisper`, then
   `python -m pytest sim/tests/test_live_talk_e2e.py -q -s` — add `MOXIE_VOICES_DIR=…`
   if the voices live outside this checkout (a git worktree starts without them).
   **In CI** it is opt-in on the same dispatch: `gh workflow run ci-deep.yml --ref dev -f

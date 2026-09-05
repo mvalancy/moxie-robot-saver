@@ -40,11 +40,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
-      - name: Install broker + client deps
+      - name: Install the broker binary (its python client comes with the test list below)
         run: |
           sudo apt-get update && sudo apt-get install -y mosquitto
           sudo systemctl stop mosquitto || true
-          pip install "paho-mqtt>=2.0"
+          # `pip install "paho-mqtt>=2.0"` used to be the third line here. It is declared
+          # once now — in mqtt/requirements.txt, which sim/tests/requirements-hermetic.txt
+          # pulls in — and the very next step installs that, eight steps before anything
+          # needs a broker client (sim/run_smoke.sh). Guarded by
+          # sim/tests/test_ci_workflows.py::test_no_job_redeclares_a_package_the_test_list_owns.
       - name: Hermetic pytest, EARLY (a red suite has to beat the merge gate)
         run: |
           # WHY THIS RUNS HERE and not only at the end of the job: the whole-suite step
@@ -53,12 +57,19 @@ jobs:
           # merged 2m22s–2m28s after opening, while the only check that could fail had
           # not concluded — every one of them was red. The same tests, minus the ones
           # that need a broker or a browser, run here in ~15 s, inside that window.
-          # protobuf is installed on purpose: the QR-parity step below installs it
-          # anyway, and WITHOUT it the compiled-proto oracle silently `importorskip`s —
-          # which is precisely the test that was red. Guarded by
-          # sim/tests/test_ci_workflows.py.
-          python3 -m pip install -q pytest openai jinja2 pyyaml protobuf httpx \
-            -r server/requirements.txt
+          #
+          # THE DEPENDENCY LIST IS NOT WRITTEN HERE ANY MORE, and that is the point. It
+          # used to be, in five different hand-written copies across this file and
+          # ci-deep.yml, no two of them the same — and every difference was drift, not a
+          # decision. This one was missing `numpy`, so the CREDS-FREE tone/speech guard in
+          # test_live_gateway_turn_e2e.py (the test that exists so the live speech
+          # assertions cannot be vacuous) importorskipped itself away on every push since
+          # it was written. Measured 2026-09-05: 5242 passed / 23 skipped without numpy →
+          # 5243 / 29 with it. `protobuf` is in the list for the same class of reason: the
+          # compiled-proto oracle silently importorskips without it, which is precisely
+          # the test that was red when this file was written.
+          # sim/tests/requirements-hermetic.txt is the ONE declaration; see its header.
+          python3 -m pip install -q -r sim/tests/requirements-hermetic.txt
           python3 -m pytest sim/tests -q -k "not test_sil and not test_docs" \
             --ignore=sim/tests/test_live_gateway.py
       - name: Mode machine + honest indicator (Pages Functions imported under bare node)
@@ -118,9 +129,11 @@ jobs:
       - name: Cloud-TTS playback test (CloudTTSResponse decode + queue + lip-sync)
         run: node sim/test_audio.mjs
       - name: Revival-QR parity (browser encoder == python toolkit)
-        run: |
-          pip install protobuf
-          node sim/test_qr.mjs
+        # `pip install protobuf` used to be the first line of this step. protobuf is now
+        # declared once, in sim/tests/requirements-hermetic.txt, which the hermetic-pytest
+        # step above installs — in this same job, eleven steps earlier. Guarded by
+        # sim/tests/test_ci_workflows.py::test_no_job_redeclares_a_package_the_test_list_owns.
+        run: node sim/test_qr.mjs
       - name: Cloud-console fixture + wiring test
         run: node sim/test_cloud.mjs
       - name: Build docs bundle for the explorer
@@ -141,11 +154,16 @@ jobs:
         run: bash sim/run_scenarios.sh
       - name: SIL + static-site pytest/Playwright suite (all pages, resolutions, controls)
         run: |
-          # This step runs the WHOLE sim/tests suite, so it needs the same hermetic test
-          # deps as the deep tier (sim/ci/ci-deep.yml) — a dep only that tier installs is
-          # a tier drift that shows up here as a red push, not as a caught bug.
-          python3 -m pip install -q "paho-mqtt>=2.0" pytest openai jinja2 pyyaml playwright \
-            httpx -r server/requirements.txt
+          # This step runs the WHOLE sim/tests suite with NO -k selector, so it COLLECTS
+          # every file on disk — including the live suites, which skip on credentials but
+          # are imported first. It therefore needs the full test list, browser driver and
+          # all: sim/tests/requirements.txt is exactly requirements-hermetic.txt plus
+          # playwright, so it cannot drift away from the hermetic step above (asserted by
+          # test_ci_workflows.py::test_the_full_test_list_is_the_hermetic_list_plus_a_browser).
+          # It used to be a hand-written list, and it was the tier most exposed by that:
+          # a collectible test needing a package only this step omitted fails at COLLECTION
+          # here, where the other tiers would merely have skipped it.
+          python3 -m pip install -q -r sim/tests/requirements.txt
           python3 -m playwright install --with-deps chromium
           python3 -m pytest sim/tests -q
 
