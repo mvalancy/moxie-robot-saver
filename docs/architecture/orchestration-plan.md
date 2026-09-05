@@ -264,6 +264,21 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     raises `ModuleNotFoundError` for that name — which reproduced the agent's `15 passed, 1
     skipped` exactly.
 
+27. **A design note inside the code is only true as of the commit that wrote it — before executing a
+    pre-written spec, check what landed since.** `functions/api/_lib/limits.js`:939 says the unit
+    budget is "one more `match` + `put`" and that "**the same fail-open rules apply verbatim**." That
+    was true when written and became FALSE hours later, when PR #160 added `slot.refundBudget()`: a
+    refund is a write that can be **lost**, and a lost refund leaves a visitor charged for a turn that
+    never happened, so the shared budget exhausts early and starts refusing people who should be
+    served. That is failing **CLOSED** — the exact direction the same paragraph rejects the
+    concurrency ceiling for. An agent following the note literally would have built a fail-closed
+    counter while believing it was following the design, and the note would have vouched for it.
+    **This repo's greatest strength — long explanatory comments that carry the reasoning — is also
+    the trap:** a paragraph that argues for its conclusion is far more persuasive than a stale
+    one-liner, and nothing in it announces that the world moved. Treat an in-code spec like a cached
+    belief about a moving thing (rule 23's shape): re-derive its premises against `git log` for the
+    files it reasons about before you build on it.
+
 ## The layered session loops (24/7 continuity)
 
 Session-scheduled loops keep the project moving while the operator is away; when a session hits a usage
