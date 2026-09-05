@@ -189,6 +189,8 @@ class TimedRobot:
     def __init__(self, host, port, device_id=None):
         self.device_id = device_id or f"d_{uuid.uuid4()}"
         self.host, self.port = host, port
+        self.subscribed = threading.Event()
+        self._pending_subs: set = set()
         self.paired = threading.Event()
         self.done = threading.Event()
         self.t0 = 0.0
@@ -198,11 +200,21 @@ class TimedRobot:
         self.scored: list[dict] = []
         self.c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.device_id)
         self.c.on_connect = self._on_connect
+        self.c.on_subscribe = self._on_subscribe
         self.c.on_message = self._on_message
 
     def _on_connect(self, c, u, flags, rc, props=None):
-        c.subscribe(f"/devices/{self.device_id}/config")
-        c.subscribe(f"/devices/{self.device_id}/commands/#")
+        pending = set()
+        for topic in (f"/devices/{self.device_id}/config",
+                      f"/devices/{self.device_id}/commands/#"):
+            pending.add(c.subscribe(topic)[1])
+        self._pending_subs = pending
+        self.subscribed.clear()
+
+    def _on_subscribe(self, c, u, mid, reason_codes=None, properties=None):
+        self._pending_subs.discard(mid)
+        if not self._pending_subs:
+            self.subscribed.set()
 
     def _on_message(self, c, u, msg):
         now = time.perf_counter()
@@ -235,6 +247,12 @@ class TimedRobot:
     def connect(self, timeout=30.0):
         self.c.connect(self.host, self.port, 30)
         self.c.loop_start()
+        # Announce only after the broker has ACKED the subscription that carries the
+        # answer — the config is QoS 0 and not retained, so a robot that announces first
+        # can lose it outright rather than late. Same rule and same reason as
+        # `virtual_moxie.VirtualMoxie.announce`.
+        if not self.subscribed.wait(timeout):
+            raise RuntimeError("the broker never acknowledged our subscriptions")
         self.c.publish(f"/devices/{self.device_id}/state",
                        json.dumps({"software_version": self.FIRMWARE, "state": "config"}))
         if not self.paired.wait(timeout):

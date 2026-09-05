@@ -101,6 +101,12 @@ class VirtualMoxie:
         self.expect_tts = expect_tts        # also assert a CloudTTSResponse (audio) arrives
         self.expect_scored = expect_scored  # ...and that every response carries its score
         self.reject_echo = reject_echo      # ...and that a real brain, not `echo`, wrote it
+        #: Set when the broker has ACKNOWLEDGED every subscription this robot needs.
+        #: Not a convenience: the config push that answers `/state` is QoS 0 and NOT
+        #: retained, so a robot that announces itself before its SUBSCRIBE has landed is
+        #: deaf to the only answer it will ever get. See `announce()`.
+        self.subscribed = threading.Event()
+        self._pending_subs: set = set()
         self.got_config = threading.Event()
         self.got_reply = threading.Event()
         self.got_tts = threading.Event()
@@ -138,6 +144,7 @@ class VirtualMoxie:
         self.errors: list[str] = []
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.device_id)
         self.client.on_connect = self._on_connect
+        self.client.on_subscribe = self._on_subscribe
         self.client.on_message = self._on_message
 
     def log(self, *a):
@@ -153,10 +160,87 @@ class VirtualMoxie:
     def t_commands(self): return f"/devices/{self.device_id}/commands/#"
     def t_event(self, name): return f"/devices/{self.device_id}/events/{name}"
 
+    # -- the handshake: SUBSCRIBE, then announce (never the other way round) --
+    #
+    # THE DEFECT THIS EXISTS FOR (2026-09-04). Every SIL client in this repo used to open
+    # with the same three lines — `connect()`, `loop_start()`, `publish(/state)` — and the
+    # third one is a race the other two cannot win reliably:
+    #
+    #   * `connect()` writes CONNECT and returns; it does not wait for CONNACK.
+    #   * `loop_start()`'s thread reads the CONNACK, and only THEN does `_on_connect`
+    #     send our SUBSCRIBE.
+    #   * `publish(/state)` is written by the CALLING thread immediately, so the broker
+    #     can be handing our announcement to the supervisor while our SUBSCRIBE is still
+    #     a callback that has not been scheduled.
+    #
+    # The supervisor answers a `/state` with `/config` at **QoS 0, not retained**
+    # (`moxie_runtime._publish` — QoS 1 is refused on purpose by §4.3). A QoS-0 publish
+    # with no matching subscription is delivered to nobody and is not replayed. So when
+    # the robot loses that race the config is not late, it is **gone** — and the robot
+    # then sits out its entire timeout for a message that will never be sent again.
+    #
+    # Measured on this repo, on 2026-09-04, with the robot's SUBSCRIBE artificially
+    # delayed (which is what a loaded runner does to a thread for free):
+    #
+    #     subscribe delayed 3000 ms → paired=False after 35.00s, configs_seen=[]
+    #     supervisor log:  [runtime] → pushed config to d_… (pairing_status=paired)
+    #
+    # — the two halves of the same run disagreeing about whether a config exists. That is
+    # the signature of the intermittent `no paired config pushed within timeout` reds in
+    # the SIL job, and it is why RAISING THE TIMEOUT CANNOT FIX IT: no wait is long
+    # enough for a message that was never queued.
+    #
+    # ⚠️  AND WHY A SMALL DELAY "DISPROVES" IT. `_device_connect` schedules the push on a
+    # **1.0 s settle timer**, so the robot gets a second of slack for free and every
+    # injected delay inside that second is absorbed with nothing to see:
+    #
+    #     delayed  500 ms → 0/4 lost      delayed 1500 ms → 1/4 lost
+    #     delayed 1100 ms → 0/4 lost      delayed 3000 ms → lost, every time
+    #
+    # A half-second experiment that comes back clean is measuring the settle timer, not
+    # the race. `sim/tests/test_sil_handshake.py` holds the whole table, and its teeth run
+    # the pre-change line below against a cloud with no settle timer at all, which makes
+    # the question ordinal instead of a stopwatch.
+    SUBACK_TIMEOUT_S = 30.0
+
+    def announce(self, state: str = "config") -> bool:
+        """Publish `/state`, but **only once the broker has acknowledged our SUBSCRIBEs**.
+
+        Waiting on `subscribed` is an observation, not an estimate: it is set by
+        `_on_subscribe`, i.e. by the broker's own SUBACK, so the config push this
+        announcement triggers cannot be published into a subscription that does not exist
+        yet. Returns False (with a line in `errors`) if the broker never acknowledged —
+        which is a broker fault worth saying out loud, and is nothing like the silent
+        deafness it replaces.
+        """
+        if not self.subscribed.wait(self.SUBACK_TIMEOUT_S):
+            self.errors.append(
+                f"the broker did not acknowledge our subscriptions within "
+                f"{self.SUBACK_TIMEOUT_S:.0f}s — announcing now would make this robot "
+                f"deaf to its own config push")
+            return False
+        self.client.publish(self.t_state, json.dumps(
+            {"software_version": FIRMWARE, "state": state}))
+        self.log(f"→ state (software_version={FIRMWARE})")
+        return True
+
     def _on_connect(self, c, u, flags, rc, props=None):
         self.log(f"connected to broker rc={rc} as {self.device_id}")
-        c.subscribe(self.t_config)
-        c.subscribe(self.t_commands)
+        # The mids are collected BEFORE `subscribed` is armed, and both callbacks are
+        # dispatched by paho's one network thread — so no SUBACK can be processed while
+        # this method is still deciding what it is waiting for.
+        pending = set()
+        for topic in (self.t_config, self.t_commands):
+            pending.add(c.subscribe(topic)[1])
+        self._pending_subs = pending
+        self.subscribed.clear()             # a reconnect re-subscribes: re-arm, not latch
+
+    def _on_subscribe(self, c, u, mid, reason_codes=None, properties=None):
+        """A SUBACK. When the last one lands the robot is safe to announce itself."""
+        self._pending_subs.discard(mid)
+        if not self._pending_subs:
+            self.log("subscriptions acknowledged by the broker")
+            self.subscribed.set()
 
     def _on_message(self, c, u, msg):
         try:
@@ -470,8 +554,8 @@ class VirtualMoxie:
         self.client.connect(self.host, self.port, 30)
         self.client.loop_start()
         try:
-            self.client.publish(self.t_state, json.dumps(
-                {"software_version": FIRMWARE, "state": "config"}))
+            if not self.announce():
+                return False
             # A config push is nice-to-have here, not required: a server only re-pushes
             # config for a robot it hasn't seen, and a real Moxie re-queries its schedule
             # every session regardless. Queries are what this run is testing.
@@ -524,8 +608,8 @@ class VirtualMoxie:
         self.client.connect(self.host, self.port, 30)
         self.client.loop_start()
         try:
-            self.client.publish(self.t_state, json.dumps(
-                {"software_version": FIRMWARE, "state": "config"}))
+            if not self.announce():
+                return False
             if not self.got_config.wait(min(5.0, self.timeout)):
                 self.log("(no config push — already-known robot; continuing)")
             for i, kind in enumerate(kinds):
@@ -558,9 +642,8 @@ class VirtualMoxie:
         self.client.connect(self.host, self.port, 30)
         self.client.loop_start()
         try:
-            self.client.publish(self.t_state, json.dumps(
-                {"software_version": FIRMWARE, "state": "config"}))
-            self.log(f"→ state (software_version={FIRMWARE})")
+            if not self.announce():
+                return False
             if not self.got_config.wait(self.timeout):
                 self.errors.append("no config pushed within timeout")
                 return False
@@ -666,8 +749,8 @@ class VirtualMoxie:
         self.client.connect(self.host, self.port, 30)
         self.client.loop_start()
         try:
-            self.client.publish(self.t_state, json.dumps(
-                {"software_version": FIRMWARE, "state": "config"}))
+            if not self.announce():
+                return False
             if not self.got_config.wait(self.timeout):
                 self.errors.append("no config pushed within timeout")
                 return False
@@ -740,10 +823,10 @@ class VirtualMoxie:
         self.client.connect(self.host, self.port, 30)
         self.client.loop_start()
         try:
-            # 1) announce presence via /state (registers us + triggers config push)
-            self.client.publish(self.t_state, json.dumps(
-                {"software_version": FIRMWARE, "state": "config"}))
-            self.log(f"→ state (software_version={FIRMWARE})")
+            # 1) announce presence via /state (registers us + triggers config push) —
+            #    but only once the broker has acked our SUBSCRIBEs; see `announce()`.
+            if not self.announce():
+                return False
 
             # 2) wait for config, assert paired
             if not self.got_config.wait(self.timeout):
@@ -845,8 +928,8 @@ class VirtualMoxie:
         self.client.connect(self.host, self.port, 30)
         self.client.loop_start()
         try:
-            self.client.publish(self.t_state, json.dumps(
-                {"software_version": FIRMWARE, "state": "config"}))
+            if not self.announce():
+                return (0, len(turns))
             if not self.got_config.wait(self.timeout):
                 self.errors.append("no config pushed within timeout"); return (0, len(turns))
             if (self.config_payload or {}).get("pairing_status") != "paired":

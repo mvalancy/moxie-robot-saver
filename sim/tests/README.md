@@ -267,6 +267,24 @@ browser at all and carry the hermetic suite CI actually runs.
   exists fails, and a listed row whose *constructs* changed fails — so adding a
   `datetime.now()` to an already-reviewed deadline loop is still caught. Its own scanner
   is proven against a planted file.
+- **`test_sil_handshake.py`** — 🤝 *a robot must not announce itself before the broker can
+  answer it.* The SIL job's two intermittent reds of 2026-09-04 included twelve setup
+  errors reading `no paired config pushed within timeout` (a 60 s wait) in runs where the
+  supervisor had logged `→ pushed config to d_… (pairing_status=paired)`. Both halves were
+  telling the truth: `connect()` does not wait for CONNACK, the SUBSCRIBE goes out from
+  `on_connect` on paho's network thread, and the caller's next line published `/state` —
+  so the config answering it, which is **QoS 0 and not retained**
+  (`moxie_runtime._publish`; QoS 1 is refused by §4.3), could be delivered to a
+  subscription that did not exist yet and is never replayed. A lost race deletes the
+  message rather than delaying it, which is why **no timeout is long enough** and why the
+  fix is to wait for the SUBACK (`VirtualMoxie.announce`). Beware the experiment that
+  clears it: `_device_connect` pushes on a **1.0 s settle timer**, so an injected delay
+  under a second is absorbed — measured 0/4 lost at 500 ms and 1100 ms, 1/4 at 1500 ms,
+  always at 3000 ms. Five cases: the shipped client survives a 1.5 s-late SUBSCRIBE, the
+  announcement provably waited for the SUBACK, **teeth** that run the pre-change call site
+  against a cloud with no settle timer and require the config to be LOST, and a sweep of
+  every `.py` under `sim/` that drives a real broker and publishes a `/state` — which is
+  discovered, not listed, and whose own teeth name the four clients it must be seeing.
 - **`test_sil_performance_e2e.py`** — the behavior planner with a **broker** between it
   and the client. #92 proved its criterion (c) "through the real runtime", which is an
   in-process runtime with a fake MQTT client; a scored field dropped by `json.dumps`, by
