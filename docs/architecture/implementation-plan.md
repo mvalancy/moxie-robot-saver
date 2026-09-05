@@ -534,6 +534,29 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   a fake cache through a miss, a hit, a stale entry, a synchronous throw, a rejection, a hang and a
   hostile store, and asserts the fail-open direction for each by name.
 
+- **`/api/speech` paid twice for every repeated line — fixed 2026-09-05.** Synthesis is the most expensive
+  thing the hosted demo does (131 348 B and 1 091 ms for one 30-character line, measured against the real
+  gateway) and the audio for a given voice and a given string never changes, yet the route re-made it on
+  every visit. `functions/api/_lib/ttscache.js` now keeps it in `caches.default` — the same mechanism
+  `backlog/live-sim-demo.md` §4.6.1 measured for the counter tier, so nothing was re-measured. **A hit is
+  one `match` and ZERO upstream calls; a miss is one `match` + one `put`** on top of the synthesis it was
+  always going to pay for. The key is the full untruncated 256-bit HMAC of a length-prefixed join of the
+  gateway URL, model, voice, format, sample rate and the **exact** text — a key that ignored the voice
+  would serve one child a line in somebody else's, which is worse than the cost it saves. It sits **after**
+  every cap (admission, the ticket, its TTL, `DEMO_MAX_TTS_CHARS`), so a hit is a cheaper way to serve a
+  request that was already going to be served and never a way past a limit; every refusal still makes zero
+  cache calls as well as zero upstream ones. It **fails open** on every failure mode and stores **nothing
+  but a successful synthesis**, so a bad minute upstream cannot become a day of bad audio.
+  `DEMO_TTS_CACHE=0` restores the previous route exactly, with no cache call at all. **What it is not:**
+  global — it is per-colo, a cold colo pays full price, and **the hit rate is not measured and cannot be
+  measured on a preview**, because a preview is keyless and the route refuses before it reaches the cache
+  (the same limitation §4.6.1 hit). One premise correction went with it, in §4.8: the demo's scripted copy
+  never reaches this route at all — `/api/speech` has no text field and only a live gateway reply ever
+  mints a ticket — so what the tier deduplicates is repeated gateway replies, not scripted lines.
+  `sim/test_demo_proxy.mjs` §16 drives the whole route through a real `caches.default` lookup and proves
+  the hit is **byte-identical** to the miss, costs zero upstream calls, and falls open for each of eighteen
+  named failure modes.
+
 - **`/api/health` told the page what it wanted to hear — fixed 2026-09-03.** `functions/api/health.js`
   shipped two LOCAL STUBS that shadowed the real implementations: `budgetState()` returned `null` and
   `loadState()` returned a hard-coded `{inflight: 0}`. Both were honest in P0-a (no spending route was
