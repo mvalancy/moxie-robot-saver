@@ -22,7 +22,6 @@ Spec: [`../docs/architecture/backlog/live-sim-demo.md`](../docs/architecture/bac
 | [`api/_lib/wire.js`](api/_lib/wire.js) | — | `build_chat_response`'s field set and `build_cloud_tts_response`'s, transcribed from `mqtt/moxie_sdk/`; the minimal markup floor built from the three mark templates `stub.js` already emits. |
 | [`api/_lib/wav.js`](api/_lib/wav.js) | — | RIFF walker → `{pcm, rate, channels}`, carrying the header's **own** rate out. Refuses 8/24-bit, a JSON body, and an HTML page. |
 | [`api/_lib/safety.js`](api/_lib/safety.js) + [`api/_lib/safety.rules.js`](api/_lib/safety.rules.js) | — | The pre-inference floor. A hard block never calls the gateway, so it is a safety control and a cost control in one rule. **A floor, not a filter.** The rule table is a plain data module, not JSON — see below. |
-| [`api/probe.js`](api/probe.js) | `GET /api/probe` | **TEMPORARY — delete before merge.** A throwaway diagnostic that settles the runtime half of §10 assumption 13: is the **Cache API** usable, and does a write survive into a later request and a different isolate; which **bindings** are configured (names and shapes only, never values); and how many **isolates** and **colos** a run of `curl`s actually reaches. Makes no upstream call, imports nothing from `_lib/`, spends nothing. Removed in the same branch that records the answer. |
 
 `api/_lib/` holds helpers, not routes. A leading underscore is Pages' convention for
 "not routable"; §10 assumption 9 records that as **inferred, not verified** — if a real

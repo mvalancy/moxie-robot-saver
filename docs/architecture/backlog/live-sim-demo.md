@@ -609,16 +609,18 @@ P0's per-IP and global counters are **best-effort**: **an in-isolate map, and no
 API, which is per-colo and per-isolate". **The Cache API leg was never implemented** — `_lib/limits.js`
 holds one `Map` per counter in module scope and consults nothing else — so the multiplier is *isolates*,
 not colos, and that is a materially weaker guarantee than the sentence promised. Anyone sizing the spend
-risk off the old wording would have got it wrong in the unsafe direction. The Cache API tier is **not**
-being added here: §10 assumption 13 (is KV or a Durable Object even available on this plan?) is still
-open, and its answer changes which counter is worth building, so the honest move today is to correct the
-document rather than to ship a second best-effort tier. Ledger row 25 records this.
+risk off the old wording would have got it wrong in the unsafe direction. Ledger row 25 records that
+correction. At the time the Cache API tier was **not** added, and the reason given was that §10
+assumption 13 (is KV or a Durable Object even available on this plan?) was still open and its answer
+changes which counter is worth building. **That reason has since been retired — by measurement rather
+than by the dashboard.** §4.6.1 has the numbers and the resulting recommendation.
 
 **The practical consequence, exactly.** Every cap in §4.1 that is enforced by a counter — the per-IP
 windows, the concurrency ceiling and the unit budget — is enforced *once per isolate*. With N isolates
 serving the deployment, the effective ceiling is up to **N × the configured number**, and N is chosen by
-Cloudflare, is not observable from inside a Function, and changes with traffic and with isolate
-recycling. So the configured caps are a **per-isolate throttle, not a global budget**: a value that
+Cloudflare and changes with traffic and with isolate recycling. **"N is not observable from inside a
+Function" was wrong, and §4.6.1 replaces it with a measurement: 41 sequential requests from one client on
+one network path were served by 7 distinct isolates in a single colo, so N ≥ 7 for that vantage point.** So the configured caps are a **per-isolate throttle, not a global budget**: a value that
 reliably stops one script hammering one endpoint, and that places no upper bound at all on the
 deployment's total spend. Two things are worth being exact about in the other direction, because
 overstating this would be its own error. First, *nothing here bounds cost by itself anyway* — the caps
@@ -642,8 +644,77 @@ is refused, not queued, and refused *for free* — the charge is refunded (§4.1
 
 They stop scripts and accidents, which is most of the real risk. The hard ceilings are (a) the gateway-side
 budget-scoped virtual key, and (b) the caps in §4.1, which bound the cost of every *individual* request
-regardless of how many arrive. P1 replaces the counter with a KV or Durable Object single-writer counter —
-**after** the dashboard confirms which of those this account and plan actually has (§10).
+regardless of how many arrive. The next counter to build is the **Cache API tier of §4.6.1**, which needs
+no binding and no owner action; a KV or Durable Object single-writer counter stays P1 and stays gated on
+the dashboard half of §10 assumption 13, because it is the only one of the three that is a true global
+ceiling.
+
+#### 4.6.1 The Cache API tier, measured rather than assumed (2026-09-05)
+
+**A throwaway `GET /api/probe` on the branch preview `feat-counter-probe.moxie-robot-saver.pages.dev`
+answered the runtime half of assumption 13**, by the same route that closed assumptions 8, 9 and 27: every
+branch push publishes a public preview, so a `curl` is a measurement and no owner is in the loop. The probe
+was deleted in the commit that wrote this section — an unauthenticated diagnostic endpoint is attack
+surface for nothing once the answer is written down.
+
+**The measurement generalizes from a preview to production, and that is a documented fact rather than a
+hope.** Cloudflare's Cache API reference states: *"Workers deployed to custom domains have access to
+functional `cache` operations. So do Pages Functions, whether attached to custom domains or `*.pages.dev`
+domains."* ([runtime-apis/cache](https://developers.cloudflare.com/workers/runtime-apis/cache/)). This is
+the one caveat that could have invalidated the whole exercise — a Worker on a `workers.dev` subdomain does
+**not** get functional cache operations — and Pages Functions are explicitly exempt from it.
+
+| # | Question | Answer | Evidence |
+|--:|---|---|---|
+| a | Is `caches.default` there? | **Yes** | `hasCaches` / `hasCachesDefault` / `hasCachesOpen` all `true`; `navigator.userAgent === "Cloudflare-Workers"`; `request.cf` present with 33 keys. |
+| b | Does a `put` survive into a `match` in the **same** request? | **Yes**, every time | `sameRequestPutVisible: true` on all 71 requests, against a key unique to that request. |
+| c | Does a write survive into a **later** request? | **Yes** | 41/41 sequential requests read the entry the previous request wrote. The `Age` header advances with wall-clock time (0 s during the run, **78 s** on a re-read 78 s later), so it is a real cache entry honouring `max-age=120`, not request coalescing. |
+| d | **Does a write survive into a *different isolate*?** | **Yes** — this is the load-bearing result | The stored value records its writer. **30 of 40** sequential responses read an entry whose `lastWriter` was a *different* isolate id than the one answering. The other 10 were one isolate answering twice in a row. |
+| e | Is it **accurate** under sequential load? | **Exactly** | 41 writes in, stored value **41**. Zero lost updates. |
+| f | Is it accurate under a **burst**? | **No — it loses about two thirds** | 31 concurrent writes (a 30-way parallel burst plus the reset) left the stored value at **9**. The unlocked read-modify-write is what a Cache-API counter *is*, so this is the tier's real behaviour and not a probe artifact. |
+| g | Which way does the error point? | **Always undercount, never overcount** | Every write is some observed `prev + 1`, so the stored value can never exceed the truth. A lossy tier therefore **fails open** — it lets extra requests through, it never wrongly refuses a visitor. (The same race also dropped an isolate from the entry's own `writers` list: 7 isolates were seen by the client, 6 survived in the burst's entry.) |
+| h | What does it cost? | **≤ 44 ms for three ops**, upper bound | Median wall time on the same deployment: `/api/probe` (three cache ops **plus** a much larger body and a full binding walk) 183 ms vs `/api/health` (no cache op) 139 ms, n=15 each. The hot path would be one `match` + one `put`, so comfortably inside a 1.2 s turn. |
+
+**And how many isolates and colos does one client actually reach?** 41 sequential requests → **7 distinct
+isolates, 1 colo (SJC)**, distributed 12/8/6/5/5/2/2. A 30-way parallel burst → the **same 7** isolates,
+same colo. The cache entry's own `writers` list independently counted the same 7, which is the nice part:
+**the Cache API is itself the instrument that makes N observable from inside a Function.** State it
+carefully, though — **7 is one client on one network path, not the deployment's N.** A different client,
+a different region or a busier hour would produce a different number, and this measurement bounds it
+from below and nothing more.
+
+**What this changes about the multiplier.** With a Cache API tier the counter is shared by every isolate
+in a colo, so the multiplier stops being *isolates* (measured ≥ 7) and becomes *colos*. Cloudflare's own
+reference says the contents of the cache *"do not replicate outside of the originating data center"*, so
+each colo keeps its own counter — that is the residual, and it is both smaller and harder to exploit: an
+attacker does not choose their colo any more than they choose their isolate, and reaching many colos needs
+a genuinely distributed client rather than 30 parallel `curl`s.
+
+**The recommendation: build the Cache API tier, as an explicitly best-effort second tier, and keep the
+Durable Object plan exactly as it is.** The argument, from the numbers above:
+
+1. **It is never worse than today and often much better.** The in-isolate `Map` stays underneath and is
+   race-free, so a Cache tier can only ever *add* refusals. There is no regime in which adding it costs
+   correctness.
+2. **The regime where it measured *exact* is the regime that actually threatens the budget.** A burst is
+   already bounded by something else — `DEMO_MAX_CONCURRENT_CHAT` is 4 and `DEMO_QUEUE_MAX_DEPTH` is 8
+   (§4.1), so a 30-way burst is refused, not served. What a counter exists to stop is the **paced
+   sustained drain**: one script at a request or two per second, for hours, which no concurrency ceiling
+   touches. That traffic is sequential, and sequentially the tier lost **zero** of 41 increments while
+   collapsing a ×7 isolate multiplier to ×1 per colo.
+3. **Its failure mode is the safe one.** Row (g): it undercounts under contention, so the worst a race
+   does is behave like today. It cannot lock a legitimate visitor out.
+4. **It needs nothing from anybody.** No binding, no plan change, no dashboard visit, no cost — which is
+   precisely what assumption 13 was blocking, and it turns out it was only ever blocking the *other* two
+   candidates.
+
+**And the thing not to conclude.** This is **not** a hard global ceiling and no sentence anywhere may
+call it one. A burst defeats it (row f) and a second colo defeats it. Durable Objects remain the only
+candidate that gives a true single-writer counter, so P1 is unchanged and still gated on the dashboard.
+Two implementation notes for whoever builds it: key the entry by a **coarse time bucket** (`…/ip/<hash>/<minute>`)
+so the hot key rotates and a stale entry expires itself; and apply the tier to the **per-IP window**
+before the **unit budget**, since an undercounted window costs a few extra turns while an undercounted
+budget costs money.
 
 `GET /api/health` reports `budget_exhausted` and the real `load.inflight` from these same counters (P0-b
 wired it on 2026-09-03; before that it returned a hard-coded `null`/`0` and could never say either). It is
@@ -1183,9 +1254,9 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 | 8 | **Where `functions/` must live** for a project whose output dir is `sim/web` | **SETTLED TRUE (2026-09-03)** | A branch-preview `curl` answered it: `GET /api/health` on `feat-audit-6.moxie-robot-saver.pages.dev` returned **HTTP 200, `application/json`**, `{"reason":"gateway_not_configured","mode":"degraded"}` with the `DEFAULTS` caps echoed. `functions/` at the **repo root** is routed even though `pages_build_output_dir = sim/web`. The document's highest risk is closed, and it needed no owner — every branch push already publishes a preview, so any PR can re-check it. |
 | 9 | A `functions/api/_lib/` directory is excluded from routing | **SETTLED TRUE (2026-09-03)** | `GET /api/_lib/env.js`, `/api/_lib/safety.rules.js` and `/api/_lib/hmac.js` on the same preview each returned the site's **static HTML fallback**, not module source and not a route — so the helpers are neither invocable nor readable. No need to inline them. (Note the status is 200-with-HTML, not 404: anything probing for a missing *route* must check the content type, not the status.) |
 | 10 | Pages Functions allow a 20 s wall clock and a ~500 KB request body | **unverified** | Same preview, with a deliberate slow upstream. Mitigation is already in place: every timeout is an env var. |
-| 11 | Cloudflare Pages keeps Production and Preview variables separate, so a preview stays keyless | **PARTIALLY settled (2026-09-03)** | The preview *is* keyless today — `/api/health` reports `gateway_not_configured`, so it holds no `DEMO_GATEWAY_*`. But that is **not yet proof of separation**, because Production holds none either: no variable is set anywhere. The real test is one `curl` of a preview **after** the owner sets Production-only variables; until then treat separation as unproven and remember **every branch push publishes a public preview** (§2.3). |
+| 11 | Cloudflare Pages keeps Production and Preview variables separate, so a preview stays keyless | **PARTIALLY settled (2026-09-03)** | The preview *is* keyless today — `/api/health` reports `gateway_not_configured`, so it holds no `DEMO_GATEWAY_*`. But that is **not yet proof of separation**, because Production holds none either: no variable is set anywhere. The real test is one `curl` of a preview **after** the owner sets Production-only variables; until then treat separation as unproven and remember **every branch push publishes a public preview** (§2.3). **Sharpened 2026-09-05:** the preview's keylessness is no longer inferred from a reason string — `/api/probe` enumerated `context.env` directly and found exactly five keys, all of them Pages' own (`ASSETS`, `CF_PAGES`, `CF_PAGES_BRANCH`, `CF_PAGES_COMMIT_SHA`, `CF_PAGES_URL`) and not one `DEMO_*`. The separation question is unchanged, because Production still holds none either. |
 | 12 | Free-tier Pages Functions request allowance, CPU limit and concurrency | **unverified — stated nowhere in the repo** | Dashboard. The only Cloudflare limit the repo states is 25 MB/file (`deploy-cloudflare.md`:169). |
-| 13 | KV / Durable Objects / the WAF Rate Limiting product are available on this account and plan | **unverified** | Dashboard. This is why P0's counter is best-effort and P1 owns the exact one. Durable Objects historically need a paid Workers plan. |
+| 13 | KV / Durable Objects / the WAF Rate Limiting product are available on this account and plan | **SPLIT 2026-09-05. The half that was blocking a decision is SETTLED; the half that needs the dashboard is still open — and the two must not be confused.** | **(a) What the runtime reports, measured.** A throwaway `GET /api/probe` on the branch preview `feat-counter-probe.moxie-robot-saver.pages.dev` enumerated `context.env` (names, `typeof`, constructor and prototype method names — never a value, since a binding can be a secret). It holds **exactly five keys**: `ASSETS` (a `Fetcher`, methods `connect`/`fetch`) and the four string variables `CF_PAGES`, `CF_PAGES_BRANCH`, `CF_PAGES_COMMIT_SHA`, `CF_PAGES_URL`. **Zero** bindings of any stateful shape — no KV namespace, Durable Object namespace, D1, R2, Queue or rate-limiter. **Read that claim exactly as narrow as it is: "no such binding is CONFIGURED right now" is a different and much weaker statement than "this plan does not OFFER them," and a Function cannot see the second one.** Whether the account and plan carry KV, Durable Objects or the WAF Rate Limiting product is a dashboard fact, it stays **unverified**, and it still gates P1's single-writer counter. Durable Objects historically need a paid Workers plan. **(b) The half that was actually blocking a decision — settled, and the decision reversed.** Row 13 was cited in §4.6 as the reason not to build a Cache API counter tier, on the ground that its answer changes which counter is worth building. **The Cache API needs no binding at all, so it never depended on row 13, and it is now measured rather than assumed: cross-request and cross-isolate persistence both confirmed, exact under sequential load, lossy-but-fail-open under a burst.** §4.6.1 carries the numbers and the recommendation to build it. |
 | 27 | **`sim/web/_headers` applies to a Pages *Function* response** | **SETTLED FALSE (2026-09-03)** | It does not, and the control is clean: the same preview served `/sim.html` with the `/*` block's `Referrer-Policy: strict-origin-when-cross-origin` — so `_headers` demonstrably works on that deployment — and served `/api/health` with **no `Referrer-Policy` at all**, neither the `/api/*` block's `same-origin` nor the `/*` fallback. The two headers the Function *did* carry (`Cache-Control: no-store`, `X-Content-Type-Options: nosniff`) are exactly the two `envelope.js` sets in code. **Consequence:** §4.7's security block never protected `/api/*`; the "belt and braces" was the only belt. `Referrer-Policy` now lives in `envelope.js`, and `sim/test_demo_proxy.mjs` fails if any header named in the `/api/*` block is not also set in code. |
 | 14 | The LiteLLM gateway can mint a virtual key with a hard budget and RPM/TPM limits | **unverified** | Ask the gateway. **Check this first** — if it can, it is a one-line control bounding the absolute worst case, and everything in §4 becomes defence in depth. |
 | 15 | The gateway's `/v1/audio/transcriptions` accepts webm/Opus (what `MediaRecorder` produces) | **SETTLED FALSE (2026-09-03)** — it does not, and neither ogg/Opus nor mp4/AAC | Settled by the only thing that could: real calls, through `sim/tools/probe_demo_gateway.mjs --only=stt`, which posts the body `transcribe.js::buildTranscribeForm` actually builds. One utterance (`sim/web/audio/moxie/03e31950df81e786.mp3`, *"Hi! I am Moxie. It is nice to meet you."*, transcoded with `ffmpeg`) in four containers against `stt-whisper`: **16 kHz mono RIFF/WAVE → 200, word-perfect, 2 582 ms; 48 kHz mono webm/Opus → 500; 48 kHz mono ogg/Opus → 500; 44.1 kHz mono mp4/AAC → 500** — the three failures carrying an identical 270-byte JSON error. Two codecs and three containers failing the same way says the deployment decodes PCM and nothing else, which is also why `mqtt/moxie_sdk/stt.py` never hit it: `wav_bytes` has always wrapped the robot's frames in RIFF first. (A fifth call, on mp3, came back **429** from the gateway's own limiter, so mp3 is **inconclusive** and is not claimed either way.) **Blast radius was NOT contained, which is the finding that mattered:** the gateway answers 500, not a 4xx, so it maps to `upstream_down` — a 503 — and §6.3 degrades the WHOLE PAGE on a 503. Forwarding a browser's default recording would have taken the brain and the voice down every time someone pressed the microphone, after paying 1.6‑4.3 s for it. Fixed in two places: `DEMO_STT_FORMATS` (default `wav`) refuses an unaccepted container *before* the call, per-turn and for free; and `sim/web/mic.js` now **encodes 16 kHz mono WAV in the browser** rather than shipping whatever `MediaRecorder` produced. |
@@ -1198,7 +1269,7 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 | 22 | `deploy-cloudflare.md`:19's claim that the child's voice is audible is **false** | **proven** | `bridge.js`:434‑446 — `handleUserTurn` never speaks. Fix in P1. |
 | 23 | The Cloudflare **account id is already public** in every commit's check-run URL | **proven** (survey) | Not a credential, but worth knowing given `orchestration-plan.md`:32's "no account id is hard-coded" — nothing in this spec adds it to a file. |
 | 24 | Origin/Referer checks stop only browser hotlinking | **proven by reasoning, stated in the code** | Headers are trivially forged by `curl`. The controls that matter are the caps, the budget and assumption 14. |
-| 25 | The best-effort counter is not a true global ceiling | **proven — and the *reason* given here was itself wrong until 2026-09-03** | Original wording: *"Cache API is per-colo; an isolate map is per-isolate."* **The Cache API leg was VERIFIED ABSENT from the shipped code on 2026-09-03** — `functions/api/_lib/limits.js` keeps one module-scope `Map` per counter (`state.windows`, `state.budget`, `state.inflight`) and consults no cache, no KV and no Durable Object; §4.6 and `functions/api/health.js`'s comment had both described a tier that was never built. The conclusion survives, the multiplier does not: it is **isolates, not colos**, so the effective ceiling is N × the configured number for an N chosen by the platform, and the configured caps are a per-isolate throttle rather than a global budget. Corrected in §4.6 and in the code comment on the same day; the Cache API tier is deliberately **not** added, because assumption 13 is still open and its answer decides which counter is worth building. |
+| 25 | The best-effort counter is not a true global ceiling | **proven — and the *reason* given here was itself wrong until 2026-09-03** | Original wording: *"Cache API is per-colo; an isolate map is per-isolate."* **The Cache API leg was VERIFIED ABSENT from the shipped code on 2026-09-03** — `functions/api/_lib/limits.js` keeps one module-scope `Map` per counter (`state.windows`, `state.budget`, `state.inflight`) and consults no cache, no KV and no Durable Object; §4.6 and `functions/api/health.js`'s comment had both described a tier that was never built. The conclusion survives, the multiplier does not: it is **isolates, not colos**, so the effective ceiling is N × the configured number for an N chosen by the platform, and the configured caps are a per-isolate throttle rather than a global budget. Corrected in §4.6 and in the code comment on the same day. The Cache API tier was deliberately **not** added at the time, on the ground that assumption 13 was still open — **a reason retired on 2026-09-05**, when a preview probe established that the Cache API needs no binding, persists across requests and across isolates, and is exact under exactly the sequential traffic a counter exists to police (§4.6.1). The conclusion of this row is untouched: the shipped counter is still one `Map` and still not a global ceiling. |
 | 28 | **A short bounded wait is a better answer to "ten people collided" than a bigger concurrency ceiling** | **proven by reasoning and by test; the *premise* remains unverified** | The reasoning: `DEMO_MAX_CONCURRENT_CHAT` is matched to the upstream key's `max_parallel_requests`, which protects a neighbouring service on the same self-hosted gateway, so raising it moves the refusal upstream instead of removing it — while 4 slots at ~1.2 s a turn already serve ~3 turns/second, far above what ten *conversational* visitors ask for. So the ceiling stays and a bounded FIFO sits behind it (§4.1, `_lib/limits.js`). **What is proven** is the mechanism, in `sim/test_demo_proxy.mjs` block 13: FIFO order under contention, no overtaking by a late arrival, the depth cap refusing immediately, the wait expiring into the existing `at_capacity` envelope, a slot released from a thrown path handed to the longest-waiting request, and the charge refunded on both failure paths. **What is NOT proven, and is the load-bearing premise:** the ~1.2 s turn time and the upstream key's actual parallel limit are both taken from earlier measurements and from the deployment's intent, not re-measured here — and if a turn is materially slower than 1.2 s, `DEMO_QUEUE_MAX_DEPTH = 8` promises more than 2 500 ms can deliver and the tail of the queue times out having waited for nothing (it is refunded, but it still waited). Both numbers are variables; re-measure the turn time under real load and re-derive the depth from it. |
 | 26 | A Cloudflare Pages build accepts the `import ... with { type: "json" }` attribute, so a Function may load a `.json` data file | **SETTLED FALSE (2026-09-03)** — it does not | Settled by the only thing that could: a real deploy. P0-b's `_lib/safety.js` loaded its rule table that way; the Pages check went `COMPLETED/FAILURE` on `feat/livesim-live-turn` while the identical check was `success` on `dev`, and that single line was the only structural difference in the Functions tree. **Node 20 accepts the syntax, so all 1637 hermetic tests were green** — this was invisible to every local guard, which is the general lesson: a bundler-specific extension cannot be validated by the runtime the tests use. Fixed by inlining the table as `_lib/safety.rules.js` (a plain `export const RULES`), deleting the `.json` so there is one source of truth, and adding a guard in `sim/test_demo_proxy.mjs` that fails on any `.json` import or import attribute under `functions/` — converting a deploy-only failure into a one-second local one. |
 
