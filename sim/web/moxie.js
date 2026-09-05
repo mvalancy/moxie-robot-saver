@@ -1945,24 +1945,56 @@ function frameInRect(vw, vh, cx, cy) {
   const offY = (H - H * k) / 2 - (cy - H / 2) * k;
   camera.setViewOffset(W, H, offX, offY, W * k, H * k);
 }
+/*
+ * Keep Moxie inside the part of the viewport that nothing is covering.
+ *
+ * Only the camera's VIEW OFFSET moves. The canvas is full-screen at every width and stays
+ * that way (`sim/test_responsive.mjs` asserts it), so what changes is where she is
+ * FRAMED, never how big the renderer is.
+ *
+ * TWO things can eat the viewport now, and since 2026-09-05 one of them is ALWAYS there:
+ *   · `#chat-dock` — the conversation and the composer — is the bottom row of the HUD grid
+ *     at every width. It is ~100 px when nobody has said anything and grows with the log.
+ *   · `#panel` — the engineering rail — but only while it is OPEN: a right-hand column at
+ *     >=900 px, a bottom drawer below that. Closed it is a handle and takes nothing.
+ *
+ * The old version knew only about the panel, and its bottom-drawer test was
+ * `r.bottom >= H - 8` — true while the drawer was the lowest thing on the page and false
+ * the moment the dock moved in underneath it. So the two claims are separated: each box
+ * contributes a BOUND, and one `frameInRect` call is made from whatever the bounds ended
+ * up being. That also fixes a case that never worked: an open drawer AND a tall
+ * conversation used to shrink her for one of them and let the other clip her.
+ *
+ * NO ResizeObserver ON THE DOCK, on purpose. This is re-run on `resize` and on a drawer
+ * toggle (`window.__applyStageOffset`), i.e. on things the VISITOR did. Re-framing every
+ * time the conversation gains a row would move the camera underneath someone who is
+ * reading, which is worse than the thing it would fix — and the log is glass and
+ * height-capped, so she is visible through it either way.
+ */
 function applyStageOffset() {
   const W = window.innerWidth, H = window.innerHeight;
   camera.aspect = W / H;
   camera.clearViewOffset();
+  let right = W, bottom = H;
+  const dock = document.getElementById('chat-dock');
+  if (dock) {
+    const d = dock.getBoundingClientRect();
+    if (d.height > 0 && d.top > H * 0.4) bottom = d.top;
+  }
   const panel = document.getElementById('panel');
   const hud = document.getElementById('hud');
   if (panel && hud && !hud.classList.contains('rail-closed')) {
     const r = panel.getBoundingClientRect();
     if (r.width > 20 && r.height > 20) {
       const isRightColumn = r.right >= W - 8 && r.top < H * 0.4 && r.height > H * 0.55 && r.width < W * 0.9;
-      const isBottomDrawer = r.bottom >= H - 8 && r.left < W * 0.2 && r.width > W * 0.6 && r.top > H * 0.3;
-      if (isRightColumn) {
-        frameInRect(r.left, H, r.left / 2, H / 2);       // fit into the space LEFT of the column
-      } else if (isBottomDrawer) {
-        frameInRect(W, r.top, W / 2, r.top / 2);         // fit into the space ABOVE the drawer
-      }
+      // `bottom + 8` rather than `H - 8`: the drawer's bottom edge is the TOP of the dock
+      // now, not the bottom of the window.
+      const isBottomDrawer = r.left < W * 0.2 && r.width > W * 0.6 && r.top > H * 0.3 && r.bottom <= bottom + 8;
+      if (isRightColumn) right = Math.min(right, r.left);        // the space LEFT of the column
+      else if (isBottomDrawer) bottom = Math.min(bottom, r.top); // the space ABOVE the drawer
     }
   }
+  if (right < W - 8 || bottom < H - 8) frameInRect(right, bottom, right / 2, bottom / 2);
   camera.updateProjectionMatrix();
   renderer.setSize(W, H);
 }

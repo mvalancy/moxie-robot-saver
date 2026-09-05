@@ -11,7 +11,13 @@ venv="$here/.venv"
 # themselves rather than failing. A stamp of the requirements file makes drift cheap to
 # detect and impossible to ignore.
 stamp="$venv/.requirements.sha"
-want="$(sha256sum "$here/requirements.txt" | cut -d" " -f1)"
+# BOTH files, because `requirements.txt` is now two lines and the packages live in
+# `requirements-hermetic.txt` beside it (declared once — see the header of either file).
+# Hashing only the outer file would mean adding a dependency to the inner one left every
+# existing venv stale while the stamp still matched: the exact under-provisioned venv the
+# stamp was introduced to make impossible.
+want="$(sha256sum "$here/requirements.txt" "$here/requirements-hermetic.txt" \
+        | sha256sum | cut -d" " -f1)"
 if [ ! -x "$venv/bin/pytest" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
   [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
   "$venv/bin/pip" install -q -r "$here/requirements.txt"

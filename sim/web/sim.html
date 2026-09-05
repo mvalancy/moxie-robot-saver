@@ -47,7 +47,7 @@
      name describes what the view IS, and says where the changing content is written
      down in text (the comms log, which is the page's one live region). -->
 <div id="app" role="img"
-     aria-label="Live 3-D view of Moxie, a small teal robot with a round screen face. Her pose and expression change as she moves; anything she says is written as text in the comms log, in the Link panel.">
+     aria-label="Live 3-D view of Moxie, a small teal robot with a round screen face. Her pose and expression change as she moves; anything she says is written as text in the comms log, just above the message box at the bottom of the page.">
 </div>
 
 <!-- HUD overlay: topbar / notice / stage+rail laid out as a grid over the canvas -->
@@ -166,14 +166,13 @@
       <details class="group" open>
         <summary><span class="tick" aria-hidden="true"></span>Voice<span class="hint">tts &middot; audio</span><span class="caret" aria-hidden="true"></span></summary>
 
+        <!-- The typed row that used to sit here is the page's composer now, pinned to the
+             bottom of the viewport (`#chat-dock`, below `</aside>`). The chips STAY: they
+             play shipped audio with no server at all, which is a genuine engineering
+             control and is not how a visitor talks to her. -->
         <section class="sub">
-          <h3>Speech<span class="hint">tap a phrase &middot; real voice</span></h3>
+          <h3>Phrases<span class="hint">tap one &middot; shipped audio</span></h3>
           <div id="speech-chips" class="chips"></div>
-          <div class="row">
-            <input id="speech-input" type="text" placeholder="transmit line&hellip;" autocomplete="off"
-                   aria-label="Message to Moxie">
-            <button id="speech-btn">Say</button>
-          </div>
         </section>
 
         <section class="sub">
@@ -191,19 +190,22 @@
           <p id="tts-status" class="hint">optional local Piper service</p>
         </section>
 
+        <!-- The Listen BUTTON is in the composer beside Send, where a phone thumb expects
+             it, and `#mic-status` went with it: a visitor who taps a control at the bottom
+             of the screen must not have to open a drawer and scroll to find out what
+             happened. Only the optional local-STT address is engineering, so only it
+             stayed here. -->
         <section class="sub">
-          <h3>Mic<span class="hint">talk to moxie</span></h3>
+          <h3>Mic<span class="hint">optional local STT</span></h3>
           <div class="row">
-            <button id="mic-btn">Listen</button>
             <input id="stt-base" type="text" placeholder="http://127.0.0.1:8082"
                    aria-label="Local speech-to-text server address">
           </div>
-          <p id="mic-status" class="hint">click to start / stop recording</p>
         </section>
       </details>
 
       <details class="group" open>
-        <summary><span class="tick" aria-hidden="true"></span>Link<span class="hint">bus &middot; log &middot; session</span><span class="caret" aria-hidden="true"></span></summary>
+        <summary><span class="tick" aria-hidden="true"></span>Link<span class="hint">bus &middot; presence &middot; session</span><span class="caret" aria-hidden="true"></span></summary>
 
         <section class="sub">
           <h3>Live bus<span class="hint">MQTT&#47;WS :9001</span></h3>
@@ -227,35 +229,6 @@
             camera never leaves the robot: these carry presence, not pixels.</p>
         </section>
 
-        <section class="sub sub-log">
-          <h3>Comms log<span class="hint">child &harr; moxie</span></h3>
-          <!-- THE PAGE'S ONE LIVE REGION, and the choice of WHICH element is the whole
-               accessibility design here.
-               #transcript carries exactly two things (the bus bridge's `addTranscript`,
-               in the file loaded below): a child
-               turn — what the visitor typed into Ask, said into the mic, or a scripted
-               demo line they pressed Play on — and Moxie's answer to it. Every one of
-               those is a direct consequence of something the visitor just did, which is
-               precisely what a screen reader should read out unprompted.
-               It deliberately does NOT carry the ambient self-talk. Moxie says an
-               unprompted quip every 11-24 s; those go to #bubble via moxie.setSpeech()
-               and never reach this element (measured: 40 s of ambient quips, transcript
-               row count unchanged). Announcing them would be exhausting and would talk
-               over the answer the visitor actually asked for — so #bubble is left as a
-               plain, readable region: NOT live, and NOT aria-hidden either, so someone
-               can still browse to it and read the current quip if they want it. Marking
-               it live would also announce the typewriter reveal one character at a time
-               ("Do y", "Do you", "Do you e" ...), which is what it literally does.
-               aria-relevant includes `text` because a streamed reply arrives as several
-               chunks appended to the SAME row (addTranscript's `append` path); with
-               additions-only, every sentence after the first would be silent.
-               tabindex="0" because this box scrolls (max-height 200px, overflow auto)
-               and contains nothing focusable, so without it a keyboard-only user cannot
-               scroll back through the conversation at all. -->
-          <div id="transcript" role="log" aria-live="polite"
-               aria-relevant="additions text" aria-atomic="false" tabindex="0"
-               aria-label="Comms log — what you and Moxie say to each other"></div>
-        </section>
 
         <section class="sub">
           <h3>Session<span class="hint">record &#47; replay</span></h3>
@@ -299,6 +272,122 @@
     </div>
   </aside>
 
+  <!-- ===================== THE COMPOSER DOCK ==================================
+       PAGE FURNITURE, NOT PANEL CONTENT — and that sentence is the whole change.
+       Until 2026-09-05 the ONLY way to say anything to Moxie was `#speech-input` +
+       `#speech-btn` inside `<aside id="panel">`. Measured against the live site in a
+       fresh incognito profile with a real iOS UA at 390x844 (written up in
+       docs/architecture/backlog/mobile-first-visit.md):
+
+           on load                   #speech-input is 0 x 0
+           after tapping CONTROLS    262 x 40 at y = 2095, of an 844 px viewport
+           after scrollIntoView      y = 663, and the turn COMPLETES normally
+
+       The turn always worked. It was unreachable — two thousand pixels down a scrolling
+       engineering drawer, behind a button labelled CONTROLS, on a page whose six visible
+       controls (Hub, ALIVE, GITHUB, CONTROLS, Run it locally, X) said nothing about
+       talking to her. She speaks unprompted at ~7 s, so a visitor heard her and had no
+       visible way to answer. That is the worst possible ordering of those two facts.
+
+       ONE INPUT, NOT TWO. These are the SAME `#transcript` / `#speech-input` /
+       `#speech-btn` / `#mic-btn` / `#mic-status` nodes that lived in the rail, MOVED —
+       not copies. Every listener in this page binds by id (`moxie.js`'s setSpeech,
+       `hud.js`'s wireAudio and the phrase chips, `mic.js`, `env.js`'s needs-backend
+       marks, `cloud-transport.js::adoptSpeechControl`), so re-parenting changes nothing
+       about behaviour and there is no second box that could disagree with this one.
+       mobile-first-visit.md is explicit that a second control is the trap: the live site
+       already proved a visitor reliably tries the top box, so a duplicate would be tried
+       first and be the wrong one.
+
+       `section.sub` ON THE COMPOSER IS LOAD-BEARING, not decoration:
+       `cloud-transport.js::ensureStatus` puts `#chat-status` — "thinking...", every
+       refusal, the over-long warning — into `#speech-btn.closest("section.sub")`, and
+       `sim/test_typed_turn.mjs` asserts that the status lands in the same section as the
+       button. Rename the class and the status silently goes somewhere else.
+
+       WHAT DID NOT CHANGE. The rail is untouched apart from the four controls that moved
+       out of it: it is still a full-height column at >=900 px and still a drawer that
+       starts CLOSED below that (`rail.js`, unchanged). This is a phone-first fix, not a
+       desktop teardown — the 3-D stage is still the hero on a wide viewport, and
+       `moxie.js::applyStageOffset` now frames her ABOVE this dock so she never sits
+       behind it.
+       ======================================================================== -->
+  <div id="chat-dock">
+
+    <!-- (c) OF THE OWNER'S STEER, and the cheapest half of it. The measurement above is
+         not only geometric: of the six controls a phone visitor could see, NOT ONE said
+         "talk to Moxie". A placeholder inside a box does not fix that on its own — it
+         vanishes the moment anything is typed, and it is not read as page copy — so the
+         page says it in words, in an element, above the box.
+         It gets out of the way once there IS a conversation (`:has()` in style.css). If a
+         browser does not support `:has()` the rule is simply dropped and the line stays,
+         which is the failure this should have: still true, merely redundant. -->
+    <p id="chat-cue">Talk to Moxie<span class="cue-more"> &mdash; type a message, or tap Listen and
+      speak. She answers here.</span></p>
+
+    <!-- THE PAGE'S ONE LIVE REGION, and the choice of WHICH element is the whole
+         accessibility design here.
+         #transcript carries exactly two things (the bus bridge's `addTranscript`,
+         in the file loaded below): a child
+         turn — what the visitor typed into the composer, said into the mic, or a scripted
+         demo line they pressed Play on — and Moxie's answer to it. Every one of
+         those is a direct consequence of something the visitor just did, which is
+         precisely what a screen reader should read out unprompted.
+         It deliberately does NOT carry the ambient self-talk. Moxie says an
+         unprompted quip every 11-24 s; those go to #bubble via moxie.setSpeech()
+         and never reach this element (measured: 40 s of ambient quips, transcript
+         row count unchanged). Announcing them would be exhausting and would talk
+         over the answer the visitor actually asked for — so #bubble is left as a
+         plain, readable region: NOT live, and NOT aria-hidden either, so someone
+         can still browse to it and read the current quip if they want it. Marking
+         it live would also announce the typewriter reveal one character at a time
+         ("Do y", "Do you", "Do you e" ...), which is what it literally does.
+         aria-relevant includes `text` because a streamed reply arrives as several
+         chunks appended to the SAME row (addTranscript's `append` path); with
+         additions-only, every sentence after the first would be silent.
+         tabindex="0" because this box scrolls (a bounded max-height, overflow auto)
+         and contains nothing focusable, so without it a keyboard-only user cannot
+         scroll back through the conversation at all. -->
+    <div id="transcript" role="log" aria-live="polite"
+         aria-relevant="additions text" aria-atomic="false" tabindex="0"
+         aria-label="Comms log — what you and Moxie say to each other"></div>
+
+    <section class="sub" id="composer">
+      <div class="row">
+        <!-- The accessible name stays "Message to Moxie" (asserted by name in
+             `sim/test_a11y.mjs`'s NAMED table); the PLACEHOLDER is the visitor-facing
+             wording, and `cloud-transport.js::adoptSpeechControl` rewrites it to the same
+             string when it adopts the box, so the two cannot drift apart.
+             `enterkeyhint` makes a phone keyboard say "send" instead of "go". -->
+        <input id="speech-input" type="text" placeholder="Message Moxie&hellip;" autocomplete="off"
+               enterkeyhint="send" aria-label="Message to Moxie">
+        <!-- The mic sits BETWEEN the box and Send, which is where the owner asked for it
+             and where a thumb expects it. The word stays "Listen": every piece of copy
+             this page already ships about the microphone (`env.js`'s tooltips, its
+             hosted-demo `#mic-status` warning) names that button by that word, and a
+             visible text label is also a stronger accessible name than the `title`
+             `env.js` sets on it. The glyph is additive, never the only label. -->
+        <button id="mic-btn" type="button">
+          <svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
+            <rect x="9" y="2.5" width="6" height="11" rx="3"/>
+            <path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/>
+          </svg><span class="btn-label">Listen</span>
+        </button>
+        <!-- Deliberately TEXT ONLY, no icon element inside it:
+             `cloud-transport.js::adoptSpeechControl` assigns `btn.textContent = "Ask"`,
+             which would wipe any child node this button carried. -->
+        <button id="speech-btn" type="button">Say</button>
+      </div>
+      <!-- Both status lines the composer's two buttons write. `#mic-status` is `mic.js`'s
+           and `env.js`'s; `#chat-status` is injected here by `cloud-transport.js`. They
+           are bounded in CSS so a two-line hosted-demo warning can never push the box
+           itself off the bottom of the screen — which would recreate this whole bug in
+           miniature. -->
+      <p id="mic-status" class="hint">click to start / stop recording</p>
+    </section>
+  </div>
+
 </div>
 
 <script type="module" src="moxie.js?v=cute7"></script>
@@ -308,6 +397,7 @@
 <script src="stub.js?v=cute7"></script>
 <script src="bridge.js?v=cute7"></script>
 <script src="mode.js?v=cute7"></script>
+<script src="turnstile.js?v=cute7"></script>
 <script src="cloud-transport.js?v=cute7"></script>
 <script src="audio.js?v=cute7"></script>
 <script src="ambient.js?v=cute7"></script>
