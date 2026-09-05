@@ -293,6 +293,17 @@ shows for QR). Two consequences shaped the whole design:
    now attaches that subscription — once per `(device, module_id)`, because "events are
    automatically unsubscribed when the module exits" — to a plain, action-free reply, so no reply
    that already carries a `launch`/`exit` changes shape. `MOXIE_VISION=0` turns it off.
+   **Since 2026-09-05 a second party can add to that list**: a sandboxed content pack's
+   `subscribe` statement reaches `Reply.subscribe`, and `_merge_subscriptions` merges it **into**
+   the list above rather than over it. The direction is the safety property — a pack may ask to
+   perceive something and can never remove an event this section's behaviour depends on, and a
+   replace would be silent because the latch says *"subscribed"* the moment the list is handed
+   over. A pack's request is refused outright under `MOXIE_VISION=0` and for an unpermitted robot,
+   and it rides a reply that already carries an action (`MoxieGo` arms the scanner and subscribes
+   in one move), which the runtime's own list deliberately does not.
+   ⚠️ **The inbound half is still missing:** a subscribed event is answered by `_on_vision_turn`
+   and never reaches `app.respond`, so a pack can ask to perceive an event and cannot yet be
+   *woken* by one ([`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md) §8, G6).
 
 ### 7.2 The presence model
 

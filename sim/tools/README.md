@@ -23,6 +23,18 @@
   and requires the corresponding test to go **red**. All 28 are caught. Run it by hand after
   touching `ext.py`, `render.py`, `content_app.py`'s host half or `packs.py`'s pattern cap; a green
   suite proves a guard is *present*, and only this proves it is *load-bearing*.
+- **`subscribe_mutation_check.py`** — the same proof for the `subscribe` capability's **16 guards**:
+  the load-time event allowlist, the width of `ext.SUBSCRIBE_EVENTS`, the P1 gate, both host
+  boundaries, both de-duplications, the two **merge-direction** rows, `MOXIE_VISION`, the pairing
+  gate and four *set-but-never-sent* shapes — **16/16 caught**. A separate table from
+  `ext_mutation_check.py` because half these guards live in `mqtt/supervisor/moxie_runtime.py`, which
+  that checker's single-file runner cannot see. Two rows earn the file on their own: a merge in which a
+  content pack's event list **replaces** the supervisor's fails *silently*, because
+  `_vision_subscription` latches *"subscribed"* for a `(device, module)` at the moment it hands its
+  list over — so presence, the greeting rule and launch cards would go quiet with nothing logged. The
+  run also found a **weak test**: rows S12/S13 left the wire assertion green in its first draft,
+  because every grantable event is in the runtime's own list and the assertion was satisfied without
+  the pack's contribution at all.
 - **`build_performance_goldens.py`** — regenerates
   [`../tests/goldens/performance.json`](../tests/goldens/), the behavior planner's 22
   dialog-act goldens as JSON `Performance` objects **plus** the markup each renders to

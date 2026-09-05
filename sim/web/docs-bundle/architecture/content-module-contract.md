@@ -314,7 +314,8 @@ Each turn hands the module's `code` a **`volley`** (this exchange) and **`sessio
 | `volley.local_data` | This-turn scratch. Never written anywhere |
 | `volley.request.get("input_vars", {})` | Inbound vars (maps to `RemoteChatRequest.input_vars`) |
 | `volley.add_execution_action(name, args)` | Ask the robot to *do* something (bridge to native) |
-| `volley.update_subscriptions([...])` | Subscribe to robot events for later turns |
+| `volley.update_subscriptions([...])` | Subscribe to robot events for later turns, **replacing** the list. Registered Python handlers are our own code and own the whole volley |
+| `volley.add_subscriptions([...])` | The same, **adding** — an extension may only add, never remove (see below) |
 | `session.summarize(...)` | LLM-summarize the transcript into structured, kid-safe facts (memory). See below |
 | `session.total_volleys`, `session.is_empty()`, `session.overflow` | Turn accounting |
 
@@ -683,7 +684,9 @@ is *also* a load refusal, so the list a parent reads is provably what the progra
 | `memory.read` / `memory.write` | Its **own namespace** of `persist_data` | refused |
 | `presence` | `face_present`, `line` | refused |
 | `markup` | Author behaviour markup (catalogue-validated) | refused |
-| `act.<name>` · `subscribe` · `brain` · `schedule.request` | robot actions, events, a model call, a schedule request | **P1 — refused at load** |
+| `act.<name>` | One robot function per name, from the closed `ext.ACTION_WORDS` allowlist | refused (grantable ✅ 2026-09-04) |
+| `subscribe` | Ask the robot to push a perception event, from the closed `ext.SUBSCRIBE_EVENTS` vocabulary | refused (grantable ✅ 2026-09-05) |
+| `brain` · `schedule.request` | A model call of its own, a schedule request | **P1 — refused at load** |
 
 The default-granted set is exactly those four, and widening it is a code change: there is
 deliberately no env var and no console control at P0. Shipped-by-us activities get a wider
@@ -704,10 +707,22 @@ so an attribute walk has nothing to walk to. A path segment beginning `_` is ref
 load, so `__class__` and `_meta` are not *blocked* — they are not valid programs.
 
 **Effects are collected, never applied during the program.** `say`, `markup`, `remember`,
-`forget`, `scratch`, `note` (and P1's `act`/`subscribe`/`brain`) append to a list the host
+`forget`, `scratch`, `note`, `act`, `subscribe` (and P1's `brain`) append to a list the host
 applies afterwards — through the same output-safety classifier and the same `annotate`
 floor a model's line goes through, with the memory namespace supplied by the host. So a
 breach mid-program leaves **nothing** half-applied.
+
+**A `subscribe` is MERGED, never applied as a replacement — at every layer.** The names are
+bounded three times against the recovered vision catalog (at load in `ext._st_subscribe`, at
+the host boundary in `content_app.subscriptions_of`, and once more in the runtime against the
+events it can actually route). Then `moxie_runtime._merge_subscriptions` merges what the reply
+asked for **into** the supervisor's own vision subscription: every entry the runtime put there
+survives, unconditionally. A content pack must be able to ask to perceive something and must
+never be able to switch off the events presence, the unprompted greeting and launch cards
+depend on — and a replace here would do that *silently*, because the runtime latches
+*"subscribed"* for a `(device, module)` at the moment it hands its list over. A pack's request
+is additionally refused when `MOXIE_VISION=0` (an operator's kill switch is above a pack) or
+when the robot is not permitted.
 
 **The limits**, all env vars in [`config.py`](../../mqtt/config.py):
 
