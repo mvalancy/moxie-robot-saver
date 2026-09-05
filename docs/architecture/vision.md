@@ -371,8 +371,11 @@ queue becomes an optimization rather than a necessity; nothing else changes.
   image. This is presence, not sight; OpenCV/VLM still needs the external camera of §6H.
 - **Unproven against hardware.** The subscription, the event delivery shape, the timing, and the
   robot's handling of `NOREPLY_ACK` on a vision event are all inferred. The SIL robot
-  (`sim/virtual_moxie.py --face-event found|lost`) and the browser SIM emit the events so the whole
-  path is exercised end to end, but a simulator agreeing with us proves only that we are consistent.
+  (`sim/virtual_moxie.py --face-event found|lost`, and `--face-value` for the three marker events
+  that carry a payload) and the browser SIM emit the events so the whole path is exercised end to
+  end — including a 🎴 launch card scanned, refused or acted on
+  (`sim/tests/test_launch_cards_sil.py`) — but a simulator agreeing with us proves only that we are
+  consistent.
 - **`eb_custom_face_search` is not driven yet.** The "close enough" size gate (§1.1) is catalogued
   in `presence.py` (`CLOSE_ENOUGH_ARGS`) but the runtime never sends the `execute` action, so
   today's presence is "any face the robot decided to target", not "someone within range".

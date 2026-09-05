@@ -20,8 +20,12 @@
 > Effort: **M** — three small pieces, not one, and one of them is an ADOPT item of its own.
 >
 > **State 2026-09-04:** P0-a 🟡 half done · **P0-b ✅ shipped** · P0-c ⬜ not started. A scanned card now
-> becomes a launch against a closed, derived 24-id allowlist. **The ceiling did not move:** no physical
-> Moxie has ever sent us an `eb-qr-event`, so nothing here is proof a robot scans paper.
+> becomes a launch against a closed, derived 24-id allowlist, and **T10 has now travelled a wire**: a
+> `sim/virtual_moxie.py` robot publishes an `eb-qr-event` carrying a card and ends up *holding* the
+> launch in its own client state (`test_launch_cards_sil.py`, 45 tests). Say that precisely — it is
+> **proven between our runtime and our simulated client**, not proven. **The ceiling did not move:** no
+> physical Moxie has ever sent us an `eb-qr-event`, and a SIL robot is not a robot — it has no camera,
+> starts no module, and records actions rather than running them. The browser-SIM leg (T12) is still open.
 
 ## 0. The two facts that set the scope
 
@@ -324,22 +328,31 @@ Hermetic first; nothing below needs a broker, a network or a sleep.
 | T7 | A QR turn carrying an unrecognised value still answers `NOREPLY_ACK` — an unknown card is silence, never a stall | ✅ `test_launch_cards_runtime.py`, parametrised over nine non-cards |
 | T8 | A card scanned during an absence does not also fire the unprompted greeting twice (`_greeting_for` and the launch are independent) | ⚠️ **the premise was wrong** — a scan is never a sighting, so the two cannot co-occur at all (`presence.update_presence` emits `arrived` only for `eb-found-face`). Asserted as such, and the would-be composition pinned white-box | 
 | T9 | `Action(EXECUTE, function="eb_enable_qr", args=["true"])` serialises to `{"action":"execute","function_id":"eb_enable_qr","function_args":["true"]}` — ✅ **done 2026-09-04**, asserted key for key in `test_actions_reach_the_robot.py::test_the_briefs_own_worked_example_is_the_shape_that_goes_out`; `ENABLE_QR` serialising to the **same** shape and never to the string `enable_qr` is ❌ **still owed**, and the current (wrong) spelling is pinned by `…::test_the_naming_defects_p0a_still_owns_are_pinned_here_not_fixed` | `test_actions_reach_the_robot.py` (wire half, shipped) · `test_launch_cards.py` (the `ENABLE_QR` half) |
-| T10 | SIL round trip: the real `MoxieRuntime` + the real `sim/virtual_moxie.py` over `helpers_runtime.loopback()` — the robot publishes an `eb-qr-event` carrying `GO<launch:DM>` and ends up **holding** the launch action in the recovered shape | `test_launch_cards_sil.py`, in the idiom of `test_e2e_actions_to_robot.py` |
+| T10 | SIL round trip: the real `MoxieRuntime` + the real `sim/virtual_moxie.py` over `helpers_runtime.loopback()` — the robot publishes an `eb-qr-event` carrying `GO<launch:DM>` and ends up **holding** the launch action in the recovered shape | ✅ **proven between our runtime and our simulated client** 2026-09-04 — `test_launch_cards_sil.py`, 45 tests. The robot's own `action_stats()` ends at `{"action": "launch", "module_id": "DM", "content_id": "", "function": "", "args": []}`, written by `virtual_moxie._apply_action` off a payload that arrived on `/devices/<id>/commands/remote_chat`. **The refusals travel the same wire**: `launch_if_confirmed`, `sleep`, `exit`, an id outside the catalog, a lowercased marker, an over-long value and two smuggling shapes each leave `applied == []` *and* answer `NOREPLY_ACK` on the scan's own `event_id`, so a refusal is silence rather than a stall. **Also run once over a real broker** (mosquitto in docker + `mqtt/run.py` as its own process), because the hermetic loopback is still one process: `sim/virtual_moxie.py --face-event eb-qr-event --face-value 'GO<launch:DM>'` printed `✅ eb-qr-event: SUCCESS (silent) 🎬 launch DM` and the supervisor logged `🎴 … scanned a launch card -> DM`, while `launch_if_confirmed`, `sleep` and `NOPE` each printed `NOREPLY_ACK` with no 🎬. That run is a **manual reproduction, not a CI gate** — `sim/run_smoke.sh` has no card mode. Not proven: any of it on hardware |
 | T11 | The sheet route returns one card per catalog id, each payload decodes back to its own id, and the page contains no id outside the catalog | `test_launch_cards.py` |
 | T12 | Browser↔Python byte parity for the card payload string, the way `sim/test_qr.mjs` already asserts it for the seven revival payloads | `sim/test_qr.mjs` |
-| T13 | Mutation run: every guard deleted one at a time turns a test red | ✅ `sim/tools/launch_card_mutation_check.py` — **14 rows, 14 caught**, 1-30 tests red each. Anchors held honest by `test_mutation_tables.py` |
+| T13 | Mutation run: every guard deleted one at a time turns a test red | ✅ `sim/tools/launch_card_mutation_check.py` — **19 rows, 19 caught**, 1-61 tests red each. M15-M19 mutate the **client** (`sim/virtual_moxie.py`), because M1-M14 all mutate the server and a SIL test could survive every one of them while still reading the runtime's own publish record. 18 of the 19 redden `test_launch_cards_sil.py` *on its own*; the exception is **M3**, and honestly so — M3 widens the derived catalog and the SIL suite is parametrised *over* that catalog, so the derivation is a property only the unit suite can see (6 red there). Anchors held honest by `test_mutation_tables.py` |
 
 **Two harness changes the tests need** (small, and both are the missing half of something already
-built):
+built) — **one of the two turned out to be already built**, see the correction under them:
 
-1. `sim/virtual_moxie.py` — `send_face_event(kind, input_vars)` already accepts a payload (`:282-292`)
-   but `run_face_events` never passes one (`:294-315`) and the CLI has no flag. Add `--face-value`.
-2. `sim/virtual_moxie.py` ignores `response_actions` **entirely** (zero references), so today the SIL
-   robot cannot show it *received* a launch — only `test_e2e_actions_to_robot.py`'s reader can. Record
-   the actions on the robot object so T10 can assert against the client's own state. The browser SIM
-   already does this (`bridge.js::applyAction`, `:217-265`, including `enable_qr` and `execute`), which
-   means **`test_e2e_actions_to_robot.py`'s docstring is stale** where it says *"and so does the browser
-   SIM's bridge"* — fix that line while you are there.
+1. ✅ **done 2026-09-04.** `sim/virtual_moxie.py` — `send_face_event(kind, input_vars)` already accepted
+   a payload but `run_face_events` never passed one and the CLI had no flag. `--face-value` now carries
+   the marker payload for all three value-bearing events, routed to the right `input_vars` key by
+   `VirtualMoxie.EVENT_VALUE_KEYS` / `value_vars` — a deliberate second copy of `presence.VALUE_KEYS`,
+   because the robot half must not import the server SDK. `run_face_events` also records the actions
+   applied during each event's turn, so `--face-event eb-qr-event --face-value 'GO<launch:DM>'` prints
+   `✅ eb-qr-event: SUCCESS (silent) 🎬 launch DM`.
+2. ⚠️ **this item was already true when it was written.** It says the file "ignores `response_actions`
+   **entirely** (zero references)". It has not since **`470ffd9` (PR #116, 2026-09-04)**, which added
+   `_on_actions` / `_apply_action` / `action_stats()` and the `self.actions` record — the file carries
+   ~30 references today, and `test_actions_reach_the_robot.py` already asserts against them. The same
+   item's closing instruction — *fix `test_e2e_actions_to_robot.py`'s stale "and so does the browser
+   SIM's bridge" line* — was fixed in **that same commit**, and the docstring now carries a paragraph
+   saying so. **The brief was drafted against a tree that PR #116 had not yet landed on.** Nothing was
+   needed here for T10; the SIL round trip asserts against `action_stats()` exactly as this item asked,
+   and what T10 *added* was five mutation rows (M15-M19) proving those recordings are load-bearing —
+   without them a SIL test can read the runtime's publish record and look identical.
 
 ## 5. Acceptance criteria
 
@@ -366,7 +379,7 @@ built):
 | P0-a the arm | **S** | [`mqtt/moxie_sdk/wire.py`](../../../mqtt/moxie_sdk/wire.py) (`build_chat_response`, the action loop) · [`mqtt/moxie_sdk/types.py`](../../../mqtt/moxie_sdk/types.py) (`ActionType.ENABLE_QR`) |
 | P0-b the route ✅ | **S/M** | **new** [`mqtt/moxie_sdk/launch_cards.py`](../../../mqtt/moxie_sdk/launch_cards.py) · [`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) (`_on_vision_turn` only) · [`mqtt/moxie_sdk/actions.py`](../../../mqtt/moxie_sdk/actions.py) (`tag_names`, additive — see the box) |
 | P0-c the sheet | **S** | [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) (two routes: the sheet, one PNG) · [`server/static/index.html`](../../../server/static/index.html) (the 🎴 card + a print stylesheet) · optionally [`sim/web/qr.js`](../../../sim/web/qr.js) for the install-free browser generator |
-| Harness | — | [`sim/virtual_moxie.py`](../../../sim/virtual_moxie.py) (`--face-value`, record `response_actions`) |
+| Harness ✅ | — | [`sim/virtual_moxie.py`](../../../sim/virtual_moxie.py) — `--face-value` + `EVENT_VALUE_KEYS`/`value_vars` landed 2026-09-04; `response_actions` were already recorded (PR #116) |
 | Tests | — | `sim/tests/test_launch_cards.py`, `test_launch_cards_runtime.py`, `test_launch_cards_sil.py`, `sim/tools/launch_card_mutation_check.py`, `sim/test_qr.mjs` |
 | Docs | — | this page's state, [`../openmoxie-feature-audit.md`](../openmoxie-feature-audit.md) §4.4 #9 + §4.3, [`README.md`](README.md), [`../../../ATTRIBUTION.md`](../../../ATTRIBUTION.md) |
 
@@ -384,7 +397,8 @@ by us, today.
 |---|---|
 | the decoder's whole behaviour, including every refusal (T1–T5) | that a real robot ever fires `eb-qr-event` for a card we printed |
 | that the runtime answers a QR turn with a correctly-shaped launch on the right `event_id` (T6–T8) | that the runtime reader decodes *our* PNG at *a child's* holding distance, in a lounge, at their lighting |
-| that the SIL robot and the browser SIM receive it (T10) and the browser SIM visibly acts on it | that `eb_enable_qr` as an `execute` action actually arms that reader |
+| that the **SIL robot** receives it and holds it — ✅ T10, 2026-09-04, refusals on the same wire | that `eb_enable_qr` as an `execute` action actually arms that reader |
+| that the **browser SIM** receives it and visibly acts on it — ⬜ still open, T12's other half | that a SIL robot receiving a launch tells us anything about a robot with a camera |
 | byte parity between our two generators (T12) | that the robot's JSON spelling of `ActionID` matches ours |
 
 | # | Risk / assumption | Why it is open | What would settle it |
