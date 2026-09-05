@@ -371,6 +371,22 @@ browser at all and carry the hermetic suite CI actually runs.
   the gateway does the speaking); skips cleanly without them or without a voice URL. **In
   CI** it rides in the same creds-only dispatch step as the three suites above, which also
   fails on an empty `MOXIE_VOICE_BASE_URL`.
+- **`test_live_hosted_ears.py` + `helpers_route.mjs`** — the only test that puts **real
+  spoken words through `functions/api/transcribe.js`**, the route the hosted page's
+  microphone posts to. Everything else about that route is proven with a stubbed `fetch`
+  and a 440 Hz tone ([`../test_demo_ears.mjs`](../test_demo_ears.mjs),
+  [`../test_mic_spend.mjs`](../test_mic_spend.mjs)), and `test_live_gateway_stt.py`'s
+  overlap-1.00 proof goes through the *Python* seam and never touches the route. Two
+  tiers: **A** runs the route MODULE against the real gateway (`helpers_route.mjs` is the
+  Python↔JS bridge — it builds the `Request`, calls `onRequestPost`, and reports
+  `_lib/limits.js`'s own upstream-call counter so the spend is measured, not assumed);
+  **B** POSTs the same WAV at a real deployment named by `MOXIE_DEMO_ORIGIN` (**no host is
+  hard-coded** — C3 — so it skips loudly when unset). 3 gateway calls for a full run;
+  `MOXIE_EARS_WAV=<file>` reuses a previous run's audio and makes it 2. The floor is 0.7,
+  the same number `test_live_gateway_stt.py` uses, and a **decoy sentence scored against
+  the same transcript must stay under 0.35** — that control is what stops the floor being
+  a test that passes on any transcript at all. **It proves the route, not a person:** no
+  human has ever spoken into the hosted microphone, and this file does not change that.
 - **`test_live_talk_e2e.py` + `helpers_audio.py`** — the *voice* live tests: real Piper
   speech in, real Piper speech out, read back by real faster-whisper. Tier 1 round-trips
   Moxie's own voice through Whisper (and proves the built-in `ToneSynthesizer` would
