@@ -1,5 +1,5 @@
 {
- "generated": "docs-7a182a998e8c",
+ "generated": "docs-247b770db0b0",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 255027,
+   "bytes": 257276,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -830,7 +830,7 @@
    "path": "architecture/backlog/mobile-first-visit.md",
    "title": "On a phone, the Talk box is 2 095 px below the fold",
    "section": "architecture",
-   "bytes": 3766,
+   "bytes": 6090,
    "mermaid": 0,
    "headings": [
     "What a first-time phone visitor actually gets",

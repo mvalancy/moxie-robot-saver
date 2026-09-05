@@ -272,7 +272,14 @@ async function unnamedControls(page) {
 }
 
 /* ==========================================================================
- * 3. FINDING 2 — the Voice panel must describe the button beside it
+ * 3. FINDING 2 — the standing note must describe what the button actually does
+ *
+ * It was written as "the Voice panel must describe the button BESIDE it", and until
+ * 2026-09-05 that was literally the geometry: `#voice-note` and `#speech-btn` were two
+ * lines apart in the same rail section. The button is in the page's composer now and the
+ * note stayed with the phrase chips it also describes, so the note points at the box
+ * rather than sitting next to it — and the assertions are unchanged, because what they
+ * were always guarding is that the note and the button cannot describe different pages.
  * ======================================================================= */
 {
   // (a) scripted / no backend: typing reaches a SCRIPTED Moxie, not the browser's voice.
@@ -308,6 +315,17 @@ async function unnamedControls(page) {
 
 /* ==========================================================================
  * 4. KEYBOARD — the rail drawer, its announced state, and no phantom tab stops
+ *
+ * REWRITTEN 2026-09-05, and the rewrite is the point. This block used to prove that
+ * `#speech-input` and `#transcript` were UNREACHABLE while the drawer was shut — which
+ * was true, and was the defect: on a phone the only way to say anything to Moxie was
+ * two thousand pixels inside a drawer labelled CONTROLS
+ * (docs/architecture/backlog/mobile-first-visit.md). Both now live in the page's
+ * composer, outside the rail, so the same two ids are asserted the OPPOSITE way round.
+ *
+ * The invariant the old block was really guarding has not moved and is still asserted
+ * below with rail-only controls: a collapsed disclosure must not leave tab stops behind
+ * it. What changed is which elements are inside it.
  * ======================================================================= */
 {
   const { page } = await open({ width: 390, height: 780 });
@@ -324,21 +342,40 @@ async function unnamedControls(page) {
   eq(closed, "false", "the drawer starts collapsed on a phone, and SAYS so");
   eq(await page.$eval("#rail-scroll", (e) => getComputedStyle(e).display), "none",
      "a collapsed rail is display:none — anything else leaves invisible tab stops");
+  // Controls that are genuinely INSIDE the rail, one from each of its four groups.
+  const RAIL_ONLY = ["center-btn", "tts-base", "stt-base", "bus-host", "rec-toggle"];
   const shut = await tabbables();
-  ok(!shut.includes("transcript") && !shut.includes("speech-input"),
-     `nothing inside the collapsed rail is tabbable — got ${JSON.stringify(shut)}`);
+  const leaked = RAIL_ONLY.filter((id) => shut.includes(id));
+  eq(JSON.stringify(leaked), "[]",
+     `nothing inside the collapsed rail is tabbable — leaked ${JSON.stringify(leaked)} ` +
+     `out of ${JSON.stringify(shut)}`);
   ok(shut.includes("rail-toggle"), "the toggle itself is reachable");
+
+  /* THE HALF THIS BLOCK EXISTS FOR SINCE 2026-09-05: with the drawer shut and nothing
+   * tapped, a keyboard visitor can still reach the whole conversation. If this ever goes
+   * back to failing, the page has gone back to requiring an engineering panel in order to
+   * say hello. */
+  for (const id of ["transcript", "speech-input", "mic-btn", "speech-btn"])
+    ok(shut.includes(id),
+       `#${id} is reachable with the rail SHUT — the composer is not panel content ` +
+       `(got ${JSON.stringify(shut)})`);
+  ok(shut.indexOf("speech-input") < shut.indexOf("speech-btn"),
+     "…in the order a visitor uses them: the box, then the buttons");
 
   await page.click("#rail-toggle");
   await new Promise((r) => setTimeout(r, 300));
   eq(await page.$eval("#rail-toggle", (e) => e.getAttribute("aria-expanded")), "true",
      "aria-expanded flips when the drawer opens");
   const open2 = await tabbables();
-  ok(open2.includes("speech-input") && open2.includes("transcript"),
-     `the opened rail's controls are reachable — got ${JSON.stringify(open2.slice(0, 12))}`);
+  const back = RAIL_ONLY.filter((id) => open2.includes(id));
+  eq(JSON.stringify(back), JSON.stringify(RAIL_ONLY),
+     `the opened rail's controls are reachable — got ${JSON.stringify(open2.slice(0, 14))}`);
   // …and in DOM order the toggle comes before what it controls.
-  ok(open2.indexOf("rail-toggle") < open2.indexOf("speech-input"),
+  ok(open2.indexOf("rail-toggle") < open2.indexOf("center-btn"),
      "focus reaches the toggle before the panel it discloses");
+  // …while the composer stayed where it was, after the whole panel it is not part of.
+  ok(open2.includes("speech-input") && open2.indexOf("center-btn") < open2.indexOf("speech-input"),
+     "the composer is still reachable with the rail open, and still comes after it");
   eq(await page.$eval("#rail-toggle", (e) => e.getAttribute("aria-controls")), "rail-scroll",
      "aria-controls names the disclosed region");
 
