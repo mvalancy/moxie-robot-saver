@@ -321,10 +321,18 @@ async function say(text, ms) {
      "…and the badge finally reads LIVE, which is exactly what P0-a withheld");
   eq(globalThis.window.moxieMode.canSpendLiveTurn(), true, "…and a live turn is spendable");
 
-  // `sim.html` loads them in the order this file evals them.
+  /* `sim.html` loads them in the order this file evals them — measured on the
+   * `<script src>` tags, not on the first mention of a filename anywhere in the document.
+   * `indexOf("cloud-transport.js")` was a proxy for load order and stopped being one on
+   * 2026-09-05, when sim.html's composer comment began naming the files whose listeners
+   * bind to the controls it moved: the prose precedes the tags. A load-order assertion a
+   * comment can flip was never measuring load order. */
   const html = readFileSync(join(repo, "sim", "web", "sim.html"), "utf8");
-  ok(html.indexOf("bridge.js") < html.indexOf("mode.js"), "sim.html loads bridge.js before mode.js");
-  ok(html.indexOf("mode.js") < html.indexOf("cloud-transport.js"),
+  const loadsAt = (f) => html.indexOf('src="' + f);
+  for (const f of ["bridge.js", "mode.js", "cloud-transport.js"])
+    ok(loadsAt(f) > -1, `sim.html has a <script src> for ${f}`);
+  ok(loadsAt("bridge.js") < loadsAt("mode.js"), "sim.html loads bridge.js before mode.js");
+  ok(loadsAt("mode.js") < loadsAt("cloud-transport.js"),
      "sim.html loads cloud-transport.js AFTER mode.js (it wraps what bridge.js published)");
 
   // With bridge.js absent the transport must do nothing rather than half-wire a page.

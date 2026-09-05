@@ -1607,13 +1607,23 @@ const outcomes = () => ts.__stats().outcomes;
   ok(!/frame-src\s+'none'/.test(csp),
      "frame-src is no longer 'none' — Turnstile draws its challenge in an iframe");
 
-  // Load order: the module must exist before either send path can call it.
-  ok(simHtml.includes('src="turnstile.js'), "sim.html loads turnstile.js");
-  ok(simHtml.indexOf("mode.js") < simHtml.indexOf("turnstile.js"),
+  /* Load order: the module must exist before either send path can call it.
+   *
+   * MEASURED ON THE `<script src>` TAGS since 2026-09-05, not on the first mention of a
+   * filename anywhere in the document. `indexOf("mic.js")` was only ever a PROXY for load
+   * order, and it stopped being one the moment `sim.html`'s composer comment started
+   * naming the files whose listeners bind to the controls it moved — the prose now comes
+   * before the tags, so the proxy reported that `mic.js` loads first. A load-order check a
+   * COMMENT can flip is not measuring load order. `src="…"` is, and each file is asserted
+   * present first so a typo cannot pass as `-1 < n`. */
+  const loadsAt = (f) => simHtml.indexOf('src="' + f);
+  for (const f of ["mode.js", "turnstile.js", "cloud-transport.js", "mic.js"])
+    ok(loadsAt(f) > -1, `sim.html has a <script src> for ${f}`);
+  ok(loadsAt("mode.js") < loadsAt("turnstile.js"),
      "…after mode.js, which is where the sitekey comes from");
-  ok(simHtml.indexOf("turnstile.js") < simHtml.indexOf("cloud-transport.js"),
+  ok(loadsAt("turnstile.js") < loadsAt("cloud-transport.js"),
      "…and before cloud-transport.js, which calls it on the typed send path");
-  ok(simHtml.indexOf("turnstile.js") < simHtml.indexOf("mic.js"),
+  ok(loadsAt("turnstile.js") < loadsAt("mic.js"),
      "…and before mic.js, which calls it on the microphone send path");
 }
 

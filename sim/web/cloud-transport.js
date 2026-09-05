@@ -658,7 +658,7 @@
       "Sends your line to Moxie — she answers here. (Speaking arbitrary text needs the local Piper server.)");
     btn.removeAttribute("disabled");
     btn.disabled = false;
-    inp.setAttribute("placeholder", "say something to moxie…");
+    inp.setAttribute("placeholder", "Message Moxie…");   // the same words sim.html ships
     inp.setAttribute("maxlength", String(maxChars()));
     inp.removeAttribute("disabled");
     inp.disabled = false;
@@ -684,6 +684,18 @@
     if (document.getElementById("chat-send")) return;
     var mic = document.getElementById("mic-btn");
     var host = mic && mic.closest ? mic.closest("section.sub") : null;
+    /* WHERE IT MAY NOT GO (2026-09-05). `#mic-btn` moved out of the rail and into the
+     * page's composer (`#chat-dock` in sim.html), and that dock must hold EXACTLY ONE
+     * text box: two boxes that can disagree is a worse bug than the dead control this
+     * fallback exists for, and the live site has already proved that a visitor reliably
+     * tries the top one. So when the mic is in the dock, this box goes to the rail
+     * instead, beside the voice controls it belongs with. The only page that reaches this
+     * branch at all is a self-hosted one with a live Piper sidecar, where `#speech-input`
+     * is still the "make Moxie SAY this" control and so cannot be adopted. */
+    if (host && host.closest && host.closest("#chat-dock")) {
+      var note = document.getElementById("voice-note");
+      host = note && note.closest ? note.closest("section.sub") : null;
+    }
     if (!host || !host.parentNode) return;
 
     var sec = document.createElement("section");
@@ -700,7 +712,7 @@
     var input = document.createElement("input");
     input.id = "chat-input";
     input.type = "text";
-    input.placeholder = "say something to moxie…";
+    input.placeholder = "Message Moxie…";
     input.autocomplete = "off";
     input.setAttribute("maxlength", "500");     // mirrors DEMO_MAX_INPUT_CHARS (§4.1)
     var send = document.createElement("button");

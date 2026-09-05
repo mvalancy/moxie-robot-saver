@@ -108,14 +108,21 @@ body::after {
   z-index: 4;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--rail-w);
-  grid-template-rows: auto auto minmax(0, 1fr);
+  /* The 4th row is the COMPOSER, and it is a grid area rather than an overlay on
+     purpose: a grid row cannot sit on top of another control, and the stage row
+     (`minmax(0, 1fr)`) is what gives way when the conversation grows. Two elements have
+     already been caught covering a bottom-anchored control on this page — the hosted
+     banner and the Turnstile challenge — and the thing they would cover now is the one
+     box a visitor needs. See #chat-dock below. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   grid-template-areas:
     "topbar topbar"
     "notice notice"
-    "stage  panel";
+    "stage  panel"
+    "chat   panel";
   pointer-events: none;          /* let orbit-drag reach the canvas… */
 }
-#topbar, #notice, #panel { pointer-events: auto; }   /* …except real HUD chrome */
+#topbar, #notice, #panel, #chat-dock { pointer-events: auto; }   /* …except real HUD chrome */
 
 /* ---- title bar ------------------------------------------------------------ */
 #topbar {
@@ -454,6 +461,121 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
   flex: none;
 }
 #rail-toggle .caret { margin-left: auto; }
+
+/* ---- THE COMPOSER DOCK ---------------------------------------------------
+ *
+ * The page's bottom furniture: a line of copy that names the action, the conversation,
+ * and one row holding the text box with the mic and the send button beside it. The shape
+ * of every chat app a visitor already knows.
+ *
+ * WHY IT IS NOT IN THE RAIL ANY MORE. Measured on a cold 390x844 load of the live site
+ * (docs/architecture/backlog/mobile-first-visit.md): `#speech-input` was 0 x 0, and
+ * tapping CONTROLS put it at y = 2095 of an 844 px viewport. On desktop 1440 it was at
+ * y = 1399, inside `#rail-scroll`'s own overflow. The turn worked; nobody could find it.
+ *
+ * It is CENTRED AND WIDTH-CAPPED rather than stretched, for two reasons that both matter
+ * on a wide screen: an input the full width of a 1440 px monitor is not a reading column,
+ * and everything outside this box stays orbit-draggable because the dock only claims its
+ * own footprint — `#hud` is `pointer-events: none` and only real chrome opts back in.
+ * ------------------------------------------------------------------------ */
+#chat-dock {
+  grid-area: chat;
+  min-width: 0;
+  justify-self: center;
+  width: 100%;
+  max-width: 760px;
+  /* `env(safe-area-inset-bottom)` keeps the row off an iPhone's home indicator. */
+  padding: 0 10px max(10px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The one line that tells a stranger what this page is for. It steps aside once there is
+   a conversation to read — `:has()` only; a browser without it drops the rule and keeps
+   the line, which is the right way for this to fail. */
+#chat-cue {
+  margin: 0 4px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);   /* legible over the 3-D, whatever is behind */
+}
+#chat-cue .cue-more { color: var(--muted); }
+#chat-dock:has(#transcript .turn) #chat-cue { display: none; }
+
+/* the conversation, above the box you type into */
+#chat-dock #transcript {
+  max-height: min(34vh, 260px);
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(9, 12, 19, 0.42);            /* GLASS — Moxie shows through */
+  backdrop-filter: blur(18px) saturate(1.1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.34);
+}
+/* 11px mono was an instrumentation size in a panel a developer opened on purpose. This
+   is the conversation a stranger came for, so it gets a readable one. */
+#chat-dock #transcript .turn { font-size: 12.5px; }
+
+/* `.sub` is the rail's idiom (a hairline-separated instrument block); down here the same
+   class has to read as a card, so its hairline goes and a glass panel replaces it. The
+   CLASS ITSELF STAYS — `cloud-transport.js` finds `#chat-status`'s home with
+   `#speech-btn.closest("section.sub")`. */
+#composer {
+  border-top: none;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 14px;
+  background: rgba(9, 12, 19, 0.55);
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.42);
+}
+#composer .row { gap: 6px; }
+#composer input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;                 /* a real touch target at every width, not just phones */
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-family: var(--font-ui);
+  /* 16px is not a taste call: iOS Safari zooms the whole page when a focused field's text
+     is smaller than 16px, and a zoomed page scrolls horizontally on a phone. */
+  font-size: 16px;
+  letter-spacing: 0;
+}
+#composer button {
+  flex: none;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+#composer #mic-btn { display: inline-flex; align-items: center; gap: 6px; }
+#composer .btn-ico { width: 15px; height: 15px; flex: none; }
+/* Send is the primary action, so it looks like one. */
+#composer #speech-btn {
+  border-color: var(--cyan-dim);
+  color: var(--cyan);
+  background: rgba(0, 240, 255, 0.09);
+}
+#composer #speech-btn:hover { background: rgba(0, 240, 255, 0.16); }
+/* `#mic-status` (mic.js / env.js) and the injected `#chat-status` (cloud-transport.js)
+   both land in here. BOUNDED, deliberately: the hosted demo's mic warning is two lines,
+   and an unbounded pair of status paragraphs would push the box itself off the bottom of
+   a small screen — recreating this whole defect in miniature. */
+#composer p.hint {
+  margin: 6px 2px 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  letter-spacing: 0;
+  line-height: 1.35;
+  max-height: 2.8em;
+  overflow: hidden;
+}
+#composer p.hint:empty { display: none; }
 
 /* ---- panel groups (collapsible) ------------------------------------------- */
 .group {
@@ -800,14 +922,20 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   flex-direction: column;
   gap: 6px;
 }
+/* GENERATED CONTENT, deliberately: `::before` is not a child node, so `:empty` still
+   matches, `textContent` never sees it, and — this is the load-bearing part — it can
+   never be announced as an addition to the live region or mistaken for something Moxie
+   said. The wording is plain rather than "— awaiting traffic —" because this box is now
+   page furniture a stranger reads, not a line of instrumentation in an engineering rail.
+   The affordance itself is `#chat-cue`, an element, above this one. */
 #transcript:empty::before {
-  content: "— awaiting traffic —";
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.1em;
+  content: "Nothing said yet.";
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  letter-spacing: 0;
   color: var(--dimmer);
   align-self: center;
-  padding: 8px 0;
+  padding: 4px 0;
 }
 #transcript .turn {
   font-family: var(--font-mono);
@@ -913,8 +1041,13 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
 @media (max-width: 899px) {
   #hud {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
-    grid-template-areas: "topbar" "notice" "stage" "panel";
+    /* The composer is the BOTTOM row at every phone width, and the engineering drawer
+       sits between it and the stage. Closed, the drawer is one 48 px handle; open, it
+       takes at most 42 vh and the stage (the `1fr` row) is what gives way — the composer
+       never moves and is never pushed off. That ordering is the fix: the old layout put
+       the drawer last and the text box two thousand pixels inside it. */
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "topbar" "notice" "stage" "panel" "chat";
   }
   /* thin single-line notice on phones — no wrap, small text, compact GitHub chip */
   #notice {
@@ -942,7 +1075,7 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
     max-height: 42vh;                       /* never cover more than ~40% — Moxie stays visible */
   }
   /* when the drawer is open, keep the stage area tall so Moxie isn't squeezed */
-  #hud:not(.rail-closed) { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  #hud:not(.rail-closed) { grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
   #rail-toggle { display: flex; }
   #hud.rail-closed #rail-scroll { display: none; }
   #hud.rail-closed #rail-toggle { border-bottom: none; }
@@ -969,7 +1102,13 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   .motor input[type="range"]::-webkit-slider-thumb { width: 16px; height: 16px; margin-top: -7px; }
   .motor input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; }
   .group summary { min-height: 44px; }
-  #transcript { max-height: 140px; }
+  /* Tighter down here: the log shares an 844 px viewport with the topbar, the notice,
+     the drawer handle, the composer and — on a hosted origin — a two-line mic warning. */
+  #chat-dock { padding: 0 8px max(8px, env(safe-area-inset-bottom)); }
+  #chat-dock #transcript { max-height: min(26vh, 168px); }
+  #chat-cue { font-size: 11.5px; }
+  #composer { padding: 7px; }
+  #composer button { padding: 8px 11px; }
 }
 
 /* very small phones: tighten the brand row */
