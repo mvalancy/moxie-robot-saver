@@ -1,5 +1,5 @@
 {
- "generated": "docs-ccf3f6a2e13b",
+ "generated": "docs-b5400b95e48b",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 244797,
+   "bytes": 247031,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -551,7 +551,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 129307,
+   "bytes": 137509,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -577,6 +577,7 @@
     "4.5 What a 429 / 503 looks like, and how the SIM reacts",
     "4.6 Counters, honestly",
     "4.7 Headers to add to `sim/web/_headers`",
+    "4.8 The synthesised-audio cache — `/api/speech` stops paying twice for a line (built 2026-09-05)",
     "5. Configuration surface",
     "The table",
     "dev.vars.example` (committed at the repo root; `.dev.vars` itself must be git-ignored)",
@@ -592,8 +593,7 @@
     "8.3 Acceptance criteria",
     "9. Effort and file list",
     "P0 — shippable alone, one agent, one sitting",
-    "P1 — M",
-    "P2 — L"
+    "P1 — M"
    ],
    "kind": "md"
   },
@@ -1390,7 +1390,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploying the Moxie Sim to Cloudflare Pages",
    "section": "guides",
-   "bytes": 12983,
+   "bytes": 14010,
    "mermaid": 0,
    "headings": [
     "The one thing to understand first",

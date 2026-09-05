@@ -889,9 +889,15 @@ const CACHE_PATH = "/__moxie/rl/";
 const CACHE_TAG_HEX = 24;
 
 /** The two ways a cache op can fail to answer. Distinct symbols so the caller can record
- *  WHICH happened; both fail open. */
-const CACHE_TIMEOUT = Symbol("cache-timeout");
-const CACHE_ERROR = Symbol("cache-error");
+ *  WHICH happened; both fail open.
+ *
+ *  EXPORTED SINCE 2026-09-05 so `./ttscache.js` — the synthesised-audio cache behind
+ *  `/api/speech` — reuses these and `withDeadline()` rather than growing a second, subtly
+ *  different fail-open style next door. There is one deadline wrapper in this tree and one
+ *  pair of failure symbols, so "every cache error falls open" is a property of one
+ *  function that two callers share, not a discipline two files each promise separately. */
+export const CACHE_TIMEOUT = Symbol("cache-timeout");
+export const CACHE_ERROR = Symbol("cache-error");
 /** A hit whose `Age` has passed its own `max-age`. A real cache would not serve one; the
  *  fake in the tests does, and the answer must be "treat it as absent". */
 const CACHE_STALE = Symbol("cache-stale");
@@ -906,7 +912,7 @@ const CACHE_STALE = Symbol("cache-stale");
  * clock — resolves this promise exactly once. The timer is cleared on every settled path,
  * so a hung op leaves no handle behind and cannot keep a `node` test alive.
  */
-function withDeadline(ms, run) {
+export function withDeadline(ms, run) {
   return new Promise((resolve) => {
     let done = false;
     let timer = null;

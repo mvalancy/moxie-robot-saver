@@ -258,11 +258,17 @@ export function pcmFromAudio(raw, fallback) {
 }
 
 /**
- * A minimal 16-bit RIFF/WAVE writer. NOT used by any route — the routes only ever read —
- * but the tests need to synthesize the exact bodies a gateway sends, and a writer written
- * next to the reader is a writer that pins the same field offsets. `sim/test_wav_decode.mjs`
- * builds its fixtures with it and then feeds the result through `audio.js`'s real decoder,
- * which is how one test pins both halves of the contract with no server.
+ * A minimal 16-bit RIFF/WAVE writer. The tests need to synthesize the exact bodies a
+ * gateway sends, and a writer written next to the reader is a writer that pins the same
+ * field offsets. `sim/test_wav_decode.mjs` builds its fixtures with it and then feeds the
+ * result through `audio.js`'s real decoder, which is how one test pins both halves of the
+ * contract with no server.
+ *
+ * SINCE 2026-09-05 IT HAS ONE PRODUCTION CALLER: `_lib/ttscache.js` wraps decoded PCM back
+ * into a WAV before storing it, so a cache entry carries its own rate and channel count and
+ * the hit path can decode with `pcmFromAudio` — the same function the miss path decodes the
+ * gateway's answer with. Round-tripping through the writer and the reader in this one file
+ * is what makes "the hit is byte-identical to the miss" a property rather than a hope.
  */
 export function writeWav(pcm, { sampleRate, channels, bitsPerSample }) {
   const bits = bitsPerSample || 16;

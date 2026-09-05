@@ -54,6 +54,14 @@ export const CONTEXT_INFO = "moxie-live-sim-demo/chat-context/v1";
  *  address becomes part of a CACHE KEY. Separate anyway, because a label reused across
  *  purposes is exactly the confusion the header above exists to prevent. */
 export const COUNTER_INFO = "moxie-live-sim-demo/cache-counter/v1";
+/** The synthesised-audio cache's own domain (`./ttscache.js`). Like `COUNTER_INFO` it
+ *  signs nothing and authorises nothing — it makes a cache key UNGUESSABLE, so an outsider
+ *  cannot enumerate `/__moxie/tts/<digest>` on this deployment's own origin and pull back
+ *  audio by guessing the text it was made from. Separate from `COUNTER_INFO` because a
+ *  label reused across purposes is exactly the confusion the header above exists to
+ *  prevent, and separate from `TICKET_INFO` because a cache digest must never be
+ *  confusable with a signature. */
+export const TTS_CACHE_INFO = "moxie-live-sim-demo/tts-cache/v1";
 
 /** The ticket/blob version prefix. A change here invalidates every outstanding one. */
 export const VERSION = "v1";

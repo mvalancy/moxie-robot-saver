@@ -847,6 +847,93 @@ now stale and should say *done*, naming `API_SECURITY_HEADERS`. Deliberately **n
 CSP or CORP lines to that `/api/*` block. They would be inert, and an inert line that looks live is the
 exact trap assumption 27 cost this repo two passes to escape.
 
+
+### 4.8 The synthesised-audio cache — `/api/speech` stops paying twice for a line (built 2026-09-05)
+
+**The cheapest saving available on the live page, and it needs nothing from anybody.** Until now
+`POST /api/speech` re-synthesised a sentence from scratch every single time it was asked for it. Synthesis
+is the most expensive thing this deployment does — the 2026-09-02 gateway probe measured **131 348 B and
+1 091 ms for one 30-character line** (§3.2) — and the audio for a given voice and a given string is the
+same audio every time. `functions/api/_lib/ttscache.js` keeps it in `caches.default` and serves it back.
+The mechanism is the one §4.6.1 measured and the counter tier of §4.6 already ships on; nothing here is
+re-measured and nothing here is re-argued.
+
+**What it costs, as a count of ops.** A **miss** is one `match` + one `put`, plus the synthesis it was
+always going to pay for. A **hit** is one `match`, **zero upstream calls**, and no write. §4.6.1 row h
+bounded three cache ops at ≤ 44 ms, so the miss overhead is a few tens of milliseconds against ~1 100 ms.
+
+**The cache key, and why each component is in it.** A key that leaves out something which changes the audio
+is *worse than no cache*: it serves one child a line in somebody else's voice, reliably, for as long as the
+entry lives. The key is the full untruncated 256-bit HMAC (`hmac.js::keyedTag` under its own domain label
+`TTS_CACHE_INFO`) of a **length-prefixed** join of:
+
+| component | why it is in the key |
+|---|---|
+| entry-format tag `v1` | if what is stored stops being a 16-bit RIFF/WAVE, old entries must not be read as if it were |
+| `DEMO_GATEWAY_BASE_URL` | the same model *name* on a different gateway is a different Piper build and a different voice |
+| `DEMO_TTS_MODEL` | on our gateway the model **is** the voice — it is encoded in the model id (`config.py`:91-92) |
+| `DEMO_TTS_VOICE` | the `voice` field actually sent; it can be overridden independently of the model |
+| `DEMO_TTS_FORMAT` | `wav` vs `pcm` is the `response_format` and changes how the answer is decoded |
+| `DEMO_TTS_SAMPLE_RATE` | under `pcm` there is no header and this number *is* the playback rate — the same bytes at 16 kHz and 22.05 kHz are two different voices |
+| the exact text | the point. Not trimmed, not lowercased, not normalised: two strings differing by a comma are two recordings |
+
+Length-prefixed because `"ab"+"c"` and `"a"+"bc"` are otherwise the same string. Keyed rather than plain
+because a Cache API entry sits under a URL on this deployment's own origin, so an unkeyed digest would let
+an outsider enumerate audio by guessing sentences. Untruncated because a counter-tag collision merely
+merges two rate-limit buckets while a collision here would play the wrong words. Deliberately **not** in
+the key: the persona and `DEMO_MAX_TTS_CHARS` (they shape what the text *is*, and the final text is already
+there), the ticket's `event_id`/`chunk_num` (they identify the turn, not the audio — including them would
+make every key unique and the cache useless), and the visitor.
+
+**Where it sits: after every cap, never before one.** Admission (§4.1), the ticket, its TTL and the
+`DEMO_MAX_TTS_CHARS` re-check all decide first. A hit is a cheaper way to serve a request that was
+*already going to be served* — never a way to serve one that was not — and an over-length, forged, expired,
+replayed, rate-limited or hotlinked request makes **zero cache calls**, exactly as it makes zero upstream
+ones.
+
+**Fail-open, and nothing but a success is stored.** Every failure mode — a miss, a stale entry, a `match`
+that throws / rejects / hangs, a body read that does the same, an entry that will not decode, a `put` that
+fails any of those ways, a store with no methods, a `caches` global that throws, no `caches` global at all —
+falls through to exactly the `fetch()` the route made before this existed. Nothing here can produce a
+refusal and nothing here can throw into the route. And the write happens on one path only: after the
+gateway returned `ok` **and** `wav.js` decoded the body into non-empty 16-bit PCM. An upstream 500, a 429,
+an unfollowed redirect, a JSON error body, an Access login page, an empty body, a `text/plain` proxy error
+and a timeout each leave **no entry behind**, so a bad minute at the gateway cannot become a day of bad
+audio for a colo.
+
+**The stored body is a WAV, not raw PCM plus headers.** The rate and channel count are properties of the
+audio, so they live inside it: the entry is self-describing, it survives a cache that declines to keep a
+custom header, and — the part that matters — the hit path decodes with `pcmFromAudio`, the *same* function
+the miss path decodes the gateway's answer with. "The hit is byte-identical to the miss" is then a property
+of one decoder rather than a claim about two, and `sim/test_demo_proxy.mjs` §16b asserts it as bytes.
+
+**The switch:** `DEMO_TTS_CACHE=0` restores the pre-2026-09-05 route exactly, with no cache call at all —
+the same escape hatch, in the same idiom, as `DEMO_CACHE_COUNTER=0`. It is a **separate** switch on purpose:
+the two tiers fail in opposite directions (an undercounting rate limiter lets someone through; a wrong
+cache key plays a child the wrong voice), and nobody should have to disable a rate limiter to disable a
+cache. They share `caches.default` and are kept apart by their key prefixes — `/__moxie/rl/` and
+`/__moxie/tts/` — which §16g asserts rather than assumes.
+
+#### What this does **not** do — read this before quoting a saving
+
+1. **It is per-colo.** Cloudflare's cache "does not replicate outside of the originating data center"
+   (§4.6.1). Each colo keeps its own copy and a cold colo pays full price for every line.
+2. **A cold start still pays.** The first visitor to a colo, the first after `DEMO_TTS_CACHE_TTL_S`
+   (86 400 s), and the first after any configuration change all pay for a synthesis.
+3. **The hit rate is NOT measured, and cannot be measured from a preview.** A branch preview carries no
+   `DEMO_*` secrets, so `/api/speech` answers `gateway_not_configured` and returns long before the cache —
+   the identical limitation §4.6.1 recorded for the counter tier. What is bounded is the **cost** (one
+   extra `match` on a miss), not the saving.
+4. **And the premise this slice was proposed under was wrong in one respect, so it is written down rather
+   than quietly dropped.** The demo's scripted copy — the fallback lines, the degraded announcement, the
+   ambient quips — **never reaches this route** and therefore is never cached. `/api/speech` has no text
+   field (§3.2); the text arrives inside a ticket and `chat.js`:150 is the only place a ticket is ever
+   minted, from a **live gateway reply**. A hard-blocked turn deliberately mints none, and every scripted
+   line is spoken from a clip or the browser voice. So there is no arithmetic to do over the scripted copy:
+   what this tier can deduplicate is **repeated gateway replies**, which at `TEMPERATURE = 0.8` repeat by
+   chance rather than by construction. The saving is real, bounded below by zero, and **unquantified** —
+   quantifying it needs a counter on a keyed deployment, which is a different slice.
+
 ---
 
 ## 5. Configuration surface
@@ -899,6 +986,10 @@ and `CLOUDFLARE_ACCOUNT_ID` as GitHub secrets; that is an alternative path, expl
 | `DEMO_STT_PER_MIN` / `_HOUR` | var | `10` / `60` | no | §4.1 |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | var | `4` / `8` | no | §4.1, §7 |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | var | `2500` / `8` | no | §4.1, §4.6 |
+| `DEMO_CACHE_COUNTER` / `DEMO_CACHE_TIMEOUT_MS` | var | on / `250` | no | The cross-isolate per-IP minute window of §4.6.1. `0` switches the tier off. |
+| `DEMO_TTS_CACHE` | var | on | no | §4.8 — cache synthesised speech in `caches.default`, so a line already made is not made again. `0` restores the pre-2026-09-05 route with **no cache call at all**. Per-colo, fail-open, and it stores nothing but a successful synthesis. |
+| `DEMO_TTS_CACHE_TTL_S` | var | `86400` | no | §4.8 — the `max-age` on a stored entry and the staleness test on the way back out. Clamped 60..604 800. |
+| `DEMO_TTS_CACHE_TIMEOUT_MS` | var | `1000` | no | §4.8 — the deadline on **each** cache op (lookup, body read, write). Four times the counter tier's, because this one moves up to ~1.3 MB and is weighed against a ~1 100 ms synthesis rather than a free decision. Clamped 50..5 000, so it can neither out-wait `DEMO_SPEECH_TIMEOUT_MS` nor switch the tier off by stealth. |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | var | `600` / `4000` | no | §4.1 |
 | `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | var | `20000` / `12000` / `12000` | no | §4.1 |
 | `DEMO_TICKET_TTL_S` | var | `60` | no | §3.2 |

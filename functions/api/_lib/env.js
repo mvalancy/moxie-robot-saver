@@ -52,6 +52,9 @@ export const DEFAULTS = Object.freeze({
   DEMO_QUEUE_MAX_DEPTH: 8,
   DEMO_CACHE_COUNTER: "1",
   DEMO_CACHE_TIMEOUT_MS: 250,
+  DEMO_TTS_CACHE: "1",
+  DEMO_TTS_CACHE_TTL_S: 86400,
+  DEMO_TTS_CACHE_TIMEOUT_MS: 1000,
   DEMO_UNIT_BUDGET_HOUR: 600,
   DEMO_UNIT_BUDGET_DAY: 4000,
   DEMO_CHAT_TIMEOUT_MS: 20000,
@@ -401,6 +404,33 @@ export function readConfig(env) {
     //   explicitly best-effort out-wait the call it is guarding.
     cacheCounter: bool(e, "DEMO_CACHE_COUNTER", true),
     cacheTimeoutMs: int(e, "DEMO_CACHE_TIMEOUT_MS", 10, 2000, notes),
+    // ---- The SYNTHESISED-AUDIO cache behind `/api/speech` (`_lib/ttscache.js`, §4.7).
+    // A different tier from the counter above and switched independently, because they
+    // fail in opposite directions and must be able to be turned off separately: the
+    // counter being wrong lets a visitor through, this one being wrong would play a child
+    // the wrong audio, and nobody should have to disable a rate limiter to disable a cache.
+    //
+    // `DEMO_TTS_CACHE` — ON. Synthesis is the most expensive thing this deployment does
+    //   (131 348 B and 1 091 ms for a 30-character line, measured 2026-09-02) and the
+    //   audio for one (voice, text) never changes, so the second visitor to hear a line
+    //   should not pay to make it again. It needs no binding and is a no-op wherever
+    //   `caches.default` is absent, which is why "on" is a safe default for a fork. Set it
+    //   to `0` for exactly the pre-2026-09-05 route, with no cache call at all.
+    // `DEMO_TTS_CACHE_TTL_S` — 86 400 (one day), the `max-age` on a stored entry and the
+    //   staleness test on the way back out. A day rather than a week because the entry's
+    //   only reason to expire is a voice that changed behind an unchanged model id, and
+    //   rather than an hour because a colo that forgets faster than visitors arrive is a
+    //   cache that never hits. Clamped 60..604 800.
+    // `DEMO_TTS_CACHE_TIMEOUT_MS` — 1 000, the deadline on EACH cache op: the lookup, the
+    //   body read and the write. Four times the counter's 250 ms, and deliberately: this
+    //   tier moves up to ~1.3 MB where the counter moves a two-field JSON object, and the
+    //   thing a slow op is being weighed against is a ~1 100 ms synthesis rather than a
+    //   free in-memory decision. Clamped 50..5 000, so no configuration can let a cache
+    //   that is explicitly best-effort out-wait `DEMO_SPEECH_TIMEOUT_MS` (12 000) — or,
+    //   at the other end, switch the tier off by stealth with a deadline nothing can meet.
+    ttsCache: bool(e, "DEMO_TTS_CACHE", true),
+    ttsCacheTtlS: int(e, "DEMO_TTS_CACHE_TTL_S", 60, 604800, notes),
+    ttsCacheTimeoutMs: int(e, "DEMO_TTS_CACHE_TIMEOUT_MS", 50, 5000, notes),
     unitBudgetHour: int(e, "DEMO_UNIT_BUDGET_HOUR", 0, 100000000, notes),
     unitBudgetDay: int(e, "DEMO_UNIT_BUDGET_DAY", 0, 100000000, notes),
     chatTimeoutMs: int(e, "DEMO_CHAT_TIMEOUT_MS", 1000, 120000, notes),
