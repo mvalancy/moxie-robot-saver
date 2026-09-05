@@ -43,6 +43,12 @@
  * budget", and `load.inflight` counts the turns THIS isolate is running, not the
  * deployment's.
  *
+ * **AND THE 2026-09-05 CACHE API TIER DOES NOT CHANGE THAT ONE WORD.** `_lib/limits.js`
+ * now shares the per-IP MINUTE window across the isolates of a colo — and only that. The
+ * unit budget and the in-flight count, which are the two things this route reports, are
+ * still one isolate's `Map`. Nothing here got wider, and this comment is the place someone
+ * would otherwise quietly assume it had (ledger row 25 is what that mistake costs).
+ *
  * That is a weaker guarantee than the one §4.6 used to imply, and it is still enormously
  * better than the hard-coded `null`/`0` this route shipped before it: an over-budget
  * isolate now says so, its next visitor's page paints SCRIPTED rather than LIVE, and the

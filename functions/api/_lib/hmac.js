@@ -49,6 +49,11 @@ const HKDF_SALT = enc.encode("moxie-live-sim-demo/hkdf-salt/v1");
 /** The domain labels. Adding one is how a future signed artefact stays un-confusable. */
 export const TICKET_INFO = "moxie-live-sim-demo/speech-ticket/v1";
 export const CONTEXT_INFO = "moxie-live-sim-demo/chat-context/v1";
+/** The cross-isolate counter tier's own domain (`./limits.js`). It signs nothing and
+ *  authorises nothing — it only makes the visitor's address unguessable where that
+ *  address becomes part of a CACHE KEY. Separate anyway, because a label reused across
+ *  purposes is exactly the confusion the header above exists to prevent. */
+export const COUNTER_INFO = "moxie-live-sim-demo/cache-counter/v1";
 
 /** The ticket/blob version prefix. A change here invalidates every outstanding one. */
 export const VERSION = "v1";
@@ -153,6 +158,35 @@ export async function hkdf(ikm, info) {
 export async function signingKey(cfg, info) {
   const material = (cfg && cfg.ticketSecret) || (cfg && cfg.apiKey) || "";
   return hkdf(enc.encode(String(material)), info);
+}
+
+/**
+ * A short, KEYED, one-way tag for a value that has to appear somewhere readable.
+ *
+ * WHY KEYED AND NOT A PLAIN HASH. `./limits.js`'s cross-isolate tier keys its cache entry
+ * on the visitor's rate-limit key, and a Cache API entry is stored under a URL **on this
+ * deployment's own origin** — a URL an outsider could in principle request. A plain
+ * `SHA-256(ip)` would not protect it: the whole IPv4 space is 2^32 preimages, which is
+ * minutes of brute force, so an unkeyed digest of an address is an address. Keyed under
+ * HKDF from the deployment's own secret material, the tag is unguessable without that
+ * secret, and the only thing a cached entry can then tell anyone is a bare integer.
+ *
+ * Truncation is safe here in a way it would not be for a MAC: a collision merges two
+ * visitors into ONE bucket, which throttles them together — the same conservative
+ * direction `ipKey()`'s /64 already errs in — rather than granting anyone a free lane.
+ *
+ * @param {object} cfg     the config carrying the (non-enumerable) secret material
+ * @param {string} info    the domain label, e.g. `COUNTER_INFO`
+ * @param {string} message what is being tagged
+ * @param {number} hexChars how many hex characters to keep (<= 64)
+ */
+export async function keyedTag(cfg, info, message, hexChars) {
+  const key = await signingKey(cfg, info);
+  const mac = await hmac(key, enc.encode(String(message)));
+  const want = Math.max(2, Math.min(64, Number(hexChars) || 24));
+  let out = "";
+  for (let i = 0; i < mac.length && out.length < want; i++) out += mac[i].toString(16).padStart(2, "0");
+  return out.slice(0, want);
 }
 
 // --------------------------------------------------------------------------- //
