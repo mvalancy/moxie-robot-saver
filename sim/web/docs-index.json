@@ -1,5 +1,5 @@
 {
- "generated": "docs-f1952d5ce6bd",
+ "generated": "docs-542506e41548",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 7771,
+   "bytes": 8761,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 15441,
+   "bytes": 17354,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -353,7 +353,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 163284,
+   "bytes": 165414,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -879,6 +879,49 @@
     "3. Where the community's problem is one we have already solved",
     "4. Verified nothing-new, and honest gaps",
     "5. What this changes on the audit's ranking"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/gamify-the-public-sim.md",
+   "title": "Gamify the public sim — evidence for a decision the owner kept",
+   "section": "architecture",
+   "bytes": 51229,
+   "mermaid": 0,
+   "headings": [
+    "0. What the owner needs to decide",
+    "1. ⚠️ The precondition: gamification before reachability is decoration",
+    "2. Q1 — Who actually visits, and what do they want first?",
+    "2.1 The honest headline: nobody has published this, and we do not measure it",
+    "2.2 The proxy that does exist: forum thread view counts",
+    "2.3 The developer cohort is provably the smallest — by an order of magnitude",
+    "2.4 The \"never owned one\" cohort is real, non-technical, and arrives referred",
+    "2.5 The cold-traffic engine has a name and a date: M3GAN 2.0",
+    "2.6 So which cohort is largest?",
+    "3. Q2 — What did people love that a web chat page could actually deliver?",
+    "3.1 The marketed core was **missions**, and the child was cast as Moxie's **helper**",
+    "3.2 The one concrete emotional beat anyone published",
+    "3.3 Our own recovered vocabulary corroborates the press record exactly",
+    "3.4 Honest counter-finding: the one thread that asked this question directly yielded almost nothing",
+    "4. Q3 — What confuses or disappoints people about revival demos?",
+    "4.1 Verified at source: the revival is a **subset**, and the missing parts are the expressive ones",
+    "4.2 Reported but **NOT verified at source**: \"a bare bones version of Moxie\"",
+    "4.3 Verified, peer-reviewed, and directly on the point: the revival is *too technical*",
+    "4.4 An experienced owner wanted the **structure removed** — and this is the best argument against gamifying",
+    "4.5 We look like an impostor, and that is a first-30-seconds problem",
+    "4.6 A tension inside our own page, named because nobody else will",
+    "5. Q4 — Five candidate directions",
+    "Say hi\" — the reachable first turn *(the precondition, not really a game)*",
+    "Moxie's Missions\" — three missions from the recovered vocabulary",
+    "Knock-knock — the smallest real game, and the only one with a working precedent",
+    "Thinking out loud — turn the latency into the play",
+    "Bring your Moxie home\" — gamify the on-ramp, not the play",
+    "6. Ranking, and a recommendation the owner should overrule freely",
+    "The single recommendation",
+    "7. What was searched, and what came back empty",
+    "r/MoxieRobot: upgrade this gap from \"unreachable\" to \"structurally unavailable to agents\"",
+    "8. What this page could not establish",
+    "9. Where this lands on the audit"
    ],
    "kind": "md"
   },
