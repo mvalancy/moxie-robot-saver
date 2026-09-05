@@ -452,9 +452,16 @@ try {
    * directive and blocked URI rather than a sentence to regex.
    * =================================================================== */
   {
-    /** Violations the page recorded, minus the one pre-existing img-src refusal. */
-    const violations = (p) => p.evaluate(() =>
-      (window.__cspViolations || []).filter((v) => !/user-attachments/.test(v.blocked || "")));
+    /* Violations the page recorded — ALL of them.
+     *
+     * This used to filter out `/user-attachments/`, "the one pre-existing img-src refusal":
+     * `README.md` embedded its hero shot from GitHub's CDN, `img-src 'self' data: blob:`
+     * refused it, correctly, on every load of docs.html, and the exemption meant the suite
+     * could not see it. A carve-out for a known violation is a carve-out for the next one
+     * too — it matched a substring, not a specific finding. The image is vendored as of
+     * 2026-09-04 (`sim/web/img/sim-hero.png`), so the exemption is gone and this is now
+     * what it always claimed to be: ZERO. */
+    const violations = (p) => p.evaluate(() => window.__cspViolations || []);
     const show = (vs) => vs.map((v) => `${v.directive} ⟵ ${v.blocked}${v.sample ? " «" + v.sample + "»" : ""}`).join(" | ");
 
     /* --- sim.html: a typed turn end to end, and the QR card ------------------- */
@@ -486,6 +493,19 @@ try {
     /* --- docs.html: search, then open a hit ----------------------------------- */
     {
       const { page } = await load("docs.html");
+      /* The home document is README.md, and its hero is the image that produced the one
+       * violation this policy actually caught in production. Assert the PIXELS, not the
+       * markup: a 404 still gives you an `<img>` element, and a CSP refusal gives you one
+       * too — both with `naturalWidth === 0`. Checked BEFORE the search below navigates
+       * away from the README. */
+      const hero = await page.evaluate(() => {
+        const i = document.querySelector("article img");
+        return i ? { src: i.getAttribute("src"), w: i.naturalWidth, h: i.naturalHeight } : null;
+      });
+      ok(hero && hero.w > 0 && hero.h > 0,
+         `docs.html: the README hero image actually DECODED (${JSON.stringify(hero)})`);
+      ok(hero && /^img\//.test(hero.src || ""),
+         `docs.html: …from this origin, the repo-relative src remapped onto the site root (${hero && hero.src})`);
       await page.type("#q", "projectorfanpid");        // a body-only term: search must have run
       await new Promise((r) => setTimeout(r, 1200));
       const hits = await page.evaluate(() => document.querySelectorAll("#tree a").length);

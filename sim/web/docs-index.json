@@ -1,12 +1,12 @@
 {
- "generated": "docs-10cedebe318a",
+ "generated": "docs-5ac9bf4ba14b",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
    "path": "_root/README.md",
    "title": "Moxie Robot Saver",
    "section": "_root",
-   "bytes": 12051,
+   "bytes": 11996,
    "mermaid": 4,
    "headings": [
     "The vision: one box, the whole Moxie backend",
@@ -47,7 +47,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 7333,
+   "bytes": 7375,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -96,7 +96,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 14009,
+   "bytes": 14528,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 230276,
+   "bytes": 233295,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -830,7 +830,7 @@
    "path": "architecture/backlog/vendor-the-readme-hero.md",
    "title": "The README hero is an off-site image, and the live docs page cannot load it",
    "section": "architecture",
-   "bytes": 3214,
+   "bytes": 4637,
    "mermaid": 0,
    "headings": [
     "The finding",

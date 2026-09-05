@@ -1,6 +1,22 @@
 # 🖼️ The README hero is an off-site image, and the live docs page cannot load it
 
-> **Filed 2026-09-04 from a production measurement · 🟢 build-ready · effort S.**
+> **Filed 2026-09-04 from a production measurement · 🟢 SHIPPED 2026-09-04 · effort S.**
+>
+> **What shipped, and where the difficulty actually was.** The image is vendored at
+> [`sim/web/img/sim-hero.png`](../../../sim/web/img/sim-hero.png) (1424×1251 PNG, 599 KiB — the
+> fetched bytes re-encoded RGB, since the alpha channel was uniformly opaque; the pixels are
+> unchanged). `img-src` was **not** touched. The copy was the easy half: `build_docs_bundle.py`
+> rewrites nothing — it is a byte-for-byte copier, deliberately — so the depth problem in §2 was
+> solved where the depth is actually known. [`sim/web/docs.js`](../../../sim/web/docs.js) now
+> resolves a doc's `<img src>` against that doc's **repo** path (inverting the bundler's mapping)
+> and strips the `sim/web/` prefix, because `sim/web` *is* the Pages output root. One rule,
+> correct from any doc depth — which is why doc images live under `sim/web/img/`. Guards:
+> [`sim/tests/test_no_offsite_images.py`](../../../sim/tests/test_no_offsite_images.py) (8 tests,
+> browser-free, two planted negative controls and the code-fence exemption tested both ways),
+> `sim/test_csp.mjs` 77 → **79** and `sim/test_docs_explorer.mjs` 22 → **25**. **3 checks redden on
+> each pre-change tree**, measured by stashing — including the zero-violation assertion itself,
+> which had been exempting `/user-attachments/` by substring, and the explorer's
+> `blocked.n === 0`, which had been absorbing three aborted off-origin requests per run.
 
 ## The finding
 
