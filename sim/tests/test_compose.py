@@ -35,6 +35,39 @@ BROKER_CONF = os.path.join(REPO, "mqtt", "broker", "compose-mosquitto.conf")
 ENV_EXAMPLE = os.path.join(REPO, ".env.example")
 SMOKE_ENV = os.path.join(REPO, "sim", "compose-smoke.env")
 
+#: A key-shaped literal. **The `\b` is the whole point of this constant existing.**
+#:
+#: The pattern shipped for months as a bare `sk-[A-Za-z0-9_]{12}` with no left word
+#: boundary, so ANY word ending in "sk" followed by a hyphen and twelve more word characters
+#: matched it. That is not a theoretical hazard: on 2026-09-05 the phrase
+#: "task-notification" — twelve characters after "sk-", exactly on the nose — appeared in
+#: the generated full-text index `sim/web/docs-search.json` and produced two false positives
+#: on a real PR review. The same shape is one edit away everywhere else: "task-scheduler",
+#: "Zendesk-styled", "kiosk-locked", "disk-formatted" all begin the same way.
+#:
+#: WHY THIS IS WORTH A NAMED CONSTANT AND A PARAGRAPH, rather than a two-character fix in
+#: place. A secret scanner's cost of being wrong is asymmetric in a direction that is easy
+#: to get backwards. A miss is one leaked key. A false positive is cheap ONCE — and then it
+#: teaches every reviewer who meets it that this particular red is noise, which is how a
+#: scanner stops being read at all. **A guard that cries wolf on ordinary English is one
+#: people learn to wave through**, and a waved-through scanner catches nothing, so the
+#: false-positive rate is a *security* property of the check and not a tidiness one.
+#: Measured before and after: `\b` gives 0 hits on that prose and still matches a synthetic
+#: `sk-AbCdEfGhIjKlMnOpQr`. `test_the_key_scan_does_not_cry_wolf` pins both directions.
+#:
+#: This is playbook rule 17's shape ("a guard must assert over code, not over the whole
+#: file") one level down: the guard must assert over a KEY, not over anything key-shaped.
+KEY_SHAPED = re.compile(r"\bsk-[A-Za-z0-9_]{12}")
+
+#: The prose that broke it, and the synthetic key that must still be caught. Kept as data
+#: next to the pattern so the two-direction test below reads as a table, and so a future
+#: widening of the pattern has to look at what it is allowed to match.
+_NOT_KEYS = ("task-notification", "a task-notification arrives", "task-scheduler",
+             "Zendesk-styled", "kiosk-locked-down", "disk-formatted_x", "risk-assessment")
+#: Deliberately not a real key: shaped like one, valid nowhere.
+_IS_A_KEY = "sk-AbCdEfGhIjKlMnOpQr"
+
+
 CORE = ("broker", "supervisor", "console")
 #: Every service an owner gets from `up` with no flags, either way in.
 SHARED = ("certs",) + CORE
@@ -183,10 +216,31 @@ def test_every_interpolated_knob_is_documented(raw):
 
 def test_env_example_ships_no_secret():
     text = open(ENV_EXAMPLE).read()
-    assert not re.search(r"sk-[A-Za-z0-9_]{12}", text), ".env.example must never hold a key"
+    assert not KEY_SHAPED.search(text), ".env.example must never hold a key"
     for line in text.splitlines():
         if line.startswith("MOXIE_LLM_API_KEY") or line.startswith("MOXIE_VOICE_API_KEY"):
             assert line.split("=", 1)[1].strip() == "", "API keys must ship empty"
+
+
+def test_the_key_scan_does_not_cry_wolf():
+    """`KEY_SHAPED` must catch a key AND stay silent on English. Both, or it is worthless.
+
+    The positive half is the obvious one and was never in doubt. The negative half is the
+    one that had actually regressed, and it is the half that decides whether anyone still
+    reads the positive half a year from now — see the constant's own note. Every string in
+    `_NOT_KEYS` is real prose from this repo's docs or its generated search index.
+    """
+    assert KEY_SHAPED.search(_IS_A_KEY), "a key-shaped literal must still be caught"
+    assert KEY_SHAPED.search("MOXIE_LLM_API_KEY=" + _IS_A_KEY), "…including after a `=`"
+    for prose in _NOT_KEYS:
+        assert not KEY_SHAPED.search(prose), (
+            f"{prose!r} is ordinary English, not a key — a scanner that reds on it is a "
+            f"scanner people learn to wave through")
+    # And the exact regression: the boundaryless form DOES fire on the prose, which is why
+    # the `\b` is load-bearing rather than decorative. If this ever stops being true the
+    # constant above can be simplified; until then it is the measurement behind the comment.
+    assert re.search(r"sk-[A-Za-z0-9_]{12}", "task-notification"), \
+        "the boundaryless pattern is what this test exists to rule out"
 
 
 def test_env_example_has_no_trailing_comments():

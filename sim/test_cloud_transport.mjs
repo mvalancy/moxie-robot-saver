@@ -1120,7 +1120,20 @@ async function say(text, ms) {
  * 8. Nothing in the client holds a secret, a key or a hostname
  * =========================================================================== */
 {
-  ok(!/sk-[A-Za-z0-9_-]{8}/.test(SRC.transport), "cloud-transport.js contains no key-shaped string");
+  // THE `\b` IS LOAD-BEARING. Without a left word boundary this fired on any word ending
+  // in "sk" followed by a hyphen and eight more — "task-scheduler", "Zendesk-styled",
+  // "kiosk-locked" — and this file's threshold of 8 is the loosest in the repo, so it was
+  // the likeliest of the three key scans to red on a comment. The identical defect in
+  // `sim/tests/test_compose.py` produced two false positives on a real PR review on
+  // 2026-09-05, off the phrase "task-notification" in the generated docs index.
+  // A scanner that cries wolf on ordinary English is one people learn to wave through, so
+  // the false-positive rate is a security property of this check, not a tidiness one.
+  // Proven in both directions immediately below rather than asserted.
+  const KEY_SHAPED = /\bsk-[A-Za-z0-9_-]{8}/;
+  ok(KEY_SHAPED.test("sk-AbCdEfGhIjKlMnOpQr"), "…the scan still catches a key-shaped literal");
+  ok(!KEY_SHAPED.test("a task-scheduler runs the retry"),
+     "…and does NOT fire on ordinary prose that merely ends a word in 'sk'");
+  ok(!KEY_SHAPED.test(SRC.transport), "cloud-transport.js contains no key-shaped string");
   ok(!/mattvalancy|graphlings|pages\.dev/i.test(SRC.transport), "…and no deployment hostname");
   ok(!/https?:\/\//.test(SRC.transport.replace(/^\s*\*.*$/gm, "")),
      "…and no absolute URL outside its header comment — the base is location.origin");
