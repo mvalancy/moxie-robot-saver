@@ -122,14 +122,17 @@ A public demo that proxies a paid gateway is an open invoice unless it is bounde
 | `DEMO_STT_PER_MIN` / `_HOUR` | 10 / 60 | |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | 4 / 8 | concurrency, not token count, is what makes a demo feel dead under load. **Do not raise these to serve more people** — the chat ceiling is matched to the upstream key's parallel-request limit, which protects whatever else shares your gateway; raising it moves the refusal upstream as a 429. Use the queue below instead. |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | 2500 / 8 | at the ceiling a request **waits** in a per-isolate FIFO instead of being refused, so ~10 visitors colliding get a slightly slower turn rather than a scripted line. Past the depth, or when the wait expires, it is the same `at_capacity` + `Retry-After: 15` as before. **Set either to `0` to switch the queue off** and get the old instant refusal back. |
+| `DEMO_CACHE_COUNTER` / `_TIMEOUT_MS` | on / 250 | a **second** per-IP minute window kept in the Cache API, so the `_PER_MIN` numbers above are counted once per **colo** instead of once per **isolate** (measured: one client reached >= 7 isolates in 1 colo). It costs one `match` + one `put` per served turn, needs no binding, and **fails open** — a cache miss, error, timeout or stale entry always admits. **It is still not a hard global ceiling:** a burst loses ~2/3 of its writes and a second colo has its own count. **Set `DEMO_CACHE_COUNTER=0`** to switch it off. |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | 600 / 4000 | denominated in **request units** (chat 3, speech 2, transcribe 2), because no price sheet exists in this repo to convert to money honestly |
 | `DEMO_CHAT_TIMEOUT_MS` | 20000 | deliberately **below** the measured worst case: a fast honest degrade beats a slow success |
 | `DEMO_TICKET_TTL_S` | 60 | a speech ticket's life — long enough for a slow client, short enough that a leaked one is worthless |
 
-**Honest about the ceiling:** these counters are **best-effort, in-process**. A Worker isolate is not
-a shared counter, so under real concurrency the true limits are the per-request caps, the ticket's
-structural property, and a budget-scoped key at your gateway. Exact counters need durable storage and
-are not built.
+**Honest about the ceiling:** these counters are **best-effort**. The per-IP minute window is shared
+across the isolates of one colo (the Cache API row above); every other counter — the hour and day
+windows, the concurrency ceiling, the queue and the unit budget — lives in one isolate's memory. So
+under real concurrency the true limits are still the per-request caps, the ticket's structural
+property, and a budget-scoped key at your gateway. **An exact counter needs a single writer** — a
+Durable Object — and is not built.
 
 ## 5. What a real deploy settled — and what is still open
 
