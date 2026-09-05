@@ -27,6 +27,7 @@ from moxie_sdk.store import JsonStore, MemoryStore       # durable per-robot JSO
 from moxie_sdk.filler import pick_filler                 # "let me think" lines + markup
 from moxie_sdk import safety as safety_seam              # InputSafety classifier (ai-seam §2)
 from moxie_sdk import presence as presence_seam          # vision events -> presence (vision.md)
+from moxie_sdk import launch_cards as cards_seam         # 🎴 a scanned QR -> one launch
 from moxie_sdk import telehealth as telehealth_seam      # 🎭 puppet mode wire (audit ADOPT #7)
 from moxie_sdk import telemetry as telemetry_seam        # 📈 Packet envelope + durable history
 from moxie_sdk import conn_telemetry as conn_seam        # 🔌 the broker connection's own history
@@ -2999,23 +3000,51 @@ class MoxieRuntime:
         """A vision event that arrived as a chat turn — the protocol-faithful path.
 
         We answer the request the robot is waiting on, and we never spend a brain call on
-        it: either the greeting below (`SUCCESS`) or `NOREPLY_ACK` — ResultCode 6,
+        it: a greeting, a 🎴 launch card, both, or `NOREPLY_ACK` — ResultCode 6,
         "acknowledge only, no spoken line" (remote-chat-protocol.md:60), which is exactly
-        the contract's field for "heard you, saying nothing"."""
+        the contract's field for "heard you, saying nothing".
+
+        The card is the first thing in this appliance that *acts* on a perception event
+        rather than merely noticing it. Honest ceiling: no physical Moxie has ever sent us
+        an `eb-qr-event`, so this path is exercised only by the SIL robot and the browser
+        SIM (docs/architecture/backlog/qr-launch-cards.md §7)."""
         event_id = rcr.get("event_id")
         backend = rcr.get("backend", "router")
-        signals = self._ingest_vision(device_id, robot, name, rcr.get("input_vars") or {})
+        input_vars = rcr.get("input_vars") or {}
+        signals = self._ingest_vision(device_id, robot, name, input_vars)
+        # 🎴 A printed launch card. This is the ONLY place a scanned QR value is in scope
+        # while a reply is being built, so the route lives here and nowhere else: a vision
+        # event is intercepted before any brain sees it (`:2908` — never handed to a brain,
+        # never written to history) and `MoxieApp.on_event` cannot shape a reply. The
+        # decoder is pure and closed (`moxie_sdk/launch_cards.py`); everything it refuses —
+        # an unknown module id, `<sleep>`, `<exit>`, `<launch_if_confirmed:…>`, a value with
+        # no `GO` marker — arrives here as None and is simply a QR we noticed and ignored.
+        card = cards_seam.decode_event(name, input_vars)
         greeting = self._greeting_for(device_id, robot, signals)
-        if greeting is None:
+        if greeting is None and card is None:
             return self._publish_chat(device_id, event_id, backend, "", markup="",
                                       result=ResultCode.NOREPLY_ACK)
-        text, markup = greeting
-        self._note("chat", f"hello (unprompted): '{text[:40]}'")
-        print(f"[runtime] 👋 {device_id} walked back in -> '{text}'", flush=True)
-        _, greet_scored = self._stage(text, turn_key=event_id, markup=markup)
+        # A card and a hello are independent, and a turn may carry both: a child who walks
+        # back in holding a card gets one greeting and one launch on one reply, never two
+        # replies and never a doubled hello.
+        text, markup = greeting if greeting is not None else ("", "")
+        if greeting is not None:
+            self._note("chat", f"hello (unprompted): '{text[:40]}'")
+            print(f"[runtime] 👋 {device_id} walked back in -> '{text}'", flush=True)
+        if card is not None:
+            self._note("vision", f"🎴 launch card -> {card.module_id}")
+            print(f"[runtime] 🎴 {device_id} scanned a launch card -> {card.module_id}",
+                  flush=True)
+        # No invented line for a card on its own: the reply carries the launch and stays
+        # silent, so a child never hears a decoding artefact.
+        greet_scored = None
+        if text:
+            _, greet_scored = self._stage(text, turn_key=event_id, markup=markup)
         self._publish_chat(device_id, event_id, backend, text, markup,
+                           actions=[card] if card is not None else None,
                            result=ResultCode.SUCCESS, scored=greet_scored)
-        self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
+        if text:
+            self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
         return None
 
     def _greeting_for(self, device_id, robot, signals):
