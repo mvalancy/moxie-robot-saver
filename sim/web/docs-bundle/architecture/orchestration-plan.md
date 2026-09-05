@@ -55,6 +55,16 @@ integration:  push feat branch → PR into dev (fast CI) → merge → standing 
 - **Clean-room:** build from `docs/architecture/` + `docs/reverse-engineering/`; the vendor app is forbidden; OpenMoxie is allowed + credited.
 - **Secrets:** never print/commit keys; `mqtt/.env` stays untracked; staged diff must contain no `sk-…`.
 - **Attribution:** commit messages end with the `Co-Authored-By` + `Claude-Session` lines the orchestrator provides.
+- **Venv:** `python3 -m venv .venv && .venv/bin/pip install -q -r sim/tests/requirements.txt`
+  — and **never** a hand-written package list. That file (plus the browser-free
+  `sim/tests/requirements-hermetic.txt` it wraps, which is what both CI tiers install) is the
+  ONE declaration of what the suite needs. The recipe in these briefs used to hand-list
+  packages and it was missing `pyyaml`, `numpy` **and** `-r server/requirements.txt`, so every
+  agent briefed from it started with a red suite, two phantom failures and a silently-skipped
+  speech guard — for no reason. Add `build` when the brief asks for a package build, and
+  `piper-tts faster-whisper` only for local-voice work (≈2 GB).
+  `sim/tests/test_ci_workflows.py::test_the_agent_brief_protocol_points_at_the_declared_test_list`
+  fails if this bullet drifts back into a list.
 - **Quality gates:** a test for every feature; hermetic suite green (`python -m pytest sim/tests -q -k "not test_sil and not test_docs" --ignore=sim/tests/test_live_gateway.py`); doc guards (`build_docs_bundle` + `check-doc-links` + `check-doc-consistency` + `node sim/test_docs.mjs`); SIL smoke on a **free** port when the runtime changed (`MOXIE_SIL_PORT=19xx bash sim/run_smoke.sh`); never kill processes you didn't start.
 - **Report:** branch, commits, what shipped, tests/counts, guard + smoke results, live observations, honest gaps — under 400 words.
 
