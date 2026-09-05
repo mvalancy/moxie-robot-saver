@@ -515,6 +515,25 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   which is what makes a depth of 8 deliverable inside 2 500 ms) is inherited from earlier measurements
   rather than re-measured under real load. Ledger row 28.
 
+- **The per-IP minute window is now counted per COLO, not per isolate — built 2026-09-05.** `_lib/limits.js`
+  held every cap in one module-scope `Map`, so `DEMO_CHAT_PER_MIN` meant *five a minute per isolate* and a
+  single client was measured reaching **>= 7 isolates in one colo**. A Cache API tier had been declined
+  while §10 assumption 13 was open; the preview probe of `backlog/live-sim-demo.md` §4.6.1 retired that
+  reason (the Cache API needs no binding), so it is built: one `caches.default` `match` plus one `put` per
+  **served** turn, keyed `/(own origin)/__moxie/rl/<route>/<keyed tag of the IP>/<minute>`, at most two
+  cache ops against a measured ≤44 ms for three. **The in-isolate `Map` is unchanged and still decides
+  first, so the tier can only ever ADD refusals**, and it **fails open by construction** — a miss, a
+  throw, a timeout, a stale entry or a lost write is always an undercount, so it can cost a refusal that
+  should have happened and can never cost a visitor a turn they were owed. It runs *after* the concurrency
+  slot is taken, so no free refusal pays for a cache round trip and the FIFO's synchronous ordering is
+  untouched; a tier refusal hands the slot straight to the next waiter and refunds its charge.
+  `DEMO_CACHE_COUNTER=0` restores the previous behaviour exactly. **What it still is not:** a hard global
+  ceiling — it is per-colo, and a burst loses ~2/3 of concurrent writes (31 stored 9; sequentially 41
+  stored 41). A true single-writer count still needs a Durable Object, which is still P1 and still gated
+  on the dashboard half of assumption 13. `sim/test_demo_proxy.mjs` §15 drives the real `admit()` against
+  a fake cache through a miss, a hit, a stale entry, a synchronous throw, a rejection, a hang and a
+  hostile store, and asserts the fail-open direction for each by name.
+
 - **`/api/health` told the page what it wanted to hear — fixed 2026-09-03.** `functions/api/health.js`
   shipped two LOCAL STUBS that shadowed the real implementations: `budgetState()` returned `null` and
   `loadState()` returned a hard-coded `{inflight: 0}`. Both were honest in P0-a (no spending route was
