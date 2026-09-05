@@ -39,6 +39,22 @@
  * back to a scripted child line rather than showing a dead button (spec §6).
  *
  * ===========================================================================
+ * AND THE HOSTED PATH CARRIES A BOT-CONTROL TOKEN (2026-09-05).
+ *
+ * `/api/transcribe` verifies a Cloudflare Turnstile token before it will spend anything
+ * (`functions/api/transcribe.js` step 4d), because the ears are the MORE expensive half of
+ * this demo: speech-to-text is priced by duration, so 60 requests an hour from one address
+ * is 15 minutes of billable transcription and there is no daily window to stop it.
+ * `botToken()` below asks `sim/web/turnstile.js` for one on the `transcribe` action —
+ * NOT the chat turn's action, so a token minted for a typed sentence cannot be spent on
+ * the microphone — and it rides a request HEADER, because this upload's body is raw audio
+ * and has no field to put it in.
+ *
+ * THE LOCAL SIDECAR PATH IS UNTOUCHED AND ASKS FOR NOTHING: it is the visitor's own
+ * machine, it costs this demo nothing, and there is no control there to satisfy.
+ * ===========================================================================
+ *
+ * ===========================================================================
  * THE CONSOLATION LINE IS FREE, AND HAS TO BE.
  *
  * The scripted fallback is a line THE PAGE CHOSE, not words a visitor said. It used to go
@@ -112,7 +128,8 @@
   /** Recorded, never sampled: `sim/test_demo_ears.mjs` asserts on these rather than on a
    *  live microphone (playbook rule 11). */
   var stats = { starts: 0, stops: 0, autoStops: 0, posts: 0, transcripts: 0, fallbacks: 0,
-                tooShort: 0, tooLong: 0, reasons: [], lastUrl: "", lastBytes: 0,
+                tooShort: 0, tooLong: 0, botUnavailable: 0, botTokens: 0,
+                reasons: [], lastUrl: "", lastBytes: 0,
                 lastMime: "", lastCapMs: 0, lastKind: "" };
 
   function mode() {
@@ -255,9 +272,70 @@
     too_long: "that clip was too long — try a shorter one",
     too_short: "(too short)",
     bad_request: "that recording wasn't usable — using a scripted line",
-    forbidden_origin: "speech-to-text is not available on this page"
+    forbidden_origin: "speech-to-text is not available on this page",
+    // The hosted ears carry the bot control too (`functions/api/transcribe.js` step 4d),
+    // so these two reasons are now reachable HERE and not only from the chat turn. Same
+    // split as `mode.js`'s copy: one is the visitor's token, one is the deployment's
+    // configuration, and neither line ever names a status code or an upstream string.
+    turnstile_failed: "Moxie needs to check you’re a real person — using a scripted line",
+    turnstile_misconfigured: "Moxie’s visitor check isn’t set up right here — using a scripted line"
   };
 
+  /* ---- the bot control, in one line on the send path --------------------- *
+   * `sim/web/turnstile.js` owns the widget; this file owns the upload. Three outcomes, the
+   * same three `cloud-transport.js` handles, plus one that is specific to having two ears:
+   *
+   *   ""      — nothing to prove. Either this deployment does not enforce the control, or
+   *             this clip is going to a LOCAL sidecar, which is the visitor's own machine
+   *             and has no bot control to satisfy. Upload as-is.
+   *   "<tok>" — a fresh single-use token minted for the `transcribe` action. It rides a
+   *             HEADER, because this route's body is raw audio and has no field to put it
+   *             in (`_lib/turnstile.js::TOKEN_HEADER`).
+   *   null    — enforcement is on and no token could be got. DO NOT UPLOAD; degrade to the
+   *             scripted line, which is what §6 asks of every other way the ears can fail.
+   *
+   * A MISSING MODULE IS THE `""` CASE, not the `null` one — the same rule
+   * `cloud-transport.js::botToken` states: the control lives on the SERVER, and a page
+   * that never loaded `turnstile.js` is a page the server is not asking a token of.
+   *
+   * THE ACTION IS `"transcribe"` AND NOT `"chat"`. The server refuses the other one here,
+   * on purpose: 15 seconds of billable speech-to-text is a far better thing to steal than
+   * 160 tokens of chat, so a token minted for a typed sentence must not be spendable on
+   * the microphone.
+   *
+   * IT RETURNS A BARE STRING — NOT A PROMISE — WHEN THERE IS NOTHING TO ASK, and that is a
+   * timing guarantee rather than a micro-optimisation. A deployment with no bot control and
+   * a home stack with a local sidecar must upload on EXACTLY the tick they always did:
+   * `.then()` always defers by a microtask, and `sim/test_demo_ears.mjs` proved that is
+   * observable — a POST pushed one tick later landed outside the window its own test had
+   * flushed for, and turned up inside the NEXT case's fetch stub. A wrapper that changes
+   * when an unenforced page makes its request has changed that page's behaviour, whatever
+   * the request looks like. */
+  function botToken(kind) {
+    if (kind !== "cloud") return "";
+    var t;
+    try { t = window.moxieTurnstile; } catch (e) { t = null; }
+    if (!t || typeof t.getToken !== "function") return "";
+    try {
+      return Promise.resolve(t.getToken("transcribe")).then(function (tok) {
+        return typeof tok === "string" ? tok : null;
+      }, function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+  }
+
+  /**
+   * Upload one clip.
+   *
+   * THE BOT CONTROL WRAPS THE UPLOAD RATHER THAN BEING THREADED THROUGH IT: `botToken()`
+   * resolves first and `upload()` below is the function this file has always had, plus the
+   * one header. That keeps the seam a wrapper instead of a re-indentation of everything,
+   * which is the same shape `cloud-transport.js::liveTurn`/`chatPost` uses and for the
+   * same reason (a parallel branch is rewriting the composer these controls live in).
+   *
+   * `stats.posts` is incremented HERE and not in `upload()` so that a clip refused for
+   * want of a token still counts as an attempt the page made — the counter answers "did
+   * the visitor try to talk", which is true either way.
+   */
   function transcribe(blob) {
     var target = sttTarget();
     status("transcribing…");
@@ -267,6 +345,28 @@
     stats.lastBytes = blob.size;
     stats.lastMime = blob.type || "";
 
+    var asked = botToken(target.kind);
+    // The synchronous answer — no control to satisfy — takes the path this file has always
+    // taken, on the same tick. See `botToken`.
+    if (typeof asked === "string") return upload(blob, target, asked);
+    return asked.then(function (tok) {
+      if (tok === null) {
+        /* NO TOKEN, SO NO UPLOAD — and the page degrades exactly as it does for every
+         * other way the ears can fail (§6): a scripted child line, spoken, for free, with
+         * the status line saying why. Counted as a transport strike as well, so three of
+         * them take the badge to SCRIPTED instead of leaving a LIVE badge over a
+         * microphone that cannot work — the same call `cloud-transport.js::botUnavailable`
+         * makes for the typed path. */
+        stats.botUnavailable++;
+        noteTransportError();
+        return fallback("Moxie couldn’t finish her visitor check — using a scripted line");
+      }
+      if (tok) stats.botTokens++;
+      return upload(blob, target, tok);
+    });
+  }
+
+  function upload(blob, target, token) {
     var opt = {
       method: "POST",
       cache: "no-store",
@@ -274,6 +374,11 @@
       body: blob,
       headers: { "Content-Type": blob.type || "application/octet-stream" },
     };
+    // Cloudflare's token, on the header the route reads
+    // (`functions/api/_lib/turnstile.js::TOKEN_HEADER`). ABSENT rather than empty when
+    // there is no control to satisfy, so an unenforced deployment and a local sidecar both
+    // see byte-identically the request they always saw.
+    if (token) opt.headers["X-Turnstile-Response"] = token;
     try {
       if (typeof AbortSignal !== "undefined" && AbortSignal.timeout)
         opt.signal = AbortSignal.timeout(POST_TIMEOUT_MS);

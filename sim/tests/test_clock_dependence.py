@@ -130,6 +130,19 @@ REVIEWED: dict = {
         "RELATIVE — a ticket is aged `Date.now()/1000 - 61` to make it one second past a "
         "60 s expiry. The subject IS the age, and 61 s from any instant is expired at "
         "every hour. (RESERVED file: owned by the live-Sim ears slice, 2026-09-03.)"),
+    "sim/test_turnstile.mjs": (
+        ("Date.now",),
+        "RELATIVE — an ELAPSED TIME, and it is the subject of the assertion rather than "
+        "an input to it. §5 stubs a `siteverify` that NEVER answers and requires the "
+        "route's own `DEMO_TURNSTILE_TIMEOUT_MS` deadline to end the wait: `elapsed = "
+        "Date.now() - started` must be at least the 120 ms deadline that was configured "
+        "and well under the route's 20 s upstream timeout. A configured deadline that is "
+        "never passed to `fetch` looks identical in every other assertion in that file, "
+        "which is what the row is for (mutation row D3e). Both bounds are durations "
+        "between two reads of one clock, so they hold at every minute of a day; a clock "
+        "that jumped would redden the suite rather than hide a hang. NOTE the check was "
+        "already unreviewed when this file arrived on 2026-09-05 — the guard was red at "
+        "the commit that added the suite, and this row is the fix."),
     "sim/test_mode.mjs": (
         ("Date.now",),
         "DETERMINISTIC — it *overrides* `Date.now = () => clock` and steps `clock` by "

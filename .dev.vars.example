@@ -122,9 +122,17 @@ DEMO_STT_MODEL=your-stt-model
 # ---------------------------------------------------------------------------
 # What it adds that nothing else here can: every other cap in this file bounds the
 # COST of a request that has already been made, and none of them can tell a child
-# from a script. `POST /api/chat` verifies a Turnstile token immediately before the
-# one gateway call, which removes a loop-with-no-browser from the set of things that
-# can drain the demo's budget at all. See functions/api/_lib/turnstile.js.
+# from a script. `POST /api/chat` AND `POST /api/transcribe` each verify a Turnstile
+# token immediately before their one gateway call, which removes a
+# loop-with-no-browser from the set of things that can drain the demo's budget at
+# all. See functions/api/_lib/turnstile.js.
+#
+# ONE PAIR OF VARIABLES, TWO WIDGET ACTIONS. The two routes do not cost the same — a
+# chat turn is 160 completion tokens, a microphone turn is up to DEMO_MAX_RECORD_MS
+# of billable speech-to-text — so each requires its own `action` back (`chat` and
+# `transcribe`, in TURNSTILE_ACTIONS) and the page renders one widget per action.
+# Nothing to configure: the actions are constants in code on both sides, and a token
+# minted for one route is refused by the other.
 #
 # BOTH OR NEITHER, exactly like the Access pair above, and for the same reason: a
 # SECRET with no SITEKEY refuses every visitor (no browser can mint a token), and a

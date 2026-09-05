@@ -87,10 +87,20 @@
   at once. The checker also reports a `-k` selector that matched **no test** as a NO-OP, because a renamed
   test is how a mutation table rots into reporting "caught" forever.
 - **`turnstile_mutation_check.py`** — the same proof for the **Cloudflare Turnstile bot control**
-  in front of `POST /api/chat`: **26 mutations** across
+  in front of `POST /api/chat` **and** `POST /api/transcribe`: **57 mutations** across
   [`functions/api/_lib/turnstile.js`](../../functions/api/_lib/turnstile.js), the guard step in
-  [`chat.js`](../../functions/api/chat.js), `_lib/env.js`'s config pair and the browser half,
-  [`sim/web/turnstile.js`](../../sim/web/turnstile.js). **It is STRICTER than the five tables above,
+  [`chat.js`](../../functions/api/chat.js) and [`transcribe.js`](../../functions/api/transcribe.js),
+  the budget refund in [`_lib/limits.js`](../../functions/api/_lib/limits.js), the sitekey's one
+  delivery path in [`health.js`](../../functions/api/health.js), `_lib/env.js`'s config pair, the
+  app-script cache list in [`sim/web/_headers`](../../sim/web/_headers), and the three browser files —
+  [`sim/web/turnstile.js`](../../sim/web/turnstile.js),
+  [`cloud-transport.js`](../../sim/web/cloud-transport.js) and [`mic.js`](../../sim/web/mic.js).
+  **IT NEVER TOUCHES THE CHECKOUT**: it hardlink-copies `functions/` and `sim/` into a throwaway
+  directory (~0.2 s, because hardlinks copy metadata and not bytes), replaces the files it mutates with
+  real copies so no write can reach the original inode, and runs `node` there. The first version rewrote
+  the live worktree and restored it in a `finally` — which left mandatory check 2 **disabled in the tree**
+  after a run that was killed, and made two concurrent runs redden each other's suites on rows that had
+  no defect behind them. **It is STRICTER than the five tables above,
   deliberately**: they run `pytest -k <selector>` and treat any non-zero exit as *caught*, which for a
   security control is too weak — a mutation that broke some unrelated assertion would read as caught
   while the guard it targeted went unexercised. This one runs `node sim/test_turnstile.mjs` and requires
@@ -110,6 +120,15 @@
   holds a concurrency slot) and says so, because "it never finished" is a different fact from "it went
   red". Pass a row name to re-check one without waiting out that hang:
   `python3 sim/tools/turnstile_mutation_check.py D3e`.
+  The 2026-09-05 review pass added 29 rows and they found five more holes of the same kind: the action
+  compared with `startsWith` or case-folded (both served a `chat-newsletter` token on the expensive
+  route and both passed green), the ears verifying nothing at all, a refusal that kept the units
+  admission charged (a *free* budget drain in place of a paid one), `/api/health` no longer publishing
+  the sitekey — the browser's ONLY source of it — with **eleven** suites still green, and a client that
+  memoised a failed script load and so disabled every turn for the life of the page. `sim/tests/
+  test_mutation_tables.py` now also pins the row COUNT stated in the docs against the table, because a
+  README that said 26 while the table held 28 is how a reader loses the ability to tell a table that grew
+  from a selector that silently stopped matching.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.

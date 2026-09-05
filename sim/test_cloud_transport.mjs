@@ -878,12 +878,16 @@ async function say(text, ms) {
  * =========================================================================== */
 {
   /** A fake `window.moxieTurnstile`, installed after boot so the real module is not
-   *  needed. `hand` is what `getToken()` resolves to; `calls` counts the asks. */
+   *  needed. `hand` is what `getToken()` resolves to; `calls` counts the asks AND RECORDS
+   *  THE ACTION each one named — there are two actions now, one per spending route, and a
+   *  send path that asked for the wrong one would be refused by the server's check 2 on
+   *  every single turn. */
   function minter(hand) {
-    const calls = { n: 0 };
+    const calls = { n: 0, actions: [] };
     globalThis.window.moxieTurnstile = {
-      getToken: function () {
+      getToken: function (action) {
         calls.n += 1;
+        calls.actions.push(action);
         return Promise.resolve(typeof hand === "function" ? hand(calls.n) : hand);
       },
     };
@@ -916,6 +920,9 @@ async function say(text, ms) {
     const posts = world.spy.fetches.filter((f) => f[0] === "/api/chat");
     eq(posts.length, 2, "two turns, two posts");
     eq(calls.n, 2, "…and the minter was asked once per turn, not once per page");
+    deep(calls.actions, ["chat", "chat"],
+         "…for the CHAT action every time — `mic.js` asks for `transcribe`, and the server " +
+         "refuses each in the other's place");
     eq(posts[0][1]["cf-turnstile-response"], "tok-1",
        "the token rides Cloudflare's own field name, which is what the route reads");
     eq(posts[1][1]["cf-turnstile-response"], "tok-2",
@@ -950,6 +957,84 @@ async function say(text, ms) {
        "…with the status line under the box telling the visitor what to do");
     ok(world.spy.speak.length > 0 || world.spy.setSpeech.length > 0,
        "…and she says it out loud, like any other line");
+  }
+
+  /* ---- REPEATED local failures DEGRADE the page, and stop repeating one line - *
+   * THE BUG THIS BLOCK EXISTS FOR, measured with `challenges.cloudflare.com` blocked (an
+   * ad-blocker rule, a DNS filter, a `frame-src` refusal — all real, none of them the
+   * visitor's doing): five typed messages produced five VERBATIM copies of the same
+   * robotic sentence, each inviting a retry that could not work, under a badge that still
+   * said LIVE. No strike was recorded, `mode.js` never left `live`, and `stub.js` — this
+   * page's own answer for exactly this situation — was never asked. That is strictly worse
+   * than the unreachable-gateway path, which flips the badge to SCRIPTED and answers
+   * topically.
+   *
+   * The fix has two halves and both are asserted: every failure is a transport STRIKE (the
+   * same 3-strike degrade §6.3 already uses), and from the SECOND consecutive failure the
+   * turn is answered from `stub.js` instead of by repeating the line. */
+  {
+    const world = await boot({ answer: (path) => path === "/api/health"
+      ? { status: 200, json: envelope() }
+      : { status: 200, json: envelope({ messages: [chatMsg("Hi!", "e1")], speech: [] }) } });
+    minter(null);
+    eq(globalThis.window.moxieMode.state(), "live", "the page starts live…");
+
+    await say("one");
+    let st = globalThis.window.moxieBridge.transportStats();
+    eq(st.botUnavailable, 1, "the FIRST failure is recorded…");
+    eq(st.fallbacks, 0, "…and answers with Moxie's own honest line rather than a stub reply");
+    ok(/visitor check/i.test(world.spy.transcript.join(" ")),
+       "…which is the line that says what happened");
+
+    await say("two");
+    st = globalThis.window.moxieBridge.transportStats();
+    eq(st.botUnavailable, 2, "the SECOND consecutive failure is recorded…");
+    eq(st.fallbacks, 1, "…and is answered from stub.js — not the same sentence again");
+
+    await say("three");
+    st = globalThis.window.moxieBridge.transportStats();
+    eq(st.fallbacks, 2, "…and so is the third");
+    eq(st.chatErrors, 0, "…none of them is reported as a transport error: nothing was sent");
+    eq(world.spy.fetches.filter((f) => f[0] === "/api/chat").length, 0,
+       "…and NOT ONE /api/chat request was made by any of them");
+
+    /* THE BADGE. Three strikes is `mode.js`'s existing degrade for a transport that cannot
+     * be reached (§6.3), and a widget host that cannot be reached is exactly that. A LIVE
+     * badge over a page that can never complete a turn is the lie this fixes. */
+    eq(globalThis.window.moxieMode.state(), "degraded",
+       "after three local failures the page is DEGRADED, not still claiming LIVE");
+    eq(globalThis.window.moxieMode.badge(), "HOSTED DEMO · SCRIPTED",
+       "…with the SCRIPTED badge, like every other unreachable transport");
+
+    /* AND THE DEGRADE HAS TEETH: a degraded page STOPS SPENDING. `canSpendLiveTurn()` is
+     * shut, so the fourth message never reaches this transport at all — it is delegated to
+     * `bridge.js`'s own offline path, exactly as it would be with a dead gateway. That is
+     * the difference between a badge that says SCRIPTED and a page that IS scripted. */
+    const before = globalThis.window.moxieBridge.transportStats().botUnavailable;
+    await say("four");
+    st = globalThis.window.moxieBridge.transportStats();
+    eq(st.delegated, 1, "a degraded page delegates the next turn instead of trying again…");
+    eq(st.botUnavailable, before, "…so the minter is not even asked");
+    eq(world.spy.fetches.filter((f) => f[0] === "/api/chat").length, 0, "…and nothing is sent");
+
+    /* AND IT RECOVERS THROUGH THE PROBE, not by guessing. `/api/health` answering healthy
+     * is what puts the page back to live (§6.3), and the CONSECUTIVE counter then means a
+     * later single failure says the honest line again rather than a stub — a page that
+     * failed once and has been fine since is not a degraded page, and `turnstile.js` no
+     * longer memoises a failed script load, so the retry that line invites can now work. */
+    minter("tok-recovered");
+    await globalThis.window.moxieMode.refresh();
+    eq(globalThis.window.moxieMode.state(), "live", "a healthy probe brings the page back…");
+    await say("five");
+    st = globalThis.window.moxieBridge.transportStats();
+    eq(st.botTokens, 1, "…the next turn mints a token and is sent…");
+    eq(world.spy.fetches.filter((f) => f[0] === "/api/chat").length, 1, "…as one real request");
+
+    minter(null);
+    await say("six");
+    eq(globalThis.window.moxieBridge.transportStats().fallbacks, 2,
+       "…and the NEXT failure is a FIRST failure again: the honest line, not a stub");
+    delete globalThis.window.moxieTurnstile;
   }
 
   /* ---- a minter that THROWS is the null case, not an exception ------------- */

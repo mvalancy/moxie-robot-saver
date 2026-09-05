@@ -17,6 +17,23 @@
  * from the set of things that can drain the demo's budget at all. A determined attacker
  * with a real browser still gets through it, and is then bounded by everything above.
  *
+ * IT IS IN FRONT OF **BOTH** VISITOR-DRIVEN SPENDING ROUTES, AND THAT TOOK A SECOND
+ * ACTION. `/api/chat` is the brain and `/api/transcribe` is the ears; `/api/speech` needs
+ * no widget of its own because it cannot be driven without a ticket `/api/chat` minted
+ * (`_lib/hmac.js`), so gating the turn gates the voice structurally. An earlier draft of
+ * this slice guarded the chat route alone and deferred the ears "to a later slice" — which
+ * left the more expensive of the two open to precisely the loop-with-no-browser this file
+ * claims to remove: 60 requests an hour from one address is 15 minutes of billable STT,
+ * ~1,440 calls a day, for ever. `TURNSTILE_ACTIONS` is the fix and the reason there is a
+ * table rather than a constant.
+ *
+ * AND A REFUSAL HERE GIVES THE BUDGET BACK. `admit()` charges the route's units before
+ * the route body runs, so a refusal that kept them would let a tokenless flood empty the
+ * SHARED hourly budget and take the demo scripted for everybody while spending nothing
+ * itself — a free drain in place of a paid one, with the same availability outcome. The
+ * routes call `slot.refundBudget()` on this path; `_lib/limits.js::grantedSlot` carries
+ * the whole argument, including why the per-IP window is deliberately NOT refunded.
+ *
  * ============================================================================
  * THE THREE CHECKS, AND WHY ALL THREE ARE MANDATORY.
  *
@@ -24,10 +41,12 @@
  * answer, and each of the other two closes a specific replay:
  *
  *   1. `success === true`  — the challenge was solved. Obviously required.
- *   2. `action` matches the action WE set on the widget. Without it, a token minted by
- *      any other widget flow on any of our authorized hostnames is accepted here — so a
- *      cheap "subscribe" form somewhere on the domain becomes a token mint for the
- *      expensive route.
+ *   2. `action` matches the action WE set on the widget FOR THIS ROUTE. Without it, a
+ *      token minted by any other widget flow on any of our authorized hostnames is
+ *      accepted here — so a cheap "subscribe" form somewhere on the domain becomes a
+ *      token mint for the expensive route, and (because the two spending routes do not
+ *      cost the same) a typed-sentence token becomes 15 seconds of billable STT. The
+ *      comparison is EXACT: `TURNSTILE_ACTIONS` says why a prefix match is not a check.
  *   3. `hostname` is in a deployment allowlist. Turnstile authorizes a hostname AND ALL
  *      ITS SUBDOMAINS, so the widget's own domain list is a coarser filter than this
  *      route wants; and the allowlist is what makes "a token solved on a dev box" not a
@@ -49,9 +68,16 @@
  *
  *   * `success: false` — Cloudflare looked and said no. **REFUSE.** This is the control;
  *     a control that lets the refused case through is not a control.
+ *   * `error-codes` naming OUR OWN fault — `invalid-input-secret`,
+ *     `missing-input-secret`, `bad-request` — **REFUSE**, and refuse as
+ *     `turnstile_misconfigured`, *whatever the status code was.* This one has to be
+ *     called out separately because Cloudflare answers those three with **HTTP 400**
+ *     (measured, see the `!res.ok` branch), so a fail-open keyed on the status alone
+ *     switched the entire control off for a secret that was wrong by one character —
+ *     silently, permanently, and while reporting a perfectly healthy turn.
  *   * siteverify unreachable, timed out, or answering something that is not JSON — a
  *     Cloudflare TRANSPORT failure, including its own documented `internal-error`
- *     ("retry the request"). **ALLOW.** Two reasons, and the second is the one that
+ *     ("retry the request") and any other non-2xx. **ALLOW.** Two reasons, and the second is the one that
  *     decides it. First, the request is already bounded by everything above this line:
  *     the per-IP windows and the unit budget cap the spend whether this check ran or not,
  *     so failing open costs at most the budget that was already the ceiling. Second, the
@@ -96,16 +122,40 @@
 export const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 /**
- * The `action` we set on the widget and require back in the verdict.
+ * The `action` we set on the widget and require back in the verdict — **ONE PER SPENDING
+ * ROUTE, keyed by the route's own name.**
  *
  * It is deliberately the ROUTE NAME rather than something decorative: check 2 above is
- * only worth having if the value is specific to the thing being protected, and `/api/chat`
- * is the only route that mints tokens today. If `/api/transcribe` ever grows its own
- * widget it gets its own action, and a chat token stops being spendable on the ears.
+ * only worth having if the value is specific to the thing being protected. A single
+ * deployment-wide action would satisfy check 2 in appearance and fail it in substance,
+ * because the two routes do not cost the same and are not driven the same way — a token
+ * the page mints for a typed sentence would be spendable on the ears, and 15 seconds of
+ * billable STT is a far better thing to steal than 160 tokens of chat.
  *
- * Turnstile constrains an action to `[A-Za-z0-9_-]{0,32}`; `chat` is well inside that.
+ * SO THERE ARE TWO, AND THE PAGE MINTS THEM FROM TWO SEPARATE WIDGETS
+ * (`sim/web/turnstile.js` renders one widget per action, lazily). A `chat` token presented
+ * to `/api/transcribe` is refused by check 2 exactly as a stranger's token would be.
+ *
+ * Turnstile constrains an action to `[A-Za-z0-9_-]{0,32}`; both of these are well inside
+ * that. `sim/test_turnstile.mjs` §10 reads the client's copy out of the source and
+ * requires the two tables to be equal, because a silent drift refuses every visitor with
+ * `turnstile_failed` and looks like a Cloudflare fault.
  */
-export const TURNSTILE_ACTION = "chat";
+export const TURNSTILE_ACTIONS = Object.freeze({ chat: "chat", transcribe: "transcribe" });
+
+/**
+ * The action for one route, or `""` for a route this table does not know.
+ *
+ * A ROUTE NAME THIS TABLE DOES NOT KNOW IS A PROGRAMMING ERROR AND IS TREATED AS ONE (see
+ * `verify`): it refuses. The alternative — defaulting to `chat` when the caller forgets
+ * the argument — is precisely the bug this split exists to prevent, and it would ship
+ * green, because a route that accepts chat tokens looks identical in every test that does
+ * not think to mint the wrong one.
+ */
+export function actionFor(route) {
+  const key = String(route || "");
+  return Object.prototype.hasOwnProperty.call(TURNSTILE_ACTIONS, key) ? TURNSTILE_ACTIONS[key] : "";
+}
 
 /** The JSON body field the token arrives in.
  *
@@ -115,6 +165,37 @@ export const TURNSTILE_ACTION = "chat";
  *  will already recognise. Inventing `token` here would save six characters and cost the
  *  reader the connection to the documentation. */
 export const TOKEN_FIELD = "cf-turnstile-response";
+
+/**
+ * ...and the REQUEST HEADER the token arrives on when there is no JSON body to put it in.
+ *
+ * `/api/transcribe`'s body is raw audio bytes — `readAudioBody` reads a `Uint8Array`, not
+ * an object — so there is no field to add. The two rejected alternatives, and why:
+ *
+ *   · a QUERY PARAMETER (`?cf-turnstile-response=…`). Rejected: tokens in URLs end up in
+ *     access logs, referrers and analytics, and a single-use credential is exactly the
+ *     kind of thing that must not be written down by three systems that were not asked.
+ *   · MULTIPART, so the token could keep Cloudflare's own form-field name. Rejected: it
+ *     would put a parser in front of a hostile upload on the one route whose whole design
+ *     note is *"the bytes are sniffed, not believed"*, to move a 40-byte string.
+ *
+ * `X-` AND NOT `CF-`, deliberately, even though `CF-Turnstile-Response` would read better
+ * next to `TOKEN_FIELD`: the `CF-` prefix is Cloudflare's own edge namespace (`CF-Ray`,
+ * `CF-Connecting-IP`, `CF-IPCountry` — this file reads one of them a few lines below), and
+ * a client-supplied header inside a namespace the platform in front of us rewrites is a
+ * header that can vanish or be replaced for reasons nothing in this repo controls.
+ */
+export const TOKEN_HEADER = "X-Turnstile-Response";
+
+/** The token off a request's headers, or `""`. One line at the call site, and the header
+ *  name lives in exactly one place. */
+export function tokenFromHeader(request) {
+  try {
+    return String((request && request.headers && request.headers.get(TOKEN_HEADER)) || "").trim();
+  } catch {
+    return "";
+  }
+}
 
 /**
  * Cloudflare `error-codes` that mean **we** are misconfigured, not that the visitor's
@@ -216,6 +297,31 @@ export function hostAllowed(cfg, request, hostname) {
 }
 
 /* ---------------------------------------------------------------------------- *
+ * Reading Cloudflare's reply — the only two things ever taken out of it
+ * ---------------------------------------------------------------------------- */
+
+/** The reply as a plain object, or `null` for anything that is not one.
+ *
+ *  NEVER THROWS AND NEVER LOGS. A body that will not parse is a transport failure at every
+ *  call site, so a `try` here saves the same `try` twice and, more importantly, keeps the
+ *  parse error itself out of scope — an error string from a fetch body can carry the URL. */
+async function readJsonBody(res) {
+  try {
+    const body = await res.json();
+    return body && typeof body === "object" && !Array.isArray(body) ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `error-codes` as an array of strings, defensively. THE ONLY FIELD READ OFF A FAILURE.
+ *  It is compared against two frozen lists and dropped; `sim/test_turnstile.mjs` sweeps
+ *  every response on every path for each of these strings. */
+function codesOf(body) {
+  return Array.isArray(body && body["error-codes"]) ? body["error-codes"].map((c) => String(c)) : [];
+}
+
+/* ---------------------------------------------------------------------------- *
  * The verification itself
  * ---------------------------------------------------------------------------- */
 
@@ -225,13 +331,17 @@ export function hostAllowed(cfg, request, hostname) {
  * @param {object} cfg      from `./env.js::readConfig`
  * @param {Request} request the request being answered (for `remoteip` and the default
  *                          hostname allowance)
- * @param {unknown} token   whatever was in the body's `cf-turnstile-response` field
+ * @param {unknown} token   whatever was in the body's `cf-turnstile-response` field, or on
+ *                          the `X-Turnstile-Response` header for a route with no JSON body
+ * @param {string} route    `"chat"` or `"transcribe"` — WHICH ACTION this token must carry.
+ *                          Required, and a name `TURNSTILE_ACTIONS` does not know REFUSES:
+ *                          see `actionFor` for why there is no default.
  * @returns {Promise<{ok: boolean, reason: string|null, outcome: string}>}
  *   `ok: true` means "let this request continue" — which covers three different worlds:
  *   enforcement is off, the token verified, or the endpoint could not be reached and we
  *   are failing open. `outcome` is which one, and it is recorded for the tests.
  */
-export async function verify(cfg, request, token) {
+export async function verify(cfg, request, token, route) {
   // ---- ENFORCEMENT IS CONFIG-GATED (D4, and C5's fail-safe default restated).
   //
   // No secret, no enforcement. This is the same shape as the gateway's own unconfigured
@@ -254,6 +364,19 @@ export async function verify(cfg, request, token) {
   // refusal — and free refusals are the ordering rule of this whole tree (§4.1). It also
   // means a flood of tokenless requests cannot turn this deployment into a traffic
   // amplifier pointed at siteverify.
+  // ---- WHICH ACTION MUST COME BACK, and a route we do not know REFUSES.
+  //
+  // Read AFTER the config gate above and not before it, deliberately: an unconfigured
+  // deployment must never refuse anybody for any reason (D4/C5), so a fork or a preview
+  // cannot be broken by this line. On an ENFORCING deployment it fails CLOSED, because
+  // the alternative to refusing an unknown route name is guessing one — and the guess
+  // that reads best (`chat`) is exactly the cross-route replay `TURNSTILE_ACTIONS`
+  // exists to prevent. It is `turnstile_misconfigured` and not `turnstile_failed`: no
+  // visitor's token can fix a route name, and the operator reading that reason is being
+  // told the truth about whose fault it is.
+  const wantAction = actionFor(route);
+  if (!wantAction) return { ok: false, reason: "turnstile_misconfigured", outcome: record("misconfigured") };
+
   const response = typeof token === "string" ? token.trim() : "";
   if (!response) return { ok: false, reason: "turnstile_failed", outcome: record("no_token") };
 
@@ -292,26 +415,55 @@ export async function verify(cfg, request, token) {
   }
 
   if (!res.ok) {
-    // Any non-2xx, including a 3xx we deliberately did not follow. Cloudflare answering
-    // anything but a 200 to a well-formed siteverify is a Cloudflare problem, which is
-    // the fail-open half of the split. NOTE the body is not read: a 4xx body here could
-    // echo the `secret` we just sent it.
+    // ==========================================================================
+    // A NON-2xx IS *MOSTLY* A TRANSPORT FAILURE — BUT NOT WHEN IT IS OUR SECRET.
+    //
+    // THE BUG THIS BRANCH USED TO HAVE, and it was the whole control:
+    // **`invalid-input-secret` AND `missing-input-secret` COME BACK AS HTTP 400.**
+    // Measured against the real endpoint on 2026-09-05, not recalled:
+    //
+    //     secret=<garbage>  -> 400 {"error-codes":["invalid-input-secret"],"success":false}
+    //     (no secret field) -> 400 {"error-codes":["missing-input-secret"],"success":false}
+    //     2x…AA (bad token) -> 200 {"error-codes":["invalid-input-response"],…}
+    //     3x…AA (replayed)  -> 200 {"error-codes":["timeout-or-duplicate"],…}
+    //
+    // So an early `return ok:true` here — a bare fail-open on `!res.ok`, with the body
+    // never read — meant that a `DEMO_TURNSTILE_SECRET` wrong by ONE CHARACTER switched
+    // the bot control off completely and silently: every visitor's genuine token answered
+    // 400, every request was allowed through, real money was spent on every one of them,
+    // the page painted a healthy LIVE badge, and `turnstile_misconfigured` — the reason
+    // whose ENTIRE PURPOSE is to diagnose exactly this fault without anyone printing the
+    // secret (see the header) — was unreachable for it. The single most likely
+    // misconfiguration of this slice was also the one it could not report.
+    //
+    // SO THE BODY IS READ, AND *ONLY* `error-codes` IS READ FROM IT. Two facts make that
+    // safe rather than a §4.2 risk, and both were verified above: the 400 bodies carry
+    // `error-codes`, `success` and an empty `messages` and NOTHING resembling the secret
+    // we sent; and the codes go into a local boolean and are dropped, exactly as they are
+    // on the 200 path a few lines below. Nothing from this body is ever forwarded.
+    //
+    // EVERYTHING ELSE STILL FAILS OPEN, which keeps D3's split and row D3c intact: a 5xx,
+    // a 3xx we did not follow, a body that will not parse, or a 4xx whose codes name the
+    // VISITOR's token rather than our configuration. A non-2xx is not a verdict, so a 500
+    // that happens to parse as `{"success": false}` is still Cloudflare having a bad ten
+    // minutes and still lets the turn through.
+    // ==========================================================================
+    const failCodes = codesOf(await readJsonBody(res));
+    if (failCodes.some((c) => OUR_FAULT_CODES.includes(c))) {
+      return { ok: false, reason: "turnstile_misconfigured", outcome: record("misconfigured") };
+    }
     return { ok: true, reason: null, outcome: record("unreachable") };
   }
 
-  let body;
-  try {
-    body = await res.json();
-  } catch {
-    // A 200 that is not JSON. Same class as the above — an interception page, a proxy, a
-    // truncated body — and the same answer.
-    return { ok: true, reason: null, outcome: record("unreachable") };
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
+  const body = await readJsonBody(res);
+  if (!body) {
+    // A 200 that is not JSON, or is JSON but not an object — an interception page, a
+    // proxy, a truncated body, a bare `null`, an array. Same class as the above, and the
+    // same answer.
     return { ok: true, reason: null, outcome: record("unreachable") };
   }
 
-  const codes = Array.isArray(body["error-codes"]) ? body["error-codes"].map((c) => String(c)) : [];
+  const codes = codesOf(body);
 
   // Cloudflare's own "retry the request" class, read BEFORE the verdict: `internal-error`
   // arrives with `success: false`, so a naive reading would treat Cloudflare's outage as
@@ -334,7 +486,12 @@ export async function verify(cfg, request, token) {
   // action is set in code on both sides (`TURNSTILE_ACTION`), so the two cannot drift
   // through configuration. What a mismatch actually means is a token that came from
   // somewhere else — which is the visitor's token being wrong for this route.
-  if (String(body.action || "") !== TURNSTILE_ACTION) {
+  //
+  // THE COMPARISON IS EXACT, AND THAT IS THE WHOLE VALUE OF IT. Not `startsWith`, not a
+  // trim, not a case fold: `chat` and `chat-newsletter` are different widgets, and a
+  // prefix match would hand every one of them the expensive route. (Both loosenings
+  // passed the suite before rows C2b/C2c existed — see the mutation table.)
+  if (String(body.action || "") !== wantAction) {
     return { ok: false, reason: "turnstile_failed", outcome: record("failed") };
   }
 

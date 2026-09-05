@@ -41,11 +41,21 @@ property that makes an attack cost the attacker more than it costs this deployme
    it is what stops a flood being answered by one outbound `siteverify` each (this
    deployment must not become a request amplifier), and a locally-blocked utterance must
    never buy a round trip to prove the visitor was human before being told no.
+   `POST /api/transcribe` has the same step in the same place (its step 4d) with its **own**
+   widget `action`, so neither route's token is spendable on the other; `/api/speech` needs
+   none, because it cannot be driven without a ticket `/api/chat` minted.
 8. **`noteUpstreamCall()` + the one `fetch()`** — the only thing here that spends money.
 
 `noteUpstreamCall()` sits immediately before that `fetch()`, so "this refusal path made
 zero upstream calls" is a *recorded fact* a test reads back, not an inference from a stub
 that may or may not have been reached.
+
+**Every refusal from step 3 onwards also gives the budget back.** `admit()` charges the
+route's units before the body runs, so a refusal that kept them let a flood of tokenless
+requests empty the *shared* hourly budget and take the whole demo scripted while spending
+nothing itself. `slot.refundBudget()` is called on each of those paths and on none that
+reached the gateway — see `_lib/limits.js::grantedSlot`, including why the per-IP window is
+deliberately not refunded.
 
 **Every early return from step 3 onwards returns from inside the `try` whose `finally`
 releases the concurrency slot.** A refusal that forgot it would leak a slot for ever, drift

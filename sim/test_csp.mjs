@@ -614,9 +614,36 @@ try {
    * redeploy can leave a visitor running yesterday's token minter against today's route.
    * =================================================================== */
   {
-    // The no-cache entry, read off the file we ship (not a restated copy of it).
-    ok(/^\/turnstile\.js\n\s+Cache-Control:\s*no-cache$/m.test(readFileSync(join(web, "_headers"), "utf8")),
-       "_headers gives turnstile.js its own no-cache entry — the app-script list IS the mechanism");
+    /* ---- TRAP B, ENUMERATED RATHER THAN SPOT-CHECKED ----------------------- *
+     * The app-script no-cache list is THE WHOLE MECHANISM (`_headers` says so in
+     * capitals): a client script missing from it is served with Pages' default caching, so
+     * a redeploy can leave a visitor running yesterday's file against today's HTML — or,
+     * for `turnstile.js` specifically, yesterday's token minter against today's route.
+     *
+     * IT USED TO NAME ONE FILE, AND THAT WAS THE GAP. A guard that asserts
+     * `/turnstile.js` proves only that THIS slice remembered; the next new client script
+     * gets nothing. Demonstrated on an isolated export of this tree: a `zz-probe.js` added
+     * to `sim.html` with NO entry in `_headers` left every guard in the repo green —
+     * `build_csp_hashes.py --check`, `test_csp_hashes.py`, `test_csp.mjs` and
+     * `test_turnstile.mjs` alike. So the property is asserted as a CLASS: every `.js` this
+     * bundle ships has its own entry, whoever added it and whenever.
+     *
+     * (`sim/test_turnstile.mjs` §10 asserts the same thing from the same file, because
+     * that suite runs in the fast tier where there is no Chrome at all. Two copies of one
+     * cheap enumeration is the right price for it being checked in both tiers.) */
+    const headerText = readFileSync(join(web, "_headers"), "utf8");
+    const listed = new Set();
+    for (const m of headerText.matchAll(/^\/([A-Za-z0-9._-]+\.js)\n\s+Cache-Control:\s*no-cache$/gm)) {
+      listed.add(m[1]);
+    }
+    ok(listed.size > 15, `the app-script no-cache list parsed (${listed.size} entries)`);
+    const shippedJs = readdirSync(web).filter((f) => f.endsWith(".js")).sort();
+    ok(shippedJs.length > 15, `…and sim/web ships ${shippedJs.length} scripts to compare it with`);
+    const unlisted = shippedJs.filter((f) => !listed.has(f));
+    eq(JSON.stringify(unlisted), "[]",
+       `EVERY script in sim/web has its own no-cache entry — unlisted: ${JSON.stringify(unlisted)}`);
+    ok(listed.has("turnstile.js"),
+       "…including turnstile.js, whose staleness would mint tokens for the wrong action");
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1440, height: 900 });

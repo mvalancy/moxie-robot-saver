@@ -289,7 +289,12 @@
     try { t = window.moxieTurnstile; } catch (e) { t = null; }
     if (!t || typeof t.getToken !== "function") return Promise.resolve("");
     try {
-      return Promise.resolve(t.getToken()).then(function (tok) {
+      /* THE ACTION IS NAMED, and it is named HERE rather than defaulted there. The two
+       * spending routes require different actions back (`TURNSTILE_ACTIONS`) because a
+       * microphone turn costs up to 15 s of billable speech-to-text and a typed turn does
+       * not, so a token minted for this send must be refused by the ears. `mic.js` passes
+       * `"transcribe"` on its own send path for the same reason. */
+      return Promise.resolve(t.getToken("chat")).then(function (tok) {
         return typeof tok === "string" ? tok : null;
       }, function () { return null; });
     } catch (e) { return Promise.resolve(null); }
@@ -317,8 +322,59 @@
    * says what to do. NO REQUEST IS MADE and nothing is spent. */
   var BOT_LINE = "Hmm, my visitor check did not answer just now. Try me once more!";
 
+  /* CONSECUTIVE local token failures. Reset by the first send that gets a token (or by a
+   * deployment that does not enforce), because what matters is whether the widget is
+   * working NOW — a page that failed once at boot and has been fine since is not degraded. */
+  var botStrikes = 0;
+
+  /**
+   * No token could be minted, so nothing was sent. What the page does about it.
+   *
+   * ============================================================================
+   * IT DEGRADES LIKE EVERY OTHER FAILURE ON THIS PAGE, AND THE FIRST VERSION DID NOT.
+   *
+   * THE BUG, measured: with `challenges.cloudflare.com` blocked (an ad-blocker rule, a DNS
+   * filter, a `frame-src` refusal — all real and none of them the visitor's doing), five
+   * typed messages produced five VERBATIM copies of the same robotic sentence, each one
+   * inviting a retry that could not work, under a badge that still said **LIVE**. No
+   * strike was recorded, `mode.js` never left `live`, and `stub.js` — the page's own
+   * answer for exactly this situation — was never asked. That is strictly worse than the
+   * unreachable-gateway path, which flips the badge to SCRIPTED and answers topically.
+   *
+   * SO THERE ARE TWO BEHAVIOURS AND A COUNTER:
+   *
+   *   · EVERY failure counts as a transport strike (`noteTransportError()`), which is the
+   *     SAME 3-strike degrade an unreachable gateway uses (§6.3). No new ceiling is
+   *     invented: a widget host that cannot be reached IS a transport failure from this
+   *     page's point of view, and after three of them the badge says SCRIPTED and the copy
+   *     stops claiming a live brain.
+   *   · the FIRST failure still says Moxie's own honest line, because "try me once more"
+   *     is TRUE for a one-off — a single `onerror`, one slow load, one expired challenge —
+   *     and `turnstile.js` no longer memoises a failed script load, so the retry it invites
+   *     can genuinely succeed now.
+   *   · from the SECOND consecutive failure the turn is answered from `stub.js` instead
+   *     (`fallbackReply`), so the visitor gets a topical reply rather than the same
+   *     sentence again. If there is no stub to ask, the honest line is still spoken —
+   *     A SILENT DEAD SEND IS NEVER AN OPTION, which is the whole reason this function
+   *     exists rather than a bare `return`.
+   * ============================================================================
+   *
+   * The child's line is already echoed (`liveTurn` echoes before asking for a token), so
+   * whichever branch runs, Moxie answers in her own voice through the SAME `route()` a real
+   * reply takes. NO REQUEST IS MADE and nothing is spent.
+   */
   function botUnavailable(text) {
     stats.botUnavailable++;
+    botStrikes++;
+    // Counted against the same 3-strike degrade an unreachable gateway uses, so the badge
+    // and the copy stop claiming a live brain the page cannot reach.
+    noteTransportError();
+    var haveStub = false;
+    try { haveStub = !!(window.moxieStub && window.moxieStub.enabled); } catch (e) {}
+    if (botStrikes > 1 && haveStub) {
+      status("Moxie’s visitor check isn’t answering — she’s using her recorded lines.");
+      return fallbackReply(text);
+    }
     status("Moxie could not finish her visitor check — try that again in a moment.");
     stats.order.push("stub");
     inner.route("/devices/d_sim/commands/remote_chat", JSON.stringify({
@@ -336,6 +392,9 @@
     // The bot control, in one line. `""` means this deployment does not enforce it.
     return botToken().then(function (tok) {
       if (tok === null) return botUnavailable(text);
+      // A token (or an unenforced deployment) means the widget is working now, so the
+      // consecutive-failure count starts again — see `botUnavailable`.
+      botStrikes = 0;
       if (tok) stats.botTokens++;
       return chatPost(text, tok);
     });

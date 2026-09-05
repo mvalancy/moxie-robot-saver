@@ -8,7 +8,15 @@ degraded line and the skipped Piper probe, with `test_fallback_coverage.mjs` ext
 717 assertions to hold them. **Turnstile ships as of 2026-09-05** (§4.1's bot control, in
 `functions/api/_lib/turnstile.js` and `sim/web/turnstile.js`) — with one deliberate deviation from
 this document's sketch, recorded at §9's P1 row: a **fresh token per send** rather than *"Turnstile
-before the first paid call of a session, then a short-lived signed session cookie."* The rest of P1
+before the first paid call of a session, then a short-lived signed session cookie."* It guards **both**
+visitor-driven spending routes, each with its own widget `action`: `POST /api/chat` (`chat`, in the JSON
+body) and `POST /api/transcribe` (`transcribe`, on an `X-Turnstile-Response` header, because that body is
+raw audio). The ears were not deferred in the end and could not be: with the per-IP windows at 10/min and
+60/hour and **no daily window**, an unguarded `/api/transcribe` left 15 minutes of billable
+speech-to-text per hour reachable from one address. Every refusal inside the admitted section also
+**refunds the units `admit()` charged** (`slot.refundBudget()`), because a refusal that kept them let 200
+tokenless requests empty the shared hourly budget and take the demo scripted for everyone while spending
+nothing itself — a free drain in place of a paid one. The rest of P1
 (exact counters, a nonce CSP, the recovery line §6.3 mentions) and all of P2 are not shipped. This is the file
 [`../orchestration-plan.md`](../orchestration-plan.md):34 points at (`backlog/live-sim-demo.md`) and that
 did not exist until now.
@@ -562,7 +570,9 @@ becomes defence in depth. Whether it can is **unverified** from this repo (§10)
 **Stated plainly in the code comment and here:** *this stops browser hotlinking only. `curl` forges these
 headers trivially.* It is a cheap first filter under the caps, the budget and the gateway-side key budget —
 never a control to rely on. Bot detection (Turnstile) was P1 and **is now built** — `functions/api/_lib/
-turnstile.js`, verified on `POST /api/chat` immediately before its one gateway call. Note what that does
+turnstile.js`, verified on `POST /api/chat` **and `POST /api/transcribe`** immediately before each one's
+gateway call, with a different widget `action` required back from each so neither route's token is
+spendable on the other. Note what that does
 and does not change about the sentence above: the origin pin is still forgeable and still not a control to
 rely on, and Turnstile removes the **cheapest** attack (a loop with no browser) rather than bounding the
 bill. What bounds the bill is still the caps, the budget and a gateway-side key budget.
@@ -1350,9 +1360,11 @@ cookie is a **second credential format** to mint, verify, expire and get wrong, 
 and the context blob that already exist (`_lib/hmac.js`) — and its whole benefit is saving one ~30 ms
 edge round trip on a turn that costs ~1 200 ms upstream; (3) demo mode is explicit in §4.4 that this
 deployment sets **no cookies at all**, and a session cookie is the one thing on that list a visitor's
-browser would notice. So: `sim/web/turnstile.js` renders one invisible widget and calls
-`reset()` + `execute()` per send, which is Cloudflare's documented way to obtain a fresh token from an
-existing widget · a TTS response cache keyed on `sha256(model + " " + normalized_text)`
+browser would notice. So: `sim/web/turnstile.js` renders one invisible widget **per action** (the chat
+one eagerly, the microphone one on first use) and calls `reset()` + `execute()` per send, which is
+Cloudflare's documented way to obtain a fresh token from an existing widget — except while a challenge is
+still on the visitor's screen, where the later send WAITS for it rather than resetting the half-finished
+puzzle the page's own "try me once more" invited them to keep working on · a TTS response cache keyed on `sha256(model + " " + normalized_text)`
 (the demo's line inventory is small and repetitive — `audio/index.json` is the same idea shipped
 statically); **do not cache STT** — that is a privacy problem, not a saving · a nonce/hash pass so
 `script-src 'self'` can be added · fix `deploy-cloudflare.md`:10, :19, :57, :65, :71‑82 and

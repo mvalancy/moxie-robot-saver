@@ -156,28 +156,43 @@ export async function onRequestPost(context) {
   }
 
   try {
+    /** A refusal from inside the admitted section — one that spends NOTHING upstream, and
+     *  therefore hands back the `UNITS.speech` (2) `admit()` charged before this `try` was
+     *  entered. The same helper, and the same argument, as `chat.js::spentNothing`.
+     *
+     *  THIS ROUTE HAS NO BOT CONTROL AND IT NEEDED THIS ANYWAY. The drain that made the
+     *  chat route refund does not need a token to work here: a forged `ticket` is refused
+     *  `bad_ticket` for free and with zero gateway calls, so ~300 of them across a spread
+     *  of addresses emptied `DEMO_UNIT_BUDGET_HOUR` and took the whole demo SCRIPTED — the
+     *  identical attack through the door next to the window, and closing one without the
+     *  other would have been theatre. (Nothing here needs a widget: the ticket is what
+     *  gates this route, and `/api/chat` — which does have a widget — is the only thing
+     *  that can mint one.) */
+    const spentNothing = (reason, extra) => {
+      slot.refundBudget();
+      return refusal(cfg, reason, { load: slot.load, rateLimit: slot.rateLimit, ...(extra || {}) });
+    };
+
     // ---- 3. The request. ONE key is read; everything else is dropped (§3.2).
     const parsed = await readJsonBody(request, cfg);
-    if (!parsed.ok) return refusal(cfg, parsed.reason, { load: slot.load, rateLimit: slot.rateLimit });
+    if (!parsed.ok) return spentNothing(parsed.reason);
     const ticket = typeof parsed.body.ticket === "string" ? parsed.body.ticket : "";
-    if (!ticket) return refusal(cfg, "bad_ticket", { load: slot.load, rateLimit: slot.rateLimit });
+    if (!ticket) return spentNothing("bad_ticket");
 
     // ---- 4. The ticket. A forged signature, a malformed artefact and an expired one are
     // all `bad_ticket`, and none of them reaches the gateway. The signature is checked
     // BEFORE the payload is parsed (`_lib/hmac.js::verifyClaims`), so a forged blob never
     // reaches the JSON parser.
     const v = await verifyTicket(cfg, ticket);
-    if (!v.ok) return refusal(cfg, "bad_ticket", { load: slot.load, rateLimit: slot.rateLimit });
+    if (!v.ok) return spentNothing("bad_ticket");
 
     // The re-check §3.2 asks for. A `too_long` rather than a `bad_ticket` because the
     // ticket is perfectly valid — the CONFIGURATION got tighter, and the page deserves to
     // be told which of the two it is.
-    if (v.claims.text.length > cfg.maxTtsChars) {
-      return refusal(cfg, "too_long", { load: slot.load, rateLimit: slot.rateLimit });
-    }
+    if (v.claims.text.length > cfg.maxTtsChars) return spentNothing("too_long");
 
     const key = replayKey(ticket);
-    if (spent.has(key)) return refusal(cfg, "bad_ticket", { load: slot.load, rateLimit: slot.rateLimit });
+    if (spent.has(key)) return spentNothing("bad_ticket");
     if (spent.size >= SPENT_MAX) spent.clear(); // bounded; see the note on `spent`
     spent.add(key);
 
