@@ -29,6 +29,7 @@ from __future__ import annotations
 import ast
 import glob
 import os
+import re
 
 import pytest
 
@@ -84,6 +85,56 @@ def _rows(path):
 def test_there_are_mutation_tables_to_check():
     """A guard over a glob that matched nothing is the emptiest kind of green."""
     assert len(TABLES) >= 4, f"only found {TABLES}"
+
+
+#: `python3 sim/tools/x_mutation_check.py        # 54 rows; every one must say "caught"`
+#: — the shape the docs use to tell a reader what a clean run looks like.
+_DOC_ROW_COUNT = re.compile(
+    r"(?P<tool>[\w./-]*?(?P<base>\w+_mutation_check\.py))\b[^\n]*?#\s*(?P<n>\d+)\s+rows"
+)
+
+
+def _docs():
+    for pattern in ("*.md", "*/*.md", "*/*/*.md", "*/*/*/*.md"):
+        for path in glob.glob(os.path.join(REPO, pattern)):
+            yield path
+
+
+def test_documented_row_counts_match_the_tables():
+    """A row count written in a doc must be the row count in the table.
+
+    WHY THIS IS A TEST AND NOT A COMMENT. `functions/README.md` told operators to run the
+    Turnstile checker and expect **26 rows** while the table held 28, and nothing anywhere
+    noticed: this file already checked every row's structure and every anchor, but never
+    how many rows there were. The number a reader checks their own run against was
+    therefore not load-bearing in either direction — two rows could vanish from a table
+    and no doc and no test would say so, which is precisely how a security table quietly
+    shrinks.
+
+    It is deliberately driven off the DOC rather than pinned to a constant here: a table
+    is *supposed* to grow, and the only thing that must never drift is the pair.
+    """
+    counts = {os.path.basename(t): len(_rows(t)) for t in TABLES}
+    checked = []
+    for doc in _docs():
+        text = open(doc, encoding="utf-8").read()
+        for m in _DOC_ROW_COUNT.finditer(text):
+            base, claimed = m.group("base"), int(m.group("n"))
+            if base not in counts:
+                continue
+            rel = os.path.relpath(doc, REPO)
+            assert claimed == counts[base], (
+                f"{rel} says {base} has {claimed} rows; it has {counts[base]}. "
+                f"Update the doc (or the table) so an operator can tell a table that GREW "
+                f"from a selector that silently stopped matching."
+            )
+            checked.append((rel, base, claimed))
+    # A regex that matched nothing would make this test the emptiest kind of green — the
+    # exact failure mode its own subject is about.
+    assert checked, (
+        "no doc states a mutation-table row count in the documented "
+        '`<tool>  # N rows` form — this guard is checking nothing'
+    )
 
 
 @pytest.mark.parametrize("table", TABLES, ids=lambda p: os.path.basename(p))

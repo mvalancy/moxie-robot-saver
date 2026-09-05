@@ -112,6 +112,11 @@ const state = {
     refused: 0,
     refusals: {},
     upstreamCalls: 0,
+    /** Budget units handed back by `slot.refundBudget()` — a request that was CHARGED at
+     *  admission and then refused by the route body without ever calling the gateway. It
+     *  is a recorded fact rather than an inference so a test can assert the refund
+     *  HAPPENED and not merely that the arithmetic came out even (playbook rule 11). */
+    refundedUnits: 0,
     /** joined = queued at all; granted = got a slot from a release; expired = waited out
      *  the clock; refusedFull = never queued because the depth cap was already reached. */
     queue: { joined: 0, granted: 0, expired: 0, refusedFull: 0 },
@@ -159,6 +164,7 @@ export function __reset() {
     refused: 0,
     refusals: {},
     upstreamCalls: 0,
+    refundedUnits: 0,
     queue: { joined: 0, granted: 0, expired: 0, refusedFull: 0 },
     cache: {
       checked: 0, ops: 0, hit: 0, miss: 0, stale: 0,
@@ -616,6 +622,15 @@ export function loadOf(cfg, route) {
  * The body-size ceiling, DERIVED from the caps so an override scales it: the largest
  * legitimate body is one utterance plus one context blob, and base64 plus JSON escaping
  * costs under 3x. Everything above it is refused unread.
+ *
+ * CHECKED WHEN `/api/chat` GREW A THIRD FIELD (2026-09-05, the Turnstile token): a
+ * Cloudflare Turnstile response token is documented at up to 2 048 bytes, and the default
+ * ceiling here is `4096 + 3 * (500 + 1500)` = 10 096 — so a maximal utterance, a maximal
+ * context blob AND a maximal token together come to roughly half of it. The flat 4 096
+ * term, which exists for JSON syntax, absorbs the new field with room to spare and no
+ * change was needed. Worth re-doing that arithmetic before adding a FOURTH field: the
+ * failure mode is a `too_long` refusal that blames the visitor's sentence for a byte
+ * budget their sentence had nothing to do with.
  */
 export function maxJsonBodyBytes(cfg) {
   return 4096 + 3 * (cfg.maxInputChars + cfg.maxContextChars);
@@ -704,7 +719,16 @@ export async function readAudioBody(request, cfg) {
 function refuse(reason, extra) {
   state.stats.refused += 1;
   state.stats.refusals[reason] = (state.stats.refusals[reason] || 0) + 1;
-  return { ok: false, reason, retryAfterS: 0, rateLimit: null, release: () => {}, ...extra };
+  // `release()` and `refundBudget()` are both no-ops here and both are PRESENT on purpose:
+  // a refused admission holds no slot and (after `refundCharges`) has spent nothing, but a
+  // caller must be able to call either without asking which kind of answer it got. A slot
+  // shape with a missing method is a `TypeError` on a refusal path, which is the one place
+  // a route cannot afford to throw.
+  return {
+    ok: false, reason, retryAfterS: 0, rateLimit: null,
+    release: () => {}, refundBudget: () => {},
+    ...extra,
+  };
 }
 
 /* ---------------------------------------------------------------------------- *
@@ -787,12 +811,60 @@ function handOffOrRelease(route) {
   state.inflight[route] = Math.max(0, (state.inflight[route] || 0) - 1);
 }
 
-/** Build the granted-slot result. `inflight` has ALREADY been accounted for by the
- *  caller — either incremented on the fast path, or handed over by `handOffOrRelease` —
- *  so this function only wraps it in the idempotent `release()`. */
-function grantedSlot(route, capacity, rateLimit) {
+/**
+ * Build the granted-slot result. `inflight` has ALREADY been accounted for by the
+ * caller — either incremented on the fast path, or handed over by `handOffOrRelease` —
+ * so this function only wraps it in the idempotent `release()`.
+ *
+ * ============================================================================
+ * `refundBudget()`, AND WHY IT GIVES BACK THE UNIT BUDGET AND *NOT* THE PER-IP WINDOW.
+ *
+ * THE HOLE IT CLOSES, measured (2026-09-05). `admit()` charges `UNITS[route]` — 3 for a
+ * chat turn — BEFORE the route body runs, and the route body has refusals of its own:
+ * `too_long`, `too_short`, `bad_request`, the safety floor's `blocked`, and (since the
+ * Turnstile slice) `turnstile_failed`. Every one of those spends 3 units on a request
+ * that makes NO gateway call. 200 tokenless POSTs — an empty JSON body, no browser, no
+ * token, and each one correctly refused — therefore emptied `DEMO_UNIT_BUDGET_HOUR` (600)
+ * and the NEXT visitor, holding a perfectly good token, was answered `budget_exhausted`
+ * with the page painted SCRIPTED for the rest of the hour. **The bot control had turned a
+ * paid drain into a free drain and left the availability outcome unchanged**, which is the
+ * opposite of what `./turnstile.js`'s header claims for it.
+ *
+ * WHY A REFUND AND NOT A REORDER. Exactly the argument `refundCharges()` sets out for the
+ * queue: charging after the decision would put a request that is refused instantly and for
+ * nothing in front of a scarce resource first. The order stays; the accounting is made
+ * true after the fact.
+ *
+ * WHY THE PER-IP WINDOW IS DELIBERATELY *NOT* GIVEN BACK — the one asymmetry with
+ * `refundCharges()`'s own two call sites, which refund both:
+ *
+ *   * the unit budget is SHARED BY EVERY VISITOR. Its exhaustion is the availability harm
+ *     above: one address spends it and everybody else gets scripted lines. Nothing a
+ *     refused request did justifies that, so it comes back.
+ *   * the per-IP window is SELF-INFLICTED and is the only thing that makes a flood of
+ *     free refusals from one address eventually go quiet. Refunding it would make an
+ *     unauthenticated, tokenless refusal *unlimited* per IP — a new abuse channel opened
+ *     to fix an abuse channel, which is the trade `refundCharges()` rejected for (b).
+ *     The visitor who eats a window unit on a refused turn is the visitor whose request
+ *     was wrong; the fairness cost is theirs alone and it is bounded by one minute.
+ *
+ * The two existing refund sites (the queue expiring, the shared tier refusing) keep
+ * refunding BOTH, and that is right for them: neither is the requester's fault at all.
+ *
+ * IDEMPOTENT, for the same reason `release()` is: a second call would credit units nobody
+ * ever spent, and an over-credited shared budget is money.
+ *
+ * AND IT MUST NOT BE CALLED ON A PATH THAT WAS SERVED. There is no way for this function
+ * to know, so the rule lives at the call sites: refund only where the route returns
+ * WITHOUT having called `noteUpstreamCall()`. `sim/test_turnstile.mjs` §11 pins the
+ * balance both ways — a refused turn leaves the counter where it found it, a served turn
+ * leaves 3 units spent.
+ * ============================================================================
+ */
+function grantedSlot(route, capacity, rateLimit, budget) {
   state.stats.admitted += 1;
   let released = false;
+  let refunded = false;
   return {
     ok: true,
     reason: null,
@@ -803,6 +875,13 @@ function grantedSlot(route, capacity, rateLimit) {
       if (released) return; // idempotent: a double release would under-count for ever
       released = true;
       handOffOrRelease(route);
+    },
+    refundBudget() {
+      if (refunded) return; // idempotent: a double refund would credit units never spent
+      refunded = true;
+      state.stats.refundedUnits += (budget && budget.charged && budget.charged.length)
+        ? (budget.cost || 0) : 0;
+      refundCharges([], (budget && budget.charged) || [], (budget && budget.cost) || 0);
     },
   };
 }
@@ -1062,7 +1141,7 @@ async function sharedWindowVerdict(store, request, { ip, route, cfg, nowS }) {
  */
 function grantOrShared(o, ctx) {
   const store = sharedStore(o, ctx.cfg);
-  if (!store) return grantedSlot(ctx.route, ctx.capacity, ctx.win.rateLimit);
+  if (!store) return grantedSlot(ctx.route, ctx.capacity, ctx.win.rateLimit, ctx.budget);
   return sharedThenGrant(store, o, ctx);
 }
 
@@ -1081,7 +1160,7 @@ async function sharedThenGrant(store, o, ctx) {
     state.stats.cache.errors += 1;
     verdict = null;
   }
-  if (!verdict) return grantedSlot(route, capacity, win.rateLimit);
+  if (!verdict) return grantedSlot(route, capacity, win.rateLimit, budget);
 
   // Refused by the shared tier. Give the slot back FIRST — it is the scarce thing and
   // somebody may be queued for it — then refund the charge, exactly as the `at_capacity`
