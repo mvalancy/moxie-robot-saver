@@ -622,9 +622,11 @@ this contract exists to prevent.
 
 P0's per-IP and global counters are **best-effort**. They were **an in-isolate map, and nothing else**
 until 2026-09-04, when the per-IP **minute** window gained the Cache API tier of §4.6.1 — measured
-first, then built. **Every other counter here is still that map alone**: the hour and day windows, the
-concurrency ceiling, the FIFO and the unit budget, so `/api/health`'s `budget` and `load` are exactly as
-narrow as this paragraph has always said.
+first, then built — and **2026-09-05, when the unit budget's HOUR joined it (§4.6.2)**. **Every other
+counter here is still that map alone**: the hour and day *per-IP* windows, the unit budget's **day**
+ceiling, the concurrency ceiling and the FIFO. `/api/health`'s `budget` and `load` are read from the
+in-isolate map and are **not** told about either shared tier — a probe that awaited a cache would be a
+probe that can hang — so they stay exactly as narrow as this paragraph has always said.
 
 > **This sentence is corrected the same day the code changed, and that is the point.** Ledger row 25
 > records the last time this paragraph drifted: it claimed a Cache API tier existed when none did, and
@@ -646,8 +648,11 @@ assumption 13 (is KV or a Durable Object even available on this plan?) was still
 changes which counter is worth building. **That reason has since been retired — by measurement rather
 than by the dashboard.** §4.6.1 has the numbers and the resulting recommendation.
 
-**The practical consequence, exactly.** Every cap in §4.1 that is enforced by a counter — the per-IP
-windows, the concurrency ceiling and the unit budget — is enforced *once per isolate*. With N isolates
+**The practical consequence, exactly** (and it is now the *floor* rather than the whole picture: the
+per-IP minute window and the unit budget's hour are additionally counted per-colo, §4.6.1 and §4.6.2,
+which removes the isolate multiplier for those two and leaves it for everything else). Every cap in §4.1
+that is enforced by a counter — the per-IP windows, the concurrency ceiling and the unit budget — is
+enforced *at least* once per isolate. With N isolates
 serving the deployment, the effective ceiling is up to **N × the configured number**, and N is chosen by
 Cloudflare and changes with traffic and with isolate recycling. **"N is not observable from inside a
 Function" was wrong, and §4.6.1 replaces it with a measurement: 41 sequential requests from one client on
@@ -675,10 +680,12 @@ is refused, not queued, and refused *for free* — the charge is refunded (§4.1
 
 They stop scripts and accidents, which is most of the real risk. The hard ceilings are (a) the gateway-side
 budget-scoped virtual key, and (b) the caps in §4.1, which bound the cost of every *individual* request
-regardless of how many arrive. The Cache API tier of §4.6.1 was **built on 2026-09-04** and covers the per-IP minute window only — deliberately, because an undercounted window costs a few extra turns while an undercounted budget costs money. The next counter to build needs
-no binding and no owner action; a KV or Durable Object single-writer counter stays P1 and stays gated on
-the dashboard half of §10 assumption 13, because it is the only one of the three that is a true global
-ceiling.
+regardless of how many arrive. The Cache API tier of §4.6.1 was **built on 2026-09-04** and covered the per-IP minute window only —
+deliberately, because an undercounted window costs a few extra turns while an undercounted budget costs
+money. **The unit budget's hour followed on 2026-09-05 (§4.6.2)**, and it is *not* the same change made
+twice: a budget can be REFUNDED and a window cannot, which turns out to decide the whole design. A KV or
+Durable Object single-writer counter stays P1 and stays gated on the dashboard half of §10 assumption 13,
+because it is the only one of the three that is a true global ceiling.
 
 #### 4.6.1 The Cache API tier, measured rather than assumed (2026-09-05)
 
@@ -745,7 +752,61 @@ candidate that gives a true single-writer counter, so P1 is unchanged and still 
 Two implementation notes for whoever builds it: key the entry by a **coarse time bucket** (`…/ip/<hash>/<minute>`)
 so the hot key rotates and a stale entry expires itself; and apply the tier to the **per-IP window**
 before the **unit budget**, since an undercounted window costs a few extra turns while an undercounted
-budget costs money.
+budget costs money. **Both were followed, and the second note came with a third clause that was WRONG —
+see §4.6.2.** The code comment that carried it said the budget would be *"one more `match` + `put` … and
+the same fail-open rules apply verbatim"*. It is not verbatim, because `slot.refundBudget()` did not
+exist when it was written.
+
+#### 4.6.2 The unit budget on the shared tier, and the refund that changed the design (2026-09-05)
+
+The per-IP minute window fails open because **every write it makes is a `prev + 1`**: lose one and the
+stored value is smaller than the truth, so somebody is served who might have been refused. Cheap.
+
+The unit budget has `slot.refundBudget()` underneath it (the P0 refund that closed the tokenless free
+drain — 200 refused POSTs used to empty `DEMO_UNIT_BUDGET_HOUR`). A refund written to a shared entry is a
+**`prev - cost`**, and a lost `prev - cost` is an **OVERCOUNT**: the visitor stays charged for a turn that
+never happened, the colo's hour empties early, and real visitors are answered `budget_exhausted` with the
+page painted SCRIPTED. That is failing **closed** — the exact property for which §4.6.1 refused to put
+the *concurrency ceiling* on this tier ("an eventually-consistent counter cannot hold a resource that
+must be given back"). A refund is a resource being given back.
+
+**So the shipped design never writes a charge it might have to un-write.** `admit()` only *reads* the
+shared entry. The units are held in the isolate's own ledger (`state.units` in
+[`_lib/limits.js`](../../../functions/api/_lib/limits.js)) and are added to it **only by `release()`, and
+only when `refundBudget()` was not called** — that is, only when the request really reached the gateway.
+The next admission's cache round trip publishes the ledger with a `put(seen + owed)`, and the ledger is
+cleared whether or not that write is confirmed (a `put` that timed out may have landed, and re-publishing
+the same units would be a double charge).
+
+| Property | How it is obtained |
+|---|---|
+| No lost write can refuse a visitor who should be served | **There is no refund write at all.** Not "rarely lost" — a refund performs zero cache operations. |
+| A refused request costs the colo nothing | It never settles, so the ledger never learns about it. 200 tokenless POSTs publish **zero** units. |
+| A lost publish only ever undercounts | Every published value is `seen + owed`, and losing it loses spend. |
+| A confirmed-or-not publish is never counted twice | The ledger is cleared on the **attempt**, not on the confirmation. |
+| Hour-boundary spend lands on the hour that spent it | The ledger carries the bucket the charge was made in; anything else is **dropped**, never moved. |
+
+**Three alternatives were rejected**, each of which is a reasonable-sounding sentence: (a) *charge shared,
+refund isolate-local* — the literal reading of "verbatim", and it re-opens the free drain in the shared
+dimension, where 200 × 3 units is exactly the 600-unit hour; (b) *store a signed net so a lost refund is
+bounded* — it is not bounded, each lost refund is permanent for the hour and the attacker picks how many;
+(c) *refund the shared tier anyway* — which would make "every error is an undercount" false, and that
+sentence is the reason this tier was allowed to exist at all.
+
+**What it costs, stated.** The colo's entry lags its real spend by whatever its isolates have not
+published — at most one settled request each, plus whatever is in flight — which is bounded by
+`DEMO_MAX_CONCURRENT_*` + `DEMO_QUEUE_MAX_DEPTH` per isolate and is in the *permissive* direction. An
+isolate recycled with units in its ledger takes them to the grave (an undercount, recorded as
+`cache.units.dropped`). A served turn now issues up to **four** cache ops rather than two — two window,
+one budget read, one conditional budget write — which by row h's own per-op cost (~15 ms) extrapolates to
+~59 ms; that is an extrapolation, not a measurement. A **refused** turn issues three and writes nothing.
+Only the **hour** is mirrored; `DEMO_UNIT_BUDGET_DAY` remains purely in-isolate and no sentence may call
+it shared.
+
+**And the thing not to conclude, again.** This is still not a global ceiling. It is per-colo, a burst
+still loses writes, and the lag above is real. `sim/test_demo_proxy.mjs` §15i drives it from two
+isolate-like contexts and asserts every failure mode admits;
+`sim/tools/unit_budget_mutation_check.py` proves those assertions are load-bearing.
 
 `GET /api/health` reports `budget_exhausted` and the real `load.inflight` from these same counters (P0-b
 wired it on 2026-09-03; before that it returned a hard-coded `null`/`0` and could never say either). It is
@@ -1004,7 +1065,7 @@ and `CLOUDFLARE_ACCOUNT_ID` as GitHub secrets; that is an alternative path, expl
 | `DEMO_STT_PER_MIN` / `_HOUR` | var | `10` / `60` | no | §4.1 |
 | `DEMO_MAX_CONCURRENT_CHAT` / `_SPEECH` | var | `4` / `8` | no | §4.1, §7 |
 | `DEMO_QUEUE_MAX_WAIT_MS` / `_MAX_DEPTH` | var | `2500` / `8` | no | §4.1, §4.6 |
-| `DEMO_CACHE_COUNTER` / `DEMO_CACHE_TIMEOUT_MS` | var | on / `250` | no | The cross-isolate per-IP minute window of §4.6.1. `0` switches the tier off. |
+| `DEMO_CACHE_COUNTER` / `DEMO_CACHE_TIMEOUT_MS` | var | on / `250` | no | The cross-isolate tier: the per-IP minute window of §4.6.1 **and** the unit budget's hour of §4.6.2. `0` switches both off. |
 | `DEMO_TTS_CACHE` | var | on | no | §4.8 — cache synthesised speech in `caches.default`, so a line already made is not made again. `0` restores the pre-2026-09-05 route with **no cache call at all**. Per-colo, fail-open, and it stores nothing but a successful synthesis. |
 | `DEMO_TTS_CACHE_TTL_S` | var | `86400` | no | §4.8 — the `max-age` on a stored entry and the staleness test on the way back out. Clamped 60..604 800. |
 | `DEMO_TTS_CACHE_TIMEOUT_MS` | var | `1000` | no | §4.8 — the deadline on **each** cache op (lookup, body read, write). Four times the counter tier's, because this one moves up to ~1.3 MB and is weighed against a ~1 100 ms synthesis rather than a free decision. Clamped 50..5 000, so it can neither out-wait `DEMO_SPEECH_TIMEOUT_MS` nor switch the tier off by stealth. |
@@ -1309,7 +1370,8 @@ attribute anywhere under `functions/`. See assumption 26.
 **Not settled, and it cannot be from here:** §10's assumptions 8-13 (unchanged) —
 all fail safe, and one preview `curl` settles them.
 **Best-effort by design, and said out loud in the code:** the per-IP windows, the
-concurrency ceiling and the unit budget are in-process, so they stop scripts and
+concurrency ceiling and the unit budget are in-process — the per-IP *minute* window and
+the unit budget's *hour* additionally per-colo (§4.6.1, §4.6.2) — so they stop scripts and
 accidents but are not a hard global ceiling (§4.6); the ceilings that hold are the
 per-request caps, the ticket, and a budget-scoped gateway key (§10 assumption 14).
 

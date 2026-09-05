@@ -147,6 +147,27 @@
   test_mutation_tables.py` now also pins the row COUNT stated in the docs against the table, because a
   README that said 26 while the table held 28 is how a reader loses the ability to tell a table that grew
   from a selector that silently stopped matching.
+- **`unit_budget_mutation_check.py`** — the same proof for the **shared unit budget** of
+  [`live-sim-demo.md` §4.6.2](../../docs/architecture/backlog/live-sim-demo.md): every guard the
+  per-colo spend ceiling rests on, all of them in
+  [`functions/api/_lib/limits.js`](../../functions/api/_lib/limits.js), checked against
+  [`sim/test_demo_proxy.mjs`](../test_demo_proxy.mjs) §15i.
+  `python3 sim/tools/unit_budget_mutation_check.py        # 16 rows; every one must say "caught"`
+  (about 25 s; pass a row name — `U3` — to re-check one in ~1.5 s). It inherits
+  `turnstile_mutation_check.py`'s **strictness** (the selector must appear in a *failing check's own
+  label*, so a row is caught only when the check that names that guard is the one that reddened) and its
+  **throwaway hardlink tree**, and it adds one thing the other six do not have: **an AMBIGUOUS verdict
+  when an anchor matches more than one place.** That is not a refinement invented on paper — on this
+  table's first run, row `U5`'s anchor matched the per-IP window sub-tier's fail-open block *as well as*
+  the budget sub-tier's, because the two were byte-identical; `str.replace(old, new, 1)` mutated the
+  first, and the row spent an entire run checking a guard it is not about. The other tables here share
+  that latent defect. Two rows are the shipped form of a **rejected design** rather than a typo: `U1`
+  charges the colo at admission and refunds only locally (the reading of §4.6.1's *"the same fail-open
+  rules apply verbatim"* that re-opens the free drain), and `U3` keeps the unpublished units to retry
+  them, which reads as resilience and double-charges whenever a `put` lands and then times out. The
+  second run also found a test defect the first hid: `U3`'s own assertion could never be the failing one,
+  because the over-publish crossed the 12-unit ceiling three checks earlier — so the row is now driven at
+  the production ceiling, out of the way.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.
