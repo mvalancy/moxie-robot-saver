@@ -425,8 +425,14 @@ class RobotDriver(threading.Thread):
                 self._backoff(str(e))
                 continue
             try:
-                vm.client.publish(vm.t_state, json.dumps(
-                    {"software_version": "0.0.0", "state": "config"}))
+                # Announce only once the broker has ACKED our subscriptions. A bare
+                # publish here raced the SUBSCRIBE, and the QoS-0 config that answers it
+                # is not replayed — so a lost race was counted below as a
+                # `session_failure` ("no config") that no fault injection had caused.
+                if not vm.announce():
+                    self.session_failures += 1
+                    self._backoff("no suback")
+                    continue
                 if not vm.got_config.wait(8.0):
                     self.session_failures += 1
                     self._backoff("no config")

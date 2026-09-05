@@ -96,6 +96,8 @@ class WireRobot:
     def __init__(self, port: int, timeout: float = 60.0):
         self.device_id = f"d_{uuid.uuid4()}"
         self.timeout = timeout
+        self.subscribed = threading.Event()
+        self._pending_subs: set = set()
         self.paired = threading.Event()
         self.closed = threading.Event()
         self.chats: list[dict] = []          # every remote_chat payload, in order
@@ -103,17 +105,42 @@ class WireRobot:
         self._lock = threading.Lock()
         self.c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.device_id)
         self.c.on_connect = self._on_connect
+        self.c.on_subscribe = self._on_subscribe
         self.c.on_message = self._on_message
         self.c.connect("127.0.0.1", port, 30)
         self.c.loop_start()
+        # ANNOUNCE ONLY ONCE THE BROKER HAS ACKNOWLEDGED THE SUBSCRIPTION THAT CARRIES
+        # THE ANSWER. `connect()` does not wait for CONNACK and `_on_connect` — which
+        # sends our SUBSCRIBE — runs on paho's network thread, so publishing `/state`
+        # from this thread on the next line used to race it. The supervisor answers a
+        # `/state` with a QoS-0, NON-RETAINED `/config` (`moxie_runtime._publish`), so
+        # losing that race does not delay the config, it deletes it: the 12 `no paired
+        # config pushed within timeout` setup errors in CI on 2026-09-04 spent the whole
+        # 60 s waiting for a message the supervisor's own log says it had already
+        # published. See `virtual_moxie.VirtualMoxie.announce` for the measurement.
+        if not self.subscribed.wait(timeout):
+            raise RuntimeError(
+                f"{self.device_id}: the broker never acknowledged our subscriptions")
         self.c.publish(f"/devices/{self.device_id}/state",
                        json.dumps({"software_version": self.FIRMWARE, "state": "config"}))
         if not self.paired.wait(timeout):
             raise RuntimeError("no paired config pushed within timeout")
 
     def _on_connect(self, c, u, flags, rc, props=None):
-        c.subscribe(f"/devices/{self.device_id}/config")
-        c.subscribe(f"/devices/{self.device_id}/commands/#")
+        # Mids first, `subscribed` armed second — paho dispatches both callbacks on one
+        # network thread, so no SUBACK can land while this is still deciding what to wait
+        # for.
+        pending = set()
+        for topic in (f"/devices/{self.device_id}/config",
+                      f"/devices/{self.device_id}/commands/#"):
+            pending.add(c.subscribe(topic)[1])
+        self._pending_subs = pending
+        self.subscribed.clear()
+
+    def _on_subscribe(self, c, u, mid, reason_codes=None, properties=None):
+        self._pending_subs.discard(mid)
+        if not self._pending_subs:
+            self.subscribed.set()
 
     def _on_message(self, c, u, msg):
         try:
@@ -222,7 +249,16 @@ def lab(tmp_path_factory):
 
 
 def _robot(lab, brain: str) -> WireRobot:
-    r = WireRobot(lab["stack"].port)
+    try:
+        r = WireRobot(lab["stack"].port)
+    except RuntimeError as e:
+        # The supervisor's own log is the other half of this failure and the fixture used
+        # to throw it away: `no paired config pushed within timeout` next to
+        # `[runtime] → pushed config to d_…` is a lost message, while the same error with
+        # no push line is a supervisor that never answered. Two different bugs, one
+        # message — so the log travels with the error.
+        raise RuntimeError(f"{e}\n--- supervisor log ---\n"
+                           f"{lab['stack'].supervisor.text()}") from None
     out, code = _req(f"{lab['status']}/brain?device_id={r.device_id}", {"brain": brain},
                      method="POST")
     assert code == 200 and out.get("ok"), (code, out)

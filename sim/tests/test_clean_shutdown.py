@@ -277,14 +277,36 @@ def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
             ("the supervisor never armed its stop signals "
              f"(alive={proc.poll() is None}):\n{tail.text()}")
         proc.send_signal(signal.SIGTERM)
-        if not tail.wait_closed(timeout=30) or proc.poll() is None:
+        # OBSERVE THE EXIT; DO NOT SAMPLE IT. This used to read
+        #
+        #     if not tail.wait_closed(timeout=30) or proc.poll() is None: fail(...)
+        #
+        # and the second half is a race, not a check. `wait_closed` returns the instant
+        # the child's stdout reaches EOF — which happens while the kernel is still tearing
+        # the process down — so `poll()` on the very next line can legitimately answer
+        # `None` for a process that has already stopped. Measured on 2026-09-04 with the
+        # box oversubscribed 40 CPU burners deep: `poll()` was None at EOF in 3 of 6 runs,
+        # every one of which had already printed both shutdown lines and exited 0. The
+        # message that fell out of it — "SIGTERM did not stop the supervisor within 30s" —
+        # was reached in under a tenth of a second and was simply untrue, which is exactly
+        # how a gate teaches people to re-run it instead of reading it.
+        #
+        # `proc.wait(timeout=30)` is the same 30-second bound (NOT widened) spent on the
+        # thing actually being claimed: it blocks in `waitpid` until the child is really
+        # gone, so there is no window to be scheduled into.
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
             proc.kill()
             pytest.fail("SIGTERM did not stop the supervisor within 30s — a `docker stop` "
                         f"would have had to SIGKILL it:\n{tail.text()}")
+        # The reader thread still has to run out the pipe before the log is complete; the
+        # process is already gone, so this can only be a scheduling wait.
+        assert tail.wait_closed(timeout=30), \
+            f"the supervisor exited but its output never ended:\n{tail.text()}"
     finally:
         if proc.poll() is None:
             proc.kill()
-    proc.wait(timeout=10)
     out = tail.text()
     assert proc.returncode == 0, f"a handled stop must exit 0, got {proc.returncode}\n{out}"
     assert "closing the broker connection cleanly" in out, out
@@ -292,6 +314,48 @@ def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
     # line after it is the proof, and it is unreachable on the default SIGTERM disposition,
     # which is what the process had before this slice.
     assert "supervisor stopped" in out, out
+
+
+@pytest.mark.skipif(os.name != "posix", reason="fd surgery on the child's stdout")
+def test_a_closed_stdout_is_not_proof_that_the_process_has_exited():
+    """THE TEETH for the line above, and the whole reason it changed.
+
+    The test above used to decide "the supervisor did not stop" from two facts read a few
+    microseconds apart: the child's stdout had reached EOF, and `poll()` had not yet seen
+    an exit status. Those are not contradictory — a process closes its file descriptors
+    on the way out and is reapable slightly later — so the pair proves nothing, and on a
+    loaded runner it produced a confident thirty-second verdict in about a tenth of a
+    second.
+
+    This builds that window on purpose and with **no wall clock in it at all**: the child
+    closes fd 1 itself and then blocks forever on stdin, so it is unambiguously alive with
+    its output stream unambiguously ended. If `poll()` at EOF were sound, this test could
+    not exist.
+
+    Then it shows the replacement doing the right thing on the same process: close stdin,
+    and `wait()` — which blocks in `waitpid` rather than sampling it — reports the true
+    exit.
+    """
+    child = subprocess.Popen(
+        [sys.executable, "-c",
+         "import os, sys; sys.stdout.write('bye\\n'); sys.stdout.flush(); "
+         "os.close(1); sys.stdin.readline()"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True)
+    try:
+        tail = _Tail(child)
+        assert tail.wait_closed(timeout=30), "the child never closed its stdout"
+        assert child.poll() is None, (
+            "this test needs a process that is alive with a closed stdout; if that is no "
+            "longer constructible, the sampled idiom may be safe again — but prove it "
+            "here rather than by assuming it")
+        assert "bye" in tail.text(), tail.text()
+        child.stdin.close()                       # the only thing keeping it alive
+        assert child.wait(timeout=30) == 0, "the observed exit disagreed with the child"
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=10)
 
 
 class _Tail:
