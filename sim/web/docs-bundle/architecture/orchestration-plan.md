@@ -651,3 +651,29 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   its own evidence (the file and line numbers, and the first-scenario/second-scenario split); only the
   claim about what I did with the job is withdrawn.
 - **2026-09-05 — BUILD: PR #149 put the QR card on a wire, and corrected my brief a second time.** The robot's own record after a scan: `[{"action": "launch", "module_id": "DM", ...}]`, written by `virtual_moxie._apply_action` off a payload that arrived on `commands/remote_chat`. Every refusal is asserted on the wire too — `applied == []`, `launches == 0`, no wire action, `NOREPLY_ACK` on the scan's own `event_id` — because a positive test alone would pass with the allowlist deleted. **The sharpest move was the agent's own:** it noticed that M1-M14 all mutate the *server*, so a SIL test could survive every one of them while reading the runtime's publish record and proving nothing about the wire — and added five rows that mutate the **client** (M15 stop consuming `response_actions` 31 red, M16 lose the module id 30, M17 drop the marker payload 33, M18/M19 1 each). **19/19 caught, verified here.** 18 of 19 redden the SIL file alone; M3 cannot, and the reason is given rather than excused — it *widens* the derived catalog, a property only the parametrised unit suite can see. **My brief was wrong again:** it said `virtual_moxie.py` ignores `response_actions`, *"zero references"*. PR #116 (`470ffd9`) had already added `_on_actions`/`_apply_action`/`action_stats()`; I took the claim from a doc drafted before that merge and propagated it. `sim/tests/README.md` carried the same stale sentence and is fixed. **Two briefs of mine corrected by evidence in one day, and both corrections were worth more than compliance would have been** — the standing invitation to contradict the brief is earning its place. Ceiling unmoved: proven *between our runtime and our simulated client*, not proven; no Moxie has ever sent us an `eb-qr-event`.
+- **2026-09-05 — FIXED, and reproduced first.** The supervisor now has an `on_subscribe`, subscribes in
+  **one** call (`c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])` — one SUBSCRIBE, one SUBACK, nothing
+  to count) and prints a **second** readiness line, `[runtime] subscriptions acknowledged by the
+  broker`, from the ack itself. `run_scenarios.sh`, `run_smoke.sh`, `helpers_stack.Supervisor.start()`
+  and `sim/tools/soak.py` (via a new `/status` field, `broker_subscribed`) all key on that instead.
+  `[runtime] broker connected` is unchanged and still means the CONNACK — `/status`, the console's
+  connection card and the rc=5 guards all read it for exactly that, so it was added *beside*, never
+  redefined. **No timeout was widened**, because the message is deleted rather than delayed.
+  **Reproduced before it was fixed, which the previous entry could not do.** The robot-side trick from
+  #143 (sleep inside `on_connect` before subscribing) proves nothing here: `_on_connect` prints its
+  readiness line *after* the subscribe loop, so a sleep there delays the line too and the gap never
+  opens. The supervisor's gap is on the **wire**, after the callback returns. So a TCP relay now sits
+  in front of the broker and holds the SUBSCRIBE packet for 3 s with nothing in the appliance patched
+  (`sim/tests/test_sil_supervisor_readiness.py`). Against `origin/dev`, waiting on the old line, the
+  scenario ends:
+  `[virtual-moxie] → state (software_version=24.10.803)` / `❌ scenario 'basic-conversation': 0/4 turns
+  OK — no config pushed within timeout` — the HIL red, verbatim, on demand. Same relay, same hold, on
+  the fixed tree waiting on the new line: **4/4 turns OK**.
+  **And a third run that matters more than either:** the fixed runtime, booted on the OLD line, still
+  fails 0/4. The runtime change alone does not fix this — the harnesses had to be moved onto the new
+  signal too, which is why "add an `on_subscribe`" would have been a half-fix that reviewed well.
+  12 tests go red on the pre-change tree (7 in `test_connect_readiness.py`, 3 in
+  `test_harness_readiness.py`, both SIL readiness tests); 5094 hermetic pass after, and 5093 in an
+  `openai`/`fastapi`-free venv. `run_scenarios.sh` run **8× consecutively: 8/8 green**, because one green
+  run of an intermittent failure proves very little. 38 mutations, 0 missed, including three new rows on
+  the SUBACK gate.

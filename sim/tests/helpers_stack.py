@@ -26,6 +26,24 @@ import time
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 BROKER_CONF = os.path.join(REPO, "sim", "broker", "ci-mosquitto.conf")
 
+#: THE SUPERVISOR'S TWO READINESS LINES, AND WHY THERE ARE TWO.
+#:
+#: `CONNECT_LINE` is the CONNACK: a socket exists, the broker said yes, and the runtime
+#: has CALLED `subscribe()`. That call only queues a SUBSCRIBE packet — under
+#: `loop_forever()` the bytes leave on the network thread after the callback returns — so
+#: the line means *"we asked"*. Anything that then puts a robot on the bus is racing: a
+#: `/state` published in that window reaches a broker holding no matching subscription,
+#: and the config push that answers a `/state` is QoS 0 and not retained, so it is never
+#: generated and never replayed. HIL, 2026-09-05:
+#: `❌ scenario 'basic-conversation': 0/4 turns OK — no config pushed within timeout`,
+#: with the *second* scenario green in the same job.
+#:
+#: `SUBSCRIBED_LINE` is the SUBACK, printed from the runtime's `_on_subscribe`, and it is
+#: the only one a robot may be booted on. `Supervisor.start()` waits for it by default;
+#: `start(ready_line=CONNECT_LINE)` exists so a test can deliberately stand in the gap.
+CONNECT_LINE = "[runtime] broker connected"
+SUBSCRIBED_LINE = "[runtime] subscriptions acknowledged by the broker"
+
 
 def free_port() -> int:
     import socket
@@ -142,12 +160,23 @@ class Supervisor:
         self.env.update(env or {})
         self._proc = None
 
-    def start(self, timeout: float = 60.0) -> "Supervisor":
+    def start(self, timeout: float = 60.0,
+              ready_line: str = SUBSCRIBED_LINE) -> "Supervisor":
+        """Boot `mqtt/run.py` and block until it can actually be talked to.
+
+        The default is the SUBACK line, not `[runtime] broker connected`: the caller's
+        very next move is to point a robot at this supervisor, and between the CONNACK and
+        the SUBACK the supervisor is connected and DEAF — the robot's `/state` is dropped
+        by the broker and the QoS-0 config push that answers it is never sent. See
+        `_on_subscribe` in mqtt/supervisor/moxie_runtime.py; PR #143 fixed the mirror
+        image in the robot. `ready_line=CONNECT_LINE` is for the one test that wants to
+        stand in that gap on purpose.
+        """
         self._proc = subprocess.Popen([sys.executable, os.path.join(REPO, "mqtt", "run.py")],
                                       cwd=REPO, env=self.env,
                                       stdout=open(self.log, "wb"),
                                       stderr=subprocess.STDOUT)
-        self.wait_for("[runtime] broker connected", timeout)
+        self.wait_for(ready_line, timeout)
         return self
 
     def text(self) -> str:

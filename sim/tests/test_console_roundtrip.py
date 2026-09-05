@@ -81,6 +81,14 @@ def _snapshot(overrides: dict, fleet: dict = None) -> dict:
         # drift test below is what keeps this list honest rather than letting this file
         # slowly become a test of itself.
         "broker_connected": True,
+        # …and whether the broker ACKNOWLEDGED our subscriptions — the CONNACK and the
+        # SUBACK are one handshake apart, and between them the appliance is connected and
+        # deaf (see `_on_subscribe` in moxie_runtime.py). `True` is not a value picked to
+        # fill the key: this fake describes a healthy appliance whose robot below carries
+        # `seen_since_connect: True`, and a robot can only have been HEARD through a
+        # subscription that exists. `False` here would describe an appliance frozen
+        # mid-handshake that had nevertheless heard a robot, which is not a thing.
+        "broker_subscribed": True,
         "last_broker_connect": 0.0,
         "last_broker_disconnect": 0.0,
         "last_connect_error": "",
