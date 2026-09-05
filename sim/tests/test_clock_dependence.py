@@ -184,6 +184,14 @@ REVIEWED: dict = {
         "now at all 1440 minutes, asserted by the same exhaustive test. Its "
         "`pytest.skip(\"the synthetic window wrapped onto now\")` was removed here: it "
         "could never fire, and a skip that cannot fire is an escape hatch for a regression."),
+    "sim/tests/test_ext_subscribe.py::_seed_absent": (
+        ("time.time",),
+        "RELATIVE — a third copy of the same helper, for the same reason: the two A2 "
+        "regressions below it prove that a woken content pack which matches nothing "
+        "leaves the greeting rule exactly as it was, and the greeting is scored as an AGE "
+        "against `greet_after_s`. A pinned epoch would make the robot absent for years, "
+        "which is a state the rule answers identically to the one under test — so the "
+        "regression would pass without asserting anything."),
     "sim/tests/test_presence_sil.py::_seed_absent": (
         ("time.time",),
         "RELATIVE — offsets from now, for the same reason as the runtime suite's "

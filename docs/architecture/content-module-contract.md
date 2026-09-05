@@ -724,6 +724,26 @@ depend on — and a replace here would do that *silently*, because the runtime l
 is additionally refused when `MOXIE_VISION=0` (an operator's kill switch is above a pack) or
 when the robot is not permitted.
 
+**…and a subscribed event comes BACK to the pack, without ever reaching a brain (2026-09-05).**
+A perception event arrives as the `speech` of an ordinary `RemoteChatRequest`
+([`vision.md`](vision.md) §7.1) and the runtime diverts it away from the turn loop, because
+`eb-found-face` fires every time a child moves around a room and answering it with a model call
+would turn presence into a billing event. That divert is unchanged. What is new is that
+`_on_vision_turn` first offers the event to `MoxieApp.perceive`, and `ContentApp.perceive` runs
+**only** this section's evaluator — the same pure, step- and byte-budgeted `evaluate()`, no
+network — over a `turn.before` extension whose rule may match on `{"var": "speech"}` being the
+event name. So a rule like *"when `speech` is `eb-qr-event` and `$eb_qr_value` starts with `GO`,
+say what the card said"* is now live on a real robot rather than only in the conformance golden.
+
+The gates are the request read backwards, which is what makes them impossible to disagree with:
+the runtime records what it **accepted** (`{device: {event: module}}`) and wakes a pack only for
+an event in that record, under the module it is running now — *"events are automatically
+unsubscribed when the module exits"*. `MOXIE_VISION=0` and the pairing gate refuse on the way in
+as well as on the way out. If a rule answers, that reply is the whole turn; if none matches, the
+appliance's own presence handling — the unprompted greeting, a 🎴 launch card, or `NOREPLY_ACK` —
+runs exactly as it did before. An app that does not implement `perceive` (which is every app but
+a content pack's) is untouched, because the base class returns `None`.
+
 **The limits**, all env vars in [`config.py`](../../mqtt/config.py):
 
 | Limit | Env var | Default |

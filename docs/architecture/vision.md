@@ -301,9 +301,26 @@ shows for QR). Two consequences shaped the whole design:
    over. A pack's request is refused outright under `MOXIE_VISION=0` and for an unpermitted robot,
    and it rides a reply that already carries an action (`MoxieGo` arms the scanner and subscribes
    in one move), which the runtime's own list deliberately does not.
-   ⚠️ **The inbound half is still missing:** a subscribed event is answered by `_on_vision_turn`
-   and never reaches `app.respond`, so a pack can ask to perceive an event and cannot yet be
-   *woken* by one ([`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md) §8, G6).
+   **The inbound half landed the same day (2026-09-05), and the constraint above is exactly what
+   shaped it.** A pack that asked for an event is now *woken* by one: `_on_vision_turn` offers the
+   event to `MoxieApp.perceive` before it does anything else, and `ContentApp.perceive` runs the
+   **sandboxed evaluator only** — pure, step- and byte-budgeted, no network, no brain — so the
+   sentence three lines above stays true word for word. Nothing about the divert changed: a
+   perception event is still never assessed as a child's utterance, never written to history and
+   never handed to `app.respond`. The four gates on being woken are the outbound gates read
+   backwards, so the two directions cannot disagree: the pack must have asked for *this* event,
+   under the module it is running now (`_pack_subscribed`, written by `_merge_subscriptions` at the
+   moment it accepts a request); `MOXIE_VISION=0` refuses; an unpermitted robot refuses; and an app
+   that does not implement `perceive` — every app but a content pack's — is untouched. If a rule
+   answers, that reply is the whole turn; if none does, the presence handling below runs unchanged,
+   greeting and all. **The zero-model-call property is asserted from a recorded counter**
+   (`moxie_sdk.chat.model_calls()`, the Python twin of the edge's `noteUpstreamCall`) rather than
+   from a stub that stayed quiet, with a control turn in the same test that makes the counter move
+   ([`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md) §8, G6).
+   ⚠️ **What is still missing:** the *defensive* `events/<name>` subtopic path in `_on_event` does
+   not wake a pack — there is no request to answer there, so a reply would have to be queued as
+   `_greeting_for`'s is. That shape is not in the recovered corpus and nothing has ever arrived on
+   it, so it is a gap rather than a bug.
 
 ### 7.2 The presence model
 

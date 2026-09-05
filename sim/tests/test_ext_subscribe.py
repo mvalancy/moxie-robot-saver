@@ -42,13 +42,15 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from helpers_runtime import drive_turn, make_runtime                   # noqa: E402
+from helpers_runtime import CountingSynth, drive_turn, make_runtime    # noqa: E402
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk import presence as P                                    # noqa: E402
 from moxie_sdk.app import MoxieApp                                     # noqa: E402
+from moxie_sdk import chat as C                                        # noqa: E402
+from moxie_sdk.chat import make_openai_chat, make_openai_stream        # noqa: E402
 from moxie_sdk.content import ext as E                                 # noqa: E402
 from moxie_sdk.content import content_app as CA                        # noqa: E402
 from moxie_sdk.content.content_app import ContentApp                   # noqa: E402
@@ -467,37 +469,435 @@ def test_the_cap_is_structural_because_the_allowlist_is_shorter_than_it():
 
 
 # --------------------------------------------------------------------------- #
-# The honest ceiling
+# The inbound half — a subscribed event WAKES the pack that asked for it
+# --------------------------------------------------------------------------- #
+#
+# Until 2026-09-05 this section held the opposite assertion. `test_a_subscribed_event_
+# still_never_reaches_the_pack_that_asked_for_it` pinned the divert in
+# `moxie_runtime._on_remote_chat` as it stood — a pack could *ask* to perceive an event
+# and could never be *woken* by one — and its docstring said in as many words that the day
+# somebody routed events to the app layer it would go red and be rewritten. That day is
+# this commit, so it is rewritten rather than deleted: same subject, inverted assertion,
+# `seen == [QR]` where it used to say `seen == []`.
+#
+# **What did NOT change, and this is the whole reason the slice is safe.** The divert is
+# still there and still diverts. A vision event is still never assessed as a child's
+# utterance, never written to history and never handed to `app.respond`. What is new is
+# one branch *inside* `_on_vision_turn` that offers the event to `MoxieApp.perceive`,
+# whose `ContentApp` implementation runs the sandboxed evaluator and nothing else — no
+# network, no brain. `eb-found-face` fires whenever a child moves around a room, so
+# vision.md §7.1's *"never costs a model call"* is the property everything here is
+# arranged around, and the first test below asserts it from a RECORDED counter rather
+# than from a double that stayed quiet.
+
+
+class _WokenProbe(MoxieApp):
+    """Records every event offered to `perceive`, and answers a fixed line.
+
+    Stands in for a `ContentApp` running a pack wherever the subject is the runtime's
+    GATE rather than the evaluator: `perceived` is the assertion surface for *"a pack must
+    not be woken by an event it did not ask for"*, which is a question about the gate and
+    would be invisible if the only evidence were a missing line on the wire.
+    """
+    name = "woken-probe"
+
+    def __init__(self, events=(QR,), text="I saw a card!"):
+        self.events = list(events)
+        self.text = text
+        self.perceived: list = []
+        self.responded: list = []
+
+    def respond(self, turn):
+        self.responded.append(turn.speech)
+        return Reply(text="ok", subscribe=list(self.events))
+
+    def perceive(self, turn):
+        self.perceived.append(turn.speech)
+        return Reply(text=self.text)
+
+
+def _subscribed(rt, dev, app, *, speech="hello", event_id="e-sub"):
+    """Spend one ordinary turn so the pack's request is accepted and RECORDED.
+
+    Every test below needs this because the inbound gate reads `_pack_subscribed`, which
+    only `_merge_subscriptions` writes — asking and being woken are deliberately the same
+    dict, so there is no way to arrange the second without the first.
+    """
+    resp = drive_turn(rt, dev, speech, event_id=event_id)
+    assert rt._pack_subscribed.get(dev), "sanity: the request was not recorded"
+    _fresh_pool(rt)
+    return resp
+
+
+def test_a_subscribed_event_now_wakes_the_pack_that_asked_for_it():
+    """⚠️ **The inversion.** This test used to be named `…still_never_reaches…` and to
+    assert `seen == []`. It asserts the opposite now, on purpose and in one commit with
+    the change that made it true.
+
+    A perception event still arrives as the `speech` of an ordinary `RemoteChatRequest`
+    and `_on_remote_chat` still diverts it to `_on_vision_turn` before `app.respond` can
+    see it — `responded` below is the proof that the divert survived. What is new is that
+    `_on_vision_turn` offers the event to `perceive` first, and a pack that asked for this
+    event answers it.
+
+    The concrete consequence for §8's G6: its middle rule, keyed on
+    `speech == "eb-qr-event"`, is now reachable by a live robot's event and not only by
+    the conformance golden. Its arming rules were always live.
+    """
+    app = _WokenProbe(events=[QR])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    resp = drive_turn(rt, dev, QR, input_vars={"$eb_qr_value": "GOnope"},
+                      event_id="e-eye")
+    assert app.perceived == [QR], "the pack asked for this event and must be woken by it"
+    assert app.responded == ["hello"], \
+        "…and the divert survived: the event never reached `respond`"
+    assert resp["result"] == "SUCCESS" and resp["output"]["text"] == "I saw a card!"
+    assert resp["event_id"] == "e-eye", "answered on the event's own event_id (§7.4)"
+    assert resp["output"]["markup"] and "<mark" in resp["output"]["markup"], \
+        "a pack's line is performed through the markup floor like any other"
+
+
+def test_the_event_is_still_never_written_to_history():
+    """§7.1's other half, which the inbound branch had every opportunity to break: a
+    woken pack answers, and `eb-qr-event` is still not something the child said. Nothing
+    calls `_remember` on this path, so the transcript the next real turn carries is
+    unchanged."""
+    app = _WokenProbe(events=[QR])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    before = list(rt.history.get(dev, []))
+    drive_turn(rt, dev, QR, input_vars={"$eb_qr_value": "GOnope"}, event_id="e-eye")
+    assert list(rt.history.get(dev, [])) == before, rt.history.get(dev)
+    assert not any(QR in str(m) for m in rt.history.get(dev, []))
+
+
+# --------------------------------------------------------------------------- #
+# A1 — zero model calls, from a counter that RECORDS, not from a quiet stub
+# --------------------------------------------------------------------------- #
+#
+# §8's G6 middle rule, hand-copied down to the `slice`, as a pack a runtime can run. The
+# first rule arms on the opener (empty speech) and is what puts `eb-qr-event` into
+# `_pack_subscribed`; the second is the one a live event now reaches.
+GO_PACK = {
+    "ext_format": 1,
+    "capabilities": ["handled", "say", "subscribe"],
+    "on": "turn.before",
+    "rules": [
+        {"when": {"==": [{"trim": [{"var": "speech"}]}, ""]},
+         "do": [{"subscribe": [QR]},
+                {"say": "Show me a card and I will read it!"},
+                {"handled": True}]},
+        {"when": {"and": [{"==": [{"var": "speech"}, QR]},
+                          {"starts_with": [{"var": "input_vars.eb_qr_value"}, "GO"]}]},
+         "do": [{"say": {"concat": ["That card says ",
+                                    {"slice": [{"var": "input_vars.eb_qr_value"}, 2]},
+                                    "!"]}},
+                {"handled": True}]},
+    ],
+}
+
+GO_MODULE = {"conversations": [{"name": "Go", "module_id": "CHAT",
+                                "content_id": "default", "prompt": "You are Moxie.",
+                                "extension": GO_PACK}]}
+
+
+class _FakeCompletions:
+    """`client.chat.completions` — the two attributes `make_openai_chat` reads."""
+
+    def __init__(self, text="the model answered"):
+        self.text = text
+
+    def create(self, **kw):
+        from types import SimpleNamespace
+        if kw.get("stream"):
+            # `delta_text` reads plain dicts as happily as the SDK's objects, so the
+            # streaming double stays dependency-free (moxie_sdk/chat.py::delta_text).
+            return iter([{"choices": [{"delta": {"content": self.text}}]}])
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content=self.text))])
+
+
+class _FakeOpenAI:
+    """The `client=` seam of playbook rule 9: no socket, no key, no `openai` client — and
+    crucially the REAL `make_openai_chat` around it, so `note_model_call` fires exactly
+    where it fires in production."""
+
+    def __init__(self, text="the model answered"):
+        from types import SimpleNamespace
+        self.chat = SimpleNamespace(completions=_FakeCompletions(text))
+
+
+def _recording_brain():
+    return make_openai_chat("http://gateway.invalid/v1", "", client=_FakeOpenAI())
+
+
+def test_a_woken_pack_costs_zero_model_calls_and_a_counter_says_so():
+    """**A1, the property the whole design rests on.**
+
+    vision.md §7.1: a vision event *"is never assessed as a child's utterance, never
+    enters history, **never costs a model call**"*. `eb-found-face` fires every time a
+    child walks back into frame, so a brain call per perception event would turn presence
+    into a billing event — which is exactly why `_on_remote_chat` diverts these away from
+    the turn loop, and exactly what the inbound branch could have quietly undone by
+    reaching for `app.respond`.
+
+    **Why a counter and not a stub.** Handing the app a brain that raises when called
+    proves only that *that* double was not called; it says nothing about a retry inside
+    `call_with_backoff`, a stream opened elsewhere in the same turn, or a second brain the
+    runtime built for this device. `moxie_sdk.chat.note_model_call()` sits immediately
+    before the request itself — the same position and the same argument as
+    `functions/api/_lib/limits.js::noteUpstreamCall()` on the edge, which
+    `test_live_hosted_ears.py` asserts against for the same reason.
+
+    The **control turn is the half that makes the zero mean something**: the same brain,
+    the same runtime, an ordinary sentence, and the counter moves. A test whose counter
+    can only ever read zero is not measuring anything.
+    """
+    C.reset_model_calls()
+    app = app_with(GO_MODULE, chat=_recording_brain(), ext_grants=SUB_GRANTS)
+    rt, dev = make_runtime(app, module_id="CHAT", content_id="default")
+
+    # 1) the opener arms the pack: rule 1 subscribes, and `handled` means no model call.
+    drive_turn(rt, dev, "", event_id="e1")
+    assert rt._pack_subscribed.get(dev, {}).get(QR) == "CHAT"
+    assert C.model_calls() == 0, "an armed pack has not spent anything yet"
+
+    # 2) THE CONTROL. An ordinary sentence matches no rule, falls through to the
+    #    conversation, and the counter records the call that really happened.
+    _fresh_pool(rt)
+    drive_turn(rt, dev, "what is a dinosaur", event_id="e2")
+    assert C.model_calls() == 1, "control: an ordinary turn DOES reach the brain"
+
+    # 3) THE PROPERTY. The same brain, the same app, a subscribed event: the pack answers
+    #    out of its own evaluator and the counter does not move.
+    _fresh_pool(rt)
+    before = C.model_calls()
+    resp = drive_turn(rt, dev, QR, input_vars={"$eb_qr_value": "GOdinosaur_quiz"},
+                      event_id="e3")
+    assert resp["output"]["text"] == "That card says dinosaur_quiz!", resp
+    assert C.model_calls() == before, \
+        f"a perception event spent {C.model_calls() - before} model call(s)"
+
+
+def test_the_counter_is_wired_to_the_real_gateway_seam():
+    """The counter's own anti-vacuity test. If `note_model_call` were dead code the test
+    above would still be green, and would be proving nothing at all — so this drives the
+    production function with the rule-9 `client=` seam and asserts one call is recorded
+    per request attempt, on both the plain and the streaming seam."""
+    C.reset_model_calls()
+    chat = _recording_brain()
+    assert chat([{"role": "user", "content": "hi"}]) == "the model answered"
+    assert C.model_calls("chat") == 1 and C.model_calls() == 1
+    stream = make_openai_stream("http://gateway.invalid/v1", "", client=_FakeOpenAI())
+    list(stream([{"role": "user", "content": "hi"}]))
+    assert C.model_calls("stream") == 1 and C.model_calls() == 2
+    C.reset_model_calls()
+    assert C.model_calls() == 0
+
+
+# --------------------------------------------------------------------------- #
+# A2 — with no rule to match, the presence behaviour is what it always was
 # --------------------------------------------------------------------------- #
 
-def test_a_subscribed_event_still_never_reaches_the_pack_that_asked_for_it():
-    """⚠️ **The gap this slice does NOT close, pinned so it cannot be forgotten.**
+def _seed_absent(rt, dev, away_s):
+    """Put this robot where it would be `away_s` seconds after a departure.
 
-    A pack can now ask to perceive an event. It cannot yet be *woken* by one. A perception
-    event arrives as the `speech` of an ordinary `RemoteChatRequest` (vision.md §7.1) and
-    `_on_remote_chat` **diverts** it to `_on_vision_turn` before any app sees it — never
-    assessed as a child's utterance, never in history, never a model call, and never
-    handed to `app.respond`. That divert is deliberate and safety-relevant (it is what
-    stops `eb-found-face` costing a brain call), so widening it is its own slice with its
-    own evidence, not a side effect of this one.
-
-    The concrete consequence for G6: its *second* rule, keyed on
-    `speech == "eb-qr-event"`, is reachable by the evaluator and by the conformance golden
-    but not by a live robot's event. Its first and third rules — the arming ones, which
-    run on an ordinary turn — are fully live. This test asserts the divert as it stands,
-    so the day somebody routes events to the app layer it goes red and this docstring gets
-    rewritten rather than quietly rotting.
+    Clock-RELATIVE, for the reason `test_presence_runtime.py`'s copy gives: the greeting
+    is scored as an AGE, so a pinned epoch would make every robot look absent for years.
+    A local copy rather than a cross-suite import, per `helpers_runtime.py`'s docstring.
     """
-    seen = []
+    import time
+    now = time.time()
+    state = P.new_state()
+    state.update({"face_present": False, "announced": "left",
+                  "last_seen_at": now - away_s - 30.0,
+                  "present_since": now - away_s - 60.0,
+                  "last_lost_at": now - away_s, "absent_since": now - away_s,
+                  "faces_seen": 1, "events": 2})
+    rt.robots[dev].extra["presence"] = state
+    return state
 
-    class _Recorder(MoxieApp):
-        name = "recorder"
 
-        def respond(self, turn):
-            seen.append(turn.speech)
-            return Reply(text="ok")
+def test_a_pack_that_matches_nothing_leaves_the_greeting_exactly_as_it_was():
+    """**A2.** The regression that matters most, because the inbound branch sits directly
+    upstream of the hello.
 
-    rt, dev = make_runtime(_Recorder())
-    resp = drive_turn(rt, dev, QR, input_vars={"$eb_qr_value": "GOnope"})
-    assert seen == [], "a vision event must not reach app.respond (yet)"
-    assert resp["result"] in ("NOREPLY_ACK", "SUCCESS"), resp["result"]
+    A pack is installed, subscribed to `eb-found-face`, and its rules match only
+    `eb-qr-event` — so `perceive` runs, finds nothing, and returns None. Everything below
+    it must then be byte-for-byte the pre-slice behaviour: `MOXIE_GREET_AFTER_S` honoured,
+    one performed hello on the event's own `event_id`, a `CloudTTSResponse` for the same
+    id, and the `greeted_at` stamp that rate-limits the next one.
+    """
+    C.reset_model_calls()
+    app = app_with(GO_MODULE, chat=_recording_brain(), ext_grants=SUB_GRANTS)
+    rt, dev = make_runtime(app, module_id="CHAT", content_id="default")
+    rt.set_synthesizer(CountingSynth())
+    rt.greet_after_s = 300.0
+    # Subscribe to found-face specifically: the pack IS woken, and still says nothing.
+    drive_turn(rt, dev, "", event_id="e1")
+    with rt._presence_lock:
+        rt._pack_subscribed[dev][FOUND] = "CHAT"
+    _fresh_pool(rt)
+    _seed_absent(rt, dev, away_s=900.0)
+    resp = drive_turn(rt, dev, FOUND, event_id="evt-eye")
+    assert resp["result"] == "SUCCESS", resp
+    text = resp["output"]["text"]
+    assert "Sam" in text and len(text) < 70, text
+    assert "<mark" in (resp["output"]["markup"] or ""), "the hello is still performed"
+    # The LAST synthesis, not the first: the opener that armed the pack was spoken too.
+    tts = rt.client.on(f"/devices/{dev}/commands/tts")
+    assert tts and tts[-1]["event_id"] == "evt-eye", tts
+    assert rt.robots[dev].extra["presence"].get("greeted_at"), \
+        "the once-per-absence stamp still lands"
+    assert C.model_calls() == 0, "and none of it cost a model call"
+
+
+def test_the_greeting_switch_still_switches_it_off_with_a_pack_installed():
+    """`MOXIE_GREET_AFTER_S=0` is off, and a pack that matches nothing cannot make Moxie
+    speak by standing next to the switch."""
+    app = app_with(GO_MODULE, chat=_recording_brain(), ext_grants=SUB_GRANTS)
+    rt, dev = make_runtime(app, module_id="CHAT", content_id="default")
+    rt.greet_after_s = 0.0
+    drive_turn(rt, dev, "", event_id="e1")
+    with rt._presence_lock:
+        rt._pack_subscribed[dev][FOUND] = "CHAT"
+    _fresh_pool(rt)
+    _seed_absent(rt, dev, away_s=9000.0)
+    assert drive_turn(rt, dev, FOUND, event_id="e2")["result"] == "NOREPLY_ACK"
+
+
+def test_an_app_that_never_heard_of_perception_is_untouched():
+    """The base-class default. `LLMApp`, `EchoApp` and `WebhookApp` do not implement
+    `perceive`, so the branch returns before it can do anything at all — which is what
+    makes this slice invisible to every app but the one that opted in."""
+    assert MoxieApp().perceive(Turn(robot=robot(), speech=QR)) is None
+    rt, dev = make_runtime(_SubscribeApp(events=[QR]))
+    drive_turn(rt, dev, "hello", event_id="e1")
+    _fresh_pool(rt)
+    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == "NOREPLY_ACK"
+
+
+# --------------------------------------------------------------------------- #
+# A3 + the gates — a pack is woken by what it asked for, and by nothing else
+# --------------------------------------------------------------------------- #
+
+def test_a_pack_is_not_woken_by_an_event_it_did_not_ask_for():
+    """**A3.** Subscribed to `eb-qr-event`; a `eb-found-face` arrives. The evaluator must
+    not run at all — not "run and match nothing", which would be a different and much
+    weaker statement, and would leave a pack paying a step budget for every face."""
+    app = _WokenProbe(events=[QR])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    resp = drive_turn(rt, dev, FOUND, event_id="e-eye")
+    assert app.perceived == [], "an event nobody asked for must not reach a pack"
+    assert resp["result"] == "NOREPLY_ACK", resp
+
+
+def test_a_request_made_under_one_module_does_not_wake_the_next_one():
+    """*"Events are automatically unsubscribed when the module exits"* (RemoteModuleAPI
+    §Unsubscribing) — so the record is keyed on the module, exactly as the runtime's own
+    `_vision_subscribed` latch is. A pack that asked while `CHAT` was running must not be
+    woken by an event that arrives while `BEDTIME` is."""
+    app = _WokenProbe(events=[QR])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    rt.robots[dev].module_id = "BEDTIME"
+    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == "NOREPLY_ACK"
+    assert app.perceived == []
+
+
+def test_a_module_exit_forgets_the_pack_request_with_the_vision_latch():
+    """The two beliefs have one invalidator and one method, so they cannot drift: the
+    thing that clears `_vision_subscribed` on a module exit clears this too."""
+    app = _WokenProbe(events=[QR])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    rt._end_conversation(dev, "module exit")
+    assert dev not in rt._vision_subscribed and dev not in rt._pack_subscribed
+
+
+def test_vision_off_refuses_to_wake_a_pack_too():
+    """`MOXIE_VISION=0` is above a content pack in BOTH directions. The outbound gate is
+    already tested above; this is the same switch read on the way back in, and it is
+    tested separately because a pack armed while vision was on would otherwise keep being
+    woken after somebody turned it off."""
+    app = _WokenProbe(events=[QR])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    rt.vision = False
+    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == "NOREPLY_ACK"
+    assert app.perceived == []
+
+
+def test_an_unpermitted_robot_cannot_wake_a_pack():
+    """The pairing gate, on the way in. An unpermitted robot is served nothing, and
+    "nothing" includes handing what its camera saw to somebody else's program."""
+    app = _WokenProbe(events=[QR])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    rt.allow_unverified_bots = lambda: False
+    assert not rt.is_permitted(dev)
+    assert drive_turn(rt, dev, QR, event_id="e2")["result"] == "NOREPLY_ACK"
+    assert app.perceived == []
+
+
+def test_a_pack_that_raises_still_leaves_the_child_a_hello():
+    """Fail-boring (§6.4), one layer up from the sandbox. `perceive` is app code and may
+    do anything; whatever it does, the greeting rule underneath it must still run."""
+    class _Broken(_WokenProbe):
+        def perceive(self, turn):
+            self.perceived.append(turn.speech)
+            raise RuntimeError("the pack exploded")
+
+    app = _Broken(events=[FOUND])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    rt.greet_after_s = 300.0
+    _seed_absent(rt, dev, away_s=900.0)
+    resp = drive_turn(rt, dev, FOUND, event_id="e2")
+    assert app.perceived == [FOUND]
+    assert resp["result"] == "SUCCESS" and "Sam" in resp["output"]["text"]
+
+
+def test_a_pack_that_answers_with_nothing_falls_through_to_the_greeting():
+    """`perceive` returning an empty `Reply` is not an answer. The distinction matters
+    because a pack whose rule wrote only to memory produces exactly that, and swallowing
+    the event there would silently delete the hello."""
+    class _Silent(_WokenProbe):
+        def perceive(self, turn):
+            self.perceived.append(turn.speech)
+            return Reply(text="")
+
+    app = _Silent(events=[FOUND])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    rt.greet_after_s = 300.0
+    _seed_absent(rt, dev, away_s=900.0)
+    resp = drive_turn(rt, dev, FOUND, event_id="e2")
+    assert app.perceived == [FOUND]
+    assert resp["result"] == "SUCCESS" and "Sam" in resp["output"]["text"]
+
+
+def test_a_woken_pack_can_act_and_re_subscribe_on_the_same_reply():
+    """`MoxieGo`'s loop, closed. The card is read, the scanner is re-armed and the
+    subscription is renewed on the reply to the event itself — the outbound and inbound
+    halves meeting on one message, which is the shape §5.1 describes and the reason the
+    pair was specified together."""
+    from moxie_sdk.types import Action, ActionType
+
+    class _ReArm(_WokenProbe):
+        def perceive(self, turn):
+            self.perceived.append(turn.speech)
+            return Reply(text="Another one!",
+                         actions=[Action(type=ActionType.EXECUTE,
+                                         function="eb_enable_qr", args=["true"])],
+                         subscribe=[QR])
+
+    app = _ReArm(events=[QR])
+    rt, dev = make_runtime(app)
+    _subscribed(rt, dev, app)
+    resp = drive_turn(rt, dev, QR, input_vars={"$eb_qr_value": "GOx"}, event_id="e2")
+    assert resp["output"]["text"] == "Another one!"
+    assert resp["response_actions"][0]["function_id"] == "eb_enable_qr"
+    assert _active(resp) == [QR], "the renewal rides the same reply as the act"

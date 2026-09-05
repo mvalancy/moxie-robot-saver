@@ -425,6 +425,55 @@ class ContentApp(MoxieApp):
             return Reply(text="Tell me more!", subscribe=subscribe)
         return Reply(text=text, actions=actions, subscribe=subscribe)
 
+    # ---- being woken by the robot's own eyes (vision.md §7.1, brief §8 G6) ----
+    def perceive(self, turn: Turn) -> Optional[Reply]:
+        """A subscribed robot event, offered to this pack's **local evaluator only**.
+
+        `turn.speech` is the event name. Everything here is the `turn.before` half of
+        `respond` with the model removed, and the removal is the point rather than an
+        optimisation: `moxie_runtime._on_vision_turn` diverts perception away from
+        `respond` precisely so that `eb-found-face` — which fires whenever a child walks
+        back into frame — can never become a model call (vision.md §7.1). A pack's rules
+        are evaluated by `ext.evaluate`: pure, step- and byte-budgeted, no network, no
+        brain. So a pack can be *woken* by something the robot noticed without moving one
+        inch of that safety property, which is the whole reason this method is separate
+        from `respond` rather than a flag on it.
+
+        **Only `on: turn.before`, and deliberately not `global`.** A global's `pattern` is
+        matched against *what a child said*; `eb-qr-event` is not something anybody said,
+        and letting an event string fall through `match_global` would mean a pack could be
+        woken by a phrase match it never intended. `turn.before` is also the faithful
+        upstream analogue — the event reaches the module's `pre_process` — which is where
+        §8's G6 middle rule (`speech == "eb-qr-event"`) lives.
+
+        Returns a `Reply` only when a rule actually **produced** something: a line, an
+        `act`, or a `subscribe`. Note what is *not* required — `handled`. On the normal
+        turn `handled` means "answer without asking the AI", and it gates whether the
+        model runs; here there is no model to suppress, so requiring it would be asking a
+        pack to opt out of something that already cannot happen. A rule that matched and
+        wrote only to memory therefore applies its effect and still returns None, and the
+        runtime's own presence handling continues underneath it — which is the honest
+        answer for "the pack noticed, and had nothing to say".
+        """
+        conv = self._active_conversation(turn)
+        if conv is None or not getattr(conv, "extension", None):
+            return None
+        v = self._volley(turn)
+        before = json.dumps(v.persist_data, sort_keys=True, default=str)
+        session = self._session(turn, history=list(turn.history),
+                                persist_data=v.persist_data, conv=conv)
+        result = self.run_extension(turn, v, session, hook="turn.before",
+                                    kind="conversation",
+                                    key=f"{conv.module_id}/{conv.content_id}",
+                                    data={"extension": conv.extension,
+                                          "memory": conv.memory})
+        if result is None:
+            return None                       # no rule matched, or it breached (§6.4)
+        if v.output_text is None and not v.execution_actions and not v.subscriptions:
+            return None                       # it acted on memory only; say nothing
+        self._save_persist_data(turn.robot.device_id, v.persist_data, before)
+        return self._reply_from_volley(v)
+
     # ---- end of conversation: write what is worth remembering ----
     def _memory_conversation(self, robot: RobotContext):
         """The conversation whose memory namespace a finished session belongs to."""

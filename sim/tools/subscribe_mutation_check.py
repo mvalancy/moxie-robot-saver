@@ -19,6 +19,18 @@ own rather than a comment.
 
     python3 sim/tools/subscribe_mutation_check.py      # from the repo root
 
+Since 2026-09-05 the table covers both directions of `subscribe`. S1-S16 are the outbound
+half — a pack's request reaching `EventSubscription.active[]` without ever displacing the
+supervisor's own list. **S17-S25 are the inbound half**, and S17 is the row with the
+sharpest teeth in this file: a subscribed event must be answered by the pack's *local*
+evaluator and never by a brain, because `eb-found-face` fires every time a child moves
+around a room and a model call per event would turn presence into a billing event
+(`docs/architecture/vision.md` §7.1). Route the event to `app.respond` instead — which
+looks exactly like sensible reuse — and every visible behaviour still works: the pack
+answers, the child hears a line, the wire is well-formed. The only thing that notices is
+`moxie_sdk.chat.model_calls()`, the recorded counter, which is why that counter exists at
+all and why deleting it is not a refactor.
+
 Sibling of `ext_mutation_check.py` (which owns the sandbox's escape guards and runs only
 `test_ext_escapes.py`) and of `launch_card_mutation_check.py`, whose multi-file runner this
 copies. A separate table rather than more rows in `ext_mutation_check.py` because half of
@@ -124,6 +136,65 @@ MUTATIONS = [
      "                if (v.output_text is not None or v.execution_actions\n"
      "                        or v.subscriptions):",
      "                if (v.output_text is not None or v.execution_actions):"),
+
+    # ---- the INBOUND half: a subscribed event wakes the pack that asked for it ----
+    # Added 2026-09-05 with `_wake_subscribed_pack`. S17 is the row this half exists to
+    # protect and the only one here whose failure costs money rather than behaviour: the
+    # event must reach the pack's LOCAL evaluator and never a brain, because
+    # `eb-found-face` fires every time a child moves around the room (vision.md §7.1). It
+    # is written as "route the event to `respond` instead", which is the *plausible* wrong
+    # implementation — it looks like reuse, it produces a perfectly good reply, and the
+    # only thing that notices is the recorded model-call counter.
+    ("S17 a perceived event is routed to `app.respond` — i.e. to a BRAIN", R,
+     "            reply = perceive(turn)",
+     "            reply = app.respond(turn)"),
+    ("S18 the pack request is never recorded, so nothing can ever wake it", R,
+     "                        self._pack_subscribed.setdefault(device_id, {})[name] = module",
+     "                        pass"),
+    # The subtle half of S18, and the reason the record is written where it is: an event
+    # the runtime ALREADY subscribes to for its own presence work adds nothing to `merged`,
+    # so recording inside that branch would leave a pack unwakeable by exactly the events
+    # it is most likely to ask for.
+    ("S19 the request is recorded only when it is NEW to the merged list", R,
+     "                    with self._presence_lock:\n"
+     "                        self._pack_subscribed.setdefault(device_id, {})[name] = module\n"
+     "                    if name not in merged:\n"
+     "                        merged.append(name)",
+     "                    if name not in merged:\n"
+     "                        with self._presence_lock:\n"
+     "                            self._pack_subscribed.setdefault(device_id, {})[name] = module\n"
+     "                        merged.append(name)"),
+    ("S20 a pack is woken by an event it never asked for", R,
+     "        if asked != module:\n"
+     "            return False",
+     "        if False:\n"
+     "            return False"),
+    ("S21 the request stops being keyed on the module that made it", R,
+     "        if asked != module:",
+     "        if asked is None:"),
+    ("S22 MOXIE_VISION=0 stops covering the way back IN", R,
+     "        if not self.vision:\n"
+     "            return False\n"
+     "        if not self.is_permitted(device_id):",
+     "        if False:\n"
+     "            return False\n"
+     "        if not self.is_permitted(device_id):"),
+    ("S23 the pairing gate stops covering the way back IN", R,
+     "        if not self.is_permitted(device_id):\n"
+     "            return False\n"
+     "        module = (getattr(robot, \"module_id\", None) or \"\")",
+     "        if False:\n"
+     "            return False\n"
+     "        module = (getattr(robot, \"module_id\", None) or \"\")"),
+    ("S24 a pack that answered with NOTHING swallows the event anyway", R,
+     "        if not text and not actions and not subscribe:\n"
+     "            return False                          # answered with nothing: not an answer",
+     "        if False:\n"
+     "            return False                          # answered with nothing: not an answer"),
+    ("S25 a module exit forgets the vision latch but not the pack's request", R,
+     "                self._vision_subscribed.pop(device_id, None)\n"
+     "                self._pack_subscribed.pop(device_id, None)",
+     "                self._vision_subscribed.pop(device_id, None)"),
 ]
 
 

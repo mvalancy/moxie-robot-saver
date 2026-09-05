@@ -780,15 +780,31 @@ corrected. It paid again on **2026-09-05**: `subscribe` got a host and **G6 turn
 way**, with the strict marker reporting the XPASS before anybody looked. **Only G5 remains `xfail`**,
 and only on `brain` and its one-call budget.
 
-⚠️ **G6 is green with one honest hole, and it is worth stating precisely rather than letting the ✅ imply
-more than it should.** Its *arming* rules — rules 1 and 3, which run on an ordinary turn — are live end
-to end. Its middle rule is keyed on `speech == "eb-qr-event"`, and a perception event never reaches
-`app.respond`: `moxie_runtime._on_remote_chat` diverts it to `_on_vision_turn` before any app sees it
-([`vision.md`](../vision.md) §7.1), which is deliberate and is what stops `eb-found-face` costing a
-brain call. So a pack can now ask to perceive an event and cannot yet be *woken* by one. Routing events
-to the app layer is its own slice with its own evidence; the divert is pinned as it stands by
-`test_ext_subscribe.py::test_a_subscribed_event_still_never_reaches_the_pack_that_asked_for_it`, which
-goes red the day it changes.
+✅ **G6's hole closed the same day (2026-09-05), and how it closed is the part worth reading.** The row
+went green in the morning with an honest gap: its *arming* rules — 1 and 3, which run on an ordinary
+turn — were live end to end, while its middle rule, keyed on `speech == "eb-qr-event"`, was reachable
+only by the evaluator, because `moxie_runtime._on_remote_chat` diverts a perception event to
+`_on_vision_turn` before any app sees it ([`vision.md`](../vision.md) §7.1). That divert is deliberate
+and is what stops `eb-found-face` costing a brain call, so the inbound slice was written to keep it
+rather than to widen it: `_on_vision_turn` offers the event to `MoxieApp.perceive`, and
+`ContentApp.perceive` runs the **local evaluator only** — the same pure, budgeted, offline `evaluate()`
+this whole brief is about. A perception event still never reaches `app.respond`, never enters history
+and never costs a model call; a pack is simply allowed to answer one out of its own rules.
+
+The gate is the outbound record read backwards — `_merge_subscriptions` writes
+`_pack_subscribed[device][event] = module` at the moment it *accepts* a request, and that is the only
+thing the wake consults — so *"a pack must not be woken by an event it never asked for"* is true by
+construction rather than by a second, driftable check. `MOXIE_VISION=0` and the pairing gate apply on
+the way in exactly as they do on the way out.
+
+The pin has been **inverted, not deleted**:
+`test_ext_subscribe.py::test_a_subscribed_event_still_never_reaches_the_pack_that_asked_for_it` said
+`seen == []` and its replacement,
+`test_a_subscribed_event_now_wakes_the_pack_that_asked_for_it`, says `seen == [QR]` — same subject,
+same file, opposite assertion, and the docstring rewritten in the same commit. The zero-model-call
+property it exists to protect is asserted from `moxie_sdk.chat.model_calls()`, a counter recorded
+immediately before the gateway request (the Python twin of `functions/api/_lib/limits.js
+::noteUpstreamCall`), with a control turn in the same test that makes it move.
 
 ---
 
@@ -820,7 +836,7 @@ A sandbox is worth exactly what its escape tests are worth.
 
 | # | Name | Asserts |
 |--:|---|---|
-| T1‑T6 | `test_conformance_<G1..G6>` | Each §8 row reproduces its golden effect list byte-for-byte from `ext_conformance.json`. G1/G2/G3/G4/G6 pass (G2, G3 since 2026-09-04; G6 since 2026-09-05, and its golden was **byte-identical** — the rule that matches emits only a `say`); **G5 alone is `xfail(strict=True)`** until `brain` exists, with its reason in `test_ext.py::P1_REASON`. The `subscribe` chain, the merge direction and the wire are `sim/tests/test_ext_subscribe.py` (18 tests) + `sim/tools/subscribe_mutation_check.py` (16/16 caught). |
+| T1‑T6 | `test_conformance_<G1..G6>` | Each §8 row reproduces its golden effect list byte-for-byte from `ext_conformance.json`. G1/G2/G3/G4/G6 pass (G2, G3 since 2026-09-04; G6 since 2026-09-05, and its golden was **byte-identical** — the rule that matches emits only a `say`); **G5 alone is `xfail(strict=True)`** until `brain` exists, with its reason in `test_ext.py::P1_REASON`. The `subscribe` chain, the merge direction, the wire **and the inbound wake** are `sim/tests/test_ext_subscribe.py` (32 tests) + `sim/tools/subscribe_mutation_check.py` (25/25 caught). |
 | T7 | `test_the_same_inputs_give_byte_identical_effects` | 100 runs of G1 and G3 at a fixed injected clock and seed; one golden. |
 | T8 | `test_a_breach_does_not_end_the_turn` | A full `ContentApp.respond()` with a poisoned `on: global` extension returns the **conversation's** reply (S1's fall-through), and with a poisoned `turn.before` returns the model's line. No exception escapes `respond()`. |
 | T9 | `test_three_breaches_quarantine_for_the_session` | The 4th turn does not evaluate the extension at all (assert the step counter never advances), and one `ext_events` entry exists — not four. |
@@ -880,9 +896,10 @@ A sandbox is worth exactly what its escape tests are worth.
 
 **P1 adds:** ~~the wire plumbing for `act`~~ (✅ 2026-09-04 — S5, G2, G3), ~~the host for
 `subscribe`~~ (✅ 2026-09-05 — `Volley.subscriptions` → `Reply.subscribe` → the runtime's merge →
-`RemoteChatAction.EventSubscription`, which unblocked G6; what is *still* open is the inbound half —
-routing a subscribed event to the pack that asked for it, since `_on_remote_chat` diverts perception
-events before any app sees them), the `brain` capability with its one-call budget (unblocks G5),
+`RemoteChatAction.EventSubscription`, which unblocked G6), ~~the *inbound* half of `subscribe`~~
+(✅ 2026-09-05 — `MoxieApp.perceive`, offered from `_on_vision_turn`, gated on the record
+`_merge_subscriptions` writes; the evaluator answers and no brain is reached, proven by a recorded
+counter), the `brain` capability with its one-call budget (unblocks G5),
 `turn.after` and `session.end`, the
 text surface that compiles to the AST outside the trust boundary, the JS evaluator passing the same
 conformance file in `workerd`, and the console card showing grants and *"this extension stopped
@@ -927,9 +944,10 @@ the text surface, the JS evaluator, the console card, signatures, and any attemp
 ### P1 — **M**
 ~~`act`~~ ✅ **shipped 2026-09-04** (S5 closed; G2/G3 green) · ~~`subscribe`~~ ✅ **shipped 2026-09-05**
 (G6 green; `Volley.subscriptions` had no consumer and now has one, **merged into** the supervisor's
-vision subscription and never over it) · the *inbound* half of `subscribe`: a subscribed event still
-never reaches the pack that asked for it, because `_on_remote_chat` diverts perception events to
-`_on_vision_turn` before any app sees them · the `brain` capability · the
+vision subscription and never over it) · ~~the *inbound* half of `subscribe`~~ ✅ **shipped
+2026-09-05** (`MoxieApp.perceive` + `ContentApp.perceive`, offered by `_on_vision_turn` before the
+greeting rule; the divert stands and the evaluator answers, so a woken pack costs zero model calls —
+asserted from `moxie_sdk.chat.model_calls()`) · the `brain` capability · the
 text→AST compiler (outside the trust boundary) · `sim/web` or `functions/` JS evaluator + the shared
 conformance run in `workerd` · the console card (grants, breaches, quarantine) · `turn.after` and
 `session.end`.
