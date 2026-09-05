@@ -23,10 +23,16 @@
   and requires the corresponding test to go **red**. All 28 are caught. Run it by hand after
   touching `ext.py`, `render.py`, `content_app.py`'s host half or `packs.py`'s pattern cap; a green
   suite proves a guard is *present*, and only this proves it is *load-bearing*.
-- **`subscribe_mutation_check.py`** — the same proof for the `subscribe` capability's **16 guards**:
+- **`subscribe_mutation_check.py`** — the same proof for the `subscribe` capability's **25 guards**:
   the load-time event allowlist, the width of `ext.SUBSCRIBE_EVENTS`, the P1 gate, both host
   boundaries, both de-duplications, the two **merge-direction** rows, `MOXIE_VISION`, the pairing
-  gate and four *set-but-never-sent* shapes — **16/16 caught**. A separate table from
+  gate, four *set-but-never-sent* shapes, and — since the inbound half landed on 2026-09-05 — nine
+  more for being **woken**: the subscribed-only gate, its module keying, both inbound gates, the
+  record and *where* it is written, the module-exit forget, the empty-answer fall-through, and S17,
+  which routes a perceived event to `app.respond` instead of to the pack's local evaluator. S17 is
+  the sharpest row in the file because every visible behaviour survives it — the pack answers, the
+  child hears a line, the wire is well formed — and the only thing that notices is
+  `moxie_sdk.chat.model_calls()`. **25/25 caught.** A separate table from
   `ext_mutation_check.py` because half these guards live in `mqtt/supervisor/moxie_runtime.py`, which
   that checker's single-file runner cannot see. Two rows earn the file on their own: a merge in which a
   content pack's event list **replaces** the supervisor's fails *silently*, because

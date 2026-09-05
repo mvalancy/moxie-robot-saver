@@ -308,6 +308,18 @@ class MoxieRuntime:
         self._last_greeting: dict[str, str] = {}   # never the same hello twice running
         self._pending_opener: dict[str, str] = {}  # hello queued for the next turn
         self._vision_subscribed: dict[str, str] = {}   # device -> module we subscribed for
+        #: What the **app layer** asked to be told about, as `{device: {event: module}}`.
+        #: Written by `_merge_subscriptions` at the moment a request is accepted, and read
+        #: by `_wake_subscribed_pack` to answer the only question the inbound half needs:
+        #: *did this pack, under this module, actually ask for this event?* The module is
+        #: the value rather than a second dict because the recovered contract says
+        #: *"events are automatically unsubscribed when the module exits"*
+        #: (RemoteModuleAPI §Unsubscribing) — so a request made under module A must not
+        #: wake whatever is running under module B, and comparing one string is the whole
+        #: check. Same lock and same lifetime as `_vision_subscribed`, for the same reason
+        #: (`_forget_robot_state`): a cached belief about a moving thing is this project's
+        #: most-repeated bug, so both beliefs are dropped by one method.
+        self._pack_subscribed: dict[str, dict] = {}
         try:
             self.greet_after_s = float(
                 greet_after_s if greet_after_s is not None
@@ -2032,8 +2044,10 @@ class MoxieRuntime:
         with self._presence_lock:
             if device_id is None:
                 self._vision_subscribed.clear()
+                self._pack_subscribed.clear()
             else:
                 self._vision_subscribed.pop(device_id, None)
+                self._pack_subscribed.pop(device_id, None)
         if vision_only:
             return
         if device_id is None:
@@ -3107,9 +3121,18 @@ class MoxieRuntime:
         """A vision event that arrived as a chat turn — the protocol-faithful path.
 
         We answer the request the robot is waiting on, and we never spend a brain call on
-        it: a greeting, a 🎴 launch card, both, or `NOREPLY_ACK` — ResultCode 6,
-        "acknowledge only, no spoken line" (remote-chat-protocol.md:60), which is exactly
-        the contract's field for "heard you, saying nothing".
+        it: a sandboxed content pack that asked to perceive this event, a greeting, a 🎴
+        launch card, or `NOREPLY_ACK` — ResultCode 6, "acknowledge only, no spoken line"
+        (remote-chat-protocol.md:60), which is exactly the contract's field for "heard
+        you, saying nothing".
+
+        The pack is offered the event **first** and, if one of its rules answers, that is
+        the whole reply — no greeting, no card, and no `greeted_at` stamp, because the
+        pack took this event rather than sharing it. That ordering is a real decision: a
+        pack subscribed to `eb-found-face` and matching every one of them displaces the
+        greeting rule for as long as it is the active module, which is what "the pack owns
+        the event it asked for" has to mean if it is to mean anything. When no rule
+        matches, everything below runs unchanged.
 
         The card is the first thing in this appliance that *acts* on a perception event
         rather than merely noticing it. Honest ceiling: no physical Moxie has ever sent us
@@ -3119,6 +3142,14 @@ class MoxieRuntime:
         backend = rcr.get("backend", "router")
         input_vars = rcr.get("input_vars") or {}
         signals = self._ingest_vision(device_id, robot, name, input_vars)
+        # 👁️→🧬 **The inbound half of `subscribe`.** A pack that asked to perceive this
+        # event gets it offered to its LOCAL evaluator before anything below runs — and
+        # only its evaluator, so the paragraph above stays true word for word: no brain
+        # call, no history, no utterance assessment. If a rule answers, that reply is the
+        # turn and the presence handling below does not run; if none does, everything
+        # below is byte-for-byte what it was before this line existed.
+        if self._wake_subscribed_pack(device_id, robot, rcr, name, input_vars):
+            return None
         # 🎴 A printed launch card. This is the ONLY place a scanned QR value is in scope
         # while a reply is being built, so the route lives here and nowhere else: a vision
         # event is intercepted before any brain sees it (`:2908` — never handed to a brain,
@@ -3153,6 +3184,96 @@ class MoxieRuntime:
         if text:
             self._maybe_synthesize(device_id, markup, event_id, chunk_num=0)
         return None
+
+    def _wake_subscribed_pack(self, device_id, robot, rcr, name, input_vars) -> bool:
+        """Offer a perceived event to the app that asked for it. True ⇔ it answered.
+
+        **This closes the hole the outbound slice shipped with, and the constraint that
+        makes it safe is not negotiable.** A subscribed event arrives as the `speech` of
+        an ordinary `RemoteChatRequest` and `_on_remote_chat` diverts it here rather than
+        into the turn loop, because a vision event *"is never assessed as a child's
+        utterance, never enters history, **never costs a model call**"*
+        (docs/architecture/vision.md §7.1). `eb-found-face` fires every time a child moves
+        around the room; routing perception to a brain would turn presence into a billing
+        event. So the event is offered to `MoxieApp.perceive`, whose `ContentApp`
+        implementation runs the **sandboxed evaluator only** — pure, budgeted, offline —
+        and never `respond`. The property is asserted in the suite from
+        `moxie_sdk.chat.model_calls()`, a counter recorded immediately before the gateway
+        request itself, rather than from a stub that stayed quiet.
+
+        Four gates, and the first three are the outbound half's own gates read backwards
+        so that the two directions cannot disagree:
+
+        * **It must have asked.** `_pack_subscribed[device][event]` must equal this
+          robot's current `module_id` — the record `_merge_subscriptions` wrote when it
+          accepted the request. A pack is never woken by an event it did not ask for, and
+          never by one it asked for under a module that has since exited (*"events are
+          automatically unsubscribed when the module exits"*).
+        * **`MOXIE_VISION=0`.** The operator's kill switch is above a content pack in both
+          directions: if this appliance is not asking for perception, a pack is not
+          answering it either.
+        * **The pairing gate.** An unpermitted robot is served nothing, and "nothing"
+          includes handing what its camera saw to a pack's program.
+        * **The app must implement `perceive`.** The base class returns None, so every app
+          that never heard of perception — `LLMApp`, `EchoApp`, `WebhookApp` — is
+          unaffected, and so is a `ContentApp` whose active conversation has no extension.
+
+        A `perceive` that raises is a non-event: logged once, False returned, and the
+        greeting/card path below runs exactly as it always has. That is the same
+        fail-boring rule the sandbox itself follows (brief §6.4) — a broken pack costs a
+        child nothing, least of all a hello.
+        """
+        # Two `if`s rather than one `or`, so each gate can be deleted on its own by
+        # `sim/tools/subscribe_mutation_check.py` — a guard nobody has watched fail is not
+        # a guard, and a compound condition hides which half was load-bearing.
+        if not self.vision:
+            return False
+        if not self.is_permitted(device_id):
+            return False
+        module = (getattr(robot, "module_id", None) or "")
+        with self._presence_lock:
+            asked = (self._pack_subscribed.get(device_id) or {}).get(name)
+        if asked != module:
+            return False
+        app = self.app_for(device_id)
+        perceive = getattr(app, "perceive", None)
+        if not callable(perceive):
+            return False
+        # History is READ (a rule may look at `session.is_empty`) and never written: this
+        # turn does not call `_remember`, so the event stays out of the transcript exactly
+        # as §7.1 requires.
+        turn = Turn(robot=robot, speech=name,
+                    history=list(self.history.get(device_id, [])),
+                    command=rcr.get("command", "prompt"), input_vars=input_vars,
+                    presence=presence_seam.snapshot(self._presence_state(robot)))
+        try:
+            reply = perceive(turn)
+        except Exception as e:                    # a broken pack must not cost the hello
+            print(f"[runtime] app.perceive error: {e}", flush=True)
+            return False
+        if reply is None:
+            return False
+        text = (getattr(reply, "text", "") or "").strip()
+        actions = list(getattr(reply, "actions", None) or [])
+        subscribe = list(getattr(reply, "subscribe", None) or [])
+        if not text and not actions and not subscribe:
+            return False                          # answered with nothing: not an answer
+        markup, scored = (getattr(reply, "markup", None), None)
+        if text:
+            markup, scored = self._stage(text, reply, turn_key=rcr.get("event_id"),
+                                         chunk_index=0, markup=reply.markup)
+        self._note("vision", f"🧬 a pack answered {name}: '{text[:40]}'")
+        print(f"[runtime] 🧬 {device_id}: {name} woke a content pack -> "
+              f"'{text[:60]}'", flush=True)
+        self._publish_chat(device_id, rcr.get("event_id"),
+                           rcr.get("backend", "router"), text, markup or "",
+                           actions=actions or None,
+                           end_turn=getattr(reply, "end_turn", False),
+                           result=getattr(reply, "result_code", ResultCode.SUCCESS),
+                           scored=scored, subscribe=subscribe or None)
+        if text:
+            self._maybe_synthesize(device_id, markup, rcr.get("event_id"), chunk_num=0)
+        return True
 
     def _greeting_for(self, device_id, robot, signals):
         """`(text, markup)` if this robot has earned an unprompted hello, else None.
@@ -3304,6 +3425,14 @@ class MoxieRuntime:
         tidiness: `_on_remote_chat` / `_on_event` can only route an event from that
         catalog, so an event outside it would be a subscription this runtime could not
         act on if the robot honoured it.
+
+        **Side effect, and it is the load-bearing one for the inbound half.** Every
+        request this function *accepts* is written to `_pack_subscribed[device][event] =
+        module`. That record is the only thing `_wake_subscribed_pack` consults, so the
+        gates above are not merely advisory on the way out — an event refused here can
+        never wake anything on the way back in, and *"a pack must not be woken by an event
+        it never asked for"* is true because the ask and the wake read one dict written in
+        one place.
         """
         merged = list(mine or [])
         if asked:
@@ -3315,12 +3444,28 @@ class MoxieRuntime:
                 print(f"[runtime] 👁️  refusing an event subscription for unpermitted "
                       f"{device_id}", flush=True)
             else:
+                # The module this request is made under. `_vision_subscribed` keys its own
+                # latch the same way; see `_pack_subscribed` in `__init__` for why an
+                # event asked for under module A must not wake module B.
+                module = (getattr(self.robots.get(device_id), "module_id", None) or "")
                 for event in asked:
                     name = str(event)
                     if name not in presence_seam.VISION_EVENTS:
                         print(f"[runtime] 👁️  {name!r} is not an event this appliance "
                               f"can route; dropped", flush=True)
                         continue
+                    # 📥 **The record the INBOUND half reads.** Everything above this line
+                    # is outbound — a request going out to the robot. This one line is
+                    # what makes the return trip possible: `_wake_subscribed_pack` will
+                    # hand a `eb-qr-event` to a pack's evaluator only if the pack is
+                    # written here, under the module it is running now. It is recorded
+                    # *outside* the `not in merged` branch below on purpose — an event the
+                    # runtime already subscribes to for its own presence work adds nothing
+                    # to `merged`, and a pack that asked for exactly that event would
+                    # otherwise be unwakeable by it, which is the one case a reader would
+                    # never suspect.
+                    with self._presence_lock:
+                        self._pack_subscribed.setdefault(device_id, {})[name] = module
                     if name not in merged:
                         merged.append(name)
                         self._note("vision", f"a content pack asked to be told about "

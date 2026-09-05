@@ -273,15 +273,21 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   each proven end to end: an extension that makes the robot **do** a thing, and one that makes it
   **perceive** a thing. `test_ext.py` owns the effect list and `test_ext_escapes.py` the load gates;
   these two own the middle — the chain from an effect to a `RemoteChatAction` a robot can carry out.
-  `test_ext_subscribe.py` (18 tests) exists because `Volley.subscriptions` was assigned by
+  `test_ext_subscribe.py` (32 tests) exists because `Volley.subscriptions` was assigned by
   `update_subscriptions` and **read by nothing**, so the capability was refused at load for having no
-  host. Its two load-bearing assertions: a pack's event list can never *remove* what the runtime put
-  in the set (asserted as the conjunction *"the latch says sent"* **and** *"what it claims was sent
-  really was"*, which is the pair a pack-wins merge breaks silently), and the merged list is read back
-  off the **published** `commands/remote_chat` JSON rather than any in-memory structure. One test pins
-  a gap rather than a feature: a subscribed event still never reaches the pack that asked for it,
-  because `_on_remote_chat` diverts perception events before any app sees them. Companion:
-  [`../tools/subscribe_mutation_check.py`](../tools/README.md) — 16 guards, 16/16 caught, and it is
+  host. Its two load-bearing assertions on the way **out**: a pack's event list can never *remove*
+  what the runtime put in the set (asserted as the conjunction *"the latch says sent"* **and** *"what
+  it claims was sent really was"*, which is the pair a pack-wins merge breaks silently), and the
+  merged list is read back off the **published** `commands/remote_chat` JSON rather than any
+  in-memory structure. Since 2026-09-05 it also owns the way **in** — a subscribed event *wakes* the
+  pack that asked for it — and the load-bearing assertion there is a different shape again: the
+  waking must cost **zero model calls**, because `eb-found-face` fires every time a child moves
+  around a room. That is asserted from `moxie_sdk.chat.model_calls()`, a counter recorded immediately
+  before the gateway request, with a **control turn in the same test** that makes the counter move —
+  a zero that could never have been anything else measures nothing. One test in this file was
+  *inverted* rather than deleted when the hole closed: `…still_never_reaches_the_pack…` became
+  `…now_wakes_the_pack…`, same subject, opposite assertion. Companion:
+  [`../tools/subscribe_mutation_check.py`](../tools/README.md) — 25 guards, 25/25 caught, and it is
   what caught the wire assertion passing for the wrong reason.
 - **`test_render_sandbox_parity.py`** — the *other* half of the content-renderer security
   fix. `test_render_sandbox.py` proves eight escape probes come back inert; that says
