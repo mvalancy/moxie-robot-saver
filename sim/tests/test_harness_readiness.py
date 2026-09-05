@@ -45,7 +45,21 @@ SIM = os.path.join(REPO, "sim")
 #: The readiness line every supervisor-booting script waits for. Kept as a literal here
 #: on purpose: if somebody changes the runtime's wording, this guard should go red next
 #: to `test_connect_readiness.py` rather than silently start waiting for nothing.
-READY_LINE = "[runtime] broker connected"
+#:
+#: **It moved on 2026-09-05, one handshake later.** `[runtime] broker connected` (below)
+#: is printed after `subscribe()` — but `subscribe()` only queues a SUBSCRIBE packet, so
+#: the line means *"we asked"*. A robot booted on it announces `/state` into a broker with
+#: no matching subscription, and the config push answering a `/state` is QoS 0 and not
+#: retained: the message is deleted, not delayed, which is why widening a timeout could
+#: never have helped. HIL caught it as `0/4 turns OK — no config pushed within timeout` on
+#: the FIRST scenario with the second green — the signature of a startup race. The
+#: harnesses now wait for the SUBACK line, printed from the runtime's `_on_subscribe`.
+READY_LINE = "[runtime] subscriptions acknowledged by the broker"
+
+#: The CONNACK line. Still printed, still true, still what `/status`'s `broker_connected`
+#: and the console's connection card mean — it is simply not a licence to put a robot on
+#: the bus. Kept here so the guards below can prove BOTH exist and in which order.
+CONNECT_LINE = "[runtime] broker connected"
 
 
 def _scripts():
@@ -131,9 +145,15 @@ def test_the_readiness_line_is_the_one_the_runtime_actually_prints():
                encoding="utf-8").read()
     # The needle, not the whole call — the call also carries `flush=True`, which the
     # behavioural test at the bottom of this file owns.
-    assert '"[runtime] broker connected rc=' in src, (
+    assert '"[runtime] subscriptions acknowledged by the broker ' in src, (
         "the runtime no longer prints the readiness line the SIL scripts wait for; "
         "update READY_LINE here and in sim/readiness.sh together")
+    # And the CONNACK line survives with it: `/status`, the console card and
+    # `test_connection_resilience.py`'s rc=5 guard all still mean that one, so a fix that
+    # renamed it instead of adding beside it would have moved the ground under them.
+    assert '"[runtime] broker connected rc=' in src, (
+        "the CONNACK line is gone. It was not the SUBACK signal's to remove — the "
+        "readiness fix ADDS a second, later line precisely so this one keeps its meaning")
 
 
 # --------------------------------------------------------------------------- #
@@ -183,12 +203,14 @@ def test_the_readiness_line_is_flushed_when_it_is_printed():
     rt = moxie_runtime.MoxieRuntime(app=_App(), child=ChildProfile(nickname="Sam"))
 
     class _Client:
-        def subscribe(self, topic):
-            pass
+        def subscribe(self, topic, qos=0):
+            return (0, 1)                   # (rc, mid), as paho returns
 
     out = _FlushRecordingIO()
     with redirect_stdout(out):
         rt._on_connect(_Client(), None, {}, 0)
+        # …and the SUBACK the broker answers it with, which is what the scripts wait for.
+        rt._on_subscribe(None, None, 1, [0], None)
 
     idx = next((i for i, (kind, payload) in enumerate(out.events)
                 if kind == "write" and READY_LINE in payload), None)

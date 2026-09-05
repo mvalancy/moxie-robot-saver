@@ -34,8 +34,21 @@ RT = WT / "mqtt/supervisor/moxie_runtime.py"
 CFG = WT / "mqtt/config.py"
 TESTS = WT / "sim/tests/test_store_concurrency.py"
 
+#: Seconds a single mutated run may take before it is treated as caught-by-hanging.
+#:
+#: **Not a nicety — this table can hang the box.** T5's *"wait forever instead of giving
+#: up"* turns `_wait_flock`'s budget loop into a true infinite one, and `t5b` drives it
+#: with an INJECTED sleep (`sleep=slept.append`), so nothing sleeps and nothing bounds it:
+#: the list grows as fast as the CPU can append. Run unattended on 2026-09-05 it reached
+#: **20 GB RSS in six minutes** on a 62 GB machine and was still climbing — an OOM that
+#: would have taken every other process on the box with it, from a tool whose whole job is
+#: to be safe to run. A mutation that hangs *is* caught (the guard's test certainly does
+#: not pass), but only if something ends it.
+MUTATION_TIMEOUT_S = 300
+
 STORE_TESTS = "sim/tests/test_store_concurrency.py"
 CONN_TESTS = "sim/tests/test_connection_resilience.py"
+READY_TESTS = "sim/tests/test_connect_readiness.py"
 
 MUTATIONS = [
     # ---- the store: the cross-process lock -------------------------------------
@@ -74,9 +87,20 @@ MUTATIONS = [
      "        self._lock.acquire()                   # RLock OUTSIDE, always (trap #2)",
      "        pass                                   # RLock OUTSIDE, always (trap #2)",
      STORE_TESTS, "t3_two_threads"),
-    ("T5  wait forever instead of giving up (block the MQTT loop)", STORE,
+    # 2026-09-05: this row used to say `or True` — loop forever. `t5b` drives the wait with
+    # an INJECTED sleep (`sleep=slept.append`), so "forever" is a tight `list.append` loop
+    # with nothing to bound it: **20 GB of RSS in six minutes**, unattended, on the machine
+    # running the check. `* 1000` is no better, and the reason is worth keeping: five lines
+    # below the condition, `delay = min(delay, self.lock_timeout_s - asked)` clamps the
+    # delay to the REMAINING BUDGET, so once `asked` reaches the timeout every subsequent
+    # delay is zero and `asked` stops growing — any mutation that only raises the budget
+    # ceiling is still unbounded (6.4 GB in two minutes, measured). Bounding the ITERATIONS
+    # instead says the same thing — the wait is no longer governed by the budget, and the
+    # MQTT loop is blocked far past it — and terminates: `t5b` goes red on the zero-length
+    # sleeps the clamp then produces, on `sum(slept)`, and on the attempt ceiling.
+    ("T5  wait far past the budget instead of giving up (block the MQTT loop)", STORE,
      "        while asked < self.lock_timeout_s:",
-     "        while asked < self.lock_timeout_s or True:",
+     "        while attempt < 100000:",
      STORE_TESTS, "t5b"),
     ("T5  swallow the refusal — return False and record nothing", STORE,
      "        self.lock_timeouts += 1", "        self.lock_timeouts += 0",
@@ -153,10 +177,31 @@ MUTATIONS = [
     ("S8  stale only the robots that already had a turn", RT,
      "        for device_id in set(self._turn_seq) | set(self.robots):",
      "        for device_id in set(self._turn_seq):", CONN_TESTS, "s8"),
+    # Anchor updated 2026-09-05: the four per-topic `subscribe()` calls became ONE list
+    # subscribe, so that one SUBSCRIBE is answered by one SUBACK and `_on_subscribe` has a
+    # single unambiguous event to gate readiness on. The mutation is the same one — do not
+    # re-subscribe when the session comes back.
     ("S3  subscribe once and never again on reconnect", RT,
-     "        for t in self.SUBSCRIPTIONS:\n            c.subscribe(t)",
-     "        if not self.last_broker_disconnect:\n            for t in self.SUBSCRIPTIONS:\n                c.subscribe(t)",
+     "        c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])",
+     "        if not self.last_broker_disconnect:\n            c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])",
      CONN_TESTS, "s3"),
+    # ---- the SUBACK gate (2026-09-05) ------------------------------------------
+    # `[runtime] broker connected` meant "we asked", never "the broker agreed", and a
+    # robot announcing in that gap lost its `/state` and the QoS-0 config answering it.
+    # These three are what a plausible half-fix looks like.
+    ("S9  arm readiness inside the CONNACK instead of on the SUBACK", RT,
+     "        c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])",
+     "        c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])\n"
+     "        self._on_subscribe(c, None, 0, None, None)",
+     READY_TESTS, "not_printed_by_the_connack"),
+    ("S9b subscribe topic by topic again (four SUBACKs, readiness on the first)", RT,
+     "        c.subscribe([(t, 0) for t in self.SUBSCRIPTIONS])",
+     "        [c.subscribe(t) for t in self.SUBSCRIPTIONS]",
+     READY_TESTS, "one_subscribe_call"),
+    ("S9c latch the SUBACK across a disconnect", RT,
+     "        self.subscriptions_acked.clear()\n        self.last_broker_disconnect = time.time()",
+     "        self.last_broker_disconnect = time.time()",
+     READY_TESTS, "disconnect_disarms"),
     ("S4c drop on_connect_fail, so the retry loop is invisible", RT,
      "        self.client.on_connect_fail = self._on_connect_fail",
      "        pass", CONN_TESTS, "s4c"),
@@ -187,14 +232,22 @@ def main() -> int:
         backup = src
         path.write_text(src.replace(old, new, 1))
         try:
-            r = subprocess.run(
-                [str(WT / ".venv/bin/python"), "-m", "pytest", tests, "-q", "-k", sel,
-                 "-p", "no:cacheprovider"],
-                cwd=WT, capture_output=True, text=True,
-                env={"PATH": "/usr/bin:/bin", "MOXIE_LLM_API_KEY": "",
-                     "MOXIE_LLM_BASE_URL": "", "MOXIE_VOICE_BASE_URL": "",
-                     "MOXIE_STT_BASE_URL": "",
-                     "HOME": str(pathlib.Path.home()), "PYTHONDONTWRITEBYTECODE": "1"})
+            try:
+                r = subprocess.run(
+                    [str(WT / ".venv/bin/python"), "-m", "pytest", tests, "-q", "-k", sel,
+                     "-p", "no:cacheprovider"],
+                    cwd=WT, capture_output=True, text=True, timeout=MUTATION_TIMEOUT_S,
+                    env={"PATH": "/usr/bin:/bin", "MOXIE_LLM_API_KEY": "",
+                         "MOXIE_LLM_BASE_URL": "", "MOXIE_VOICE_BASE_URL": "",
+                         "MOXIE_STT_BASE_URL": "",
+                         "HOME": str(pathlib.Path.home()), "PYTHONDONTWRITEBYTECODE": "1"})
+            except subprocess.TimeoutExpired:
+                # Counted as caught, and SAID so rather than silently: the guard's test did
+                # not pass, but "it never finished" is a different fact from "it went red"
+                # and the next reader should not have to guess which one this row is.
+                print(f"  caught      {name}  (hung — killed after {MUTATION_TIMEOUT_S}s)")
+                caught += 1
+                continue
             # Ported back from `hardening_p1_mutation_check.py` (2026-09-03): a `-k`
             # selector that matched nothing exits 0 and would read as "caught" forever.
             # Three of this table's anchors had gone stale against P1's refactors, which

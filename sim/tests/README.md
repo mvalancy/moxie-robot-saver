@@ -300,6 +300,20 @@ browser at all and carry the hermetic suite CI actually runs.
   against a cloud with no settle timer and require the config to be LOST, and a sweep of
   every `.py` under `sim/` that drives a real broker and publishes a `/state` — which is
   discovered, not listed, and whose own teeth name the four clients it must be seeing.
+- **`test_sil_supervisor_readiness.py`** — 🔌 *the same rule, the other end of the wire.*
+  The promotion PR's HIL job went red as `❌ scenario 'basic-conversation': 0/4 turns OK —
+  no config pushed within timeout` while `motion-demo`, the **second** scenario in the same
+  job, passed 4/4: first-fails-second-passes is a startup race. `subscribe()` does not
+  subscribe — it queues a packet — so `[runtime] broker connected`, printed straight after
+  it, meant *"we asked"*, and until 2026-09-05 the supervisor had no `on_subscribe` at all.
+  A robot booted on that line announces into a broker holding no matching subscription and
+  its QoS-0 config answer is never generated. **The robot-side trick does not reproduce
+  this one**: a sleep before the subscribe also delays the readiness line, so the gap never
+  opens — the supervisor's gap is on the wire, *after* the callback returns. So this file
+  puts a TCP relay in front of the broker and holds the SUBSCRIBE packet for 3 s with
+  nothing in the appliance patched. Two cases: the shipped supervisor booted on the SUBACK
+  line serves the robot through that hold, and the **teeth** — the identical run booted on
+  `[runtime] broker connected` loses the config outright, which is the HIL red on demand.
 - **`test_sil_performance_e2e.py`** — the behavior planner with a **broker** between it
   and the client. #92 proved its criterion (c) "through the real runtime", which is an
   in-process runtime with a fake MQTT client; a scored field dropped by `json.dumps`, by
