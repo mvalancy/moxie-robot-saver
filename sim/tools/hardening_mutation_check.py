@@ -148,8 +148,24 @@ MUTATIONS = [
      "        if self._connack_failed(rc):",
      '        print(f"[runtime] broker connected rc={rc}")\n        if self._connack_failed(rc):',
      CONN_TESTS, "s4_a_connack"),
+    # `failed = getattr(rc, "is_failure", None)` is IDENTICAL in `_connack_failed` and
+    # `_suback_failed` — deliberately, they are twins — so the one-line anchor matched both
+    # and mutated whichever came first. The `int(rc) != 0` tail is what makes this the
+    # CONNACK one, which is the guard `s4_a_connack` is about. (The old replacement was
+    # also invisible to `test_mutation_tables.py`'s captured-mutation half: it left the
+    # anchor still matching at the OTHER site, so `old in src` stayed true with the
+    # mutation sitting in the tree. An ambiguous anchor breaks the ratchet too.)
     ("S4  treat every reason code as success", RT,
-     "        failed = getattr(rc, \"is_failure\", None)", "        return False\n        failed = None",
+     "        failed = getattr(rc, \"is_failure\", None)\n"
+     "        if failed is not None:\n"
+     "            return bool(failed)\n"
+     "        try:\n"
+     "            return int(rc) != 0",
+     "        failed = False\n"
+     "        if failed is not None:\n"
+     "            return bool(failed)\n"
+     "        try:\n"
+     "            return int(rc) != 0",
      CONN_TESTS, "s4_a_connack"),
     ("S5  go back to paho's 120 s reconnect ceiling", RT,
      "RECONNECT_MAX_DELAY_S = 60", "RECONNECT_MAX_DELAY_S = 120", CONN_TESTS, "s5"),
@@ -225,8 +241,25 @@ def main() -> int:
     caught = missed = noop = 0
     for name, path, old, new, tests, sel in MUTATIONS:
         src = path.read_text()
-        if old not in src:
+        # AMBIGUOUS IS NOT CAUGHT, and it is not a milder NO-OP either. `replace(old, new, 1)`
+        # takes the FIRST match, so a row whose anchor occurs twice is about whichever block
+        # sorts earliest in the file — possibly the guard it names, possibly that guard's twin —
+        # and it prints `caught` either way. Measured 2026-09-05: three rows across this
+        # directory were anchored on a line a deliberate twin guard also carried (a load-time
+        # refusal and its runtime belt-and-braces; `_connack_failed` and `_suback_failed`). All
+        # three happened to hit the intended block by line order alone, which is luck, not proof.
+        # `unit_budget_mutation_check.py` hit the same defect where the WRONG block was patched.
+        # `sim/tests/test_mutation_tables.py` now refuses a non-unique anchor for every table in
+        # the fast tier; this is the same refusal at the point of use, so an operator running one
+        # table by hand is told why rather than reading a `caught` that means nothing.
+        hits = src.count(old)
+        if hits == 0:
             print(f"  NO-OP       {name}  (anchor not found)")
+            noop += 1
+            continue
+        if hits > 1:
+            print(f"  AMBIGUOUS   {name}  (anchor matches {hits} places; "
+                  f"it would mutate whichever comes first)")
             noop += 1
             continue
         backup = src

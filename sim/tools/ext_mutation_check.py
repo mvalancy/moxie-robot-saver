@@ -25,8 +25,14 @@ CA  = WT / "mqtt/moxie_sdk/content/content_app.py"
 PK  = WT / "mqtt/moxie_sdk/content/packs.py"
 
 MUTATIONS = [
+ # The anchor carries the `for` line above it because `if seg.startswith("_"):` occurs
+ # TWICE in ext.py: here in `_var` (the LOAD-TIME refusal this row is about) and again in
+ # `lookup`, the belt-and-braces that answers null for the same path at RUNTIME. The bare
+ # one-liner matched both, and `replace(old, new, 1)` silently took whichever came first —
+ # right by luck of line order, and proving nothing that a reordering could not undo.
  ("X1  drop the `_`-segment path refusal", EXT,
-  '            if seg.startswith("_"):', '            if False:', "x1_no_op_or_path"),
+  '        for seg in arg.split("."):\n            if seg.startswith("_"):',
+  '        for seg in arg.split("."):\n            if False:', "x1_no_op_or_path"),
  ("X1  drop the fact-root refusal", EXT,
   "        if root not in FACT_ROOTS:", "        if False:", "x1_no_op_or_path"),
  ("X1  add an `eval` operator", EXT,
@@ -89,8 +95,15 @@ MUTATIONS = [
   "    spare = sorted(declared - v.used)", "    spare = []", "x10_a_capability"),
  ("X10 grant the still-P1 capabilities anyway", EXT,
   "    return cap in P1_CAPABILITIES", "    return cap in ()", "x10_p1"),
+ # `if name not in known:` occurs twice in content_app.py — once in `execution_actions_of`
+ # (robot FUNCTIONS, which is this row) and once in `subscriptions_of` (robot EVENTS,
+ # which is `subscribe_mutation_check.py`'s S4). Two different guards, one anchor. The
+ # `name = str(...)` line above is unique to the functions gate, so the row now names the
+ # block it is about. Note that S4 was written disambiguated from the start: its table
+ # enforces a unique anchor, so its author was FORCED to. This one was not.
  ("X10 let a pack name a robot function the table does not", CA,
-  "        if name not in known:", "        if False:",
+  '        name = str((entry or {}).get("name") or "")\n        if name not in known:',
+  '        name = str((entry or {}).get("name") or "")\n        if False:',
   "x10_the_host_will_not_name"),
  ("X10 grant `act` to every pack by default", EXT,
   'DEFAULT_GRANTS = frozenset({"say", "handled", "session", "child.nickname"})',
@@ -122,8 +135,23 @@ def main() -> int:
     caught = missed = noop = 0
     for name, path, old, new, sel in MUTATIONS:
         src = path.read_text()
-        if old not in src:
+        # AMBIGUOUS IS NOT CAUGHT, and it is not a milder NO-OP either. `replace(old, new, 1)`
+        # takes the FIRST match, so a row whose anchor occurs twice is about whichever block
+        # sorts earliest in the file — possibly the guard it names, possibly that guard's twin —
+        # and it prints `caught` either way. Measured 2026-09-05: three rows across this
+        # directory were anchored on a line a deliberate twin guard also carried (a load-time
+        # refusal and its runtime belt-and-braces; `_connack_failed` and `_suback_failed`). All
+        # three happened to hit the intended block by line order alone, which is luck, not proof.
+        # `unit_budget_mutation_check.py` hit the same defect where the WRONG block was patched.
+        # `sim/tests/test_mutation_tables.py` now refuses a non-unique anchor for every table in
+        # the fast tier; this is the same refusal at the point of use, so an operator running one
+        # table by hand is told why rather than reading a `caught` that means nothing.
+        hits = src.count(old)
+        if hits == 0:
             print(f"  NO-OP       {name}  (anchor not found)"); noop += 1; continue
+        if hits > 1:
+            print(f"  AMBIGUOUS   {name}  (anchor matches {hits} places; "
+                  f"it would mutate whichever comes first)"); noop += 1; continue
         backup = src
         path.write_text(src.replace(old, new, 1))
         try:
