@@ -139,6 +139,14 @@ def encode(module_id: str, content_id: Optional[str] = None) -> str:
     Here rather than in the (unbuilt) sheet generator so that the printing side can never
     emit a payload the reading side refuses: an id outside the catalog raises instead of
     producing paper nothing will act on.
+
+    **This function has a twin**, `moxieQR.encodeCard` in `sim/web/qr.js`, because a phone
+    loading the static site has no Python. Two generators for one payload is exactly the
+    silent-drift shape `sim/test_qr.mjs` was written for, so the twin is pinned there: all
+    24 ids compared byte for byte against this function, each browser-built string decoded
+    by the real `decode` below, and five refusals refused *after* crossing the boundary.
+    The asymmetry that guard exists to catch: the catalog above is **derived**, the browser's
+    is **transcribed**. Neither side is the authority on what a card may do — `decode` is.
     """
     if not is_launchable(module_id):
         raise ValueError(f"{module_id!r} is not a launchable module id")
