@@ -1,23 +1,20 @@
-# Dependencies for the local one-shot runner (`sim/tests/run.sh`).
+# The FULL test list: everything the pytest suite needs, plus the browser driver.
 #
-# This list MUST cover everything CI's SIL job installs, or a local run silently
-# under-provisions and tests `importorskip` themselves away — a skip that reads as
-# coverage, which is worse than a failure. That is not hypothetical: this file listed
-# only pytest + playwright while the suite needs paho-mqtt to import `virtual_moxie`,
-# jinja2 for the content renderer and its sandbox-escape probes, and pyyaml for the
-# workflow guards. `sim/tests/test_ci_workflows.py` now fails if CI installs a package
-# this file omits.
-pytest>=8
+# This is what `sim/tests/run.sh` provisions its venv from, what an agent's venv should be
+# built from, and what the fast tier's whole-suite step installs (`sim/ci/ci.yml`'s
+# "SIL + static-site pytest/Playwright suite" — the one step that runs `pytest sim/tests`
+# with NO `-k` selector, so it collects every file on disk).
+#
+# It is deliberately two lines: the packages themselves are declared ONCE, next door in
+# `requirements-hermetic.txt`, which is what the two `-k "not test_sil and not test_docs"`
+# runs install. Those runs deselect every browser-driving test, so a ~35 MB playwright
+# wheel in them would be paid for and never used — that difference, and only that
+# difference, is why there are two files rather than one.
+# `sim/tests/test_ci_workflows.py::test_the_full_test_list_is_the_hermetic_list_plus_a_browser`
+# asserts the relationship, so the two can never quietly diverge into two lists.
+-r requirements-hermetic.txt
+
+# The browser driver. `conftest.py` skips the whole browser family cleanly when this is
+# absent AND when it is present without a Chromium, so it is safe either way — but a local
+# run without it silently loses every static-site assertion.
 playwright>=1.40
-
-# Imported by the suite itself (mirrors sim/ci/ci.yml's SIL job).
-paho-mqtt>=2.0        # sim/virtual_moxie.py sys.exit()s without it
-openai                # the gateway client seam
-jinja2                # moxie_sdk.content.render + the sandbox tests
-pyyaml                # the CI-workflow parity guards read the YAML
-httpx                 # the console round-trip tests
-
-# Local-only extra, deliberately NOT in CI's fast tier: the speech/tone guard that
-# tells a real voice from a beep. Without it the live-gateway turn test skips for a
-# reason that has nothing to do with credentials.
-numpy

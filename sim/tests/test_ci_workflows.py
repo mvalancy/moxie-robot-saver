@@ -29,6 +29,7 @@ absent (both venv shapes install it; the fast tier installs it too).
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -141,8 +142,16 @@ def test_the_fast_tier_has_no_path_filter_and_no_cancelling_concurrency(fast):
 def test_the_fast_tier_runs_the_whole_pytest_suite(fast):
     """Playbook rule 9: the fast tier runs the WHOLE `sim/tests` suite with the fast
     tier's deps — a `-k`/`--ignore` here would hide exactly the kind of failure this
-    file was written about."""
-    runs = [s.get("run", "") for job in fast["jobs"].values() for s in _steps(job)]
+    file was written about.
+
+    Reads the COMMANDS, not the whole `run:` block. It used to read the block, and on
+    2026-09-05 the whole-suite step grew a comment explaining that it deliberately runs
+    with no selector — the phrase contains the very token this guard searches for, so a
+    comment describing the guaranteed behaviour broke the guarantee. Playbook rule 17, in
+    the file that documents rule 17's first instance: the guard was wrong, not the comment.
+    """
+    runs = [_uncommented(s.get("run", ""))
+            for job in fast["jobs"].values() for s in _steps(job)]
     pytest_runs = [r for r in runs if "pytest sim/tests" in r]
     assert pytest_runs, "the fast tier no longer runs the pytest suite at all"
     whole = [r for r in pytest_runs if " -k " not in r and "--ignore" not in r]
@@ -339,103 +348,299 @@ def test_the_only_event_conditionals_in_the_deep_tier_are_the_dispatch_only_live
 
 
 # --------------------------------------------------------------------------- #
-# Tier dependency parity — a test that CI never RUNS is not a test
+# ONE dependency declaration, and the guards that keep it the only one
 # --------------------------------------------------------------------------- #
-#: Everything the hermetic suite needs in order to actually execute, rather than to
-#: `importorskip` past itself. Found the hard way on 2026-09-02: neither tier installed
-#: fastapi/httpx, so all 55 `test_console_roundtrip.py` tests — the acceptance tests for
-#: DoD criterion 3, the parent console's config/telemetry/safety/memory round trips —
-#: skipped in CI on every run since they were written. `pyyaml` was likewise missing
-#: from the deep tier, which silently skipped the compose parity guards (PR #34).
+#: The single place a package the pytest suite needs is named, and the same list plus the
+#: browser driver. Read either file's header for the full post-mortem; the short version is
+#: that this list used to be hand-written in FIVE workflow steps, no two of them the same,
+#: and every difference was drift rather than a decision.
+HERMETIC_REQS = os.path.join("sim", "tests", "requirements-hermetic.txt")
+FULL_REQS = os.path.join("sim", "tests", "requirements.txt")
+
+#: Import name → distribution name, for the handful where they differ. Everything else is
+#: assumed to be its own distribution, which is true for the rest of what the suite imports.
+MODULE_TO_DISTRIBUTION = {
+    "paho": "paho-mqtt",
+    "yaml": "pyyaml",
+    "google": "protobuf",
+    "faster_whisper": "faster-whisper",
+    "piper": "piper-tts",
+}
+
+#: Modules the suite imports that must NOT be in the test list — each a decision, each with
+#: its reason here, because an unexplained exception is how the coverage guard below would
+#: quietly stop covering anything.
 #:
-#: `-r server/requirements.txt` rather than a hand-copied `fastapi pynacl …` list: the
-#: console's deps are declared once, in the console's own file, so this cannot drift.
-HERMETIC_TEST_DEPS = (
-    "pytest",
-    "openai",                      # LLMApp's injected-client seam still imports it
-    "jinja2",                      # content-module templates
-    "pyyaml",                      # compose parity guards + this file
-    "httpx",                       # fastapi's TestClient
-    "-r server/requirements.txt",  # fastapi + pynacl: the console app itself
-)
-
-#: Which file runs the hermetic suite, and which job in it.
-HERMETIC_JOBS = ((FAST, "sil"), ("ci-deep.yml", "hil-sim"))
+#: `piper-tts` and `faster-whisper` are ~2 GB of local model wheels plus two 63 MB voices;
+#: only the deep tier's opt-in `voice: true` step installs them, and the suites that need
+#: them `importorskip` at module scope and say so in their skip reason.
+DELIBERATELY_OPTIONAL = {"piper-tts", "faster-whisper"}
 
 
-def _runs_up_to_pytest(job: dict) -> str:
-    """Every `run:` block in the job up to and including the first hermetic pytest —
-    which is where its deps must have been installed."""
-    seen = []
-    for step in _steps(job):
-        run = step.get("run") or ""
-        seen.append(run)
-        if "pytest sim/tests" in run and " -k " in run:
-            return "\n".join(seen)
-    return "\n".join(seen)
+def _requirements(rel_path: str) -> set:
+    """Distribution names a requirements file declares, following `-r` transitively.
+
+    `-r` is resolved relative to the referring file, exactly as pip does, so
+    `sim/tests/requirements-hermetic.txt` can point at `../../mqtt/requirements.txt` and
+    the appliance's own dependencies stay owned by the appliance. Version specifiers,
+    extras and environment markers are stripped: this answers "is this package declared",
+    not "at which version".
+    """
+    out, stack, seen = set(), [os.path.join(REPO, rel_path)], set()
+    while stack:
+        path = stack.pop()
+        real = os.path.realpath(path)
+        if real in seen:
+            continue
+        seen.add(real)
+        assert os.path.exists(path), (
+            f"a requirements file references {path}, which does not exist")
+        for raw in open(path):
+            line = raw.split("#", 1)[0].strip()
+            if not line:
+                continue
+            if line.startswith(("-r", "--requirement")):
+                stack.append(os.path.join(os.path.dirname(path), line.split(None, 1)[1]))
+                continue
+            name = re.split(r"[<>=!~\[;\s]", line, maxsplit=1)[0].strip().lower()
+            if name:
+                out.add(name)
+    return out
 
 
-@pytest.mark.parametrize("workflow,job_id", HERMETIC_JOBS)
-@pytest.mark.parametrize("dep", HERMETIC_TEST_DEPS)
-def test_both_tiers_install_the_same_hermetic_test_deps(workflow, job_id, dep):
-    """Playbook rule 9, as an assertion: the tiers' hermetic test deps stay in parity.
-    A dep only one tier installs is a tier drift that shows up as a red push rather than
-    as a caught bug — or, worse, as a suite that quietly skips itself."""
-    job = _load(os.path.join(TEMPLATES, workflow))["jobs"][job_id]
-    text = _runs_up_to_pytest(job)
-    assert dep in text, (
-        f"{workflow} job `{job_id}` runs the hermetic suite without installing {dep!r}; "
-        "the tests that need it will importorskip instead of running")
+def _uncommented(run: str) -> str:
+    """A `run:` block with its shell comments removed.
+
+    Playbook rule 17 — a guard must assert over code, not over the whole file. These
+    workflow steps explain at length what they no longer do ("`pip install protobuf` used
+    to be the first line of this step"), so a duplicate-declaration guard that cannot tell
+    a comment from a command would fire on the very comment that documents the fix. PR #52
+    and the `functions/` json-import guard are the same lesson.
+    """
+    out = []
+    for line in (run or "").splitlines():
+        stripped = line.split(" #", 1)[0]
+        if stripped.lstrip().startswith("#"):
+            continue
+        out.append(stripped)
+    return "\n".join(out)
+
+
+def _pip_tokens(run: str) -> set:
+    """Package names a `run:` block's `pip install` lines name, comments excluded."""
+    names = set()
+    for line in _uncommented(run).splitlines():
+        if "pip install" not in line:
+            continue
+        for token in line.split():
+            token = token.strip('"\'\\')
+            if not token or token.startswith("-") or token in ("pip", "install",
+                                                             "python", "python3", "-m"):
+                continue
+            if token.endswith(".txt") or "/" in token:
+                continue
+            names.add(re.split(r"[<>=!~\[]", token, maxsplit=1)[0].strip().lower())
+    return names
+
+
+def _jobs_running_the_suite(workflow: str):
+    """(job_id, steps, index-of-first-pytest) for every job of the tier that runs pytest.
+
+    DISCOVERED rather than listed. This used to be a two-entry `HERMETIC_JOBS` constant,
+    which meant a third job that ran the suite — or a job renamed — was covered by nothing,
+    the same "the guard silently stopped applying" shape as the browser-suite split.
+    """
+    doc = _load(os.path.join(TEMPLATES, workflow))
+    for job_id, job in doc["jobs"].items():
+        steps = _steps(job)
+        at = next((i for i, s in enumerate(steps)
+                   if "pytest sim/tests" in _uncommented(s.get("run") or "")), None)
+        if at is not None:
+            yield job_id, steps, at
+
+
+@pytest.mark.parametrize("workflow", TIERS)
+def test_every_job_that_runs_the_pytest_suite_installs_the_declared_test_list(workflow):
+    """Playbook rule 9, but enforced on the DECLARATION rather than on a copy of it: a job
+    that runs `pytest sim/tests` must have installed the one test list before it. Whichever
+    packages that list names then arrive in every tier at once, and a tier can no longer
+    have "its own" deps to be missing."""
+    for job_id, steps, at in _jobs_running_the_suite(workflow):
+        before = "\n".join(_uncommented(s.get("run") or "") for s in steps[:at + 1])
+        assert HERMETIC_REQS in before or FULL_REQS in before, (
+            f"{workflow} job `{job_id}` runs the pytest suite without installing "
+            f"{HERMETIC_REQS} (or {FULL_REQS}) first, so its dependencies are whatever "
+            f"that job happens to have — which is how five different hand-written lists "
+            f"came about:\n{before}")
+
+
+def test_some_job_actually_runs_the_suite_so_the_guard_above_is_not_vacuous():
+    """A parametrized guard over a discovered set passes trivially when the set is empty,
+    and "the discovery quietly returned nothing" is this repo's most common guard failure.
+    So: the fast tier's `sil` and the deep tier's `hil-sim` must both be found."""
+    found = {(w, j) for w in TIERS for j, _, _ in _jobs_running_the_suite(w)}
+    assert (FAST, "sil") in found, found
+    assert ("ci-deep.yml", "hil-sim") in found, found
+
+
+@pytest.mark.parametrize("workflow", TIERS)
+def test_no_job_redeclares_a_package_the_test_list_owns(workflow):
+    """"Declared once" as an assertion. Once a job has installed the test list, no later
+    step in it may `pip install` a package that list already names.
+
+    Three lines died to this when it was written, and each had cost something: `paho-mqtt`
+    in the fast tier's broker step, `protobuf` before the QR-parity step, and `numpy` in
+    BOTH of the deep tier's live steps — the last being why the hermetic tiers never
+    noticed they lacked it, since the only jobs that exercised the numpy tests installed it
+    by hand a second time.
+    """
+    owned = _requirements(FULL_REQS)
+    for job_id, steps, _ in _jobs_running_the_suite(workflow):
+        installed_at = next(
+            (i for i, s in enumerate(steps)
+             if HERMETIC_REQS in _uncommented(s.get("run") or "")
+             or FULL_REQS in _uncommented(s.get("run") or "")), None)
+        if installed_at is None:
+            continue                     # the guard above is the one that fails for this
+        for i, step in enumerate(steps[installed_at:], start=installed_at):
+            duplicates = _pip_tokens(step.get("run") or "") & owned
+            assert not duplicates, (
+                f"{workflow} job `{job_id}` step #{i + 1} "
+                f"({step.get('name', '?')}) re-installs {sorted(duplicates)}, which "
+                f"{FULL_REQS} already declares. Two declarations of a dependency are two "
+                f"chances to disagree; delete the line and let the list own it.")
+
+
+def test_the_full_test_list_is_the_hermetic_list_plus_a_browser():
+    """The two files exist for exactly one difference — the ~35 MB playwright wheel, which
+    the `-k "not test_sil and not test_docs"` runs deselect every user of. If they ever
+    differ by anything else they have become two lists again, which is the whole defect."""
+    hermetic, full = _requirements(HERMETIC_REQS), _requirements(FULL_REQS)
+    assert hermetic <= full, sorted(hermetic - full)
+    assert full - hermetic == {"playwright"}, (
+        f"{FULL_REQS} and {HERMETIC_REQS} now differ by more than the browser driver: "
+        f"{sorted(full - hermetic)}. Move the package into the hermetic list (both tiers "
+        f"need it) or say in this guard why the browser tier alone does.")
+
+
+def _third_party_modules_the_suite_imports() -> dict:
+    """{distribution: [files]} for every non-stdlib, non-local module `sim/tests` imports.
+
+    EVERY import, not only module-scope ones, and every `pytest.importorskip` name. That is
+    the point: `numpy` was invisible to a module-scope-only reading of these files because
+    `helpers_audio.py` imported it inside five FUNCTIONS, so the suite needed a package that
+    no test file mentioned. A `getattr`-based import would still escape this, which is worth
+    saying rather than pretending otherwise.
+
+    "Local" is any module name that matches a `.py` file or a directory containing one
+    anywhere in the repo — coarse, but the repo has no directory named after a package it
+    depends on, and the failure mode is a missed check rather than a false alarm.
+    """
+    local, tests = set(), os.path.join(REPO, "sim", "tests")
+    skip = {".git", ".venv", "node_modules", "__pycache__", "work"}
+    for root, dirs, files in os.walk(REPO):
+        dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".venv")]
+        local.update(f[:-3] for f in files if f.endswith(".py"))
+        local.update(d for d in dirs
+                     if any(x.endswith(".py") for x in os.listdir(os.path.join(root, d))))
+    found = {}
+    for name in sorted(os.listdir(tests)):
+        if not name.endswith(".py"):
+            continue
+        tree = ast.parse(open(os.path.join(tests, name)).read())
+        modules = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                modules.add(node.module.split(".")[0])
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                  and node.func.attr == "importorskip" and node.args
+                  and isinstance(node.args[0], ast.Constant)
+                  and isinstance(node.args[0].value, str)):
+                modules.add(node.args[0].value.split(".")[0])
+        for module in modules:
+            if module in sys.stdlib_module_names or module in local:
+                continue
+            dist = MODULE_TO_DISTRIBUTION.get(module, module).lower()
+            found.setdefault(dist, []).append(name)
+    return found
+
+
+def test_the_import_scan_found_the_packages_we_know_the_suite_needs():
+    """Anti-vacuity for the guard below: a scan that came back empty would pass it. These
+    five are certainties — `numpy` deliberately among them, since it is reachable only
+    through a helper's in-function import and is the reason this scan exists."""
+    found = _third_party_modules_the_suite_imports()
+    for known in ("pytest", "numpy", "pyyaml", "paho-mqtt", "fastapi"):
+        assert known in found, (known, sorted(found))
+
+
+def test_the_declared_test_list_covers_every_package_the_suite_imports():
+    """The general form of every dependency defect this repo has had: a package a
+    collectible test needs, absent from the tier that collects it, turning a real assertion
+    into an `importorskip` that reads as a pass — or, for a *helper's* in-function import,
+    into a hard `ModuleNotFoundError` in the middle of a live turn.
+
+    With the list declared once and installed by every pytest job (the two guards above),
+    this closes the loop: whatever the suite imports must be IN that list, or be a named
+    exception with a reason.
+    """
+    declared = _requirements(FULL_REQS)
+    missing = {dist: sorted(files)
+               for dist, files in _third_party_modules_the_suite_imports().items()
+               if dist not in declared and dist not in DELIBERATELY_OPTIONAL}
+    assert not missing, (
+        f"the suite imports packages that {FULL_REQS} does not declare, so every tier "
+        f"runs those tests under-provisioned: {missing}. Add them to "
+        f"{HERMETIC_REQS} (both tiers need it) or to DELIBERATELY_OPTIONAL with the "
+        f"reason.")
 
 
 def test_the_console_round_trip_suite_can_actually_run_in_ci():
     """The concrete consequence, spelled out so nobody re-derives it: DoD criterion 3 is
     proven by `test_console_roundtrip.py`, and that file opens with
-    `importorskip("fastapi")`. If CI does not install the console's own requirements, the
-    whole file reports as one green skip."""
+    `importorskip("fastapi")`. If the test list does not carry the console's own
+    requirements, the whole file reports as one green skip — which it did, on every run
+    from the day it was written until PR #47."""
     gate = open(os.path.join(os.path.dirname(__file__),
                              "test_console_roundtrip.py")).read()
     assert 'importorskip("fastapi"' in gate, (
         "test_console_roundtrip.py no longer gates on fastapi — update this guard")
-    for workflow, job_id in HERMETIC_JOBS:
-        job = _load(os.path.join(TEMPLATES, workflow))["jobs"][job_id]
-        assert "server/requirements.txt" in _runs_up_to_pytest(job), workflow
+    declared = _requirements(HERMETIC_REQS)
+    for dep in ("fastapi", "httpx"):
+        assert dep in declared, (dep, sorted(declared))
 
 
-# --------------------------------------------------------------------------- #
-# …and the LOCAL runner must not under-provision either.
-# --------------------------------------------------------------------------- #
+def test_the_test_list_carries_protobuf_for_the_compiled_proto_oracle():
+    """Specifically: the failure this whole file was written about had `protobuf` present
+    (installed by hand for the QR-parity step) and no compiled protos. A tier without
+    protobuf `importorskip`s past the very test that was red — so it is in the list, which
+    means every tier has it rather than only the one job that named it."""
+    assert "protobuf" in _requirements(HERMETIC_REQS)
+
+
 def test_the_local_runner_installs_everything_ci_does():
-    """`sim/tests/run.sh` provisions its venv from `sim/tests/requirements.txt`. If that
-    file lists less than CI installs, a local run silently under-provisions and the tests
-    that need the missing package `importorskip` themselves away — a skip that reads as
-    coverage, which is worse than a failure.
+    """`sim/tests/run.sh` provisions its venv from `sim/tests/requirements.txt` — the same
+    file the fast tier's whole-suite step installs. That is now true by construction rather
+    than by a comparison of two hand-written lists, so what is left to assert is that run.sh
+    still installs from the file at all, and that it notices when EITHER file changes.
 
-    This is not hypothetical. The file listed only pytest + playwright while the suite
-    needs `paho-mqtt` (without it `sim/virtual_moxie.py` calls `sys.exit` at import, so
-    the client-parity test fails), `jinja2` (the content renderer and its sandbox-escape
-    probes) and `pyyaml` (the guards in this very file). Found 2026-09-03 when the
-    live-gateway turn test skipped for a reason that had nothing to do with credentials.
+    The staleness half is not hypothetical in the other direction either: the stamp used to
+    hash `requirements.txt` alone, and moving the packages into `requirements-hermetic.txt`
+    would have left every existing venv stale while the stamp still matched — the exact
+    under-provisioned venv the stamp exists to prevent.
     """
-    req = open(os.path.join(os.path.dirname(__file__), "requirements.txt")).read()
-    listed = {
-        line.split("#")[0].strip().split(">")[0].split("=")[0].strip().lower()
-        for line in req.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    }
-    # HERMETIC_TEST_DEPS is what BOTH tiers install, but the SIL job additionally
-    # installs paho-mqtt — and that is the one whose absence bites hardest, because
-    # `sim/virtual_moxie.py` calls sys.exit() at import rather than raising ImportError,
-    # so the failure is a hard error in an unrelated-looking test. Check it explicitly.
-    required = [d for d in HERMETIC_TEST_DEPS if not d.startswith("-r")]
-    required.append("paho-mqtt")
-    missing = [d for d in required if d.lower() not in listed]
-    assert not missing, (
-        "sim/tests/requirements.txt omits what CI installs: "
-        + ", ".join(missing)
-        + ". run.sh builds the local venv from that file, so the suite would run "
-          "under-provisioned and skip instead of fail."
-    )
+    run_sh = open(os.path.join(os.path.dirname(__file__), "run.sh")).read()
+    assert "-r \"$here/requirements.txt\"" in run_sh, (
+        "run.sh no longer provisions its venv from requirements.txt")
+    for name in ("requirements.txt", "requirements-hermetic.txt"):
+        assert name in run_sh.split("sha256sum", 1)[1].split("\n")[0] or \
+            name in run_sh, f"run.sh does not hash {name}; a change to it leaves venvs stale"
+    stamp = [l for l in run_sh.splitlines() if "sha256sum" in l]
+    assert stamp and "requirements-hermetic.txt" in "\n".join(stamp), (
+        "run.sh's venv stamp does not cover requirements-hermetic.txt, where the packages "
+        f"actually live:\n{stamp}")
 
 
 def test_the_local_runner_reinstalls_when_requirements_change():
@@ -446,6 +651,31 @@ def test_the_local_runner_reinstalls_when_requirements_change():
     assert "requirements.txt" in run_sh and "sha256sum" in run_sh, (
         "run.sh no longer re-installs when requirements.txt changes; a stale venv will "
         "under-provision the suite again")
+
+
+def test_the_agent_brief_protocol_points_at_the_declared_test_list():
+    """The drift escaped the repo. `docs/architecture/orchestration-plan.md` is the protocol
+    every agent brief is copied from, and the venv recipe pasted out of it hand-listed
+    packages — omitting `pyyaml`, `numpy` and `-r server/requirements.txt`, so agent after
+    agent started with a red suite and two silently-skipped guards, for no reason and at a
+    measured cost of two phantom test failures in one session.
+
+    Only the protocol half of the plan is checked, not the append-only status log: history
+    is allowed to quote what it did at the time.
+    """
+    plan = open(os.path.join(REPO, "docs", "architecture", "orchestration-plan.md")).read()
+    protocol = plan.split("## Status log", 1)[0]
+    assert "sim/tests/requirements.txt" in protocol, (
+        "the orchestration plan's agent protocol does not name sim/tests/requirements.txt; "
+        "a brief written from it will hand-list packages and omit one, which is exactly "
+        "what happened on 2026-09-05")
+    offenders = [line.strip() for line in protocol.splitlines()
+                 if "pip install" in line and "pytest" in line
+                 and "sim/tests/requirements" not in line]
+    assert not offenders, (
+        "the plan's protocol hand-lists test dependencies instead of pointing at the one "
+        f"declaration: {offenders}")
+
 
 # --------------------------------------------------------------------------- #
 # Every live suite must be dispatched by SOME tier.
