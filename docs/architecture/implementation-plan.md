@@ -98,6 +98,31 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **the hosted microphone: the ROUTE now hears real speech; no human has ever spoken into it.**
+  Until 2026-09-05 every test of [`functions/api/transcribe.js`](../../functions/api/transcribe.js) —
+  the route the live page's microphone posts to — used a stubbed `fetch` or a 440 Hz tone.
+  [`sim/test_demo_ears.mjs`](../../sim/test_demo_ears.mjs) proves the caps, the magic-number sniff and
+  the no-leak sweep with no key; [`sim/test_mic_spend.mjs`](../../sim/test_mic_spend.mjs) drives the
+  real page in Chrome but answers `/api/*` at the browser. Every one of those assertions would still
+  pass if the gateway transcribed everything as "banana", and
+  [`test_live_gateway_stt.py`](../../sim/tests/test_live_gateway_stt.py)'s overlap-1.00 proof goes
+  through the **Python** seam, never through the route.
+  [`sim/tests/test_live_hosted_ears.py`](../../sim/tests/test_live_hosted_ears.py) closes that half:
+  the gateway voice speaks a fixed 13-word line, it is resampled to the 16 kHz mono WAV `mic.js`
+  encodes, and it goes through **the shipped route** (`onRequestPost`, real gateway, exactly one
+  upstream call counted by `_lib/limits.js`) **and through the live deployment** — both returned the
+  sentence verbatim at **word overlap 1.00**, and the same transcript scores **0.07** against a decoy
+  sentence, a control that runs in CI so the 0.7 floor can never be met by a route that returns
+  anything at all. Two findings came free with it, both in the
+  [live-demo ledger](backlog/live-sim-demo.md) (rows 29-30): **`DEMO_CHAT_MODEL` is required for the
+  EARS to exist** (`configured` gates `ears`, so a transcriber with no chat model answers
+  `gateway_not_configured`), and **a non-browser client never reaches the Function on the production
+  domain** — Cloudflare's browser-integrity check answers `error_code: 1010` as *JSON problem details*,
+  which parsed as our envelope reads `403 reason=None`. **What remains is the human half, untouched:**
+  nobody has ever spoken into the microphone on the hosted site, so `getUserMedia`, the permission
+  prompt, `mic.js::encodeWav` against a real device's 48 kHz, a child's voice in a real room, and the
+  15-second hard stop against a real recorder are all still unproven. This narrows the gap; it does not
+  close it, and nothing in the status table above should be read as if it did.
 - **The fix that made the browser suites run put them on the wrong runner — split 2026-09-04.**
   PR #120 closed a real hole: eleven suites import [`browser_harness.mjs`](../../sim/browser_harness.mjs),
   no workflow installed `puppeteer`, `loadPuppeteer()` fell back to scanning `~/Code/*/node_modules` (a
