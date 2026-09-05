@@ -55,25 +55,24 @@ def run_row(row, *, allow_p1=False):
 # T1–T6 — the six §8 hooks reproduce their goldens byte for byte
 # --------------------------------------------------------------------------- #
 
-#: What is still missing, per row, now that `act` is real. Named precisely, because a
-#: stale `xfail` reason is a lie the suite tells every time it runs.
+#: What is still missing, per row. Named precisely, because a stale `xfail` reason is a
+#: lie the suite tells every time it runs.
 #:
 #: * **G5** needs `brain` — one model call per turn from inside a pack, with the budget
 #:   brief §5.1 requires before a pack may spend money and latency inside the 6 s turn.
-#: * **G6** needs `subscribe`. Its *matched* rule emits only a `say`, but the pack
-#:   **declares** `subscribe` and declared-equals-used is a load condition (§5, X10), so
-#:   the row cannot run until the capability is honoured. The effect has no host: nothing
-#:   joins `Volley.subscriptions` to `wire.build_chat_response(subscribe_events=…)` — the
-#:   supervisor fills `EventSubscription` from its own vision bookkeeping instead
-#:   (`moxie_runtime.py::_publish_chat`).
 #:
-#: `act` is **not** on this list any more (2026-09-04): brief S5 is closed for it, and
-#: G2/G3 below are plain tests.
+#: Two capabilities have left this dict, and the pattern both times was the same: the
+#: capability was not missing *grammar*, it was missing a **host** — somewhere for its
+#: effect to go.
+#:
+#: * `act` (2026-09-04) — brief S5. `G2`/`G3` are plain tests below.
+#: * `subscribe` (2026-09-05) — `Volley.subscriptions` was assigned and read by nothing.
+#:   `content_app.subscriptions_of` now bounds it and puts it on `Reply.subscribe`, and
+#:   `moxie_runtime._publish_chat` **merges** it into the supervisor's own vision
+#:   subscription (never over it) before it reaches
+#:   `RemoteChatAction.EventSubscription.active[]`. `G6` is a plain test below.
 P1_REASON = {
     "G5": "needs the `brain` capability and its one-call-per-turn budget (brief §5.1)",
-    "G6": ("needs `subscribe`: nothing joins Volley.subscriptions to "
-           "RemoteChatAction.EventSubscription yet, so the capability could not do "
-           "anything and is still refused at load"),
 }
 
 
@@ -105,8 +104,9 @@ def test_t1_t6_conformance_p1_grammar_is_already_valid(name):
 
     §8's point worth checking early: these four were gated by *capability*, not by
     expressiveness. Their grammar was accepted by the validator all along, which is why
-    two of them turned green below the moment `act` was plumbed rather than needing to be
-    written that day.
+    three of them turned green below the moment their effect got a host — G2/G3 when
+    `act` was plumbed, G6 when `subscribe` was — rather than needing to be written that
+    day. Only G5 is still waiting, and only on `brain`.
     """
     row = ROWS[name]
     assert E.validate(row["ast"], allow_p1=True) == []
@@ -135,13 +135,41 @@ def test_t1_t6_conformance_act(name):
     assert r.handled == row["expected_handled"]
 
 
-@pytest.mark.parametrize("name", ["G5", "G6"])
+def test_t6_conformance_subscribe():
+    """T6 — `MoxieGo`, whole. ✅ 2026-09-05, and the third of the four rows to flip.
+
+    This was `xfail(strict=True)` for one reason only: the pack **declares** `subscribe`,
+    declared-equals-used is a load condition (§5, X10), and `subscribe` was refused at
+    load because `Volley.subscriptions` was assigned by `update_subscriptions` and read by
+    **nothing**. The grammar was accepted all along (the test above proves that), so the
+    fix was a host, not a language: `content_app.subscriptions_of` →`Reply.subscribe` →
+    `moxie_runtime._publish_chat`'s merge → `EventSubscription.active[]`.
+
+    The golden did **not** move, and that is worth stating rather than assuming: the
+    facts in this row make `speech == "eb-qr-event"` with a `GO`-prefixed value, so the
+    rule that matches is the *middle* one — a `say` and a `handled`, no `subscribe`. The
+    two re-arming rules that do subscribe are the first and third. `test_ext_subscribe.py`
+    is where the effect itself is driven; the generator was re-run and
+    `ext_conformance.json` came back byte-identical.
+    """
+    row = ROWS["G6"]
+    r = run_row(row)
+    assert r.ok, r.reason
+    assert r.effects == row["expected_effects"], r.effects
+    assert r.handled == row["expected_handled"]
+    # The declaration is the half that used to fail: a pack may now *say* it wants this.
+    assert "subscribe" in row["ast"]["capabilities"]
+    assert E.validate(row["ast"], grants=set(row["grants"])) == [], \
+        "no `allow_p1` door: this must validate under the real gate now"
+
+
+@pytest.mark.parametrize("name", ["G5"])
 def test_t1_t6_conformance_still_p1(name, request):
-    """T5/T6 — still `xfail`, and the reason names **only** what is actually missing.
+    """T5 — still `xfail`, and the reason names **only** what is actually missing.
 
     `strict=True` on purpose: the day someone makes one of these grantable and forgets to
     remove the marker, an XPASS fails the suite and says so. That is exactly how G2/G3
-    were caught the day `act` landed.
+    were caught the day `act` landed, and how G6 was caught the day `subscribe` did.
     """
     request.node.add_marker(pytest.mark.xfail(strict=True, reason=P1_REASON[name]))
     row = ROWS[name]
