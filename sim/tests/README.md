@@ -254,8 +254,9 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
 - **`test_ext.py`** — T1–T18, the other two questions: *does the language express what content
   authors actually wrote?* and *does a broken one leave the child with a working robot?* All six
   OpenMoxie hooks reproduce their goldens from
-  [`data/ext_conformance.json`](data/README.md) byte for byte (four `xfail(strict)` until the
-  `RemoteChatAction` wire lands, with their grammar asserted valid **today**); 100 runs at a fixed
+  [`data/ext_conformance.json`](data/README.md) byte for byte (**G5 alone** is still `xfail(strict)`,
+  waiting on `brain`; G2/G3 flipped when `act` got a host in 2026-09-04 and G6 when `subscribe` got
+  one in 2026-09-05, each time with the strict marker reporting the XPASS before anybody looked); 100 runs at a fixed
   injected clock and seed give one answer, and moving the clock moves it. A poisoned `on: global`
   falls through to the conversation and a poisoned `turn.before` lets the model answer — the child
   hears no error text — nothing is half-written, and three breaches quarantine with **one**
@@ -268,6 +269,20 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   answers end to end **with no model call** — while an imported look-alike carrying a *different*
   program gets only the four default grants and falls through, which is the point of anchoring the
   shipped grant to the program's bytes rather than to its key.
+- **`test_ext_act.py`** / **`test_ext_subscribe.py`** — the two halves of `MoxieGo`'s opening move,
+  each proven end to end: an extension that makes the robot **do** a thing, and one that makes it
+  **perceive** a thing. `test_ext.py` owns the effect list and `test_ext_escapes.py` the load gates;
+  these two own the middle — the chain from an effect to a `RemoteChatAction` a robot can carry out.
+  `test_ext_subscribe.py` (18 tests) exists because `Volley.subscriptions` was assigned by
+  `update_subscriptions` and **read by nothing**, so the capability was refused at load for having no
+  host. Its two load-bearing assertions: a pack's event list can never *remove* what the runtime put
+  in the set (asserted as the conjunction *"the latch says sent"* **and** *"what it claims was sent
+  really was"*, which is the pair a pack-wins merge breaks silently), and the merged list is read back
+  off the **published** `commands/remote_chat` JSON rather than any in-memory structure. One test pins
+  a gap rather than a feature: a subscribed event still never reaches the pack that asked for it,
+  because `_on_remote_chat` diverts perception events before any app sees them. Companion:
+  [`../tools/subscribe_mutation_check.py`](../tools/README.md) — 16 guards, 16/16 caught, and it is
+  what caught the wire assertion passing for the wrong reason.
 - **`test_render_sandbox_parity.py`** — the *other* half of the content-renderer security
   fix. `test_render_sandbox.py` proves eight escape probes come back inert; that says
   nothing about whether `SandboxedEnvironment` broke a legitimate prompt, and the failure

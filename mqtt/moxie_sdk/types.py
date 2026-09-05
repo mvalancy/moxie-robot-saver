@@ -112,6 +112,16 @@ class Reply:
     actions: list = field(default_factory=list)   # list[Action]
     end_turn: bool = False               # True → Moxie stops listening after this
     result_code: ResultCode = ResultCode.SUCCESS  # the RemoteChat outcome (see ResultCode)
+    subscribe: list = field(default_factory=list)
+    """Robot events this reply ASKS the robot to start pushing us — the app's half of
+    `RemoteChatAction.EventSubscription.active[]` (remote-chat-protocol.md §RemoteChatAction).
+
+    This is a **request, not the final list.** `moxie_runtime._publish_chat` merges it
+    *into* the supervisor's own vision subscription and never the other way round, so an
+    app (or a sandboxed content pack, which is where these come from — `content_app
+    .subscriptions_of`) can add a perception it needs and cannot switch off the events
+    presence and greeting depend on. Empty for every app that does not ask, which is why
+    a reply that never sets it is byte-identical on the wire to what we sent before."""
     # ---- scored output (docs/architecture/ai-seam.md §② "Response out") ----------
     # `RemoteChatOutput` is not just text: it is a fully-scored line. Everything below is
     # optional, and everything below is FILLED IN by the seam when the app leaves it None

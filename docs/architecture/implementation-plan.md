@@ -284,7 +284,11 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   §P0-a's rename must turn it red. And the backlog's claim that this "flips four `xfail(strict)`
   extension-conformance rows green" is **false, measured not assumed**: all four of
   `test_ext.py::test_t1_t6_conformance_p1[G2/G3/G5/G6]` still xfail, refused at *load* with
-  *"needs something this appliance cannot grant yet: `act.eb_timer_request`"* — the remaining half is
+  *"needs something this appliance cannot grant yet: `act.eb_timer_request`"*. (History, for the
+  reader arriving here later: G2/G3 flipped on 2026-09-04 when `act` got its host and G6 on 2026-09-05
+  when `subscribe` got its own, leaving G5 and `brain`. Both times the pattern was the same — the
+  capability was never missing *grammar*, it was missing somewhere for its effect to go.) The remaining
+  half is
   [`ext.py`](../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` / `P1_CAPABILITIES` gate plus
   `content_app._reply_from_volley` plumbing `volley.execution_actions` into an `Action` at all. The wire
   was necessary, not sufficient. **Still honestly missing:** no physical robot has ever been sent one of
@@ -352,7 +356,15 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   same commit. `[G5]` and `[G6]` still xfail** — G5 needs `brain`, G6 needs `subscribe` (its `act` half is
   done; nothing joins `Volley.subscriptions` to `RemoteChatAction.EventSubscription`, so the capability
   would still do nothing) — and `P1_REASON` is now a per-row dict naming exactly that, instead of one
-  stale sentence about a wire that now exists. **The bound is the security argument.**
+  stale sentence about a wire that now exists. **G6 flipped on 2026-09-05, so the golden set is now 3
+  of 4 and `P1_REASON` holds G5 alone**: `subscribe` got a host — `content_app.subscriptions_of` →
+  `Reply.subscribe` → `moxie_runtime._merge_subscriptions`, which merges a pack's events **into** the
+  supervisor's vision subscription and never over it, because a replace would silently switch off
+  presence behind a latch that already said *"subscribed"*. 18 tests in `sim/tests/test_ext_subscribe.py`
+  and 16/16 in `sim/tools/subscribe_mutation_check.py`; the conformance golden came back **byte-identical**
+  (G6's matching rule emits only a `say`). Honest hole kept: a subscribed event is diverted by
+  `_on_remote_chat` before any app sees it, so a pack can ask to perceive one and cannot yet be *woken*
+  by it. **The bound is the security argument.**
   `ext.ACTION_WORDS` is simultaneously the allowlist of nameable `function_id`s and the source of the
   sentence a parent reads, so a robot function nobody wrote English for cannot be declared, granted or
   emitted — [qr-launch-cards](backlog/qr-launch-cards.md) §P0-b's *"the catalog is a closed allowlist, and
