@@ -1019,3 +1019,25 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   when to re-take it rather than trusting it.
   Method note for whoever re-measures: `waitUntil: "networkidle2"` **never settles** on this page —
   the ambient loop keeps the network busy by design. Use `domcontentloaded` plus a settle delay.
+
+- **2026-09-06 — and the phone composer actually WORKS, which is a separate claim from being
+  visible.** The measurement above proves the controls are reachable; it does not prove a turn
+  completes, and "reachable" was never the thing a visitor cares about. Driven on the same
+  390×844 viewport against live production — tap `#speech-input`, type, tap `#speech-btn`:
+
+  | signal | result |
+  |---|---|
+  | network | `200 /api/chat` **and** `200 /api/speech` — brain *and* voice both served |
+  | console errors | **0** |
+  | transcript | grew 0 → 210 chars |
+  | reply | *"I love playing hide-and-seek and making silly faces! What do you like to play?"* |
+  | ambient loop | live underneath it — *"The Roomba downstairs reports to me. We do not talk about the Roomba."* |
+
+  So a stranger on a phone can now reach `moxie.mattvalancy.com/sim`, type, and be answered in
+  Moxie's voice with her own character. That is the owner's headline goal — *"when will Moxie Sim
+  be live with AI on our public page?"* — met on the device most visitors will actually use, and
+  it is now proven by a driven turn rather than inferred from a layout measurement.
+  **Why this is logged as two entries and not one:** the previous entry establishes *reachable* and
+  this one establishes *works*, and collapsing them would repeat the session's recurring defect —
+  a check that looks like it proves the thing and does not. A composer can be perfectly placed and
+  still be wired to nothing.
