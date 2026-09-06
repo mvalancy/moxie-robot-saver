@@ -21,6 +21,11 @@
  * and requires the collision to REAPPEAR. A layout test that only shows the fixed state is
  * green is indistinguishable from one whose selector silently matches nothing.
  *
+ * SINCE 2026-09-06 IT ALSO CARRIES THE OPENERS (block 8). Blocks 6-7 proved a visitor can
+ * REACH the message box; block 8 is about a visitor who can see it and still has nothing
+ * to say to a robot nobody introduced. Three buttons in the dock, one tap, a real turn —
+ * and a height budget that block 4 turned out to be enforcing all along.
+ *
  *   node sim/test_mobile_layout.mjs
  */
 import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable }
@@ -594,6 +599,167 @@ try {
        `teeth — …and it is 0x0, which is exactly what production measured (${broken.w}x${broken.h})`);
 
     eyes("the rail-free typed turn", page);
+    await page.close();
+  }
+
+
+  /* =====================================================================
+   * 8. THE THREE OPENERS — a first turn that costs ONE TAP and no typing.
+   *
+   * WHAT THIS BLOCK ADDS TO 6-7. Those two closed "the box is reachable". They did not
+   * close the other half of the same finding: a stranger who can now SEE the box still
+   * has to think of something to say to a robot, having been told nothing about her.
+   * `#chat-openers` — three buttons in the dock, under the log — is
+   * docs/architecture/backlog/gamify-the-public-sim.md's 🅐, verbatim: *"three tappable
+   * openers — Tell me a joke, How are you feeling?, Play a game with me."*
+   *
+   * THE DISTINCTION THIS BLOCK PINS, and the reason the feature was not already shipped:
+   * `#speech-chips` in the ENGINEERING RAIL look like these and are not these. They play
+   * PRE-CACHED SHIPPED AUDIO and send no turn at all (`sim.html`:174-178 says so in its
+   * own words). So the assertions below are about WHERE each control lives and WHAT a tap
+   * produces — never about "a chip exists somewhere on the page", which was true the
+   * whole time the openers did not exist.
+   *
+   * AND THE COST IS MEASURED, NOT WAVED AT. Three 44 px targets above the composer take
+   * vertical space an 844 px phone did not have spare, so the composer's rect is measured
+   * with them on the page, before the tap and after it, and the teeth at the end inflate
+   * them until it really does leave the fold. `inFold` is then something that has been
+   * SEEN to fail, not something assumed capable of failing.
+   *
+   * The turn here is SCRIPTED — `/api/health` answers `degraded` (see `load()`), so not
+   * one request leaves the page. "She really answered over the wire" is the claim of
+   * `sim/test_typed_turn.mjs` block 7, which asserts the opener's words in the
+   * `/api/chat` body; this block's claim is the geometric one plus "one tap, no
+   * scrolling, no drawer, and the log grew".
+   * =================================================================== */
+  {
+    const L = "iPhone 12  390x844";
+    const page = await load(390, 844);
+
+    /* ---- (a) three openers, in the DOCK, on a cold load ---- */
+    const openers = await page.evaluate(() => {
+      const box = document.getElementById("chat-openers");
+      const chips = document.getElementById("speech-chips");
+      if (!box) return { found: false, n: 0, labels: [], heights: [] };
+      const btns = [...box.querySelectorAll("button.opener")];
+      return {
+        found: true,
+        n: btns.length,
+        labels: btns.map((b) => b.textContent.replace(/\s+/g, " ").trim()),
+        heights: btns.map((b) => Math.round(b.getBoundingClientRect().height)),
+        inDock: !!box.closest("#chat-dock"),
+        inRail: !!box.closest("#panel"),
+        chipsInDock: !!(chips && chips.closest("#chat-dock")),
+        chipsInRail: !!(chips && chips.closest("#panel")),
+        boxH: Math.round(box.getBoundingClientRect().height),
+        // Rows counted from the buttons' own tops, not from a class or a computed
+        // `grid-template`: it is the LAID-OUT arrangement that costs height.
+        rows: new Set(btns.map((b) => Math.round(b.getBoundingClientRect().top))).size,
+      };
+    });
+    ok(openers.found, `${L}: #chat-openers exists at all`);
+    eq(openers.n, 3, `${L}: three openers, no more and no fewer (got ${openers.n})`);
+    eq(JSON.stringify(openers.labels),
+       JSON.stringify(["Tell me a joke", "How are you feeling?", "Play a game with me"]),
+       `${L}: …and they are the three the brief names — got ${JSON.stringify(openers.labels)}`);
+    ok(openers.inDock && !openers.inRail,
+       `${L}: they sit in #chat-dock, NOT in the engineering rail (dock=${openers.inDock} rail=${openers.inRail})`);
+    ok(openers.chipsInRail && !openers.chipsInDock,
+       `${L}: …and #speech-chips STAYED in the rail — the shipped-audio chips are a ` +
+       `different control and were not repurposed (dock=${openers.chipsInDock} rail=${openers.chipsInRail})`);
+    ok(openers.heights.length === 3 && openers.heights.every((h) => h >= 44),
+       `${L}: every opener is a 44 px touch target, like the controls beside it — ` +
+       `got ${JSON.stringify(openers.heights)}`);
+    /* ONE ROW, AND THIS IS A HEIGHT BUDGET, NOT A STYLE PREFERENCE. The dock's growth is
+     * taken out of the `1fr` stage row, so everything above the dock — `#rail-toggle`
+     * included — rides up by exactly as much as the openers cost. Measured at 375x667: at
+     * one row the handle sits at y=373; at two rows of natural-width pills it sat at
+     * y=323, inside the vertically-centred Turnstile challenge (301..366), and block 4 of
+     * this file went red because a challenged visitor could no longer open the drawer. So
+     * the row count is load-bearing and is asserted here, where the reason is written
+     * down, as well as enforced there by its consequence. */
+    ok(openers.rows === 1,
+       `${L}: the three openers share ONE row (${openers.rows} row(s), ${openers.boxH}px). ` +
+       "Two rows cost ~100px of an 844px phone, all of it taken from the stage, and it " +
+       "puts #rail-toggle inside the Turnstile challenge at 375x667 — see block 4");
+
+    for (let i = 1; i <= 3; i++)
+      reachable(L, await page.evaluate(reach, `#chat-openers .opener:nth-of-type(${i})`), `opener ${i}`);
+
+    /* ---- (b) …and the composer they sit above did NOT move out of the fold ---- */
+    reachable(L, await page.evaluate(reach, "#speech-input"), "the message box, with the openers above it");
+    reachable(L, await page.evaluate(reach, "#speech-btn"), "the send button, with the openers above it");
+    const doc = await page.evaluate(() => ({
+      sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight,
+      sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth,
+    }));
+    ok(doc.sh <= doc.ch + 1,
+       `${L}: the page still does not scroll vertically with the openers on it ` +
+       `(scrollHeight ${doc.sh} vs clientHeight ${doc.ch})`);
+    ok(doc.sw <= doc.cw + 1, `${L}: …nor horizontally (${doc.sw} vs ${doc.cw})`);
+
+    /* ---- (c) ONE TAP, and a real turn happens ----
+     * `page.tap()`, not `.click()`: it REFUSES on an obscured element, which is the
+     * strongest available form of "a thumb can actually reach this". */
+    if (openers.found) {
+      await page.tap("#chat-openers .opener:nth-of-type(1)");
+      await page.waitForFunction(
+        () => [...document.querySelectorAll("#transcript .turn")].some((r) => /\buser\b/.test(r.className)),
+        { timeout: 15000 }).catch(() => {});
+      await page.waitForSelector("#transcript .turn.moxie", { timeout: 15000 }).catch(() => {});
+    }
+    const turn = await page.evaluate(() => ({
+      rows: [...document.querySelectorAll("#transcript .turn")].map((r) => ({
+        who: r.className, msg: (r.querySelector(".msg") || r).textContent.trim() })),
+      inputValue: document.getElementById("speech-input").value,
+      expanded: document.getElementById("rail-toggle").getAttribute("aria-expanded"),
+      railDisplay: getComputedStyle(document.getElementById("rail-scroll")).display,
+      scrollY: window.scrollY,
+    }));
+    ok(turn.rows.some((r) => /\buser\b/.test(r.who) && r.msg === "Tell me a joke"),
+       `${L}: ONE TAP put the opener's words in the log as the VISITOR's turn — ` +
+       `got ${JSON.stringify(turn.rows)}`);
+    ok(turn.rows.some((r) => /\bmoxie\b/.test(r.who) && r.msg.length > 0),
+       `${L}: …and Moxie answered it — got ${JSON.stringify(turn.rows)}`);
+    eq(turn.inputValue, "",
+       `${L}: …without writing into the message box: an opener sends, it does not pre-fill ` +
+       `(a second control that can disagree with the first is the trap this dock exists to avoid)`);
+    eq(turn.expanded, "false", `${L}: THE WHOLE TURN COMPLETED WITH THE RAIL NEVER OPENED`);
+    eq(turn.railDisplay, "none", `${L}: …and the rail was display:none for all of it`);
+    eq(turn.scrollY, 0, `${L}: …and the page never scrolled (scrollY=${turn.scrollY})`);
+
+    const boxAfter = await page.evaluate(reach, "#speech-input");
+    ok(boxAfter.inFold && boxAfter.self,
+       `${L}: the composer is STILL in the fold after the turn — y=${boxAfter.top}..${boxAfter.bottom} ` +
+       `of ${boxAfter.vh}, hit ${boxAfter.hit}`);
+    /* They step aside once there is a conversation — the same `:has()` rule and the same
+     * reasoning as `#chat-cue`, and the room they give back goes to the log. */
+    const stepped = await page.evaluate(() => {
+      const box = document.getElementById("chat-openers");
+      return box ? getComputedStyle(box).display : "MISSING";
+    });
+    eq(stepped, "none",
+       `${L}: …because an opener has done its job once the log has a turn in it (got ${stepped})`);
+
+    /* ---- TEETH. Inflate the openers and require the composer to leave the fold.
+     * Without this, every `inFold` above is equally consistent with "the openers cost
+     * nothing" and with "this assertion cannot fail" — and this repo found nine checks of
+     * the second kind on 2026-09-06. The mutation is CSS only, applied to the shipped
+     * elements: nothing here can pass by matching a selector that was never there. */
+    const broken = await page.evaluate((fn) => {
+      const s = document.createElement("style");
+      s.textContent = "#chat-dock:has(#transcript .turn) #chat-openers { display: grid }" +
+                      "#chat-openers .opener { min-height: 700px }";
+      document.head.appendChild(s);
+      // eslint-disable-next-line no-eval
+      return (0, eval)("(" + fn + ")")("#speech-input");
+    }, reach.toString());
+    eq(broken.inFold, false,
+       `teeth — 700 px openers really do push the composer out of the 844 px fold ` +
+       `(${broken.w}x${broken.h} at y=${broken.top}..${broken.bottom} of ${broken.vh}); ` +
+       "if this passes, none of the fold assertions above is measuring anything");
+
+    eyes(`${L}: the openers`, page);
     await page.close();
   }
 
