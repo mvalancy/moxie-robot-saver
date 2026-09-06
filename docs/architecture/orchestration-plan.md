@@ -294,6 +294,27 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     notification is expected**, or do the merge-forward in a throwaway worktree off the same branch and
     push from there. Integration is not urgent enough to race an agent that is still measuring.
 
+29. **A `dev → main` promotion has TWO trailing steps that `gh pr merge` will not do for you, and
+    both were missed after both promotions on 2026-09-05/06.** Squash-merging the standing PR leaves
+    `dev` **one commit behind `main`** (the squash is a new commit `dev` has never seen) and
+    **deletes the only PR tracking the relationship**. Neither is visible from the merge output, and
+    nothing goes red — the damage surfaces later, when the next promotion PR opens CONFLICTING or
+    when someone asks "is `dev` green?" and there is no standing PR to read.
+    So, immediately after the merge, every time:
+      1. **Reconcile** — `git merge origin/main -X ours --no-edit`, then **verify the tree did not
+         move**: `git diff <pre-merge-sha>..HEAD --stat` must print **nothing**. If it prints
+         anything, the `-X ours` swallowed a real change and the promotion needs unpicking, not
+         pushing.
+      2. **Recreate the standing PR** — `gh pr create --base main --head dev`.
+    Do both from a **throwaway worktree** rather than the shared checkout: on 2026-09-06 the main
+    checkout held another session's uncommitted files, and a reconcile there would have been the
+    rule-28 race all over again.
+    The wider point, and the reason this is a rule rather than a checklist item: **the two steps are
+    invisible-by-default cleanup behind an irreversible action** — the same shape as rule 22 (never
+    chain cleanup behind a merge) and rule 25 (`--delete-branch` silently leaves the remote when a
+    worktree holds the branch). Anything a merge is supposed to tidy up afterwards should be
+    *verified*, never assumed.
+
 ## The layered session loops (24/7 continuity)
 
 Session-scheduled loops keep the project moving while the operator is away; when a session hits a usage
