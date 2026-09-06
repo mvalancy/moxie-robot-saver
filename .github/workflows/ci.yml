@@ -251,6 +251,14 @@ jobs:
         # the defect it was written for. No gateway and no network: /api/* and the :8081
         # sidecar are answered at the browser. Guarded by sim/tests/test_ci_test_coverage.py.
         run: node sim/test_typed_turn.mjs
+      - name: Liveliness hold, self-talk in the log, dock width, head-anchored bubble
+        # The owner's four 2026-09-06 asks, driven in a real browser: she stops muttering
+        # while you are talking to her and starts again when you stop; the quips appear in
+        # the comms log as their own kind of row; the dock fills the width the engineering
+        # panel leaves it (desktop open, desktop closed, phone); and the speech bubble is
+        # anchored to her head in the 3-D rather than pinned to the top of the viewport,
+        # asserted by PANNING the camera and re-reading the recorded anchor.
+        run: node sim/test_liveliness.mjs
       - name: Phone-layout hit test (elementFromPoint on the bottom controls)
         # `#env-banner` sat exactly on top of `#rail-toggle` at phone widths and swallowed
         # every tap on it, while the toggle stayed visible, sized and pointer-events:auto —

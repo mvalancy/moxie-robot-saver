@@ -1449,6 +1449,10 @@ function showSpeech(text) {
   if (bubbleTimer) clearTimeout(bubbleTimer);
   if (typeTimer) { clearInterval(typeTimer); typeTimer = null; }
   bubbleEl.classList.remove('hidden');
+  // New text means a new box size, and the anchor clamps against it. Drop the cached
+  // metrics so the first anchored frame measures the sentence actually on screen rather
+  // than the last one — the typewriter then grows it, which the 250 ms refresh follows.
+  if (window.__invalidateBubbleMetrics) window.__invalidateBubbleMetrics();
   speech.until = performance.now() + dur;
 
   if (typeDur === 0) {
@@ -1833,6 +1837,7 @@ const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
+  updateBubbleAnchor();      // keep her thought over her head, whatever the camera does
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
   const now = performance.now();
@@ -1997,9 +2002,163 @@ function applyStageOffset() {
   if (right < W - 8 || bottom < H - 8) frameInRect(right, bottom, right / 2, bottom / 2);
   camera.updateProjectionMatrix();
   renderer.setSize(W, H);
+  // The stage box just moved, so the bubble's cached metrics describe the old one.
+  if (window.__invalidateBubbleMetrics) window.__invalidateBubbleMetrics();
 }
 window.addEventListener('resize', applyStageOffset);
 window.__applyStageOffset = applyStageOffset;   // re-run when the drawer toggles
+
+/* ===========================================================================
+ * THE SPEECH BUBBLE IS ATTACHED TO HER HEAD, NOT TO THE TOP OF THE SCREEN.
+ *
+ * It used to be `position: absolute; top: 22px; left: 50%` — a caption pinned to the
+ * viewport. That was defensible while the bubble was the ONLY place her words appeared:
+ * put it where it cannot be missed. It stopped being defensible on 2026-09-05, when the
+ * comms log moved to `#chat-dock` at the bottom of every viewport and became the thing
+ * you read. A second, larger copy of the same sentence floating in the sky is no longer
+ * information — it is furniture, and furniture that does not move when you orbit the
+ * camera reads as a bug in the 3-D rather than as a label.
+ *
+ * So it is anchored: a world point just above the crown of her head, projected to screen
+ * every frame, with the bubble's own bottom-centre sitting on it. Orbit, zoom, or let her
+ * lean, and it stays over her head the way a thought does.
+ *
+ * WHY A PROJECTED DOM NODE AND NOT A `THREE.Sprite` OR A CSS3D OBJECT. The bubble is real
+ * text in the accessibility tree — `#bubble-text` is a readable region that `sim.html`
+ * deliberately leaves NOT `aria-live` but NOT `aria-hidden` either, so somebody can browse
+ * to it. A sprite is pixels: it would delete that. `CSS3DRenderer` would keep the DOM but
+ * needs a second render pass and a second scene graph, and it would rotate the text with
+ * the camera, which is exactly what you do not want for something you have to read.
+ * Projecting one point and writing two custom properties keeps the text flat, legible and
+ * selectable, and costs one `Vector3.project` per frame.
+ *
+ * IT IS CLAMPED TO THE STAGE. A head near the edge would otherwise push the bubble half
+ * off-screen, and behind the camera `project()` returns coordinates that are not merely
+ * wrong but mirrored. Both are handled below, and the clamp is what makes "attached"
+ * survive a visitor who orbits all the way round.
+ * =========================================================================== */
+const BUBBLE_UP = 0.34;          // metres above the head centre — clears the crown + antenna
+/** The stage box the bubble is positioned inside. `bubbleEl` already exists further up
+ *  (`showSpeech`'s node) and is REUSED rather than shadowed — a second `const bubbleEl`
+ *  here is a `SyntaxError` that kills the whole module, which is precisely what it did
+ *  the first time this block was written. */
+/** `var`, NOT `let`/`const`, and the reason is a real crash rather than a style choice:
+ *  `animate()` is defined and STARTED above this point, so its first frame reaches
+ *  `updateBubbleAnchor` before a `let` here has been evaluated — the temporal dead zone,
+ *  which throws `Cannot access 'bubbleStage' before initialization` and takes the whole
+ *  module with it. `var` hoists as `undefined`, and the vector is allocated lazily on the
+ *  first call for the same reason. */
+var bubbleStage = null;
+var bubbleWorld = null;
+/* THE LAYOUT READS ARE CACHED, AND THIS IS NOT MICRO-OPTIMISATION.
+ *
+ * The first version read `stage.getBoundingClientRect()` plus the bubble's `offsetWidth`
+ * and `offsetHeight` on EVERY animation frame. Each of those forces a synchronous layout,
+ * and doing it inside `requestAnimationFrame` — after the frame's style writes — is the
+ * textbook layout-thrash loop: write, read, write, read, sixty times a second, for a box
+ * whose size changes only when its text changes and whose container changes only when the
+ * window or the drawer does.
+ *
+ * It showed up as more than a profiler number. `sim/test_mobile_layout.mjs` began failing
+ * intermittently on the drawer tap once a quip made the bubble visible mid-test: the
+ * handle moved between the coordinate Puppeteer computed and the touch it dispatched.
+ * That race is not created by this code — it is latent in any test that taps a moving
+ * target — but a forced layout per frame is exactly the thing that turns "rare" into
+ * "every few runs".
+ *
+ * So the metrics are refreshed at most every `BUBBLE_METRICS_MS`, and IMMEDIATELY on the
+ * two events that can invalidate them: a resize (via `applyStageOffset`) and new text
+ * (via `showSpeech`). The projection itself still runs every frame — it is pure maths on
+ * one vector and touches no layout. */
+var BUBBLE_METRICS_MS = 250;
+var bubbleMetrics = { at: -1e9, sx: 0, sy: 0, sw: 0, sh: 0, bw: 0, bh: 0 };
+function invalidateBubbleMetrics() { bubbleMetrics.at = -1e9; }
+window.__invalidateBubbleMetrics = invalidateBubbleMetrics;
+
+function updateBubbleAnchor() {
+  if (!bubbleWorld) bubbleWorld = new THREE.Vector3();
+  if (bubbleStage === null) bubbleStage = document.getElementById('stage') || false;
+  if (!bubbleEl || !bubbleStage) return;
+  // Hidden bubble: skip the maths entirely rather than positioning something invisible.
+  if (bubbleEl.classList.contains('hidden')) return;
+
+  // The crown, in WORLD space, so every parent transform — the head roll group, her
+  // lean, the neck pivot — is already baked in. `head` is the mesh the face is drawn on.
+  head.getWorldPosition(bubbleWorld);
+  bubbleWorld.y += BUBBLE_UP;
+
+  const v = bubbleWorld.clone().project(camera);
+  // `z > 1` means the point is BEHIND the near plane: `project()` still returns numbers,
+  // and they are mirrored, so a bubble would fly to the opposite corner. Fade instead.
+  if (v.z > 1) { bubbleEl.classList.add('off-stage'); return; }
+  bubbleEl.classList.remove('off-stage');
+
+  const W = window.innerWidth, H = window.innerHeight;
+  const sx = (v.x * 0.5 + 0.5) * W;
+  const sy = (1 - (v.y * 0.5 + 0.5)) * H;
+
+  // Viewport px -> `#stage`-relative px, because that is the box the bubble is absolutely
+  // positioned inside. Reading the stage rect every frame is one layout read on a box
+  // that only changes on resize, and it is what keeps this correct when the grid moves.
+  const now = performance.now();
+  if (now - bubbleMetrics.at > BUBBLE_METRICS_MS) {
+    const r = bubbleStage.getBoundingClientRect();
+    bubbleMetrics.at = now;
+    bubbleMetrics.sx = r.left; bubbleMetrics.sy = r.top;
+    bubbleMetrics.sw = r.width; bubbleMetrics.sh = r.height;
+    bubbleMetrics.bw = bubbleEl.offsetWidth; bubbleMetrics.bh = bubbleEl.offsetHeight;
+  }
+  const st = { left: bubbleMetrics.sx, top: bubbleMetrics.sy,
+               width: bubbleMetrics.sw, height: bubbleMetrics.sh };
+  const bw = bubbleMetrics.bw, bh = bubbleMetrics.bh;
+  if (!st.width || !bw) return;                  // nothing measured yet: wait a frame
+  const M = 8;                                   // keep it off the very edge
+  const ax = sx - st.left, ay = sy - st.top;     // the anchor, in stage coordinates
+
+  /* ABOVE HER HEAD WHERE THERE IS ROOM, BELOW IT WHERE THERE IS NOT.
+   *
+   * This is not a nicety. The default camera frames her head high in the stage — measured
+   * at ~100 px from the top of a 900 px window — and the bubble is ~50-90 px tall, so
+   * "always above" spends most of its life jammed against the ceiling, no longer touching
+   * her head and no longer pointing at anything. Clamping alone produced exactly that: a
+   * box sitting 50 px BELOW the anchor it claimed to hang from, with a tail aimed at
+   * nothing. Flipping is what every tooltip does and it is what keeps the thing attached.
+   *
+   * `.below` is a class rather than more arithmetic so the TAIL can flip with it — a
+   * notch on the wrong edge is how you can tell a flipped tooltip was an afterthought. */
+  const flip = (ay - bh - M) < 0;
+  bubbleEl.classList.toggle('below', flip);
+
+  const x = Math.min(Math.max(ax, bw / 2 + M), Math.max(bw / 2 + M, st.width - bw / 2 - M));
+  // Anchored above, the transform is translate(-50%, -100%) so the box occupies
+  // [y - bh, y]; anchored below it is translate(-50%, 0) and occupies [y, y + bh].
+  const lo = flip ? M : bh + M;
+  const hi = flip ? Math.max(M, st.height - bh - M) : Math.max(bh + M, st.height - M);
+  const y = Math.min(Math.max(ay, lo), hi);
+  bubbleEl.style.setProperty('--bx', x.toFixed(1) + 'px');
+  bubbleEl.style.setProperty('--by', y.toFixed(1) + 'px');
+  bubbleEl.classList.add('anchored');
+}
+/** Where the bubble's anchor point is on screen right now, for the layout tests —
+ *  RECORDED state rather than a screenshot (playbook rule 11). */
+window.__bubbleAnchor = function () {
+  const el = document.getElementById('bubble');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  const h = new THREE.Vector3();
+  head.getWorldPosition(h);
+  h.y += BUBBLE_UP;
+  const p = window.__moxieProject(h.x, h.y, h.z);
+  return {
+    anchored: el.classList.contains('anchored'),
+    below: el.classList.contains('below'),
+    offStage: el.classList.contains('off-stage'),
+    hidden: el.classList.contains('hidden'),
+    head: { x: Math.round(p.x), y: Math.round(p.y) },
+    bubble: { cx: Math.round(r.left + r.width / 2), bottom: Math.round(r.bottom),
+              left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top) },
+  };
+};
 // Project a world point to screen px (respects the active view offset) — used by
 // the responsive tests to assert Moxie stays framed in the useful viewport.
 window.__moxieProject = function (x, y, z) {
