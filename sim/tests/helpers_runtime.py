@@ -87,15 +87,74 @@ def dotenv_values(path: str) -> dict:
     return values
 
 
-def load_repo_dotenv(path: str | None = None) -> str | None:
-    """Best-effort: load the repo's git-ignored `mqtt/.env` into `os.environ` (existing
-    environment wins, exactly like the supervisor's own `config._load_env`). Returns the
-    file it used, or None when there is none. Values are never printed."""
+#: The ONLY keys a deployment's `mqtt/.env` may export into the suite's environment.
+#:
+#: `load_repo_dotenv` exists so the live tier can find real credentials, and it used to
+#: copy the **whole file** in. That is the same defect `conftest.py`'s fence was built for
+#: (playbook rule 20), through a second door: `setdefault` at collection time promotes
+#: every key to a real environment variable for the rest of the session, and nothing ever
+#: removes them, so a hermetic test that says "nothing is configured" was quietly running
+#: on whatever this developer configured. Measured 2026-09-05 with a maximal fixture at
+#: the default path: **21 tests** in six files went red that way — and the shape that
+#: matters is not the red one. `MOXIE_ALLOW_UNVERIFIED_BOTS=1` is a documented, plausible
+#: setting, and with it exported **thirteen** `test_device_permits.py` tests asserting
+#: *"an unpermitted stranger is refused"* **passed while the gate stood open**.
+#:
+#: Deleting the loader is not the fix: the live suites read their key and endpoints from
+#: that file and nowhere else — ten `test_live_*.py` modules call this at import — so
+#: they would all become silent skips, the exact regression PR #157 was opened to
+#: close. So it is narrowed instead, to credentials,
+#: endpoints and model names. A *behavioural* knob (`MOXIE_ALLOW_UNVERIFIED_BOTS`,
+#: `MOXIE_APP`, `MOXIE_STT`, `MOXIE_TTS`, `MOXIE_STREAMING`, …) never crosses: no live
+#: suite reads one, and the two that care — `test_live_gateway_tts.py::_config` and
+#: `test_live_gateway_stt.py::_config` — already *delete* them before reloading `config`,
+#: which is the codebase agreeing that they are noise rather than input.
+#:
+#: **This list is derived, not remembered.** Every name below is one an AST walk finds a
+#: `test_live_*.py` module actually READING out of `os.environ`; a name it only writes
+#: (`MOXIE_VOICE_FORMAT`) is absent, because a value the module sets for itself cannot
+#: need to arrive from a file. `test_dotenv_cannot_perturb_the_suite.py` re-derives it and
+#: fails if this list stops matching, so a new live suite that needs a new credential is a
+#: red test rather than a silent skip, and a knob added here is a red test rather than a
+#: reopened door.
+LIVE_KEYS = (
+    # --- the brain -------------------------------------------------------------
+    "MOXIE_LLM_API_KEY", "LITELLM_MASTER_KEY",   # credential, and the gateway's own name
+    "MOXIE_LLM_BASE_URL", "MOXIE_LLM_MODEL",
+    # --- the voice -------------------------------------------------------------
+    "MOXIE_VOICE_API_KEY", "MOXIE_VOICE_BASE_URL",
+    "MOXIE_VOICE_MODEL", "MOXIE_VOICE_ALT_MODEL",   # the model name IS the voice
+    # --- the ears --------------------------------------------------------------
+    "MOXIE_STT_API_KEY", "MOXIE_STT_BASE_URL", "MOXIE_STT_MODEL",
+    # --- what a live run may be aimed at ---------------------------------------
+    #: A deployed origin to POST at (`test_live_hosted_ears.py` tier B) and a WAV to reuse
+    #: instead of synthesising one. Endpoint and input, not appliance behaviour: neither
+    #: can make a hermetic test assert something different.
+    "MOXIE_DEMO_ORIGIN", "MOXIE_EARS_WAV",
+)
+
+
+def load_repo_dotenv(path: str | None = None, *, allow=LIVE_KEYS) -> str | None:
+    """Best-effort: load the live tier's credentials out of the repo's git-ignored
+    `mqtt/.env` into `os.environ`. Returns the file it used, or None when there is none.
+    Values are never printed.
+
+    Only the keys in `allow` (`LIVE_KEYS` — see above) cross; everything else in the file
+    is read and dropped, so a developer's own configuration cannot decide what a hermetic
+    test asserts. The existing environment still wins (`setdefault`), exactly like the
+    supervisor's own `config._load_env`.
+
+    `allow` is a parameter rather than a constant so that a test can say otherwise *in the
+    open* — pass this file's own key names and you have the un-narrowed loader back, which
+    is how the guard proves the narrowing is load-bearing. No production caller passes it,
+    and a guard asserts that stays true."""
     path = path or find_repo_dotenv()
     if not path:
         return None
+    allow = frozenset(allow)
     for k, v in dotenv_values(path).items():
-        os.environ.setdefault(k, v)
+        if k in allow:
+            os.environ.setdefault(k, v)
     return path
 
 

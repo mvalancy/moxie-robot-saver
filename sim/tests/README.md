@@ -449,7 +449,10 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   the suite with `MOXIE_LLM_API_KEY= `. That loader is deliberately **separate** from
   `config._load_env` and does not honour the dotenv fence below, which is what lets the
   hermetic tier say "nothing is configured" while the live tier still runs with real
-  credentials in the same session; `test_dotenv_cannot_perturb_the_suite.py` pins it. `test_live_action_tags.py` asserts a *rate* (2 of 3
+  credentials in the same session. It is **narrowed** rather than fenced — only
+  `helpers_runtime.LIVE_KEYS` (credentials, endpoints, model names) cross, never a
+  behavioural knob — see **The dotenv fence** below;
+  `test_dotenv_cannot_perturb_the_suite.py` pins it. `test_live_action_tags.py` asserts a *rate* (2 of 3
   sampled turns) rather than a single sample, because the brain runs at temperature
   0.8 — see its docstring for the measured numbers.
   **In CI** all three run together in the deep tier's dispatch-only step
@@ -576,6 +579,35 @@ MOXIE_DOTENV=<file> pytest sim/tests     # run it against a fixture — never a 
 and runs the affected files in a subprocess both ways — green with the fence, **red**
 without it — so the fence cannot be removed silently, and it pins that the fence does not
 reach the live tier's credentials.
+
+### The second loader, and why it is narrowed rather than fenced
+
+There are **two** dotenv loaders. The block above fences `config._load_env`.
+`helpers_runtime.load_repo_dotenv` is the other one, and it deliberately stays open: ten
+`test_live_*.py` modules call it at import to find a real key, and fencing it would turn
+every one of them into a silent skip — the regression PR #157 exists to prevent. It used to
+copy the **whole file** into `os.environ` with `setdefault`, permanently, at collection
+time. Measured 2026-09-05 against a maximal fixture, that broke **21 tests** in six files —
+and the shape that matters is not the red one: `MOXIE_ALLOW_UNVERIFIED_BOTS=1` is a
+documented setting, and with it exported **thirteen** `test_device_permits.py` tests
+asserting "an unpermitted stranger is refused" **passed while the gate stood open**.
+
+It is now **narrowed** to `helpers_runtime.LIVE_KEYS` — credentials, endpoints and model
+names, derived by an AST walk over what the live modules actually read, never a behavioural
+knob (`MOXIE_APP`, `MOXIE_STT`, `MOXIE_TTS`, `MOXIE_ALLOW_UNVERIFIED_BOTS`, …). That closes
+sixteen of the twenty-one. The other five move on the *credentials themselves*, because
+`MOXIE_STT=auto` means "gateway when a URL and a key are present" — so an endpoint the live
+tier cannot do without is, to a hermetic test, a configured gateway. The remedy is that
+those are different tests: a live suite reads its credentials at **import**, into module
+constants, while a hermetic test reads the environment while it **runs**. So
+`conftest.hermetic_tier_sees_no_credentials` hides exactly `LIVE_KEYS` for the duration of
+every test outside a `test_live_*.py` file, and restores them afterwards.
+
+Together the two are total — the allowlist bounds what a dotenv can put into the process,
+the fixture hides that bound set from everything hermetic — and both halves are guarded by
+mutation in `test_dotenv_cannot_perturb_the_suite.py`: widening the allowlist back to the
+whole file goes **red** (14 failures across two files), and removing the fixture's `autouse`
+goes **red** in the hermetic probe while the live probe stays green.
 
 ## Run
 

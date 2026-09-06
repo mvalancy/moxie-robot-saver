@@ -116,6 +116,70 @@ def isolated_data_dir(tmp_path_factory):
         os.environ["MOXIE_DATA_DIR"] = prev
 
 
+#: `helpers_runtime.LIVE_KEYS`, imported once and lazily. Lazily because importing that
+#: module pulls in `moxie_sdk` and therefore `config`, and this file's whole subject is
+#: which import of `config` happens first — so the fixture below reaches for it when a
+#: test is about to run, long after the block at the top of this file has decided.
+_LIVE_KEYS = None
+
+
+def _live_keys():
+    global _LIVE_KEYS
+    if _LIVE_KEYS is None:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from helpers_runtime import LIVE_KEYS
+        _LIVE_KEYS = LIVE_KEYS
+    return _LIVE_KEYS
+
+
+@pytest.fixture(autouse=True)
+def hermetic_tier_sees_no_credentials(request):
+    """The second half of the fence — the one the block at the top of this file cannot do.
+
+    There are TWO dotenv loaders. `config._load_env` is fenced above, before the first
+    import. `helpers_runtime.load_repo_dotenv` is the other one, and it deliberately is
+    **not** fenced: ten `test_live_*.py` modules call it at import to find a real key,
+    and a fence there would turn every one of them into a silent skip — the exact
+    regression PR #157 was opened to close, and a green run that tested nothing.
+
+    So that loader was narrowed instead (`LIVE_KEYS`): a deployment's `mqtt/.env` can now
+    export credentials, endpoints and model names, and nothing else — no
+    `MOXIE_ALLOW_UNVERIFIED_BOTS`, no `MOXIE_APP`, no `MOXIE_STT`. That removed 16 of the
+    21 tests a maximal dotenv used to break. The remaining five cannot be fixed there, and
+    it is worth being clear about why: a credential and an endpoint **are** what "is a
+    gateway configured?" means. `MOXIE_STT=auto` resolves to the gateway exactly when an
+    STT URL and a key are present, so `test_assemble.py`'s "auto is None without whisper"
+    and three `test_voice_settings.py` defaults still moved — on the credentials the live
+    tier cannot do without. Narrowing further would take the key away from the live suites;
+    narrowing less leaves hermetic tests reading a developer's gateway.
+
+    The way out is that those are different tests. A live suite reads its credentials at
+    IMPORT, into module constants, before any fixture runs; a hermetic test reads the
+    environment while it runs. So the credentials stay in `os.environ` for collection and
+    are hidden for the duration of every non-live test. Together the two mechanisms are
+    total: the allowlist bounds what a dotenv can put into the process at all, and this
+    hides exactly that bound set from everything hermetic — so a hermetic test sees
+    nothing of the file, which is what makes a local run and a CI run the same run.
+
+    Deliberately keyed on the filename rather than a marker: `test_live_*` is already the
+    convention `test_ci_workflows.py` enforces for "this suite needs credentials", so
+    there is one definition of a live suite and not two. `test_env_hygiene_live_suites.py`
+    is hermetic despite its name and is correctly treated as such — its own docstring
+    explains why it refuses the prefix.
+
+    Restores whatever it removed, so a suite that asserts a module left the environment
+    as it found it still sees a symmetric picture.
+    """
+    if Path(str(request.node.path)).name.startswith("test_live_"):
+        yield
+        return
+    hidden = {k: os.environ.pop(k) for k in _live_keys() if k in os.environ}
+    try:
+        yield
+    finally:
+        os.environ.update(hidden)
+
+
 @pytest.fixture(scope="session")
 def server():
     """Start sim/serve.py on a free port for the whole session."""
