@@ -27,7 +27,8 @@
  * (a concurrent pass owns sim/ci/ci.yml). Run it directly:
  *     PUPPETEER_PATH=~/Code/valancy-resume node sim/test_a11y.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable }
+  from "./browser_harness.mjs";
 
 const LABEL = "a11y";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
@@ -57,12 +58,17 @@ async function open(o = {}) {
   const page = await browser.newPage();
   await page.setViewport({ width: o.width || 1440, height: o.height || 900 });
   const spent = [];
+  const { errs, aborted } = watchPage(page);
   await page.setRequestInterception(true);
   page.on("request", (r) => {
     const u = r.url();
-    if (SPENDY.test(u)) { spent.push(u); return r.abort(); }          // never spend
+    if (SPENDY.test(u)) { spent.push(u); aborted.n++; return r.abort(); }   // never spend
     if (o.health != null && /\/api\/health\b/.test(u))
       return r.respond({ status: 200, contentType: "application/json", body: o.health });
+    /* With no `health` fixture the probe is CONTINUED to the static server, which has no
+     * such file — so the page legitimately logs one 404. Counted here, at the request
+     * that causes it, so `notable()` forgives exactly that one and no other. */
+    if (o.health == null && /\/api\/health\b/.test(u)) aborted.refused++;
     return r.continue();
   });
   if (o.reducedMotion)
@@ -70,7 +76,47 @@ async function open(o = {}) {
   await page.goto(srv.url + "/sim.html", { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => !!window.moxie, { timeout: 30000 });
   await new Promise((r) => setTimeout(r, 2500));       // sidecar probe + first mode render
-  return { page, spent };
+  return { page, spent, errs, aborted };
+}
+
+/* ==========================================================================
+ * WHAT THE BROWSER ITSELF SAID — measured, then asserted
+ *
+ * WHY THIS IS NOT `errs.length === 0`. This suite serves the page with the REAL
+ * `sim/web/_headers` CSP (`serveWeb({ headers: true })`) on a 127.0.0.1 origin, which is
+ * `isLocal` — so `env.js` fires its two optional-sidecar probes at `:8081` (Piper) and
+ * `:8082` (STT), and `connect-src 'self'` refuses both. Chrome reports each refusal
+ * TWICE, once as the violation and once as the failed fetch, so every page load in this
+ * suite carries exactly four console errors that the page is RIGHT to produce and the
+ * fixture is right to see. An `errs.length === 0` here would be red on a correct page and
+ * would be loosened by the next person into something that proves nothing.
+ *
+ * So the allowance is narrow and identified: a message is forgiven only if it names one of
+ * the two sidecar ports on THIS origin *and* says the CSP refused it. A CSP refusal of
+ * anything else — a script, a style, a gateway fetch — matches neither half and is a
+ * failure, which is the case that matters: `script-src` is exactly how this page breaks in
+ * production, and it breaks silently.
+ *
+ * The cap is what stops the allowance from becoming a blanket. Four is what the two probes
+ * cost; a fifth means something else on the page is talking to those ports.
+ * ======================================================================= */
+const SIDECAR_CSP = /127\.0\.0\.1:(8081|8082)\/health/;
+const CSP_REFUSAL = /Content Security Policy|Refused to connect/;
+const isSidecarProbe = (e) => SIDECAR_CSP.test(e) && CSP_REFUSAL.test(e);
+
+/**
+ * Assert one page's console output: the sidecar-probe refusals are expected and capped,
+ * and NOTHING else may be there.
+ */
+function eyes(label, { errs, aborted }) {
+  const probes = errs.filter(isSidecarProbe);
+  const rest = notable(errs.filter((e) => !isSidecarProbe(e)), aborted);
+  ok(probes.length <= 4,
+     `${label}: env.js's two sidecar probes cost at most 4 CSP refusals — got ` +
+     `${probes.length}: ${probes.slice(0, 5).join(" | ")}`);
+  eq(rest.length, 0,
+     `${label}: the page raised console errors nobody asked for — ${rest.length}, ` +
+     `first: ${rest.slice(0, 3).join(" | ")}`);
 }
 
 /** The accessible name Chrome computes for one element, or null when it has no AX node. */
@@ -103,7 +149,8 @@ async function unnamedControls(page) {
  * 1. NAMES — the finding, re-derived, and asserted by identity
  * ======================================================================= */
 {
-  const { page, spent } = await open();
+  const view = await open();
+  const { page, spent } = view;
 
   const bare = await unnamedControls(page);
   ok(bare.length === 0, `interactive controls with NO accessible name: [${bare.join(", ")}]`);
@@ -180,6 +227,7 @@ async function unnamedControls(page) {
   }
 
   eq(spent.length, 0, "no request to a spendy /api route");
+  eyes("names", view);
   await page.close();
 }
 
@@ -187,7 +235,8 @@ async function unnamedControls(page) {
  * 2. THE LIVE REGION — and what it deliberately does NOT announce
  * ======================================================================= */
 {
-  const { page, spent } = await open();
+  const view = await open();
+  const { page, spent } = view;
 
   const t = await page.$eval("#transcript", (e) => ({
     role: e.getAttribute("role"), live: e.getAttribute("aria-live"),
@@ -268,6 +317,7 @@ async function unnamedControls(page) {
      "no ambient quip leaked into the log alongside the answer");
 
   eq(spent.length, 0, "a scripted typed turn spends nothing");
+  eyes("live region", view);
   await page.close();
 }
 
@@ -283,7 +333,8 @@ async function unnamedControls(page) {
  * ======================================================================= */
 {
   // (a) scripted / no backend: typing reaches a SCRIPTED Moxie, not the browser's voice.
-  const { page, spent } = await open();
+  const view = await open();
+  const { page, spent } = view;
   const s = await textOf(page, "#voice-note");
   const btn = await page.$eval("#speech-btn", (e) => e.textContent.trim());
   eq(btn, "Ask", "with no Piper the Say button is the typed turn");
@@ -293,6 +344,7 @@ async function unnamedControls(page) {
      `scripted note must not still claim free text uses the browser's voice — got ${JSON.stringify(s)}`);
   ok(s !== null && !/in her own voice/i.test(s), "scripted note must not promise a live voice");
   eq(spent.length, 0, "no spend while reading the scripted copy");
+  eyes("scripted copy", view);
   await page.close();
 
   // (b) live: /api/health says the brain and the voice are on.
@@ -310,6 +362,7 @@ async function unnamedControls(page) {
   ok(l !== null && !/scripted/i.test(l), "live note must not call the answer scripted");
   ok(l !== s, "the note actually differs between live and scripted");
   eq(live.spent.length, 0, "reading the live copy never posts a turn");
+  eyes("live copy", live);
   await live.page.close();
 }
 
@@ -328,7 +381,8 @@ async function unnamedControls(page) {
  * it. What changed is which elements are inside it.
  * ======================================================================= */
 {
-  const { page } = await open({ width: 390, height: 780 });
+  const view = await open({ width: 390, height: 780 });
+  const { page } = view;
 
   const tabbables = () => page.evaluate(() => {
     const sel = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), " +
@@ -379,6 +433,7 @@ async function unnamedControls(page) {
   eq(await page.$eval("#rail-toggle", (e) => e.getAttribute("aria-controls")), "rail-scroll",
      "aria-controls names the disclosed region");
 
+  eyes("keyboard/phone", view);
   await page.close();
 }
 
