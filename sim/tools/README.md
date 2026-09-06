@@ -161,8 +161,10 @@
   [`functions/api/_lib/limits.js`](../../functions/api/_lib/limits.js), checked against
   [`sim/test_demo_proxy.mjs`](../test_demo_proxy.mjs) §15i (rows `U*`, the shared minute window and
   the budget's HOUR) and [`sim/tests/helpers_shared_ceilings.mjs`](../tests/helpers_shared_ceilings.mjs)
-  (rows `W*`/`D*`, the per-IP HOUR/DAY windows and the budget's DAY).
-  `python3 sim/tools/unit_budget_mutation_check.py        # 35 rows; every one must say "caught"`
+  (rows `W*`/`D*`, the per-IP HOUR/DAY windows and the budget's DAY). `U18`/`U19` cover the
+  RE-ROLL's extra charge (§4.9): the second gateway call inside one admitted turn, which may
+  neither be spent past a ceiling that refused it nor be forgotten by a refund.
+  `python3 sim/tools/unit_budget_mutation_check.py        # 37 rows; every one must say "caught"`
   (about 45 s; pass a row name — `U3`, `D4` — to re-check one in ~1.5 s). **The `W*`/`D*` block was
   added on 2026-09-06 because its absence had already cost something.** PR #178 lifted the day
   ceiling onto `caches.default` by copying the hour's proven design without the hour's proof, and
