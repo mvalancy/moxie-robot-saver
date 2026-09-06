@@ -1652,3 +1652,37 @@ This does not weaken [rule 21](../orchestration-plan.md) ("open a PR and curl it
 settled the mobile-composer and Referrer-Policy questions the same day). It bounds it: a preview
 answers questions about **anything reachable before the gateway check**, and answers nothing about
 what lies after it.
+
+### §5.1 — five operator-facing variables the code reads and §5 never named (audit, 2026-09-06)
+
+Found by diffing every `DEMO_*` token in this spec against every one read by
+`functions/api/_lib/env.js`. Four arrived with the shared-ceiling work (§4.6.3) an hour before this
+audit and one is **secret-bearing**; none was discoverable by an operator reading the docs.
+
+| variable | default | range | what it caps |
+|---|---|---|---|
+| `DEMO_CHAT_PER_HOUR` | **40** | 1 … 1 000 000 | per-IP `POST /api/chat` in one hour |
+| `DEMO_CHAT_PER_DAY` | **150** | 1 … 10 000 000 | per-IP `POST /api/chat` in one day |
+| `DEMO_SPEECH_PER_HOUR` | **80** | 1 … 1 000 000 | per-IP `POST /api/speech` in one hour |
+| `DEMO_STT_PER_HOUR` | **60** | 1 … 1 000 000 | per-IP `POST /api/transcribe` in one hour |
+| `DEMO_GATEWAY_ACCESS_CLIENT_SECRET` | `""` | — | the other half of the Cloudflare Access service token, whose `…_CLIENT_ID` **is** documented |
+
+**The asymmetry is real and is probably deliberate — recorded here so the next reader does not have
+to guess.** Chat has both an hour and a day ceiling; speech and STT have only an hour. That is not
+an oversight in the obvious direction, because `DEMO_UNIT_BUDGET_DAY` counts **units across every
+route**, so a day ceiling already exists globally and a per-route one would be a second, narrower
+bound on the same spend. Whether the narrower bound is wanted is a judgement, not a defect —
+**but it should be made on purpose.** If speech/STT day windows are ever added, note that
+`windowArity` changes and §4.6.2's collision argument must be re-checked.
+
+**The secret one is the sharper gap.** `DEMO_GATEWAY_ACCESS_CLIENT_ID` is documented and its
+partner is not, so an operator putting this behind Cloudflare Access can set half a service token,
+get an auth failure with no documented second field to look for, and have no way to discover the
+missing name except by reading `env.js`. A half-documented credential pair is worse than an
+undocumented one, because the documented half implies the list is complete.
+
+**Method note, since this class of drift is invisible to every guard we have:** nothing in CI
+compares the spec's variable list to the code's. The diff that found this is one command —
+`git grep -ohE 'DEMO_[A-Z_]+'` over each side, `comm` the sorted results — and it is worth running
+whenever a slice adds a tunable. Beware two false positives it produces: `DEMO_GATEWAY_*` and
+`DEMO_MAX_CONCURRENT_*` appear in prose as glob patterns, not as variables.
