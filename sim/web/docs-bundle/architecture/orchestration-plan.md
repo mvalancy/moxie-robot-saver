@@ -214,6 +214,18 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     state`), and only then clean up, in a separate command that runs only when the state is
     literally `MERGED`.** A loop over several PRs must `break` on the first that is not.
 
+    **Violated again 2026-09-06, and the reason is the reusable part.** `gh pr merge 176 --squash
+    --delete-branch` was chained with `worktree remove`, `branch -D` and `push --delete` in one
+    command. The merge **failed** on a docs-bundle conflict (#172 had landed on `dev` after #176 was
+    pushed) — and every cleanup step ran anyway, deleting the branch of an **open** PR, which GitHub
+    then auto-CLOSED. Recovery was cheap only because git had not GC'd: `git branch feat/e2e
+    <sha>`, re-push, `gh pr reopen`. **Why it happened matters more than that it did:** the identical
+    chained command had just worked twice in a row (#175, #172), and two successes are exactly what
+    makes a shape feel safe enough to reuse a third time. A conditional does not care how the last
+    two runs went. So the rule is not "be careful with cleanup" — it is **make the cleanup
+    unreachable unless the merge actually succeeded**, e.g. `gh pr merge … && { cleanup; }`, or
+    simply a second command after reading the first one's result.
+
 23. **A gate result is only true for the commit it was read on — re-read it in the same
     command that merges.** Made twice on 2026-09-03, once by machine and once by hand. The
     machine version: a merge watcher read `gate: all` from a run that had already been
