@@ -80,6 +80,29 @@ tree must pass every clause, and three mutated copies of `sim/web` must each red
 **different** one. It is a check on the checker, so a scheduled run cannot become a green light
 for an instrument that quietly stopped working.
 
+### The microphone job in the same file — dispatch only, and off the schedule
+
+`deployed.yml` also carries [`sim/check_hosted_mic.mjs`](../check_hosted_mic.mjs), which plays a
+real voice into Chrome's **fake microphone** and lets the page do what a visitor's press does.
+It is a **separate job**, `workflow_dispatch` only, and `mic: dry` by default:
+
+```sh
+gh workflow run deployed.yml -f mic=dry                    # free: the button, getUserMedia, the WAV
+gh workflow run deployed.yml -f mic=spend -f mic_budget=5  # the real thing: ~3 gateway calls
+node sim/check_hosted_mic.mjs --selftest                   # hermetic; the fast tier runs this
+```
+
+**It is not on the schedule above, and that is the judgement.** The beacon check is free, so
+running it four times a day costs nothing and catches a regression that reached production
+between promotions. This one is not free: four runs a day is ~4,400 transcriptions, chats and
+syntheses a year out of the budget the whole public demo shares, and the failure it would catch
+— the gateway's ears stopped answering — is already caught at no cost by
+[`test_live_hosted_ears.py`](../tests/test_live_hosted_ears.py) wherever a gateway is
+configured. A monitor that eats the thing it monitors is not a monitor. `mic: dry` exists so
+the *free* half — the composer, the permission grant, `mic.js::encodeWav`, and that the
+uploaded audio really is the audio played — can be re-checked against a live deployment as
+often as anyone likes.
+
 ## The live tiers in `ci-deep.yml`
 
 Everything else in CI is hermetic. Two steps are not, and both are **`workflow_dispatch`

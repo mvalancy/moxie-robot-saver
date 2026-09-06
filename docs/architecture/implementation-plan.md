@@ -118,11 +118,25 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   EARS to exist** (`configured` gates `ears`, so a transcriber with no chat model answers
   `gateway_not_configured`), and **a non-browser client never reaches the Function on the production
   domain** — Cloudflare's browser-integrity check answers `error_code: 1010` as *JSON problem details*,
-  which parsed as our envelope reads `403 reason=None`. **What remains is the human half, untouched:**
-  nobody has ever spoken into the microphone on the hosted site, so `getUserMedia`, the permission
-  prompt, `mic.js::encodeWav` against a real device's 48 kHz, a child's voice in a real room, and the
-  15-second hard stop against a real recorder are all still unproven. This narrows the gap; it does not
-  close it, and nothing in the status table above should be read as if it did.
+  which parsed as our envelope reads `403 reason=None`.
+  **The BROWSER half closed on 2026-09-05** with
+  [`sim/check_hosted_mic.mjs`](../../sim/check_hosted_mic.mjs), which plays a WAV into Chromium's
+  fake capture device (`--use-file-for-fake-audio-capture`) and presses the real Listen button on the
+  real deployment, so `getUserMedia`, the permission grant, `mic.js::wavCapture`'s ScriptProcessor
+  graph and `encodeWav`'s 48 kHz → 16 kHz decimation all run for the first time against a live site.
+  Measured against production: the device opened (`secureContext` ✓, `isRecording()` ✓), the page
+  uploaded **311,340 B of 16 kHz mono PCM16** whose energy envelope correlated **0.985** with the clip
+  played and **0.329** with an unrelated one, the deployment transcribed it at **word overlap 1.00**
+  (decoy **0.00**) and the brain answered — at **1 STT + 1 chat + 1 TTS**, zero
+  `securitypolicyviolation` events, zero console errors. Two measurements came free: Chrome
+  **resamples** the fake-capture file to the capture rate (so a 22050 Hz clip is not pitch-shifted),
+  and it **loops it with an unobservable phase**, which is why the recording must run longer than twice
+  the clip. **What remains is a HUMAN:** the clip is the site's own prerendered Piper speech, not a
+  child in a room, so a real voice's timbre, room noise, clipping and distance are still unproven —
+  `MOXIE_MIC_WAV`/`MOXIE_MIC_TEXT` point the same run at a recording of one. Also still unmeasured on
+  a deployment: that her `/api/speech` audio reaches the speakers there (the paid run snapshotted
+  before it landed, and re-running would have doubled a budget already three-fifths spent; covered
+  hermetically by `test_mic_spend.mjs` scenario 4 and by that file's own `--selftest`).
 - **The fix that made the browser suites run put them on the wrong runner — split 2026-09-04.**
   PR #120 closed a real hole: eleven suites import [`browser_harness.mjs`](../../sim/browser_harness.mjs),
   no workflow installed `puppeteer`, `loadPuppeteer()` fell back to scanning `~/Code/*/node_modules` (a
@@ -1666,7 +1680,7 @@ control on the page, and would have gone quietly green while measuring nothing.
 cheap and they are the seam a game would attach to, and that is exactly why they wait for
 (d)'s brief rather than arriving as a side effect of this one.
 
-① **A human voice through the hosted mic.** The STT path is built, wired and tested, and **no human has ever spoken into it on the hosted site** — the single largest untested surface on the page a visitor actually uses. Everything else on this list is smaller than this. ~~② **Turnstile**~~ — **BUILT 2026-09-05** and no longer owner-blocked: the widget and both variables exist in production, `POST /api/chat` verifies a token before its one gateway call, and enforcement is config-gated so previews and forks stay inert (`functions/api/_lib/turnstile.js`). What it does *not* do is bound the bill — it removes the cheapest attack (a loop with no browser) and leaves a determined one with a real browser to the per-IP caps and the unit budget, which is why ④ below did not move.
+~~① **A human voice through the hosted mic.**~~ — **THE BROWSER HALF CLOSED 2026-09-05** by [`sim/check_hosted_mic.mjs`](../../sim/check_hosted_mic.mjs): a WAV played into Chromium's fake capture device, the real Listen button pressed on the real deployment, and the words came back at **word overlap 1.00** (decoy 0.00) for **1 STT + 1 chat + 1 TTS**, with `getUserMedia`, the permission grant and `mic.js::encodeWav`'s 48 kHz → 16 kHz decimation all exercised against production for the first time. What is left of this entry is a **human being** — the clip is the site's own prerendered speech, and `MOXIE_MIC_WAV`/`MOXIE_MIC_TEXT` point the same run at a recording of a child. Detail and the two free findings (Chrome resamples the fake-capture file; it loops it with an unobservable phase) are in the Known-gaps bullet above. ~~② **Turnstile**~~ — **BUILT 2026-09-05** and no longer owner-blocked: the widget and both variables exist in production, `POST /api/chat` verifies a token before its one gateway call, and enforcement is config-gated so previews and forks stay inert (`functions/api/_lib/turnstile.js`). What it does *not* do is bound the bill — it removes the cheapest attack (a loop with no browser) and leaves a determined one with a real browser to the per-IP caps and the unit budget, which is why ④ below did not move.
 
 ③ **A TTS cache** — the demo re-synthesises identical phrases on every visit, which is the cheapest cost win available and needs no owner. ~~④ **The hour/day windows and the unit budget on the Cache API tier**~~ — **the UNIT BUDGET half shipped 2026-09-05** ([`live-sim-demo.md` §4.6.2](backlog/live-sim-demo.md)): the deployment's hourly spend is now counted per-colo alongside the minute window PR #146 shared, so the *spend* ceiling is no longer the loosest of the four. It is **not** the same change made twice — a budget can be refunded and a window cannot, and a lost refund on an eventually-consistent counter fails **closed** (it refuses visitors who should be served), which is the direction §4.6.1 had already rejected the concurrency ceiling over. So the shared entry is never told about a charge until the request has been released *without* a refund; there is no refund write to lose. What remains of ④ is the **per-IP hour/day windows** and the unit budget's **day** ceiling, both still one isolate's `Map`. ⑤ **`'unsafe-inline'` in `style-src`** — a much smaller hole than the script one closed in #137, and honestly labelled as such.
 

@@ -288,6 +288,27 @@ jobs:
         # it). It is a check on the checker, so the scheduled run cannot quietly become a
         # green light for an instrument that stopped working.
         run: node sim/check_deployed.mjs --selftest
+      - name: Hosted-mic checker — its own teeth, hermetically
+        # `sim/check_hosted_mic.mjs` plays a WAV into Chrome's FAKE MICROPHONE
+        # (`--use-file-for-fake-audio-capture`) and drives the real page: `getUserMedia`, the
+        # permission grant, `mic.js::wavCapture`'s ScriptProcessor graph, `encodeWav`'s
+        # 48 kHz → 16 kHz decimation, and the upload. Against a DEPLOYED site it spends real
+        # gateway calls — one STT + one chat + one TTS — which is exactly why the network half
+        # is wired to NO push and NO schedule: see the file's header and the opt-in dispatch
+        # job in sim/ci/deployed.yml.
+        #
+        # WHAT RUNS HERE IS `--selftest`, and it is hermetic: `sim/web` on loopback under the
+        # real `_headers` policy with /api/* answered at the browser, driven four times with
+        # four different fake microphones. Measured 2026-09-05 — the sentence clip must pass
+        # every clause (envelope correlation 0.985 against the source, 0.314 against an
+        # unrelated one); DIGITAL SILENCE must redden "the captured audio is AUDIBLE" (peak
+        # 0.0000); A DIFFERENT CLIP — real, loud, and the wrong words — must redden "it is the
+        # clip the fake microphone played" (0.284) while leaving the audible clause GREEN, and
+        # that is the mutation that matters, because silence reddens almost anything; and the
+        # committed golden (`sim/tests/goldens/real_voice_22050_mono.wav`) must come back
+        # through the same instrument at 0.991. It also prints the overlap scorer's table and
+        # WATCHES the transcript assertion fail against a reference nobody said.
+        run: node sim/check_hosted_mic.mjs --selftest
       - name: Mic-spend test (a refused microphone must not buy a chat+speech turn)
         # The audit finding this closes: `mic.js` consoles a failed microphone with a
         # SCRIPTED CHILD LINE, and that line used to go out through `sendUserTurn` — so a

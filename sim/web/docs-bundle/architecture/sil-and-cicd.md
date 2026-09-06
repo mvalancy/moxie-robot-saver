@@ -318,6 +318,56 @@ the fast tier's browser job: it serves four loopback copies of `sim/web` under t
 each redden a **different** one — a check on the checker, so the scheduled run can never become
 a green light for an instrument that stopped working.
 
+## The check that deliberately spends — a real voice through the hosted microphone
+
+[`sim/check_hosted_mic.mjs`](../../sim/check_hosted_mic.mjs) is the complement of the one
+above, and the two are a matched pair: `check_deployed.mjs` **aborts** `/api/chat`,
+`/api/speech` and `/api/transcribe` so it can promise it costs nothing, and this one lets them
+through on purpose. It exists because one question on the live page could not be answered for
+free — *does a voice actually get from a browser microphone into the deployed ears?* Three
+files circle it ([`test_demo_ears.mjs`](../../sim/test_demo_ears.mjs) stubs `fetch`,
+[`test_mic_spend.mjs`](../../sim/test_mic_spend.mjs) replaces the recorder and answers `/api/*`
+at the browser, [`test_live_hosted_ears.py`](../../sim/tests/test_live_hosted_ears.py) POSTs
+with `urllib`), and none of them opens a microphone.
+
+Chromium can play a WAV **into `getUserMedia`** as a capture device
+(`--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=…`), so the whole real
+path runs: the permission grant, `mic.js::wavCapture`'s ScriptProcessor graph, `encodeWav`'s
+48 kHz → 16 kHz decimation, the upload, the route, the brain, the voice. Measured while
+writing it: Chrome **resamples the file to the capture rate** (a 22050 Hz clip captured at
+48000 Hz loops at 0.760 s against its true 0.750 s), and the file **loops with an unobservable
+phase**, which is why the recording runs for more than twice the clip's length.
+
+```sh
+node sim/check_hosted_mic.mjs --selftest   # hermetic; the fast tier runs this every push
+node sim/check_hosted_mic.mjs --dry-run    # the real site, FREE — every spending route aborted
+node sim/check_hosted_mic.mjs              # the real site, SPENDS ~3 gateway calls
+gh workflow run deployed.yml -f mic=spend  # the same, on demand, in CI
+```
+
+**First paid run, 2026-09-05, against production:** the microphone played *"Happy birthday! I
+hope your day is amazing."*; the page uploaded **311,340 B of 16 kHz mono PCM16** whose
+envelope correlated **0.985** with the clip played (0.329 against an unrelated one); the
+deployment answered *"Happy birthday, I hope your day is amazing."* — **word overlap 1.00**,
+decoy **0.00** — and the brain replied *"Happy birthday! I hope you have lots of fun today."*,
+at **1 STT + 1 chat + 1 TTS**, with **zero** `securitypolicyviolation` events and zero console
+errors. The budget is an interceptor rather than a promise: `MOXIE_MIC_BUDGET` (default 5)
+aborts request N+1 on a spending route at the browser.
+
+**It is neither a merge gate nor a schedule**, and the second half of that is the interesting
+one: `check_deployed.mjs` is free, so a 4×/day cron costs nothing; this one would be ~4,400
+billable calls a year out of the budget the public demo shares, to catch a failure
+`test_live_hosted_ears.py` already catches for nothing. A monitor that eats the thing it
+monitors is not a monitor. So the fast tier runs `--selftest` — four fake microphones against
+`sim/web` on loopback, where **digital silence** must redden *"the captured audio is AUDIBLE"*
+and **a different clip** (real, loud, the wrong words) must redden *"it is the clip the fake
+microphone played"* while the audible clause stays green — and the spending half is a
+`workflow_dispatch` job with `mic: dry` as its default.
+
+**What it does not prove:** the clip is the site's own prerendered speech, not a human being.
+Point `MOXIE_MIC_WAV` + `MOXIE_MIC_TEXT` at a recording of a child and the same run closes that
+too.
+
 ## Run it now
 
 ```sh
