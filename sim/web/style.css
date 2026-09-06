@@ -1474,3 +1474,123 @@ body.tts-speaking #tts-status { color: var(--cyan); }
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* ---- THE THREE OPENERS (#chat-openers) ------------------------------------
+ *
+ * APPENDED, NOT WOVEN IN. This block is a whole, self-contained rule set at the end of
+ * the file on purpose: `style.css` is open in more than one working copy, and a new
+ * feature that restructures existing rules turns every one of those into a conflict for
+ * no benefit. Everything below is additive and nothing above it changes.
+ *
+ * WHAT THEY ARE. Three buttons in `#chat-dock`, between the log and the composer, each of
+ * which SENDS A TURN when tapped (`sim.html`'s note there, and `hud.js`'s `wireOpeners`).
+ * They are the visitor's half of the dock; the phrase chips in the rail (`.chips`/`.chip`,
+ * ~:852) are the engineer's, they play shipped audio, and the two deliberately do not
+ * share a class — a shared class is how one silently becomes the other.
+ *
+ * WHY THEY LOOK LIKE COPY AND NOT LIKE INSTRUMENTATION. The base `button` rule is 11 px
+ * uppercase mono, which is right for a rail full of controls and wrong for three
+ * sentences a stranger is meant to READ and choose between. So they take the UI font at a
+ * readable size in sentence case, like `#chat-cue` directly above them, and the pill
+ * radius says "tap me, this is a suggestion" rather than "this is a switch".
+ *
+ * 44 px, AND `#chat-openers .opener` RATHER THAN `.opener`, for a reason this file has
+ * already hit once (see the expression-chip note at ~:900): the phone media query sets
+ * `button { min-height: 40px }`, so a bare class selector would LOSE to it below 899 px —
+ * i.e. on exactly the devices the touch target exists for. Id specificity wins.
+ *
+ * THREE COLUMNS ON A PHONE, AND THE HEIGHT BUDGET IS WHY — this is the one decision in
+ * the block that was made with a ruler rather than by taste. The three labels are ~50
+ * characters and cannot share one line of pills on a 390 px phone (they want ~413 px of a
+ * ~358 px row), which left three options and only one survived measurement:
+ *
+ *   · TWO ROWS of natural-width pills. Costs ~100 px. REJECTED, and not for looks: the
+ *     dock's growth comes out of the `1fr` STAGE row, so everything above the dock —
+ *     including `#rail-toggle` — rides UP by exactly that much. Measured at 375x667 the
+ *     handle went from y=423 to y=323, straight into the vertically-centred Turnstile
+ *     challenge (301..366), and `sim/test_mobile_layout.mjs` block 4 caught it: a
+ *     challenged visitor could no longer open the drawer. 100 px is more height than this
+ *     page has to give.
+ *   · ONE SCROLLING STRIP of natural-width pills. Costs 50 px and fits, but pushes the
+ *     third opener off the right edge of the ONE SCREEN this whole feature exists to make
+ *     legible. Rejected for that reason alone.
+ *   · THREE EQUAL COLUMNS whose labels wrap to two short lines. Costs 50 px, shows all
+ *     three in full, and keeps the 44 px target. That is what ships below.
+ *
+ * Above 900 px the width is not scarce and the grid would stretch three pills across a
+ * monitor, so there they go back to being natural-width pills in a flex row.
+ *
+ * THE 50 px IS STILL REAL and is spent from the stage, never from the composer: measured
+ * at 390x844, `#speech-input` is 193x44 at y=748..792 both before and after this block
+ * existed — the dock grows UPWARDS. `sim/test_mobile_layout.mjs` block 8 pins that, and
+ * its teeth inflate these buttons until the composer really does leave the fold.
+ *
+ * `min-width: 0` + `overflow: hidden` on the buttons: a long label ellipsizes inside its
+ * own pill instead of widening the dock. The accessible name is `textContent` and is
+ * unaffected — CSS truncation is not name truncation, which is the mistake the phrase
+ * chips have to work around in script.
+ * -------------------------------------------------------------------------- */
+#chat-openers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 2px;
+  min-width: 0;
+}
+#chat-openers .opener {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: 14px;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.25;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  /* The label WRAPS instead of ellipsising: three columns of a phone are narrow, and a
+     suggestion a visitor cannot finish reading is not a suggestion. `overflow-wrap` is the
+     guard for the one word too long for its column — it breaks the word rather than the
+     layout. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  hyphens: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text-dim);
+  /* GLASS, matching the composer below it — Moxie shows through her own suggestions. */
+  background: rgba(9, 12, 19, 0.55);
+  backdrop-filter: blur(18px) saturate(1.1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.34);
+}
+#chat-openers .opener:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: rgba(0, 240, 255, 0.10);
+}
+/* An opener has done its job once the log has a turn in it. Same rule, same reasoning and
+   the same `:has()`-only failure mode as `#chat-cue` (~:586) — a browser without `:has()`
+   simply keeps them. Note what does NOT trigger it: her ambient self-talk logs a
+   `.mutter`, never a `.turn`, so an idle page keeps its openers however long she rambles. */
+#chat-dock:has(#transcript .turn) #chat-openers { display: none; }
+
+/* Wide enough that three natural-width pills fit on one line with room to spare, so the
+   equal-column grid stops earning its keep and would just stretch them across a monitor.
+   The breakpoint is the one the rest of this file already turns on (>=900 px is where the
+   rail becomes a side column rather than a drawer). */
+@media (min-width: 900px) {
+  #chat-openers { display: flex; flex-wrap: wrap; }
+  #chat-openers .opener {
+    flex: 0 1 auto;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* …and the `display:none` above must still beat the `display:flex` on this line, which
+     it does on specificity (three ids vs one) regardless of source order. Stated because
+     the pair is easy to break by "tidying" the media query to `#chat-openers` alone. */
+}

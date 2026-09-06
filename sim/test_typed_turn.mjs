@@ -26,6 +26,10 @@
  *   5. local + Piper      — the local path is BYTE-FOR-BYTE the behaviour it has today.
  *   6. local, no sidecar  — the box is adopted only after the probe answers, and the
  *                           turn is scripted.
+ *   7. hosted + live      — TAPPING AN OPENER is a real turn: the opener's own words in
+ *                           the /api/chat body, the ticket redeemed, her voice audible —
+ *                           and the rail's phrase chips, clicked on the same page, send
+ *                           nothing at all. That pair IS the feature's definition.
  *
  * No gateway, no Cloudflare account, no network: `/api/*` and the :8081 sidecar are
  * answered at the browser, and the site is served from a loopback static server.
@@ -443,6 +447,115 @@ try {
        `no console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
     await page.close();
   }
+
+  /* =======================================================================
+   * 7. AN OPENER IS A REAL TURN — the same request a typed line makes.
+   *
+   * WHAT IT IS. `#chat-openers` in the chat dock: three buttons —
+   * *"Tell me a joke"* / *"How are you feeling?"* / *"Play a game with me"* — specified in
+   * docs/architecture/backlog/gamify-the-public-sim.md's 🅐. Tapping one is a whole first
+   * turn for a visitor who has been told nothing about this robot and has no idea what
+   * she can do.
+   *
+   * WHY THE PROOF BELONGS HERE. `sim/test_mobile_layout.mjs` block 8 drives the openers
+   * on a 390x844 phone, but on a DEGRADED page: every turn there is scripted by `stub.js`
+   * and no request leaves the browser, which is exactly right for "one tap, no scrolling,
+   * no drawer, the log grew" and says nothing at all about the wire. The claim made here
+   * is the other one, and it is the property the whole feature is defined by: an opener
+   * goes down the SAME path a typed line takes — `moxieTypedTurn.send` -> `sendUserTurn`
+   * -> `POST /api/chat` -> a speech ticket -> her real voice — so it spends, queues and
+   * is refused under exactly the same rules. Nothing about it is canned.
+   *
+   * THE NEGATIVE CONTROL IS IN THIS BLOCK, ON THIS PAGE, and it is not decoration: it is
+   * the distinction the feature exists for. `#speech-chips` in the engineering rail look
+   * like these and are not these — they play PRE-CACHED SHIPPED AUDIO and send nothing
+   * (`sim.html`:174-178). One is clicked here and the `/api/chat` count must NOT move.
+   * The day someone "simplifies" the openers into phrase chips, or repurposes the phrase
+   * chips into openers, one of the two halves below goes red.
+   * ===================================================================== */
+  {
+    const { page, errs, reqs, bodies, aborted } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });
+    const chats = () => bodies.filter((b) => /\/api\/chat\b/.test(b.url));
+
+    const before = await page.evaluate(() => {
+      const box = document.getElementById("chat-openers");
+      return {
+        adopted: !!(window.moxieTypedTurn && window.moxieTypedTurn.adopted()),
+        found: !!box,
+        inDock: !!(box && box.closest("#chat-dock")),
+        labels: box ? [...box.querySelectorAll("button.opener")]
+                        .map((b) => b.textContent.replace(/\s+/g, " ").trim()) : [],
+      };
+    });
+    ok(before.adopted, "live/hosted: the typed turn owns the composer (the path an opener uses)");
+    ok(before.found, "…and the three openers are on the page");
+    ok(before.inDock,
+       "…in #chat-dock, beside the box a visitor types into — not in the engineering rail");
+    eq(JSON.stringify(before.labels),
+       JSON.stringify(["Tell me a joke", "How are you feeling?", "Play a game with me"]),
+       `…and they are the three openers the brief names — got ${JSON.stringify(before.labels)}`);
+
+    if (before.found) {
+      await page.click("#chat-openers .opener:nth-of-type(1)");
+      await page.waitForFunction("window.__audio.started > 0", { timeout: 15000 }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    const after = await page.evaluate(snapshot);
+
+    eq(chats().length, 1, "TAPPING AN OPENER REACHES /api/chat — exactly once, like a typed line");
+    ok(chats().length === 1 && JSON.parse(chats()[0].body).text === "Tell me a joke",
+       `…carrying the opener's own words in the same field a typed line fills ` +
+       `(got ${chats()[0] && chats()[0].body})`);
+    const speech = bodies.filter((b) => /\/api\/speech\b/.test(b.url));
+    eq(speech.length, 1, "…and one /api/speech for the answer's voice");
+    ok(speech.length === 1 && JSON.parse(speech[0].body).ticket === "v1.TESTTICKET.MAC",
+       "…redeeming the ticket the chat route minted, exactly as the typed path does");
+    ok(after.audio.started >= 1,
+       `…and a buffer source really STARTED — her answer was spoken (started=${after.audio.started})`);
+    ok(after.audio.peak > 0.5,
+       `…audibly, not a silent clip (peak ${after.audio.peak.toFixed(3)} of ${TONE.amp})`);
+    ok(after.chatText.includes("Tell me a joke"),
+       `…the visitor's line is in the log — got ${JSON.stringify(after.chatText.slice(0, 120))}`);
+    ok(after.chatText.includes("What would you like to play"),
+       `…and Moxie's answer under it — got ${JSON.stringify(after.chatText.slice(-90))}`);
+    eq(await page.$eval("#speech-input", (e) => e.value), "",
+       "…and the message box was never touched: an opener SENDS, it does not pre-fill");
+
+    /* ---- THE NEGATIVE CONTROL: a phrase chip is not an opener ----
+     * `moxieAudio.speak` is wrapped rather than the sound being timed, so this is a
+     * DETERMINISTIC fact about what the chip's handler asked for — no waiting on a decode
+     * and nothing for a slow machine to make flaky. `includes` rather than a length,
+     * because Moxie mutters to herself through the same function every 11-24 s. */
+    await page.waitForSelector("#speech-chips .chip", { timeout: 10000 }).catch(() => {});
+    await page.evaluate(() => {
+      window.__spoke = [];
+      const a = window.moxieAudio, orig = a.speak;
+      a.speak = function (t) { window.__spoke.push(String(t)); return orig.apply(this, arguments); };
+    });
+    const chip = await page.$("#speech-chips .chip");
+    ok(!!chip, "the rail still ships its pre-cached phrase chips, untouched by this slice");
+    const chipText = chip ? await page.$eval("#speech-chips .chip", (e) => e.title || e.textContent) : "";
+    if (chip) {
+      await page.$eval("#speech-chips .chip", (e) => e.click());
+      await new Promise((r) => setTimeout(r, 900));
+    }
+    const spoke = await page.evaluate(() => (window.__spoke || []).slice());
+    ok(spoke.includes(chipText),
+       `…tapping one DID fire its handler — it asked for the shipped clip ${JSON.stringify(chipText)} ` +
+       `(spoke ${JSON.stringify(spoke)})`);
+    eq(chats().length, 1,
+       "…and it sent NO TURN: still exactly one /api/chat, the opener's. THIS is the " +
+       "difference between a phrase chip and an opener");
+    eq(await page.$eval("#speech-input", (e) => e.value), "",
+       "…nor did it pre-fill the composer on an adopted page");
+
+    eq(reqs.filter((u) => /:8081\//.test(u)).length, 0,
+       "no port-8081 request was made from a hosted origin on the opener path either");
+    eq(notable(errs, aborted).length, 0,
+       `the whole opener turn raised no console errors — ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+    await page.close();
+  }
+
 } catch (e) {
   fails.push("threw: " + (e && e.stack ? e.stack.split("\n").slice(0, 4).join(" / ") : e));
 } finally {
