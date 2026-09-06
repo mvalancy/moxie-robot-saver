@@ -1071,3 +1071,36 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   not: the only tracked matches for the key shape are `sim/test_cloud_transport.mjs` and
   `sim/tests/test_compose.py`, and both are the guards' **own deliberately-fake fixture**
   (`KEY_SHAPED.test(...)`, `_IS_A_KEY = …`). A scanner that flags its own test data is working.
+
+- **2026-09-06 — the docs-bundle conflict tax was two defects in the generator, not a property of
+  generated files.** It fired **five times** (#176 twice, #179, #183), each costing a merge-forward
+  plus a full CI cycle, and it made one agent revert a note rather than regenerate files reserved
+  from it. The brief offered four options — merge driver, deploy-time generation, a `.gitattributes`
+  strategy, do nothing — and **all four were rejected because the premise was wrong.**
+  `docs-bundle/**` merged cleanly every single time. The cause was (1) `docs-index.json` carrying one
+  always-rewritten `"generated": "docs-<sha256>"` stamp that **nothing reads**, and (2)
+  `docs-search.json` being **one 3 MB line** with zero merge granularity. Fix: **~8 functional lines**
+  — drop the stamp, emit the search map one doc per line blank-line separated (+295 bytes; the blank
+  line is the *context* git needs). **Activation required: nothing.**
+  **The measurement that killed the favoured option:** a merge driver resolves in a *worktree*, but
+  `git merge-tree --write-tree` — the bare merge a **forge** computes — **still conflicts with it
+  installed**, so GitHub keeps blocking the PR and the cost stays. We had been reasoning about the
+  wrong merge. And `union`, listed neutrally in the brief, is **silently corrupt**: it reports
+  *resolved* while making `docs-search.json` invalid JSON (search dies in production) and giving
+  `docs-index.json` a duplicate key that still parses — the worst available option, and the one an
+  unexamined instinct would have picked.
+  **Validated live, not just constructed:** with #185 open, a doc + bundle commit was pushed to `dev`
+  — the exact shape that broke five times — and the PR stayed **MERGEABLE** (`merge-tree` exit 0).
+  Two mutation-tested assertions in `sim/test_docs.mjs` stop the tax returning, each carrying the
+  *reason* in its failure text so nobody "simplifies" it back.
+
+- **2026-09-06 — two orchestration mistakes of my own, both from over-broad reservations and stale
+  reads.** (a) I blanket-reserved `sim/test_*.mjs` from one agent when the other only ever touched
+  `sim/tools/`; that over-reservation blocked it from fixing its own red suite and cost a round trip.
+  **Reserve what an agent USES, not the neighbourhood it sits in** — and note that the committed doc
+  bundle is a build artifact every doc change must regenerate, so reserving `sim/web/**` wholesale
+  forbids documenting anything. (b) The shared `repo` checkout sat **31 commits behind** all day
+  (blocked by another session's uncommitted files) and I read from it three times, concluding wrongly
+  each time that a rule was missing, a secret count was stale, and a suite did not exist.
+  **Audit against `origin/dev` explicitly** — `git grep <ref>`, throwaway worktrees — and never treat
+  the shared checkout as a source of truth.
