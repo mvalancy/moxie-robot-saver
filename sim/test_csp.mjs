@@ -504,7 +504,15 @@ try {
         const c = document.getElementById("qr-canvas");
         const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
         let dark = 0;
-        for (let i = 0; i < d.length; i += 4) if (d[i] < 128) dark++;
+        /* OPAQUE **and** dark. `d[i] < 128` on its own counts a canvas NOBODY EVER DREW
+         * ON: an untouched 2-D canvas is `rgba(0,0,0,0)` everywhere, so its red channel
+         * is 0 and every pixel reads as "dark". Measured 2026-09-06 by
+         * `sim/tools/page_teeth_check.py` with `sim/web/qr.js` DELETED and again with it
+         * served 200 OK but inert — `hud.js` bails at `!window.moxieQR`, so the card
+         * cannot draw at all, and both runs returned exactly **45000 dark px**: the whole
+         * 300x150 default canvas, comfortably past the `> 500` bar. The alpha term is what
+         * makes this a measurement of INK rather than of the canvas's existence. */
+        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i] < 128) dark++;
         return { dark, status: (document.getElementById("qr-status") || {}).textContent || "" };
       });
       ok(qr.dark > 500, `sim.html: the QR card actually drew a code (${qr.dark} dark px)`);
@@ -537,7 +545,16 @@ try {
         const i = document.querySelector("article img");
         return i ? { src: i.getAttribute("src"), complete: i.complete, w: i.naturalWidth, h: i.naturalHeight } : null;
       });
-      ok(hero && hero.w > 0 && hero.h > 0,
+      /* `complete` IS PART OF THE ASSERTION, not merely of the wait above. The wait
+       * `.catch(() => {})`s, so when it expires the check runs anyway — and a PNG that is
+       * still arriving does NOT have `naturalWidth === 0`, which is what the comment above
+       * assumed. Chrome fills the dimensions in from the IHDR header long before the
+       * pixels land. Measured 2026-09-06 with the 612 KB hero padded to 24 MB behind a
+       * 1 MB/s throttle: `{"complete":false,"w":1424,"h":1251}` — green, on an image the
+       * page had not decoded. Asserting `complete` turns the expired wait from failing
+       * OPEN into failing loud, and costs no teeth: `complete` flips true on error too, so
+       * a 404 or a refusal still has to get past `naturalWidth > 0`, which it cannot. */
+      ok(hero && hero.complete && hero.w > 0 && hero.h > 0,
          `docs.html: the README hero image actually DECODED (${JSON.stringify(hero)})`);
       ok(hero && /^img\//.test(hero.src || ""),
          `docs.html: …from this origin, the repo-relative src remapped onto the site root (${hero && hero.src})`);
@@ -567,7 +584,15 @@ try {
         const c = document.getElementById("cv-wifi");
         const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
         let dark = 0;
-        for (let i = 0; i < d.length; i += 4) if (d[i] < 128) dark++;
+        /* OPAQUE **and** dark. `d[i] < 128` on its own counts a canvas NOBODY EVER DREW
+         * ON: an untouched 2-D canvas is `rgba(0,0,0,0)` everywhere, so its red channel
+         * is 0 and every pixel reads as "dark". Measured 2026-09-06 by
+         * `sim/tools/page_teeth_check.py` with `sim/web/qr.js` DELETED and again with it
+         * served 200 OK but inert — `hud.js` bails at `!window.moxieQR`, so the card
+         * cannot draw at all, and both runs returned exactly **45000 dark px**: the whole
+         * 300x150 default canvas, comfortably past the `> 500` bar. The alpha term is what
+         * makes this a measurement of INK rather than of the canvas's existence. */
+        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i] < 128) dark++;
         return { dark, payload: (document.getElementById("pl-wifi") || {}).textContent || "" };
       });
       ok(out.dark > 500, `setup.html: the Wi-Fi QR drew (${out.dark} dark px)`);

@@ -1,5 +1,5 @@
 {
- "generated": "docs-a0855b1b61e1",
+ "generated": "docs-4a014de48cad",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -944,7 +944,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 36245,
+   "bytes": 42022,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -957,6 +957,9 @@
     "The deployed check — the one tier that looks at what Cloudflare actually serves",
     "The check that deliberately spends — a real voice through the hosted microphone",
     "The audio clause is an ordering, not a magnitude — and that is a scar",
+    "Teeth on the browser suites — which checks survive a broken page",
+    "What the first sweep found: the suites are largely sound",
+    "Where the next pass should go — and the one finding this pass could not fix",
     "Run it now"
    ],
    "kind": "md"
