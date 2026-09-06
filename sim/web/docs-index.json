@@ -1,5 +1,5 @@
 {
- "generated": "docs-247b770db0b0",
+ "generated": "docs-bfb72f9e1465",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -238,7 +238,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 35954,
+   "bytes": 37577,
    "mermaid": 1,
    "headings": [
     "The loop",

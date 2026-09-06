@@ -2869,10 +2869,37 @@ class MoxieRuntime:
             robot.extra["telemetry"] = buf
         return buf
 
-    def telemetry_rollup(self, device_id) -> dict:
-        """This robot's daily roll-up record as stored (`{}`-safe)."""
-        return self.store.read(device_id, telemetry_seam.DAILY_COLLECTION,
-                               telemetry_seam.new_rollup())
+    def telemetry_rollup(self, device_id, *, repair: bool = True) -> dict:
+        """This robot's daily roll-up, **reconciled against the ring** (`{}`-safe).
+
+        The single read point for the roll-up, and the reason a lost write to it is
+        recoverable rather than permanent. The ring is the durable log; the roll-up is a
+        view over it carrying `through_seq`, so every envelope the view has not counted
+        is a fact on disk rather than a guess (`telemetry.unfolded_packets`).
+
+        `repair=True` writes the reconciled record back, and only when something was
+        actually missing — a self-heal, not a write on every read. Without it the repair
+        would be recomputed on every refresh and would vanish for good the moment the
+        ring wrapped past the packet it was recovering. The write is best-effort for the
+        same reason `_persist_telemetry`'s are: this can run on the MQTT thread and a
+        telemetry write must never cost a child their turn.
+
+        `repair=False` is for `_persist_telemetry`, which is about to write the record
+        itself and would otherwise write it twice.
+        """
+        stored = self.store.read(device_id, telemetry_seam.DAILY_COLLECTION,
+                                 telemetry_seam.new_rollup())
+        ring = self.store.read(device_id, telemetry_seam.PACKETS_COLLECTION, [])
+        missing = telemetry_seam.unfolded_packets(stored, ring)
+        rollup = telemetry_seam.reconcile_rollup(stored, ring)
+        if missing and repair:
+            try:
+                self.store.write(device_id, telemetry_seam.DAILY_COLLECTION, rollup)
+                print(f"[runtime] 📈 repaired {device_id}'s telemetry roll-up from the "
+                      f"ring: {len(missing)} packet(s) it had not counted", flush=True)
+            except Exception as e:                # pragma: no cover - best effort
+                print(f"[runtime] telemetry roll-up repair failed: {e}", flush=True)
+        return rollup
 
     def ingest_telemetry(self, device_id, payload):
         """Parse an incoming telemetry Packet, keep it live, and persist it per policy.
@@ -2894,20 +2921,63 @@ class MoxieRuntime:
         """Write one Packet through the privacy gate. True when something was stored.
 
         A telemetry write must never cost a child their turn, so every failure here is
-        printed and swallowed — this runs on the MQTT thread."""
+        printed and swallowed — this runs on the MQTT thread.
+
+        **Three things about the order and the lock, all of them the 2026-09-05 fix.**
+
+        1. **The roll-up is written BEFORE the ring**, which is the opposite of what this
+           did until a `sil` red on a PR that could not reach this code (the whole
+           argument is at the top of `moxie_sdk/telemetry.py`). Both writes are
+           `os.replace`s of separate files and nothing can make the pair atomic, so the
+           only question is which one an observer sees first — and every observer's
+           leading edge is the ring: the SIL fixture waits for envelopes, the console
+           lists events, a restart hydrates its buffer from it. Writing the *exact*
+           record (the lifetime count, which must be right) before the *bounded* one (a
+           ring that is documented to drop things) means no observer can see the ring
+           hold a packet the roll-up has not counted. The inverse — a crash after the
+           roll-up and before the append — costs one envelope from a record whose whole
+           contract is "the newest 500", and costs the number a parent reads nothing.
+        2. **Both writes are one critical section**, held on the ring's record. The
+           roll-up write is a read-modify-write and it was not: two ingests landing
+           together each read the same roll-up and the second's `write` overwrote the
+           first's count, while the ring's `append` — which *is* transactional — kept
+           both. Same divergence, no crash required. `transaction()` is reentrant and the
+           two records are always taken in this order, so the nesting cannot deadlock
+           with anything else here (`erase_telemetry` takes them one at a time).
+        3. **Both return values are read.** `append` answers None and `write` answers
+           False when another process holds the record past `lock_timeout_s` — a refusal,
+           not an exception — and this function used to return True over both of them.
+           That is the disease `store.py::_append_path` describes: *a comfortable lie at
+           the one boundary that knows the truth.* A refused roll-up write is now said
+           out loud, and it is survivable rather than permanent precisely because the
+           envelope still goes into the ring for `telemetry_rollup` to reconcile from.
+        """
         row = telemetry_seam.storable_packet(pkt, self.telemetry_policy(device_id))
         if row is None:                       # LoggingPolicy.NO_DATA — nothing on disk
             return False
         try:
-            self.store.append(device_id, telemetry_seam.PACKETS_COLLECTION, row,
-                              cap=telemetry_seam.max_packets())
-            self.store.write(device_id, telemetry_seam.DAILY_COLLECTION,
-                             telemetry_seam.roll_up_packet(
-                                 self.telemetry_rollup(device_id), row))
-            return True
+            with self.store.transaction(device_id, telemetry_seam.PACKETS_COLLECTION):
+                ring = self.store.read(device_id, telemetry_seam.PACKETS_COLLECTION, [])
+                stored = self.telemetry_rollup(device_id, repair=False)
+                # Stamped here, AFTER the privacy gate — `storable_packet` keeps only
+                # `_PACKET_FIELDS`, so a robot cannot hand us a `seq` of its own and mark
+                # the ring as counted.
+                row = telemetry_seam.with_seq(row, telemetry_seam.next_seq(ring, stored))
+                counted = self.store.write(
+                    device_id, telemetry_seam.DAILY_COLLECTION,
+                    telemetry_seam.roll_up_packet(stored, row))
+                kept = self.store.append(device_id, telemetry_seam.PACKETS_COLLECTION,
+                                         row, cap=telemetry_seam.max_packets()) is not None
         except Exception as e:
             print(f"[runtime] telemetry write failed: {e}", flush=True)
             return False
+        if not counted:
+            print(f"[runtime] telemetry roll-up refused for {device_id} "
+                  f"({self.store.last_lock_error}); the ring will repair it", flush=True)
+        if not kept:
+            print(f"[runtime] telemetry envelope refused for {device_id} "
+                  f"({self.store.last_lock_error}); it is counted, not listed", flush=True)
+        return counted or kept
 
     # ---- erasing the activity record (the other half of the privacy contract) ----
     #
