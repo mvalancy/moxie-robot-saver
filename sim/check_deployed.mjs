@@ -73,6 +73,21 @@
  *        also half of the CI judgement at the bottom of this comment: a PREVIEW
  *        DEPLOYMENT CANNOT EXERCISE CLAUSE 2 AT ALL.
  *
+ * 3. EVERY PAGE ASSET ARRIVED. Same-origin, non-`/api/` requests must all come back below
+ *    400 and none may fail at the network layer. See the clause itself for why it is not
+ *    `consoleErrs.length === 0`.
+ *
+ * 4. AND THE SCRIPTS THAT ARRIVED ACTUALLY RAN. Clause 3's blind spot, and the last open
+ *    member of its family: a file served **200 OK and inert** satisfies clause 3
+ *    perfectly — real status, real body, no failure, no console line, no exception — and
+ *    does nothing. Nothing generic can see that. So clause 4 names ONE cheap observable
+ *    effect per script (`moxie.js` builds the stage canvas and the motor panel; `hud.js`
+ *    puts the accessible name on each slider; `mode.js` moves `body[data-mode]` off
+ *    "boot"; `env.js` creates the badge; `qr.js` draws real ink when Make is pressed) and
+ *    asserts THOSE. Not a `window.__loaded` flag: an effect the page already has because
+ *    of what it is for, so nobody deletes it as test scaffolding later. The clause lists
+ *    the scripts it does NOT cover, out loud.
+ *
  * ────────────────────────────────────────────────────────────────────────────
  * IT SPENDS NOTHING. `/api/chat`, `/api/speech` and `/api/transcriptions` are ABORTED at
  * the browser, so no path through this file can reach the gateway even if a future page
@@ -98,6 +113,14 @@
  *      mutation A  `#chat-dock { display: none }`   → the 0×0 pre-#162 state
  *      mutation B  the dock pushed 2 000 px down    → sized, hit-testable, below the fold
  *      mutation C  a fixed banner laid over it      → sized, in view, and NOT tappable
+ *      mutation D  `qr.js` deleted from the build   → clause 3, an asset that 404s
+ *      mutation E  `moxie.js` served 200 OK, inert  → clause 4, and it takes hud.js's
+ *                                                     mark with it (no sliders to name)
+ *      mutation F  `hud.js`   served 200 OK, inert  → clause 4, HUD only: every moxie.js
+ *                                                     mark still stands
+ *      mutation G  `mode.js`  served 200 OK, inert  → clause 4, `data-mode` stuck at "boot"
+ *      mutation H  `env.js`   served 200 OK, inert  → clause 4, no badge is ever built
+ *      mutation I  `qr.js`    served 200 OK, inert  → clause 4, Make draws a blank canvas
  *
  * Each mutation must redden a DIFFERENT clause, which is the point: three assertions that
  * always fail together are one assertion with extra words. It is hermetic — loopback
@@ -145,7 +168,8 @@
  *
  *     node sim/check_deployed.mjs https://<a-branch-preview>.pages.dev/sim
  */
-import { readFileSync, mkdtempSync, cpSync, appendFileSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, cpSync, appendFileSync,
+         rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { requireBrowser, serveStatic, pagesHeaders, makeChecks, finish, web } from "./browser_harness.mjs";
@@ -268,6 +292,43 @@ async function probe(browser, url, { settleMs = 2000 } = {}) {
    * speaks unprompted: nothing here should be racing the page's own life. */
   await page.waitForFunction("!!document.getElementById('speech-input')", { timeout: 15000 })
             .catch(() => {});
+
+  /* ---- clause 4's wait: every script on the page has to LEAVE A MARK ----------
+   *
+   * The one breakage nothing here could see, measured on 2026-09-06 by
+   * `sim/tools/page_teeth_check.py`: serve `hud.js` — or `moxie.js`, or `mode.js`, or
+   * `qr.js` — **200 OK and inert**, and this file exited 0 with 88 checks. The tag
+   * resolves, the request log is clean, the status is 200, no exception is thrown and no
+   * console line is printed, so clause 3 (an asset that FAILED) is blind by construction
+   * and so is every listener a suite could install. There is no generic detector for it.
+   * The only thing that separates a script that ran from one that was merely delivered is
+   * AN EFFECT THAT SCRIPT IS SUPPOSED TO HAVE, named one file at a time.
+   *
+   * Each signal below is something the page already does because of what it is for — not
+   * a flag added for the test. A `window.__loaded` marker or a `data-ran` attribute would
+   * make this pass by making the product carry scaffolding, and the next person to read
+   * `sim.html` deletes it as dead weight; then the check goes green forever.
+   *
+   * WHY IT IS A WAIT AND NOT JUST AN ASSERTION AFTER THE SETTLE. `moxie.js` is an ES
+   * module (deferred, and it has three.js to fetch) and `mode.js` answers over the
+   * network, so on a cold real deployment the marks land at their own pace. Sampling them
+   * at a fixed 2 s is defect 2/3/4's shape all over again — a check that can only fail on
+   * a slow machine. So: poll for all four, then measure. `.catch(() => {})` on purpose —
+   * an expired wait must fall through to the assertions and REPORT which mark is missing,
+   * not throw a timeout that says nothing about which script died.
+   *
+   * 8 s is chosen against `mode.js`'s own `PROBE_TIMEOUT_MS` (6 s): past that it has
+   * given up on `/api/health` and settled into `offline`, so a deployment whose health
+   * route hangs still resolves rather than racing this wait. */
+  await page.waitForFunction(() => {
+    const named = document.querySelectorAll('#motors input[type="range"][aria-label]').length;
+    const mode = document.body && document.body.getAttribute("data-mode");
+    return !!document.querySelector("#app canvas")               // moxie.js built the stage
+        && document.querySelectorAll("#motors .motor").length > 0  // moxie.js built the panel
+        && named > 0                                             // hud.js named the sliders
+        && !!mode && mode !== "boot";                            // mode.js answered
+  }, { timeout: 8000, polling: 200 }).catch(() => {});
+
   await new Promise((r) => setTimeout(r, settleMs));
 
   /* The measurement runs INSIDE the page, and it is written INLINE rather than passed in
@@ -315,12 +376,74 @@ async function probe(browser, url, { settleMs = 2000 } = {}) {
       beaconTags: [...document.querySelectorAll("script[src]")]
         .map((s) => s.src).filter((s) => /cloudflareinsights\.com/.test(s)),
       csp: window.__csp || [],
+      /* One cheap, specific, per-file mark. Each is picked because ONLY that script
+       * produces it and the page ships without it:
+       *   stage   `moxie.js` appends the three.js renderer's own <canvas> to #app.
+       *   motors  `moxie.js::buildPanel` writes the motor rows into an EMPTY <div
+       *           id="motors"> (sim.html:130) and the expression glyphs into #faces.
+       *   named   `hud.js::labelMotors` copies each row's visible text onto its slider as
+       *           an `aria-label` — the a11y fix it exists for. moxie.js writes the rows
+       *           WITHOUT one, so the attribute is hud.js's signature and nothing else's.
+       *   mode    `env.js::paintBadge` writes body[data-mode] from `mode.js`'s answer, and
+       *           writes the literal "boot" when there is no answer to paint. So a value
+       *           other than "boot" means mode.js decided something.
+       *   badge   `env.js` CREATES the .env-badge span; sim.html has no such element.
+       * Deliberately NOT used, having been checked against the markup: body[data-bus]
+       * (sim.html ships data-bus="idle" and hud.js's first sync computes "idle" from "not
+       * connected" — identical either way), #link-label (ships the exact text hud.js would
+       * write), and #alive-toggle's class/aria-pressed (both ship set). Three signals that
+       * look like witnesses and are markup. */
+      ran: {
+        stage: document.querySelectorAll("#app canvas").length,
+        motors: document.querySelectorAll("#motors .motor").length,
+        faces: document.querySelectorAll("#faces .face-emoji").length,
+        named: document.querySelectorAll('#motors input[type="range"][aria-label]').length,
+        mode: document.body ? document.body.getAttribute("data-mode") : null,
+        badge: (document.querySelector("#topbar .env-badge") || {}).textContent || "",
+      },
     };
+  });
+
+  /* The one PROVOKED signal, and it runs AFTER `view` on purpose: every clause above is a
+   * claim about a page nobody has touched, so nothing may be clicked until the geometry
+   * has been read.
+   *
+   * `qr.js` has no effect at all until someone asks for a code — it defines encoders and
+   * a canvas renderer and does nothing on load — so it is the case the prompt's "assert an
+   * observable effect" rule has to be provoked into. Pressing Make is free (no network, no
+   * spend: the encoders are pure string work and `qrcode.js` draws locally) and the
+   * default #qr-kind is OPEN_MOXIE, which needs no typed input.
+   *
+   * INK, NOT PIXEL VALUE. `d[i] < 128` alone counts a canvas NOBODY EVER DREW ON: an
+   * untouched 2-D canvas is rgba(0,0,0,0) everywhere, so its red channel is 0 and every
+   * pixel reads "dark" — 45000 of them on the 300x150 default. The alpha term is what
+   * makes this a measurement of ink. Same trap, same fix, as test_csp.mjs's two QR checks.
+   *
+   * It is also the ONE signal that covers two files at once, which is a feature rather
+   * than sloppiness: the button's listener lives in `hud.js` and bails at `!window.moxieQR`,
+   * the encoder and the renderer live in `qr.js`, so an inert EITHER leaves the canvas
+   * blank. `named` above is what separates the two when it happens. */
+  const qr = await page.evaluate(async () => {
+    const btn = document.getElementById("qr-make");
+    const cv = document.getElementById("qr-canvas");
+    const st = document.getElementById("qr-status");
+    if (!btn || !cv) return { present: false, ink: 0, status: "" };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 300));
+    let ink = 0;
+    try {
+      const d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i] < 128) ink++;
+    } catch (e) {
+      return { present: true, ink: 0, status: "readback failed: " + (e && e.message) };
+    }
+    return { present: true, ink, w: cv.width, h: cv.height,
+             status: (st && st.textContent) || "" };
   });
 
   await page.close();
   return { url, status: res ? res.status() : 0, headers: res ? res.headers() : {},
-           net, failed, blocked, consoleErrs, ...view };
+           net, failed, blocked, consoleErrs, qr, ...view };
 }
 
 /* ---- the assertions, over one probe record -------------------------------- */
@@ -398,6 +521,48 @@ function assertReachable(c, p, tag, { expectBeacon }) {
   eq(deadAssets.length, 0,
      `${tag}: no page asset failed at the network layer — ${JSON.stringify(deadAssets)}`);
 
+  /* ---- clause 4: the scripts did not merely ARRIVE, they RAN -------------------
+   *
+   * The last open member of the family clause 3 closed half of. Clause 3 asks whether the
+   * bytes turned up; a script served 200 OK and INERT answers yes and does nothing. That
+   * is not hypothetical — it is what a bad minify, a truncated upload, a module that
+   * throws before its first side effect, or a `<script>` whose dependency moved all look
+   * like on the wire, and `sim/tools/page_teeth_check.py` reproduces it exactly (`gut`).
+   *
+   * There is deliberately NO generic rule here. "A global is defined" is brittle and most
+   * of the page is ESM; "count the requests" gives the identical count (the file WAS
+   * fetched); "diff the DOM" is huge, noisy, and gets loosened the first time it flaps.
+   * One named mark per file is the only shape that stays true and stays cheap, and it is
+   * the reason each clause below says which file it is about — a red here points at one
+   * script, which is the whole value over a screenshot diff.
+   *
+   * WHAT THIS DOES NOT COVER, said out loud so nobody reads a green here as "every script
+   * ran": `sw-reset.js`, `stub.js`, `bridge.js`, `audio.js`, `life.js`, `mic.js`,
+   * `rail.js`, `turnstile.js`, `cloud-transport.js` and `ambient.js` are all loaded by
+   * sim.html and none is asserted here. Some have no observable effect on an untouched
+   * page (`stub.js` and `cloud-transport.js` answer a turn that has not been taken;
+   * `turnstile.js` renders nothing without a sitekey); `ambient.js` has one but it is ~7 s
+   * away and this file must stay well inside that. They are the honest remainder. */
+  const r = p.ran;
+  ok(r.stage > 0,
+     `${tag}: moxie.js ran — the three.js renderer appended its <canvas> to #app (found ${r.stage})`);
+  ok(r.motors > 0 && r.faces > 0,
+     `${tag}: moxie.js ran — buildPanel() filled the empty #motors and #faces ` +
+     `(${r.motors} motor rows, ${r.faces} expression glyphs)`);
+  ok(r.motors > 0 && r.named === r.motors,
+     `${tag}: hud.js ran — labelMotors() gave every motor slider its accessible name ` +
+     `(${r.named} named of ${r.motors} rows)`);
+  ok(!!r.mode && r.mode !== "boot",
+     `${tag}: mode.js ran — body[data-mode] left "boot" for this deployment's own answer ` +
+     `(got ${JSON.stringify(r.mode)})`);
+  ok(!!r.badge,
+     `${tag}: env.js ran — it built the environment badge in the topbar (got ${JSON.stringify(r.badge)})`);
+  ok(p.qr.present && p.qr.ink > 500,
+     `${tag}: qr.js ran — pressing Make drew a real code, opaque ink and not an untouched ` +
+     `canvas (${p.qr.ink} ink px on ${p.qr.w}x${p.qr.h})`);
+  ok(p.qr.present && /\{/.test(p.qr.status),
+     `${tag}: qr.js ran — …and printed the JSON payload it encoded (${JSON.stringify(String(p.qr.status).slice(0, 48))})`);
+
   /* ---- the beacon reality (clause 2) ---- */
   eq(p.csp.length, 0, `${tag}: ZERO securitypolicyviolation events on load — ` +
      JSON.stringify(p.csp.slice(0, 4)));
@@ -435,6 +600,14 @@ function report(p, { expectBeacon }) {
   console.log(`    beacon          ${p.beaconTags.length ? p.beaconTags.map((s) => s.slice(0, 78)).join(", ") : "(none)"}` +
               `   expected: ${expectBeacon ? "yes" : "no"}`);
   console.log(`    CSP violations  ${p.csp.length}${p.csp.length ? "  " + JSON.stringify(p.csp.slice(0, 3)) : ""}`);
+  // The marks clause 4 reads, printed as NUMBERS rather than as a verdict — the same
+  // discipline the mutation list below records: a mutation that quietly mutates nothing is
+  // only ever caught because a run leaves its measurements behind.
+  console.log(`    scripts ran     moxie.js: ${p.ran.stage} stage canvas, ${p.ran.motors} motors, ` +
+              `${p.ran.faces} faces   hud.js: ${p.ran.named} named sliders   ` +
+              `mode.js: data-mode=${JSON.stringify(p.ran.mode)}   env.js: badge ${JSON.stringify(p.ran.badge)}`);
+  console.log(`    qr.js           ${p.qr.present ? `${p.qr.ink} ink px on ${p.qr.w}x${p.qr.h}` : "NO #qr-make/#qr-canvas"}` +
+              `   payload ${JSON.stringify(String(p.qr.status).slice(0, 46))}`);
   console.log(`    spending routes aborted: ${p.blocked.length}   failed requests: ${p.failed.length}` +
               `   console errors: ${p.consoleErrs.length}`);
   if (p.failed.length) for (const f of p.failed.slice(0, 5)) console.log(`      · failed ${f.url} — ${f.why}`);
@@ -481,8 +654,24 @@ function report(p, { expectBeacon }) {
  * tree instead. `qr.js` is chosen because losing it changes NO geometry — so D reddens
  * clause 3 and nothing else, which is what makes it a test of clause 3 rather than of the
  * layout clauses that were already covered.
+ *
+ * E…I ARE THE SUBTLER HALF OF D, and clause 4 exists because of them. A file served
+ * **200 OK and inert** is a real 200 with a real body and no code: D's own instrument
+ * cannot see it, because nothing failed. Each one gutts exactly one script and must
+ * redden exactly the clause that names that script — which is also the only proof that
+ * the marks clause 4 reads are attributable one file at a time rather than four
+ * assertions that fail together.
+ *
+ * `wanted` for E and F is deliberately not the same string: gutting `moxie.js` takes
+ * `hud.js`'s mark down with it (there are no sliders left to name), while gutting
+ * `hud.js` leaves every moxie.js mark standing. That asymmetry is the discrimination
+ * being tested, so E must fire the MOXIE clause and F the HUD one.
  */
+const GUT = "/* --selftest mutation: this file was served 200 OK and did nothing. */\n";
+const gut = (name) => (dir) => writeFileSync(join(dir, name), GUT);
+
 const MUTATIONS = [
+  // [name, appended CSS, the clause it MUST fire, a mutate(dir) fn, the file it needs]
   ["A · dock hidden (the pre-#162 0×0 state)",
    `#chat-dock { display: none !important; }`,
    /non-zero box/],
@@ -496,9 +685,29 @@ const MUTATIONS = [
   ["D · a shipped script is missing from the build (qr.js 404s)",
    null,
    /every page asset loaded/,
-   (dir) => rmSync(join(dir, "qr.js"))],
+   (dir) => rmSync(join(dir, "qr.js"), { force: true }),
+   "qr.js"],
+  ["E · moxie.js served 200 OK and INERT (the stage never boots)",
+   null, /moxie\.js ran/, gut("moxie.js"), "moxie.js"],
+  ["F · hud.js served 200 OK and INERT (no HUD glue ever wires up)",
+   null, /hud\.js ran/, gut("hud.js"), "hud.js"],
+  ["G · mode.js served 200 OK and INERT (the deployment never decides what it is)",
+   null, /mode\.js ran/, gut("mode.js"), "mode.js"],
+  ["H · env.js served 200 OK and INERT (no badge, no banner, no needs-backend marks)",
+   null, /env\.js ran/, gut("env.js"), "env.js"],
+  ["I · qr.js served 200 OK and INERT (Make is wired and encodes nothing)",
+   null, /qr\.js ran/, gut("qr.js"), "qr.js"],
 ];
 
+/* `{ force: true }` on D's delete, and the anchor asserted separately in `selftest()`
+ * below, because of a defect this file HAD: with `sim/web/qr.js` already missing from the
+ * tree (which is exactly what `page_teeth_check.py`'s `qr-gone` row does), `rmSync` threw
+ * ENOENT inside `mutatedCopy` — during server SETUP, before a single probe ran. The suite
+ * exited non-zero with a stack trace and the audit scored the deletion as "caught". It was
+ * not caught; it was a crash that happened to have the right exit code, and it would have
+ * scored identically had every clause in this file been deleted. Now the copy cannot
+ * crash, the missing anchor is its own named check, and the deletion is caught where it
+ * always should have been: the BASELINE target 404s on qr.js and clause 3 reddens. */
 function mutatedCopy(css, mutate) {
   const dir = mkdtempSync(join(tmpdir(), "moxie-deployed-"));
   cpSync(web, dir, { recursive: true });
@@ -514,6 +723,17 @@ async function selftest(puppeteer, chrome) {
   /* Every server first, so every port is known before the browser starts: Chrome takes
    * its resolver rules at LAUNCH, and one browser for all four targets keeps the run to a
    * single profile (and a single set of GPU warnings). */
+  /* A mutation whose target file is not in the tree mutates NOTHING, and the tree is not
+   * a constant: `page_teeth_check.py` deletes shipped scripts on purpose, and so does a
+   * bad merge. Asserted here, as a check, rather than being discovered as an exception
+   * out of `mutatedCopy` — see its note. */
+  for (const [name, , , , anchor] of MUTATIONS) {
+    if (!anchor) continue;
+    c.ok(existsSync(join(web, anchor)),
+         `mutation ${name} needs sim/web/${anchor} to exist before it can break it — ` +
+         `the file is missing from the tree, so this mutation proves nothing`);
+  }
+
   const targets = [];
   for (const [i, entry] of [[0, null], ...MUTATIONS.map((m, n) => [n + 1, m])]) {
     const [name, css, wanted, mutate] = entry || ["baseline (the tree as committed)", null, null];

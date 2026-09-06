@@ -17,10 +17,12 @@
  * several budgets. §4.6 says this out loud and this comment is the code half of that
  * promise.
  *
- * **SINCE 2026-09-05 TWO OF THOSE COUNTS ARE ALSO KEPT IN THE CACHE API: the per-IP
- * MINUTE window, and the UNIT BUDGET's hour.** Both tiers are described in full further
- * down, at `sharedWindowVerdict` and `sharedBudgetVerdict`, and the three facts that
- * matter are these. They are **per-colo**, so they remove the *isolate* multiplier
+ * **SINCE 2026-09-06 EVERY PER-IP WINDOW AND EVERY UNIT-BUDGET CEILING IS ALSO KEPT IN
+ * THE CACHE API: the per-IP MINUTE, HOUR and DAY windows, and the unit budget's HOUR and
+ * DAY.** (2026-09-05 shipped the first two of those; the hour and day windows and the
+ * budget's day followed.) The sub-tiers are described in full further down, at
+ * `sharedWindowVerdict` / `sharedWideWindow` and `sharedBudgetVerdict` / `sharedDayBudget`,
+ * and the three facts that matter are these. They are **per-colo**, so they remove the *isolate* multiplier
  * (measured >= 7) and leave the *colo* one. **A burst defeats them** — 31 concurrent
  * increments stored 9 — while a paced sustained drain, which is the traffic a counter
  * actually exists to stop, lost 0 of 41. And **every one of their errors is an
@@ -33,6 +35,14 @@
  * charge until the request has been released without a refund — the isolate holds its
  * unpublished spend in `state.units` and publishes it on the next admission. There is no
  * refund write anywhere on the shared tier, which is why there is no lost refund to fear.
+ * The DAY budget is the same design again, with its own ledger (`state.unitsDay`) for the
+ * one reason a shared ledger could not serve: the two roll on different clocks.
+ *
+ * **WHAT IS STILL PER-ISOLATE, so that this comment cannot drift the way §4.6 once did:**
+ * the CONCURRENCY ceiling, its FIFO, and `/api/health`'s `budget` and `load` probe. The
+ * first two are refused a place here on purpose — a slot must be given back, and a lost
+ * give-back leaks a slot for ever, which fails CLOSED — and the third is a probe that must
+ * not be able to hang. Nothing else in this file is isolate-only any more.
  *
  * The in-isolate `Map` below is unchanged and still decides FIRST: the cache
  * tier only ever ADDS refusals, and with `DEMO_CACHE_COUNTER=0` — or on any runtime with
@@ -128,6 +138,18 @@ const state = {
    * Dropping is an undercount, which is legal here. Moving is not.
    */
   units: { pending: 0, bucket: -1 },
+  /**
+   * THE DAY TWIN OF `units`, and a SEPARATE ledger rather than a second field on that one.
+   *
+   * The hour and the day publish to two different entries and roll on two different
+   * clocks, so one ledger carrying both would have to drop the day's units every time the
+   * hour rolled — turning a legal undercount of one hour into a systematic undercount of
+   * the whole day. Two ledgers is the cheap way to make each drop mean only what it says.
+   * Everything else about it is the hour's argument verbatim: units land here only from
+   * `release()` on an un-refunded request, and once here they can only be published or
+   * DROPPED. There is no take-back, because a lost take-back is an overcount.
+   */
+  unitsDay: { pending: 0, bucket: -1 },
   /** route -> requests currently in flight in THIS isolate */
   inflight: { chat: 0, speech: 0, transcribe: 0 },
   /** route -> the FIFO of requests waiting for a concurrency slot. **PER-ISOLATE, like
@@ -174,6 +196,15 @@ const state = {
         allowed: 0, refused: 0, wrote: 0, errors: 0, timeouts: 0,
         published: 0, dropped: 0,
       },
+      wide: {
+        checked: 0, ops: 0, hit: 0, miss: 0, stale: 0,
+        allowed: 0, refused: 0, wrote: 0, errors: 0, timeouts: 0,
+      },
+      unitsDay: {
+        checked: 0, ops: 0, hit: 0, miss: 0, stale: 0,
+        allowed: 0, refused: 0, wrote: 0, errors: 0, timeouts: 0,
+        published: 0, dropped: 0,
+      },
     },
   },
 };
@@ -209,6 +240,7 @@ export function __reset() {
   // that resets and keeps the same fake cache is then two isolates in one colo, which is
   // exactly the thing `sharedBudgetVerdict` exists to see.
   state.units = { pending: 0, bucket: -1 };
+  state.unitsDay = { pending: 0, bucket: -1 };
   for (const route of Object.keys(state.waiters)) expireAll(state.waiters[route]);
   state.inflight = { chat: 0, speech: 0, transcribe: 0 };
   state.waiters = { chat: [], speech: [], transcribe: [] };
@@ -223,6 +255,15 @@ export function __reset() {
       checked: 0, ops: 0, hit: 0, miss: 0, stale: 0,
       allowed: 0, refused: 0, wrote: 0, errors: 0, timeouts: 0,
       units: {
+        checked: 0, ops: 0, hit: 0, miss: 0, stale: 0,
+        allowed: 0, refused: 0, wrote: 0, errors: 0, timeouts: 0,
+        published: 0, dropped: 0,
+      },
+      wide: {
+        checked: 0, ops: 0, hit: 0, miss: 0, stale: 0,
+        allowed: 0, refused: 0, wrote: 0, errors: 0, timeouts: 0,
+      },
+      unitsDay: {
         checked: 0, ops: 0, hit: 0, miss: 0, stale: 0,
         allowed: 0, refused: 0, wrote: 0, errors: 0, timeouts: 0,
         published: 0, dropped: 0,
@@ -248,6 +289,11 @@ export function __state() {
      *  on this rather than on the cache's stored value when what it wants to know is what
      *  this isolate OWES, which is a different fact from what the colo has been told. */
     units: { ...state.units },
+    /** The DAY ledger, reported beside the hour's rather than folded into it: the two
+     *  publish to different entries and roll on different clocks, and a test that wants to
+     *  know what this isolate owes TODAY is asking a different question from what it owes
+     *  this hour. */
+    unitsDay: { ...state.unitsDay },
     stats: JSON.parse(JSON.stringify(state.stats)),
   };
 }
@@ -572,6 +618,11 @@ function chargeBudget(route, cfg, nowS) {
   /** The hour this charge belongs to, and whether an hourly ceiling exists to mirror. */
   const hourBucket = bucket(nowS, SCALES.hour);
   const hourly = !!cfg.unitBudgetHour;
+  /** The same two facts for the DAY, carried out for the same reason: `release()` may
+   *  settle on the far side of a midnight boundary, and the day that pays for a turn is
+   *  the day the charge was made in, not the day the slot happened to be given back. */
+  const dayBucket = bucket(nowS, SCALES.day);
+  const daily = !!cfg.unitBudgetDay;
   const touched = [];
   for (const [name, ceiling] of Object.entries(ceilings)) {
     if (!ceiling) continue; // 0 => uncapped at this scale
@@ -582,7 +633,7 @@ function chargeBudget(route, cfg, nowS) {
       const resetAt = (bucket(nowS, scale) + 1) * scale;
       return {
         ok: false, reason: "budget_exhausted", retryAfterS: Math.max(1, resetAt - nowS),
-        charged: [], cost, hourBucket, hourly,
+        charged: [], cost, hourBucket, hourly, dayBucket, daily,
       };
     }
     touched.push([key, used + cost]);
@@ -591,7 +642,7 @@ function chargeBudget(route, cfg, nowS) {
   prune(state.budget);
   return {
     ok: true, reason: null, retryAfterS: 0,
-    charged: touched.map(([key]) => key), cost, hourBucket, hourly,
+    charged: touched.map(([key]) => key), cost, hourBucket, hourly, dayBucket, daily,
   };
 }
 
@@ -630,6 +681,19 @@ function pendingUnits(b) {
   return u.pending;
 }
 
+/** `pendingUnits` for the DAY ledger. Same self-heal, same recorded drop, different
+ *  counter — `cache.unitsDay.dropped`, so a day's crumbs are never confused with an
+ *  hour's when somebody reads the stats to find out why a colo undercounted. */
+function pendingDayUnits(b) {
+  const u = state.unitsDay;
+  if (u.bucket !== b) {
+    if (u.pending > 0) state.stats.cache.unitsDay.dropped += u.pending;
+    u.bucket = b;
+    u.pending = 0;
+  }
+  return u.pending;
+}
+
 /** Add committed spend to the ledger. Called from `release()` and from nowhere else, so
  *  the only units that can ever arrive here are units a request actually spent. */
 function accruePending(hourBucket, cost) {
@@ -642,6 +706,26 @@ function accruePending(hourBucket, cost) {
     return;
   }
   u.pending += cost;
+}
+
+/** `accruePending` for the DAY ledger. */
+function accrueDayPending(dayBucket, cost) {
+  if (!cost) return;
+  const u = state.unitsDay;
+  if (u.pending === 0) u.bucket = dayBucket;
+  if (u.bucket !== dayBucket) {
+    state.stats.cache.unitsDay.dropped += cost;
+    return;
+  }
+  u.pending += cost;
+}
+
+/** `unaccruePending` for the DAY ledger — same argument, and it is safe for the same
+ *  reason: nothing here has been shown to anybody outside this isolate yet. */
+function unaccrueDayPending(dayBucket, cost) {
+  const u = state.unitsDay;
+  if (!cost || u.bucket !== dayBucket) return;
+  u.pending = Math.max(0, u.pending - cost);
 }
 
 /** Take committed spend back OUT of the ledger — the one and only un-say in this design,
@@ -1056,6 +1140,12 @@ function grantedSlot(route, capacity, rateLimit, budget) {
   const owed = budget && budget.hourly && budget.charged && budget.charged.length
     ? (budget.cost || 0) : 0;
   const hourBucket = (budget && budget.hourBucket) || 0;
+  /** The same number for the DAY ledger, computed from the DAY ceiling's own flag so a
+   *  deployment that caps the hour but not the day (or the other way round) accrues to
+   *  exactly the ledger it has a ceiling for and to no other. */
+  const owedDay = budget && budget.daily && budget.charged && budget.charged.length
+    ? (budget.cost || 0) : 0;
+  const dayBucket = (budget && budget.dayBucket) || 0;
   return {
     ok: true,
     reason: null,
@@ -1070,6 +1160,7 @@ function grantedSlot(route, capacity, rateLimit, budget) {
       if (!refunded && !settled) {
         settled = true;
         accruePending(hourBucket, owed);
+        accrueDayPending(dayBucket, owedDay);
       }
       handOffOrRelease(route);
     },
@@ -1079,6 +1170,7 @@ function grantedSlot(route, capacity, rateLimit, budget) {
       if (settled) {
         settled = false;
         unaccruePending(hourBucket, owed); // the release-then-refund ordering; see above
+        unaccrueDayPending(dayBucket, owedDay);
       }
       state.stats.refundedUnits += (budget && budget.charged && budget.charged.length)
         ? (budget.cost || 0) : 0;
@@ -1133,10 +1225,15 @@ function grantedSlot(route, capacity, rateLimit, budget) {
  * while an undercounted budget costs money"* — put the lossy counter where being wrong is
  * cheap. Three candidates were considered, one rejected and one built next door:
  *
- *   * The **hour and day windows** — rejected on the latency budget. Each extra key is
- *     another `match` + `put`; §4.6.1 row h measured three cache ops at <=44 ms and this
- *     sub-tier gets two. The minute is also the bucket that rotates fastest, so a hot key
- *     is never long-lived and a stale one expires itself.
+ *   * The **hour and day windows** — rejected here on the latency budget (*"each extra key
+ *     is another `match` + `put`"*), and BUILT on 2026-09-06 at `sharedWideWindow` by
+ *     answering that objection rather than overruling it: both scales share ONE entry, so
+ *     they cost one round trip between them and not two. What that gives up is the minute
+ *     key's free staleness argument — the shared entry rotates DAILY, because that is the
+ *     widest scale it holds — so each scale's bucket is stamped in the BODY beside its
+ *     count and a count stamped with any other bucket reads as zero. The sentence above is
+ *     left standing rather than rewritten, because the objection was correct and knowing
+ *     which objection a design answers is worth more than a tidy paragraph.
  *   * The **unit budget** — BUILT 2026-09-05, at `sharedBudgetVerdict`, and it is one more
  *     `match` (+ one conditional `put`) on the key `.../units/<hour bucket>` as this note
  *     predicted. What this note got WRONG, and it is worth leaving the correction next to
@@ -1263,6 +1360,48 @@ function cacheKeyUrl(request, route, tag, minuteBucket) {
 }
 
 /**
+ * The one-character marks that keep the WIDER scales' entries out of the narrower ones'
+ * key space, and they are a proof rather than a hope.
+ *
+ * A window key's last component is `Math.floor(nowS / 60)` and a wide window key's is
+ * `"w" + Math.floor(nowS / 86400)`; a budget key's is `Math.floor(nowS / 3600)` and the
+ * day budget's is `"d" + Math.floor(nowS / 86400)`. **A decimal integer cannot begin with
+ * a letter**, so no value of the clock can make a narrow key spell a wide one — which
+ * matters because the two ARITIES are equal within each pair and the arity argument that
+ * separates the window family from the budget family cannot separate these. The mark is
+ * the whole of the separation and it is a byte-level one.
+ *
+ * They also keep `__keyShapes().windowArity` at 3 and `unitsArity` at 2, so the collision
+ * argument in `unitsKeyUrl` below survives this addition unchanged rather than needing to
+ * be re-argued for four shapes.
+ */
+const WIDE_MARK = "w";
+const DAY_MARK = "d";
+
+/** `https://<own origin>/__moxie/rl/<route>/<tag>/w<day bucket>` — ONE entry carrying this
+ *  visitor's HOUR and DAY counts for this route.
+ *
+ *  **WHY ONE ENTRY AND NOT TWO.** §4.6.1 rejected the hour and day windows on the latency
+ *  budget — *"each extra key is another `match` + `put`"* — and that objection is correct
+ *  and is what this shape answers: two scales in one entry cost ONE round trip, not two.
+ *  The body carries each scale's bucket beside its count, so a component the key no longer
+ *  rotates is carried in the value instead and nothing stale can be believed. The key
+ *  rotates DAILY rather than per-minute, which is the widest scale it holds and therefore
+ *  the shortest life it can have while holding it; `max-age` matches. */
+function wideKeyUrl(request, route, tag, dayBucket) {
+  const origin = new URL(request.url).origin;
+  return origin + CACHE_PATH + route + "/" + tag + "/" + WIDE_MARK + dayBucket;
+}
+
+/** `https://<own origin>/__moxie/rl/units/d<day bucket>` — the unit budget's DAY entry.
+ *  Every word of `unitsKeyUrl`'s argument below applies to it unchanged: no visitor, no
+ *  route, no ceiling, and nothing an outsider controls. */
+function unitsDayKeyUrl(request, dayBucket) {
+  const origin = new URL(request.url).origin;
+  return origin + CACHE_PATH + UNITS_PATH + "/" + DAY_MARK + dayBucket;
+}
+
+/**
  * `https://<own origin>/__moxie/rl/units/<hour bucket>` — the unit budget's shared entry.
  *
  * ============================================================================
@@ -1330,16 +1469,20 @@ export function __keyShapes() {
     prefix: CACHE_PATH,
     units: UNITS_PATH,
     routes: Object.keys(UNITS),
-    /** Components after `CACHE_PATH`, for each shape. Different => cannot collide. */
+    /** Components after `CACHE_PATH`, for each shape. Different => cannot collide.
+     *  The WIDE window and the DAY budget share their family's arity on purpose and are
+     *  separated from it by `wideMark` / `dayMark` instead — see those constants. */
     windowArity: 3,
     unitsArity: 2,
+    wideMark: WIDE_MARK,
+    dayMark: DAY_MARK,
     tagHex: CACHE_TAG_HEX,
   };
 }
 
 /** Read the stored count. Returns an integer, `CACHE_STALE`, or `null` for "no usable
  *  entry" — and every one of those three means "start from zero", which is fail-open. */
-async function readCount(store, key) {
+async function readBody(store, key) {
   const hit = await store.match(key);
   if (!hit) return null;
   const age = Number(hit.headers.get("Age"));
@@ -1352,7 +1495,16 @@ async function readCount(store, key) {
   } catch {
     return null; // an entry we cannot parse is an entry we do not have
   }
-  const n = body && Number(body.n);
+  return body && typeof body === "object" ? body : null;
+}
+
+/** The single-counter entries' reader — the minute window's and both unit budgets'. Its
+ *  contract is unchanged from before `readBody` was split out of it: an integer,
+ *  `CACHE_STALE`, or `null`, and all three of those mean "start from zero". */
+async function readCount(store, key) {
+  const body = await readBody(store, key);
+  if (body === CACHE_STALE || body === null) return body;
+  const n = Number(body.n);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
 }
 
@@ -1370,12 +1522,15 @@ async function readCount(store, key) {
  */
 async function sharedWindowVerdict(store, request, { ip, route, cfg, nowS }) {
   const limit = windowLimits(cfg, route).min;
-  if (!limit) return null; // this route has no per-minute cap to mirror
   const c = state.stats.cache;
   const b = bucket(nowS, SCALES.min);
   const resetAt = (b + 1) * SCALES.min;
 
   const tag = await keyedTag(cfg, COUNTER_INFO, ip + "|" + route, CACHE_TAG_HEX);
+  // This route has no per-minute cap to mirror — but the WIDER scales may still have one.
+  // The tag is the same one they key on, so it is computed above this guard rather than
+  // derived a second time on the other side of it.
+  if (!limit) return sharedWideWindow(store, request, { ip, route, cfg, nowS, tag });
   const key = cacheKeyUrl(request, route, tag, b);
   c.checked += 1;
 
@@ -1409,6 +1564,24 @@ async function sharedWindowVerdict(store, request, { ip, route, cfg, nowS }) {
     };
   }
 
+  // ---- THE WIDER SCALES DECIDE BEFORE THIS ONE WRITES, and the order matters.
+  //
+  // The hour and the day are the same visitor's window at wider scales, so they belong to
+  // this sub-tier; running them HERE rather than after the write below is what makes a
+  // refusal by any of the three cost ZERO cache writes. Incrementing the minute for a
+  // request the hour then refuses would leave the stored minute count ABOVE the truth —
+  // an overcount, which is the one direction this tier may not fail in.
+  //
+  // (The residual, stated rather than hidden: the two window entries are still written
+  // before `sharedThenGrant` consults the BUDGET sub-tiers, so a budget refusal does leave
+  // this visitor's windows one higher than they earned. That predates this slice — the
+  // hour budget has been ordered after the window write since 2026-09-05 — it is bounded
+  // by one increment per refused request, and it only bites while the deployment is out of
+  // budget and therefore already answering everybody `budget_exhausted`. The fix is a
+  // read-phase/write-phase split of the whole tier; see live-sim-demo.md §4.6.3.)
+  const wider = await sharedWideWindow(store, request, { ip, route, cfg, nowS, tag });
+  if (wider) return wider;
+
   // ---- op 2: write back. Unlocked and on purpose — a lost update undercounts (2).
   // `max-age` is one window, so an entry outlives its own bucket by at most that and then
   // evicts itself; the key already carries the bucket, so nothing stale can be believed.
@@ -1430,6 +1603,124 @@ async function sharedWindowVerdict(store, request, { ip, route, cfg, nowS }) {
     c.wrote += 1;
   }
   c.allowed += 1;
+  return null;
+}
+
+/**
+ * The per-IP window sub-tier's WIDER HALF: the hour and the day, in ONE cache entry.
+ *
+ * ============================================================================
+ * WHY THIS EXISTS AT ALL, GIVEN THAT §4.6.1 REJECTED IT.
+ *
+ * `sharedWindowVerdict`'s own notes reject the hour and day windows *"on the latency
+ * budget: each extra key is another `match` + `put`"*. That reasoning is sound and this
+ * function does not overturn it — it answers it. Two scales in ONE entry cost ONE round
+ * trip, so lifting both costs the tier a single extra `match` + `put`, not four. What it
+ * gives up is the property the minute key had for free: a key that rotates fast. The
+ * entry rotates DAILY, because that is the widest scale it holds, so each scale's BUCKET
+ * is carried in the body beside its count and a count whose bucket is not the current one
+ * reads as **zero**. Nothing stale is believed; it is simply not believed in the value
+ * instead of not believed in the key.
+ *
+ * **THE FAILURE DIRECTION IS THE SAME ONE, AND FOR THE SAME REASON.** Every write here is
+ * some observed `prev + 1` for each scale, so the stored value can never exceed the truth.
+ * A miss, a stale entry, a timeout, a throw, an unparseable body, a bucket that does not
+ * match, a lost update under a burst — every one of them reads as a SMALLER count and
+ * therefore ADMITS somebody who might have been refused. **None of them can refuse a
+ * visitor who should have been allowed.** That is the whole licence this tier holds, and a
+ * change that breaks it is a change that must not ship.
+ *
+ * A refusal writes NOTHING, exactly as the minute half does: a request that was refused
+ * spent nothing, so it counts nothing. And when the hour refuses, the day is never
+ * incremented — the visitor is not charged twice for one turn they did not get.
+ * ============================================================================
+ */
+async function sharedWideWindow(store, request, { ip, route, cfg, nowS, tag }) {
+  const limits = windowLimits(cfg, route);
+  /** `[bucket-name, ceiling, count field, bucket field]`, narrowest first so the refusal a
+   *  visitor meets is the one with the SHORTEST `Retry-After` that applies to them. */
+  const scales = [];
+  if (limits.hour) scales.push(["hour", limits.hour, "h", "hb"]);
+  if (limits.day) scales.push(["day", limits.day, "d", "db"]);
+  if (!scales.length) return null; // neither wider scale is capped for this route
+  const w = state.stats.cache.wide;
+  const dayB = bucket(nowS, SCALES.day);
+  const key = wideKeyUrl(request, route, tag, dayB);
+  w.checked += 1;
+
+  // ---- op 1: read. Every failure returns `null`, which ADMITS.
+  const seen = await withDeadline(cfg.cacheTimeoutMs, () => readBody(store, key));
+  if (seen === CACHE_TIMEOUT) {
+    w.timeouts += 1;
+    w.allowed += 1;
+    return null; // FAIL OPEN: a deadline is not evidence that anybody is over their hour
+  }
+  if (seen === CACHE_ERROR) {
+    w.errors += 1;
+    w.allowed += 1;
+    return null; // FAIL OPEN: neither is a throw from a store having a bad day
+  }
+  w.ops += 1;
+  let body = null;
+  if (seen === CACHE_STALE) w.stale += 1;
+  else if (seen) {
+    w.hit += 1;
+    body = seen;
+  } else w.miss += 1;
+
+  /** What the entry will say if this request is admitted. Built as it is checked, so a
+   *  scale that refuses is never written and the ones before it are never written either
+   *  — the whole `put` is skipped below. */
+  const next = {};
+  for (const [name, ceiling, nField, bField] of scales) {
+    const scale = SCALES[name];
+    const b = bucket(nowS, scale);
+    // THE BUCKET CHECK IS THE STALENESS ARGUMENT. The key no longer carries this scale's
+    // bucket, so the body has to, and a count stamped with any other bucket is a count of
+    // a window that has closed: it reads as zero, which is the permissive direction.
+    const stored = body && Number(body[bField]) === b ? Number(body[nField]) : 0;
+    const used = Number.isFinite(stored) && stored > 0 ? Math.floor(stored) : 0;
+    if (used >= ceiling) {
+      w.refused += 1;
+      const resetAt = (b + 1) * scale;
+      return {
+        retryAfterS: Math.max(1, resetAt - nowS),
+        // The same triple `chargeWindows()` sends when ITS hour or day refuses — the
+        // minute's limit and reset — so a visitor cannot tell the two tiers apart and
+        // `chat.py`'s backoff loop needs no new case.
+        rateLimit: {
+          limit: limits.min,
+          remaining: 0,
+          reset: (bucket(nowS, SCALES.min) + 1) * SCALES.min,
+        },
+      };
+    }
+    next[nField] = used + 1;
+    next[bField] = b;
+  }
+
+  // ---- op 2: write back. Unlocked, like the minute half: a lost update undercounts.
+  // `max-age` is one DAY, the widest window the entry holds, so an entry outlives its own
+  // widest bucket by at most that and then evicts itself. Everything narrower inside it is
+  // policed by the bucket stamped beside it rather than by the entry's lifetime.
+  const wrote = await withDeadline(cfg.cacheTimeoutMs, () =>
+    store.put(
+      key,
+      new Response(JSON.stringify(next), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "max-age=" + SCALES.day,
+        },
+      }),
+    ),
+  );
+  if (wrote === CACHE_TIMEOUT) w.timeouts += 1;
+  else if (wrote === CACHE_ERROR) w.errors += 1;
+  else {
+    w.ops += 1;
+    w.wrote += 1;
+  }
+  w.allowed += 1;
   return null;
 }
 
@@ -1502,10 +1793,12 @@ async function sharedWindowVerdict(store, request, { ip, route, cfg, nowS }) {
  *
  * WHAT IS NOT MIRRORED, and why:
  *
- *   * **The DAY ceiling** (`DEMO_UNIT_BUDGET_DAY`). Another key is another `match` + `put`
- *     on the request path, and the hour is the bucket that both rotates fast enough to keep
- *     the entry short-lived and matches the ceiling a runaway actually hits first. The day
- *     stays a purely in-isolate ceiling and no sentence may call it a shared one.
+ *   * **The DAY ceiling** (`DEMO_UNIT_BUDGET_DAY`) — deferred here for one `match` + `put`
+ *     of latency, and BUILT on 2026-09-06 at `sharedDayBudget`. It is this function's
+ *     design repeated rather than adapted: no charge is written that might have to be
+ *     un-written, the units wait in `state.unitsDay`, and the next admission publishes
+ *     them. It costs the one extra `match` this paragraph priced, plus a `put` only when
+ *     this isolate owes the day something.
  *   * **`/api/health`'s probe** (`budgetState`). It stays synchronous and in-isolate — see
  *     its own note. A probe that awaited a cache would be a probe that can hang.
  * ============================================================================
@@ -1517,7 +1810,11 @@ async function sharedWindowVerdict(store, request, { ip, route, cfg, nowS }) {
  */
 async function sharedBudgetVerdict(store, request, { cfg, nowS }) {
   const ceiling = cfg.unitBudgetHour;
-  if (!ceiling) return null; // 0 => uncapped at this scale, so there is nothing to mirror
+  // 0 => uncapped at THIS scale, so there is nothing to mirror here — but the DAY may
+  // still have a ceiling, and returning `null` would let one variable silently switch off
+  // a different one. Fail-open is legal for a lost write; it is not licence to skip a
+  // ceiling the operator actually set.
+  if (!ceiling) return sharedDayBudget(store, request, { cfg, nowS });
   const c = state.stats.cache.units;
   const b = bucket(nowS, SCALES.hour);
   const resetAt = (b + 1) * SCALES.hour;
@@ -1592,7 +1889,121 @@ async function sharedBudgetVerdict(store, request, { cfg, nowS }) {
     clearPending(b);
   }
   c.allowed += 1;
+  // The hour admitted. The DAY is the same deployment ceiling one scale wider, so it is
+  // this sub-tier's business too — and an hour refusal returns above without paying for
+  // its round trip.
+  return sharedDayBudget(store, request, { cfg, nowS });
+}
+
+/**
+ * The unit budget sub-tier's DAY: `DEMO_UNIT_BUDGET_DAY`, shared across a colo.
+ *
+ * ============================================================================
+ * IT IS THE HOUR'S DESIGN, NOT A VARIATION ON IT, AND THAT IS DELIBERATE.
+ *
+ * `sharedBudgetVerdict` above carries the whole argument and every sentence of it is true
+ * here: **a budget can be refunded and a window cannot, and a lost refund on an
+ * eventually-consistent counter fails CLOSED** — it refuses visitors who should be served.
+ * So this function does what that one does, for the same reason, with no clever variation:
+ *
+ *   * it only ever READS the shared entry on behalf of the request it is admitting;
+ *   * the units reach `state.unitsDay` — this isolate's own day ledger — only from
+ *     `release()`, and only when `refundBudget()` was not called;
+ *   * the NEXT admission publishes that ledger with a `put(spent + owed)`, and the ledger
+ *     is cleared on the ATTEMPT rather than on the confirmation, because a `put` that
+ *     timed out may have landed and re-publishing it would be a double charge.
+ *
+ * **There is no refund write here either, so there is no lost refund to fear.** Every
+ * error this function can make — a miss, a stale entry, a timeout, a throw, a lost update,
+ * a ledger dropped at a day boundary or taken to the grave by a recycled isolate — makes
+ * the stored number SMALLER than the truth, which serves somebody who might have been
+ * refused. That is the direction it is allowed to be wrong in.
+ *
+ * WHAT IT COSTS, STATED. One `match` on every admitted turn whose hour was not refused,
+ * and one `put` only when this isolate owes the day something. §4.6.1 row h's ~15 ms per
+ * op makes that ~15-30 ms; it is an extrapolation from that measurement, not a measurement
+ * of this code. The day's own lag is the hour's lag exactly — at most one settled request
+ * per isolate plus whatever is in flight — and it is in the permissive direction.
+ *
+ * The separate ledger (`state.unitsDay`) is not duplication for its own sake: the hour and
+ * the day roll on different clocks, and one ledger would have to drop the day's units
+ * every time the hour rolled.
+ * ============================================================================
+ */
+async function sharedDayBudget(store, request, { cfg, nowS }) {
+  const ceiling = cfg.unitBudgetDay;
+  if (!ceiling) return null; // 0 => uncapped at this scale, so there is nothing to mirror
+  const d = state.stats.cache.unitsDay;
+  const db = bucket(nowS, SCALES.day);
+  const resetAt = (db + 1) * SCALES.day;
+  /** What this isolate has spent today and not yet told the colo about. Reading it also
+   *  rolls the ledger if it belongs to a past day — see `pendingDayUnits`. */
+  const owedDay = pendingDayUnits(db);
+  const key = unitsDayKeyUrl(request, db);
+  d.checked += 1;
+
+  // ---- op 1: read. Every failure below returns `null`, which ADMITS.
+  const seen = await withDeadline(cfg.cacheTimeoutMs, () => readCount(store, key));
+  if (seen === CACHE_TIMEOUT) {
+    d.timeouts += 1;
+    d.allowed += 1;
+    return null; // FAIL OPEN, ledger KEPT: nothing was written, so nothing can have landed
+  }
+  if (seen === CACHE_ERROR) {
+    d.errors += 1;
+    d.allowed += 1;
+    return null; // FAIL OPEN, ledger KEPT, for the same reason as the timeout above
+  }
+  d.ops += 1;
+  let spent = 0;
+  if (seen === CACHE_STALE) d.stale += 1;
+  else if (typeof seen === "number") {
+    d.hit += 1;
+    spent = seen;
+  } else d.miss += 1;
+
+  // The colo's day as best anybody knows it: what the entry says plus what this isolate
+  // has spent and not yet said. `>=` for the same reason the hour uses it — the local
+  // request's own cost is already accounted for by the in-isolate map that ran first.
+  if (spent + owedDay >= ceiling) {
+    d.refused += 1;
+    return { retryAfterS: Math.max(1, resetAt - nowS) };
+  }
+
+  // ---- op 2: publish the ledger. SKIPPED when there is nothing to publish, which is
+  // every request that was refused by its route body: the free drain, closed structurally.
+  if (owedDay > 0) {
+    const wrote = await withDeadline(cfg.cacheTimeoutMs, () =>
+      store.put(
+        key,
+        new Response(JSON.stringify({ n: spent + owedDay }), {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "max-age=" + SCALES.day,
+          },
+        }),
+      ),
+    );
+    if (wrote === CACHE_TIMEOUT) d.timeouts += 1;
+    else if (wrote === CACHE_ERROR) d.errors += 1;
+    else {
+      d.ops += 1;
+      d.wrote += 1;
+    }
+    // Cleared on the ATTEMPT, not the confirmation — see the hour's note. Keeping them to
+    // retry would double-charge whenever a `put` lands and then times out, and a double
+    // charge is an overcount, which refuses somebody.
+    d.published += owedDay;
+    clearDayPending(db);
+  }
+  d.allowed += 1;
   return null;
+}
+
+/** `clearPending` for the DAY ledger. */
+function clearDayPending(b) {
+  state.unitsDay.pending = 0;
+  state.unitsDay.bucket = b;
 }
 
 /** Forget the ledger, having attempted to publish it. Separate from `pendingUnits` so the

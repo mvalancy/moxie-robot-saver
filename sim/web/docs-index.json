@@ -1,5 +1,4 @@
 {
- "generated": "docs-c4bc65895877",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 262514,
+   "bytes": 264340,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -128,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 203142,
+   "bytes": 209879,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -551,7 +550,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 148049,
+   "bytes": 165247,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -944,7 +943,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 36245,
+   "bytes": 52574,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -957,6 +956,10 @@
     "The deployed check — the one tier that looks at what Cloudflare actually serves",
     "The check that deliberately spends — a real voice through the hosted microphone",
     "The audio clause is an ordering, not a magnitude — and that is a scar",
+    "Teeth on the browser suites — which checks survive a broken page",
+    "What the first sweep found: the suites are largely sound",
+    "The inert script: a 200 OK that does nothing, and the clause that finally sees it",
+    "Giving them eyes (2026-09-06)",
     "Run it now"
    ],
    "kind": "md"

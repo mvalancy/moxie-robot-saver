@@ -1071,3 +1071,76 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   not: the only tracked matches for the key shape are `sim/test_cloud_transport.mjs` and
   `sim/tests/test_compose.py`, and both are the guards' **own deliberately-fake fixture**
   (`KEY_SHAPED.test(...)`, `_IS_A_KEY = …`). A scanner that flags its own test data is working.
+
+- **2026-09-06 — the inert script: the last open member of the defect family this day spent mapping,
+  and the one no listener could ever have closed.** A script served **200 OK and doing nothing**
+  survived every detection mechanism in the repo, and the blindness was measured rather than
+  suspected: `sim/check_deployed.mjs --selftest` exited **0 with 88 checks** against `hud.js` gutted,
+  and again against `moxie.js`, `mode.js` and `qr.js` gutted — four broken pages, four greens. The
+  reason is structural. **An inert script produces no console output**, so the day's new
+  console/`pageerror` listeners cannot see it; it *arrived*, status 200, so the `deadAssets` clause
+  cannot; and the network count is byte-identical to a healthy load, so counting requests cannot.
+  `sim/tools/page_teeth_check.py` *creates* the breakage and nothing consumed the result.
+  **The only way to notice an inert script is to assert an observable effect it is supposed to have** —
+  a per-script contract, never a generic rule. The three generic shapes are traps and were all
+  rejected: *"a global is defined"* (brittle, and most of this page is ESM), *"count the network
+  requests"* (identical), *"snapshot the DOM"* (huge, noisy, loosened the first time it flaps).
+  `check_deployed.mjs` now carries a **clause 4** naming one cheap mark per script — `moxie.js`
+  appends the three.js canvas to `#app` and fills an empty `#motors`/`#faces`; `hud.js` puts the
+  accessible name on every slider `moxie.js` leaves anonymous; `mode.js` moves `body[data-mode]` off
+  `"boot"`; `env.js` creates the badge; `qr.js` draws real opaque ink when **Make** is pressed — plus
+  five mutations **E**–**I** that gut one script apiece and must each fire the clause that names it.
+  Verdict change, same tool, same box: `qr-inert`, `hudjs-inert`, `moxiejs-inert`, `modejs-inert`
+  **NO TEETH → caught (rc 1, 38/46/50/32 red)**; the new `envjs-inert` row caught too. Details and
+  the rejected signals: [`sil-and-cicd.md`](sil-and-cicd.md).
+  **Two things worth carrying forward.** First, *do not invent the signal you are asserting.* A
+  `window.__loaded` flag or a `data-ran` attribute passes the test by making the product carry test
+  scaffolding, and the next reader deletes it as dead weight — after which the check is green
+  forever. Every mark above already existed because of what the file does. Second, **three signals
+  that look like witnesses are markup**: `body[data-bus]` (`sim.html` ships `data-bus="idle"` and
+  hud.js's first `sync()` computes `"idle"` — identical either way), `#link-label` (ships the exact
+  text hud.js would write), `#alive-toggle`'s class and `aria-pressed` (both ship set). Each would
+  have produced a check that could never fail — rule 30's shape, one layer out.
+  **And one finding that looked caught was caught for the wrong reason** (this is why the row was
+  re-read rather than believed): `qr.js` *deleted* reddened the selftest through an **ENOENT out of
+  `cpSync`/`rmSync` during server setup, before a single probe ran** — the right exit code from a
+  stack trace, which would have scored identically with every clause in the file deleted. Fixed: the
+  copy can no longer crash, each mutation's anchor is its own named check, and the deletion is now
+  caught where it always should have been — the **baseline** target 404s and clause 3 reddens.
+  Also correcting a stale claim carried into this fire: `test_csp.mjs`'s two QR checks were reported
+  as still surviving `qr.js` deleted *and* gutted. Re-measured on `dev@1dbc41a`, they do **not** —
+  the `d[i + 3] > 0` alpha term landed with the teeth tool itself (#179), and `test_csp` now catches
+  all four inert rows. **Do not trust a count or a verdict quoted at you, including this one; the
+  suite takes 63 s to re-measure.**
+- **2026-09-06 — the docs-bundle conflict tax was two defects in the generator, not a property of
+  generated files.** It fired **five times** (#176 twice, #179, #183), each costing a merge-forward
+  plus a full CI cycle, and it made one agent revert a note rather than regenerate files reserved
+  from it. The brief offered four options — merge driver, deploy-time generation, a `.gitattributes`
+  strategy, do nothing — and **all four were rejected because the premise was wrong.**
+  `docs-bundle/**` merged cleanly every single time. The cause was (1) `docs-index.json` carrying one
+  always-rewritten `"generated": "docs-<sha256>"` stamp that **nothing reads**, and (2)
+  `docs-search.json` being **one 3 MB line** with zero merge granularity. Fix: **~8 functional lines**
+  — drop the stamp, emit the search map one doc per line blank-line separated (+295 bytes; the blank
+  line is the *context* git needs). **Activation required: nothing.**
+  **The measurement that killed the favoured option:** a merge driver resolves in a *worktree*, but
+  `git merge-tree --write-tree` — the bare merge a **forge** computes — **still conflicts with it
+  installed**, so GitHub keeps blocking the PR and the cost stays. We had been reasoning about the
+  wrong merge. And `union`, listed neutrally in the brief, is **silently corrupt**: it reports
+  *resolved* while making `docs-search.json` invalid JSON (search dies in production) and giving
+  `docs-index.json` a duplicate key that still parses — the worst available option, and the one an
+  unexamined instinct would have picked.
+  **Validated live, not just constructed:** with #185 open, a doc + bundle commit was pushed to `dev`
+  — the exact shape that broke five times — and the PR stayed **MERGEABLE** (`merge-tree` exit 0).
+  Two mutation-tested assertions in `sim/test_docs.mjs` stop the tax returning, each carrying the
+  *reason* in its failure text so nobody "simplifies" it back.
+
+- **2026-09-06 — two orchestration mistakes of my own, both from over-broad reservations and stale
+  reads.** (a) I blanket-reserved `sim/test_*.mjs` from one agent when the other only ever touched
+  `sim/tools/`; that over-reservation blocked it from fixing its own red suite and cost a round trip.
+  **Reserve what an agent USES, not the neighbourhood it sits in** — and note that the committed doc
+  bundle is a build artifact every doc change must regenerate, so reserving `sim/web/**` wholesale
+  forbids documenting anything. (b) The shared `repo` checkout sat **31 commits behind** all day
+  (blocked by another session's uncommitted files) and I read from it three times, concluding wrongly
+  each time that a rule was missing, a secret count was stale, and a suite did not exist.
+  **Audit against `origin/dev` explicitly** — `git grep <ref>`, throwaway worktrees — and never treat
+  the shared checkout as a source of truth.

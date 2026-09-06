@@ -5,6 +5,14 @@
   ([`../web/docs.html`](../web/docs.html)) can browse them on a static Cloudflare Pages deploy with no
   server. Byte-for-byte copies; re-run it whenever docs change (`node ../test_docs.mjs` fails if the
   bundle is stale). The generated bundle **is committed** so the deploy needs no build step.
+  Because it is *generated* **and** *committed*, every branch that touches a doc rewrites it, so the
+  output is deliberately shaped to survive a plain 3-way merge: **no global content-derived value**
+  in either JSON (a top-level `generated` hash made them conflict on every pair of doc-touching
+  branches, and nothing read it), and **one doc per line, blank-line separated**, in
+  `docs-search.json` (it used to be one ~3 MB line, which gave the merge no granularity at all).
+  Two branches editing different docs now merge cleanly and byte-identically to a rebuild. Keep both
+  properties; the header comment in the script says why, and `check_bundle_fresh.py` stays the sole
+  authority on freshness.
 - **`prerender_audio.py`** — renders scripted session lines with Piper into `../web/audio/` for the
   static demo (both sides of the conversation). See [`../../docs/guides/deploy-cloudflare.md`](../../docs/guides/deploy-cloudflare.md).
 - **`build_ext_conformance.py`** — regenerates
@@ -147,13 +155,28 @@
   test_mutation_tables.py` now also pins the row COUNT stated in the docs against the table, because a
   README that said 26 while the table held 28 is how a reader loses the ability to tell a table that grew
   from a selector that silently stopped matching.
-- **`unit_budget_mutation_check.py`** — the same proof for the **shared unit budget** of
-  [`live-sim-demo.md` §4.6.2](../../docs/architecture/backlog/live-sim-demo.md): every guard the
-  per-colo spend ceiling rests on, all of them in
+- **`unit_budget_mutation_check.py`** — the same proof for the **shared per-colo ceilings** of
+  [`live-sim-demo.md` §4.6.1–§4.6.3](../../docs/architecture/backlog/live-sim-demo.md): every guard
+  the per-colo spend ceiling and the per-IP window tier rest on, all of them in
   [`functions/api/_lib/limits.js`](../../functions/api/_lib/limits.js), checked against
-  [`sim/test_demo_proxy.mjs`](../test_demo_proxy.mjs) §15i.
-  `python3 sim/tools/unit_budget_mutation_check.py        # 16 rows; every one must say "caught"`
-  (about 25 s; pass a row name — `U3` — to re-check one in ~1.5 s). It inherits
+  [`sim/test_demo_proxy.mjs`](../test_demo_proxy.mjs) §15i (rows `U*`, the shared minute window and
+  the budget's HOUR) and [`sim/tests/helpers_shared_ceilings.mjs`](../tests/helpers_shared_ceilings.mjs)
+  (rows `W*`/`D*`, the per-IP HOUR/DAY windows and the budget's DAY).
+  `python3 sim/tools/unit_budget_mutation_check.py        # 35 rows; every one must say "caught"`
+  (about 45 s; pass a row name — `U3`, `D4` — to re-check one in ~1.5 s). **The `W*`/`D*` block was
+  added on 2026-09-06 because its absence had already cost something.** PR #178 lifted the day
+  ceiling onto `caches.default` by copying the hour's proven design without the hour's proof, and
+  deleting `unaccrueDayPending()` left the ceilings suite 151/151 green and `test_demo_proxy.mjs`
+  green while the hour's byte-identical branch (`U2`) reddens instantly — a dead branch that survived
+  review, a passing 151-check suite and a merge, found only by a hand-run sweep (fixed in #180; row
+  `D4` is the lock). Adding the block found **five** more assertions that could not fail: §G's *"the colo
+  holds 3 units, not 6"* (the double charge is only visible on a THIRD admission, which did not
+  exist), §H's missing wide-entry `max-age`, §F's fail-open cases seeded with exactly the bytes a
+  fresh write produces, §J watching the sub-tier rather than the ledger `release()` accrues to, and
+  the wide window's **narrowest-first** scale order, which was visible only as the field order of a
+  JSON body until §F got a case where the hour and the day are spent at once. All five are now
+  asserted, and `test_shared_ceilings.py`'s F/G/H/J floors are pinned to the exact counts so a row
+  cannot be quietly unhooked from its proof. It inherits
   `turnstile_mutation_check.py`'s **strictness** (the selector must appear in a *failing check's own
   label*, so a row is caught only when the check that names that guard is the one that reddened) and its
   **throwaway hardlink tree**, and it adds one thing the other six do not have: **an AMBIGUOUS verdict
@@ -184,6 +207,46 @@
   second process. And **M8 is the shipped form of a rejected design**: treating an unstamped legacy
   envelope as *unfolded* would double the lifetime total of every appliance on its first read after the
   upgrade, which is a wrong number that grows on refresh.
+- **`page_teeth_check.py`** (+ `teeth_ledger.mjs`, `teeth_hook.mjs`) — the same proof turned on the
+  **page** instead of the product. The checkers above delete a guard from the code and require its
+  test to redden; this serves each **browser suite** a deliberately broken site — a script deleted, a
+  script served 200 OK and inert, a fetch 404'd, a document emptied, one resource stalled ~24 s behind
+  a throttle — and reports **which of its checks stay green**. It exists because on 2026-09-06 five
+  checks were found passing against a system that was actually broken (`test_bg_perf`'s Node-side
+  baseline, two unwaited `naturalWidth` samples, `article p` matching the *"Loading docs…"* spinner,
+  and `check_deployed.mjs` printing `failed requests: 0` without asserting it) and **every one was
+  found by luck**. Nobody had ever swept for them.
+  `python3 sim/tools/page_teeth_check.py --selftest        # ~1 min, both directions`
+  `python3 sim/tools/page_teeth_check.py --baseline-dir /tmp/teeth   # the full sweep`
+  Three things make it an audit rather than a noise generator. **Exposure is measured**: the ledger
+  records every URL each suite's browser actually requested on the healthy run, and a suite is only in
+  scope for "delete `qr.js`" if it fetched `qr.js` — a green under a breakage a suite never touched is
+  not a finding, and reporting one would send someone to fix a test that works. **Instrumentation
+  cannot fail quietly**: the loader hook throws on a moved anchor, and a `stall` row whose throttle did
+  not apply is SKIPPED rather than read as "everything stayed green" — that exact bug was in the
+  tool's own first draft (puppeteer 24 takes `{download, upload, latency}`; the CDP field names throw)
+  and it would have reported *no findings* for the whole not-loaded-yet family. **A check's identity is
+  its call site**, `file:line:col`, not its message: several suites interpolate live values — including
+  a list of image responses *in arrival order* — so a text key drops the very assertion under audit
+  from the comparison on the run that matters.
+  It is **not wired into CI** as it stands: the full sweep took **~2.5 hours** on this box (a suite
+  whose waits all expire runs far longer broken than healthy — `test_mermaid` went 37 s → 448 s with
+  `docs.js` inert), and it mutates `sim/web` transiently. `--selftest` is the half that could gate a
+  PR: **41 s**, hermetic, and it fails in both directions. Run the sweep by hand after touching a page
+  or a browser suite; `--check-tree` proves it left no tracked file behind, and `--check-tree
+  --restore` undoes a breakage an interrupted run left in place. That is not hypothetical — the first
+  full sweep was killed by its supervisor mid-row and the `finally` never ran.
+  First sweep's findings are in
+  [`sil-and-cicd.md`](../../docs/architecture/sil-and-cicd.md): the suites are largely sound, two
+  checks in `test_csp.mjs`/`test_docs_explorer.mjs` had no teeth and are fixed, and
+  `sim/check_deployed.mjs --selftest` exited **0** against four different broken pages — the
+  **inert-script** rows, which are the ones no console listener and no network log can ever see.
+  That last one is closed as of 2026-09-06: `check_deployed.mjs` grew a **clause 4** that names one
+  observable effect per script (`moxie.js` builds the stage canvas and the motor panel, `hud.js` puts
+  the accessible name on each slider, `mode.js` moves `body[data-mode]` off `"boot"`, `env.js` creates
+  the badge, `qr.js` draws real ink when **Make** is pressed) and five new mutations, **E**–**I**, that
+  gut one script apiece and must each redden the clause that names it. `envjs-inert` was added to the
+  rows above at the same time, so the marks that `env.js` paints are themselves under audit.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.

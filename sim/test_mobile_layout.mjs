@@ -23,11 +23,39 @@
  *
  *   node sim/test_mobile_layout.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable }
+  from "./browser_harness.mjs";
 
 const LABEL = "mobile-layout test";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
 const { fails, ok, eq, count } = makeChecks();
+
+/* ---- EYES: what the browser itself reported ------------------------------- *
+ * Kept in a WeakMap keyed by the page rather than threaded through `load()`'s return,
+ * because both loaders hand back a bare `page` and eight call sites destructure nothing.
+ * `eyes(label, page)` is then the only line a block has to add. */
+const EYES = new WeakMap();
+/**
+ * Assert one page's console output.
+ *
+ * WHY IT IS `=== 0` HERE AND A CAPPED ALLOWANCE IN `test_a11y.mjs`. That suite serves the
+ * real `_headers` CSP on a 127.0.0.1 origin, so `env.js` fires two localhost sidecar
+ * probes the policy then refuses — four console errors a correct page produces. This one
+ * drives `moxie.hosted.test`, which is NOT local, so `env.js` never fires those probes at
+ * all, and it serves without the CSP header. MEASURED across every page this file opens,
+ * all four phones and every block: 0 raw console messages of type `error`, 0 `pageerror`,
+ * on every one. So silence is the honest bar here and the budget below is forgiving
+ * nothing — `aborted.n` counts the `:808x` aborts the interceptor provokes, which this
+ * fixture never actually reaches, and it is wired up so that a future fixture that DOES
+ * refuse a request has the correlation already in place instead of a widened pattern.
+ */
+const eyes = (label, page) => {
+  const seen = EYES.get(page) || { errs: [], aborted: null };
+  const left = notable(seen.errs, seen.aborted);
+  eq(left.length, 0,
+     `${label}: the page raised console errors nobody asked for — ${left.length}, ` +
+     `first: ${left.slice(0, 3).join(" | ")}`);
+};
 
 const site = await serveWeb();
 
@@ -72,6 +100,8 @@ const hitTest = (sel) => {
 async function load(w, h) {
   const page = await browser.newPage();
   await page.setViewport({ width: w, height: h, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const seen = watchPage(page);
+  EYES.set(page, seen);
   await page.setRequestInterception(true);
   page.on("request", (r) => {
     if (r.isInterceptResolutionHandled()) return;
@@ -80,7 +110,7 @@ async function load(w, h) {
     if (/\/api\/health\b/.test(r.url()))
       return r.respond({ status: 200, contentType: "application/json",
                          body: JSON.stringify({ ok: false, reason: "gateway_not_configured", mode: "degraded" }) });
-    if (/:808[12]\//.test(r.url())) return r.abort("connectionrefused");
+    if (/:808[12]\//.test(r.url())) { seen.aborted.n++; return r.abort("connectionrefused"); }
     return r.continue();
   });
   await page.goto(HOSTED, { waitUntil: "domcontentloaded", timeout: 20000 });
@@ -105,6 +135,8 @@ async function load(w, h) {
 async function loadChallenged(w, h) {
   const page = await browser.newPage();
   await page.setViewport({ width: w, height: h, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const seen = watchPage(page);
+  EYES.set(page, seen);
   await page.setRequestInterception(true);
   page.on("request", (r) => {
     if (r.isInterceptResolutionHandled()) return;
@@ -131,7 +163,7 @@ async function loadChallenged(w, h) {
                            getResponse: function () { return ""; },
                          };` });
     }
-    if (/:808[12]\//.test(u)) return r.abort("connectionrefused");
+    if (/:808[12]\//.test(u)) { seen.aborted.n++; return r.abort("connectionrefused"); }
     return r.continue();
   });
   await page.goto(HOSTED, { waitUntil: "domcontentloaded", timeout: 20000 });
@@ -198,6 +230,7 @@ try {
       document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     eq(hscroll, false, `${label}: no horizontal page scroll`);
 
+    eyes(`${label}: hit-testing the phone page`, page);
     await page.close();
   }
 
@@ -289,6 +322,7 @@ try {
        "either the holder or the challenge inside it, which is why the shipped holder is " +
        "pointer-events:none AND is not down here");
 
+    eyes(`${label}: the challenged page`, page);
     await page.close();
   }
 
@@ -329,6 +363,7 @@ try {
      * which child happened to be under one particular coordinate. */
     ok(/env-banner|\beb-/.test(broken.hit),
        `teeth: …and it is the banner LAYER that swallows the tap (got ${broken.hit})`);
+    eyes("teeth: the --eb-lift page", page);
     await page.close();
   }
 
@@ -464,6 +499,7 @@ try {
     eq(after.expanded, "false",
        `${label}: NOTHING above opened the rail — every measurement was on the cold page`);
 
+    eyes(`${label}: the cold first-visit page`, page);
     await page.close();
   }
 
@@ -557,6 +593,7 @@ try {
     eq(broken.shown, false,
        `teeth — …and it is 0x0, which is exactly what production measured (${broken.w}x${broken.h})`);
 
+    eyes("the rail-free typed turn", page);
     await page.close();
   }
 

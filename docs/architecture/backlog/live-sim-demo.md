@@ -622,9 +622,13 @@ this contract exists to prevent.
 
 P0's per-IP and global counters are **best-effort**. They were **an in-isolate map, and nothing else**
 until 2026-09-04, when the per-IP **minute** window gained the Cache API tier of §4.6.1 — measured
-first, then built — and **2026-09-05, when the unit budget's HOUR joined it (§4.6.2)**. **Every other
-counter here is still that map alone**: the hour and day *per-IP* windows, the unit budget's **day**
-ceiling, the concurrency ceiling and the FIFO. `/api/health`'s `budget` and `load` are read from the
+first, then built — **2026-09-05, when the unit budget's HOUR joined it (§4.6.2)**, and **2026-09-06,
+when the per-IP HOUR and DAY windows and the unit budget's DAY joined it too (§4.6.3)**. **What is
+still that map alone is now a short list and it is the interesting one**: the **concurrency ceiling**
+and its **FIFO** — refused a place on the shared tier on purpose, because a slot must be given back
+and a lost give-back leaks one for ever, which fails CLOSED — and `/api/health`'s probe. Every per-IP
+window and every unit-budget ceiling is now counted per-colo as well as per-isolate.
+`/api/health`'s `budget` and `load` are read from the
 in-isolate map and are **not** told about either shared tier — a probe that awaited a cache would be a
 probe that can hang — so they stay exactly as narrow as this paragraph has always said.
 
@@ -648,9 +652,10 @@ assumption 13 (is KV or a Durable Object even available on this plan?) was still
 changes which counter is worth building. **That reason has since been retired — by measurement rather
 than by the dashboard.** §4.6.1 has the numbers and the resulting recommendation.
 
-**The practical consequence, exactly** (and it is now the *floor* rather than the whole picture: the
-per-IP minute window and the unit budget's hour are additionally counted per-colo, §4.6.1 and §4.6.2,
-which removes the isolate multiplier for those two and leaves it for everything else). Every cap in §4.1
+**The practical consequence, exactly** (and it is now the *floor* rather than the whole picture: every
+per-IP window and every unit-budget ceiling is additionally counted per-colo, §4.6.1, §4.6.2 and
+§4.6.3, which removes the isolate multiplier for all of them and leaves it for the concurrency ceiling
+and the FIFO). Every cap in §4.1
 that is enforced by a counter — the per-IP windows, the concurrency ceiling and the unit budget — is
 enforced *at least* once per isolate. With N isolates
 serving the deployment, the effective ceiling is up to **N × the configured number**, and N is chosen by
@@ -793,6 +798,11 @@ bounded* — it is not bounded, each lost refund is permanent for the hour and t
 (c) *refund the shared tier anyway* — which would make "every error is an undercount" false, and that
 sentence is the reason this tier was allowed to exist at all.
 
+**Superseded in one clause on 2026-09-06 (§4.6.3):** the last sentence of this subsection said *"Only
+the **hour** is mirrored; `DEMO_UNIT_BUDGET_DAY` remains purely in-isolate and no sentence may call it
+shared."* The day is now mirrored too, by this same design repeated rather than adapted. Everything
+else in §4.6.2 stands unchanged, including every reason the design is shaped this way.
+
 **What it costs, stated.** The colo's entry lags its real spend by whatever its isolates have not
 published — at most one settled request each, plus whatever is in flight — which is bounded by
 `DEMO_MAX_CONCURRENT_*` + `DEMO_QUEUE_MAX_DEPTH` per isolate and is in the *permissive* direction. An
@@ -825,6 +835,168 @@ paints the LIVE badge with an empty message while `env.js`:203 marks the page `n
 dishonesty in place of the one being removed. The residual imprecision is the poll ceiling, and it is
 named rather than hidden: `POLL_MAX_MS` clamps the reschedule to 5 minutes, so a `Retry-After` longer than
 that is re-checked early. The re-check costs a probe, not a gateway call.
+
+#### 4.6.3 The remaining ceilings on the shared tier — the wide windows and the budget's day (2026-09-06)
+
+§4.6.1 built the per-IP **minute** window on `caches.default` and **rejected** the hour and day, in one
+sentence worth quoting because this section answers it rather than overruling it: *"each extra key is
+another `match` + `put`; §4.6.1 row h measured three cache ops at <=44 ms and this sub-tier gets two."*
+§4.6.2 built the unit budget's **hour** and deferred the **day** for the same reason. Both objections
+were about the LATENCY BUDGET and both were correct.
+
+**The answer is one entry, not one key per scale.** The per-IP hour and day now share a single cache
+entry, so lifting *both* costs one round trip between them:
+
+| | key | body | `max-age` |
+|---|---|---|---|
+| minute window (2026-09-04) | `…/rl/<route>/<tag>/<minute bucket>` | `{"n":…}` | 60 |
+| **hour + day window** (new) | `…/rl/<route>/<tag>/w<day bucket>` | `{"h":…,"hb":…,"d":…,"db":…}` | 86400 |
+| unit budget hour (2026-09-05) | `…/rl/units/<hour bucket>` | `{"n":…}` | 3600 |
+| **unit budget day** (new) | `…/rl/units/d<day bucket>` | `{"n":…}` | 86400 |
+
+**What the one-entry shape gives up, and how that is paid for.** The minute key gets its staleness
+argument for free: last minute's count lives under a different URL and *cannot* be read as this
+minute's. A shared entry cannot have that for every scale it holds — it rotates on the WIDEST one, the
+day — so **each scale's bucket is stamped in the body beside its count, and a count stamped with any
+other bucket reads as ZERO.** Not believed-with-suspicion: zero. That is the permissive direction, and
+it is asserted directly rather than inferred (`helpers_shared_ceilings.mjs` §F seeds an entry stamped
+`hb: 1` against an hour of `2` and requires the visitor to be admitted).
+
+**The marks `w` and `d` are the whole separation inside each family, and they are a proof.** A window
+key's last component is a decimal integer and a wide window key's begins with a letter; likewise for
+the budget's hour and day. **A decimal integer cannot begin with a letter**, so no value of the clock
+can make a narrow key spell a wide one. This matters because the arity argument in `unitsKeyUrl` —
+three components versus two — separates the *window family* from the *budget family* and cannot
+separate the members of either. Arities are unchanged (`__keyShapes().windowArity` is still 3,
+`unitsArity` still 2), so §4.6.2's collision argument survives this addition without being re-argued.
+
+**The day budget is §4.6.2's design repeated, not adapted, and that is the load-bearing sentence.**
+*A budget can be refunded and a window cannot, and a lost refund on an eventually-consistent counter
+fails CLOSED* — it refuses visitors who should be served. So the day writes no charge it might have to
+un-write either: `admit()` only READS the day entry, the units wait in a **second isolate-local
+ledger** (`state.unitsDay`), and the next admission publishes them with a `put(spent + owed)`, clearing
+the ledger on the ATTEMPT rather than on the confirmation. Two ledgers rather than one field added to
+the hour's, for a reason that is not tidiness: **the hour and the day roll on different clocks**, and a
+single ledger would have to drop the day's units every time the hour rolled — turning one hour's legal
+undercount into a systematic undercount of the whole day.
+
+**Which direction each new ceiling errs in, stated per failure mode and proved rather than asserted:**
+
+| failure | wide window | day budget | direction |
+|---|---|---|---|
+| `match` hangs / rejects / throws synchronously | count reads 0 | spend reads 0 | **admits** |
+| entry served past its own `max-age` | treated as absent | treated as absent | **admits** |
+| body unparseable, or JSON that is not an object | treated as absent | treated as absent | **admits** |
+| body stamped with another bucket | reads 0 | (key carries the day) | **admits** |
+| `put` hangs / rejects / throws | increment lost | spend never published | **admits** |
+| `put` lands and then hangs | increment lost at worst | ledger CLEARED, never re-published | **admits** |
+| concurrent read-modify-write | lost update | lost update | **admits** |
+| isolate recycled with a ledger | — | units die with it (`cache.unitsDay.dropped`) | **admits** |
+| day boundary with unpublished units | — | DROPPED, never moved | **admits** |
+
+Every row is an undercount. There is **no refund write on the shared tier at any scale**, so there is
+no lost refund to fear — which is the property, not "the loss is rare".
+
+**One ordering changed, and it fixed a real fail-CLOSED leak.** The wider scales are consulted BEFORE
+the minute window writes its increment. Without that, a request the hour refused would leave the minute
+entry counting a turn that never happened — an **overcount**, the one direction this tier may not fail
+in. A refusal by any per-IP scale now costs **zero** cache writes.
+
+**The residual this slice does NOT fix, named rather than left to be discovered.** Both window entries
+are still written before `sharedThenGrant` consults the budget sub-tiers, so a `budget_exhausted`
+refusal leaves that visitor's minute and wide windows one higher than they earned. It **predates this
+slice** — the hour budget has been ordered after the window write since 2026-09-05 — it is bounded at
+one increment per refused request, and it only bites while the deployment is out of budget and
+therefore already answering everybody `budget_exhausted` and painting the page SCRIPTED. The fix is a
+**read-phase / write-phase split of the whole tier**: read every entry, decide, then write. It is not
+done here because the phase split moves code that `sim/tools/unit_budget_mutation_check.py`'s anchors
+are pinned to, and that file was reserved. `helpers_shared_ceilings.mjs` §K asserts the residual from
+both sides so it cannot quietly grow.
+
+**UPDATE 2026-09-06 — the reservation is lifted and the tier is now covered, which closes the warning
+this section made about its own anchors.** `unit_budget_mutation_check.py` went from **16 rows to 35**
+(`35 caught, 0 missed, 0 no-op, 0 wrong-check`), adding W1–W8 for the wide window and D1–D11 for the day
+budget — including a row for the `unaccrueDayPending()` deletion that shipped as dead code in this slice
+and was caught only later, by a hand sweep.
+
+**Writing those rows found five more assertions in `helpers_shared_ceilings.mjs` that could not fail**,
+and every one was fixed by *adding* an assertion rather than loosening one (suite 155 → 163): §G's
+*"the colo holds 3 units, not 6"* needed a third admission before the double charge could appear, so
+`clearDayPending()` was deletable with the whole block green; §F seeded its fail-open cases with exactly
+the bytes a fresh write produces, so a read that failed open and then published stored identical bytes;
+§F never made hour and day bind at once, leaving narrowest-first visible only as JSON field order; §H
+never checked the wide entry's `max-age`; and §J watched the sub-tier while the accrual happens in
+`release()`, which consults none.
+
+Two candidate rows were **rejected rather than forced**: the `!limit` and `!scales.length` fall-throughs
+are genuinely **unreachable**, because `env.js` clamps every window ceiling to ≥ 1, so no configuration
+can produce them.
+
+**The limit of the method, stated because a 35/35 is easy to over-read:** mutation testing proves a
+guard is *load-bearing*, never that it is the *right* guard. The residual above is asserted as
+**present**; no row can say it ought to be. And nothing here touches a real deployment —
+`caches.default` is a fake `Map`, "two isolates" is `__reset()` between two admissions sharing one
+store, and every `nowS` is explicit. Multi-colo behaviour, real eviction, the real `Age` header,
+bucket-boundary races and lost updates under a real burst (§4.6.1's 9-of-31 probe) remain **out of
+reach of any row**.
+
+**What it costs, as ops rather than as an intention.** A first admitted turn: **4 reads + 2 writes**
+(both windows). A subsequent turn from an isolate that owes units: **4 reads + 4 writes**. A refusal:
+1–4 reads and **no writes**. By §4.6.1 row h's own ~15 ms per op that extrapolates to ~90 ms and
+~120 ms — **an extrapolation from that measurement, not a measurement of this code**, and roughly
+double what the tier cost before this slice. Inside a 1.2 s turn, and `DEMO_CACHE_COUNTER=0` remains
+the one-variable way back to the in-isolate map with no code change.
+
+**And the thing not to conclude, for the third time.** This is still not a global ceiling. It is
+per-colo, a burst still loses writes (§4.6.1 row f), and the publish lag is real. Durable Objects
+remain the only candidate that gives a true single-writer count, P1 is unchanged, and no sentence
+anywhere may call any of this a hard limit.
+
+**What this branch could not verify.** There is no Cloudflare deployment in the loop here: every
+assertion is against an injected fake store in `node`, and "two isolates" is `__reset()` between two
+admissions that share one store. The multi-colo behaviour, the real `Age` header, and the real
+per-op latency are all inherited from §4.6.1's measurement rather than re-measured.
+
+**The ten pins in `sim/test_demo_proxy.mjs`, and what moved.** This file was reserved when the slice
+was written, so the first commit landed with **ten of its assertions red** and tabled here; the
+reservation was lifted the same day and they are now **re-pinned to their exact new values** (suite
+green, 0 failures). The table is kept rather than deleted because *which* assertions moved is the
+reusable part: every one was an op-count or key-ORDER pin and **none was behavioural** — the fail-open,
+refund, ledger, key-privacy, body-shape and shared-refusal assertions all passed unchanged throughout,
+which is the evidence that this slice added ceilings rather than altering how the existing ones behave.
+
+| § | assertion | was | is |
+|---|---|---|---|
+| 15d | `c.log.match` on an admitted turn | 2 | 4 |
+| 15d | `c.log.put` on an admitted turn | 1 | 2 |
+| 15d | `match + put <= 3` on a first turn | ≤3 | 6 |
+| 15d | a turn whose isolate owes units | 4 ops | 8 ops |
+| 15f | `c.log.match` for 5 turns + a refusal | `chatPerMin * 2` | `chatPerMin * 4` |
+| 15g | `c.log.keys.length` on an admitted turn | 2 | 4 |
+| 15h | `c.log.match` through the global `caches.default` | 2 | 4 |
+| 15i-a | `c.log.keys.length` on an admitted turn | 2 | 4 |
+| 15i-a | `c.log.keys[1]` is the units key | `keys[1]` | the whole 4-key ORDER, pinned with `deep()` |
+| 15i-a | `keys[1]` contains no route name | `keys[1]` | both budget keys, `keys[2]` and `keys[3]` |
+
+**Two of the ten were not re-pinned by moving an index, and that is the interesting half.**
+
+* The `<= 3` op bound became an **equality at 6**. Relaxing it to `<= 6` would have left a bound that
+  no longer bounds anything; and its old claim — *"still inside row h's three ops"* — is simply false
+  now. The equality states the doubling on the record instead.
+* The `keys[1]` rows became a `deep()` on the **entire read sequence** rather than a bumped index.
+  Re-pinning to `keys[2]` would have kept a passing assertion while dropping what the index was worth:
+  that all per-IP window scales are consulted BEFORE any budget scale, so a visitor over their own
+  limit gets a per-visitor 429 and not a deployment-wide 503. That ordering is exactly what
+  `unit_budget_mutation_check.py` row U10 exists to catch, so it is now pinned as an order and not as
+  a coincidence of indexing.
+
+**And an eleventh, which was a real defect rather than a moved number.** §15i-f asserted *"no budget
+entry is ever asked for"* under `DEMO_UNIT_BUDGET_HOUR=0`. It went red — correctly — because the first
+draft returned early from `sharedBudgetVerdict` when the HOUR was uncapped, which skipped the DAY as
+well: **one variable silently switching off a ceiling the operator had set with a different one.** The
+fix is in `limits.js` (the uncapped hour now chains to the day), and the assertion was **split** rather
+than moved — the hour's entry is still never asked for, the day's now is, and a new case covers the
+genuinely uncapped deployment where neither is.
 
 ### 4.7 Headers to add to `sim/web/_headers`
 
@@ -1484,3 +1656,60 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 [Orchestration plan](../orchestration-plan.md) · [Deploy on Cloudflare](../../guides/deploy-cloudflare.md) ·
 [MQTT and the conversation](../mqtt-and-conversation.md) · [The AI seam](../ai-seam.md) ·
 [The static experience](../static-experience.md)
+
+
+### §4.6.4 — the shared tier cannot be exercised on a Pages preview, and that is the config gate working
+
+Measured 2026-09-06 against `https://feat-spendceil.moxie-robot-saver.pages.dev`, the branch alias
+for this slice. `/api/health` answers **200** with `mode: degraded`, and every `POST /api/chat`
+returns `gateway_not_configured` — a **free local refusal** that is taken *before* any per-IP
+window or unit budget is consulted. Previews are deliberately denied the production secrets so that
+previews and forks stay inert (the same gate that keeps Turnstile enforcement off outside
+production), and the consequence for this tier is worth stating plainly rather than discovering
+later:
+
+**A Pages preview can prove the request path and the envelope survive a change to `limits.js`. It
+cannot prove anything about the ceilings themselves.** The shared sub-tiers are only reachable on a
+deployment with a configured gateway — that is, production. So for this tier the injected-store
+tests in `sim/tests/helpers_shared_ceilings.mjs` are not merely the *primary* evidence, they are the
+**only** evidence available before it ships, which is why their two-isolate construction and their
+`DEMO_CACHE_COUNTER=0` controls carry more weight here than a passing suite normally would.
+
+This does not weaken [rule 21](../orchestration-plan.md) ("open a PR and curl its preview" — it
+settled the mobile-composer and Referrer-Policy questions the same day). It bounds it: a preview
+answers questions about **anything reachable before the gateway check**, and answers nothing about
+what lies after it.
+
+### §5.1 — five operator-facing variables the code reads and §5 never named (audit, 2026-09-06)
+
+Found by diffing every `DEMO_*` token in this spec against every one read by
+`functions/api/_lib/env.js`. Four arrived with the shared-ceiling work (§4.6.3) an hour before this
+audit and one is **secret-bearing**; none was discoverable by an operator reading the docs.
+
+| variable | default | range | what it caps |
+|---|---|---|---|
+| `DEMO_CHAT_PER_HOUR` | **40** | 1 … 1 000 000 | per-IP `POST /api/chat` in one hour |
+| `DEMO_CHAT_PER_DAY` | **150** | 1 … 10 000 000 | per-IP `POST /api/chat` in one day |
+| `DEMO_SPEECH_PER_HOUR` | **80** | 1 … 1 000 000 | per-IP `POST /api/speech` in one hour |
+| `DEMO_STT_PER_HOUR` | **60** | 1 … 1 000 000 | per-IP `POST /api/transcribe` in one hour |
+| `DEMO_GATEWAY_ACCESS_CLIENT_SECRET` | `""` | — | the other half of the Cloudflare Access service token, whose `…_CLIENT_ID` **is** documented |
+
+**The asymmetry is real and is probably deliberate — recorded here so the next reader does not have
+to guess.** Chat has both an hour and a day ceiling; speech and STT have only an hour. That is not
+an oversight in the obvious direction, because `DEMO_UNIT_BUDGET_DAY` counts **units across every
+route**, so a day ceiling already exists globally and a per-route one would be a second, narrower
+bound on the same spend. Whether the narrower bound is wanted is a judgement, not a defect —
+**but it should be made on purpose.** If speech/STT day windows are ever added, note that
+`windowArity` changes and §4.6.2's collision argument must be re-checked.
+
+**The secret one is the sharper gap.** `DEMO_GATEWAY_ACCESS_CLIENT_ID` is documented and its
+partner is not, so an operator putting this behind Cloudflare Access can set half a service token,
+get an auth failure with no documented second field to look for, and have no way to discover the
+missing name except by reading `env.js`. A half-documented credential pair is worse than an
+undocumented one, because the documented half implies the list is complete.
+
+**Method note, since this class of drift is invisible to every guard we have:** nothing in CI
+compares the spec's variable list to the code's. The diff that found this is one command —
+`git grep -ohE 'DEMO_[A-Z_]+'` over each side, `comm` the sorted results — and it is worth running
+whenever a slice adds a tunable. Beware two false positives it produces: `DEMO_GATEWAY_*` and
+`DEMO_MAX_CONCURRENT_*` appear in prose as glob patterns, not as variables.

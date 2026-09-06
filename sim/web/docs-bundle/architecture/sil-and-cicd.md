@@ -454,6 +454,203 @@ capture is the clip that was played** — both are browser-capture statistics th
 carry. It asserts that a device opened, that the upload is a well-formed *audible* 16 kHz WAV,
 and that the scorer still discriminates on committed bytes.
 
+## Teeth on the browser suites — which checks survive a broken page
+
+A green browser suite proves its assertions are **present**. It does not prove they are
+**load-bearing**. On 2026-09-06 five of them turned out not to be, and every one was found by
+luck — a red on an unrelated diff, or somebody noticing while measuring something else (rule 30
+in [`orchestration-plan.md`](orchestration-plan.md), and that date's status log). Nobody had
+ever swept for them. [`sim/tools/page_teeth_check.py`](../../sim/tools/README.md) makes the
+search deliberate: it serves each suite a **deliberately broken site** and records which of its
+checks stay green.
+
+The breakages are the shapes that actually ship — a script **deleted** (404), a script served
+**200 OK and inert** (no 404, no network error, no code: the subtle one), a fetch **404'd**, a
+document **emptied** behind the same *"Loading…"* placeholder that hid defect 4, and one
+resource **stalled** ~24 s by padding it to 24 MB behind a 1 MB/s throttle. Nothing intercepts
+requests: eleven of these suites intercept for themselves, and a second interceptor would change
+what they are testing.
+
+Two rules keep it an audit rather than a noise generator.
+
+- **Exposure is measured.** A ledger records every URL each suite's browser actually requested
+  on the healthy run, and a suite is in scope for *"delete `qr.js`"* only if it fetched `qr.js`.
+  A green under a breakage a suite never touched is not a finding. **False positives are worse
+  than misses**: one of those sends somebody to fix a test that works.
+- **The instrument may not fail quietly.** The loader hook throws on a moved anchor, and a stall
+  row whose throttle did not apply is *skipped*, never read as "everything stayed green". That
+  bug was in the tool's own first draft — puppeteer 24 takes `{download, upload, latency}` and
+  the CDP field names throw — so a 24 MB file arrived in 231 ms, every suite passed, and the
+  sweep would have reported **no findings** for the whole not-loaded-yet family.
+
+### What the first sweep found: the suites are largely sound
+
+Most breakages are caught, usually by several suites at once, and most of what the tool flags is
+a suite that merely *loads* the broken page without claiming anything about it — rejected by hand,
+not reported. `test_a11y.mjs` is the model to copy: it carries an explicit anti-vacuity guard,
+*"ambient self-talk actually ran (otherwise the next check is vacuous)"*, and that is the check
+that reddened when the corpus 404'd while three quip assertions went vacuously green on `[]`.
+
+Two checks genuinely had no teeth. Both are *"it looked fine"* rather than a missing assertion:
+
+| check | survived | why |
+|---|---|---|
+| `test_csp.mjs` — *"the QR card actually drew a code"*, *"the Wi-Fi QR drew"* | `qr.js` deleted **and** `qr.js` served inert | `if (d[i] < 128) dark++` counts a canvas **nobody drew on**: an untouched 2-D canvas is `rgba(0,0,0,0)`, so its red channel is 0 for every pixel. Both runs reported exactly **45000 dark px** — the whole 300×150 default canvas — against a `> 500` bar, while `hud.js` had bailed at `!window.moxieQR` and the card could not draw at all. |
+| `test_csp.mjs` + `test_docs_explorer.mjs` — *"the README hero … actually DECODED"* | the hero stalled on the wire | both wait on `img.complete` and then `.catch(() => {})` the wait, so an expired wait leaves the check running — and a PNG still arriving does **not** report `naturalWidth === 0`. Chrome fills the dimensions in from the IHDR header. Measured: `{"complete":false,"w":1424,"h":1251}`, green, on an image the page had not decoded. Both files' comments assert the opposite in prose. |
+
+Each fix is two terms — `d[i + 3] > 0` and `hero.complete` — and each carries the control this
+repo asks for: RED against the breakage, GREEN against the healthy page. The canvas one is also
+proved without any suite in the path: a blank 300×150 canvas gives **45000** under the old rule
+and **0** under the new one, while a canvas holding 900 px of real ink gives **900** under both.
+
+### The inert script: a 200 OK that does nothing, and the clause that finally sees it
+
+The sweep's last open finding was `sim/check_deployed.mjs --selftest` **exiting 0 against a page
+that cannot work**. Measured on 2026-09-06 against `dev`: serve `sim/web/hud.js` 200 OK and inert —
+no simulator control wires up at all — and the deployed-artifact checker passed, **88 checks, rc 0**.
+The same for `moxie.js`, for `mode.js`, and for `qr.js`: four different broken pages, four greens.
+
+The reason is structural, and it is why no listener could have closed it. **An inert script produces
+no console output.** The `<script>` tag resolves, the response is a real 200 with a real body, the
+request log is clean, and nothing throws — so a `console`/`pageerror` listener sees nothing, and
+`check_deployed`'s own `deadAssets` clause (an asset that *failed* on the wire) is blind by
+construction. Counting requests is no help either: the inert file **was** fetched, and the count is
+identical.
+
+**The only way to notice an inert script is to assert an observable effect it is supposed to have** —
+a per-script contract, not a generic rule. The three obvious generic approaches are traps: *"a global
+is defined"* is brittle and most of this page is ESM; *"count the network requests"* gives the same
+number; *"snapshot the DOM"* is huge, noisy, and gets loosened the first time it flaps. So
+`check_deployed.mjs` grew a **clause 4** that names one cheap, specific mark per script:
+
+| script | the mark clause 4 asserts | why it is only true if that file ran |
+|---|---|---|
+| `moxie.js` | a `<canvas>` inside `#app`, and `#motors`/`#faces` non-empty | it appends the three.js renderer's own canvas, and `buildPanel()` fills two elements `sim.html` ships **empty** |
+| `hud.js` | every motor slider carries an `aria-label` | `labelMotors()` copies the row's visible text onto the input; `moxie.js` writes those rows *without* one, so the attribute is hud.js's signature |
+| `mode.js` | `body[data-mode]` is not `"boot"` | `env.js` paints that attribute from mode.js's answer and writes the literal `"boot"` when there is no answer |
+| `env.js` | a `.env-badge` exists in the topbar | env.js **creates** the element; `sim.html` has no such node |
+| `qr.js` | pressing **Make** leaves opaque ink on `#qr-canvas`, and prints its JSON payload | the encoders and the canvas renderer are qr.js's whole content; the button's listener is in hud.js and bails at `!window.moxieQR`, so an inert *either* leaves the canvas blank |
+
+None of these is a flag added for the test. **A `window.__loaded` marker or a `data-ran` attribute
+would make the check pass by making the product carry test scaffolding**, and the next person to read
+`sim.html` deletes it as dead weight — after which the check is green forever. Three signals that
+*look* like witnesses were rejected on exactly that reading of the markup: `body[data-bus]` (sim.html
+ships `data-bus="idle"` and hud.js's first `sync()` computes `"idle"` from *"not connected"* — bit for
+bit identical either way), `#link-label` (ships the exact text hud.js would write), and
+`#alive-toggle`'s class and `aria-pressed` (both ship set).
+
+Five new mutations in the file's own `--selftest` hold it: **E** `moxie.js` inert, **F** `hud.js`
+inert, **G** `mode.js` inert, **H** `env.js` inert, **I** `qr.js` inert, each of which must fire the
+clause that names *its* file. E and F are the pair that proves the marks are attributable rather than
+one assertion in five voices: gutting `moxie.js` takes hud.js's mark down with it (no sliders left to
+name), while gutting `hud.js` leaves every moxie.js mark standing.
+
+**One finding that looked caught was caught for the wrong reason.** `qr.js` *deleted* reddened the
+selftest — but not through an assertion: mutation D did `rmSync(dir/qr.js)`, which threw **ENOENT
+during server setup**, before a single probe ran. The exit code was right and the evidence was a stack
+trace; it would have scored identically with every clause in the file deleted. D now deletes with
+`{ force: true }`, each mutation's anchor file is its own named check, and the deletion is caught
+where it always should have been — the **baseline** target 404s on `qr.js` and clause 3 reddens.
+
+**Measured, not reasoned, in both directions.** With `page_teeth_check.py`'s own `gut` applied, the
+same suite's verdict flips: `qr-inert`, `hudjs-inert`, `moxiejs-inert`, `modejs-inert` went **NO
+TEETH (rc 0, 88 checks)** → **caught (rc 1; 38 / 46 / 50 / 32 red)**, and the new `envjs-inert` row
+is caught too — **TIER A findings for this suite: 0**. Each gut reddens exactly the clause that names
+its file and no other: gutting `mode.js` fires **one** check (`data-mode` … got `"boot"`), gutting
+`qr.js` fires **two** (both qr.js clauses, with every moxie.js and hud.js mark still standing). Green
+and stable on the healthy page 3/3 at **25 checks**, and — the run that matters for a monitor — green
+against live production at **29 checks**: `data-mode="live"`, badge `HOSTED DEMO · LIVE`, 7 named
+sliders, 14 expression glyphs, **10880 ink px** on a 180×180 QR canvas, 0 console errors.
+
+**What clause 4 does not cover, said out loud.** `sw-reset.js`, `stub.js`, `bridge.js`, `audio.js`,
+`life.js`, `mic.js`, `rail.js`, `turnstile.js`, `cloud-transport.js` and `ambient.js` are all loaded by
+`sim.html` and none is asserted. Several have **no observable effect on an untouched page** —
+`stub.js` and `cloud-transport.js` answer a turn nobody has taken, `turnstile.js` renders nothing
+without a sitekey — which is a finding, not a gap to work around. `ambient.js` does have one, but it
+is ~7 s away and this file must stay well inside that; [`test_ambient_guard.mjs`](../../sim/test_ambient_guard.mjs)
+and [`test_a11y.mjs`](../../sim/test_a11y.mjs) hold that one instead.
+
+The same shape, more widely: **four** of the browser suites installed **no `console` and no
+`pageerror` listener at all** — `test_a11y`, `test_bg_perf`, `test_liveliness`,
+`test_mobile_layout` — and a fifth, `test_console_insights`, held a `pageerror` listener only.
+(An earlier draft of this paragraph listed `test_console_insights` among the four and left
+`test_liveliness` implicit; the counts above are re-measured against `origin/dev@94cb8b4`.
+`sim/test_ambient.mjs` is sometimes counted here and should not be: it opens no browser at all,
+reading `ambient.json`, `audio/index.json` and `sim.html` as **files**.) A page script that 404s
+or throws is structurally invisible to a suite with no listener; it notices a missing script only
+where some behavioural assertion happens to depend on it (`a11y` does, through the Wi-Fi reveal;
+`liveliness` and `mobile_layout` do not, and both exited 0 with `qr.js` deleted).
+
+**`pageerror` alone is not enough**, which is why the fifth suite is on this list too. It fires
+for uncaught exceptions and nothing else; a `<script src>` that 404s raises no exception anywhere
+and surfaces as a **console** message, and so does a CSP refusal. `test_console_insights` was
+blind to a missing `app.js` while holding a listener.
+
+### Giving them eyes (2026-09-06)
+
+`sim/test_ambient_guard.mjs` already had the right idiom — both listeners plus a `notable()`
+filter that forgives provoked noise **by count** rather than by widening a pattern — so it was
+hoisted into [`sim/browser_harness.mjs`](../../sim/browser_harness.mjs) as `watchPage()` +
+`notable()`, and all five suites above now share that definition rather than forking it
+(`test_ambient_guard`'s own check count is unchanged at 36: the hoist is behaviour-neutral).
+
+The assertions are on the absence of **unexpected** output, never on silence, because some of
+these fixtures legitimately produce console errors and an `errs.length === 0` that reddens on
+benign noise gets loosened by the next reader into something that proves nothing:
+
+| suite | what the page legitimately says | how it is forgiven |
+|---|---|---|
+| `test_a11y` | four CSP refusals: it serves the real `_headers` policy on a `127.0.0.1` origin, so `env.js` fires its two optional-sidecar probes at `:8081`/`:8082` and `connect-src 'self'` refuses both — twice each, once as the violation and once as the failed fetch | only when the message names one of those two ports **on this origin** *and* says the CSP refused it, capped at four. A `script-src` refusal matches neither half. |
+| `test_console_insights` | one deliberate `503` (the only way to reach the *"telemetry threw"* render path) and one `404` for a favicon `server/static/` does not ship | counted at the interceptor that causes each one |
+| `test_liveliness` | two refused sidecar probes and one `404` for `/api/health` | counted at the interceptor — see below, because this suite had no interceptor at all |
+| `test_bg_perf`, `test_mobile_layout` | nothing — measured 0 on every page they open | silence is the honest bar; the counters are wired anyway so a later fixture has the correlation ready instead of a widened pattern |
+
+**`test_liveliness` had to become hermetic before it could be given a stable assertion, and
+that is the more useful half of its fix.** It intercepted nothing, so on the `127.0.0.1` origin
+it serves — which `env.js` treats as LOCAL — the two optional-sidecar probes went to the *real*
+loopback ports. On a box running Piper on `:8081` they succeed; in CI they are refused. What the
+page then believes about Piper decides whether `#speech-btn` is the typed turn or the local
+"Say" control, so the chat-dock geometry this suite measures already depended on what happened
+to be running on the machine — and a console assertion written against either environment would
+have been red on the other. Both probes are refused and counted now, and `/api/health` is
+answered `404` explicitly instead of being continued to a static server that holds no such file
+(byte-identical behaviour, now countable). 32 → 36 checks, every pre-existing assertion still
+green.
+
+Red/green controls, one script deleted per suite, run against `origin/dev@94cb8b4` and then
+against the same broken page with the listeners in place:
+
+| suite | script deleted | before | after |
+|---|---|---|---|
+| `test_a11y` | `sim/web/sw-reset.js` | ✅ 69 checks passed | ❌ 404 on the console |
+| `test_bg_perf` | `sim/web/wire-bg.js` | ✅ 25 checks passed | ❌ 404 on the console |
+| `test_mobile_layout` | `sim/web/qr.js` | ✅ 222 checks passed | ❌ 404 on the console |
+| `test_console_insights` | `server/static/style.css` | ✅ 94 checks passed | ❌ 404 on the console |
+| `test_liveliness` | `sim/web/qr.js` | ✅ 32 checks passed | ❌ 404 on the console |
+
+Each suite was then run **three times** against the healthy page: 3/3 green with an identical
+check count every run (a11y 79, bg_perf 30, mobile_layout 235, console_insights 94, liveliness
+36, ambient_guard 36).
+
+**The limit of the instrument, stated plainly:** eyes catch a 404, a CSP refusal and a thrown
+exception. They do **not** catch a script served *200 OK and inert* — the `gut` breakage — which
+produces no console output at all. That family needs a behavioural assertion instead, and it is
+the section above (*"The inert script"*) that supplies one for `check_deployed.mjs`: one named
+observable effect per script, asserted. **The limit is still real for these five suites** —
+nothing was added to them here, and a `watchPage()` listener can never see an inert script by
+construction.
+
+One real defect turned up on the listeners' first run, in a suite's own instrument rather than in
+the page: `test_bg_perf` stretched rAF timestamps by **multiplying** them, so putting `inflate`
+back to 0 stepped the clock backwards by minutes. `bg.js` clamps `dt` from above
+(`Math.min(2.4, elapsed / 16.7)`) and not from below, so that drove a ping radius negative and
+every later frame threw `IndexSizeError: arc(): The radius provided (-53809.6) is negative`. A
+real `requestAnimationFrame` timestamp never decreases, so `bg.js` cannot reach that state on its
+own — the stretch is an accumulated **offset** now, monotonic whatever `inflate` does.
+
+Only [`test_responsive.mjs`](../../sim/test_responsive.mjs) asserts on the 404s it observed, and
+it is the suite that caught the most breakages here.
+
 ## Run it now
 
 ```sh
