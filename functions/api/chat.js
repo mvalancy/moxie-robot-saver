@@ -317,6 +317,43 @@ function expressiveInstruction() {
   );
 }
 
+/**
+ * ONE ISOLATE'S MEMORY OF WHETHER THIS GATEWAY UNDERSTANDS THE PENALTY FIELDS.
+ *
+ * `frequency_penalty` and `presence_penalty` are core OpenAI chat-completions parameters,
+ * but this deployment points at whatever gateway the operator configured, and a backend
+ * that has never heard of them answers 400 — which `callGateway` turns into
+ * `upstream_down`, which paints the page SCRIPTED. A repetition fix that can take the
+ * whole demo down on an unfamiliar backend is not a fix.
+ *
+ * So the first 400 on a request that CARRIED them clears this flag and the call is retried
+ * once without them. The cost of an unsupporting gateway is therefore one extra call, once
+ * per isolate, and never a visitor seeing a degraded page. The cost on a gateway that does
+ * support them is nothing at all.
+ *
+ * DELIBERATELY NOT A CACHE ACROSS ISOLATES. It is one boolean in one isolate's memory, so
+ * the worst case after a deploy or a recycle is that a few isolates each pay the extra
+ * call once. Putting it in the shared Cache API tier would mean a transient 400 — a
+ * momentarily wedged backend — permanently disabling the fix for the whole colo, which is
+ * a far worse failure than repeating a cheap probe.
+ */
+let penaltiesAccepted = true;
+
+/** The penalty pair, or nothing at all: an explicit 0 means "do not send this field",
+ *  which is how an operator switches one off without needing this file to know why. */
+function penaltyFields(cfg) {
+  if (!penaltiesAccepted) return {};
+  const out = {};
+  if (cfg.frequencyPenalty) out.frequency_penalty = cfg.frequencyPenalty;
+  if (cfg.presencePenalty) out.presence_penalty = cfg.presencePenalty;
+  return out;
+}
+
+/** Tests only: put the flag back, so one case's simulated 400 cannot leak into the next. */
+export function __resetPenaltyProbe() { penaltiesAccepted = true; }
+/** Tests only: what the isolate currently believes. */
+export function __penaltiesAccepted() { return penaltiesAccepted; }
+
 export function buildUpstreamBody(cfg, turns, text) {
   const messages = [{ role: "system", content: cfg.persona }];
   for (const t of turns) messages.push({ role: t.role, content: t.content });
@@ -330,6 +367,9 @@ export function buildUpstreamBody(cfg, turns, text) {
     messages,
     max_tokens: cfg.maxTokens, // 160 by default (§4.1): the ceiling on the expensive half
     temperature: TEMPERATURE,
+    // Repetition pressure. Absent entirely when configured to 0 or when this isolate has
+    // learned the gateway rejects them — see `penaltiesAccepted`.
+    ...penaltyFields(cfg),
     n: 1,
     stream: false,
   };
@@ -396,6 +436,22 @@ async function callGateway(cfg, body) {
   // swallow it into `upstream_down`.
   if (res.status >= 300 && res.status < 400) {
     return { ok: false, reason: "gateway_unreachable_or_gated" };
+  }
+  /* A 400 ON A REQUEST THAT CARRIED THE PENALTY FIELDS IS READ AS "THIS GATEWAY DOES NOT
+   * KNOW THEM", not as an outage. Remember that for the life of the isolate and try once
+   * more without them, so an unfamiliar backend costs one extra call rather than a
+   * degraded page. Narrow on purpose: only 400 (a malformed-request status), only when the
+   * fields were actually sent, and only once — `penaltiesAccepted` is already false on the
+   * retry, so a gateway that 400s for some other reason cannot loop here. */
+  if (res.status === 400 && penaltiesAccepted &&
+      ("frequency_penalty" in body || "presence_penalty" in body)) {
+    penaltiesAccepted = false;
+    // The SAME body minus the two fields, rather than a rebuilt one: re-deriving it would
+    // need the turns and the text plumbed down here, and a retry that rebuilds its own
+    // prompt is a retry that can differ from the request it is replacing.
+    const { frequency_penalty, presence_penalty, ...plain } = body;
+    void frequency_penalty; void presence_penalty;
+    return callGateway(cfg, plain);
   }
   if (!res.ok) {
     // 4xx and 5xx alike. The body is NOT read: an unknown-model 400 names the model, and

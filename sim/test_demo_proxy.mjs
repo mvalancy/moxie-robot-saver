@@ -90,6 +90,15 @@ globalThis.fetch = async (url, opt) => {
   sent.push({ url: String(url), opt });
   const isChat = String(url).endsWith("/chat/completions");
   const p = (isChat ? plan.chat : plan.speech) || {};
+  /* A GATEWAY THAT HAS NEVER HEARD OF `frequency_penalty`, which is the real failure mode
+   * the retry in `chat.js` exists for: OpenAI-compatible backends that predate the field,
+   * or narrow proxies, answer 400 to a body carrying it. Simulated on the BODY rather than
+   * with a call counter so the stub cannot accidentally pass a retry that still sent it. */
+  if (isChat && plan.rejectPenalties) {
+    let sentPenalties = false;
+    try { sentPenalties = "frequency_penalty" in JSON.parse(opt.body); } catch { /* not JSON */ }
+    if (sentPenalties) return new Response('{"error":{"message":"unknown field"}}', { status: 400 });
+  }
   if (p.throw) {
     const e = new Error("stub");
     e.name = p.throw;
@@ -333,8 +342,16 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   ok(!("logit_bias" in up), "no logit_bias field reaches the gateway");
   ok(!("best_of" in up), "no best_of field reaches the gateway");
   ok(!("response_format" in up), "no client response_format reaches the gateway");
-  deep(Object.keys(up).sort(), ["max_tokens", "messages", "model", "n", "stream", "temperature"],
+  /* The allowlist gained the two repetition-pressure fields on 2026-09-06. It is still an
+   * EXACT set and that is the point of the check — nothing a visitor sends may appear here
+   * — but the set is now eight, because a degenerate affirmation loop was measured at the
+   * live site and `frequency_penalty`/`presence_penalty` are the direct lever on it. */
+  deep(Object.keys(up).sort(),
+       ["frequency_penalty", "max_tokens", "messages", "model", "n", "presence_penalty",
+        "stream", "temperature"],
        "the upstream body has EXACTLY the server-built fields");
+  eq(up.frequency_penalty, 0.4, "…with DEMO_FREQUENCY_PENALTY's default…");
+  eq(up.presence_penalty, 0.3, "…and DEMO_PRESENCE_PENALTY's");
 
   // §3.3: the persona is placed both FIRST and LAST, so the final instruction the model
   // reads is always ours whatever the visitor put in the middle.
@@ -3187,6 +3204,53 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
        "…and none of the envelope's field names");
   }
 
+  // ---- 4b. A GATEWAY THAT REJECTS THE PENALTIES COSTS ONE CALL, NOT THE DEMO -- //
+  //
+  // `frequency_penalty` and `presence_penalty` are core OpenAI fields, but this deployment
+  // points at whatever gateway the operator configured, and one that has never heard of
+  // them answers 400 — which `callGateway` would otherwise turn into `upstream_down` and a
+  // SCRIPTED page. A repetition fix that can take the demo down on an unfamiliar backend
+  // is not a fix, so the first such 400 disables them for the isolate and retries once.
+  {
+    fresh();
+    chat.__resetPenaltyProbe();
+    eq(chat.__penaltiesAccepted(), true, "an isolate starts out believing the gateway takes them");
+    plan = { rejectPenalties: true, chat: { content: "Hi there!" } };
+    const r = await call(chat, "/api/chat", { text: "hello" });
+    eq(r.res.status, 200, "a gateway that 400s the penalty fields still SERVES the visitor");
+    eq(r.body.reason, null, "…with no refusal reason…");
+    eq(r.body.mode, "live", "…and a LIVE page, not the scripted one a 400 used to produce");
+    eq(sent.length, 2, "…having cost exactly one extra upstream call");
+    ok("frequency_penalty" in JSON.parse(sent[0].opt.body), "…the FIRST call carried the fields…");
+    ok(!("frequency_penalty" in JSON.parse(sent[1].opt.body)), "…and the retry did not");
+    ok(!("presence_penalty" in JSON.parse(sent[1].opt.body)), "…neither of them");
+    eq(chat.__penaltiesAccepted(), false, "…and the isolate has learned not to send them again");
+
+    // …and it does NOT pay that price twice. The next turn goes straight out without them.
+    fresh();
+    plan = { rejectPenalties: true, chat: { content: "Hi again!" } };
+    const r2 = await call(chat, "/api/chat", { text: "hello" });
+    eq(r2.res.status, 200, "the NEXT turn is served too");
+    eq(sent.length, 1, "…in a single call: the lesson is remembered, not relearned");
+    chat.__resetPenaltyProbe();
+  }
+
+  // ---- 4c. A 400 THAT IS NOT ABOUT THE PENALTIES IS STILL AN OUTAGE ---------- //
+  // The narrow scope is what stops the retry becoming a general-purpose second chance on
+  // every malformed request — and what stops it looping, since the retry itself carries no
+  // penalties and so cannot re-enter the branch.
+  {
+    fresh();
+    chat.__resetPenaltyProbe();
+    plan = { chat: { status: 400, body: '{"error":{"message":"no such model"}}' } };
+    const r = await call(chat, "/api/chat", { text: "hello" });
+    eq(r.body.reason, "upstream_down", "a 400 for any OTHER reason is still upstream_down");
+    eq(sent.length, 2, "…retried once, because the first call did carry the fields…");
+    ok(!("frequency_penalty" in JSON.parse(sent[1].opt.body)), "…and the retry dropped them");
+    eq(chat.__penaltiesAccepted(), false, "…so a persistent 400 cannot loop: the flag is already off");
+    chat.__resetPenaltyProbe();
+  }
+
   // ---- 5. THE PERSONA IS THE ROBOT PATH'S, NOT A SAFETY BLURB --------------- //
   // The single change that made her Moxie rather than an assistant wearing a name tag.
   {
@@ -3195,7 +3259,11 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     ok(/never preachy|never lecture|never scold/.test(P), "…the personality rules…");
     ok(/one to three SHORT natural sentences/.test(P), "…the voice rule…");
     ok(/you have a face|arms you can move/.test(P), "…the embodiment…");
-    ok(/REDIRECT/.test(P), "…and a redirect discipline stronger than 'say so kindly'");
+    ok(/REDIRECT/.test(P), "…a redirect discipline stronger than 'say so kindly'…");
+    ok(/Keep the conversation MOVING/.test(P),
+       "…and the initiative rule the measured affirmation loop produced");
+    ok(/Never repeat a sentence you have already said/.test(P),
+       "…which names the exact failure: a repeated line");
     ok(P.length > 1200, `…and it is a character, not a blurb (${P.length} chars)`);
   }
 }
