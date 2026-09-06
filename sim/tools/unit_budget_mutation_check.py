@@ -162,7 +162,7 @@ MUTATIONS = [
     ("U8  the budget sub-tier never consulted at all", LIMITS,
      "      const over = await sharedBudgetVerdict(store, o.request, { cfg, nowS });",
      "      const over = null;",
-     SUITE, "then the budget entry"),
+     SUITE, "FOUR shared entries"),
 
     # ---- U9: the visitor told the wrong thing --------------------------------
     ("U9  a spent colo hour reported as rate_limited (a 429 for a 503 condition)", LIMITS,
@@ -189,7 +189,7 @@ MUTATIONS = [
     ("U11 accrue units on a deployment with no hourly ceiling to mirror", LIMITS,
      "  const owed = budget && budget.hourly && budget.charged && budget.charged.length",
      "  const owed = budget && budget.charged && budget.charged.length",
-     SUITE, "an uncapped deployment accrues nothing"),
+     SUITE, "uncapped deployment accrues nothing"),
 
     # ---- U12: which hour pays --------------------------------------------
     # The clock read again at settle time rather than the hour the charge was MADE in.
