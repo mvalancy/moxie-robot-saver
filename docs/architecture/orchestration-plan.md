@@ -922,3 +922,20 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   without anyone wiring them in, and it caught #166's M1 as `NO-OP anchor (0 matches)` when a refactor
   moved the anchored line. Also fixed: the key scan fired on the ordinary word `task-notification` — a
   scanner that cries wolf on English is one people learn to wave through.
+
+- **2026-09-06 — the RESEARCH tier has verified "nothing new upstream" SIX consecutive times, and
+  that is now a finding about the tier rather than about upstream.** Measured this fire, not
+  recalled: `jbeghtol/openmoxie` last pushed **2026-01-15** (234 days), both active forks unmoved
+  since the first check of this session, upstream issue #63 unmoved since 2026-08-23, and — the
+  broadest form — **zero repos in the entire fork network pushed since 2026-09-03**
+  (`gh api repos/jbeghtol/openmoxie/forks?sort=newest --jq '[.[]|select(.pushed_at>"2026-09-03")]|length'`
+  returns `0`).
+  **Recommended change to the tier's own prompt, for whoever next edits the crons:** stop re-sweeping
+  three repos plus a 40-fork network every three hours to relearn the same answer, and instead watch
+  **the one signal the audit itself identified** — upstream issue #63, where Fork A's author is
+  talking to jbeghtol. A repo that has not moved in eight months does not need polling on a
+  three-hour cadence; the issue thread is where a change would appear first, and one API call
+  answers it. The rotation's other spokes (b) build-ready briefs and (c) BEYOND specs remain
+  worthwhile — it is specifically (a), the refresh, that has stopped paying for itself.
+  **What the tier's own audit says to do instead:** *"What remains is ours to build."* Six sweeps
+  agreeing with that sentence is the evidence for it, not a reason to run a seventh.
