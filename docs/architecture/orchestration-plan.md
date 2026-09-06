@@ -966,3 +966,78 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   worthwhile — it is specifically (a), the refresh, that has stopped paying for itself.
   **What the tier's own audit says to do instead:** *"What remains is ours to build."* Six sweeps
   agreeing with that sentence is the evidence for it, not a reason to run a seventh.
+
+- **2026-09-06 — the hidden-tab red was the harness, and the same defect was sitting one file
+  over.** `packets grew while the tab was hidden` had been believed across two sessions and had
+  already produced a guard in `sim/web/bg.js` whose comment credited it with the fix. The failure
+  came back **with that guard in place** (job 101442923492, PR #172). Measurement settled it in one
+  run: instrumenting every push into `packets`/`pings` with `document.hidden` **at the push** gave
+  **zero** hidden-time pushes across 32 backgrounded runs, and zero frames delivered while hidden —
+  `bg.js`'s guard has never been beaten and cannot be, since hole 1 needs a frame. The extra entry
+  was always spawned by a **visible** page in the 7–26 ms between `sim/test_bg_perf.mjs` sampling
+  its baseline from Node and the tab actually going hidden, then charged to the hidden window
+  because nothing retires once rAF stops. Widened to 1200 ms it reproduced **4 runs in 12**; that
+  narrow gap is exactly why it re-ran green and read as a flake. Fix is harness-only — the baseline
+  is now taken **by the page, inside the `visibilitychange` handler** — with `bg.js` changed by
+  **comment only**, withdrawing the false credit and keeping the guard (still the only defence for
+  its point 2, and **unfalsifiable in this environment**, which is now written down rather than
+  implied). Controls: `origin/dev`'s test + the same construction **3/3 red** with CI's message
+  verbatim; fixed suite **3/3 green, 25 checks**; fixed suite vs a mutated `bg.js` **6/25 fail**.
+  Recorded as **rule 30**. Then PR #175 reddened on a *different* suite — `the README hero should
+  actually decode (got {"src":"img/sim-hero.png","w":0,"h":0})` — on a diff of one test file plus
+  comments. The PNG is valid and byte-identical on both branches (612892 B, 1424×1251), so the
+  browser returned 0×0: `sim/test_docs_explorer.mjs:110` reads `naturalWidth` with no wait for
+  decode, and its own comment enumerates two causes of `0` while missing *not loaded yet*. Briefed
+  with that as a **hypothesis**, against the rival (the off-origin interceptor genuinely aborting
+  it) which needs the opposite fix. **#172's blocker is separately confirmed dead**: `bg_perf`
+  green, 25 checks, on the merged tree, verified in a throwaway worktree rather than assumed.
+
+- **2026-09-06 — the owner's mobile steer is DONE in production, and the plan still says it is
+  not.** The "Most valuable next slice" block records a production measurement on a 390×844 phone
+  finding the Talk box **`0×0` on load** and, after tapping `CONTROLS`, at **`y=2095`** — roughly
+  2000 px below the fold, so the turn worked and was merely unreachable. **Re-measured today
+  against live `moxie.mattvalancy.com/sim` on that exact viewport, and every number has changed:**
+
+  | control | id | label | size | top | in fold |
+  |---|---|---|---|---|---|
+  | text field | `#speech-input` | *Message to Moxie* | 211×44 | 763 | ✅ |
+  | mic | `#mic-btn` | *Listen* | 89×44 | 763 | ✅ |
+  | send | `#speech-btn` | *Ask* | 46×44 | 763 | ✅ |
+
+  **3 of 3 in the fold**, all on one row at the bottom, all 44 px touch targets;
+  `document.scrollHeight` is **844** against a **844** viewport, i.e. the page no longer scrolls at
+  all; `#panel` is 374×**50** rather than a full-height rail; and `#chat-cue` reads *"Talk to Moxie
+  — type a message, or tap Listen and speak."* That is (a) the bottom composer, (b) the rail
+  optional, and (c) a control that says what it is — the three pieces of the owner's steer that
+  were specified enough to build. **(d) "Gamify this for regular people" remains unspecified and
+  still must not be guessed at.**
+  Credit where due: this landed from the *other* live session's `sim.html`/`style.css` work, not
+  from this loop. **The lesson is about the plan, not the feature** — a "Most valuable next slice"
+  block that describes a fixed problem sends the next agent to build what already exists, which is
+  the same failure as a comment asserting a guard that was never measured (rule 30). A ranking that
+  cites a measurement should carry the measurement's **date and viewport** so the next reader knows
+  when to re-take it rather than trusting it.
+  Method note for whoever re-measures: `waitUntil: "networkidle2"` **never settles** on this page —
+  the ambient loop keeps the network busy by design. Use `domcontentloaded` plus a settle delay.
+
+- **2026-09-06 — and the phone composer actually WORKS, which is a separate claim from being
+  visible.** The measurement above proves the controls are reachable; it does not prove a turn
+  completes, and "reachable" was never the thing a visitor cares about. Driven on the same
+  390×844 viewport against live production — tap `#speech-input`, type, tap `#speech-btn`:
+
+  | signal | result |
+  |---|---|
+  | network | `200 /api/chat` **and** `200 /api/speech` — brain *and* voice both served |
+  | console errors | **0** |
+  | transcript | grew 0 → 210 chars |
+  | reply | *"I love playing hide-and-seek and making silly faces! What do you like to play?"* |
+  | ambient loop | live underneath it — *"The Roomba downstairs reports to me. We do not talk about the Roomba."* |
+
+  So a stranger on a phone can now reach `moxie.mattvalancy.com/sim`, type, and be answered in
+  Moxie's voice with her own character. That is the owner's headline goal — *"when will Moxie Sim
+  be live with AI on our public page?"* — met on the device most visitors will actually use, and
+  it is now proven by a driven turn rather than inferred from a layout measurement.
+  **Why this is logged as two entries and not one:** the previous entry establishes *reachable* and
+  this one establishes *works*, and collapsing them would repeat the session's recurring defect —
+  a check that looks like it proves the thing and does not. A composer can be perfectly placed and
+  still be wired to nothing.
