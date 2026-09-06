@@ -59,6 +59,23 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   record + derived `arrived`/`left` signals, with hysteresis so a face flickering at the edge of
   the frame cannot spam the brain, plus the short prompt line and the greeting lines the runtime
   speaks. Design + honesty: [vision.md §7](../../docs/architecture/vision.md).
+- [`launch_cards.py`](launch_cards.py) — 🎴 **what a printed QR may do to a child's robot.**
+  One scanned string in (`eb-qr-event` → `$eb_qr_value`), at most one launch out. A QR is an
+  unauthenticated input any stranger can print, so the catalog is a **positive list derived from
+  [`schedule.py`](schedule.py)** — 24 ids today — and a card may start an activity and *nothing
+  else*: `<sleep>`, `<exit>` and `<launch_if_confirmed:…>` are refused even though the shared
+  action-tag grammar parses all three. `decode` is total and never raises; `encode` is its exact
+  inverse and lives here rather than in the sheet so the printing side cannot emit a payload the
+  reading side refuses.
+- [`launch_sheet.py`](launch_sheet.py) — 🎴 **the paper.** Turns those 24 ids into one
+  self-contained HTML page of cards with the symbols as inline SVG, sized in millimetres, that a
+  parent prints on A4 or US Letter and cuts up: `python3 -m moxie_sdk.launch_sheet -o cards.html`.
+  Vector rather than PNG so a home printer rasterises every module edge at its own DPI; error
+  level Q, one pinned symbol version for the whole deck, a 4-module quiet zone drawn inside the
+  SVG, ~1.5 mm per module. Every payload comes from `launch_cards.encode`, so an id outside the
+  catalog raises instead of producing paper. `segno` is the optional `cards` extra — the module
+  imports without it and only drawing needs it.
+  ([backlog brief](../../docs/architecture/backlog/qr-launch-cards.md) P0-c)
 - [`segment.py`](segment.py) — the sentence segmenter a streaming brain talks through:
   dependency-free, pure, and careful about decimals, abbreviations, ellipses and lines too
   short to speak alone. Each finished sentence becomes one `RemoteChatResponse` chunk, so a
