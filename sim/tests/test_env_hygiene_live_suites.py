@@ -219,9 +219,15 @@ with open(sys.argv[2], "w") as fh:
 sys.exit(int(rc))
 """
 
-#: Written by `conftest.isolated_data_dir` for the whole session, so the probe sees it
-#: whatever the file under test did. Not a leak, and not this guard's business.
-_PROBE_IGNORED = ("MOXIE_DATA_DIR",)
+#: Written by `conftest` for the whole session, so the probe sees them whatever the file
+#: under test did. Not leaks, and not this guard's business.
+#:
+#: `MOXIE_DATA_DIR` comes from `isolated_data_dir`; `MOXIE_SKIP_DOTENV` from the dotenv
+#: fence at the top of `conftest.py`, which the probe's own subprocess re-applies because
+#: this test deliberately unsets it before launching. Without this entry the fence would
+#: read as `test_assemble.py` having added a variable — a guard failing on the presence of
+#: another guard, which says nothing about the file under test.
+_PROBE_IGNORED = ("MOXIE_DATA_DIR", "MOXIE_SKIP_DOTENV")
 
 
 def test_test_assemble_py_leaves_the_environment_exactly_as_it_found_it(tmp_path):
