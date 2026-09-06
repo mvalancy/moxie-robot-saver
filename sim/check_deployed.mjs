@@ -145,7 +145,7 @@
  *
  *     node sim/check_deployed.mjs https://<a-branch-preview>.pages.dev/sim
  */
-import { readFileSync, mkdtempSync, cpSync, appendFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, cpSync, appendFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { requireBrowser, serveStatic, pagesHeaders, makeChecks, finish, web } from "./browser_harness.mjs";
@@ -331,6 +331,7 @@ async function probe(browser, url, { settleMs = 2000 } = {}) {
  */
 function assertReachable(c, p, tag, { expectBeacon }) {
   const { ok, eq } = c;
+  const origin = new URL(p.url).origin;
 
   eq(p.status, 200, `${tag}: HTTP status of ${p.url}`);
   /* Rule 21's corollary: a MISSING route on Pages answers 200 with the STATIC HTML
@@ -362,6 +363,40 @@ function assertReachable(c, p, tag, { expectBeacon }) {
        `${tag}: ${sel} is inside the viewport horizontally — x ${m.left}…${m.right} of ${p.innerW}`);
     ok(m.self, `${tag}: a tap at the centre of ${sel} reaches it — elementFromPoint gave ${m.hit}`);
   }
+
+  /* ---- clause 3: every asset the PAGE asked for actually arrived ----------------
+   * Until 2026-09-06 `net`, `failed` and `consoleErrs` were collected, PRINTED as
+   * `failed requests: 0   console errors: 0` — and asserted NOWHERE. Three numbers that
+   * read like a verdict and were decoration: a production build whose `sim.html`
+   * referenced a script that 404s would print the 404 and still exit ✅. That is not
+   * hypothetical for this page. Thirteen inline `<script>` blocks became thirteen
+   * `<script src>` files in the CSP pass, and the file's own note for that work says a
+   * page whose glue fails to load "still paints its markup and its CSS" — i.e. exactly
+   * the failure every clause above survives.
+   *
+   * The proof it was live is in this file's own selftest: the BASELINE reported
+   * `console errors: 1` and passed with `fired: NOTHING`.
+   *
+   * WHY THE CLAUSE IS NOT `consoleErrs.length === 0`, which is the obvious version and is
+   * WRONG. That one 404 is `mode.js` polling same-origin `GET /api/health`, and on a
+   * static origin with no Functions a 404 there is not a fault — it is HOW THE PAGE
+   * DECIDES IT IS `offline`. Asserting zero console errors would redden the selftest
+   * baseline, every fork with no Functions, and `sim/serve.py`. So the claim is narrower
+   * and is about PAGE ASSETS: everything same-origin that is not under `/api/` must have
+   * come back below 400 and must not have failed at the network layer. `/api/` is the
+   * page's own feature detection and third parties are somebody else's uptime — neither
+   * belongs in a clause that can redden a monitor. */
+  const asset = (u) => {
+    if (!u.startsWith(origin + "/")) return false;         // third parties are not ours
+    return !/\/api\//.test(u);                             // /api/* is feature detection
+  };
+  const badAssets = p.net.filter((r) => asset(r.url) && r.status >= 400)
+                         .map((r) => `${r.status} ${r.url}`);
+  eq(badAssets.length, 0,
+     `${tag}: every page asset loaded — ${badAssets.length} did not: ${JSON.stringify(badAssets)}`);
+  const deadAssets = p.failed.filter((f) => asset(f.url)).map((f) => `${f.url} — ${f.why}`);
+  eq(deadAssets.length, 0,
+     `${tag}: no page asset failed at the network layer — ${JSON.stringify(deadAssets)}`);
 
   /* ---- the beacon reality (clause 2) ---- */
   eq(p.csp.length, 0, `${tag}: ZERO securitypolicyviolation events on load — ` +
@@ -440,6 +475,12 @@ function report(p, { expectBeacon }) {
  * healthy. Those probes are a local-development branch that no deployment ever takes.
  * `test_mobile_layout.mjs` and `test_csp.mjs` both map a `.test` hostname for the same
  * class of reason; this does it per-target so all four servers can share one browser.
+ *
+ * D IS NOT CSS, and that is the point of it. Clause 3 is about an asset that never
+ * arrives, which no stylesheet can imitate, so D deletes a shipped script from the copied
+ * tree instead. `qr.js` is chosen because losing it changes NO geometry — so D reddens
+ * clause 3 and nothing else, which is what makes it a test of clause 3 rather than of the
+ * layout clauses that were already covered.
  */
 const MUTATIONS = [
   ["A · dock hidden (the pre-#162 0×0 state)",
@@ -452,12 +493,17 @@ const MUTATIONS = [
    `#topbar { position: fixed !important; top: auto !important; left: 0; right: 0; bottom: 0;
       height: 320px; z-index: 99; pointer-events: auto; }`,
    /reaches it — elementFromPoint/],
+  ["D · a shipped script is missing from the build (qr.js 404s)",
+   null,
+   /every page asset loaded/,
+   (dir) => rmSync(join(dir, "qr.js"))],
 ];
 
-function mutatedCopy(css) {
+function mutatedCopy(css, mutate) {
   const dir = mkdtempSync(join(tmpdir(), "moxie-deployed-"));
   cpSync(web, dir, { recursive: true });
   if (css) appendFileSync(join(dir, "style.css"), "\n/* --selftest mutation */\n" + css + "\n");
+  if (mutate) mutate(dir);
   return dir;
 }
 
@@ -470,8 +516,8 @@ async function selftest(puppeteer, chrome) {
    * single profile (and a single set of GPU warnings). */
   const targets = [];
   for (const [i, entry] of [[0, null], ...MUTATIONS.map((m, n) => [n + 1, m])]) {
-    const [name, css, wanted] = entry || ["baseline (the tree as committed)", null, null];
-    const site = await serveStatic(mutatedCopy(css), { headers });
+    const [name, css, wanted, mutate] = entry || ["baseline (the tree as committed)", null, null];
+    const site = await serveStatic(mutatedCopy(css, mutate), { headers });
     targets.push({ name, wanted, site, host: `moxie-selftest-${i}.hosted.test` });
   }
   const rules = targets.map((t) => `MAP ${t.host} 127.0.0.1:${t.site.port}`).join(",");
