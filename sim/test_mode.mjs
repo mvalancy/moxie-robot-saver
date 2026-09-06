@@ -108,8 +108,14 @@ const FULL = {
   eq(d.maxTokens, 160, "DEMO_MAX_TOKENS default");
   eq(d.maxInputChars, 500, "DEMO_MAX_INPUT_CHARS default");
   eq(d.maxTtsChars, 300, "DEMO_MAX_TTS_CHARS default");
-  eq(d.maxContextChars, 1500, "DEMO_MAX_CONTEXT_CHARS default");
-  eq(d.maxHistoryTurns, 4, "DEMO_MAX_HISTORY_TURNS default");
+  /* RAISED 2026-09-06, deliberately, and the pair moved together on purpose.
+   * Four turns is two exchanges — she forgot the beginning of any real conversation,
+   * which is the most character-breaking thing a companion can do. Twelve is what the
+   * robot path has always used. Raising the count WITHOUT the byte budget would have
+   * changed nothing: `hmac.js` drops oldest-first until the history fits, so the extra
+   * eight turns would have been trimmed away on every request. */
+  eq(d.maxContextChars, 4000, "DEMO_MAX_CONTEXT_CHARS default — the real bound on history");
+  eq(d.maxHistoryTurns, 12, "DEMO_MAX_HISTORY_TURNS default — twelve, as the robot path uses");
   eq(d.maxAudioBytes, 500000, "DEMO_MAX_AUDIO_BYTES default");
   eq(d.minAudioBytes, 2000, "DEMO_MIN_AUDIO_BYTES default");
   eq(d.chatPerMin, 5, "DEMO_CHAT_PER_MIN default");
