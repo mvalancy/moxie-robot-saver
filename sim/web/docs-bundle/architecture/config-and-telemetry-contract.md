@@ -356,6 +356,24 @@ shapes, both caps and the filter; the runtime is the only thing that touches dis
 | `robots/<id>/telemetry_packets.json` | a ring of the newest `Packet` envelopes | *"what just happened"* — the event list + the by-event roll-up |
 | `robots/<id>/telemetry_daily.json` | one row per **local calendar day**: a count, counts by `event_name`, and the day's first/last stamp | *"what has been happening"* — a week, a month |
 
+**The two are a log and a view over it — not two counters.** They used to be two counters: the
+runtime appended an envelope, then wrote a separately-advanced roll-up, and nothing ever compared
+them again. Two files, two `os.replace` calls, and a window in between where the ring holds a
+packet the roll-up has never counted. On **2026-09-05** that window produced a red `sil` job on a
+PR whose diff could not reach either record — three envelopes on disk, two counted — and the
+version that matters is not the red test: a supervisor **killed** in that window made the
+disagreement *permanent*, and the console's 📈 card reads the roll-up for its lifetime total, so a
+parent would have been shown a confidently wrong number while the ring held the truth. Since then
+every stored envelope carries a monotonic **`seq`** (stamped by the server *after* the privacy
+gate, so a robot cannot forge one — `storable_packet` keeps only the wire fields) and the roll-up
+carries **`through_seq`**, the highest it has folded. *"Has this been counted?"* is therefore a
+fact on disk, `reconcile_rollup` replays whatever the roll-up is missing, and the roll-up is
+written **before** the ring so that no reader whose leading edge is the ring — the fixture, the
+console's event list, a restart hydrating its buffer — can observe an under-count. A crash between
+the two now costs one envelope from a record whose contract is already *"the newest 500"*, and
+costs the lifetime count nothing. `seq` and `through_seq` are **server bookkeeping and not wire
+fields**: nothing in `Cloud.proto` has them and a robot never sees either.
+
 **A third file is under the same switch, and it is not a telemetry record.**
 `robots/<id>/mentor_behaviors.json` is the durable per-child behavioural log — which activity
 was finished, which was quit, which was refused, with a timestamp on each — written by

@@ -16,7 +16,7 @@
   **ordered** map, so sorting the keys would silently reorder every program in the file — the
   escape suite caught exactly that.
 - **`ext_mutation_check.py`** — the other direction of *"a test for every feature"*. It removes each
-  of **28 guards** the extension sandbox rests on — the `_`-segment path refusal, the fact-root
+  of **28 guards** the extension sandbox rests on ⚠️ *(unverified as of 2026-09-05 and left rather than guessed at — the table has **30 rows** across **12 distinct guard ids** (`X1`–`X12`), so 28 matches neither unit; whoever knows what it enumerated should correct it)* — the `_`-segment path refusal, the fact-root
   refusal, the step and wall-clock budgets, the byte caps, both depth caps, the injected clock and
   seed, the NFKC identity check, the memory-key grammar, the host-supplied namespace, the two
   capability-equality checks, the all-or-nothing effect list, the jinja2 sandbox, the pattern cap —
@@ -81,7 +81,7 @@
   reasons and SUBACKs a subscription it will never deliver on, so a proof written against acks would pass
   on a broker with no ACL at all.
 - **`hardening_mutation_check.py`** — the same proof for [production
-  hardening](../../docs/architecture/backlog/production-hardening.md) P0: **35 mutations** across
+  hardening](../../docs/architecture/backlog/production-hardening.md) P0: **38 mutations** across
   `moxie_sdk/store.py`'s cross-process lock and the connection region of
   `supervisor/moxie_runtime.py`. Two of them are deliberately the *half-done fixes* the brief warns
   about rather than deleted guards — `connect_async` without `retry_first_connection=True` (a no-op
@@ -147,6 +147,43 @@
   test_mutation_tables.py` now also pins the row COUNT stated in the docs against the table, because a
   README that said 26 while the table held 28 is how a reader loses the ability to tell a table that grew
   from a selector that silently stopped matching.
+- **`unit_budget_mutation_check.py`** — the same proof for the **shared unit budget** of
+  [`live-sim-demo.md` §4.6.2](../../docs/architecture/backlog/live-sim-demo.md): every guard the
+  per-colo spend ceiling rests on, all of them in
+  [`functions/api/_lib/limits.js`](../../functions/api/_lib/limits.js), checked against
+  [`sim/test_demo_proxy.mjs`](../test_demo_proxy.mjs) §15i.
+  `python3 sim/tools/unit_budget_mutation_check.py        # 16 rows; every one must say "caught"`
+  (about 25 s; pass a row name — `U3` — to re-check one in ~1.5 s). It inherits
+  `turnstile_mutation_check.py`'s **strictness** (the selector must appear in a *failing check's own
+  label*, so a row is caught only when the check that names that guard is the one that reddened) and its
+  **throwaway hardlink tree**, and it adds one thing the other six do not have: **an AMBIGUOUS verdict
+  when an anchor matches more than one place.** That is not a refinement invented on paper — on this
+  table's first run, row `U5`'s anchor matched the per-IP window sub-tier's fail-open block *as well as*
+  the budget sub-tier's, because the two were byte-identical; `str.replace(old, new, 1)` mutated the
+  first, and the row spent an entire run checking a guard it is not about. The other tables here share
+  that latent defect. Two rows are the shipped form of a **rejected design** rather than a typo: `U1`
+  charges the colo at admission and refunds only locally (the reading of §4.6.1's *"the same fail-open
+  rules apply verbatim"* that re-opens the free drain), and `U3` keeps the unpublished units to retry
+  them, which reads as resilience and double-charges whenever a `put` lands and then times out. The
+  second run also found a test defect the first hid: `U3`'s own assertion could never be the failing one,
+  because the over-publish crossed the 12-unit ceiling three checks earlier — so the row is now driven at
+  the production ceiling, out of the way.
+- **`telemetry_rollup_mutation_check.py`** — the same proof for **durable telemetry's two records**,
+  after a `sil` red on 2026-09-05 (PR #164) whose diff could not reach the code it reddened: the ring
+  (`telemetry_packets.json`) held three envelopes and the daily roll-up (`telemetry_daily.json`) had
+  counted two. The property is that the two **cannot durably disagree, because one is a log and the
+  other is a view over it** — an envelope carries a monotonic `seq`, the roll-up carries `through_seq`,
+  and `reconcile_rollup` replays the difference. Each row deletes one of the three mechanisms it rests
+  on: the write **order** (the exact record before the bounded one), the **critical section** (both
+  writes as one, so two ingests cannot lose an update the ring keeps), and the **watermark** itself.
+  `python3 sim/tools/telemetry_rollup_mutation_check.py   # 12 rows; every one must say "caught"`
+  (about 30 s), checked against [`../tests/test_telemetry_rollup_repair.py`](../tests/README.md) plus the
+  two older telemetry suites. Two notes worth keeping. **M2's first draft proved nothing**: it locked the
+  *other* record instead of deleting the lock, and in-process `JsonStore._transaction_path` serialises
+  every transaction on one RLock whatever record it names — so the mutation was invisible without a
+  second process. And **M8 is the shipped form of a rejected design**: treating an unstamped legacy
+  envelope as *unfolded* would double the lifetime total of every appliance on its first read after the
+  upgrade, which is a wrong number that grows on refresh.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.
@@ -158,3 +195,32 @@
   `attempted == on_disk + refused`, which is the only thing that distinguishes a *silent loss* (A5, must
   be 0) from the *recorded refusal* §3.2 point 4 explicitly accepts. It restarts the supervisor with
   **SIGTERM**, so the clean-shutdown path is exercised by the harness and not only by a unit test.
+
+---
+
+## An anchor must match exactly once
+
+A mutation row locates its target by a code snippet and applies `replace(old, new, 1)`. If that
+snippet appears **more than once in the file**, the row patches whichever copy comes first — so it
+can report `caught` while having proved nothing about the guard it names.
+
+Not hypothetical. Audited 2026-09-05 across all nine tables: **311 rows, 308 unique, 3 ambiguous** —
+`ext` X1 and X10, and `hardening` S4. Each was anchored on a line that a *deliberate twin guard* also
+carries: a load-time refusal beside its runtime belt-and-braces, the function half beside the event
+half, `_connack_failed` beside `_suback_failed`. All three happened to hit the intended block **by
+line order alone**.
+
+**The split was causal, not stylistic**, and that is the part worth keeping. The four tables whose
+runners already refused a non-unique anchor had **zero** ambiguous rows; the five without that check
+held all three — and `subscribe`'s S4, which targets the *other* half of `ext` X10's pair, was written
+disambiguated from the start **because its own table forced it**. The property is only reliably true
+where something mechanically insists on it.
+
+So it is insisted on in two places now: every runner prints `AMBIGUOUS` and exits 1, and
+`sim/tests/test_mutation_tables.py` enforces uniqueness for **every table, including ones not yet
+written**, in about a second. That second place matters because the mutation checkers are **not in
+CI** — that fast-tier test is the only automated guard over them.
+
+A related trap the same audit found: ambiguity silently disabled the *captured-mutation* half of
+`test_mutation_tables.py`, which only looks for the replacement once the original is gone. An
+ambiguous original still matches at the twin, so the check passed while measuring nothing.
