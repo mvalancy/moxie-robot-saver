@@ -281,23 +281,57 @@ try {
 
     // The whole point: the bottom-anchored controls still own their own centres.
     const toggle = await page.evaluate(hitTest, "#rail-toggle");
-    ok(toggle.self,
-       `${label}: with a challenge on screen, a tap at #rail-toggle STILL reaches the toggle ` +
-       `(got ${toggle.hit})`);
+    /* `drew.drew &&` IS PART OF THE ASSERTION, not belt and braces. Both of these say
+     * "with a challenge on screen", and with NO challenge on screen both are trivially
+     * true — which `sim/tools/page_teeth_check.py`'s `turnstilejs-inert` row measured:
+     * gut `turnstile.js` and these two stayed green while naming the thing that had just
+     * been deleted. A check whose message describes a state it does not require is a
+     * check that reads as coverage and is not. */
+    ok(drew.drew && toggle.self,
+       `${label}: with a challenge ON SCREEN (drawn=${drew.drew}), a tap at #rail-toggle ` +
+       `STILL reaches the toggle (got ${toggle.hit})`);
     // ...and `page.tap()` refuses on an obscured element, which is the strongest form of it.
     await page.tap("#rail-toggle");
     await new Promise((r) => setTimeout(r, 600));
-    eq(await page.evaluate(() => document.getElementById("rail-toggle").getAttribute("aria-expanded")),
-       "true", `${label}: …and tapping it really opens the drawer, challenge and all`);
+    const expanded = await page.evaluate(() =>
+      document.getElementById("rail-toggle").getAttribute("aria-expanded"));
+    ok(drew.drew && expanded === "true",
+       `${label}: …and tapping it really opens the drawer, challenge and all ` +
+       `(drawn=${drew.drew}, aria-expanded=${JSON.stringify(expanded)})`);
 
     // The challenge is CLICKABLE, which is the other half of being usable.
     const widget = await page.evaluate(hitTest, "#fake-cf-widget");
     ok(widget.self,
        `${label}: …while the challenge itself is hittable, not decoration (got ${widget.hit})`);
 
-    // It is in the middle of the viewport, which is where no control lives at any width.
-    ok(drew.y > drew.vh * 0.25 && drew.y + drew.h < drew.vh * 0.75,
-       `${label}: …centred vertically, clear of both strips (y=${drew.y} h=${drew.h} vh=${drew.vh})`);
+    /* IT IS IN THE OPEN STAGE, BETWEEN THE TWO STRIPS OF CHROME — asserted as CLEARANCE
+     * FROM THE STRIPS THEMSELVES, not as a fraction of the viewport.
+     *
+     * This used to read `y > vh*0.25 && y+h < vh*0.75`, which was a restatement of
+     * `align-items: center` on a full-viewport layer rather than a fact about the page.
+     * `turnstile.js` no longer centres in the viewport — it centres in the space ABOVE the
+     * bottom-anchored controls, because the viewport's middle stops being empty as
+     * `#chat-dock` grows (block 9 below has the measurements and the 683 < vh < 909
+     * window). The fraction then went red on a page that was MORE correct, which is the
+     * signature of a check pinned to an implementation. What actually has to be true is
+     * this: clear of the top chrome, and not touching the drawer handle — in the
+     * drawer-OPEN state this line runs in as much as in the cold one. */
+    const between = await page.evaluate(() => {
+      const cf = document.getElementById("fake-cf-widget");
+      const top = document.getElementById("notice") || document.getElementById("topbar");
+      const ctl = document.getElementById("rail-toggle");
+      if (!cf || !top || !ctl) return { ok: false };
+      const a = cf.getBoundingClientRect(), t = top.getBoundingClientRect(),
+            c = ctl.getBoundingClientRect();
+      return { ok: true, cfTop: Math.round(a.top), cfBottom: Math.round(a.bottom),
+               chrome: Math.round(t.bottom),
+               ctl: [Math.round(c.top), Math.round(c.bottom)],
+               oy: Math.round(Math.max(0, Math.min(a.bottom, c.bottom) - Math.max(a.top, c.top))) };
+    });
+    ok(between.ok && between.cfTop >= between.chrome && between.oy === 0,
+       `${label}: …in the open stage — the challenge (y=${between.cfTop}..${between.cfBottom}) ` +
+       `starts below the top chrome (ends ${between.chrome}) and does not touch ` +
+       `#rail-toggle (y=${between.ctl}) — ${between.oy}px of bleed`);
 
     // The composer is bottom-anchored at every width since 2026-09-05, so it is the
     // control a `bottom: 16px` widget would land on now. Both are asserted.
@@ -761,6 +795,184 @@ try {
 
     eyes(`${L}: the openers`, page);
     await page.close();
+  }
+
+  /* =====================================================================
+   * 9. THE CHALLENGE, MEASURED AT THE MOMENT IT CAN ACTUALLY BE IN THE WAY.
+   *
+   * WHAT BLOCK 4 CANNOT SEE, AND WHY. Block 4 loads the challenged page and measures it
+   * about a second later, while `#transcript` is empty and `#chat-dock` is at its 237 px
+   * minimum. But the dock GROWS: her ambient self-talk writes a `.mutter` into the log
+   * every 11-24 s, the log runs to its `min(26vh, 168px)` cap, and every pixel of that
+   * comes out of the `1fr` stage row — so everything above the dock rides UP. Measured
+   * here at 390x844: `#chat-dock` 237 -> 365 px and `#rail-toggle` y=550..598 -> 422..470,
+   * a 128 px climb that takes ~30 s of real time to happen. Block 4's assertions are not
+   * wrong; they simply run before the state they would catch exists. That is the defect
+   * class this repo spent 2026-09-06 closing — A CHECK THAT MEASURES AT THE WRONG MOMENT —
+   * and it had nine instances. This block is the tenth NOT being added.
+   *
+   * HOW IT REACHES THE STATE WITHOUT WAITING 30 SECONDS, AND WITHOUT A SLEEP. It drives
+   * `window.__ambient.say()` — `sim/web/ambient.js`'s declared test seam, which calls the
+   * page's OWN `logMutter()`, so the rows are the real rows, written by the real code.
+   * The loop's stop condition is a MEASUREMENT, not a timer: append, re-read
+   * `#chat-dock`'s height, and stop once four appends in a row have not changed it. Then
+   * `atCap` re-derives that the log really is pinned to its computed `max-height` and
+   * really is overflowing, and every assertion below is gated on it. A fixed sleep here
+   * would be the same mistake in a different costume, and this repo has removed several.
+   *
+   * THE ASSERTION IS RECT INTERSECTION, NOT A CENTRE HIT TEST, and that distinction is a
+   * measurement too. Swept across 17 viewport heights, the challenge covers the TOP of a
+   * 48 px handle at 870 and 896 while `elementFromPoint()` at the handle's exact centre
+   * still answers `#rail-toggle` — a challenged visitor loses a third of a touch target
+   * and a centre-only check calls it green. So a control's box must not intersect the
+   * challenge's box AT ALL, and the hit test is kept alongside as the second question.
+   *
+   * WHICH VIEWPORTS, AND WHY THESE. With the dock at its cap the handle sits at
+   * `vh-422..vh-374` and a viewport-centred 65 px challenge at `(vh±65)/2`, so they
+   * overlap for **683 < vh < 909** and nowhere else. 844 and 851 are inside that window
+   * (and are the two commonest modern phones); 375x667 is BELOW it — its dock eats enough
+   * that the handle overshoots ABOVE the challenge — and is here to pin that the fix does
+   * not move something that was already clear.
+   * =================================================================== */
+  {
+    /* Drive the comms log to the dock's cap using the page's own mutter writer, stopping
+     * on a measurement rather than a clock. Returns what it actually achieved so the
+     * assertions can refuse to run against a state that never arrived. */
+    const fillLog = (page) => page.evaluate(() => {
+      const dock = document.getElementById("chat-dock");
+      const log = document.getElementById("transcript");
+      if (!dock || !log || !window.__ambient || typeof window.__ambient.say !== "function")
+        return { drove: false, said: 0 };
+      const H = () => Math.round(dock.getBoundingClientRect().height);
+      const LINES = [
+        "Do you ever think about how many teeth you have?",
+        "I counted the ceiling tiles. Twice. Same answer both times.",
+        "If I hold still enough, the room forgets I am in it.",
+        "My battery dreams in percentages.",
+        "Somewhere a refrigerator is humming my song.",
+      ];
+      const before = H();
+      let said = 0, stable = 0;
+      while (said < 60 && stable < 4) {
+        const was = H();
+        window.__ambient.say(LINES[said % LINES.length] + " · " + said);
+        said++;
+        if (H() === was) stable++; else stable = 0;
+      }
+      const r = log.getBoundingClientRect();
+      const max = parseFloat(getComputedStyle(log).maxHeight);
+      return {
+        drove: true, said, dockBefore: before, dockAfter: H(),
+        logH: Math.round(r.height), logMax: Math.round(max),
+        rows: log.querySelectorAll(".mutter").length,
+        // The dock is at its cap when the LOG is at its own max-height and scrolling.
+        atCap: isFinite(max) && r.height >= max - 1 && log.scrollHeight > log.clientHeight + 1,
+      };
+    });
+
+    /** Does the challenge's box intersect `sel`'s box, and who owns `sel`'s centre? */
+    const clearOf = (sel) => {
+      const cf = document.getElementById("fake-cf-widget");
+      const el = document.querySelector(sel);
+      if (!cf || !el) return { found: false, sel };
+      const a = cf.getBoundingClientRect(), b = el.getBoundingClientRect();
+      if (!(b.width > 0 && b.height > 0)) return { found: true, sel, sized: false };
+      const ox = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+      const oy = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+      const hit = document.elementFromPoint(Math.round(b.left + b.width / 2),
+                                            Math.round(b.top + b.height / 2));
+      const id = hit ? (hit.id ? "#" + hit.id : hit.tagName.toLowerCase()) : "null";
+      return {
+        found: true, sized: true, sel,
+        cf: [Math.round(a.top), Math.round(a.bottom)],
+        el: [Math.round(b.top), Math.round(b.bottom)],
+        overlap: Math.round(ox * oy), oy: Math.round(oy),
+        hit: id, onTurnstile: id === "#fake-cf-widget" || id === "#turnstile-holder",
+      };
+    };
+
+    /* Every bottom-anchored control a challenge could land on. `#rail-toggle` is the one
+     * the collision was found on; the other three are the strip the composer moved into
+     * on 2026-09-05, which is where a `bottom: 16px` widget lands now (block 4's note). */
+    const CONTROLS = ["#rail-toggle", "#chat-openers", "#speech-input", "#speech-btn"];
+
+    for (const [label, w, h, inWindow] of [
+      ["iPhone 12  390x844", 390, 844, true],
+      ["Pixel 5    393x851", 393, 851, true],
+      ["iPhone 8   375x667", 375, 667, false],
+    ]) {
+      const page = await loadChallenged(w, h);
+
+      const cold = await page.evaluate(clearOf, "#rail-toggle");
+      const filled = await fillLog(page);
+      ok(filled.drove,
+         `${label}: ambient.js's own test seam drove the log — window.__ambient.say()`);
+      ok(filled.atCap,
+         `${label}: THE STATE UNDER TEST WAS REACHED — the log is pinned at its cap and ` +
+         `scrolling (${filled.rows} mutters, log ${filled.logH}/${filled.logMax}px, ` +
+         `dock ${filled.dockBefore} -> ${filled.dockAfter}px). If this fails, every ` +
+         "assertion below is measuring the same too-early moment block 4 does.");
+
+      const hot = await page.evaluate(clearOf, "#rail-toggle");
+      ok(cold.el[0] - hot.el[0] >= 100,
+         `${label}: …and the handle really rode up with it — y=${cold.el[0]} cold -> ` +
+         `${hot.el[0]} full (${cold.el[0] - hot.el[0]}px). This is the movement no suite ` +
+         "in this repo had ever sampled.");
+
+      for (const sel of CONTROLS) {
+        const m = await page.evaluate(clearOf, sel);
+        ok(m.found && m.sized, `${label}: ${sel} is laid out with a challenge on screen`);
+        eq(m.overlap, 0,
+           `${label}: the challenge (y=${m.cf[0]}..${m.cf[1]}) must not touch ${sel} ` +
+           `(y=${m.el[0]}..${m.el[1]}) with the log at its cap — ${m.oy}px of vertical bleed`);
+        eq(m.onTurnstile, false,
+           `${label}: …and a tap at ${sel}'s centre must not land on the challenge layer ` +
+           `(got ${m.hit})`);
+      }
+
+      /* THE OTHER HALF, and it is what stops "move it somewhere harmless" from becoming
+       * "move it somewhere unusable": an unsolvable challenge is a page that can never
+       * send anything, which is worse than the bug being fixed. */
+      const cfm = await page.evaluate(reach, "#fake-cf-widget");
+      ok(cfm.shown && cfm.self,
+         `${label}: the challenge itself is still hittable (${cfm.w}x${cfm.h}, hit ${cfm.hit})`);
+      ok(cfm.inFold,
+         `${label}: …and wholly inside the viewport — y=${cfm.top}..${cfm.bottom} of ${cfm.vh}`);
+      ok(cfm.top > 0 && cfm.bottom < cfm.vh,
+         `${label}: …not flush against either edge (y=${cfm.top}..${cfm.bottom} of ${cfm.vh})`);
+
+      /* TEETH, and they are the point of the block. Put the challenge back where `dev`
+       * puts it — centred in the WHOLE viewport — and require the collision to return on
+       * the viewports where the arithmetic says it must. Without this, every `overlap: 0`
+       * above is equally consistent with "the fix works" and "the stand-in widget has no
+       * size", and `sim/tools/page_teeth_check.py` exists because this repo has shipped
+       * the second kind. On 375x667 the SAME mutation must NOT collide — that viewport is
+       * below the 683..909 window, and a teeth block that bit everywhere would be
+       * asserting a mutation, not a defect. */
+      const broken = await page.evaluate((fn) => {
+        const holder = document.getElementById("turnstile-holder");
+        holder.style.bottom = "0px";              // the pre-fix, whole-viewport layer
+        holder.style.alignItems = "center";
+        // eslint-disable-next-line no-eval
+        return (0, eval)("(" + fn + ")")("#rail-toggle");
+      }, clearOf.toString());
+      if (inWindow) {
+        ok(broken.overlap > 0,
+           `${label}: teeth — centred in the whole viewport the challenge ` +
+           `(y=${broken.cf[0]}..${broken.cf[1]}) DOES land on #rail-toggle ` +
+           `(y=${broken.el[0]}..${broken.el[1]}, ${broken.oy}px); if this passes, nothing ` +
+           "above is being measured");
+      } else {
+        eq(broken.overlap, 0,
+           `${label}: teeth — …and at vh=${h}, below the 683..909 window, the same ` +
+           `mutation does NOT collide (challenge y=${broken.cf[0]}..${broken.cf[1]}, ` +
+           `handle y=${broken.el[0]}..${broken.el[1]}) — the filing's own device is the ` +
+           "one where the dock's growth carries the handle clear ABOVE the band");
+      }
+
+      eyes(`${label}: the challenged page with a full log`, page);
+      await page.close();
+    }
   }
 
 } catch (e) {

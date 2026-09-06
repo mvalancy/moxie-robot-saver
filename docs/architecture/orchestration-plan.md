@@ -1169,3 +1169,32 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   header that failed twice in one day, because **a reader lands on a cell, not a section header**.
   Every §3 verdict now carries its correction inline, at the point of consumption, made in place
   rather than overwritten — so the next reader can see this document drifts and check accordingly.
+
+- **2026-09-06 — rule 29 has now been missed after FOUR of the last FIVE promotions, by two
+  independent actors. Prose is not the fix.** #174 and #177 (me), #190 and #191 (a long-running
+  agent). Every time, the same two: `dev` left **one commit behind `main`**, and **zero open PRs to
+  `main`** because merging closes the standing PR and nothing re-opens it. Every time, nothing went
+  red. The rule is written, RELEASING.md carries the corrected order, and the procedure now sits in
+  the standing PR's own body — and it was still missed twice more after all of that.
+  **Four misses in five is a workflow gap, not forgetfulness.** The mechanical fix is small and is
+  the obvious next step for whoever picks this up: a post-merge step in the promotion workflow, or a
+  scheduled check that reddens when `dev` is behind `main` or when no PR targets `main`. Until then
+  the honest expectation is that it will be missed again.
+
+- **2026-09-06 — a long-running agent hit this session's defect class independently, and named it
+  better than the playbook does.** While building `sim/eval_live.mjs` (a live multi-turn conversation
+  evaluator) it wrote two tests, found them both wrong, and diagnosed them in one sentence:
+  ***"Both the same mistake: asserting a live sample instead of recorded state."*** It had asserted
+  `#mic-status` text that the transcript overwrites a tick later, and counted `setFace` calls where
+  `setFace` is a **shared channel** the blink system and ambient also write to — *"counting calls
+  there measures the page, not the feature."*
+  That is instances nine and ten of the day's family, found by an agent that had seen none of the
+  other eight. **The phrasing is worth adopting: an assertion should read RECORDED STATE, not a LIVE
+  SAMPLE** — the sample is whatever happened to be true at the microsecond you looked, and on a page
+  with an ambient loop that is rarely what you meant.
+  Its second finding is sharper still. After fixing a degenerate affirmation loop, **the metrics
+  lied**: overlap fell 1.0 → 0.2 and exact duplicates hit **zero**, while six of seven turns were
+  still *"Did you … today?"* — same shape, different words. Its own earlier rule (*"ask at most one
+  question"*) had been obeyed literally and **licensed** a question every turn. **A metric improving
+  is not the behaviour improving**, and the remedy was to read the transcripts rather than the
+  summary.
