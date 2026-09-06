@@ -13,7 +13,7 @@ never be split across commits that could be dropped separately.
 > `git diff --quiet origin/<branch>:sim/ci/<file>.yml origin/<branch>:.github/workflows/<file>.yml`.
 
 ```sh
-cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml .github/workflows/
+cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml sim/ci/deployed.yml .github/workflows/
 ```
 
 | File | Tier | Trigger | What it proves |
@@ -21,6 +21,7 @@ cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml .github/workflows/
 | **`ci.yml`** | fast (dev) | push `dev`, PR → `dev` | doc/protocol guards, SIL smoke, the hermetic unit/cloud suite (~5 min) |
 | **`ci-deep.yml`** | deep (main) + HIL | PR → `main`, **manual dispatch** | everything above, plus the packaged build, the compose stack, and the **live tiers** below |
 | **`release.yml`** | release | tag `v*` | sdist+wheel, version==tag, GitHub Release |
+| **`deployed.yml`** | monitor | **schedule** (4×/day) + manual dispatch | the LIVE deployment in a real phone-sized browser: the composer is reachable without opening the rail, and Cloudflare's injected analytics beacon loads with zero CSP violations |
 
 ## What the fast tier's `sil` job actually runs (measured 2026-09-04)
 
@@ -47,6 +48,37 @@ the tier every test runs under the fullest dependency set, which is what turns a
 was taken for turned out to be latent races (see the `test_sil_handshake.py` and
 `test_clean_shutdown.py` docstrings) and were fixed at the source, so paying a proven
 invariant for ~2 minutes would be buying nothing.
+
+## `deployed.yml` — the only tier that looks at a real deployment
+
+Every other suite here tests a **local** server. `deployed.yml` runs
+[`sim/check_deployed.mjs`](../check_deployed.mjs) against the deployed artifact, because the
+deployed artifact genuinely differs from the local one: **Cloudflare Pages injects its Web
+Analytics beacon into every HTML response** — a `static.cloudflareinsights.com` script tag this
+repo does not write and cannot edit — and the first CSP we shipped refused it on every
+production page load. Nothing local could have seen that. See the long note in
+[`sim/web/_headers`](../web/_headers).
+
+```sh
+node sim/check_deployed.mjs                    # the canonical origin in sim/web/index.html, + /sim
+node sim/check_deployed.mjs https://host/sim   # any deployment; or MOXIE_DEPLOYED_URL=…
+node sim/check_deployed.mjs --selftest         # hermetic; the fast tier runs this on every push
+gh workflow run deployed.yml -f url=https://feat-x.<project>.pages.dev/sim
+```
+
+**It is a monitor, not a merge gate, and that is a decision rather than an omission.** Gating
+each PR on its own Pages preview was investigated and rejected on measurements: this repo's
+Pages integration creates **no GitHub Deployment** (`gh api …/deployments` → `[]`), so
+`on: deployment_status` can never fire; a branch alias **404s before its first build** and
+serves the *previous* build after, so a push-time job tests the wrong artifact; a fork PR gets
+no preview at all; and no `*.pages.dev` host carries the beacon (23,425 bytes on every preview
+against 23,792 on the custom domain), so the half that matters is untestable there anyway. The
+full argument, with the numbers, is in the header of `sim/ci/deployed.yml`.
+
+What *does* gate every push is `--selftest`, in the fast tier's `browser` job: the unmutated
+tree must pass every clause, and three mutated copies of `sim/web` must each redden a
+**different** one. It is a check on the checker, so a scheduled run cannot become a green light
+for an instrument that quietly stopped working.
 
 ## The live tiers in `ci-deep.yml`
 

@@ -1,0 +1,104 @@
+# Moxie DEPLOYED-ARTIFACT check — INSTALL: copy to .github/workflows/deployed.yml
+#
+# THE ONLY TIER THAT LOOKS AT A REAL DEPLOYMENT. Everything else in this repo tests a
+# local server: `sim/test_mobile_layout.mjs` serves `sim/web` on loopback and maps
+# `moxie.hosted.test` to `127.0.0.1`, `sim/test_csp.mjs` parses `sim/web/_headers` and
+# replays the policy itself. Until this file, nothing asserted anything about the bytes
+# Cloudflare actually serves — and the deployed artifact demonstrably differs from the
+# local one, because Pages INJECTS its Web Analytics beacon into every HTML response
+# (`<script src="https://static.cloudflareinsights.com/beacon.min.js/…">`, a tag this repo
+# does not write and cannot edit). Our first CSP refused it on every production page load.
+# See the long note in `sim/web/_headers`, and `sim/check_deployed.mjs`'s header.
+#
+# ── WHY THIS IS A SCHEDULE AND NOT A MERGE GATE (the judgement, 2026-09-05) ──────────────
+#
+# Playbook rule 21 — "open a PR and curl its preview" — makes gating each PR on its own
+# Pages preview the obvious wiring. It was investigated and REJECTED, on measurements:
+#
+#   · `gh api repos/<owner>/<repo>/deployments` returns `[]`. The Pages integration here
+#     creates NO GitHub Deployment, so `on: deployment_status` — the one event that hands a
+#     workflow an authoritative `environment_url` — can never fire for this repo.
+#   · The branch alias is not a synchronous fact. `https://feat-<branch>.<project>.pages.dev/sim`
+#     answers HTTP 404 (with a 16 KB HTML body) for a branch that has never been built, and
+#     serves the PREVIOUS build for one that has. A job running at push time tests either
+#     nothing or yesterday's artifact. That is not flaky, it is WRONG, which is worse.
+#   · The Pages bot comment DOES carry an SHA-pinned per-deployment URL (measured on PR #162:
+#     `Latest commit: 5617aa3` → `https://0721897a.<project>.pages.dev`, the comment edited
+#     in place 4m23s after it first appeared). Polling it would work for this repo's own
+#     branches and would fail every time for a fork PR (no preview is built for one) and for
+#     a plain push to `dev` (no PR, no comment). A gate that is red for every outside
+#     contributor is a gate people learn to ignore — which is worse than no gate.
+#   · And the beacon half is UNTESTABLE on a preview anyway: measured 2026-09-05,
+#     `dev.<project>.pages.dev`, `<project>.pages.dev` and a branch preview all serve 23,425
+#     bytes with NO beacon, against 23,792 on the custom domain. The injection belongs to the
+#     ZONE, not to the Pages project, and `pages.dev` is not our zone.
+#
+# So the wiring is split, and neither half gates a merge on an external service:
+#
+#   · `sim/ci/ci.yml` (fast tier, every push and PR) runs `check_deployed.mjs --selftest` —
+#     hermetic, loopback only, and it proves the instrument has teeth: the unmutated tree
+#     must pass every clause and three mutated copies must each redden a different one.
+#   · THIS FILE runs the real thing against the live deployment, on a schedule and on
+#     demand. Production is settled long before the cron fires, so there is no build race to
+#     lose; it is the only place the beacon exists; and because it gates nothing, a
+#     Cloudflare hiccup reddens a monitor instead of blocking a merge. That is what an
+#     external dependency deserves.
+#
+# NOTE, so nobody is surprised: GitHub runs `schedule` only from the DEFAULT branch, so this
+# tier starts firing once it has been promoted there. Until then (and any time after) use the
+# dispatch, which also takes an arbitrary URL:
+#
+#   gh workflow run deployed.yml
+#   gh workflow run deployed.yml -f url=https://feat-x.<project>.pages.dev/sim
+#
+# NO HOSTNAME IS WRITTEN HERE. With no `url` input the checker reads the site's own
+# `<link rel="canonical">` out of `sim/web/index.html` — the artifact names its own home, and
+# `sim/tests/test_no_deployment_defaults.py`'s rule is honoured rather than dodged.
+name: Deployed site
+on:
+  # 4× a day at an odd minute, for the same reason the deep tier uses 03:17: GitHub queues
+  # the top of the hour. This tier is a monitor — it is meant to notice a regression that
+  # reached production between promotions, not to be part of anyone's inner loop.
+  schedule:
+    - cron: "23 2,8,14,20 * * *"
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Deployment to check (blank = the canonical origin in sim/web/index.html, + /sim)"
+        type: string
+        default: ""
+      expect_beacon:
+        description: "Require Cloudflare's injected analytics beacon (auto = yes on a custom domain, no on *.pages.dev)"
+        type: choice
+        options: [auto, "yes", "no"]
+        default: auto
+
+# Least privilege: this tier reads a public page and nothing else. It needs no repo scope
+# beyond the checkout, no secrets, and — deliberately — no Cloudflare account credentials of
+# any kind. It could not deploy, roll back or read a variable if it wanted to.
+permissions:
+  contents: read
+
+jobs:
+  deployed:
+    name: Deployed composer + beacon (real browser, real deployment)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install a browser
+        # FIRST, like the fast tier's browser job. Without one `browser_harness.mjs::skipper`
+        # would exit 0 with a "skipped — puppeteer not found" line, and a skip nobody can see
+        # is not a skip: it is a green badge over an assertion that never fired. That defect
+        # is why `skipper()` turns a missing browser into a FAILURE whenever `CI` is set, and
+        # GitHub sets `CI` — so this step failing reddens the job loudly rather than quietly
+        # deleting it.
+        run: npm install --no-save --no-audit --no-fund puppeteer
+      - name: The composer is reachable, and the injected beacon loads clean
+        env:
+          # Empty on a schedule (the `inputs` context is empty for a non-dispatch event), and
+          # the checker treats an empty string as "not set" — so the schedule resolves the
+          # target from the page's own canonical link.
+          MOXIE_DEPLOYED_URL: ${{ inputs.url }}
+          # auto → "", which is what the checker's own derivation reads as "decide for me".
+          MOXIE_EXPECT_BEACON: ${{ inputs.expect_beacon == 'yes' && '1' || (inputs.expect_beacon == 'no' && '0' || '') }}
+        run: node sim/check_deployed.mjs
