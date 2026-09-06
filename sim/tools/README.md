@@ -206,9 +206,17 @@
   its call site**, `file:line:col`, not its message: several suites interpolate live values — including
   a list of image responses *in arrival order* — so a text key drops the very assertion under audit
   from the comparison on the run that matters.
-  It is **not wired into CI** and should not be: it takes ~90 minutes and it mutates `sim/web`
-  transiently. Run it by hand after touching a page or a browser suite. `--check-tree` proves it left
-  no tracked file behind.
+  It is **not wired into CI** as it stands: the full sweep took **~2.5 hours** on this box (a suite
+  whose waits all expire runs far longer broken than healthy — `test_mermaid` went 37 s → 448 s with
+  `docs.js` inert), and it mutates `sim/web` transiently. `--selftest` is the half that could gate a
+  PR: **41 s**, hermetic, and it fails in both directions. Run the sweep by hand after touching a page
+  or a browser suite; `--check-tree` proves it left no tracked file behind, and `--check-tree
+  --restore` undoes a breakage an interrupted run left in place. That is not hypothetical — the first
+  full sweep was killed by its supervisor mid-row and the `finally` never ran.
+  First sweep's findings are in
+  [`sil-and-cicd.md`](../../docs/architecture/sil-and-cicd.md): the suites are largely sound, two
+  checks in `test_csp.mjs`/`test_docs_explorer.mjs` had no teeth and are fixed, and
+  `sim/check_deployed.mjs --selftest` still exits **0** against four different broken pages.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.
