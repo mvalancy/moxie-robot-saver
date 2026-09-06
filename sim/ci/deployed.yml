@@ -72,6 +72,30 @@ on:
         type: choice
         options: [auto, "yes", "no"]
         default: auto
+      # ── THE SPENDING JOB, OFF BY DEFAULT ──────────────────────────────────────────────
+      # `sim/check_hosted_mic.mjs` plays a real voice into Chrome's fake microphone and lets
+      # the page do what a visitor's press does: one `POST /api/transcribe`, one
+      # `POST /api/chat`, one `POST /api/speech` — three gateway calls out of the budget the
+      # whole public demo shares. `dry` proves everything up to the money for free (the
+      # button, `getUserMedia` on the deployed origin, the encoded WAV, the audio in it) and
+      # is the default because it is the right answer almost every time.
+      #
+      # WHY THIS IS NOT ON THE SCHEDULE ABOVE, which is the judgement worth writing down: the
+      # beacon check is FREE, so running it 1,460 times a year costs nothing and catches a
+      # regression that reached production between promotions. This one is not free. Four
+      # runs a day is ~4,400 transcriptions, chats and syntheses a year, and the failure it
+      # would catch — the gateway's ears stopped answering — is already caught, at no cost to
+      # this budget, by `sim/tests/test_live_hosted_ears.py` wherever a gateway is
+      # configured. A monitor that eats the thing it monitors is not a monitor.
+      mic:
+        description: "Microphone check against the deployment: off / dry (free) / spend (real gateway calls)"
+        type: choice
+        options: [off, dry, spend]
+        default: dry
+      mic_budget:
+        description: "Ceiling on gateway-backed requests for the microphone check (a healthy turn is 3)"
+        type: string
+        default: "5"
 
 # Least privilege: this tier reads a public page and nothing else. It needs no repo scope
 # beyond the checkout, no secrets, and — deliberately — no Cloudflare account credentials of
@@ -102,3 +126,36 @@ jobs:
           # auto → "", which is what the checker's own derivation reads as "decide for me".
           MOXIE_EXPECT_BEACON: ${{ inputs.expect_beacon == 'yes' && '1' || (inputs.expect_beacon == 'no' && '0' || '') }}
         run: node sim/check_deployed.mjs
+
+  # ── A REAL VOICE THROUGH THE DEPLOYED MICROPHONE ────────────────────────────────────────
+  # DISPATCH ONLY, and never on the schedule: `inputs` is empty for a `schedule` event, so
+  # `inputs.mic` is '' there and this job is skipped without needing an event test. It is a
+  # SEPARATE job rather than another step of the one above so that the free beacon monitor is
+  # never blocked by, or blamed for, a microphone run — and so the summary says plainly which
+  # of the two actually ran.
+  #
+  # It gates nothing. Nothing depends on it, no branch protection names it, and a red here
+  # means "go and look at the live ears", not "do not merge".
+  mic:
+    name: A real voice through the deployed microphone (fake device, real gateway)
+    if: ${{ inputs.mic == 'dry' || inputs.mic == 'spend' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install a browser
+        # Same reason as the job above: without one, `browser_harness.mjs::skipper` would
+        # exit 0 with a "skipped" line, and a skip nobody can see is a green badge over an
+        # assertion that never fired. `skipper()` turns that into a FAILURE whenever `CI` is
+        # set, and GitHub sets it — so this step failing reddens the job loudly.
+        run: npm install --no-save --no-audit --no-fund puppeteer
+      - name: Speak into the hosted microphone
+        env:
+          MOXIE_DEPLOYED_URL: ${{ inputs.url }}
+          MOXIE_MIC_BUDGET: ${{ inputs.mic_budget }}
+        # `--dry-run` aborts every spending route at the browser and still proves the button,
+        # the permission grant, the encoded WAV and that the audio in it is the audio played.
+        # Without the flag the same run lets the three requests through and additionally
+        # asserts that the transcript RESEMBLES the words (a recall overlap against the
+        # sentence, plus a decoy sentence scored against the same transcript so the floor
+        # cannot be met by a route that returns anything at all).
+        run: node sim/check_hosted_mic.mjs ${{ inputs.mic == 'dry' && '--dry-run' || '' }}

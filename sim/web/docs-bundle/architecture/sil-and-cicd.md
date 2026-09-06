@@ -318,6 +318,142 @@ the fast tier's browser job: it serves four loopback copies of `sim/web` under t
 each redden a **different** one — a check on the checker, so the scheduled run can never become
 a green light for an instrument that stopped working.
 
+## The check that deliberately spends — a real voice through the hosted microphone
+
+[`sim/check_hosted_mic.mjs`](../../sim/check_hosted_mic.mjs) is the complement of the one
+above, and the two are a matched pair: `check_deployed.mjs` **aborts** `/api/chat`,
+`/api/speech` and `/api/transcribe` so it can promise it costs nothing, and this one lets them
+through on purpose. It exists because one question on the live page could not be answered for
+free — *does a voice actually get from a browser microphone into the deployed ears?* Three
+files circle it ([`test_demo_ears.mjs`](../../sim/test_demo_ears.mjs) stubs `fetch`,
+[`test_mic_spend.mjs`](../../sim/test_mic_spend.mjs) replaces the recorder and answers `/api/*`
+at the browser, [`test_live_hosted_ears.py`](../../sim/tests/test_live_hosted_ears.py) POSTs
+with `urllib`), and none of them opens a microphone.
+
+Chromium can play a WAV **into `getUserMedia`** as a capture device
+(`--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=…`), so the whole real
+path runs: the permission grant, `mic.js::wavCapture`'s ScriptProcessor graph, `encodeWav`'s
+48 kHz → 16 kHz decimation, the upload, the route, the brain, the voice. Measured while
+writing it: Chrome **resamples the file to the capture rate** (a 22050 Hz clip captured at
+48000 Hz loops at 0.760 s against its true 0.750 s), and the file **loops with an unobservable
+phase**, which is why the recording runs for more than twice the clip's length.
+
+```sh
+node sim/check_hosted_mic.mjs --selftest   # hermetic; the fast tier runs this every push
+node sim/check_hosted_mic.mjs --dry-run    # the real site, FREE — every spending route aborted
+node sim/check_hosted_mic.mjs              # the real site, SPENDS ~3 gateway calls
+gh workflow run deployed.yml -f mic=spend  # the same, on demand, in CI
+```
+
+**First paid run, 2026-09-05, against production:** the microphone played *"Happy birthday! I
+hope your day is amazing."*; the page uploaded **311,340 B of 16 kHz mono PCM16** whose
+envelope correlated **0.985** with the clip played (0.329 against an unrelated one); the
+deployment answered *"Happy birthday, I hope your day is amazing."* — **word overlap 1.00**,
+decoy **0.00** — and the brain replied *"Happy birthday! I hope you have lots of fun today."*,
+at **1 STT + 1 chat + 1 TTS**, with **zero** `securitypolicyviolation` events and zero console
+errors. The budget is an interceptor rather than a promise: `MOXIE_MIC_BUDGET` (default 5)
+aborts request N+1 on a spending route at the browser.
+
+**It is neither a merge gate nor a schedule**, and the second half of that is the interesting
+one: `check_deployed.mjs` is free, so a 4×/day cron costs nothing; this one would be ~4,400
+billable calls a year out of the budget the public demo shares, to catch a failure
+`test_live_hosted_ears.py` already catches for nothing. A monitor that eats the thing it
+monitors is not a monitor. So the fast tier runs `--selftest` — four fake microphones against
+`sim/web` on loopback, where **digital silence** must redden *"the captured audio is AUDIBLE"*
+and **a different clip** (real, loud, the wrong words) must redden *"it is the clip the fake
+microphone played"* while the audible clause stays green — and the spending half is a
+`workflow_dispatch` job with `mic: dry` as its default.
+
+### The audio clause is an ordering, not a magnitude — and that is a scar
+
+The first version of the audio assertion took the **peak** amplitude envelope, slid the source
+clip across the capture, and demanded an absolute correlation floor. It passed on a developer's
+box at 0.955–0.991 and **failed in CI** (run 34013443378):
+
+| case | capture peak | vs clip played | vs unrelated clip |
+|---|---|---|---|
+| baseline (the sentence) | **1.0000** | 0.430 | 0.294 |
+| mutation A (silence) | 0.0000 | −1.000 | −1.000 |
+| mutation B (a different clip) | **1.0000** | 0.339 | **0.471** |
+| control C (the golden) | 0.9997 | 0.592 | 0.277 |
+
+`peak 1.0000` in three of four cases is the finding: **the runner's own capture saturates.**
+`getUserMedia`'s processing applies gain until the loud parts clip, and a *peak* envelope of a
+clipped signal is a flat top — the environment destroys the exact feature the measure was built
+on. Note what did **not** break: in every single case the clip that was actually played
+out-scored the other one. Saturation halved the magnitudes and left the comparison intact.
+
+Lowering the floor would have been the third per-box tune of one number, and a threshold tuned
+per machine reddens on the next machine. So the failure was reproduced **offline** instead —
+the capture chain modelled as loop → resample → compressor → clip → decimate — and candidate
+measures scored across nine conditions. Three results shaped the rewrite: **RMS beats peak
+under clipping** (0.848 where peak fell to 0.665); the **log** of the RMS envelope is nearly
+invariant to saturation (spread 0.007 across clean/saturated/hard, against peak's 0.316); and
+**no rigid template survives dropped `ScriptProcessor` blocks**, which time-warp the recording,
+so each ~1 s chunk is matched against its best position anywhere in the template instead.
+
+A fourth finding came from the rewrite's own teeth one run later: **the template has to be the
+looped file, not one period.** Chrome's fake device loops the clip for as long as the stream is
+open, so a chunk of the capture routinely straddles a loop seam and has no matching position in
+a single copy — it matches nothing and votes at random. A 0.45 s chunk of the 0.75 s committed
+golden straddles most of the time, which is exactly how the *short* fixture failed at 52 % while
+the 3.95 s sentence passed at 89 %. Tiling each template with a copy of itself takes the golden
+to **91 %** clean and **89 %** with a tenth of the blocks dropped, while the mutation that must
+fail sits at 22 %. Both sides are tiled, so neither gets more chances at a coincidental match.
+
+The clause is now: score the capture against the clip played **and** against an unrelated one —
+same recording, same machine, same code — and assert only that **the played clip wins**.
+
+*How* it wins took one more measurement. Asserting a difference of scores (`median(played) −
+median(unrelated) ≥ 0.05`) was still too noisy to gate on: on a 24-core box at **load 29**, a
+healthy run scored **+0.058** and the mutation that must fail scored **+0.038**. Twenty
+thousandths between "green" and "the teeth work" is a coin toss with a decimal point. So the
+comparison is a **vote**: each of ~24 one-second chunks is an independent head-to-head, and the
+clause asserts the fraction that chose the played clip. Votes concentrate where a difference of
+medians does not — across the same nine conditions, true positives run **0.750–0.875** and
+inversions **0.208–0.429**, a gap of **0.32** against the difference's 0.02. The threshold is
+0.60, in the middle of that gap and deliberately not 0.5 + ε.
+
+**Then the runner failed a second time, and the second failure changed the design.** The vote
+survived saturation on the runner exactly as predicted — but the same run reported this:
+
+    mutation B (the DECOY clip played)  ->  71 % of 24 chunks voted for the SENTENCE
+                                            medians 0.585 sentence / 0.514 decoy
+
+A **false green** on the one case that proves the audio is the right audio, which is worse than
+a red. The scorer is not at fault: handed the two fixtures directly it separates them **100 % /
+0 %**. The runner's *capture* is degraded past the point where a waveform statistic over it
+means anything, and no model reproduced it — this developer's box votes 20-47 % on that same
+mutant at every load and saturation tried.
+
+A statistic nobody can reproduce is not a thing to gate a merge on. So **both statistics over a
+browser capture — the identity vote and the fidelity magnitude — are asserted only by
+`--dry-run` and the paid run**, against a real deployment where the audio path is somebody's to
+look at, and are *reported* in CI. What gates every push instead is deterministic:
+
+* **the scorer proof** — the same scorer over the committed fixtures with no browser in the
+  path: the sentence must win, the **decoy must lose**, the golden must win. Identical on every
+  machine, and still loud if the measure stops discriminating;
+* **the degradation gauntlet** — the fixture, looped as the fake device loops it, through seven
+  modelled capture defects, each of which must hold *and* must fail with the templates swapped;
+* **mutation A** — digital silence through a real browser capture must redden the *audible*
+  clause. A binary tooth (peak 0.0000 against 0.96) that reddened correctly on the runner too.
+
+The **degradation gauntlet** degrades the *committed fixture* rather than a browser capture,
+and that swap is the same lesson once more: degrading the runner's own already-degraded
+recording proves something only on the machines that happened to record well — run 101437894164
+passed the gauntlet while a real mutant sailed through at 71 %. Over the fixture it is pure
+arithmetic on bytes that are identical everywhere, so it costs nothing, cannot flake, and a
+threshold that only holds on the machine it was tuned on cannot survive it.
+
+**What it does not prove:** the clip is the site's own prerendered speech, not a human being.
+Point `MOXIE_MIC_WAV` + `MOXIE_MIC_TEXT` at a recording of a child and the same run closes that
+too. And a green `--selftest` is **not** "the audio round trip is verified": the fast tier runs
+no ASR (the transcript is a fixture), and it asserts neither recording fidelity **nor that the
+capture is the clip that was played** — both are browser-capture statistics this runner cannot
+carry. It asserts that a device opened, that the upload is a well-formed *audible* 16 kHz WAV,
+and that the scorer still discriminates on committed bytes.
+
 ## Run it now
 
 ```sh

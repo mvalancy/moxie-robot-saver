@@ -24,12 +24,18 @@
  *   block that concludes anything from a hidden tab first asserts that both of those
  *   actually happened — `hidden === true` and ZERO frames delivered.
  *
- * · ARRAY LENGTH, not wall-clock. A frame-time assertion is a coin toss on a shared CI
- *   runner. The quantity that actually causes the sluggishness is how many entries are
- *   waiting to be drawn — it is upstream of the frame time, it is an integer, and it is
- *   the same number whether the runner is busy or idle. Counting `shadowBlur` draws per
- *   frame was considered and dropped: on this page that number IS the array length plus a
- *   constant, so it measures the same thing later and less directly.
+ * · RECORDED PUSHES, not a sampled length difference. See "THE MEASUREMENT BOUNDARY"
+ *   below: the primary assertion is the number of pushes into the two arrays that
+ *   happened while `document.hidden` was true, captured at the push, by the page. The
+ *   before/after lengths are still reported and still asserted, but they are a corroborating
+ *   read, not the claim.
+ *
+ * · ARRAY LENGTH, not wall-clock, for that corroborating read. A frame-time assertion is a
+ *   coin toss on a shared CI runner. The quantity that actually causes the sluggishness is
+ *   how many entries are waiting to be drawn — it is upstream of the frame time, it is an
+ *   integer, and it is the same number whether the runner is busy or idle. Counting
+ *   `shadowBlur` draws per frame was considered and dropped: on this page that number IS
+ *   the array length plus a constant, so it measures the same thing later and less directly.
  *
  * · THE TEETH RUN FIRST. Block 1 rebuilds the OLD producer shape out of the SHIPPED file
  *   (a text transform, never a second copy that could drift) and requires the growth to
@@ -37,7 +43,7 @@
  *   suite skips green with a loud notice instead of reporting a pass it did not earn.
  *   Every later block runs only on an environment that has just proven it can see the bug.
  *
- * · THE CAP IS TESTED SEPARATELY (block 3), by inflating the rAF timestamp the page sees
+ * · THE CAP IS TESTED SEPARATELY (block 4), by inflating the rAF timestamp the page sees
  *   and freezing both retire conditions, so nothing can leave the arrays and the ceiling
  *   is the only thing left holding the line. It starts three short of the cap so a pass
  *   must show the arrays GROW and then stop exactly there — a block that merely asserted
@@ -45,6 +51,48 @@
  *
  * · A MISSING in-frame spawner is a FAILURE, not a skip. The one thing this suite must
  *   never do is stand quietly down on a revert of the very change it guards.
+ *
+ * THE MEASUREMENT BOUNDARY (2026-09-06, and the reason block 3 exists).
+ *
+ * This suite reddened twice on PRs whose diffs could not reach `sim/web/bg.js` — once as
+ * `pings grew while the tab was hidden (1 -> 2 in 20s)` on 2026-09-05, and again as
+ * `packets grew while the tab was hidden (1 -> 2 in 20s)` on 2026-09-06 (job
+ * 101442923492, PR #172) — while passing every time it was re-run by hand. It was not a
+ * flake and it was not `bg.js`: it was THIS FILE measuring across a boundary it did not
+ * control.
+ *
+ * `before` used to be sampled here, from Node, and only THEN did the harness open the
+ * second page and bring it to the front. Everything in between — a CDP round trip, a
+ * `Target.createTarget`, a navigation to about:blank — happens with the page under test
+ * still VISIBLE and its rAF loop still running, so `bg.js` spawns during it exactly as it
+ * is supposed to. Those legitimate visible-tab packets then never retire, because the tab
+ * hides moments later and rAF stops, so they are still in the array 20 s later and the
+ * "growth while hidden" arithmetic charges them to the hidden window.
+ *
+ * Measured directly, with every push into both arrays recorded together with
+ * `document.hidden` and a page-clock timestamp: on an idle box that gap is 7-26 ms, which
+ * is why it passes by hand; widened to 1 200 ms it reproduces the CI failure 4 runs in 12,
+ * with the offending pushes timestamped INSIDE the gap and `document.hidden === false` at
+ * every one of them. Across 32 such runs, the number of pushes that happened while
+ * `document.hidden` was true was ZERO — `bg.js`'s guard has never once been beaten. A
+ * loaded CI runner starting a second Chrome target is simply slower than an idle laptop.
+ *
+ * That is rule 23's shape — a check whose subject can change between the check and the
+ * action is not a check, it is a memory — and note which direction the old code had already
+ * conceded: the `<= 0` below tolerated a DECREASE for precisely this reason, without
+ * noticing that the same gap produces an increase just as easily. So:
+ *
+ *   1. `before` is now captured BY THE PAGE, inside the `visibilitychange` handler itself
+ *      (`__bgHiddenAt`), so the measured window begins exactly at the flip. No frame can
+ *      run between the flip and that snapshot — the handler runs synchronously in the
+ *      dispatch — and every frame after it sees `document.hidden === true`.
+ *   2. The claim under test is asserted directly, as recorded state: zero pushes while
+ *      hidden. That assertion cannot be moved by any boundary at all.
+ *   3. Block 3 CONSTRUCTS the interleaving rather than waiting for it: it drives the
+ *      spawner with the drain frozen and hides the tab only once the page has reported
+ *      three brand-new packets, so a burst is provably in flight at the flip. Against the
+ *      pre-fix boundary that block fails every single run, with the CI message verbatim;
+ *      against this one it passes, and it still fails if `bg.js` ever spawns while hidden.
  *
  * `MAX_PACKETS` / `MAX_PINGS` are read out of `sim/web/bg.js`, never restated here — a
  * hard-coded 48 could pass while the shipped file said something else.
@@ -93,15 +141,42 @@ const LEGACY = hasShape
 /* ---- page instrumentation -------------------------------------------------
  * `packets` and `pings` are closed over inside bg.js's IIFE. They are captured by
  * shape, off a temporary `Array.prototype.push` hook that removes itself the moment
- * both are found — so nothing else on the page pays for it. */
+ * both are found — so nothing else on the page pays for it.
+ *
+ * The moment an array IS found it gets an OWN `push` (shadowing the prototype, so only
+ * these two arrays pay anything) that records `document.hidden` at the push. That is the
+ * measurement this suite actually rests on: "did anything spawn while hidden" answered by
+ * the page, at the instant it happened, instead of inferred afterwards from two lengths
+ * sampled on either side of a boundary Node cannot see. See THE MEASUREMENT BOUNDARY above.
+ *
+ * `__bgHiddenAt` resolves with the two lengths taken INSIDE the `visibilitychange`
+ * dispatch, which is the only instant that is exactly the start of the hidden window. */
 const INSTRUMENT = function () {
-  window.__bg = { packets: null, pings: null, inflate: 0 };
+  window.__bg = { packets: null, pings: null, inflate: 0, hiddenPushes: [] };
   const op = Array.prototype.push;
+  const lens = () => ({
+    packets: window.__bg.packets ? window.__bg.packets.length : -1,
+    pings: window.__bg.pings ? window.__bg.pings.length : -1,
+    hidden: document.hidden,
+    at: performance.now(),
+  });
+  const record = (kind, arr) => {
+    if (!document.hidden) return;
+    const h = window.__bg.hiddenPushes;
+    h[h.length] = { kind, at: performance.now(), len: arr.length };
+  };
+  const watch = (arr, kind) => {
+    record(kind, arr);                       // the identifying push itself counts too
+    Object.defineProperty(arr, "push", {
+      configurable: true, writable: true,
+      value: function () { record(kind, this); return op.apply(this, arguments); },
+    });
+  };
   Array.prototype.push = function (v) {
     if (arguments.length === 1 && v && typeof v === "object" && !Array.isArray(v)) {
       const k = Object.keys(v).join(",");
-      if (k === "a,b,t,sp,c" && !window.__bg.packets) window.__bg.packets = this;
-      if (k === "x,y,r,a" && !window.__bg.pings) window.__bg.pings = this;
+      if (k === "a,b,t,sp,c" && !window.__bg.packets) { window.__bg.packets = this; watch(this, "packet"); }
+      if (k === "x,y,r,a" && !window.__bg.pings) { window.__bg.pings = this; watch(this, "ping"); }
       if (window.__bg.packets && window.__bg.pings) Array.prototype.push = op;
     }
     return op.apply(this, arguments);
@@ -112,10 +187,17 @@ const INSTRUMENT = function () {
   window.requestAnimationFrame = function (cb) {
     return raf(function (ts) { return cb(window.__bg.inflate ? ts * window.__bg.inflate : ts); });
   };
-  window.__bgLen = () => ({
-    packets: window.__bg.packets ? window.__bg.packets.length : -1,
-    pings: window.__bg.pings ? window.__bg.pings.length : -1,
-    hidden: document.hidden,
+  window.__bgLen = lens;
+  /* The lengths AT THE FLIP. Armed at document-start so it cannot miss the event, and it
+   * resolves from inside the handler — no `await`, no timer, nothing that could let a
+   * frame slip between the visibility change and the reading. */
+  window.__bgHiddenAt = new Promise((res) => {
+    if (document.hidden) return res(lens());
+    document.addEventListener("visibilitychange", function h() {
+      if (!document.hidden) return;
+      document.removeEventListener("visibilitychange", h);
+      res(lens());
+    });
   });
   // frames actually delivered over `ms` — 0 proves rAF really was paused
   window.__bgFrames = (ms) => new Promise((res) => {
@@ -130,8 +212,21 @@ const browser = await puppeteer.launch({
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });
 
-/** Load index.html, optionally serving a rewritten bg.js, and background it for `ms`. */
-async function hiddenRun(variant, ms) {
+/**
+ * Load index.html, optionally serving a rewritten bg.js, and background it for `ms`.
+ *
+ * `drive` (see block 3) is a NUMBER OF PACKETS, not a duration, and that is the whole
+ * point: the harness inflates the rAF timestamp so every frame banks a full
+ * `SPAWN_CREDIT_MS`, freezes the drain so the array can only grow, and then WAITS until
+ * the page reports that many new packets before it hides the tab. A fixed sleep was tried
+ * first and produced the burst only about two runs in three — a construction that
+ * sometimes does not happen is the very thing this file is being fixed for.
+ *
+ * @returns {{warm, before, after, frames, armed, flipped, hiddenPushes}}
+ *   `warm` is the pre-hide reading (reported, never asserted on); `before` is the reading
+ *   taken inside the visibilitychange dispatch, which is where the hidden window starts.
+ */
+async function hiddenRun(variant, ms, { drive = 0 } = {}) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
   await page.evaluateOnNewDocument(INSTRUMENT);
@@ -154,47 +249,93 @@ async function hiddenRun(variant, ms) {
       () => { const l = window.__bgLen(); return l.packets >= 0 && l.pings >= 0; },
       { timeout: 25000, polling: 250 });
   } catch { armed = false; }
-  const before = await page.evaluate(() => window.__bgLen());
+  const warm = await page.evaluate(() => window.__bgLen());
+
+  if (drive) {
+    await page.evaluate(() => {
+      window.__bg.driveFrom = window.__bg.packets ? window.__bg.packets.length : 0;
+      window.__bg.inflate = 400;              // every frame banks the full SPAWN_CREDIT_MS
+      /* Freeze the DRAIN, exactly as block 4 does, so the burst is a monotone increase
+       * rather than a race between the spawner and the retire condition. Without this the
+       * net delta at the flip is spawns-minus-retires and can legitimately be zero. */
+      window.__bg.hold = setInterval(() => {
+        const P = window.__bg.packets; if (!P) return;
+        for (const p of P) { p.sp = 0; p.t = 0; }
+      }, 10);
+    });
+    try {
+      await page.waitForFunction(
+        (n) => window.__bg.packets && window.__bg.packets.length >= window.__bg.driveFrom + n,
+        { timeout: 15000, polling: 50 }, drive);
+    } catch { /* reported by the driveGrowth assertion in block 3, never swallowed */ }
+  }
 
   const other = await browser.newPage();
   await other.goto("about:blank");
   await other.bringToFront();
+  /* The hidden window starts HERE, at the page's own visibilitychange, not at whatever
+   * moment Node last managed to ask. A 20 s ceiling so a browser that never backgrounds
+   * the tab reports `flipped: false` instead of hanging the suite. */
+  const before = await page.evaluate(() => Promise.race([
+    window.__bgHiddenAt,
+    new Promise((r) => setTimeout(() => r(null), 20000)),
+  ]));
+  const flipped = before !== null;
+  if (drive) await page.evaluate(() => { clearInterval(window.__bg.hold); window.__bg.inflate = 0; });
   const frames = await page.evaluate((d) => window.__bgFrames(d), ms);
   const after = await page.evaluate(() => window.__bgLen());
+  const hiddenPushes = await page.evaluate(() => window.__bg.hiddenPushes.slice());
   await other.close();
   await page.close();
-  return { before, after, frames, armed };
+  return { warm, before: before || warm, after, frames, armed, flipped, hiddenPushes };
 }
 
 const HIDDEN_MS = 20000;
+const pushSummary = (h) => h.length
+  ? `${h.length} (${h.filter((p) => p.kind === "packet").length} packet / ` +
+    `${h.filter((p) => p.kind === "ping").length} ping)`
+  : "0";
 
-/* ---- 1. TEETH: the old shape must still grow, or this box cannot see the bug --- */
+/* ---- 1. TEETH: the old shape must still grow, or this box cannot see the bug ---
+ * The teeth now read the RECORDED pushes, not the length difference. Same intent, one
+ * less inference: what has to be observable here is a producer running while the tab is
+ * hidden, and that is now a thing the page reports rather than a thing arithmetic on two
+ * lengths implies. On a box that cannot background a tab it is 0 and the suite stands
+ * down loudly. */
 const legacy = await hiddenRun(LEGACY, HIDDEN_MS);
 const legacyGrowth = (legacy.after.packets - legacy.before.packets) +
                      (legacy.after.pings - legacy.before.pings);
-if (!legacy.after.hidden || legacy.frames > 0 || legacyGrowth < 3) {
+if (!legacy.after.hidden || !legacy.flipped || legacy.frames > 0 || legacy.hiddenPushes.length < 3) {
   // A static failure already found (a missing cap, a reverted spawner) is a fact about
   // the FILE, not about this box — it must not be swallowed by an environment skip.
   if (fails.length) finish(LABEL, { fails, count });
   skip(`this browser will not background a tab (hidden=${legacy.after.hidden}, ` +
-       `frames-while-hidden=${legacy.frames}, legacy growth=${legacyGrowth}) — ` +
+       `flipped=${legacy.flipped}, frames-while-hidden=${legacy.frames}, ` +
+       `legacy pushes-while-hidden=${legacy.hiddenPushes.length}, legacy growth=${legacyGrowth}) — ` +
        "with rAF still running there is no producer/consumer gap to observe, so a PASS " +
        "here would mean nothing. Nothing is wrong with sim/web/bg.js; this box cannot test it.");
 }
-ok(true, "teeth: the pre-fix producer shape grows while hidden");
+ok(true, "teeth: the pre-fix producer shape spawns while hidden");
 
-/* ---- 2. the SHIPPED file: zero growth while hidden ------------------------- */
+/* ---- 2. the SHIPPED file: nothing spawns while hidden ---------------------- */
 const now = await hiddenRun(null, HIDDEN_MS);
 ok(now.after.hidden === true, "the page under test was not actually hidden");
+ok(now.flipped, "the page never reported a visibilitychange to hidden — the window under measurement " +
+                "never started, so the numbers below describe nothing");
 eq(now.frames, 0, "requestAnimationFrame kept running while hidden — the run proves nothing");
 ok(now.armed && now.after.packets >= 0 && now.after.pings >= 0,
    "bg.js never created its packets/pings arrays within 25 s of load — nothing is spawning at all");
-// `<= 0`, not `=== 0`, and the pings line below has always said so — the asymmetry was the
-// bug. The claim under test is that nothing SPAWNS while hidden. A *decrease* means a frame
-// slipped through as the tab was going hidden and retired an entry, which is the fix working,
-// not a failure: with the producers inside `step()`, a frame that runs both drains and does
-// not spawn. Demanding exact equality made the test depend on whether that last frame landed
-// before or after the visibility flip — it failed CI on an unrelated PR with `2 -> 1`.
+/* THE claim, asserted as recorded state (rule 11): not one entry may be created while
+ * `document.hidden` is true. Unlike the two length reads below, this cannot be shifted by
+ * anything that happens on either side of the visibility flip. */
+eq(now.hiddenPushes.length, 0,
+   `sim/web/bg.js spawned while the tab was hidden — ${pushSummary(now.hiddenPushes)} push(es) ` +
+   `recorded with document.hidden===true; the guard in spawn() has been beaten or removed`);
+/* `<= 0`, not `=== 0`, and the pings line below has always said so. `before` is now read
+ * inside the visibilitychange dispatch, so an INCREASE here is a real spawn in the hidden
+ * window (and the recorded-push check above would already have caught it); a DECREASE
+ * still cannot be a failure — it would mean a frame ran and retired an entry, which needs
+ * `frames > 0`, which the assertion above already refuses. */
 ok(now.after.packets - now.before.packets <= 0,
    `packets grew while the tab was hidden (${now.before.packets} -> ${now.after.packets} in ${HIDDEN_MS / 1000}s)`);
 ok(now.after.pings - now.before.pings <= 0,
@@ -202,10 +343,56 @@ ok(now.after.pings - now.before.pings <= 0,
 ok(now.after.packets <= MAX_PACKETS, `packets over cap while hidden: ${now.after.packets} > ${MAX_PACKETS}`);
 ok(now.after.pings <= MAX_PINGS, `pings over cap while hidden: ${now.after.pings} > ${MAX_PINGS}`);
 console.log(`   hidden ${HIDDEN_MS / 1000}s — legacy: packets ${legacy.before.packets}->${legacy.after.packets}, ` +
-            `pings ${legacy.before.pings}->${legacy.after.pings}   |   shipped: packets ` +
-            `${now.before.packets}->${now.after.packets}, pings ${now.before.pings}->${now.after.pings}`);
+            `pings ${legacy.before.pings}->${legacy.after.pings}, pushes-while-hidden ` +
+            `${pushSummary(legacy.hiddenPushes)}   |   shipped: packets ` +
+            `${now.before.packets}->${now.after.packets}, pings ${now.before.pings}->${now.after.pings}, ` +
+            `pushes-while-hidden ${pushSummary(now.hiddenPushes)}`);
 
-/* ---- 3. the cap holds however hard the spawner is driven ------------------- *
+/* ---- 3. THE CONSTRUCTED INTERLEAVING: a burst in flight as the tab hides ----
+ *
+ * Block 2 hides an idle page, so on a fast box it usually spawns nothing in the moments
+ * before the flip and the boundary bug stays invisible — three consecutive green runs on
+ * clean `origin/dev` is what sent the 2026-09-06 CI failure back as "just a flake". This
+ * block removes the luck: while the page is still VISIBLE the rAF timestamp is inflated
+ * 400x, so every frame banks a full `SPAWN_CREDIT_MS` (four frames buy a packet), and the
+ * retire condition is held frozen so the array can only grow. The tab is then hidden not
+ * after a fixed sleep but as soon as the page reports `DRIVE_PACKETS` new entries — so
+ * the interleaving is a precondition the harness WAITS for, never one it hopes for. Those
+ * packets are brand new at the instant the tab goes hidden, and every one of them was
+ * spawned, legitimately, by a VISIBLE page.
+ *
+ * Against the old boundary (`before` sampled from Node before the second page was even
+ * created) this fails every run, reporting exactly the CI message. Against a `before`
+ * read at the flip it passes, because those packets are on the correct side of it.
+ *
+ * The `driveGrowth` assertion is this block's own teeth: if the burst did not happen, the
+ * block proved nothing and must say so rather than pass. */
+const DRIVE_PACKETS = 3;
+const burst = await hiddenRun(null, 6000, { drive: DRIVE_PACKETS });
+const driveGrowth = burst.before.packets - burst.warm.packets;
+ok(burst.flipped && burst.after.hidden === true,
+   "the constructed-interleaving page never went hidden");
+eq(burst.frames, 0, "requestAnimationFrame kept running while hidden in the constructed run");
+ok(driveGrowth >= DRIVE_PACKETS,
+   `the constructed interleaving never happened: driving the spawner with the drain frozen added ` +
+   `only ${driveGrowth} of the ${DRIVE_PACKETS} packets asked for in 15 s ` +
+   `(${burst.warm.packets} -> ${burst.before.packets}), so this block did not put a spawn in ` +
+   `flight and proves nothing`);
+eq(burst.hiddenPushes.length, 0,
+   `sim/web/bg.js spawned while hidden with a burst in flight — ${pushSummary(burst.hiddenPushes)} ` +
+   `push(es) recorded with document.hidden===true`);
+ok(burst.after.packets - burst.before.packets <= 0,
+   `packets grew while the tab was hidden with a burst in flight ` +
+   `(${burst.before.packets} -> ${burst.after.packets})`);
+ok(burst.after.pings - burst.before.pings <= 0,
+   `pings grew while the tab was hidden with a burst in flight ` +
+   `(${burst.before.pings} -> ${burst.after.pings})`);
+console.log(`   constructed interleaving — driven while visible until +${DRIVE_PACKETS}: packets ` +
+            `${burst.warm.packets}->${burst.before.packets} at the flip (+${driveGrowth}), then ` +
+            `${burst.before.packets}->${burst.after.packets} while hidden, pushes-while-hidden ` +
+            `${pushSummary(burst.hiddenPushes)}`);
+
+/* ---- 4. the cap holds however hard the spawner is driven ------------------- *
  * Two knobs, so the ceiling is the ONLY thing that can stop the arrays growing:
  *  · the rAF timestamp the page sees is multiplied, so every frame looks like seconds of
  *    elapsed time and `SPAWN_CREDIT_MS` is the only thing rationing spawns;
@@ -255,7 +442,7 @@ console.log(`   driven clock — packets ${peak.start && peak.start.p}->${peak.p
             `pings ${peak.start && peak.start.g}->${peak.gk} (cap ${MAX_PINGS})`);
 await capPage.close();
 
-/* ---- 4. reduced motion still spawns nothing at all ------------------------- */
+/* ---- 5. reduced motion still spawns nothing at all ------------------------- */
 const rm = await browser.newPage();
 await rm.setViewport({ width: 1440, height: 900 });
 await rm.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
