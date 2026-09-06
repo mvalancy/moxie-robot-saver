@@ -18,8 +18,8 @@ Three mechanisms hold it up and each row deletes exactly one of them —
   * the **watermark** (`seq` on the envelope, `through_seq` on the roll-up, so
     *"already counted"* is a fact on disk and a lost roll-up write is replayable).
 
-A mutation that leaves the suite GREEN is a hole in the tests, not a pass. Two rows were
-rewritten before this table was honest: the first draft of M2 locked the *other* record
+A mutation that leaves the suite GREEN is a hole in the tests, not a pass. One row had to
+be rewritten before this table was honest: the first draft of M2 locked the *other* record
 instead of deleting the lock, and in-process every `transaction()` is serialized by one
 RLock whatever record it names — so the mutation was unobservable without a second
 process, and the row proved nothing. It now deletes the section outright.
@@ -48,14 +48,16 @@ MUTATIONS = [
     ("M1  the ring is written before the roll-up again (the 2026-09-05 red)", R,
      "                counted = self.store.write(\n"
      "                    device_id, telemetry_seam.DAILY_COLLECTION,\n"
-     "                    telemetry_seam.roll_up_packet(stored, row))\n"
+     "                    telemetry_seam.roll_up_packet(\n"
+     "                        telemetry_seam.reconcile_rollup(stored, ring), row))\n"
      "                kept = self.store.append(device_id, telemetry_seam.PACKETS_COLLECTION,\n"
      "                                         row, cap=telemetry_seam.max_packets()) is not None",
      "                kept = self.store.append(device_id, telemetry_seam.PACKETS_COLLECTION,\n"
      "                                         row, cap=telemetry_seam.max_packets()) is not None\n"
      "                counted = self.store.write(\n"
      "                    device_id, telemetry_seam.DAILY_COLLECTION,\n"
-     "                    telemetry_seam.roll_up_packet(stored, row))"),
+     "                    telemetry_seam.roll_up_packet(\n"
+     "                        telemetry_seam.reconcile_rollup(stored, ring), row))"),
     ("M2  the two writes stop being one critical section", R,
      "            with self.store.transaction(device_id, telemetry_seam.PACKETS_COLLECTION):",
      "            if True:"),
@@ -63,8 +65,8 @@ MUTATIONS = [
      "        rollup = telemetry_seam.reconcile_rollup(stored, ring)",
      "        rollup = telemetry_seam.reconcile_rollup(stored, [])"),
     ("M4  a repair is answered but never written back", R,
-     "        if missing and repair:",
-     "        if False and missing and repair:"),
+     "        if missing:\n            try:",
+     "        if False:\n            try:"),
     ("M5  the stored envelope is not stamped with its sequence", R,
      "                row = telemetry_seam.with_seq(row, telemetry_seam.next_seq(ring, stored))",
      "                row = dict(row)"),
@@ -95,6 +97,11 @@ MUTATIONS = [
     ("M11 a robot's own `seq` survives the privacy gate and forges the watermark", T,
      "    out = {k: v for k, v in pkt.items() if k in _PACKET_FIELDS}",
      "    out = dict(pkt)"),
+    ("M12 an ingest stops repairing on its way past, so only a reader can heal", R,
+     "                    telemetry_seam.roll_up_packet(\n"
+     "                        telemetry_seam.reconcile_rollup(stored, ring), row))",
+     "                    telemetry_seam.roll_up_packet(\n"
+     "                        stored, row))"),
 ]
 
 

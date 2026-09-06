@@ -2869,30 +2869,32 @@ class MoxieRuntime:
             robot.extra["telemetry"] = buf
         return buf
 
-    def telemetry_rollup(self, device_id, *, repair: bool = True) -> dict:
+    def telemetry_rollup(self, device_id) -> dict:
         """This robot's daily roll-up, **reconciled against the ring** (`{}`-safe).
 
-        The single read point for the roll-up, and the reason a lost write to it is
-        recoverable rather than permanent. The ring is the durable log; the roll-up is a
-        view over it carrying `through_seq`, so every envelope the view has not counted
-        is a fact on disk rather than a guess (`telemetry.unfolded_packets`).
+        The read path for the roll-up, and the reason a lost write to it is recoverable
+        rather than permanent. The ring is the durable log; the roll-up is a view over it
+        carrying `through_seq`, so every envelope the view has not counted is a fact on
+        disk rather than a guess (`telemetry.unfolded_packets`).
 
-        `repair=True` writes the reconciled record back, and only when something was
-        actually missing — a self-heal, not a write on every read. Without it the repair
-        would be recomputed on every refresh and would vanish for good the moment the
-        ring wrapped past the packet it was recovering. The write is best-effort for the
-        same reason `_persist_telemetry`'s are: this can run on the MQTT thread and a
+        The repair is **written back**, and only when something was actually missing — a
+        self-heal, not a write on every read. Answering the repaired number without
+        storing it would recompute it on every refresh and lose it for good the moment
+        the ring wrapped past the packet it was recovering. The write is best-effort for
+        the same reason `_persist_telemetry`'s are: this can run on the MQTT thread and a
         telemetry write must never cost a child their turn.
 
-        `repair=False` is for `_persist_telemetry`, which is about to write the record
-        itself and would otherwise write it twice.
+        `_persist_telemetry` deliberately does **not** come through here: it is inside its
+        own transaction, it has already read the ring to number the packet, and it is
+        about to write the roll-up anyway — going through this method would cost a third
+        read of the ring and a duplicate write, per packet, on the MQTT thread.
         """
         stored = self.store.read(device_id, telemetry_seam.DAILY_COLLECTION,
                                  telemetry_seam.new_rollup())
         ring = self.store.read(device_id, telemetry_seam.PACKETS_COLLECTION, [])
         missing = telemetry_seam.unfolded_packets(stored, ring)
         rollup = telemetry_seam.reconcile_rollup(stored, ring)
-        if missing and repair:
+        if missing:
             try:
                 self.store.write(device_id, telemetry_seam.DAILY_COLLECTION, rollup)
                 print(f"[runtime] 📈 repaired {device_id}'s telemetry roll-up from the "
@@ -2958,14 +2960,18 @@ class MoxieRuntime:
         try:
             with self.store.transaction(device_id, telemetry_seam.PACKETS_COLLECTION):
                 ring = self.store.read(device_id, telemetry_seam.PACKETS_COLLECTION, [])
-                stored = self.telemetry_rollup(device_id, repair=False)
+                stored = self.store.read(device_id, telemetry_seam.DAILY_COLLECTION,
+                                         telemetry_seam.new_rollup())
                 # Stamped here, AFTER the privacy gate — `storable_packet` keeps only
                 # `_PACKET_FIELDS`, so a robot cannot hand us a `seq` of its own and mark
                 # the ring as counted.
                 row = telemetry_seam.with_seq(row, telemetry_seam.next_seq(ring, stored))
+                # Reconciled on the way past, so a robot that keeps talking heals a lost
+                # roll-up write without waiting for a parent to open the card.
                 counted = self.store.write(
                     device_id, telemetry_seam.DAILY_COLLECTION,
-                    telemetry_seam.roll_up_packet(stored, row))
+                    telemetry_seam.roll_up_packet(
+                        telemetry_seam.reconcile_rollup(stored, ring), row))
                 kept = self.store.append(device_id, telemetry_seam.PACKETS_COLLECTION,
                                          row, cap=telemetry_seam.max_packets()) is not None
         except Exception as e:

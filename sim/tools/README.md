@@ -176,7 +176,7 @@
   and `reconcile_rollup` replays the difference. Each row deletes one of the three mechanisms it rests
   on: the write **order** (the exact record before the bounded one), the **critical section** (both
   writes as one, so two ingests cannot lose an update the ring keeps), and the **watermark** itself.
-  `python3 sim/tools/telemetry_rollup_mutation_check.py   # 11 rows; every one must say "caught"`
+  `python3 sim/tools/telemetry_rollup_mutation_check.py   # 12 rows; every one must say "caught"`
   (about 30 s), checked against [`../tests/test_telemetry_rollup_repair.py`](../tests/README.md) plus the
   two older telemetry suites. Two notes worth keeping. **M2's first draft proved nothing**: it locked the
   *other* record instead of deleting the lock, and in-process `JsonStore._transaction_path` serialises

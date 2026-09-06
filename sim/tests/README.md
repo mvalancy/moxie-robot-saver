@@ -227,7 +227,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   the very change that made `requirements-hermetic.txt` the single source of truth — a
   binary is invisible to a guard that reads `pip install` lines, so the five programs the
   suite may spawn (`mosquitto`, `docker`, `node`, `git`, `bash`) are declared in
-  `DECLARED_BINARIES` with their reason and their provider. Eleven mutants, 11/11 caught.
+  `DECLARED_BINARIES` with their reason and their provider. Eleven mutants, 12/12 caught.
 - **`test_ext_escapes.py`** — X1–X12, the escape suite for [sandboxed content
   extensions](../../docs/architecture/backlog/sandboxed-extensions.md) (BEYOND #6). Its own file,
   apart from the behaviour tests, because a reviewer asking *"can a stranger's content pack hurt
@@ -326,7 +326,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   the watermark with the files, and eight concurrent ingests losing no roll-up update — the
   divergence that needs no crash at all, because the roll-up's read-modify-write had nothing
   around it while the ring's `append` is transactional. Companion:
-  [`../tools/telemetry_rollup_mutation_check.py`](../tools/README.md), 11/11 caught.
+  [`../tools/telemetry_rollup_mutation_check.py`](../tools/README.md), 12/12 caught.
 - **`test_sil_durable_telemetry.py`** — the two claims about durable telemetry that no
   fixture can establish. A second `MoxieRuntime` in the same interpreter proves the
   hydration code path and nothing about durability, so this boots the real appliance
