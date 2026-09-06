@@ -477,6 +477,32 @@ section("E");
   eq(unitsDay().published, 0, "…zero units published");
   eq(unitsDay().wrote, 0, "…and zero writes attempted, which is the structural half of the claim");
   deep(st().unitsDay, { pending: 0, bucket: DAY0 }, "…and the ledger is empty, because nothing ever settled");
+
+  // `release()` THEN `refundBudget()` — the ordering the drain above can never reach.
+  // Refunding BEFORE the release means `release()`'s `if (!refunded && !settled)` never
+  // settles, so there is nothing to un-say and `unaccrueDayPending()` is never called.
+  // That function exists ONLY for this ordering (no route in this repo performs it today
+  // and nothing structurally prevents it), so without a case that settles first it is dead
+  // code as far as this suite is concerned — and "a refunded request publishes nothing to
+  // the shared day" would be proven for one of the two orderings while claiming both.
+  //
+  // MEASURED 2026-09-06, which is why this exists: deleting the `unaccrueDayPending()`
+  // call from `refundBudget()` left this suite at 151/151 green AND `sim/test_demo_proxy.mjs`
+  // green. The HOUR's identical branch is caught immediately, by §15's "a refund AFTER the
+  // release takes them straight back out again". The day inherited the hour's design
+  // without inheriting the hour's proof; this is that proof.
+  fresh();
+  const late = fakeCache();
+  const l = await admitWith(ON, late, "203.0.113.8", T0);
+  eq(l.ok, true, "the release-then-refund turn is admitted in the first place");
+  l.release();
+  deep(st().unitsDay, { pending: 3, bucket: DAY0 },
+       "a released turn settles its units into the DAY ledger");
+  l.refundBudget();
+  deep(st().unitsDay, { pending: 0, bucket: DAY0 },
+       "…and a refund AFTER the release takes them straight back out of the DAY ledger too");
+  eq(late.count(DK), null,
+     "…with still nothing published to the colo's day, on either ordering");
 }
 
 /* =========================================================================== *
