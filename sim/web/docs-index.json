@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 9313,
+   "bytes": 9745,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 22681,
+   "bytes": 23045,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -885,16 +885,15 @@
    "path": "architecture/backlog/turnstile-layout-collision.md",
    "title": "The Turnstile challenge and `#rail-toggle` share a band on a small phone",
    "section": "architecture",
-   "bytes": 3785,
+   "bytes": 6630,
    "mermaid": 0,
    "headings": [
     "What happens",
-    "Why no test sees it",
-    "Why it is latent",
-    "Why that matters now",
-    "What a fix would need",
-    "What a fix must also do — and this is the load-bearing part",
-    "Honest limits of this filing"
+    "The measurements — re-derived, and they disagree with the first filing",
+    "Why no test saw it",
+    "The fix, and the two that lost",
+    "The guard",
+    "What this did NOT fix — a second, live-today defect in `env.js`"
    ],
    "kind": "md"
   },
