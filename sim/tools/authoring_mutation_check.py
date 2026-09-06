@@ -154,8 +154,23 @@ def main() -> int:
     caught = missed = noop = 0
     for name, path, old, new, sel in MUTATIONS:
         src = path.read_text()
-        if old not in src:
+        # AMBIGUOUS IS NOT CAUGHT, and it is not a milder NO-OP either. `replace(old, new, 1)`
+        # takes the FIRST match, so a row whose anchor occurs twice is about whichever block
+        # sorts earliest in the file — possibly the guard it names, possibly that guard's twin —
+        # and it prints `caught` either way. Measured 2026-09-05: three rows across this
+        # directory were anchored on a line a deliberate twin guard also carried (a load-time
+        # refusal and its runtime belt-and-braces; `_connack_failed` and `_suback_failed`). All
+        # three happened to hit the intended block by line order alone, which is luck, not proof.
+        # `unit_budget_mutation_check.py` hit the same defect where the WRONG block was patched.
+        # `sim/tests/test_mutation_tables.py` now refuses a non-unique anchor for every table in
+        # the fast tier; this is the same refusal at the point of use, so an operator running one
+        # table by hand is told why rather than reading a `caught` that means nothing.
+        hits = src.count(old)
+        if hits == 0:
             print(f"  NO-OP       {name}  (anchor not found)"); noop += 1; continue
+        if hits > 1:
+            print(f"  AMBIGUOUS   {name}  (anchor matches {hits} places; "
+                  f"it would mutate whichever comes first)"); noop += 1; continue
         backup = src
         path.write_text(src.replace(old, new, 1))
         try:
