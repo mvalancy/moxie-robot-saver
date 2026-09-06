@@ -5,8 +5,7 @@
 Walks docs/ (+ a few top-level .md), copies each file verbatim into
 sim/web/docs-bundle/<same relative path>, and writes sim/web/docs-index.json:
 
-    { "generated": "docs-<sha256[:12]>",   # deterministic content stamp
-      "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
+    { "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
       "files": [ { "path": "reverse-engineering/qr-commands.md",
                    "title": "QR commands", "section": "reverse-engineering",
                    "bytes": 1234, "mermaid": 2, "headings": ["...", "..."] }, ... ] }
@@ -18,7 +17,7 @@ explorer shows is exactly what's in the repo.
 
 Usage:  python3 sim/tools/build_docs_bundle.py
 """
-import hashlib, json, os, re, shutil, sys
+import json, os, re, shutil, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -138,24 +137,50 @@ def main():
             rank = readme_rank.get(sec, {}).get(bn, 10 ** 6)   # unlisted → after, A–Z
         return (sec, rank, path)
     entries.sort(key=sort_key)
-    # A DETERMINISTIC content stamp: sha256 over each doc's (path + bytes), so an
-    # unchanged doc set always produces a byte-identical index. That keeps this
-    # tracked artifact reproducible (no spurious `git status` drift on rebuild) and
-    # lets CI verify freshness with `git diff --exit-code` after a rebuild. (A git
-    # commit hash was volatile — always one commit behind or `-dirty`.)
-    h = hashlib.sha256()
-    for e in sorted(entries, key=lambda e: e["path"]):
-        h.update(e["path"].encode("utf-8"))
-        h.update(str(e["bytes"]).encode("utf-8"))
-        h.update(search.get(e["path"], "").encode("utf-8"))
-    desc = "docs-" + h.hexdigest()[:12]
-
+    # ---------------------------------------------------------------------------
+    # MERGEABILITY (read before changing either json.dump below).
+    #
+    # These two files are generated AND committed, so every branch that touches a
+    # doc rewrites them. That is fine — as long as a plain 3-way *text* merge can
+    # reconcile two branches that edited different docs. Two rules keep that true:
+    #
+    #   1. NO GLOBAL, CONTENT-DERIVED VALUE in a committed artifact. This file used
+    #      to carry a top-level "generated": "docs-<sha256[:12]>" stamp over the whole
+    #      doc set. Nothing ever read it (not docs.js, not sim/test_docs.mjs, not
+    #      check_bundle_fresh.py — that one re-runs this script and diffs with git),
+    #      but because it changed on BOTH sides of every merge it made this file
+    #      conflict mechanically on every pair of doc-touching branches. Removed.
+    #      Do not reintroduce one: any single line that both sides rewrite is an
+    #      unconditional conflict, and it would re-impose that tax on every branch.
+    #
+    #   2. ONE DOC PER LINE. docs-search.json used to be one ~3 MB line, which gave
+    #      the merge zero granularity: any two edits collided on that single line.
+    #      Each doc's blob now gets its own line, blank-line separated, so edits to
+    #      different docs land in different hunks and merge cleanly — and merge
+    #      byte-identically to a rebuild, since the keys are sorted and each value
+    #      is self-contained.
+    #
+    # Both files stay deterministic, so check_bundle_fresh.py is unaffected: it is
+    # still the sole authority on whether the committed bundle matches docs/.
+    # ---------------------------------------------------------------------------
     with open(INDEX, "w", encoding="utf-8") as fh:
-        json.dump({"generated": desc, "firmware": FIRMWARE, "files": entries},
+        json.dump({"firmware": FIRMWARE, "files": entries},
                   fh, indent=1, ensure_ascii=False)
     # Separate, lazily-fetched full-text index (only loaded when the user searches).
+    # One "path":"blob" pair per line; see rule 2 above. Hand-written rather than
+    # json.dump(indent=...) because json's indent modes cannot emit a blank line.
     with open(SEARCH, "w", encoding="utf-8") as fh:
-        json.dump(search, fh, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        # A BLANK LINE between entries is JSON-insignificant whitespace, and it is
+        # what lets git merge edits to two *alphabetically adjacent* docs: without
+        # a common line between them the two changed lines are one region, and one
+        # region touched by both sides is a conflict. See rule 2 above.
+        fh.write("{\n")
+        for i, k in enumerate(sorted(search)):
+            if i:
+                fh.write(",\n\n")
+            fh.write(json.dumps(k, ensure_ascii=False) + ":" +
+                     json.dumps(search[k], ensure_ascii=False))
+        fh.write("\n}\n")
 
     total_mermaid = sum(e["mermaid"] for e in entries)
     print(f"[docs-bundle] {len(entries)} markdown files, "
