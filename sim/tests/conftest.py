@@ -22,6 +22,55 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 SERVE = REPO / "sim" / "serve.py"
 
+# --------------------------------------------------------------------------- #
+# The dotenv fence — the suite decides ONCE, here, whether a deployment's
+# `mqtt/.env` is visible to it. Everything below happens at conftest *import*,
+# which is the only moment early enough to matter.
+# --------------------------------------------------------------------------- #
+#
+# Playbook rule 20 found that a git-ignored `mqtt/.env` refills variables a test
+# deleted, so "nothing is configured" silently became "whatever this developer
+# configured" — invisible to CI and to every worktree, because that is exactly
+# where the file does not exist. The opt-out added for it, `MOXIE_SKIP_DOTENV`,
+# was then set inside each affected test helper. **That does not work, and this
+# block exists because it does not work.**
+#
+# `config._load_env` loads the file with `os.environ.setdefault(...)`. The first
+# `import config` anywhere in the session therefore promotes every key in the
+# file to a real environment variable, permanently — nothing ever removes them.
+# From that instant `MOXIE_SKIP_DOTENV` is a no-op: it stops the *file* being
+# re-read, and the values are no longer coming from the file. Measured on
+# 2026-09-05 with a fixture dotenv: `test_assemble.py` and `test_voice_settings.py`
+# pass when run ALONE (their helper sets the flag before anything else imports
+# `config`) and fail in the full suite (something imported `config` first). So the
+# flag is a **first-import-wins** switch that every existing caller sets too late,
+# and whether a given test asserts anything depends on collection order.
+#
+# The second, independent leak in the same fix: those helpers delete a
+# hand-maintained LIST of variable names. `test_assemble._fresh_config` lists nine
+# and `mqtt/.env.example` documents twenty-five, so `MOXIE_PIPER_MODEL` — absent
+# from the list — still reached `build_synthesizer()` and the "no voice configured"
+# assertion tested a machine with a voice. A denylist that must enumerate every
+# future knob is not a fence.
+#
+# Both are fixed by deciding before the first import instead of after it, in the
+# one file pytest guarantees to import before it collects anything. With this,
+# a local run and a CI run are the same run — which is the actual goal: a baseline
+# nobody can reproduce cannot catch a regression.
+#
+# It is deliberately NOT unconditional. Rule 20 was found *by* running the suite
+# against a real dotenv, and a fence that made that impossible would close the
+# only door the defect ever walked through. So an explicit opinion always wins:
+#   * `MOXIE_SKIP_DOTENV=0 pytest sim/tests`   → run it as this deployment sees it
+#   * `MOXIE_DOTENV=<file> pytest sim/tests`   → run it against a fixture
+# and `test_dotenv_cannot_perturb_the_suite.py` uses the second of those to prove,
+# in CI and with a throwaway file, that the fence is real and that removing it
+# turns the suite red. Never point either at a developer's own `mqtt/.env`.
+_SKIP_DOTENV = "MOXIE_SKIP_DOTENV"
+_DOTENV_PATH = "MOXIE_DOTENV"
+if _SKIP_DOTENV not in os.environ and _DOTENV_PATH not in os.environ:
+    os.environ[_SKIP_DOTENV] = "1"
+
 try:
     from playwright.sync_api import sync_playwright  # noqa: E402
 except Exception:  # pragma: no cover - playwright not installed
