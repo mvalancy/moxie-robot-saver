@@ -968,7 +968,7 @@ function refuse(reason, extra) {
     // `chargeExtra()` answers FALSE rather than nothing: a refused admission holds no
     // budget to add to, and false is the answer that makes a caller not spend. A missing
     // method here would be a `TypeError` on a refusal path.
-    release: () => {}, refundBudget: () => {}, chargeExtra: () => false, extraUnits: () => 0,
+    release: () => {}, refundBudget: () => {}, chargeExtra: () => false,
     ...extra,
   };
 }
@@ -1156,8 +1156,8 @@ function grantedSlot(route, capacity, rateLimit, budget, ctx) {
    * both charges and not one of them. Kept as a fresh array rather than aliasing
    * `budget.charged`, which `admit()` still holds and reads on its own refusal paths. */
   const budgetKeys = [...((budget && budget.charged) || [])];
-  /** Extra units this request has committed beyond admission — recorded so a test can
-   *  assert the second gateway call was PAID FOR and not merely made. */
+  /** Extra units this request has committed beyond admission. It exists so that a refund
+   *  after an extra charge gives back BOTH, and not only the admission's. */
   let extraUnits = 0;
   return {
     ok: true,
@@ -1235,16 +1235,15 @@ function grantedSlot(route, capacity, rateLimit, budget, ctx) {
       if (!extra.ok) return false;
       for (const key of extra.charged) budgetKeys.push(key);
       const cost = extra.cost || 0;
-      extraUnits += cost;
-      // The ledgers the colo will be told about at `release()`. Guarded by the SAME
-      // `hourly`/`daily` flags the admission charge used, so a deployment with no ceiling
-      // at a scale accrues nothing at that scale — here as there.
+      // `charged.length` guards every one of these, exactly as the admission charge's own
+      // arithmetic above does: an UNCAPPED deployment charges no key, so it owes nothing,
+      // publishes nothing, and has nothing to give back. Counting `cost` there would
+      // credit a refund with units the map never held.
+      if (extra.charged.length) extraUnits += cost;
       if (extra.hourly && extra.charged.length) owed += cost;
       if (extra.daily && extra.charged.length) owedDay += cost;
       return true;
     },
-    /** Tests and the report: units this request committed BEYOND its admission charge. */
-    extraUnits() { return extraUnits; },
   };
 }
 

@@ -4180,6 +4180,50 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
        "…and the hour was charged 6 units, not the 9 a spent-past ceiling would show");
   }
 
+  // ---- 6c. THE ACCOUNTING ITSELF, on a bare slot with no route around it ----- //
+  //
+  // `chat.js` cannot reach a refund after step 8b — every refusal that refunds is upstream
+  // of the gateway call — so the ordering "charge extra, then refund" is unreachable
+  // through the route and is exercised here directly. It is cheaper to be correct for a
+  // call sequence nothing performs today than to leave a comment asking future callers not
+  // to perform it.
+  {
+    fresh();
+    const cfg = wire2.readConfig(FULL);
+    const slot = await limits.admit({ request: req("/api/chat", { text: "x" }), cfg, route: "chat" });
+    ok(slot.ok, "the slot was granted");
+    eq(budgetUsed(), limits.UNITS.chat, "admission charged one chat turn");
+    eq(slot.chargeExtra(), true, "…and a re-roll's units are available");
+    eq(budgetUsed(), 2 * limits.UNITS.chat, "…taking the hour to six");
+    slot.refundBudget();
+    eq(budgetUsed(), 0, "a refund gives back BOTH charges, not just the admission's");
+    eq(limits.__state().stats.refundedUnits, 2 * limits.UNITS.chat,
+       "…and RECORDS that it gave back both (playbook rule 11: a fact, not an inference)");
+    eq(slot.chargeExtra(), false,
+       "a REFUNDED request may not quietly enlarge what it owes afterwards");
+    slot.release();
+    eq(limits.__state().units.pending, 0, "…and the colo is told nothing at all");
+    eq(slot.chargeExtra(), false, "a RELEASED request may not either — it has already settled");
+  }
+
+  // ---- 6d. AN UNCAPPED DEPLOYMENT CHARGES NOTHING AND OWES NOTHING ----------- //
+  // `DEMO_UNIT_BUDGET_HOUR=0` / `_DAY=0` is the documented "no ceiling" setting. The extra
+  // charge must then be free, publish nothing, and — the part that is easy to get wrong —
+  // credit a refund with nothing, rather than with units the map never held.
+  {
+    fresh();
+    const uncapped = wire2.readConfig({ ...FULL, DEMO_UNIT_BUDGET_HOUR: "0", DEMO_UNIT_BUDGET_DAY: "0" });
+    const slot = await limits.admit({ request: req("/api/chat", { text: "x" }), cfg: uncapped, route: "chat" });
+    ok(slot.ok, "an uncapped deployment admits the turn");
+    eq(slot.chargeExtra(), true, "…and has headroom for a re-roll by definition");
+    eq(budgetUsed(), 0, "…while charging nothing, because there is no ceiling to charge against");
+    slot.refundBudget();
+    eq(limits.__state().stats.refundedUnits, 0,
+       "…so a refund credits nothing either: an uncapped hour cannot be given units back");
+    slot.release();
+    eq(limits.__state().units.pending, 0, "…and nothing is published to the colo");
+  }
+
   // ---- 7. EVERY FAILURE KEEPS THE REPLY THE VISITOR ALREADY HAD -------------- //
   //
   // A re-roll may never turn a won turn into a `degraded` page. This is the same objection
