@@ -60,7 +60,7 @@ SECTIONS = {
     "B": (10, "the per-IP HOUR binds across isolates"),
     "C": (7, "the per-IP DAY binds across isolates"),
     "D": (18, "the unit budget's DAY binds across isolates, by charge-on-completion"),
-    "E": (4, "a refunded request publishes nothing to the shared day"),
+    "E": (8, "a refunded request publishes nothing to the shared day, BOTH orderings"),
     "F": (24, "the wide window fails OPEN, every failure mode by name"),
     "G": (18, "the day budget fails OPEN, every failure mode by name"),
     "H": (17, "the keys carry no address and cannot be read as each other"),
