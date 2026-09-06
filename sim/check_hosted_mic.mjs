@@ -460,13 +460,22 @@ function bestCorrelation(template, signal, hz = 100) {
  * vacuous by being loosened: `--selftest`'s mutation B fires this clause on every push and
  * reddens if it stops discriminating.
  *
- * The decoy ceiling stays 0.50, between a worst true negative of 0.350 and a best
- * wrong-clip score of 0.734. The gap is real but not enormous, for a stateable reason: two
- * clips of the same voice reading different sentences share a speaking rate and a syllable
- * rhythm, so their envelopes are not independent. Anyone moving either number must re-state
- * the spread here from a run, not from memory. */
+ * THE SECOND CLAUSE IS A MARGIN AND NOT A CEILING, and that started as an absolute 0.50 and
+ * was changed for the same reason, one measurement later. Load moves BOTH scores: on the
+ * busy box the healthy decoy ROSE 0.298 → 0.363 while mutation B's FELL 0.983 → 0.523, and
+ * the two populations were closing on the fixed line from opposite sides. A DIFFERENCE does
+ * not have that problem — whatever the machine does to the recording it does to both
+ * correlations — and it states the actual claim, which was never "an unrelated clip scores
+ * below 0.50" but "the clip we played beats an unrelated one, clearly". Measured across all
+ * six runs: healthy margins **0.481 … 0.818**, mutation B's **−0.674 … −0.206**. Zero
+ * separates the populations; 0.25 is the conservative side of zero.
+ *
+ * Both numbers are real but neither gap is enormous, for a stateable reason: two clips of
+ * the same voice reading different sentences share a speaking rate and a syllable rhythm,
+ * so their envelopes are not independent. Anyone moving either must re-state the spread here
+ * from a run, not from memory. */
 const CORR_FLOOR = 0.60;
-const CORR_DECOY_CEIL = 0.50;
+const CORR_MARGIN = 0.25;
 
 /* ════════════════════════ the fake microphone's WAV ═══════════════════════════ */
 /** Mono PCM16 → a complete RIFF/WAVE file. The one place this file writes a header. */
@@ -959,9 +968,11 @@ function assertHeard(c, p, tag, ctx) {
      `${tag}: the uploaded audio must be the clip the fake microphone played — envelope ` +
      `correlation ${good.score.toFixed(3)} at lag ${good.lagS.toFixed(2)}s ` +
      `(floor ${CORR_FLOOR})`);
-  ok(bad.score < CORR_DECOY_CEIL,
-     `${tag}: …and NOT an unrelated clip — the decoy scored ${bad.score.toFixed(3)} ` +
-     `(ceiling ${CORR_DECOY_CEIL}), so the correlation above is not discriminating`);
+  ok(good.score - bad.score >= CORR_MARGIN,
+     `${tag}: …and it must BEAT an unrelated clip by a clear margin — ` +
+     `${good.score.toFixed(3)} vs ${bad.score.toFixed(3)} is ` +
+     `${(good.score - bad.score).toFixed(3)} (need ${CORR_MARGIN}), so the correlation ` +
+     `above is not discriminating`);
   p.corr = { good: good.score, bad: bad.score, lagS: good.lagS, peak, wavBytes: wav.length,
              ms: dur ? dur.ms : 0 };
 

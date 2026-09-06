@@ -300,8 +300,10 @@ jobs:
         # WHAT RUNS HERE IS `--selftest`, and it is hermetic: `sim/web` on loopback under the
         # real `_headers` policy with /api/* answered at the browser, driven four times with
         # four different fake microphones. Measured 2026-09-05 — the sentence clip must pass
-        # every clause (envelope correlation 0.785-0.991 against the source, 0.173-0.350 against an
-        # unrelated one); DIGITAL SILENCE must redden "the captured audio is AUDIBLE" (peak
+        # every clause (envelope correlation 0.785-0.991 against the source, 0.173-0.363 against
+        # an unrelated one — the clause is a MARGIN between the two rather than a ceiling on the
+        # second, because machine load moves both); DIGITAL SILENCE must redden "the captured
+        # audio is AUDIBLE" (peak
         # 0.0000); A DIFFERENT CLIP — real, loud, and the wrong words — must redden "it is the
         # clip the fake microphone played" (0.270-0.300) while leaving the audible clause GREEN, and
         # that is the mutation that matters, because silence reddens almost anything; and the
