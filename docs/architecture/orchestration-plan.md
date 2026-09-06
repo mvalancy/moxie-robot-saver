@@ -315,6 +315,33 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     worktree holds the branch). Anything a merge is supposed to tidy up afterwards should be
     *verified*, never assumed.
 
+30. **When a check says the product did X, measure X before you change the product.** On 2026-09-06
+    the failure `packets grew while the tab was hidden (1 -> 2 in 20s)` was taken at face value
+    across two sessions, and produced a hidden-tab guard in `sim/web/bg.js` whose comment credited
+    it with the fix. **The same failure came back with that guard in place** (job 101442923492, PR
+    #172) — and a red that returns is a *refutation of the fix that claimed it*, not a second bug to
+    hunt. One measurement ended the investigation: instrumenting every push into `packets`/`pings`
+    with `document.hidden` **at the moment of the push** gave **zero** hidden-time pushes across 32
+    backgrounded runs, and zero frames delivered while hidden. The product had never done X and
+    could not — hole 1 needs a frame. `sim/test_bg_perf.mjs` had sampled its baseline **from Node**
+    before `newPage()`/`goto()`/`bringToFront()`, so packets a **visible** page legitimately spawned
+    in the 7–26 ms gap were charged to the hidden window; that gap's size is precisely why re-running
+    looked like a flake, and why the old `<= 0` had quietly tolerated a *decrease* for the same
+    reason without ever noticing the increase.
+    Three things fall out, in order of how much they save:
+      1. **A failure message is the harness's claim ABOUT the product, not an observation OF it.**
+         Instrument the claim before acting on it. Here it was one run and it deleted the whole
+         investigation — two sessions had already been spent fixing a product that was innocent.
+      2. **A returning red refutes the fix credited with it.** Suspect your own premise first.
+      3. **Measure the measurement boundary.** When a test compares "before" and "after" across a
+         state change, the sample must be taken *by whatever owns the state change* — here, the
+         page's own `visibilitychange` handler — never by the driver, which is always some
+         unknowable number of milliseconds early.
+    This is rule 27 with teeth: the guard's comment was **reasoned, never measured**, and read as
+    fact for as long as it stood. It was corrected in place rather than deleted, and the guard was
+    kept — it remains the only defence for its point 2, and it is **unfalsifiable in this
+    environment**, which is now written down rather than implied.
+
 ## The layered session loops (24/7 continuity)
 
 Session-scheduled loops keep the project moving while the operator is away; when a session hits a usage
