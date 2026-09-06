@@ -300,13 +300,16 @@ jobs:
         # WHAT RUNS HERE IS `--selftest`, and it is hermetic: `sim/web` on loopback under the
         # real `_headers` policy with /api/* answered at the browser, driven four times with
         # four different fake microphones. Measured 2026-09-05 — the sentence clip must pass
-        # every clause (envelope correlation 0.985 against the source, 0.314 against an
+        # every clause (envelope correlation 0.785-0.991 against the source, 0.173-0.350 against an
         # unrelated one); DIGITAL SILENCE must redden "the captured audio is AUDIBLE" (peak
         # 0.0000); A DIFFERENT CLIP — real, loud, and the wrong words — must redden "it is the
-        # clip the fake microphone played" (0.284) while leaving the audible clause GREEN, and
+        # clip the fake microphone played" (0.270-0.300) while leaving the audible clause GREEN, and
         # that is the mutation that matters, because silence reddens almost anything; and the
         # committed golden (`sim/tests/goldens/real_voice_22050_mono.wav`) must come back
-        # through the same instrument at 0.991. It also prints the overlap scorer's table and
+        # through the same instrument. The floor is 0.60 and not 0.70 because a run on a
+        # LOADED machine moved every score (the golden 0.991 -> 0.785): `wavCapture`'s
+        # ScriptProcessor drops frames when the main thread is busy, and a CI runner is a busy
+        # machine. It also prints the overlap scorer's table and
         # WATCHES the transcript assertion fail against a reference nobody said.
         run: node sim/check_hosted_mic.mjs --selftest
       - name: Mic-spend test (a refused microphone must not buy a chat+speech turn)

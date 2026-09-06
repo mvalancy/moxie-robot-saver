@@ -439,21 +439,33 @@ function bestCorrelation(template, signal, hz = 100) {
 }
 
 /* The floors for clause 3, set FROM the numbers rather than from taste. Every `--selftest`
- * run prints all of them, and these are the spread measured on 2026-09-05 across three
- * hermetic runs plus two against production:
+ * run prints all of them; this is the whole spread measured on 2026-09-05, across four
+ * hermetic runs and two against production:
  *
- *     the clip that was played   0.939 … 0.991   (0.985 on the live deployment, twice)
+ *     the clip that was played   0.785 … 0.991   (0.985 on the live deployment, twice)
  *     an unrelated clip          0.173 … 0.350
- *     mutation B, where the microphone plays the DECOY: 0.270/0.284 against the sentence
- *                                and 0.958/0.983 against the decoy — the two clauses swap,
+ *     mutation B, where the microphone plays the DECOY: 0.270 … 0.300 against the sentence,
+ *                                0.734 … 0.983 against the decoy — the two clauses SWAP,
  *                                which is the whole point of that mutation.
  *
- * So 0.70 sits ~0.24 below every true positive and 0.50 sits ~0.15 above every true
- * negative. The gap is real but it is not enormous, and the reason is stated plainly: two
+ * 0.785 IS THE INTERESTING NUMBER AND IT IS WHY THE FLOOR IS 0.60 RATHER THAN 0.70. Three
+ * of the four hermetic runs put the true positives at 0.939-0.991; the fourth ran while
+ * another project's test suite had the machine, and every score moved: the sentence clip
+ * fell 0.985 → 0.881 and the 0.75 s golden fell 0.991 → 0.785, leaving 0.085 over a 0.70
+ * floor. `mic.js::wavCapture` records through a `ScriptProcessor`, which drops frames when
+ * the main thread is busy, and a SHORT template feels each dropped frame more — the golden
+ * is 75 envelope frames against the sentence's ~400. A CI runner is a busy machine, so a
+ * floor whose margin evaporates under load is a red that says nothing about the site.
+ * 0.60 still sits 0.30 above the worst wrong-clip score, and the assertion cannot go
+ * vacuous by being loosened: `--selftest`'s mutation B fires this clause on every push and
+ * reddens if it stops discriminating.
+ *
+ * The decoy ceiling stays 0.50, between a worst true negative of 0.350 and a best
+ * wrong-clip score of 0.734. The gap is real but not enormous, for a stateable reason: two
  * clips of the same voice reading different sentences share a speaking rate and a syllable
- * rhythm, so their ENVELOPES are not independent. Anyone tightening these must re-state the
- * spread here from a run, not from memory. */
-const CORR_FLOOR = 0.70;
+ * rhythm, so their envelopes are not independent. Anyone moving either number must re-state
+ * the spread here from a run, not from memory. */
+const CORR_FLOOR = 0.60;
 const CORR_DECOY_CEIL = 0.50;
 
 /* ════════════════════════ the fake microphone's WAV ═══════════════════════════ */
@@ -519,7 +531,10 @@ async function decodeClips(puppeteer, chrome, rels, rate) {
   });
   try {
     const page = await browser.newPage();
-    await page.goto(site.url + "/sim.html", { waitUntil: "domcontentloaded", timeout: 20000 });
+    /* The HUB, not `sim.html`: this page exists only to be a same-origin `fetch` + an
+     * `AudioContext`, and the simulator would drag in three.js, a GLB and a WebGL context
+     * to decode an mp3. Any page under `sim/web` would do; the cheapest one is right. */
+    await page.goto(site.url + "/index.html", { waitUntil: "domcontentloaded", timeout: 20000 });
     const got = await page.evaluate(async (list, r) => {
       const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: r });
       const out = {};
