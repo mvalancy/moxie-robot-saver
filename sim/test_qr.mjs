@@ -246,6 +246,168 @@ if (cards) {
   }
 }
 
+// ---- 7. the printed sheet: modules on paper, read back and decoded (P0-c) ----
+// Section 6 pins two encoders against each other at the level of the PAYLOAD STRING.
+// This one goes a layer down, to the black squares `mqtt/moxie_sdk/launch_sheet.py`
+// actually draws — the thing a robot's camera sees and no string comparison can reach.
+//
+// The move is the same one this file was built for, pointed at a different pair. The
+// browser's own QR encoder (`sim/web/vendor/qrcode.js`, Kazuhiko Arase's, MIT) builds the
+// module matrix for every card at the sheet's pinned version and error level; that matrix
+// crosses into Python, where `sim/tests/helpers_qr_matrix.py` walks it the way a scanner
+// does — format information, un-mask, zig-zag, de-interleave, byte segment — and the
+// string that comes out goes to the real `launch_cards.decode`.
+//
+// WHAT IS DELIBERATELY *NOT* ASSERTED HERE, and why. The two encoders' matrices are NOT
+// byte-identical, and requiring them to be would be wrong. Measured 2026-09-06 on all 24
+// cards: same version, same error level, same mask, and the first fifteen data codewords
+// identical — segno then emits one extra 0x00 before the 0xEC/0x11 pad run where
+// qrcode.js starts padding immediately. Both are valid symbols carrying the same payload
+// (a decoder reads 0x00 as the terminator mode indicator), so terminator/pad placement is
+// implementation freedom the standard allows and neither side is wrong. The invariant
+// that MUST hold is therefore semantic — what the modules say — and that is what is
+// asserted. A byte-for-byte matrix guard here would be a false alarm waiting to happen.
+//
+// Ceiling, unchanged: this proves the ink, not the optics. No physical Moxie has read one.
+// One skip is legitimate here and exactly one: `segno` is the SDK's `cards` extra, so a
+// python with no QR encoder cannot draw a symbol. It is reported BY NAME from inside the
+// script; every other failure is a red assertion, never a skip. That split is the point —
+// a missing package that turns a guard into a silent pass is the trap this repo has hit
+// four times, and CI installs `sim/tests/requirements-hermetic.txt` (which declares segno
+// through `server/requirements.txt`) in this same job before this file runs.
+const SHEET_SCRIPT = [
+  "import sys, json",
+  "sys.path[:0] = ['mqtt', 'sim/tests']",
+  "from moxie_sdk import launch_sheet as ls",
+  "try:",
+  "    deck = ls.cards_for()",
+  "    v = ls.deck_version([p for _, _, p in deck])",
+  "except RuntimeError as e:",
+  "    print(json.dumps({'skip': str(e)})); raise SystemExit(0)",
+  "print(json.dumps({'level': ls.ERROR_LEVEL.upper(), 'version': v,",
+  "                  'geometry': ls.geometry(v), 'min_module_mm': ls.MIN_MODULE_MM,",
+  "                  'cards': [{'id': i, 'label': l, 'payload': p} for i, l, p in deck]}))",
+].join("\n");
+
+const READ_SCRIPT = [
+  "import sys, json",
+  "sys.path[:0] = ['mqtt', 'sim/tests']",
+  "import helpers_qr_matrix as qrm",
+  "from moxie_sdk import launch_cards as lc",
+  "req = json.load(sys.stdin)",
+  "out = []",
+  "for rows in req['matrices']:",
+  "    grid = [[1 if ch == '1' else 0 for ch in row] for row in rows]",
+  "    try:",
+  "        text = qrm.read_payload(grid)",
+  "    except Exception as e:",
+  "        out.append({'error': type(e).__name__ + ': ' + str(e)}); continue",
+  "    a = lc.decode(text)",
+  "    out.append({'payload': text,",
+  "                'module_id': None if a is None else a.module_id})",
+  "print(json.dumps({'read': out}))",
+].join("\n");
+
+let sheetInfo = null;
+let sheetSkip = cards ? "" : "moxie_sdk not importable";
+if (cards) {
+  // `cards` above already proved the SDK imports under this python, so anything that goes
+  // wrong from here is a defect and is recorded as one. A crashing generator must not be
+  // able to report itself as a skip — that is how the EC-level mutation of this file's
+  // own geometry passed the node lane while the pytest lane went red.
+  try {
+    const got = pyJSON(repo, SHEET_SCRIPT, {});
+    if (got.skip) sheetSkip = got.skip;
+    else sheetInfo = got;
+  } catch (e) {
+    fails.push("launch_sheet could not render the deck: " +
+               String(e.message).split("\n").filter(Boolean).pop());
+  }
+}
+if (sheetSkip) console.log("ℹ️  printed-sheet checks skipped —", sheetSkip);
+
+if (sheetInfo) {
+  // (a) the sheet prints exactly the payloads the browser would encode. Three generators
+  //     now agree on one string: the derived Python catalog, the transcribed JS one, and
+  //     the paper. The sheet is not a third transcription — it asks `launch_cards.encode`.
+  const sheetIds = sheetInfo.cards.map((c) => c.id);
+  ok(sheetIds.join(",") === CAT.slice().sort().join(","),
+     "the printed sheet's ids differ from qr.js's catalog\n       sheet: " +
+     sheetIds.join(",") + "\n       js:    " + CAT.slice().sort().join(","));
+  for (const c of sheetInfo.cards)
+    ok(c.payload === card(c.id),
+       `sheet card ${c.id}: payload differs from encodeCard\n       sheet: ${c.payload}` +
+       `\n       js:    ${card(c.id)}`);
+
+  // (b) the geometry a parent's printer will produce. Millimetres, not pixels — the whole
+  //     reason the sheet is inline SVG. The floor is practical print guidance, NOT a
+  //     measurement of Moxie's camera, which our corpus does not describe.
+  const g = sheetInfo.geometry;
+  ok(g.module_mm >= sheetInfo.min_module_mm,
+     `a printed module is ${g.module_mm.toFixed(2)} mm, under the ${sheetInfo.min_module_mm} mm floor`);
+  ok(g.units === g.modules + 8, "the symbol must carry a 4-module quiet zone on every side");
+  ok(g.grid_w_mm <= g.page_w_mm && g.used_h_mm <= g.page_h_mm,
+     `the card grid (${g.grid_w_mm} x ${g.used_h_mm} mm) does not fit the printable box ` +
+     `(${g.page_w_mm} x ${g.page_h_mm} mm) shared by A4 and US Letter`);
+
+  // (c) the browser builds each card's symbol, and Python reads the payload back OUT of
+  //     the modules. `qrcode(version, level)` is the vendored encoder the SIM already
+  //     renders with, driven at the sheet's pinned geometry.
+  const rawQr = new Function(
+    readFileSync(join(here, "web", "vendor", "qrcode.js"), "utf8") + "; return qrcode;")();
+  const matrixOf = (text) => {
+    const q = rawQr(sheetInfo.version, sheetInfo.level);
+    q.addData(text);
+    q.make();
+    const n = q.getModuleCount(), rows = [];
+    for (let r = 0; r < n; r++) {
+      let line = "";
+      for (let c = 0; c < n; c++) line += q.isDark(r, c) ? "1" : "0";
+      rows.push(line);
+    }
+    return rows;
+  };
+  const drawn = sheetInfo.cards.map((c) => matrixOf(c.payload));
+  ok(new Set(drawn.map((m) => m.length)).size === 1 &&
+     drawn[0].length === sheetInfo.geometry.modules,
+     "every card in the deck must be drawn at one symbol size");
+
+  // (d) …and a refusal drawn as real modules is still refused after being read back off
+  //     them. The string is built by qr.js's ungated formatter, drawn by qr.js's encoder,
+  //     read by our matrix reader and handed to the real decoder — the full paper path.
+  const PAPER_REFUSALS = [
+    ["out-of-catalog id on paper", Q.cardPayload("launch", "NOPE")],
+    ["sleep card on paper",        Q.cardPayload("sleep")],
+    ["launch_if_confirmed paper",  Q.cardPayload("launch_if_confirmed", "DM")],
+  ];
+  let back = null;
+  try {
+    back = pyJSON(repo, READ_SCRIPT,
+                  { matrices: drawn.concat(PAPER_REFUSALS.map((r) => matrixOf(r[1]))) });
+  } catch (e) {
+    fails.push("the matrix reader crashed on browser-built symbols: " +
+               String(e.message).split("\n").filter(Boolean).pop());
+  }
+  if (back) {
+    for (let i = 0; i < sheetInfo.cards.length; i++) {
+      const c = sheetInfo.cards[i], got = back.read[i];
+      ok(got && got.payload === c.payload,
+         `card ${c.id}: the modules read back as ${JSON.stringify(got)}, not ${c.payload}`);
+      ok(got && got.module_id === c.id,
+         `card ${c.id}: python decoded what the modules carry as ${JSON.stringify(got)}`);
+    }
+    for (let i = 0; i < PAPER_REFUSALS.length; i++) {
+      const [name, str] = PAPER_REFUSALS[i];
+      const got = back.read[sheetInfo.cards.length + i];
+      ok(got && got.payload === str,
+         `${name}: the modules did not carry ${JSON.stringify(str)} — ${JSON.stringify(got)}`);
+      ok(got && got.module_id === null,
+         `${name}: decode ACCEPTED ${JSON.stringify(str)} read off real modules as ` +
+         JSON.stringify(got) + " — paper must not widen what a card may do");
+    }
+  }
+}
+
 // ---- report ------------------------------------------------------------------
 if (fails.length) {
   console.log("❌ qr tests FAILED:");
@@ -257,4 +419,8 @@ console.log(`✅ qr tests OK — ${CASES.length} revival payloads` +
             `, ${CAT.length + 1} launch-card payloads` +
             (cards ? " byte-identical to moxie_sdk.launch_cards (+ " + REFUSALS.length +
                      " refusals refused across the boundary)" : " (parity skipped)") +
+            (sheetInfo
+              ? `, ${sheetInfo.cards.length} printed cards read back out of their own ` +
+                `modules at ${sheetInfo.geometry.module_mm.toFixed(2)} mm/module`
+              : " (sheet checks skipped)") +
             ", enum + HUD + setup.html wiring verified`".slice(0, -1));
