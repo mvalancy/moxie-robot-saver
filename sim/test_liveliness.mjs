@@ -210,6 +210,88 @@ async function dockGeometry(page) {
 }
 
 /* ======================================================================== *
+ * 3b. SHE REACTS, AND SHE THINKS VISIBLY — the loading-bar layer
+ * ======================================================================== *
+ *
+ * "Reduce the amount of time where Moxie is idle or what she is doing is unclear."
+ * Between a tap and an answer there were two dead gaps — the recording and the gateway
+ * round trip — and the only feedback in either was grey text. The rules that keep the fix
+ * from being annoying are the ones worth testing, so all four are asserted: it is subtle,
+ * it never repeats itself back to back, it does NOT fire on a fast turn, and it yields.
+ */
+{
+  const page = await open(1280, 900);
+  const faces = await page.evaluate(() => {
+    // Record every face and gesture the aliveness layer asks for, without a robot.
+    window.__seen = { faces: [], gestures: [] };
+    const realFace = window.moxie.setFace;
+    window.moxie.setFace = (f) => { window.__seen.faces.push(f); return realFace.call(window.moxie, f); };
+    return typeof window.moxieAlive;
+  });
+  eq(faces, "object", "the aliveness layer is exposed for the page to drive");
+
+  // ---- the tap is acknowledged IMMEDIATELY -------------------------------- //
+  const listened = await page.evaluate(() => {
+    window.__seen.faces.length = 0;
+    window.moxieAlive.listening();
+    return { faces: window.__seen.faces.slice(), state: window.moxieAlive.__state() };
+  });
+  /* ASSERTED ON THE LAYER'S OWN RECORDED PICK, not on a count of `setFace` calls. The
+   * first draft counted them and read 3 where it expected 1, because `setFace` is a SHARED
+   * channel: the avatar blinks through it and ambient self-talk drives it too. Counting
+   * calls on a channel three systems write to measures the page, not the feature
+   * (playbook rule 11). `__state().last` is what THIS layer chose. */
+  ok(["curious", "happy"].includes(listened.state.last.listen),
+     `opening the mic picks an attentive face at once (got ${listened.state.last.listen})`);
+  ok(listened.faces.length >= 1, "…and it really did reach the avatar");
+  eq(listened.state.armed, false, "…and listening arms no thinking timer");
+
+  // ---- thinking is DELAYED, so a fast turn never flashes a pose ----------- //
+  const fast = await page.evaluate(() => {
+    window.__seen.faces.length = 0;
+    window.moxieAlive.thinking();
+    const armed = window.moxieAlive.__state().armed;
+    window.moxieAlive.settled();                       // an answer inside the delay
+    return { armed, faces: window.__seen.faces.slice(), after: window.moxieAlive.__state() };
+  });
+  eq(fast.armed, true, "a turn in flight arms the thinking cue…");
+  eq(fast.after.stage, 0,
+     "…but a turn answered inside the delay never reaches a beat: a pose that flashes for 200 ms is noise");
+  eq(fast.after.armed, false, "…and settling disarms it");
+  eq(fast.after.stage, 0, "…leaving no stage behind");
+
+  // ---- a SLOW turn does get a thinking face ------------------------------ //
+  const slow = await page.evaluate(() => new Promise((r) => {
+    window.__seen.faces.length = 0;
+    window.moxieAlive.thinking();
+    setTimeout(() => r({ faces: window.__seen.faces.slice(), state: window.moxieAlive.__state() }), 1400);
+  }));
+  eq(slow.state.stage, 1, "a turn still waiting after the delay DOES reach the first thinking beat");
+  ok(["thinking", "curious"].includes(slow.state.last.thinkFace),
+     `…and picked a thinking face (got ${slow.state.last.thinkFace})`);
+  ok(slow.faces.includes(slow.state.last.thinkFace), "…which really reached the avatar");
+  await page.evaluate(() => window.moxieAlive.settled());
+
+  // ---- and it never repeats itself back to back -------------------------- //
+  // The rule `mqtt/moxie_sdk/filler.py::pick_filler` uses on the robot path: a stuck line
+  // reads as a broken robot rather than a thinking one. Ten consecutive picks from a
+  // two-item list must alternate — never the same twice running.
+  const picks = await page.evaluate(() => {
+    const out = [];
+    for (let i = 0; i < 10; i++) {
+      window.moxieAlive.listening();
+      out.push(window.moxieAlive.__state().last.listen);   // the layer's own choice
+    }
+    return out;
+  });
+  let backToBack = 0;
+  for (let i = 1; i < picks.length; i++) if (picks[i] === picks[i - 1]) backToBack++;
+  eq(backToBack, 0, `no cue is ever shown twice in a row (${picks.join(",")})`);
+  ok(new Set(picks).size > 1, "…and it really does vary rather than being one fixed cue");
+  await page.close();
+}
+
+/* ======================================================================== *
  * 4. THE SPEECH BUBBLE HANGS OVER HER HEAD
  * ======================================================================== */
 {

@@ -125,9 +125,77 @@
 
   var rec = null, chunks = [], stream = null, recording = false, capTimer = null;
 
+  /* ======================================================================== *
+   * THE SILENCE AUTO-STOP — "the user pressed the button and it never resets"
+   *
+   * Before this, the ONLY thing that ended a recording was the visitor pressing the
+   * button again or the 15 s hard cap. Press it, say four words, and Moxie sat there with
+   * a live microphone for another fourteen seconds — dead air that reads as a robot that
+   * has stopped working, and (on the hosted demo) fourteen seconds of nothing uploaded as
+   * audio somebody pays to transcribe.
+   *
+   * THE ONE THING IT MUST NOT DO IS CUT SOMEBODY OFF, which is why it is two rules rather
+   * than one threshold:
+   *
+   *   · `SILENCE_END_MS` (1100 ms) — hang up only AFTER speech has been heard and then
+   *     stopped. A child pausing mid-sentence to think is the case this must survive, so
+   *     it is well past a breath (~300 ms) and past the beat before a second clause, but
+   *     short enough that the turn does not feel like it stalled. It only ever arms once
+   *     `speechSeen` is true, so a quiet room can never end a recording that has not begun.
+   *   · `NO_SPEECH_MS` (5000 ms) — if NOTHING above the threshold has arrived at all, the
+   *     button was pressed by accident, or the mic is muted or broken. Ending is kinder
+   *     than fifteen seconds of a listening indicator that will transcribe nothing, and
+   *     the size floor (`DEMO_MIN_AUDIO_BYTES`) would refuse the clip anyway.
+   *
+   * `SPEECH_RMS` (0.02) is a level, not a voice detector, and is deliberately generous:
+   * room tone on a laptop sits around 0.002-0.008, speech at a normal distance is 0.05+.
+   * Being wrong towards "that was speech" costs a slightly longer recording; being wrong
+   * the other way cuts a child off, and only one of those is acceptable.
+   *
+   * THE HARD CAP IS UNTOUCHED and still the outer bound (§4.1). This can only ever end a
+   * recording EARLIER, never extend one, so nothing it does can raise the ceiling on what
+   * a visitor spends.
+   * ======================================================================== */
+  var SPEECH_RMS = 0.02;
+  var SILENCE_END_MS = 1100;
+  var NO_SPEECH_MS = 5000;
+  var silenceTimer = null, speechSeen = false, startedAt = 0;
+
+  function clearSilence() {
+    if (silenceTimer !== null) { clearTimeout(silenceTimer); silenceTimer = null; }
+  }
+
+  /** One RMS block from the capture. Arms, disarms and re-arms the auto-stop. */
+  function onLevel(rms) {
+    if (!recording) return;
+    var loud = rms >= SPEECH_RMS;
+    if (loud) {
+      if (!speechSeen) { speechSeen = true; stats.speechDetected++; }
+      clearSilence();                       // still talking: the clock restarts
+      return;
+    }
+    if (silenceTimer !== null) return;      // already counting down
+    var wait = speechSeen ? SILENCE_END_MS : Math.max(0, NO_SPEECH_MS - (Date.now() - startedAt));
+    silenceTimer = setTimeout(function () {
+      silenceTimer = null;
+      if (!recording) return;
+      if (speechSeen) {
+        stats.silenceStops++;
+        status("● got it — transcribing…");
+      } else {
+        stats.emptyStops++;
+        status("I did not hear anything");
+      }
+      stop();
+    }, wait);
+  }
+
   /** Recorded, never sampled: `sim/test_demo_ears.mjs` asserts on these rather than on a
    *  live microphone (playbook rule 11). */
-  var stats = { starts: 0, stops: 0, autoStops: 0, posts: 0, transcripts: 0, fallbacks: 0,
+  // `speechDetected` / `silenceStops` / `emptyStops` are the auto-stop's recorded
+  // facts (playbook rule 11): a test asserts that the recording ended BECAUSE the
+  // room went quiet, not merely that it ended.
+  var stats = { starts: 0, stops: 0, autoStops: 0, speechDetected: 0, silenceStops: 0, emptyStops: 0, posts: 0, transcripts: 0, fallbacks: 0,
                 tooShort: 0, tooLong: 0, botUnavailable: 0, botTokens: 0,
                 reasons: [], lastUrl: "", lastBytes: 0,
                 lastMime: "", lastCapMs: 0, lastKind: "" };
@@ -543,6 +611,18 @@
       var mute = ctx.createGain();
       mute.gain.value = 0;
       var buffers = [], total = 0, running = false;
+      /* THE LEVEL METER, computed from frames this handler already has.
+       *
+       * `onLevel` is called with the RMS of every 4096-sample block — about twelve times a
+       * second at 48 kHz — and `start()` uses it to stop recording once the visitor has
+       * clearly finished. Doing it HERE is what makes it free: the alternative is a second
+       * `AnalyserNode` on the same stream polled from a timer, which is another node,
+       * another buffer and another clock for a number this loop already has in its hands.
+       *
+       * `defaultCapture` (MediaRecorder) has no equivalent and does not get one — it never
+       * sees samples. That path keeps the hard cap alone, which is why the auto-stop is
+       * described everywhere as a property of the HOSTED capture rather than of the mic. */
+      var onLevel = null;
 
       node.onaudioprocess = function (e) {
         if (!running) return;
@@ -551,6 +631,11 @@
         copy.set(ch);
         buffers.push(copy);
         total += copy.length;
+        if (onLevel) {
+          var sum = 0;
+          for (var i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
+          onLevel(Math.sqrt(sum / ch.length));
+        }
       };
       source.connect(node);
       node.connect(mute);
@@ -576,7 +661,12 @@
           if (recorder.onstop) recorder.onstop();
         },
       };
-      return { recorder: recorder, stream: s };
+      return {
+        recorder: recorder,
+        stream: s,
+        /** Subscribe to the RMS of each captured block. Present only on this capture. */
+        setLevelListener: function (fn) { onLevel = typeof fn === "function" ? fn : null; },
+      };
     });
   }
 
@@ -621,10 +711,20 @@
       };
       rec.start();
       recording = true;
+      speechSeen = false;
+      startedAt = Date.now();
+      clearSilence();
+      // Only the hosted (WAV) capture hands us levels; MediaRecorder never sees samples.
+      if (got && typeof got.setLevelListener === "function") got.setLevelListener(onLevel);
       stats.starts++;
       document.body.setAttribute("data-mic", "on");
       status("● listening…");
       if (window.moxieAudio) window.moxieAudio.sfx("listen");
+      // SHE NOTICES THE TAP. Immediate and small — this is the acknowledgement that the
+      // button did something, and it is the difference between a robot listening and a
+      // robot sitting there. `bridge.js::moxieAlive` owns the vocabulary and the
+      // never-twice-running rule.
+      if (window.moxieAlive) window.moxieAlive.listening();
 
       // THE HARD STOP (§4.1). See the header: this, and not the byte cap, is what bounds
       // how much gateway time one visitor can spend on the ears.
@@ -648,6 +748,10 @@
 
   function stop() {
     if (!recording) return;
+    clearSilence();
+    // The recording is over; whatever comes next (a transcript, a refusal, nothing at all)
+    // owns her face from here. `thinking()` is armed by the SEND, not by the stop.
+    if (window.moxieAlive) window.moxieAlive.settled();
     recording = false;
     stats.stops++;
     clearCap();
