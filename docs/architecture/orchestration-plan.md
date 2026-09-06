@@ -991,3 +991,31 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   with that as a **hypothesis**, against the rival (the off-origin interceptor genuinely aborting
   it) which needs the opposite fix. **#172's blocker is separately confirmed dead**: `bg_perf`
   green, 25 checks, on the merged tree, verified in a throwaway worktree rather than assumed.
+
+- **2026-09-06 — the owner's mobile steer is DONE in production, and the plan still says it is
+  not.** The "Most valuable next slice" block records a production measurement on a 390×844 phone
+  finding the Talk box **`0×0` on load** and, after tapping `CONTROLS`, at **`y=2095`** — roughly
+  2000 px below the fold, so the turn worked and was merely unreachable. **Re-measured today
+  against live `moxie.mattvalancy.com/sim` on that exact viewport, and every number has changed:**
+
+  | control | id | label | size | top | in fold |
+  |---|---|---|---|---|---|
+  | text field | `#speech-input` | *Message to Moxie* | 211×44 | 763 | ✅ |
+  | mic | `#mic-btn` | *Listen* | 89×44 | 763 | ✅ |
+  | send | `#speech-btn` | *Ask* | 46×44 | 763 | ✅ |
+
+  **3 of 3 in the fold**, all on one row at the bottom, all 44 px touch targets;
+  `document.scrollHeight` is **844** against a **844** viewport, i.e. the page no longer scrolls at
+  all; `#panel` is 374×**50** rather than a full-height rail; and `#chat-cue` reads *"Talk to Moxie
+  — type a message, or tap Listen and speak."* That is (a) the bottom composer, (b) the rail
+  optional, and (c) a control that says what it is — the three pieces of the owner's steer that
+  were specified enough to build. **(d) "Gamify this for regular people" remains unspecified and
+  still must not be guessed at.**
+  Credit where due: this landed from the *other* live session's `sim.html`/`style.css` work, not
+  from this loop. **The lesson is about the plan, not the feature** — a "Most valuable next slice"
+  block that describes a fixed problem sends the next agent to build what already exists, which is
+  the same failure as a comment asserting a guard that was never measured (rule 30). A ranking that
+  cites a measurement should carry the measurement's **date and viewport** so the next reader knows
+  when to re-take it rather than trusting it.
+  Method note for whoever re-measures: `waitUntil: "networkidle2"` **never settles** on this page —
+  the ambient loop keeps the network busy by design. Use `domcontentloaded` plus a settle delay.
