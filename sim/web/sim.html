@@ -363,6 +363,46 @@
          aria-relevant="additions text" aria-atomic="false" tabindex="0"
          aria-label="Comms log — what you and Moxie say to each other"></div>
 
+    <!-- THE THREE OPENERS — the only thing on this page that both NAMES something to say
+         to her and SAYS IT. Specified verbatim in
+         docs/architecture/backlog/gamify-the-public-sim.md's 🅐 ("the reachable first
+         turn"): *"Beside it, three tappable openers — Tell me a joke, How are you
+         feeling?, Play a game with me."*
+
+         WHY THEY ARE HERE AND NOT WITH THE PHRASE CHIPS, which is the whole distinction.
+         `#speech-chips` (above, :182) play PRE-CACHED SHIPPED AUDIO: they make Moxie say a
+         line this site recorded, with no server, no spend and no turn. That is a genuine
+         engineering control, it is not how a visitor talks to her, and it STAYS exactly
+         where and what it is. These are the opposite thing: a tap sends the VISITOR's
+         words down the same path a typed line takes — `hud.js`'s `wireOpeners` ->
+         `moxieTypedTurn.send` -> `moxieBridge.sendUserTurn` — so an opener spends, queues,
+         is rate-limited, is refused and is answered exactly as if it had been typed.
+         Nothing here is canned: the reply is whatever the brain says, in her real voice.
+
+         THE LABEL IS THE MESSAGE, and there is deliberately no second copy of it. No
+         `data-text` mirroring the button's words: `wireOpeners` reads `textContent`, so
+         the string a visitor reads and the string Moxie receives cannot drift apart. The
+         phrase chips taught this page that lesson from the other side — their visible text
+         is truncated IN JS, which is exactly why each one has to carry an `aria-label`
+         with the whole line. Nothing truncates these in script: on a phone the label WRAPS
+         (three equal columns, see style.css) and above 900 px it is a pill wide enough not
+         to, so `textContent` and the accessibility tree always carry the whole sentence.
+
+         THEY STEP ASIDE ONCE THERE IS A CONVERSATION — the same `:has()` rule and the same
+         reasoning as `#chat-cue` above. An opener has done its job the moment the log has
+         a turn in it, and the 50 px it gives back on a phone goes to the log. A browser
+         without `:has()` drops the rule and keeps them, which is the right way for this to
+         fail: still usable, merely in the way.
+
+         `role="group"` + `aria-label` rather than a bare `<div>`: three buttons whose
+         names are three unrelated sentences need something to say what the set IS before
+         a screen-reader user tabs into the middle of it. -->
+    <div id="chat-openers" role="group" aria-label="Conversation starters">
+      <button class="opener" type="button">Tell me a joke</button>
+      <button class="opener" type="button">How are you feeling?</button>
+      <button class="opener" type="button">Play a game with me</button>
+    </div>
+
     <section class="sub" id="composer">
       <div class="row">
         <!-- The accessible name stays "Message to Moxie" (asserted by name in

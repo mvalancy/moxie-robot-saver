@@ -181,6 +181,64 @@
     });
   })();
 
+
+  /* THE THREE OPENERS — `#chat-openers`, in the chat dock under the log.
+   *
+   * Three buttons that each send a whole first turn for a visitor who has been told
+   * nothing about this robot: *"Tell me a joke"*, *"How are you feeling?"*, *"Play a game
+   * with me"* (docs/architecture/backlog/gamify-the-public-sim.md, 🅐).
+   *
+   * ONE LINE OF REAL WORK, and every word of the rest of this note is about WHICH PATH it
+   * takes. `window.moxieTypedTurn.send` is `cloud-transport.js`'s `sendTyped` — "the one
+   * typed path, shared by whichever control is carrying it", in its own header. Going
+   * through it buys three things, and each one is a bug avoided rather than a nicety:
+   *
+   *   · THE SPEND STORY IS INHERITED, NOT RE-IMPLEMENTED. `canSpendLiveTurn()`, the
+   *     Turnstile token, the bounded FIFO queue and the server's `admit()` all apply
+   *     unchanged, because an opener IS a typed line as far as everything downstream is
+   *     concerned. A chip with its own send path would be a second, cheaper way to spend
+   *     the gateway, and nothing would have noticed until the bill.
+   *   · THE CLIENT-SIDE CAP AND THE STATUS LINE come with it (`maxChars()` and
+   *     `#chat-status`), so a refusal is explained under the control the visitor used.
+   *   · IT MEANS THE SAME THING IN BOTH ADOPTION STATES, which a synthetic click on
+   *     `#speech-btn` would NOT. That button is the "ask Moxie" control only on a page
+   *     whose typed turn adopted it; on a self-hosted page with a live Piper sidecar it
+   *     still means "SAY this text out loud", so faking a click there would have Moxie
+   *     announce "Tell me a joke" in her own voice instead of answering it.
+   *
+   * DELEGATED FROM THE CONTAINER rather than bound per button: the three are static markup
+   * today, and one listener on the group keeps that true if a fourth ever arrives from
+   * data. `closest("button.opener")` because a tap can land on a text node inside the
+   * button — the same reason `sim/test_mobile_layout.mjs`'s `hitTest` accepts a descendant.
+   *
+   * THE VISIBLE LABEL IS THE MESSAGE. There is no `data-text` attribute to drift out of
+   * sync with what the visitor read; see the note in `sim.html` beside the markup. */
+  (function wireOpeners() {
+    var box = document.getElementById("chat-openers");
+    if (!box) return;
+    function send(text) {
+      var t = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+      if (!t) return false;
+      var typed = window.moxieTypedTurn;
+      if (typed && typeof typed.send === "function") return !!typed.send(t);
+      /* No transport at all — a fork that dropped `cloud-transport.js`. The bridge still
+       * echoes the turn and `stub.js` still answers it, which is the scripted behaviour
+       * this site had before the gateway existed. A dead chip would be worse than a free
+       * one, and this is the same fallback `mic.js` keeps for the same reason. */
+      if (window.moxieBridge && typeof window.moxieBridge.sendUserTurn === "function") {
+        window.moxieBridge.sendUserTurn(t);
+        return true;
+      }
+      return false;
+    }
+    box.addEventListener("click", function (e) {
+      var t = e.target;
+      var b = t && t.closest ? t.closest("button.opener") : null;
+      if (!b || !box.contains(b)) return;
+      send(b.textContent);
+    });
+  })();
+
   /* Revive QR — the codes that re-home a real robot are plain JSON, so we can
    * build them client-side: a phone loading the static site can revive a Moxie
    * with nothing installed. Byte-identical to moxie_toolkit's encoders.
