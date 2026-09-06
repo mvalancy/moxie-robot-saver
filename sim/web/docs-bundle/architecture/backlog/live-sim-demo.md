@@ -1430,7 +1430,7 @@ would score 1.
 
 All arms against the **same** gateway and the same model in one session, on a local host for the real
 `chat.js` (`DEMO_TURN_SHAPE` off is byte-identical to the pre-change body, so this is one tree A/B'd
-against itself, not two deployments compared). **309 gateway calls.**
+against itself, not two deployments compared). **293 gateway calls**, every one of them counted by `_lib/limits.js::noteUpstreamCall`.
 
 | `loop`, 6 conversations / 42 turns each arm | moves used (of 3) | mean `runMax` | **worst `runMax`** | `maxOverlap` | `exactDupes` | `repeatOpening` | `questionRate` | moods |
 |---|---|---|---|---|---|---|---|---|
