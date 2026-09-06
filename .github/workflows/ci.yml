@@ -293,37 +293,38 @@ jobs:
         # (`--use-file-for-fake-audio-capture`) and drives the real page: `getUserMedia`, the
         # permission grant, `mic.js::wavCapture`'s ScriptProcessor graph, `encodeWav`'s
         # 48 kHz -> 16 kHz decimation, and the upload. Against a DEPLOYED site it spends real
-        # gateway calls — one STT + one chat + one TTS — which is why the network half is
-        # wired to NO push and NO schedule: see the file's header and the opt-in dispatch job
-        # in sim/ci/deployed.yml.
+        # gateway calls, which is why the network half is wired to NO push and NO schedule —
+        # see the opt-in dispatch job in sim/ci/deployed.yml.
         #
-        # WHAT THIS TIER CLAIMS: the composer is reachable with the rail shut, a device opens
-        # on a real page, the upload is a 16 kHz mono RIFF/WAVE the SERVER's own reader
-        # accepts, it is audible rather than silence, IT IS THE CLIP THAT WAS PLAYED rather
-        # than a different one, the transcript reaches the log, her gateway voice is
-        # scheduled, and nothing fires a CSP violation.
+        # WHAT THIS TIER CLAIMS: the composer is reachable with the rail shut; a device really
+        # opens on a real page; the upload is a 16 kHz mono RIFF/WAVE the SERVER's own reader
+        # accepts, of a plausible duration and size; it is AUDIBLE rather than silence; the
+        # transcript reaches the comms log; her gateway voice is scheduled; and the page fires
+        # no CSP violation and logs no console error.
         #
-        # WHAT IT DOES NOT CLAIM, so a green run is not misread: that the recording is a
-        # FAITHFUL copy of what was played. This tier reddened once on exactly that
-        # (run 34013443378) and the cause was the runner, not the site — its capture
-        # SATURATES, `peak 1.0000` in three of four cases, which halves an envelope score
-        # while the ordering stays correct in all four. So the magnitude floor is asserted
-        # only by `--dry-run` and the paid run, and printed here; what is asserted here is
-        # the ORDERING, produced from one recording on one machine, which is the only kind of
-        # number that can survive a runner nobody has characterised. It is taken as a VOTE
-        # over ~24 one-second chunks rather than as a difference of scores, because a
-        # difference was measured to be a coin toss under load — on a 24-core box at load 29
-        # a healthy run scored +0.058 against a mutation's +0.038, while the vote separates
-        # the same two populations 0.750-0.875 against 0.208-0.429.
+        # WHAT IT DELIBERATELY DOES NOT CLAIM: that the recording is the right recording, or a
+        # faithful one. Both are statistics over a BROWSER CAPTURE, and this runner's capture
+        # cannot carry them. Run 34013443378 reddened because the capture SATURATES
+        # (`peak 1.0000`); the rewrite to a chunked log-RMS vote survived that — and then run
+        # 101437894164 reported something worse than a red: the mutant that plays a DIFFERENT
+        # clip PASSED at 71 % (medians 0.585 sentence / 0.514 decoy). A false green on the one
+        # case that proves the audio is the right audio. The scorer is fine — handed the
+        # fixtures directly it separates them 100 %/0 % — the runner's capture is degraded past
+        # the point where the statistic means anything, and no model reproduced it (that box
+        # votes 20-47 % on the same mutant at every load and saturation tried).
         #
-        # TEETH: digital silence must redden "audible"; A DIFFERENT CLIP — real, loud, the
-        # wrong words — must redden "it is the clip that was played" while audible stays
-        # green; the committed golden must come back through the same instrument; and the
-        # DEGRADATION GAUNTLET re-scores the audio the baseline case really uploaded under
-        # seven modelled capture defects (saturation, hard saturation, 5/15/30 % of
-        # ScriptProcessor blocks dropped, a very quiet input), requiring the clause to hold
-        # each time AND to FAIL with the templates swapped. That last part is what keeps this
-        # honest on a machine it has never run on.
+        # So those two clauses are asserted by `--dry-run` and the paid run, against a real
+        # deployment, and REPORTED here. What gates every push instead is deterministic:
+        #   · SCORER PROOF — the same scorer over the committed fixtures, no browser in the
+        #     path: the sentence must win, the DECOY must LOSE, the golden must win. Identical
+        #     on every machine, and still loud if the measure stops discriminating.
+        #   · DEGRADATION GAUNTLET — the fixture, looped as the fake device loops it, put
+        #     through seven modelled capture defects (saturation, hard saturation, 5/15/30 % of
+        #     ScriptProcessor blocks dropped, a very quiet input); the clause must hold each
+        #     time AND must fail with the two templates swapped.
+        #   · MUTATION A — digital silence through a REAL browser capture must redden the
+        #     AUDIBLE clause. A binary tooth (peak 0.0000 against 0.96), and it reddened
+        #     correctly on the runner too.
         run: node sim/check_hosted_mic.mjs --selftest
       - name: Mic-spend test (a refused microphone must not buy a chat+speech turn)
         # The audit finding this closes: `mic.js` consoles a failed microphone with a

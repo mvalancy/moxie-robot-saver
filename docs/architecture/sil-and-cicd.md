@@ -414,22 +414,45 @@ medians does not — across the same nine conditions, true positives run **0.750
 inversions **0.208–0.429**, a gap of **0.32** against the difference's 0.02. The threshold is
 0.60, in the middle of that gap and deliberately not 0.5 + ε.
 
-The fidelity magnitude (`FIDELITY_FLOOR`) is asserted by `--dry-run` and the paid run, where the
-audio path is somebody's to look at, and merely printed in CI.
+**Then the runner failed a second time, and the second failure changed the design.** The vote
+survived saturation on the runner exactly as predicted — but the same run reported this:
 
-Keeping that honest is the **degradation gauntlet**: it takes the audio the baseline browser
-case really uploaded and re-scores it under seven modelled capture defects — saturation, hard
-saturation, 5/15/30 % of blocks dropped, a very quiet input — requiring the clause to hold each
-time *and* requiring the same audio to **fail** with the two templates swapped. It is arithmetic
-over bytes already captured, so it costs nothing, cannot flake, and puts the exact environment
-that broke this file permanently under test — a threshold that only holds on the machine it was
-tuned on cannot survive contact with the gauntlet.
+    mutation B (the DECOY clip played)  ->  71 % of 24 chunks voted for the SENTENCE
+                                            medians 0.585 sentence / 0.514 decoy
+
+A **false green** on the one case that proves the audio is the right audio, which is worse than
+a red. The scorer is not at fault: handed the two fixtures directly it separates them **100 % /
+0 %**. The runner's *capture* is degraded past the point where a waveform statistic over it
+means anything, and no model reproduced it — this developer's box votes 20-47 % on that same
+mutant at every load and saturation tried.
+
+A statistic nobody can reproduce is not a thing to gate a merge on. So **both statistics over a
+browser capture — the identity vote and the fidelity magnitude — are asserted only by
+`--dry-run` and the paid run**, against a real deployment where the audio path is somebody's to
+look at, and are *reported* in CI. What gates every push instead is deterministic:
+
+* **the scorer proof** — the same scorer over the committed fixtures with no browser in the
+  path: the sentence must win, the **decoy must lose**, the golden must win. Identical on every
+  machine, and still loud if the measure stops discriminating;
+* **the degradation gauntlet** — the fixture, looped as the fake device loops it, through seven
+  modelled capture defects, each of which must hold *and* must fail with the templates swapped;
+* **mutation A** — digital silence through a real browser capture must redden the *audible*
+  clause. A binary tooth (peak 0.0000 against 0.96) that reddened correctly on the runner too.
+
+The **degradation gauntlet** degrades the *committed fixture* rather than a browser capture,
+and that swap is the same lesson once more: degrading the runner's own already-degraded
+recording proves something only on the machines that happened to record well — run 101437894164
+passed the gauntlet while a real mutant sailed through at 71 %. Over the fixture it is pure
+arithmetic on bytes that are identical everywhere, so it costs nothing, cannot flake, and a
+threshold that only holds on the machine it was tuned on cannot survive it.
 
 **What it does not prove:** the clip is the site's own prerendered speech, not a human being.
 Point `MOXIE_MIC_WAV` + `MOXIE_MIC_TEXT` at a recording of a child and the same run closes that
 too. And a green `--selftest` is **not** "the audio round trip is verified": the fast tier runs
-no ASR (the transcript is a fixture) and does not assert recording fidelity — only that a device
-opened, the upload is a well-formed audible 16 kHz WAV, and it is the clip that was played.
+no ASR (the transcript is a fixture), and it asserts neither recording fidelity **nor that the
+capture is the clip that was played** — both are browser-capture statistics this runner cannot
+carry. It asserts that a device opened, that the upload is a well-formed *audible* 16 kHz WAV,
+and that the scorer still discriminates on committed bytes.
 
 ## Run it now
 

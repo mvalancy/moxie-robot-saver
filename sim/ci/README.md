@@ -110,11 +110,16 @@ that the capture is audible rather than silence, that **the audio uploaded is th
 played** rather than a different one, and that nothing fires a CSP violation. It does **not**
 prove recording *fidelity*, and that exclusion is deliberate: this tier reddened once on exactly
 that (run 34013443378) because **the runner's own microphone capture saturates** — `peak 1.0000`
-in three of four cases, which flattens an amplitude envelope — while the *ordering* of "played
-clip vs unrelated clip" stayed correct in all four. So what is asserted here is the ordering, as
-a **vote** over ~24 one-second chunks (a difference of scores was measured to be a coin toss
-under load: healthy +0.058 against a mutation's +0.038), and the magnitude floor is asserted only
-where the audio path is a known quantity (`--dry-run`, the paid run) and printed here. It also runs no ASR:
+in three of four cases, which flattens an amplitude envelope. The rewrite to a chunked log-RMS
+**vote** survived that on the runner; then run 101437894164 showed something worse than a red —
+the mutant that plays a **different clip PASSED at 71 %**, a false green on the one case that
+proves the audio is the right audio. Handed the fixtures directly the scorer separates them
+100 %/0 %, so it is the runner's *capture* that cannot carry the statistic, and no model
+reproduced it. **Both browser-capture statistics — identity and fidelity — are therefore
+asserted only by `--dry-run` and the paid run** and printed here. The push gate is deterministic
+instead: a **scorer proof** over the committed fixtures (the decoy must lose), a **degradation
+gauntlet** over the looped fixture, and **silence** through a real capture reddening the audible
+clause. It also runs no ASR:
 the transcript is a fixture, so nothing here says the ears work. The
 [deployed-check section](../../docs/architecture/sil-and-cicd.md#the-audio-clause-is-an-ordering-not-a-magnitude-and-that-is-a-scar)
 carries the measurements.

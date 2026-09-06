@@ -622,15 +622,67 @@ const IDENTITY_VOTE = 0.60;
  */
 const FIDELITY_FLOOR = 0.60;
 
+/* ═══════════════ the scorer proof — what actually gates every push ════════════ *
+ * THE SAME SCORER, OVER THE COMMITTED FIXTURES, WITH NO BROWSER IN THE PATH.
+ *
+ * This exists because CI run 101437894164 reported a FALSE GREEN: mutation B played the
+ * DECOY clip through the fake microphone and the vote came back 71 % for the SENTENCE
+ * (medians 0.585 / 0.514). The scorer was not at fault — handed these same fixtures directly
+ * it separates them 100 % / 0 % — and no model built here reproduced the runner's capture at
+ * any saturation, drop rate or load (this box votes 20-47 % on that mutant every time).
+ *
+ * A statistic nobody can reproduce is not a thing to gate a merge on. So the push gate is
+ * this instead: feed the scorer each fixture AS THOUGH IT WERE THE CAPTURE and require it to
+ * pick the right one — both directions, over committed bytes, identical on every machine.
+ *
+ *     capture = the sentence fixture   -> must vote FOR the sentence
+ *     capture = the DECOY fixture      -> must vote AGAINST it   (this is the tooth)
+ *     capture = the committed golden   -> must vote FOR the golden
+ *
+ * It does not prove a browser capture is faithful, and nothing that gates a push can, on a
+ * machine nobody can observe — that claim belongs to `--dry-run` and the paid run against a
+ * real deployment. What this proves is that the MEASURE still discriminates, which is the
+ * part a refactor can quietly break.
+ */
+function scorerProof(c, fx) {
+  const vsDecoy = { source: fx.spoken.pcm, sourceRate: fx.spoken.rate,
+                    decoyPcm: fx.decoy.pcm, decoyRate: fx.decoy.rate };
+  const goldenVsDecoy = { source: fx.golden.pcm, sourceRate: fx.golden.rate,
+                          decoyPcm: fx.decoy.pcm, decoyRate: fx.decoy.rate };
+  const PROOFS = [
+    ["the sentence fixture", fx.spoken.pcm, fx.spoken.rate, vsDecoy, true],
+    ["the DECOY fixture (must lose)", fx.decoy.pcm, fx.decoy.rate, vsDecoy, false],
+    ["the committed golden", fx.golden.pcm, fx.golden.rate, goldenVsDecoy, true],
+  ];
+  console.log(`\n  the scorer, over committed fixtures — no browser, no device, no machine variance`);
+  console.log(`    capture                          vote   played  unrelated   verdict`);
+  for (const [name, pcm, rate, ctx, shouldWin] of PROOFS) {
+    const r = score(pcm, rate, ctx);
+    const won = r.vote >= IDENTITY_VOTE;
+    console.log(`    ${name.padEnd(32)} ${(r.vote * 100).toFixed(0).padStart(3)}%   ` +
+                `${r.good.toFixed(3)}    ${r.bad.toFixed(3)}    ` +
+                `${won === shouldWin ? "as expected ✓" : "WRONG ✗"}`);
+    c.ok(won === shouldWin,
+         `scorer proof "${name}": expected the scorer to ${shouldWin ? "PICK" : "REJECT"} ` +
+         `the reference clip; it voted ${(r.vote * 100).toFixed(0)}% over ${r.chunks} chunks ` +
+         `(threshold ${(IDENTITY_VOTE * 100).toFixed(0)}%; medians ${r.good.toFixed(3)} ` +
+         `played vs ${r.bad.toFixed(3)} unrelated)`);
+  }
+}
+
 /* ════════════════ the degradation gauntlet (the CI failure, under test) ═══════ *
  * `--selftest` browser cases prove the instrument works on THIS machine. This proves it
  * survives a machine it has not got — specifically the one that reddened CI run
  * 34013443378, whose capture saturated at peak 1.0000 and halved every score.
  *
- * It takes the REAL audio the baseline browser case uploaded and degrades it the way a
- * runner does, then re-runs the identity clause over each degraded copy. No browser, no
- * clock, no network: it is arithmetic over bytes that were already captured, so it costs
- * nothing and cannot flake. Two things must hold for every degradation:
+ * It takes the COMMITTED FIXTURE and degrades it the way a runner does, then re-runs the
+ * identity scorer over each degraded copy. No browser, no device, no clock, no network: it
+ * is arithmetic over bytes that are the same on every machine, so it costs nothing and
+ * cannot flake. (It used to degrade the baseline case's real upload, which sounded stronger
+ * and was weaker: a degradation applied to the runner's own already-degraded capture proves
+ * something only on the machines that happened to record well. CI run 101437894164 passed
+ * this gauntlet while a real mutant sailed through at 71 %.) Two things must hold for every
+ * degradation:
  *
  *   · the clip that WAS played still wins the chunk vote by `IDENTITY_VOTE`;
  *   · with the two templates SWAPPED, the same audio must FAIL — otherwise the margin is
@@ -693,6 +745,23 @@ function dropBlocks(pcm, rate) {
   return out;
 }
 
+/**
+ * The fixture as the fake device would actually deliver it: LOOPED to `seconds`.
+ *
+ * The gauntlet needs this rather than one bare copy of the clip, and the reason is sample
+ * size. Dropping 30 % of the blocks from a 3.25 s fixture leaves ~2.3 s, which is THREE
+ * one-second chunks — a vote over three chunks is noise, and it duly came back 0 % on a
+ * perfectly good degradation. A real capture is ~10 s because Chrome loops the file for as
+ * long as the stream is open, so looping here is the faithful input as well as the useful
+ * one: ~24 chunks before the drop, ~17 after.
+ */
+function loopTo(pcm, rate, seconds) {
+  const n = Math.round(seconds * rate);
+  const out = new Int16Array(n);
+  for (let i = 0; i < n; i++) out[i] = pcm[i % pcm.length];
+  return out;
+}
+
 function scale(pcm, g) {
   const out = new Int16Array(pcm.length);
   for (let i = 0; i < pcm.length; i++) out[i] = Math.round(pcm[i] * g);
@@ -706,8 +775,7 @@ function scale(pcm, g) {
  * @param {*} ctx  `{source, sourceRate, decoyPcm, decoyRate}`
  */
 function gauntlet(c, pcm, rate, ctx) {
-  console.log(`\n  the degradation gauntlet — the CI failure mode, over the audio the ` +
-              `baseline case really uploaded`);
+  console.log(`\n  the degradation gauntlet — the CI failure mode, over the committed fixture`);
   console.log(`    degradation                              peak    vote          played  unrelated  swapped`);
   const swapped = { source: ctx.decoyPcm, sourceRate: ctx.decoyRate,
                     decoyPcm: ctx.source, decoyRate: ctx.sourceRate };
@@ -1224,18 +1292,38 @@ function assertHeard(c, p, tag, ctx) {
      `peak ${peak.toFixed(4)}`);
 
   /* ---- clause 3: it is the audio we played ----
-   * TWO CLAUSES WITH DIFFERENT SCOPES, and the split is the lesson from CI run 34013443378
-   * (the long note at `envelope` has the table). The ORDERING is environment-invariant —
-   * both numbers come out of the same recording on the same machine — so it is asserted
-   * everywhere. The MAGNITUDE is not: the runner's own microphone saturates, which halves
-   * every score without anything being wrong with this site, so the fidelity floor is
-   * asserted only where the audio path is a known quantity and is REPORTED everywhere. */
+   * ASSERTED ONLY WHERE THE AUDIO PATH IS A KNOWN QUANTITY, and that restriction is the
+   * lesson of CI run 34013443378 followed by run 101437894164 — two runner failures, and the
+   * SECOND is why this is scoped rather than tuned a third time.
+   *
+   * The first red was saturation flattening a peak envelope, and the rewrite to a chunked
+   * log-RMS VOTE fixed it: on the runner the vote survived `peak 1.0000` throughout and the
+   * gauntlet passed there. But the same run reported this, which is worse than a red:
+   *
+   *     mutation B (the DECOY clip played)  ->  71 % of 24 chunks voted for the SENTENCE
+   *                                             medians 0.585 sentence / 0.514 decoy
+   *
+   * A FALSE GREEN on the one case that proves the audio is the right audio. The scorer is
+   * not at fault — handed the fixtures directly it separates them 100 % / 0 % (see
+   * `scorerProof`) — and the failure could not be reproduced here at any saturation, drop
+   * rate or load: this box votes 20-47 % on that mutant every time. The runner's CAPTURE is
+   * degraded past the point where a waveform-similarity statistic over it means anything,
+   * and nothing here can observe that machine to model it.
+   *
+   * So a statistic computed over a BROWSER CAPTURE is asserted only against a real
+   * deployment or a developer's box (`--dry-run`, the paid run), where the audio path is
+   * somebody's to look at. It is REPORTED everywhere, so the numbers stay visible. What
+   * gates every push instead is `scorerProof`: the same scorer, over the committed fixtures,
+   * with no browser in the path — identical on every machine, and still loud if the measure
+   * stops discriminating. */
   const id = score(got.pcm, got.rate, ctx);
-  ok(id.vote >= IDENTITY_VOTE,
-     `${tag}: the uploaded audio must be the clip the fake microphone played, not the ` +
-     `other one — only ${(id.vote * 100).toFixed(0)}% of its ${id.chunks} chunks matched ` +
-     `the clip played better than an unrelated one (need ${(IDENTITY_VOTE * 100).toFixed(0)}%). ` +
-     `Median scores: ${id.good.toFixed(3)} played vs ${id.bad.toFixed(3)} unrelated.`);
+  if (ctx.identity) {
+    ok(id.vote >= IDENTITY_VOTE,
+       `${tag}: the uploaded audio must be the clip the fake microphone played, not the ` +
+       `other one — only ${(id.vote * 100).toFixed(0)}% of its ${id.chunks} chunks matched ` +
+       `the clip played better than an unrelated one (need ${(IDENTITY_VOTE * 100).toFixed(0)}%). ` +
+       `Median scores: ${id.good.toFixed(3)} played vs ${id.bad.toFixed(3)} unrelated.`);
+  }
   if (ctx.fidelity) {
     ok(id.good >= FIDELITY_FLOOR,
        `${tag}: …and it must be a FAITHFUL recording of it — chunked log-RMS envelope ` +
@@ -1244,7 +1332,8 @@ function assertHeard(c, p, tag, ctx) {
        `peak (${peak.toFixed(4)} — 1.0000 means the device saturated).`);
   }
   p.corr = { good: id.good, bad: id.bad, vote: id.vote, chunks: id.chunks, peak,
-             wavBytes: wav.length, ms: dur ? dur.ms : 0, fidelity: !!ctx.fidelity };
+             wavBytes: wav.length, ms: dur ? dur.ms : 0, fidelity: !!ctx.fidelity,
+             identity: !!ctx.identity };
 
   /* ---- clause 6, asserted in EVERY mode: a mutation of the sound must not change what the
    * page refuses or logs, and if it does, that is its own finding. Requests this run aborted
@@ -1336,7 +1425,8 @@ function report(p, tag) {
     console.log(`    uploaded        ${p.corr.wavBytes} B  ${p.corr.ms} ms  peak ${p.corr.peak.toFixed(4)}` +
                 `${p.corr.peak > 0.999 ? " (SATURATED)" : ""}` +
                 `\n    identity        ${(p.corr.vote * 100).toFixed(0)}% of ${p.corr.chunks} chunks chose the clip played` +
-                ` (need ${(IDENTITY_VOTE * 100).toFixed(0)}%)   medians ${p.corr.good.toFixed(3)} played` +
+                ` (${p.corr.identity ? "need " + (IDENTITY_VOTE * 100).toFixed(0) + "%" : "REPORTED ONLY"})` +
+                `   medians ${p.corr.good.toFixed(3)} played` +
                 ` / ${p.corr.bad.toFixed(3)} unrelated   fidelity floor ` +
                 `${p.corr.fidelity ? FIDELITY_FLOOR + " ASSERTED" : "reported only"}`);
   else
@@ -1437,7 +1527,6 @@ function launchWithMic(puppeteer, chrome, wavPath, extraArgs = []) {
  */
 async function selftest(puppeteer, chrome, fx) {
   const c = makeChecks();
-  let captured = null;                     // what the baseline browser case really uploaded
 
   /* ---- the paper mutations first: no browser, no clock, no excuses ---- */
   console.log(`\n  the overlap scorer (a port of helpers_audio.py::word_overlap)`);
@@ -1535,12 +1624,23 @@ async function selftest(puppeteer, chrome, fx) {
     return false;
   };
 
+  /* TWO BROWSER CASES, and the two that are gone went for a reason rather than for speed.
+   * `mutation B` (a different clip played) and `control C` (the committed golden) both
+   * existed to exercise the IDENTITY clause over a real capture, and that clause no longer
+   * gates a push — CI run 101437894164 had mutation B PASS at 71 % on the runner, a false
+   * green on the one case that proves the audio is the right audio. Their job moved to
+   * `scorerProof`, which makes the same discrimination on committed bytes and cannot vary by
+   * machine. What is left is what a browser is genuinely needed for, and what held on the
+   * runner unchanged:
+   *
+   *     baseline    the sentence clip   → every environment-invariant clause must PASS
+   *     mutation A  digital silence     → "the captured audio is AUDIBLE" must go red
+   *
+   * Silence is a binary tooth, not a marginal statistic: peak 0.0000 against 0.96, and it
+   * reddened correctly on the runner exactly as it does here. */
   const CASES = [
     ["baseline · the sentence clip", fx.spoken.path, null],
     ["mutation A · digital silence", fx.silence.path, /AUDIBLE, not a silent buffer/],
-    ["mutation B · a DIFFERENT clip through the microphone", fx.decoy.path,
-     /must be the clip the fake microphone played/],
-    ["control C · the committed golden (0.75 s of the same sentence)", fx.golden.path, null],
   ];
 
   try {
@@ -1558,7 +1658,7 @@ async function selftest(puppeteer, chrome, fx) {
       try {
         /* The golden is 0.75 s, so its capture window can be short; the others loop a ~4 s
          * file and need more than two periods (see the header on phase). */
-        const recordMs = wav === fx.golden.path ? 4000 : 8600;
+        const recordMs = 8600;
         const p = await probeTurn(browser, url, { recordMs, budget: BUDGET, stub });
         /* `words: true` even though there is no ASR here, and it is not a pretence. The stub
          * holds the TRANSCRIPT constant while the mutations move the SOUND, so clause 4
@@ -1568,8 +1668,8 @@ async function selftest(puppeteer, chrome, fx) {
          * the half the first paid run got wrong. Clauses 2 and 3 are the ones the mutations
          * are aimed at, and they are the ones that move. */
         const ctx = {
-          source: wav === fx.golden.path ? fx.golden.pcm : fx.spoken.pcm,
-          sourceRate: wav === fx.golden.path ? fx.golden.rate : fx.spoken.rate,
+          source: fx.spoken.pcm,
+          sourceRate: fx.spoken.rate,
           decoyPcm: fx.decoy.pcm, decoyRate: fx.decoy.rate,
           spoken: SPOKEN_TEXT, decoy: DECOY_TEXT, words: true,
           /* NOT asserted here, and the reason is the whole point of the rewrite: a CI
@@ -1580,10 +1680,6 @@ async function selftest(puppeteer, chrome, fx) {
         };
         assertHeard(mm, p, name.split(" ·")[0], ctx);
         report(p, name);
-        // The baseline's real upload is the gauntlet's input: degrading audio that a
-        // browser actually captured is worth more than degrading the fixture, because it
-        // already carries whatever this machine's capture path did to it.
-        if (!wanted && wav !== fx.golden.path && p.upload) captured = readWav(Buffer.from(p.upload, "base64"));
       } finally {
         try { await browser.close(); } catch {}
       }
@@ -1606,17 +1702,17 @@ async function selftest(puppeteer, chrome, fx) {
     site.close();
   }
 
-  /* The gauntlet last, over the audio the baseline case really uploaded. It is what keeps
-   * the correlation clause honest on a machine this suite has never run on — see its
-   * header, and CI run 34013443378 for why it exists. */
-  if (captured) {
-    gauntlet(c, captured.pcm, captured.rate,
-             { source: fx.spoken.pcm, sourceRate: fx.spoken.rate,
-               decoyPcm: fx.decoy.pcm, decoyRate: fx.decoy.rate });
-  } else {
-    c.ok(false, "the baseline case produced no upload, so the degradation gauntlet ran on " +
-                "nothing — that is a failure, not a skip");
-  }
+  /* Both deterministic halves last. Neither touches a browser, so both are identical on
+   * every machine — which is exactly what the two runner failures taught. The gauntlet runs
+   * over the FIXTURE rather than over a capture for the same reason: its job is to prove the
+   * measure survives a degraded recording, and a degradation applied to known bytes says
+   * that on every machine, where one applied to the runner's own capture said it only on the
+   * machines that happened to record well. */
+  scorerProof(c, fx);
+  gauntlet(c, loopTo(fx.spoken.pcm, fx.spoken.rate, 10), fx.spoken.rate,
+           { source: fx.spoken.pcm, sourceRate: fx.spoken.rate,
+             decoyPcm: fx.decoy.pcm, decoyRate: fx.decoy.rate });
+
   return c;
 }
 
@@ -1669,6 +1765,9 @@ try {
     source: fx.spoken.pcm, sourceRate: fx.spoken.rate,
     decoyPcm: fx.decoy.pcm, decoyRate: fx.decoy.rate,
     spoken: fx.spoken.text, decoy: fx.decoy.text, words: !DRY,
+    /* A real deployment and a developer's box are audio paths somebody can look at, so a
+     * capture that is not the clip played is a finding here rather than a runner quirk. */
+    identity: true,
     /* ASSERTED here. A developer's box and a real deployment are audio paths somebody can
      * look at, so a degraded recording is a finding rather than a runner quirk. */
     fidelity: true,
