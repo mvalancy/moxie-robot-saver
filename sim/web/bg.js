@@ -98,11 +98,26 @@
    * for two holes the belt leaves:
    *
    *   1. `pingAcc` SURVIVES the transition. A tab hidden with the accumulator already at
-   *      ~2 500 ms of the 2 600 ms ping interval needs one more frame — up to 250 ms — to
-   *      tip over and emit a ping nobody is there to see. That is exactly the
+   *      ~2 500 ms of the 2 600 ms ping interval would need one more frame — up to 250 ms —
+   *      to tip over and emit a ping nobody is there to see.
+   *
+   *      CORRECTED 2026-09-06, and left here because the correction is the useful part.
+   *      This paragraph used to claim that hole was "exactly the
    *      `pings grew while the tab was hidden (1 -> 2 in 20s)` this file's own guard caught
-   *      in CI on 2026-09-05, on a PR whose diff was `functions/api/` and could not reach
-   *      this file.
+   *      in CI on 2026-09-05". It was not. The same CI failure came back on 2026-09-06 as
+   *      `packets grew while the tab was hidden (1 -> 2 in 20s)` (job 101442923492, PR #172),
+   *      WITH this guard in place — so the guard had not been what fixed it, and the
+   *      original diagnosis had been reasoned rather than measured. Measured since, by
+   *      recording every push into `packets`/`pings` with `document.hidden` at the push:
+   *      across 32 backgrounded runs, pushes while `document.hidden` was true numbered
+   *      ZERO, and the frames delivered while hidden were also zero — so hole 1 cannot
+   *      fire in that environment at all, because it needs a frame. The extra entry was
+   *      always spawned by a VISIBLE page, in the milliseconds between the moment
+   *      `sim/test_bg_perf.mjs` sampled its "before" length and the moment the tab actually
+   *      went hidden, and then charged to the hidden window because nothing retires once
+   *      rAF stops. The fix is in that file's measurement boundary; see its header.
+   *      Nothing below changes: the guard is still correct, still cheap, and still the
+   *      only defence for point 2 — it was simply never the thing under test.
    *   2. `requestAnimationFrame` is not reliably paused everywhere this page runs. Headless
    *      Chrome never truly backgrounds a tab, which is why the guard has to simulate
    *      hiding at all — and a mechanism that works only because the browser stops calling
