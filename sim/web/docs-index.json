@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 264340,
+   "bytes": 266313,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 209879,
+   "bytes": 212069,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -352,7 +352,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 169075,
+   "bytes": 198447,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -387,11 +387,11 @@
     "4.2 Top 10 BEYOND — what we should build instead",
     "4.3 Backlog — the build briefs",
     "4.4 The open backlog, re-ranked — 2026-09-05",
-    "What this table got wrong — three times in twelve hours, and five more found on 2026-09-05",
+    "What this table got wrong — three times in twelve hours, five more on 2026-09-05, and five more on 2026-09-06",
     "Shipped since the last refresh — corrections first, so nobody rebuilds them",
     "In flight right now — do not assign",
     "The ranking",
-    "The single most valuable next slice — the spend ceilings on the Cache API tier",
+    "The single most valuable next slice — ~~the spend ceilings on the Cache API tier~~ **SHIPPED**",
     "Not ranked, deliberately — the ceilings no ranking moves",
     "5. The honest ledger",
     "Where OpenMoxie (and its forks) are genuinely ahead of us"
