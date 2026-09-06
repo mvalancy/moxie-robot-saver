@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 8761,
+   "bytes": 9313,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -882,6 +882,23 @@
    "kind": "md"
   },
   {
+   "path": "architecture/backlog/turnstile-layout-collision.md",
+   "title": "The Turnstile challenge and `#rail-toggle` share a band on a small phone",
+   "section": "architecture",
+   "bytes": 3785,
+   "mermaid": 0,
+   "headings": [
+    "What happens",
+    "Why no test sees it",
+    "Why it is latent",
+    "Why that matters now",
+    "What a fix would need",
+    "What a fix must also do — and this is the load-bearing part",
+    "Honest limits of this filing"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/backlog/gamify-the-public-sim.md",
    "title": "Gamify the public sim — evidence for a decision the owner kept",
    "section": "architecture",
@@ -992,23 +1009,6 @@
     "7.4 The greeting rule — and the unsolicited-reply assumption",
     "7.5 What is still not true",
     "Sources"
-   ],
-   "kind": "md"
-  },
-  {
-   "path": "architecture/backlog/turnstile-layout-collision.md",
-   "title": "The Turnstile challenge and `#rail-toggle` share a band on a small phone",
-   "section": "architecture",
-   "bytes": 3785,
-   "mermaid": 0,
-   "headings": [
-    "What happens",
-    "Why no test sees it",
-    "Why it is latent",
-    "Why that matters now",
-    "What a fix would need",
-    "What a fix must also do — and this is the load-bearing part",
-    "Honest limits of this filing"
    ],
    "kind": "md"
   },
