@@ -109,8 +109,26 @@ try {
   await page.waitForSelector("a.doc", { timeout: 8000 }).catch(() => {});
   const treeCount = await page.$$eval("a.doc", (els) => els.length).catch(() => 0);
   ok(treeCount >= 60, `tree should list the docs (got ${treeCount})`);
-  ok(await page.evaluate(() => !!document.querySelector("article h1, article h2, article p")),
-     "home document markdown should render");
+  /* `article p` IS THE LOADING PLACEHOLDER, so this check used to have no teeth at all.
+   * Found while measuring 1a below: `docs.html` ships
+   * `<div id="content"><article><p class="muted">Loading docs…</p></article></div>` as
+   * static markup, and `article p` matches that spinner exactly as well as it matches
+   * rendered prose. At 150–200 ms of emulated latency this assertion passes against an
+   * article whose entire content is the word "Loading" — measured, not supposed. The tree
+   * (`a.doc`) comes from `docs-index.json`; the prose is a SECOND fetch of README.md that
+   * lands later, so on any runner slow enough the suite was reporting "markdown renders"
+   * for a page that had rendered none.
+   *
+   * Assert a HEADING instead: `marked` output starts with the README's `<h1>`, and the
+   * placeholder has no heading of any kind. That is strictly stronger than what was here
+   * (`h1, h2` is a subset of `h1, h2, p`), and waiting on the same selector removes the
+   * machine-speed term without softening it — if the prose never renders, the wait simply
+   * expires and the assertion still fails. */
+  await page.waitForSelector("article h1, article h2", { timeout: 8000 }).catch(() => {});
+  ok(await page.evaluate(() => {
+    const a = document.querySelector("article");
+    return !!a && !!a.querySelector("h1, h2") && !/^\s*Loading/.test(a.textContent);
+  }), "home document markdown should render (not the “Loading docs…” placeholder)");
 
   /* 1a) …INCLUDING its hero image, from this origin, actually decoded.
    *
