@@ -53,6 +53,13 @@ export const DEFAULTS = Object.freeze({
   // and never a degraded page. Set either to 0 to send it not at all.
   DEMO_FREQUENCY_PENALTY: 0.4,
   DEMO_PRESENCE_PENALTY: 0.3,
+  // The per-turn shape cue (`_lib/turnshape.js`). ON, because the defect it addresses is
+  // the one the owner reported and it costs NOTHING — no extra call, no extra token beyond
+  // one short sentence, and no new failure mode: the cue is a server-built system message
+  // and a model that ignores it produces exactly the turn it would have produced anyway.
+  // `0` removes the sentence entirely and the body is byte-identical to the pre-2026-09-06
+  // one, which is what makes the two arms of the measurement in §4.10 comparable.
+  DEMO_TURN_SHAPE: "1",
   // THE LAST OF THE REPETITION LEVERS, and the only one that costs money: when a reply
   // comes back WORD FOR WORD the same as something Moxie already said in this same
   // conversation, `chat.js` asks the gateway once more before answering. Default ON,
@@ -544,6 +551,10 @@ export function readConfig(env) {
     // Clamped to OpenAI's own -2..2, as floats rather than ints.
     frequencyPenalty: num(e, "DEMO_FREQUENCY_PENALTY", -2, 2, notes),
     presencePenalty: num(e, "DEMO_PRESENCE_PENALTY", -2, 2, notes),
+    // The free repetition lever that acts on the SHAPE of a turn rather than its words —
+    // see `_lib/turnshape.js` for the measurement that made it necessary and for the ways
+    // it can be obeyed and still fail.
+    turnShape: bool(e, "DEMO_TURN_SHAPE", true),
     // The one repetition lever that spends. `chat.js` step 8b.
     reroll: bool(e, "DEMO_REROLL", true),
     maxAudioBytes: int(e, "DEMO_MAX_AUDIO_BYTES", 1, 50000000, notes),
