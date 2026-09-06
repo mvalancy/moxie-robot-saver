@@ -859,3 +859,45 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   `mode=live`, `degraded=false`, `turnstile=None`). `*.pages.dev` is not an authorised hostname, so
   no preview can rehearse a real challenge — production is necessarily the first live test, which is
   why arming it is one API call the owner gets to time.
+
+- **2026-09-05 — PROMOTED, and the owner's chat box is verifiably reachable on the live site.**
+  `dev`→`main` (#155, 18 commits, **12/12 green read on the exact head promoted**), then the
+  post-promotion reconcile changed **zero files** and `dev` came back 19-ahead/0-behind with #165 as
+  the fresh standing PR. **No tag** — the owner's rule is promote freely, tag only on their word, so
+  `__version__` stays `0.7.0` matching `v0.7.0`. What that promotion shipped is the answer to the
+  steer of 2026-09-04: the composer (#162) is now the HUD grid's own bottom row at every width, the
+  engineering rail is optional with `rail.js` **byte-unchanged**, and `#chat-cue` names the action on
+  first paint. Measured against the real deployment afterwards by `sim/check_deployed.mjs` (#167):
+  `#speech-input` **211×44 at y=763…807 of 844**, hit-testing to itself, **0 CSP violations, 0 console
+  errors, 20 checks passed** — no tap on CONTROLS, no scroll. Before the fix that box was `0×0` on
+  load and `y=2095` after tapping CONTROLS. **Turnstile enforcement remains OFF**: `turnstile=''` on
+  the deployed `/api/health`, which is the new code correctly reporting the control inert because the
+  secret is unset. Arming it is one call, held for the owner because previews cannot rehearse a
+  challenge and production is therefore necessarily the first real test.
+
+- **2026-09-05 — CI reddened a PR whose diff could not reach the code, and that red was worth two
+  real bugs.** #164 (mutation-anchor audit — test files and runners only) failed the `sil` job on
+  `test_the_supervisor_writes_both_collections_to_disk`. #163's `sil` had passed minutes earlier and
+  the test passed **5/5 locally on clean dev**, so a re-run would almost certainly have cleared it.
+  It was not re-run, per this plan's own rule. #166 then found the ring and the daily roll-up could
+  **durably disagree across a restart** — the parent console reads the roll-up, so an unlucky restart
+  under-reports a child's activity while the ring holds the truth — and, while proving that, a second
+  and larger defect: **`assert 1 == 8`, eight concurrent ingests producing a daily total of one**,
+  because the roll-up's read-modify-write had no lock while the ring's `append` did. The fix reframes
+  rather than patches — the ring is the durable **log**, the roll-up a **view** carrying `through_seq`
+  that heals on read, with the envelope's `seq` stamped *after* the privacy gate so a robot cannot
+  forge one. Negative control: **10 of 12 new tests failed** against pre-change code, including
+  `assert 2 == 3`, the exact CI number. #164's red then cleared **because the defect was gone**.
+
+- **2026-09-05 — the guards were audited, and the enforcement turned out to be the thing that
+  prevents the defect.** #164 audited **311 mutation rows across 9 tables: 308 unique, 3 ambiguous**
+  (`ext` X1/X10, `hardening` S4), each anchored on a line a *deliberate twin guard* also carries, each
+  hitting the intended block **by line order alone**. The causal finding is the keeper: **the four
+  tables whose runners already refused a non-unique anchor had zero ambiguous rows; the five without
+  it held all three** — and `subscribe`'s S4 was written disambiguated from the start *because its own
+  table forced it*. Uniqueness is now enforced repo-wide by `test_mutation_tables.py` (the mutation
+  checkers are **not in CI**; that fast-tier test is the only automated guard over them), and it
+  proved itself twice within the hour: it went 12→14 tests the moment #166 added two new tables
+  without anyone wiring them in, and it caught #166's M1 as `NO-OP anchor (0 matches)` when a refactor
+  moved the anchored line. Also fixed: the key scan fired on the word "ta**sk-notification**" — a
+  scanner that cries wolf on English is one people learn to wave through.

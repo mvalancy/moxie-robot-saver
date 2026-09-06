@@ -1,5 +1,5 @@
 {
- "generated": "docs-78a1738d0008",
+ "generated": "docs-b5b22d9a226f",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -128,7 +128,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 185196,
+   "bytes": 189059,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
