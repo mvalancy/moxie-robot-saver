@@ -281,14 +281,23 @@ try {
 
     // The whole point: the bottom-anchored controls still own their own centres.
     const toggle = await page.evaluate(hitTest, "#rail-toggle");
-    ok(toggle.self,
-       `${label}: with a challenge on screen, a tap at #rail-toggle STILL reaches the toggle ` +
-       `(got ${toggle.hit})`);
+    /* `drew.drew &&` IS PART OF THE ASSERTION, not belt and braces. Both of these say
+     * "with a challenge on screen", and with NO challenge on screen both are trivially
+     * true — which `sim/tools/page_teeth_check.py`'s `turnstilejs-inert` row measured:
+     * gut `turnstile.js` and these two stayed green while naming the thing that had just
+     * been deleted. A check whose message describes a state it does not require is a
+     * check that reads as coverage and is not. */
+    ok(drew.drew && toggle.self,
+       `${label}: with a challenge ON SCREEN (drawn=${drew.drew}), a tap at #rail-toggle ` +
+       `STILL reaches the toggle (got ${toggle.hit})`);
     // ...and `page.tap()` refuses on an obscured element, which is the strongest form of it.
     await page.tap("#rail-toggle");
     await new Promise((r) => setTimeout(r, 600));
-    eq(await page.evaluate(() => document.getElementById("rail-toggle").getAttribute("aria-expanded")),
-       "true", `${label}: …and tapping it really opens the drawer, challenge and all`);
+    const expanded = await page.evaluate(() =>
+      document.getElementById("rail-toggle").getAttribute("aria-expanded"));
+    ok(drew.drew && expanded === "true",
+       `${label}: …and tapping it really opens the drawer, challenge and all ` +
+       `(drawn=${drew.drew}, aria-expanded=${JSON.stringify(expanded)})`);
 
     // The challenge is CLICKABLE, which is the other half of being usable.
     const widget = await page.evaluate(hitTest, "#fake-cf-widget");
