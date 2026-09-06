@@ -595,6 +595,44 @@ section("F");
     if (r.ok) r.release();
   }
 
+  // WHICH SCALE ANSWERS WHEN BOTH ARE SPENT. `scales` is built narrowest-first so the
+  // refusal a visitor meets carries the SHORTEST `Retry-After` that applies to them —
+  // "come back tomorrow" when the hour would have let them in at the top of the hour is a
+  // worse answer, not a safer one. Asserted directly because the order is otherwise
+  // visible only as the FIELD ORDER of a JSON body, and a body's key order proves nothing
+  // about a refusal: measured 2026-09-06, reversing `scales` was caught by §H's
+  // deep-equality on the stored shape and by nothing that names the Retry-After at all.
+  {
+    const BOTH = cfgOf({ DEMO_CHAT_PER_MIN: "60", DEMO_CHAT_PER_HOUR: "1", DEMO_CHAT_PER_DAY: "1" });
+    fresh();
+    const c = fakeCache();
+    (await admitWith(BOTH, c, IP, T0)).release();   // one turn fills BOTH scales at once
+    fresh();                                        // a second isolate, so only the colo refuses
+    const r = await admitWith(BOTH, c, IP, T0);
+    eq(r.ok, false, "a visitor who has spent BOTH their hour and their day is refused");
+    ok(r.retryAfterS <= 3600,
+       "…by the HOUR, the narrower of the two: the shortest Retry-After that applies wins, got "
+       + r.retryAfterS);
+  }
+
+  // A READ THAT FAILED MUST NOT WRITE, and the entry has to hold something OTHER than what
+  // a fresh write would produce for the difference to be visible at all. The cases above
+  // are seeded with exactly the body an admitted first turn writes, so a fall-through that
+  // published after a failed read would store the identical bytes and prove nothing —
+  // measured 2026-09-06 while adding `unit_budget_mutation_check.py` row W6, which was NOT
+  // CAUGHT until this block existed. `sharedWindowVerdict`'s own note names the mistake:
+  // writing after a failed read RESETS a live window to this isolate's share.
+  {
+    fresh();
+    const LIVE = { h: 5, hb: 2, d: 5, db: 0 };
+    const c = fakeCache({ matchRejects: true, only: AT_WIDE }).seed(realKey, LIVE);
+    const r = await admitWith(ON, c, IP, T0);
+    eq(r.ok, true, "a wide read that REJECTS against a busy window still admits");
+    deep(c.body(realKey), LIVE,
+         "…and writes NOTHING: publishing after a failed read would RESET a live hour to one");
+    if (r.ok) r.release();
+  }
+
   // A write that fails. The count is not incremented, which is an undercount, which admits
   // the NEXT request too — the direction this tier is allowed to be wrong in.
   for (const [label, opts] of [
@@ -681,6 +719,18 @@ section("G");
     eq(unitsDay().wrote, 0, "…which this file may not claim to have confirmed");
     eq(unitsDay().published, 3, "…while 3 units really did leave this isolate");
     eq(c.count(DK), 3, "…and the colo holds 3 units, not 6");
+
+    // A THIRD turn, because the two above cannot tell the double charge apart from the
+    // truth. Found 2026-09-06 by `sim/tools/unit_budget_mutation_check.py` row D2:
+    // deleting `clearDayPending()` leaves every assertion above GREEN — the retained units
+    // are only published a SECOND time on the next admission, and until this turn existed
+    // there was no next admission. The line above says "not 6" and could not have seen a
+    // 6; this one is what makes both of them load-bearing.
+    const a3 = await admitWith(ON, c, IP, T0);
+    eq(c.count(DK), 6,
+       "…and a third turn publishes its OWN 3, not the retained 3 again: the colo holds 6, never 9");
+    eq(unitsDay().published, 6, "…recorded as 6 units having left this isolate in total");
+    a3.release();
   }
 
   // A DAY boundary DROPS the ledger rather than moving it: spend recorded against a day
@@ -764,9 +814,16 @@ section("H");
   fresh();
   const c6 = fakeCache();
   (await admitWith(ON, c6, "203.0.113.97", T0)).release();
-  const stored = c6.body(c6.log.keys.find((k) => k.indexOf("/w") >= 0));
+  const wideK = c6.log.keys.find((k) => k.indexOf("/w") >= 0);
+  const stored = c6.body(wideK);
   deep(stored, { h: 1, hb: 2, d: 1, db: 0 },
        "the wide entry is two counts and the bucket each belongs to: no address, no route history, nothing");
+  // Its LIFETIME, asserted for the same reason section D asserts the day budget entry's:
+  // the key rotates daily, so an entry that outlived its own day could be read as today's.
+  // A shorter one is not wrong in the dangerous direction but it throws the hour count
+  // away every minute, which is the ceiling silently not binding.
+  eq((c6.store.get(wideK) || {}).maxAge, 86400,
+     "…and it lives exactly ONE DAY — the widest scale it holds, which is the shortest life it can have");
 }
 
 /* =========================================================================== *
@@ -831,6 +888,12 @@ section("J");
   (await admitWith(NO_DAY, c, "198.51.100.40", T0)).release();
   eq(unitsDay().checked, 0, "with no DAY ceiling there is nothing to mirror, so that sub-tier never runs");
   ok(!c.log.keys.some((k) => k.indexOf("/units/d") >= 0), "…and its entry is never asked for");
+  // …and the LEDGER stays untouched too, which the two lines above cannot see: `release()`
+  // accrues without consulting any sub-tier, so units could pile up for a ceiling that does
+  // not exist and be published the day somebody sets one. Found 2026-09-06 by
+  // `unit_budget_mutation_check.py` row D11, which was NOT CAUGHT until this line existed.
+  deep(st().unitsDay, { pending: 0, bucket: -1 },
+       "…and the DAY ledger never accrued a unit either: an uncapped scale banks nothing to publish");
 
   // `speech` has an hour cap and NO day cap (`windowLimits`), so the wide sub-tier runs
   // with one scale rather than two — the body must then carry one scale and not two.
