@@ -102,7 +102,11 @@
 
     <!-- presence badge: what the robot's own eyes have told the server.
          Recorded state (window.moxieBridge.presenceStats()), not an animation. -->
-    <div id="presence-badge" data-presence="unknown"
+    <!-- `hidden` from the start: this reports what the ROBOT'S camera sees, and on the
+         hosted site there is no robot, so it would otherwise read "PRESENCE UNKNOWN"
+         forever in the corner of a phone screen. `bridge.js::presenceBadge` reveals it the
+         moment a real face event arrives. -->
+    <div id="presence-badge" data-presence="unknown" hidden
          style="position:absolute;top:12px;right:14px;display:flex;gap:8px;align-items:center;
                 padding:5px 10px;border-radius:4px;background:rgba(10,10,15,.72);
                 border:1px solid rgba(18,181,176,.45);font-size:11px;letter-spacing:.08em">
