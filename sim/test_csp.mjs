@@ -521,10 +521,21 @@ try {
        * violation this policy actually caught in production. Assert the PIXELS, not the
        * markup: a 404 still gives you an `<img>` element, and a CSP refusal gives you one
        * too — both with `naturalWidth === 0`. Checked BEFORE the search below navigates
-       * away from the README. */
+       * away from the README.
+       *
+       * A THIRD thing gives you `naturalWidth === 0`: an image still loading. This sample
+       * is the same one that reddened `test_docs_explorer.mjs` on CI run 34021460344 for
+       * that reason, and the only thing standing between this copy and the same red is the
+       * fixed 2.5 s sleep in `load()` above — a bet on the runner, not an assertion. Wait
+       * on `complete` instead, which flips true on load AND on error and so cannot launder
+       * a real refusal into a pass; `naturalWidth > 0` still has to separate those. */
+      await page.waitForFunction(() => {
+        const i = document.querySelector("article img");
+        return !!i && i.complete;
+      }, { timeout: 8000 }).catch(() => {});
       const hero = await page.evaluate(() => {
         const i = document.querySelector("article img");
-        return i ? { src: i.getAttribute("src"), w: i.naturalWidth, h: i.naturalHeight } : null;
+        return i ? { src: i.getAttribute("src"), complete: i.complete, w: i.naturalWidth, h: i.naturalHeight } : null;
       });
       ok(hero && hero.w > 0 && hero.h > 0,
          `docs.html: the README hero image actually DECODED (${JSON.stringify(hero)})`);

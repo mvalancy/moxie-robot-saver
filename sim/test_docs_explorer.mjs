@@ -89,6 +89,21 @@ try {
     return r.continue();
   });
 
+  /* What the NETWORK did with each image, so check 1a below can say WHICH of the three
+   * causes of `naturalWidth === 0` it hit. Reading the DOM alone cannot tell an aborted
+   * request from a 404 from bytes that simply have not arrived, and that ambiguity is
+   * exactly what cost a full diagnosis cycle when CI run 34021460344 went red: the message
+   * printed `{"src":"img/sim-hero.png","w":0,"h":0}` and nothing else, which is equally
+   * consistent with a broken hero and a healthy one. It never has to be guessed again. */
+  const imgNet = [];
+  page.on("response", (r) => {
+    if (/\/img\//.test(r.url())) imgNet.push(`${r.status()} ${new URL(r.url()).pathname}`);
+  });
+  page.on("requestfailed", (r) => {
+    if (/\/img\//.test(r.url()))
+      imgNet.push(`FAILED ${new URL(r.url()).pathname} ${(r.failure() || {}).errorText}`);
+  });
+
   // 1) tree populates + home markdown renders
   await page.goto(base + "/docs.html", { waitUntil: "domcontentloaded" });
   await page.waitForSelector("a.doc", { timeout: 8000 }).catch(() => {});
@@ -106,15 +121,39 @@ try {
    * `<img>` is present": the src must have been REMAPPED (the README writes it repo-relative
    * as `sim/web/img/…` so GitHub renders it; this page is served FROM `sim/web`, so
    * `docs.js` has to strip that prefix or the URL 404s), and the bytes must have DECODED —
-   * `naturalWidth` is 0 for a broken-image icon and 0 for a blocked one. */
+   * `naturalWidth` is 0 for a broken-image icon and 0 for a blocked one.
+   *
+   * …AND 0 FOR ONE THAT HAS NOT FINISHED LOADING YET. That third cause is the one the
+   * sentence above missed, and missing it is what made this check red on CI run
+   * 34021460344 against a diff of one perf test plus two comments. Kept rather than
+   * rewritten because the omission is the reusable part: an enumeration of failure causes
+   * that forgets "not yet" turns a sampling boundary into a phantom product bug.
+   *
+   * Measured, not reasoned. Under 100 ms of emulated latency the old sample came back
+   * {"src":"img/sim-hero.png","complete":false,"w":0,"h":0} — the CI string exactly — with
+   * the interceptor above having aborted NOTHING and no image response yet on the wire.
+   * The hero is 612 KB and its request is issued only once `docs.js` has fetched and
+   * rendered README.md, so on a loaded runner it is still in flight when the two `evaluate`
+   * round-trips of checks 1 and 1a are done.
+   *
+   * `img.complete` is the terminator, and it is sound PRECISELY BECAUSE IT DOES NOT
+   * DISTINGUISH SUCCESS: it flips true on load and on error alike. Waiting on it removes
+   * the machine-speed term without removing a single tooth — a hero that 404s, is refused,
+   * or is aborted settles `complete` immediately and then has to get past `naturalWidth > 0`
+   * on its own, which it cannot. A bare "sleep longer" would instead have masked all three. */
+  await page.waitForFunction(() => {
+    const i = document.querySelector("article img");
+    return !!i && i.complete;
+  }, { timeout: 8000 }).catch(() => {});
   const hero = await page.evaluate(() => {
     const i = document.querySelector("article img");
-    return i ? { src: i.getAttribute("src"), w: i.naturalWidth, h: i.naturalHeight } : null;
+    return i ? { src: i.getAttribute("src"), complete: i.complete, w: i.naturalWidth, h: i.naturalHeight } : null;
   });
   ok(hero && /^img\//.test(hero.src || ""),
      `the README hero should be remapped onto the site root (got ${hero && hero.src})`);
   ok(hero && hero.w > 0 && hero.h > 0,
-     `the README hero should actually decode (got ${JSON.stringify(hero)})`);
+     `the README hero should actually decode (got ${JSON.stringify(hero)}; ` +
+     `image responses: ${imgNet.join(" | ") || "NONE — no request was ever issued"})`);
 
   // 1b) the reverse-engineering section is sub-grouped by folder (Protocol / Runtime / Firmware / …)
   const subheads = await page.$$eval(".subhead", (els) => els.map((e) => e.textContent));
