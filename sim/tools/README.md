@@ -184,6 +184,31 @@
   second process. And **M8 is the shipped form of a rejected design**: treating an unstamped legacy
   envelope as *unfolded* would double the lifetime total of every appliance on its first read after the
   upgrade, which is a wrong number that grows on refresh.
+- **`page_teeth_check.py`** (+ `teeth_ledger.mjs`, `teeth_hook.mjs`) — the same proof turned on the
+  **page** instead of the product. The checkers above delete a guard from the code and require its
+  test to redden; this serves each **browser suite** a deliberately broken site — a script deleted, a
+  script served 200 OK and inert, a fetch 404'd, a document emptied, one resource stalled ~24 s behind
+  a throttle — and reports **which of its checks stay green**. It exists because on 2026-09-06 five
+  checks were found passing against a system that was actually broken (`test_bg_perf`'s Node-side
+  baseline, two unwaited `naturalWidth` samples, `article p` matching the *"Loading docs…"* spinner,
+  and `check_deployed.mjs` printing `failed requests: 0` without asserting it) and **every one was
+  found by luck**. Nobody had ever swept for them.
+  `python3 sim/tools/page_teeth_check.py --selftest        # ~1 min, both directions`
+  `python3 sim/tools/page_teeth_check.py --baseline-dir /tmp/teeth   # the full sweep`
+  Three things make it an audit rather than a noise generator. **Exposure is measured**: the ledger
+  records every URL each suite's browser actually requested on the healthy run, and a suite is only in
+  scope for "delete `qr.js`" if it fetched `qr.js` — a green under a breakage a suite never touched is
+  not a finding, and reporting one would send someone to fix a test that works. **Instrumentation
+  cannot fail quietly**: the loader hook throws on a moved anchor, and a `stall` row whose throttle did
+  not apply is SKIPPED rather than read as "everything stayed green" — that exact bug was in the
+  tool's own first draft (puppeteer 24 takes `{download, upload, latency}`; the CDP field names throw)
+  and it would have reported *no findings* for the whole not-loaded-yet family. **A check's identity is
+  its call site**, `file:line:col`, not its message: several suites interpolate live values — including
+  a list of image responses *in arrival order* — so a text key drops the very assertion under audit
+  from the comparison on the run that matters.
+  It is **not wired into CI** and should not be: it takes ~90 minutes and it mutates `sim/web`
+  transiently. Run it by hand after touching a page or a browser suite. `--check-tree` proves it left
+  no tracked file behind.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.
