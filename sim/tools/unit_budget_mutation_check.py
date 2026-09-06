@@ -1,18 +1,25 @@
-"""Remove each guard the SHARED unit budget rests on, and check its test goes red.
+"""Remove each guard the SHARED day/hour ceilings rest on, and check its test goes red.
 
 *"A test for every fix, proven in BOTH directions."* A green `sim/test_demo_proxy.mjs` §15i
-proves the guards are **present**; this proves they are **load-bearing**. Same shape as
-`turnstile_mutation_check.py`, and deliberately the same STRICTNESS: the runner is
-`node sim/test_demo_proxy.mjs`, which prints one `  - <label>` line per failed check, and
-the sixth column is a substring that must appear IN A FAILING LABEL. A row is caught only
-when **the check that names that guard** is the one that reddened, because a mutation that
-broke some unrelated assertion would otherwise read as caught while the guard it targeted
-was never exercised.
+and a green `sim/tests/helpers_shared_ceilings.mjs` prove the guards are **present**; this
+proves they are **load-bearing**. Same shape as `turnstile_mutation_check.py`, and
+deliberately the same STRICTNESS: each row names a runner, that runner prints one
+`  - <label>` line per failed check, and the sixth column is a substring that must appear
+IN A FAILING LABEL. A row is caught only when **the check that names that guard** is the
+one that reddened, because a mutation that broke some unrelated assertion would otherwise
+read as caught while the guard it targeted was never exercised.
+
+TWO RUNNERS, ONE TABLE. Rows `U*` name `sim/test_demo_proxy.mjs` §15i, which holds the
+proof for the shared MINUTE window and the budget's HOUR. Rows `W*` and `D*` name
+`sim/tests/helpers_shared_ceilings.mjs`, which holds the proof for the per-IP HOUR/DAY
+windows and the budget's DAY — a separate file only because `test_demo_proxy.mjs` was
+reserved to another agent for the whole of that slice, as its own header explains. Nothing
+about the row format changes; the runner column was always per-row.
 
 Run it by hand after touching the cache tier in `functions/api/_lib/limits.js`:
 
-    python3 sim/tools/unit_budget_mutation_check.py            # the whole table, ~25 s
-    python3 sim/tools/unit_budget_mutation_check.py U3         # one row, ~1.5 s
+    python3 sim/tools/unit_budget_mutation_check.py            # the whole table, ~45 s
+    python3 sim/tools/unit_budget_mutation_check.py U3 D4      # two rows, ~1.5 s
 
 =============================================================================
 WHY THIS TABLE EXISTS AT ALL, WHICH IS A DIFFERENT QUESTION FROM WHY THE OTHERS DO.
@@ -27,12 +34,16 @@ paints SCRIPTED for an hour. Neither shows up in a green suite. Both are one del
 
 So the rows come in two families and the second is the point:
 
-  · **U1, U7, U8, U11, U13, U17** — the counter stops counting, or counts the wrong thing.
-    An undercount. Cheap to be wrong about, and the table catches it anyway.
-  · **U2, U3, U4, U5, U6, U9, U10, U12, U16** — the counter counts something TWICE, keeps
-    a charge it should have dropped, or refuses where it should have fallen open. Every
-    one of these is an OVERCOUNT or a fail-CLOSED, which is the direction
-    `_lib/limits.js::sharedBudgetVerdict` says this tier may never fail in.
+  · **U1, U7, U8, U11, U13, U17** and **W5, W7, W8, D3, D5, D6, D10, D11** — the counter
+    stops
+    counting, or counts the wrong thing. An undercount. Cheap to be wrong about, and the
+    table catches it anyway.
+  · **U2, U3, U4, U5, U6, U9, U10, U12, U16** and **W1, W2, W3, W6, D1, D2, D4, D7, D8,
+    D9** — the counter counts something TWICE, keeps a charge it should have dropped, or
+    refuses where it should have fallen open. Every one of these is an OVERCOUNT or a
+    fail-CLOSED, which is the direction `_lib/limits.js::sharedBudgetVerdict` says this
+    tier may never fail in. (U14 predates the two lists and belongs in the first; it is
+    left unlisted rather than quietly reclassified by somebody who did not write it.)
 
 U1 and U3 deserve naming individually, because each is the shipped design of a REJECTED
 alternative rather than a typo:
@@ -44,6 +55,13 @@ alternative rather than a typo:
   · **U3 keeps the unpublished units after a write attempt, to retry them** — which reads
     like resilience and is a double charge whenever a `put` lands and then times out. The
     fake cache grew a `putStoresThenHangs` shape specifically so this row has teeth.
+
+And **D4 is the one that actually shipped.** PR #178 lifted the day ceiling onto the cache
+by copying the hour's design without the hour's proof; deleting `unaccrueDayPending()` left
+the ceilings suite 151/151 green and `test_demo_proxy.mjs` green, while U2 — the hour's
+byte-identical branch — reddens instantly. It survived review, a 151-check suite and a
+merge, and only a hand-run sweep found it. Every `W*`/`D*` row below exists because that
+happened once.
 
 =============================================================================
 **IT NEVER TOUCHES YOUR CHECKOUT.** Every mutation is applied inside a THROWAWAY COPY —
@@ -76,15 +94,25 @@ ROOT_FILES = ("wrangler.toml",)
 
 #: The one file this table mutates. Every guard in this slice lives in the admission
 #: module, which is the point: the shared budget is not a policy spread across routes, it
-#: is one function's arithmetic plus one isolate-local ledger.
+#: is one function's arithmetic plus one isolate-local ledger — and the day/wide tier added
+#: on top of it is a second copy of exactly that, with its own ledger and its own key mark.
 LIMITS = WT / "functions/api/_lib/limits.js"
 
 #: The suite. Run whole (about 1.5 s), because running it whole is what lets the selector
 #: column check that the RIGHT assertion reddened.
 SUITE = "sim/test_demo_proxy.mjs"
 
-#: Seconds one mutated run may take before it is treated as caught-by-hanging. The suite is
-#: ~1.5 s; a mutation that wedges a deadline would be caught, but only if something ends it.
+#: The DAY/WIDE tier's suite — `sim/tests/helpers_shared_ceilings.mjs`, run by
+#: `sim/tests/test_shared_ceilings.py` under `pytest sim/tests`. It is a SECOND runner and
+#: not a second section because `sim/test_demo_proxy.mjs` was reserved to another agent for
+#: the whole of that slice; the file's own header says so. It prints the same `  - <label>`
+#: line per failed check and exits non-zero, which is the only shape this table's runner
+#: needs, so nothing about the row format changes when a row names it.
+CEILINGS = "sim/tests/helpers_shared_ceilings.mjs"
+
+#: Seconds one mutated run may take before it is treated as caught-by-hanging. `SUITE` is
+#: ~1.5 s and `CEILINGS` ~0.3 s; a mutation that wedges a deadline would be caught, but only
+#: if something ends it.
 MUTATION_TIMEOUT_S = 90
 
 MUTATIONS = [
@@ -233,6 +261,323 @@ MUTATIONS = [
      "  if (owed > 0) {",
      "  if (owed >= 0) {",
      SUITE, "which is the structural half of the claim"),
+    # =========================================================================
+    # THE DAY/WIDE TIER. Rows W* and D*, added 2026-09-06, and the reason they exist is
+    # not symmetry.
+    #
+    # PR #178 lifted the per-IP hour/day windows and the unit budget's DAY ceiling onto
+    # `caches.default` by copying the HOUR's proven design onto the DAY — and not the
+    # hour's proof. The gap was PREDICTED (live-sim-demo.md §912 warned these anchors were
+    # at risk from that slice) and then not covered: neither this table nor
+    # `turnstile_mutation_check.py` held a single row naming `sharedDayBudget`,
+    # `sharedWideWindow`, `unitsDay`, `DAY_MARK` or `WIDE_MARK`. What that cost, measured:
+    # deleting `unaccrueDayPending()` from `refundBudget()` left the ceilings suite
+    # 151/151 GREEN and `sim/test_demo_proxy.mjs` green, while the HOUR's byte-identical
+    # branch (row U2) reddens instantly. The day's un-accrual was dead code the suite could
+    # not reach. PR #180 added the section E case that reaches it (151 -> 155 checks); row
+    # D4 below is what stops that case from being deleted again.
+    #
+    # These rows name `CEILINGS`, not `SUITE`, because that is where the tier's proof
+    # lives. Everything else about them is the same contract: one anchor, matched exactly
+    # once, and a selector that must appear in a FAILING check's own label.
+    # =========================================================================
+
+    # ---- W1: the ordering #178 fixed, put back --------------------------------
+    # The wide check runs BEFORE the minute's write. Moving it after is the tidier-looking
+    # arrangement (one `await` further from the read it pairs with) and it costs a refused
+    # request a cache write it did not earn: the minute entry ends up counting a turn the
+    # hour then refused, so the stored count is ABOVE the truth. That is an OVERCOUNT, the
+    # one direction §4.6.1 says this tier may never fail in.
+    ("W1  the wide check moved back AFTER the minute write (a refusal that costs a write)",
+     LIMITS,
+     "  const wider = await sharedWideWindow(store, request, { ip, route, cfg, nowS, tag });\n"
+     "  if (wider) return wider;\n"
+     "\n"
+     "  // ---- op 2: write back. Unlocked and on purpose — a lost update undercounts (2).\n"
+     "  // `max-age` is one window, so an entry outlives its own bucket by at most that and then\n"
+     "  // evicts itself; the key already carries the bucket, so nothing stale can be believed.\n"
+     "  const wrote = await withDeadline(cfg.cacheTimeoutMs, () =>\n"
+     "    store.put(\n"
+     "      key,\n"
+     "      new Response(JSON.stringify({ n: used + 1 }), {\n"
+     "        headers: {\n"
+     '          "Content-Type": "application/json",\n'
+     '          "Cache-Control": "max-age=" + SCALES.min,\n'
+     "        },\n"
+     "      }),\n"
+     "    ),\n"
+     "  );\n"
+     "  if (wrote === CACHE_TIMEOUT) c.timeouts += 1;\n"
+     "  else if (wrote === CACHE_ERROR) c.errors += 1;\n"
+     "  else {\n"
+     "    c.ops += 1;\n"
+     "    c.wrote += 1;\n"
+     "  }\n"
+     "  c.allowed += 1;",
+     "  // ---- op 2: write back. Unlocked and on purpose — a lost update undercounts (2).\n"
+     "  // `max-age` is one window, so an entry outlives its own bucket by at most that and then\n"
+     "  // evicts itself; the key already carries the bucket, so nothing stale can be believed.\n"
+     "  const wrote = await withDeadline(cfg.cacheTimeoutMs, () =>\n"
+     "    store.put(\n"
+     "      key,\n"
+     "      new Response(JSON.stringify({ n: used + 1 }), {\n"
+     "        headers: {\n"
+     '          "Content-Type": "application/json",\n'
+     '          "Cache-Control": "max-age=" + SCALES.min,\n'
+     "        },\n"
+     "      }),\n"
+     "    ),\n"
+     "  );\n"
+     "  if (wrote === CACHE_TIMEOUT) c.timeouts += 1;\n"
+     "  else if (wrote === CACHE_ERROR) c.errors += 1;\n"
+     "  else {\n"
+     "    c.ops += 1;\n"
+     "    c.wrote += 1;\n"
+     "  }\n"
+     "  const wider = await sharedWideWindow(store, request, { ip, route, cfg, nowS, tag });\n"
+     "  if (wider) return wider;\n"
+     "  c.allowed += 1;",
+     CEILINGS, "a refusal may not leave a counter ABOVE the truth"),
+
+    # ---- W2: the staleness argument, deleted ----------------------------------
+    # The wide entry rotates DAILY because the day is the widest scale it holds, so the
+    # HOUR's freshness cannot ride in the key the way the minute window's does — it rides
+    # in the body, as a bucket stamped beside the count. Trusting the count without the
+    # stamp believes an 03:00 count at 20:00 and refuses somebody who has spent nothing.
+    ("W2  the wide entry's BUCKET STAMP ignored, so a closed hour's count is believed",
+     LIMITS,
+     "    const stored = body && Number(body[bField]) === b ? Number(body[nField]) : 0;",
+     "    const stored = body ? Number(body[nField]) : 0;",
+     CEILINGS, "a count stamped with a DIFFERENT bucket reads as zero, not as this hour's"),
+
+    # ---- W3: fail open turned into fail closed, in the wide half --------------
+    ("W3  a store that HANGS refuses the wide window instead of admitting (fail closed)",
+     LIMITS,
+     "  if (seen === CACHE_TIMEOUT) {\n"
+     "    w.timeouts += 1;\n"
+     "    w.allowed += 1;\n"
+     "    return null; // FAIL OPEN: a deadline is not evidence that anybody is over their hour\n"
+     "  }",
+     "  if (seen === CACHE_TIMEOUT) {\n"
+     "    w.timeouts += 1;\n"
+     "    w.refused += 1;\n"
+     "    const reset = (bucket(nowS, SCALES.min) + 1) * SCALES.min;\n"
+     "    return { retryAfterS: 1, rateLimit: { limit: limits.min, remaining: 0, reset } };\n"
+     "  }",
+     CEILINGS, "WIDE WINDOW FAILS OPEN: a match that HANGS FOR EVER still ADMITS"),
+
+    # ---- W4: the mark that separates a wide key from a narrow one -------------
+    # `windowArity` is 3 for BOTH shapes, so arity cannot tell them apart; the mark is the
+    # whole of the separation, and it works only because a decimal integer cannot begin
+    # with a letter. Empty it and a wide entry can spell a minute entry.
+    ("W4  the WIDE mark emptied, so a wide key can spell a narrow one", LIMITS,
+     'const WIDE_MARK = "w";',
+     'const WIDE_MARK = "";',
+     CEILINGS, "the two wide shapes are marked by a LETTER"),
+
+    # ---- W5: the wide entry outlives its own day ------------------------------
+    # Its key rotates DAILY because the day is the widest scale it holds, so `max-age` has
+    # to be the day too. A shorter one is not wrong in the dangerous direction — it throws
+    # the hour count away and admits — but a ceiling that quietly stops binding is the
+    # failure this whole tier exists to make visible.
+    ("W5  the WIDE entry given a MINUTE's max-age instead of its own day's", LIMITS,
+     "      new Response(JSON.stringify(next), {\n"
+     "        headers: {\n"
+     '          "Content-Type": "application/json",\n'
+     '          "Cache-Control": "max-age=" + SCALES.day,',
+     "      new Response(JSON.stringify(next), {\n"
+     "        headers: {\n"
+     '          "Content-Type": "application/json",\n'
+     '          "Cache-Control": "max-age=" + SCALES.min,',
+     CEILINGS, "it lives exactly ONE DAY — the widest scale it holds"),
+
+    # ---- W6: a failed READ that writes anyway ---------------------------------
+    # The wide half of U5, and the plausible tidy-up is the same one: record the error and
+    # fall through instead of returning. `body` is then the error sentinel, every bucket
+    # stamp reads as NaN, both counts read as zero, and the `put` RESETS a live window to
+    # this isolate's single turn. NOT CAUGHT until section F grew a case whose seeded entry
+    # differs from what a fresh write produces — see that block's own note.
+    ("W6  a failed WIDE read publishes anyway, resetting a live window", LIMITS,
+     "  if (seen === CACHE_ERROR) {\n"
+     "    w.errors += 1;\n"
+     "    w.allowed += 1;\n"
+     "    return null; // FAIL OPEN: neither is a throw from a store having a bad day\n"
+     "  }",
+     "  if (seen === CACHE_ERROR) {\n"
+     "    w.errors += 1;\n"
+     "  }",
+     CEILINGS, "publishing after a failed read would RESET a live hour to one"),
+
+    # ---- W7: the wide ceiling off by one --------------------------------------
+    # `>=` and not `>`, for the reason the day budget states next door: the local request's
+    # own cost is already accounted for by the in-isolate map that ran first, so a colo
+    # standing exactly ON the ceiling has spent it.
+    ("W7  the wide window's ceiling comparison off by one (> instead of >=)", LIMITS,
+     "    if (used >= ceiling) {\n"
+     "      w.refused += 1;",
+     "    if (used > ceiling) {\n"
+     "      w.refused += 1;",
+     CEILINGS, "the colo has seen three"),
+
+    # ---- W8: which scale answers when both are spent --------------------------
+    # `scales` is narrowest-first so a visitor who has spent both their hour and their day
+    # is told to come back at the top of the hour, not tomorrow. Reversing it was caught by
+    # NOTHING that names a refusal until section F grew the case this row points at — §H's
+    # deep-equality on the stored body reddened, because the array order is also the JSON
+    # field order, and a row caught by a serialization detail proves nothing about the
+    # ordering it claims to be about.
+    ("W8  the wide scales built WIDEST-first, so the day answers before the hour", LIMITS,
+     '  if (limits.hour) scales.push(["hour", limits.hour, "h", "hb"]);\n'
+     '  if (limits.day) scales.push(["day", limits.day, "d", "db"]);',
+     '  if (limits.day) scales.push(["day", limits.day, "d", "db"]);\n'
+     '  if (limits.hour) scales.push(["hour", limits.hour, "h", "hb"]);',
+     CEILINGS, "the shortest Retry-After that applies wins"),
+
+    # ---- D1: charge-at-admission, in the DAY dimension ------------------------
+    # §4.6.2's refund rule is what the day inherits along with the hour's design: the colo
+    # is never told about a charge that might have to be given back. Settling the DAY
+    # ledger without asking whether the request was REFUNDED is that rule dropped — and it
+    # is charge-at-admission's observable shape, because a shared entry has no refund write
+    # to correct it with. 200 tokenless POSTs then publish 600 units nobody spent. U1 is
+    # the same mistake in the hour; this row leaves the hour CORRECT, so it is caught only
+    # by a proof the day owns.
+    ("D1  the DAY ledger settled even for a REFUNDED request (the free drain, day-side)",
+     LIMITS,
+     "      if (!refunded && !settled) {\n"
+     "        settled = true;\n"
+     "        accruePending(hourBucket, owed);\n"
+     "        accrueDayPending(dayBucket, owedDay);\n"
+     "      }",
+     "      if (!refunded && !settled) {\n"
+     "        settled = true;\n"
+     "        accruePending(hourBucket, owed);\n"
+     "      }\n"
+     "      accrueDayPending(dayBucket, owedDay);",
+     CEILINGS, "200 refunded requests wrote NOTHING to the colo's day"),
+
+    # ---- D2: retain after the ATTEMPT ----------------------------------------
+    # The day's half of U3. The ledger clears on the `put` ATTEMPT, not on its
+    # confirmation, because a write that lands and then times out has landed: keeping the
+    # units to retry them publishes them TWICE, and a double charge is an overcount, which
+    # refuses somebody. The fake cache's `putStoresThenHangs` exists for exactly this shape.
+    ("D2  keep the DAY units after a write ATTEMPT, to retry them (a double charge)",
+     LIMITS,
+     "    d.published += owedDay;\n    clearDayPending(db);",
+     "    d.published += owedDay;",
+     CEILINGS, "a put that LANDS AND THEN HANGS still clears the ledger"),
+
+    # ---- D3: the comparison forgets this isolate's day ledger -----------------
+    ("D3  compare only the PUBLISHED day count, ignoring this isolate's unpublished spend",
+     LIMITS,
+     "  if (spent + owedDay >= ceiling) {",
+     "  if (spent >= ceiling) {",
+     CEILINGS, "the colo has seen 12"),
+
+    # ---- D4: THE ONE THAT SHIPPED --------------------------------------------
+    # Deleting this line is what PR #178 effectively did and what a 151-check green suite,
+    # a 151-check review and a merge all missed. It is dead code unless a case RELEASES
+    # before it REFUNDS — which no route in this repo does today and nothing prevents — so
+    # section E's second half was written to reach it. This row is the lock on that case.
+    ("D4  the DAY's un-accrual deleted (the dead branch #178 shipped and #180 caught)",
+     LIMITS,
+     "        unaccruePending(hourBucket, owed); // the release-then-refund ordering; see above\n"
+     "        unaccrueDayPending(dayBucket, owedDay);",
+     "        unaccruePending(hourBucket, owed); // the release-then-refund ordering; see above",
+     CEILINGS, "straight back out of the DAY ledger too"),
+
+    # ---- D5: the entry outlives its own day ----------------------------------
+    ("D5  the DAY budget entry given a MINUTE's max-age instead of its own day's", LIMITS,
+     "        new Response(JSON.stringify({ n: spent + owedDay }), {\n"
+     "          headers: {\n"
+     '            "Content-Type": "application/json",\n'
+     '            "Cache-Control": "max-age=" + SCALES.day,',
+     "        new Response(JSON.stringify({ n: spent + owedDay }), {\n"
+     "          headers: {\n"
+     '            "Content-Type": "application/json",\n'
+     '            "Cache-Control": "max-age=" + SCALES.min,',
+     CEILINGS, "the day entry's max-age is ONE DAY"),
+
+    # ---- D6: the publish that always runs, day-side --------------------------
+    # `owedDay > 0` is what makes a refused request cost ZERO day writes. Without it the
+    # free drain is not closed structurally at all — it is 200 no-op writes on the single
+    # hottest key in the colo, each one publishing `spent + 0`.
+    ("D6  publish the day on every admission, even when the isolate owes nothing", LIMITS,
+     "  if (owedDay > 0) {",
+     "  if (owedDay >= 0) {",
+     CEILINGS, "zero writes attempted, which is the structural half of the claim"),
+
+    # ---- D7: the day roll ----------------------------------------------------
+    # Yesterday's crumbs carried into today's entry are spend recorded against a day that
+    # did not spend it, which refuses somebody TOMORROW. Dropping them undercounts, which
+    # is the direction this tier is allowed to be wrong in; the `dropped` counter is what
+    # keeps the drop from being silent.
+    ("D7  carry yesterday's unpublished units INTO today's entry", LIMITS,
+     "function pendingDayUnits(b) {\n"
+     "  const u = state.unitsDay;\n"
+     "  if (u.bucket !== b) {\n"
+     "    if (u.pending > 0) state.stats.cache.unitsDay.dropped += u.pending;\n"
+     "    u.bucket = b;\n"
+     "    u.pending = 0;\n"
+     "  }\n"
+     "  return u.pending;\n"
+     "}",
+     "function pendingDayUnits(b) {\n"
+     "  const u = state.unitsDay;\n"
+     "  if (u.bucket !== b) {\n"
+     "    u.bucket = b;\n"
+     "  }\n"
+     "  return u.pending;\n"
+     "}",
+     CEILINGS, "day 0's unpublished units are never carried into day 1's entry"),
+
+    # ---- D8: fail open turned into fail closed, day budget -------------------
+    # The CATASTROPHIC direction, one scale wider than U6: a colo whose cache is having a
+    # bad day answers every visitor `budget_exhausted` for a DAY rather than for an hour,
+    # and the page paints SCRIPTED the whole time.
+    ("D8  a cache that HANGS refuses the DAY budget instead of admitting (fail closed)",
+     LIMITS,
+     "  if (seen === CACHE_TIMEOUT) {\n"
+     "    d.timeouts += 1;\n"
+     "    d.allowed += 1;\n"
+     "    return null; // FAIL OPEN, ledger KEPT: nothing was written, so nothing can have landed\n"
+     "  }",
+     "  if (seen === CACHE_TIMEOUT) {\n"
+     "    d.timeouts += 1;\n"
+     "    d.refused += 1;\n"
+     "    return { retryAfterS: 1 };\n"
+     "  }",
+     CEILINGS, "DAY BUDGET FAILS OPEN: a match that HANGS FOR EVER still ADMITS"),
+
+    # ---- D9: the day budget's own mark ---------------------------------------
+    # `unitsArity` is 2 for the hour key AND for the day key, so — exactly as for W4 — the
+    # mark is the whole separation. Empty it and `.../units/d0` becomes `.../units/0`,
+    # which is the hour key of hour 0: the deployment's DAY spend and its 00:00 hour merge
+    # into one counter.
+    ("D9  the DAY mark emptied, so the day key can spell an hour key", LIMITS,
+     'const DAY_MARK = "d";',
+     'const DAY_MARK = "";',
+     CEILINGS, "the day budget entry is origin + prefix + 'units' + d + the DAY bucket"),
+
+    # ---- D10: the sub-tier deleted, one scale wider --------------------------
+    # U8's day. `sharedBudgetVerdict` ends by handing off to the day, and an hour refusal
+    # returns above it — so deleting the hand-off leaves a deployment with an hour ceiling
+    # and no day ceiling at all, silently, on a route whose hour never fills.
+    ("D10 the DAY budget sub-tier never consulted at all", LIMITS,
+     "  return sharedDayBudget(store, request, { cfg, nowS });\n}",
+     "  return null;\n}",
+     CEILINGS, "reads FOUR shared entries"),
+
+    # ---- D11: the uncapped deployment, day-side ------------------------------
+    # U11's day, and `budget.daily` is what makes a deployment that caps the HOUR but not
+    # the day accrue to exactly the ledger it has a ceiling for. Without it the day ledger
+    # fills for a ceiling that does not exist — harmless while it stays 0, and a backlog
+    # published in one burst the day an operator sets one. NOT CAUGHT until section J grew
+    # the ledger assertion; the two lines it already had watch the SUB-TIER, and this
+    # accrual happens in `release()`, which consults no sub-tier at all.
+    ("D11 accrue DAY units on a deployment with no daily ceiling to mirror", LIMITS,
+     "  const owedDay = budget && budget.daily && budget.charged && budget.charged.length",
+     "  const owedDay = budget && budget.charged && budget.charged.length",
+     CEILINGS, "the DAY ledger never accrued a unit either"),
 ]
 
 
