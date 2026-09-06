@@ -966,3 +966,28 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   worthwhile — it is specifically (a), the refresh, that has stopped paying for itself.
   **What the tier's own audit says to do instead:** *"What remains is ours to build."* Six sweeps
   agreeing with that sentence is the evidence for it, not a reason to run a seventh.
+
+- **2026-09-06 — the hidden-tab red was the harness, and the same defect was sitting one file
+  over.** `packets grew while the tab was hidden` had been believed across two sessions and had
+  already produced a guard in `sim/web/bg.js` whose comment credited it with the fix. The failure
+  came back **with that guard in place** (job 101442923492, PR #172). Measurement settled it in one
+  run: instrumenting every push into `packets`/`pings` with `document.hidden` **at the push** gave
+  **zero** hidden-time pushes across 32 backgrounded runs, and zero frames delivered while hidden —
+  `bg.js`'s guard has never been beaten and cannot be, since hole 1 needs a frame. The extra entry
+  was always spawned by a **visible** page in the 7–26 ms between `sim/test_bg_perf.mjs` sampling
+  its baseline from Node and the tab actually going hidden, then charged to the hidden window
+  because nothing retires once rAF stops. Widened to 1200 ms it reproduced **4 runs in 12**; that
+  narrow gap is exactly why it re-ran green and read as a flake. Fix is harness-only — the baseline
+  is now taken **by the page, inside the `visibilitychange` handler** — with `bg.js` changed by
+  **comment only**, withdrawing the false credit and keeping the guard (still the only defence for
+  its point 2, and **unfalsifiable in this environment**, which is now written down rather than
+  implied). Controls: `origin/dev`'s test + the same construction **3/3 red** with CI's message
+  verbatim; fixed suite **3/3 green, 25 checks**; fixed suite vs a mutated `bg.js` **6/25 fail**.
+  Recorded as **rule 30**. Then PR #175 reddened on a *different* suite — `the README hero should
+  actually decode (got {"src":"img/sim-hero.png","w":0,"h":0})` — on a diff of one test file plus
+  comments. The PNG is valid and byte-identical on both branches (612892 B, 1424×1251), so the
+  browser returned 0×0: `sim/test_docs_explorer.mjs:110` reads `naturalWidth` with no wait for
+  decode, and its own comment enumerates two causes of `0` while missing *not loaded yet*. Briefed
+  with that as a **hypothesis**, against the rival (the off-origin interceptor genuinely aborting
+  it) which needs the opposite fix. **#172's blocker is separately confirmed dead**: `bg_perf`
+  green, 25 checks, on the merged tree, verified in a throwaway worktree rather than assumed.
