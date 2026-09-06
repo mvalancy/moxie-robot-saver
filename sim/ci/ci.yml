@@ -292,27 +292,38 @@ jobs:
         # `sim/check_hosted_mic.mjs` plays a WAV into Chrome's FAKE MICROPHONE
         # (`--use-file-for-fake-audio-capture`) and drives the real page: `getUserMedia`, the
         # permission grant, `mic.js::wavCapture`'s ScriptProcessor graph, `encodeWav`'s
-        # 48 kHz → 16 kHz decimation, and the upload. Against a DEPLOYED site it spends real
-        # gateway calls — one STT + one chat + one TTS — which is exactly why the network half
-        # is wired to NO push and NO schedule: see the file's header and the opt-in dispatch
-        # job in sim/ci/deployed.yml.
+        # 48 kHz -> 16 kHz decimation, and the upload. Against a DEPLOYED site it spends real
+        # gateway calls — one STT + one chat + one TTS — which is why the network half is
+        # wired to NO push and NO schedule: see the file's header and the opt-in dispatch job
+        # in sim/ci/deployed.yml.
         #
-        # WHAT RUNS HERE IS `--selftest`, and it is hermetic: `sim/web` on loopback under the
-        # real `_headers` policy with /api/* answered at the browser, driven four times with
-        # four different fake microphones. Measured 2026-09-05 — the sentence clip must pass
-        # every clause (envelope correlation 0.785-0.991 against the source, 0.173-0.363 against
-        # an unrelated one — the clause is a MARGIN between the two rather than a ceiling on the
-        # second, because machine load moves both); DIGITAL SILENCE must redden "the captured
-        # audio is AUDIBLE" (peak
-        # 0.0000); A DIFFERENT CLIP — real, loud, and the wrong words — must redden "it is the
-        # clip the fake microphone played" (0.270-0.300) while leaving the audible clause GREEN, and
-        # that is the mutation that matters, because silence reddens almost anything; and the
-        # committed golden (`sim/tests/goldens/real_voice_22050_mono.wav`) must come back
-        # through the same instrument. The floor is 0.60 and not 0.70 because a run on a
-        # LOADED machine moved every score (the golden 0.991 -> 0.785): `wavCapture`'s
-        # ScriptProcessor drops frames when the main thread is busy, and a CI runner is a busy
-        # machine. It also prints the overlap scorer's table and
-        # WATCHES the transcript assertion fail against a reference nobody said.
+        # WHAT THIS TIER CLAIMS: the composer is reachable with the rail shut, a device opens
+        # on a real page, the upload is a 16 kHz mono RIFF/WAVE the SERVER's own reader
+        # accepts, it is audible rather than silence, IT IS THE CLIP THAT WAS PLAYED rather
+        # than a different one, the transcript reaches the log, her gateway voice is
+        # scheduled, and nothing fires a CSP violation.
+        #
+        # WHAT IT DOES NOT CLAIM, so a green run is not misread: that the recording is a
+        # FAITHFUL copy of what was played. This tier reddened once on exactly that
+        # (run 34013443378) and the cause was the runner, not the site — its capture
+        # SATURATES, `peak 1.0000` in three of four cases, which halves an envelope score
+        # while the ordering stays correct in all four. So the magnitude floor is asserted
+        # only by `--dry-run` and the paid run, and printed here; what is asserted here is
+        # the ORDERING, produced from one recording on one machine, which is the only kind of
+        # number that can survive a runner nobody has characterised. It is taken as a VOTE
+        # over ~24 one-second chunks rather than as a difference of scores, because a
+        # difference was measured to be a coin toss under load — on a 24-core box at load 29
+        # a healthy run scored +0.058 against a mutation's +0.038, while the vote separates
+        # the same two populations 0.750-0.875 against 0.208-0.429.
+        #
+        # TEETH: digital silence must redden "audible"; A DIFFERENT CLIP — real, loud, the
+        # wrong words — must redden "it is the clip that was played" while audible stays
+        # green; the committed golden must come back through the same instrument; and the
+        # DEGRADATION GAUNTLET re-scores the audio the baseline case really uploaded under
+        # seven modelled capture defects (saturation, hard saturation, 5/15/30 % of
+        # ScriptProcessor blocks dropped, a very quiet input), requiring the clause to hold
+        # each time AND to FAIL with the templates swapped. That last part is what keeps this
+        # honest on a machine it has never run on.
         run: node sim/check_hosted_mic.mjs --selftest
       - name: Mic-spend test (a refused microphone must not buy a chat+speech turn)
         # The audit finding this closes: `mic.js` consoles a failed microphone with a

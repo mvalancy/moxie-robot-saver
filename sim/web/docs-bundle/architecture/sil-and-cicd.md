@@ -364,9 +364,72 @@ and **a different clip** (real, loud, the wrong words) must redden *"it is the c
 microphone played"* while the audible clause stays green — and the spending half is a
 `workflow_dispatch` job with `mic: dry` as its default.
 
+### The audio clause is an ordering, not a magnitude — and that is a scar
+
+The first version of the audio assertion took the **peak** amplitude envelope, slid the source
+clip across the capture, and demanded an absolute correlation floor. It passed on a developer's
+box at 0.955–0.991 and **failed in CI** (run 34013443378):
+
+| case | capture peak | vs clip played | vs unrelated clip |
+|---|---|---|---|
+| baseline (the sentence) | **1.0000** | 0.430 | 0.294 |
+| mutation A (silence) | 0.0000 | −1.000 | −1.000 |
+| mutation B (a different clip) | **1.0000** | 0.339 | **0.471** |
+| control C (the golden) | 0.9997 | 0.592 | 0.277 |
+
+`peak 1.0000` in three of four cases is the finding: **the runner's own capture saturates.**
+`getUserMedia`'s processing applies gain until the loud parts clip, and a *peak* envelope of a
+clipped signal is a flat top — the environment destroys the exact feature the measure was built
+on. Note what did **not** break: in every single case the clip that was actually played
+out-scored the other one. Saturation halved the magnitudes and left the comparison intact.
+
+Lowering the floor would have been the third per-box tune of one number, and a threshold tuned
+per machine reddens on the next machine. So the failure was reproduced **offline** instead —
+the capture chain modelled as loop → resample → compressor → clip → decimate — and candidate
+measures scored across nine conditions. Three results shaped the rewrite: **RMS beats peak
+under clipping** (0.848 where peak fell to 0.665); the **log** of the RMS envelope is nearly
+invariant to saturation (spread 0.007 across clean/saturated/hard, against peak's 0.316); and
+**no rigid template survives dropped `ScriptProcessor` blocks**, which time-warp the recording,
+so each ~1 s chunk is matched against its best position anywhere in the template instead.
+
+A fourth finding came from the rewrite's own teeth one run later: **the template has to be the
+looped file, not one period.** Chrome's fake device loops the clip for as long as the stream is
+open, so a chunk of the capture routinely straddles a loop seam and has no matching position in
+a single copy — it matches nothing and votes at random. A 0.45 s chunk of the 0.75 s committed
+golden straddles most of the time, which is exactly how the *short* fixture failed at 52 % while
+the 3.95 s sentence passed at 89 %. Tiling each template with a copy of itself takes the golden
+to **91 %** clean and **89 %** with a tenth of the blocks dropped, while the mutation that must
+fail sits at 22 %. Both sides are tiled, so neither gets more chances at a coincidental match.
+
+The clause is now: score the capture against the clip played **and** against an unrelated one —
+same recording, same machine, same code — and assert only that **the played clip wins**.
+
+*How* it wins took one more measurement. Asserting a difference of scores (`median(played) −
+median(unrelated) ≥ 0.05`) was still too noisy to gate on: on a 24-core box at **load 29**, a
+healthy run scored **+0.058** and the mutation that must fail scored **+0.038**. Twenty
+thousandths between "green" and "the teeth work" is a coin toss with a decimal point. So the
+comparison is a **vote**: each of ~24 one-second chunks is an independent head-to-head, and the
+clause asserts the fraction that chose the played clip. Votes concentrate where a difference of
+medians does not — across the same nine conditions, true positives run **0.750–0.875** and
+inversions **0.208–0.429**, a gap of **0.32** against the difference's 0.02. The threshold is
+0.60, in the middle of that gap and deliberately not 0.5 + ε.
+
+The fidelity magnitude (`FIDELITY_FLOOR`) is asserted by `--dry-run` and the paid run, where the
+audio path is somebody's to look at, and merely printed in CI.
+
+Keeping that honest is the **degradation gauntlet**: it takes the audio the baseline browser
+case really uploaded and re-scores it under seven modelled capture defects — saturation, hard
+saturation, 5/15/30 % of blocks dropped, a very quiet input — requiring the clause to hold each
+time *and* requiring the same audio to **fail** with the two templates swapped. It is arithmetic
+over bytes already captured, so it costs nothing, cannot flake, and puts the exact environment
+that broke this file permanently under test — a threshold that only holds on the machine it was
+tuned on cannot survive contact with the gauntlet.
+
 **What it does not prove:** the clip is the site's own prerendered speech, not a human being.
 Point `MOXIE_MIC_WAV` + `MOXIE_MIC_TEXT` at a recording of a child and the same run closes that
-too.
+too. And a green `--selftest` is **not** "the audio round trip is verified": the fast tier runs
+no ASR (the transcript is a fixture) and does not assert recording fidelity — only that a device
+opened, the upload is a well-formed audible 16 kHz WAV, and it is the clip that was played.
 
 ## Run it now
 

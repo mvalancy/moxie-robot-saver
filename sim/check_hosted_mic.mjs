@@ -151,10 +151,14 @@
  *      mono RIFF/WAVE of a plausible duration — parsed with the SERVER's own
  *      `functions/api/_lib/wav.js`, so the client encoder and the server decoder are pinned
  *      by one assertion — and its peak amplitude is audible, not a silent buffer.
- *   3. IT IS THE AUDIO WE PLAYED. The captured envelope correlates with the source clip's
- *      and NOT with an unrelated clip's. Separate from 2 because "loud" and "the right
- *      recording" fail separately: a fake device that fed white noise, or a page that
- *      uploaded the wrong buffer, is loud.
+ *   3. IT IS THE AUDIO WE PLAYED. The capture is scored against the clip that was played
+ *      AND against an unrelated one, and the played clip must WIN. Separate from 2 because
+ *      "loud" and "the right recording" fail separately: a fake device that fed white
+ *      noise, or a page that uploaded the wrong buffer, is loud. It is an ORDERING and not
+ *      a magnitude, and that is the load-bearing detail — see the long note at `envelope`,
+ *      and CI run 34013443378, where a saturating runner halved every score while getting
+ *      the ordering right in all four cases. The magnitude (`FIDELITY_FLOOR`) is asserted
+ *      only against a real deployment or a developer's box, and reported everywhere.
  *   4. THE TRANSCRIPT RESEMBLES THE WORDS. `wordOverlap(spoken, heard) >= STT_FLOOR`, and
  *      `wordOverlap(decoy, heard) < DECOY_CEIL`. The second half is what makes the first
  *      non-vacuous: an ASR that returns confident nonsense fails clause one; an ASR that
@@ -216,10 +220,20 @@
  *     mutation A digital silence       → clause 2 (audible) must go red
  *     mutation B a DIFFERENT clip      → clause 3 (it is the audio we played) must go red
  *                                        while clause 2 still passes
+ *     control C  the committed golden  → every clause must PASS on the shipped fixture
  *
  * B is the one that matters: silence reddens almost anything, so a harness could pass A
  * while its correlation was vacuous. B plays real, loud, perfectly good speech that is the
- * WRONG speech, and only the correlation can tell.
+ * WRONG speech, and only the identity clause can tell.
+ *
+ * Plus THE DEGRADATION GAUNTLET, which is what the fast tier gained after CI reddened. The
+ * browser cases prove the instrument works on the machine it is running on; the gauntlet
+ * takes the audio the BASELINE CASE REALLY UPLOADED and re-scores it under seven modelled
+ * capture defects — saturation, hard saturation, 5/15/30 % of ScriptProcessor blocks
+ * dropped, a very quiet input — requiring the identity clause to survive each one AND
+ * requiring the same audio to FAIL with the two templates swapped. It is arithmetic over
+ * bytes already captured, so it costs nothing and cannot flake, and it puts the exact
+ * environment that broke this file permanently under test.
  *
  * Plus two paper mutations that need no browser at all, printed with their real numbers:
  * the overlap scorer against the sentence itself (1.00), against the decoy (measured), and
@@ -227,8 +241,28 @@
  * nobody said, whose failure messages are PRINTED so a reader can see the assertion fire.
  *
  * It spends nothing, touches no network beyond loopback, and needs no gateway, so the fast
- * tier runs it on every push. What it proves is that the instrument works. The instrument
- * is then pointed at a real deployment BY HAND.
+ * tier runs it on every push.
+ *
+ * WHAT THE FAST TIER THEREFORE CLAIMS, AND WHAT IT DOES NOT — say this plainly, because a
+ * green `--selftest` must not be read as "the audio round trip is verified":
+ *
+ *   IT PROVES  the composer is reachable with the rail shut; `getUserMedia` opens a device
+ *              on a real page; `wavCapture`+`encodeWav` produce a 16 kHz mono RIFF/WAVE the
+ *              SERVER's own reader accepts; the capture is audible rather than silence; the
+ *              audio that was uploaded is the clip that was played rather than a different
+ *              one; the transcript reaches the log and is scored; her gateway voice is
+ *              scheduled; and the page fires no CSP violation and logs no error.
+ *
+ *   IT DOES NOT PROVE  that the recording is a FAITHFUL copy of what was played. That is
+ *              `FIDELITY_FLOOR`, and it is deliberately not asserted here: a CI runner's
+ *              microphone saturates (peak 1.0000, measured) and halves the score with
+ *              nothing wrong with this site. The number is printed on every run, and it is
+ *              asserted by `--dry-run` and by the paid run, where the audio path is
+ *              somebody's to look at.
+ *
+ *   IT ALSO DOES NOT PROVE anything about the gateway: no ASR runs here, the transcript is
+ *              a fixture, and clause 4 is therefore about the plumbing that carries a
+ *              transcript, never about whether the ears work. Only the paid run tests that.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * THE CI JUDGEMENT (2026-09-05), WHICH IS PART OF THE DELIVERABLE.
@@ -386,27 +420,97 @@ function assertWords(c, heard, { spoken, decoy, where }) {
 }
 
 /* ════════════════════════ waveform maths ══════════════════════════════════════ *
- * Clause 3 needs "is this the recording we played", through a path that legitimately
+ * Clause 3 asks "is this the recording we played", through a path that legitimately
  * changes the samples: Chrome resamples the file to the capture rate, `getUserMedia` runs
  * echo cancellation and noise suppression (`mic.js::wavCapture` asks for both), and
- * `encodeWav` decimates 48 kHz → 16 kHz by nearest neighbour. Sample-wise comparison is
- * meaningless after that; the ENERGY ENVELOPE survives all of it.
+ * `encodeWav` decimates to 16 kHz by nearest neighbour. Sample-wise comparison is
+ * meaningless after that, so the comparison is over the ENERGY ENVELOPE.
  *
- * So: peak amplitude per 10 ms frame, normalised, then a sliding normalised
- * cross-correlation of the source's single period against the capture. The lag search is
- * what makes it phase-blind, which it must be — the file's playback phase at the moment
- * capture starts is not observable from here (see the header).
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THIS BLOCK WAS REWRITTEN AFTER IT WENT RED IN CI (run 34013443378), AND THE REWRITE IS
+ * THE INTERESTING PART, SO IT IS WRITTEN DOWN RATHER THAN TUNED AWAY.
+ *
+ * The first version took the PEAK amplitude per 10 ms frame and slid the source's single
+ * period across the capture, asserting an absolute floor and a fixed margin. It passed on
+ * this developer's box at 0.955-0.991 and FAILED on the GitHub runner:
+ *
+ *     baseline    peak 1.0000   src 0.430   decoy 0.294   margin +0.136   ✗ both clauses
+ *     mutation A  peak 0.0000   src -1.000  decoy -1.000                  (silence)
+ *     mutation B  peak 1.0000   src 0.339   decoy 0.471   margin -0.131
+ *     control C   peak 0.9997   src 0.592   decoy 0.277   margin +0.315   ✗ the floor
+ *
+ * `peak 1.0000` in three of four cases is the whole story: THE RUNNER'S CAPTURE SATURATES.
+ * `getUserMedia`'s audio processing applies gain until the loud parts hit full scale, and a
+ * PEAK envelope of a clipped signal is a flat top — the feature the measure was built on is
+ * the one the environment destroys. Lowering the floor again would have been the third
+ * per-box tune of the same number, and a threshold tuned per machine reddens on the next
+ * one.
+ *
+ * So the failure was reproduced OFFLINE instead — the capture chain modelled as
+ * loop → resample → compressor with attack/release → clip → decimate — and candidate
+ * measures scored across nine conditions (clean/saturated/hard-saturated × 48 kHz/44.1 kHz,
+ * 5/15/30 % of ScriptProcessor blocks dropped, and a very quiet input). The model
+ * reproduces the defect: peak-envelope Pearson falls 0.981 → 0.730 → 0.665 and its margin
+ * +0.671 → +0.238 → +0.168, which is the shape CI reported. Three findings came out of it:
+ *
+ *   1. **RMS beats peak under clipping.** Clipping caps the top of a waveform but the
+ *      frame ENERGY still tracks the speech. Plain RMS held 0.985 → 0.848 where peak fell
+ *      to 0.665.
+ *   2. **The LOG of the RMS envelope is very nearly invariant to saturation** — 0.982,
+ *      0.975, 0.981 across clean, saturated and hard-saturated, a spread of 0.007 against
+ *      the peak envelope's 0.316. A compressor is approximately a gain, and a gain is an
+ *      offset in log space, which Pearson already removes.
+ *   3. **No rigid template survives DROPPED BLOCKS.** A starved main thread makes
+ *      `ScriptProcessor` skip 4096-frame blocks, which time-warps the recording; at 15 %
+ *      dropped the whole-clip margin fell to +0.105. The fix is to stop requiring one
+ *      global alignment: score each ~1 s chunk of the capture against its best match
+ *      ANYWHERE in the template. That is what `score()` does, and it holds 0.751 at 30 %
+ *      dropped where the rigid version has collapsed.
+ *   4. **THE TEMPLATE MUST BE THE LOOPED FILE, NOT ONE PERIOD** — found by this file's own
+ *      teeth, one run after the rewrite, when control C (the 0.75 s committed golden) came
+ *      back at 52 % while the 3.95 s sentence passed at 89 %. Chrome's fake device loops the
+ *      file, so a chunk of the capture routinely STRADDLES A LOOP SEAM, and a seam-crossing
+ *      chunk has no matching position in a single copy of the clip — it matches nothing and
+ *      votes at random. A 0.45 s chunk of a 0.75 s clip straddles most of the time, which is
+ *      why the short fixture failed and the long one did not. Tiling each template with a
+ *      copy of itself gives every window a home: the golden goes 57 % → 91 % clean and
+ *      40 % → 89 % with a tenth of the blocks dropped, while the mutation that must fail
+ *      moves to 22 %. Both templates are tiled, so the position count stays equal — a longer
+ *      template would otherwise get more chances at a coincidental match, which was the
+ *      other half of why the short golden lost to the longer decoy.
+ *
+ * AND THE THRESHOLD ITSELF CHANGED SHAPE, which matters more than the statistic did. Read
+ * the CI table again: in EVERY case the ordering was right — the clip that was actually
+ * played out-scored the other one (0.430 > 0.294; 0.339 < 0.471, correctly, because
+ * mutation B played the decoy; 0.592 > 0.277). Saturation moved the MAGNITUDES by half and
+ * left the COMPARISON intact. So clause 3 no longer asserts a magnitude at all: it asserts
+ * that the played clip out-scores the other. Both scores are produced in the same run, on
+ * the same machine, from the same recording — which is the only way a number here can be
+ * environment-invariant.
+ *
+ * And the comparison is taken as a VOTE over chunks rather than as a difference of scores,
+ * because a difference was measured to be too noisy to gate on even after all of the above:
+ * at load 29 on this box a healthy run scored +0.058 against a mutation's +0.038. The vote
+ * separates the same two populations by 0.32. `score()` carries that table.
  */
-function envelope(pcm16, rate, hz = 100) {
+/** Frames per second of the envelope. 10 ms is finer than anything that matters here. */
+const ENV_HZ = 100;
+
+/** RMS energy per frame, 0..1. RMS rather than peak: see finding 1 above. */
+function envelope(pcm16, rate, hz = ENV_HZ) {
   const hop = Math.max(1, Math.round(rate / hz));
   const out = [];
   for (let i = 0; i + hop <= pcm16.length; i += hop) {
-    let p = 0;
-    for (let j = i; j < i + hop; j++) { const v = Math.abs(pcm16[j]); if (v > p) p = v; }
-    out.push(p / 32768);
+    let s = 0;
+    for (let j = i; j < i + hop; j++) { const v = pcm16[j] / 32768; s += v * v; }
+    out.push(Math.sqrt(s / hop));
   }
   return out;
 }
+
+/** Log of the envelope, which is what makes it saturation-proof (finding 2). The epsilon
+ *  puts digital silence at -4 rather than at -Infinity. */
+const logEnv = (e) => e.map((v) => Math.log10(v + 1e-4));
 
 /** Pearson correlation of `a` against `b[at … at+a.length]`, or -1 where either is flat. */
 function corrAt(a, b, at) {
@@ -423,59 +527,214 @@ function corrAt(a, b, at) {
   return num / Math.sqrt(da * db);
 }
 
-/**
- * The best alignment of `template` anywhere inside `signal`, as `{score, lagS}`.
- * Both are 100 Hz envelopes; a 1-frame step is 10 ms, which is finer than anything that
- * matters here and cheap at these lengths (a few hundred frames against a thousand).
- */
-function bestCorrelation(template, signal, hz = 100) {
-  if (template.length < 8 || signal.length < template.length) return { score: -1, lagS: 0 };
-  let best = -1, at = 0;
-  for (let i = 0; i + template.length <= signal.length; i++) {
-    const s = corrAt(template, signal, i);
-    if (s > best) { best = s; at = i; }
+/** The best score for one chunk anywhere in `template`. The inner loop of everything below. */
+function bestIn(chunk, template) {
+  let best = -1;
+  for (let j = 0; j + chunk.length <= template.length; j++) {
+    const v = corrAt(chunk, template, j);
+    if (v > best) best = v;
   }
-  return { score: best, lagS: at / hz };
+  return best;
 }
 
-/* The floors for clause 3, set FROM the numbers rather than from taste. Every `--selftest`
- * run prints all of them; this is the whole spread measured on 2026-09-05, across four
- * hermetic runs and two against production:
+/**
+ * Score the capture against BOTH templates, chunk by chunk, WITHOUT requiring one global
+ * alignment — a starved main thread makes `ScriptProcessor` skip whole 4096-frame blocks,
+ * which time-warps the recording, and no rigid template survives that (finding 3 above).
+ * Each ~1 s chunk is matched against its best position anywhere in each template.
  *
- *     the clip that was played   0.785 … 0.991   (0.985 on the live deployment, twice)
- *     an unrelated clip          0.173 … 0.350
- *     mutation B, where the microphone plays the DECOY: 0.270 … 0.300 against the sentence,
- *                                0.734 … 0.983 against the decoy — the two clauses SWAP,
- *                                which is the whole point of that mutation.
+ * Returns the two median scores and — the number clause 3 actually asserts — the FRACTION
+ * of chunks that matched the played clip better than the unrelated one.
  *
- * 0.785 IS THE INTERESTING NUMBER AND IT IS WHY THE FLOOR IS 0.60 RATHER THAN 0.70. Three
- * of the four hermetic runs put the true positives at 0.939-0.991; the fourth ran while
- * another project's test suite had the machine, and every score moved: the sentence clip
- * fell 0.985 → 0.881 and the 0.75 s golden fell 0.991 → 0.785, leaving 0.085 over a 0.70
- * floor. `mic.js::wavCapture` records through a `ScriptProcessor`, which drops frames when
- * the main thread is busy, and a SHORT template feels each dropped frame more — the golden
- * is 75 envelope frames against the sentence's ~400. A CI runner is a busy machine, so a
- * floor whose margin evaporates under load is a red that says nothing about the site.
- * 0.60 still sits 0.30 above the worst wrong-clip score, and the assertion cannot go
- * vacuous by being loosened: `--selftest`'s mutation B fires this clause on every push and
- * reddens if it stops discriminating.
+ * WHY A VOTE AND NOT A DIFFERENCE OF SCORES. The first rewrite asserted
+ * `median(played) - median(unrelated) >= 0.05`, which is still a comparison made on one
+ * machine from one recording, and it was STILL too noisy to gate on. Measured on this box
+ * at load 29 with every core busy: a HEALTHY run scored +0.058 and the mutation that must
+ * fail scored +0.038. Twenty thousandths between "green" and "the teeth work" is not a
+ * threshold, it is a coin toss with a decimal point.
  *
- * THE SECOND CLAUSE IS A MARGIN AND NOT A CEILING, and that started as an absolute 0.50 and
- * was changed for the same reason, one measurement later. Load moves BOTH scores: on the
- * busy box the healthy decoy ROSE 0.298 → 0.363 while mutation B's FELL 0.983 → 0.523, and
- * the two populations were closing on the fixed line from opposite sides. A DIFFERENCE does
- * not have that problem — whatever the machine does to the recording it does to both
- * correlations — and it states the actual claim, which was never "an unrelated clip scores
- * below 0.50" but "the clip we played beats an unrelated one, clearly". Measured across all
- * six runs: healthy margins **0.481 … 0.818**, mutation B's **−0.674 … −0.206**. Zero
- * separates the populations; 0.25 is the conservative side of zero.
+ * A vote concentrates where a difference of medians does not: each chunk is an independent
+ * head-to-head and there are ~24 of them, so the noise that moves any single score averages
+ * out. Measured across nine modelled capture conditions (clean, saturated, hard-saturated,
+ * 5/15/30/50 % of blocks dropped, a very quiet input, 44.1 kHz):
  *
- * Both numbers are real but neither gap is enormous, for a stateable reason: two clips of
- * the same voice reading different sentences share a speaking rate and a syllable rhythm,
- * so their envelopes are not independent. Anyone moving either must re-state the spread here
- * from a run, not from memory. */
-const CORR_FLOOR = 0.60;
-const CORR_MARGIN = 0.25;
+ *     played = the sentence   vote 0.750 … 0.875
+ *     played = the decoy      vote 0.208 … 0.429
+ *
+ * a gap of 0.32 where the difference of medians had 0.02.
+ *
+ * @returns {{good:number, bad:number, margin:number, vote:number, chunks:number}}
+ */
+function score(capturePcm, captureRate, ctx) {
+  const sig = logEnv(envelope(capturePcm, captureRate));
+  const a0 = logEnv(envelope(ctx.source, ctx.sourceRate));
+  const b0 = logEnv(envelope(ctx.decoyPcm, ctx.decoyRate));
+  const shortest = Math.min(a0.length, b0.length, sig.length);
+  const L = Math.min(ENV_HZ, Math.max(20, Math.floor(shortest * 0.6)));
+  const stride = Math.max(1, Math.round(L / 2));
+  const none = { good: -1, bad: -1, margin: 0, vote: -1, chunks: 0 };
+  if (sig.length < L || a0.length < L || b0.length < L) return none;
+  /* THE TEMPLATES ARE TILED, and this is a correctness fix rather than a tuning knob.
+   * Chrome's fake device LOOPS the file for as long as the stream is open, so a chunk of
+   * the capture routinely straddles a loop seam — and a seam-crossing chunk has no matching
+   * position in a single copy of the clip, so it matches nothing and votes at random. The
+   * shorter the clip, the worse it is: a 0.45 s chunk of the 0.75 s committed golden
+   * straddles most of the time, which is exactly how control C failed at 52 % while the
+   * 3.95 s sentence passed at 89 %. Concatenating each template with itself gives every
+   * seam-crossing window a home. Measured on the golden: 57 % → 91 % clean, 40 % → 89 %
+   * with a tenth of the blocks dropped, while the mutation that must fail moved 22 %.
+   * Both templates are tiled, so the position count stays equal and the comparison stays
+   * unbiased — a longer template would otherwise get more chances at a coincidental match,
+   * which is the OTHER half of why the short golden was losing to the longer decoy. */
+  const A = a0.concat(a0), B = b0.concat(b0);
+  const ga = [], gb = [];
+  let win = 0, n = 0;
+  for (let i = 0; i + L <= sig.length; i += stride) {
+    const chunk = sig.slice(i, i + L);
+    const a = bestIn(chunk, A), b = bestIn(chunk, B);
+    ga.push(a); gb.push(b);
+    if (a > b) win++;
+    n++;
+  }
+  if (!n) return none;
+  const med = (x) => { const y = x.slice().sort((p, q) => p - q); return y[Math.floor(y.length / 2)]; };
+  const good = med(ga), bad = med(gb);
+  return { good, bad, margin: good - bad, vote: win / n, chunks: n };
+}
+
+/**
+ * The fraction of chunks that must pick the clip that was actually played. Asserted
+ * EVERYWHERE, the fast tier included, because it is a COMPARISON and not a magnitude: both
+ * halves come out of the same recording, on the same machine, through the same code, so an
+ * environment that degrades the audio degrades both halves together.
+ *
+ * 0.60 sits between a worst measured true positive of 0.750 and a worst measured inversion
+ * of 0.429 (nine modelled conditions; the table is at `score`). Deliberately NOT 0.5 + eps:
+ * a coin-flip boundary would make a degraded run a coin toss.
+ */
+const IDENTITY_VOTE = 0.60;
+
+/**
+ * The absolute fidelity magnitude, asserted ONLY where the audio path is a known quantity —
+ * a developer's box or a real deployment (`--dry-run` and the paid run), never the fast
+ * tier. The fast tier REPORTS it instead, because a runner whose own microphone saturates
+ * (`peak 1.0000`, measured in CI run 34013443378) is not a defect in this site.
+ */
+const FIDELITY_FLOOR = 0.60;
+
+/* ════════════════ the degradation gauntlet (the CI failure, under test) ═══════ *
+ * `--selftest` browser cases prove the instrument works on THIS machine. This proves it
+ * survives a machine it has not got — specifically the one that reddened CI run
+ * 34013443378, whose capture saturated at peak 1.0000 and halved every score.
+ *
+ * It takes the REAL audio the baseline browser case uploaded and degrades it the way a
+ * runner does, then re-runs the identity clause over each degraded copy. No browser, no
+ * clock, no network: it is arithmetic over bytes that were already captured, so it costs
+ * nothing and cannot flake. Two things must hold for every degradation:
+ *
+ *   · the clip that WAS played still wins the chunk vote by `IDENTITY_VOTE`;
+ *   · with the two templates SWAPPED, the same audio must FAIL — otherwise the margin is
+ *     being cleared by something other than the audio, which is how this measure would go
+ *     quietly vacuous.
+ *
+ * A degradation that stops reddening the swapped case is itself reported, because a
+ * gauntlet whose mutations have gone toothless is worse than no gauntlet.
+ */
+const DEGRADATIONS = [
+  ["as captured", (f) => f],
+  /* THE CI DEFECT: gain until the loud parts clip. Modelled as a compressor with a fast
+   * attack and slow release, which is what produces `peak 1.0000` on a runner. */
+  ["saturated (the runner's own microphone)", (f) => compress(f, 0.30)],
+  ["hard saturated", (f) => compress(f, 0.60)],
+  /* A STARVED MAIN THREAD: `mic.js::wavCapture` records through a `ScriptProcessor`, which
+   * simply does not deliver a 4096-frame block when the page is busy. That time-warps the
+   * recording, which is why the score is chunked rather than one global alignment. */
+  ["5% of ScriptProcessor blocks dropped", (f) => dropBlocks(f, 0.05)],
+  ["15% dropped", (f) => dropBlocks(f, 0.15)],
+  /* A THIRD OF THE RECORDING GONE, and this one carries a lower expectation ON PURPOSE —
+   * 0.5 rather than `IDENTITY_VOTE`, i.e. it must still CHOOSE the right clip but need not
+   * clear the full confidence bar. Dropping 30 % of the blocks also drops 30 % of the
+   * recording, so the vote is taken over ~12 chunks instead of ~24, and demanding the same
+   * confidence from half the evidence is a statement about sample size rather than about
+   * the measure. Measured at 58 % on a box at load 26 — right clip, thinner majority. The
+   * swapped control below is still held to the FULL bar, so this cannot go vacuous. */
+  ["30% dropped + saturated", (f) => compress(dropBlocks(f, 0.30), 0.30), 0.5],
+  ["very quiet input", (f) => scale(f, 0.05)],
+];
+
+/** A compressor with attack/release, clipping at full scale. */
+function compress(pcm, target) {
+  const out = new Int16Array(pcm.length);
+  const win = Math.round(0.02 * 16000);
+  let g = 1;
+  for (let i = 0; i < pcm.length; i += win) {
+    const end = Math.min(pcm.length, i + win);
+    let r = 0;
+    for (let j = i; j < end; j++) { const v = pcm[j] / 32768; r += v * v; }
+    r = Math.sqrt(r / Math.max(1, end - i));
+    const want = r > 1e-4 ? Math.min(30, target / r) : g;
+    g = g + (want - g) * (want > g ? 0.5 : 0.15);
+    for (let j = i; j < end; j++)
+      out[j] = Math.max(-32768, Math.min(32767, Math.round(pcm[j] * g)));
+  }
+  return out;
+}
+
+/** Whole 4096-frame blocks never delivered, so what remains is spliced together. */
+function dropBlocks(pcm, rate) {
+  const keep = [];
+  for (let i = 0; i < pcm.length; i += 4096)
+    if (((i / 4096) % Math.max(2, Math.round(1 / rate))) !== 0)
+      keep.push(pcm.subarray(i, Math.min(pcm.length, i + 4096)));
+  const total = keep.reduce((a, b) => a + b.length, 0);
+  const out = new Int16Array(total);
+  let at = 0;
+  for (const k of keep) { out.set(k, at); at += k.length; }
+  return out;
+}
+
+function scale(pcm, g) {
+  const out = new Int16Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) out[i] = Math.round(pcm[i] * g);
+  return out;
+}
+
+/**
+ * @param {*} c    the selftest's `makeChecks()` bundle
+ * @param {Int16Array} pcm  what the baseline case really uploaded
+ * @param {number} rate
+ * @param {*} ctx  `{source, sourceRate, decoyPcm, decoyRate}`
+ */
+function gauntlet(c, pcm, rate, ctx) {
+  console.log(`\n  the degradation gauntlet — the CI failure mode, over the audio the ` +
+              `baseline case really uploaded`);
+  console.log(`    degradation                              peak    vote          played  unrelated  swapped`);
+  const swapped = { source: ctx.decoyPcm, sourceRate: ctx.decoyRate,
+                    decoyPcm: ctx.source, decoyRate: ctx.sourceRate };
+  for (const [name, fn, floor] of DEGRADATIONS) {
+    const want = floor === undefined ? IDENTITY_VOTE : floor;
+    const d = fn(pcm);
+    let pk = 0;
+    for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > pk) pk = v; }
+    pk /= 32768;
+    const got = score(d, rate, ctx);
+    const inv = score(d, rate, swapped);
+    /* The swapped control is always held to the FULL bar, whatever this row expects of the
+     * real one — a mutation judged by a lowered standard is not a mutation. */
+    const swapFails = inv.vote < IDENTITY_VOTE;
+    console.log(`    ${name.padEnd(40)} ${pk.toFixed(3)}   ${(got.vote * 100).toFixed(0).padStart(3)}%` +
+                ` (need ${(want * 100).toFixed(0)}%)  ${got.good.toFixed(3)}    ${got.bad.toFixed(3)}` +
+                `   ${swapFails ? "reddens ✓" : "PASSES ✗"}`);
+    c.ok(got.vote >= want,
+         `gauntlet "${name}": the identity clause must survive it — only ` +
+         `${(got.vote * 100).toFixed(0)}% of ${got.chunks} chunks chose the clip played ` +
+         `(need ${(want * 100).toFixed(0)}%)`);
+    c.ok(swapFails,
+         `gauntlet "${name}": with the templates SWAPPED the same audio must FAIL — ` +
+         `${(inv.vote * 100).toFixed(0)}% of chunks still chose the "played" clip, so the ` +
+         `vote above is not coming from the audio`)
+  }
+}
 
 /* ════════════════════════ the fake microphone's WAV ═══════════════════════════ */
 /** Mono PCM16 → a complete RIFF/WAVE file. The one place this file writes a header. */
@@ -790,7 +1049,13 @@ async function probeTurn(browser, url, opts) {
    * refused". Recorded state, never a live sample (playbook rule 11). */
   const opened = await page.waitForFunction(
     () => !!(window.moxieMic && window.moxieMic.isRecording && window.moxieMic.isRecording()),
-    { timeout: 8000 }).then(() => true).catch(() => false);
+    /* 25 s and not 8 s, and the difference is a measurement rather than padding. At 8 s this
+     * reported "the microphone never opened" on a 24-core box at load 48 — `getUserMedia`
+     * had simply not been serviced yet. It is a WAIT, so it costs nothing when the device
+     * opens promptly and everything it buys is on the failure path; the only reason it is
+     * bounded at all is to avoid burning the two 45 s waits below on a run that is already
+     * dead. A generous bound still does that. */
+    { timeout: 25000 }).then(() => true).catch(() => false);
 
   if (opened) {
     await new Promise((r) => setTimeout(r, opts.recordMs));
@@ -958,23 +1223,28 @@ function assertHeard(c, p, tag, ctx) {
   ok(peak > 0.05, `${tag}: the captured audio is AUDIBLE, not a silent buffer — ` +
      `peak ${peak.toFixed(4)}`);
 
-  /* ---- clause 3: it is the audio we played ---- */
-  const heardEnv = envelope(got.pcm, got.rate);
-  const srcEnv = envelope(ctx.source, ctx.sourceRate);
-  const decoyEnv = envelope(ctx.decoyPcm, ctx.decoyRate);
-  const good = bestCorrelation(srcEnv, heardEnv);
-  const bad = bestCorrelation(decoyEnv, heardEnv);
-  ok(good.score >= CORR_FLOOR,
-     `${tag}: the uploaded audio must be the clip the fake microphone played — envelope ` +
-     `correlation ${good.score.toFixed(3)} at lag ${good.lagS.toFixed(2)}s ` +
-     `(floor ${CORR_FLOOR})`);
-  ok(good.score - bad.score >= CORR_MARGIN,
-     `${tag}: …and it must BEAT an unrelated clip by a clear margin — ` +
-     `${good.score.toFixed(3)} vs ${bad.score.toFixed(3)} is ` +
-     `${(good.score - bad.score).toFixed(3)} (need ${CORR_MARGIN}), so the correlation ` +
-     `above is not discriminating`);
-  p.corr = { good: good.score, bad: bad.score, lagS: good.lagS, peak, wavBytes: wav.length,
-             ms: dur ? dur.ms : 0 };
+  /* ---- clause 3: it is the audio we played ----
+   * TWO CLAUSES WITH DIFFERENT SCOPES, and the split is the lesson from CI run 34013443378
+   * (the long note at `envelope` has the table). The ORDERING is environment-invariant —
+   * both numbers come out of the same recording on the same machine — so it is asserted
+   * everywhere. The MAGNITUDE is not: the runner's own microphone saturates, which halves
+   * every score without anything being wrong with this site, so the fidelity floor is
+   * asserted only where the audio path is a known quantity and is REPORTED everywhere. */
+  const id = score(got.pcm, got.rate, ctx);
+  ok(id.vote >= IDENTITY_VOTE,
+     `${tag}: the uploaded audio must be the clip the fake microphone played, not the ` +
+     `other one — only ${(id.vote * 100).toFixed(0)}% of its ${id.chunks} chunks matched ` +
+     `the clip played better than an unrelated one (need ${(IDENTITY_VOTE * 100).toFixed(0)}%). ` +
+     `Median scores: ${id.good.toFixed(3)} played vs ${id.bad.toFixed(3)} unrelated.`);
+  if (ctx.fidelity) {
+    ok(id.good >= FIDELITY_FLOOR,
+       `${tag}: …and it must be a FAITHFUL recording of it — chunked log-RMS envelope ` +
+       `score ${id.good.toFixed(3)} (floor ${FIDELITY_FLOOR}). A low score here with the ` +
+       `vote above still healthy means the audio arrived but degraded: check the capture ` +
+       `peak (${peak.toFixed(4)} — 1.0000 means the device saturated).`);
+  }
+  p.corr = { good: id.good, bad: id.bad, vote: id.vote, chunks: id.chunks, peak,
+             wavBytes: wav.length, ms: dur ? dur.ms : 0, fidelity: !!ctx.fidelity };
 
   /* ---- clause 6, asserted in EVERY mode: a mutation of the sound must not change what the
    * page refuses or logs, and if it does, that is its own finding. Requests this run aborted
@@ -1064,8 +1334,11 @@ function report(p, tag) {
   console.log(`    #speech-btn     ${box(p.before.say)}`);
   if (p.corr)
     console.log(`    uploaded        ${p.corr.wavBytes} B  ${p.corr.ms} ms  peak ${p.corr.peak.toFixed(4)}` +
-                `   envelope corr ${p.corr.good.toFixed(3)} (lag ${p.corr.lagS.toFixed(2)}s)` +
-                `  decoy ${p.corr.bad.toFixed(3)}`);
+                `${p.corr.peak > 0.999 ? " (SATURATED)" : ""}` +
+                `\n    identity        ${(p.corr.vote * 100).toFixed(0)}% of ${p.corr.chunks} chunks chose the clip played` +
+                ` (need ${(IDENTITY_VOTE * 100).toFixed(0)}%)   medians ${p.corr.good.toFixed(3)} played` +
+                ` / ${p.corr.bad.toFixed(3)} unrelated   fidelity floor ` +
+                `${p.corr.fidelity ? FIDELITY_FLOOR + " ASSERTED" : "reported only"}`);
   else
     console.log(`    uploaded        ${p.uploadBytes} B (not parsed)`);
   console.log(`    transcript      ${JSON.stringify(p.transcript)}` +
@@ -1164,6 +1437,7 @@ function launchWithMic(puppeteer, chrome, wavPath, extraArgs = []) {
  */
 async function selftest(puppeteer, chrome, fx) {
   const c = makeChecks();
+  let captured = null;                     // what the baseline browser case really uploaded
 
   /* ---- the paper mutations first: no browser, no clock, no excuses ---- */
   console.log(`\n  the overlap scorer (a port of helpers_audio.py::word_overlap)`);
@@ -1298,9 +1572,18 @@ async function selftest(puppeteer, chrome, fx) {
           sourceRate: wav === fx.golden.path ? fx.golden.rate : fx.spoken.rate,
           decoyPcm: fx.decoy.pcm, decoyRate: fx.decoy.rate,
           spoken: SPOKEN_TEXT, decoy: DECOY_TEXT, words: true,
+          /* NOT asserted here, and the reason is the whole point of the rewrite: a CI
+           * runner's microphone saturates, which halves every fidelity score while the site
+           * is perfectly healthy. The ORDERING clause still runs, and mutation B is still
+           * its teeth. See `assertHeard` clause 3 and the table at `envelope`. */
+          fidelity: false,
         };
         assertHeard(mm, p, name.split(" ·")[0], ctx);
         report(p, name);
+        // The baseline's real upload is the gauntlet's input: degrading audio that a
+        // browser actually captured is worth more than degrading the fixture, because it
+        // already carries whatever this machine's capture path did to it.
+        if (!wanted && wav !== fx.golden.path && p.upload) captured = readWav(Buffer.from(p.upload, "base64"));
       } finally {
         try { await browser.close(); } catch {}
       }
@@ -1321,6 +1604,18 @@ async function selftest(puppeteer, chrome, fx) {
     }
   } finally {
     site.close();
+  }
+
+  /* The gauntlet last, over the audio the baseline case really uploaded. It is what keeps
+   * the correlation clause honest on a machine this suite has never run on — see its
+   * header, and CI run 34013443378 for why it exists. */
+  if (captured) {
+    gauntlet(c, captured.pcm, captured.rate,
+             { source: fx.spoken.pcm, sourceRate: fx.spoken.rate,
+               decoyPcm: fx.decoy.pcm, decoyRate: fx.decoy.rate });
+  } else {
+    c.ok(false, "the baseline case produced no upload, so the degradation gauntlet ran on " +
+                "nothing — that is a failure, not a skip");
   }
   return c;
 }
@@ -1374,6 +1669,9 @@ try {
     source: fx.spoken.pcm, sourceRate: fx.spoken.rate,
     decoyPcm: fx.decoy.pcm, decoyRate: fx.decoy.rate,
     spoken: fx.spoken.text, decoy: fx.decoy.text, words: !DRY,
+    /* ASSERTED here. A developer's box and a real deployment are audio paths somebody can
+     * look at, so a degraded recording is a finding rather than a runner quirk. */
+    fidelity: true,
   });
   report(p, DRY ? "deployed (dry run)" : "deployed");
   console.log(`\n  SPENT: ${p.spend.transcribe} STT + ${p.spend.chat} chat + ` +
