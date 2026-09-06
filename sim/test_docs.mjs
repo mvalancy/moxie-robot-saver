@@ -78,6 +78,28 @@ if (existsSync(searchPath)) {
   ok(hay.includes("dlpc3430"), "full-text index should contain body prose (e.g. 'DLPC3430')");
 }
 
+// ---- the two committed artifacts must stay MERGE-SAFE ----
+/* Both files are generated AND committed, so every branch that touches a doc rewrites
+ * them. Two properties keep a plain 3-way merge able to reconcile branches that edited
+ * different docs; both were absent once and made these files conflict on EVERY pair of
+ * doc-touching branches, at a merge-forward plus a full CI cycle each time.
+ *   (a) no global, content-derived value in docs-index.json — a top-level `generated`
+ *       sha256 stamp is rewritten by both sides of every merge, so it is an
+ *       unconditional conflict. Nothing read it. Do not reintroduce one.
+ *   (b) docs-search.json is line-granular — it was one ~3 MB line, so any two edits
+ *       collided on that single line. One doc per line, blank-line separated (the blank
+ *       line is the common context that lets ADJACENT docs merge too).
+ * See the header comment in sim/tools/build_docs_bundle.py. */
+ok(JSON.stringify(Object.keys(idx).sort()) === '["files","firmware"]',
+   `docs-index.json top level must be exactly {firmware, files} — got ${Object.keys(idx).join(", ")}. ` +
+   "A global content-derived key (e.g. a `generated` hash) conflicts on every merge; see build_docs_bundle.py.");
+if (existsSync(searchPath)) {
+  const lines = readFileSync(searchPath, "utf8").split("\n").length;
+  ok(lines >= idx.files.length * 2,
+     `docs-search.json has ${lines} lines for ${idx.files.length} docs — it must be one doc per line, ` +
+     "blank-line separated, or every branch pair conflicts on it. See build_docs_bundle.py.");
+}
+
 // ---- vendored renderers present ----
 for (const v of ["marked.min.js", "mermaid.min.js", "highlight.min.js"])
   ok(existsSync(join(web, "vendor", v)), `vendored ${v} missing`);

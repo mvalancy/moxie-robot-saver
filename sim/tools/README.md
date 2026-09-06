@@ -5,6 +5,14 @@
   ([`../web/docs.html`](../web/docs.html)) can browse them on a static Cloudflare Pages deploy with no
   server. Byte-for-byte copies; re-run it whenever docs change (`node ../test_docs.mjs` fails if the
   bundle is stale). The generated bundle **is committed** so the deploy needs no build step.
+  Because it is *generated* **and** *committed*, every branch that touches a doc rewrites it, so the
+  output is deliberately shaped to survive a plain 3-way merge: **no global content-derived value**
+  in either JSON (a top-level `generated` hash made them conflict on every pair of doc-touching
+  branches, and nothing read it), and **one doc per line, blank-line separated**, in
+  `docs-search.json` (it used to be one ~3 MB line, which gave the merge no granularity at all).
+  Two branches editing different docs now merge cleanly and byte-identically to a rebuild. Keep both
+  properties; the header comment in the script says why, and `check_bundle_fresh.py` stays the sole
+  authority on freshness.
 - **`prerender_audio.py`** — renders scripted session lines with Piper into `../web/audio/` for the
   static demo (both sides of the conversation). See [`../../docs/guides/deploy-cloudflare.md`](../../docs/guides/deploy-cloudflare.md).
 - **`build_ext_conformance.py`** — regenerates
