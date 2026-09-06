@@ -1,6 +1,12 @@
 # 🧠 Any brain, hot-swappable, per child
 
 > **Audit BEYOND #3 · ranked #7 · P0 SHIPPED 2026-09-03.**
+> *Marker re-verified 2026-09-06 against the code and correct:*
+> [`brains.py`](../../../mqtt/moxie_sdk/brains.py) is 371 lines and the three test files below exist.
+> *One citation had drifted and is corrected on the Console line: this page said `normalize_brain`; the
+> shipped names are `normalize_brain_option` and `normalize_brain_robot`.*
+> **P1 remains open** — the *persona* half of the binding, per-child keys and cost accounting, all three
+> of which need a new secret.
 > `ai-seam.md` §2 has always said Moxie's body is a shell and any AI can wear it. That was true
 > of the drawing and false of the appliance: a brain was chosen **once, globally**, by `MOXIE_APP`
 > at import time. This is the registry and the selection that make it an operation.
@@ -9,7 +15,8 @@
 > [`mqtt/config.py`](../../../mqtt/config.py) (`BRAIN_BUILDERS`, `BrainEngines`) ·
 > [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) (`app_for`, `brain_for`,
 > `brain_view`, `brain_update`).
-> Console: [`fleet.py::normalize_brain`](../../../server/moxie_server/fleet.py) + two proxy routes
+> Console: [`fleet.py`](../../../server/moxie_server/fleet.py)`::normalize_brain_option`:1017 +
+> `::normalize_brain_robot`:1032 + two proxy routes
 > + the 🧠 card in [`server/static/`](../../../server/static/index.html).
 > Tests: [`test_brains.py`](../../../sim/tests/test_brains.py) (82) +
 > [`test_brain_runtime.py`](../../../sim/tests/test_brain_runtime.py) (31) +

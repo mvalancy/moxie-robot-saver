@@ -1,6 +1,15 @@
 # 📦 Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)
 
-**Status:** build-ready brief (2026-09-02). **Covers:** [`../openmoxie-feature-audit.md`](../openmoxie-feature-audit.md)
+**Status:** ✅ **SHIPPED** — P0 *and* P1 landed 2026-09-02; import-path hardening 2026-09-03.
+*(was: "build-ready brief (2026-09-02)" — this line still said **build-ready** on 2026-09-06, four days
+after the code merged, while the banner immediately below it said `✅ P0 shipped`. Re-verified against the
+code, not against the audit: [`mqtt/moxie_sdk/content/packs.py`](../../../mqtt/moxie_sdk/content/packs.py)
+is **1 145 lines** — `SPEC`:123, `validate_item`:272, `export_pack`:352, `parse_pack`:459,
+`review_pack`:626, `apply_pack`:810, `mark_edited`:872 — and the five status-HTTP routes are live at
+[`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):1003 `/content`, :1007 `/content/export`,
+:1163 `/content/undo`, :1166 `/content/review`, :1303 the write set. A brief that announces itself as
+ready hands the reader a plan; that is why this marker was more dangerous than a stale audit row.)*
+**Covers:** [`../openmoxie-feature-audit.md`](../openmoxie-feature-audit.md)
 §4.1 **ADOPT #5**, ranked **#1** of the open backlog in that file's §4.4.
 **Owner outcomes:** ② *scrape OpenMoxie's best* (this is the last ADOPT item that changes what the
 appliance is for) and ③ *ten levels beyond* (an authoring studio, a per-child content library and

@@ -1,6 +1,15 @@
 # 🎴 Printable launch cards — a QR a child shows Moxie, and an activity starts
 
-> **Audit §4.4 #9 · re-scoped 2026-09-03 · 🟢 build-ready.**
+> **Audit §4.4 #9 · re-scoped 2026-09-03 · 🟡 P0-b SHIPPED 2026-09-04 · P0-c SHIPPED 2026-09-06.**
+> *(Was "🟢 build-ready" — stale at the headline while this page's own State lines at :22 and :37
+> recorded both ships. **The first line is what a build agent reads**, which is why the headline is
+> the one that has to be right.)* Verified 2026-09-06: `mqtt/moxie_sdk/launch_cards.py` (210 ln)
+> decodes to one typed `Action` against the derived 24-id allowlist and `_on_vision_turn` puts it on
+> the reply; `sim/web/qr.js` + `sim/test_qr.mjs` pin 25 payloads byte-for-byte; and
+> `mqtt/moxie_sdk/launch_sheet.py` now renders the printable sheet (#188, 49 tests).
+> **Still open:** P0-a's remaining half, the browser-SIM leg, and a console surface — **no UI makes a
+> card yet**, so a parent needs a terminal. **Ceiling unmoved:** no physical Moxie has ever sent us an
+> `eb-qr-event`, and nobody here has printed a sheet and scanned it. What is proven is the ink.
 > A parent prints a sheet; a child holds a card up to Moxie's face; the robot starts that activity.
 > Upstream ships the *paper* (`site/data/qr/extract.py` → 24 PNGs of `GO<launch:MODULE_ID>`, MIT) and
 > **we ship none of it** — not the sheet, and not the three server-side hops that would make a scanned

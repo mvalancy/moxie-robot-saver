@@ -2,6 +2,26 @@
 
 > **Research brief · scan run 2026-09-05 · this page does not choose the game.**
 >
+> > **⚠️ Re-verified 2026-09-06: §1's precondition CLOSED while this page was being written, and the
+> > numbers below are now the *defect*, not the current state.** [`mobile-first-visit.md`](mobile-first-visit.md)
+> > shipped the same day (2026-09-05): [`sim/web/sim.html`](../../../sim/web/sim.html):322 is
+> > `<div id="chat-dock">` — the page's own bottom grid row — with the `#chat-cue` line at :332 (*"Talk
+> > to Moxie"*, the answer to *"none of the six visible controls says talk to Moxie"*) and
+> > `#speech-input` at :369, styled at [`style.css`](../../../sim/web/style.css):556. The controls were
+> > **moved, not copied**, which is what 🅐 asked for. Guarded by
+> > [`sim/test_mobile_layout.mjs`](../../../sim/test_mobile_layout.mjs).
+> >
+> > **So 🅐 is no longer the blocking precondition — but it is not finished either.** What remains of 🅐,
+> > and it is genuinely build-ready: **the three tappable openers** (*"Tell me a joke"* / *"How are you
+> > feeling?"* / *"Play a game with me"*). The `#speech-chips` that exist
+> > ([`sim.html`](../../../sim/web/sim.html):182, [`hud.js`](../../../sim/web/hud.js):140-147) are **not**
+> > those: they live in the rail and play *pre-cached shipped audio*, and `sim.html`:174-178 says so in
+> > its own words — *"The chips STAY … a genuine engineering control and is not how a visitor talks to
+> > her."* An opener chip has to sit in `#chat-dock` and *send a turn*.
+> >
+> > **Nothing else here changes.** 🅑–🅔 are untouched and still awaiting the owner's two §0 answers;
+> > this page still **does not choose the game**, and §0's ranking is not re-ranked here.
+>
 > The owner's steer for [`moxie.mattvalancy.com/sim`](https://moxie.mattvalancy.com/sim) had four parts.
 > Three are specified enough to build and are recorded at
 > [`implementation-plan.md`](../implementation-plan.md):1598 — a chat composer pinned to the bottom, the

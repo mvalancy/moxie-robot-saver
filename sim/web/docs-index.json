@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 17354,
+   "bytes": 22242,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -402,7 +402,7 @@
    "path": "architecture/backlog/expressiveness.md",
    "title": "Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)",
    "section": "architecture",
-   "bytes": 52152,
+   "bytes": 54124,
    "mermaid": 1,
    "headings": [
     "Why this is the next slice",
@@ -519,7 +519,7 @@
    "path": "architecture/backlog/content-packs.md",
    "title": "Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)",
    "section": "architecture",
-   "bytes": 45252,
+   "bytes": 46130,
    "mermaid": 0,
    "headings": [
     "Why this is worth building",
@@ -600,7 +600,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)",
    "section": "architecture",
-   "bytes": 93181,
+   "bytes": 94679,
    "mermaid": 0,
    "headings": [
     "0. The boundary, stated first — this is cloud-side, and only cloud-side",
@@ -650,7 +650,7 @@
    "path": "architecture/backlog/brain-picker.md",
    "title": "Any brain, hot-swappable, per child",
    "section": "architecture",
-   "bytes": 8021,
+   "bytes": 8552,
    "mermaid": 0,
    "headings": [
     "1. What was actually missing",
@@ -666,7 +666,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 84035,
+   "bytes": 86146,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",
@@ -707,7 +707,7 @@
    "path": "architecture/backlog/content-authoring.md",
    "title": "Content authoring — the verb packs did not ship (§4.4 #6)",
    "section": "architecture",
-   "bytes": 56970,
+   "bytes": 58621,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -756,7 +756,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 47520,
+   "bytes": 48431,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
@@ -779,7 +779,7 @@
    "path": "architecture/backlog/insights.md",
    "title": "Insights that mean something — the vocabulary this history does not have (BEYOND #5)",
    "section": "architecture",
-   "bytes": 50089,
+   "bytes": 51889,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -861,7 +861,7 @@
    "path": "architecture/backlog/community-signals.md",
    "title": "Community signals — what owners actually hit, ranked by evidence",
    "section": "architecture",
-   "bytes": 32638,
+   "bytes": 33481,
    "mermaid": 0,
    "headings": [
     "1. What was searched, and when",
@@ -885,7 +885,7 @@
    "path": "architecture/backlog/gamify-the-public-sim.md",
    "title": "Gamify the public sim — evidence for a decision the owner kept",
    "section": "architecture",
-   "bytes": 51229,
+   "bytes": 52877,
    "mermaid": 0,
    "headings": [
     "0. What the owner needs to decide",

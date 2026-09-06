@@ -15,6 +15,26 @@
 > marked *"Not in P0, deliberately"* in §11 stayed out. **The rest of this page is the design as
 > written, and is deliberately unedited** — it is the argument, not the changelog.
 >
+> ### ✅ P1's `act` SHIPPED 2026-09-04 · P1's `subscribe` SHIPPED 2026-09-05
+>
+> *Added 2026-09-06. The banner above said `P0` only, so this page read as "P1 open" for two days after
+> half of P1 merged — and the [backlog index](README.md) still says `subscribe` "has **no host**, since
+> nothing joins `Volley.subscriptions` to `wire.build_chat_response(subscribe_events=…)`". It does now.*
+> Verified against the code: [`volley.py`](../../../mqtt/moxie_sdk/content/volley.py):89
+> `self.subscriptions`, :100 `update_subscriptions`, :109 `add_subscriptions` (the asymmetry is
+> deliberate and documented at :112); `ACTION_WORDS` at
+> [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py):175 with `MAX_ACTIONS`:294. Guards:
+> [`test_ext_act.py`](../../../sim/tests/test_ext_act.py),
+> [`test_ext_subscribe.py`](../../../sim/tests/test_ext_subscribe.py) and
+> [`sim/tools/subscribe_mutation_check.py`](../../../sim/tools/subscribe_mutation_check.py).
+> §11's own T1 row (:839) already records G2/G3 green since 2026-09-04 and G6 since 2026-09-05.
+>
+> **What genuinely remains in P1** — re-checked, still open: the `brain` capability (**G5 alone is
+> `xfail(strict=True)`** until it exists, :839), the parent-facing **grant flow** (without which `act` is
+> reachable from tests and from nobody else), `turn.after` / `session.end` (:387), the text surface, the
+> JS evaluator in `workerd` (:760), and the console card. **P2** — a Wasm runtime and publisher
+> signatures — is unscheduled.
+>
 > **Backlog brief v1 · 2026-09-02.** The build document for
 > [OpenMoxie feature audit](../openmoxie-feature-audit.md) **§4.2 BEYOND #6** — *"Their `METHOD` globals
 > and conversation `code` fields are `exec()` with a 10-second timeout — powerful, and un-shareable. A

@@ -1,5 +1,25 @@
 # 🎭 Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)
 
+> ## ✅ BOTH halves SHIPPED — §1 the markup floor 2026-09-02, §2's P1 the behavior planner 2026-09-03.
+>
+> *This page carried **no status marker at its top** until 2026-09-06 and §0 below still described the
+> seam as **"Eight lines, a passthrough"** — corrected in place in that table. Its own §1 (:66) and §2
+> (:343) headings have carried `🟢 SHIPPED` since they merged; the top of the file and §0 had not caught
+> up, which is the half a build agent reads.* Re-verified against the code:
+> [`mqtt/supervisor/markup.py`](../../../mqtt/supervisor/markup.py) is now **191 lines** and holds
+> **three generations behind one signature**, chosen by `MOXIE_EXPRESSIVE` — `planner` (default) →
+> `moxie_sdk.performance.render(validate(plan(…)))`, `floor` → `moxie_sdk.automarkup.annotate`, `off` →
+> v1's passthrough (`markup.py`:3-10). The floor is
+> [`automarkup.py`](../../../mqtt/moxie_sdk/automarkup.py) (**489 lines**); the planner is
+> [`performance.py`](../../../mqtt/moxie_sdk/performance.py) (**839 lines**), whose header states the
+> degrade-to-floor rule this brief specified. Guards:
+> [`sim/tests/test_performance.py`](../../../sim/tests/test_performance.py) and
+> [`sim/tests/test_sil_performance_e2e.py`](../../../sim/tests/test_sil_performance_e2e.py).
+>
+> **What genuinely remains: §2's P2 only** — the ≥500 **live**-line unknown-id bar (P1 measured 0 unknown
+> ids over a 300-line corpus, which is not the same bar), and everything §2 files under P2. P2 is not
+> scheduled here.
+
 > **Backlog brief v1 · 2026-09-02.** Two build documents in one file, because they are **one seam at two
 > depths**: §1 is a slice a build agent can execute as-is (a deterministic markup floor), §2 is the
 > contract-level spec for the 10× version that replaces it *behind the same seam*. Ranked as ADOPT #3 and
@@ -38,7 +58,7 @@ flowchart LR
 
 | Where | File | What it does today |
 |---|---|---|
-| The seam | [`mqtt/supervisor/markup.py`](../../../mqtt/supervisor/markup.py) | `make_markup(text) -> text`. **Eight lines, a passthrough.** Its own docstring says the expressive engine plugs in here. |
+| The seam | [`mqtt/supervisor/markup.py`](../../../mqtt/supervisor/markup.py) | `make_markup(text) -> text`. ~~**Eight lines, a passthrough.**~~ **Stale as of 2026-09-06 — corrected in place.** That was true when this brief was filed; the expressive engine did plug in here, twice. The file is now **191 lines** and dispatches three generations on `MOXIE_EXPRESSIVE` (`markup.py`:3-10): `planner` → `performance.render(validate(plan(…)))`, `floor` → `automarkup.annotate`, `off` → the original passthrough. **§0 describes the seam as it stood on 2026-09-02, not today**; read it as the starting point the two shipped sections moved from. |
 | Called from | [`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) | two sites: the single-reply path (`markup = reply.markup if reply.markup is not None else make_markup(reply.text)`) and, since PR #17, the **per-chunk** streaming path in `_publish_stream_chunk`. So the seam runs **once per spoken chunk**, on the hot path between the first token and the first audio. |
 | The one app that bypasses it | [`mqtt/moxie_sdk/apps/llm_app.py`](../../../mqtt/moxie_sdk/apps/llm_app.py) | `build_markup(text, mood, gesture)` emits exactly **two marks**: one `cmd:playback-mood` and one `cmd:behaviour-tree` carrying a `Gesture_*`, both chosen by the *model* from a 5-mood / 10-gesture menu. |
 | Mid-stream | same file, `stream_style(text)` | while a reply is still streaming the model's `"mood"`/`"gesture"` have not arrived yet, so an in-flight chunk gets a punctuation-only guess (`?` → question, `!` → positive) and the **closing** chunk uses what the model actually chose. |
