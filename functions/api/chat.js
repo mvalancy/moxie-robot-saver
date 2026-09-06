@@ -72,6 +72,7 @@ import { assess } from "./_lib/safety.js";
 import { admit, budgetState, loadOf, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { mintContext, mintTicket, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
+import { turnShapeInstruction } from "./_lib/turnshape.js";
 import { buildChatResponse, chatMessage, eventId, expressiveVocab, joinUrl, markupFloor, MK } from "./_lib/wire.js";
 
 /** §4.1: matches `chat.py`:130 so the hosted persona sounds like the local one. */
@@ -361,7 +362,43 @@ export function buildUpstreamBody(cfg, turns, text) {
   // The persona is repeated AFTER the child's turn as injection mitigation — that is
   // unchanged. The envelope instruction rides with the second copy rather than the first
   // because a format rule is most obeyed when it is the last thing the model read.
-  messages.push({ role: "system", content: cfg.persona + "\n\n" + expressiveInstruction() });
+  //
+  // ---- AND BETWEEN THEM, THE ONE MOVE THIS TURN IS TO MAKE (`_lib/turnshape.js`).
+  //
+  // It goes in this message and not in a fourth one, and it goes HERE inside it — after
+  // the persona, before the format rule — for two reasons that pull in opposite
+  // directions. The cue has to be near the end, because it is about the sentence the model
+  // is one token away from writing and it is competing with a run of her own previous
+  // turns demonstrating the opposite. The format rule has to be LAST, because that is the
+  // argument the line above already makes and a JSON envelope that stops being obeyed
+  // takes the mood and the gesture down with it. Both are satisfied by putting the cue
+  // second of three.
+  //
+  // MEASURED, NOT ASSUMED. The cue was also tried as its OWN system message placed after
+  // the child's turn and before this one. Three seven-turn `loop` conversations each way,
+  // same gateway, same session: as a separate message the turn SHAPES varied just as well
+  // and the WORDS collapsed — trigram overlap 0.7 / 1.0 / 0.8 against 0.14 / 0 / 0.38 here,
+  // including one exact duplicate. Detached from the persona, the cue was obeyed by
+  // re-using the same sentence that had satisfied it two turns earlier ("Let's talk about
+  // your favourite part of the drawing!", twice). Kept in the same breath as "never repeat
+  // a sentence you have already said", it is not. That is the whole reason for the
+  // concatenation below rather than a fourth `messages.push`.
+  //
+  // IT IS BUILT FROM `turns` AND CONFIGURATION AND NOTHING ELSE — `nextShape()` reads only
+  // the ROLES and the SHAPES of history the server itself signed (`_lib/hmac.js`), and
+  // `shapeCue()` returns one of three fixed strings. No visitor-supplied character reaches
+  // it, so §3.3's mitigation is untouched: the last thing the model reads is still ours,
+  // and so is this.
+  //
+  // COSTS NOTHING AND CANNOT FAIL LOUDLY. No extra call, one short sentence of prompt, and
+  // a model that ignores the cue answers exactly as it would have. With `DEMO_TURN_SHAPE`
+  // off the interpolation is the empty string and this body is byte-identical to the one
+  // that shipped before it.
+  const cue = turnShapeInstruction(turns, cfg.turnShape);
+  messages.push({
+    role: "system",
+    content: cfg.persona + (cue ? "\n\n" + cue : "") + "\n\n" + expressiveInstruction(),
+  });
   return {
     model: cfg.chatModel, // from DEMO_CHAT_MODEL. NEVER from the request.
     messages,

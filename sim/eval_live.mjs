@@ -35,6 +35,12 @@
  *                      that answers everything with one face is looping visually even when
  *                      the words vary, and this repo has shipped exactly that before (the
  *                      regex floor's happy + Gesture_Talk default).
+ *   · shapes/runMax  — how many of the three MOVES a turn can make (`_lib/turnshape.js`:
+ *                      tell, ask, offer) appeared, and the longest run of a single one.
+ *                      READ THIS COLUMN FIRST. It is the only number here that cannot be
+ *                      improved by doing less: `questionRate` goes to zero if she stops
+ *                      asking anything and becomes a monologue, and `runMax` calls that
+ *                      exactly as loudly as it calls an interrogation. See `score()`.
  *   · refusals       — non-200s, so a run degraded by rate limiting or an outage is never
  *                      silently scored as bad conversation.
  *
@@ -47,6 +53,12 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+/* THE SAME CLASSIFIER THE ROUTE USES, imported rather than reimplemented. `chat.js` picks
+ * the next turn's move by classifying the previous ones; this file scores whether the
+ * moves actually varied. If the two ever disagreed about what an "offer" is, the
+ * instrument would be marking the route's own homework with a different pen — and the one
+ * thing this file exists to be is a check on the route rather than an echo of it. */
+import { shapeOf } from "../functions/api/_lib/turnshape.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -172,6 +184,30 @@ function score(replies) {
    * lexical metric cannot see it, and a child would feel nothing but the interrogation.
    * A companion that ends every turn with a question is interviewing, not talking. */
   const questions = texts.filter((t) => /\?\s*$/.test(t)).length;
+  /* TURN SHAPE, added 2026-09-06 after `questionRate` misled a THIRD pass — and it is the
+   * number to read first, because it is the only one here that cannot be improved by doing
+   * less.
+   *
+   * The measurement that forced it: six seven-turn `loop` conversations against the real
+   * gateway, and the run with the LOWEST `questionRate` in the whole set (0.14, the best
+   * score anything produced) was six consecutive "Let's ...!" proposals — an activity list
+   * read at a child who was never once reacted to. Zero exact duplicates, zero repeated
+   * openings, trigram overlap 0. Every lexical number said the loop was fixed.
+   *
+   * `maxShapeRun` is how many turns in a row made the SAME move (`_lib/turnshape.js`), and
+   * it is symmetric in the way `questionRate` is not: seven questions in a row and seven
+   * statements in a row both score 7. An interrogation and a monologue are the two ways to
+   * fail this, and driving `questionRate` to zero walks straight into the second one.
+   *
+   * IT IS STILL NOT A VERDICT. Three fixed lines answering three cues in rotation would
+   * score `maxShapeRun` 1 and read as three loops braided together; `maxOverlap` and
+   * `repeatOpening` are what would catch that. Read the transcript. */
+  const shapeSeq = texts.map(shapeOf);
+  let maxShapeRun = 0, run = 0;
+  for (let i = 0; i < shapeSeq.length; i++) {
+    run = i && shapeSeq[i] === shapeSeq[i - 1] ? run + 1 : 1;
+    if (run > maxShapeRun) maxShapeRun = run;
+  }
   return {
     turns: replies.length,
     answered: texts.length,
@@ -183,6 +219,9 @@ function score(replies) {
     exactDupes,
     questions,
     questionRate: texts.length ? Number((questions / texts.length).toFixed(2)) : 0,
+    shapeSeq,
+    shapes: [...new Set(shapeSeq)],
+    maxShapeRun,
     moods: [...new Set(said.map((r) => r.mood).filter((m) => m !== null))],
     gestures: [...new Set(said.map((r) => r.gesture).filter(Boolean))],
     avgWords: texts.length ? Math.round(texts.reduce((n, t) => n + words(t).length, 0) / texts.length) : 0,
@@ -250,7 +289,9 @@ for (const sc of chosen) {
     replies.push(r);
     const face = r.mood === null ? "—" : FACE[r.mood] || String(r.mood);
     console.log(`   you   > ${line}`);
-    if (r.text) console.log(`   moxie < ${r.text}   [${face} / ${r.gesture || "—"} / ${r.ms}ms]`);
+    // The MOVE is printed next to the words on purpose. The whole lesson of this file's
+    // last three revisions is that the summary table is not where a loop is seen.
+    if (r.text) console.log(`   moxie < ${r.text}   [${shapeOf(r.text)} / ${face} / ${r.gesture || "—"} / ${r.ms}ms]`);
     else console.log(`   moxie < (no answer: ${r.reason})`);
     await sleep(PACE);
   }
@@ -261,6 +302,8 @@ for (const sc of chosen) {
               `, ${s.moods.length} mood(s), ${s.gestures.length} gesture(s)` +
               `, ${s.questions}/${s.answered} end in '?'` +
               `, ${s.avgWords} words avg, ${s.refusals} refusal(s)`);
+  console.log(`      turn shapes: ${s.shapeSeq.join(" -> ") || "(none)"}` +
+              `   (${s.shapes.length} of 3 used, longest run of one move: ${s.maxShapeRun})`);
   if (s.worstPair) {
     console.log(`      most similar pair:\n        A: ${s.worstPair[0]}\n        B: ${s.worstPair[1]}`);
   }
@@ -268,7 +311,7 @@ for (const sc of chosen) {
 
 /* ---- the summary ---- */
 console.log("\n" + "=".repeat(78));
-console.log("scenario     turns  answered  repeatOpen  maxOverlap  dupes  ask%  moods  gestures  words");
+console.log("scenario     turns  answered  repeatOpen  maxOverlap  dupes  ask%  shapes  runMax  moods  gestures  words");
 for (const r of results) {
   console.log(
     r.scenario.padEnd(12) +
@@ -278,6 +321,8 @@ for (const r of results) {
     String(r.maxOverlap).padStart(12) +
     String(r.exactDupes).padStart(7) +
     String(Math.round(r.questionRate * 100)).padStart(6) +
+    String(r.shapes.length).padStart(8) +
+    String(r.maxShapeRun).padStart(8) +
     String(r.moods.length).padStart(7) +
     String(r.gestures.length).padStart(10) +
     String(r.avgWords).padStart(7));
@@ -289,6 +334,13 @@ console.log("moods used overall   : " + (allMoods.map((m) => FACE[m] || m).join(
             `   (${allMoods.length} of 11)`);
 console.log("gestures used overall: " + (allGest.join(", ") || "none") + `   (${allGest.length} of 12)`);
 console.log("total refusals       : " + results.reduce((n, r) => n + r.refusals, 0));
+/* THE HEADLINE, and it is deliberately the last line printed. `runMax` is the longest run
+ * of a single move in any one conversation: 1 means she never made the same move twice in
+ * a row anywhere, and a large number means a loop whatever the lexical columns say — an
+ * interrogation and a monologue both land here and nowhere else. */
+console.log("worst single-move run: " +
+            Math.max(0, ...results.map((r) => r.maxShapeRun)) +
+            "  (in " + (results.slice().sort((a, b) => b.maxShapeRun - a.maxShapeRun)[0] || {}).scenario + ")");
 
 const outDir = join(here, "artifacts");
 mkdirSync(outDir, { recursive: true });
