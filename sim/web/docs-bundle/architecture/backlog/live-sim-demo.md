@@ -1629,3 +1629,26 @@ scenarios with a picker, a Stop control and cancellable timers (`bridge.js`:400�
 [Orchestration plan](../orchestration-plan.md) · [Deploy on Cloudflare](../../guides/deploy-cloudflare.md) ·
 [MQTT and the conversation](../mqtt-and-conversation.md) · [The AI seam](../ai-seam.md) ·
 [The static experience](../static-experience.md)
+
+
+### §4.6.4 — the shared tier cannot be exercised on a Pages preview, and that is the config gate working
+
+Measured 2026-09-06 against `https://feat-spendceil.moxie-robot-saver.pages.dev`, the branch alias
+for this slice. `/api/health` answers **200** with `mode: degraded`, and every `POST /api/chat`
+returns `gateway_not_configured` — a **free local refusal** that is taken *before* any per-IP
+window or unit budget is consulted. Previews are deliberately denied the production secrets so that
+previews and forks stay inert (the same gate that keeps Turnstile enforcement off outside
+production), and the consequence for this tier is worth stating plainly rather than discovering
+later:
+
+**A Pages preview can prove the request path and the envelope survive a change to `limits.js`. It
+cannot prove anything about the ceilings themselves.** The shared sub-tiers are only reachable on a
+deployment with a configured gateway — that is, production. So for this tier the injected-store
+tests in `sim/tests/helpers_shared_ceilings.mjs` are not merely the *primary* evidence, they are the
+**only** evidence available before it ships, which is why their two-isolate construction and their
+`DEMO_CACHE_COUNTER=0` controls carry more weight here than a passing suite normally would.
+
+This does not weaken [rule 21](../orchestration-plan.md) ("open a PR and curl its preview" — it
+settled the mobile-composer and Referrer-Policy questions the same day). It bounds it: a preview
+answers questions about **anything reachable before the gateway check**, and answers nothing about
+what lies after it.
