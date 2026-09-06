@@ -228,6 +228,27 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   binary is invisible to a guard that reads `pip install` lines, so the five programs the
   suite may spawn (`mosquitto`, `docker`, `node`, `git`, `bash`) are declared in
   `DECLARED_BINARIES` with their reason and their provider. Eleven mutants, 12/12 caught.
+- **`test_shared_ceilings.py` + `helpers_shared_ceilings.mjs`** — the per-IP **hour** and **day**
+  windows and the unit budget's **day** ceiling on the shared Cache API tier of
+  `functions/api/_lib/limits.js` (live-sim-demo.md §4.6.3). A Python wrapper around a node
+  suite, because the code under test is JavaScript and the only honest way to test a Cache
+  API tier is to drive the real module with a real injected store. It is a wrapper rather
+  than a `sim/test_*.mjs` for a reason worth knowing: `test_ci_test_coverage.py` requires a
+  CI tier to NAME every `sim/test_*.mjs`, so a new one needs a step in `sim/ci/ci.yml` —
+  while `pytest sim/tests` collects a new Python file with no wiring at all, which is why
+  that family has never gone silently unrun. 151 checks in eleven sections, each reported as
+  its own pytest failure: the **fallback** (with no store, `admit()` is the function it was
+  before the tier existed — now across four sub-tiers, not two); the hour and the day
+  **really binding across isolates** (two isolates, one injected store, a visitor refused on
+  a count neither isolate's own `Map` has seen, and the same sequence admitted with
+  `DEMO_CACHE_COUNTER=0`, which is what makes it a statement about the tier); the day
+  budget by **charge-on-completion**, because a lost refund on an eventually-consistent
+  counter is an OVERCOUNT and refuses innocent visitors; 200 refunded requests publishing
+  **literally nothing**; and every failure mode — a store that hangs, rejects, throws
+  synchronously, serves a stale entry, serves an unparseable body, serves a count stamped
+  with another bucket, or lands a `put` and then hangs — required to **ADMIT**, each against
+  an entry a working store would have refused on. §K measures the two directions a refusal
+  can err in, including the inherited overcount this slice does **not** fix.
 - **`test_ext_escapes.py`** — X1–X12, the escape suite for [sandboxed content
   extensions](../../docs/architecture/backlog/sandboxed-extensions.md) (BEYOND #6). Its own file,
   apart from the behaviour tests, because a reviewer asking *"can a stranger's content pack hurt

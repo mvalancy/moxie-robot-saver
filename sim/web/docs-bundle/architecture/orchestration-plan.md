@@ -214,6 +214,18 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     state`), and only then clean up, in a separate command that runs only when the state is
     literally `MERGED`.** A loop over several PRs must `break` on the first that is not.
 
+    **Violated again 2026-09-06, and the reason is the reusable part.** `gh pr merge 176 --squash
+    --delete-branch` was chained with `worktree remove`, `branch -D` and `push --delete` in one
+    command. The merge **failed** on a docs-bundle conflict (#172 had landed on `dev` after #176 was
+    pushed) — and every cleanup step ran anyway, deleting the branch of an **open** PR, which GitHub
+    then auto-CLOSED. Recovery was cheap only because git had not GC'd: `git branch feat/e2e
+    <sha>`, re-push, `gh pr reopen`. **Why it happened matters more than that it did:** the identical
+    chained command had just worked twice in a row (#175, #172), and two successes are exactly what
+    makes a shape feel safe enough to reuse a third time. A conditional does not care how the last
+    two runs went. So the rule is not "be careful with cleanup" — it is **make the cleanup
+    unreachable unless the merge actually succeeded**, e.g. `gh pr merge … && { cleanup; }`, or
+    simply a second command after reading the first one's result.
+
 23. **A gate result is only true for the commit it was read on — re-read it in the same
     command that merges.** Made twice on 2026-09-03, once by machine and once by hand. The
     machine version: a merge watcher read `gate: all` from a run that had already been
@@ -736,7 +748,7 @@ honesty over green; idempotent + interruptible; one thing at a time, don't stomp
 - **2026-09-04 — INTEGRATION** — Live infra validated with real creds: `test_live_gateway.py` **4 passed** with the key and **4 skipped** without (`MOXIE_LLM_API_KEY= MOXIE_SKIP_DOTENV=1`), so that contract holds in both directions. Then a real gap, found by re-reading evidence I had cited myself an hour earlier: **nothing runs broker + runtime + live brain together.** `sim/run_smoke.sh`:97 pins `MOXIE_APP=echo` with no flag, so its reply is `'You said: hello Moxie'` — real broker, real TTS, **mocked brain**; and `test_live_gateway.py`'s assembled-stack test says "minus the broker" in its own docstring. DoD criterion 1 **downgraded 🟢→🟡** and the total taken back ~88 %→~82 %; a slice is in flight to earn it back. No second BUILD agent launched this fire: a console-UI browser suite (the gap PR #136 left) needs `sim/browser_harness.mjs` and `sim/ci/ci.yml`, both held by the CSP agent, so disjointness genuinely fails — recorded rather than forced.
 - **2026-09-04 — BUILD** — Four PRs merged: **#137** dropped `'unsafe-inline'` from `script-src` by deleting 13 of 14 inline blocks (verified on a real Pages preview: 5/5 pages render, `window.moxie` true — the hashed importmap resolving — a typed turn completes, 0 script-src violations; the one `img-src` violation is **pre-existing on production** and unrelated). **#136** closed the privacy gaps. **#139** fixed the ambient guard, which after #137 went red about one run in four *on branches that cannot touch `sim/web`*: instrumenting it showed block 3 was measuring an **ambient** clip as "the scripted reply" and then reporting the real reply — which correctly cuts ambient — as an interruption. `settleDegradedLine` stopped the scheduler at the exact instant `moxieBusy()` first allowed it to speak (stop ~15.1 s, ambient timer 15.173 s); stopping first decorrelates it. 10/10 green after. **#138** gave `run_smoke.sh` a `--live-brain` flag, so one run now covers broker + supervisor + runtime + live gateway + TTS + robot — criterion 1 earned back to 🟢, total ~82 %→~90 %.
 - **2026-09-04 — OPEN, OBSERVED, NOT EXPLAINED** — `sim/tests/test_sil_performance_e2e.py` errored at setup **12 times in one CI run** (`RuntimeError: no paired config pushed within timeout`, 60 s timeout, 5144 tests, 376 s) on PR #138, whose diff to `sim/virtual_moxie.py` is a constant and a pure helper and **cannot reach the pairing path**. It passes 18/18 locally on `dev`. I hypothesised the fixture published `state=config` before its own SUBSCRIBE was registered, built the SUBACK gate for it, and then **could not reproduce the failure even with a 0.5 s delay injected into `on_connect`** — paho queues the publish until after CONNACK, so that race does not exist. The branch was discarded rather than shipped: a fix labelled for a cause it does not have is worse than an open bug. A re-run went green and #138 merged on it. **This is recorded so the next occurrence is the second data point, not the first** — capture the supervisor log and the port assignments from the failing job.
-- **2026-09-04 — AUDIT, guard rot found and fixed.** The secrets check `git log -S sk-Afb` began returning **1** — and the match was *its own documentation*: an earlier status line here quoted the command, so the literal entered history in `e14399e` and the check has matched itself ever since. Nothing leaked (the full key: **0 tracked files, 0 commits**), but a guard that cannot tell a finding from its own name is worse than no guard, because it reads red forever and gets ignored. **Do not write the key's prefix into any tracked file, including when naming the check.** The better check needs no literal at all and tests the whole key rather than eight characters of it — source the git-ignored env and search for the value, never echoing it:
+- **2026-09-04 — AUDIT, guard rot found and fixed.** The secrets check `git log -S <demo-key-prefix>` began returning **1** — and the match was *its own documentation*: an earlier status line here quoted the command, so the literal entered history in `e14399e` and the check has matched itself ever since. Nothing leaked (the full key: **0 tracked files, 0 commits**), but a guard that cannot tell a finding from its own name is worse than no guard, because it reads red forever and gets ignored. **Do not write the key's prefix into any tracked file, including when naming the check.** The better check needs no literal at all and tests the whole key rather than eight characters of it — source the git-ignored env and search for the value, never echoing it:
 
 ```sh
 set -a; . ./mqtt/.env; set +a
@@ -1041,3 +1053,21 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   this one establishes *works*, and collapsing them would repeat the session's recurring defect —
   a check that looks like it proves the thing and does not. A composer can be perfectly placed and
   still be wired to nothing.
+
+- **2026-09-06 — the audit had written its own search string into the log, and thereby into every
+  future audit.** A previous fire recorded *"secrets clean (`git grep sk-` 0 tracked, `git log -S
+  <demo-key-prefix>`)"* — documenting the command it ran, which contains the demo key's prefix. The
+  key itself has **zero** occurrences in tracked files and **zero** in history; nothing leaked. But
+  the sentence made `git log -S <demo-key-prefix>` match a commit **forever**, so every future
+  auditor inherits a hit that costs a real investigation to dismiss. Now redacted to a placeholder.
+  **This is the third time in one session that writing about a pattern has re-triggered the check
+  for that pattern** — the earlier two were prose containing a bolded word that restored the `\bsk-`
+  boundary, and a brief whose own secret-scan regex matched the ordinary English word it was
+  written next to. **The rule: when documenting a detector, never write a string the detector
+  matches.** Name it (`<demo-key-prefix>`) instead of quoting it. A guard whose documentation trips
+  the guard trains its readers to ignore it, which is the one failure a security check cannot
+  survive.
+  Also confirmed this fire and worth stating precisely, since the two hits look alarming and are
+  not: the only tracked matches for the key shape are `sim/test_cloud_transport.mjs` and
+  `sim/tests/test_compose.py`, and both are the guards' **own deliberately-fake fixture**
+  (`KEY_SHAPED.test(...)`, `_IS_A_KEY = …`). A scanner that flags its own test data is working.
