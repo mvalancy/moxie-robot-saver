@@ -771,6 +771,105 @@
 
   // Public surface for other modules (mic.js): inject a child utterance either
   // onto the live bus (so the real backend answers) or locally into the avatar.
+  /* ======================================================================== *
+   * THE ALIVENESS LAYER — reactions and thinking, as the loading bar
+   * ======================================================================== *
+   *
+   * THE PROBLEM, owner-reported: "reduce the amount of time where Moxie is idle or what
+   * she is doing is unclear." Between pressing the button and hearing an answer there were
+   * two dead gaps — the microphone recording, and the ~1.2-4 s gateway round trip — and in
+   * both of them the only feedback was a line of grey text. A robot with a face and arms
+   * that does nothing while you talk to it does not read as listening; it reads as broken.
+   *
+   * The model is a person you have just asked a question: they look up, they go "hmm",
+   * they think visibly. THAT is the loading bar. The rules that keep it from becoming
+   * annoying are as important as the feature:
+   *
+   *   · SUBTLE. `Gesture_Think_Subtle` and small head moves, never `Gesture_Celebrate`.
+   *     A big arm movement every time somebody taps a button is exhausting by turn three.
+   *   · NEVER THE SAME TWICE RUNNING. `pickDifferent` holds the last choice per channel,
+   *     the same rule `mqtt/moxie_sdk/filler.py::pick_filler` uses on the robot path
+   *     ("a stuck line reads as a broken robot rather than a thinking one").
+   *   · LATE, NOT INSTANT, for thinking. Nothing at all for the first `THINK_DELAY_MS`,
+   *     because most turns answer inside it and a thinking pose that flashes for 200 ms is
+   *     noise. A person does not say "hmm" to a question they already know the answer to.
+   *   · IT NEVER SPEAKS. Every cue here is face, arms and LED — no audio, no bubble text.
+   *     Speaking a filler would need either a gateway call (money, and slower than the
+   *     thing it covers) or a pre-rendered clip per line, and `audio/index.json` has none
+   *     for these. Saying words she has not been given is the one shortcut worth refusing.
+   *   · IT YIELDS. `settled()` is called on every path that ends a wait, and the real
+   *     answer's own markup then drives the face — so this can only ever fill a gap, never
+   *     fight the reply that lands after it.
+   */
+  var THINK_DELAY_MS = 900;
+  var thinkTimer = null, thinkStage = 0;
+  var lastPick = {};
+
+  /** One of `list`, never the one this channel returned last. */
+  function pickDifferent(channel, list) {
+    var options = list.filter(function (x) { return x !== lastPick[channel]; });
+    if (!options.length) options = list;
+    var choice = options[Math.floor(Math.random() * options.length)];
+    lastPick[channel] = choice;
+    return choice;
+  }
+
+  function clearThink() {
+    if (thinkTimer !== null) { clearTimeout(thinkTimer); thinkTimer = null; }
+    thinkStage = 0;
+  }
+
+  var alive = {
+    /** The visitor just opened the microphone. She notices, and leans in a little.
+     *  Immediate on purpose: this one IS the acknowledgement that the tap landed. */
+    listening: function () {
+      clearThink();
+      try {
+        if (window.moxie) {
+          window.moxie.setFace(pickDifferent("listen", ["curious", "happy"]));
+          gesture(pickDifferent("listenGesture", ["Gesture_Think_Subtle", "Gesture_None"]));
+          set(4, pickDifferent("listenHead", [17600, 15400]));   // a small nod or tilt
+        }
+      } catch (e) {}
+    },
+
+    /** A turn is in flight. Nothing for `THINK_DELAY_MS`, then a thinking pose, then — only
+     *  if it is really taking a while — one further beat so the wait keeps moving. */
+    thinking: function () {
+      clearThink();
+      thinkStage = 0;
+      var beat = function () {
+        thinkStage++;
+        try {
+          if (!window.moxie) return;
+          if (thinkStage === 1) {
+            window.moxie.setFace(pickDifferent("thinkFace", ["thinking", "curious"]));
+            gesture("Gesture_Think_Subtle");
+          } else {
+            // Still waiting. A different small move rather than a louder one.
+            gesture(pickDifferent("thinkAgain", ["Gesture_Think", "Gesture_Think_Subtle"]));
+            set(5, pickDifferent("thinkYaw", [17400, 15600]));
+          }
+        } catch (e) {}
+        if (thinkStage < 3) thinkTimer = setTimeout(beat, 2200);
+        else thinkTimer = null;
+      };
+      thinkTimer = setTimeout(beat, THINK_DELAY_MS);
+    },
+
+    /** The wait is over — an answer, a refusal, a cancelled recording, anything. Stops the
+     *  cues and hands the body back; it deliberately does NOT set a face, because the
+     *  reply's own markup is about to. */
+    settled: function () {
+      clearThink();
+      try { armsHome(); } catch (e) {}
+    },
+
+    /** Recorded state for the tests (playbook rule 11). */
+    __state: function () { return { stage: thinkStage, armed: thinkTimer !== null, last: lastPick }; },
+  };
+  window.moxieAlive = alive;
+
   window.moxieBridge = {
     route: route,
     sendUserTurn: function (text) {

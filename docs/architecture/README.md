@@ -74,8 +74,15 @@ A backend + Sim are built from these directly; each cites the study but reads on
   the one defect that had stood between the live site and a clean browser console: the README's hero
   image was hosted on `github.com`, which `img-src 'self' data: blob:` correctly refuses. Vendored
   rather than allow-listed, and the guard against the next one — `sim/tests/test_no_offsite_images.py`
-  — is worth more than the image). One page there is the odd one out and
-  deliberately so:
+  — is worth more than the image), and
+  [`backlog/ota-push.md`](backlog/ota-push.md) (**OTA push — a specification, and the argument for not
+  building it**: the one backlog item that mutates firmware on hardware nobody here owns. Separates what
+  our recovered protos actually prove from what one person's prose describes, labels four things
+  **unknown** rather than guessing them, designs eight refusals before the happy path — including the two
+  hazards the seam already contains, a config document that is re-asserted on every reconnect and a fleet
+  whitelist shared with the per-robot one — and finds that the brick risk is not a bad payload but
+  defeating the robot's own signature gate. Concludes **specify, do not build**). One page there is the
+  odd one out and deliberately so:
   [`backlog/community-signals.md`](backlog/community-signals.md) — **the inbound half**, what owners
   holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how
   strong the evidence is rather than how good the feature sounds. A second page shares that outward
