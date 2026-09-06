@@ -899,5 +899,5 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   checkers are **not in CI**; that fast-tier test is the only automated guard over them), and it
   proved itself twice within the hour: it went 12→14 tests the moment #166 added two new tables
   without anyone wiring them in, and it caught #166's M1 as `NO-OP anchor (0 matches)` when a refactor
-  moved the anchored line. Also fixed: the key scan fired on the word "ta**sk-notification**" — a
+  moved the anchored line. Also fixed: the key scan fired on the ordinary word `task-notification` — a
   scanner that cries wolf on English is one people learn to wave through.
