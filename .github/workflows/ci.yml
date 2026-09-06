@@ -257,6 +257,29 @@ jobs:
         # so only a hit test could catch it. Includes a teeth block that restores the old
         # geometry and requires the collision to reappear.
         run: node sim/test_mobile_layout.mjs
+      - name: Deployed-artifact checker — its own teeth, hermetically
+        # `sim/check_deployed.mjs` drives a real phone-sized browser at a DEPLOYED URL and
+        # asserts the composer is reachable with no tap on CONTROLS and no scroll, and that
+        # Cloudflare's INJECTED analytics beacon loads with zero securitypolicyviolation
+        # events. That second half is the point of the file: Pages adds that script tag to
+        # every HTML response after our bytes have left this repo, our first CSP refused it
+        # on every production page load, and NO local suite could have seen it.
+        #
+        # THE NETWORK HALF IS NOT WIRED HERE, ON PURPOSE — `sim/ci/deployed.yml` runs it on a
+        # schedule instead, and check_deployed.mjs's header carries the measurements behind
+        # that decision (no GitHub Deployment is created for this repo, so `deployment_status`
+        # can never fire; a branch alias 404s before its first build and serves the previous
+        # one after; and no `*.pages.dev` host gets a beacon at all, so a preview cannot
+        # exercise the half that matters). A merge gate that depends on an external build
+        # finishing is a gate people learn to re-run rather than read.
+        #
+        # WHAT RUNS HERE IS `--selftest`, which is hermetic — four loopback servers under the
+        # real `sim/web/_headers` policy, no internet — and it is the half that can honestly
+        # gate a PR: the unmutated tree must pass every clause, and three mutated copies must
+        # each redden a DIFFERENT one (0×0 dock, dock below the fold, a real element laid over
+        # it). It is a check on the checker, so the scheduled run cannot quietly become a
+        # green light for an instrument that stopped working.
+        run: node sim/check_deployed.mjs --selftest
       - name: Mic-spend test (a refused microphone must not buy a chat+speech turn)
         # The audit finding this closes: `mic.js` consoles a failed microphone with a
         # SCRIPTED CHILD LINE, and that line used to go out through `sendUserTurn` — so a
