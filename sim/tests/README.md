@@ -227,7 +227,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   the very change that made `requirements-hermetic.txt` the single source of truth — a
   binary is invisible to a guard that reads `pip install` lines, so the five programs the
   suite may spawn (`mosquitto`, `docker`, `node`, `git`, `bash`) are declared in
-  `DECLARED_BINARIES` with their reason and their provider. Eleven mutants, 11/11 caught.
+  `DECLARED_BINARIES` with their reason and their provider. Eleven mutants, 12/12 caught.
 - **`test_ext_escapes.py`** — X1–X12, the escape suite for [sandboxed content
   extensions](../../docs/architecture/backlog/sandboxed-extensions.md) (BEYOND #6). Its own file,
   apart from the behaviour tests, because a reviewer asking *"can a stranger's content pack hurt
@@ -304,6 +304,29 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   appliance** actually uses: `mqtt/requirements.txt` has no jinja2, so the container and a
   bare wheel install take the `ImportError` branch, and one test records the known hole
   there (`{% if %}` passes through verbatim) rather than letting it look like it works.
+- **`test_telemetry_rollup_repair.py`** — the two durable telemetry records made unable to
+  disagree, **by construction rather than by waiting**. On 2026-09-05 the `sil` job went red on
+  a PR whose diff could not reach this code: `telemetry_packets.json` held three envelopes and
+  `telemetry_daily.json` had counted two. Two files, two `os.replace` calls, nothing relating
+  them — and the SIL fixture's leading edge is the ring, so anything landing between the two
+  writes sees the roll-up under-report, while a **restart** in that window makes it permanent.
+  The parent console's 📈 card reads the roll-up for its lifetime total, so that is a number
+  stated confidently and wrongly. A test that waits for that race fails a few runs in ten and is
+  worse than none, so this file drives the interleaving instead: `_OrderedStore` subclasses
+  `JsonStore._write_path` — the choke point *both* `write` and `append` funnel through, which is
+  what makes the instrument order-agnostic — and records the on-disk state of both collections
+  after every write, so *"the ring never leads the roll-up"* is asserted at **every** instant
+  rather than the one the runner happened to schedule; `_LosingStore` drops one nominated write
+  and reports success, which is exactly what a `kill -9` between the two `os.replace` calls
+  leaves behind, and the test then builds a new runtime over the same data directory and asks it
+  what happened. Both were run against the pre-fix runtime and are red there. The rest pin the
+  repair's edges: no double count on repeated reads (the direction where being wrong *grows*),
+  an unstamped pre-upgrade ring left alone, a robot's forged `seq` refused by the privacy gate,
+  a lost *ring* write not letting the next packet reuse a sequence, `erase_telemetry` resetting
+  the watermark with the files, and eight concurrent ingests losing no roll-up update — the
+  divergence that needs no crash at all, because the roll-up's read-modify-write had nothing
+  around it while the ring's `append` is transactional. Companion:
+  [`../tools/telemetry_rollup_mutation_check.py`](../tools/README.md), 12/12 caught.
 - **`test_sil_durable_telemetry.py`** — the two claims about durable telemetry that no
   fixture can establish. A second `MoxieRuntime` in the same interpreter proves the
   hydration code path and nothing about durability, so this boots the real appliance

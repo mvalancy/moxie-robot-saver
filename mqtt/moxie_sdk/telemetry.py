@@ -9,9 +9,10 @@ the server INGESTS them for insights.
 Two halves:
   * the **envelope** (`build_packet`/`parse_packet`), the upload gate (`should_upload`)
     and the live roll-up (`summarize_events`) — the wire and the "what just happened";
-  * **durable, bounded storage** (bottom of the file) — the shapes, caps, privacy filter
-    and day arithmetic behind a history that survives a supervisor restart. Pure: the
-    runtime does the disk I/O through `moxie_sdk.store.JsonStore`.
+  * **durable, bounded storage** (bottom of the file) — the shapes, caps, privacy filter,
+    day arithmetic and the **log/view reconcile** behind a history that survives a
+    supervisor restart. Pure: the runtime does the disk I/O through
+    `moxie_sdk.store.JsonStore`.
 """
 from __future__ import annotations
 import base64
@@ -138,9 +139,62 @@ def summarize_events(packets, limit: int = 20) -> dict:
 # `docs/architecture/config-and-telemetry-contract.md` §③ (`LoggingPolicy`). No
 # upstream code was consulted for any of it.
 
+# **The two records are a log and a view over it, not two independent counters.**
+# (Added 2026-09-05, after a `sil` red on PR #164 whose diff could not reach this code.)
+#
+# They used to be two independent counters: the runtime appended to the ring, then wrote
+# a separately-advanced roll-up, and nothing ever compared them again. Two files, two
+# `os.replace` calls, and a window in between where the ring holds a packet the roll-up
+# has never counted. Anything landing in that window sees a disagreement — the SIL
+# fixture, whose leading edge is the ring file, did; a parent refreshing the console
+# would; and a supervisor **killed** in it made the disagreement permanent, because the
+# roll-up was only ever advanced forwards and never reconciled.
+#
+# That is the shape `orchestration-plan.md` rule 23 calls *a cached belief about a moving
+# thing*, and it is the most common bug this project has produced. The fix is to stop the
+# roll-up being a belief:
+#
+#   * every stored envelope carries a monotonic **`seq`** (`SEQ_FIELD`), stamped by the
+#     server after the privacy gate — a robot cannot forge one, because `storable_packet`
+#     keeps only `_PACKET_FIELDS`;
+#   * the roll-up carries **`through_seq`**, the highest `seq` it has folded;
+#   * so *"has this envelope been counted?"* is a **fact on disk**, and
+#     `reconcile_rollup` can rebuild whatever the roll-up is missing from the ring.
+#
+# The ring is therefore the durable log for its window and the roll-up is a materialized
+# view over it plus a carry (`total`, which is lifetime and outlives the window). A lost
+# roll-up write is recoverable; a lost ring write loses an envelope from a record that is
+# explicitly a ring and not an archive.
+#
+# What was rejected, and why:
+#
+#  * **One file holding both.** Genuinely atomic, and it throws away everything the split
+#    buys: `erase_telemetry`'s three-record contract, two independent caps (500 envelopes
+#    vs 35 day rows), and the reason the roll-up can answer "last week" at all without
+#    keeping every packet forever. An atomicity fix that costs the design is not a fix.
+#  * **Ordering alone (roll-up first, ring second).** It is *half* the fix and it ships
+#    below — with the exact record written before the lossy one, no observer whose
+#    leading edge is the ring can ever see an under-count. But a `store.write` that is
+#    **refused** (another process holding the record past `lock_timeout_s` returns False,
+#    it does not raise) still leaves the ring ahead, and ordering has no answer for that:
+#    it makes the window small, not absent. "Small enough" is what the pre-fix code
+#    already was.
+#  * **Recomputing the roll-up from the ring on every read.** Correct only while the ring
+#    still holds everything, which it never does past `MAX_PACKETS` — it would silently
+#    reset `total` to at most 500 the first time a busy robot wrapped, turning a fix for
+#    under-reporting into a much larger one.
+#  * **Widening the SIL fixture's wait.** Would have made the red go away and left the
+#    restart-shaped data loss shipping.
+
 #: Collections under the robot's data dir (`robots/<device>/<collection>.json`).
 PACKETS_COLLECTION = "telemetry_packets"
 DAILY_COLLECTION = "telemetry_daily"
+
+#: The monotonic per-robot sequence number a **stored** envelope carries. Deliberately not
+#: in `_PACKET_FIELDS`: it is the server's bookkeeping, not part of the robot's wire
+#: envelope, so `storable_packet` drops any `seq` a robot sends and the runtime stamps its
+#: own afterwards (`with_seq`).
+SEQ_FIELD = "seq"
 
 #: `LoggingPolicy` values, by value rather than by import, so the caps and the filter
 #: stay usable from anything (`cloud_config` is imported above for `should_upload`, but
@@ -278,8 +332,13 @@ def packet_day(pkt, *, now=None) -> str:
 
 
 def new_rollup() -> dict:
-    """An empty daily roll-up record."""
-    return {"days": {}, "total": 0, "dropped_days": 0, "updated_at": None}
+    """An empty daily roll-up record.
+
+    `through_seq` is the watermark: the highest stored-envelope `seq` this record has
+    folded in. 0 means "nothing", which is also what a roll-up written before the
+    watermark existed reads as — see `unfolded_packets` for why that is the safe end."""
+    return {"days": {}, "total": 0, "dropped_days": 0, "updated_at": None,
+            "through_seq": 0}
 
 
 def _count(value) -> int:
@@ -314,6 +373,7 @@ def _clean_rollup(rollup) -> dict:
     out["total"] = _count(r.get("total"))
     out["dropped_days"] = _count(r.get("dropped_days"))
     out["updated_at"] = _recorded_at(r.get("updated_at"))
+    out["through_seq"] = _count(r.get("through_seq"))
     return out
 
 
@@ -353,11 +413,100 @@ def roll_up_packet(rollup, pkt, *, now=None, max_days: Optional[int] = None) -> 
            "last": ts if row["last"] is None else max(row["last"], ts)}
     out["days"][day] = row
     out["total"] += 1
+    seq = packet_seq(pkt)
+    if seq is not None and seq > out["through_seq"]:
+        out["through_seq"] = seq
     if cap and len(out["days"]) > cap:
         for old in sorted(out["days"])[: len(out["days"]) - cap]:
             del out["days"][old]
             out["dropped_days"] += 1
     out["updated_at"] = now
+    return out
+
+
+# --- the log/view relationship: `seq`, the watermark, and the repair -----------------
+
+def packet_seq(pkt) -> Optional[int]:
+    """A stored envelope's `seq`, or None when it has none / it is not a usable one.
+
+    Strict for the same reason `policy_value` is: this number decides whether a packet
+    gets counted, so anything it cannot read as a positive integer is None, and every
+    caller treats None as *"no watermark information"* rather than guessing a number."""
+    if not isinstance(pkt, dict):
+        return None
+    value = pkt.get(SEQ_FIELD)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def with_seq(row, seq: int) -> dict:
+    """A stored envelope stamped with its sequence number. Returns a NEW dict."""
+    out = dict(row or {})
+    out[SEQ_FIELD] = max(1, int(seq))
+    return out
+
+
+def next_seq(ring, rollup=None) -> int:
+    """The next sequence number for this robot: one past the highest either record knows.
+
+    The ring alone would be enough in the ordinary case — its newest row carries the
+    newest `seq`, and the cap only ever drops the *oldest*. The roll-up is consulted as
+    well because the two writes are separate: if the ring append is the one that is lost,
+    the roll-up's `through_seq` is momentarily ahead of anything on the ring, and reusing
+    that number would give two different packets the same identity. Monotonic beats
+    gapless — a gap costs nothing, a duplicate costs a packet."""
+    highest = 0
+    if isinstance(ring, list):
+        for row in ring:
+            n = packet_seq(row)
+            if n is not None and n > highest:
+                highest = n
+    if rollup is not None:
+        highest = max(highest, _clean_rollup(rollup)["through_seq"])
+    return highest + 1
+
+
+def unfolded_packets(rollup, ring) -> list:
+    """The stored envelopes the roll-up has **not** counted yet, oldest first.
+
+    Empty when the two records agree, which is the overwhelmingly common case and the
+    one this is optimised to say cheaply.
+
+    **An envelope with no `seq` counts as folded.** That is the migration rule and it is
+    the asymmetric choice on purpose: an appliance upgrading into this fix has a ring of
+    unstamped envelopes and a roll-up that already counted every one of them, so treating
+    unstamped as *unfolded* would double the lifetime total of every existing install on
+    its first read — a number that grows on refresh, which is the loudest possible way to
+    be wrong. Treating it as folded reproduces exactly the pre-fix behaviour for
+    pre-fix data and costs nothing for anything written since."""
+    out = _clean_rollup(rollup)
+    rows = [r for r in ring if isinstance(r, dict)] if isinstance(ring, list) else []
+    missing = [(n, r) for r in rows
+               for n in (packet_seq(r),) if n is not None and n > out["through_seq"]]
+    missing.sort(key=lambda pair: pair[0])
+    return [r for _, r in missing]
+
+
+def reconcile_rollup(rollup, ring, *, now=None, max_days=None) -> dict:
+    """The roll-up with everything the ring holds and it does not, folded back in.
+
+    This is what makes a lost roll-up write recoverable rather than permanent: the ring
+    is the durable log, `through_seq` says how far the view got, and the difference is
+    replayable. Returns a normalised record even when nothing was missing, so a caller
+    can use it as the read path unconditionally (a corrupt file is repaired on the way
+    past, exactly as `_clean_rollup` already promised).
+
+    Note what it deliberately does **not** do: recompute the roll-up from the ring. The
+    ring is capped and the roll-up's `total` is a lifetime count, so a full recompute
+    would delete every packet that has aged out of the window."""
+    out = _clean_rollup(rollup)
+    for row in unfolded_packets(out, ring):
+        out = roll_up_packet(out, row, now=now, max_days=max_days)
     return out
 
 
