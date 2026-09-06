@@ -222,6 +222,14 @@ BREAKAGES = [
     ("modejs-inert", "gut", "sim/web/mode.js", True,
      "mode.js is served 200 OK and does nothing — hosted/offline mode is never decided",
      r"mode|hosted|banner|offline|demo|capabilit"),
+    # Added 2026-09-06 with the clause that closes it. env.js paints EVERY mark the two
+    # rows above are read through (`body[data-mode]`, the badge, the needs-backend marks),
+    # so a row for it is what keeps those two honest: without it, a clause that reads a
+    # mark env.js writes could be satisfied by env.js alone and nobody would have measured
+    # the difference.
+    ("envjs-inert", "gut", "sim/web/env.js", True,
+     "env.js is served 200 OK and does nothing — no badge, no banner, no needs-backend marks",
+     r"env\.js|badge|banner|needs-backend|hosted|local\b"),
     ("docs-hollow", "hollow", "sim/web/docs.html", True,
      "docs.html ships an empty body behind the same 'Loading…' placeholder",
      r"tree|markdown|search|article|explorer|renders?\b"),

@@ -239,7 +239,14 @@
   First sweep's findings are in
   [`sil-and-cicd.md`](../../docs/architecture/sil-and-cicd.md): the suites are largely sound, two
   checks in `test_csp.mjs`/`test_docs_explorer.mjs` had no teeth and are fixed, and
-  `sim/check_deployed.mjs --selftest` still exits **0** against four different broken pages.
+  `sim/check_deployed.mjs --selftest` exited **0** against four different broken pages — the
+  **inert-script** rows, which are the ones no console listener and no network log can ever see.
+  That last one is closed as of 2026-09-06: `check_deployed.mjs` grew a **clause 4** that names one
+  observable effect per script (`moxie.js` builds the stage canvas and the motor panel, `hud.js` puts
+  the accessible name on each slider, `mode.js` moves `body[data-mode]` off `"boot"`, `env.js` creates
+  the badge, `qr.js` draws real ink when **Make** is pressed) and five new mutations, **E**–**I**, that
+  gut one script apiece and must each redden the clause that names it. `envjs-inert` was added to the
+  rows above at the same time, so the marks that `env.js` paints are themselves under audit.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.

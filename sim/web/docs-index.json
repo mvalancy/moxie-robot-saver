@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 203142,
+   "bytes": 206978,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -943,7 +943,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 47523,
+   "bytes": 52574,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -958,7 +958,7 @@
     "The audio clause is an ordering, not a magnitude — and that is a scar",
     "Teeth on the browser suites — which checks survive a broken page",
     "What the first sweep found: the suites are largely sound",
-    "Where the next pass should go — and the one finding this pass could not fix",
+    "The inert script: a 200 OK that does nothing, and the clause that finally sees it",
     "Giving them eyes (2026-09-06)",
     "Run it now"
    ],
