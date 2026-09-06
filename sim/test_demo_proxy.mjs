@@ -2404,17 +2404,33 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   //
   // §4.6.1 row h measured THREE cache ops at <=44 ms. `admit()` sits in the request path of
   // every turn, so the op count is the budget and it is asserted, not intended.
+  //
+  // **THE NUMBERS BELOW DOUBLED ON 2026-09-06 AND THAT IS A DESIGN CHANGE, NOT A LOOSENED
+  // ASSERTION.** §4.6.3 lifted the remaining ceilings onto this tier: the per-IP HOUR and
+  // DAY windows (which SHARE ONE ENTRY, so both scales cost one round trip between them —
+  // that is the whole answer to the latency objection §4.6.1 rejected them on) and the
+  // unit budget's DAY. Four sub-tiers, so four reads. Each pin below is re-pinned to an
+  // EXACT new value rather than relaxed to an inequality, and the one that WAS an
+  // inequality (`<= 3`) is now an equality, because the claim it made — "still inside row
+  // h's three ops" — is false and a bound that no longer bounds is worse than a red one.
   {
     fresh();
     const c = fakeCache();
     const r = await admitWith(ON, c, "198.51.100.20");
     eq(r.ok, true, "an admitted request");
-    eq(c.log.match, 2, "…reads TWO shared entries: the per-IP minute window, then the unit budget's hour");
-    eq(c.log.put, 1,
-       "…and writes exactly ONE of them back — the window. The budget publishes only what this " +
-       "isolate already OWES, and a first admission owes nothing yet (§15i)");
-    ok(c.log.match + c.log.put <= 3,
-       "…so an isolate's FIRST turn still costs the three ops §4.6.1 row h measured");
+    eq(c.log.match, 4,
+       "…reads FOUR shared entries: the per-IP minute window, the per-IP hour+day window (ONE entry " +
+       "for both scales), the unit budget's hour, then its day. It was 2 before §4.6.3");
+    eq(c.log.put, 2,
+       "…and writes exactly TWO of them back — BOTH windows, and neither budget. That the budget " +
+       "half still writes nothing here is the unchanged half of this pin: a budget publishes only " +
+       "what this isolate already OWES, and a first admission owes nothing yet (§15i). It was 1 " +
+       "before §4.6.3 because there was one window entry; now there are two");
+    eq(c.log.match + c.log.put, 6,
+       "…so an isolate's FIRST turn costs SIX ops — DOUBLE the three §4.6.1 row h measured, which by " +
+       "row h's own ~15 ms per op extrapolates to ~90 ms. Pinned as an equality rather than left as " +
+       "the `<= 3` bound it was: that bound is now false, and §4.6.3 accepted the doubling on the " +
+       "record rather than by accident");
     eq(cacheStats().ops, 2, "…recorded as two completed cache ops for the window half");
     eq(cacheStats().wrote, 1, "…one of them a write");
     eq(cacheStats().units.ops, 1, "…and one for the budget half: the read, with nothing to publish");
@@ -2430,8 +2446,10 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
       (await admitWith(ON, c2, "198.51.100.22")).release();
       const before = c2.log.match + c2.log.put;
       (await admitWith(ON, c2, "198.51.100.23")).release();
-      eq(c2.log.match + c2.log.put - before, 4,
-         "a turn whose isolate owes units costs FOUR ops: two window, one budget read, one budget write");
+      eq(c2.log.match + c2.log.put - before, 8,
+         "a turn whose isolate owes units costs EIGHT ops: four reads, two window writes, and two " +
+         "budget publishes — the hour's and the day's. It was 4 when there was one window entry and " +
+         "one budget ledger (§4.6.3)");
     }
 
     fresh();
@@ -2544,9 +2562,12 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     const sixth = await admitWith(ON, c, "198.51.100.40", "chat", 2000);
     eq(sixth.ok, false, "the 6th turn in a minute is refused by the in-isolate map, as before");
     eq(sixth.reason, "rate_limited", "…as rate_limited");
-    eq(c.log.match, ON.chatPerMin * 2,
-       "…and the tier was consulted for 5 turns, not 6 (two reads each, one per sub-tier): " +
-       "a free refusal never pays for a cache round trip");
+    eq(c.log.match, ON.chatPerMin * 4,
+       "…and the tier was consulted for 5 turns, not 6 (FOUR reads each, one per sub-tier): " +
+       "a free refusal never pays for a cache round trip. The multiplier moved from 2 to 4 with " +
+       "§4.6.3's two new sub-tiers; the property being guarded — that the 6th turn costs ZERO round " +
+       "trips because the in-isolate map refused it first — is unchanged, and it is the reason this " +
+       "is a multiple of `chatPerMin` rather than a bare number");
 
     // The same for the origin pin, which is the cheapest refusal of all.
     fresh();
@@ -2565,7 +2586,9 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     fresh();
     const c = fakeCache();
     (await admitWith(ON, c, "203.0.113.99", "chat", 3000)).release();
-    eq(c.log.keys.length, 2, "one admitted turn asks the cache for two keys: the window's, then the budget's");
+    eq(c.log.keys.length, 4,
+       "one admitted turn asks the cache for FOUR keys: the minute window's, the hour+day window's, " +
+       "the budget's hour, the budget's day (§4.6.3; it was 2)");
     const key = c.log.keys[0] || "";
     ok(key.startsWith(ORIGIN + "/__moxie/rl/chat/"),
        `the entry lives on our OWN origin, under a non-route prefix — got ${key}`);
@@ -2616,7 +2639,7 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
       plan = { chat: { content: "hi" } };
       const first = await call(chat, "/api/chat", { text: "hello" });
       eq(first.res.status, 200, "a served turn, with the tier reading the real caches.default");
-      eq(c.log.match, 2, "…which consulted the global store for both sub-tiers");
+      eq(c.log.match, 4, "…which consulted the global store for all FOUR sub-tiers (§4.6.3; it was 2)");
       const key = c.log.keys[0] || "no-key";
 
       // Now stand the shared count at the ceiling, as five turns from another isolate
@@ -2670,6 +2693,11 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
    *  with the code it is checking. */
   const HOUR2 = 7200;
   const UK = ORIGIN + "/__moxie/rl/units/2";
+  /** The DAY entry (§4.6.3), spelled out for the same reason: `nowS` 7200 is day bucket 0,
+   *  and the `d` mark is what stops a day key ever being read as an hour key — a decimal
+   *  integer cannot begin with a letter, which is the whole separation inside the budget
+   *  family now that both scales live in it. */
+  const DK = ORIGIN + "/__moxie/rl/units/d0";
 
   // ---- 15i-a. THE KEY: one entry per DEPLOYMENT per hour, and no visitor in it -- //
   {
@@ -2683,16 +2711,37 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     fresh();
     const c = fakeCache();
     (await admitWith(TWELVE, c, "203.0.113.50", "chat", HOUR2)).release();
-    eq(c.log.keys.length, 2, "an admitted turn reads the window entry, then the budget entry");
-    eq(c.log.keys[1], UK, "the budget entry is origin + prefix + 'units' + the HOUR bucket");
-    ok(!String(c.log.keys[1]).includes("203.0.113.50"), "…with no visitor's address in it");
-    ok(!/(chat|speech|transcribe)/.test(String(c.log.keys[1]).slice((ORIGIN + "/__moxie/rl/").length)),
-       "…and no route either: the 3-vs-2 unit difference rides in the increment, not the key");
+    // THE READ ORDER, PINNED AS A WHOLE RATHER THAN BY INDEX. Before §4.6.3 the budget
+    // entry was `keys[1]`, and re-pinning it to `keys[2]` would have kept a passing
+    // assertion while quietly dropping what the index was worth — that the per-IP window
+    // is consulted BEFORE the deployment's budget (15i-h, and `unit_budget_mutation_check`
+    // row U10). So the whole sequence is asserted: every per-IP window scale, narrowest
+    // first, then every budget scale, narrowest first. Reordering ANY of it now reddens
+    // here rather than silently answering a per-visitor condition with a 503.
+    eq(c.log.keys.length, 4,
+       "an admitted turn reads four entries: both window scales, then both budget scales (§4.6.3; it was 2)");
+    const wk = String(c.log.keys[0] || "");
+    const tag = wk.slice((ORIGIN + "/__moxie/rl/chat/").length).split("/")[0];
+    deep(c.log.keys, [
+      ORIGIN + "/__moxie/rl/chat/" + tag + "/120",   // the per-IP MINUTE, bucket 7200/60
+      ORIGIN + "/__moxie/rl/chat/" + tag + "/w0",    // the per-IP HOUR+DAY, one entry, day 0
+      UK,                                            // the budget's HOUR
+      DK,                                            // the budget's DAY
+    ], "…in that exact order: per-IP window scales first, budget scales second");
+    eq(c.log.keys[2], UK, "the hour budget entry is origin + prefix + 'units' + the HOUR bucket");
+    eq(c.log.keys[3], DK, "…and the day's is the same shape with the 'd' mark and the DAY bucket");
+    for (const k of [c.log.keys[2], c.log.keys[3]]) {
+      ok(!String(k).includes("203.0.113.50"), "…with no visitor's address in either budget key");
+      ok(!/(chat|speech|transcribe)/.test(String(k).slice((ORIGIN + "/__moxie/rl/").length)),
+         "…and no route either: the 3-vs-2 unit difference rides in the increment, not the key");
+    }
 
     fresh();
     const c2 = fakeCache();
     (await admitWith(TWELVE, c2, "203.0.113.50", "chat", HOUR2 + 3600)).release();
-    ok((c2.log.keys[1] || "") !== UK, "…and the next HOUR keys a different entry, so nothing stale is believable");
+    ok((c2.log.keys[2] || "") !== UK,
+       "…and the next HOUR keys a different entry, so nothing stale is believable (index 1 -> 2: the " +
+       "wide window's entry now sits between the minute's and the budget's)");
   }
 
   // ---- 15i-b. IT IS SHARED: isolate B is refused on isolate A's spend --------- //
@@ -2973,14 +3022,39 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     eq(c.log.match + c.log.put, 0, "DEMO_CACHE_COUNTER=0 makes ZERO cache calls for the budget half too");
     eq(cacheStats().units.checked, 0, "…recorded as never checked");
 
+    // AN UNCAPPED HOUR MUST NOT SWITCH OFF THE DAY, and this assertion is why the code
+    // says so. It read `…length, 0` — "no budget entry is ever asked for" — until §4.6.3,
+    // and it was correct while the hour was the only budget scale on this tier. With a day
+    // scale beside it, the same line would have passed only because the hour's early
+    // return skipped the day too: one variable silently switching off a ceiling the
+    // operator set with a different one. This pin is therefore SPLIT rather than moved.
     fresh();
     const c2 = fakeCache();
     const NOBUDGET = wire2.readConfig({ ...FULL, DEMO_UNIT_BUDGET_HOUR: "0" });
     (await admitWith(NOBUDGET, c2, "198.51.100.81", "chat", HOUR2)).release();
     eq(cacheStats().units.checked, 0, "with no hourly ceiling there is nothing to mirror, so the sub-tier never runs");
-    eq(c2.log.keys.filter((k) => k.indexOf("/units/") >= 0).length, 0, "…and no budget entry is ever asked for");
+    eq(c2.log.keys.filter((k) => k.indexOf("/units/") >= 0 && k.indexOf("/units/d") < 0).length, 0,
+       "…and the HOUR's budget entry is never asked for");
     deep(limits.__state().units, { pending: 0, bucket: -1 },
-         "…and an uncapped deployment accrues nothing, so it can never publish anything");
+         "…and an hour-uncapped deployment accrues nothing to the HOUR ledger, so it can never publish it");
+    eq(c2.log.keys.filter((k) => k.indexOf("/units/d") >= 0).length, 1,
+       "…while the DAY's entry IS still asked for: `DEMO_UNIT_BUDGET_DAY` defaults to 4000 and an " +
+       "unrelated variable may not switch a ceiling off (§4.6.3)");
+    eq(cacheStats().unitsDay.checked, 1, "…recorded as the day sub-tier having run on its own ceiling");
+
+    // …and the genuinely uncapped deployment, which is the case the line above used to
+    // cover on its own: BOTH scales zero, and the budget half of the tier vanishes.
+    fresh();
+    const c3 = fakeCache();
+    const NOBUDGETATALL = wire2.readConfig({
+      ...FULL, DEMO_UNIT_BUDGET_HOUR: "0", DEMO_UNIT_BUDGET_DAY: "0",
+    });
+    (await admitWith(NOBUDGETATALL, c3, "198.51.100.82", "chat", HOUR2)).release();
+    eq(c3.log.keys.filter((k) => k.indexOf("/units/") >= 0).length, 0,
+       "with NEITHER budget ceiling set, no budget entry of either scale is ever asked for");
+    eq(cacheStats().units.checked + cacheStats().unitsDay.checked, 0, "…recorded as neither sub-tier running");
+    deep(limits.__state().unitsDay, { pending: 0, bucket: -1 },
+         "…and the DAY ledger accrues nothing either, so it can never publish anything");
   }
 
   // ---- 15i-g. THE WHOLE ROUTE, THROUGH THE REAL `caches.default` ------------- //
