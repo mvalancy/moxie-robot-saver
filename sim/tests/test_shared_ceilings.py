@@ -57,9 +57,9 @@ NODE = "node"
 #: number that quietly got smaller is exactly how a proof rots.
 #:
 #: F, G, H and J were raised to their exact counts on 2026-09-06, which is a stronger claim
-#: than the slack the others carry and is deliberate: four assertions added that day are the
-#: ONLY thing that reddens for `sim/tools/unit_budget_mutation_check.py` rows W5, W6, D2 and
-#: D11. Delete one and that row stops failing for the reason it claims — it starts reporting
+#: than the slack the others carry and is deliberate: five assertions added that day are the
+#: ONLY thing that reddens for `sim/tools/unit_budget_mutation_check.py` rows W5, W6, W8, D2
+#: and D11. Delete one and that row stops failing for the reason it claims — it starts reporting
 #: WRONG CHECK, or worse, keeps saying "caught" because some unrelated assertion happened to
 #: redden. A floor is the cheapest guard against a proof being quietly unhooked from its row.
 SECTIONS = {
@@ -68,7 +68,7 @@ SECTIONS = {
     "C": (7, "the per-IP DAY binds across isolates"),
     "D": (18, "the unit budget's DAY binds across isolates, by charge-on-completion"),
     "E": (8, "a refunded request publishes nothing to the shared day, BOTH orderings"),
-    "F": (29, "the wide window fails OPEN, every failure mode by name"),
+    "F": (31, "the wide window fails OPEN, every failure mode by name"),
     "G": (24, "the day budget fails OPEN, every failure mode by name"),
     "H": (18, "the keys carry no address and cannot be read as each other"),
     "I": (9, "what the tier costs, as a count of round trips"),

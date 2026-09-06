@@ -595,6 +595,26 @@ section("F");
     if (r.ok) r.release();
   }
 
+  // WHICH SCALE ANSWERS WHEN BOTH ARE SPENT. `scales` is built narrowest-first so the
+  // refusal a visitor meets carries the SHORTEST `Retry-After` that applies to them —
+  // "come back tomorrow" when the hour would have let them in at the top of the hour is a
+  // worse answer, not a safer one. Asserted directly because the order is otherwise
+  // visible only as the FIELD ORDER of a JSON body, and a body's key order proves nothing
+  // about a refusal: measured 2026-09-06, reversing `scales` was caught by §H's
+  // deep-equality on the stored shape and by nothing that names the Retry-After at all.
+  {
+    const BOTH = cfgOf({ DEMO_CHAT_PER_MIN: "60", DEMO_CHAT_PER_HOUR: "1", DEMO_CHAT_PER_DAY: "1" });
+    fresh();
+    const c = fakeCache();
+    (await admitWith(BOTH, c, IP, T0)).release();   // one turn fills BOTH scales at once
+    fresh();                                        // a second isolate, so only the colo refuses
+    const r = await admitWith(BOTH, c, IP, T0);
+    eq(r.ok, false, "a visitor who has spent BOTH their hour and their day is refused");
+    ok(r.retryAfterS <= 3600,
+       "…by the HOUR, the narrower of the two: the shortest Retry-After that applies wins, got "
+       + r.retryAfterS);
+  }
+
   // A READ THAT FAILED MUST NOT WRITE, and the entry has to hold something OTHER than what
   // a fresh write would produce for the difference to be visible at all. The cases above
   // are seeded with exactly the body an admitted first turn writes, so a fall-through that

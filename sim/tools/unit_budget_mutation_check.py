@@ -34,7 +34,8 @@ paints SCRIPTED for an hour. Neither shows up in a green suite. Both are one del
 
 So the rows come in two families and the second is the point:
 
-  · **U1, U7, U8, U11, U13, U17** and **W5, W7, D3, D5, D6, D10, D11** — the counter stops
+  · **U1, U7, U8, U11, U13, U17** and **W5, W7, W8, D3, D5, D6, D10, D11** — the counter
+    stops
     counting, or counts the wrong thing. An undercount. Cheap to be wrong about, and the
     table catches it anyway.
   · **U2, U3, U4, U5, U6, U9, U10, U12, U16** and **W1, W2, W3, W6, D1, D2, D4, D7, D8,
@@ -417,6 +418,20 @@ MUTATIONS = [
      "    if (used > ceiling) {\n"
      "      w.refused += 1;",
      CEILINGS, "the colo has seen three"),
+
+    # ---- W8: which scale answers when both are spent --------------------------
+    # `scales` is narrowest-first so a visitor who has spent both their hour and their day
+    # is told to come back at the top of the hour, not tomorrow. Reversing it was caught by
+    # NOTHING that names a refusal until section F grew the case this row points at — §H's
+    # deep-equality on the stored body reddened, because the array order is also the JSON
+    # field order, and a row caught by a serialization detail proves nothing about the
+    # ordering it claims to be about.
+    ("W8  the wide scales built WIDEST-first, so the day answers before the hour", LIMITS,
+     '  if (limits.hour) scales.push(["hour", limits.hour, "h", "hb"]);\n'
+     '  if (limits.day) scales.push(["day", limits.day, "d", "db"]);',
+     '  if (limits.day) scales.push(["day", limits.day, "d", "db"]);\n'
+     '  if (limits.hour) scales.push(["hour", limits.hour, "h", "hb"]);',
+     CEILINGS, "the shortest Retry-After that applies wins"),
 
     # ---- D1: charge-at-admission, in the DAY dimension ------------------------
     # §4.6.2's refund rule is what the day inherits along with the hour's design: the colo

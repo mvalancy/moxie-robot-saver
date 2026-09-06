@@ -154,19 +154,21 @@
   [`sim/test_demo_proxy.mjs`](../test_demo_proxy.mjs) §15i (rows `U*`, the shared minute window and
   the budget's HOUR) and [`sim/tests/helpers_shared_ceilings.mjs`](../tests/helpers_shared_ceilings.mjs)
   (rows `W*`/`D*`, the per-IP HOUR/DAY windows and the budget's DAY).
-  `python3 sim/tools/unit_budget_mutation_check.py        # 34 rows; every one must say "caught"`
+  `python3 sim/tools/unit_budget_mutation_check.py        # 35 rows; every one must say "caught"`
   (about 45 s; pass a row name — `U3`, `D4` — to re-check one in ~1.5 s). **The `W*`/`D*` block was
   added on 2026-09-06 because its absence had already cost something.** PR #178 lifted the day
   ceiling onto `caches.default` by copying the hour's proven design without the hour's proof, and
   deleting `unaccrueDayPending()` left the ceilings suite 151/151 green and `test_demo_proxy.mjs`
   green while the hour's byte-identical branch (`U2`) reddens instantly — a dead branch that survived
   review, a passing 151-check suite and a merge, found only by a hand-run sweep (fixed in #180; row
-  `D4` is the lock). Adding the block found four more assertions that could not fail: §G's *"the colo
+  `D4` is the lock). Adding the block found **five** more assertions that could not fail: §G's *"the colo
   holds 3 units, not 6"* (the double charge is only visible on a THIRD admission, which did not
   exist), §H's missing wide-entry `max-age`, §F's fail-open cases seeded with exactly the bytes a
-  fresh write produces, and §J watching the sub-tier rather than the ledger `release()` accrues to.
-  All four are now asserted, and `test_shared_ceilings.py`'s F/G/H/J floors are pinned to the exact
-  counts so a row cannot be quietly unhooked from its proof. It inherits
+  fresh write produces, §J watching the sub-tier rather than the ledger `release()` accrues to, and
+  the wide window's **narrowest-first** scale order, which was visible only as the field order of a
+  JSON body until §F got a case where the hour and the day are spent at once. All five are now
+  asserted, and `test_shared_ceilings.py`'s F/G/H/J floors are pinned to the exact counts so a row
+  cannot be quietly unhooked from its proof. It inherits
   `turnstile_mutation_check.py`'s **strictness** (the selector must appear in a *failing check's own
   label*, so a row is caught only when the check that names that guard is the one that reddened) and its
   **throwaway hardlink tree**, and it adds one thing the other six do not have: **an AMBIGUOUS verdict
