@@ -965,7 +965,10 @@ function refuse(reason, extra) {
   // a route cannot afford to throw.
   return {
     ok: false, reason, retryAfterS: 0, rateLimit: null,
-    release: () => {}, refundBudget: () => {},
+    // `chargeExtra()` answers FALSE rather than nothing: a refused admission holds no
+    // budget to add to, and false is the answer that makes a caller not spend. A missing
+    // method here would be a `TypeError` on a refusal path.
+    release: () => {}, refundBudget: () => {}, chargeExtra: () => false, extraUnits: () => 0,
     ...extra,
   };
 }
@@ -1128,7 +1131,7 @@ function handOffOrRelease(route) {
  * ---------------------------------------------------------------------------
  * ============================================================================
  */
-function grantedSlot(route, capacity, rateLimit, budget) {
+function grantedSlot(route, capacity, rateLimit, budget, ctx) {
   state.stats.admitted += 1;
   let released = false;
   let refunded = false;
@@ -1137,15 +1140,25 @@ function grantedSlot(route, capacity, rateLimit, budget) {
    *  whenever there is no hourly ceiling to mirror, or whenever the in-isolate charge
    *  took nothing (an uncapped deployment), so an unbudgeted deployment accrues nothing
    *  and publishes nothing. */
-  const owed = budget && budget.hourly && budget.charged && budget.charged.length
+  let owed = budget && budget.hourly && budget.charged && budget.charged.length
     ? (budget.cost || 0) : 0;
   const hourBucket = (budget && budget.hourBucket) || 0;
   /** The same number for the DAY ledger, computed from the DAY ceiling's own flag so a
    *  deployment that caps the hour but not the day (or the other way round) accrues to
    *  exactly the ledger it has a ceiling for and to no other. */
-  const owedDay = budget && budget.daily && budget.charged && budget.charged.length
+  let owedDay = budget && budget.daily && budget.charged && budget.charged.length
     ? (budget.cost || 0) : 0;
   const dayBucket = (budget && budget.dayBucket) || 0;
+  /* EVERY BUDGET KEY THIS REQUEST HAS CHARGED, in charge order — `admit()`'s own charge
+   * first, then anything `chargeExtra()` added. A key CAN appear twice (a second charge in
+   * the same hour writes the same key), and that is exactly what `refundCharges()` wants:
+   * it subtracts `cost` once per occurrence, so a refund after an extra charge gives back
+   * both charges and not one of them. Kept as a fresh array rather than aliasing
+   * `budget.charged`, which `admit()` still holds and reads on its own refusal paths. */
+  const budgetKeys = [...((budget && budget.charged) || [])];
+  /** Extra units this request has committed beyond admission — recorded so a test can
+   *  assert the second gateway call was PAID FOR and not merely made. */
+  let extraUnits = 0;
   return {
     ok: true,
     reason: null,
@@ -1172,10 +1185,66 @@ function grantedSlot(route, capacity, rateLimit, budget) {
         unaccruePending(hourBucket, owed); // the release-then-refund ordering; see above
         unaccrueDayPending(dayBucket, owedDay);
       }
-      state.stats.refundedUnits += (budget && budget.charged && budget.charged.length)
-        ? (budget.cost || 0) : 0;
-      refundCharges([], (budget && budget.charged) || [], (budget && budget.cost) || 0);
+      state.stats.refundedUnits += ((budget && budget.charged && budget.charged.length)
+        ? (budget.cost || 0) : 0) + extraUnits;
+      refundCharges([], budgetKeys, (budget && budget.cost) || 0);
     },
+    /**
+     * CHARGE THIS ALREADY-ADMITTED REQUEST FOR ONE MORE GATEWAY CALL.
+     *
+     * `chat.js`'s re-roll is a SECOND upstream call inside ONE admitted turn, and the two
+     * ceilings it crosses are not the same kind of thing, so it may not be charged against
+     * both:
+     *
+     *   * THE PER-IP WINDOW IS NOT TOUCHED, AND THAT IS THE WHOLE POINT. It counts what
+     *     the VISITOR did, and the visitor typed one sentence. `admit()` already charged
+     *     that one request and `admit()` does not run again, so a re-rolled turn costs
+     *     exactly the same slice of `DEMO_CHAT_PER_MIN` as any other. A child whose reply
+     *     happened to come back a duplicate must not be given four turns a minute instead
+     *     of five as a reward for it.
+     *   * THE UNIT BUDGET IS CHARGED IN FULL, AND THAT IS ALSO THE WHOLE POINT. It counts
+     *     what the DEPLOYMENT SPENT, and a second completion is a second completion. This
+     *     file's own rule for the lossy shared tier — *"an undercounted window costs a few
+     *     extra turns while an undercounted budget costs money"* — settles it: a re-roll
+     *     that did not charge would make `DEMO_UNIT_BUDGET_HOUR` quietly describe up to
+     *     twice the money it names, which is the one direction the budget may not be wrong
+     *     in.
+     *
+     * SO IT CAN SAY NO, AND THE CALLER MUST OBEY IT. With no headroom left this returns
+     * `false` and the caller MUST NOT make the call — the re-roll is a quality improvement
+     * that yields to every ceiling, never a way to spend past one. Note what it does NOT
+     * do on refusal: it does not refuse the TURN. The visitor already has a reply; they
+     * keep it, duplicate and all, and the page stays `live`.
+     *
+     * IT CHARGES AGAINST THE ADMISSION'S CLOCK (`ctx.nowS`), not against now. `chargeBudget`'s
+     * own header states the rule — the hour that pays for a turn is the hour the charge was
+     * made in — and a turn that straddles an hour boundary must not have its two halves
+     * billed to two different hours, or the ledger would accrue the second half under a
+     * bucket the first half never used and drop it.
+     *
+     * AFTER `release()` OR `refundBudget()` IT ALWAYS RETURNS FALSE. A settled request has
+     * already told the colo what it owes and a refunded one has said it owes nothing; both
+     * are statements this isolate has made and neither may be quietly enlarged afterwards.
+     *
+     * @returns {boolean} true when the units were taken and the caller may spend them.
+     */
+    chargeExtra() {
+      if (released || refunded) return false;
+      if (!ctx || !ctx.cfg) return false;
+      const extra = chargeBudget(route, ctx.cfg, ctx.nowS);
+      if (!extra.ok) return false;
+      for (const key of extra.charged) budgetKeys.push(key);
+      const cost = extra.cost || 0;
+      extraUnits += cost;
+      // The ledgers the colo will be told about at `release()`. Guarded by the SAME
+      // `hourly`/`daily` flags the admission charge used, so a deployment with no ceiling
+      // at a scale accrues nothing at that scale — here as there.
+      if (extra.hourly && extra.charged.length) owed += cost;
+      if (extra.daily && extra.charged.length) owedDay += cost;
+      return true;
+    },
+    /** Tests and the report: units this request committed BEYOND its admission charge. */
+    extraUnits() { return extraUnits; },
   };
 }
 
@@ -2024,7 +2093,7 @@ function clearPending(b) {
  */
 function grantOrShared(o, ctx) {
   const store = sharedStore(o, ctx.cfg);
-  if (!store) return grantedSlot(ctx.route, ctx.capacity, ctx.win.rateLimit, ctx.budget);
+  if (!store) return grantedSlot(ctx.route, ctx.capacity, ctx.win.rateLimit, ctx.budget, ctx);
   return sharedThenGrant(store, o, ctx);
 }
 
@@ -2068,7 +2137,7 @@ async function sharedThenGrant(store, o, ctx) {
     state.stats.cache.errors += 1;
     verdict = null;
   }
-  if (!verdict) return grantedSlot(route, capacity, win.rateLimit, budget);
+  if (!verdict) return grantedSlot(route, capacity, win.rateLimit, budget, ctx);
 
   // Refused by the shared tier. Give the slot back FIRST — it is the scarce thing and
   // somebody may be queued for it — then refund the charge, exactly as the `at_capacity`

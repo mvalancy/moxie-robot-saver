@@ -1187,6 +1187,123 @@ cache. They share `caches.default` and are kept apart by their key prefixes — 
 
 ---
 
+### 4.9 The three repetition levers, and the one that costs money (built 2026-09-06)
+
+**The defect.** The owner's report was *"Moxie gets stuck in a loop repeating the same things"*.
+It is not visible to any hermetic test, because a stubbed gateway returns what it was told to;
+it only appears over several turns of a real conversation with a real model and real history.
+So the instrument came first: [`sim/eval_live.mjs`](../../../sim/eval_live.mjs) drives six
+scripted conversations at a live deployment, threads the signed context blob exactly as
+`sim/web/cloud-transport.js` does, paces itself under `DEMO_CHAT_PER_MIN`, and refuses to run
+without `--yes` because every turn is money. It scores `repeatOpening`, `maxOverlap` (word-trigram
+Jaccard), `exactDupes`, `questionRate`, and the count of distinct moods and gestures.
+
+Three levers were pulled, in increasing order of cost. **Only the third spends anything.**
+
+| # | lever | where | cost |
+|---|---|---|---|
+| 1 | the persona's initiative rule — *keep the conversation moving*, *never repeat a sentence you have already said*, and (after the correction below) **do not ask a question every turn** | `DEMO_PERSONA` in `_lib/env.js` | free |
+| 2 | `frequency_penalty` **0.4** / `presence_penalty` **0.3** on every completion, with a self-healing probe: a gateway that answers 400 to a body carrying them has them dropped for the life of the isolate and the call retried once, so an unfamiliar backend costs one extra call and never a SCRIPTED page | `DEMO_FREQUENCY_PENALTY`, `DEMO_PRESENCE_PENALTY` | free |
+| 3 | **the re-roll** — a reply that is word-for-word a line already in this conversation is asked again, once | `DEMO_REROLL`, `chat.js` step 8b | **one extra completion on the turns it fires** |
+
+**THE CORRECTION IN THE MIDDLE IS THE MOST USEFUL THING IN THIS SECTION, AND IT IS A WARNING
+ABOUT METRICS.** After lever 2, `maxOverlap` fell from 1.0 to 0.2 and `exactDupes` reached zero —
+and the conversation *still read as a loop*, because six of seven turns were *"Did you … today?"*.
+Same shape, different words. The persona rule *"ask at most one question"* had been obeyed
+literally and had **licensed** a question every turn. A lexical similarity number cannot see that,
+and it moved in the right direction while the behaviour did not. The rule was inverted and
+`questionRate` was added to the instrument so the next person can see the same thing without
+having to read every transcript. **Read the transcripts anyway.**
+
+#### What a re-rolled turn costs
+
+The decision is made *after* the completion comes back, so it sits behind every free refusal in
+§4.1 — the origin pin, the input caps, the context check, the safety floor and the bot control are
+all upstream of it and none of them can be reached twice.
+
+| ceiling | charged | why |
+|---|---|---|
+| the visitor's per-IP window (`DEMO_CHAT_PER_MIN`, `_HOUR`, `_DAY`) | **once, unchanged** | It counts what the *visitor* did, and they typed one sentence. `admit()` runs before the route body and is not re-entered. Taking a second of their five turns a minute away because the *model* repeated itself would punish them for our defect. |
+| the unit budget (`DEMO_UNIT_BUDGET_HOUR` / `_DAY`) | **`UNITS.chat` again — 3 more, charged *before* the call** | It counts what the *deployment spent*, and a second completion is real money. §4.6's own rule settles it: *an undercounted window costs a few extra turns while an undercounted budget costs money*. `_lib/limits.js::chargeExtra` adds it to the in-isolate map **and** to the shared ledger, so a colo's published spend is not half the truth. |
+| the concurrency ceiling | **unchanged** | one slot, held for the whole turn, released in the same `finally`. |
+| latency | **up to double, never past `DEMO_CHAT_TIMEOUT_MS`** | See below. |
+
+**A ceiling that says no cancels the re-roll; it is never spent past.** `chargeExtra()` returning
+false — the hour or the day has less than 3 units left — means the second call is not made and the
+visitor keeps the duplicate. What must *not* happen is a refusal: they already have a reply, and a
+`budget_exhausted` at that point would paint the page SCRIPTED over a repeated sentence.
+
+#### The four design questions, answered
+
+* **Bounded to one, structurally.** `rerollOnce()` contains no loop and no recursion, so there is
+  no counter for anyone to raise. If the second answer *also* repeats, the **first** reply is
+  served and the turn ends — the second call may only ever *replace* an answer, never degrade one.
+  A turn that repeats twice costs two calls and is still counted as a duplicate by the instrument,
+  which is the honest thing for it to do.
+* **Exact match, not near-match, and comparing against *every* assistant turn in the signed
+  window** (so "A, B, A" is caught, not just an adjacent repeat). A near-match test needs a
+  similarity threshold — and the correction above is the measured proof that a lexical similarity
+  number can improve while the conversation does not. Wiring a *spend* decision to that class of
+  signal would be paying money on the strength of something already known to mislead. Case and
+  collapsed whitespace are ignored, because *"That's great!"* and *"that's great!"* are the same
+  line read aloud; nothing beyond that, because anything further starts making judgements about
+  how different two sentences are.
+* **Latency is bounded by the promise the route already made.** `rerollBudgetMs()` gives the second
+  call whatever is *left* of `DEMO_CHAT_TIMEOUT_MS` (20 000), and only attempts it when what is
+  left is at least what the first call took. So a re-rolled turn can never outlast the timeout an
+  ordinary turn already could, and a first call that took more than half the budget — a gateway
+  already struggling — cancels the re-roll rather than stretching it. No new constant was invented:
+  §4.1's *"the demo prefers a fast honest degrade to a slow success"* is the same rule applied to
+  the same clock. Measured on the live deployment, completions land in 1.2–6.1 s, so a re-roll is
+  available on essentially every turn that wants one and disappears exactly when the site is slow.
+* **The second call is not a bare retry.** It carries one extra *server-built* system message
+  naming the duplicated line and forbidding it. On the inputs that produce a duplicate — "ok",
+  "hmm", "yeah", where the child has given the model nothing to work with — the distribution that
+  just produced that line is very likely to produce it again, so a bare re-roll would buy a second
+  completion and a good chance of the same words. The quoted line is *our own gateway's previous
+  output*, already in the conversation as a signed assistant turn, so nothing a visitor can write
+  reaches it; and because the message is appended after the persona's second copy, **the last thing
+  the model reads is still ours**, which is §3.3's mitigation intact.
+* **Every failure keeps the reply the visitor already had.** A timeout, a 500, an unreachable
+  gateway, an empty completion: all of them are ignored and the first answer is served at 200,
+  `mode: "live"`. A repetition fix that can take the demo down is not a fix — the same objection
+  that shaped the penalty probe in lever 2.
+
+#### What was measured, and what is still wrong
+
+Fourteen `loop` conversations against the real gateway, seven turns each, before and after
+(`sim/eval_live.mjs --only=loop`):
+
+| | conversations | turns | exact duplicates | conversations containing one | gateway calls |
+|---|---|---|---|---|---|
+| before | 8 | 56 | **4** | 3 | 56 |
+| after | 14 | 98 | **0** | 0 | 102 (4 re-rolls, **4.1 %** of turns) |
+
+Two re-rolls were captured with both completions logged. The turn that would have been served:
+
+> **you** → `yeah ok`
+> **call 1** *(rejected — word for word turn 4)* → "That sounds okay! Want to tell me about your day?"
+> **call 2** *(served)* → "That's nice! Did you see any animals today?"
+
+**AND THE CONVERSATION THAT CONTAINS IT STILL READS AS A LOOP.** Six of its seven turns are
+*"Did you … today?"*. `exactDupes` is 0 and `questionRate` is **7/7**. The re-roll closed exactly
+the defect it was aimed at — the identical sentence — and closed nothing else. The register-level
+repetition is a prompt problem, it is what lever 1 exists for, and it is not finished. Anyone
+reading a green `exactDupes` as "the loop is fixed" is making the same mistake this section's
+middle paragraph is a warning about.
+
+Two further gaps, stated rather than left to be discovered:
+
+* **A repeat from outside the signed window is invisible.** The history the route can see is
+  bounded by `DEMO_MAX_HISTORY_TURNS` (12 messages) and `DEMO_MAX_CONTEXT_CHARS`, so in a
+  conversation longer than about six exchanges a line recycled from the beginning is not an echo
+  as far as `echoOf` is concerned. The instrument scores the *whole* conversation and would still
+  count it. This is a real limit of a stateless route with a signed blob, not a bug in the lever.
+* **Nothing measures how often the re-roll fires in production.** 4.1 % of turns is what fourteen
+  scripted conversations produced against one model; a different model, a different persona or a
+  chattier visitor would produce a different number, and the only honest way to know is to measure
+  it again after a change.
+
 ## 5. Configuration surface
 
 **Where these are set:** Cloudflare dashboard → Workers & Pages → the Pages project → Settings →
@@ -1242,6 +1359,8 @@ and `CLOUDFLARE_ACCOUNT_ID` as GitHub secrets; that is an alternative path, expl
 | `DEMO_TTS_CACHE_TTL_S` | var | `86400` | no | §4.8 — the `max-age` on a stored entry and the staleness test on the way back out. Clamped 60..604 800. |
 | `DEMO_TTS_CACHE_TIMEOUT_MS` | var | `1000` | no | §4.8 — the deadline on **each** cache op (lookup, body read, write). Four times the counter tier's, because this one moves up to ~1.3 MB and is weighed against a ~1 100 ms synthesis rather than a free decision. Clamped 50..5 000, so it can neither out-wait `DEMO_SPEECH_TIMEOUT_MS` nor switch the tier off by stealth. |
 | `DEMO_UNIT_BUDGET_HOUR` / `_DAY` | var | `600` / `4000` | no | §4.1 |
+| `DEMO_FREQUENCY_PENALTY` / `DEMO_PRESENCE_PENALTY` | var | `0.4` / `0.3` | no | §4.9 lever 2 — repetition pressure, in OpenAI's chat-completions vocabulary, clamped to its own -2…2. Either set to `0` is **not sent at all**, which is how an operator switches one off without the route needing to know why. A gateway that answers 400 to a body carrying them has them dropped for the life of the isolate and the call retried once. |
+| `DEMO_REROLL` | var | on | no | §4.9 lever 3 — **the only repetition lever that spends money.** A completion that is word-for-word a line already in this conversation is asked again, once. Costs the visitor nothing extra in their per-IP window and the deployment one more `UNITS.chat` (3), charged before the call and refused by any ceiling with no headroom. `0` switches it off entirely, which is a legitimate choice on a tight `DEMO_UNIT_BUDGET_HOUR`. |
 | `DEMO_CHAT_TIMEOUT_MS` / `_SPEECH_` / `_STT_` | var | `20000` / `12000` / `12000` | no | §4.1 |
 | `DEMO_TICKET_TTL_S` | var | `60` | no | §3.2 |
 | `DEMO_TURNSTILE_SECRET` | **secret** | — | no | §4.1's bot control. **Both or neither with the sitekey below**, exactly like the Access pair: a secret with no sitekey refuses every visitor (no browser can mint a token) and a sitekey with no secret is a widget nothing verifies, so either alone is reported in `missing` and the deployment reads as unconfigured. Unset ⇒ the check is a synchronous no-op. |

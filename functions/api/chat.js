@@ -45,6 +45,16 @@
  * reached. `_lib/limits.js::noteUpstreamCall()` is called immediately before the one
  * `fetch()` in this file, so a test can prove that without stubbing anything.
  *
+ * A SERVED TURN MAKES ONE UPSTREAM CALL, OR TWO — NEVER MORE (step 8b). When a completion
+ * comes back word for word identical to something Moxie already said in this conversation,
+ * the route asks once more and serves the second answer. There is still exactly one
+ * `fetch()` site, so the count stays a recorded fact; what changed is that a turn may pass
+ * through it twice. It costs the visitor nothing extra in their per-IP window (`admit()`
+ * runs once) and costs the deployment a second `UNITS.chat`, charged before the call by
+ * `_lib/limits.js::chargeExtra` so no ceiling is spent past and none is under-counted. It
+ * is bounded to ONE re-roll structurally, it fits inside the turn timeout that was already
+ * promised, and every way it can fail keeps the reply the visitor already had.
+ *
  * THE BOT CONTROL IS STEP 7, AND IT IS ON BOTH VISITOR-DRIVEN SPENDING ROUTES. Cloudflare
  * Turnstile (`_lib/turnstile.js`) sits between the free local refusals and the gateway
  * call here and in `transcribe.js`, each with its OWN widget `action`
@@ -201,10 +211,11 @@ export async function onRequestPost(context) {
       return spentNothing(bot.reason);
     }
 
-    // ---- 8. The one upstream call. Server-built body, fixed everything, and our own
+    // ---- 8. The FIRST upstream call. Server-built body, fixed everything, and our own
     // timeout — deliberately BELOW the measured worst case of 45 s (`chat.py`:151-152),
     // because the demo prefers a fast honest degrade to a slow success (§4.1).
     const turns = history.turns;
+    const startedAt = Date.now();
     const upstream = await callGateway(cfg, buildUpstreamBody(cfg, turns, text));
     if (!upstream.ok) {
       return refusal(cfg, "chat", upstream.reason, {
@@ -214,14 +225,23 @@ export async function onRequestPost(context) {
       });
     }
 
+    // ---- 8b. THE RE-ROLL — the last of the repetition levers, and the only one that
+    // spends. `rerollOnce()` carries the whole argument: what it costs, what bounds it,
+    // and why it can only ever improve the answer or leave it exactly as it is.
+    const served = await rerollOnce(cfg, slot, { turns, text, first: upstream, startedAt });
+
     // ---- 9. The reply, as the wire `bridge.js` already renders.
-    const reply = upstream.text;
+    const reply = served.text;
     const eid = eventId();
     // `upstream.chosen` is the mood/gesture the MODEL picked, or null when it answered
     // prose. `markupFloor` validates each field against its closed table and falls back to
     // the regex floor per-field, so this is safe to pass through unexamined.
     const wire = buildChatResponse({
-      eventId: eid, text: reply, markup: markupFloor(reply, upstream.chosen),
+      // `served.chosen` and `served.text` travel TOGETHER: a re-roll that replaced the
+      // words replaced the face the model picked for those words, and pairing one turn's
+      // sentence with another turn's mood is exactly the mismatch the expressive envelope
+      // exists to remove.
+      eventId: eid, text: reply, markup: markupFloor(reply, served.chosen),
     });
 
     // ---- 10. A ticket for the voice, and a fresh context blob for the next turn. The
@@ -354,7 +374,36 @@ export function __resetPenaltyProbe() { penaltiesAccepted = true; }
 /** Tests only: what the isolate currently believes. */
 export function __penaltiesAccepted() { return penaltiesAccepted; }
 
-export function buildUpstreamBody(cfg, turns, text) {
+/**
+ * The re-roll's extra sentence, and it is the difference between rolling the dice again
+ * and actually asking for something else.
+ *
+ * A bare second call sends the IDENTICAL body: same history, same sentence, same
+ * temperature. On the inputs that produce a duplicate in the first place — "ok", "hmm",
+ * "yeah", where the child has given the model almost nothing to work with — the
+ * distribution that just produced that line is very likely to produce it again, so a bare
+ * re-roll would buy a second completion and a decent chance of the same words. Naming the
+ * line and forbidding it is what makes the second call worth its money.
+ *
+ * `line` IS OUR OWN GATEWAY'S PREVIOUS OUTPUT, not visitor text — it is already in this
+ * conversation as a signed assistant turn (`_lib/hmac.js`), so quoting it back introduces
+ * no string the model has not already read from us. It is sliced anyway, because a bound
+ * on what we echo is cheaper than an argument about why it cannot be long.
+ */
+function rerollInstruction(line) {
+  return (
+    "You already said this, word for word, earlier in this same conversation:\n" +
+    '"' + String(line).slice(0, 500) + '"\n' +
+    "Say something different this time — a new thought, not that same thought reworded, " +
+    "and not a line you have already said. Stay in the same JSON format."
+  );
+}
+
+/**
+ * @param {string} [avoid] a line the model must not repeat. Empty on the first call of a
+ *   turn and set only by `rerollOnce()`, which is the only caller that has one.
+ */
+export function buildUpstreamBody(cfg, turns, text, avoid) {
   const messages = [{ role: "system", content: cfg.persona }];
   for (const t of turns) messages.push({ role: t.role, content: t.content });
   messages.push({ role: "user", content: text });
@@ -362,6 +411,12 @@ export function buildUpstreamBody(cfg, turns, text) {
   // unchanged. The envelope instruction rides with the second copy rather than the first
   // because a format rule is most obeyed when it is the last thing the model read.
   messages.push({ role: "system", content: cfg.persona + "\n\n" + expressiveInstruction() });
+  // THE RE-ROLL'S SENTENCE GOES LAST, AND THAT DOES NOT WEAKEN THE MITIGATION ABOVE. The
+  // property §3.3 asks for is that the final instruction the model reads is OURS; this one
+  // is built here, from configuration and from our own previous completion, and there is no
+  // path by which a request body can reach it. A visitor cannot cause this message to
+  // exist, cannot choose whether it exists, and cannot influence a character of it.
+  if (avoid) messages.push({ role: "system", content: rerollInstruction(avoid) });
   return {
     model: cfg.chatModel, // from DEMO_CHAT_MODEL. NEVER from the request.
     messages,
@@ -375,6 +430,181 @@ export function buildUpstreamBody(cfg, turns, text) {
   };
 }
 
+/* ---------------------------------------------------------------------------- *
+ * Step 8b — the re-roll
+ * ---------------------------------------------------------------------------- *
+ *
+ * WHAT IT IS. When the completion that just came back is WORD FOR WORD something Moxie
+ * already said in this same conversation, ask the gateway once more — naming the line and
+ * forbidding it — and answer with the second reply instead. Nothing else about the turn
+ * changes.
+ *
+ * WHY IT IS HERE AND NOT IN THE PROMPT. It is the third and last lever against the defect
+ * the owner reported, and the first two are free ones that have already been pulled: the
+ * persona's own initiative rule, and `frequency_penalty` / `presence_penalty` (see
+ * `penaltiesAccepted`). `sim/eval_live.mjs` — which drives real multi-turn conversations
+ * at the real deployment because a stub cannot show a loop — recorded what those two did
+ * and what they left behind: the affirmation spiral gone, trigram overlap down from 1.0 to
+ * 0.2, and STILL an exact duplicate in the `loop` scenario, the one where the child answers
+ * "ok", "yeah", "hmm" and gives the model nothing to work with. A prompt rule cannot fix
+ * that case, because the prompt already says it; the model simply lands on the same
+ * sentence twice. Catching it after the fact is the only lever left that acts on the actual
+ * output.
+ *
+ * ============================================================================
+ * WHAT A RE-ROLLED TURN COSTS. Stated exactly, because a second gateway call inside one
+ * visitor request is the kind of thing that quietly doubles a bill.
+ *
+ *   · THE VISITOR'S PER-IP WINDOW: **NOTHING EXTRA.** `admit()` runs once, before the body,
+ *     and is not re-entered. A re-rolled turn eats exactly the same one slice of
+ *     `DEMO_CHAT_PER_MIN` (5) as any other turn. This is the half that must not be charged
+ *     twice: the visitor typed one sentence, and taking a second of their five turns a
+ *     minute away because the MODEL repeated itself would punish them for our defect.
+ *   · THE UNIT BUDGET: **`UNITS.chat` AGAIN — 3 more units, charged BEFORE the call.**
+ *     This is the half that must be charged, and `limits.js::chargeExtra` carries the
+ *     argument: the budget counts money, a second completion is real money, and a re-roll
+ *     that spent silently would make `DEMO_UNIT_BUDGET_HOUR` describe up to twice the
+ *     spend it names. At the defaults an hour is 600 units, so the worst imaginable hour —
+ *     every single turn re-rolling — is 100 turns instead of 200 rather than 200 turns at
+ *     double the true cost. Fewer turns is a visible, honest limit; an undercounted budget
+ *     is not.
+ *   · GATEWAY CALLS: **two, both recorded.** Both go through `callGateway`, so both hit
+ *     `noteUpstreamCall()` and `__state().stats.upstreamCalls` is the true number.
+ *   · LATENCY: **up to double, and never past the timeout this route already promised.**
+ *     `rerollBudgetMs` below is the bound.
+ * ============================================================================
+ *
+ * AND EVERY ONE OF THOSE CEILINGS CAN SAY NO. `chargeExtra()` returning false — the hour
+ * or the day is spent — means the re-roll simply does not happen. It is a quality
+ * improvement that yields to every limit and is never a way to spend past one. What it
+ * must never do is turn a served turn into a refusal: the visitor already has a reply in
+ * hand, and if anything at all goes wrong they keep it.
+ */
+
+/**
+ * HOW MUCH TIME A RE-ROLL MAY HAVE, or 0 for "not now".
+ *
+ * THE BOUND IS THE ROUTE'S OWN TIMEOUT AND NOT A NEW NUMBER. `DEMO_CHAT_TIMEOUT_MS`
+ * (20 000) is already this route's promise about the worst a visitor waits, chosen in §4.1
+ * because *the demo prefers a fast honest degrade to a slow success*. A re-roll that could
+ * push past it would be quietly rewriting that promise, and picking any fresh constant —
+ * "re-roll only under 4 s" — would be inventing a threshold with no measurement behind it,
+ * which is exactly the mistake `eval_live.mjs`'s own header refuses to make.
+ *
+ * So: the second call may have what is LEFT of the first call's budget, and it is only
+ * attempted when what is left is at least what the first call took. The first condition
+ * makes the total wall clock of a re-rolled turn <= `DEMO_CHAT_TIMEOUT_MS`, exactly as an
+ * ordinary turn is. The second is the fast-degrade rule applied to the same clock: a first
+ * call that took 12 of the 20 seconds is a gateway already struggling, and the honest
+ * answer there is a duplicate reply now rather than a fresh one that may not arrive. In
+ * practice the live deployment answers in 1.5-2.6 s, so a re-roll is available on
+ * essentially every turn that wants one, and disappears precisely when the site is slow.
+ *
+ * @param {object} cfg
+ * @param {number} elapsedMs how long the first call took
+ * @returns {number} ms the re-roll may use, or 0 if it may not run
+ */
+export function rerollBudgetMs(cfg, elapsedMs) {
+  const spent = Number.isFinite(elapsedMs) && elapsedMs > 0 ? elapsedMs : 0;
+  const left = (cfg.chatTimeoutMs || 0) - spent;
+  return left >= spent ? left : 0;
+}
+
+/**
+ * The line `reply` repeats, or "" when it repeats nothing.
+ *
+ * ============================================================================
+ * EXACT, NOT NEAR — AND THIS IS THE DELIBERATE CHOICE, NOT THE LAZY ONE.
+ *
+ * A near-match test needs a similarity threshold, and a threshold is a number somebody has
+ * to defend. This repo already has the measurement that shows why one would be indefensible
+ * here: the first repetition fix took `eval_live.mjs`'s trigram overlap from 1.0 to 0.2 and
+ * exact duplicates to zero, and the conversation STILL read as a loop, because six of seven
+ * turns were "Did you … today?" — same shape, different words. A lexical similarity number
+ * moved in the right direction while the behaviour did not. Wiring a spend decision to that
+ * same class of number would be spending real money on the strength of a signal already
+ * known to mislead. The register-level repetition it would try to catch is a PROMPT problem
+ * and has been treated as one (the persona's initiative rule, and `questionRate` in the
+ * instrument so the next person can see whether it worked).
+ *
+ * What is left after the prompt has done its work is the case a prompt cannot reach: the
+ * model landing on the identical sentence twice. That is a fact, not a judgement — no
+ * threshold, no argument, and it is the one the instrument still reports as `exactDupes`.
+ *
+ * NOT MERELY THE PREVIOUS TURN: EVERY ASSISTANT TURN IN THE SIGNED HISTORY. "A, B, A" is
+ * the same loop with one turn of camouflage, and comparing against all of them costs a
+ * string compare over a window `_lib/hmac.js` has already bounded at
+ * `DEMO_MAX_HISTORY_TURNS` (12) and `DEMO_MAX_CONTEXT_CHARS` (4000).
+ *
+ * CASE- AND SPACE-INSENSITIVE, AND NOTHING ELSE. Those two are not a similarity threshold:
+ * "That's great!" and "that's great!" are the same line read aloud, and the whitespace has
+ * already been collapsed upstream by `completionText`. Anything further — stripping
+ * punctuation, stemming, dropping a leading name — starts making judgements about how
+ * different two sentences are, which is the thing this function refuses to do.
+ * ============================================================================
+ */
+export function echoOf(reply, turns) {
+  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
+  const key = norm(reply);
+  if (!key) return "";
+  for (const t of turns || []) {
+    if (!t || t.role !== "assistant") continue;
+    if (norm(t.content) === key) return String(t.content);
+  }
+  return "";
+}
+
+/**
+ * Re-roll at most once, and never make the turn worse.
+ *
+ * @returns {{text: string, chosen: object|null, rerolled: boolean}} the reply to serve.
+ *
+ * ONE. NOT A LOOP. There is no recursion here and no `while`: the second call's answer is
+ * taken or it is not, and either way this function returns. A loop of re-rolls is how a
+ * repetition fix becomes an unbounded spend on a model having a bad day, and the bound has
+ * to be structural rather than a counter somebody could raise. Consequently:
+ *
+ *   IF THE RE-ROLL ALSO REPEATS, THE FIRST REPLY IS SERVED AND THE TURN ENDS. Both answers
+ *   are the same duplicate, so the visitor loses nothing by getting the one they would have
+ *   got anyway — and keeping the FIRST rather than the second makes the rule easy to state
+ *   and easy to test: **the second call may only ever replace the reply, never degrade it.**
+ *   The turn is a duplicate that cost two calls; the instrument still counts it as a
+ *   duplicate, which is the honest thing for it to do.
+ *
+ * EVERY FAILURE KEEPS THE FIRST REPLY. A timeout, an unreachable gateway, a 500, an empty
+ * completion — all of them come back from `callGateway` as `ok: false` and are simply
+ * ignored here. A re-roll may never turn a turn the visitor had already won into a
+ * `degraded` page; that would be a repetition fix that can take the demo down, which is the
+ * same objection that shaped `penaltiesAccepted` above.
+ */
+async function rerollOnce(cfg, slot, o) {
+  const first = { text: o.first.text, chosen: o.first.chosen, rerolled: false };
+  if (!cfg.reroll) return first;
+
+  // 1. THE DECISION. Free, and it is the only thing that can start a spend.
+  const echo = echoOf(first.text, o.turns);
+  if (!echo) return first;
+
+  // 2. THE LATENCY BOUND. Also free, and checked before the money so a slow gateway does
+  //    not have units taken off the budget for a call that was never going to be made.
+  const budgetMs = rerollBudgetMs(cfg, Date.now() - o.startedAt);
+  if (!budgetMs) return first;
+
+  // 3. THE MONEY. Charged BEFORE the call, in `admit()`'s own order — charge, then spend —
+  //    so a crash between the two under-serves rather than under-counts. `false` means a
+  //    ceiling said no, and a ceiling saying no ends it.
+  if (!slot.chargeExtra()) return first;
+
+  // 4. The second call. `noteUpstreamCall()` fires inside it, as for the first.
+  const again = await callGateway(cfg, buildUpstreamBody(cfg, o.turns, o.text, echo), budgetMs);
+  if (!again.ok) return first;
+  // NOT MERELY "DIFFERENT FROM THE FIRST": not an echo of ANYTHING she has said. A second
+  // reply that dodges the line we named and lands on one from three turns ago is the same
+  // defect wearing a different sentence.
+  if (echoOf(again.text, o.turns)) return first;
+  return { text: again.text, chosen: again.chosen, rerolled: true };
+}
+
 /**
  * The one `fetch()` in this file.
  *
@@ -385,9 +615,14 @@ export function buildUpstreamBody(cfg, turns, text) {
  * (`chat.py`:49-56), so the browser client and the Python client read the same signal
  * (§4.5).
  *
+ * @param {number} [timeoutMs] the deadline for THIS call, defaulting to
+ *   `DEMO_CHAT_TIMEOUT_MS`. Only the re-roll passes one, and it passes what is LEFT of that
+ *   same budget (`rerollBudgetMs`), so two calls in one turn still cannot outlast the one
+ *   timeout §4.1 promises a visitor.
  * @returns {{ok:boolean, text?:string, reason?:string, retryAfterS?:number}}
  */
-async function callGateway(cfg, body) {
+async function callGateway(cfg, body, timeoutMs) {
+  const deadline = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : cfg.chatTimeoutMs;
   const url = joinUrl(cfg.baseUrl, "chat/completions");
   let res;
   try {
@@ -400,7 +635,7 @@ async function callGateway(cfg, body) {
       // Access-protected tunnel is reachable (`_lib/env.js::ACCESS_VARS`).
       headers: Object.assign(upstreamHeaders(cfg, "application/json"), { Accept: "application/json" }),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(cfg.chatTimeoutMs),
+      signal: AbortSignal.timeout(deadline),
       // ---- REDIRECTS ARE NOT FOLLOWED, AND A 3xx IS A DOOR PROBLEM.
       //
       // `fetch`'s default is `follow`. This request carries the deployment's ONLY
@@ -451,7 +686,10 @@ async function callGateway(cfg, body) {
     // prompt is a retry that can differ from the request it is replacing.
     const { frequency_penalty, presence_penalty, ...plain } = body;
     void frequency_penalty; void presence_penalty;
-    return callGateway(cfg, plain);
+    // THE SAME DEADLINE, carried into the retry rather than defaulted. A re-roll runs on
+    // what is left of the turn's budget, and a retry that quietly reset itself to the full
+    // `DEMO_CHAT_TIMEOUT_MS` would let one turn outlast the timeout this route promises.
+    return callGateway(cfg, plain, deadline);
   }
   if (!res.ok) {
     // 4xx and 5xx alike. The body is NOT read: an unknown-model 400 names the model, and
