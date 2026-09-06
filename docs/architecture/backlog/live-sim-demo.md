@@ -913,6 +913,33 @@ done here because the phase split moves code that `sim/tools/unit_budget_mutatio
 are pinned to, and that file was reserved. `helpers_shared_ceilings.mjs` §K asserts the residual from
 both sides so it cannot quietly grow.
 
+**UPDATE 2026-09-06 — the reservation is lifted and the tier is now covered, which closes the warning
+this section made about its own anchors.** `unit_budget_mutation_check.py` went from **16 rows to 35**
+(`35 caught, 0 missed, 0 no-op, 0 wrong-check`), adding W1–W8 for the wide window and D1–D11 for the day
+budget — including a row for the `unaccrueDayPending()` deletion that shipped as dead code in this slice
+and was caught only later, by a hand sweep.
+
+**Writing those rows found five more assertions in `helpers_shared_ceilings.mjs` that could not fail**,
+and every one was fixed by *adding* an assertion rather than loosening one (suite 155 → 163): §G's
+*"the colo holds 3 units, not 6"* needed a third admission before the double charge could appear, so
+`clearDayPending()` was deletable with the whole block green; §F seeded its fail-open cases with exactly
+the bytes a fresh write produces, so a read that failed open and then published stored identical bytes;
+§F never made hour and day bind at once, leaving narrowest-first visible only as JSON field order; §H
+never checked the wide entry's `max-age`; and §J watched the sub-tier while the accrual happens in
+`release()`, which consults none.
+
+Two candidate rows were **rejected rather than forced**: the `!limit` and `!scales.length` fall-throughs
+are genuinely **unreachable**, because `env.js` clamps every window ceiling to ≥ 1, so no configuration
+can produce them.
+
+**The limit of the method, stated because a 35/35 is easy to over-read:** mutation testing proves a
+guard is *load-bearing*, never that it is the *right* guard. The residual above is asserted as
+**present**; no row can say it ought to be. And nothing here touches a real deployment —
+`caches.default` is a fake `Map`, "two isolates" is `__reset()` between two admissions sharing one
+store, and every `nowS` is explicit. Multi-colo behaviour, real eviction, the real `Age` header,
+bucket-boundary races and lost updates under a real burst (§4.6.1's 9-of-31 probe) remain **out of
+reach of any row**.
+
 **What it costs, as ops rather than as an intention.** A first admitted turn: **4 reads + 2 writes**
 (both windows). A subsequent turn from an isolate that owes units: **4 reads + 4 writes**. A refusal:
 1–4 reads and **no writes**. By §4.6.1 row h's own ~15 ms per op that extrapolates to ~90 ms and
