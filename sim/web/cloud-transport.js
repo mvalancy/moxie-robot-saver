@@ -388,6 +388,11 @@
   function liveTurn(text) {
     stats.live++;
     status("thinking…");
+    // …and SHOW it. The status line is grey text a child does not read; this is the same
+    // statement made with her face and arms, and it is what fills the ~1.2-4 s gap that
+    // otherwise reads as a robot that has stopped working. It is a no-op for the first
+    // `THINK_DELAY_MS`, so a fast turn never flashes a thinking pose.
+    if (window.moxieAlive) window.moxieAlive.thinking();
     echoUser(text);
     // The bot control, in one line. `""` means this deployment does not enforce it.
     return botToken().then(function (tok) {
@@ -411,6 +416,13 @@
     // so an unenforced deployment sends byte-identically to how it always did.
     if (token) payload["cf-turnstile-response"] = token;
     return post("/api/chat", payload, CHAT_FETCH_MS).then(function (res) {
+      /* THE WAIT IS OVER, whatever the outcome. Cleared HERE — once, at the top, on the
+       * single path every answer and every refusal comes back through — rather than at
+       * each of the five returns below. A thinking pose that outlives its turn is worse
+       * than never showing one: it would sit on top of the reply's own markup and read as
+       * a robot that never came back. The reply sets her face immediately after, so this
+       * only stops the cues and hands the arms home. */
+      if (window.moxieAlive) window.moxieAlive.settled();
       if (!res.body) {
         stats.chatErrors++;
         noteTransportError();

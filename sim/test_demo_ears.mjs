@@ -955,12 +955,95 @@ function bootMic(o) {
   const mic = globalThis.window.moxieMic;
   const rec = makeRecorder(opts.recorder);
   // `realCapture` leaves mic.js to choose its OWN capture per target — which is the thing
+  let levelFn = null;
   // the WAV block below has to exercise. Everything else injects a fake recorder.
   if (!opts.realCapture) {
-    mic.setCapture(() => Promise.resolve({ recorder: rec, stream: { getTracks: () => [] } }));
+    /* `setLevelListener` is the seam `wavCapture` really returns — the hosted capture hands
+     * `mic.js` the RMS of every 4096-sample block so it can hang up once the room goes
+     * quiet. The fake exposes the same method and `level()` below drives it, so the
+     * silence auto-stop is tested through the REAL code path rather than by calling an
+     * internal. */
+    mic.setCapture(() => Promise.resolve({
+      recorder: rec,
+      stream: { getTracks: () => [] },
+      setLevelListener: (fn) => { levelFn = fn; },
+    }));
   }
   return { mic, rec, posts, notes, published, scripted, routed, els, bodyAttrs, audioCtx, gum,
+           level: (rms) => { if (levelFn) levelFn(rms); },
            statusText: () => els["mic-status"].textContent };
+}
+
+/* --------------------------------------------------------------------------- *
+ * B1b. THE SILENCE AUTO-STOP — "the user pressed the button and it never resets"
+ * --------------------------------------------------------------------------- *
+ *
+ * Before this, the only things that ended a recording were a second tap and the 15 s hard
+ * cap: say four words and the microphone stayed open for another fourteen seconds. The
+ * requirement pulls in two directions at once — end the turn promptly, NEVER cut a child
+ * off mid-sentence — so both directions are asserted here, and the mid-sentence pause is
+ * the case that matters most.
+ * --------------------------------------------------------------------------- */
+{
+  const w = bootMic();
+  await w.mic.start();
+  await flush();
+  eq(w.mic.isRecording(), true, "recording");
+
+  // Speech, then a PAUSE TO THINK that must NOT end the turn.
+  w.level(0.09);
+  await advance(300);
+  w.level(0.002);                       // silence begins
+  await advance(900);                   // …but only 900 ms of it
+  eq(w.mic.isRecording(), true,
+     "a 900 ms pause mid-sentence does NOT end the recording — that is a child thinking");
+  w.level(0.07);                        // they carry on
+  await advance(200);
+  eq(w.mic.isRecording(), true, "…and speaking again keeps it open");
+
+  // Now they really are finished.
+  w.level(0.001);
+  await advance(1200);
+  eq(w.mic.isRecording(), false, "1.1 s of silence AFTER speech ends the recording");
+  eq(w.mic.stats().silenceStops, 1, "…recorded as a silence stop, not a cap stop");
+  eq(w.mic.stats().speechDetected, 1, "…having actually heard speech first");
+  /* NO ASSERTION ON THE STATUS TEXT HERE, and that is playbook rule 11 rather than an
+   * omission: stopping starts the transcribe, which overwrites `#mic-status` with
+   * `heard: "…"` a tick later. The first draft asserted "got it" and read the transcript
+   * instead — a live sample racing the thing that replaces it. `silenceStops` is the
+   * RECORDED fact that the recording ended because the room went quiet, and it cannot be
+   * overwritten by whatever happens next. */
+  eq(pendingTimers(), 0, "…leaving no timer behind");
+}
+{
+  // A tap with NOTHING said: the button was pressed by accident, or the mic is muted.
+  // Fifteen seconds of a listening indicator that will transcribe nothing is unkind, and
+  // the size floor would refuse the clip anyway.
+  const w = bootMic();
+  await w.mic.start();
+  await flush();
+  w.level(0.001);
+  await advance(4000);
+  eq(w.mic.isRecording(), true, "4 s of an empty room is not yet a decision");
+  await advance(1200);
+  eq(w.mic.isRecording(), false, "…but 5 s with no speech at all gives the mic back");
+  eq(w.mic.stats().emptyStops, 1, "…recorded as an EMPTY stop, distinct from a silence stop");
+  eq(w.mic.stats().silenceStops, 0, "…and never as a silence stop: nothing was ever heard");
+  eq(w.mic.stats().speechDetected, 0, "…with no speech detected");
+}
+{
+  // THE AUTO-STOP CAN ONLY EVER SHORTEN A RECORDING. A visitor who keeps talking still
+  // meets the 15 s hard cap and nothing else, so §4.1's ceiling on what one visitor can
+  // spend is untouched by any of this.
+  const w = bootMic();
+  await w.mic.start();
+  await flush();
+  for (let i = 0; i < 30; i++) { w.level(0.08); await advance(490); }
+  eq(w.mic.isRecording(), true, "continuous speech is never interrupted by the auto-stop");
+  await advance(400);
+  eq(w.mic.isRecording(), false, "…and the 15 s HARD CAP still ends it");
+  eq(w.mic.stats().autoStops, 1, "…as a cap stop");
+  eq(w.mic.stats().silenceStops, 0, "…not a silence stop");
 }
 
 /* --------------------------------------------------------------------------- *
