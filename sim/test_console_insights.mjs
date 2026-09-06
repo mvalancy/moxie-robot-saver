@@ -71,7 +71,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { requireBrowser, serveStatic, makeChecks, finish, repo } from "./browser_harness.mjs";
+import { requireBrowser, serveStatic, makeChecks, finish, repo, watchPage, notable }
+  from "./browser_harness.mjs";
 
 const LABEL = "console-insights test";
 const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
@@ -208,7 +209,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function drive(mode, mutate) {
   const state = { deletes: [], gets: 0, erased: false };
-  const errs = [];
   const page = await browser.newPage();
   /* EVERY drive is a first visit. `app.js`:3 reads `localStorage.moxie_token` at parse
    * time and its last line auto-enters the app when one is there — so the second drive in
@@ -219,7 +219,7 @@ async function drive(mode, mutate) {
    * that read. (The returning-parent path is real and worth its own coverage; it is not
    * this slice, and it is named as a gap in the report.) */
   await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch (e) {} });
-  page.on("pageerror", (e) => errs.push(String(e)));
+  const { errs, aborted } = watchPage(page);
   await page.setRequestInterception(true);
   page.on("request", (r) => {
     if (r.isInterceptResolutionHandled()) return;
@@ -244,7 +244,10 @@ async function drive(mode, mutate) {
       }
       state.gets++;
       if (state.erased) return J(mode === "nodata" ? FIX.empty_nodata : FIX.empty);
-      if (mode === "offline") return J(FIX.notok, 503);
+      /* A REAL 503 — the only way to reach `refreshInsights`'s "telemetry threw" branch,
+       * and something the browser reports as a console error. Counted so `notable()`
+       * forgives exactly the refusals this fixture issued. */
+      if (mode === "offline") { aborted.refused++; return J(FIX.notok, 503); }
       if (mode === "notok") return J(FIX.notok);
       if (mode === "nodata") return J(FIX.nodata);
       if (mode === "empty") return J(FIX.empty);
@@ -254,6 +257,12 @@ async function drive(mode, mutate) {
      * own XHR on entry. Answering them {ok:false} renders each one's "unavailable" branch,
      * which is honest and inert — this suite makes no claim about those cards. */
     if (p.startsWith("/local/") || p.startsWith("/api/")) return J({ ok: false, error: "not in this fixture" });
+    /* Everything else is the console's own static assets, served by the harness. The one
+     * that is NOT there is `/favicon.ico` — `server/static/` ships none, so Chrome's
+     * automatic request for it 404s on the FIRST page this browser opens and is cached as
+     * a failure for the rest of the run. Counted here rather than answered, because the
+     * real FastAPI console 404s it too and the fixture should not paper over that. */
+    if (p === "/favicon.ico") aborted.refused++;
     return r.continue();
   });
   /* `domcontentloaded` + an explicit wait, never `networkidle*`: the console polls. */
@@ -267,7 +276,7 @@ async function drive(mode, mutate) {
     "(document.querySelector('#robot-insights')||{}).textContent && " +
     "document.querySelector('#robot-insights').textContent.trim().length > 0",
     { timeout: 10000 });
-  return { page, state, errs };
+  return { page, state, errs, aborted };
 }
 
 const readCard = (page) => page.$eval("#robot-insights", (e) => ({
@@ -290,7 +299,7 @@ const readCard = (page) => page.$eval("#robot-insights", (e) => ({
  */
 async function sweepPath(C, mode, { mutate = null, deep = false } = {}) {
   const spec = PATHS[mode];
-  const { page, state, errs } = await drive(mode, mutate);
+  const { page, state, errs, aborted } = await drive(mode, mutate);
   const tag = `path ${spec.n} (${mode})`;
   try {
     await page.waitForFunction(
@@ -402,7 +411,18 @@ async function sweepPath(C, mode, { mutate = null, deep = false } = {}) {
       } finally { await p2.page.close(); }
     }
 
-    C.eq(errs.length, 0, `${tag}: the page must raise no uncaught errors — ${errs.join(" | ")}`);
+    /* WHAT THE BROWSER ITSELF SAID. This assertion existed before 2026-09-06 and covered
+     * `pageerror` ONLY — uncaught exceptions. That leaves the console unread, and the
+     * console is where a 404'd `<script src>` surfaces: no exception is raised anywhere,
+     * so `app.js` failing to load at all would have left this suite reporting only that
+     * the card never rendered, with nothing saying why. `watchPage()` now installs both
+     * listeners and `notable()` forgives, by COUNT, exactly the refusals the interceptor
+     * issued above (path 2's deliberate 503, and the missing favicon on the first load).
+     * Measured across all six paths and all three mutations: nothing else is ever said. */
+    const left = notable(errs, aborted);
+    C.eq(left.length, 0,
+         `${tag}: the page must raise no uncaught errors and no unexplained console ` +
+         `errors — ${left.length}, first: ${left.slice(0, 3).join(" | ")}`);
   } finally {
     await page.close();
   }

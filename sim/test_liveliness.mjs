@@ -19,7 +19,8 @@
  *
  *   node sim/test_liveliness.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable }
+  from "./browser_harness.mjs";
 
 const LABEL = "liveliness + chat layout";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
@@ -33,10 +34,55 @@ const browser = await puppeteer.launch({
 
 const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* ---- EYES, and the hermeticity they required ------------------------------ *
+ *
+ * Until 2026-09-06 this suite installed no `console` and no `pageerror` listener, so a
+ * page script that 404'd or threw was structurally invisible to it: the seams it waits
+ * for (`window.__ambient`, `window.__bubbleAnchor`) would simply never appear and the run
+ * would time out with nothing saying why. `watchPage()` gives it both listeners.
+ *
+ * ADDING THEM FORCED THE FIXTURE TO BECOME HERMETIC, and that is a fix in its own right.
+ * This suite intercepted nothing, so on a `127.0.0.1` origin — which `env.js` treats as
+ * LOCAL — the page's two optional-sidecar probes went to the real loopback ports. On a
+ * developer's box with Piper on :8081 they succeed; in CI they are refused, and the
+ * refusal is two console errors. What the page then believes about Piper decides whether
+ * `#speech-btn` is the typed turn or the local "Say" control, so this suite's own
+ * measurements already depended on what happened to be running on the machine. Refusing
+ * both probes here — and COUNTING the refusals, so `notable()` forgives exactly two —
+ * makes every box see the same page, which is the same idiom `test_mobile_layout.mjs` and
+ * `test_ambient_guard.mjs` already use.
+ */
+const EYES = new WeakMap();
+const eyes = (label, page) => {
+  const seen = EYES.get(page) || { errs: [], aborted: null };
+  const left = notable(seen.errs, seen.aborted);
+  eq(left.length, 0,
+     `${label}: the page raised console errors nobody asked for — ${left.length}, ` +
+     `first: ${left.slice(0, 3).join(" | ")}`);
+};
+
 async function open(width, height, isMobile) {
   const page = await browser.newPage();
   await page.setViewport({ width, height, isMobile: !!isMobile, hasTouch: !!isMobile,
                            deviceScaleFactor: 1 });
+  const seen = watchPage(page);
+  EYES.set(page, seen);
+  await page.setRequestInterception(true);
+  page.on("request", (r) => {
+    if (r.isInterceptResolutionHandled()) return;
+    const u = r.url();
+    if (/:808[12]\//.test(u)) { seen.aborted.n++; return r.abort("connectionrefused"); }
+    /* No gateway is reachable from this suite and none should be. Answering `/api/health`
+     * 404 is byte-for-byte what the static server did before (it holds no such file); it
+     * is written out here only so the console error it causes can be COUNTED at the
+     * request that causes it, rather than forgiven by a widened pattern. */
+    if (/\/api\/health\b/.test(u)) {
+      seen.aborted.refused++;
+      return r.respond({ status: 404, contentType: "text/plain", body: "not found" });
+    }
+    if (/\/api\/(chat|speech|transcribe)\b/.test(u)) { seen.aborted.n++; return r.abort(); }
+    return r.continue();
+  });
   await page.goto(site.url + "/sim.html", { waitUntil: "domcontentloaded" });
   // The seam has to exist before anything below means anything.
   await page.waitForFunction("window.__ambient && window.moxie && window.__bubbleAnchor", { timeout: 20000 });
@@ -114,6 +160,7 @@ async function open(width, height, isMobile) {
   eq(selfHold, false,
      "her own quip does NOT count as a conversation — otherwise one mutter would mute her for ever");
 
+  eyes("the conversation hold", page);
   await page.close();
 }
 
@@ -149,6 +196,7 @@ async function dockGeometry(page) {
      `…which is very nearly the whole window (${closedRail.dockW} of ${closedRail.vw})`);
   ok(closedRail.panelW > 0 && closedRail.panelW < 220,
      `…while the panel stays on screen as a handle you can re-open (${closedRail.panelW}px)`);
+  eyes("the desktop dock", page);
   await page.close();
 }
 {
@@ -157,6 +205,7 @@ async function dockGeometry(page) {
   ok(phone.vw - phone.dockW < 40,
      `phone: the dock spans the viewport (${phone.dockW} of ${phone.vw})`);
   ok(phone.dockLeft < 20, `…starting at the left edge (${phone.dockLeft})`);
+  eyes("the phone dock", page);
   await page.close();
 }
 
@@ -216,6 +265,7 @@ async function dockGeometry(page) {
      `…and the bubble went with it (bubble ${b.bubble.cx} vs head ${b.head.x})`);
   ok(Math.abs(b.bubble.cx - a.bubble.cx) > 40,
      `…which the old viewport-pinned bubble could not have done (${a.bubble.cx} -> ${b.bubble.cx})`);
+  eyes("the speech bubble", page);
   await page.close();
 }
 

@@ -61,8 +61,8 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo, web }
-  from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, pcmToneBase64, repo, web,
+         watchPage, notable } from "./browser_harness.mjs";
 
 const LABEL = "ambient-guard test";
 const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
@@ -138,13 +138,11 @@ async function open(url, opts) {
   // >=900px so the rail is a side column; below that sim.html starts with the drawer
   // CLOSED and no control in it is clickable (see sim/test_mobile_layout.mjs).
   await page.setViewport({ width: 1440, height: 900 });
-  const errs = [], aborted = { n: 0, probe404: 0 };
+  const { errs, aborted } = watchPage(page);
   /* Hold clip FETCHES open on demand. Block 5 needs a clip that is still in flight at the
    * instant the answer starts; racing the real network for that would be a test that fails
    * a few runs in ten, so the fixture creates the condition instead of hoping for it. */
   const clipNet = { stall: false, held: [] };
-  page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
-  page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
 
   /* THE RECORDER. A timeline of every buffer source that started or was stopped, tagged
    * by how its buffer was built (see the header). `stop` is recorded because that is the
@@ -196,7 +194,7 @@ async function open(url, opts) {
     if (/\/api\/health\b/.test(u)) {
       if (opts.health)
         return r.respond({ status: 200, contentType: "application/json", body: opts.health });
-      aborted.probe404++;
+      aborted.refused++;
       return r.respond({ status: 404, contentType: "text/plain", body: "not found" });
     }
     if (/\/api\/chat\b/.test(u))
@@ -220,19 +218,12 @@ async function open(url, opts) {
   return { page, errs, aborted, clipNet };
 }
 
-/* Console errors, minus the ones this fixture CAUSED on purpose — forgiven exactly as
- * many times as they were provoked, never by loosening the pattern. Same correlation
- * trick as sim/test_typed_turn.mjs and sim/test_env_hosted.mjs. */
-const ABORTED = /Failed to load resource: net::ERR_(CONNECTION_REFUSED|FAILED|BLOCKED_BY_CLIENT)/;
-const PROBE_404 = /Failed to load resource: the server responded with a status of 404/;
-function notable(errs, aborted) {
-  let budget = aborted ? aborted.n : 0, probes = aborted ? aborted.probe404 : 0;
-  return errs.filter((e) => {
-    if (budget > 0 && ABORTED.test(e)) { budget--; return false; }
-    if (probes > 0 && PROBE_404.test(e)) { probes--; return false; }
-    return true;
-  });
-}
+/* Console errors, minus the ones this fixture CAUSED on purpose, live in
+ * `browser_harness.mjs` now — `watchPage()` installs both listeners and `notable()`
+ * forgives provoked noise exactly as many times as the interceptor provoked it. They were
+ * hoisted out of this file on 2026-09-06 so the four suites that had NO listener at all
+ * could share the definition rather than fork it. Same correlation trick as
+ * sim/test_typed_turn.mjs and sim/test_env_hosted.mjs. */
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const starts = (evs, src) => evs.filter((e) => e.ev === "start" && (!src || e.src === src));

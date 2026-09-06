@@ -236,6 +236,90 @@ export async function serveWeb(opts = {}) {
   return serveStatic(web, { headers: opts.headers ? pagesHeaders() : {} });
 }
 
+/* ---- EYES: what the browser itself reported ------------------------------- *
+ *
+ * WHY THIS IS HERE AND NOT IN ONE SUITE. On 2026-09-06 four browser suites
+ * (`test_a11y`, `test_bg_perf`, `test_mobile_layout` and — for the console half —
+ * `test_console_insights`) were measured as installing NO `console` and NO `pageerror`
+ * listener at all. A suite with no listener cannot fail on a 404'd script, a CSP refusal
+ * or an uncaught exception no matter what else it asserts: it can only notice a breakage
+ * that happens to move the one property it reads. `sim/test_ambient_guard.mjs` had the
+ * right idiom already — a console listener, a pageerror listener, and a `notable()` filter
+ * that forgives the noise the FIXTURE ITSELF provoked — and this is that idiom hoisted so
+ * the other suites share the definition instead of forking it. `test_ambient_guard.mjs`
+ * imports it from here now, so there is exactly one answer to "what counts as an error".
+ *
+ * `pageerror` ALONE IS NOT ENOUGH, and that is the reason both listeners are installed
+ * together by one call. `pageerror` fires for uncaught exceptions only. A script tag whose
+ * `src` 404s raises no exception anywhere — it surfaces as a CONSOLE message ("Failed to
+ * load resource: the server responded with a status of 404"), and so does a CSP refusal
+ * and a blocked mixed-content fetch. A suite holding only a `pageerror` listener is blind
+ * to a missing script, which is the single most likely way this site breaks in production.
+ *
+ * THE FILTER IS A BUDGET, NOT A PATTERN. Every suite here deliberately refuses some
+ * requests — `r.abort("connectionrefused")` for the local sidecars, a 404 for `/api/health`
+ * when the fixture wants the offline branch — and each of those prints a console error the
+ * fixture asked for. Forgiving them by loosening the regex would forgive the REAL ones too.
+ * Instead the interceptor COUNTS what it provoked and `notable()` forgives exactly that
+ * many, so a second, unexplained 404 is still a failure. That correlation is what makes
+ * `notable(...).length === 0` an assertion about the page rather than about the fixture.
+ */
+export const ABORTED_NOISE =
+  /Failed to load resource: net::ERR_(CONNECTION_REFUSED|FAILED|BLOCKED_BY_CLIENT|ABORTED)/;
+/* Any status the fixture DELIBERATELY served, not only 404. `test_ambient_guard.mjs`
+ * provoked 404s and nothing else, so its original pattern named 404 alone; adding
+ * `test_console_insights.mjs` brought a fixture that answers `GET …/telemetry` with a
+ * REAL 503 to reach the console's "telemetry threw" render path, and a pattern pinned to
+ * 404 would have made that a failure on a page doing exactly what it was asked. The
+ * widening is safe because the count is what forgives, not the pattern: `refused` is
+ * incremented at the interceptor, once per response the fixture broke on purpose. */
+export const REFUSED_NOISE =
+  /Failed to load resource: the server responded with a status of \d{3}/;
+
+/**
+ * Console errors, minus the ones the FIXTURE caused on purpose — forgiven exactly as many
+ * times as they were provoked, never by loosening the pattern.
+ *
+ * @param {string[]} errs      everything the listeners collected, in arrival order
+ * @param {{n?:number, refused?:number}} [aborted]
+ *   `n` requests this fixture aborted at the network layer; `refused` requests it
+ *   answered with an error status on purpose (or knowingly let 404 at the static server).
+ * @returns {string[]} the ones nobody asked for.
+ */
+export function notable(errs, aborted) {
+  let budget = aborted ? (aborted.n || 0) : 0;
+  let refused = aborted ? (aborted.refused || 0) : 0;
+  return errs.filter((e) => {
+    if (budget > 0 && ABORTED_NOISE.test(e)) { budget--; return false; }
+    if (refused > 0 && REFUSED_NOISE.test(e)) { refused--; return false; }
+    return true;
+  });
+}
+
+/**
+ * Give a page eyes: a console listener, a pageerror listener, and the budget counters the
+ * request interceptor increments for the noise it provokes itself.
+ *
+ * @param {import("puppeteer").Page} page
+ * @returns {{errs: string[], aborted: {n:number, refused:number}}}
+ */
+export function watchPage(page) {
+  const errs = [], aborted = { n: 0, refused: 0 };
+  page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
+  page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
+  return { errs, aborted };
+}
+
+/**
+ * One assertion string for a page's unexplained console output. Kept next to `notable()`
+ * so every suite reports the same way: the COUNT plus the first few messages verbatim,
+ * because "3 console errors" sends nobody anywhere.
+ */
+export function eyesMsg(label, left) {
+  return `${label}: the page must raise no unexplained console errors — ` +
+         `${left.length} of them, first: ${left.slice(0, 3).join(" | ")}`;
+}
+
 /* ---- assertions ----------------------------------------------------------- */
 export function makeChecks() {
   const fails = [];

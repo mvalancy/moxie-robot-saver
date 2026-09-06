@@ -101,7 +101,8 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { requireBrowser, serveWeb, makeChecks, finish, web } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, makeChecks, finish, web, watchPage, notable }
+  from "./browser_harness.mjs";
 
 const LABEL = "background-effects growth test";
 const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
@@ -181,11 +182,30 @@ const INSTRUMENT = function () {
     }
     return op.apply(this, arguments);
   };
-  // rAF timestamps the page sees can be stretched, to drive the spawner harder than
-  // any real clock. `inflate` of 0 leaves the browser's own timestamps untouched.
+  /* rAF timestamps the page sees can be stretched, to drive the spawner harder than any
+   * real clock. `inflate` of 0 leaves the browser's own timestamps untouched.
+   *
+   * THE STRETCH IS AN ACCUMULATED OFFSET, NOT A MULTIPLIER, and that is not a refinement.
+   * `ts * inflate` is monotonic only while `inflate` is held constant: the moment blocks 3
+   * and 4 put it back to 0 the page sees the clock JUMP BACKWARDS by minutes. `bg.js`
+   * clamps `dt` from above (`Math.min(2.4, elapsed / 16.7)`) and not from below, so a
+   * negative elapsed drives `pg.r += 0.6 * dt` negative and every subsequent frame throws
+   * `IndexSizeError: arc(): The radius provided (-53809.6) is negative` — which the
+   * console/pageerror listeners added on 2026-09-06 caught the first time they ran. It is
+   * an artefact of this instrument and NOT a defect in `bg.js`: a real `requestAnimationFrame`
+   * timestamp never decreases, so the page cannot reach that state on its own. The fix is
+   * here, where the fault is. Banking the extra time as a running offset makes the clock
+   * monotonic whatever `inflate` does, while still handing the spawner 400 frames' worth
+   * of elapsed time per frame, which is all either block ever needed. */
   const raf = window.requestAnimationFrame.bind(window);
+  let warp = 0, prev = null;
   window.requestAnimationFrame = function (cb) {
-    return raf(function (ts) { return cb(window.__bg.inflate ? ts * window.__bg.inflate : ts); });
+    return raf(function (ts) {
+      if (prev === null) prev = ts;
+      if (window.__bg.inflate) warp += (ts - prev) * (window.__bg.inflate - 1);
+      prev = ts;
+      return cb(ts + warp);
+    });
   };
   window.__bgLen = lens;
   /* The lengths AT THE FLIP. Armed at document-start so it cannot miss the event, and it
@@ -225,10 +245,12 @@ const browser = await puppeteer.launch({
  * @returns {{warm, before, after, frames, armed, flipped, hiddenPushes}}
  *   `warm` is the pre-hide reading (reported, never asserted on); `before` is the reading
  *   taken inside the visibilitychange dispatch, which is where the hidden window starts.
+ *   `errs` is everything the page said to the console (see EYES below).
  */
 async function hiddenRun(variant, ms, { drive = 0 } = {}) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
+  const { errs, aborted } = watchPage(page);
   await page.evaluateOnNewDocument(INSTRUMENT);
   if (variant) {
     await page.setRequestInterception(true);
@@ -287,8 +309,37 @@ async function hiddenRun(variant, ms, { drive = 0 } = {}) {
   const hiddenPushes = await page.evaluate(() => window.__bg.hiddenPushes.slice());
   await other.close();
   await page.close();
-  return { warm, before: before || warm, after, frames, armed, flipped, hiddenPushes };
+  return { warm, before: before || warm, after, frames, armed, flipped, hiddenPushes,
+           errs, aborted };
 }
+
+/* ---- EYES ----------------------------------------------------------------- *
+ *
+ * WHY THIS SUITE NEEDED THEM. Until 2026-09-06 this file installed no `console` and no
+ * `pageerror` listener, so the ONE property it reads — how many objects were pushed into
+ * two arrays inside `bg.js`'s closure — was the only thing that could ever fail it. Serve
+ * `index.html` with a script 404'd, a CSP that refuses `home.js`, or an exception thrown
+ * on the first frame, and every assertion below still passes on whatever is left: an
+ * array that nothing pushes to grows by zero while hidden, which reads as a PASS.
+ *
+ * WHAT `notable()` IS FORGIVING HERE: nothing, and that is the measured answer, not an
+ * assumption. `index.html` under this fixture (`serveWeb()`, no CSP header, no route
+ * refused, no `/api` call) produced ZERO console errors and ZERO failed requests across
+ * every page this suite opens — only WebGL software-rendering warnings, which are `warn`
+ * and never collected. So `aborted` stays at 0 and the assertion is a plain "the page said
+ * nothing was wrong". If a future fixture starts refusing a request, count it into
+ * `aborted.n` at the interceptor rather than widening the pattern.
+ *
+ * THE LEGACY RUN IS ASSERTED FIRST, and deliberately before the environment skip below:
+ * block 1 rebuilds the pre-fix `bg.js` by a TEXT TRANSFORM, and a transform that produced
+ * broken JavaScript would spawn nothing, background nothing, and take the skip — reporting
+ * "this box cannot background a tab" for a fault that is entirely in this file. */
+const eyes = (label, run) => {
+  const left = notable(run.errs, run.aborted);
+  eq(left.length, 0,
+     `${label}: the page raised console errors nobody asked for — ${left.length}, ` +
+     `first: ${left.slice(0, 3).join(" | ")}`);
+};
 
 const HIDDEN_MS = 20000;
 const pushSummary = (h) => h.length
@@ -303,6 +354,7 @@ const pushSummary = (h) => h.length
  * lengths implies. On a box that cannot background a tab it is 0 and the suite stands
  * down loudly. */
 const legacy = await hiddenRun(LEGACY, HIDDEN_MS);
+eyes("teeth (the rebuilt pre-fix bg.js)", legacy);
 const legacyGrowth = (legacy.after.packets - legacy.before.packets) +
                      (legacy.after.pings - legacy.before.pings);
 if (!legacy.after.hidden || !legacy.flipped || legacy.frames > 0 || legacy.hiddenPushes.length < 3) {
@@ -319,6 +371,7 @@ ok(true, "teeth: the pre-fix producer shape spawns while hidden");
 
 /* ---- 2. the SHIPPED file: nothing spawns while hidden ---------------------- */
 const now = await hiddenRun(null, HIDDEN_MS);
+eyes("the shipped landing page", now);
 ok(now.after.hidden === true, "the page under test was not actually hidden");
 ok(now.flipped, "the page never reported a visibilitychange to hidden — the window under measurement " +
                 "never started, so the numbers below describe nothing");
@@ -369,6 +422,7 @@ console.log(`   hidden ${HIDDEN_MS / 1000}s — legacy: packets ${legacy.before.
  * block proved nothing and must say so rather than pass. */
 const DRIVE_PACKETS = 3;
 const burst = await hiddenRun(null, 6000, { drive: DRIVE_PACKETS });
+eyes("the constructed interleaving", burst);
 const driveGrowth = burst.before.packets - burst.warm.packets;
 ok(burst.flipped && burst.after.hidden === true,
    "the constructed-interleaving page never went hidden");
@@ -404,6 +458,7 @@ console.log(`   constructed interleaving — driven while visible until +${DRIVE
  * `length >= MAX_*` guards in bg.js and the peak walks straight past it. */
 const capPage = await browser.newPage();
 await capPage.setViewport({ width: 1440, height: 900 });
+const capEyes = watchPage(capPage);
 await capPage.evaluateOnNewDocument(INSTRUMENT);
 await capPage.goto(site.url + "/index.html", { waitUntil: "networkidle2" });
 await capPage.bringToFront();
@@ -440,11 +495,13 @@ eq(peak.gk, MAX_PINGS,
    (peak.gk > MAX_PINGS ? "The cap does not hold." : "The spawner never reached it — this block proved nothing."));
 console.log(`   driven clock — packets ${peak.start && peak.start.p}->${peak.pk} (cap ${MAX_PACKETS}), ` +
             `pings ${peak.start && peak.start.g}->${peak.gk} (cap ${MAX_PINGS})`);
+eyes("the driven-clock page", capEyes);
 await capPage.close();
 
 /* ---- 5. reduced motion still spawns nothing at all ------------------------- */
 const rm = await browser.newPage();
 await rm.setViewport({ width: 1440, height: 900 });
+const rmEyes = watchPage(rm);
 await rm.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
 await rm.evaluateOnNewDocument(INSTRUMENT);
 await rm.goto(site.url + "/index.html", { waitUntil: "networkidle2" });
@@ -454,6 +511,7 @@ eq(rmLen.packets, -1, "prefers-reduced-motion:reduce spawned packets — it must
 eq(rmLen.pings, -1, "prefers-reduced-motion:reduce spawned radar pings — it must spawn none");
 const rmSparks = await rm.evaluate(() => document.querySelectorAll(".spark").length);
 eq(rmSparks, 0, "prefers-reduced-motion:reduce still injected .spark divs");
+eyes("prefers-reduced-motion", rmEyes);
 await rm.close();
 
 await browser.close();
