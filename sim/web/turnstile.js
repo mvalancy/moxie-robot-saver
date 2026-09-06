@@ -227,10 +227,15 @@
    * That is the SAME defect `#env-banner` had, which `style.css`:1093 records and which
    * `env.js`'s measured `--eb-lift` exists to fix; the parallel composer branch puts a
    * `#composer`, a `#mic-btn` and a `#speech-input` in that same strip, and all three were
-   * covered too. So the challenge is centred in the VIEWPORT instead: the middle of the
-   * screen is Moxie's face on every layout, it holds no controls at any width, it cannot be
-   * clipped by a panel, and it is the most visible place on the page for the one thing a
-   * visitor MUST be able to complete.
+   * covered too. So the challenge is centred in THE SPACE ABOVE THAT STRIP instead: the
+   * middle of the stage is Moxie's face on every layout, it holds no controls at any width,
+   * it cannot be clipped by a panel, and it is the most visible place on the page for the
+   * one thing a visitor MUST be able to complete.
+   *
+   * IT USED TO SAY "CENTRED IN THE VIEWPORT", AND THAT WAS HALF A FIX. The viewport's
+   * middle holds no controls only while the page is still; `#chat-dock` grows as her
+   * self-talk fills the log and carries `#rail-toggle` up into it. `place()` below is the
+   * other half — read its header for the measurements and the 683 < vh < 909 window.
    *
    * THE LAYER ITSELF IS `pointer-events: none` AND ITS CHILDREN ARE NOT. So an empty
    * holder — the overwhelmingly common case — is not merely small but completely
@@ -267,8 +272,148 @@
         holder.id = "turnstile-holder";
         document.body.appendChild(holder);
       }
+      watchPlacement();
     } catch (e) { holder = null; }
     return holder;
+  }
+
+  /* ---- WHERE, EXACTLY, "THE MIDDLE OF THE VIEWPORT" IS -------------------- *
+   *
+   * THE DEFECT THIS SECTION EXISTS FOR, measured 2026-09-06 in headless Chromium against
+   * this repo's own `sim/web`, with `/api/health` publishing one of Cloudflare's documented
+   * always-passes test sitekeys and a 300x65 stand-in widget, after driving `#transcript`
+   * to its cap through the page's own `window.__ambient.say()`:
+   *
+   *     390x844  #rail-toggle 550..598 cold  ->  422..470 full,  challenge 390..455
+   *     393x851  #rail-toggle 557..605 cold  ->  429..477 full,  challenge 393..458
+   *
+   * `#chat-dock` is the HUD grid's bottom row and its `#transcript` GROWS — from 40 px to
+   * its `min(26vh, 168px)` cap — as her ambient self-talk writes to the log. All of that
+   * growth is taken out of the `1fr` stage row, so everything above the dock, `#rail-toggle`
+   * included, rides UP by 128 px over the first ~30 seconds of an idle visit. A challenge
+   * centred in the VIEWPORT does not move, so the handle climbs into it.
+   *
+   * IT IS NOT A SHORT-VIEWPORT BUG, which is the thing worth writing down because the
+   * filing guessed otherwise. With the dock at its cap the handle sits at `vh-422..vh-374`
+   * and a viewport-centred 65 px challenge at `(vh±65)/2`, so they overlap for
+   * **683 < vh < 909** and NOWHERE ELSE — swept at 17 heights from 568 to 1024. A 375x667
+   * phone (the one the filing measured) is BELOW that window: its dock eats so much that
+   * the handle overshoots ABOVE the challenge. The devices inside it are 844, 851 and 896 —
+   * i.e. the ordinary modern phone. Capping the dock to clear the band therefore buys
+   * nothing at 667 and costs 33 px of transcript at 844 and 113 px of 168 at 683, so the
+   * fix is here instead, where it costs no transcript at all.
+   *
+   * CLOUDFLARE HAS NO SAY IN THIS. Its `render()` reference documents `sitekey`, `action`,
+   * `cData`, the callbacks, `theme`, `size`, `tabindex`, `response-field*`, `retry*`,
+   * `language`, `execution`, `appearance` and `refresh-expired` — and NOTHING about
+   * position. The widget draws inside the container it is handed, so where the challenge
+   * lands is entirely this file's decision and always was.
+   *
+   * SO THE LAYER STOPS ABOVE THE CONTROLS INSTEAD OF SPANNING THE PAGE. `bottom` is set
+   * from the measured top of the page's bottom stack, which is the same idiom `env.js`'s
+   * `--eb-lift` uses for `#env-banner` — and this does NOT reuse that variable, for a
+   * reason: `--eb-lift` skips a box whose `bottom` is in the upper half of the viewport,
+   * which is exactly what `#panel` becomes once the dock is at its cap on a short phone.
+   * Measured at 375x667, `#env-banner` therefore ends up on top of `#rail-toggle`
+   * (banner 119..280, handle 245..293, `elementFromPoint` -> `div#env-banner`) with no
+   * Turnstile anywhere on the page. That is a separate, live-today defect in `env.js`,
+   * filed in docs/architecture/backlog/turnstile-layout-collision.md; borrowing the
+   * variable would have inherited it.
+   *
+   * AND IT RESERVES THE GROWTH RATHER THAN CHASING IT. `growth()` adds back the height
+   * `#transcript` has not used yet, so the region is computed for the dock at its CAP and
+   * the answer is the same before and after she rambles. Without that the challenge would
+   * be repositioned by a `ResizeObserver` while the visitor was reaching for it, and — the
+   * real failure — a challenge rendered at t=5 s would be sitting still while the handle
+   * climbed into it anyway. The observers below are for the changes a PERSON makes:
+   * rotating the phone, opening the drawer.
+   * ------------------------------------------------------------------------ */
+  var DRAWER_MQ = "(max-width: 899px)";   // must match the CSS drawer breakpoint
+  var PLACE_GAP = 8;                      // clear air between challenge and controls
+  /* Below this much room there is nowhere to put a 65 px challenge above the controls, and
+   * `turnstile.js`'s oldest rule wins: a challenge clipped to nothing is worse than a
+   * challenge in the way, because an unsolvable one is a page that can never send. So the
+   * layer falls back to the whole viewport — i.e. to EXACTLY what this page did before this
+   * section existed, which is no worse than it was. Reached only by a viewport with under
+   * ~90 px of stage: measured, a 667x375 phone in landscape. */
+  var PLACE_MIN = 88;
+  /* Below this much room, CENTRING is not safe: a flex line taller than its container
+   * overflows both ends equally, so a centred 65 px box in a 60 px region hangs 2.5 px
+   * past the bottom and back into the controls. `flex-end` pins the bottom edge to the
+   * region instead, which is a guarantee rather than an arithmetic result. 300 is chosen
+   * to clear Turnstile's tallest documented widget (compact, 130x120) with room over. */
+  var PLACE_CENTRE_MIN = 300;
+
+  /** Height `#transcript` can still gain before it hits its own `max-height` cap. */
+  function growth() {
+    try {
+      var t = document.getElementById("transcript");
+      if (!t) return 0;
+      var h = t.getBoundingClientRect().height;
+      if (!(h > 0)) return 0;
+      var max = parseFloat(window.getComputedStyle(t).maxHeight);
+      if (!isFinite(max) || max <= 0) return 0;
+      return Math.max(0, max - h);
+    } catch (e) { return 0; }
+  }
+
+  /** The top of the page's bottom stack, with the dock's remaining growth already spent. */
+  function controlsTop() {
+    var H = window.innerHeight || 0;
+    var top = H;
+    var drawer = false;
+    try { drawer = !!(window.matchMedia && window.matchMedia(DRAWER_MQ).matches); } catch (e) {}
+    /* `#panel` only counts in DRAWER mode. At >=900 px it is a full-height side column
+     * whose top is the topbar, and counting it there would pin the challenge to the very
+     * top of a monitor. `#rail-toggle` needs no entry of its own: it is a child of
+     * `#panel`, so the panel's rect already contains it in the mode where it is stacked
+     * above the dock. */
+    var ids = drawer ? ["panel", "chat-dock"] : ["chat-dock"];
+    for (var i = 0; i < ids.length; i++) {
+      var el = document.getElementById(ids[i]);
+      if (!el || !el.getBoundingClientRect) continue;
+      var r = el.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) continue;    // a collapsed rail is not furniture
+      if (r.top < top) top = r.top;
+    }
+    return top - growth();
+  }
+
+  function place() {
+    if (!holder || !holder.style) return;
+    var H = window.innerHeight || 0;
+    if (!H) return;
+    var room = controlsTop() - PLACE_GAP;
+    if (!(room >= PLACE_MIN) || room >= H) {   // no room above the controls, or no controls
+      holder.style.bottom = "0px";
+      holder.style.alignItems = "center";
+      return;
+    }
+    holder.style.bottom = Math.round(H - room) + "px";
+    holder.style.alignItems = room >= PLACE_CENTRE_MIN ? "center" : "flex-end";
+  }
+
+  var placing = false;
+  function watchPlacement() {
+    if (placing) return;
+    placing = true;
+    place();
+    try { window.addEventListener("resize", place, { passive: true }); } catch (e) {}
+    try { window.addEventListener("orientationchange", place); } catch (e) {}
+    /* These boxes change height with no resize event at all — the drawer opening, the
+     * openers stepping aside once there is a conversation — so watch them where the
+     * browser can. The holder itself is NEVER observed: `place()` writes its `bottom`,
+     * and observing what you write is how a ResizeObserver loop starts. */
+    try {
+      if (window.ResizeObserver) {
+        var ro = new window.ResizeObserver(place);
+        var ids = ["panel", "chat-dock"];
+        for (var i = 0; i < ids.length; i++) {
+          var el = document.getElementById(ids[i]);
+          if (el) ro.observe(el);
+        }
+      }
+    } catch (e) {}
   }
 
   /** This action's own child of the holder, so two widgets cannot render into one element. */

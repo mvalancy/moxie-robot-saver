@@ -87,12 +87,16 @@ A backend + Sim are built from these directly; each cites the study but reads on
   holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how
   strong the evidence is rather than how good the feature sounds. A second page shares that outward
   gaze and adds a rule of its own:
-  [`backlog/turnstile-layout-collision.md`](backlog/turnstile-layout-collision.md) — a **latent**
-  layout defect: the Turnstile challenge renders viewport-centred, and the chat dock grows upward as
-  the ambient loop fills the transcript, carrying `#rail-toggle` into that band over ~30 seconds. It
-  cannot occur while `turnstile: ""`, so it **gates arming Turnstile rather than shipping** — and
-  both existing mobile suites sample ~1 s after load, so neither can observe it. Any fix needs a
-  guard that measures late enough to see the failure.
+  [`backlog/turnstile-layout-collision.md`](backlog/turnstile-layout-collision.md) — a layout defect
+  **found latent and fixed the same day**: the Turnstile challenge rendered viewport-centred while the
+  chat dock grows upward as the ambient loop fills the transcript, carrying `#rail-toggle` into that
+  band over ~30 seconds. It could not occur while `turnstile: ""`, so it **gated arming Turnstile
+  rather than shipping**, and both existing mobile suites sample ~1 s after load, so neither could
+  observe it. The page now measures its own bottom stack and centres the challenge above it; the
+  guard drives the transcript to its cap through `ambient.js`'s own test seam and stops on a
+  measurement rather than a clock. **Read it for the numbers that changed under re-measurement** —
+  the collision window is `683 < vh < 909`, which excludes the phone the original filing was written
+  from — and for the second, still-open `env.js` defect the same driven state exposes.
 
 [`backlog/gamify-the-public-sim.md`](backlog/gamify-the-public-sim.md) — evidence for the **one part
   of the owner's chat-first steer that was deliberately left open**, *"Gamify this for regular

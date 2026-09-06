@@ -230,6 +230,16 @@ BREAKAGES = [
     ("envjs-inert", "gut", "sim/web/env.js", True,
      "env.js is served 200 OK and does nothing — no badge, no banner, no needs-backend marks",
      r"env\.js|badge|banner|needs-backend|hosted|local\b"),
+    # Added 2026-09-06 with the fix for docs/architecture/backlog/turnstile-layout-collision.md.
+    # `turnstile.js` is the ONLY file that creates `#turnstile-holder`, decides where the
+    # challenge lands and re-enables pointer events on it, and it is now the file two blocks
+    # of `test_mobile_layout.mjs` are aimed at — so it needs a row of its own. Gutted, the
+    # sitekey is still published, `/api.js` is still requested by nobody, and no holder is
+    # ever built: a check that only asks "is the page laid out" cannot tell, and one that
+    # asks "where is the challenge" must.
+    ("turnstilejs-inert", "gut", "sim/web/turnstile.js", True,
+     "turnstile.js is served 200 OK and does nothing — no holder, no widget, no token",
+     r"turnstile|challenge|holder|sitekey|widget|bot control"),
     ("docs-hollow", "hollow", "sim/web/docs.html", True,
      "docs.html ships an empty body behind the same 'Loading…' placeholder",
      r"tree|markdown|search|article|explorer|renders?\b"),
