@@ -72,7 +72,7 @@ import { assess } from "./_lib/safety.js";
 import { admit, budgetState, loadOf, noteUpstreamCall, readJsonBody } from "./_lib/limits.js";
 import { mintContext, mintTicket, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
-import { buildChatResponse, chatMessage, eventId, joinUrl, markupFloor, MK } from "./_lib/wire.js";
+import { buildChatResponse, chatMessage, eventId, expressiveVocab, joinUrl, markupFloor, MK } from "./_lib/wire.js";
 
 /** §4.1: matches `chat.py`:130 so the hosted persona sounds like the local one. */
 const TEMPERATURE = 0.8;
@@ -217,7 +217,12 @@ export async function onRequestPost(context) {
     // ---- 9. The reply, as the wire `bridge.js` already renders.
     const reply = upstream.text;
     const eid = eventId();
-    const wire = buildChatResponse({ eventId: eid, text: reply, markup: markupFloor(reply) });
+    // `upstream.chosen` is the mood/gesture the MODEL picked, or null when it answered
+    // prose. `markupFloor` validates each field against its closed table and falls back to
+    // the regex floor per-field, so this is safe to pass through unexamined.
+    const wire = buildChatResponse({
+      eventId: eid, text: reply, markup: markupFloor(reply, upstream.chosen),
+    });
 
     // ---- 10. A ticket for the voice, and a fresh context blob for the next turn. The
     // ticket is minted ONLY when a TTS model is configured: no voice, no ticket, and the
@@ -276,11 +281,50 @@ export async function onRequestPost(context) {
  * `stream` is not sent. P0 sends single-chunk turns only (§9's "explicitly out of P0"),
  * which is what makes the reply byte-identical to the pre-streaming wire (`wire.py`:78-81).
  */
+/**
+ * THE EXPRESSIVE ENVELOPE — how Moxie gets to choose her own face.
+ *
+ * Before 2026-09-06 the hosted model was asked for prose and nothing else, and her mood
+ * and gesture were then INFERRED from that prose by six regexes in `wire.js`. Every reply
+ * that was not a question, not an exclamation, and contained none of about twenty keywords
+ * fell to the same default — happy, `Gesture_Talk` — which is why she wore one grin
+ * through almost every conversation on the live site.
+ *
+ * The robot path has never worked that way: `mqtt/moxie_sdk/apps/llm_app.py` asks its
+ * brain for a JSON object carrying `say`, `mood` and `gesture`, on the reasoning that the
+ * model is holding the sentence and its intent and the regex is holding neither. This is
+ * that instruction, ported, with the vocabulary interpolated from `wire.js`'s own tables
+ * so the prompt and the parser cannot drift apart.
+ *
+ * IT IS A REQUEST, NOT A CONTRACT. `parseExpressive` below treats a non-JSON answer as
+ * plain prose and the floor takes over, so a model that ignores this — a smaller one, an
+ * older one, a fork pointing at something else entirely — degrades to exactly the
+ * behaviour that shipped before, rather than to an error. That is why it is safe to send
+ * unconditionally and why there is no capability check anywhere in this file.
+ */
+function expressiveInstruction() {
+  const v = expressiveVocab();
+  return (
+    "Always reply with ONLY a JSON object and no other text:\n" +
+    '{"say": "<what you say out loud>", "mood": "<one of: ' + v.moods.join("|") + '>", ' +
+    '"gesture": "<one of: ' + v.gestures.join("|") + '>"}\n' +
+    "Pick the mood and gesture that genuinely fit your line — you are a robot with a face " +
+    "and arms, so move and emote naturally: celebrate good news, think when you are " +
+    "pondering, question when you ask something, self when you talk about yourself. Your " +
+    "face has these expressions and no others; anything else is ignored. Leave a field out " +
+    "if none fits. Never put emoji, markdown, asterisks or stage directions inside \"say\" " +
+    "— it is read aloud exactly as written."
+  );
+}
+
 export function buildUpstreamBody(cfg, turns, text) {
   const messages = [{ role: "system", content: cfg.persona }];
   for (const t of turns) messages.push({ role: t.role, content: t.content });
   messages.push({ role: "user", content: text });
-  messages.push({ role: "system", content: cfg.persona });
+  // The persona is repeated AFTER the child's turn as injection mitigation — that is
+  // unchanged. The envelope instruction rides with the second copy rather than the first
+  // because a format rule is most obeyed when it is the last thing the model read.
+  messages.push({ role: "system", content: cfg.persona + "\n\n" + expressiveInstruction() });
   return {
     model: cfg.chatModel, // from DEMO_CHAT_MODEL. NEVER from the request.
     messages,
@@ -379,10 +423,15 @@ async function callGateway(cfg, body) {
     // completion in the body, call it gated rather than down.
     if (!completionText(json)) return { ok: false, reason: "gateway_unreachable_or_gated" };
   }
-  const text = completionText(json);
+  const raw = completionText(json);
   // An empty completion is a FAILURE, not a turn. §4.5: never a 200 with an empty string.
+  if (!raw) return { ok: false, reason: "upstream_down" };
+  // The envelope is unwrapped HERE, at the boundary, so everything downstream — the safety
+  // sweep, the transcript, the TTS ticket, the response body — sees the spoken line and
+  // never the JSON. A visitor must never be read a brace out loud.
+  const { text, chosen } = parseExpressive(raw);
   if (!text) return { ok: false, reason: "upstream_down" };
-  return { ok: true, text };
+  return { ok: true, text, chosen };
 }
 
 /** The OpenAI chat-completions reply shape, defensively. */
@@ -391,6 +440,45 @@ function completionText(json) {
   const msg = choice && choice.message;
   const raw = msg && typeof msg.content === "string" ? msg.content : "";
   return raw.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Read the expressive envelope out of a reply, or decide there isn't one.
+ *
+ * @returns {{text: string, chosen: {mood?: string, gesture?: string}|null}}
+ *
+ * NEVER THROWS AND NEVER RETURNS NOTHING. Every failure — not JSON, JSON that is an array,
+ * JSON with no `say`, a `say` that is not a string, an empty `say` — falls back to the raw
+ * line with `chosen: null`, which is precisely the pre-2026-09-06 behaviour. The one thing
+ * this function must not do is lose a reply the visitor already paid for.
+ *
+ * THE FENCE STRIP IS NOT COSMETIC. Models routinely wrap JSON in ```json … ``` even when
+ * told not to, and `completionText` has already collapsed newlines to spaces, so the fence
+ * arrives as a leading "```json " and a trailing "```" on one line. Without stripping it,
+ * `JSON.parse` throws and every single reply silently takes the fallback path — the
+ * feature would look like it simply did not work.
+ */
+export function parseExpressive(raw) {
+  const line = String(raw || "").trim();
+  const plain = { text: line, chosen: null };
+  if (!line) return plain;
+
+  let body = line;
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(body);
+  if (fenced) body = fenced[1].trim();
+  if (body.charAt(0) !== "{") return plain;
+
+  let obj;
+  try { obj = JSON.parse(body); } catch { return plain; }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return plain;
+
+  const say = typeof obj.say === "string" ? obj.say.replace(/\s+/g, " ").trim() : "";
+  if (!say) return plain;   // an envelope with no line in it is not an answer
+
+  const chosen = {};
+  if (typeof obj.mood === "string") chosen.mood = obj.mood;
+  if (typeof obj.gesture === "string") chosen.gesture = obj.gesture;
+  return { text: say, chosen: Object.keys(chosen).length ? chosen : null };
 }
 
 /** A bounded integer from a `Retry-After` header, or a sane default. Never the string. */
