@@ -308,6 +308,7 @@ def test_the_symbol_is_vector_and_sized_in_millimetres(version, deck):
     assert f'width="{sheet.SYMBOL_MM}mm"' in svg and f'height="{sheet.SYMBOL_MM}mm"' in svg
     assert 'shape-rendering="crispEdges"' in svg
     assert "<image" not in svg and "data:image" not in svg
+    assert "http" not in svg          # inline SVG in HTML needs no xmlns; see symbol_svg
 
 
 # --------------------------------------------------------------------------- #
@@ -349,13 +350,12 @@ def test_a_card_with_no_recorded_name_shows_its_id_and_the_page_says_so(html):
 def test_the_page_is_self_contained_and_reaches_no_network(html):
     """A file bound for a printer must not need a CDN to be up, and a parent may open it
     with the appliance switched off."""
-    assert "<script" not in html and "@import" not in html
-    assert "url(" not in html
-    for attr in ("src=", 'href="http', "<link"):
+    assert "<script" not in html and "@import" not in html and "url(" not in html
+    for attr in ("src=", "<link"):
         assert attr not in html
-    assert html.count("http") == html.count("http://www.w3.org/2000/svg") * 1 + \
-        html.count("https://") * 0
-    assert "https://" not in html
+    # Not "no fetches" but "no URL at all" — the inline SVG needs no `xmlns` inside HTML,
+    # so there is nothing left in the file that even looks like an address.
+    assert "http" not in html
 
 
 def test_the_print_stylesheet_sets_the_margin_and_breaks_between_sheets(html):

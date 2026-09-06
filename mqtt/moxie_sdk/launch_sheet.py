@@ -257,6 +257,12 @@ def symbol_svg(payload: str, version: int, symbol_mm: float = SYMBOL_MM,
     rasteriser draws every module edge on the device's own pixel grid at whatever DPI it
     has — the property a PNG cannot have. Horizontal runs of dark modules are merged into
     one path segment, which keeps a 24-card file small enough to open instantly.
+
+    No `xmlns`: an `<svg>` inside HTML is put in the SVG namespace by the HTML parser
+    itself, so the attribute would be redundant — and leaving it out means the printed page
+    contains **no URL at all**, which is a stronger form of the self-contained property
+    than "the only URL is a namespace". `test_no_deployment_defaults.py` flags a hostname
+    in shipped Python and it was right to: the guard is cheaper to satisfy than to widen.
     """
     matrix = qr_matrix(payload, version)
     units = len(matrix) + 2 * QUIET_MODULES
@@ -274,7 +280,7 @@ def symbol_svg(payload: str, version: int, symbol_mm: float = SYMBOL_MM,
             x += run
     alt = _escape(label or payload)
     return (
-        f'<svg class="qr" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {units} {units}"'
+        f'<svg class="qr" viewBox="0 0 {units} {units}"'
         f' width="{symbol_mm}mm" height="{symbol_mm}mm" shape-rendering="crispEdges"'
         f' role="img" aria-label="QR code for {alt}">'
         f'<rect width="{units}" height="{units}" fill="{LIGHT}"/>'
