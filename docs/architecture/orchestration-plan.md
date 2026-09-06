@@ -294,6 +294,27 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     notification is expected**, or do the merge-forward in a throwaway worktree off the same branch and
     push from there. Integration is not urgent enough to race an agent that is still measuring.
 
+29. **A `dev → main` promotion has TWO trailing steps that `gh pr merge` will not do for you, and
+    both were missed after both promotions on 2026-09-05/06.** Squash-merging the standing PR leaves
+    `dev` **one commit behind `main`** (the squash is a new commit `dev` has never seen) and
+    **deletes the only PR tracking the relationship**. Neither is visible from the merge output, and
+    nothing goes red — the damage surfaces later, when the next promotion PR opens CONFLICTING or
+    when someone asks "is `dev` green?" and there is no standing PR to read.
+    So, immediately after the merge, every time:
+      1. **Reconcile** — `git merge origin/main -X ours --no-edit`, then **verify the tree did not
+         move**: `git diff <pre-merge-sha>..HEAD --stat` must print **nothing**. If it prints
+         anything, the `-X ours` swallowed a real change and the promotion needs unpicking, not
+         pushing.
+      2. **Recreate the standing PR** — `gh pr create --base main --head dev`.
+    Do both from a **throwaway worktree** rather than the shared checkout: on 2026-09-06 the main
+    checkout held another session's uncommitted files, and a reconcile there would have been the
+    rule-28 race all over again.
+    The wider point, and the reason this is a rule rather than a checklist item: **the two steps are
+    invisible-by-default cleanup behind an irreversible action** — the same shape as rule 22 (never
+    chain cleanup behind a merge) and rule 25 (`--delete-branch` silently leaves the remote when a
+    worktree holds the branch). Anything a merge is supposed to tidy up afterwards should be
+    *verified*, never assumed.
+
 ## The layered session loops (24/7 continuity)
 
 Session-scheduled loops keep the project moving while the operator is away; when a session hits a usage
@@ -901,3 +922,20 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   without anyone wiring them in, and it caught #166's M1 as `NO-OP anchor (0 matches)` when a refactor
   moved the anchored line. Also fixed: the key scan fired on the ordinary word `task-notification` — a
   scanner that cries wolf on English is one people learn to wave through.
+
+- **2026-09-06 — the RESEARCH tier has verified "nothing new upstream" SIX consecutive times, and
+  that is now a finding about the tier rather than about upstream.** Measured this fire, not
+  recalled: `jbeghtol/openmoxie` last pushed **2026-01-15** (234 days), both active forks unmoved
+  since the first check of this session, upstream issue #63 unmoved since 2026-08-23, and — the
+  broadest form — **zero repos in the entire fork network pushed since 2026-09-03**
+  (`gh api repos/jbeghtol/openmoxie/forks?sort=newest --jq '[.[]|select(.pushed_at>"2026-09-03")]|length'`
+  returns `0`).
+  **Recommended change to the tier's own prompt, for whoever next edits the crons:** stop re-sweeping
+  three repos plus a 40-fork network every three hours to relearn the same answer, and instead watch
+  **the one signal the audit itself identified** — upstream issue #63, where Fork A's author is
+  talking to jbeghtol. A repo that has not moved in eight months does not need polling on a
+  three-hour cadence; the issue thread is where a change would appear first, and one API call
+  answers it. The rotation's other spokes (b) build-ready briefs and (c) BEYOND specs remain
+  worthwhile — it is specifically (a), the refresh, that has stopped paying for itself.
+  **What the tier's own audit says to do instead:** *"What remains is ours to build."* Six sweeps
+  agreeing with that sentence is the evidence for it, not a reason to run a seventh.
