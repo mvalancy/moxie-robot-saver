@@ -43,10 +43,21 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TEMPLATES = os.path.join(REPO, "sim", "ci")
 INSTALLED = os.path.join(REPO, ".github", "workflows")
 
-#: The three tiers, by file name. `sil-and-cicd.md` documents them; the deep tier's
-#: extra jobs and the release tier's tag trigger are deliberate, so only the fast tier
-#: is held to the event-symmetry rule below.
-TIERS = ("ci.yml", "ci-deep.yml", "release.yml")
+#: Every workflow this repo ships, by file name. `sil-and-cicd.md` documents them; the
+#: deep tier's extra jobs, the release tier's tag trigger and the deployed tier's schedule
+#: are deliberate, so only the fast tier is held to the event-symmetry rule below.
+#:
+#: `deployed.yml` joined the list on 2026-09-05 and is NOT a fourth "tier" in the
+#: fast/deep/release sense — it is a MONITOR: a real browser against the live deployment,
+#: on a schedule and on dispatch, gating nothing (`sim/ci/deployed.yml`'s header carries
+#: the measurements behind that choice, and `sim/check_deployed.mjs` the check itself).
+#: It is named here for exactly one reason: the byte-identity guard below is the only
+#: thing that keeps `sim/ci/*` and `.github/workflows/*` from drifting, and a workflow
+#: outside this tuple is covered by nothing at all — the same "the guard silently stopped
+#: applying" shape this file exists to catch. The two other guards parametrized over
+#: TIERS key on jobs that run pytest, which this workflow does not, so they pass over it
+#: without pretending to assert anything.
+TIERS = ("ci.yml", "ci-deep.yml", "release.yml", "deployed.yml")
 FAST = "ci.yml"
 
 
