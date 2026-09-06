@@ -53,6 +53,15 @@ export const DEFAULTS = Object.freeze({
   // and never a degraded page. Set either to 0 to send it not at all.
   DEMO_FREQUENCY_PENALTY: 0.4,
   DEMO_PRESENCE_PENALTY: 0.3,
+  // THE LAST OF THE REPETITION LEVERS, and the only one that costs money: when a reply
+  // comes back WORD FOR WORD the same as something Moxie already said in this same
+  // conversation, `chat.js` asks the gateway once more before answering. Default ON,
+  // because the defect it closes is the one the owner actually reported and the two free
+  // levers above did not finish it off. Set to 0 to switch it off entirely: a deployment
+  // on a tight `DEMO_UNIT_BUDGET_HOUR` may prefer the duplicate to the second completion,
+  // and that is a legitimate choice rather than a broken one. See `chat.js` step 8b for
+  // what a re-rolled turn costs and what it is bounded by.
+  DEMO_REROLL: "1",
   DEMO_MAX_AUDIO_BYTES: 500000,
   DEMO_MIN_AUDIO_BYTES: 2000,
   DEMO_MAX_RECORD_MS: 15000,
@@ -535,6 +544,8 @@ export function readConfig(env) {
     // Clamped to OpenAI's own -2..2, as floats rather than ints.
     frequencyPenalty: num(e, "DEMO_FREQUENCY_PENALTY", -2, 2, notes),
     presencePenalty: num(e, "DEMO_PRESENCE_PENALTY", -2, 2, notes),
+    // The one repetition lever that spends. `chat.js` step 8b.
+    reroll: bool(e, "DEMO_REROLL", true),
     maxAudioBytes: int(e, "DEMO_MAX_AUDIO_BYTES", 1, 50000000, notes),
     minAudioBytes: int(e, "DEMO_MIN_AUDIO_BYTES", 0, 50000000, notes),
     // The CLIENT-SIDE recording cap (§4.1). It is enforced by `sim/web/mic.js`, not by a
