@@ -1,5 +1,5 @@
 {
- "generated": "docs-4a014de48cad",
+ "generated": "docs-1d0f6bd28fa1",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -944,7 +944,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 42022,
+   "bytes": 47523,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -960,6 +960,7 @@
     "Teeth on the browser suites — which checks survive a broken page",
     "What the first sweep found: the suites are largely sound",
     "Where the next pass should go — and the one finding this pass could not fix",
+    "Giving them eyes (2026-09-06)",
     "Run it now"
    ],
    "kind": "md"

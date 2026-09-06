@@ -516,13 +516,83 @@ and the only assertion over any of them is the beacon-specific `!p.failed.some(�
 started this hunt is **not closed**: the file prints two numbers it does not assert. That file was
 reserved to another session for this pass, so this is a report rather than a diff.
 
-The same shape, more widely: five of the fourteen `test_*.mjs` browser suites install **no
-`console` or `pageerror` listener at all** — `test_a11y`, `test_bg_perf`, `test_console_insights`,
-`test_liveliness`, `test_mobile_layout`. A page script that 404s or throws is structurally
-invisible to them; they notice a missing script only where some behavioural assertion happens to
-depend on it (`a11y` does, through the Wi-Fi reveal; `liveliness` and `mobile_layout` do not, and
-both exited 0 with `qr.js` deleted). Only [`test_responsive.mjs`](../../sim/test_responsive.mjs)
-asserts on the 404s it observed, and it is the suite that caught the most breakages here.
+The same shape, more widely: **four** of the browser suites installed **no `console` and no
+`pageerror` listener at all** — `test_a11y`, `test_bg_perf`, `test_liveliness`,
+`test_mobile_layout` — and a fifth, `test_console_insights`, held a `pageerror` listener only.
+(An earlier draft of this paragraph listed `test_console_insights` among the four and left
+`test_liveliness` implicit; the counts above are re-measured against `origin/dev@94cb8b4`.
+`sim/test_ambient.mjs` is sometimes counted here and should not be: it opens no browser at all,
+reading `ambient.json`, `audio/index.json` and `sim.html` as **files**.) A page script that 404s
+or throws is structurally invisible to a suite with no listener; it notices a missing script only
+where some behavioural assertion happens to depend on it (`a11y` does, through the Wi-Fi reveal;
+`liveliness` and `mobile_layout` do not, and both exited 0 with `qr.js` deleted).
+
+**`pageerror` alone is not enough**, which is why the fifth suite is on this list too. It fires
+for uncaught exceptions and nothing else; a `<script src>` that 404s raises no exception anywhere
+and surfaces as a **console** message, and so does a CSP refusal. `test_console_insights` was
+blind to a missing `app.js` while holding a listener.
+
+### Giving them eyes (2026-09-06)
+
+`sim/test_ambient_guard.mjs` already had the right idiom — both listeners plus a `notable()`
+filter that forgives provoked noise **by count** rather than by widening a pattern — so it was
+hoisted into [`sim/browser_harness.mjs`](../../sim/browser_harness.mjs) as `watchPage()` +
+`notable()`, and all five suites above now share that definition rather than forking it
+(`test_ambient_guard`'s own check count is unchanged at 36: the hoist is behaviour-neutral).
+
+The assertions are on the absence of **unexpected** output, never on silence, because some of
+these fixtures legitimately produce console errors and an `errs.length === 0` that reddens on
+benign noise gets loosened by the next reader into something that proves nothing:
+
+| suite | what the page legitimately says | how it is forgiven |
+|---|---|---|
+| `test_a11y` | four CSP refusals: it serves the real `_headers` policy on a `127.0.0.1` origin, so `env.js` fires its two optional-sidecar probes at `:8081`/`:8082` and `connect-src 'self'` refuses both — twice each, once as the violation and once as the failed fetch | only when the message names one of those two ports **on this origin** *and* says the CSP refused it, capped at four. A `script-src` refusal matches neither half. |
+| `test_console_insights` | one deliberate `503` (the only way to reach the *"telemetry threw"* render path) and one `404` for a favicon `server/static/` does not ship | counted at the interceptor that causes each one |
+| `test_liveliness` | two refused sidecar probes and one `404` for `/api/health` | counted at the interceptor — see below, because this suite had no interceptor at all |
+| `test_bg_perf`, `test_mobile_layout` | nothing — measured 0 on every page they open | silence is the honest bar; the counters are wired anyway so a later fixture has the correlation ready instead of a widened pattern |
+
+**`test_liveliness` had to become hermetic before it could be given a stable assertion, and
+that is the more useful half of its fix.** It intercepted nothing, so on the `127.0.0.1` origin
+it serves — which `env.js` treats as LOCAL — the two optional-sidecar probes went to the *real*
+loopback ports. On a box running Piper on `:8081` they succeed; in CI they are refused. What the
+page then believes about Piper decides whether `#speech-btn` is the typed turn or the local
+"Say" control, so the chat-dock geometry this suite measures already depended on what happened
+to be running on the machine — and a console assertion written against either environment would
+have been red on the other. Both probes are refused and counted now, and `/api/health` is
+answered `404` explicitly instead of being continued to a static server that holds no such file
+(byte-identical behaviour, now countable). 32 → 36 checks, every pre-existing assertion still
+green.
+
+Red/green controls, one script deleted per suite, run against `origin/dev@94cb8b4` and then
+against the same broken page with the listeners in place:
+
+| suite | script deleted | before | after |
+|---|---|---|---|
+| `test_a11y` | `sim/web/sw-reset.js` | ✅ 69 checks passed | ❌ 404 on the console |
+| `test_bg_perf` | `sim/web/wire-bg.js` | ✅ 25 checks passed | ❌ 404 on the console |
+| `test_mobile_layout` | `sim/web/qr.js` | ✅ 222 checks passed | ❌ 404 on the console |
+| `test_console_insights` | `server/static/style.css` | ✅ 94 checks passed | ❌ 404 on the console |
+| `test_liveliness` | `sim/web/qr.js` | ✅ 32 checks passed | ❌ 404 on the console |
+
+Each suite was then run **three times** against the healthy page: 3/3 green with an identical
+check count every run (a11y 79, bg_perf 30, mobile_layout 235, console_insights 94, liveliness
+36, ambient_guard 36).
+
+**The limit of the instrument, stated plainly:** eyes catch a 404, a CSP refusal and a thrown
+exception. They do **not** catch a script served *200 OK and inert* — the `gut` breakage — which
+produces no console output at all. That family still needs a behavioural assertion, which is what
+the rest of `page_teeth_check.py`'s table is for.
+
+One real defect turned up on the listeners' first run, in a suite's own instrument rather than in
+the page: `test_bg_perf` stretched rAF timestamps by **multiplying** them, so putting `inflate`
+back to 0 stepped the clock backwards by minutes. `bg.js` clamps `dt` from above
+(`Math.min(2.4, elapsed / 16.7)`) and not from below, so that drove a ping radius negative and
+every later frame threw `IndexSizeError: arc(): The radius provided (-53809.6) is negative`. A
+real `requestAnimationFrame` timestamp never decreases, so `bg.js` cannot reach that state on its
+own — the stretch is an accumulated **offset** now, monotonic whatever `inflate` does.
+
+Only [`test_responsive.mjs`](../../sim/test_responsive.mjs) asserts on the 404s it observed, and
+it is the suite that caught the most breakages here.
 
 ## Run it now
 
