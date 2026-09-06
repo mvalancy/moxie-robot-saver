@@ -80,6 +80,50 @@ tree must pass every clause, and three mutated copies of `sim/web` must each red
 **different** one. It is a check on the checker, so a scheduled run cannot become a green light
 for an instrument that quietly stopped working.
 
+### The microphone job in the same file — dispatch only, and off the schedule
+
+`deployed.yml` also carries [`sim/check_hosted_mic.mjs`](../check_hosted_mic.mjs), which plays a
+real voice into Chrome's **fake microphone** and lets the page do what a visitor's press does.
+It is a **separate job**, `workflow_dispatch` only, and `mic: dry` by default:
+
+```sh
+gh workflow run deployed.yml -f mic=dry                    # free: the button, getUserMedia, the WAV
+gh workflow run deployed.yml -f mic=spend -f mic_budget=5  # the real thing: ~3 gateway calls
+node sim/check_hosted_mic.mjs --selftest                   # hermetic; the fast tier runs this
+```
+
+**It is not on the schedule above, and that is the judgement.** The beacon check is free, so
+running it four times a day costs nothing and catches a regression that reached production
+between promotions. This one is not free: four runs a day is ~4,400 transcriptions, chats and
+syntheses a year out of the budget the whole public demo shares, and the failure it would catch
+— the gateway's ears stopped answering — is already caught at no cost by
+[`test_live_hosted_ears.py`](../tests/test_live_hosted_ears.py) wherever a gateway is
+configured. A monitor that eats the thing it monitors is not a monitor. `mic: dry` exists so
+the *free* half — the composer, the permission grant, `mic.js::encodeWav`, and that the
+uploaded audio really is the audio played — can be re-checked against a live deployment as
+often as anyone likes.
+
+**What `--selftest` in the fast tier claims, and what it does not.** It proves the composer is
+reachable with the rail shut, that `getUserMedia` opens a device on a real page, that
+`wavCapture` + `encodeWav` produce a 16 kHz mono RIFF/WAVE the *server's own* reader accepts,
+that the capture is audible rather than silence, that **the audio uploaded is the clip that was
+played** rather than a different one, and that nothing fires a CSP violation. It does **not**
+prove recording *fidelity*, and that exclusion is deliberate: this tier reddened once on exactly
+that (run 34013443378) because **the runner's own microphone capture saturates** — `peak 1.0000`
+in three of four cases, which flattens an amplitude envelope. The rewrite to a chunked log-RMS
+**vote** survived that on the runner; then run 101437894164 showed something worse than a red —
+the mutant that plays a **different clip PASSED at 71 %**, a false green on the one case that
+proves the audio is the right audio. Handed the fixtures directly the scorer separates them
+100 %/0 %, so it is the runner's *capture* that cannot carry the statistic, and no model
+reproduced it. **Both browser-capture statistics — identity and fidelity — are therefore
+asserted only by `--dry-run` and the paid run** and printed here. The push gate is deterministic
+instead: a **scorer proof** over the committed fixtures (the decoy must lose), a **degradation
+gauntlet** over the looped fixture, and **silence** through a real capture reddening the audible
+clause. It also runs no ASR:
+the transcript is a fixture, so nothing here says the ears work. The
+[deployed-check section](../../docs/architecture/sil-and-cicd.md#the-audio-clause-is-an-ordering-not-a-magnitude-and-that-is-a-scar)
+carries the measurements.
+
 ## The live tiers in `ci-deep.yml`
 
 Everything else in CI is hermetic. Two steps are not, and both are **`workflow_dispatch`

@@ -1,5 +1,5 @@
 {
- "generated": "docs-6d706237ac5f",
+ "generated": "docs-875089ddb746",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 258225,
+   "bytes": 260083,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -944,7 +944,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 26316,
+   "bytes": 36245,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -955,6 +955,8 @@
     "The layered session timers",
     "Live CI — proving it against the real gateway and real speech, on demand",
     "The deployed check — the one tier that looks at what Cloudflare actually serves",
+    "The check that deliberately spends — a real voice through the hosted microphone",
+    "The audio clause is an ordering, not a magnitude — and that is a scar",
     "Run it now"
    ],
    "kind": "md"
