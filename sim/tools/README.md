@@ -161,8 +161,10 @@
   [`functions/api/_lib/limits.js`](../../functions/api/_lib/limits.js), checked against
   [`sim/test_demo_proxy.mjs`](../test_demo_proxy.mjs) §15i (rows `U*`, the shared minute window and
   the budget's HOUR) and [`sim/tests/helpers_shared_ceilings.mjs`](../tests/helpers_shared_ceilings.mjs)
-  (rows `W*`/`D*`, the per-IP HOUR/DAY windows and the budget's DAY).
-  `python3 sim/tools/unit_budget_mutation_check.py        # 35 rows; every one must say "caught"`
+  (rows `W*`/`D*`, the per-IP HOUR/DAY windows and the budget's DAY). `U18`/`U19` cover the
+  RE-ROLL's extra charge (§4.9): the second gateway call inside one admitted turn, which may
+  neither be spent past a ceiling that refused it nor be forgotten by a refund.
+  `python3 sim/tools/unit_budget_mutation_check.py        # 37 rows; every one must say "caught"`
   (about 45 s; pass a row name — `U3`, `D4` — to re-check one in ~1.5 s). **The `W*`/`D*` block was
   added on 2026-09-06 because its absence had already cost something.** PR #178 lifted the day
   ceiling onto `caches.default` by copying the hour's proven design without the hour's proof, and
@@ -247,6 +249,13 @@
   the badge, `qr.js` draws real ink when **Make** is pressed) and five new mutations, **E**–**I**, that
   gut one script apiece and must each redden the clause that names it. `envjs-inert` was added to the
   rows above at the same time, so the marks that `env.js` paints are themselves under audit.
+  **`turnstilejs-inert` joined them on 2026-09-06**, with the fix for
+  [`turnstile-layout-collision.md`](../../docs/architecture/backlog/turnstile-layout-collision.md):
+  `sim/web/turnstile.js` is the only file that builds `#turnstile-holder` and decides where the
+  challenge lands, and two blocks of `test_mobile_layout.mjs` now aim at it. Its first run paid for
+  itself — TIER A **0**, but **two TIER B** checks that said *"with a challenge on screen"* stayed
+  green against a page with no challenge on it at all. Both now require the challenge to have been
+  drawn, and the row reports TIER A 0 / TIER B 0.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.

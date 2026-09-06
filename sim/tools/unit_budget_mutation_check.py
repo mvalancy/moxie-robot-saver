@@ -38,8 +38,8 @@ So the rows come in two families and the second is the point:
     stops
     counting, or counts the wrong thing. An undercount. Cheap to be wrong about, and the
     table catches it anyway.
-  · **U2, U3, U4, U5, U6, U9, U10, U12, U16** and **W1, W2, W3, W6, D1, D2, D4, D7, D8,
-    D9** — the counter counts something TWICE, keeps a charge it should have dropped, or
+  · **U2, U3, U4, U5, U6, U9, U10, U12, U16, U18, U19** and **W1, W2, W3, W6, D1, D2, D4,
+    D7, D8, D9** — the counter counts something TWICE, keeps a charge it should have dropped, or
     refuses where it should have fallen open. Every one of these is an OVERCOUNT or a
     fail-CLOSED, which is the direction `_lib/limits.js::sharedBudgetVerdict` says this
     tier may never fail in. (U14 predates the two lists and belongs in the first; it is
@@ -214,9 +214,12 @@ MUTATIONS = [
      SUITE, "a spent colo hour AND a spent minute answers rate_limited"),
 
     # ---- U11: the uncapped deployment ----------------------------------------
+    # `let`, not `const`, since 2026-09-06: `chargeExtra()` raises `owed` when a re-rolled
+    # turn commits a second completion (§4.9). The mutation is unchanged — drop the
+    # `hourly` guard and an uncapped deployment starts accruing a ceiling it does not have.
     ("U11 accrue units on a deployment with no hourly ceiling to mirror", LIMITS,
-     "  const owed = budget && budget.hourly && budget.charged && budget.charged.length",
-     "  const owed = budget && budget.charged && budget.charged.length",
+     "  let owed = budget && budget.hourly && budget.charged && budget.charged.length",
+     "  let owed = budget && budget.charged && budget.charged.length",
      SUITE, "uncapped deployment accrues nothing"),
 
     # ---- U12: which hour pays --------------------------------------------
@@ -574,10 +577,35 @@ MUTATIONS = [
     # published in one burst the day an operator sets one. NOT CAUGHT until section J grew
     # the ledger assertion; the two lines it already had watch the SUB-TIER, and this
     # accrual happens in `release()`, which consults no sub-tier at all.
+    # `let`, not `const`, for U11's reason.
     ("D11 accrue DAY units on a deployment with no daily ceiling to mirror", LIMITS,
-     "  const owedDay = budget && budget.daily && budget.charged && budget.charged.length",
-     "  const owedDay = budget && budget.charged && budget.charged.length",
+     "  let owedDay = budget && budget.daily && budget.charged && budget.charged.length",
+     "  let owedDay = budget && budget.charged && budget.charged.length",
      CEILINGS, "the DAY ledger never accrued a unit either"),
+
+    # ---- U18: the re-roll spends past the ceiling ----------------------------
+    # `chargeExtra()` is the ONLY thing standing between `chat.js`'s second gateway call
+    # and a budget that has already run out. It returning `true` on a refused charge is one
+    # character, it costs money rather than availability, and it is invisible in a green
+    # suite for exactly the reason this file's header gives: an admission that should have
+    # been a refusal is a slightly larger bill and nobody's complaint.
+    ("U18 the re-roll's extra charge is taken even when the ceiling refused it", LIMITS,
+     "      const extra = chargeBudget(route, ctx.cfg, ctx.nowS);\n"
+     "      if (!extra.ok) return false;",
+     "      const extra = chargeBudget(route, ctx.cfg, ctx.nowS);\n"
+     "      if (!extra.ok) return true;",
+     SUITE, "with no headroom for a second completion the re-roll DOES NOT HAPPEN"),
+
+    # ---- U19: the refund forgets what the re-roll spent ----------------------
+    # The mirror of U18, and the OTHER direction: a refund that hands back only the
+    # admission's 3 units leaves 3 units charged against an hour by a request that was
+    # refused. An overcount, which is the direction this tier may never fail in. Unreachable
+    # through `chat.js` today — every refusal that refunds is upstream of the gateway call —
+    # so §6c drives the ordering directly on a bare slot rather than through a route.
+    ("U19 a refund gives back only the admission's units, not the re-roll's", LIMITS,
+     "      refundCharges([], budgetKeys, (budget && budget.cost) || 0);",
+     "      refundCharges([], (budget && budget.charged) || [], (budget && budget.cost) || 0);",
+     SUITE, "a refund gives back BOTH charges, not just the admission's"),
 ]
 
 
