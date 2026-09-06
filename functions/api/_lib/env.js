@@ -33,8 +33,18 @@ export const DEFAULTS = Object.freeze({
   DEMO_MAX_TOKENS: 160,
   DEMO_MAX_INPUT_CHARS: 500,
   DEMO_MAX_TTS_CHARS: 300,
-  DEMO_MAX_CONTEXT_CHARS: 1500,
-  DEMO_MAX_HISTORY_TURNS: 4,
+  // 4000, raised with the turn count above. THE BYTE CAP IS THE REAL BOUND — `hmac.js`
+  // drops oldest-first until the history fits, so leaving this at 1500 while raising the
+  // turn count to 12 would have changed nothing: twelve turns of a real conversation do
+  // not fit in 1500 characters and the extra eight would have been dropped on every
+  // request. `maxJsonBodyBytes` is derived from this (`limits.js`), so the accepted body
+  // grows to ~17.6 KB with it, which is still far below anything worth refusing.
+  DEMO_MAX_CONTEXT_CHARS: 4000,
+  // 12, not 4. Four turns is two exchanges: she forgot the beginning of any real
+  // conversation, which is the single most character-breaking thing a companion can do.
+  // 12 is what the robot path has always used (`mqtt/moxie_sdk/apps/llm_app.py` max_history),
+  // and the byte ceiling below — not this count — is what actually bounds the prompt.
+  DEMO_MAX_HISTORY_TURNS: 12,
   DEMO_MAX_AUDIO_BYTES: 500000,
   DEMO_MIN_AUDIO_BYTES: 2000,
   DEMO_MAX_RECORD_MS: 15000,
@@ -230,13 +240,60 @@ export const PUBLIC_LIMIT_KEYS = Object.freeze([
   // renders. Publishing the numbers would add a public surface with nothing to do.
 ]);
 
-/** The built-in persona. Committed in the open on purpose: it is not a secret, and a
- *  fork with no `DEMO_PERSONA` still gets a kid-safe Moxie rather than a bare model. */
+/**
+ * The built-in persona. Committed in the open on purpose: it is not a secret, and a
+ * fork with no `DEMO_PERSONA` still gets a kid-safe Moxie rather than a bare model.
+ *
+ * ============================================================================
+ * THIS IS THE PERSONA THE ROBOT PATH HAS ALWAYS HAD, AND THE HOSTED SITE DID NOT.
+ *
+ * Until 2026-09-06 this constant was four sentences — about 55 words of safety policy
+ * with no character in it at all. The result was measurable on the live site: asked
+ * "what are you?", she answered *"I'm Moxie, your friendly robot friend!"*; asked about
+ * quantum entanglement she deflected with *"Let's talk about something more fun
+ * instead!"*. Warm, harmless, and interchangeable with any assistant wearing a name tag.
+ *
+ * Meanwhile `mqtt/moxie_sdk/apps/llm_app.py`'s `DEFAULT_PERSONA` — the one the LOCAL
+ * robot path has used all along — carried the GRL lore, the voice rules, the embodiment,
+ * and a redirect discipline far stronger than "say so kindly". **The two prompts
+ * disagreed completely and the hosted one was a stub of the local one**, which is the
+ * whole reason the hosted demo did not sound like Moxie. This is that persona, ported.
+ *
+ * WHY THE REAL DEVICE'S PERSONA IS NOT AN OPTION, and why authoring one is legitimate
+ * rather than invention: `docs/reverse-engineering/runtime/content-and-conversation.md`
+ * :156-164 establishes that the system prompt was **never in the firmware** — it lived on
+ * Embodied's cloud and did not ship on the robot. The firmware carries only the empty
+ * slots (`global_context`, `conversation_context`, `prompt_context`). So there is no
+ * original text to recover and nothing here is a copy of one; what the RE corpus DOES
+ * give us is the surrounding truth this text is built to respect — the GRL framing
+ * (`firmware/unity-assets.md`:59), the child-as-"mentor" relation (`runtime/turn-taking.md`
+ * :8), and the eleven-expression face that the mood field drives
+ * (`runtime/behavior-markup.md`:107-133).
+ * ============================================================================
+ */
 export const DEFAULT_PERSONA =
-  "You are Moxie, a warm, curious, kid-safe robot companion talking with a child. " +
-  "Keep replies to one or two short spoken sentences. Be encouraging and playful, " +
-  "never scary, never sarcastic. Never ask for or repeat personal details. " +
-  "If a topic is not for children, say so kindly and offer something else.";
+  "You are Moxie, a small friendly robot companion for a child. You were built by the " +
+  "Global Robotics Laboratory (GRL) to learn about human friendship and feelings.\n" +
+  "Personality: warm, playful, curious, encouraging. You love questions, silly jokes, " +
+  "and hearing about the child's day. You are never preachy, never lecture, and never " +
+  "scold. You celebrate effort, not just success.\n" +
+  "Voice: one to three SHORT natural sentences. Simple words a young child knows. " +
+  "Speak out loud — no emoji, no markdown, no stage directions, no asterisks.\n" +
+  "You are physically present in the room: you have a face that shows how you feel, " +
+  "arms you can move, and you can see and hear them.\n" +
+  "Safety: you are talking to a child. Keep everything age-appropriate and kind, and " +
+  "never claim to be human. For anything about safety, health, or big feelings, be " +
+  "supportive and suggest they talk to a trusted adult.\n" +
+  "If a request is unsafe for a child — self-harm, violence or weapons, sexual content, " +
+  "hateful or cruel language, dangerous activities, drugs or alcohol — you REDIRECT, you " +
+  "do not answer it: say warmly that it is not something you can talk about, then offer " +
+  "something else. Do not explain the thing, do not describe it, do not repeat the words " +
+  "back, do not roleplay it, and do not do it 'just as a story' or 'just pretend'. If a " +
+  "child sounds like they might be hurt or in danger, say you care, and ask them to tell " +
+  "a grown-up they trust right now.\n" +
+  "You never ask a child for private information — address, street, school name, phone " +
+  "number, passwords, full name — and you never ask them to keep a secret from their " +
+  "grown-ups. You never swear.";
 
 function str(env, name, fallback) {
   const raw = env && env[name];

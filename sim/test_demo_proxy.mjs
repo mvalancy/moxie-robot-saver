@@ -340,7 +340,13 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   // reads is always ours whatever the visitor put in the middle.
   eq(up.messages[0].role, "system", "the first message is the persona");
   eq(up.messages[up.messages.length - 1].role, "system", "the LAST message is the persona too");
-  eq(up.messages[0].content, up.messages[up.messages.length - 1].content, "both persona copies match");
+  /* The trailing copy STARTS WITH the persona rather than equalling it (2026-09-06): the
+   * expressive-envelope instruction is appended there, because a format rule is best obeyed
+   * as the last thing the model read. What §3.3 actually requires — that the final
+   * instruction in the prompt is ours and not the visitor's — is unchanged and is what this
+   * asserts. A dropped, replaced or truncated trailing persona still fails it. */
+  ok(up.messages[up.messages.length - 1].content.startsWith(up.messages[0].content),
+     "both persona copies match — the trailing one leads with the same text");
   ok(up.messages[0].content.includes("Moxie"), "the built-in persona is the Moxie one");
   // The visitor's own hostile `messages` array is nowhere in what we sent.
   const flat = JSON.stringify(up);
@@ -354,12 +360,28 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   ok(!JSON.stringify(sent[0].opt.body).includes(KEY), "the key is not in the outbound body");
   eq(sent[0].url, BASE + "/chat/completions", "the upstream path is /chat/completions");
 
-  // A configured persona replaces the default, and still sits at both ends.
+  /* A configured persona replaces the default, and still sits at both ends.
+   *
+   * THE TRAILING COPY IS NO LONGER BYTE-IDENTICAL, and the assertion had to change shape
+   * rather than change number (2026-09-06). `chat.js` appends the expressive-envelope
+   * instruction to the SECOND system message, because a format rule is best obeyed when it
+   * is the last thing the model read. The security property this pair of checks exists for
+   * is unaffected and is what is now asserted: the persona is PRESENT at both ends, so a
+   * visitor's turn is bracketed by it and cannot be the last instruction in the prompt.
+   * Byte-equality was only ever a proxy for that, and the weaker-looking `startsWith` is
+   * the stronger check to write here — it would still fail if the trailing copy were
+   * dropped, replaced, or truncated. */
   fresh();
   await call(chat, "/api/chat", { text: "hi" }, null, { ...FULL, DEMO_PERSONA: "You are a test persona." });
   const up2 = JSON.parse(sent[0].opt.body);
   eq(up2.messages[0].content, "You are a test persona.", "DEMO_PERSONA is honoured");
-  eq(up2.messages[up2.messages.length - 1].content, "You are a test persona.", "…at both ends");
+  const tail2 = up2.messages[up2.messages.length - 1];
+  eq(tail2.role, "system", "…and the LAST message is a system message, not the child's turn");
+  ok(tail2.content.startsWith("You are a test persona."),
+     "…with the persona at both ends, so the visitor's turn is bracketed by it");
+  ok(tail2.content.includes('"say"') && tail2.content.includes('"mood"') &&
+     tail2.content.includes('"gesture"'),
+     "…and the trailing copy carries the expressive envelope, which is what asks her to emote");
 
   // Overridable caps (§4.1: every number is an env var).
   fresh();
@@ -924,7 +946,8 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   }
   const last = JSON.parse(sent[sent.length - 1].opt.body);
   const history = last.messages.filter((m) => m.role !== "system").length - 1; // minus this turn
-  ok(history <= 4, `at most DEMO_MAX_HISTORY_TURNS (4) history turns reach the gateway, got ${history}`);
+  ok(history <= 12,
+     `at most DEMO_MAX_HISTORY_TURNS (12) history turns reach the gateway, got ${history}`);
 
   // …and the total character cap trims from the OLDEST end, so recency survives.
   fresh();
@@ -2982,6 +3005,124 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
       delete globalThis.caches;
     }
     eq(typeof caches, "undefined", "the global is put back, so no later block inherits a cache");
+  }
+}
+
+/* =========================================================================== *
+ * 15j. THE EXPRESSIVE ENVELOPE — Moxie chooses her own face
+ * =========================================================================== *
+ *
+ * WHAT THIS REPLACED, measured on the live site before it shipped. The hosted model was
+ * asked for prose, and `wire.js`'s six regexes then GUESSED her mood from that prose. Any
+ * reply that was not a question, not an exclamation, and contained none of ~20 keywords
+ * fell to the same default — happy + `Gesture_Talk` — so she wore one grin through almost
+ * every conversation. "Quantum entanglement is like having two magic dice" got the same
+ * face as "I'm sorry you had a bad day".
+ *
+ * Now the model is asked for `{say, mood, gesture}` and the floor is the FALLBACK. The two
+ * properties that matter are asserted here in both directions:
+ *
+ *   1. a model that answers the envelope drives the face, across all eleven moods —
+ *      including the six the floor can never reach;
+ *   2. a model that ignores it is not broken by it. Prose, fenced JSON, half an envelope,
+ *      an array, a truncated brace: every one of them still SPEAKS, and never speaks JSON.
+ */
+{
+  const vocab = wire.expressiveVocab();
+  eq(vocab.moods.length, 11, "the prompt offers all ELEVEN ePlaybackMood faces…");
+  eq(vocab.gestures.length, 10, "…and the ten gesture names bridge.js implements");
+  ok(vocab.moods.includes("angry") && vocab.moods.includes("shy") &&
+     vocab.moods.includes("embarrassed"),
+     "…including the ones the regex floor can never pick");
+
+  /** The mood integer and gesture name a reply's markup actually carries. */
+  const readMark = (mk) => ({
+    mood: (/cmd:playback-mood,data:\{[^}]*?\+mood\+:(\d+)/.exec(mk) || [])[1],
+    gesture: (/\+eventName\+:\+(Gesture_[A-Za-z_]+)\+/.exec(mk) || [])[1],
+  });
+  /** Drive one full turn with the gateway answering `content`, and read the markup back. */
+  async function turnWith(content) {
+    fresh();
+    plan = { chat: { content } };
+    const r = await call(chat, "/api/chat", { text: "hello" });
+    const p = r.body && r.body.messages && r.body.messages[0]
+      ? JSON.parse(r.body.messages[0].payload) : null;
+    return { status: r.res.status, reason: r.body && r.body.reason,
+             text: p && p.output ? p.output.text : "",
+             mark: readMark(p && p.output ? p.output.markup : "") };
+  }
+
+  // ---- 1. the model's choice reaches the face -------------------------------- //
+  for (const [mood, num, gesture, wireName] of [
+    ["angry", "3", "point", "Gesture_Point"],
+    ["shy", "4", "self", "Gesture_Self"],
+    ["afraid", "6", "down", "Gesture_Lower"],
+    ["embarrassed", "10", "none", "Gesture_None"],
+    ["curious", "9", "think", "Gesture_Think"],
+  ]) {
+    const t = await turnWith(JSON.stringify({ say: "Okay then.", mood, gesture }));
+    eq(t.text, "Okay then.", `a ${mood} envelope speaks only its \`say\``);
+    eq(t.mark.mood, num, `…and drives ePlaybackMood ${num} (${mood})`);
+    eq(t.mark.gesture, wireName, `…and the ${gesture} gesture`);
+  }
+  // The proof that this is the MODEL talking and not the floor: "Okay then." is a plain
+  // statement, so the floor would have made every one of the five happy + Gesture_Talk.
+  {
+    const floorOnly = wire.markupFloor("Okay then.");
+    eq(readMark(floorOnly).mood, "1", "CONTROL: the floor alone calls 'Okay then.' happy…");
+    eq(readMark(floorOnly).gesture, "Gesture_Talk", "…with the talking gesture, for all five");
+  }
+
+  // ---- 2. a model that ignores the envelope is unharmed ---------------------- //
+  for (const [label, content, wantText] of [
+    ["plain prose", "Hi there, friend!", "Hi there, friend!"],
+    ["a fenced envelope", '```json {"say":"Fenced but fine.","mood":"happy"} ```', "Fenced but fine."],
+    ["an envelope with no say", '{"mood":"happy","gesture":"celebrate"}', '{"mood":"happy","gesture":"celebrate"}'],
+    ["a JSON array", "[1,2,3]", "[1,2,3]"],
+    ["a truncated brace", "{not json at all", "{not json at all"],
+  ]) {
+    const t = await turnWith(content);
+    eq(t.status, 200, `${label} still answers 200`);
+    eq(t.text, wantText, `…${label} speaks the right line`);
+    ok(t.mark.mood !== undefined && t.mark.gesture !== undefined,
+       `…${label} still carries a mood and a gesture from the floor`);
+  }
+
+  // ---- 3. a bad mood or gesture NAME is dropped, not passed through ---------- //
+  // `bridge.js` would silently do nothing with an unknown gesture, which reads as a broken
+  // robot rather than an absent one. Each field validates independently, so a good mood
+  // beside a nonsense gesture keeps the mood.
+  {
+    const t = await turnWith(JSON.stringify({ say: "Hmm.", mood: "sad", gesture: "moonwalk" }));
+    eq(t.mark.mood, "2", "a valid mood beside an invalid gesture still reaches the face…");
+    eq(t.mark.gesture, "Gesture_Think", "…and the floor supplies the gesture (hmm -> think)");
+    const u = await turnWith(JSON.stringify({ say: "Hooray!", mood: "ecstatic", gesture: "celebrate" }));
+    eq(u.mark.mood, "1", "…and an invalid mood falls to the floor (hooray -> happy)");
+    eq(u.mark.gesture, "Gesture_Celebrate", "…while the valid gesture is kept");
+  }
+
+  // ---- 4. THE ENVELOPE IS NEVER SPOKEN, AND NEVER LEAKS --------------------- //
+  // The unwrap happens at the gateway boundary, so nothing downstream — the safety sweep,
+  // the ticket, the transcript, the response body — ever sees a brace. A child being read
+  // `{"say": ...}` out loud is the whole failure this ordering prevents.
+  {
+    const t = await turnWith(JSON.stringify({ say: "I am a robot.", mood: "happy", gesture: "self" }));
+    ok(!t.text.includes("{") && !t.text.includes('"say"'),
+       "the spoken line carries no JSON at all");
+    ok(!t.text.includes("mood") && !t.text.includes("gesture"),
+       "…and none of the envelope's field names");
+  }
+
+  // ---- 5. THE PERSONA IS THE ROBOT PATH'S, NOT A SAFETY BLURB --------------- //
+  // The single change that made her Moxie rather than an assistant wearing a name tag.
+  {
+    const P = wire2.readConfig(FULL).persona;
+    ok(P.includes("Global Robotics Laboratory"), "the persona carries the GRL origin…");
+    ok(/never preachy|never lecture|never scold/.test(P), "…the personality rules…");
+    ok(/one to three SHORT natural sentences/.test(P), "…the voice rule…");
+    ok(/you have a face|arms you can move/.test(P), "…the embodiment…");
+    ok(/REDIRECT/.test(P), "…and a redirect discipline stronger than 'say so kindly'");
+    ok(P.length > 1200, `…and it is a character, not a blurb (${P.length} chars)`);
   }
 }
 

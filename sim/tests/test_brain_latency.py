@@ -375,11 +375,17 @@ def test_no_dotenv_anywhere_is_not_an_error(tmp_path):
 
 
 def test_load_repo_dotenv_never_overrides_the_real_environment(tmp_path, monkeypatch):
+    # `allow` names the two probes explicitly because the loader now exports only
+    # `LIVE_KEYS`, and these deliberately inert names are not among them. That is the
+    # point of the parameter: the `setdefault` semantics under test are independent of
+    # *which* keys are allowed through, so the test says which it means instead of
+    # borrowing a real credential's name and mutating it mid-session.
     path = tmp_path / "sample.env"
     path.write_text("# a comment\n\nMOXIE_TEST_A=fromfile\nMOXIE_TEST_B=fromfile\n")
     monkeypatch.setenv("MOXIE_TEST_A", "already-set")
     monkeypatch.delenv("MOXIE_TEST_B", raising=False)
-    assert load_repo_dotenv(str(path)) == str(path)
+    probes = ("MOXIE_TEST_A", "MOXIE_TEST_B")
+    assert load_repo_dotenv(str(path), allow=probes) == str(path)
     assert os.environ["MOXIE_TEST_A"] == "already-set"
     assert os.environ["MOXIE_TEST_B"] == "fromfile"
     monkeypatch.delenv("MOXIE_TEST_B")

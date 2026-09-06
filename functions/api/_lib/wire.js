@@ -173,10 +173,49 @@ export const MK = Object.freeze({
   },
 });
 
-/** `ePlaybackMood` values `bridge.js`:39-42 maps to a face. Only these five are used by
- *  the floor; the map has eleven, and a mood the floor never picks is not a mood the
- *  avatar cannot show. */
-export const MOOD = Object.freeze({ NEUTRAL: 0, HAPPY: 1, SAD: 2, SURPRISED: 5, CURIOUS: 9 });
+/** `ePlaybackMood`, the AUTHORITATIVE eleven, recovered from Assembly-CSharp and
+ *  documented at `docs/reverse-engineering/runtime/behavior-markup.md`:107-133. Each value
+ *  plays `Bht_Eyeseme_<name>` on the real device and is mapped 1:1 to a SIL face by
+ *  `sim/web/bridge.js`:39-42.
+ *
+ *  ALL ELEVEN ARE NAMED HERE NOW. The regex floor below still only picks five of them —
+ *  that is a property of the floor, not of the avatar — but since 2026-09-06 the MODEL may
+ *  choose any of the eleven (`chat.js`'s expressive envelope), and a mood it names has to
+ *  be resolvable to a number here or it cannot reach the face at all. Five was the reason
+ *  Moxie could not look angry, shy, afraid, concerned, confused or embarrassed on a site
+ *  whose avatar has always been able to. */
+export const MOOD = Object.freeze({
+  NEUTRAL: 0, HAPPY: 1, SAD: 2, ANGRY: 3, SHY: 4, SURPRISED: 5,
+  AFRAID: 6, CONCERNED: 7, CONFUSED: 8, CURIOUS: 9, EMBARRASSED: 10,
+});
+
+/** The name -> number table for a mood the MODEL wrote. Lower-cased, closed set: anything
+ *  outside it is ignored rather than guessed at, and the floor then decides. */
+const MOOD_BY_NAME = Object.freeze({
+  neutral: 0, happy: 1, sad: 2, angry: 3, shy: 4, surprised: 5,
+  afraid: 6, concerned: 7, confused: 8, curious: 9, embarrassed: 10,
+});
+
+/** The twelve gestures `sim/web/bridge.js`'s `gesture()` switch actually implements
+ *  (`behavior-markup.md`:191-198). A model-chosen gesture is accepted only if it is one of
+ *  these — the short lower-case name it writes, mapped to the wire's `Gesture_*` form.
+ *  An unknown name is dropped, never passed through: `bridge.js` would silently do nothing
+ *  with it, which is a gesture that looks like a bug rather than an absent one. */
+const GESTURE_BY_NAME = Object.freeze({
+  none: "Gesture_None", talk: "Gesture_Talk", think: "Gesture_Think",
+  question: "Gesture_Question", point: "Gesture_Point", self: "Gesture_Self",
+  big: "Gesture_Large", large: "Gesture_Large", up: "Gesture_Higher",
+  down: "Gesture_Lower", celebrate: "Gesture_Celebrate",
+});
+
+/** The vocabulary the prompt has to hand the model, built FROM the tables above so the
+ *  two can never drift. `chat.js` interpolates these into the expressive envelope. */
+export function expressiveVocab() {
+  return {
+    moods: Object.keys(MOOD_BY_NAME),
+    gestures: ["none", "talk", "think", "question", "point", "self", "big", "up", "down", "celebrate"],
+  };
+}
 
 /**
  * The floor's whole rule set, in evaluation order. DELIBERATELY TINY and deliberately
@@ -218,10 +257,37 @@ const ICONS = [
  * `sim/test_demo_proxy.mjs` assert the markup a given reply produces instead of merely
  * asserting that some markup came out.
  */
-export function markupFloor(text) {
+export function markupFloor(text, chosen) {
   const s = String(text || "");
   if (!s) return "";
-  const rule = FLOOR.find((r) => r.re.test(s)) || FLOOR_DEFAULT;
+  /* THE MODEL'S OWN CHOICE WINS, WHERE IT MADE ONE.
+   *
+   * `chosen` is `{mood, gesture}` as the model wrote them (short lower-case names) and is
+   * absent whenever it answered plain prose, whenever the envelope failed to parse, and
+   * whenever the deployment has the expressive envelope switched off. Each field is
+   * validated independently against the closed tables above, so a model that names a good
+   * mood and a nonsense gesture keeps the mood — half an answer is still better than the
+   * regex guess, and the floor fills whatever is left.
+   *
+   * WHY THIS ORDER, rather than letting the floor override. The floor is six regexes over
+   * the reply's own words; it cannot tell "I'm not sure" from "I'm sad", and its default —
+   * reached by any statement that is not a question, not an exclamation, and contains none
+   * of ~20 keywords — is HAPPY + `Gesture_Talk`. That default is why the live site wore one
+   * fixed grin through almost every conversation. The model has the actual sentence and its
+   * intent; the floor is the fallback it always was. */
+  const pick = chosen && typeof chosen === "object" ? chosen : null;
+  const moodName = pick && typeof pick.mood === "string" ? pick.mood.trim().toLowerCase() : "";
+  const gestName = pick && typeof pick.gesture === "string" ? pick.gesture.trim().toLowerCase() : "";
+  const moodNum = Object.prototype.hasOwnProperty.call(MOOD_BY_NAME, moodName)
+    ? MOOD_BY_NAME[moodName] : null;
+  const gestWire = Object.prototype.hasOwnProperty.call(GESTURE_BY_NAME, gestName)
+    ? GESTURE_BY_NAME[gestName] : null;
+
+  const floor = FLOOR.find((r) => r.re.test(s)) || FLOOR_DEFAULT;
+  const rule = {
+    mood: moodNum === null ? floor.mood : moodNum,
+    gesture: gestWire === null ? floor.gesture : gestWire,
+  };
   const hit = ICONS.find((r) => r.re.test(s));
   let mk = MK.mood(rule.mood) + MK.gesture(rule.gesture);
   if (hit) mk += MK.icons(hit.icon, 0);
