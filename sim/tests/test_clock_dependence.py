@@ -125,6 +125,17 @@ REVIEWED: dict = {
         "`a >= b` for two reads of one monotone-in-practice clock is true at every one of "
         "the 1440 minutes of a day; no assertion reads either value, and a clock that "
         "stepped BACKWARDS between them would redden the suite rather than hide a bug."),
+    "sim/eval_live.mjs": (
+        ("Date.now", "new Date()", "toISOString"),
+        "RELATIVE — and NOT A TEST, the only row here that is not. `sim/eval_live.mjs` drives REAL "
+        "conversations at a REAL deployment, spends real gateway calls, refuses to start "
+        "without `--yes`, and is run by hand. It contains no assertions at all, so there is "
+        "nothing here that a clock could make pass or fail. All three reads are MEASUREMENT "
+        "rather than logic: `Date.now()` twice around a `fetch` is a latency in "
+        "milliseconds (a duration, never a date), and `new Date().toISOString()` names the "
+        "artifact file it writes. Kept in the ledger rather than excluded from the scan "
+        "because a glob exception is invisible and this row is not — if this file ever "
+        "grows a real assertion, the reasoning above is right where somebody will read it."),
     "sim/test_demo_tickets.mjs": (
         ("Date.now",),
         "RELATIVE — a ticket is aged `Date.now()/1000 - 61` to make it one second past a "

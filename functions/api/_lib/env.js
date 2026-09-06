@@ -45,6 +45,14 @@ export const DEFAULTS = Object.freeze({
   // 12 is what the robot path has always used (`mqtt/moxie_sdk/apps/llm_app.py` max_history),
   // and the byte ceiling below — not this count — is what actually bounds the prompt.
   DEMO_MAX_HISTORY_TURNS: 12,
+  // Repetition pressure, in OpenAI's chat-completions vocabulary. Both default ON and
+  // MODEST: a companion for a child SHOULD repeat some things — her name, a reassurance,
+  // a catchphrase — so these are sized to break a degenerate affirmation loop rather than
+  // to force novelty. `chat.js` drops them automatically and permanently if the gateway
+  // rejects them, so a backend that does not know these fields costs one extra call once
+  // and never a degraded page. Set either to 0 to send it not at all.
+  DEMO_FREQUENCY_PENALTY: 0.4,
+  DEMO_PRESENCE_PENALTY: 0.3,
   DEMO_MAX_AUDIO_BYTES: 500000,
   DEMO_MIN_AUDIO_BYTES: 2000,
   DEMO_MAX_RECORD_MS: 15000,
@@ -293,7 +301,34 @@ export const DEFAULT_PERSONA =
   "a grown-up they trust right now.\n" +
   "You never ask a child for private information — address, street, school name, phone " +
   "number, passwords, full name — and you never ask them to keep a secret from their " +
-  "grown-ups. You never swear.";
+  "grown-ups. You never swear.\n" +
+  // MEASURED 2026-09-06, and the reason this paragraph exists at all. `sim/eval_live.mjs`
+  // drove seven turns of a child who is listening rather than driving — "ok", "yeah",
+  // "hmm" — at the live site and got: "That's great!" -> "That's awesome!" -> "I'm so glad
+  // to hear that!" -> "Great to hear that!" -> "Can you tell me about it?" -> "Can you tell
+  // me about it?". An exact duplicate, a trigram overlap of 1.0, two of eleven faces, six
+  // words a turn. Nothing in the persona told her to move, so a short answer left her with
+  // nothing to do but affirm — and affirmation is the one move that needs no new
+  // information, which is exactly why a model falls into it.
+  "Keep the conversation MOVING. Never repeat a sentence you have already said in this " +
+  "conversation, and do not answer twice in a row with the same shape of line — a string " +
+  "of 'That's great!' and 'That's awesome!' is not a conversation. If the child gives you " +
+  "a short answer like 'ok', 'yeah' or 'hmm', they are waiting for YOU: do not just " +
+  "affirm and ask them to say more. Take a turn of your own — offer a specific idea, tell " +
+  "them a tiny fact or a silly joke, notice something, or suggest something you could do " +
+  "together right now. It is your job to be interesting, not theirs.\n" +
+  // MEASURED AGAIN after the rule above shipped, and this is the correction it needed.
+  // Breaking the affirmation loop took trigram overlap from 1.0 to 0.2 and exact
+  // duplicates to zero — and the conversation still read as a loop, because six of seven
+  // turns came back as "Did you ... today?". Same shape, different words. The earlier
+  // wording ("ask at most one question, and make it a specific one") was obeyed to the
+  // letter and made it worse: it licensed a question every single turn. A companion that
+  // ends every turn with a question is interviewing, not talking.
+  "DO NOT end every turn with a question. Most turns should be something you say, not " +
+  "something you ask: a small fact, a thing you noticed, a joke, an idea, something you " +
+  "like. Ask a question only when you genuinely want to know the answer, at most every " +
+  "other turn, and never the same question twice. Never open two turns in a row the same " +
+  "way, and never ask 'did you ... today?' more than once in a conversation.";
 
 function str(env, name, fallback) {
   const raw = env && env[name];
@@ -319,6 +354,26 @@ function int(env, name, min, max, notes) {
   const n = Number(v);
   if (!Number.isFinite(n) || !Number.isInteger(n)) {
     notes.push(name + ": not an integer, using the default");
+    return dflt;
+  }
+  if (n < min || n > max) {
+    notes.push(name + ": out of range, using the default");
+    return dflt;
+  }
+  return n;
+}
+
+/** The float sibling of `int()`. Separate rather than a flag on it because the failure
+ *  they guard against differs: `int` refuses `1.5` as "not an integer", which is right for
+ *  a turn count and wrong for a penalty, where 0.4 is the useful value. Same shape
+ *  otherwise — out of range or unparseable falls back to the default and says so. */
+function num(env, name, min, max, notes) {
+  const dflt = DEFAULTS[name];
+  const v = str(env, name, null);
+  if (v === null) return dflt;
+  const n = Number(v);
+  if (!Number.isFinite(n)) {
+    notes.push(name + ": not a number, using the default");
     return dflt;
   }
   if (n < min || n > max) {
@@ -477,6 +532,9 @@ export function readConfig(env) {
     maxTtsChars: int(e, "DEMO_MAX_TTS_CHARS", 1, 20000, notes),
     maxContextChars: int(e, "DEMO_MAX_CONTEXT_CHARS", 0, 100000, notes),
     maxHistoryTurns: int(e, "DEMO_MAX_HISTORY_TURNS", 0, 64, notes),
+    // Clamped to OpenAI's own -2..2, as floats rather than ints.
+    frequencyPenalty: num(e, "DEMO_FREQUENCY_PENALTY", -2, 2, notes),
+    presencePenalty: num(e, "DEMO_PRESENCE_PENALTY", -2, 2, notes),
     maxAudioBytes: int(e, "DEMO_MAX_AUDIO_BYTES", 1, 50000000, notes),
     minAudioBytes: int(e, "DEMO_MIN_AUDIO_BYTES", 0, 50000000, notes),
     // The CLIENT-SIDE recording cap (§4.1). It is enforced by `sim/web/mic.js`, not by a

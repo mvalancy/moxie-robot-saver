@@ -487,6 +487,24 @@
     const state = presence.present === null ? "unknown" : (presence.present ? "here" : "away");
     if (el && el.setAttribute) el.setAttribute("data-presence", state);
     if (label) label.textContent = state.toUpperCase();
+    /* HIDDEN UNTIL IT KNOWS SOMETHING (2026-09-06, owner-reported from a phone).
+     *
+     * `presence` is what the ROBOT'S OWN CAMERA has reported over MQTT. On the hosted site
+     * there is no robot and there are no vision events, so `presence.present` is `null`
+     * forever and this badge sat in the corner of every visitor's screen reading
+     * "PRESENCE UNKNOWN" — a field that cannot ever say anything else, occupying real
+     * estate on a 390 px phone, and reading to a visitor as though something were broken.
+     *
+     * "Unknown" is honest but it is not INFORMATION, and a readout with exactly one
+     * reachable value is furniture. So the badge now appears the moment a face event
+     * actually arrives and stays out of the way until then — which means that when it IS
+     * on screen it always means something. The `data-presence` attribute is still written
+     * in every state, so `sim/test_presence_bridge.mjs` still observes the whole machine
+     * including the `unknown` start; only the VISIBILITY is conditional.
+     *
+     * `hidden` rather than a style or a class, matching `#liveness-hold`: visibility is a
+     * property, not a thing two files have to keep in sync. */
+    if (el) el.hidden = (state === "unknown");
     const btn = document.getElementById("presence-toggle");
     if (btn) btn.textContent = presence.present ? "Walk away" : "Walk in";
     const st = document.getElementById("presence-status");
