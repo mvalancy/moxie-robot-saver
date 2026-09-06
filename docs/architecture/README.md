@@ -81,7 +81,14 @@ A backend + Sim are built from these directly; each cites the study but reads on
   **unknown** rather than guessing them, designs eight refusals before the happy path — including the two
   hazards the seam already contains, a config document that is re-asserted on every reconnect and a fleet
   whitelist shared with the per-robot one — and finds that the brick risk is not a bad payload but
-  defeating the robot's own signature gate. Concludes **specify, do not build**). One page there is the
+  defeating the robot's own signature gate. Concludes **specify, do not build**), and
+  [`backlog/visemes.md`](backlog/visemes.md) (**`TTSMark[]` visemes — the research slice** the audit
+  asked for instead of a build agent. Answers the load-bearing question — Piper **can** emit exact
+  per-phoneme durations, after a one-time graph patch that Piper itself ships — and then finds that the
+  row is not about marks: the browser consumer is *already built*, and the ceiling is a face with one
+  drivable degree of freedom and a combine rule that can only open her mouth, never close it. So a
+  perfect phoneme track renders as a differently-timed version of the same animation. Recommends the
+  cheap universal half first). One page there is the
   odd one out and deliberately so:
   [`backlog/community-signals.md`](backlog/community-signals.md) — **the inbound half**, what owners
   holding a real Moxie report on public trackers and forums, cited by URL and date and ranked by how
