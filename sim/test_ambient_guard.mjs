@@ -406,10 +406,40 @@ try {
     await page.waitForFunction("!window.moxieAudio.isMoxieBusy(1600)", { timeout: 15000 });
     const after = await tickAmbient(page);
     eq(after.pred.busy, false, "past the grace beat she is free again…");
+
+    /* --- 1e. …AND STILL SILENT, BECAUSE THE CONVERSATION HOLD OUTLIVES THE GRACE BEAT.
+     *
+     * THIS BLOCK USED TO ASSERT THE OPPOSITE, and the change is a deliberate contract
+     * change rather than a test being bent to fit (2026-09-06, owner-reported). The
+     * AUDIO guard above lifts 1600 ms after her last sample, which is the right rule for
+     * "do not talk over her". It is the wrong rule for "do not interrupt the person
+     * talking to her": this test reaches here by TYPING a turn into the composer, and a
+     * visitor who has just typed is about to read an answer and type again. The old
+     * behaviour — quip 1.6 s after her reply finishes — is exactly the interruption the
+     * owner reported, and `ambient.js`'s conversation hold (45 s past the last turn) is
+     * what fixes it.
+     *
+     * So the guard now proves both halves, which is more than it proved before:
+     *   · while the hold is on she stays quiet even though the audio guard has lifted;
+     *   · once it lapses she really does come back — nothing here can make her
+     *     permanently silent, which was this block's actual point all along.
+     * The hold is released through `__ambient.quietMs()` rather than by sleeping 45 s. */
+    await sleep(2500);
+    const heldTotal = starts(await timeline(page), "clip").length;
+    eq(heldTotal, before,
+       `…and she is STILL quiet, because a turn was typed and the conversation hold ` +
+       `outlives the 1.6 s audio grace (${heldTotal} total vs ${before} before)`);
+    const holding = await page.evaluate(() => window.__ambient.state().conversing);
+    eq(holding, true, "…which the page records as an active conversation hold");
+
+    // Now let the conversation go quiet, and she comes back.
+    await page.evaluate(() => window.__ambient.quietMs(1));
+    await page.waitForFunction("window.__ambient.state().conversing === false", { timeout: 5000 });
+    await tickAmbient(page);
     await sleep(2500);
     const total = starts(await timeline(page), "clip").length;
     ok(total > before,
-       `…and ambient RESUMES — a clip started once she was done (${total} total vs ${before} before)`);
+       `…and ambient RESUMES once the conversation is over (${total} total vs ${before} before)`);
 
     eq(notable(errs, aborted).length, 0,
        `no console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);

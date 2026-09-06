@@ -323,6 +323,17 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
 #hud-frame .br { bottom: 0; right: 0;   border-bottom: 1px solid var(--glow-30); border-right: 1px solid var(--glow-30); }
 
 /* ---- speech callout ------------------------------------------------------- */
+/* ANCHORED TO HER HEAD by `moxie.js::updateBubbleAnchor`, which writes `--bx`/`--by`
+   (stage-relative px) every frame and adds `.anchored`.
+
+   THE DEFAULTS ARE THE OLD BEHAVIOUR, and that is deliberate: without `.anchored` this is
+   still `top: 22px; left: 50%; translateX(-50%)`, exactly the pinned caption it was. So a
+   page where the 3-D never starts — WebGL refused, a reduced-motion path, a test that
+   never runs a frame — shows the bubble where it has always been rather than at 0,0.
+
+   `min-width` is dropped once anchored. A 220 px floor is right for a banner spanning the
+   top of the screen and wrong for a thought balloon over a head: it made two-word quips
+   ("Yoshimi?") into a wide empty box that no longer read as pointing at her. */
 #bubble {
   position: absolute;
   top: 22px;
@@ -340,6 +351,52 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
   opacity: 1;
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
+#bubble.anchored {
+  top: var(--by, 22px);
+  left: var(--bx, 50%);
+  /* bottom-centre of the box sits ON the anchor point, so the box hangs above her head */
+  transform: translate(-50%, -100%);
+  min-width: 0;
+  max-width: min(340px, calc(100% - 32px));
+  /* No transition on `transform`: this moves every frame with the camera, and a 0.2s ease
+     on a per-frame write is a bubble that swims a fifth of a second behind her head. The
+     opacity transition below is kept — that one fires on show/hide, not on motion. */
+  transition: opacity 0.2s ease;
+  will-change: top, left;
+}
+/* THE TAIL — a small notch under the bubble pointing down at her. It is what turns "a box
+   that happens to be above the robot" into "the robot is thinking this", and it only
+   exists in the anchored state, where there is something below to point at. */
+#bubble.anchored::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%) rotate(45deg);
+  background: rgba(14, 14, 20, 0.88);
+  border-right: 1px solid var(--glow-30);
+  border-bottom: 1px solid var(--glow-30);
+}
+/* FLIPPED — there was no room above her head, so the bubble hangs under it instead and
+   the tail moves to the top edge. `moxie.js::updateBubbleAnchor` decides; a notch left on
+   the bottom of a bubble that is itself below the head points away from her, which is
+   worse than no tail at all. */
+#bubble.anchored.below { transform: translate(-50%, 0); }
+#bubble.anchored.below::after {
+  bottom: auto;
+  top: -7px;
+  border-right: none;
+  border-bottom: none;
+  border-left: 1px solid var(--glow-30);
+  border-top: 1px solid var(--glow-30);
+}
+/* Behind the camera: `project()` returns mirrored coordinates, so the bubble is faded out
+   rather than drawn somewhere untrue. Not `display:none` — that would drop it from the
+   accessibility tree mid-sentence, and its text is still the current utterance. */
+#bubble.off-stage { opacity: 0; pointer-events: none; }
+
 #bubble .callout-label {
   display: block;
   font-family: var(--font-mono);
@@ -478,18 +535,41 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
  * and everything outside this box stays orbit-draggable because the dock only claims its
  * own footprint — `#hud` is `pointer-events: none` and only real chrome opts back in.
  * ------------------------------------------------------------------------ */
+/* FULL WIDTH OF WHATEVER SPACE IS LEFT, at every viewport.
+ *
+ * It used to be a 760 px column centred in the stage area, which on a wide screen left
+ * the conversation reading as a narrow strip with the page's most important control
+ * floating in the middle of it. `justify-self: stretch` hands it the whole grid area
+ * instead — and because `chat` is a grid AREA rather than an overlay, "the whole area"
+ * already means the right thing in all three states without a single width calculation:
+ *
+ *   · engineering rail OPEN   -> the grid reserves `var(--rail-w)` for `panel`, so the
+ *                                dock spans the stage column and stops at the rail.
+ *   · rail CLOSED (`.rail-closed`, desktop) -> the rail column collapses to the width of
+ *                                its own handle and the dock spans the rest.
+ *   · phone -> the grid is one column and `chat` is its own bottom row, so the dock is
+ *              full-bleed under the drawer whatever the drawer is doing.
+ *
+ * There is no `max-width` any more, and that is the point of the change; the line length
+ * is bounded where it actually matters instead — on the READING column (`#transcript`'s
+ * rows), which keeps prose legible on a 4K monitor without narrowing the control. */
 #chat-dock {
   grid-area: chat;
   min-width: 0;
-  justify-self: center;
+  justify-self: stretch;
   width: 100%;
-  max-width: 760px;
   /* `env(safe-area-inset-bottom)` keeps the row off an iPhone's home indicator. */
   padding: 0 10px max(10px, env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
+/* NOTE the column-collapse rule that belongs with this lives in the `min-width: 900px`
+ * block at the bottom of the file, NOT here. Written here first, it broke the phone
+ * layout: `#hud.rail-closed` (id + class) outranks the phone media query's `#hud`, so a
+ * collapsed drawer got a phantom second column while `grid-template-areas` still named
+ * one — and every area became invalid. Specificity beats source order across a media
+ * query, which is the trap. */
 
 /* The one line that tells a stranger what this page is for. It steps aside once there is
    a conversation to read — `:has()` only; a browser without it drops the rule and keeps
@@ -937,14 +1017,18 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   align-self: center;
   padding: 4px 0;
 }
-#transcript .turn {
+#transcript .turn,
+#transcript .mutter {
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   padding: 5px 9px;
   border-radius: 4px;
   background: var(--surface-2);
-  max-width: 92%;
+  /* Two bounds, and the `ch` one is the reason the dock itself no longer needs a
+     `max-width`: a row stops growing at roughly 78 characters, which is a readable
+     measure, so a 2560 px viewport gets a full-width CONTROL and still-legible PROSE. */
+  max-width: min(92%, 78ch);
   overflow-wrap: anywhere;
 }
 #transcript .turn.user {
@@ -967,6 +1051,26 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   color: var(--muted-2);
 }
 #transcript .turn.moxie .who { color: var(--cyan-dim); }
+
+/* HER SELF-TALK, IN THE LOG — visibly a different kind of thing from a turn.
+   Centred rather than left/right aligned because it is addressed to nobody: the two
+   turn styles use the edges to say "you" and "her", and a quip is neither side of that
+   conversation. Dimmer and italic for the same reason. It carries `aria-hidden` from
+   `ambient.js` (see `logMutter`), so this is a purely visual channel. */
+#transcript .mutter {
+  align-self: center;
+  text-align: center;
+  font-style: italic;
+  color: var(--muted-2);
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.09);
+  opacity: 0.85;
+}
+#transcript .mutter .who {
+  color: var(--muted-2);
+  opacity: 0.75;
+  letter-spacing: 0.1em;
+}
 
 /* ---- session / file load -------------------------------------------------- */
 .file-load {
@@ -1106,6 +1210,15 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
      the drawer handle, the composer and — on a hosted origin — a two-line mic warning. */
   #chat-dock { padding: 0 8px max(8px, env(safe-area-inset-bottom)); }
   #chat-dock #transcript { max-height: min(26vh, 168px); }
+  /* WHEN THE ENGINEERING DRAWER IS OPEN, THE LOG GIVES WAY — not the drawer.
+     Both are `auto` rows in the phone grid and the stage (`1fr`) is the only thing that
+     shrinks on its own, so on a 640 px phone a full-height log plus an open drawer plus
+     the topbar and the notice simply do not fit, and the drawer is what loses. That was
+     invisible until the log started filling itself with her self-talk on an idle page:
+     before, an untouched page had an empty 40 px log and the sum always fit.
+     A visitor who has deliberately opened the engineering panel is looking at the panel,
+     so the log is the right thing to shorten — and it scrolls, so nothing is lost. */
+  #hud:not(.rail-closed) #chat-dock #transcript { max-height: min(14vh, 92px); }
   #chat-cue { font-size: 11.5px; }
   #composer { padding: 7px; }
   #composer button { padding: 8px 11px; }
@@ -1175,8 +1288,27 @@ body[data-mic="on"] #mic-btn::before { content: "● "; }
 @media (min-width: 900px) {
   :root { --rail-w: clamp(340px, 25vw, 400px); }
   #hud { grid-template-columns: minmax(0, 1fr) var(--rail-w); }
-  #rail-toggle { display: none; }
-  #hud.rail-closed #rail-scroll { display: flex; }
+
+  /* THE ENGINEERING PANEL CLOSES ON A WIDE SCREEN TOO (2026-09-06).
+     It could not before: the toggle was hidden and `.rail-closed` was actively
+     overridden back open, so "the space available to the chat dock" had exactly one
+     desktop value. That made the dock's own full-width behaviour only half true — it
+     filled the stage column, and the stage column was always 340-400 px short of the
+     window. The panel is engineering chrome on a page whose point is talking to Moxie,
+     so being able to put it away is the same decision as making the dock fill the space.
+     Collapsed it becomes the handle and nothing else, so the way back is always visible
+     — a control that hides itself with no way to return is how a "close" button becomes
+     a bug report. */
+  #rail-toggle { display: flex; }
+  #hud.rail-closed { grid-template-columns: minmax(0, 1fr) auto; }
+  #hud.rail-closed #rail-scroll { display: none; }
+  #hud.rail-closed #panel { margin-left: 0; }
+  #hud.rail-closed #rail-toggle {
+    border-bottom: none;
+    width: auto;
+    padding: 0 var(--sp-3);
+  }
+  #hud.rail-closed #rail-toggle .caret { transform: rotate(45deg); }   /* points left = pull open */
 }
 
 /* ---- Environment awareness (env.js): hosted-demo vs local, disabled hints ---- */
