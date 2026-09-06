@@ -19,6 +19,9 @@
 (function () {
   "use strict";
   var lines = null, bag = [], timer = 0, relax = 0, gt = [], running = false, started = false;
+  var lastTurnAt = 0;                       // when the visitor last exchanged a real turn
+  var watching = false;                     // the transcript observer is attached once
+  var holdTimer = 0;                        // repaints the paused hint when the hold lapses
   var loading = null;                       // the single in-flight ambient.json fetch
   var degraded = null;                      // ambient.json's `degraded` entry, if any
   var degradedSaid = false;                 // said ONCE per session, then never again
@@ -79,6 +82,150 @@
     return !c || c.checked;   // default on if the control is absent
   }
 
+  /* ======================================================================== *
+   * THE CONVERSATION HOLD — she stops muttering to herself while you are talking
+   * to her, and starts again once you have stopped.
+   *
+   * WHY THIS IS NOT ALREADY COVERED by the `moxieBusy()` guard below. That guard is
+   * about AUDIO: it refuses to talk OVER her own answer, and it lifts 1600 ms after her
+   * last syllable. A conversation is not audio — it is a person composing the next
+   * thing to say. The gap between "she finished answering" and "you finished typing"
+   * is exactly the 11-24 s ambient window, so the shipped behaviour was that Moxie
+   * interrupted a visitor mid-sentence with a non-sequitur about world domination,
+   * every single time, while they were still reading her reply. `moxieBusy()` cannot
+   * see that, because nothing is playing.
+   *
+   * HOW A TURN IS DETECTED: a `MutationObserver` on `#transcript`, counting only
+   * `.turn` rows. That is deliberately the DOM rather than a hook into `bridge.js`,
+   * because five different things put a turn in that log — the composer's Send, the
+   * mic, the scripted demo session, `cloud-transport.js`'s reply, and the MQTT bridge —
+   * and a hook would have to be added to each one and remembered by whoever adds the
+   * sixth. The log is the one place all of them already meet. Our OWN quips are written
+   * as `.mutter` rows precisely so they are invisible to this observer; if ambient
+   * counted its own lines as conversation it would silence itself for ever after one
+   * quip.
+   *
+   * THE QUIET PERIOD is 45 s, and the number is a judgement rather than a measurement,
+   * so here is the reasoning. It has to be longer than the pause where someone reads a
+   * reply and types an answer (the thing this exists to protect) and shorter than the
+   * span where an abandoned page feels dead. Her own reply takes ~5 s to play and the
+   * ambient window is 11-24 s, so anything under ~30 s would still land inside a normal
+   * back-and-forth. Forty-five seconds puts the first quip after a conversation at
+   * 45-69 s past the last turn, which reads as "she got bored waiting" rather than as
+   * an interruption.
+   *
+   * THE VISITOR'S OWN TOGGLE IS NOT TOUCHED. `#idle-on` stays the master switch and
+   * this hold sits underneath it: off means off, and the hold can only ever ADD
+   * silence, never take a visitor's "off" and turn it back on. Programmatically
+   * flipping a checkbox the visitor set would also destroy the one bit of state that
+   * says what they actually wanted — after which "re-enable when idle" would have no
+   * way to know whether it was re-enabling its own pause or overriding a person.
+   * `#hud` carries `chatting` instead, so the UI can SAY it is paused (style.css) while
+   * the setting underneath stays whatever the visitor chose.
+   * ======================================================================== */
+  var CHAT_QUIET_MS = 45000;
+
+  /** True while a conversation is live enough that a quip would be an interruption. */
+  function conversing() {
+    return lastTurnAt > 0 && (Date.now() - lastTurnAt) < CHAT_QUIET_MS;
+  }
+
+  /** Paint the paused state, so the toggle does not look broken while it is held. */
+  function reflectHold() {
+    /* NOT gated on `running`, deliberately. `start()` only runs once `mode.js` has decided
+     * the page is in a state that talks, so an ambient loop that is merely not armed YET —
+     * a booting page, a degraded deployment that later recovers — would show no hint while
+     * the hold was nonetheless real and the visitor's switch was on. Worse, `running`
+     * flips with page mode, so the hint would blink on and off for reasons that have
+     * nothing to do with the conversation it is describing. What the line claims is "your
+     * switch is on and she is holding off because you are talking", and that is exactly
+     * these two predicates. */
+    var held = !!(livenessOn() && conversing());
+    var hud = document.getElementById("hud");
+    if (hud) hud.classList.toggle("chatting", held);
+    var hint = document.getElementById("liveness-hold");
+    // `hidden` rather than a style, so the rule the rest of this page follows holds here
+    // too: visibility is a property, not a class somebody has to keep in sync.
+    if (hint) hint.hidden = !held;
+  }
+
+  function noteTurn() {
+    lastTurnAt = Date.now();
+    reflectHold();
+    // Repaint when the hold LAPSES. Without this the "paused" hint would hang around
+    // until the next `tick()`, which is up to 24 s later — so the UI would still say she
+    // is holding off for a conversation that ended half a minute ago.
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(reflectHold, CHAT_QUIET_MS + 50);
+  }
+
+  /** Watch the comms log for REAL turns — never our own `.mutter` rows. */
+  function watchTranscript() {
+    if (watching) return;                   // `start()` may be called more than once
+    var el = document.getElementById("transcript");
+    if (!el || typeof MutationObserver !== "function") return;
+    watching = true;
+    new MutationObserver(function (records) {
+      for (var i = 0; i < records.length; i++) {
+        var added = records[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          var n = added[j];
+          if (n && n.nodeType === 1 && n.classList && n.classList.contains("turn")) {
+            noteTurn();
+            return;
+          }
+        }
+        // A STREAMED REPLY IS ALSO A TURN. `addTranscript`'s `append` path does not add a
+        // row at all — it concatenates into the last `.turn.moxie`'s `.msg` — so a long
+        // answer arriving in chunks would otherwise look like silence to this observer
+        // and let a quip land in the middle of it.
+        var t = records[i].target;
+        if (records[i].type === "characterData" ||
+            (t && t.nodeType === 1 && t.classList && t.classList.contains("msg"))) {
+          noteTurn();
+          return;
+        }
+      }
+    }).observe(el, { childList: true, subtree: true, characterData: true });
+  }
+
+  /** Put one quip in the comms log, where the visitor can actually read it.
+   *
+   * IT IS NOT A `.turn`, AND THAT IS THREE DECISIONS AT ONCE:
+   *   1. `addTranscript()`'s streaming path appends later chunks into the last
+   *      `.turn.moxie` it can find. Give a quip that class and a streamed reply would
+   *      concatenate ONTO the end of a mutter about Skynet — one row, two voices.
+   *   2. `#chat-cue` ("Talk to Moxie") hides itself with `:has(#transcript .turn)`, i.e.
+   *      once there is a conversation. A quip is not a conversation, and an idle page
+   *      would otherwise lose the one line that says what the page is for.
+   *   3. The observer above ignores it, so she cannot silence herself with her own voice.
+   *
+   * `aria-hidden` keeps the existing accessibility contract that `sim.html` spells out
+   * at `#transcript`: that region is `aria-live`, so every row added to it is READ OUT.
+   * Announcing an unprompted quip every 11-24 s would be exhausting and would talk over
+   * the answer the visitor actually asked for. She still says it aloud, and `#bubble`
+   * remains browsable for anyone who wants to read the current one. */
+  function logMutter(text) {
+    var el = document.getElementById("transcript");
+    if (!el || !text) return;
+    var row = document.createElement("div");
+    row.className = "mutter";
+    row.setAttribute("aria-hidden", "true");
+    var who = document.createElement("span");
+    who.className = "who";
+    who.textContent = "Moxie \u00b7 to herself";
+    var msg = document.createElement("span");
+    msg.className = "msg";
+    msg.textContent = text;              // textContent = XSS-safe, same as addTranscript
+    row.appendChild(who);
+    row.appendChild(msg);
+    el.appendChild(row);
+    // Only follow the tail if the visitor is already there. Yanking the scroll position
+    // while somebody is reading back through the conversation is its own interruption.
+    var atBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  }
+
   function schedule(initial) {
     clearTimeout(timer);
     if (!running) return;
@@ -105,6 +252,20 @@
       m.setSpeech(ln.text);
       if (window.moxieAudio) window.moxieAudio.speak(ln.text, group || "ambient");
     } catch (e) {}
+    /* …and into the comms log, so the quips are readable rather than only catchable —
+     * BUT ONLY THE QUIPS. `group` is "ambient" for the idle bag and "moxie" for the one
+     * degraded line, and this file has kept those two apart from the beginning: the
+     * degraded sentence lives outside `lines[]` precisely so it can never surface as a
+     * random mutter. It is also not self-talk — it is addressed to the visitor — so
+     * filing it under "Moxie · to herself" would be the wrong label on the one sentence
+     * where being understood matters most.
+     *
+     * It was logged unconditionally for about an hour, and the way that surfaced is worth
+     * recording: `sim/test_mobile_layout.mjs` went red on all four phones, because the
+     * degraded page says its line within a second of load, the row grew `#chat-dock`, and
+     * the drawer underneath it lost the space the test taps into. A content decision and a
+     * layout bug, from one missing condition. */
+    if ((group || "ambient") === "ambient") logMutter(ln.text);
 
     // relax back toward a calm face + rest pose (roughly the line's spoken length)
     clearTimeout(relax);
@@ -153,7 +314,12 @@
 
   function tick() {
     if (!running) return;
+    reflectHold();
     if (document.hidden || !livenessOn()) { schedule(false); return; }
+    // A CONVERSATION IS IN PROGRESS. Same guard idiom as every other refusal in this
+    // function — re-arm, never stop — so the hold can only ever delay a quip and can
+    // never leave her permanently silent.
+    if (conversing()) { schedule(false); return; }
     if (moxieBusy()) { schedule(false); return; }
     var m = window.moxie, ln = nextLine();
     if (!m || !ln) { schedule(false); return; }
@@ -167,7 +333,11 @@
     var kick = function () { schedule(initial); };
     if (!started) { started = true; loadOnce().then(kick); } else kick();
   }
-  function stop() { running = false; clearTimeout(timer); clearTimeout(relax); clearGesture(); }
+  function stop() {
+    running = false;
+    clearTimeout(timer); clearTimeout(relax); clearTimeout(holdTimer); clearGesture();
+    reflectHold();   // liveness off: the paused hint must not outlive the feature
+  }
 
   /* ======================================================================== *
    * THE ONE DEGRADED LINE (live-sim-demo.md §6.2, §6.3)
@@ -269,6 +439,31 @@
                             return { text: degraded && degraded.text ? degraded.text : null,
                                      said: degradedSaid, pending: degradedPending };
                           } };
+
+  /* A TEST SEAM, not an API. `sim/test_liveliness.mjs` drives the hold with a real
+   * browser and cannot wait 45 real seconds per assertion, so it may shorten the quiet
+   * period and read back the recorded state (playbook rule 11: assert what the page
+   * RECORDED, never a live sample). Nothing in the page calls any of this. */
+  window.__ambient = {
+    quietMs: function (ms) { if (typeof ms === "number" && ms >= 0) CHAT_QUIET_MS = ms; return CHAT_QUIET_MS; },
+    state: function () {
+      return { running: running, conversing: conversing(), livenessOn: livenessOn(),
+               lastTurnAt: lastTurnAt, watching: watching };
+    },
+    noteTurn: noteTurn,
+    say: function (text) { logMutter(text); }
+  };
+
+  /* THE OBSERVER IS ATTACHED AT LOAD, NOT IN `start()`.
+   *
+   * It was in `start()` first, and that was wrong for a reason worth keeping: `start()`
+   * only runs when the liveness toggle is on AND `mode.js` has decided the page is in a
+   * state that talks. A visitor who turns liveness on halfway through a conversation, or a
+   * page that starts degraded and recovers, would then have an ambient layer whose idea of
+   * "when did we last speak" began at the moment it woke up — so its very first act could
+   * be to interrupt a live conversation. The observer costs one `MutationObserver` on a
+   * small node and it makes `lastTurnAt` true from the first turn of the page. */
+  watchTranscript();
 
   watchMode();          // sim.html loads mode.js BEFORE ambient.js, so it is already there
 

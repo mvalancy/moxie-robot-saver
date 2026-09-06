@@ -279,6 +279,45 @@ already verify, and is paired with an `actions/cache` keyed on that same pinned 
 one for `~/.cache/huggingface`, since faster-whisper downloads `base.en` itself). Details:
 [`sim/ci/README.md`](../../sim/ci/README.md).
 
+## The deployed check — the one tier that looks at what Cloudflare actually serves
+
+Everything above, hermetic and live alike, tests a server we started. **No suite in this repo
+asserted anything about the deployed artifact** until 2026-09-05, and that is a real gap rather
+than a purist one: Cloudflare Pages **injects its Web Analytics beacon into every HTML
+response** — a `static.cloudflareinsights.com` script tag this repo neither writes nor can edit
+— and the first CSP we shipped refused it on *every* production page load. Nothing local could
+have seen it. The long note in [`sim/web/_headers`](../../sim/web/_headers) is that post-mortem.
+
+[`sim/check_deployed.mjs`](../../sim/check_deployed.mjs) drives a real browser at a real
+deployment, phone-sized (390×844, a real iOS UA), and asserts:
+
+1. **the composer is reachable on a fresh load** — no tap on CONTROLS, no scrolling:
+   `#speech-input` and `#speech-btn` each have a non-zero box, lie inside the first viewport,
+   and win a `document.elementFromPoint` hit test at their own centre. Three clauses, because
+   the three ways this has failed each pass the other two;
+2. **the injected beacon loads and the page fires zero `securitypolicyviolation` events.**
+
+```sh
+node sim/check_deployed.mjs                     # the canonical origin sim/web/index.html declares, + /sim
+node sim/check_deployed.mjs https://host/sim    # any deployment (or MOXIE_DEPLOYED_URL=…)
+node sim/check_deployed.mjs --selftest          # hermetic teeth; the fast tier runs this every push
+gh workflow run deployed.yml                    # the real thing, on demand
+```
+
+**It is a monitor, not a merge gate** ([`sim/ci/deployed.yml`](../../sim/ci/deployed.yml),
+schedule + dispatch), and the reasoning is measurement rather than taste. Gating a PR on its
+Pages preview needs a preview URL that is *true for that commit*: this repo's Pages integration
+creates **no GitHub Deployment** (`gh api …/deployments` → `[]`) so `deployment_status` never
+fires; a branch alias **404s before its first build** and serves the previous build after; a
+fork PR gets no preview at all; and — measured — **no `*.pages.dev` host carries the beacon**
+(23,425 bytes on every preview against 23,792 on the custom domain), so a preview cannot
+exercise the half this exists for. A gate that depends on someone else's build finishing is a
+gate people learn to re-run rather than read. What *does* run on every push is `--selftest`, in
+the fast tier's browser job: it serves four loopback copies of `sim/web` under the real
+`_headers` policy and requires the unmutated one to pass every clause while three mutated ones
+each redden a **different** one — a check on the checker, so the scheduled run can never become
+a green light for an instrument that stopped working.
+
 ## Run it now
 
 ```sh

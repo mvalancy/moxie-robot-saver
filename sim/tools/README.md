@@ -168,6 +168,22 @@
   second run also found a test defect the first hid: `U3`'s own assertion could never be the failing one,
   because the over-publish crossed the 12-unit ceiling three checks earlier — so the row is now driven at
   the production ceiling, out of the way.
+- **`telemetry_rollup_mutation_check.py`** — the same proof for **durable telemetry's two records**,
+  after a `sil` red on 2026-09-05 (PR #164) whose diff could not reach the code it reddened: the ring
+  (`telemetry_packets.json`) held three envelopes and the daily roll-up (`telemetry_daily.json`) had
+  counted two. The property is that the two **cannot durably disagree, because one is a log and the
+  other is a view over it** — an envelope carries a monotonic `seq`, the roll-up carries `through_seq`,
+  and `reconcile_rollup` replays the difference. Each row deletes one of the three mechanisms it rests
+  on: the write **order** (the exact record before the bounded one), the **critical section** (both
+  writes as one, so two ingests cannot lose an update the ring keeps), and the **watermark** itself.
+  `python3 sim/tools/telemetry_rollup_mutation_check.py   # 12 rows; every one must say "caught"`
+  (about 30 s), checked against [`../tests/test_telemetry_rollup_repair.py`](../tests/README.md) plus the
+  two older telemetry suites. Two notes worth keeping. **M2's first draft proved nothing**: it locked the
+  *other* record instead of deleting the lock, and in-process `JsonStore._transaction_path` serialises
+  every transaction on one RLock whatever record it names — so the mutation was invisible without a
+  second process. And **M8 is the shipped form of a rejected design**: treating an unstamped legacy
+  envelope as *unfolded* would double the lifetime total of every appliance on its first read after the
+  upgrade, which is a wrong number that grows on refresh.
 - **`soak.py`** — the SIL soak behind [`../run_soak.sh`](../run_soak.sh)
   ([production hardening](../../docs/architecture/backlog/production-hardening.md) §5): real mosquitto in
   a container, a real `mqtt/run.py`, real virtual robots, `MOXIE_APP=echo` so nothing reaches a gateway.

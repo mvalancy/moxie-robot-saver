@@ -457,11 +457,17 @@ def test_the_endpoint_and_key_fall_back_voice_then_llm(monkeypatch):
 
 def test_nothing_set_still_returns_what_it_returned_before(monkeypatch):
     """The no-regression pin: an unset environment builds local whisper when it is
-    installed and None when it is not — the M3 contract, unchanged."""
-    for k in _STT_ENV:
-        monkeypatch.delenv(k, raising=False)
-    import config as _c
-    c = importlib.reload(_c)
+    installed and None when it is not — the M3 contract, unchanged.
+
+    Through `_fresh_config`, not by hand. This test used to inline the delete-and-reload
+    loop and so was the one test in this file that skipped the helper's
+    `MOXIE_SKIP_DOTENV` — which is the entire reason the helper exists. With a dotenv
+    visible it built a gateway transcriber and asserted `is None` against a machine that
+    has ears, i.e. it asserted nothing (playbook rule 20). It is the only test here that
+    fails on a real developer's box even when this FILE is run alone, so it is a defect
+    in the test rather than in collection order; the suite-wide fence in `conftest.py`
+    covers the order-dependent half."""
+    c = _fresh_config(monkeypatch)
     t = c.build_transcriber()
     if WhisperTranscriber.available():
         assert t is not None and t.name == "faster-whisper"

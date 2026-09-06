@@ -38,7 +38,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { requireBrowser, serveWeb, pagesHeaders, makeChecks, finish, web } from "./browser_harness.mjs";
+import { requireBrowser, serveWeb, serveStatic, pagesHeaders, makeChecks, finish, web } from "./browser_harness.mjs";
 
 const LABEL = "CSP + security-headers test";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
@@ -716,6 +716,158 @@ try {
            .then(() => "sent").catch(() => "blocked")), "blocked",
        "…and connect-src keeps its teeth for every other host");
     await page.close();
+  }
+
+
+  /* =====================================================================
+   * 10. `style-src` — THE LAST HOLE, AND THE MEASURED REASON IT IS STILL OPEN.
+   * =================================================================== */
+  {
+    const csp = H["Content-Security-Policy"] || "";
+    const styleSrc = (csp.split(";").find((d) => d.trim().startsWith("style-src")) || "").trim();
+    /* EXHAUSTIVE, like `connect-src` in block 1: a widening is a diff to this line, not a
+     * regex that quietly keeps passing. */
+    deep(styleSrc.split(/\s+/).slice(1), ["'self'", "'unsafe-inline'"],
+         `style-src is 'self' plus 'unsafe-inline' and nothing else (got ${JSON.stringify(styleSrc)})`);
+
+    /* THE CANDIDATE POLICY, DERIVED FROM THE SHIPPED ONE rather than retyped — delete the
+     * keyword and change nothing else. A hand-written "strict" string here could pass while
+     * being a policy we would never actually ship, which is the same class of mistake as a
+     * suite that hard-codes the CSP instead of parsing `_headers`. */
+    const STRICT = csp.replace(styleSrc, "style-src 'self'");
+    ok(STRICT.includes("style-src 'self';") && !/style-src[^;]*unsafe-inline/.test(STRICT),
+       `the derived strict policy is malformed: ${JSON.stringify(STRICT)}`);
+
+    const strictSite = await serveStatic(web, { headers: { ...H, "Content-Security-Policy": STRICT } });
+    try {
+      const sp = await browser.newPage();
+      await sp.setViewport({ width: 1440, height: 900 });
+      /* `docs.html` on purpose: it is the ONLY page whose blocker is not ours to delete,
+       * and mermaid is already initialised on it by `docs.js`. */
+      await sp.goto(`${strictSite.url}/docs.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
+      await new Promise((r) => setTimeout(r, 1500));
+
+      const m = await sp.evaluate(async () => {
+        const v = [];
+        document.addEventListener("securitypolicyviolation", (e) =>
+          v.push({ d: e.effectiveDirective || e.violatedDirective, u: e.blockedURI }));
+        /* Only style refusals. This page also probes the optional :8081 sidecar, which
+         * `connect-src` refuses — counting that would make every number below a lie. */
+        const styleV = () => v.filter((x) => /style-src/.test(x.d || "")).length;
+        const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+
+        /* --- (a) THE CLAIM THIS BLOCK EXISTS TO REFUTE -----------------------------
+         * `_headers` used to say `'unsafe-inline'` had to stay because the JS animates
+         * `el.style.transform` on a rAF loop, "which no hash can cover". No hash is needed:
+         * `style-src` governs `<style>` ELEMENTS, `<link rel=stylesheet>` and the `style`
+         * ATTRIBUTE. A CSSOM property write is none of the three. */
+        const box = document.createElement("div");
+        document.body.appendChild(box);
+        const a0 = styleV();
+        await new Promise((res) => {
+          let n = 0;
+          const frame = () => {
+            box.style.transform = "translateX(" + (n % 40) + "px) rotate(" + n + "deg)";
+            box.style.opacity = "0.6";
+            box.style.setProperty("--csp-probe", n + "px");
+            if (++n < 20) requestAnimationFrame(frame); else res();
+          };
+          requestAnimationFrame(frame);
+        });
+        const cssom = {
+          violations: styleV() - a0,
+          transform: getComputedStyle(box).transform,
+          opacity: getComputedStyle(box).opacity,
+          custom: getComputedStyle(box).getPropertyValue("--csp-probe").trim(),
+        };
+
+        /* --- (b) NEGATIVE CONTROL — the policy must be seen REFUSING something ------
+         * All three shapes `style-src` really does police, in one go. A policy never
+         * observed refusing anything is not a policy. */
+        const b0 = styleV();
+        const st = document.createElement("style");
+        st.textContent = "#csp-neg{outline:9px solid rgb(0,255,0)}";
+        (document.head || document.documentElement).appendChild(st);
+        const neg = document.createElement("div");
+        neg.id = "csp-neg";
+        neg.innerHTML = '<span id="csp-neg-attr" style="color:rgb(1,2,3)">x</span>';
+        document.body.appendChild(neg);
+        neg.setAttribute("style", "color:rgb(4,5,6)");
+        await settle(200);
+        const refused = {
+          violations: styleV() - b0,
+          directives: v.filter((x) => /style-src/.test(x.d || "")).map((x) => x.d),
+          styleElOutline: getComputedStyle(neg).outlineStyle,
+          innerHTMLAttrColor: getComputedStyle(document.getElementById("csp-neg-attr")).color,
+          setAttributeColor: getComputedStyle(neg).color,
+        };
+
+        /* --- (c) THE ACTUAL BLOCKER ------------------------------------------------
+         * mermaid builds its theme AT RUNTIME: `render()` returns an SVG string carrying a
+         * `<style>` element and a fistful of `style=` attributes, which `docs.js` assigns
+         * through `innerHTML`. Nothing here is ours to move into a .css file, and no hash
+         * can cover it — the bytes differ per diagram, and the docs ship 63 of them. */
+        const c0 = styleV();
+        let mm;
+        try {
+          const r = await mermaid.render("csp_style_probe", "graph TD; A[alpha]-->B[beta];");
+          const host = document.createElement("div");
+          host.innerHTML = r.svg;
+          document.body.appendChild(host);
+          await settle(200);
+          mm = {
+            violations: styleV() - c0,
+            styleEls: host.querySelectorAll("style").length,
+            styleAttrs: host.querySelectorAll("[style]").length,
+            rendered: !!host.querySelector("svg"),
+          };
+        } catch (e) { mm = { error: String((e && e.message) || e) }; }
+
+        return { cssom, refused, mermaid: mm };
+      });
+
+      /* ---- (a) the refutation, asserted as a NUMBER ---------------------------- */
+      eq(m.cssom.violations, 0,
+         "MEASURED: `el.style.transform` on a rAF loop, `.opacity`, and `setProperty` fire ZERO " +
+         `style-src violations under 'self' — the CSSOM is not what keeps 'unsafe-inline' here ` +
+         `(${JSON.stringify(m.cssom)})`);
+      ok(/matrix\(/.test(m.cssom.transform),
+         `…and the animated transform still APPLIED (got ${JSON.stringify(m.cssom.transform)})`);
+      eq(m.cssom.opacity, "0.6", "…as did the animated opacity");
+      ok(m.cssom.custom !== "",
+         `…as did a custom property written through \`style.setProperty\` (got ${JSON.stringify(m.cssom.custom)})`);
+
+      /* ---- (b) teeth: the strict policy visibly refuses all three real shapes --- */
+      ok(m.refused.violations >= 3,
+         "NEGATIVE CONTROL: a strict style-src must REFUSE an injected <style>, an innerHTML " +
+         `style= attribute and setAttribute("style") — saw ${m.refused.violations} ` +
+         `(${JSON.stringify(m.refused.directives)})`);
+      ok(m.refused.directives.some((d) => /style-src-elem/.test(d)),
+         `…the <style> ELEMENT refusal is style-src-elem (${JSON.stringify(m.refused.directives)})`);
+      ok(m.refused.directives.some((d) => /style-src-attr/.test(d)),
+         `…and the ATTRIBUTE refusals are style-src-attr (${JSON.stringify(m.refused.directives)})`);
+      eq(m.refused.styleElOutline, "none", "…and the injected <style> did NOT take effect");
+      ok(m.refused.innerHTMLAttrColor !== "rgb(1, 2, 3)",
+         `…nor did the innerHTML style= attribute (got ${m.refused.innerHTMLAttrColor})`);
+      ok(m.refused.setAttributeColor !== "rgb(4, 5, 6)",
+         `…nor did setAttribute("style") (got ${m.refused.setAttributeColor})`);
+
+      /* ---- (c) THE INVERTING GUARD -------------------------------------------- *
+       * This is the only assertion in this file that WANTS a violation. It is what makes
+       * the hole in `style-src` a measured fact with an owner rather than a paragraph of
+       * prose that nothing checks. The day mermaid stops emitting runtime styles — a
+       * re-vendor, a config, a replacement renderer — this reddens, and the fix is not to
+       * relax it: it is to drop `'unsafe-inline'` from `style-src` in `sim/web/_headers`
+       * and delete this assertion. */
+      ok(!m.mermaid.error, `the mermaid probe must run at all (${m.mermaid.error || "ok"})`);
+      ok(m.mermaid.styleEls > 0 || m.mermaid.styleAttrs > 0,
+         `mermaid still emits runtime styles into its SVG (${JSON.stringify(m.mermaid)})`);
+      ok(m.mermaid.violations > 0,
+         "THE BLOCKER, STILL REAL: mermaid's generated SVG is refused by a strict style-src " +
+         `(${JSON.stringify(m.mermaid)}). IF THIS EVER READS ZERO, the last hole can close — ` +
+         "remove 'unsafe-inline' from style-src in sim/web/_headers and delete this check.");
+      await sp.close();
+    } finally { strictSite.close(); }
   }
 
 } catch (e) {

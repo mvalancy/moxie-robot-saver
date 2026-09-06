@@ -1,5 +1,5 @@
 {
- "generated": "docs-247b770db0b0",
+ "generated": "docs-f3ef28ffe738",
  "firmware": "v3.6.4-Zephyr / OTA v24.10.803",
  "files": [
   {
@@ -109,7 +109,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 257276,
+   "bytes": 257821,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -128,7 +128,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 185196,
+   "bytes": 189064,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -238,7 +238,7 @@
    "path": "architecture/config-and-telemetry-contract.md",
    "title": "Config & telemetry contract — what the server manages on the robot",
    "section": "architecture",
-   "bytes": 35954,
+   "bytes": 37577,
    "mermaid": 1,
    "headings": [
     "The loop",
@@ -353,7 +353,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 167460,
+   "bytes": 169016,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -944,7 +944,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 23508,
+   "bytes": 26316,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -954,6 +954,7 @@
     "The 1-week roadmap (drives the build timer)",
     "The layered session timers",
     "Live CI — proving it against the real gateway and real speech, on demand",
+    "The deployed check — the one tier that looks at what Cloudflare actually serves",
     "Run it now"
    ],
    "kind": "md"
