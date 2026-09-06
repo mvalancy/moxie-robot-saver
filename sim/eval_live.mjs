@@ -165,6 +165,13 @@ function score(replies) {
     }
   }
   const exactDupes = texts.length - new Set(texts).size;
+  /* QUESTION RATE, added after the first fix (2026-09-06) because the first fix's own
+   * numbers were misleading. Breaking the affirmation loop took trigram overlap from 1.0
+   * to 0.2 and exact duplicates to zero — and the conversation still read as a loop,
+   * because six of seven turns were "Did you ... today?". Same shape, different words: a
+   * lexical metric cannot see it, and a child would feel nothing but the interrogation.
+   * A companion that ends every turn with a question is interviewing, not talking. */
+  const questions = texts.filter((t) => /\?\s*$/.test(t)).length;
   return {
     turns: replies.length,
     answered: texts.length,
@@ -174,6 +181,8 @@ function score(replies) {
     maxOverlap: Number(maxOverlap.toFixed(3)),
     worstPair: maxOverlap > 0.34 ? [pairA, pairB] : null,
     exactDupes,
+    questions,
+    questionRate: texts.length ? Number((questions / texts.length).toFixed(2)) : 0,
     moods: [...new Set(said.map((r) => r.mood).filter((m) => m !== null))],
     gestures: [...new Set(said.map((r) => r.gesture).filter(Boolean))],
     avgWords: texts.length ? Math.round(texts.reduce((n, t) => n + words(t).length, 0) / texts.length) : 0,
@@ -250,6 +259,7 @@ for (const sc of chosen) {
   console.log(`   -> openings repeated ${s.repeatOpening}/${Math.max(0, s.answered - 1)}` +
               `, max trigram overlap ${s.maxOverlap}, exact dupes ${s.exactDupes}` +
               `, ${s.moods.length} mood(s), ${s.gestures.length} gesture(s)` +
+              `, ${s.questions}/${s.answered} end in '?'` +
               `, ${s.avgWords} words avg, ${s.refusals} refusal(s)`);
   if (s.worstPair) {
     console.log(`      most similar pair:\n        A: ${s.worstPair[0]}\n        B: ${s.worstPair[1]}`);
@@ -258,7 +268,7 @@ for (const sc of chosen) {
 
 /* ---- the summary ---- */
 console.log("\n" + "=".repeat(78));
-console.log("scenario     turns  answered  repeatOpen  maxOverlap  dupes  moods  gestures  words");
+console.log("scenario     turns  answered  repeatOpen  maxOverlap  dupes  ask%  moods  gestures  words");
 for (const r of results) {
   console.log(
     r.scenario.padEnd(12) +
@@ -267,6 +277,7 @@ for (const r of results) {
     (r.repeatOpening + "/" + Math.max(0, r.answered - 1)).padStart(12) +
     String(r.maxOverlap).padStart(12) +
     String(r.exactDupes).padStart(7) +
+    String(Math.round(r.questionRate * 100)).padStart(6) +
     String(r.moods.length).padStart(7) +
     String(r.gestures.length).padStart(10) +
     String(r.avgWords).padStart(7));
