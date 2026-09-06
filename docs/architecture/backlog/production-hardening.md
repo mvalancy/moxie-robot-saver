@@ -1,5 +1,29 @@
 # 🛡️ Production hardening — a robot that stays connected, and a store two processes can share
 
+> ## ✅ P0 + P1 SHIPPED — 2026-09-03. P2 is open by design.
+>
+> *This page carried **no status marker at its top** until 2026-09-06, so a reader landing here met an
+> unbuilt brief whose §1 quotes the audit calling this row 🟠 **needs-a-spec** — while §11 further down
+> had said `✅ shipped 2026-09-03` for both phases since the day they merged. The top is what a build
+> agent reads first.* Re-verified against the code, not against §11 and not against the audit:
+>
+> | §3's decision | Where it actually is |
+> |---|---|
+> | advisory `flock` on a per-record sidecar, JSON staying on disk | [`store.py`](../../../mqtt/moxie_sdk/store.py):444 `transaction()` · :462 `transaction_shared()` · :344 `flock(fd, LOCK_EX \| LOCK_NB)` · the argument at :60 and :110 |
+> | §4's reconnection, incl. the `retry_first_connection` trap | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):372 `reconnect_delay_set` · :797 `loop_forever(retry_first_connection=True)` · :789 the comment naming the trap |
+> | §5's soak | [`sim/run_soak.sh`](../../../sim/run_soak.sh) + [`sim/tools/soak.py`](../../../sim/tools/soak.py) |
+> | P1's durable roster (15th collection) | [`roster.py`](../../../mqtt/moxie_sdk/roster.py):41 `fleet/roster.json` · re-read at `moxie_runtime.py`:1745 |
+> | P1's connection telemetry (16th collection) | [`conn_telemetry.py`](../../../mqtt/moxie_sdk/conn_telemetry.py):49 `fleet/conn_events.json` · `summarize`:175 |
+> | P1's SIGTERM/SIGINT handler | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):808 `_install_signal_handlers` |
+>
+> **What genuinely remains:** only **P2** (§11) — a `MOXIE_STORE=sqlite` backend behind the unchanged
+> five-method API, and only *if* a caller appears that needs a transaction or a query (§3.2's trigger).
+> P2 is deliberately unscheduled, not build-ready. **The ceiling in §0 is unmoved:** no physical Moxie has
+> ever been on our broker, and six of the assumptions in §9 still need one.
+>
+> **The rest of this page is the design as written, deliberately unedited** — it is the argument, not the
+> changelog.
+
 > **Backlog brief v1 · 2026-09-03.** The build document for
 > [OpenMoxie feature audit](../openmoxie-feature-audit.md) **§4.4 #3** — *"Production hardening for a
 > robot that stays connected"* — which the audit ranked third and marked 🟠 **needs-a-spec** for one

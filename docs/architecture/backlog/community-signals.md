@@ -1,6 +1,15 @@
 # 📡 Community signals — what owners actually hit, ranked by evidence
 
-> **Scan 1 · run 2026-09-03.** The [OpenMoxie feature audit](../openmoxie-feature-audit.md) ranks what to
+> **Scan 1 · run 2026-09-03** · *build-ready rows re-verified against the code 2026-09-06 and both still
+> stand:* **C3** (IP drift after pairing) — `grep -rn 'ip_drift'` over `mqtt/` and `server/` returns
+> nothing, so it remains a real, small, build-ready gap on no other list. **§3's `pairing_status` row** —
+> the *mechanism* is still there and the *toggle* is still not: `UNPAIRED_PAIRING_STATUS` and
+> `build_unpaired_cloud_config()` are at
+> [`cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py):75 and :78 (used at
+> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2533), and there is **no unpair control
+> in `server/static/` or `sim/web/`** — the only `Unpair` string in the tree is the *vendor* API described
+> in `docs/guides/factory-reset-a-paired-moxie.md`, which is not ours. *No finding below is re-ranked;
+> only re-checked.* The [OpenMoxie feature audit](../openmoxie-feature-audit.md) ranks what to
 > build by reading *our own* code and specs. Four of its ten items shipped on 2026-09-02, and every one of
 > them came from that inward read. This page is the other direction: **what people holding a real Moxie
 > say is broken**, cited to a public URL and a date, weighted by how many independent reports there are,

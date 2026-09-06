@@ -7,6 +7,29 @@
 > on-device, nothing uploaded."* — effort **M**, status 🟡 *partial: the durable half shipped
 > (PR #55), the insight half is open.*
 >
+> > **✅ Marker re-verified 2026-09-06 against the code — this one was right, and it stays 🟡.** A
+> > *still-open* verdict needs evidence as much as a shipped one, so here it is: **none** of §11's P0
+> > rows 1, 2, 4, 7, 9 or 10 exist. `grep -rn 'RESERVED_EVENTS\|bucket_events\|buckets'` over
+> > [`telemetry.py`](../../../mqtt/moxie_sdk/telemetry.py),
+> > [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) and
+> > [`fleet.py`](../../../server/moxie_server/fleet.py) returns **nothing**; there is no `_mint`, no
+> > `normalize_activity`, and **no `sim/tests/test_insights.py`**. What exists is the durable half this
+> > brief already credits — `roll_up_packet`:380, `reconcile_rollup`:495, `history_view`:520,
+> > `rollup_totals`:547, `summarize_events`:88 — over a **free-string** `event_name` (:105, :403), which
+> > is exactly the vocabulary gap §3 exists to close. `MAX_DAY_EVENTS = 24` (:224) still caps
+> > **first-come**, which is §11's T3 red-first test.
+> >
+> > **Two P0 rows did land, out of band, and the brief should say so:** row 3's `erase_telemetry` +
+> > `DELETE /telemetry` are built (`moxie_runtime.py`:3024, route at :1215-1221, the three-file list
+> > documented at :141 and :3018), and the **P-1** `telemetry_policy` gate on mentor behavior is at
+> > :4880. So P0 is *smaller* than filed, not larger.
+> >
+> > **Still build-ready, and this is what remains:** the reserved event vocabulary + `bucket_events` +
+> > `buckets` through `roll_up_packet`/`history_view` (row 1), `_mint(event)` on the three call sites
+> > (row 3's remainder), `test_insights.py` (row 4), the console carry-through (rows 7–10). §0's ceiling
+> > is unmoved: nothing on this appliance has ever *produced* a `Packet`, so the store is still correct,
+> > tested and **empty**.
+>
 > The audit states the blocker in its own words: those five things *"need a vocabulary this history
 > does not have — `Packet.event_name` is a free string and our corpus recovers no module-scoped
 > events"*. **§3 removes that decision**; §4 says which parent questions the choice can answer and

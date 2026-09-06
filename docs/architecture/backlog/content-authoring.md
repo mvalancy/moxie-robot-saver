@@ -1,5 +1,28 @@
 # ✍️ Content authoring — the verb packs did not ship (§4.4 #6)
 
+> ## ✅ P0 SHIPPED — 2026-09-04. P1 (the paid *try*) and P2 are open.
+>
+> *This page carried **no status marker at all** until 2026-09-06, while its title still read "the verb
+> packs did not ship" and §1 below still opens "Why this is 🟠 today". Both were true when filed and
+> neither is true now.* Re-verified against the code:
+> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):1177 routes `POST /content/item` to
+> `content_save_item` and its own comment names this brief — *"✍️ Rung 4 … the one authoring verb that
+> writes, and the one that owns `validate_item` — deliberately HERE and not in the console proxy, so a
+> direct `curl` at this port cannot skip it (brief R6)"*. The R6 mitigation is restated at
+> [`server/moxie_server/main.py`](../../../server/moxie_server/main.py):1153; the editor panel is
+> [`server/static/index.html`](../../../server/static/index.html):404 (*"✍️ The editor
+> (docs/architecture/backlog/content-authoring.md §4.1)"*) driving
+> [`server/static/app.js`](../../../server/static/app.js):1588 and :1862
+> (`fetch('/local/content/item', {method:'POST'…})`); the validator it must call is
+> [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py):272. Guarded by
+> [`sim/tests/test_content_authoring.py`](../../../sim/tests/test_content_authoring.py).
+>
+> **What genuinely remains** (§11's P1/P2, unchanged and still build-ready): the paid *try* with its
+> budget and the rehearse button, and P2. A9–A11 still need a real parent and A8 a real robot — §0's
+> ceiling is unmoved by P0 shipping.
+>
+> **The rest of this page is the design as written, deliberately unedited.**
+
 > **Backlog brief v1 · 2026-09-03.** The build document for
 > [OpenMoxie feature audit](../openmoxie-feature-audit.md) **§4.4 #6** — *"Packs made content
 > **shippable**; nothing made it **writable**. A parent can install a stranger's conversation and diff
