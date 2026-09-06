@@ -454,6 +454,76 @@ capture is the clip that was played** — both are browser-capture statistics th
 carry. It asserts that a device opened, that the upload is a well-formed *audible* 16 kHz WAV,
 and that the scorer still discriminates on committed bytes.
 
+## Teeth on the browser suites — which checks survive a broken page
+
+A green browser suite proves its assertions are **present**. It does not prove they are
+**load-bearing**. On 2026-09-06 five of them turned out not to be, and every one was found by
+luck — a red on an unrelated diff, or somebody noticing while measuring something else (rule 30
+in [`orchestration-plan.md`](orchestration-plan.md), and that date's status log). Nobody had
+ever swept for them. [`sim/tools/page_teeth_check.py`](../../sim/tools/README.md) makes the
+search deliberate: it serves each suite a **deliberately broken site** and records which of its
+checks stay green.
+
+The breakages are the shapes that actually ship — a script **deleted** (404), a script served
+**200 OK and inert** (no 404, no network error, no code: the subtle one), a fetch **404'd**, a
+document **emptied** behind the same *"Loading…"* placeholder that hid defect 4, and one
+resource **stalled** ~24 s by padding it to 24 MB behind a 1 MB/s throttle. Nothing intercepts
+requests: eleven of these suites intercept for themselves, and a second interceptor would change
+what they are testing.
+
+Two rules keep it an audit rather than a noise generator.
+
+- **Exposure is measured.** A ledger records every URL each suite's browser actually requested
+  on the healthy run, and a suite is in scope for *"delete `qr.js`"* only if it fetched `qr.js`.
+  A green under a breakage a suite never touched is not a finding. **False positives are worse
+  than misses**: one of those sends somebody to fix a test that works.
+- **The instrument may not fail quietly.** The loader hook throws on a moved anchor, and a stall
+  row whose throttle did not apply is *skipped*, never read as "everything stayed green". That
+  bug was in the tool's own first draft — puppeteer 24 takes `{download, upload, latency}` and
+  the CDP field names throw — so a 24 MB file arrived in 231 ms, every suite passed, and the
+  sweep would have reported **no findings** for the whole not-loaded-yet family.
+
+### What the first sweep found: the suites are largely sound
+
+Most breakages are caught, usually by several suites at once, and most of what the tool flags is
+a suite that merely *loads* the broken page without claiming anything about it — rejected by hand,
+not reported. `test_a11y.mjs` is the model to copy: it carries an explicit anti-vacuity guard,
+*"ambient self-talk actually ran (otherwise the next check is vacuous)"*, and that is the check
+that reddened when the corpus 404'd while three quip assertions went vacuously green on `[]`.
+
+Two checks genuinely had no teeth. Both are *"it looked fine"* rather than a missing assertion:
+
+| check | survived | why |
+|---|---|---|
+| `test_csp.mjs` — *"the QR card actually drew a code"*, *"the Wi-Fi QR drew"* | `qr.js` deleted **and** `qr.js` served inert | `if (d[i] < 128) dark++` counts a canvas **nobody drew on**: an untouched 2-D canvas is `rgba(0,0,0,0)`, so its red channel is 0 for every pixel. Both runs reported exactly **45000 dark px** — the whole 300×150 default canvas — against a `> 500` bar, while `hud.js` had bailed at `!window.moxieQR` and the card could not draw at all. |
+| `test_csp.mjs` + `test_docs_explorer.mjs` — *"the README hero … actually DECODED"* | the hero stalled on the wire | both wait on `img.complete` and then `.catch(() => {})` the wait, so an expired wait leaves the check running — and a PNG still arriving does **not** report `naturalWidth === 0`. Chrome fills the dimensions in from the IHDR header. Measured: `{"complete":false,"w":1424,"h":1251}`, green, on an image the page had not decoded. Both files' comments assert the opposite in prose. |
+
+Each fix is two terms — `d[i + 3] > 0` and `hero.complete` — and each carries the control this
+repo asks for: RED against the breakage, GREEN against the healthy page. The canvas one is also
+proved without any suite in the path: a blank 300×150 canvas gives **45000** under the old rule
+and **0** under the new one, while a canvas holding 900 px of real ink gives **900** under both.
+
+### Where the next pass should go — and the one finding this pass could not fix
+
+**`sim/check_deployed.mjs --selftest` still exits 0 against a page that cannot work.** Measured:
+serve `sim/web/hud.js` 200 OK and inert — no simulator control wires up at all — and the
+deployed-artifact checker passes, 61 checks. Its `--selftest` copies `sim/web` per target
+(`mutatedCopy` → `cpSync(web, dir)`), so the breakage really does reach all four of its servers;
+`assertReachable` asserts geometry and hit-tests only. `probe()` still collects `net`, `failed`,
+`blocked` and `consoleErrs`, `report()` still **prints** `failed requests: N   console errors: N`,
+and the only assertion over any of them is the beacon-specific `!p.failed.some(…)` — which
+`--selftest` skips entirely, because it runs with `expectBeacon: false`. So the defect that
+started this hunt is **not closed**: the file prints two numbers it does not assert. That file was
+reserved to another session for this pass, so this is a report rather than a diff.
+
+The same shape, more widely: five of the fourteen `test_*.mjs` browser suites install **no
+`console` or `pageerror` listener at all** — `test_a11y`, `test_bg_perf`, `test_console_insights`,
+`test_liveliness`, `test_mobile_layout`. A page script that 404s or throws is structurally
+invisible to them; they notice a missing script only where some behavioural assertion happens to
+depend on it (`a11y` does, through the Wi-Fi reveal; `liveliness` and `mobile_layout` do not, and
+both exited 0 with `qr.js` deleted). Only [`test_responsive.mjs`](../../sim/test_responsive.mjs)
+asserts on the 404s it observed, and it is the suite that caught the most breakages here.
+
 ## Run it now
 
 ```sh

@@ -169,7 +169,18 @@ try {
   });
   ok(hero && /^img\//.test(hero.src || ""),
      `the README hero should be remapped onto the site root (got ${hero && hero.src})`);
-  ok(hero && hero.w > 0 && hero.h > 0,
+  /* `complete` IS PART OF THE ASSERTION. The wait above `.catch(() => {})`s, so an
+   * expired wait leaves this check running against whatever the DOM happens to hold — and
+   * the comment above is wrong about what that is. A PNG still on the wire does NOT report
+   * `naturalWidth === 0`: Chrome fills the dimensions in from the IHDR header long before
+   * the pixels arrive. Measured 2026-09-06 by `sim/tools/page_teeth_check.py`, with this
+   * 612 KB hero padded to 24 MB behind a 1 MB/s throttle —
+   * `{"src":"img/sim-hero.png","complete":false,"w":1424,"h":1251}`, GREEN, on an image
+   * the page had not decoded. So the third cause of a false reading was named here and
+   * then not actually guarded against. Requiring `complete` costs nothing: it flips true
+   * on error as well as on load, so a 404, a refusal and an abort all still have to clear
+   * `naturalWidth > 0`, which none of them can. */
+  ok(hero && hero.complete && hero.w > 0 && hero.h > 0,
      `the README hero should actually decode (got ${JSON.stringify(hero)}; ` +
      `image responses: ${imgNet.join(" | ") || "NONE — no request was ever issued"})`);
 

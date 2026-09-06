@@ -4,8 +4,9 @@ checks stay green.
 The mutation checkers next to this file (`ext_mutation_check.py`,
 `brain_mutation_check.py`, …) delete a guard from the PRODUCT and require its test to
 redden. This is the same proof turned on the other half of the browser suites' world:
-it breaks the **page** — deletes a script, 404s a fetch, guts a module, empties a
-document, slows the network — and requires the suites that load that page to notice.
+it breaks the **page** — deletes a script, serves one 200 OK and inert, 404s a fetch,
+empties a document, stalls one resource past every wait — and requires the suites that
+load that page to notice.
 
 WHY IT EXISTS. On 2026-09-06 five checks in this repo were found to pass against a
 system that was actually broken, and **every one of them was found by luck** — a red on
@@ -25,10 +26,15 @@ Four of the five are the same shape — *the check samples a page that has not f
 being a page yet, or matches markup that is present whether or not the page worked.*
 Nobody had ever swept for them. This is that sweep.
 
-    python3 sim/tools/page_teeth_check.py                 # full sweep, ~40 min
-    python3 sim/tools/page_teeth_check.py --selftest      # prove the tool works (~4 min)
-    python3 sim/tools/page_teeth_check.py --suite test_csp
-    python3 sim/tools/page_teeth_check.py --baseline-only
+    python3 sim/tools/page_teeth_check.py --baseline-dir /tmp/teeth   # the full sweep
+    python3 sim/tools/page_teeth_check.py --selftest      # prove the tool works, ~1 min
+    python3 sim/tools/page_teeth_check.py --suite test_csp --breakage qr-inert
+    python3 sim/tools/page_teeth_check.py --check-tree    # nothing was left mutated
+
+The full sweep takes a couple of hours: it runs every exposed suite once per breakage,
+and a suite whose waits all expire runs far longer broken than healthy (`test_mermaid`
+went 37 s -> 448 s with `docs.js` inert). `--baseline-dir` caches the healthy run so a
+single row can be re-read in a minute.
 
 HOW A FINDING IS DECIDED, and why it is not just "the suite passed".
 
@@ -62,13 +68,39 @@ import pathlib
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 
 WT = pathlib.Path(__file__).resolve().parents[2]
-WEB = WT / "sim" / "web"
 LEDGER_HOOK = WT / "sim" / "tools" / "teeth_ledger.mjs"
+
+# WHERE A MUTATION IN FLIGHT IS RECORDED, and why this file exists at all.
+#
+# Every breakage is reverted in a `finally` — which a SIGKILL does not run. On 2026-09-06
+# the first full sweep was killed by its supervisor part-way through `hudjs-inert` and left
+# `sim/web/hud.js` gutted in the worktree; `--check-tree` caught it, but only because
+# somebody thought to ask. That is exactly the shape playbook rule 22 warns about: cleanup
+# chained behind an action that can be interrupted.
+#
+# So the target is written here BEFORE it is touched and removed after it is restored, and
+# `--check-tree` reads it. Recovery is total and needs no saved bytes: every target is a
+# TRACKED file, so `git checkout -- <path>` is the whole repair, and `--restore` runs it.
+# It lives inside the real git directory deliberately — a journal in the worktree would
+# itself be an untracked file the audit then has to explain away. That path has to be
+# ASKED FOR, not composed: in a linked worktree (which is how every agent here works)
+# `WT/.git` is a FILE holding `gitdir: …`, so `WT/".git"/"page-teeth-active"` is a write
+# into a path under a regular file. The first draft did exactly that inside a bare
+# `except: pass`, so the journal silently never existed — the same swallowed-exception
+# defect this tool exists to hunt, twice in one afternoon.
+def _git_dir() -> pathlib.Path:
+    r = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=WT,
+                       capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        return pathlib.Path(r.stdout.strip())
+    return WT                                   # not a checkout: keep it beside the tree
+
+
+JOURNAL = _git_dir() / "page-teeth-active"
 
 # Reserved by other sessions (see the module docstring). Refused as mutation targets at
 # table-validation time rather than by convention, so a future row cannot quietly add one.
@@ -89,20 +121,30 @@ RESERVED = {
 # a real limitation of this tool and is printed in the report rather than hidden.
 # ---------------------------------------------------------------------------
 SUITES = [
-    ("test_a11y", True),
-    ("test_ambient_guard", True),
-    ("test_api_headers", True),
-    ("test_bg_perf", True),
-    ("test_console_insights", True),
-    ("test_csp", True),
-    ("test_docs_explorer", True),
-    ("test_env_hosted", False),
-    ("test_liveliness", True),
-    ("test_mermaid", False),
-    ("test_mic_spend", True),
-    ("test_mobile_layout", True),
-    ("test_responsive", False),
-    ("test_typed_turn", True),
+    # (module stem, does it use makeChecks, argv)
+    #
+    # `check_deployed --selftest` is here even though it is not a `test_*.mjs` and is a
+    # RESERVED file this pass may not edit. Auditing is not editing, and it is the most
+    # on-point target in the repo: defect 5 — the one that started this — was ITS printed
+    # `failed requests: 0  console errors: 0` with nothing asserting either. Its
+    # `--selftest` is hermetic (four loopback servers under the real `_headers`, no
+    # internet), so it can be swept like any other suite. If a fix belongs in it, this
+    # tool's job is to say so and stop.
+    ("check_deployed", True, ["--selftest"]),
+    ("test_a11y", True, []),
+    ("test_ambient_guard", True, []),
+    ("test_api_headers", True, []),
+    ("test_bg_perf", True, []),
+    ("test_console_insights", True, []),
+    ("test_csp", True, []),
+    ("test_docs_explorer", True, []),
+    ("test_env_hosted", False, []),
+    ("test_liveliness", True, []),
+    ("test_mermaid", False, []),
+    ("test_mic_spend", True, []),
+    ("test_mobile_layout", True, []),
+    ("test_responsive", False, []),
+    ("test_typed_turn", True, []),
 ]
 
 # ---------------------------------------------------------------------------
@@ -149,13 +191,16 @@ BREAKAGES = [
      r"\bQR\b|qr\.js|pairing|encode"),
     ("docsjs-inert", "gut", "sim/web/docs.js", True,
      "docs.js is served 200 OK and does nothing — the explorer never populates",
-     r"docs|tree|markdown|search|highlight|mermaid|render"),
+     # Deliberately NOT `docs` on its own: every `test_csp.mjs` check about the docs PAGE
+     # is prefixed "docs.html:", including ones about HSTS, and matching those made the
+     # first sweep's report 80 % page-name collisions. A claims regex has to match a claim.
+     r"tree|markdown|search|highlight|renders?\b|populate|explorer|diagram"),
     ("readme-404", "delete", "sim/web/docs-bundle/_root/README.md", True,
      "the docs explorer's home document 404s (defect 4's breakage)",
-     r"markdown|README|render|prose|home|Loading|hero"),
+     r"markdown|README|renders?\b|prose|home document|Loading|hero"),
     ("docs-index-404", "delete", "sim/web/docs-index.json", True,
      "the docs explorer's index 404s — there is no tree to build",
-     r"docs|tree|search|index"),
+     r"tree|search|index|explorer|list"),
     ("hero-404", "delete", "sim/web/img/sim-hero.png", True,
      "the README hero image 404s (defect 2's subject)",
      r"hero|image|img|decode"),
@@ -179,17 +224,17 @@ BREAKAGES = [
      r"mode|hosted|banner|offline|demo|capabilit"),
     ("docs-hollow", "hollow", "sim/web/docs.html", True,
      "docs.html ships an empty body behind the same 'Loading…' placeholder",
-     r"docs|tree|markdown|search|article"),
+     r"tree|markdown|search|article|explorer|renders?\b"),
     # ---- the "not loaded YET" family: a real 200 that arrives ~24 s late ----------
     ("readme-stalled", "stall", "sim/web/docs-bundle/_root/README.md", False,
      "the docs home document is still on the wire when the suite looks at the article",
-     r"markdown|render|prose|home|Loading|article|hero"),
+     r"markdown|renders?\b|prose|home document|Loading|article|hero"),
     ("hero-stalled", "stall", "sim/web/img/sim-hero.png", False,
      "the README hero is still on the wire when the suite reads naturalWidth (defect 2)",
      r"hero|decode|image|img"),
     ("docsindex-stalled", "stall", "sim/web/docs-index.json", False,
      "the docs index is still on the wire when the suite counts the tree",
-     r"tree|docs|index|list|search"),
+     r"tree|index|list|search|explorer"),
 ]
 
 
@@ -249,6 +294,10 @@ class Mutation:
         if not self.path.exists():
             raise SystemExit(f"page_teeth_check: anchor missing — {self.target}")
         self._backup = self.path.read_bytes()
+        # NOT in a try/except. If the journal cannot be written, an interrupted run leaves
+        # a mutated tree with nothing recording it, and the whole point of the file is
+        # gone. Refuse to mutate instead.
+        JOURNAL.write_text(f"{self.kind} {self.target}\n")
         if self.kind == "delete":
             self.path.unlink()
         elif self.kind == "gut":
@@ -269,6 +318,7 @@ class Mutation:
         if self._backup is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_bytes(self._backup)
+        JOURNAL.unlink(missing_ok=True)
         return False
 
     def paths_hit(self) -> list[str]:
@@ -279,7 +329,7 @@ class Mutation:
 # ---------------------------------------------------------------------------
 # running one suite
 # ---------------------------------------------------------------------------
-def run_suite(suite: str, extra_env: dict, timeout: int = 900) -> dict:
+def run_suite(suite: str, extra_env: dict, argv=(), timeout: int = 900) -> dict:
     """Run `sim/<suite>.mjs` under the ledger hook. Returns the ledger + exit code."""
     fd, tmp = tempfile.mkstemp(suffix=".json", prefix="teeth-")
     os.close(fd)
@@ -297,7 +347,7 @@ def run_suite(suite: str, extra_env: dict, timeout: int = 900) -> dict:
     # reports the checks it HAD reached. `subprocess.run(timeout=)` sends SIGKILL, which
     # would hand back an empty ledger — indistinguishable from "nothing stayed green".
     p = subprocess.Popen(
-        ["node", "--import", str(LEDGER_HOOK), f"sim/{suite}.mjs"],
+        ["node", "--import", str(LEDGER_HOOK), f"sim/{suite}.mjs", *argv],
         cwd=WT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         tail = p.communicate(timeout=timeout)[0]
@@ -359,13 +409,13 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
         cache.mkdir(parents=True, exist_ok=True)
     base = {}
     void = []
-    for suite, granular in suites:
+    for suite, granular, argv in suites:
         cached = cache / f"{suite}.json" if cache else None
         was_cached = bool(cached and cached.exists())
         if was_cached:
             led = json.loads(cached.read_text())
         else:
-            led = run_suite(suite, {})
+            led = run_suite(suite, {}, argv)
             if cached:
                 cached.write_text(json.dumps(led))
         base[suite] = led
@@ -387,22 +437,24 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
     for bid, kind, target, tier_a_counts, why, claims in breaks:
         m = Mutation(kind, target)
         frags = m.paths_hit()
-        todo = [(s, g) for s, g in suites
+        todo = [(s, g, av) for s, g, av in suites
                 if s not in void and exposed(base[s], frags)]
         print()
         print("=" * 78)
         print(f"BREAKAGE {bid} — {why}")
         print(f"  ({kind} {target})   exposed suites: "
-              f"{', '.join(s for s, _ in todo) or 'NONE'}")
+              f"{', '.join(s for s, _, _ in todo) or 'NONE'}")
         print("=" * 78)
-        for s, _ in suites:
-            if s not in void and (s, True) not in todo and (s, False) not in todo:
+        done = {s for s, _, _ in todo}
+        for s, _, _ in suites:
+            if s not in void and s not in done:
                 skipped.append((bid, s))
         if not todo:
             continue
+        caught, missed = [], []
         with m:
-            for suite, granular in todo:
-                led = run_suite(suite, m.env)
+            for suite, granular, argv in todo:
+                led = run_suite(suite, m.env, argv)
                 # An instrument that failed is not evidence of anything. `stall` depends on
                 # the browser actually being throttled; if `emulateNetworkConditions` threw
                 # (it did, silently, in this tool's first draft), every check would "stay
@@ -441,6 +493,15 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
                 if gone:
                     vanished.append((bid, suite, len(gone)))
                     print(f"      vanished (did not run at all): {', '.join(gone[:4])}")
+                (caught if led["rc"] != 0 else missed).append(suite)
+        # WAS THE BREAKAGE DETECTABLE AT ALL? A row that NO exposed suite reddens is a
+        # far stronger statement than one suite tolerating it: it says nothing in the
+        # repository would notice this shipping. Printed per row rather than only in the
+        # summary, because that is the number a reader of one row needs.
+        print(f"  --> caught by {len(caught)}/{len(todo)} exposed suites"
+              + (f"; MISSED BY: {', '.join(missed)}" if missed else ""))
+        if not caught:
+            print("  !! NOTHING IN THE REPO NOTICES THIS BREAKAGE")
 
     # ---- report ----------------------------------------------------------
     print()
@@ -551,7 +612,17 @@ def selftest() -> int:
     return 0
 
 
-def check_tree() -> int:
+def check_tree(restore: bool = False) -> int:
+    if JOURNAL.exists():
+        line = JOURNAL.read_text().strip()
+        print(f"!! a run was INTERRUPTED while a breakage was applied: {line}")
+        if restore:
+            target = line.split(None, 1)[-1]
+            subprocess.run(["git", "checkout", "--", target], cwd=WT, check=False)
+            JOURNAL.unlink(missing_ok=True)
+            print(f"   restored {target} from the index")
+        else:
+            print("   re-run with --restore, or `git checkout -- <path>` by hand")
     r = subprocess.run(["git", "status", "--porcelain"], cwd=WT,
                        capture_output=True, text=True)
     # Only TRACKED files can be left behind by a breakage — every mutation edits a file
@@ -577,6 +648,8 @@ def main() -> int:
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--baseline-only", action="store_true")
     ap.add_argument("--check-tree", action="store_true")
+    ap.add_argument("--restore", action="store_true",
+                    help="with --check-tree: undo a breakage an interrupted run left behind")
     ap.add_argument("--suite")
     ap.add_argument("--breakage")
     ap.add_argument("--baseline-dir",
@@ -585,7 +658,7 @@ def main() -> int:
     if not shutil.which("node"):
         print("node not found — nothing to audit"); return 0
     if a.check_tree:
-        return check_tree()
+        return check_tree(a.restore)
     if a.selftest:
         return selftest()
     return sweep(a.suite, a.breakage, a.baseline_only, a.baseline_dir)
