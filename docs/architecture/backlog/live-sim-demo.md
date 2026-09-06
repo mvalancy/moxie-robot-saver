@@ -930,10 +930,13 @@ assertion is against an injected fake store in `node`, and "two isolates" is `__
 admissions that share one store. The multi-colo behaviour, the real `Age` header, and the real
 per-op latency are all inherited from §4.6.1's measurement rather than re-measured.
 
-**And the ten assertions this slice leaves for its integrator.** `sim/test_demo_proxy.mjs` was reserved
-for the whole of this slice, so it is untouched and **ten of its assertions are now red**. Every one is
-an op-count or key-ORDER pin, and none is behavioural — the fail-open, refund, ledger, key-privacy,
-body-shape and shared-refusal assertions all still pass unchanged:
+**The ten pins in `sim/test_demo_proxy.mjs`, and what moved.** This file was reserved when the slice
+was written, so the first commit landed with **ten of its assertions red** and tabled here; the
+reservation was lifted the same day and they are now **re-pinned to their exact new values** (suite
+green, 0 failures). The table is kept rather than deleted because *which* assertions moved is the
+reusable part: every one was an op-count or key-ORDER pin and **none was behavioural** — the fail-open,
+refund, ledger, key-privacy, body-shape and shared-refusal assertions all passed unchanged throughout,
+which is the evidence that this slice added ceilings rather than altering how the existing ones behave.
 
 | § | assertion | was | is |
 |---|---|---|---|
@@ -945,13 +948,28 @@ body-shape and shared-refusal assertions all still pass unchanged:
 | 15g | `c.log.keys.length` on an admitted turn | 2 | 4 |
 | 15h | `c.log.match` through the global `caches.default` | 2 | 4 |
 | 15i-a | `c.log.keys.length` on an admitted turn | 2 | 4 |
-| 15i-a | `c.log.keys[1]` is the units key | `keys[1]` | now `keys[2]` (`keys[1]` is the wide window's) |
-| 15i-a | `keys[1]` contains no route name | `keys[1]` | now `keys[2]` |
+| 15i-a | `c.log.keys[1]` is the units key | `keys[1]` | the whole 4-key ORDER, pinned with `deep()` |
+| 15i-a | `keys[1]` contains no route name | `keys[1]` | both budget keys, `keys[2]` and `keys[3]` |
 
-The `keys[1]` rows are the sub-tier ORDER, and it is deliberate: all per-IP window scales run before
-any budget scale, so a visitor over their own limit gets a per-visitor 429 rather than a
-deployment-wide 503. Reordering to keep the index would be exactly the mistake
-`unit_budget_mutation_check.py` row U10 exists to catch.
+**Two of the ten were not re-pinned by moving an index, and that is the interesting half.**
+
+* The `<= 3` op bound became an **equality at 6**. Relaxing it to `<= 6` would have left a bound that
+  no longer bounds anything; and its old claim — *"still inside row h's three ops"* — is simply false
+  now. The equality states the doubling on the record instead.
+* The `keys[1]` rows became a `deep()` on the **entire read sequence** rather than a bumped index.
+  Re-pinning to `keys[2]` would have kept a passing assertion while dropping what the index was worth:
+  that all per-IP window scales are consulted BEFORE any budget scale, so a visitor over their own
+  limit gets a per-visitor 429 and not a deployment-wide 503. That ordering is exactly what
+  `unit_budget_mutation_check.py` row U10 exists to catch, so it is now pinned as an order and not as
+  a coincidence of indexing.
+
+**And an eleventh, which was a real defect rather than a moved number.** §15i-f asserted *"no budget
+entry is ever asked for"* under `DEMO_UNIT_BUDGET_HOUR=0`. It went red — correctly — because the first
+draft returned early from `sharedBudgetVerdict` when the HOUR was uncapped, which skipped the DAY as
+well: **one variable silently switching off a ceiling the operator had set with a different one.** The
+fix is in `limits.js` (the uncapped hour now chains to the day), and the assertion was **split** rather
+than moved — the hour's entry is still never asked for, the day's now is, and a new case covers the
+genuinely uncapped deployment where neither is.
 
 ### 4.7 Headers to add to `sim/web/_headers`
 

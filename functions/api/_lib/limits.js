@@ -1810,7 +1810,11 @@ async function sharedWideWindow(store, request, { ip, route, cfg, nowS, tag }) {
  */
 async function sharedBudgetVerdict(store, request, { cfg, nowS }) {
   const ceiling = cfg.unitBudgetHour;
-  if (!ceiling) return null; // 0 => uncapped at this scale, so there is nothing to mirror
+  // 0 => uncapped at THIS scale, so there is nothing to mirror here — but the DAY may
+  // still have a ceiling, and returning `null` would let one variable silently switch off
+  // a different one. Fail-open is legal for a lost write; it is not licence to skip a
+  // ceiling the operator actually set.
+  if (!ceiling) return sharedDayBudget(store, request, { cfg, nowS });
   const c = state.stats.cache.units;
   const b = bucket(nowS, SCALES.hour);
   const resetAt = (b + 1) * SCALES.hour;
