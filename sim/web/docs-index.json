@@ -756,7 +756,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 47520,
+   "bytes": 48431,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
