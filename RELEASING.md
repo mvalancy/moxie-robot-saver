@@ -27,7 +27,13 @@ feat/*  ──PR──▶  dev  ──PR──▶  main  ──tag v X.Y.Z──
   **no ancestry** with `dev`'s granular history, so both branches look like they independently "added"
   the same files — the recreated standing PR reads **CONFLICTING**, not empty. Fix it in two steps,
   right after the squash:
-  1. `gh pr create --base main --head dev` — recreate the standing PR.
+  **Order matters — reconcile FIRST, then recreate** (corrected 2026-09-06 after running this four
+  times). These steps were originally numbered the other way round, which accepted a window where
+  the freshly-created standing PR read `CONFLICTING`. That window is avoidable for free.
+  1. On `dev`: `git fetch origin && git merge origin/main -X ours --no-edit`. **Verify
+     `git diff <pre> HEAD` is empty BEFORE pushing** — if it prints anything, the `-X ours`
+     swallowed a real change and the promotion needs unpicking, not pushing.
+  2. `gh pr create --base main --head dev` — recreate the standing PR, clean from birth.
   2. On `dev`: `git fetch origin && git merge origin/main -X ours --no-edit` then push. `dev` is a
      superset of `main`'s squash, so this changes **no content** (verify: `git diff <pre> HEAD` is
      empty) — it only re-links history. The standing PR then diffs cleanly (only genuinely-new work).

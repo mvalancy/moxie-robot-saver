@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 17354,
+   "bytes": 22242,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 264340,
+   "bytes": 266313,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 209879,
+   "bytes": 212069,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -352,7 +352,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 169075,
+   "bytes": 198447,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -387,11 +387,11 @@
     "4.2 Top 10 BEYOND — what we should build instead",
     "4.3 Backlog — the build briefs",
     "4.4 The open backlog, re-ranked — 2026-09-05",
-    "What this table got wrong — three times in twelve hours, and five more found on 2026-09-05",
+    "What this table got wrong — three times in twelve hours, five more on 2026-09-05, and five more on 2026-09-06",
     "Shipped since the last refresh — corrections first, so nobody rebuilds them",
     "In flight right now — do not assign",
     "The ranking",
-    "The single most valuable next slice — the spend ceilings on the Cache API tier",
+    "The single most valuable next slice — ~~the spend ceilings on the Cache API tier~~ **SHIPPED**",
     "Not ranked, deliberately — the ceilings no ranking moves",
     "5. The honest ledger",
     "Where OpenMoxie (and its forks) are genuinely ahead of us"
@@ -402,7 +402,7 @@
    "path": "architecture/backlog/expressiveness.md",
    "title": "Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)",
    "section": "architecture",
-   "bytes": 52152,
+   "bytes": 54124,
    "mermaid": 1,
    "headings": [
     "Why this is the next slice",
@@ -519,7 +519,7 @@
    "path": "architecture/backlog/content-packs.md",
    "title": "Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)",
    "section": "architecture",
-   "bytes": 45252,
+   "bytes": 46130,
    "mermaid": 0,
    "headings": [
     "Why this is worth building",
@@ -600,7 +600,7 @@
    "path": "architecture/backlog/sandboxed-extensions.md",
    "title": "Sandboxed content extensions — a pack that can *do* something, written by someone you don't trust (BEYOND #6)",
    "section": "architecture",
-   "bytes": 93181,
+   "bytes": 94679,
    "mermaid": 0,
    "headings": [
     "0. The boundary, stated first — this is cloud-side, and only cloud-side",
@@ -650,7 +650,7 @@
    "path": "architecture/backlog/brain-picker.md",
    "title": "Any brain, hot-swappable, per child",
    "section": "architecture",
-   "bytes": 8021,
+   "bytes": 8552,
    "mermaid": 0,
    "headings": [
     "1. What was actually missing",
@@ -666,7 +666,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 84035,
+   "bytes": 86146,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",
@@ -707,7 +707,7 @@
    "path": "architecture/backlog/content-authoring.md",
    "title": "Content authoring — the verb packs did not ship (§4.4 #6)",
    "section": "architecture",
-   "bytes": 56970,
+   "bytes": 58621,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -756,7 +756,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 40880,
+   "bytes": 48431,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
@@ -765,7 +765,7 @@
     "1. The seam — exactly what is missing, in three pieces",
     "P0-a — the arm (`eb_enable_qr` onto the wire) · **S** — 🟡 **half done (2026-09-04)**",
     "P0-b — the route (`$eb_qr_value` → a launch action) · **S/M** — ✅ **shipped 2026-09-04**",
-    "P0-c — the sheet · **S**",
+    "P0-c — the sheet · **S** — ✅ **shipped 2026-09-06**",
     "2. The vocabularies (nothing outside them reaches the wire or the paper)",
     "3. Prior art — OpenMoxie (MIT), described and credited, never copied",
     "4. Tests",
@@ -779,7 +779,7 @@
    "path": "architecture/backlog/insights.md",
    "title": "Insights that mean something — the vocabulary this history does not have (BEYOND #5)",
    "section": "architecture",
-   "bytes": 50089,
+   "bytes": 51889,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -861,7 +861,7 @@
    "path": "architecture/backlog/community-signals.md",
    "title": "Community signals — what owners actually hit, ranked by evidence",
    "section": "architecture",
-   "bytes": 32638,
+   "bytes": 33481,
    "mermaid": 0,
    "headings": [
     "1. What was searched, and when",
@@ -885,7 +885,7 @@
    "path": "architecture/backlog/gamify-the-public-sim.md",
    "title": "Gamify the public sim — evidence for a decision the owner kept",
    "section": "architecture",
-   "bytes": 51229,
+   "bytes": 52877,
    "mermaid": 0,
    "headings": [
     "0. What the owner needs to decide",

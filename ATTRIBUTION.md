@@ -109,6 +109,15 @@ robot-cloud layer builds on its groundwork:
   `Action` **in the runtime** rather than round-tripping it through text a child could hear, and admits
   only a **closed catalog derived from `schedule.py`** — refusing `<sleep>`, `<exit>` and
   `<launch_if_confirmed:…>` even though the shared tag grammar parses all three.
+- the **idea of shipping the cards as printable paper** — that the feature is not finished until a
+  parent can produce the deck (`site/data/qr/extract.py` writes 24 PNGs, one per module id). We take
+  the *idea*; nothing was read out of their script and no line of it is here. Ours is
+  [`mqtt/moxie_sdk/launch_sheet.py`](mqtt/moxie_sdk/launch_sheet.py), and it differs by design: **one
+  self-contained HTML page** rather than 24 raster files, with the symbols as **inline SVG sized in
+  millimetres**, so a home printer rasterises each module edge at its own DPI instead of resampling a
+  fixed pixel grid; error-correction level **Q** with one pinned symbol version for the whole deck; and
+  every payload obtained from `launch_cards.encode`, so an id outside the closed catalog raises rather
+  than producing paper the runtime would refuse.
 
 > When we vendor any OpenMoxie source into this repo, its MIT `LICENSE` and copyright notice are
 > included alongside it (see `mqtt/` third-party notices as that code lands). Nothing here is a

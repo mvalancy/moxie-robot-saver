@@ -1144,3 +1144,28 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   each time that a rule was missing, a secret count was stale, and a suite did not exist.
   **Audit against `origin/dev` explicitly** — `git grep <ref>`, throwaway worktrees — and never treat
   the shared checkout as a source of truth.
+
+- **2026-09-06 — the RESEARCH tier is watching the wrong thing, and today measured how wrong.** Its
+  rotation item (a) is *"refresh the audit against upstream OpenMoxie + the active forks… mark items
+  we've since shipped."* Eight consecutive sweeps have now confirmed upstream is **static** —
+  `jbeghtol/openmoxie` last pushed 2026-01-15 (234 days), issue #63 unmoved since 2026-08-23, both
+  active forks unmoved. That question is answerable in **two API calls** and has returned the same
+  answer every time.
+  Meanwhile the audit had drifted **39%** from our own code — 21 of 54 rows stale, and **16 of 21
+  §3 verdict cells (76%)** — discovered only when a BUILD fire nearly briefed an agent to rebuild a
+  TTS cache that had shipped in PR #152. **The drift ran entirely one way: not one row understated
+  the remaining work.** Turnstile (511 lines, called at `chat.js:199`), the behaviour planner (839
+  lines, and the *default*), content packs (1145 lines), schedule (1016 lines), telehealth, the
+  durable store's cross-process writer — every one recorded as `none` or `not built`, every one
+  shipped. Including §4.4's own **⭐ next-slice pick**, which was already done.
+  **The asymmetry is the point.** The audit does not drift because OpenMoxie changes; it drifts
+  because **we ship and do not record it**. Upstream moved zero times in eight sweeps; we invalidated
+  21 rows in the time nobody was looking.
+  **Recommended change to the tier's prompt:** replace (a)'s upstream refresh with a **self-audit** —
+  re-verify our own Status column against the code on a cadence, `file:line` in both directions —
+  and keep issue #63 as the single upstream signal, checked in the two calls it costs. Items (b),
+  (c) and (d) are unaffected and remain worthwhile.
+  **And a structural fix already applied** (#187): §3 carried a *"frozen, do not brief from here"*
+  header that failed twice in one day, because **a reader lands on a cell, not a section header**.
+  Every §3 verdict now carries its correction inline, at the point of consumption, made in place
+  rather than overwritten — so the next reader can see this document drifts and check accordingly.

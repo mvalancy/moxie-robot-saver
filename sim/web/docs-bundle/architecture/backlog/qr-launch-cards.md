@@ -1,6 +1,15 @@
 # 🎴 Printable launch cards — a QR a child shows Moxie, and an activity starts
 
-> **Audit §4.4 #9 · re-scoped 2026-09-03 · 🟢 build-ready.**
+> **Audit §4.4 #9 · re-scoped 2026-09-03 · 🟡 P0-b SHIPPED 2026-09-04 · P0-c SHIPPED 2026-09-06.**
+> *(Was "🟢 build-ready" — stale at the headline while this page's own State lines at :22 and :37
+> recorded both ships. **The first line is what a build agent reads**, which is why the headline is
+> the one that has to be right.)* Verified 2026-09-06: `mqtt/moxie_sdk/launch_cards.py` (210 ln)
+> decodes to one typed `Action` against the derived 24-id allowlist and `_on_vision_turn` puts it on
+> the reply; `sim/web/qr.js` + `sim/test_qr.mjs` pin 25 payloads byte-for-byte; and
+> `mqtt/moxie_sdk/launch_sheet.py` now renders the printable sheet (#188, 49 tests).
+> **Still open:** P0-a's remaining half, the browser-SIM leg, and a console surface — **no UI makes a
+> card yet**, so a parent needs a terminal. **Ceiling unmoved:** no physical Moxie has ever sent us an
+> `eb-qr-event`, and nobody here has printed a sheet and scanned it. What is proven is the ink.
 > A parent prints a sheet; a child holds a card up to Moxie's face; the robot starts that activity.
 > Upstream ships the *paper* (`site/data/qr/extract.py` → 24 PNGs of `GO<launch:MODULE_ID>`, MIT) and
 > **we ship none of it** — not the sheet, and not the three server-side hops that would make a scanned
@@ -19,7 +28,8 @@
 >
 > Effort: **M** — three small pieces, not one, and one of them is an ADOPT item of its own.
 >
-> **State 2026-09-04:** P0-a 🟡 half done · **P0-b ✅ shipped** · P0-c ⬜ not started. A scanned card now
+> **State 2026-09-04:** P0-a 🟡 half done · **P0-b ✅ shipped** · P0-c ⬜ not started (**✅ shipped
+> 2026-09-06**, see the box two paragraphs down). A scanned card now
 > becomes a launch against a closed, derived 24-id allowlist, and **T10 has now travelled a wire**: a
 > `sim/virtual_moxie.py` robot publishes an `eb-qr-event` carrying a card and ends up *holding* the
 > launch in its own client state (`test_launch_cards_sil.py`, 45 tests). Say that precisely — it is
@@ -32,6 +42,31 @@
 > [`sim/test_qr.mjs`](../../../sim/test_qr.mjs) pins 25 payloads byte for byte against `launch_cards.encode`
 > plus five refusals refused *after* crossing into Python. **No UI makes a card yet**, so the browser-SIM leg
 > — a person holding a card up to the SIM and watching it act — is still open.
+>
+> **State 2026-09-06: P0-c ✅ shipped — there is paper.**
+> [`mqtt/moxie_sdk/launch_sheet.py`](../../../mqtt/moxie_sdk/launch_sheet.py) turns the 24 ids into one
+> self-contained HTML page (`python3 -m moxie_sdk.launch_sheet -o cards.html`): six postcard-sized cards
+> per sheet, four sheets, symbols as **inline SVG sized in millimetres** so a home printer rasterises each
+> module edge at its own DPI. Error level **Q**, one pinned symbol version for the whole deck, a 4-module
+> quiet zone drawn inside the SVG, **1.51 mm per module** at 56 mm. Every payload comes from
+> `launch_cards.encode`, so an out-of-catalog id raises instead of producing paper.
+> **How far the proof goes**, which is further than a caption check: `sim/tests/test_launch_sheet.py`
+> (49 tests) walks each rendered **module matrix** the way a scanner does
+> ([`helpers_qr_matrix.py`](../../../sim/tests/helpers_qr_matrix.py) — format info, un-mask, zig-zag,
+> de-interleave, byte segment, no Reed-Solomon so damage surfaces) and hands the result to the real
+> `decode`; three of those tests print through **a real browser** — four PDF pages on A4 *and* Letter, and
+> all 24 symbols rasterised at **300 dpi**, re-sampled and decoded back. `sim/test_qr.mjs` does the same
+> across the boundary with the browser's own encoder, plus three refusals drawn as real modules and still
+> refused after being read off them.
+> **The ceiling has still not moved.** No physical Moxie has read one of these; our corpus describes
+> nothing about its camera; nobody here can print a sheet and scan it with a robot. The module size and
+> the 10:1 read-distance rule of thumb are ordinary print/scan guidance, **not** measurements of this
+> machine. What is proven is the ink, not the optics.
+>
+> **Where it does not live yet:** the parent console. The generator is a CLI, in the shape
+> [`broker_acl.py`](../../../mqtt/moxie_sdk/broker_acl.py) uses. `server/` deliberately does not import
+> `moxie_sdk` anywhere today, and crossing that boundary is a bigger decision than a print sheet — see
+> the note under P0-c below.
 
 ## 0. The two facts that set the scope
 
@@ -131,8 +166,8 @@ with a greeting or `ResultCode.NOREPLY_ACK` and **never** carries an action.
 >    `entry.function` only — not `function_id`, and no args at all — so an armed `execute` renders as
 >    `(unnamed)` there while the SIL robot names it. Two clients that disagree is exactly what DoD
 >    criterion 4 forbids. ⚠️ **Being fixed in `feat/client-parity` as of 2026-09-04 — do not take this
->    piece.** The rest of P0-a (the `ENABLE_QR` spelling) and P0-c are unclaimed; **P0-b shipped
->    2026-09-04.**
+>    piece.** The rest of P0-a (the `ENABLE_QR` spelling) is unclaimed; **P0-b shipped
+>    2026-09-04, P0-c 2026-09-06.**
 
 The runtime reader **is not always scanning**: the brain turns it on for a moment of content
 ([`qr-commands.md`](../../reverse-engineering/protocol/qr-commands.md):309-311, and
@@ -274,21 +309,49 @@ input any stranger can print and leave on a table in front of a child. The permi
 `<launch_if_confirmed:…>` on a card are **refused** even though the grammar parses them: a card may
 start an activity and may do nothing else.
 
-### P0-c — the sheet · **S**
+### P0-c — the sheet · **S** — ✅ **shipped 2026-09-06**
 
 A printable page of cards, one per module, each with its QR and its friendly label from
-[`schedule.py::MODULE_LABELS`](../../../mqtt/moxie_sdk/schedule.py):223-233. The rendering problem is
-already solved twice in this repo and neither needs a new dependency:
+[`schedule.py::MODULE_LABELS`](../../../mqtt/moxie_sdk/schedule.py):223-233. Built as
+[`mqtt/moxie_sdk/launch_sheet.py`](../../../mqtt/moxie_sdk/launch_sheet.py) —
+`python3 -m moxie_sdk.launch_sheet -o cards.html`, then open it and press Ctrl-P.
 
-* server-side PNG — `segno`, exactly as
-  [`main.py`](../../../server/moxie_server/main.py):473-479 and `:505-513` render the endpoint and
-  Wi-Fi codes;
-* browser-side canvas — [`sim/web/qr.js`](../../../sim/web/qr.js) `render(canvas, text, scale)`, which
-  already drives the simulator's *Revive a robot* panel with no install at all.
+**Three decisions this brief did not make, and the reasons:**
 
-**Where it lives:** the parent console (`server/static/index.html`) as a 🎴 card, beside 🎨 Moxie's look
-and 📦 Content — the same surface every other parent-facing feature chose, and the one that already
-proxies the supervisor. A `?print=1` view is a plain print stylesheet; do not build a PDF pipeline.
+1. **One HTML page with inline SVG, not 24 PNGs and not a PDF pipeline.** A raster QR is *resampled*
+   by the printer to its own DPI, so module edges land mid-pixel and come out as grey fringes — the
+   ordinary way a home-printed code stops scanning. SVG is rasterised by the print driver at the
+   device's native resolution, so an edge is exact at any size, and the size can be stated in
+   **millimetres** rather than in pixels-at-an-unwritten-DPI. "Save as PDF" in the same print dialog
+   produces a PDF for anyone who wants one.
+2. **`segno`, as the SDK's optional `cards` extra** — not a new dependency and not a base one. It is
+   already declared by [`server/requirements.txt`](../../../server/requirements.txt) and therefore by
+   [`sim/tests/requirements-hermetic.txt`](../../../sim/tests/requirements-hermetic.txt), so CI gains
+   nothing to install; and it is imported lazily, so the wheel still installs with `paho-mqtt` alone
+   and every pure function in the module works without it. `segno.make_qr`, never `segno.make`: `make`
+   returns a **Micro QR** for a short payload at a forgiving level, which is a different symbology with
+   a string version and a two-module quiet zone.
+3. **Error level Q, one pinned version for the whole deck, 56 mm symbols.** A card lives in a child's
+   hands — a crease, a thumb over a corner, a lamp reflection — and at 13-26 byte payloads Q costs one
+   symbol version (29x29 instead of 25x25) and nothing else. Pinning the version to what the *longest*
+   payload needs makes the deck uniform and `module_mm` a single number: **1.51 mm**, with a 4-module
+   quiet zone drawn inside the SVG so no layout can crop it. The 0.6 mm floor the tests enforce and the
+   10:1 read-distance rule of thumb are **generic print/scan guidance, not measurements of Moxie's
+   camera** — our corpus describes the semantic events vision emits and nothing about the optics.
+
+**Labelling.** The card shows the friendly label, or the id itself where `MODULE_LABELS` records no
+plain-English name (`AB`, `FF`, `RDL` today — we do not invent Embodied product names), and under every
+symbol the **literal payload**, so a parent can check what a card carries without scanning it. The list
+of unnamed ids on the page is derived, not transcribed.
+
+**Where it does NOT live yet — the parent console.** This brief said the sheet belongs in
+`server/static/index.html` behind a `?print=1` view. It is a CLI instead, and that is a deliberate
+deferral rather than an oversight: `server/` **does not import `moxie_sdk` anywhere today** — see
+[`fleet.py`](../../../server/moxie_server/fleet.py):1104, which re-states a shape rather than importing
+it — so a console route would be the first crossing of that boundary, and that decision is bigger than a
+print sheet. The follow-up slice is a console card that shells the generator or a route that owns the
+import explicitly; a static page under [`sim/web/`](../../../sim/web/) driven by
+[`qr.js`](../../../sim/web/qr.js)'s already-pinned `encodeCard` is the install-free alternative.
 
 ## 2. The vocabularies (nothing outside them reaches the wire or the paper)
 
@@ -335,7 +398,8 @@ Hermetic first; nothing below needs a broker, a network or a sleep.
 | T8 | A card scanned during an absence does not also fire the unprompted greeting twice (`_greeting_for` and the launch are independent) | ⚠️ **the premise was wrong** — a scan is never a sighting, so the two cannot co-occur at all (`presence.update_presence` emits `arrived` only for `eb-found-face`). Asserted as such, and the would-be composition pinned white-box | 
 | T9 | `Action(EXECUTE, function="eb_enable_qr", args=["true"])` serialises to `{"action":"execute","function_id":"eb_enable_qr","function_args":["true"]}` — ✅ **done 2026-09-04**, asserted key for key in `test_actions_reach_the_robot.py::test_the_briefs_own_worked_example_is_the_shape_that_goes_out`; `ENABLE_QR` serialising to the **same** shape and never to the string `enable_qr` is ❌ **still owed**, and the current (wrong) spelling is pinned by `…::test_the_naming_defects_p0a_still_owns_are_pinned_here_not_fixed` | `test_actions_reach_the_robot.py` (wire half, shipped) · `test_launch_cards.py` (the `ENABLE_QR` half) |
 | T10 | SIL round trip: the real `MoxieRuntime` + the real `sim/virtual_moxie.py` over `helpers_runtime.loopback()` — the robot publishes an `eb-qr-event` carrying `GO<launch:DM>` and ends up **holding** the launch action in the recovered shape | ✅ **proven between our runtime and our simulated client** 2026-09-04 — `test_launch_cards_sil.py`, 45 tests. The robot's own `action_stats()` ends at `{"action": "launch", "module_id": "DM", "content_id": "", "function": "", "args": []}`, written by `virtual_moxie._apply_action` off a payload that arrived on `/devices/<id>/commands/remote_chat`. **The refusals travel the same wire**: `launch_if_confirmed`, `sleep`, `exit`, an id outside the catalog, a lowercased marker, an over-long value and two smuggling shapes each leave `applied == []` *and* answer `NOREPLY_ACK` on the scan's own `event_id`, so a refusal is silence rather than a stall. **Also run once over a real broker** (mosquitto in docker + `mqtt/run.py` as its own process), because the hermetic loopback is still one process: `sim/virtual_moxie.py --face-event eb-qr-event --face-value 'GO<launch:DM>'` printed `✅ eb-qr-event: SUCCESS (silent) 🎬 launch DM` and the supervisor logged `🎴 … scanned a launch card -> DM`, while `launch_if_confirmed`, `sleep` and `NOPE` each printed `NOREPLY_ACK` with no 🎬. That run is a **manual reproduction, not a CI gate** — `sim/run_smoke.sh` has no card mode. Not proven: any of it on hardware |
-| T11 | The sheet route returns one card per catalog id, each payload decodes back to its own id, and the page contains no id outside the catalog | `test_launch_cards.py` |
+| T11 | The sheet returns one card per catalog id, each payload decodes back to its own id, and the page contains no id outside the catalog | ✅ **done 2026-09-06** — `test_launch_sheet.py`, 49 tests. Read *out of the modules*, not off the caption: each rendered matrix is walked the way a scanner walks it ([`helpers_qr_matrix.py`](../../../sim/tests/helpers_qr_matrix.py)) and the recovered string goes to the real `decode`. Ten out-of-catalog ids **raise instead of drawing anything**, one bad id refuses the whole sheet, and an AST guard proves no string literal in the generator's *code* spells the card grammar — the payload can only come from `launch_cards.encode`. Anti-vacuity is explicit: flip a module in the placement's first codewords and the read must change or refuse; past version 6 the reader refuses rather than guessing | `sim/tests/test_launch_sheet.py` |
+| T14 | The paper survives a real rasteriser: the page paginates to four sheets and a printed symbol still decodes after being turned into pixels | ✅ **done 2026-09-06** — three browser-backed tests. Chrome prints the sheet to PDF at **A4 and US Letter** and both come back **4 pages**; all 24 symbols are rasterised at **300 dpi**, thresholded, re-sampled at the module centres and decoded back to their own ids, so antialiasing, the mm→px mapping and the browser's path filling are inside the loop. `sim/test_qr.mjs` §7 does the matrix leg with the *browser's own* encoder and refuses three non-cards read off real modules. **Not proven, and it is the gap that matters: optics.** No physical Moxie has read a card, our corpus describes nothing about its camera, and nobody here can print a sheet and scan it with a robot | `sim/tests/test_launch_sheet.py`, `sim/test_qr.mjs` |
 | T12 | Browser↔Python byte parity for the card payload string, the way `sim/test_qr.mjs` already asserts it for the seven revival payloads | ✅ **done 2026-09-05 — after correcting the row's premise.** T12 as written assumed there were two generators to compare; there were not. [`sim/web/qr.js`](../../../sim/web/qr.js) shipped the three **setup** encoders only (`endpoint_update`/`wifi`/`debug`), and a launch card is not a setup code — different reader, different grammar, not even JSON. **The browser could not make a card at all**, so the slice built `encodeCard` + `cardPayload` first and then asserted the parity. What is now asserted: **25 payloads byte for byte** (all 24 catalog ids, plus one carrying a content id) against `launch_cards.encode`, each browser-built string **round-tripped through the real `launch_cards.decode`** back to its own module id; and the two catalogs compared id for id, because qr.js **transcribes** where Python **derives** — that one assertion is the whole thing holding them equal. **Five refusals cross the boundary**, each composed with the browser's own formatter: `launch_if_confirmed`, `sleep`, `exit`, an out-of-catalog id, and two launches in one card all decode to `None`. The browser also **cannot print** a card outside the catalog — `encodeCard` throws on eight bad ids, so the print side can never emit paper the reader refuses. Mutation: **11 rows, 11 red**, 1–57 assertions each. **Still open, and not claimed:** no control in `sim.html` or `setup.html` reaches `encodeCard`, so a *person* cannot yet make a card in a browser — this is the encoder and its guard, not a feature. The ceiling did not move: no Moxie has ever sent us an `eb-qr-event` | `sim/test_qr.mjs` |
 | T13 | Mutation run: every guard deleted one at a time turns a test red | ✅ `sim/tools/launch_card_mutation_check.py` — **19 rows, 19 caught**, 1-61 tests red each. M15-M19 mutate the **client** (`sim/virtual_moxie.py`), because M1-M14 all mutate the server and a SIL test could survive every one of them while still reading the runtime's own publish record. 18 of the 19 redden `test_launch_cards_sil.py` *on its own*; the exception is **M3**, and honestly so — M3 widens the derived catalog and the SIL suite is parametrised *over* that catalog, so the derivation is a property only the unit suite can see (6 red there). Anchors held honest by `test_mutation_tables.py` |
 
@@ -384,9 +448,9 @@ built) — **one of the two turned out to be already built**, see the correction
 |---|:--:|---|
 | P0-a the arm | **S** | [`mqtt/moxie_sdk/wire.py`](../../../mqtt/moxie_sdk/wire.py) (`build_chat_response`, the action loop) · [`mqtt/moxie_sdk/types.py`](../../../mqtt/moxie_sdk/types.py) (`ActionType.ENABLE_QR`) |
 | P0-b the route ✅ | **S/M** | **new** [`mqtt/moxie_sdk/launch_cards.py`](../../../mqtt/moxie_sdk/launch_cards.py) · [`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) (`_on_vision_turn` only) · [`mqtt/moxie_sdk/actions.py`](../../../mqtt/moxie_sdk/actions.py) (`tag_names`, additive — see the box) |
-| P0-c the sheet | **S** | [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) (two routes: the sheet, one PNG) · [`server/static/index.html`](../../../server/static/index.html) (the 🎴 card + a print stylesheet) · optionally [`sim/web/qr.js`](../../../sim/web/qr.js) for the install-free browser generator |
+| P0-c the sheet ✅ | **S** | **new** [`mqtt/moxie_sdk/launch_sheet.py`](../../../mqtt/moxie_sdk/launch_sheet.py) (generator + `python3 -m` CLI) · [`mqtt/pyproject.toml`](../../../mqtt/pyproject.toml) (the optional `cards` extra). **Deferred:** [`server/moxie_server/main.py`](../../../server/moxie_server/main.py) + [`server/static/index.html`](../../../server/static/index.html) — a console route would be the first `server/` → `moxie_sdk` import in the tree |
 | Harness ✅ | — | [`sim/virtual_moxie.py`](../../../sim/virtual_moxie.py) — `--face-value` + `EVENT_VALUE_KEYS`/`value_vars` landed 2026-09-04; `response_actions` were already recorded (PR #116) |
-| Tests | — | `sim/tests/test_launch_cards.py`, `test_launch_cards_runtime.py`, `test_launch_cards_sil.py`, `sim/tools/launch_card_mutation_check.py`, `sim/test_qr.mjs` |
+| Tests | — | `sim/tests/test_launch_cards.py`, `test_launch_cards_runtime.py`, `test_launch_cards_sil.py`, **`test_launch_sheet.py` + `helpers_qr_matrix.py`** (49 tests: the module matrix read back and decoded, a real browser's pagination and its 300-dpi raster), `sim/tools/launch_card_mutation_check.py`, `sim/test_qr.mjs` §7 |
 | Docs | — | this page's state, [`../openmoxie-feature-audit.md`](../openmoxie-feature-audit.md) §4.4 #9 + §4.3, [`README.md`](README.md), [`../../../ATTRIBUTION.md`](../../../ATTRIBUTION.md) |
 
 **Do not touch** `presence.py`'s state machine. The QR value is already carried correctly; this slice
