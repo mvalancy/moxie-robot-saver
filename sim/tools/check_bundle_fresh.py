@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Guard: the committed docs bundle must match a fresh build of docs/.
 
-`build_docs_bundle.py` is deterministic, so rebuilding an in-sync bundle produces
-byte-identical output. (It USED to carry a `generated` content-hash stamp; that stamp was removed
-2026-09-06 because it was the single hunk that made every branch pair conflict on
-`docs-index.json`, and nothing read it. Determinism never depended on it — it comes
-from sorted inputs.) This rebuilds and
-checks `git` reports no change to the bundle paths — catching the easy mistake of
+`build_docs_bundle.py` is deterministic — sorted inputs, no clock, no commit hash — so
+rebuilding an in-sync bundle produces byte-identical output. (Determinism used to be
+credited to a `generated` content-hash stamp in `docs-index.json`. It never came from
+that stamp, and the stamp is gone: it was the one line both sides of every merge
+rewrote, which made every pair of doc-touching branches conflict. Nothing read it.)
+This rebuilds and checks `git` reports no change to the bundle paths — catching the easy mistake of
 editing a doc (or adding one) without re-running the bundler before committing.
 
     python3 sim/tools/check_bundle_fresh.py
