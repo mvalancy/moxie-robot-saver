@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 214510,
+   "bytes": 219475,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -137,7 +137,9 @@
     "Workstreams (the backlog agents draw from)",
     "Integration playbook (learned 2026-09-02, day one — apply every time)",
     "The layered session loops (24/7 continuity)",
-    "Status log (append-only, absolute dates)"
+    "Status log (append-only, absolute dates)",
+    "2026-09-06 — BUILD: `feat/bubbleframe`, and a red that measured three wrong theories first",
+    "2026-09-06 — INTEGRATION: the intermittent is now the promotion gate, and `feat/suiteaudit`"
    ],
    "kind": "md"
   },
