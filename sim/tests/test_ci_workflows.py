@@ -57,7 +57,16 @@ INSTALLED = os.path.join(REPO, ".github", "workflows")
 #: applying" shape this file exists to catch. The two other guards parametrized over
 #: TIERS key on jobs that run pytest, which this workflow does not, so they pass over it
 #: without pretending to assert anything.
-TIERS = ("ci.yml", "ci-deep.yml", "release.yml", "deployed.yml")
+#:
+#: `promotion.yml` joined on 2026-09-06 and is a MONITOR for the same reason `deployed.yml` is —
+#: schedule + dispatch, gating nothing. It watches the repository rather than the product: whether
+#: the last `dev → main` promotion was finished (`dev` reconciled, standing PR recreated), a pair of
+#: steps `gh pr merge` does not do and that were missed after five of the last seven promotions. It
+#: is named here for the same single reason `deployed.yml` is: outside this tuple nothing keeps
+#: `sim/ci/promotion.yml` and `.github/workflows/promotion.yml` from drifting, and a workflow that
+#: drifts behaves unlike the file we read. Its own behaviour is asserted by
+#: `sim/tests/test_promotion_guard.py`, not here.
+TIERS = ("ci.yml", "ci-deep.yml", "release.yml", "deployed.yml", "promotion.yml")
 FAST = "ci.yml"
 
 

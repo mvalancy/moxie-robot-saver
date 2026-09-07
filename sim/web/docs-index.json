@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 214510,
+   "bytes": 217173,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -1030,7 +1030,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 52574,
+   "bytes": 55739,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -1047,7 +1047,8 @@
     "What the first sweep found: the suites are largely sound",
     "The inert script: a 200 OK that does nothing, and the clause that finally sees it",
     "Giving them eyes (2026-09-06)",
-    "Run it now"
+    "Run it now",
+    "promotion.yml` — was the last promotion *finished*?"
    ],
    "kind": "md"
   },

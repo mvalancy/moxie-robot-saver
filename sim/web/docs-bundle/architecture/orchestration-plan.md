@@ -326,6 +326,10 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     chain cleanup behind a merge) and rule 25 (`--delete-branch` silently leaves the remote when a
     worktree holds the branch). Anything a merge is supposed to tidy up afterwards should be
     *verified*, never assumed.
+    **Mechanised 2026-09-06, and that supersedes remembering it:** `sim/ci/promotion.yml` (a
+    schedule-and-dispatch monitor, gating nothing) runs `sim/tools/check_promotion_state.py`
+    hourly and reddens when `dev` is behind `main` or no `dev → main` PR is open, 30 minutes
+    after the squash. This rule stays for the *why*; the check is what will actually notice.
 
 30. **When a check says the product did X, measure X before you change the product.** On 2026-09-06
     the failure `packets grew while the tab was hidden (1 -> 2 in 20s)` was taken at face value
@@ -1198,3 +1202,30 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   question"*) had been obeyed literally and **licensed** a question every turn. **A metric improving
   is not the behaviour improving**, and the remedy was to read the transcripts rather than the
   summary.
+
+- **2026-09-06 — rule 29 is now a check rather than a paragraph, and the interesting part is the
+  window.** The previous entry ended "the honest expectation is that it will be missed again". It
+  is now `sim/tools/check_promotion_state.py`, called hourly by `sim/ci/promotion.yml`
+  (schedule + dispatch, `contents: read` + `pull-requests: read`, the workflow's own
+  `GITHUB_TOKEN`, gating nothing).
+  **Detection was the easy half.** `git rev-list --count origin/dev..origin/main > 0` and
+  `gh pr list --base main` being empty are two cheap probes — but both are *legitimately true*
+  between a squash and its reconcile, and a check that fires in that window trains people to
+  ignore it, which is strictly worse than no check (the same reason this repo threw away a guard
+  at 7 % precision). So both conditions are gated on **one clock**: the committer date of `main`'s
+  tip, which for a squash promotion *is* the moment both defects begin. The bound was measured,
+  not guessed — the interval from squash to reconcile across the ten promotions in history is
+  11s, 11s, 12s, 17s, 21s, 96s, 132s, 274s, 731s, **990s** (median 18s), so the grace is 1800s:
+  1.8× the worst case ever observed. Worst case squash → red is grace + cadence ≈ 90 minutes,
+  against the "days, at the next promotion" it replaces.
+  **Two decisions worth carrying forward.** (a) A step in the fast tier was rejected because *the
+  missing action is the trigger* — `ci.yml` fires on `push: [dev]`, and the whole defect is that
+  the reconcile push never happened; it would fire on the next unrelated PR and redden someone
+  else's change, which `ci.yml`'s own header already records this repo paying for once (#125).
+  (b) The instrument has a **third exit code**: 2 for "could not measure" (no `gh`, not
+  authenticated, missing ref), never 0 — a monitor that reports all-clear when its probe is broken
+  is the exact failure this repo spent a day deleting.
+  `sim/tests/test_promotion_guard.py` builds real git repositories to prove all of it: the full
+  eight-row truth table, both sides of the grace edge one second apart, and three negative controls
+  that blind one measurement each (the age gate, the behind count, the PR lookup) and require the
+  row that clause was holding to flip.
