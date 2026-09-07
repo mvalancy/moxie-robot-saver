@@ -1426,6 +1426,28 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   product code and `functions/` are unswept; and monotonic-clock load flakiness (playbook rule 11's
   disease) is deliberately out of that guard's scope and still unfenced.
 
+- **the speech bubble's anchor readout mixed two instants, and that is what reddened CI on PR #202
+  (2026-09-06 — closed).** `window.__bubbleAnchor()` read `--leader` out of the DOM — *recorded* state,
+  written by the last `updateBubbleAnchor()` — while re-projecting her head **live** through
+  `__moxieProject` at call time. `updateBubbleAnchor()` runs at the top of `animate()`, and the rest of
+  `animate()` then moves her (motor smoothing, breathing, liveness offsets), so the two halves of every
+  geometry assertion in [`sim/test_liveliness.mjs`](../../sim/test_liveliness.mjs) came from frames N and
+  N+1. The error is one frame of head travel, which is why it was invisible locally and 2.5 px on a loaded
+  swiftshader runner — a live sample in a file whose header promises *"EVERY ASSERTION READS RECORDED
+  STATE, NEVER A LIVE SAMPLE"*. **Measured, not reasoned about:** `origin/dev` under 2× CPU
+  oversubscription reproduces the exact CI red — *"a leader that spans exactly the gap (87px for 78px)"* —
+  plus two more, **5 of 65 checks failing**; stepping motor 6 (body lean) end to end reaches **15.6 px** of
+  drift on an idle machine. `updateBubbleAnchor()` now stashes the head/crown/chest it actually projected
+  and the box it placed, in **viewport px** (the space `getBoundingClientRect` and `__moxieProject` both
+  answer in), and the readout hands that back: residual **0.06 px**, which is `--by`'s own `.toFixed(1)`
+  quantisation and nothing else, so the leader tolerance went from 2 px to **0.2**. The stash is
+  deliberately **frozen** while the bubble is hidden — the anchor stops updating on purpose rather than
+  burning a forced layout for a box nobody can see — and the readout says so with `frozen`/`ageMs`/`seq`
+  instead of handing back a fresh-looking lie. **Honest residual:** at 2× oversubscription two checks in
+  the *conversation-hold* block (`the chatting marker is cleared`, `the paused hint goes away`) still fail,
+  and they fail identically on untouched `origin/dev` — a second latent race of the same family (a
+  `settle(4600)` standing in for a condition) left for its own slice, not fixed here.
+
 ## DoD progress (audited 2026-09-04 08:15 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 92%** (done = all six 🟢)
 
 > **Criterion 6 is green, and it was earned in the place it used to be false.** The day the merge gate was a
