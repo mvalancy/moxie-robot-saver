@@ -1458,3 +1458,37 @@ came in with #203). A repair was written and **reverted**: polling `getMotor(6)`
 unexplained contradiction is how the other eleven survived. A later probe **eliminated the
 `setSpeech()` re-issue** as the cause. And `smoke-load-sensitivity`, measured by an interleaved A/B in
 which pristine `dev` failed too.
+
+### 2026-09-07 — promotion #2 of the day, and the Turnstile answer written down
+
+**`main` `cf833fe` → `28365e2`, 112 commits.** The gate meant something: **#207 was 12 of 12 green on
+`181daa6`, `dev`'s exact tip** — not a stale green from an earlier commit, and not a coin flip on a
+check that reddens when the machine is busy. Reconcile first (`git diff PRE..HEAD` **empty**), then
+recreate (**#210**, clean from birth), then `check_promotion_state.py` confirming *promotion finished*.
+Second consecutive promotion verified by a machine rather than by someone remembering rule 29 — which
+had been missed after **six of nine** before that guard existed.
+
+**Live site healthy after it:** `/api/health` → `ok:true, degraded:false, mode:"live"`, capacity 4,
+`voice:true`, `ears:true`; `/sim` 200 at 27 KB.
+
+**THE TURNSTILE ANSWER, recorded here because it answers an explicit owner request and has so far
+lived only in a chat transcript.** The owner supplied sitekey `0x4AAAAAAEpY3bwJnLFVFf8a` and asked to
+*"finish integrating it into this project"*. **The integration is complete in code** (PR #195: three
+mandatory siteverify checks, per-route `TURNSTILE_ACTIONS` so a token minted for a typed sentence is
+refused by the ears endpoint, fail-closed-on-verdict / fail-open-on-transport). What remains is **one
+owner action in the Cloudflare Pages production environment**, and it must set **both** halves at once:
+
+- `DEMO_TURNSTILE_SITEKEY` = the public sitekey above (a plain variable — it ships to every visitor)
+- `DEMO_TURNSTILE_SECRET` = the secret half, **which must never pass through a transcript**
+
+**Setting either alone takes the public demo down**, and that is deliberate
+([`env.js`](../../functions/api/_lib/env.js):131): with only the secret no browser can mint a token and
+every visitor is refused; with only the sitekey the page renders a widget whose token nothing checks —
+*"a bot control that is theatre."* Both cases make `readConfig` report it missing, and every route then
+answers `gateway_not_configured` and spends nothing. So the orchestrator **cannot** arm the half it
+holds: doing so would break a currently-healthy `moxie.mattvalancy.com/sim`.
+
+The present state — neither set, enforcement **off** — is correct rather than an oversight, and it is
+also what keeps branch previews usable: Turnstile authorizes a hostname and its subdomains, and the
+platform-assigned preview host is not on the widget's domain list, so a preview that enforced would be
+a preview nobody could use.
