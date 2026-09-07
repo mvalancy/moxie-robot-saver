@@ -1069,6 +1069,27 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   border: 1px dashed rgba(255, 255, 255, 0.09);
   opacity: 0.85;
 }
+/* A DIAGRAM SHE DREW. Full width of the log and centred, because it is neither side of
+   the conversation — the same reasoning as `.mutter`. The SVG is scaled to fit rather than
+   allowed to set its own size: mermaid emits an intrinsic width that can be far wider than
+   a phone, and a log that scrolls sideways is a log nobody reads. */
+#transcript .diagram {
+  align-self: stretch;
+  max-width: 100%;
+  margin: 2px 0;
+  padding: 8px;
+  border: 1px solid rgba(0, 240, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(0, 240, 255, 0.04);
+  overflow-x: auto;
+}
+#transcript .diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 #transcript .mutter .who {
   color: var(--muted-2);
   opacity: 0.75;

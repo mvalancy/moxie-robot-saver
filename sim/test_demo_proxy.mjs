@@ -3370,6 +3370,79 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
 }
 
 /* =========================================================================== *
+ * 15m. SHE CAN DRAW — AND THE SYNTAX IS NEVER SPOKEN
+ * =========================================================================== *
+ *
+ * `say` is read aloud. A fenced mermaid block left inside it is synthesised verbatim, so
+ * a child hears "backtick backtick backtick mermaid graph T D semicolon" in Moxie's
+ * voice — and it is minted into the TTS ticket and PAID FOR, and it lands in the
+ * transcript as syntax. Extracting the diagram is the easy half; this section is about
+ * the other one, which is the half a listener notices.
+ *
+ * The split happens at the gateway boundary, so the guarantee is structural rather than
+ * a discipline: everything downstream — the safety sweep, the ticket, the wire text, the
+ * markup floor — only ever sees words, because by then the diagram is somewhere else.
+ */
+{
+  const DIAGRAM = "graph TD;\n  Child-->Moxie;\n  Moxie-->Gateway;";
+  fresh();
+  plan = { chat: { content: "Here is how a turn works! ```mermaid\n" + DIAGRAM + "\n``` Neat, right?" } };
+  const r = await call(chat, "/api/chat", { text: "how does a turn work?" });
+  const payload = JSON.parse(r.body.messages[0].payload);
+
+  eq(r.res.status, 200, "a reply carrying a diagram is served normally");
+  eq(payload.output.text, "Here is how a turn works! Neat, right?",
+     "the SPOKEN line is the words with the fence cut out and the seam repaired");
+  ok(!payload.output.text.includes("```"), "…no fence survives into what she says");
+  ok(!/graph TD|-->/.test(payload.output.text), "…and no diagram syntax either");
+  ok(!/```|graph TD/.test(payload.output.markup),
+     "…the MARKUP is built from the spoken words, so the floor never reads syntax as prose");
+
+  eq(r.body.diagram, DIAGRAM, "the diagram itself rides the envelope as source text");
+  ok(r.body.diagram.includes("graph TD"), "…carrying what she actually drew");
+  /* NEWLINES SURVIVE, and this assertion is the whole reason `completionText` no longer
+   * flattens whitespace. Mermaid is newline-delimited: a diagram collapsed to one line is
+   * not a diagram, it is a parse error. The flattening now happens once, on the spoken
+   * half only, after the fence is out. */
+  ok(r.body.diagram.includes("\n"),
+     `…with its line breaks intact — mermaid is newline-delimited (${JSON.stringify(r.body.diagram)})`);
+
+  // THE TICKET IS THE ONE THAT COSTS MONEY. It is minted from the reply, so a diagram left
+  // in the spoken line would be synthesised and charged for.
+  ok(r.body.speech && r.body.speech.length, "a voice-configured deployment still mints a ticket");
+  const ticketed = await hmac.verifyTicket(wire2.readConfig(FULL), r.body.speech[0].ticket);
+  ok(ticketed.ok, "…and it verifies");
+  ok(!/```|graph TD|-->/.test(ticketed.claims.t || ""),
+     "…and the TEXT IT AUTHORISES carries no diagram: nothing pays to synthesise syntax");
+
+  // A reply with no diagram is byte-identical to before the feature existed.
+  fresh();
+  plan = { chat: { content: "Just words, no diagram." } };
+  const plain = await call(chat, "/api/chat", { text: "hi" });
+  eq(JSON.parse(plain.body.messages[0].payload).output.text, "Just words, no diagram.",
+     "a reply with no diagram is untouched…");
+  eq(plain.body.diagram, "", "…and carries an empty diagram, never a missing key");
+
+  // A NON-mermaid fence is left alone: truncating a sentence because a model fenced a word
+  // for emphasis would be a worse bug than a missed diagram.
+  fresh();
+  plan = { chat: { content: "The word ```hello``` is fenced." } };
+  const fenced = await call(chat, "/api/chat", { text: "hi" });
+  eq(fenced.body.diagram, "", "a plain ``` fence is NOT treated as a diagram");
+  ok(JSON.parse(fenced.body.messages[0].payload).output.text.includes("hello"),
+     "…and the sentence survives intact");
+
+  // An over-long diagram is dropped, and the WORDS are still spoken — a runaway model
+  // costs the visitor a picture, never their turn.
+  fresh();
+  plan = { chat: { content: "Look! ```mermaid\n" + "x".repeat(2000) + "\n``` Done." } };
+  const huge = await call(chat, "/api/chat", { text: "hi" });
+  eq(huge.body.diagram, "", "an over-long diagram is dropped…");
+  eq(JSON.parse(huge.body.messages[0].payload).output.text, "Look! Done.",
+     "…and the visitor still gets their sentence");
+}
+
+/* =========================================================================== *
  * 16. THE SYNTHESISED-AUDIO CACHE — `/api/speech` stops paying twice for a line
  * =========================================================================== *
  *
