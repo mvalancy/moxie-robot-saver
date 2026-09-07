@@ -110,6 +110,24 @@ JS_CLOCK_PATTERNS = (
 #: answer the same at every minute of a day — or which branch is asserted when it is not.
 REVIEWED: dict = {
 
+    # ---- the entry this ledger predicted, and then earned ------------------------
+    "sim/tests/test_telemetry_runtime.py::test_telemetry_survives_a_supervisor_restart": (
+        ("datetime.now",),
+        "RELATIVE — two reads of the SAME clock at the same moment, never a fixed date. "
+        "It reads the clock at ASSERTION time on purpose. "
+        "`history_view` counts back from today at CALL time, while the fixture's `TODAY` "
+        "is fixed at MODULE IMPORT. Comparing the two is what broke on 2026-09-07 at "
+        "00:03:58 UTC (run 34068212046, imported 23:57): the 09-06 roll-up row was present "
+        "and correct, but the window had advanced and `history[-1]['day']` was 09-07. "
+        "Pinning the stamp to noon stops a +/-30s OFFSET crossing a boundary; it cannot "
+        "stop the WINDOW moving under a run that itself spans midnight. So the tail is "
+        "compared against the view's own notion of today -- the same clock, read at the "
+        "same moment -- which is the only comparison that is true at every hour. Proved by "
+        "simulation rather than by waiting a day: with `TODAY` pinned to YESTERDAY noon the "
+        "old assertion fails and this one passes. GENERAL SHAPE for the next entry: a "
+        "boundary-safe fixture stamp is not sufficient -- any assertion comparing "
+        "IMPORT-time state to CALL-time state is clock-dependent however it is stamped."),
+
     # ---- node suites (file-level: these have no scope the scanner can name) ----------
     "sim/test_audio.mjs": (
         ("Date.now",),

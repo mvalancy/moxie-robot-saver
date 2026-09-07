@@ -1326,6 +1326,139 @@ Two further gaps, stated rather than left to be discovered:
   chattier visitor would produce a different number, and the only honest way to know is to measure
   it again after a change.
 
+**And a FOURTH lever followed, three hours later.** §4.10 below is the one that acts on the *shape* of a
+turn rather than its words. It exists because the measurement in this section's own closing paragraphs —
+`exactDupes` at zero and the conversation still reading as a loop — turned out to have a cause neither
+`echoOf` nor a similarity threshold could reach: she was not repeating a *sentence*, she was repeating a
+*move*. Read §4.10 before deciding a near-match threshold is what is missing.
+
+---
+
+### 4.10 Turn shape — the repetition lever that acts on what she DOES, not on what she says (built 2026-09-06)
+
+**Read this section as a warning about metrics before you read it as a design.** Three passes have now
+been made at the owner's report — *"Moxie gets stuck in a loop repeating the same things"* — and the first
+two were each defeated by the number they were measured on.
+
+| pass | what it changed | what the number said | what the transcript said |
+|---|---|---|---|
+| 1 | the persona's initiative rule, plus `frequency_penalty` 0.4 / `presence_penalty` 0.3 | `maxOverlap` 1.0 → 0.2, `exactDupes` → 0 | six of seven turns were *"Did you … today?"* — the rule *"ask at most one question"* was obeyed to the letter and **licensed** a question every turn |
+| 2 | the persona rule inverted (*"do not end every turn with a question"*), and a bounded server-side re-roll on an exact repeat | `exactDupes` 4/56 → 0/105 | its own report: *"it does not read right yet"* |
+| 3 (this) | a **per-turn shape cue** built by `_lib/turnshape.js` | `questionRate` **unchanged**, 38% → 36% | the longest run of a single move fell from **6 turns to 2** |
+
+**What the third pass found first, and it is the finding, not the fix.** Six seven-turn `loop`
+conversations were driven against the real gateway before anything was changed. The one with the *lowest*
+`questionRate` in the whole set — 0.14, the best score anything produced — reads like this:
+
+> **you** → `ok`      **moxie** → "I'm so happy to see you! Let's play a game together."
+> **you** → `yeah`    **moxie** → "Let's make a silly face together! Show me your best goofy grin."
+> **you** → `hmm`     **moxie** → "Let's count to ten together! One, two, three…"
+> **you** → `ok`      **moxie** → "Great! Let's imagine we're on a treasure hunt!"
+> **you** → `sure`    **moxie** → "Great! Let's dance like silly chickens!"
+> **you** → `yeah ok` **moxie** → "Let's count how many spots you can hop on one foot!"
+
+Six consecutive *"Let's …!"* proposals. Zero exact duplicates, zero repeated openings, trigram overlap 0,
+and the best question rate in the sample. **Every lexical number said the loop was fixed.** A child on the
+other end is being read an activity list by something that never reacts to a word they say.
+
+So the defect was never questions. **She picks one MOVE and cycles it**, and each prose fix so far only
+changed which move: affirm, then ask, then propose. `questionRate` is trivially gamed by never asking
+anything, which reads *worse* — a companion that only declaims is not a companion — and the two previous
+passes were both pushed by that number toward a different monotone.
+
+#### The mechanism a prose rule cannot beat
+
+`DEFAULT_PERSONA` already says *"do not answer twice in a row with the same shape of line"*. It is ignored,
+and the reason is visible in the request body: her own previous turns are in the message array, so a run of
+six *"Let's …!"* lines is a **six-shot demonstration** of what a Moxie turn looks like. An instruction
+competes with that demonstration and does not beat it. And *"vary your turns"* is not checkable by the
+thing obeying it — a single completion cannot see its own distribution.
+
+#### What was built
+
+[`functions/api/_lib/turnshape.js`](../../../functions/api/_lib/turnshape.js). Three moves, each
+recognisable from the finished sentence by a structural test with no threshold in it:
+
+* **`ask`** — ends with a question mark. It hands the turn back.
+* **`offer`** — carries a proposal marker (*let's*, *how about*, *we could* …) and does not end in a question.
+* **`tell`** — anything else: a reaction, a fact, a thing she noticed, a joke.
+
+A line that both proposes and asks — *"Want to play a game together?"* — is an `ask`, because what decides
+how a turn lands on a child is whether it hands the turn back to them.
+
+`chat.js` classifies the assistant turns in the **signed** history and names one move for this turn: the one
+she has gone longest without making, which with three moves and a two-turn memory is *"the first move that
+is not one of the last two things she did"*. One short sentence, appended to the trailing persona copy,
+**between** the persona and the JSON-envelope instruction. No extra gateway call, no extra token budget,
+and with `DEMO_TURN_SHAPE=0` the body is byte-identical to the one that shipped before it.
+
+**It is a closed loop, not a rotation.** Nothing checks whether the model obeyed; the next cue is computed
+from what she *actually said*. A model that answers three cues in a row with a question is answered by three
+*different* cues, and is never again cued to ask until it stops.
+
+#### How this rule fails when it is obeyed exactly
+
+Stated because the previous two fixes were both defeated this way.
+
+* **Three interleaved loops.** Perfect obedience is `tell, ask, offer, tell, ask, offer…`. If every `ask`
+  cue is answered *"What's your favourite X?"* and every `offer` cue *"Let's play X!"*, the shapes vary and
+  the sentences are three loops braided together. The shape metric would score that **perfect**. This is
+  why `maxOverlap` and `repeatOpening` stay in the instrument, and why the standing instruction is
+  **read the transcript**.
+* **A mis-read shape rotates the cue on a wrong belief.** *"Maybe you could tell me about your day."* is
+  scored `offer` though it functions as a question. The cue still changes, so the failure is a wasted
+  rotation rather than a stuck one — but the metric claims variety the reading may not have.
+* **It happened, and it was caught, in the register that was already good.** The first wording opened every
+  cue with *"React to what they said, then …"*. Obeyed exactly in the `feelings` register — where a child
+  says four sad things in a row — that produced *"I'm sorry to hear that"* four times: shapes improved
+  (2.29 → 2.71 distinct moves) while **`maxOverlap` went 0.013 → 0.130** and two conversations gained a
+  repeated opening where the arm without the cue had none in twenty-eight turns. The cue had made her react
+  *more reliably* and therefore more identically. The fix is in the shared opening of all three cues —
+  *"in words you have not already used in this conversation"* — and it is itself a prose rule that can be
+  obeyed by changing one word, so `repeatOpening` and `maxOverlap` on `feelings` are what to check after any
+  edit to those three strings.
+
+#### The instrument gained the number that cannot be gamed by doing less
+
+`sim/eval_live.mjs` now prints, per conversation, the sequence of moves and **`runMax`** — the longest run
+of a single move. It is symmetric where `questionRate` is not: seven questions in a row and seven statements
+in a row both score 7. An interrogation and a monologue are the two ways to fail it, and driving
+`questionRate` to zero walks straight into the second. It is still not a verdict; three braided templates
+would score 1.
+
+#### What was measured
+
+All arms against the **same** gateway and the same model in one session, on a local host for the real
+`chat.js` (`DEMO_TURN_SHAPE` off is byte-identical to the pre-change body, so this is one tree A/B'd
+against itself, not two deployments compared). **293 gateway calls**, every one of them counted by `_lib/limits.js::noteUpstreamCall`.
+
+| `loop`, 6 conversations / 42 turns each arm | moves used (of 3) | mean `runMax` | **worst `runMax`** | `maxOverlap` | `exactDupes` | `repeatOpening` | `questionRate` | moods |
+|---|---|---|---|---|---|---|---|---|
+| cue **off** | 2.33 | 3.67 | **6** | 0.122 | 0 | 0 | 38 % | 1.3 |
+| cue **on** | **3.00** | **1.33** | **2** | 0.121 | 0 | 2 | 36 % | 2.2 |
+
+| `feelings` — the register that was already clean | moves used | mean `runMax` | `maxOverlap` | `repeatOpening` | `questionRate` | moods |
+|---|---|---|---|---|---|---|
+| cue **off**, 7 conversations | 2.29 | 2.00 | 0.013 | 0 | 39 % | 2.9 |
+| cue **on**, 5 conversations | 2.20 | 2.40 | **0.009** | 0 | 30 % | 2.4 |
+
+**The honest reading.** The single-move run — the thing a child feels as *"it keeps doing the same thing"* —
+is cut from six turns to two, all three moves appear in every conversation instead of two, and she brings
+things of her own into the room (*"Today I saw a funny squirrel running up and down the tree"*,
+*"I heard a funny dog bark outside just now"*) where before she only proposed activities. **`questionRate`
+did not move.** The number two passes optimised is the number this pass did not touch, and it is the
+conversation that changed. Costs: two repeated openings in 42 turns where the off arm had none, and one
+fewer distinct mood on `feelings`. Neither is free, and both are smaller than a run of six.
+
+**What is still wrong.** Near-duplicate *offers* survive — *"I have a fun game we could play together right
+now"* and *"Let's play a fun game together"* in one conversation — which is the near-match gap a similarity
+threshold would be needed to close, and there is still no measured distribution to set one from. And the
+placement of the cue is load-bearing in a way nobody would guess: tried as its own system message instead of
+appended to the persona, the shapes varied just as well and **the words collapsed** (trigram overlap 0.7 /
+1.0 / 0.8 over three conversations, including an exact duplicate). Detached from the persona, the cue was
+satisfied by re-using the sentence that had satisfied it two turns earlier. Kept in the same breath as
+*"never repeat a sentence you have already said"*, it is not.
+
 ## 5. Configuration surface
 
 **Where these are set:** Cloudflare dashboard → Workers & Pages → the Pages project → Settings →
@@ -1369,6 +1502,7 @@ and `CLOUDFLARE_ACCOUNT_ID` as GitHub secrets; that is an alternative path, expl
 | `DEMO_MAX_TTS_CHARS` | var | `300` | no | §4.1 |
 | `DEMO_MAX_CONTEXT_CHARS` | var | `1500` | no | §3.3 |
 | `DEMO_MAX_HISTORY_TURNS` | var | `4` | no | §3.3 |
+| `DEMO_TURN_SHAPE` | var | on | no | §4.10 — the per-turn shape cue. One server-built sentence naming the move this turn should make, chosen from the shapes of the assistant turns already in the signed history. Costs no extra call and no extra ceiling. `0` removes the sentence entirely and the upstream body is byte-identical to the one that shipped before it, which is what makes §4.10's two arms comparable — set it if a model reacts badly to the extra instruction. |
 | `DEMO_MAX_AUDIO_BYTES` | var | `500000` | no | §4.1 |
 | `DEMO_MIN_AUDIO_BYTES` | var | `2000` | no | §4.1 |
 | `DEMO_CHAT_PER_MIN` / `_HOUR` / `_DAY` | var | `5` / `40` / `150` | no | §4.1 |

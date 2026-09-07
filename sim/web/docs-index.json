@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 10453,
+   "bytes": 11100,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 25080,
+   "bytes": 27864,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -550,7 +550,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 177213,
+   "bytes": 187742,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -578,6 +578,7 @@
     "4.7 Headers to add to `sim/web/_headers`",
     "4.8 The synthesised-audio cache — `/api/speech` stops paying twice for a line (built 2026-09-05)",
     "4.9 The three repetition levers, and the one that costs money (built 2026-09-06)",
+    "4.10 Turn shape — the repetition lever that acts on what she DOES, not on what she says (built 2026-09-06)",
     "5. Configuration surface",
     "The table",
     "dev.vars.example` (committed at the repo root; `.dev.vars` itself must be git-ignored)",
@@ -591,8 +592,7 @@
     "8.1 Hermetic tests — no Cloudflare account, no network, no browser",
     "8.2 What only a real deploy can settle",
     "8.3 Acceptance criteria",
-    "9. Effort and file list",
-    "P0 — shippable alone, one agent, one sitting"
+    "9. Effort and file list"
    ],
    "kind": "md"
   },
@@ -888,6 +888,42 @@
     "8. The failure mode that matters",
     "9. What the owner must decide before anyone builds this",
     "The recommendation: **specify, do not build**",
+    "10. Effort, files, risks"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/visemes.md",
+   "title": "TTSMark[]` visemes — the research slice, and what the row turns out to be about",
+   "section": "architecture",
+   "bytes": 40357,
+   "mermaid": 1,
+   "headings": [
+    "0. Why this row got a research slice",
+    "1. What is known, what is measured, what is inferred, and what is unknown",
+    "1.1 The ledger",
+    "1.2 Four citations that had rotted, found while writing this",
+    "2. The two questions the row exists to answer",
+    "2.1 Can Piper emit the alignment we need? — **YES, exactly, after a one-time model patch**",
+    "2.2 Where would marks come from, post-#152?",
+    "3. The contract touchpoints — fields, not intentions",
+    "3.1 `mqtt/moxie_sdk/tts.py` — the `Synthesizer` interface",
+    "3.2 The wire — `functions/api/_lib/wire.js`",
+    "3.3 The cache entry — `functions/api/_lib/ttscache.js`",
+    "3.4 `sim/web/audio.js` — the mouth driver",
+    "3.5 `sim/web/moxie.js` — the renderer, and the second degree of freedom",
+    "3.6 The viseme alphabet — the one new frozen artifact",
+    "4. The finding: the consumer is built, and the renderer is the bottleneck",
+    "5. Is this 10×? — honestly, **the row as written is not; the cheap half is**",
+    "6. P0 / P1 / P2",
+    "P0 — give the mouth the ability to be wrong · **S**",
+    "P1 — real marks on the local Piper path only · **M**",
+    "P2 — carry marks to the hosted demo · **L**, and gated on P1's measured verdict",
+    "7. How this is tested — an ordering, not a magnitude",
+    "The ceiling, stated as plainly as the rest of this repo states its own",
+    "8. The fallback path — design it first, because it is the common case for years",
+    "9. What the owner must decide",
+    "The recommendation: **build P0, specify P1, do not build P2**",
     "10. Effort, files, risks"
    ],
    "kind": "md"

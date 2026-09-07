@@ -111,12 +111,12 @@ export function chatMessage(deviceId, response) {
 /**
  * `tts.build_cloud_tts_response`'s output (:369-382), which is the exact inverse of
  * `audio.js`'s `decodeCloudTTS` (:260-282). `buffer` is base64 of RAW little-endian
- * signed 16-bit PCM — NOT a container: `audio.js`:610-614 says so in its own comment, and
+ * signed 16-bit PCM — NOT a container: `audio.js`:838-848 says so in its own comment, and
  * `decodeAudioData()` could not read it. `audio.js` ignores `request_source`; it is sent
  * because a real server sends it.
  *
  * `marks` is `[]` in P0. That is not a lost feature: with no marks the mouth follows the
- * audio ENVELOPE (`audio.js`:666-681 and `sim/web/README.md`:58-62), so lip-sync still
+ * audio ENVELOPE (`audio.js`:551-566 and `sim/web/README.md`:58-62), so lip-sync still
  * happens — it is driven by amplitude instead of by visemes.
  */
 export function buildCloudTtsResponse(o) {

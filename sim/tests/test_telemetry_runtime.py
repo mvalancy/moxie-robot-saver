@@ -96,7 +96,15 @@ def test_telemetry_survives_a_supervisor_restart(tmp_path):
     day = T.packet_day({"recorded_at": TODAY})
     today_row = [r for r in after["history"] if r["day"] == day]
     assert today_row and today_row[0]["count"] == 3
-    assert len(after["history"]) == 7 and after["history"][-1]["day"] == day
+    # `history_view` counts back from TODAY AT CALL TIME, while `day` comes from `TODAY`,
+    # which is fixed at MODULE IMPORT. Those are the same day except when the test run
+    # itself crosses midnight between import and here — which happened on 2026-09-07 at
+    # 00:03:58 UTC (run 34068212046, import 23:57): the 09-06 row was present and correct
+    # (the assertion above passed), but the window had moved on and `history[-1]` was 09-07.
+    # Pinning the stamp to noon fixed the ±30 s OFFSET crossing a boundary; it could not fix
+    # the WINDOW moving. So the tail is compared against the view's own notion of today.
+    today = T.packet_day({"recorded_at": int(datetime.datetime.now().timestamp())})
+    assert len(after["history"]) == 7 and after["history"][-1]["day"] == today
 
 
 def test_the_in_memory_read_paths_see_the_restored_history(tmp_path):

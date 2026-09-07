@@ -354,19 +354,18 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
 #bubble.anchored {
   top: var(--by, 22px);
   left: var(--bx, 50%);
-  /* bottom-centre of the box sits ON the anchor point, so the box hangs above her head */
-  transform: translate(-50%, -100%);
+  /* `--by` is always the TOP edge, in both placements, so the box never has to be measured
+     twice: `updateBubbleAnchor` does the arithmetic and CSS just places it. */
+  transform: translate(-50%, 0);
   min-width: 0;
   max-width: min(340px, calc(100% - 32px));
-  /* No transition on `transform`: this moves every frame with the camera, and a 0.2s ease
-     on a per-frame write is a bubble that swims a fifth of a second behind her head. The
-     opacity transition below is kept — that one fires on show/hide, not on motion. */
+  /* No transition on position: this moves every frame with the camera, and an ease on a
+     per-frame write is a bubble that swims a fifth of a second behind her. */
   transition: opacity 0.2s ease;
   will-change: top, left;
 }
-/* THE TAIL — a small notch under the bubble pointing down at her. It is what turns "a box
-   that happens to be above the robot" into "the robot is thinking this", and it only
-   exists in the anchored state, where there is something below to point at. */
+/* ABOVE HER HEAD (the default, and what the framing headroom exists to allow): a short
+   tail under the box, pointing down at the crown. */
 #bubble.anchored::after {
   content: "";
   position: absolute;
@@ -379,18 +378,22 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
   border-right: 1px solid var(--glow-30);
   border-bottom: 1px solid var(--glow-30);
 }
-/* FLIPPED — there was no room above her head, so the bubble hangs under it instead and
-   the tail moves to the top edge. `moxie.js::updateBubbleAnchor` decides; a notch left on
-   the bottom of a bubble that is itself below the head points away from her, which is
-   worse than no tail at all. */
-#bubble.anchored.below { transform: translate(-50%, 0); }
-#bubble.anchored.below::after {
-  bottom: auto;
-  top: -7px;
-  border-right: none;
-  border-bottom: none;
-  border-left: 1px solid var(--glow-30);
-  border-top: 1px solid var(--glow-30);
+/* AT HER CHEST, ON A LEADER (short landscape, where there is no room above). The tail is
+   replaced by a line running from the top of the box back up to her head — the comic-strip
+   convention, and what keeps "these are her words" legible once the box is no longer
+   touching her. `--leader` is the exact gap in px, so the line always ENDS at her head
+   rather than at a guessed distance. */
+#bubble.anchored.leadered::after { display: none; }
+#bubble.anchored.leadered::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  width: 2px;
+  height: var(--leader, 0px);
+  transform: translateX(-50%);
+  background: linear-gradient(to bottom, var(--glow-30), rgba(14, 14, 20, 0.88));
+  pointer-events: none;
 }
 /* Behind the camera: `project()` returns mirrored coordinates, so the bubble is faded out
    rather than drawn somewhere untrue. Not `display:none` — that would drop it from the
@@ -1222,6 +1225,61 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   #chat-cue { font-size: 11.5px; }
   #composer { padding: 7px; }
   #composer button { padding: 8px 11px; }
+}
+
+/* ==========================================================================
+   LANDSCAPE PHONE — a SHORT viewport is a different layout, not a squashed one.
+   ==========================================================================
+   Measured before this existed, at 851x393: topbar 44 + notice 25 + drawer handle 50 +
+   chat dock 206 = 325 px of chrome, leaving THE 3-D STAGE 56 px. At 667x375 it was 38.
+   Moxie was a sliver. Stacking works in portrait because height is the plentiful axis;
+   in landscape it is the scarce one, and the same stack is simply wrong.
+
+   So the axes swap: she takes the left, the conversation takes a right-hand column, and
+   both get the full height. The engineering drawer stops being a row and becomes an
+   overlay anchored bottom-left — it is the one thing here that is genuinely optional, and
+   giving it a permanent 50 px band of a 375 px screen was the largest single mistake in
+   the old layout.
+
+   Keyed on HEIGHT, not on `orientation`, because what breaks is short-ness: a small
+   window on a laptop hits exactly the same wall and gets exactly the same fix. */
+@media (max-width: 899px) and (max-height: 520px) {
+  #hud {
+    grid-template-columns: minmax(0, 1fr) clamp(200px, 38%, 320px);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "topbar topbar"
+      "stage  chat";
+  }
+  /* The hosted banner is supplementary and it is a whole row of a screen that has none to
+     spare. The badge and the GitHub link both live in the topbar too. */
+  #notice { display: none; }
+
+  /* The drawer floats over the stage instead of taking a band from it. Closed it is its
+     own handle in the corner; open it is a panel over the 3-D, which is the right
+     trade at this size — you are reading the panel, not watching her. */
+  #panel {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    width: min(64%, 420px);
+    max-height: calc(100% - 16px);
+    margin: 0;
+    z-index: 30;
+  }
+  #hud.rail-closed #panel { width: auto; }
+
+  #chat-dock {
+    padding: 0 8px 8px;
+    min-height: 0;
+  }
+  /* The log fills the column rather than being capped for a bottom strip — the whole
+     point of the swap is that height is available here. */
+  #chat-dock #transcript { max-height: none; flex: 1 1 auto; min-height: 0; }
+  #chat-cue { display: none; }            /* the composer's placeholder carries it here */
+  #composer { padding: 6px; }
+  #composer button { padding: 7px 10px; }
+  #transcript .turn, #transcript .mutter { font-size: 11px; }
 }
 
 /* very small phones: tighten the brand row */
