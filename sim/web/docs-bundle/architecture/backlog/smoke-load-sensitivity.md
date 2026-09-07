@@ -29,7 +29,7 @@ Definition of done's criterion 6) that is how a real defect stays hidden. It has
 misread once: an orchestrator recorded a smoke failure as a merge regression before an A/B showed
 pristine `dev` failing identically.
 
-## MEASURED 2026-09-07 — the rate, and the threshold
+## MEASURED 2026-09-07 — the rate, and a threshold claim this section then RETRACTS
 
 The first acceptance criterion below is now satisfied. Same commit throughout (`02e7b47`), same
 script, load generated with `while :; do :; done` burner processes on a 24-core box:
@@ -40,9 +40,28 @@ script, load generated with `while :; do :; done` burner processes on a 24-core 
 | moderate | **19–33** | **0 of 5** |
 | high | **123–156** | **2 of 7** |
 
-**Eight consecutive passes and then ~30 % failing is a threshold, not noise** — and nothing about the
-tree changed between those rows. Below roughly load 33 the script is clean; above roughly 120 it fails
-about a third of the time.
+**FIRST READING, SINCE RETRACTED:** *"eight consecutive passes and then ~30 % failing is a threshold,
+not noise; below load 33 clean, above 120 fails about a third of the time."*
+
+**RETRACTED THE SAME DAY, by more of the same measurement.** Two further rounds at the load that had
+produced failures came back **clean**: 2 of 2 at load 75, then **3 of 3 at load 139–150** — the second
+squarely inside the band the first round called failing. The corrected totals, all on `02e7b47`:
+
+| condition | load average | failures |
+|---|---|---|
+| quiet → moderate | **3.3 – 75** | **0 of 13** |
+| high | **123 – 156** | **2 of 10** |
+
+So the honest statement is **not** a threshold with a clean edge. It is a **load-dependent
+probability**: roughly one run in five fails above load ~120, and none of thirteen failed at or below
+75. The difference between those rows is real; the sharpness the first reading claimed was not.
+
+**Why the overstatement happened, since it is the same error twice in one day.** The first round was
+8 clean runs followed by 2 failures, and *"threshold"* is the tidier story that shape suggests. Ten
+more runs were enough to spoil it. A rate estimated from two failures has an interval wide enough to
+hold almost any hypothesis, and calling it a threshold gave a number more authority than its sample
+could carry — the same species of error as reporting a green obtained at the wrong load, which this
+section already records two paragraphs down.
 
 **A correction worth keeping, because it nearly closed this brief wrongly.** The first loaded attempt
 returned **5 pass / 0 fail** and read as *"the smoke is fine"*. It was not: the burners had not ramped,
@@ -57,8 +76,9 @@ ratio of load to cores rather than an absolute, CI may sit near it routinely —
 mechanism behind reds appearing on diffs that cannot reach the code, the pattern that started this
 whole line of work on 2026-09-06.
 
-**Still not known: which step gives way.** Two attempts to capture a failing run's tail were
-interrupted, and a third passed at load 156. **The distinction the section below insists on — a fixed
+**Still not known: which step gives way** — after **five** capture attempts across 13 high-load runs.
+The two failures that did occur were counted by a wrapper that had already discarded their output, and
+every run since, at every load tried, has passed. **The distinction the section below insists on — a fixed
 wait standing in for a condition (a harness bug) versus a genuine capacity limit in the runtime (a
 product finding) — remains unresolved, and nothing here should be read as having settled it.**
 
