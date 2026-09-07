@@ -151,6 +151,9 @@ REVIEWED: dict = {
         "RELATIVE — the requestAnimationFrame shim hands `cb(Date.now())` to code that "
         "only ever diffs consecutive frame stamps. A duration in disguise; no assertion "
         "reads the value."),
+    "sim/test_csp.mjs": (
+        ("Date.now",),
+        "RELATIVE — a CEILING on a wait, and nothing else. `until()` stamps `t0` and then\n        compares `Date.now() - t0` against a fixed budget purely to stop polling; the value\n        is never asserted and never reaches a check. It exists because puppeteer's console\n        listeners fill their arrays in THIS process, so \"a refusal was logged\" has to be\n        waited for in node rather than in the renderer.\n        Added 2026-09-07, by this ratchet catching PR #209 the day after PR #206 taught it\n        to scan monotonic clocks at all — which is the point of a ratchet: the entry was\n        not written because someone remembered, it was written because the check refused\n        the merge."),
     "sim/test_console_insights.mjs": (
         ("Date.now",),
         "RELATIVE — an ORDERING of two reads of the same clock, never a date. The suite "

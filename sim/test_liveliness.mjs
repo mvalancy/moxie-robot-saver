@@ -32,7 +32,48 @@ const browser = await puppeteer.launch({
   args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
 });
 
-const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+/* ---- WAIT FOR THE LAYOUT, NOT FOR A NUMBER OF MILLISECONDS ---------------- *
+ *
+ * THERE ARE NO FIXED SLEEPS LEFT IN THIS FILE and the `settle()` helper that supplied
+ * them is gone with them, because all three of its call sites turned out to be waiting
+ * for something the page could simply be ASKED about. Two of them were the same
+ * condition — "the browser has finished the relayout I just asked it for". `open()`
+ * slept 500 ms after the seams appeared, and the dock-geometry
+ * block slept 400 ms after clicking `#rail-toggle`; on a runner starved enough to drop
+ * frames, either could hand a mid-flight rectangle to a check that then reports it as a
+ * layout bug. `#rail-toggle`'s handler is the clearer case: it toggles the class
+ * synchronously and then re-frames the stage two `requestAnimationFrame`s later
+ * (`rail.js`), so what the 400 ms was really buying was frames, and frames are exactly
+ * what a starved runner stops delivering on schedule.
+ *
+ * Fonts first, because a webfont that lands late re-flows every text box this suite
+ * measures. Then the widths under measurement have to read IDENTICALLY on three
+ * consecutive animation frames — three, not two, so a single quiet frame in the middle of
+ * a reflow cannot be mistaken for the end of one. Bounded: a layout that never settles
+ * fails here, loudly, instead of quietly handing on a number nobody can explain.
+ */
+async function layoutSettled(page, sels = ["#chat-dock", "#panel"], timeout = 30000) {
+  return page.evaluate(async (sels, timeout) => {
+    await Promise.race([document.fonts.ready,
+                        new Promise((r) => setTimeout(r, 5000))]);
+    const read = () => sels.map((sel) => {
+      const el = document.querySelector(sel);
+      // Hundredths of a pixel: sub-pixel widths are real, and rounding them away here
+      // would call a still-moving layout "stable".
+      return el ? Math.round(el.getBoundingClientRect().width * 100) : -1;
+    }).join("/");
+    const t0 = performance.now();
+    let last = null, same = 0;
+    for (;;) {
+      const now = await new Promise((r) => requestAnimationFrame(() => r(read())));
+      same = now === last ? same + 1 : 0;
+      last = now;
+      if (same >= 2) return now;                       // three frames in agreement
+      if (performance.now() - t0 > timeout)
+        throw new Error(`layout never settled after ${timeout}ms (${sels.join(",")} = ${now})`);
+    }
+  }, sels, timeout);
+}
 
 /* ---- EYES, and the hermeticity they required ------------------------------ *
  *
@@ -86,7 +127,11 @@ async function open(width, height, isMobile) {
   await page.goto(site.url + "/sim.html", { waitUntil: "domcontentloaded" });
   // The seam has to exist before anything below means anything.
   await page.waitForFunction("window.__ambient && window.moxie && window.__bubbleAnchor", { timeout: 20000 });
-  await settle(500);
+  // …and the first layout has to be FINISHED, not merely 500 ms old, before any block
+  // below measures a rectangle. (`ambient.js` attaches its transcript observer in the same
+  // synchronous pass that defines `window.__ambient`, so `state().watching` is already
+  // true by the time the wait above returns — this settle owes it nothing.)
+  await layoutSettled(page);
   return page;
 }
 
@@ -100,7 +145,22 @@ async function open(width, height, isMobile) {
   const idleBefore = await page.evaluate(() => document.getElementById("idle-on").checked);
   eq(idleBefore, true, "liveness starts ON (the visitor's own switch)");
 
-  // ---- a REAL turn puts the hold on ------------------------------------- //
+  /* ---- a REAL turn puts the hold on ------------------------------------- *
+   *
+   * THE THIRD FIXED SLEEP, and the one that only turned up because the fix below was
+   * being MEASURED under load rather than reasoned about. This waited 250 ms in the page
+   * for `ambient.js`'s `MutationObserver` to see the row and call `noteTurn()`. The
+   * observer is a microtask, so it has always fired long before 250 ms — but the WINDOW
+   * matters, because the hold this then reads is only 4 000 ms wide: on a runner starved
+   * badly enough for a 250 ms timer to come back over four seconds late, the hold it was
+   * waiting for has already lapsed and `a turn in the log puts the conversation hold ON`
+   * goes red for a page that did exactly the right thing. Measured once at loadavg 77 on
+   * 24 cores while proving the lapse fix.
+   *
+   * `chatting` is the marker `reflectHold()` paints from inside `noteTurn()`, so polling
+   * for it waits on the observer having RUN rather than on a duration — and it resolves
+   * on the first turn of the event loop, which is what keeps the read inside the 4 s
+   * window instead of merely usually inside it. */
   const held = await page.evaluate(() => {
     window.__ambient.quietMs(4000);            // 45 s is unwatchable in a test
     const el = document.getElementById("transcript");
@@ -108,12 +168,23 @@ async function open(width, height, isMobile) {
     row.className = "turn user";
     row.innerHTML = '<span class="who">Child</span><span class="msg">hello moxie</span>';
     el.appendChild(row);                        // exactly what addTranscript() builds
-    return new Promise((r) => setTimeout(() => r({
-      state: window.__ambient.state(),
-      hudChatting: document.getElementById("hud").classList.contains("chatting"),
-      hintShown: !document.getElementById("liveness-hold").hidden,
-      idleStillChecked: document.getElementById("idle-on").checked,
-    }), 250));
+    const hud = document.getElementById("hud");
+    return new Promise((resolve, reject) => {
+      const t0 = performance.now();
+      const poll = () => {
+        if (hud.classList.contains("chatting")) return resolve({
+          state: window.__ambient.state(),
+          hudChatting: hud.classList.contains("chatting"),
+          hintShown: !document.getElementById("liveness-hold").hidden,
+          idleStillChecked: document.getElementById("idle-on").checked,
+        });
+        // Bounded, and it names what it was waiting for rather than timing out blankly.
+        if (performance.now() - t0 > 3000)
+          return reject(new Error("the transcript observer never put the hold on"));
+        setTimeout(poll, 5);
+      };
+      poll();
+    });
   });
   eq(held.state.watching, true, "ambient is watching the comms log for real turns");
   eq(held.state.conversing, true, "a turn in the log puts the conversation hold ON…");
@@ -122,16 +193,54 @@ async function open(width, height, isMobile) {
   eq(held.idleStillChecked, true,
      "…and the visitor's OWN liveness switch is NOT flipped: a hold is not a setting");
 
-  // ---- and it lifts on its own once the conversation goes quiet ---------- //
-  await settle(4600);
+  /* ---- and it lifts on its own once the conversation goes quiet ---------- *
+   *
+   * WAITED ON THE RECORDED CONDITION, NOT ON NODE'S CLOCK. This slept a flat 4600 ms in
+   * Node for a hold shortened to 4000 ms and then read the result back. Those are two
+   * different clocks. The hold lapses on `ambient.js`'s own
+   * `setTimeout(reflectHold, CHAT_QUIET_MS + 50)` INSIDE the page; `settle()` counts on
+   * Node's event loop, which keeps time whether or not the page has been given any.
+   *
+   * MEASURED, on untouched `dev` under 2x CPU oversubscription: `conversing` had already
+   * gone false — it is derived live from `Date.now() - lastTurnAt` and so needs no timer
+   * at all — while `chatting` and the paused hint, the two things only `reflectHold()`
+   * repaints, were both still set. Two of the three checks below went red for a page that
+   * was behaving perfectly, which is this repo's oldest bug shape: a fixed sleep standing
+   * in for a condition.
+   *
+   * ALL THREE ARE WAITED FOR TOGETHER, and that is the load-bearing detail rather than a
+   * flourish. A wait on `conversing` alone would return on the wall clock — before
+   * `reflectHold()` had run at all — and would read the two DOM markers a beat early:
+   * one race swapped for a tighter one. The condition is therefore the WHOLE lapse, after
+   * which each part is still asserted separately, so a lapse that only half happened
+   * still names the half that did not. */
+  const HOLD_LAPSE_MS = 30000;              // 7x the shortened 4 s hold: generous, bounded
+  let lapseTimedOut = false;
+  try {
+    await page.waitForFunction(
+      () => window.__ambient.state().conversing === false &&
+            !document.getElementById("hud").classList.contains("chatting") &&
+            document.getElementById("liveness-hold").hidden === true,
+      // Polled on a timer rather than on `raf`, puppeteer's default: a page starved of
+      // frames is exactly the case this wait exists for, and rAF is the first thing such
+      // a page stops delivering.
+      { timeout: HOLD_LAPSE_MS, polling: 50 });
+  } catch { lapseTimedOut = true; }
   const lifted = await page.evaluate(() => ({
     conversing: window.__ambient.state().conversing,
     hudChatting: document.getElementById("hud").classList.contains("chatting"),
     hintShown: !document.getElementById("liveness-hold").hidden,
   }));
-  eq(lifted.conversing, false, "the hold LAPSES once the conversation goes quiet…");
-  eq(lifted.hudChatting, false, "…the `chatting` marker is cleared…");
-  eq(lifted.hintShown, false, "…and the paused hint goes away with it");
+  /* A WAIT THAT GIVES UP HAS TO SAY SO. Left silent, a timed-out wait would be reported
+   * below as an ordinary disagreement and say nothing about the 30 s spent waiting for
+   * it — so whichever of the three is still wrong carries the timeout in its own message,
+   * which is what names the one that never arrived. */
+  const late = lapseTimedOut
+    ? ` [the wait for the lapse TIMED OUT after ${HOLD_LAPSE_MS}ms — THIS is what never arrived]`
+    : "";
+  eq(lifted.conversing, false, "the hold LAPSES once the conversation goes quiet…" + late);
+  eq(lifted.hudChatting, false, "…the `chatting` marker is cleared…" + late);
+  eq(lifted.hintShown, false, "…and the paused hint goes away with it" + late);
 
   // ---- her self-talk lands in the log, as its own kind of row ------------ //
   const mutter = await page.evaluate(() => {
@@ -154,7 +263,17 @@ async function open(width, height, isMobile) {
   eq(mutter.isTurn, false,
      "…and NOT a `.turn`: that class is what addTranscript() appends streamed replies into");
 
-  // ---- and she cannot silence herself with her own voice ----------------- //
+  /* ---- and she cannot silence herself with her own voice ----------------- *
+   *
+   * THIS ONE IS DELIBERATELY A DURATION AND STAYS ONE. Everything else in this block
+   * waits for something to HAPPEN; this asserts that nothing does — that a `.mutter` row
+   * is not a `.turn` and so never reaches `noteTurn()`. There is no condition to wait
+   * for, because the correct behaviour is the absence of one, and a wait-for-a-condition
+   * here would either return instantly (proving nothing) or hang until it timed out. The
+   * 250 ms is the window in which the observer would have fired if it were going to, and
+   * it is safe in the failing direction: starve the runner and `conversing` is even more
+   * certainly false, so a stalled frame cannot turn this check green when it should be
+   * red. */
   const selfHold = await page.evaluate(() => new Promise((r) => setTimeout(
     () => r(window.__ambient.state().conversing), 250)));
   eq(selfHold, false,
@@ -187,7 +306,12 @@ async function dockGeometry(page) {
 
   // …and closing the panel really does hand it the rest of the window.
   await page.click("#rail-toggle");
-  await settle(400);
+  // The class flips synchronously in `rail.js`, but the re-frame it schedules is two
+  // animation frames away and the grid relayout is a frame away — so this waits for the
+  // widths to stop moving rather than for 400 ms to pass. Nothing about the ANSWER is
+  // baked into the wait: it settles on whatever width the page arrives at, and the checks
+  // below are what decide whether that width is the right one.
+  await layoutSettled(page);
   const closedRail = await dockGeometry(page);
   eq(closedRail.closed, true, "desktop: the engineering panel can now be CLOSED at all");
   ok(closedRail.dockW > openRail.dockW + 200,

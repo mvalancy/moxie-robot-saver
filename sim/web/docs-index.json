@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 11632,
+   "bytes": 12195,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 29313,
+   "bytes": 30444,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 276680,
+   "bytes": 278029,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 230524,
+   "bytes": 234622,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -142,7 +142,9 @@
     "2026-09-06 — INTEGRATION: the intermittent is now the promotion gate, and `feat/suiteaudit`",
     "2026-09-06 — AUDIT: the DoD total was stale in both directions at once",
     "2026-09-06 — PROMOTION, and the research tier has been watching the wrong repository",
-    "2026-09-06 — the family, counted honestly: ten found, nine closed, one in flight"
+    "2026-09-06 — the family, counted honestly: ten found, nine closed, one in flight",
+    "2026-09-07 — BLOCKED: no Opus agent capacity until 2026-09-11",
+    "2026-09-07 — everything the rate limit interrupted is landed, by hand"
    ],
    "kind": "md"
   },
@@ -977,12 +979,32 @@
    "path": "architecture/backlog/smoke-load-sensitivity.md",
    "title": "run_smoke.sh` is load-sensitive — the stack exercise cannot currently tell \"broken\" from \"busy\"",
    "section": "architecture",
-   "bytes": 3656,
+   "bytes": 8934,
    "mermaid": 0,
    "headings": [
     "The evidence, and why it is not a suspicion",
     "Why it matters more than an ordinary flake",
+    "MEASURED 2026-09-07 — the rate, and a threshold claim this section then RETRACTS",
+    "RETRACTED AGAIN, further the same day — load is NOT established as the cause",
     "What the work is",
+    "Acceptance criteria",
+    "Effort",
+    "Files"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/head-travel-threshold.md",
+   "title": "test_liveliness.mjs`'s head-travel floor is a measurement of the machine",
+   "section": "architecture",
+   "bytes": 4307,
+   "mermaid": 0,
+   "headings": [
+    "Where",
+    "The evidence",
+    "The mechanism",
+    "What was tried, and why it is filed rather than fixed",
+    "Narrowed 2026-09-07: the per-sweep `setSpeech()` is NOT the cause",
     "Acceptance criteria",
     "Effort",
     "Files"

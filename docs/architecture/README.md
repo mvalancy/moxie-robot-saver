@@ -110,6 +110,12 @@ A backend + Sim are built from these directly; each cites the study but reads on
   failed on *both* sides including pristine `dev`. The eleventh instance of the family, sitting under the
   INTEGRATION tier's own primary instrument, and the brief requires separating a fixed wait from a real
   capacity limit — the second would be a product finding).
+  and [`backlog/head-travel-threshold.md`](backlog/head-travel-threshold.md) (**the twelfth
+  instance, and the first this project introduced while fixing the family** — block 4a's `spread > 40`
+  px floor waits a fixed four frames per sweep, so a loaded runner reads a short arc as a broken drive.
+  Red on pristine `dev` in 2 of 3 interleaved pairs. A fix was written and **reverted**: polling the
+  motor for arrival stalled in a way a standalone probe could not reproduce, and shipping past an
+  unexplained contradiction is how the other eleven survived).
 
 [`backlog/gamify-the-public-sim.md`](backlog/gamify-the-public-sim.md) — evidence for the **one part
   of the owner's chat-first steer that was deliberately left open**, *"Gamify this for regular

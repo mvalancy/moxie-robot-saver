@@ -29,6 +29,91 @@ Definition of done's criterion 6) that is how a real defect stays hidden. It has
 misread once: an orchestrator recorded a smoke failure as a merge regression before an A/B showed
 pristine `dev` failing identically.
 
+## MEASURED 2026-09-07 — the rate, and a threshold claim this section then RETRACTS
+
+The first acceptance criterion below is now satisfied. Same commit throughout (`02e7b47`), same
+script, load generated with `while :; do :; done` burner processes on a 24-core box:
+
+| condition | load average | failures |
+|---|---|---|
+| quiet | **3.3** | **0 of 3** |
+| moderate | **19–33** | **0 of 5** |
+| high | **123–156** | **2 of 7** |
+
+**FIRST READING, SINCE RETRACTED:** *"eight consecutive passes and then ~30 % failing is a threshold,
+not noise; below load 33 clean, above 120 fails about a third of the time."*
+
+**RETRACTED THE SAME DAY, by more of the same measurement.** Two further rounds at the load that had
+produced failures came back **clean**: 2 of 2 at load 75, then **3 of 3 at load 139–150** — the second
+squarely inside the band the first round called failing. The corrected totals, all on `02e7b47`:
+
+| condition | load average | failures |
+|---|---|---|
+| quiet → moderate | **3.3 – 75** | **0 of 13** |
+| high | **123 – 156** | **2 of 10** |
+
+So the honest statement is **not** a threshold with a clean edge. It is a **load-dependent
+probability**: roughly one run in five fails above load ~120, and none of thirteen failed at or below
+75. The difference between those rows is real; the sharpness the first reading claimed was not.
+
+**Why the overstatement happened, since it is the same error twice in one day.** The first round was
+8 clean runs followed by 2 failures, and *"threshold"* is the tidier story that shape suggests. Ten
+more runs were enough to spoil it. A rate estimated from two failures has an interval wide enough to
+hold almost any hypothesis, and calling it a threshold gave a number more authority than its sample
+could carry — the same species of error as reporting a green obtained at the wrong load, which this
+section already records two paragraphs down.
+
+**A correction worth keeping, because it nearly closed this brief wrongly.** The first loaded attempt
+returned **5 pass / 0 fail** and read as *"the smoke is fine"*. It was not: the burners had not ramped,
+and that run peaked at load 19–33 — which the table above now shows is **below the threshold
+entirely**. Reporting it would have retired a real defect on a measurement taken in the wrong regime,
+which is exactly the failure mode that produced the other twelve instances. The rule that follows:
+**state the load with the rate, always, or the rate means nothing.**
+
+**Why this may matter for CI rather than only for developers.** GitHub's runners are 2–4 core, and the
+browser suite takes **19–22 minutes** there against roughly 60 seconds locally. If this threshold is a
+ratio of load to cores rather than an absolute, CI may sit near it routinely — which would be one
+mechanism behind reds appearing on diffs that cannot reach the code, the pattern that started this
+whole line of work on 2026-09-06.
+
+## RETRACTED AGAIN, further the same day — load is NOT established as the cause
+
+Two more rounds at high load, **8 runs, zero failures** (3 of 3 at load 139–150; 5 of 5 at load
+125–150, this time with every run's full output preserved to its own file). Cumulative:
+
+| condition | load average | failures |
+|---|---|---|
+| quiet → moderate | **3.3 – 75** | **0 of 13** |
+| high | **123 – 156** | **2 of 15** |
+
+**That difference is not significant.** Fisher's exact on 0/13 against 2/15 gives **p ≈ 0.49** — the
+two rows are indistinguishable from a single rate. The honest statement is now weaker than either
+earlier reading:
+
+> `run_smoke.sh` failed **twice, both inside one round**, and 26 further runs across four rounds and
+> four load regimes produced **no failure at all**. Load is a *hypothesis*, not a finding.
+
+What those two failures share is not known to be load. They shared a round, a port range
+(`1981`–`1985`), and whatever state the preceding runs left behind. Each of those is about as
+well-supported as CPU pressure — which is to say barely.
+
+**The methodological failure that made this take five rounds.** Every measurement wrapper used here
+grepped for a success marker and **discarded the rest of the output**, so each failure was *counted*
+and its evidence *destroyed in the same step*. The round that finally preserved full logs found
+nothing to preserve. **A harness that records THAT something failed but not HOW converts a defect into
+a statistic** — the same species of error as this repo's twelve assertion-level instances, relocated
+into the instrument.
+
+**How to settle it:** loop the smoke keeping every log, long enough to catch two or three failures,
+then compare them. Roughly 30–50 runs at ~90 s each — an hour of wall clock, which is why this stays
+filed rather than done.
+
+**Still not known: which step gives way** — after **five** capture attempts across 13 high-load runs.
+The two failures that did occur were counted by a wrapper that had already discarded their output, and
+every run since, at every load tried, has passed. **The distinction the section below insists on — a fixed
+wait standing in for a condition (a harness bug) versus a genuine capacity limit in the runtime (a
+product finding) — remains unresolved, and nothing here should be read as having settled it.**
+
 ## What the work is
 
 1. **Measure before changing anything.** Establish the failure rate against pristine `dev` at a known
