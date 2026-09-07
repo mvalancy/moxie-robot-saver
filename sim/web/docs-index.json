@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 278029,
+   "bytes": 278908,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 237146,
+   "bytes": 238818,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -145,7 +145,8 @@
     "2026-09-06 — the family, counted honestly: ten found, nine closed, one in flight",
     "2026-09-07 — BLOCKED: no Opus agent capacity until 2026-09-11",
     "2026-09-07 — everything the rate limit interrupted is landed, by hand",
-    "2026-09-07 — promotion #2 of the day, and the Turnstile answer written down"
+    "2026-09-07 — promotion #2 of the day, and the Turnstile answer written down",
+    "2026-09-07 — AUDIT: the DoD said \"still unknown\" about something already answered"
    ],
    "kind": "md"
   },

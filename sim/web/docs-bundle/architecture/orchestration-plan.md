@@ -1492,3 +1492,27 @@ The present state — neither set, enforcement **off** — is correct rather tha
 also what keeps branch previews usable: Turnstile authorizes a hostname and its subdomains, and the
 platform-assigned preview host is not on the widget's domain list, so a preview that enforced would be
 a preview nobody could use.
+
+### 2026-09-07 — AUDIT: the DoD said "still unknown" about something already answered
+
+Criterion 6's row carried *"which step gives way is still unknown after five capture attempts"*. That
+was true when written and **false within the hour** — the sixth attempt caught the failure with its
+log and named the step (`sim/run_smoke.sh:241`, a fixed `--timeout 20` on the config push). Corrected
+today rather than at the next audit, because a row that says "unknown" about something the same
+session has since answered is exactly the **one-directional documentation drift** this program measured
+at **39 % of audit rows and 38 % of briefs** on 2026-09-06 — records consistently understating what
+exists. Drift is not created by anyone deciding to be stale; it is created by an answer arriving after
+the sentence describing the question.
+
+**#6 remains 🟡, and now for a reason with a named fix rather than an open question.** A gate that
+reports starvation as breakage still teaches its reader to re-run; it goes green when the wait says
+*which* it was.
+
+**RESEARCH, same fire:** both signals unchanged — `Noonster77/openmoxie` **2026-08-31**,
+`jbeghtol/openmoxie` **2026-01-15** (236 days). Two API calls, watching the fork that is actually
+alive. Nothing to delegate: no Opus capacity until 2026-09-11, and every rotation item is either
+shipped or blocked on that.
+
+**Program state:** `main` `28365e2` serving, `dev` level with it, standing PR **#210**, guard reports
+*promotion finished*, guards green, bundle 0-diff, secrets clean (2 known `sk-AbCd` fixtures),
+`mqtt/.env` untouched at its 2026-09-02 mtime, 1 worktree, 0 orphaned branches, all four tiers armed.
