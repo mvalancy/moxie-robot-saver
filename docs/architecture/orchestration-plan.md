@@ -1516,3 +1516,30 @@ shipped or blocked on that.
 **Program state:** `main` `28365e2` serving, `dev` level with it, standing PR **#210**, guard reports
 *promotion finished*, guards green, bundle 0-diff, secrets clean (2 known `sk-AbCd` fixtures),
 `mqtt/.env` untouched at its 2026-09-02 mtime, 1 worktree, 0 orphaned branches, all four tiers armed.
+
+### 2026-09-07 — #211: a guard whose verdict changed nothing, found beside the one being hunted
+
+Merged `3e98f02`. `sim/readiness.sh::wait_for_log` printed *"supervisor never logged …"*, dumped 20
+lines of log, returned **1** — and two of its three call sites discarded that. The SUBACK waits in
+`run_smoke.sh` and `run_scenarios.sh` were unguarded while the status-endpoint wait **beside one of
+them** carried `|| exit 1`, which is what made it invisible.
+
+The cost was a misattributed failure: a supervisor that never acknowledged its subscriptions produced
+an accurate error, the script launched the robot anyway into the QoS-0 race that line exists to
+prevent, and the run died 20 s later as `no config pushed within timeout` — *the appliance did not
+answer* when the truth was *we walked past a gate that told us not to*.
+
+**This is the same family one level up.** The twelve instances before it were assertions that could not
+fail; this is a check whose result could not affect the outcome. **A guard whose verdict changes
+nothing is not a guard**, and the test is therefore a ratchet on the *call sites* rather than on the
+race — the race already has `test_sil_supervisor_readiness.py`. It asks the different question, *is the
+gate obeyed*, in 0.08 s, and reddens on a fourth unguarded caller.
+
+**Two disciplines held that are easy to skip.** It did **not** cause the smoke failure being hunted —
+that log carries no such error line — so it is filed as itself rather than credited with the other.
+And the behaviour change is stated in the PR rather than discovered later: guarding these means a run
+that previously limped past a 40 s timeout now stops there. SIL going green in CI (8m52s) is the
+evidence that gate is comfortably met rather than routinely walked past.
+
+Verified: fail-without-itself (1 failed naming `run_smoke.sh:230`; 2 passed restored), SIL smoke ✅,
+scenarios 2/2 with 4/4 turns, **5330 passed + 30 skipped**, four doc guards green.
