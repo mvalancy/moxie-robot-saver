@@ -104,6 +104,12 @@ A backend + Sim are built from these directly; each cites the study but reads on
   measurement rather than a clock. **Read it for the numbers that changed under re-measurement** —
   the collision window is `683 < vh < 909`, which excludes the phone the original filing was written
   from — and for the second, still-open `env.js` defect the same driven state exposes.
+  Filed 2026-09-06 and deliberately left unstarted:
+  [`backlog/smoke-load-sensitivity.md`](backlog/smoke-load-sensitivity.md) (**the stack exercise cannot
+  tell "broken" from "busy"** — `run_smoke.sh` reddens under load, measured by an interleaved A/B that
+  failed on *both* sides including pristine `dev`. The eleventh instance of the family, sitting under the
+  INTEGRATION tier's own primary instrument, and the brief requires separating a fixed wait from a real
+  capacity limit — the second would be a product finding).
 
 [`backlog/gamify-the-public-sim.md`](backlog/gamify-the-public-sim.md) — evidence for the **one part
   of the owner's chat-first steer that was deliberately left open**, *"Gamify this for regular
