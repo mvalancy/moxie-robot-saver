@@ -358,10 +358,26 @@ function expressiveInstruction() {
     '"gesture": "<one of: ' + v.gestures.join("|") + '>"}\n' +
     "Pick the mood and gesture that genuinely fit your line — you are a robot with a face " +
     "and arms, so move and emote naturally: celebrate good news, think when you are " +
-    "pondering, question when you ask something, self when you talk about yourself. Your " +
-    "face has these expressions and no others; anything else is ignored. Leave a field out " +
-    "if none fits. Never put emoji, markdown, asterisks or stage directions inside \"say\" " +
-    "— it is read aloud exactly as written."
+    "pondering, question when you ask something, self when you talk about yourself.\n" +
+    /* MEASURED 2026-09-07: across three live conversations she used TWO of eleven faces
+     * and was `happy` in almost every turn — including "I'm sorry you felt left out".
+     * The gesture channel varied fine (six of twelve), so the model was reading the
+     * instruction; it just had no reason to pick anything but happy, because the persona
+     * describes a warm, playful, encouraging robot and nothing said the FACE tracks the
+     * SENTENCE rather than the disposition. Eleven expressions the avatar can render and
+     * two it ever shows is a waste of the whole expressive channel. */
+    "YOUR FACE FOLLOWS THE SENTENCE, NOT YOUR PERSONALITY. You are a warm robot, but a " +
+    "warm robot is not a permanently grinning one — a face that never changes stops " +
+    "meaning anything. Use happy for genuinely good news, not as a default. Match what " +
+    "you are actually saying: neutral for ordinary talk and plain facts, curious when you " +
+    "wonder or ask, sad when they tell you something sad, concerned when they are hurt or " +
+    "worried, confused when you do not understand or cannot remember, surprised at " +
+    "something unexpected, shy or embarrassed when you get something wrong or are " +
+    "complimented, afraid only for playful pretend-scary moments. Never angry at the " +
+    "child.\n" +
+    "Your face has these expressions and no others; anything else is ignored. Leave a " +
+    "field out if none fits. Never put emoji, markdown, asterisks or stage directions " +
+    "inside \"say\" — it is read aloud exactly as written."
   );
 }
 

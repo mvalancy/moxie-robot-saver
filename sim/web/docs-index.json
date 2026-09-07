@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 278029,
+   "bytes": 278908,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 234622,
+   "bytes": 240795,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -144,7 +144,10 @@
     "2026-09-06 — PROMOTION, and the research tier has been watching the wrong repository",
     "2026-09-06 — the family, counted honestly: ten found, nine closed, one in flight",
     "2026-09-07 — BLOCKED: no Opus agent capacity until 2026-09-11",
-    "2026-09-07 — everything the rate limit interrupted is landed, by hand"
+    "2026-09-07 — everything the rate limit interrupted is landed, by hand",
+    "2026-09-07 — promotion #2 of the day, and the Turnstile answer written down",
+    "2026-09-07 — AUDIT: the DoD said \"still unknown\" about something already answered",
+    "2026-09-07 — #211: a guard whose verdict changed nothing, found beside the one being hunted"
    ],
    "kind": "md"
   },
@@ -979,13 +982,14 @@
    "path": "architecture/backlog/smoke-load-sensitivity.md",
    "title": "run_smoke.sh` is load-sensitive — the stack exercise cannot currently tell \"broken\" from \"busy\"",
    "section": "architecture",
-   "bytes": 8934,
+   "bytes": 10867,
    "mermaid": 0,
    "headings": [
     "The evidence, and why it is not a suspicion",
     "Why it matters more than an ordinary flake",
     "MEASURED 2026-09-07 — the rate, and a threshold claim this section then RETRACTS",
     "RETRACTED AGAIN, further the same day — load is NOT established as the cause",
+    "ANSWERED 2026-09-07 — the step is the config wait, and it is NOT the known race",
     "What the work is",
     "Acceptance criteria",
     "Effort",

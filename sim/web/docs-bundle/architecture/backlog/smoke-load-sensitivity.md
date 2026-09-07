@@ -108,11 +108,42 @@ into the instrument.
 then compare them. Roughly 30–50 runs at ~90 s each — an hour of wall clock, which is why this stays
 filed rather than done.
 
-**Still not known: which step gives way** — after **five** capture attempts across 13 high-load runs.
-The two failures that did occur were counted by a wrapper that had already discarded their output, and
-every run since, at every load tried, has passed. **The distinction the section below insists on — a fixed
-wait standing in for a condition (a harness bug) versus a genuine capacity limit in the runtime (a
-product finding) — remains unresolved, and nothing here should be read as having settled it.**
+## ANSWERED 2026-09-07 — the step is the config wait, and it is NOT the known race
+
+A failure was finally caught **with its log intact**, on the sixth attempt, after the wrapper was
+changed to write every run to its own file instead of grepping for a success marker and discarding the
+rest. Run 4 of 4 at load 147:
+
+    [virtual-moxie] connected to broker rc=Success as d_691d8ffd-…
+    [virtual-moxie] subscriptions acknowledged by the broker
+    [virtual-moxie] → state (software_version=24.10.803)
+    ❌ SIL round-trip FAILED:
+       - no config pushed within timeout
+
+**The step is the config-push wait** — `sim/run_smoke.sh` line 241 passes `--timeout 20` to
+`sim/virtual_moxie.py`, whose `got_config.wait(self.timeout)` raises exactly this message.
+
+**And the ordering rules out the cause this project already knows about.** `subscriptions
+acknowledged` precedes `→ state`, so the SUBSCRIBE had landed before the announce — this is **not**
+the QoS-0-and-not-retained race that PR #143 fixed on 2026-09-04, whose whole signature is a state
+published before the subscription exists. `run_smoke.sh:219-221` still carries the comment from that
+episode saying *"no timeout here can be big enough"*; that remains true of the old race and is **not**
+what happened here.
+
+**So the answer to this brief's central question is: it is a fixed wait, but what it is measuring is
+starvation.** Twenty seconds is not a tight budget. A supervisor that cannot answer a `/state` inside
+it is not slow-by-design; it is a Python process competing with ~150 spinning cores. The defect is
+that **the check cannot distinguish that from an appliance that is broken**, and its message — *"no
+config pushed within timeout"* — reads unambiguously as the latter.
+
+**Recommendation, now that the step is known:** the wait should report *which* it is. A supervisor
+that is alive but starved can be told from one that is wedged by asking it (its status endpoint, or a
+liveness ping on the same broker) when the wait expires, and saying so in the failure line. That
+converts a 20-second silence from a verdict about the appliance into an observation about the machine
+— which is the same correction `sim/test_csp.mjs` received in PR #209, where `"timeout"` was being
+compared against `"loaded"` and `"refused"` as though it were a third verdict.
+
+**Rates behind this, for completeness:** 0 failures in 21 runs at load 3.3–75; 3 in 19 above load 120.
 
 ## What the work is
 

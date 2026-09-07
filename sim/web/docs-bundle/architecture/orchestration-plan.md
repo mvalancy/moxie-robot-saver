@@ -1458,3 +1458,88 @@ came in with #203). A repair was written and **reverted**: polling `getMotor(6)`
 unexplained contradiction is how the other eleven survived. A later probe **eliminated the
 `setSpeech()` re-issue** as the cause. And `smoke-load-sensitivity`, measured by an interleaved A/B in
 which pristine `dev` failed too.
+
+### 2026-09-07 — promotion #2 of the day, and the Turnstile answer written down
+
+**`main` `cf833fe` → `28365e2`, 112 commits.** The gate meant something: **#207 was 12 of 12 green on
+`181daa6`, `dev`'s exact tip** — not a stale green from an earlier commit, and not a coin flip on a
+check that reddens when the machine is busy. Reconcile first (`git diff PRE..HEAD` **empty**), then
+recreate (**#210**, clean from birth), then `check_promotion_state.py` confirming *promotion finished*.
+Second consecutive promotion verified by a machine rather than by someone remembering rule 29 — which
+had been missed after **six of nine** before that guard existed.
+
+**Live site healthy after it:** `/api/health` → `ok:true, degraded:false, mode:"live"`, capacity 4,
+`voice:true`, `ears:true`; `/sim` 200 at 27 KB.
+
+**THE TURNSTILE ANSWER, recorded here because it answers an explicit owner request and has so far
+lived only in a chat transcript.** The owner supplied sitekey `0x4AAAAAAEpY3bwJnLFVFf8a` and asked to
+*"finish integrating it into this project"*. **The integration is complete in code** (PR #195: three
+mandatory siteverify checks, per-route `TURNSTILE_ACTIONS` so a token minted for a typed sentence is
+refused by the ears endpoint, fail-closed-on-verdict / fail-open-on-transport). What remains is **one
+owner action in the Cloudflare Pages production environment**, and it must set **both** halves at once:
+
+- `DEMO_TURNSTILE_SITEKEY` = the public sitekey above (a plain variable — it ships to every visitor)
+- `DEMO_TURNSTILE_SECRET` = the secret half, **which must never pass through a transcript**
+
+**Setting either alone takes the public demo down**, and that is deliberate
+([`env.js`](../../functions/api/_lib/env.js):131): with only the secret no browser can mint a token and
+every visitor is refused; with only the sitekey the page renders a widget whose token nothing checks —
+*"a bot control that is theatre."* Both cases make `readConfig` report it missing, and every route then
+answers `gateway_not_configured` and spends nothing. So the orchestrator **cannot** arm the half it
+holds: doing so would break a currently-healthy `moxie.mattvalancy.com/sim`.
+
+The present state — neither set, enforcement **off** — is correct rather than an oversight, and it is
+also what keeps branch previews usable: Turnstile authorizes a hostname and its subdomains, and the
+platform-assigned preview host is not on the widget's domain list, so a preview that enforced would be
+a preview nobody could use.
+
+### 2026-09-07 — AUDIT: the DoD said "still unknown" about something already answered
+
+Criterion 6's row carried *"which step gives way is still unknown after five capture attempts"*. That
+was true when written and **false within the hour** — the sixth attempt caught the failure with its
+log and named the step (`sim/run_smoke.sh:241`, a fixed `--timeout 20` on the config push). Corrected
+today rather than at the next audit, because a row that says "unknown" about something the same
+session has since answered is exactly the **one-directional documentation drift** this program measured
+at **39 % of audit rows and 38 % of briefs** on 2026-09-06 — records consistently understating what
+exists. Drift is not created by anyone deciding to be stale; it is created by an answer arriving after
+the sentence describing the question.
+
+**#6 remains 🟡, and now for a reason with a named fix rather than an open question.** A gate that
+reports starvation as breakage still teaches its reader to re-run; it goes green when the wait says
+*which* it was.
+
+**RESEARCH, same fire:** both signals unchanged — `Noonster77/openmoxie` **2026-08-31**,
+`jbeghtol/openmoxie` **2026-01-15** (236 days). Two API calls, watching the fork that is actually
+alive. Nothing to delegate: no Opus capacity until 2026-09-11, and every rotation item is either
+shipped or blocked on that.
+
+**Program state:** `main` `28365e2` serving, `dev` level with it, standing PR **#210**, guard reports
+*promotion finished*, guards green, bundle 0-diff, secrets clean (2 known `sk-AbCd` fixtures),
+`mqtt/.env` untouched at its 2026-09-02 mtime, 1 worktree, 0 orphaned branches, all four tiers armed.
+
+### 2026-09-07 — #211: a guard whose verdict changed nothing, found beside the one being hunted
+
+Merged `3e98f02`. `sim/readiness.sh::wait_for_log` printed *"supervisor never logged …"*, dumped 20
+lines of log, returned **1** — and two of its three call sites discarded that. The SUBACK waits in
+`run_smoke.sh` and `run_scenarios.sh` were unguarded while the status-endpoint wait **beside one of
+them** carried `|| exit 1`, which is what made it invisible.
+
+The cost was a misattributed failure: a supervisor that never acknowledged its subscriptions produced
+an accurate error, the script launched the robot anyway into the QoS-0 race that line exists to
+prevent, and the run died 20 s later as `no config pushed within timeout` — *the appliance did not
+answer* when the truth was *we walked past a gate that told us not to*.
+
+**This is the same family one level up.** The twelve instances before it were assertions that could not
+fail; this is a check whose result could not affect the outcome. **A guard whose verdict changes
+nothing is not a guard**, and the test is therefore a ratchet on the *call sites* rather than on the
+race — the race already has `test_sil_supervisor_readiness.py`. It asks the different question, *is the
+gate obeyed*, in 0.08 s, and reddens on a fourth unguarded caller.
+
+**Two disciplines held that are easy to skip.** It did **not** cause the smoke failure being hunted —
+that log carries no such error line — so it is filed as itself rather than credited with the other.
+And the behaviour change is stated in the PR rather than discovered later: guarding these means a run
+that previously limped past a 40 s timeout now stops there. SIL going green in CI (8m52s) is the
+evidence that gate is comfortably met rather than routinely walked past.
+
+Verified: fail-without-itself (1 failed naming `run_smoke.sh:230`; 2 passed restored), SIL smoke ✅,
+scenarios 2/2 with 4/4 turns, **5330 passed + 30 skipped**, four doc guards green.

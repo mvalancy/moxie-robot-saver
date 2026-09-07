@@ -431,6 +431,30 @@ console.log("\nfull transcripts -> " + outFile);
  * REFUSALS ARE REPORTED SEPARATELY AND DO NOT PASS AS QUALITY. A run throttled by the
  * rate limiter or hit by an outage has not measured the conversation at all, and calling
  * that a pass would be the worst failure this file could have. */
+/* RUN-LEVEL CHECKS — properties of the WHOLE study, which no single scenario can see.
+ *
+ * Expressive range is the one that matters and the one that was silently failing: every
+ * individual conversation looked fine (warm, on-topic, non-repetitive) while she used two
+ * of eleven faces across all of them. A per-scenario check cannot catch that — four turns
+ * about feelings using two faces is defensible; TWENTY turns across six scenarios using
+ * two is a channel that is not working. The floor is deliberately low: four of eleven says
+ * the face tracks the sentence at all, not that it is used artfully. */
+const allMoodsUsed = [...new Set(results.flatMap((r) => r.moods))];
+const allGestUsed = [...new Set(results.flatMap((r) => r.gestures))];
+const runChecks = [
+  { name: `uses at least 4 of the 11 faces across the whole study (used ${allMoodsUsed.length})`,
+    ok: allMoodsUsed.length >= 4 },
+  { name: `uses at least 4 of the 12 gestures (used ${allGestUsed.length})`,
+    ok: allGestUsed.length >= 4 },
+];
+// Only meaningful over a broad run; a single-scenario invocation cannot fairly be held to
+// a range check, so they are skipped rather than failed.
+if (chosen.length >= 3) {
+  for (const c of runChecks) console.log(`\n${c.ok ? "PASS" : "FAIL"}  ${c.name}`);
+  results.push({ scenario: "(whole run)", checks: runChecks, refusals: 0,
+                 failed: runChecks.filter((c) => !c.ok).length, moods: [], gestures: [] });
+}
+
 const failedChecks = results.reduce((n, r) => n + r.failed, 0);
 const totalChecks = results.reduce((n, r) => n + r.checks.length, 0);
 const refusals = results.reduce((n, r) => n + r.refusals, 0);
