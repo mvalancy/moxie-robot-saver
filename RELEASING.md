@@ -34,9 +34,19 @@ feat/*  ──PR──▶  dev  ──PR──▶  main  ──tag v X.Y.Z──
      `git diff <pre> HEAD` is empty BEFORE pushing** — if it prints anything, the `-X ours`
      swallowed a real change and the promotion needs unpicking, not pushing.
   2. `gh pr create --base main --head dev` — recreate the standing PR, clean from birth.
-  2. On `dev`: `git fetch origin && git merge origin/main -X ours --no-edit` then push. `dev` is a
-     superset of `main`'s squash, so this changes **no content** (verify: `git diff <pre> HEAD` is
-     empty) — it only re-links history. The standing PR then diffs cleanly (only genuinely-new work).
+
+  (Step 2 appeared twice here until 2026-09-06 — the leftover of the pre-correction ordering, kept
+  by accident when the steps were swapped. Deleted, because this is the paragraph the mechanical
+  check below sends people to at 2am.)
+
+  **This is now checked mechanically, and that is the only reason to trust it.** The two steps were
+  missed after five of the last seven promotions by three different actors — *while* being written
+  down here, in playbook rule 29, in the standing PR's body and in the status log. So
+  [`sim/ci/promotion.yml`](sim/ci/promotion.yml) runs
+  [`sim/tools/check_promotion_state.py`](sim/tools/check_promotion_state.py) hourly and **reddens**
+  if `dev` is left behind `main` or the standing PR is left missing, forgiving the first 30 minutes
+  after the squash (the measured window: ten promotions reconciled in 11s–990s). It quotes these two
+  steps back at you — it is deliberately **not** a fifth place to keep them in sync.
 
   (Alternative: promote with a **merge commit** instead of squash — `main` keeps full history and no
   reconcile is needed. We use squash for a clean one-commit-per-release `main`, and pay the reconcile.)

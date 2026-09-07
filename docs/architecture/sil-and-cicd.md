@@ -667,3 +667,48 @@ bash sim/run_smoke.sh --live-brain
 
 ---
 📖 [MQTT server](../../mqtt/) · [Cloud protocol](../reverse-engineering/protocol/cloud-protocol.md) · [Behavior markup](../reverse-engineering/runtime/behavior-markup.md) · [Hardware map](../reverse-engineering/hardware/hardware-map.md) · [Roadmap](../../ROADMAP.md)
+
+## `promotion.yml` — was the last promotion *finished*?
+
+The second monitor, and the only tier that looks at the **repository** rather than at the product.
+Squash-merging the standing `dev → main` PR leaves two things undone that `gh pr merge` will not do
+for you: `dev` ends **one commit behind `main`** (the squash is a commit `dev` has never seen), and
+the **standing PR is deleted** (merging closes it; nothing re-opens it). Neither is visible from the
+merge output, nothing goes red, and the damage surfaces days later — as a `CONFLICTING` promotion PR,
+or as "is `dev` green?" with no PR to read.
+
+It was written down in four places and **missed after five of the last seven promotions by three
+different actors** (#174, #177, #190, #191, #197), twice *after* all four existed. That is the
+finding the check exists for: prose did not fix it.
+
+```sh
+python3 sim/tools/check_promotion_state.py        # 0 finished · 1 unfinished · 2 could not measure
+gh workflow run promotion.yml                     # the same, in CI, on demand
+gh workflow run promotion.yml -f grace_seconds=0  # ignore the post-squash window
+```
+
+Two probes — `git rev-list --count origin/dev..origin/main` and `gh pr list --base main` — needing
+**repo read only** (`contents: read` + `pull-requests: read` on the workflow's own `GITHUB_TOKEN`;
+no PAT, no new secret). It gates nothing.
+
+**The hard part is the transient, not the detection.** Between the squash and the reconcile both
+conditions are legitimately true, and a check that fires in that window teaches people the alarm
+means nothing — the same reason a 7 %-precision guard was rejected here. So both are gated on one
+clock, the committer date of `main`'s tip, which for a squash promotion *is* the moment both defects
+begin, and forgiven for **30 minutes**. That bound is measured: across the ten promotions in this
+repo's history the reconcile followed the squash by 11s–990s, median 18s, so the grace is 1.8× the
+worst case ever observed. Hourly at :37, so squash → red is at worst ≈ 90 minutes, against the days
+it replaces.
+
+**Why not a step in the fast tier**, which is cheaper and was rejected: `ci.yml` fires on
+`push: [dev]`, and the defect *is* that the reconcile push never happened — in exactly the state we
+want caught, there is no push. It would fire on the next unrelated PR and redden someone else's
+change, which is the gate people re-run rather than read (this repo already paid that once, PR #125).
+
+**Its teeth run in the fast tier, not on the schedule.** `sim/tests/test_promotion_guard.py` builds
+real git repositories — a bare `origin`, a `main` carrying a squash commit with a pinned committer
+date, a `dev` that has or has not merged it — with a stubbed `gh`, and asserts the full eight-row
+truth table, both sides of the grace edge one second apart, that a broken or missing `gh` exits **2**
+rather than 0, and three negative controls that blind one measurement each (the age gate, the behind
+count, the standing-PR lookup) and require the row that clause was holding to flip. So a red from the
+schedule means the repository is in the state, not that the instrument drifted.
