@@ -1,0 +1,109 @@
+# Moxie PROMOTION-FINISHED check — INSTALL: copy to .github/workflows/promotion.yml
+#
+# A MONITOR, like `deployed.yml`. It gates nothing, blocks no merge, and is required by no
+# branch protection. It exists to make ONE invisible defect visible, on a clock, with no
+# human remembering anything.
+#
+# ── THE DEFECT ───────────────────────────────────────────────────────────────────────────
+# Squash-merging the standing `dev → main` PR leaves two things undone that `gh pr merge`
+# does not do for you: `dev` ends one commit BEHIND `main` (the squash is a commit `dev`
+# has never seen), and the standing PR is DELETED (merging closes it; nothing re-opens it).
+# Neither is visible from the merge output and nothing goes red — the damage surfaces days
+# later, when the next promotion PR opens CONFLICTING, or when someone asks "is `dev`
+# green?" and there is no PR to read.
+#
+# Measured 2026-09-06: missed after FIVE of the last SEVEN promotions (#174, #177, #190,
+# #191, #197), by THREE different actors — after it was already written down in four
+# places (playbook rule 29, RELEASING.md's "After a promotion (squash)", the standing PR's
+# own body, and the status log). It was missed twice more *after* all four existed. That is
+# the finding: prose does not fix this. This file is the mechanical version, and it adds no
+# fifth explanation — `sim/tools/check_promotion_state.py` points at RELEASING.md, which
+# already carries the corrected order.
+#
+# ── WHY A SCHEDULE, AND NOT A STEP IN AN EXISTING TIER ───────────────────────────────────
+# The obvious cheaper wiring is a step in `ci.yml`. It was rejected on two counts, and both
+# are worth writing down because they are not obvious:
+#
+#   · THE MISSING ACTION IS THE TRIGGER. `ci.yml` fires on `push: [dev]`. The whole defect
+#     is that the reconcile push to `dev` never happened — so in exactly the state we want
+#     caught, there is no push, and a fast-tier step would not run. It would fire on the
+#     next UNRELATED push, whenever that happened to be, which is "when someone remembers
+#     to do something else". That is not a mechanical check.
+#   · IT WOULD REDDEN SOMEONE ELSE'S PR. The next push is usually a `feat/*` PR, and a gate
+#     that goes red for a reason unrelated to the change is a gate people learn to re-run
+#     rather than read. `ci.yml`'s own header records this repo paying that cost once
+#     already (PR #125, a docs-only change, red twice on unrelated SIL tests).
+#
+# A `sim/tools/` script alone was rejected for the reason the brief names: it needs a
+# caller, and "a human runs the script" is the failure mode we are removing. So it is BOTH
+# — the logic is a hermetic, unit-tested script (`sim/tools/check_promotion_state.py`,
+# whose teeth `sim/tests/test_promotion_guard.py` proves on every push) and this file is
+# the caller that needs nobody.
+#
+# NOTE, so nobody is surprised: GitHub runs `schedule` only from the DEFAULT branch, so
+# this tier starts firing once it has been promoted to `main`. That is not a gap here, it
+# is the right moment — the promotion that installs it is itself the first promotion it can
+# check. Until then, and any time after, use the dispatch:
+#
+#   gh workflow run promotion.yml
+#   gh workflow run promotion.yml -f grace_seconds=0    # ignore the transient window
+#
+# ── THE CADENCE, AND THE WINDOW IT LEAVES ────────────────────────────────────────────────
+# Hourly at :37 — an odd minute for the same reason `deployed.yml` uses :23 and the deep
+# tier 03:17: GitHub queues (and drops) crons at the top of the hour. The job is a checkout
+# plus two probes, well under a minute, so hourly costs nothing worth counting.
+#
+# The checker forgives a 30-minute post-squash window (measured: the ten promotions in this
+# repo's history reconciled in 11s–990s, median 18s — see the script's header), so the
+# worst case from squash to red is grace + cadence ≈ 90 minutes, against the "days, at the
+# next promotion" it replaces. A shorter cron would not help: the grace dominates, and it is
+# the number that keeps this alarm worth reading.
+name: Promotion finished
+on:
+  schedule:
+    - cron: "37 * * * *"
+  workflow_dispatch:
+    inputs:
+      grace_seconds:
+        description: "Post-squash window to forgive, in seconds (0 = check right now)"
+        type: string
+        default: "1800"
+
+# LEAST PRIVILEGE, and the whole permission story in four lines. This tier reads the commit
+# graph and asks which PRs are open. It uses the workflow's OWN `GITHUB_TOKEN` — no PAT, no
+# new repo secret, nothing to leak — scoped to READ. It could not merge, push, close a PR or
+# read a secret if it wanted to.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  promotion:
+    name: dev is level with main, and the standing PR exists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # BOTH branches, all history. The default checkout fetches one commit of one ref,
+          # and `git rev-list --count origin/dev..origin/main` over a shallow graft answers
+          # a different question than the one asked — quietly, with an exit code of 0.
+          fetch-depth: 0
+      - name: Was the last dev → main promotion finished?
+        env:
+          # The built-in token, nothing else. `gh` reads GH_TOKEN.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # THROUGH `env:`, never interpolated into the `run:` body below. A `${{ inputs.… }}`
+          # inside a shell line is substituted BEFORE the shell sees it, so a dispatch input
+          # of `$(…)` would execute on the runner. Only write-access actors can dispatch this
+          # workflow, which makes it a small hole rather than none — and closing it costs one
+          # line. `sim/tests/test_promotion_guard.py` asserts no run: body interpolates one.
+          GRACE_SECONDS: ${{ inputs.grace_seconds || '1800' }}
+        # The checker's teeth are NOT asserted here — they are asserted in the fast tier,
+        # where `pytest sim/tests` collects `sim/tests/test_promotion_guard.py` on every
+        # push and every PR. That file builds real git repositories in a temp dir (a branch
+        # genuinely behind its base, a stubbed `gh` with and without the standing PR),
+        # walks the whole truth table, and carries a negative control in which the grace
+        # gate is deleted and the in-window cases must go red. So this step failing means
+        # the repository is in the state, not that the instrument drifted.
+        run: |
+          python3 sim/tools/check_promotion_state.py --grace-seconds "$GRACE_SECONDS"
