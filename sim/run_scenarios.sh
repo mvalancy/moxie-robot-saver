@@ -62,7 +62,12 @@ wait_for_port "$PORT" 30
 # MOXIE_ALLOW_UNVERIFIED_BOTS=1: the scenario robots are throwaway `d_<uuid>`s, so the
 # lab runs in open mode — see the note in run_smoke.sh.
 : > "$SUP_LOG"
-MOXIE_APP=echo MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT MOXIE_ALLOW_UNVERIFIED_BOTS=1 MOXIE_STATUS_PORT=${MOXIE_STATUS_PORT:-$((7000 + ((PORT + 1) % 2000)))} PYTHONUNBUFFERED=1 python3 mqtt/run.py >"$SUP_LOG" 2>&1 & PIDS+=($!)
+# Hoisted 2026-09-07: the supervisor's status port was derived INLINE here, so nothing
+# else in this script could name it. The robot now needs it too — not to drive
+# anything, but so a config-wait expiry can ask whether the supervisor is alive and
+# report starved vs wedged instead of neither. Same derivation, one place.
+STATUS_PORT="${MOXIE_STATUS_PORT:-$((7000 + ((PORT + 1) % 2000)))}"
+MOXIE_APP=echo MOXIE_MQTT_HOST=127.0.0.1 MOXIE_MQTT_PORT=$PORT MOXIE_ALLOW_UNVERIFIED_BOTS=1 MOXIE_STATUS_PORT=$STATUS_PORT PYTHONUNBUFFERED=1 python3 mqtt/run.py >"$SUP_LOG" 2>&1 & PIDS+=($!)
 SUP_PID=${PIDS[-1]}
 # THE SUBACK, NOT THE CONNACK. `[runtime] broker connected` means the supervisor ASKED
 # for its topics — `subscribe()` only queues a packet — so a robot that announced itself on
@@ -84,7 +89,11 @@ wait_for_log "[runtime] subscriptions acknowledged by the broker" "$SUP_PID" 40 
 rc=0; total=0; failed=0
 for s in sim/scenarios/*.json; do
   total=$((total + 1))
+  # See `_why_no_config` in virtual_moxie.py: on a config-wait expiry this lets the
+  # robot ask the supervisor, over HTTP rather than the MQTT that just went quiet,
+  # whether it is alive - so the failure says starved or wedged instead of neither.
   python3 sim/virtual_moxie.py --scenario "$s" --port $PORT --timeout 20 --quiet \
+    --status-url "http://127.0.0.1:$STATUS_PORT" \
     || { rc=1; failed=$((failed + 1)); }
 done
 # A verdict line, like run_smoke.sh's — so a caller (or an integration report) has one
