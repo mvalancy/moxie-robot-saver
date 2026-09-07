@@ -83,6 +83,7 @@ import { admit, budgetState, loadOf, noteUpstreamCall, readJsonBody } from "./_l
 import { mintContext, mintTicket, verifyContext } from "./_lib/hmac.js";
 import { TOKEN_FIELD, verify as verifyTurnstile } from "./_lib/turnstile.js";
 import { turnShapeInstruction } from "./_lib/turnshape.js";
+import { lookup as lookupDocs } from "./_lib/docsearch.js";
 import { buildChatResponse, chatMessage, eventId, expressiveVocab, joinUrl, markupFloor, MK } from "./_lib/wire.js";
 
 /** §4.1: matches `chat.py`:130 so the hosted persona sounds like the local one. */
@@ -244,7 +245,13 @@ export async function onRequestPost(context) {
     // because the demo prefers a fast honest degrade to a slow success (§4.1).
     const turns = history.turns;
     const startedAt = Date.now();
-    const upstream = await callGateway(cfg, buildUpstreamBody(cfg, turns, text));
+    /* THE LOOKUP. Two same-origin asset fetches, no gateway cost, gated by `wantsDocs` so
+     * an ordinary turn pays nothing at all. Awaited because it shapes the one prompt we are
+     * about to send — but it fails open to `null`, so a missing binding, a failed fetch or
+     * a corpus that has moved costs a citation and never a turn. */
+    const docs = await lookupDocs(context.env && context.env.ASSETS,
+                                  new URL(request.url).origin, text);
+    const upstream = await callGateway(cfg, buildUpstreamBody(cfg, turns, text, undefined, docs));
     if (!upstream.ok) {
       return refusal(cfg, "chat", upstream.reason, {
         retryAfterS: upstream.retryAfterS,
@@ -459,9 +466,32 @@ function rerollInstruction(line) {
  * @param {string} [avoid] a line the model must not repeat. Empty on the first call of a
  *   turn and set only by `rerollOnce()`, which is the only caller that has one.
  */
-export function buildUpstreamBody(cfg, turns, text, avoid) {
+export function buildUpstreamBody(cfg, turns, text, avoid, docs) {
   const messages = [{ role: "system", content: cfg.persona }];
   for (const t of turns) messages.push({ role: t.role, content: t.content });
+  /* SHE LOOKED IT UP. A passage from this deployment's OWN documentation, fetched from our
+   * own origin through the `ASSETS` binding — never anything the visitor typed. See
+   * `_lib/docsearch.js` for why retrieval is server-side: the browser alternative hands a
+   * visitor a field that gets spliced straight into a system message.
+   *
+   * It sits BEFORE the child's turn so the persona still comes LAST and is still the final
+   * instruction in the prompt (§3.3). Putting reference material after the question would
+   * make the last thing the model read a wall of technical prose, which is how a warm robot
+   * starts reciting a protocol specification at a seven-year-old. */
+  if (docs && docs.excerpt) {
+    messages.push({
+      role: "system",
+      content:
+        "You looked this up in your own documentation just now. It was written by the " +
+        "people who took you apart to work out how you function, so it is true — but it is " +
+        "written for engineers.\n\n" +
+        "From \"" + docs.title + "\":\n" + docs.excerpt + "\n\n" +
+        "Answer IN YOUR OWN WORDS at a child's level — one or two short sentences, no " +
+        "jargon you have not explained, and never read it out. You may say you looked it " +
+        "up. If it does not actually answer what they asked, say you are not sure rather " +
+        "than stretching it to fit.",
+    });
+  }
   messages.push({ role: "user", content: text });
   // The persona is repeated AFTER the child's turn as injection mitigation — that is
   // unchanged. The envelope instruction rides with the second copy rather than the first
