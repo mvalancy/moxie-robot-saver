@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 268142,
+   "bytes": 269124,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
