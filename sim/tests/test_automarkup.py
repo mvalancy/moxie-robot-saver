@@ -23,6 +23,7 @@ Nothing here talks to a network, a broker, a model or a clock.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -547,25 +548,106 @@ def test_annotate_imports_nothing_outside_the_stdlib():
 
 
 # --------------------------------------------------------------------------- #
-# T10 — the budget
+# T10 — the budget, measured against THIS machine rather than against a constant
 # --------------------------------------------------------------------------- #
-def test_p95_under_one_millisecond():
+#: A fixed unit of the same *kind* of work the floor does — a regex sweep over the line
+#: and the string rebuild that follows — sized to cost about what one `annotate` costs.
+#: It is a yardstick, not a benchmark: dividing by it cancels whatever the machine and
+#: the scheduler are doing, because both halves are timed in the same interleaved loop.
+_CALIB_WORD = re.compile(r"[A-Za-z']+")
+
+
+def _calibration_unit(line):
+    """~0.35 ms of pure-CPU regex+string work. No I/O, no allocation cliff, no clock."""
+    n = 0
+    for _ in range(20):
+        n += " ".join(w.lower() for w in _CALIB_WORD.findall(line)).count("a")
+    return n
+
+
+def _interleaved_medians(subject, calibrate, n=400):
+    """Median cost of `subject` and of `calibrate`, sampled ALTERNATELY in one loop.
+
+    Interleaving is the whole trick. A preemption lands on whichever call it lands on,
+    so over 400 pairs both medians absorb the same scheduler weather and the ratio
+    between them is a property of the code. Sampled in two separate loops the two halves
+    drift apart by up to 38% on a loaded box (measured), which is why they are not.
+    """
+    subj, calib = [], []
+    for i in range(n):
+        t0 = time.perf_counter()
+        subject(i)
+        t1 = time.perf_counter()
+        calibrate(i)
+        t2 = time.perf_counter()
+        subj.append((t1 - t0) * 1000.0)
+        calib.append((t2 - t1) * 1000.0)
+    subj.sort()
+    calib.sort()
+    return subj[len(subj) // 2], calib[len(calib) // 2]
+
+
+def test_the_floor_costs_about_what_one_pass_over_the_line_costs():
     """The seam runs per spoken chunk, on the hot path PR #17 bought down to a measured
-    1.52 s first-audio. A regression that adds I/O fails loudly here."""
+    1.52 s first-audio, so the floor may not quietly become the expensive part of it.
+
+    This used to read `assert p95 < 1.0` ms. That number measured the MACHINE: on a box
+    at load average 88 the same unchanged code gave a p95 of 7.3 ms against a median of
+    0.34 ms — the tail is the scheduler preempting the process, not the floor getting
+    slower, and a green that depends on who else is running is not a green. The budget is
+    therefore a RATIO to a calibration timed in the same run, at the MEDIAN, where the
+    signal lives. Measured over five trials at load 88-104: ratio 0.86-0.91, so 2.0 is
+    roughly a 2.2x headroom.
+
+    What this catches: anything that doubles the cost of a chunk — a network call, a
+    lock, a sleep, an algorithmic regression. An injected `time.sleep(0.5 ms)` takes the
+    ratio to 6.4-8.8 (measured).
+    What it does NOT catch: a single bare `open()` of a small file, which is a ~10%
+    effect against a ~5%-wide band. That case is covered exactly, and without any timing
+    at all, by `test_the_hot_path_opens_no_file_and_reaches_no_socket` below.
+    """
     line = ("I love that you asked me about the stars tonight, because they are my very "
             "favourite thing in the whole wide sky, and I think about them a lot when it "
             "gets dark outside. Some of them are far older than the Earth that you and I "
             "are standing on right now! Is that not completely amazing?")
     assert 250 <= len(line) <= 400, len(line)
     annotate(line, turn_key="warm")                       # warm the regex cache
-    samples = []
-    for i in range(400):
-        t0 = time.perf_counter()
-        annotate(line, turn_key="evt-bench", chunk_index=i % 4)
-        samples.append(time.perf_counter() - t0)
-    samples.sort()
-    p95 = samples[int(0.95 * len(samples))] * 1000.0
-    assert p95 < 1.0, f"p95 {p95:.3f} ms (budget 1 ms); median {samples[len(samples)//2]*1000:.3f} ms"
+    _calibration_unit(line)                               # and the yardstick's
+    floor_ms, calib_ms = _interleaved_medians(
+        lambda i: annotate(line, turn_key="evt-bench", chunk_index=i % 4),
+        lambda i: _calibration_unit(line),
+    )
+    assert calib_ms > 0.0, "the calibration unit was too cheap to time"
+    ratio = floor_ms / calib_ms
+    assert ratio < 2.0, (
+        f"the floor costs {ratio:.2f}x a same-run calibration pass "
+        f"(median {floor_ms:.3f} ms vs {calib_ms:.3f} ms); budget 2.0x")
+
+
+def test_the_hot_path_opens_no_file_and_reaches_no_socket():
+    """The half of the old p95 budget that was actually about the PRODUCT: "a regression
+    that adds I/O fails loudly here". Timing said that only obliquely, and said it in a
+    machine-dependent way. Asserting it directly is exact, instant and load-immune — a
+    single `open()` is a ~10% blip in a timing run and cannot be told from noise, but it
+    is either present or absent here.
+
+    `pytest.fail` raises `BaseException`, so a caller that swallows `Exception` to fall
+    back to the floor cannot hide the violation.
+    """
+    import builtins
+    import socket
+    line = "Tell me about the stars tonight, because they are my favourite thing!"
+    annotate(line, turn_key="warm")                       # warm caches BEFORE the trap
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(builtins, "open", lambda *a, **kw: pytest.fail("the floor opened a file"))
+        mp.setattr(os, "open", lambda *a, **kw: pytest.fail("the floor opened a fd"))
+        mp.setattr(socket, "socket",
+                   lambda *a, **kw: pytest.fail("the floor opened a socket"))
+        for i in range(4):
+            out = annotate(line, turn_key="evt-io", chunk_index=i)
+    assert "<mark" in out and strip_markup(out) == line, \
+        "the floor still has to do its job with the trap installed"
 
 
 # --------------------------------------------------------------------------- #

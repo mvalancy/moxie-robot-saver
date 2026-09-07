@@ -78,8 +78,25 @@ import re
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-#: Wall-clock calls, by their dotted tail. Monotonic clocks are absent on purpose.
+#: Wall-clock calls, by their dotted tail — and, since 2026-09-06, the MONOTONIC ones
+#: too. They were left out on purpose at first, and the reasoning was sound as far as it
+#: went: `perf_counter` reads no date, so it cannot make a test that passes at 09:00 fail
+#: at 23:59, which is the disease the first three rows of this file were written for.
+#:
+#: A second disease wears the same costume. A monotonic clock cannot tell you the hour,
+#: but subtracting two reads gives a DURATION, and asserting that a duration is under a
+#: constant asks the machine a question instead of the product. `test_automarkup.py`'s
+#: `p95 < 1.0` ms passed 3/3 on a quiet box and failed 3/3 at load average 88, where the
+#: same unchanged code measured a p95 of 7.3 ms against a median of 0.34 ms — the tail
+#: was the scheduler preempting the process, and the green depended on who else was
+#: running. That is the same defect this ledger exists to name: a test whose answer comes
+#: from somewhere other than the code under test, with nobody having written down why it
+#: is safe. So durations are scanned too, and the verdicts below say what makes each one
+#: honest — a timeout that only ever waits longer, a lower bound a slow box pushes
+#: further from failure, or a ratio whose halves are preempted alike.
 PY_CLOCK_CALLS = {
+    ("time", "perf_counter"): "time.perf_counter",
+    ("time", "monotonic"): "time.monotonic",
     ("datetime", "datetime", "now"): "datetime.now",
     ("datetime", "now"): "datetime.now",
     ("datetime", "datetime", "today"): "datetime.today",
@@ -337,6 +354,102 @@ REVIEWED: dict = {
         "contains now at every minute including the wrap, and both bedtime keys are "
         "written so the weekday never matters (PR #63). A fully deterministic pair sits "
         "beside it pinning the helper's real semantics."),
+
+    # ---- DURATIONS (monotonic clocks), scanned from 2026-09-06 -------------------
+    # A duration reads no date, so none of these can fail at 23:59. The question each
+    # row answers is the other one: does a BUSY machine change the answer? A timeout
+    # that only ever waits longer does not; a lower bound a slow box pushes further
+    # from failure does not; a ratio whose halves are preempted alike does not. An
+    # upper bound on a measured duration DOES, and that is the one defect fixed here.
+
+    "sim/tests/helpers_audio.py::Stage.__enter__": (
+        ("time.perf_counter",),
+        "RELATIVE — and asserted on by nothing. `Stage` is a stopwatch whose `seconds` "
+        "is only ever interpolated into a `print()` by the live suites "
+        "(`test_live_talk_e2e.py`, `test_live_hosted_ears.py`, `test_live_gateway_stt.py`), "
+        "which is why a slow box makes the number bigger and no test redder. Checked "
+        "across the tree on 2026-09-06: there is no `assert` anywhere on `.seconds` or on "
+        "`timing_line`. If one is ever added it must be a RATIO, not a ceiling."),
+    "sim/tests/helpers_audio.py::Stage.__exit__": (
+        ("time.perf_counter",),
+        "RELATIVE — the closing read of the pair above, same reason. The subtraction of "
+        "two reads of one monotonic clock is an ELAPSED TIME that is reported, never "
+        "gated."),
+
+    "sim/tests/test_automarkup.py::_interleaved_medians": (
+        ("time.perf_counter",),
+        "RELATIVE — a RATIO, and the row this ledger grew a duration section for. The "
+        "assertion used to be `p95 < 1.0` ms absolute: it passed 3/3 on a quiet box and "
+        "failed 3/3 at load average 88, where the same unchanged code gave a p95 of "
+        "7.252 ms against a median of 0.337 ms. A median that steady with a tail that "
+        "wild is not slower code, it is the scheduler, so the number was measuring the "
+        "MACHINE. It is now the median cost of `annotate` divided by the median cost of "
+        "a fixed calibration pass, the two timed ALTERNATELY in one loop so a preemption "
+        "lands on both alike. Measured clean band 0.86-0.91 over five trials at load "
+        "88-104, gate at 2.0. Sampling the two in SEPARATE loops was tried first and "
+        "rejected by measurement: the halves drifted up to 38% apart."),
+    "sim/tests/test_performance.py::_interleaved_medians": (
+        ("time.perf_counter",),
+        "RELATIVE — the same ratio, against a better yardstick: the planner is divided by "
+        "the FLOOR it replaces, which is a real alternative implementation rather than a "
+        "synthetic one. This test already had that idea and still failed under load, for "
+        "two reasons now fixed. It also asserted the floor's absolute `planner < 1.0` ms "
+        "(6.390 ms observed at load 104) — deleted, it measured the machine. And the "
+        "ratio itself was taken at p95, which under load compares one scheduler tail "
+        "against another: five trials at load 104 gave median ratios of 1.999-2.025 "
+        "(stable to ~1%) while the p95 ratios over the SAME samples read 1.80, 2.03, "
+        "2.20, 2.91 and 45.48. A 4x gate would have called that last one a regression. "
+        "The lesson for the next row: a ratio is only load-immune at a percentile where "
+        "the signal, not the scheduler, decides the value."),
+
+    "sim/tests/test_brain_latency.py::test_slow_brain_speaks_a_filler_then_the_real_answer": (
+        ("time.monotonic",),
+        "RELATIVE — `0.2 <= heard_at < 5.0`, and both halves are honest. The lower bound "
+        "is the subject (the filler must NOT precede the budget) and a busy box only "
+        "raises `heard_at`, away from it. The upper bound is 25x the 0.2 s budget under "
+        "test: it asks 'did this land inside the window', not 'how fast was it', and the "
+        "file's own header says so. A ceiling that loose cannot be reached by preemption "
+        "without the runtime being genuinely broken."),
+
+    "sim/tests/test_clean_shutdown.py::_Tail.wait_for": (
+        ("time.monotonic",),
+        "DETERMINISTIC — `deadline = monotonic() + timeout`, then poll until a needle is "
+        "printed. This is a bounded WAIT, not a measurement: a slow box waits longer and "
+        "the test still passes, and it reddens only if the line genuinely never appears. "
+        "The callers pass 180 s / 30 s. Note this file already fixed one instance of the "
+        "defect class in its own way — deciding 'did not stop' from `poll()` sampled at "
+        "stdout EOF, replaced with a blocking `waitpid` and guarded by "
+        "`test_a_closed_stdout_is_not_proof_that_the_process_has_exited`."),
+
+    "sim/tests/test_sil_handshake.py::test_the_announcement_really_did_wait_for_the_suback": (
+        ("time.monotonic",),
+        "RELATIVE — a LOWER bound: `waited >= LATE_SUBSCRIBE_S * 0.5` proves `announce()` "
+        "blocked for the SUBACK instead of returning early. Preemption inflates `waited`, "
+        "which pushes the assertion further from failure, so load can only make this "
+        "greener. The direction is what makes it safe; the same expression as an upper "
+        "bound would be the defect."),
+    "sim/tests/test_sil_supervisor_readiness.py::test_a_supervisor_whose_subscribe_is_late_still_serves_the_robot": (
+        ("time.monotonic",),
+        "RELATIVE — the same shape and the same direction: `booted >= HOLD_SUBSCRIBE_S * "
+        "0.5` proves the boot really blocked on the held SUBSCRIBE. A busy machine only "
+        "makes `booted` larger."),
+
+    "sim/tests/test_soak_accounting.py::test_a_fault_wholly_inside_a_turn_is_seen": (
+        ("time.monotonic",),
+        "RELATIVE — an OVERLAP between two reads of the same monotonic clock, with no "
+        "duration compared to any constant. `t_start` and `t_end` bracket the window and "
+        "the assertion is that the recorded outage intersects them; stretching the "
+        "bracket by preempting it keeps that true."),
+    "sim/tests/test_soak_accounting.py::test_a_fault_still_in_flight_is_seen": (
+        ("time.monotonic",),
+        "RELATIVE — an OPEN window runs to +inf, so `overlaps(now, now + 8.0)` is true "
+        "for any `now` the clock returns. No timing can change the answer."),
+    "sim/tests/test_soak_accounting.py::test_a_fault_before_or_after_the_turn_is_not_seen": (
+        ("time.monotonic",),
+        "RELATIVE — the converse, and safe in the same direction: the window is already "
+        "CLOSED when `after = monotonic() + 0.05` is computed, so `after` is strictly "
+        "past it however long the process was descheduled first. Delay only widens the "
+        "gap the assertion needs."),
 }
 
 #: Rows whose construct tuple is empty are kept as tombstones — a fixed site whose
@@ -525,14 +638,22 @@ def test_the_scanner_sees_a_clock_read_that_is_deliberately_planted():
            "class C:\n"
            "    def d(self):\n"
            "        return datetime.date.today(), time.time()\n"
+           "def dur():\n"
+           "    return time.monotonic(), time.perf_counter()\n"
            "def safe():\n"
-           "    return time.monotonic(), time.perf_counter(), time.sleep(0)\n")
+           "    return time.sleep(0)\n")
     scan = _Scan()
     scan.visit(ast.parse(src))
     assert scan.hits["a"] == {"datetime.now"}
     assert scan.hits["b"] == {"time.strftime", "time.localtime"}
     assert scan.hits["C.d"] == {"date.today", "time.time"}
-    assert "safe" not in scan.hits, "monotonic clocks must NOT be flagged"
+    assert scan.hits["dur"] == {"time.monotonic", "time.perf_counter"}, \
+        "durations are scanned too from 2026-09-06 — see PY_CLOCK_CALLS for why"
+    assert "safe" not in scan.hits, (
+        "`time.sleep` is deliberately NOT flagged: it is a WAIT, not a measurement. It "
+        "yields no value an assertion can be built on, so it cannot carry this defect by "
+        "itself — the read that TIMES the wait is the one that can, and that is scanned. "
+        "11 more scopes would need rows for no verdict anyone could act on.")
     for name, pattern in JS_CLOCK_PATTERNS:
         assert pattern.search({"Date.now": "const t = Date.now();",
                                "new Date()": "const d = new Date();",

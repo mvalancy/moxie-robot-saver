@@ -1449,6 +1449,42 @@ Tracked so the status table above isn't over-claimed. Each is a build slice, not
   and they fail identically on untouched `origin/dev` — a second latent race of the same family (a
   `settle(4600)` standing in for a condition) left for its own slice, not fixed here.
 
+- **the pytest tier's two latency budgets asserted an absolute millisecond count, so they measured the
+  MACHINE — fixed 2026-09-06, and the ratio that was already there was load-dependent too.** The browser
+  suites spent the day removing assertions whose result depends on who else is running; the same disease was
+  still live in `pytest`. `test_automarkup.py::test_p95_under_one_millisecond` asserted `p95 < 1.0` ms and
+  `test_performance.py::test_the_planner_costs_about_what_the_floor_costs` bolted the same absolute onto an
+  otherwise sound ratio. **Reproduced before touching either:** on a 24-core box at load average 84-104 both
+  failed 3/3, at `p95 7.252 ms` against a `median 0.337 ms` — a median that steady with a tail that wild is
+  the scheduler preempting the process, not code that got slower. Neither budget was widened: `p95 < 1.0`
+  would still have been a number someone liked at 5 ms, and would still redden on a slower runner. Both now
+  divide by a calibration measured in the **same interleaved loop**, at the **median**, so a preemption lands
+  on both halves alike. **The non-obvious half is that the existing ratio was not safe either**: taken at
+  p95 it compared one scheduler tail against another, and five trials at load 104 read `1.80, 2.03, 2.20,
+  2.91` and **`45.48`** where the median ratio held at `1.999-2.025` — a 4x gate would have called that last
+  sample a regression on a green tree. Sampling the two sides in separate loops was tried first and rejected
+  by measurement (up to 38% drift). **The property is defended more strongly than before, not less, and by
+  the right instrument:** *"a regression that adds I/O fails loudly here"* is now a direct I/O-absence
+  assertion rather than an inference from timing, because an injected `open()` is a ~10% blip on a ~5%-wide
+  band and **no timing budget at any threshold can resolve it**. Proved in both directions by injecting the
+  regression into the product and watching what reddened: `open()` in `automarkup.annotate` → the new
+  trap fails, the ratio stays green (correctly); `sleep(0.5 ms)` → the ratio fails at 6.4-8.8x; `sleep(1 ms)`
+  in the planner seam → `8.15x the floor's 0.187 ms`. That sweep found a **real hole**: `open()` in
+  `markup.make_markup` — the seam the robot calls once per spoken chunk — reddened **nothing** in the whole
+  suite, because `test_the_planner_makes_no_model_call_and_touches_no_io` trapped `random` and `socket` but
+  not `open`, and exercised `perf.render` rather than the seam; both are closed. The ratchet
+  ([`test_clock_dependence.py`](../../sim/tests/test_clock_dependence.py)) now scans **monotonic** clocks,
+  which it deliberately did not before — correct for the disease it was written for (a date read cannot make
+  09:00 differ from 23:59) but blind to the second disease wearing that costume, where subtracting two reads
+  gives a duration and an upper bound on a duration asks the machine a question. 11 duration rows added with
+  verdicts, 6 tests still green, teeth re-proved by planting an unreviewed read. **Named residuals, neither
+  fixed here:** the scanner matches dotted names, so `import time as _t; _t.perf_counter()` **evades it** —
+  pre-existing, and it evades the wall-clock families equally. And `time.sleep` is deliberately left
+  unscanned (11 more scopes, no verdict anyone could act on): it is a wait, not a measurement, and the read
+  that *times* a wait is the one that can carry this defect. **Surveyed the tier while there: 9 of the 11
+  files that read a clock are clean** — timeouts bounding real waits, lower bounds a slow box pushes further
+  from failure, and overlap assertions on one monotonic clock. The only two absolute-duration assertions in
+  the tier were the two fixed here.
 ## DoD progress (audited 2026-09-04 08:15 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 92%** (done = all six 🟢)
 
 > **Criterion 6 is green, and it was earned in the place it used to be false.** The day the merge gate was a
