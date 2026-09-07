@@ -1362,3 +1362,42 @@ which is 🟡 partial — a JSON store landed, a database did not. That is the o
 and it serves fleet-scale concerns for hardware nobody has, which this plan's own ranking puts below
 anything that improves a stranger's visit to the public sim. **No agent was briefed this fire**, and
 that is the honest outcome rather than a gap.
+
+### 2026-09-06 — the family, counted honestly: ten found, nine closed, one in flight
+
+`#204` (`suiteaudit`) and `#206` (`clockbudget`) close the browser and pytest halves of the defect
+this session has been mining: **an assertion whose result depends on the machine rather than on the
+product.** Running total for the day: **ten instances found, nine fixed, one under proof.**
+
+**Both agents corrected the orchestrator's brief, and both were right.** That is now the day's most
+productive pattern and it should be invited explicitly rather than tolerated:
+
+- `clockbudget`'s brief asserted that the planner's existing `4x floor` **ratio** was the sound half,
+  needing only its bolted-on absolute removed. **Wrong.** Taken at p95, the ratio compares one
+  scheduler tail against another: five trials at load 104 held a median ratio of **1.999–2.025** while
+  the p95 ratio *over the same samples* read 1.80, 2.03, 2.20, 2.91 and **45.48** — a sample that
+  fails a 4x gate on a healthy tree. The ratio was right; **taking it at p95 was the bug.**
+- Its regression proof then found a hole nobody had asked about: `open()` injected into
+  `markup.make_markup` **reddened nothing**, because the no-IO test trapped `random`/`socket` but not
+  `open`, and exercised `perf.render` rather than the seam. The conclusion is the durable part — *a
+  bare `open()` is a ~10% blip on a ~5% band, so no timing threshold can resolve it* — so that
+  property is now a **direct I/O-absence assertion** instead of an inference from timing.
+
+**Why a ratchet built for this missed it for months:** `test_clock_dependence.py` deliberately excluded
+**monotonic** clocks. Correct for date-dependence, blind to load-dependence. Now scanned, with teeth
+re-proved by planting an unreviewed read.
+
+**An orchestrator error worth recording.** `wt-suiteaudit` was removed at merge time, and the agent
+**woke afterwards**, found its worktree and branches gone, and reported its work lost. It was not —
+`#204` had already merged it, verified file-by-file, all six byte-identical on `dev`. But the
+observation is right and the lesson is new: **a subagent can resume after it has reported**, so prompt
+worktree cleanup can strand a resumed run into a false recovery. Its conclusion was wrong; its
+observation was not, and separating those is the whole discipline.
+
+**The tenth instance is in flight** (`feat/cspwait`). `sim/test_csp.mjs:289-297` resolves an injected
+script through a three-way race whose third racer is a hardcoded `setTimeout(resolve("timeout"), 3000)`
+— and `"timeout"` (*we gave up*) is asserted against `"loaded"` and `"refused"`, which are statements
+about what **CSP** did. Both hosts are route-intercepted and answered locally at `status: 200`, so a
+timeout there **cannot** be a slow network; the previous agent's curl connectivity check was measuring
+something structurally incapable of affecting the test. A check that cannot separate a starved renderer
+from a policy decision is guarding the mechanism that protects the public sim.
