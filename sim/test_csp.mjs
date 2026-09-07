@@ -87,6 +87,101 @@ const isKnown = (e) => KNOWN_REFUSALS.some((k) => k.test(e));
 /** Console lines that are a POLICY refusal we have NOT already accounted for. */
 const cspErrors = (errs) => errs.filter((e) => POLICY_LINE.test(e) && !isKnown(e));
 
+/* ---------------------------------------------------------------------------
+ * WAITING — AND THE THIRD OUTCOME THAT USED TO BE COMPARED AGAINST A VERDICT.
+ *
+ * Every script injection in this file used to resolve through a THREE-way race: `onload`,
+ * `onerror`, and `setTimeout(…, 3000)`. The third arm's value was handed straight to
+ * `eq()` against "loaded" or "refused". Those two are statements about what the browser's
+ * CSP DID. "timeout" is a statement about US — we stopped waiting. Comparing them is how
+ * a starved renderer gets reported as a policy decision, and CSP is the mechanism
+ * protecting the public sim, so that conflation is not a cosmetic one.
+ *
+ * IT WAS NEVER A NETWORK WAIT, which is the detail that settles the mechanism. Both hosts
+ * in block 4 and both in block 9 are route-intercepted a few lines above their injection
+ * and answered locally with `r.respond({ status: 200, … })`; measured 2026-09-06, the
+ * whole interception path for all 30 requests `sim.html` makes cost 254–485 ms in total.
+ * So a 3000 ms expiry could only ever have meant "the renderer had not dispatched the
+ * event yet" — a fact about the machine, never about the policy.
+ *
+ * MEASURED, in-page `performance.now()` from `appendChild` to the event, with the
+ * renderer throttled over CDP the way `sim/tools/page_teeth_check.py --slow N` does it
+ * (node's own timers keep full speed; the page does not):
+ *
+ *     throttle   in-page busy loop    static. onload   bare onerror   frame violation
+ *      1x             26.6 ms            2799 ms           0 ms          2065 ms
+ *      6x             45.5 ms            1836 ms        1055 ms          3355 ms
+ *     20x            319.7 ms            3471 ms           0 ms          6692 ms
+ *
+ * Two things follow and the SECOND was not expected. The 3000 ms script budget is blown
+ * at 20x — that is the reported failure, and `--slow 6` reproduces it against bytes on
+ * disk that were never touched. But the iframe half's 1200 ms budget was already blown AT
+ * FULL SPEED, 2065 ms, on a box under ordinary load. These were not "green except on a
+ * very loaded runner": they were marginal in the normal case and passing on luck.
+ *
+ * So nothing below races a clock against an event. A wait ends when the EVENT arrives.
+ * `CEILING` exists only so a hung renderer cannot hang the suite, and when it expires the
+ * result is a SENTENCE naming what never arrived — a value that can never be equal to
+ * "loaded", to "refused" or to `null`, and so can never be silently read as a verdict.
+ * ------------------------------------------------------------------------- */
+
+/** The give-up ceiling. NOT a budget — no assertion in this file is about being fast, and
+ *  on a healthy run every wait below returns in milliseconds, so raising it costs nothing
+ *  that a green run pays. It is the deadlock stop, sized far past the slowest thing ever
+ *  measured here (6692 ms at 20x throttle), and every expiry is reported loudly. */
+const CEILING = 30000;
+
+/** Poll a NODE-side predicate. The console/`errs` arrays are filled by puppeteer's own
+ *  listeners in this process and cannot be seen from inside the page, so the presence of
+ *  a logged refusal has to be waited for here rather than in the renderer. */
+const until = async (pred, ms = CEILING, step = 50) => {
+  const t0 = Date.now();
+  for (;;) {
+    if (pred()) return true;
+    if (Date.now() - t0 >= ms) return false;
+    await new Promise((r) => setTimeout(r, step));
+  }
+};
+
+/** Poll an IN-PAGE predicate; hand back the first truthy value it returns, or `null` if
+ *  the ceiling expires. `waitForFunction` THROWS on expiry and this whole suite runs
+ *  inside one `try`, so an uncaught expiry would abort every later block and surface as a
+ *  single "threw:" line — the opposite of failing distinguishably. Caught here, turned
+ *  into `null`, and NAMED by each caller. */
+const untilPage = async (page, fn, arg = null, ms = CEILING) => {
+  try {
+    const h = await page.waitForFunction(fn, { polling: 100, timeout: ms }, arg);
+    return await h.jsonValue();
+  } catch { return null; }
+};
+
+let injectN = 0;
+/** Add a `<script src>` the way Pages injects the beacon, and report WHAT THE BROWSER
+ *  DECIDED — "loaded" (its `load` event) or "refused" (its `error` event), waited for
+ *  rather than guessed at. If neither ever fires the return value is a sentence about the
+ *  renderer, not a third verdict about the policy.
+ *
+ *  `module: true` mirrors the tag Pages actually injects (`type="module"
+ *  crossorigin="anonymous"`, which is why the interceptors have to send CORS). For BOTH
+ *  kinds the `load` event fires only after the script has been EVALUATED, so `"loaded"`
+ *  is already the proof that the body ran — the `window.__…` probes next to each call are
+ *  the independent second witness, not the wait. */
+const injectTag = async (page, src, { module = false } = {}) => {
+  const tag = `i${++injectN}`;
+  await page.evaluate((u, t, mod) => {
+    (window.__inject = window.__inject || {})[t] = null;
+    const s = document.createElement("script");
+    if (mod) s.type = "module";
+    s.src = u;
+    s.onload = () => { window.__inject[t] = "loaded"; };
+    s.onerror = () => { window.__inject[t] = "refused"; };
+    document.head.appendChild(s);
+  }, src, tag, module);
+  return (await untilPage(page, (t) => window.__inject[t] || null, tag)) ||
+    `GAVE UP: <script src="${src}"> fired NEITHER load NOR error within ${CEILING} ms — ` +
+    "a starved renderer, NOT a policy verdict; do not read this as one";
+};
+
 /* Each page, and the runtime fact that proves its scripts really ran under the policy.
  * A page that loads but whose inline block was refused looks fine to the naked eye and to
  * every structural check — the probe is what separates the two. */
@@ -126,6 +221,21 @@ async function load(path) {
   // instead of forgiven on the strength of its text (see the loop below).
   page.on("response", (r) => { if (r.status() === 404) notFound.push(r.url()); });
   const res = await page.goto(`${HOST}/${path}`, { waitUntil: "domcontentloaded", timeout: 20000 });
+  /* THE CONDITION FIRST; THE DURATION AFTER IT STAYS, AND IS HONESTLY A DURATION.
+   *
+   * `domcontentloaded` returns before the module graph, the stylesheets, the fonts and
+   * the images are in, so a bare `sleep(2500)` was betting that 2500 ms covered the whole
+   * of that. The `load` event is the condition the bet was standing in for, so wait for
+   * it. (`untilPage` never throws: an expiry falls through to the assertions below, which
+   * is exactly where a page that never finished loading should be reported.)
+   *
+   * The fixed window after it is NOT converted, deliberately. What consumes it in block 2
+   * is `eq(cspErrors(errs).length, 0, …)` — an assertion that NOTHING was refused. An
+   * absence has no event to wait for; it is a window, and a window is honestly a
+   * duration. The change that matters is that it now starts at the load event instead of
+   * at DOMContentLoaded, so it is a quiet period AFTER the page finished rather than a
+   * slice of the page still loading. */
+  await untilPage(page, () => document.readyState === "complete" || null, null, 20000);
   await new Promise((r) => setTimeout(r, 2500));
   return { page, errs, headers: res.headers(), notFound };
 }
@@ -224,17 +334,14 @@ try {
     const before = cspErrors(errs).length;
     eq(before, 0, "teeth: the page is clean before anything is injected");
 
-    const loaded = await page.evaluate(() => new Promise((resolve) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.invalid.test/evil.js";
-      s.onload = () => resolve("loaded");
-      s.onerror = () => resolve("refused");
-      document.head.appendChild(s);
-      setTimeout(() => resolve("timeout"), 3000);
-    }));
+    const loaded = await injectTag(page, "https://cdn.invalid.test/evil.js");
     eq(loaded, "refused",
        "teeth: a script from another origin is REFUSED — without script-src it would have run");
-    await new Promise((r) => setTimeout(r, 400));
+    /* THE CONSOLE LINE, WAITED FOR RATHER THAN SLEPT AT. `errs` is filled by puppeteer's
+     * `console` listener in NODE, so this is a node-side poll and cannot see the page's
+     * clock at all. A fixed 400 ms here was a bet that CDP had already delivered the
+     * message; the bet's losing side is a RED on a policy that is working. */
+    await until(() => cspErrors(errs).length > before);
     ok(cspErrors(errs).length > before,
        "teeth: …and the browser logged the refusal, so the policy really is the one in force");
 
@@ -284,31 +391,40 @@ try {
       return r.continue();
     });
     await page.goto(`${HOST}/sim.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
-    await new Promise((r) => setTimeout(r, 1500));
+    /* WAIT FOR THE SIM TO BE UP, which is the condition 1500 ms was standing in for. This
+     * block injects into `sim.html`, and an injection is only a fair test of the policy
+     * once the page's own module graph has stopped competing for the main thread —
+     * `window.moxie` exists only when that graph resolved (block 2 asserts precisely
+     * that), so it is the condition, not a guess about how long it takes. */
+    await untilPage(page, () => !!window.moxie || null);
 
-    /** Add a script tag the way Pages injects the beacon, and report what happened. */
-    const inject = (src) => page.evaluate((u) => new Promise((resolve) => {
-      const s2 = document.createElement("script");
-      s2.type = "module";
-      s2.src = u;
-      s2.onload = () => resolve("loaded");
-      s2.onerror = () => resolve("refused");
-      document.head.appendChild(s2);
-      setTimeout(() => resolve("timeout"), 3000);
-    }), src);
-
-    eq(await inject("https://static.cloudflareinsights.com/beacon.min.js/vTESTONLY"), "loaded",
+    /* `injectTag` (top of this file) waits for the browser's own verdict and cannot return
+     * a third value comparable to one. `module: true` because that is the tag Pages
+     * injects, and it is why the interceptor above has to send CORS. */
+    const beacon = await injectTag(page,
+      "https://static.cloudflareinsights.com/beacon.min.js/vTESTONLY", { module: true });
+    eq(beacon, "loaded",
        "the injected Cloudflare beacon LOADS — the console error on every page load is gone");
     eq(await page.evaluate(() => window.__beacon || null), "ran", "…and actually executed");
 
-    eq(await inject("https://cloudflareinsights.com/beacon.min.js/vTESTONLY"), "refused",
+    const sibling = await injectTag(page,
+      "https://cloudflareinsights.com/beacon.min.js/vTESTONLY", { module: true });
+    eq(sibling, "refused",
        "…while the BARE cloudflareinsights.com is still refused: the allowance is host-exact");
-    eq(await page.evaluate(() => window.__sibling || null), null, "…and never ran");
-    await new Promise((r) => setTimeout(r, 400));
+    /* THE ABSENCE, ANCHORED TO AN EVENT. `__sibling === null` on its own is satisfied by a
+     * script CSP refused and equally by a script that simply has not run YET, so it is
+     * only worth something read at a moment when the browser has already decided — which
+     * is what waiting for `onerror` above buys. The `sibling === "refused"` guard folds
+     * that in: if the injection never settled, this check goes red WITH its sibling
+     * instead of passing vacuously on the strength of nothing having happened. */
+    const siblingRan = await page.evaluate(() => window.__sibling || null);
+    eq(sibling === "refused" ? siblingRan : sibling, null, "…and never ran");
     // Match the URL the browser NAMES as refused, not the line: every such line also
-    // quotes the policy back, which now contains the word `static.` itself.
-    ok(cspErrors(errs).some((e) => /'https:\/\/cloudflareinsights\.com\//.test(e)),
-       "…with the refusal logged, so the policy really is the one in force");
+    // quotes the policy back, which now contains the word `static.` itself. Waited for on
+    // the node side, for the reason given in block 3.
+    const logged = () => cspErrors(errs).some((e) => /'https:\/\/cloudflareinsights\.com\//.test(e));
+    await until(logged);
+    ok(logged(), "…with the refusal logged, so the policy really is the one in force");
 
     /* The connect-src half of the same question, checked rather than assumed. The beacon
      * reports through `navigator.sendBeacon` to the RELATIVE `/cdn-cgi/rum?…` (it only uses
@@ -439,16 +555,33 @@ try {
     /* The same thing by the route an XSS payload actually takes. `innerHTML` never runs a
      * plain <script>, so this uses the classic `<img onerror>`, which DOES fire — and which
      * `'unsafe-hashes'` would have re-enabled. Two different doors, one lock. */
-    const fired = await page.evaluate(() => new Promise((resolve) => {
+    /* 600 ms USED TO BE THE WHOLE ASSERTION HERE, and this one failed OPEN — the worse
+     * direction, and the reason it is fixed in the same pass as block 4's. `__handlerRan
+     * === null` is satisfied by a handler the policy REFUSED and equally by a handler
+     * whose `error` event had not been dispatched yet, so on a renderer slower than the
+     * guess this check reported "the policy held" about a page where nothing had happened
+     * at all. An absence is only evidence once the thing it is an absence OF has had its
+     * chance, so this needs a barrier: a witness that the event really was dispatched.
+     * `addEventListener` is not an inline handler, so `script-src` does not police it —
+     * the same event, watched through the door the policy deliberately leaves open. */
+    await page.evaluate(() => {
       window.__handlerRan = null;
+      window.__imgErrored = null;
       const d = document.createElement("div");
       d.innerHTML = '<img src="data:," onerror="window.__handlerRan = \'ran\'">';
+      // Attached synchronously, before the event can possibly arrive: `error` is queued
+      // as a task and is never delivered during `innerHTML` parsing.
+      d.querySelector("img").addEventListener("error", () => { window.__imgErrored = "fired"; });
       document.body.appendChild(d);
-      setTimeout(() => resolve(window.__handlerRan), 600);
-    }));
+    });
+    const errored = await untilPage(page, () => window.__imgErrored || null);
+    const fired = errored
+      ? await page.evaluate(() => window.__handlerRan || null)
+      : `GAVE UP: the <img>'s error event never fired within ${CEILING} ms, so the inline ` +
+        "handler was never given its chance — this is NOT evidence that the policy held";
     eq(fired, null, "inline teeth: an injected inline event-handler attribute does NOT fire either");
 
-    await new Promise((r) => setTimeout(r, 400));
+    await until(() => cspErrors(errs).length >= 1);
     ok(cspErrors(errs).length >= 1,
        "inline teeth: …and the browser logged the refusals, so the policy really is in force");
 
@@ -725,33 +858,39 @@ try {
       return r.continue();
     });
     await page.goto(`${HOST}/sim.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
-    await new Promise((r) => setTimeout(r, 1500));
+    // The sim being up is the condition 1500 ms was standing in for — see block 4.
+    await untilPage(page, () => !!window.moxie || null);
 
-    const injectScript = (src) => page.evaluate((u) => new Promise((resolve) => {
-      const s2 = document.createElement("script");
-      s2.src = u;
-      s2.onload = () => resolve("loaded");
-      s2.onerror = () => resolve("refused");
-      document.head.appendChild(s2);
-      setTimeout(() => resolve("timeout"), 3000);
-    }), src);
-
-    eq(await injectScript("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"), "loaded",
-       "Turnstile's widget script LOADS — script-src allows its host");
+    const turnstile = await injectTag(page,
+      "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit");
+    eq(turnstile, "loaded", "Turnstile's widget script LOADS — script-src allows its host");
     eq(await page.evaluate(() => window.__turnstileHost || null), "ran", "…and actually executed");
 
-    eq(await injectScript("https://cloudflare.com/turnstile/v0/api.js"), "refused",
+    const bareScript = await injectTag(page, "https://cloudflare.com/turnstile/v0/api.js");
+    eq(bareScript, "refused",
        "…while the BARE cloudflare.com is still refused: the allowance is host-exact");
-    eq(await page.evaluate(() => window.__bareCloudflare || null), null, "…and never ran");
+    // Anchored to the refusal event, for the reason spelled out in block 4: an absence
+    // read before the browser has decided is an absence of nothing.
+    const bareRan = await page.evaluate(() => window.__bareCloudflare || null);
+    eq(bareScript === "refused" ? bareRan : bareScript, null, "…and never ran");
 
     /* The iframe half. `frame-src` refusals do not fire `onerror` on an `<iframe>` at all,
      * so the witness is the `securitypolicyviolation` EVENT — which carries the directive
      * and the blocked URI rather than a sentence to regex. The listener is installed here
-     * rather than relying on `load()`'s, because this block builds its own page. */
-    const framed = await page.evaluate((allowed, refused) => new Promise((resolve) => {
-      const seen = [];
+     * rather than relying on `load()`'s, because this block builds its own page.
+     *
+     * IT USED TO BE A 1200 ms WINDOW, AND BOTH CHECKS BELOW WERE WRONG BECAUSE OF IT.
+     * Measured on this box the frame-src violation arrives at 2065 ms with NOTHING
+     * throttled (6692 ms at 20x), so the presence check was passing on luck — and the
+     * ABSENCE check next to it was then passing on an EMPTY ARRAY, a vacuous green on the
+     * assertion that the widget still works at all. Both are now anchored to one barrier:
+     * wait until the refusal we REQUIRE has actually been observed, and only then ask
+     * whether the host we ALLOW is in the same set. If the barrier never arrives, both go
+     * red — neither can be satisfied by nothing having happened. */
+    await page.evaluate((allowed, refused) => {
+      window.__frameV = [];
       document.addEventListener("securitypolicyviolation", (e) => {
-        seen.push({ d: e.effectiveDirective || e.violatedDirective, u: e.blockedURI });
+        window.__frameV.push({ d: e.effectiveDirective || e.violatedDirective, u: e.blockedURI });
       });
       for (const u of [allowed, refused]) {
         const f = document.createElement("iframe");
@@ -759,12 +898,24 @@ try {
         f.style.display = "none";
         document.body.appendChild(f);
       }
-      setTimeout(() => resolve(seen), 1200);
-    }), "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/", "https://cloudflare.com/frame");
-    ok(!framed.some((v) => /frame/.test(v.d || "") && /challenges\.cloudflare\.com/.test(v.u || "")),
-       `frame-src PERMITS the Turnstile iframe — with 'none' the widget mints no token at all (${JSON.stringify(framed)})`);
-    ok(framed.some((v) => /frame/.test(v.d || "") && /^https:\/\/cloudflare\.com/.test(v.u || "")),
-       `…while an iframe from the bare cloudflare.com is REFUSED (${JSON.stringify(framed)})`);
+    }, "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/", "https://cloudflare.com/frame");
+    const barrier = await untilPage(page, () =>
+      (window.__frameV || []).some((x) => /frame/.test(x.d || "") &&
+        /^https:\/\/cloudflare\.com/.test(x.u || "")) ? window.__frameV : null);
+    /* A DURATION THAT IS HONESTLY A DURATION, AND IS NOT CONVERTED. The barrier above
+     * proves the refusal channel is live and delivering; the first check below is an
+     * ABSENCE — that the ALLOWED host produced no violation — and an absence has no event
+     * to wait for. The allowed iframe is appended FIRST, so a refusal of it would have
+     * been queued ahead of the one just observed; this window is the margin on that
+     * ordering argument, not a stand-in for a condition. */
+    if (barrier) await new Promise((r) => setTimeout(r, 400));
+    const framed = barrier ? await page.evaluate(() => window.__frameV) : null;
+    const gaveUp = `GAVE UP: no frame-src violation for the bare host within ${CEILING} ms — ` +
+                   "the renderer never delivered one, so neither check below has evidence";
+    ok(framed && !framed.some((v) => /frame/.test(v.d || "") && /challenges\.cloudflare\.com/.test(v.u || "")),
+       `frame-src PERMITS the Turnstile iframe — with 'none' the widget mints no token at all (${framed ? JSON.stringify(framed) : gaveUp})`);
+    ok(framed && framed.some((v) => /frame/.test(v.d || "") && /^https:\/\/cloudflare\.com/.test(v.u || "")),
+       `…while an iframe from the bare cloudflare.com is REFUSED (${framed ? JSON.stringify(framed) : gaveUp})`);
 
     /* And `connect-src`'s one host, both directions. The widened directive must permit the
      * widget's own origin and must still refuse everybody else — the port-8081 kill this
