@@ -558,7 +558,33 @@ try {
          `docs.html: the README hero image actually DECODED (${JSON.stringify(hero)})`);
       ok(hero && /^img\//.test(hero.src || ""),
          `docs.html: …from this origin, the repo-relative src remapped onto the site root (${hero && hero.src})`);
+      /* MEASURED 2026-09-06, and it is not a theory: with the browser throttled to
+       * 400 KB/s — a cold cache on a slow link, which is the CI runner's normal condition —
+       * this check read `0 hits` and the suite went red. `docs.js` does not fetch the
+       * full-text corpus until the first keystroke, and `sim/web/docs-search.json` is
+       * **3.27 MB**, queued behind `mermaid.min.js` (another 3.3 MB) on the same pipe.
+       * Instrumented on the real page at that throughput: typed at t=12.0 s, the filtered
+       * tree appeared at **t=24.5 s** — the shipped assertion looked at t=13.2 s. Nothing
+       * about the policy under test had changed; the number 1200 was the whole assertion.
+       *
+       * THE OBVIOUS WAIT IS ALSO WRONG, which is why the count before typing is captured.
+       * `#tree a > 0` is satisfied INSTANTLY: `buildTree("")` has already rendered all 46
+       * docs, so the naive condition returns before a single keystroke is processed. The
+       * same instrumented run shows the sequence — 46 links, then 0 while the title-only
+       * pass finds no match for a body-only term, then 13 when the corpus lands. So the
+       * condition is the CLAIM: the tree has been filtered (fewer) and is not empty.
+       *
+       * It is not circular. `.catch(() => {})` lets an expired wait fall through to the
+       * assertion, so a search that genuinely matches nothing still fails — with a message
+       * that now means what it says. */
+      const allDocs = await page.evaluate(() => document.querySelectorAll("#tree a").length);
       await page.type("#q", "projectorfanpid");        // a body-only term: search must have run
+      await page.waitForFunction(
+        (n) => { const k = document.querySelectorAll("#tree a").length; return k > 0 && k < n; },
+        // Sized for the 7 MB this page pulls on a cold cache, not for a warm laptop. It
+        // costs nothing when the corpus is already there, which is every healthy run.
+        { timeout: 60000 }, allDocs,
+      ).catch(() => {});
       await new Promise((r) => setTimeout(r, 1200));
       const hits = await page.evaluate(() => document.querySelectorAll("#tree a").length);
       ok(hits > 0, `docs.html: full-text search filters the tree (got ${hits} hits)`);
@@ -799,6 +825,30 @@ try {
          * ATTRIBUTE. A CSSOM property write is none of the three. */
         const box = document.createElement("div");
         document.body.appendChild(box);
+        /* QUIESCE BEFORE THE FIRST SAMPLE — the page under this probe is still WORKING.
+         *
+         * `a0` and the second `styleV()` twenty frames later are two LIVE samples of a
+         * counter this probe does not own: `v` collects every style-src refusal on the
+         * page, and this page is `docs.html` under the strict policy, where `docs.js` is
+         * still rendering mermaid — which is precisely the producer part (c) below measures
+         * on purpose. Anything mermaid emits inside the rAF window is charged to
+         * `el.style.transform`, and the check's message then names the wrong cause.
+         *
+         * Measured 2026-09-06 with the renderer throttled 20x
+         * (`sim/tools/page_teeth_check.py --slow 20`): `{"violations":239}` where a full
+         * speed run reads 0 — the transform, the opacity and the custom property all still
+         * applied, so nothing about the CSSOM claim had changed. The `setTimeout(1500)`
+         * above was doing the work of a condition, and 1500 ms is not a condition.
+         *
+         * So: wait until the page has STOPPED producing style-src refusals (250 ms of
+         * quiet), and only then start counting. `styleV()` and not `v.length` because the
+         * page also probes the optional :8081 sidecar, which `connect-src` refuses on its
+         * own schedule and would keep the quiet from ever arriving. */
+        let last = -1, stable = 0;
+        for (let i = 0; i < 400 && stable < 5; i++) {
+          await settle(50);
+          if (styleV() === last) stable++; else { stable = 0; last = styleV(); }
+        }
         const a0 = styleV();
         await new Promise((res) => {
           let n = 0;
