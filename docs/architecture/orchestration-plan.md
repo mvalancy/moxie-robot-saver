@@ -1235,3 +1235,32 @@ blocking every `git pull`. All three were superseded drafts — every identifier
 (`logMutter`, `watchTranscript`, `rail-toggle`, `rail-closed`, `presence-badge`, `livenessOn`)
 exists on `dev` in a further-evolved form, and `style.css` there carries 13–14 hits where the local
 buffer had one. Stashed rather than discarded, then pulled.
+
+### 2026-09-06 — INTEGRATION: the intermittent is now the promotion gate, and `feat/suiteaudit`
+
+The cross-instant race in `sim/test_liveliness.mjs` stopped being a nuisance this hour. It has now
+reddened **three PRs on diffs that cannot reach it**: #202 (Python + YAML + Markdown), and — the
+one that matters — **#201, the standing `dev → main` PR**, whose failing step the API names as
+*"Liveliness hold, self-talk in the log, dock width, head-anchored bubble"*. **The promotion is
+blocked by a check that is wrong about the product**, which is the most expensive form this defect
+family takes: it costs a re-run every time, and re-running is precisely how it stays hidden.
+
+`sim/ci/ci.yml` runs **32 browser suites**, every one a promotion gate. Five instances of the same
+family have now been found across them, so `feat/suiteaudit` was briefed to audit the other 30 —
+with the standing requirement that a candidate is a *finding* only once it has been **measured**
+(the two quantities shown diverging, or the assertion shown green against a deliberately broken
+page), and that every fix is proven to fail without itself. `sim/tools/page_teeth_check.py` already
+serves each suite a broken site and is the right instrument. **A null result is a real result**:
+clearing 27 suites honestly beats reporting 30 unmeasured "concerns".
+
+The same fire also cleared a stale subagent that had been "running" for a day. Its deliverable —
+the chat context-expiry fix — was already on `dev` as `e8ce5af` with its worktree removed, so it
+had finished and was holding nothing but a slot in the ledger. Its parting note worried that its
+new test made a **relative** clock read needing a reviewed row in `sim/tests/test_clock_dependence.py`;
+that ratchet was run against `dev` before the kill and is **6 passed**, so nothing was left broken.
+
+One process fix, now with an instance rather than a prediction: the BUILD tier's staged-secret scan
+is `grep -ciE "sk-[A-Za-z0-9_]{12}"`, and it returned **2** on a commit containing no key at all —
+both hits the ordinary word `task-notification`. With a word boundary (`\bsk-`) it returns 0. The
+check as written would block a clean commit and, worse, train its reader to wave through a non-zero
+count.
