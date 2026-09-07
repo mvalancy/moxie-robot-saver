@@ -979,11 +979,12 @@
    "path": "architecture/backlog/smoke-load-sensitivity.md",
    "title": "run_smoke.sh` is load-sensitive — the stack exercise cannot currently tell \"broken\" from \"busy\"",
    "section": "architecture",
-   "bytes": 3656,
+   "bytes": 5707,
    "mermaid": 0,
    "headings": [
     "The evidence, and why it is not a suspicion",
     "Why it matters more than an ordinary flake",
+    "MEASURED 2026-09-07 — the rate, and the threshold",
     "What the work is",
     "Acceptance criteria",
     "Effort",

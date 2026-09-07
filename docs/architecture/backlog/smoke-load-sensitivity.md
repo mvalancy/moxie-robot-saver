@@ -29,6 +29,39 @@ Definition of done's criterion 6) that is how a real defect stays hidden. It has
 misread once: an orchestrator recorded a smoke failure as a merge regression before an A/B showed
 pristine `dev` failing identically.
 
+## MEASURED 2026-09-07 — the rate, and the threshold
+
+The first acceptance criterion below is now satisfied. Same commit throughout (`02e7b47`), same
+script, load generated with `while :; do :; done` burner processes on a 24-core box:
+
+| condition | load average | failures |
+|---|---|---|
+| quiet | **3.3** | **0 of 3** |
+| moderate | **19–33** | **0 of 5** |
+| high | **123–156** | **2 of 7** |
+
+**Eight consecutive passes and then ~30 % failing is a threshold, not noise** — and nothing about the
+tree changed between those rows. Below roughly load 33 the script is clean; above roughly 120 it fails
+about a third of the time.
+
+**A correction worth keeping, because it nearly closed this brief wrongly.** The first loaded attempt
+returned **5 pass / 0 fail** and read as *"the smoke is fine"*. It was not: the burners had not ramped,
+and that run peaked at load 19–33 — which the table above now shows is **below the threshold
+entirely**. Reporting it would have retired a real defect on a measurement taken in the wrong regime,
+which is exactly the failure mode that produced the other twelve instances. The rule that follows:
+**state the load with the rate, always, or the rate means nothing.**
+
+**Why this may matter for CI rather than only for developers.** GitHub's runners are 2–4 core, and the
+browser suite takes **19–22 minutes** there against roughly 60 seconds locally. If this threshold is a
+ratio of load to cores rather than an absolute, CI may sit near it routinely — which would be one
+mechanism behind reds appearing on diffs that cannot reach the code, the pattern that started this
+whole line of work on 2026-09-06.
+
+**Still not known: which step gives way.** Two attempts to capture a failing run's tail were
+interrupted, and a third passed at load 156. **The distinction the section below insists on — a fixed
+wait standing in for a condition (a harness bug) versus a genuine capacity limit in the runtime (a
+product finding) — remains unresolved, and nothing here should be read as having settled it.**
+
 ## What the work is
 
 1. **Measure before changing anything.** Establish the failure rate against pristine `dev` at a known
