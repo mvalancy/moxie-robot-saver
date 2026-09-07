@@ -1198,3 +1198,40 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   question"*) had been obeyed literally and **licensed** a question every turn. **A metric improving
   is not the behaviour improving**, and the remedy was to read the transcripts rather than the
   summary.
+
+### 2026-09-06 — BUILD: `feat/bubbleframe`, and a red that measured three wrong theories first
+
+PR **#202**'s browser suite reddened on `sim/test_liveliness.mjs:325` — `…on a leader that spans
+exactly the gap (88.5px for 91px)` — on a diff containing a Python promotion checker, a workflow
+and `RELEASING.md`. Rule 30 says that is a latent race, not a flake, so it was instrumented before
+anything was changed. Three hypotheses died to measurement, and recording them is the point:
+
+1. **The typewriter grows the box, so the cached `bh` is stale.** Refuted: `offsetHeight` is **61
+   for every one of 90 sampled frames**. The box never changes size.
+2. **A CSS ease on position makes the rendered box lag its target.** Refuted by `style.css`, which
+   says so in its own comment — `#bubble.anchored` transitions `opacity` only, *"No transition on
+   position"*.
+3. **`updateBubbleAnchor()` runs first in `animate()`, so the anchor trails the pose by a frame.**
+   Moving the call to just before `renderer.render` and re-measuring changed nothing.
+
+The instrumentation also produced a **false alarm worth naming**: drift reaches **18 px** late in
+the run, which read as "the bubble stops tracking her head". Every one of those rows has
+`hidden=1`. `updateBubbleAnchor()` early-returns while the bubble is hidden — correctly, since
+that would be a forced layout every frame for a box nobody can see. The orchestrator wrote it up
+as a visible artifact before checking the flag, and the brief carries the correction explicitly so
+the agent does not "fix" working code.
+
+What survives: `window.__bubbleAnchor()` mixes two instants in one readout. `leader` is read from
+the `--leader` custom property (**recorded state**, as of the last rendered frame) while `head` is
+**re-projected live at call time**, and her head moves continuously inside `animate()` *after* the
+anchor is computed. The error is head-velocity × time-since-last-frame — invisible on a fast local
+box, red on a loaded CI runner. This is precisely what `test_liveliness.mjs`'s own header forbids:
+*"EVERY ASSERTION READS RECORDED STATE, NEVER A LIVE SAMPLE (playbook rule 11)."* **The file
+violates the rule it opens by declaring**, and the `<= 2` tolerance has been absorbing the
+evidence.
+
+Also cleared this fire: `repo` itself was **73 commits behind** with three dirty `sim/web` files
+blocking every `git pull`. All three were superseded drafts — every identifier in them
+(`logMutter`, `watchTranscript`, `rail-toggle`, `rail-closed`, `presence-badge`, `livenessOn`)
+exists on `dev` in a further-evolved form, and `style.css` there carries 13–14 hits where the local
+buffer had one. Stashed rather than discarded, then pulled.
