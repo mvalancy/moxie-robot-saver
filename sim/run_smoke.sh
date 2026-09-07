@@ -266,7 +266,13 @@ else
   case "${MOXIE_EXPRESSIVE:-planner}" in off) EXPECT_SCORED="";; esac
   [ "${MOXIE_AUTOMARKUP:-1}" = "0" ] && EXPECT_SCORED=""
   echo "── virtual Moxie (SIL round-trip${EXPECT_TTS:+ + tts audio}${EXPECT_SCORED:+ + scored output}${REJECT_ECHO:+ + 🧠 live brain}) ──"
+  # `--status-url` is NOT for driving anything here (that is --telehealth's job). It is
+  # so that if the config wait expires, the robot can ASK whether the supervisor is
+  # alive on a DIFFERENT transport and say which it was. `no config pushed within
+  # timeout` read as "the appliance did not answer" for as long as it could not tell
+  # a starved supervisor from a wedged one. See `_why_no_config`.
   python3 sim/virtual_moxie.py --host 127.0.0.1 --port $PORT --timeout $CHAT_TIMEOUT \
+    --status-url "http://127.0.0.1:$STATUS_PORT" \
     $EXPECT_SCORED $EXPECT_TTS $REJECT_ECHO
   rc=$?
 fi

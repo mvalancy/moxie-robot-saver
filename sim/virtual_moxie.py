@@ -94,13 +94,17 @@ ACTION_KINDS = ("launch", "exit", "sleep", "enable_qr", "execute")
 class VirtualMoxie:
     def __init__(self, host: str, port: int, device_id: str | None = None,
                  timeout: float = 15.0, verbose: bool = True, expect_tts: bool = False,
-                 expect_scored: bool = False, reject_echo: bool = False):
+                 expect_scored: bool = False, reject_echo: bool = False,
+                 status_url: str | None = None):
         self.host, self.port, self.timeout = host, port, timeout
         self.device_id = device_id or f"d_{uuid.uuid4()}"
         self.verbose = verbose
         self.expect_tts = expect_tts        # also assert a CloudTTSResponse (audio) arrives
         self.expect_scored = expect_scored  # ...and that every response carries its score
         self.reject_echo = reject_echo      # ...and that a real brain, not `echo`, wrote it
+        #: The supervisor's localhost status server, when the caller knows it. Used ONLY
+        #: to answer "which was it?" when a wait expires - see `_why_no_config`.
+        self.status_url = status_url
         #: Set when the broker has ACKNOWLEDGED every subscription this robot needs.
         #: Not a convenience: the config push that answers `/state` is QoS 0 and NOT
         #: retained, so a robot that announces itself before its SUBSCRIBE has landed is
@@ -202,6 +206,49 @@ class VirtualMoxie:
     # the pre-change line below against a cloud with no settle timer at all, which makes
     # the question ordinal instead of a stopwatch.
     SUBACK_TIMEOUT_S = 30.0
+
+    def _why_no_config(self) -> str:
+        """Say WHICH it was when the config wait expires: starved, or wedged.
+
+        **The finding (2026-09-07).** `no config pushed within timeout` was this suite's
+        most misleading line. It is emitted when `got_config.wait()` expires, and it reads
+        as *the appliance did not answer* - but a 20 s budget is not tight, and a failure
+        captured at load 147 showed the robot's own SUBSCRIBE acknowledged before it
+        announced, so the message was reporting a **starved supervisor** in exactly the
+        words reserved for a broken one. A wait whose expiry means "we stopped waiting"
+        must not be phrased as a verdict about the thing waited for.
+
+        That is the correction PR #209 made to `sim/test_csp.mjs`, where a hardcoded
+        `setTimeout(resolve("timeout"), 3000)` raced `onload`/`onerror` and `"timeout"` was
+        then compared against `"loaded"` and `"refused"` as if it were a third verdict.
+
+        So when the wait expires, ASK. The status server is a DIFFERENT TRANSPORT (HTTP on
+        localhost) from the one that just went quiet (MQTT), which is what makes the answer
+        worth having: it separates "alive but did not push" from "not answering anything".
+        Three seconds, because this runs only on the failure path and a diagnosis that
+        hangs is worse than no diagnosis.
+
+        Never raises: every outcome, including a broken `--status-url`, is an answer.
+        """
+        import urllib.error
+        import urllib.request
+
+        base = (self.status_url or "").rstrip("/")
+        if not base:
+            return ("supervisor liveness NOT CHECKED (no --status-url was passed), so this "
+                    "line says nothing about starved vs wedged")
+        t0 = time.time()
+        try:
+            with urllib.request.urlopen(f"{base}/status", timeout=3) as r:
+                ms = int((time.time() - t0) * 1000)
+                r.read(1)
+                return (f"but the supervisor IS ALIVE (GET /status -> {r.status} in {ms} ms): "
+                        "reachable, and it did not answer the /state - a lost message or a "
+                        "starved process, NOT a wedged appliance")
+        except Exception as exc:                    # noqa: BLE001 - any failure is the answer
+            ms = int((time.time() - t0) * 1000)
+            return (f"and the supervisor did NOT answer /status either "
+                    f"({type(exc).__name__} after {ms} ms) - wedged, gone, or starved past 3 s")
 
     def announce(self, state: str = "config") -> bool:
         """Publish `/state`, but **only once the broker has acknowledged our SUBSCRIBEs**.
@@ -695,7 +742,7 @@ class VirtualMoxie:
             if not self.announce():
                 return False
             if not self.got_config.wait(self.timeout):
-                self.errors.append("no config pushed within timeout")
+                self.errors.append(f"no config pushed within {self.timeout:g}s {self._why_no_config()}")
                 return False
             cfg = self.config_payload or {}
             print(json.dumps(cfg, indent=2, sort_keys=True))
@@ -802,7 +849,7 @@ class VirtualMoxie:
             if not self.announce():
                 return False
             if not self.got_config.wait(self.timeout):
-                self.errors.append("no config pushed within timeout")
+                self.errors.append(f"no config pushed within {self.timeout:g}s {self._why_no_config()}")
                 return False
             self.report_telehealth_state("READY")
 
@@ -880,7 +927,7 @@ class VirtualMoxie:
 
             # 2) wait for config, assert paired
             if not self.got_config.wait(self.timeout):
-                self.errors.append("no config pushed within timeout")
+                self.errors.append(f"no config pushed within {self.timeout:g}s {self._why_no_config()}")
                 return False
             ps = (self.config_payload or {}).get("pairing_status")
             if ps != "paired":
@@ -981,7 +1028,7 @@ class VirtualMoxie:
             if not self.announce():
                 return (0, len(turns))
             if not self.got_config.wait(self.timeout):
-                self.errors.append("no config pushed within timeout"); return (0, len(turns))
+                self.errors.append(f"no config pushed within {self.timeout:g}s {self._why_no_config()}"); return (0, len(turns))
             if (self.config_payload or {}).get("pairing_status") != "paired":
                 self.errors.append("config not paired"); return (0, len(turns))
             for i, turn in enumerate(turns):
@@ -1069,7 +1116,8 @@ def main():
 
     vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet,
                       expect_tts=args.expect_tts, expect_scored=args.expect_scored,
-                      reject_echo=args.reject_echo)
+                      reject_echo=args.reject_echo,
+                      status_url=args.status_url)
 
     if args.expect_unpaired:
         ok = False
@@ -1143,7 +1191,7 @@ def main():
         turns = spec.get("turns", spec) if isinstance(spec, dict) else spec
         name = spec.get("name", args.scenario) if isinstance(spec, dict) else args.scenario
         while True:                       # --loop-seconds replays for the demo stack
-            vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet)
+            vm = VirtualMoxie(args.host, args.port, args.device_id, args.timeout, not args.quiet, status_url=args.status_url)
             try:
                 passed, total = vm.run_scenario(turns)
             except Exception as e:
