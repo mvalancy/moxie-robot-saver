@@ -103,7 +103,15 @@ const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerH
 // On narrow / portrait screens the 40° vertical FOV frames Moxie tighter, so start
 // the camera further back for breathing room; roomier landscape stays closer.
 const _portraitish = window.innerWidth < 900 || window.innerWidth < window.innerHeight;
-camera.position.set(_portraitish ? 1.4 : 1.8, 2.1, _portraitish ? 6.8 : 4.8);
+/* A SHORT viewport is its own case and it is the one that was broken: a landscape phone is
+ * ~375-420 px tall, so she filled the frame top to bottom with nothing above her and the
+ * bubble had nowhere to go. Pulling back there buys the headroom the framing bias then
+ * uses. Portrait also gains a little — it is the orientation most visitors hold. */
+const _shortish = window.innerHeight < 520;
+camera.position.set(
+  _portraitish ? 1.4 : 1.8,
+  2.1,
+  _shortish ? 7.4 : (_portraitish ? 7.2 : 4.8));
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.15, 0);        // Moxie's centre — orbit pivots here by default
@@ -1984,7 +1992,12 @@ function applyStageOffset() {
   const dock = document.getElementById('chat-dock');
   if (dock) {
     const d = dock.getBoundingClientRect();
+    // The dock is a BOTTOM ROW at most sizes and a RIGHT-HAND COLUMN on a short landscape
+    // screen (style.css's `max-height: 520px` block). Those bound her in different
+    // directions, and the old test knew only the first — so in landscape she was centred
+    // underneath the conversation instead of beside it.
     if (d.height > 0 && d.top > H * 0.4) bottom = d.top;
+    else if (d.width > 0 && d.left > W * 0.45 && d.height > H * 0.6) right = Math.min(right, d.left);
   }
   const panel = document.getElementById('panel');
   const hud = document.getElementById('hud');
@@ -1999,7 +2012,22 @@ function applyStageOffset() {
       else if (isBottomDrawer) bottom = Math.min(bottom, r.top); // the space ABOVE the drawer
     }
   }
-  if (right < W - 8 || bottom < H - 8) frameInRect(right, bottom, right / 2, bottom / 2);
+  /* HEADROOM — frame her a little LOW on purpose, so there is space above her head for
+   * the speech bubble (owner's suggestion, 2026-09-06: "zoom out and move the camera up,
+   * then Moxie's word bubble has room above her head").
+   *
+   * `frameInRect`'s `cy` is where the free band's centre should land; pushing it DOWN
+   * moves her down the screen and opens the gap above. It is a FRACTION of the band rather
+   * than a pixel count, so a tall portrait phone gets a proportionally bigger gap than a
+   * 375 px landscape strip, where there is nothing to give and the bubble drops to her
+   * chest instead.
+   *
+   * AND IT NOW RUNS UNCONDITIONALLY. The old `if` only re-framed when something was
+   * covering her, so on a full-screen desktop no offset was applied at all and there was
+   * no headroom to have. Framing her identically whether or not the drawer is open is the
+   * behaviour that was wanted anyway. */
+  const HEADROOM = 0.09;
+  frameInRect(right, bottom, right / 2, bottom / 2 + bottom * HEADROOM);
   camera.updateProjectionMatrix();
   renderer.setSize(W, H);
   // The stage box just moved, so the bubble's cached metrics describe the old one.
@@ -2037,69 +2065,76 @@ window.__applyStageOffset = applyStageOffset;   // re-run when the drawer toggle
  * wrong but mirrored. Both are handled below, and the clamp is what makes "attached"
  * survive a visitor who orbits all the way round.
  * =========================================================================== */
-const BUBBLE_UP = 0.34;          // metres above the head centre — clears the crown + antenna
-/** The stage box the bubble is positioned inside. `bubbleEl` already exists further up
- *  (`showSpeech`'s node) and is REUSED rather than shadowed — a second `const bubbleEl`
- *  here is a `SyntaxError` that kills the whole module, which is precisely what it did
- *  the first time this block was written. */
-/** `var`, NOT `let`/`const`, and the reason is a real crash rather than a style choice:
- *  `animate()` is defined and STARTED above this point, so its first frame reaches
- *  `updateBubbleAnchor` before a `let` here has been evaluated — the temporal dead zone,
- *  which throws `Cannot access 'bubbleStage' before initialization` and takes the whole
- *  module with it. `var` hoists as `undefined`, and the vector is allocated lazily on the
- *  first call for the same reason. */
+/* THE BUBBLE HANGS AT HER CHEST, ON A LEADER FROM HER HEAD (2026-09-06, owner-reported).
+ *
+ * The first version put it ABOVE her head and flipped it below when there was no room.
+ * On a portrait phone there is never room — the camera frames her head about 150 px down a
+ * 851 px screen — so it flipped, and "below the anchor" meant below a point just above her
+ * CROWN, i.e. hanging straight down across her face. Measured: bubble 88..149, head at
+ * 148. The one thing a speech bubble must never cover is the face that is speaking.
+ *
+ * So it no longer hangs off the head at all. It is pinned to a point at her CHEST and
+ * drops from there, with a leader line drawn back up to her head — the comic-strip
+ * convention, and the thing that keeps "these are her words" legible once the bubble is no
+ * longer touching her. Two consequences worth stating:
+ *
+ *   · THE FACE IS STRUCTURALLY SAFE. `MIN_HEAD_GAP` is a floor on the bubble's top edge
+ *     relative to the projected HEAD, applied after every clamp, so no camera angle, zoom
+ *     or viewport can put the box over her face. It is an invariant, not a tuning value.
+ *   · The leader length is whatever is left between the two, so zooming in lengthens it
+ *     and zooming out shortens it, and the line always ends where her head actually is.
+ */
+const HEAD_TOP_RISE = 0.34;      // metres above head centre — clears the crown + antenna
+const HEAD_ANCHOR_DROP = 0.16;   // just under the chin: where the leader points
+const CHEST_DROP = 0.62;         // metres below head centre — the top of the chest bubble
+const MIN_HEAD_GAP = 26;         // px: the bubble's top can never come closer than this
+/** `var`, NOT `let`/`const`: `animate()` is defined and STARTED above this point, so its
+ *  first frame reaches `updateBubbleAnchor` before a `let` here has been evaluated — the
+ *  temporal dead zone, which throws and takes the whole module with it. */
 var bubbleStage = null;
-var bubbleWorld = null;
-/* THE LAYOUT READS ARE CACHED, AND THIS IS NOT MICRO-OPTIMISATION.
- *
- * The first version read `stage.getBoundingClientRect()` plus the bubble's `offsetWidth`
- * and `offsetHeight` on EVERY animation frame. Each of those forces a synchronous layout,
- * and doing it inside `requestAnimationFrame` — after the frame's style writes — is the
- * textbook layout-thrash loop: write, read, write, read, sixty times a second, for a box
- * whose size changes only when its text changes and whose container changes only when the
- * window or the drawer does.
- *
- * It showed up as more than a profiler number. `sim/test_mobile_layout.mjs` began failing
- * intermittently on the drawer tap once a quip made the bubble visible mid-test: the
- * handle moved between the coordinate Puppeteer computed and the touch it dispatched.
- * That race is not created by this code — it is latent in any test that taps a moving
- * target — but a forced layout per frame is exactly the thing that turns "rare" into
- * "every few runs".
- *
- * So the metrics are refreshed at most every `BUBBLE_METRICS_MS`, and IMMEDIATELY on the
- * two events that can invalidate them: a resize (via `applyStageOffset`) and new text
- * (via `showSpeech`). The projection itself still runs every frame — it is pure maths on
- * one vector and touches no layout. */
+var bubbleHead = null;
+var bubbleChest = null;
+var bubbleTop = null;
+/* The layout reads are cached and refreshed at most every `BUBBLE_METRICS_MS`, plus
+ * immediately on a resize and on new text. Reading `getBoundingClientRect()` and
+ * `offsetWidth` every frame inside `requestAnimationFrame` is a forced synchronous layout
+ * per frame — textbook layout thrash — for a box whose size changes only when its text
+ * does and whose container changes only when the window or the drawer does. */
 var BUBBLE_METRICS_MS = 250;
 var bubbleMetrics = { at: -1e9, sx: 0, sy: 0, sw: 0, sh: 0, bw: 0, bh: 0 };
 function invalidateBubbleMetrics() { bubbleMetrics.at = -1e9; }
 window.__invalidateBubbleMetrics = invalidateBubbleMetrics;
 
 function updateBubbleAnchor() {
-  if (!bubbleWorld) bubbleWorld = new THREE.Vector3();
+  if (!bubbleHead) {
+    bubbleHead = new THREE.Vector3();
+    bubbleChest = new THREE.Vector3();
+    bubbleTop = new THREE.Vector3();
+  }
   if (bubbleStage === null) bubbleStage = document.getElementById('stage') || false;
   if (!bubbleEl || !bubbleStage) return;
-  // Hidden bubble: skip the maths entirely rather than positioning something invisible.
   if (bubbleEl.classList.contains('hidden')) return;
 
-  // The crown, in WORLD space, so every parent transform — the head roll group, her
-  // lean, the neck pivot — is already baked in. `head` is the mesh the face is drawn on.
-  head.getWorldPosition(bubbleWorld);
-  bubbleWorld.y += BUBBLE_UP;
+  // Two world points, so both ends of the leader move with her and with the camera.
+  head.getWorldPosition(bubbleHead);
+  bubbleChest.copy(bubbleHead);
+  bubbleTop.copy(bubbleHead);
+  bubbleHead.y -= HEAD_ANCHOR_DROP;
+  bubbleChest.y -= CHEST_DROP;
+  bubbleTop.y += HEAD_TOP_RISE;
 
-  const v = bubbleWorld.clone().project(camera);
-  // `z > 1` means the point is BEHIND the near plane: `project()` still returns numbers,
-  // and they are mirrored, so a bubble would fly to the opposite corner. Fade instead.
-  if (v.z > 1) { bubbleEl.classList.add('off-stage'); return; }
+  const hv = bubbleHead.clone().project(camera);
+  const cv = bubbleChest.clone().project(camera);
+  const tv = bubbleTop.clone().project(camera);
+  // `z > 1` is BEHIND the near plane: `project()` still returns numbers and they are
+  // mirrored, so the bubble would fly to the opposite corner. Fade instead.
+  if (hv.z > 1 || cv.z > 1 || tv.z > 1) { bubbleEl.classList.add('off-stage'); return; }
   bubbleEl.classList.remove('off-stage');
 
   const W = window.innerWidth, H = window.innerHeight;
-  const sx = (v.x * 0.5 + 0.5) * W;
-  const sy = (1 - (v.y * 0.5 + 0.5)) * H;
+  const toX = (v) => (v.x * 0.5 + 0.5) * W;
+  const toY = (v) => (1 - (v.y * 0.5 + 0.5)) * H;
 
-  // Viewport px -> `#stage`-relative px, because that is the box the bubble is absolutely
-  // positioned inside. Reading the stage rect every frame is one layout read on a box
-  // that only changes on resize, and it is what keeps this correct when the grid moves.
   const now = performance.now();
   if (now - bubbleMetrics.at > BUBBLE_METRICS_MS) {
     const r = bubbleStage.getBoundingClientRect();
@@ -2108,37 +2143,49 @@ function updateBubbleAnchor() {
     bubbleMetrics.sw = r.width; bubbleMetrics.sh = r.height;
     bubbleMetrics.bw = bubbleEl.offsetWidth; bubbleMetrics.bh = bubbleEl.offsetHeight;
   }
-  const st = { left: bubbleMetrics.sx, top: bubbleMetrics.sy,
-               width: bubbleMetrics.sw, height: bubbleMetrics.sh };
-  const bw = bubbleMetrics.bw, bh = bubbleMetrics.bh;
-  if (!st.width || !bw) return;                  // nothing measured yet: wait a frame
-  const M = 8;                                   // keep it off the very edge
-  const ax = sx - st.left, ay = sy - st.top;     // the anchor, in stage coordinates
+  const st = bubbleMetrics, bw = bubbleMetrics.bw, bh = bubbleMetrics.bh;
+  if (!st.sw || !bw) return;                     // nothing measured yet: wait a frame
+  const M = 8;
 
-  /* ABOVE HER HEAD WHERE THERE IS ROOM, BELOW IT WHERE THERE IS NOT.
-   *
-   * This is not a nicety. The default camera frames her head high in the stage — measured
-   * at ~100 px from the top of a 900 px window — and the bubble is ~50-90 px tall, so
-   * "always above" spends most of its life jammed against the ceiling, no longer touching
-   * her head and no longer pointing at anything. Clamping alone produced exactly that: a
-   * box sitting 50 px BELOW the anchor it claimed to hang from, with a tail aimed at
-   * nothing. Flipping is what every tooltip does and it is what keeps the thing attached.
-   *
-   * `.below` is a class rather than more arithmetic so the TAIL can flip with it — a
-   * notch on the wrong edge is how you can tell a flipped tooltip was an afterthought. */
-  const flip = (ay - bh - M) < 0;
-  bubbleEl.classList.toggle('below', flip);
+  const headX = toX(hv) - st.sx, headY = toY(hv) - st.sy;
+  const chestX = toX(cv) - st.sx, chestY = toY(cv) - st.sy;
+  const crownY = toY(tv) - st.sy;
 
-  const x = Math.min(Math.max(ax, bw / 2 + M), Math.max(bw / 2 + M, st.width - bw / 2 - M));
-  // Anchored above, the transform is translate(-50%, -100%) so the box occupies
-  // [y - bh, y]; anchored below it is translate(-50%, 0) and occupies [y, y + bh].
-  const lo = flip ? M : bh + M;
-  const hi = flip ? Math.max(M, st.height - bh - M) : Math.max(bh + M, st.height - M);
-  const y = Math.min(Math.max(ay, lo), hi);
+  /* ABOVE HER HEAD WHEN THERE IS ROOM, AT HER CHEST WHEN THERE IS NOT.
+   *
+   * Above is the better place and it is where the framing now tries to make room (see
+   * `HEADROOM` in `applyStageOffset`): the bubble is out of the way of everything, and a
+   * short tail reads as speech without a line across the picture. The chest fallback
+   * exists because on a short landscape phone there is genuinely no room up there, and
+   * "no room" must not silently become "over her face" — which is exactly the bug this
+   * replaced.
+   *
+   * The test is honest about the whole box: the bubble fits above only if its full height
+   * plus the margin clears the top of the STAGE, not merely the top of her head. */
+  const above = (crownY - bh - M) >= M;
+  bubbleEl.classList.toggle('leadered', !above);
+
+  const anchorX = above ? headX : chestX;
+  const x = Math.min(Math.max(anchorX, bw / 2 + M), Math.max(bw / 2 + M, st.sw - bw / 2 - M));
+
+  let y;
+  if (above) {
+    // The box sits ON TOP of the crown: its BOTTOM edge is the anchor, so `--by` is the top.
+    y = Math.min(Math.max(crownY - bh, M), Math.max(M, st.sh - bh - M));
+    bubbleEl.style.setProperty('--leader', '0px');
+  } else {
+    // Ordered so the FACE RULE is applied LAST and therefore always wins: first keep the
+    // whole box on screen, then push it back down if that would have put it over her head.
+    y = Math.min(Math.max(chestY, M), Math.max(M, st.sh - bh - M));
+    y = Math.max(y, headY + MIN_HEAD_GAP);
+    bubbleEl.style.setProperty('--leader', Math.max(0, y - headY).toFixed(1) + 'px');
+  }
+
   bubbleEl.style.setProperty('--bx', x.toFixed(1) + 'px');
   bubbleEl.style.setProperty('--by', y.toFixed(1) + 'px');
   bubbleEl.classList.add('anchored');
 }
+
 /** Where the bubble's anchor point is on screen right now, for the layout tests —
  *  RECORDED state rather than a screenshot (playbook rule 11). */
 window.__bubbleAnchor = function () {
@@ -2147,11 +2194,11 @@ window.__bubbleAnchor = function () {
   const r = el.getBoundingClientRect();
   const h = new THREE.Vector3();
   head.getWorldPosition(h);
-  h.y += BUBBLE_UP;
+  h.y -= HEAD_ANCHOR_DROP;
   const p = window.__moxieProject(h.x, h.y, h.z);
   return {
     anchored: el.classList.contains('anchored'),
-    below: el.classList.contains('below'),
+    leader: Number(String(el.style.getPropertyValue('--leader') || '0').replace('px', '')),
     offStage: el.classList.contains('off-stage'),
     hidden: el.classList.contains('hidden'),
     head: { x: Math.round(p.x), y: Math.round(p.y) },

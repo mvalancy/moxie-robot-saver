@@ -306,20 +306,29 @@ async function dockGeometry(page) {
   eq(a.offStage, false, "…with her head in front of the camera");
   ok(Math.abs(a.bubble.cx - a.head.x) <= 24,
      `…horizontally centred on her head (bubble ${a.bubble.cx} vs head ${a.head.x})`);
-  /* ABOVE, OR DIRECTLY BELOW WHEN THERE IS NO ROOM ABOVE — and the test says which,
-   * because "it is somewhere near her head" would pass for a bubble that had simply been
-   * clamped against the ceiling and stopped tracking. The default camera frames her head
-   * ~100 px from the top, which is exactly the case that flips. */
-  if (a.below) {
-    ok(a.bubble.top >= a.head.y - 24,
-       `…flipped BELOW her head, because there is no room above (bubble top ${a.bubble.top} vs head ${a.head.y})`);
-    ok(a.bubble.top - a.head.y < 40,
-       `…and still touching it rather than floating away (gap ${a.bubble.top - a.head.y}px)`);
+  /* THE INVARIANT IS THAT IT NEVER COVERS HER FACE, and that is what is asserted —
+   * not one particular placement.
+   *
+   * There are two legal positions and which one is used depends on the viewport: above
+   * her head where the framing headroom leaves room (portrait and landscape phones), and
+   * at her chest on a leader where it does not (a desktop frames her large, so her crown
+   * is near the top of the stage). Pinning "always above" is what produced the reported
+   * bug in the first place — the old code flipped to "below the crown", which IS her
+   * face. So the test asserts the rule rather than the outcome: the box may not overlap
+   * the head anchor, whichever side it is on. */
+  const overlapsHead = a.bubble.top <= a.head.y && a.bubble.bottom >= a.head.y;
+  eq(overlapsHead, false,
+     `the bubble never covers her face (head ${a.head.y}, bubble ${a.bubble.top}..${a.bubble.bottom})`);
+  if (a.leader > 0) {
+    ok(a.bubble.top > a.head.y,
+       `…at her chest, below the head (bubble top ${a.bubble.top} vs head ${a.head.y})`);
+    ok(Math.abs(a.leader - (a.bubble.top - a.head.y)) <= 2,
+       `…on a leader that spans exactly the gap (${a.leader}px for ${a.bubble.top - a.head.y}px)`);
   } else {
-    ok(a.bubble.bottom <= a.head.y + 24,
-       `…sitting ABOVE it (bubble bottom ${a.bubble.bottom} vs head ${a.head.y})`);
-    ok(a.head.y - a.bubble.bottom < 40,
-       `…and still touching it rather than floating away (gap ${a.head.y - a.bubble.bottom}px)`);
+    ok(a.bubble.bottom < a.head.y,
+       `…above the head (bubble bottom ${a.bubble.bottom} vs head ${a.head.y})`);
+    ok(a.head.y - a.bubble.bottom < 90,
+       `…and still close to her rather than floating away (gap ${a.head.y - a.bubble.bottom}px)`);
   }
   ok(a.bubble.top > 0 && a.bubble.left >= 0 && a.bubble.right <= 1280,
      "…entirely on screen");
@@ -348,6 +357,48 @@ async function dockGeometry(page) {
   ok(Math.abs(b.bubble.cx - a.bubble.cx) > 40,
      `…which the old viewport-pinned bubble could not have done (${a.bubble.cx} -> ${b.bubble.cx})`);
   eyes("the speech bubble", page);
+  await page.close();
+}
+
+/* ======================================================================== *
+ * 4b. THE FACE IS SAFE AT EVERY VIEWPORT — including the ones that broke
+ * ======================================================================== *
+ *
+ * The reported bug was PHONE-ONLY and the desktop check above would never have caught it:
+ * "on mobile in portrait the word bubbles at the top of the screen completely block
+ * Moxie's face". Measured at 393x851 before the fix — bubble 88..149 with her head at 148.
+ * The old code flipped the bubble "below its anchor" when there was no room above, and the
+ * anchor was just above her CROWN, so below it was her face.
+ *
+ * Landscape is here for the same reason and a second one: at 851x393 the stage had been
+ * squeezed to 56 px of a 393 px screen (38 of 375 on a smaller phone) by a layout that
+ * stacked five rows on the axis a landscape phone has least of.
+ */
+for (const [label, w, h] of [
+  ["portrait 393x851", 393, 851],
+  ["landscape 851x393", 851, 393],
+  ["landscape 667x375", 667, 375],
+]) {
+  const page = await open(w, h, true);
+  const r = await page.evaluate(() => {
+    window.moxie.setSpeech("Do you ever think about the sky and all the stars up there?");
+    return new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const st = document.getElementById("stage").getBoundingClientRect();
+      res({ a: window.__bubbleAnchor(), stageH: Math.round(st.height), vh: window.innerHeight });
+    })));
+  });
+  const a = r.a;
+  eq(a.hidden, false, `${label}: she is speaking`);
+  eq(a.anchored, true, `${label}: the bubble is anchored to her, not pinned to the viewport`);
+  const covers = a.bubble.top <= a.head.y && a.bubble.bottom >= a.head.y;
+  eq(covers, false,
+     `${label}: THE BUBBLE DOES NOT COVER HER FACE (head ${a.head.y}, bubble ${a.bubble.top}..${a.bubble.bottom})`);
+  ok(a.bubble.top >= 0 && a.bubble.bottom <= h,
+     `${label}: …and the whole box is on screen`);
+  // The stage must be a stage, not a sliver. Before the landscape layout it was 14% of a
+  // 393 px screen; a third of the viewport is the floor worth defending.
+  ok(r.stageH > r.vh * 0.33,
+     `${label}: the 3-D stage gets real height (${r.stageH} of ${r.vh})`);
   await page.close();
 }
 
