@@ -137,6 +137,13 @@
             <input id="scene-light" type="range" min="0" max="100" value="85">
             <span class="rng-val" id="scene-light-val">0.85</span></label>
           <label class="chk"><input id="idle-on" type="checkbox" checked><span>liveness (imaginary life &mdash; same as the ALIVE button)</span></label>
+          <!-- THE HOLD, SAID OUT LOUD. `ambient.js` stops the self-talk while a
+               conversation is going and starts it again ~45 s after the last turn. It
+               deliberately does NOT flip the checkbox above — that is the visitor's
+               setting and "off" must stay off — so without this line the feature is
+               indistinguishable from a broken toggle: box ticked, robot silent. It is a
+               STATUS, not a control, hence a <p> rather than anything focusable. -->
+          <p id="liveness-hold" class="hint" hidden>paused &mdash; she stays quiet while you&rsquo;re chatting</p>
           <label class="chk"><input id="axes-on" type="checkbox"><span>show axes</span></label>
           <div id="axis-legend" hidden>
             <span class="ax ax-x"><i></i>X <em>right / left</em></span>

@@ -481,9 +481,8 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
 #chat-dock {
   grid-area: chat;
   min-width: 0;
-  justify-self: center;
+  justify-self: stretch;
   width: 100%;
-  max-width: 760px;
   /* `env(safe-area-inset-bottom)` keeps the row off an iPhone's home indicator. */
   padding: 0 10px max(10px, env(safe-area-inset-bottom));
   display: flex;
@@ -937,14 +936,15 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   align-self: center;
   padding: 4px 0;
 }
-#transcript .turn {
+#transcript .turn,
+#transcript .mutter {
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   padding: 5px 9px;
   border-radius: 4px;
   background: var(--surface-2);
-  max-width: 92%;
+  max-width: min(92%, 78ch);
   overflow-wrap: anywhere;
 }
 #transcript .turn.user {
@@ -967,6 +967,21 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
   color: var(--muted-2);
 }
 #transcript .turn.moxie .who { color: var(--cyan-dim); }
+
+#transcript .mutter {
+  align-self: center;
+  text-align: center;
+  font-style: italic;
+  color: var(--muted-2);
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.09);
+  opacity: 0.85;
+}
+#transcript .mutter .who {
+  color: var(--muted-2);
+  opacity: 0.75;
+  letter-spacing: 0.1em;
+}
 
 /* ---- session / file load -------------------------------------------------- */
 .file-load {
