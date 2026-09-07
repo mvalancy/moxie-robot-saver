@@ -143,6 +143,14 @@ const SCENARIOS = [
       ["survives a conversation longer than the window", s.answered === s.turns],
       ["never refuses mid-conversation", s.refusals === 0],
       ["still answers the final question with something", t[7] && t[7].length > 0],
+      /* AND DOES NOT CONFABULATE. Measured 2026-09-07: she answered "I heard you saw a
+       * bird!" to "what was my secret word?" — a fact that had legitimately fallen off the
+       * window. Forgetting is inevitable at any window size and is fine; pretending not to
+       * have forgotten is what makes a companion untrustworthy. Either she still has the
+       * word, or she says she does not — anything else fails. */
+      ["either recalls the word or admits forgetting — never confabulates",
+       has(t[7], "pineapple") || has(t[7], "don't remember", "do not remember", "can't remember",
+                                     "cannot remember", "forgot", "remind me", "tell me again")],
     ],
   },
   {
