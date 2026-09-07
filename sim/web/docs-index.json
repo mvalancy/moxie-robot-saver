@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 11632,
+   "bytes": 12195,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 29313,
+   "bytes": 30444,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -984,6 +984,23 @@
     "The evidence, and why it is not a suspicion",
     "Why it matters more than an ordinary flake",
     "What the work is",
+    "Acceptance criteria",
+    "Effort",
+    "Files"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/head-travel-threshold.md",
+   "title": "test_liveliness.mjs`'s head-travel floor is a measurement of the machine",
+   "section": "architecture",
+   "bytes": 3293,
+   "mermaid": 0,
+   "headings": [
+    "Where",
+    "The evidence",
+    "The mechanism",
+    "What was tried, and why it is filed rather than fixed",
     "Acceptance criteria",
     "Effort",
     "Files"
