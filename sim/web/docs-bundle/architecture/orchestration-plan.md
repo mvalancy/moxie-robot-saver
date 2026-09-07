@@ -1327,3 +1327,38 @@ branches. **Spec conformance (config-and-telemetry):** DoD #3's named residual i
 no erase path for the safety journal exists in `server/` or `mqtt/`. A null result, recorded as one.
 
 **Most valuable next slice: the promotion.** `main` is 93 behind and #201 is re-running with #203's fix.
+
+### 2026-09-06 — PROMOTION, and the research tier has been watching the wrong repository
+
+**`main` `54a7e86` → `dae6f60`, 95 commits.** The first promotion whose trailing steps were confirmed
+by a machine rather than by a paragraph: `sim/tools/check_promotion_state.py` — merged from #202 about
+an hour earlier — returned **exit 0** on the orchestrator's own promotion. Rule 29 had been missed
+after **five of seven** promotions by three actors despite four written explanations; the fifth
+explanation was never going to be the one that worked.
+
+The order held: **reconcile first, then recreate.** `git diff <pre> HEAD` after
+`git merge origin/main -X ours` was **empty**, which is the check that distinguishes "re-linked
+history" from "`-X ours` quietly ate a real change" — if it prints, the promotion needs unpicking, not
+pushing. #205 was then created clean from birth, never passing through the `CONFLICTING` window the
+old step order accepted. No version bump, no tag: promotions are free, tags wait for the owner.
+
+**A process defect found while doing it.** Every push to `dev` restarts the standing PR's CI, so the
+per-fire status-log append — this file — was making the promotion *unreachable*: each entry reset the
+~20-minute browser job the promotion waits on. Four fires' entries were deliberately batched into this
+one. **The tier instruction to log every fire and the tier instruction to promote are in tension, and
+nothing said so.**
+
+**RESEARCH: twelve consecutive "nothing new upstream" checks were watching the dead repository.** The
+cheap signal was `jbeghtol/openmoxie`'s `pushed_at` — **235 days** stale, 91 stars, and it has been
+confirmed static twelve times. The *active* project is the fork **`Noonster77/openmoxie`**, which
+pushed **2026-08-31** — six days ago, nine commits since this audit's recorded date, including "Add
+parent review acknowledgments". Nothing substantively new (it increments a direction the audit already
+records), so the finding is not a missed feature — **it is that a cheap check confirming the wrong
+thing reads exactly like a cheap check confirming the right thing.** Fork row refreshed to 2026-08-31
+(verified). `vapors/openmoxie-ollama` remains stale at 2025-08-18.
+
+**Backlog state, honestly:** all ten §4.1 ADOPT items are 🟢 **shipped** except #8 (durable store),
+which is 🟡 partial — a JSON store landed, a database did not. That is the only un-started ADOPT work,
+and it serves fleet-scale concerns for hardware nobody has, which this plan's own ranking puts below
+anything that improves a stranger's visit to the public sim. **No agent was briefed this fire**, and
+that is the honest outcome rather than a gap.

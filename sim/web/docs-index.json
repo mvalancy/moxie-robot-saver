@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 224782,
+   "bytes": 227483,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -140,7 +140,8 @@
     "Status log (append-only, absolute dates)",
     "2026-09-06 — BUILD: `feat/bubbleframe`, and a red that measured three wrong theories first",
     "2026-09-06 — INTEGRATION: the intermittent is now the promotion gate, and `feat/suiteaudit`",
-    "2026-09-06 — AUDIT: the DoD total was stale in both directions at once"
+    "2026-09-06 — AUDIT: the DoD total was stale in both directions at once",
+    "2026-09-06 — PROMOTION, and the research tier has been watching the wrong repository"
    ],
    "kind": "md"
   },
@@ -355,7 +356,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 198447,
+   "bytes": 198471,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
