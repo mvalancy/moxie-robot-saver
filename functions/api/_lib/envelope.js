@@ -99,6 +99,21 @@ export const PUBLIC_KEYS = Object.freeze([
   "transcript",
   "voice",
   "ears",
+  /* A mermaid diagram Moxie drew, as SOURCE TEXT, or `""` on every other response.
+   *
+   * On the ENVELOPE rather than inside the robot wire's `output`, deliberately: `output`
+   * is `build_chat_response`'s shape and has to stay byte-compatible with what the real
+   * device expects (`mqtt/moxie_sdk/wire.py`), while this envelope is OUR API and is the
+   * right place for something only the browser SIM can do. It is also why the field is
+   * `""` and not absent when there is none — every key in `PUBLIC_KEYS` is always present,
+   * which is what makes the allowlist a security control rather than a suggestion.
+   *
+   * IT IS UNVALIDATED SOURCE and the renderer treats it as untrusted: `sim/web/diagram.js`
+   * hands it to a vendored, same-origin mermaid and inserts the result as SVG under the
+   * page's own CSP (`script-src 'self'`), which is what stops a diagram becoming a script
+   * delivery mechanism. `chat.js::splitDiagram` has already taken it OUT of the spoken
+   * line, so nothing here is ever read aloud. */
+  "diagram",
 ]);
 
 /** §4.5's table. A reason absent here is a programming error, not a 500 (see `respond`). */
@@ -369,6 +384,12 @@ export function envelope(partial) {
     transcript: typeof p.transcript === "string" ? p.transcript : "",
     voice: !!p.voice,
     ears: !!p.ears,
+    /* A STRING, never null, `""` when she drew nothing — the same absence convention as
+     * `context`, `transcript` and `message`. It is coerced and CAPPED here rather than
+     * trusted from the caller, because this is the last place the body is assembled and a
+     * length bound belongs where the shape is guaranteed, not where it happens to be set.
+     * `chat.js::splitDiagram` has already removed it from the spoken line. */
+    diagram: typeof p.diagram === "string" ? p.diagram.slice(0, 1200) : "",
   };
   // Reassemble in PUBLIC_KEYS order so the wire shape is stable and the allowlist is the
   // literal construction, not a filter applied after the fact.

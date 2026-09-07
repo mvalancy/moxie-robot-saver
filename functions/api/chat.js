@@ -300,6 +300,7 @@ export async function onRequestPost(context) {
         turnstile: publicTurnstile(cfg),
         messages: [chatMessage(cfg.deviceId, wire)],
         speech,
+        diagram: upstream.diagram || "",
         context: nextContext,
         voice: cfg.voice,
         ears: cfg.ears,
@@ -377,7 +378,18 @@ function expressiveInstruction() {
     "child.\n" +
     "Your face has these expressions and no others; anything else is ignored. Leave a " +
     "field out if none fits. Never put emoji, markdown, asterisks or stage directions " +
-    "inside \"say\" — it is read aloud exactly as written."
+    "inside \"say\" — it is read aloud exactly as written.\n" +
+    /* SHE CAN DRAW. The fence is pulled out of the spoken line by `splitDiagram` before
+     * anything reads it aloud, so the only thing this instruction has to get right is
+     * WHEN — and the answer is rarely. A robot that answers "what is 2+2" with a flowchart
+     * is a party trick, and a child who gets a diagram every turn stops looking at them. */
+    "You can DRAW. When a picture would genuinely explain something better than words — a " +
+    "sequence of steps, how parts connect, a comparison — you may include ONE mermaid " +
+    "diagram inside \"say\", in a ```mermaid fenced block, alongside your spoken words. " +
+    "Keep it small: a handful of nodes a young child can follow, simple labels, no styling. " +
+    "The diagram is SHOWN, never spoken, so your words must still make sense on their own " +
+    "and must never say \"see the diagram below\". Most turns need no diagram at all — do " +
+    "not draw one just because you can."
   );
 }
 
@@ -804,8 +816,11 @@ async function callGateway(cfg, body, timeoutMs) {
   // sweep, the transcript, the TTS ticket, the response body — sees the spoken line and
   // never the JSON. A visitor must never be read a brace out loud.
   const { text, chosen } = parseExpressive(raw);
-  if (!text) return { ok: false, reason: "upstream_down" };
-  return { ok: true, text, chosen };
+  // The diagram leaves the spoken line here, so the safety sweep, the TTS ticket, the wire
+  // text and the transcript all see words only. See `splitDiagram`.
+  const { spoken, diagram } = splitDiagram(text);
+  if (!spoken) return { ok: false, reason: "upstream_down" };
+  return { ok: true, text: spoken, chosen, diagram };
 }
 
 /** The OpenAI chat-completions reply shape, defensively. */
@@ -813,7 +828,12 @@ function completionText(json) {
   const choice = json && Array.isArray(json.choices) ? json.choices[0] : null;
   const msg = choice && choice.message;
   const raw = msg && typeof msg.content === "string" ? msg.content : "";
-  return raw.replace(/\s+/g, " ").trim();
+  /* TRIMMED, NOT FLATTENED. This used to collapse every run of whitespace to one space,
+   * which was harmless while a reply was only ever prose — and silently destroys a mermaid
+   * diagram, whose syntax is newline-delimited. Flattening now happens once, on the SPOKEN
+   * half only, inside `splitDiagram`, which is the last point at which anything still cares
+   * about line breaks. */
+  return raw.trim();
 }
 
 /**
@@ -832,6 +852,49 @@ function completionText(json) {
  * `JSON.parse` throws and every single reply silently takes the fallback path — the
  * feature would look like it simply did not work.
  */
+/**
+ * Pull a mermaid diagram out of a reply, and give back the words WITHOUT it.
+ *
+ * ============================================================================
+ * THE HALF THAT MATTERS IS THE STRIPPING, NOT THE EXTRACTING.
+ *
+ * `say` is read aloud. A fenced mermaid block left in it is synthesised verbatim, so a
+ * child hears "backtick backtick backtick mermaid graph T D semicolon A arrow B" in
+ * Moxie's voice. It is also minted into the TTS ticket and charged for, and it lands in
+ * the transcript as syntax. Every one of those is downstream of this function, which is
+ * why the split happens HERE — at the gateway boundary, in the same place the JSON
+ * envelope is unwrapped — rather than in the browser. Nothing after this point can
+ * accidentally speak a diagram, because nothing after this point has one.
+ *
+ * WHAT COUNTS AS A DIAGRAM: a ```mermaid fence. Bare ``` is NOT taken as one — a model
+ * that fences a word for emphasis would otherwise have its sentence silently truncated,
+ * and a wrong diagram is better than a missing sentence. The body is returned raw and
+ * UNVALIDATED: mermaid's parser lives in the browser, so validity is the renderer's
+ * question (`sim/web/diagram.js`), and this function's only job is that the words and the
+ * syntax stop travelling together.
+ *
+ * SIZE-CAPPED, because this rides the response envelope and is attacker-adjacent in the
+ * ordinary sense that a model can be talked into writing a lot. A diagram longer than a
+ * screen is not a diagram a child is reading.
+ * ============================================================================
+ */
+const MAX_DIAGRAM_CHARS = 1200;
+const MERMAID_FENCE = /```mermaid\s*([\s\S]*?)```/i;
+
+export function splitDiagram(text) {
+  const s = String(text || "");
+  // The one place prose is flattened, and it happens AFTER the diagram is out — see
+  // `completionText`. Everything downstream speaks or displays single-spaced words.
+  const flat = (x) => String(x).replace(/\s+/g, " ").trim();
+  const m = MERMAID_FENCE.exec(s);
+  if (!m) return { spoken: flat(s), diagram: "" };
+  const body = String(m[1] || "").trim();
+  // The words with the fence cut out, whitespace repaired so the seam is not audible.
+  const spoken = flat(s.slice(0, m.index) + " " + s.slice(m.index + m[0].length));
+  if (!body || body.length > MAX_DIAGRAM_CHARS) return { spoken, diagram: "" };
+  return { spoken, diagram: body };
+}
+
 export function parseExpressive(raw) {
   const line = String(raw || "").trim();
   const plain = { text: line, chosen: null };
@@ -846,7 +909,9 @@ export function parseExpressive(raw) {
   try { obj = JSON.parse(body); } catch { return plain; }
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return plain;
 
-  const say = typeof obj.say === "string" ? obj.say.replace(/\s+/g, " ").trim() : "";
+  // NOT flattened here either: `say` may legitimately contain a fenced diagram, and
+  // `splitDiagram` collapses the words after the fence has been taken out.
+  const say = typeof obj.say === "string" ? obj.say.trim() : "";
   if (!say) return plain;   // an envelope with no line in it is not an answer
 
   const chosen = {};

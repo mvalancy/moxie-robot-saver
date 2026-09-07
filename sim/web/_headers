@@ -264,6 +264,8 @@
   Cache-Control: no-cache
 /audio.js
   Cache-Control: no-cache
+/diagram.js
+  Cache-Control: no-cache
 /ambient.js
   Cache-Control: no-cache
 /mic.js

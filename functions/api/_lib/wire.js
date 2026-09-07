@@ -283,9 +283,27 @@ export function markupFloor(text, chosen) {
   const gestWire = Object.prototype.hasOwnProperty.call(GESTURE_BY_NAME, gestName)
     ? GESTURE_BY_NAME[gestName] : null;
 
-  const floor = FLOOR.find((r) => r.re.test(s)) || FLOOR_DEFAULT;
+  const matched = FLOOR.find((r) => r.re.test(s));
+  const floor = matched || FLOOR_DEFAULT;
+
+  /* THE ONE PLACE THE FLOOR OVERRULES THE MODEL, and it is narrow on purpose.
+   *
+   * Measured twice at the live site: the model collapses onto `happy`. Prompting moved it
+   * from two faces to three and no further — it answered "I'm sorry you felt left out"
+   * with a happy face. When the model says HAPPY and the sentence contains one of the
+   * floor's high-precision emotional cues (sorry, sad, lonely, hurt, cry...), the floor is
+   * simply more right: those regexes fire on the words in front of them, and `happy` is
+   * this model's null answer rather than a judgement.
+   *
+   * THE CONDITIONS ARE ALL THREE, so this cannot become the floor quietly taking the
+   * channel back: the model must have said `happy` specifically, a floor rule must have
+   * ACTUALLY matched (never `FLOOR_DEFAULT`, which is itself happy and would make this
+   * unconditional), and that rule must disagree. Any other mood the model picks — sad,
+   * curious, concerned, surprised — is taken as written, because a model that chose a
+   * non-default mood was making a real choice. */
+  const overrule = moodNum === MOOD.HAPPY && matched && matched.mood !== MOOD.HAPPY;
   const rule = {
-    mood: moodNum === null ? floor.mood : moodNum,
+    mood: overrule ? matched.mood : (moodNum === null ? floor.mood : moodNum),
     gesture: gestWire === null ? floor.gesture : gestWire,
   };
   const hit = ICONS.find((r) => r.re.test(s));
