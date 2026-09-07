@@ -76,6 +76,38 @@ ratio of load to cores rather than an absolute, CI may sit near it routinely —
 mechanism behind reds appearing on diffs that cannot reach the code, the pattern that started this
 whole line of work on 2026-09-06.
 
+## RETRACTED AGAIN, further the same day — load is NOT established as the cause
+
+Two more rounds at high load, **8 runs, zero failures** (3 of 3 at load 139–150; 5 of 5 at load
+125–150, this time with every run's full output preserved to its own file). Cumulative:
+
+| condition | load average | failures |
+|---|---|---|
+| quiet → moderate | **3.3 – 75** | **0 of 13** |
+| high | **123 – 156** | **2 of 15** |
+
+**That difference is not significant.** Fisher's exact on 0/13 against 2/15 gives **p ≈ 0.49** — the
+two rows are indistinguishable from a single rate. The honest statement is now weaker than either
+earlier reading:
+
+> `run_smoke.sh` failed **twice, both inside one round**, and 26 further runs across four rounds and
+> four load regimes produced **no failure at all**. Load is a *hypothesis*, not a finding.
+
+What those two failures share is not known to be load. They shared a round, a port range
+(`1981`–`1985`), and whatever state the preceding runs left behind. Each of those is about as
+well-supported as CPU pressure — which is to say barely.
+
+**The methodological failure that made this take five rounds.** Every measurement wrapper used here
+grepped for a success marker and **discarded the rest of the output**, so each failure was *counted*
+and its evidence *destroyed in the same step*. The round that finally preserved full logs found
+nothing to preserve. **A harness that records THAT something failed but not HOW converts a defect into
+a statistic** — the same species of error as this repo's twelve assertion-level instances, relocated
+into the instrument.
+
+**How to settle it:** loop the smoke keeping every log, long enough to catch two or three failures,
+then compare them. Roughly 30–50 runs at ~90 s each — an hour of wall clock, which is why this stays
+filed rather than done.
+
 **Still not known: which step gives way** — after **five** capture attempts across 13 high-load runs.
 The two failures that did occur were counted by a wrapper that had already discarded their output, and
 every run since, at every load tried, has passed. **The distinction the section below insists on — a fixed
