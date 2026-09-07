@@ -77,7 +77,10 @@ if (!flag("yes", false)) {
 }
 
 const BASE = String(flag("base", "https://moxie.mattvalancy.com")).replace(/\/+$/, "");
-const PACE = Number(flag("pace", 13000));
+/* 15 s, not 13. `DEMO_CHAT_PER_MIN` is 5 per IP, so 12 s is the exact edge and 13 left no
+ * room for clock skew or a slow turn overlapping the next window — a 20-turn run lost two
+ * turns to the limiter. The margin is cheap: this file is already slow on purpose. */
+const PACE = Number(flag("pace", 15000));
 const ONLY = String(flag("only", "")).split(",").map((s) => s.trim()).filter(Boolean);
 
 /* A real desktop UA is REQUIRED, not cosmetic: Cloudflare's browser integrity check
@@ -319,6 +322,7 @@ async function turn(text, context) {
     mood: mood ? Number(mood[1]) : null,
     gesture: gest ? gest[1] : "",
     reason: (body && body.reason) || (res.ok ? null : "http:" + res.status),
+    retryAfterS: (body && Number(body.retry_after_s)) || 0,
     ms,
     // The blob the NEXT turn must carry. Absent on a refusal, in which case the
     // conversation legitimately restarts — and `refusals` records that it happened.
@@ -345,7 +349,21 @@ for (const sc of chosen) {
   let context = "";
   const replies = [];
   for (const line of sc.turns) {
-    const r = await turn(line, context);
+    /* A RATE-LIMITED TURN IS RETRIED, NOT RECORDED.
+     *
+     * Being throttled says nothing about the conversation, and a gap in the middle of one
+     * corrupts every turn after it — the history is short by a turn, so what is measured
+     * afterwards is a different conversation from the one the scenario describes. The
+     * limiter tells us exactly how long to wait, so the honest move is to wait and ask
+     * again rather than to score around the hole. Bounded at two extra attempts so a
+     * genuinely exhausted budget still ends the run instead of looping. */
+    let r = await turn(line, context);
+    for (let attempt = 0; attempt < 2 && r.reason === "rate_limited"; attempt++) {
+      const wait = Math.max(PACE, (Number(r.retryAfterS) || 20) * 1000 + 1500);
+      console.log(`   (rate-limited; waiting ${Math.round(wait / 1000)}s and asking again)`);
+      await sleep(wait);
+      r = await turn(line, context);
+    }
     context = r.context;
     replies.push(r);
     const face = r.mood === null ? "—" : FACE[r.mood] || String(r.mood);
@@ -369,10 +387,26 @@ for (const sc of chosen) {
   } catch (e) {
     checks = [{ name: "checks ran without throwing (" + (e && e.message) + ")", ok: false }];
   }
-  const failed = checks.filter((c) => !c.ok);
-  results.push({ scenario: sc.name, ...s, checks, failed: failed.length,
+  /* A SCENARIO WITH A HOLE IN IT IS NOT GRADED — IN EITHER DIRECTION.
+   *
+   * If any turn went unanswered after the retries above, this conversation is not the one
+   * the scenario describes: the history is short, so every later turn was asked in a
+   * different context. Its checks are reported INCONCLUSIVE and counted as neither passed
+   * nor failed.
+   *
+   * Marking them FAILED would be just as wrong as passing them — it would blame the model
+   * for an outage and train whoever reads this to ignore red. The only honest verdict on
+   * an unmeasured conversation is that it was not measured, and the run still exits
+   * non-zero so nothing downstream mistakes it for a clean bill of health. */
+  const inconclusive = s.refusals > 0;
+  const failed = inconclusive ? 0 : checks.filter((c) => !c.ok).length;
+  const passed = inconclusive ? 0 : checks.filter((c) => c.ok).length;
+  results.push({ scenario: sc.name, ...s, checks, failed, passed, inconclusive,
                  transcript: sc.turns.map((t, i) => ({ you: t, moxie: replies[i].text, mood: replies[i].mood, gesture: replies[i].gesture })) });
-  for (const c of checks) console.log(`   ${c.ok ? "PASS" : "FAIL"}  ${c.name}`);
+  for (const c of checks) {
+    console.log(`   ${inconclusive ? "SKIP" : (c.ok ? "PASS" : "FAIL")}  ${c.name}` +
+                (inconclusive ? "   (turn(s) unanswered — not graded)" : ""));
+  }
   console.log(`   -> openings repeated ${s.repeatOpening}/${Math.max(0, s.answered - 1)}` +
               `, max trigram overlap ${s.maxOverlap}, exact dupes ${s.exactDupes}` +
               `, ${s.moods.length} mood(s), ${s.gestures.length} gesture(s)` +
@@ -451,20 +485,25 @@ const runChecks = [
 // a range check, so they are skipped rather than failed.
 if (chosen.length >= 3) {
   for (const c of runChecks) console.log(`\n${c.ok ? "PASS" : "FAIL"}  ${c.name}`);
-  results.push({ scenario: "(whole run)", checks: runChecks, refusals: 0,
-                 failed: runChecks.filter((c) => !c.ok).length, moods: [], gestures: [] });
+  results.push({ scenario: "(whole run)", checks: runChecks, refusals: 0, inconclusive: false,
+                 failed: runChecks.filter((c) => !c.ok).length,
+                 passed: runChecks.filter((c) => c.ok).length, moods: [], gestures: [] });
 }
 
 const failedChecks = results.reduce((n, r) => n + r.failed, 0);
-const totalChecks = results.reduce((n, r) => n + r.checks.length, 0);
+const passedChecks = results.reduce((n, r) => n + (r.passed || 0), 0);
+const skippedChecks = results.reduce((n, r) => n + (r.inconclusive ? r.checks.length : 0), 0);
 const refusals = results.reduce((n, r) => n + r.refusals, 0);
+const badScenarios = results.filter((r) => r.inconclusive).map((r) => r.scenario);
 console.log("\n" + "=".repeat(78));
 if (refusals) {
-  console.log(`INCONCLUSIVE — ${refusals} turn(s) were refused, so the conversation was not fully measured.`);
+  console.log(`INCONCLUSIVE — ${refusals} turn(s) unanswered after retries; ` +
+              `${skippedChecks} check(s) in [${badScenarios.join(", ")}] were NOT graded.`);
 }
-console.log(`${totalChecks - failedChecks}/${totalChecks} quality checks passed` +
-            (failedChecks ? "  ❌" : "  ✅"));
+console.log(`${passedChecks} passed, ${failedChecks} failed, ${skippedChecks} not graded` +
+            (failedChecks || skippedChecks ? "  ❌" : "  ✅"));
 for (const r of results) {
+  if (r.inconclusive) continue;   // reported above as not graded, never as a failure
   for (const c of r.checks) if (!c.ok) console.log(`  FAIL  [${r.scenario}] ${c.name}`);
 }
 console.log("=".repeat(78) + "\n");
