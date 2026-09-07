@@ -153,6 +153,27 @@ async function load(url, opts = {}) {
   // trace. Reproduced by aborting the navigation. A slow runner that hits the 15 s cap
   // lands here, which is exactly the machine this suite had never run on.
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 }).catch((e) => raw.push("NAV " + e.message));
+  // PIN THE SAMPLE TO THE EVENT, *THEN* KEEP THE ABSENCE WINDOW.
+  //
+  // `domcontentloaded` returns before `mode.js` has asked anything, so until 2026-09-06
+  // this line was a bare `setTimeout(3000)` and the expiry of that number was the only
+  // thing that made `state`, `badge`, `banner`, the pill and the three `needs-backend`
+  // marks true — roughly forty assertions riding on one bet about how fast the runner is.
+  // The condition is observable: `mode.js` RECORDS every verdict it reaches in
+  // `stats().transitions` ("Recorded, not sampled … a poll that already happened is a
+  // fact; one that is about to is a bet", mode.js:126), so the wait is on the fact.
+  //
+  // The residual settle is NOT redundant and is deliberately left at its full length: the
+  // suite's negative assertions (`sidecar.length === 0`, `errs.length === 0`,
+  // `notFound.length === 1`) are absence claims, and `audio.js`'s :8081/:8082 sidecar
+  // probes are not part of the mode verdict at all — `local.sidecar.length === 2` needs
+  // them to have fired. A wait that returned early would weaken every one of those. This
+  // pair only ever EXTENDS the wait, never shortens it — the rule `test_mic_spend.mjs`
+  // wrote down when the same defect was found there.
+  await page.waitForFunction(
+    () => !!window.moxieMode && window.moxieMode.stats().transitions.length > 0,
+    { timeout: 20000 },
+  ).catch(() => {});   // expiring is not a failure HERE — the assertions below say what broke
   await new Promise((r) => setTimeout(r, 3000));  // give the probes (if any) time to fire
   const info = await page.evaluate(() => {
     const q = (sel) => document.querySelector(sel);
@@ -176,6 +197,14 @@ async function load(url, opts = {}) {
       hasMode: !!window.moxieMode,
       state: window.moxieMode ? window.moxieMode.state() : null,
       polls: window.moxieMode ? window.moxieMode.stats().polls : null,
+      // WHAT "NEVER AGAIN" ACTUALLY LOOKS LIKE. `api.length === 1` below counts the
+      // requests that happened inside this function's settle — and `POLL_MIN_MS` is
+      // 30 000 ms, so NO settle this suite could afford can see a second one. Measured
+      // 2026-09-06 by deleting `mode.js`'s `if (sticky) return` no-poll-storm guard: the
+      // check "an absent route must be probed ONCE and never again" stayed GREEN.
+      // `scheduled` is the timer's own record — `schedule()` pushes to it before arming —
+      // so an empty array is proof the storm was never even queued, with no clock in it.
+      scheduled: window.moxieMode ? window.moxieMode.stats().scheduled : null,
     };
   });
   await page.close();
@@ -231,6 +260,9 @@ try {
   ok(off.sidecar.length === 0, `hosted deploy must fire NO :8081/:8082 probes (fired ${off.sidecar.length})`);
   ok(off.hasMode === true, "mode.js must be loaded on sim.html");
   ok(off.api.length === 1, `an absent route must be probed ONCE and never again (fired ${off.api.length})`);
+  ok(Array.isArray(off.scheduled) && off.scheduled.length === 0,
+     `...and the next poll was never even ARMED — the line above can only see a 3 s ` +
+     `window and the poll floor is 30 s (scheduled ${JSON.stringify(off.scheduled)})`);
   ok(off.state === "offline", `a 404 /api/health must read as offline (got ${off.state})`);
   ok(off.mode === "offline", `body[data-mode] should say offline (got ${off.mode})`);
   ok(off.badge === "HOSTED DEMO", `offline must keep today's badge exactly (got "${off.badge}")`);
@@ -251,6 +283,8 @@ try {
   const deg = await load(HOSTED, { health: { status: 200, body: HEALTH_BARE } });
   ok(deg.state === "degraded", `gateway_not_configured must read as degraded (got ${deg.state})`);
   ok(deg.api.length === 1, `not-configured must be probed ONCE (fired ${deg.api.length})`);
+  ok(Array.isArray(deg.scheduled) && deg.scheduled.length === 0,
+     `...and, again, never ARMED a second one (scheduled ${JSON.stringify(deg.scheduled)})`);
   ok(deg.badge === "HOSTED DEMO", `degraded/not-configured keeps today's badge (got "${deg.badge}")`);
   ok(deg.pillShown === false, "degraded/not-configured shows no pill — §7 keeps today's copy");
   ok(/only pre.scripted lines have audio/.test(deg.ttsStatus),
@@ -272,6 +306,12 @@ try {
   ok(/own voice is live/.test(live.ttsStatus), `live voice wording (got "${live.ttsStatus}")`);
   ok(/live brain answers on this page/.test(live.banner), `live banner (got "${live.banner}")`);
   ok(live.sidecar.length === 0, "a live hosted page still fires no sidecar probes");
+  // THE POSITIVE CONTROL for the two "never ARMED" checks above. Without this line an
+  // empty `scheduled` would satisfy them for the wrong reason — a renamed field, a stats
+  // object that stopped being populated, a page that never booted `mode.js` at all — and
+  // they would report "no poll storm" about a page that never polled anything.
+  ok(Array.isArray(live.scheduled) && live.scheduled.length === 1 && live.scheduled[0] >= 30000,
+     `a LIVE page DOES arm its next poll, ~30 s out (scheduled ${JSON.stringify(live.scheduled)})`);
   ok(live.errs.length === 0, `live console errors: ${live.errs.slice(0, 3).join(" | ")}`);
 
   // --- 3b. LIVE with no transport loaded. P0-a shipped this state by simply not having a
