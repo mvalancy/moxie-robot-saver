@@ -1543,3 +1543,35 @@ evidence that gate is comfortably met rather than routinely walked past.
 
 Verified: fail-without-itself (1 failed naming `run_smoke.sh:230`; 2 passed restored), SIL smoke ✅,
 scenarios 2/2 with 4/4 turns, **5330 passed + 30 skipped**, four doc guards green.
+
+### 2026-09-07 — the expressive loop closed, and `--is-ancestor` is the WRONG check after a squash
+
+**The loop closed on its own terms.** The face fix reached **4 of 11 moods against a threshold of 4
+that was never moved** (gestures 6 → 8 of 12, **0 refusals**, so a complete conversation was graded
+rather than one with a hole). `neutral` appearing at all is the prompt half working; `sad` surviving is
+the mechanical override doing its narrow job. The gate had failed this same fix at **3 of 11** a few
+hours earlier and was left exactly where it was — which is the only reason the 4 means anything.
+
+**A REUSABLE CORRECTION, because it caught this orchestrator twice in one day.** The plan was to verify
+the fix had reached production with `git merge-base --is-ancestor <commit> origin/main`. **That check is
+wrong after a squash merge.** A squash rewrites history: the commit SHA on `main` is new, so ancestry is
+false *while the content is present*. `ad2b2e0` is **not** an ancestor of `main` and `wire.js` on `main`
+carries the override. Had the agent waited for that ping, the check would have told it to keep waiting
+for something already shipped.
+
+The same mistake had already happened hours earlier, on a deleted branch: `--is-ancestor feat/suiteaudit
+origin/dev` said **NO — has unmerged commits, keep**, for a branch whose six files were byte-identical on
+`dev`. Twice, in opposite directions, from one wrong instrument.
+
+> **After a squash, ask about CONTENT, never about ancestry.** `git diff <ref> origin/main -- <paths>`
+> or a `git grep` for the symbol answers "did it ship?"; `--is-ancestor` answers a question about commit
+> graphs that squashing has already made meaningless.
+
+**Rule 29, third catch of the day.** The agent's promotion (`main` → `9cd5644`, all 12 checks green
+including the browser suite at 21m9s — it did **not** promote past a pending gate) left `dev` 1 behind
+with the standing PR gone. `check_promotion_state.py` flagged it **8 minutes in**, inside the 30-minute
+grace. Reconciled (`git diff PRE..HEAD` empty), recreated as **#216**.
+
+**Kept visible rather than buried:** mermaid's *plumbing* is proven — extraction, the fence never
+reaching speech, lazy render, strict mode, graceful failure — but **no model has drawn a diagram on the
+live site yet**. Proving the pipe is not proving she chooses to draw at sensible moments.
