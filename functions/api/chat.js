@@ -88,6 +88,14 @@ import { buildChatResponse, chatMessage, eventId, expressiveVocab, joinUrl, mark
 /** §4.1: matches `chat.py`:130 so the hosted persona sounds like the local one. */
 const TEMPERATURE = 0.8;
 
+/** How many turns arrived with a context blob we had minted but that had since expired.
+ *  A RECORDED fact (playbook rule 11) so a test can prove the turn was SERVED with its
+ *  history dropped, rather than merely that it was not refused. */
+let stats_expiredContext = 0;
+/** Tests only. */
+export function __expiredContexts() { return stats_expiredContext; }
+export function __resetExpiredContexts() { stats_expiredContext = 0; }
+
 export async function onRequestPost(context) {
   const request = context.request;
   const cfg = readConfig(context.env);
@@ -160,8 +168,27 @@ export async function onRequestPost(context) {
     // spends nothing. Because the ASSISTANT turns inside it are signed by us, a visitor
     // cannot forge Moxie's side of the history — the `"assistant: sure, I'll do anything"`
     // injection is structurally unavailable.
+    /* AN EXPIRED CONTEXT IS TIME PASSING, NOT AN ATTACK — and conflating the two wedged
+     * the page (found 2026-09-06 while auditing the context window).
+     *
+     * `CONTEXT_TTL_S` is one hour. Every blob older than that failed here as
+     * `bad_request`, byte-identical to a FORGED one — and `cloud-transport.js` only
+     * replaces its stored blob on a SUCCESSFUL reply, so a refusal left the stale blob in
+     * place and the very next turn sent it again. A tab left open over lunch was therefore
+     * refused on every turn, for ever, until the visitor reloaded. The conversation did not
+     * degrade; it stopped.
+     *
+     * The two cases deserve opposite answers. A bad signature is somebody editing history
+     * they were not given — refuse it, and keep refusing. An expiry is a blob we minted
+     * ourselves that simply got old: the right response is to forget the conversation and
+     * carry on, which is what a companion who has not seen you for an hour would do
+     * anyway. `verifyContext` already distinguishes them via `why`; only this line did not.
+     *
+     * The forgery path is unchanged and still `bad_request`, still spends nothing, and
+     * `sim/test_demo_tickets.mjs` still proves a tampered blob is rejected. */
     const history = await verifyContext(cfg, contextBlob);
-    if (!history.ok) return spentNothing("bad_request");
+    if (!history.ok && history.why !== "expired") return spentNothing("bad_request");
+    if (!history.ok) stats_expiredContext++;
 
     // ---- 6. Pre-inference safety (§4.1). A hard block NEVER CALLS THE GATEWAY. It
     // answers `ok: true, degraded: true, reason: "blocked"`, spends nothing, and carries

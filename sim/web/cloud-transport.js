@@ -438,6 +438,13 @@
         // other reason answers from `stub.js` for this one turn.
         if (body.reason === "blocked") stats.blocked++;
         else stats.chatRefused++;
+        /* BELT AND BRACES FOR A POISONED BLOB. The server no longer refuses an expired
+         * context, but any refusal that IS about the blob would otherwise repeat for ever:
+         * this file only replaces `contextBlob` on a successful reply, so a rejected blob
+         * would be sent again on the very next turn. Dropping it on `bad_request` costs a
+         * conversation its history — which has already effectively happened — and turns a
+         * permanent wedge into one bad turn. */
+        if (body.reason === "bad_request") contextBlob = "";
         var m2 = mode();
         status((m2 && m2.message && m2.message()) || "answering from her recorded lines.");
         if (body.messages && body.messages.length) { routeAll(body.messages, "chat"); return; }

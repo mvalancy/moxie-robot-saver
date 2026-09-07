@@ -3292,6 +3292,62 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
 }
 
 /* =========================================================================== *
+ * 15k. AN EXPIRED CONVERSATION IS FORGOTTEN, NOT REFUSED
+ * =========================================================================== *
+ *
+ * `CONTEXT_TTL_S` is one hour. Until 2026-09-06 a blob older than that failed the same
+ * check as a FORGED one and answered `bad_request` — and `cloud-transport.js` only
+ * replaces its stored blob on a successful reply, so the stale blob was sent again on the
+ * next turn, and the next. A tab left open over lunch was refused for ever until reload.
+ * The conversation did not degrade; it stopped.
+ *
+ * The two cases want opposite answers, and both are asserted here: a bad signature is
+ * somebody editing history they were not given, and stays refused; an expiry is a blob we
+ * minted ourselves that got old, and the turn is served with the history dropped.
+ */
+{
+  const cfg = wire2.readConfig(FULL);
+  const NOW = Math.floor(Date.now() / 1000);
+  const turns = [{ role: "user", content: "my favourite animal is the octopus" },
+                 { role: "assistant", content: "Octopuses are so cool!" }];
+
+  // A blob minted far enough in the past that it has certainly expired.
+  const stale = await hmac.mintContext(cfg, turns, NOW - hmac.CONTEXT_TTL_S - 60);
+  const fresh_ = await hmac.mintContext(cfg, turns, NOW);
+
+  fresh();
+  chat.__resetExpiredContexts();
+  plan = { chat: { content: "Hi again!" } };
+  const old = await call(chat, "/api/chat", { text: "hello", context: stale });
+  eq(old.res.status, 200, "an EXPIRED conversation is SERVED, not refused");
+  eq(old.body.reason, null, "…with no refusal reason");
+  eq(chat.__expiredContexts(), 1, "…recorded as an expired context rather than inferred");
+  const sentBody = JSON.parse(sent[0].opt.body);
+  const userTurns = sentBody.messages.filter((m) => m.role === "user");
+  eq(userTurns.length, 1, "…and the stale history is DROPPED: only the new turn goes upstream");
+  ok(!JSON.stringify(sentBody).includes("octopus"),
+     "…so nothing from the forgotten conversation reaches the model");
+  ok(typeof old.body.context === "string" && old.body.context.length > 0,
+     "…and a FRESH blob comes back, so the next turn starts a new conversation cleanly");
+
+  // The fresh one still carries its history, which is what makes the above a statement
+  // about EXPIRY rather than about the history being dropped generally.
+  fresh();
+  plan = { chat: { content: "Hi again!" } };
+  await call(chat, "/api/chat", { text: "hello", context: fresh_ });
+  ok(JSON.stringify(JSON.parse(sent[0].opt.body)).includes("octopus"),
+     "CONTROL: a FRESH blob still carries the conversation upstream");
+
+  // …and a forged one is still refused, spending nothing.
+  fresh();
+  chat.__resetExpiredContexts();
+  const forged = await call(chat, "/api/chat", { text: "hello", context: "v1.forged.blob" });
+  eq(forged.body.reason, "bad_request", "a FORGED blob is still refused");
+  eq(upstreamCalls(), 0, "…having called nothing upstream");
+  eq(chat.__expiredContexts(), 0, "…and is never counted as an expiry");
+}
+
+/* =========================================================================== *
  * 16. THE SYNTHESISED-AUDIO CACHE — `/api/speech` stops paying twice for a line
  * =========================================================================== *
  *
