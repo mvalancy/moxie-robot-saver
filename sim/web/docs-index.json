@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 230524,
+   "bytes": 232303,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -142,7 +142,8 @@
     "2026-09-06 — INTEGRATION: the intermittent is now the promotion gate, and `feat/suiteaudit`",
     "2026-09-06 — AUDIT: the DoD total was stale in both directions at once",
     "2026-09-06 — PROMOTION, and the research tier has been watching the wrong repository",
-    "2026-09-06 — the family, counted honestly: ten found, nine closed, one in flight"
+    "2026-09-06 — the family, counted honestly: ten found, nine closed, one in flight",
+    "2026-09-07 — BLOCKED: no Opus agent capacity until 2026-09-11"
    ],
    "kind": "md"
   },

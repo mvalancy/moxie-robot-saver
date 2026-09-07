@@ -1401,3 +1401,28 @@ about what **CSP** did. Both hosts are route-intercepted and answered locally at
 timeout there **cannot** be a slow network; the previous agent's curl connectivity check was measuring
 something structurally incapable of affecting the test. A check that cannot separate a starved renderer
 from a policy decision is guarding the mechanism that protects the public sim.
+
+### 2026-09-07 — BLOCKED: no Opus agent capacity until 2026-09-11
+
+**Both in-flight agents died mid-work on an account-level weekly rate limit** — `HTTP 429`,
+`rate_limit`, *"You've hit your weekly limit · resets Sep 11, 11pm (America/Los_Angeles)"*, model
+`claude-opus-5`. `feat/holdwait` fell at *"Measurements complete. Now the guards and docs"*;
+`feat/cspwait` at *"Now block 9"*.
+
+**This disables the orchestration model itself.** Every tier in this plan is built on *"I orchestrate,
+Opus agents implement in worktrees"*. Until the reset there are no implementers, so the four cron
+tiers will each fire on schedule, attempt a launch, and fail — BUILD every 30 minutes, INTEGRATION
+hourly, AUDIT every two hours, RESEARCH every three. **That is roughly 60 failed launches a day, each
+consuming quota to accomplish nothing**, which is worth stopping rather than absorbing.
+
+**Nothing was lost.** Both worktrees hold substantial uncommitted work — `wt-holdwait` 140 insertions
+(all three fixed sleeps replaced by a `layoutSettled()` helper that requires three consecutive
+identical frames and fails loudly when a layout never settles), `wt-cspwait` 209 insertions (the
+hardcoded `setTimeout(resolve("timeout"), 3000)` racer is gone). Neither had committed, so the
+orchestrator is validating and landing them directly rather than re-delegating.
+
+**The honest gap in doing that:** both agents completed measurements they never reported. Their
+before/after counts under load are therefore *not in evidence*, and any claim resting on them would be
+manufactured confidence — the exact failure this session spent two days removing. Where the
+orchestrator lands their work, it re-runs the A/B itself and reports its own numbers, or says plainly
+that the proof is missing.
