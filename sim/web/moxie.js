@@ -2105,6 +2105,32 @@ var bubbleMetrics = { at: -1e9, sx: 0, sy: 0, sw: 0, sh: 0, bw: 0, bh: 0 };
 function invalidateBubbleMetrics() { bubbleMetrics.at = -1e9; }
 window.__invalidateBubbleMetrics = invalidateBubbleMetrics;
 
+/* THE FRAME STASH — every number a placement used, from ONE instant.
+ *
+ * `updateBubbleAnchor` writes the box's position from a head it projected at the top of
+ * `animate()`. Her head then keeps moving for the rest of that frame (motor smoothing,
+ * breathing, liveness offsets) and every frame after. So a readout that RE-PROJECTS the
+ * head at call time is comparing a box placed at frame N against a head sampled at frame
+ * N+1, and the difference is one whole frame of head travel — invisible at 120 fps on a
+ * developer's box, several pixels on a loaded CI runner's swiftshader frames. That is a
+ * live sample wearing a recorded state's clothes, and playbook rule 11 (and this file's
+ * own test header) forbids exactly it. Measured before this stash existed: driving her
+ * body lean end to end put 15.6 px between `--leader` and the box's real gap, on an
+ * UNLOADED machine, while the bubble was plainly visible.
+ *
+ * COORDINATE SPACE: VIEWPORT CSS px, matching `getBoundingClientRect` and
+ * `__moxieProject` — the two things a layout test actually compares the anchor against.
+ * The placement arithmetic below is stage-relative, so the stash adds back the SAME
+ * cached `st.sx/st.sy` the placement subtracted; the stashed head and the stashed box
+ * therefore share one origin as well as one instant.
+ *
+ * It is deliberately NOT written on the early-return paths (hidden, off-stage, nothing
+ * measured yet). Those frames place nothing, so there is nothing honest to record — the
+ * stash freezes, and `__bubbleAnchor` says so with `frozen`/`ageMs` rather than handing
+ * back a fresh-looking lie. */
+var bubbleFrame = null;
+var bubbleFrameSeq = 0;
+
 function updateBubbleAnchor() {
   if (!bubbleHead) {
     bubbleHead = new THREE.Vector3();
@@ -2147,9 +2173,14 @@ function updateBubbleAnchor() {
   if (!st.sw || !bw) return;                     // nothing measured yet: wait a frame
   const M = 8;
 
-  const headX = toX(hv) - st.sx, headY = toY(hv) - st.sy;
-  const chestX = toX(cv) - st.sx, chestY = toY(cv) - st.sy;
-  const crownY = toY(tv) - st.sy;
+  // Viewport px first, stage-relative second: the stash below hands the viewport pair
+  // straight out, so the two never drift apart through a second projection.
+  const headVX = toX(hv), headVY = toY(hv);
+  const chestVX = toX(cv), chestVY = toY(cv);
+  const crownVX = toX(tv), crownVY = toY(tv);
+  const headX = headVX - st.sx, headY = headVY - st.sy;
+  const chestX = chestVX - st.sx, chestY = chestVY - st.sy;
+  const crownY = crownVY - st.sy;
 
   /* ABOVE HER HEAD WHEN THERE IS ROOM, AT HER CHEST WHEN THERE IS NOT.
    *
@@ -2168,42 +2199,95 @@ function updateBubbleAnchor() {
   const anchorX = above ? headX : chestX;
   const x = Math.min(Math.max(anchorX, bw / 2 + M), Math.max(bw / 2 + M, st.sw - bw / 2 - M));
 
-  let y;
+  let y, leader;
   if (above) {
     // The box sits ON TOP of the crown: its BOTTOM edge is the anchor, so `--by` is the top.
     y = Math.min(Math.max(crownY - bh, M), Math.max(M, st.sh - bh - M));
+    leader = 0;
     bubbleEl.style.setProperty('--leader', '0px');
   } else {
     // Ordered so the FACE RULE is applied LAST and therefore always wins: first keep the
     // whole box on screen, then push it back down if that would have put it over her head.
     y = Math.min(Math.max(chestY, M), Math.max(M, st.sh - bh - M));
     y = Math.max(y, headY + MIN_HEAD_GAP);
-    bubbleEl.style.setProperty('--leader', Math.max(0, y - headY).toFixed(1) + 'px');
+    leader = Math.max(0, y - headY);
+    bubbleEl.style.setProperty('--leader', leader.toFixed(1) + 'px');
   }
 
   bubbleEl.style.setProperty('--bx', x.toFixed(1) + 'px');
   bubbleEl.style.setProperty('--by', y.toFixed(1) + 'px');
   bubbleEl.classList.add('anchored');
+
+  /* One instant, recorded. `leader` is kept UNROUNDED here on purpose: `--leader` is a CSS
+   * string quantised to 0.1 px, and a test that wants to know whether the leader really
+   * spans the gap should not have to spend its whole tolerance budget on `toFixed(1)`. */
+  bubbleFrame = {
+    at: now, seq: ++bubbleFrameSeq, above,
+    head: { x: headVX, y: headVY },
+    crown: { x: crownVX, y: crownVY },
+    chest: { x: chestVX, y: chestVY },
+    leader,
+    // Where the placement MEANT to put the box, in the same viewport space. The DOM rect
+    // read back by `__bubbleAnchor` is the same box as CSS actually laid it out, so the
+    // two together say whether the stylesheet honoured the arithmetic.
+    box: { left: st.sx + x - bw / 2, top: st.sy + y, width: bw, height: bh },
+  };
 }
 
 /** Where the bubble's anchor point is on screen right now, for the layout tests —
- *  RECORDED state rather than a screenshot (playbook rule 11). */
+ *  RECORDED state rather than a screenshot (playbook rule 11).
+ *
+ *  ONE INSTANT, NOT TWO. `head` comes from `bubbleFrame` — the head this frame's placement
+ *  actually projected — and never from a fresh `head.getWorldPosition()`. Re-projecting
+ *  here is what made the geometry checks race: see the stash's comment for the numbers.
+ *  `bubble` is still the real DOM rect, which is recorded state too (it moves only when
+ *  `--bx`/`--by` are written, i.e. only inside `updateBubbleAnchor`), so the pair describes
+ *  one placement and a tight tolerance means something.
+ *
+ *  STALENESS IS REPORTED, NOT HIDDEN. While the bubble is hidden or off-stage the anchor
+ *  deliberately stops updating — there is no point burning a forced layout every frame for
+ *  a box nobody can see — so the stash freezes and her head walks away from it. `frozen`
+ *  and `ageMs` let a caller tell "frozen because hidden" from "current"; `stamped` is false
+ *  before the very first successful placement, when there is no frame to report at all. */
 window.__bubbleAnchor = function () {
   const el = document.getElementById('bubble');
   if (!el) return null;
   const r = el.getBoundingClientRect();
-  const h = new THREE.Vector3();
-  head.getWorldPosition(h);
-  h.y -= HEAD_ANCHOR_DROP;
-  const p = window.__moxieProject(h.x, h.y, h.z);
+  const f = bubbleFrame;
+  const hidden = el.classList.contains('hidden');
+  const offStage = el.classList.contains('off-stage');
+  const head = f ? f.head : { x: NaN, y: NaN };
   return {
     anchored: el.classList.contains('anchored'),
     leader: Number(String(el.style.getPropertyValue('--leader') || '0').replace('px', '')),
-    offStage: el.classList.contains('off-stage'),
-    hidden: el.classList.contains('hidden'),
-    head: { x: Math.round(p.x), y: Math.round(p.y) },
+    offStage, hidden,
+    stamped: !!f,
+    // A frame that placed nothing cannot have refreshed the stash, so anything read out of
+    // it is as old as `ageMs` says and should be treated as history, not as "now".
+    frozen: !f || hidden || offStage,
+    ageMs: f ? Math.round(performance.now() - f.at) : null,
+    /* A COUNTER, BECAUSE WALL-CLOCK IS NOT A SEAM. `seq` is bumped once per placement, so
+     * a caller that has just moved the camera can wait for the anchor to be RE-PLACED
+     * instead of sleeping a guessed number of milliseconds and hoping a starved runner
+     * managed a frame inside it. Sleeping is what turns a correct freeze into a red
+     * check. */
+    seq: f ? f.seq : 0,
+    head: { x: Math.round(head.x), y: Math.round(head.y) },
     bubble: { cx: Math.round(r.left + r.width / 2), bottom: Math.round(r.bottom),
               left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top) },
+    /* Unrounded, for the assertions that compare the leader with the gap it claims to
+     * span. `Math.round` on both sides of that subtraction is ±1 px of noise all by
+     * itself — enough to swallow a real regression in a check whose honest residual is a
+     * tenth of a pixel. */
+    exact: f ? {
+      leader: f.leader, above: f.above,
+      head: { x: f.head.x, y: f.head.y },
+      crown: { x: f.crown.x, y: f.crown.y },
+      chest: { x: f.chest.x, y: f.chest.y },
+      box: f.box,
+      bubble: { cx: r.left + r.width / 2, top: r.top, bottom: r.bottom,
+                left: r.left, right: r.right },
+    } : null,
   };
 };
 // Project a world point to screen px (respects the active view offset) — used by
