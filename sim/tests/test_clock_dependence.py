@@ -154,6 +154,16 @@ REVIEWED: dict = {
         "artifact file it writes. Kept in the ledger rather than excluded from the scan "
         "because a glob exception is invisible and this row is not — if this file ever "
         "grows a real assertion, the reasoning above is right where somebody will read it."),
+    "sim/test_demo_proxy.mjs": (
+        ("Date.now",),
+        "RELATIVE — an AGE, never a date. §15k mints a context blob stamped "
+        "`now - CONTEXT_TTL_S - 60` and asserts the route treats it as expired, and mints "
+        "a second at `now` and asserts it is still carried. The clock cannot be injected "
+        "here on purpose: `chat.js` calls `verifyContext(cfg, blob)` with no `nowS`, so it "
+        "reads the real clock, and pinning a fixed timestamp in the test would prove the "
+        "expiry check against a clock the code under test does not use. One hour and one "
+        "minute before any instant is expired at every one of the 1440 minutes of a day, "
+        "and no assertion reads either value."),
     "sim/test_demo_tickets.mjs": (
         ("Date.now",),
         "RELATIVE — a ticket is aged `Date.now()/1000 - 61` to make it one second past a "
