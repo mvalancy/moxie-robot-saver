@@ -36,6 +36,32 @@ and a suite whose waits all expire runs far longer broken than healthy (`test_me
 went 37 s -> 448 s with `docs.js` inert). `--baseline-dir` caches the healthy run so a
 single row can be re-read in a minute.
 
+    python3 sim/tools/page_teeth_check.py --slow 6 --baseline-dir /tmp/teeth   # ← the OTHER half
+
+THE OTHER HALF: `--slow`, AND WHY THE BREAKAGES ABOVE CANNOT FIND IT.
+
+Every row in `BREAKAGES` sabotages the SITE — a file is gone, inert, hollow or late. That
+finds a check with no teeth. It cannot find the *other* member of the same family, the one
+this repo has now hit five times:
+
+    an assertion that compares a LIVE sample against RECORDED state, or two live samples
+    taken at different instants — green on a fast box, red on a loaded runner.
+
+Those checks are green here because the page is FASTER than the number the suite guessed.
+`--slow N` makes the page slower instead: `Emulation.setCPUThrottlingRate` slows everything
+inside the renderer (script, layout, rAF, transitions) while node's own `setTimeout` keeps
+full speed — which is exactly what a busy CI runner does to a suite, and is why
+`await sleep(600)` standing in for "the drawer finished opening" fails there and not here.
+Measured on the box it was written on: a 4e6-iteration in-page busy loop went 10.3 ms at
+rate 1 to 58.5 ms at rate 6.
+
+A `--slow` finding is a check that was GREEN in the healthy baseline and RED under the
+throttle, WITHOUT the site being touched. It is not automatically a bug — a check that
+deliberately measures time (`test_bg_perf`'s budgets) is *supposed* to notice a slow
+machine, and those are reported separately rather than mixed in. Everything else is a
+check whose truth depends on the machine, which is the definition of the family.
+Reproduce a race by CREATING it, never by waiting for it.
+
 HOW A FINDING IS DECIDED, and why it is not just "the suite passed".
 
   · **Exposure is measured, not asserted.** `teeth_ledger.mjs` records every URL each
@@ -546,6 +572,113 @@ def sweep(only_suite=None, only_breakage=None, baseline_only=False,
 
 
 # ---------------------------------------------------------------------------
+# the slow sweep — the loaded runner, on this box, on purpose
+# ---------------------------------------------------------------------------
+#
+# A check whose OWN MESSAGE says it is about time. `test_bg_perf` asserts frame budgets and
+# `test_a11y` asserts a motion preference; a throttled renderer is *supposed* to move those,
+# and reporting them next to a drawer that never opened would bury the finding in the noise
+# the exposure filter above exists to prevent. Separated, never dropped: the count is
+# printed so a reader can see how much was set aside and on what grounds.
+TIME_CLAIMS = re.compile(
+    r"\bbudget|\bfps\b|frame time|\bms\b|milliseconds|\bslow(er|ly)?\b|"
+    r"within \d|under \d|faster|latenc|throughput|elapsed|duration", re.I)
+
+
+def slow_sweep(rate: int, only_suite=None, baseline_dir=None, timeout: int = 1800) -> int:
+    """Run every suite against an UNTOUCHED site on a renderer throttled `rate`x.
+
+    The site is byte-identical to the healthy one — `git status` stays clean throughout,
+    and that is the point: anything that reddens here reddened because of the CLOCK.
+    """
+    suites = [s for s in SUITES if not only_suite or s[0] == only_suite]
+    cache = pathlib.Path(baseline_dir) if baseline_dir else None
+    if cache:
+        cache.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 78)
+    print("BASELINE — the healthy page at full speed.")
+    print("=" * 78)
+    base, void = {}, []
+    for suite, granular, argv in suites:
+        cached = cache / f"{suite}.json" if cache else None
+        if cached and cached.exists():
+            led = json.loads(cached.read_text())
+            note = " (cached)"
+        else:
+            led = run_suite(suite, {}, argv)
+            note = ""
+            if cached:
+                cached.write_text(json.dumps(led))
+        base[suite] = led
+        print(f"  {'ok ' if led['rc'] == 0 else 'RED'} {suite:<22} rc={led['rc']}  "
+              f"{len(led['checks']):>3} checks  {led['secs']:>6}s{note}")
+        if led["rc"] != 0:
+            void.append(suite)
+    if void:
+        print(f"\n!! already red on the healthy tree: {', '.join(void)} — findings there are void.")
+
+    print()
+    print("=" * 78)
+    print(f"SLOW — the SAME site, renderer throttled {rate}x (nothing on disk is touched)")
+    print("=" * 78)
+    findings, timed, gone_all, notes_all = [], [], [], []
+    for suite, granular, argv in suites:
+        if suite in void:
+            continue
+        led = run_suite(suite, {"MOXIE_TEETH_CPU": str(rate)}, argv, timeout=timeout)
+        # An instrument that did not apply is not evidence. Same contract as `stall`.
+        if not led.get("cpuThrottled"):
+            notes_all.append(suite)
+            print(f"  SKIPPED      {suite:<22} the CPU throttle never applied — "
+                  f"{'; '.join(led.get('notes') or ['no pages were instrumented'])}")
+            continue
+        b, a = by_key(base[suite]), by_key(led)
+        flipped = [k for k, c in a.items() if not c["pass"] and b.get(k, {}).get("pass")]
+        gone = [k for k in b if k not in a]
+        print(f"  {'ok ' if led['rc'] == 0 else 'RED'} {suite:<22} rc={led['rc']}  "
+              f"{len(a):>3} checks  {len(flipped):>3} flipped green->red  "
+              f"{len(gone):>3} vanished  {led['secs']:>6}s")
+        for k in flipped:
+            row = (suite, k, a[k]["msg"])
+            if TIME_CLAIMS.search(a[k]["msg"]):
+                timed.append(row)
+                print(f"      (time-claiming, set aside) {k}  {a[k]['msg'][:80]}")
+            else:
+                findings.append(row)
+                print(f"      FLIPPED {k}  {a[k]['msg'][:88]}")
+        if gone:
+            gone_all.append((suite, len(gone), gone[:4]))
+            print(f"      vanished (never ran): {', '.join(gone[:4])}")
+        if led["rc"] != 0 and not flipped and not gone:
+            print("      red with NO flipped check — the suite threw before it asserted:")
+            print("      " + led["tail"].replace("\n", "\n      "))
+
+    print()
+    print("=" * 78)
+    print("FINDINGS — green at full speed, RED on a slow renderer, same bytes on disk")
+    print("=" * 78)
+    for suite, k, msg in findings:
+        print(f"  · {suite:<22} {k}\n      {msg[:110]}")
+    if not findings:
+        print("  (none)")
+    print(f"\nSET ASIDE — checks whose own message is about time ({len(timed)}):")
+    for suite, k, msg in timed:
+        print(f"  · {suite:<22} {k}  {msg[:80]}")
+    if not timed:
+        print("  (none)")
+    print(f"\nCOVERAGE DROPS — checks that stopped running when the page got slow "
+          f"({len(gone_all)} suite(s)):")
+    for suite, n, sample in gone_all:
+        print(f"  · {suite:<22} {n} check(s) never ran: {', '.join(sample)}")
+    if not gone_all:
+        print("  (none)")
+    if notes_all:
+        print(f"\n!! the throttle did not apply in: {', '.join(notes_all)} — those rows prove nothing.")
+    return 1 if (findings or gone_all) else 0
+
+
+# ---------------------------------------------------------------------------
 # selftest — the tool must find a check that is KNOWN to have no teeth
 # ---------------------------------------------------------------------------
 #
@@ -627,6 +760,26 @@ def selftest() -> int:
     print("✅ SELFTEST — the tool separates a toothless check from a fixed one:")
     print("   defect 4 restored + home document 404 -> the check stays GREEN (detected)")
     print("   defect 4 fixed    + home document 404 -> the check goes RED   (not reported)")
+
+    # ---- and the OTHER instrument, which has no breakage to be caught by ------------
+    #
+    # `--slow` reports a finding only when a check FLIPS, so a throttle that silently did
+    # not apply reports "no findings" — indistinguishable from a clean sweep and exactly
+    # the failure `emulateNetworkConditions` already produced once in this file's history.
+    # There is nothing on disk to inspect afterwards (the whole point of `--slow` is that
+    # the tree stays byte-clean), so the only proof available is the instrument's own
+    # count, taken on a real suite. `test_api_headers` is the cheapest browser suite here.
+    print()
+    print("── the --slow instrument ──")
+    led = run_suite("test_api_headers", {"MOXIE_TEETH_CPU": "6"}, [])
+    if not led.get("cpuThrottled"):
+        print("❌ SELFTEST FAILED — the CPU throttle never applied: "
+              f"{'; '.join(led.get('notes') or ['no pages were instrumented'])}")
+        print("   Every `--slow` row would read 'no findings' about a browser that was "
+              "never slowed down.")
+        return 1
+    print(f"✅ the CPU throttle applied to {led['cpuThrottled']} page(s) with no notes — "
+          "a `--slow` row that reports nothing is reporting about a throttled browser")
     return 0
 
 
@@ -670,6 +823,9 @@ def main() -> int:
                     help="with --check-tree: undo a breakage an interrupted run left behind")
     ap.add_argument("--suite")
     ap.add_argument("--breakage")
+    ap.add_argument("--slow", type=int, metavar="RATE",
+                    help="do not break the site — throttle the RENDERER RATEx and report "
+                         "every check that was green at full speed and is red now")
     ap.add_argument("--baseline-dir",
                     help="cache the healthy run here and reuse it on the next call")
     a = ap.parse_args()
@@ -679,6 +835,8 @@ def main() -> int:
         return check_tree(a.restore)
     if a.selftest:
         return selftest()
+    if a.slow:
+        return slow_sweep(a.slow, a.suite, a.baseline_dir)
     return sweep(a.suite, a.breakage, a.baseline_only, a.baseline_dir)
 
 

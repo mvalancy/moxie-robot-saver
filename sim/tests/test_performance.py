@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import glob
 import json
-import math
 import os
 import re
 import subprocess
@@ -859,49 +858,105 @@ def test_every_emitted_id_is_rendered_by_the_browser_sim():
 # =====================================================================================
 # (f) Budget — measured against the floor, not against a round number
 # =====================================================================================
-def _p95(samples):
-    ordered = sorted(samples)
-    return ordered[min(len(ordered) - 1, int(math.ceil(0.95 * len(ordered)) - 1))]
+def _interleaved_medians(a, b, n=400):
+    """Median cost (ms) of `a` and of `b`, sampled ALTERNATELY in a single loop.
+
+    Interleaving is what makes the ratio mean something: a preemption lands on whichever
+    call it happens to land on, so over 400 pairs both medians absorb the same scheduler
+    weather and what is left is the code. Timed in two separate loops instead, the two
+    halves drift apart by up to 38% on a loaded box (measured 2026-09-06).
+    """
+    xs, ys = [], []
+    for i in range(n):
+        t0 = time.perf_counter()
+        a(i)
+        t1 = time.perf_counter()
+        b(i)
+        t2 = time.perf_counter()
+        xs.append((t1 - t0) * 1000.0)
+        ys.append((t2 - t1) * 1000.0)
+    xs.sort()
+    ys.sort()
+    return xs[len(xs) // 2], ys[len(ys) // 2]
 
 
 def test_the_planner_costs_about_what_the_floor_costs():
     """(f) no first-audio latency regression. The seam runs once per spoken chunk on the
     hot path between the first token and the first audio, so the planner is measured
     against the generator it replaces rather than against a number someone liked: it may
-    not be more than 4x the floor, and it must still clear the floor's own 1 ms budget."""
+    not be more than 4x the floor.
+
+    Two things changed here on 2026-09-06, both measured rather than guessed.
+
+    * The ratio used to be taken at **p95**, and a p95 under load is not the planner —
+      it is the scheduler. Five trials on a box at load average 104 gave a *median*
+      ratio of 1.999, 2.025, 2.020, 2.017 and 2.008 (stable to ~1%), while the p95 ratio
+      over the same samples read 2.03, 2.20, 2.91, 1.80 and **45.48**. That last sample
+      would have sailed straight through the 4x gate as a false red on a green tree: at
+      p95 this assertion was comparing one scheduler tail against another. The median is
+      where the planner actually shows up, so the ratio is taken there.
+    * `assert planner < 1.0` ms is gone. It was the half that failed — 6.390 ms observed
+      at load 104 against a 0.38 ms median — and it was an absolute compiled from one
+      developer's laptop, so it measured the machine and not the seam. The floor's own
+      cost is the yardstick, and it is measured in the same loop.
+
+    What this catches: the planner becoming materially more expensive than the generator
+    it replaces — a model call, a socket, a lock, an algorithmic regression. What it does
+    not catch: both halves regressing together, which is
+    `test_automarkup.py::test_the_floor_costs_about_what_one_pass_over_the_line_costs`'s
+    job, and I/O too small to time, which is
+    `test_the_planner_makes_no_model_call_and_touches_no_io`'s.
+    """
     from moxie_sdk.automarkup import annotate
     line = ("I looked out of the window and the sky had gone completely orange, and I "
             "wanted to tell you about it right away because it was so beautiful!")
     seam = _seam()
 
-    def timed(fn, n=400):
-        out = []
-        for i in range(n):
-            t0 = time.perf_counter()
-            fn(line, turn_key=f"k{i}")
-            out.append((time.perf_counter() - t0) * 1000.0)
-        return out
-
     annotate(line, turn_key="warm")                  # import/compile warm-up
     seam.make_markup(line, turn_key="warm")
-    floor = _p95(timed(annotate))
-    planner = _p95(timed(seam.make_markup))
-    assert planner < 1.0, f"planner p95 {planner:.3f} ms/line"
-    assert planner <= max(4.0 * floor, 0.4), \
-        f"planner p95 {planner:.3f} ms vs floor {floor:.3f} ms"
+    floor, planner = _interleaved_medians(
+        lambda i: annotate(line, turn_key=f"k{i}"),
+        lambda i: seam.make_markup(line, turn_key=f"k{i}"),
+    )
+    assert floor > 0.0, "the floor was too cheap to time"
+    assert planner <= 4.0 * floor, (
+        f"planner median {planner:.3f} ms is {planner / floor:.2f}x the floor's "
+        f"{floor:.3f} ms; budget 4x")
 
 
 def test_the_planner_makes_no_model_call_and_touches_no_io(monkeypatch):
-    """Deterministic means deterministic: no clock, no `random`, no socket. A regression
-    that reached for any of them would make the goldens flaky instead of failing here."""
+    """Deterministic means deterministic: no clock, no `random`, no socket, no file. A
+    regression that reached for any of them would make the goldens flaky instead of
+    failing here.
+
+    Two holes were measured shut on 2026-09-06, by injecting the regression and watching
+    what stayed green. `open()` was not trapped at all, and the only path exercised was
+    `perf.render`, so an `open()` added to `markup.make_markup` — the seam the robot
+    actually calls, once per spoken chunk — reddened NOTHING in the suite: it is a ~10%
+    blip on a 0.38 ms median, far under what any timing budget can resolve, and no
+    assertion looked for it directly. Both are covered now, and the timing budget above
+    is deliberately not asked to do this job.
+    """
+    import builtins
     import random
     import socket
+    seam = _seam()
+    text = "Tell me a story about a dragon, please!"
+    seam.make_markup(text, turn_key="warm")          # warm every cache BEFORE the traps
+    staged(text, turn_key="warm")
+
     monkeypatch.setattr(random, "random", lambda: pytest.fail("planner used random"))
     monkeypatch.setattr(random, "randint",
                         lambda *a: pytest.fail("planner used random"))
     monkeypatch.setattr(socket, "socket",
                         lambda *a, **kw: pytest.fail("planner opened a socket"))
-    perf.render(staged("Tell me a story about a dragon, please!", turn_key="k"))
+    monkeypatch.setattr(builtins, "open",
+                        lambda *a, **kw: pytest.fail("planner opened a file"))
+    monkeypatch.setattr(os, "open", lambda *a, **kw: pytest.fail("planner opened a fd"))
+
+    perf.render(staged(text, turn_key="k"))
+    out = seam.make_markup(text, turn_key="k")       # the hot path the robot calls
+    assert "<mark" in out, "the seam still has to do its job with the traps installed"
 
 
 def test_the_planner_imports_only_the_stdlib_and_the_sdk():

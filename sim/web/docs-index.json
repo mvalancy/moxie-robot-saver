@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 11100,
+   "bytes": 11632,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 27864,
+   "bytes": 29313,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 270079,
+   "bytes": 276680,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 224782,
+   "bytes": 230524,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -140,7 +140,9 @@
     "Status log (append-only, absolute dates)",
     "2026-09-06 — BUILD: `feat/bubbleframe`, and a red that measured three wrong theories first",
     "2026-09-06 — INTEGRATION: the intermittent is now the promotion gate, and `feat/suiteaudit`",
-    "2026-09-06 — AUDIT: the DoD total was stale in both directions at once"
+    "2026-09-06 — AUDIT: the DoD total was stale in both directions at once",
+    "2026-09-06 — PROMOTION, and the research tier has been watching the wrong repository",
+    "2026-09-06 — the family, counted honestly: ten found, nine closed, one in flight"
    ],
    "kind": "md"
   },
@@ -355,7 +357,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 198447,
+   "bytes": 198471,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -968,6 +970,22 @@
     "The fix, and the two that lost",
     "The guard",
     "What this did NOT fix — a second, live-today defect in `env.js`"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/smoke-load-sensitivity.md",
+   "title": "run_smoke.sh` is load-sensitive — the stack exercise cannot currently tell \"broken\" from \"busy\"",
+   "section": "architecture",
+   "bytes": 3656,
+   "mermaid": 0,
+   "headings": [
+    "The evidence, and why it is not a suspicion",
+    "Why it matters more than an ordinary flake",
+    "What the work is",
+    "Acceptance criteria",
+    "Effort",
+    "Files"
    ],
    "kind": "md"
   },

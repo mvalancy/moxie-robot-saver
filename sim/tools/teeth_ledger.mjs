@@ -25,6 +25,7 @@
  * Env:
  *   MOXIE_TEETH_LEDGER   path to write the JSON ledger to (required, else inert)
  *   MOXIE_TEETH_THROUGHPUT  bytes/s cap for the `stall` breakage (optional)
+ *   MOXIE_TEETH_CPU      CPU throttling multiplier for the `--slow` sweep (optional)
  */
 import { register } from "node:module";
 import { writeFileSync } from "node:fs";
@@ -36,6 +37,25 @@ const OUT = process.env.MOXIE_TEETH_LEDGER;
  * of these suites call `setRequestInterception` themselves and a second interceptor
  * would change what they are testing. */
 const THROUGHPUT = Number(process.env.MOXIE_TEETH_THROUGHPUT || 0);
+/* THE LOADED RUNNER, MADE REPRODUCIBLE. The breakages above all sabotage the SITE; this
+ * one sabotages the CLOCK the suite and the page disagree about. Chrome's
+ * `Emulation.setCPUThrottlingRate` slows everything that happens INSIDE the page — script,
+ * layout, rAF, CSS transitions driven by the compositor's main thread — while node's own
+ * `setTimeout` keeps running at full speed. That asymmetry is exactly the difference
+ * between a laptop and a busy CI runner, and it is what turns "a fixed `sleep(600)`
+ * standing in for a condition" from a theory into a measurement: the sleep still takes
+ * 600 ms, the page now needs longer, and the assertion after it reads a page that has not
+ * got there yet.
+ *
+ * Measured on this box before it was wired in (4e6-iteration busy loop inside the page):
+ * rate 1 → 10.3 ms, rate 6 → 58.5 ms, rate 20 → 159.0 ms. It is a real slowdown, not a
+ * flag that is accepted and ignored.
+ *
+ * It is applied over CDP rather than through puppeteer's API on purpose: `Page` in
+ * puppeteer 24.43 has NO `emulateCPUThrottlingRate` (verified — it throws
+ * `p.emulateCPUThrottlingRate is not a function`), and a helper that silently did nothing
+ * is precisely the failure the `emulateNetworkConditions` note below records. */
+const CPU = Number(process.env.MOXIE_TEETH_CPU || 0);
 
 if (OUT) {
   const checks = [];
@@ -43,6 +63,7 @@ if (OUT) {
   const failed = [];
   const notes = [];
   let throttled = 0;
+  let cpuThrottled = 0;
   const seen = new Map();
 
   /* A check's IDENTITY is its CALL SITE, not its message.
@@ -105,6 +126,20 @@ if (OUT) {
           console.error("teeth_ledger: THROTTLE NOT APPLIED —", e.message);
         }
       }
+      /* Same contract as the throughput throttle: a CPU throttle that did not apply must
+       * be LOUD, because a silent one turns the whole `--slow` sweep into "no findings"
+       * — a green that means nothing. `page_teeth_check.py` refuses to read a slow row
+       * whose ledger carries a note. */
+      if (CPU > 1) {
+        try {
+          const cdp = await page.createCDPSession();
+          await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU });
+          cpuThrottled++;
+        } catch (e) {
+          notes.push("setCPUThrottlingRate FAILED: " + e.message);
+          console.error("teeth_ledger: CPU THROTTLE NOT APPLIED —", e.message);
+        }
+      }
       return page;
     };
     const wrapBrowser = (browser) => {
@@ -131,7 +166,7 @@ if (OUT) {
     if (written) return;
     written = true;
     try {
-      writeFileSync(OUT, JSON.stringify({ checks, requests, failed, notes, throttled }, null, 1));
+      writeFileSync(OUT, JSON.stringify({ checks, requests, failed, notes, throttled, cpuThrottled }, null, 1));
     } catch {}
   };
   process.on("exit", dump);

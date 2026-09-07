@@ -63,7 +63,16 @@ def main():
         # docs explorer; its links are correct at the originals' location (already checked).
         if md.replace(os.sep, "/").startswith("sim/web/docs-bundle/"):
             continue
-        if "/node_modules/" in md:
+        # A DEPENDENCY'S OWN README IS NOT THIS REPO'S DOCUMENTATION, and the test for that
+        # has to survive the package tree being at the ROOT. `glob("**/*.md")` yields
+        # RELATIVE paths, so a top-level install is `node_modules/zod/README.md` — with no
+        # leading separator, which is what the old `"/node_modules/"` needed. Found
+        # 2026-09-06: `npm install --no-save puppeteer` in a worktree (the exact command
+        # `sim/ci/ci.yml`'s browser job runs) took this guard from exit 0 to exit 1 with 56
+        # "broken" links, every one of them inside a vendored package. CI never saw it only
+        # because the doc job and the browser job are different checkouts — an accident of
+        # layout, not a property of the guard.
+        if "node_modules/" in md.replace(os.sep, "/"):
             continue
         files += 1
         base = os.path.dirname(md)
