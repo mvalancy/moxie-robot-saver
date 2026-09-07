@@ -1,5 +1,21 @@
 # `sim/tools/` — build helpers for the static site, and one proof
 
+- **`check_promotion_state.py`** — the only tool here that looks at the *repository* rather than at
+  the product. It answers one question: **was the last `dev → main` promotion finished?** A squash
+  merge leaves `dev` one commit behind `main` and deletes the standing PR, `gh pr merge` does
+  neither of the follow-ups, and nothing goes red — measured 2026-09-06, that was missed after five
+  of the last seven promotions by three different actors, *after* being written down in four places.
+  So it is a check instead: `git rev-list --count origin/dev..origin/main` and `gh pr list --base
+  main` (repo **read** only), both gated on one clock — the committer date of `main`'s tip — and
+  forgiven for 30 minutes, because between a squash and its reconcile the defect state is
+  legitimate and a check that fires there is worse than no check. The bound is the measured one:
+  the ten promotions in history reconciled in 11s–990s. Exit **0** finished (or inside the window),
+  **1** unfinished, **2** *could not measure* — a third code on purpose, because a monitor that
+  says all-clear when its probe is broken is the failure this repo spent a day deleting. Called
+  hourly by [`../ci/promotion.yml`](../ci/README.md); its teeth are
+  [`../tests/test_promotion_guard.py`](../tests/), which builds real git repositories, walks the
+  whole truth table and blinds each measurement in turn to prove every clause is load-bearing.
+
 - **`build_docs_bundle.py`** — copies every Markdown doc under `docs/` (+ top-level `README`/`ROADMAP`)
   into [`../web/docs-bundle/`](../web/) and writes `../web/docs-index.json`, so the **docs explorer**
   ([`../web/docs.html`](../web/docs.html)) can browse them on a static Cloudflare Pages deploy with no

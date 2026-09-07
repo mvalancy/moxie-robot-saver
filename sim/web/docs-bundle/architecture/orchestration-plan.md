@@ -326,6 +326,10 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     chain cleanup behind a merge) and rule 25 (`--delete-branch` silently leaves the remote when a
     worktree holds the branch). Anything a merge is supposed to tidy up afterwards should be
     *verified*, never assumed.
+    **Mechanised 2026-09-06, and that supersedes remembering it:** `sim/ci/promotion.yml` (a
+    schedule-and-dispatch monitor, gating nothing) runs `sim/tools/check_promotion_state.py`
+    hourly and reddens when `dev` is behind `main` or no `dev → main` PR is open, 30 minutes
+    after the squash. This rule stays for the *why*; the check is what will actually notice.
 
 30. **When a check says the product did X, measure X before you change the product.** On 2026-09-06
     the failure `packets grew while the tab was hidden (1 -> 2 in 20s)` was taken at face value
@@ -1198,3 +1202,128 @@ Both returned **0** on 2026-09-04. `e14399e` stays a known-benign match for the 
   question"*) had been obeyed literally and **licensed** a question every turn. **A metric improving
   is not the behaviour improving**, and the remedy was to read the transcripts rather than the
   summary.
+
+- **2026-09-06 — rule 29 is now a check rather than a paragraph, and the interesting part is the
+  window.** The previous entry ended "the honest expectation is that it will be missed again". It
+  is now `sim/tools/check_promotion_state.py`, called hourly by `sim/ci/promotion.yml`
+  (schedule + dispatch, `contents: read` + `pull-requests: read`, the workflow's own
+  `GITHUB_TOKEN`, gating nothing).
+  **Detection was the easy half.** `git rev-list --count origin/dev..origin/main > 0` and
+  `gh pr list --base main` being empty are two cheap probes — but both are *legitimately true*
+  between a squash and its reconcile, and a check that fires in that window trains people to
+  ignore it, which is strictly worse than no check (the same reason this repo threw away a guard
+  at 7 % precision). So both conditions are gated on **one clock**: the committer date of `main`'s
+  tip, which for a squash promotion *is* the moment both defects begin. The bound was measured,
+  not guessed — the interval from squash to reconcile across the ten promotions in history is
+  11s, 11s, 12s, 17s, 21s, 96s, 132s, 274s, 731s, **990s** (median 18s), so the grace is 1800s:
+  1.8× the worst case ever observed. Worst case squash → red is grace + cadence ≈ 90 minutes,
+  against the "days, at the next promotion" it replaces.
+  **Two decisions worth carrying forward.** (a) A step in the fast tier was rejected because *the
+  missing action is the trigger* — `ci.yml` fires on `push: [dev]`, and the whole defect is that
+  the reconcile push never happened; it would fire on the next unrelated PR and redden someone
+  else's change, which `ci.yml`'s own header already records this repo paying for once (#125).
+  (b) The instrument has a **third exit code**: 2 for "could not measure" (no `gh`, not
+  authenticated, missing ref), never 0 — a monitor that reports all-clear when its probe is broken
+  is the exact failure this repo spent a day deleting.
+  `sim/tests/test_promotion_guard.py` builds real git repositories to prove all of it: the full
+  eight-row truth table, both sides of the grace edge one second apart, and three negative controls
+  that blind one measurement each (the age gate, the behind count, the PR lookup) and require the
+  row that clause was holding to flip.
+### 2026-09-06 — BUILD: `feat/bubbleframe`, and a red that measured three wrong theories first
+
+PR **#202**'s browser suite reddened on `sim/test_liveliness.mjs:325` — `…on a leader that spans
+exactly the gap (88.5px for 91px)` — on a diff containing a Python promotion checker, a workflow
+and `RELEASING.md`. Rule 30 says that is a latent race, not a flake, so it was instrumented before
+anything was changed. Three hypotheses died to measurement, and recording them is the point:
+
+1. **The typewriter grows the box, so the cached `bh` is stale.** Refuted: `offsetHeight` is **61
+   for every one of 90 sampled frames**. The box never changes size.
+2. **A CSS ease on position makes the rendered box lag its target.** Refuted by `style.css`, which
+   says so in its own comment — `#bubble.anchored` transitions `opacity` only, *"No transition on
+   position"*.
+3. **`updateBubbleAnchor()` runs first in `animate()`, so the anchor trails the pose by a frame.**
+   Moving the call to just before `renderer.render` and re-measuring changed nothing.
+
+The instrumentation also produced a **false alarm worth naming**: drift reaches **18 px** late in
+the run, which read as "the bubble stops tracking her head". Every one of those rows has
+`hidden=1`. `updateBubbleAnchor()` early-returns while the bubble is hidden — correctly, since
+that would be a forced layout every frame for a box nobody can see. The orchestrator wrote it up
+as a visible artifact before checking the flag, and the brief carries the correction explicitly so
+the agent does not "fix" working code.
+
+What survives: `window.__bubbleAnchor()` mixes two instants in one readout. `leader` is read from
+the `--leader` custom property (**recorded state**, as of the last rendered frame) while `head` is
+**re-projected live at call time**, and her head moves continuously inside `animate()` *after* the
+anchor is computed. The error is head-velocity × time-since-last-frame — invisible on a fast local
+box, red on a loaded CI runner. This is precisely what `test_liveliness.mjs`'s own header forbids:
+*"EVERY ASSERTION READS RECORDED STATE, NEVER A LIVE SAMPLE (playbook rule 11)."* **The file
+violates the rule it opens by declaring**, and the `<= 2` tolerance has been absorbing the
+evidence.
+
+Also cleared this fire: `repo` itself was **73 commits behind** with three dirty `sim/web` files
+blocking every `git pull`. All three were superseded drafts — every identifier in them
+(`logMutter`, `watchTranscript`, `rail-toggle`, `rail-closed`, `presence-badge`, `livenessOn`)
+exists on `dev` in a further-evolved form, and `style.css` there carries 13–14 hits where the local
+buffer had one. Stashed rather than discarded, then pulled.
+
+### 2026-09-06 — INTEGRATION: the intermittent is now the promotion gate, and `feat/suiteaudit`
+
+The cross-instant race in `sim/test_liveliness.mjs` stopped being a nuisance this hour. It has now
+reddened **three PRs on diffs that cannot reach it**: #202 (Python + YAML + Markdown), and — the
+one that matters — **#201, the standing `dev → main` PR**, whose failing step the API names as
+*"Liveliness hold, self-talk in the log, dock width, head-anchored bubble"*. **The promotion is
+blocked by a check that is wrong about the product**, which is the most expensive form this defect
+family takes: it costs a re-run every time, and re-running is precisely how it stays hidden.
+
+`sim/ci/ci.yml` runs **32 browser suites**, every one a promotion gate. Five instances of the same
+family have now been found across them, so `feat/suiteaudit` was briefed to audit the other 30 —
+with the standing requirement that a candidate is a *finding* only once it has been **measured**
+(the two quantities shown diverging, or the assertion shown green against a deliberately broken
+page), and that every fix is proven to fail without itself. `sim/tools/page_teeth_check.py` already
+serves each suite a broken site and is the right instrument. **A null result is a real result**:
+clearing 27 suites honestly beats reporting 30 unmeasured "concerns".
+
+The same fire also cleared a stale subagent that had been "running" for a day. Its deliverable —
+the chat context-expiry fix — was already on `dev` as `e8ce5af` with its worktree removed, so it
+had finished and was holding nothing but a slot in the ledger. Its parting note worried that its
+new test made a **relative** clock read needing a reviewed row in `sim/tests/test_clock_dependence.py`;
+that ratchet was run against `dev` before the kill and is **6 passed**, so nothing was left broken.
+
+One process fix, now with an instance rather than a prediction: the BUILD tier's staged-secret scan
+is `grep -ciE "sk-[A-Za-z0-9_]{12}"`, and it returned **2** on a commit containing no key at all —
+both hits the ordinary word `task-notification`. With a word boundary (`\bsk-`) it returns 0. The
+check as written would block a clean commit and, worse, train its reader to wave through a non-zero
+count.
+
+### 2026-09-06 — AUDIT: the DoD total was stale in both directions at once
+
+**#6 downgraded 🟢 → 🟡, and the total ~90 % → ~85 % (four green, two amber).** Not new information —
+this row's *own* standard, written days ago, says *a gate you re-run is not green, because it teaches
+the next reader to merge through red*. Today `sim/test_liveliness.mjs` reddened **three PRs on diffs
+that could not reach it**, twice on the standing `dev → main` PR. PR #203 fixed that instance and
+proved it on untouched `dev` (5 of 65 under 2× load). The amber is for what #203 explicitly did *not*
+close: two conversation-hold checks that fail the same way, on `dev`, right now — a `settle(4600)`
+sleeping on Node's clock while the hold lapses on a page timer. `feat/holdwait` is in flight for it and
+`feat/suiteaudit` is sweeping the other 30 gating suites.
+
+**The interesting part is that the previous total was wrong in two directions simultaneously.** It read
+*five green, one amber* and had not been re-scored after #1 was restored to green — while #6 had
+drifted below green with nobody recording it. The arithmetic came out right by cancellation. **Two
+errors cancelling is not the same as being right**, and a total that is only ever checked when someone
+expects it to move is a total that hides this.
+
+**Secrets: clean, and one alarm is self-inflicted.** `git log -S` on the demo key's prefix returns
+**3 commits**, which reads as a leak and is not one: the longest string ever committed is **6
+characters** against a 25-character key — an earlier audit wrote *its own search pattern* into this
+file and thereby flagged itself forever (fixed in `24984f0`, whose subject says exactly that). The two
+tracked matches are `sk-AbCd…` fixtures in `test_cloud_transport.mjs` and `test_compose.py`. This entry
+deliberately does **not** repeat the literal prefix, because doing so is what caused the false positive.
+
+**Everything else green:** bundle 0-diff, links, consistency, `test_docs` (150 docs, 66 diagrams), SIL
+smoke on :2088 (`state→config(paired)→remote-chat→reply`), `python -m build` at 0.7.0, `mqtt/.env`
+ignored + untracked + mtime unchanged, all four cron tiers armed, no stale worktrees, no orphaned
+branches. **Spec conformance (config-and-telemetry):** DoD #3's named residual is accurate — `DELETE
+/local/robots/{id}/telemetry` exists, `safety.py` honors `NO_DATA` forward via `keep_excerpt=False`, and
+no erase path for the safety journal exists in `server/` or `mqtt/`. A null result, recorded as one.
+
+**Most valuable next slice: the promotion.** `main` is 93 behind and #201 is re-running with #203's fix.

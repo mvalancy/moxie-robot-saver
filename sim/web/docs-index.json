@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 266313,
+   "bytes": 270079,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -118,7 +118,7 @@
     "DoD progress (audited 2026-09-04 08:15 PDT, at v0.7.0) — **5/6 🟢 · overall ≈ 92%** (done = all six 🟢)",
     "TTS strategy (2026-09-01)",
     "Definition of done — the complete end-to-end system",
-    "Progress against the six — scored 2026-09-04",
+    "Progress against the six — scored 2026-09-04, re-scored 2026-09-06",
     "Working rules (build loops)"
    ],
    "kind": "md"
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 214510,
+   "bytes": 224782,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -137,7 +137,10 @@
     "Workstreams (the backlog agents draw from)",
     "Integration playbook (learned 2026-09-02, day one — apply every time)",
     "The layered session loops (24/7 continuity)",
-    "Status log (append-only, absolute dates)"
+    "Status log (append-only, absolute dates)",
+    "2026-09-06 — BUILD: `feat/bubbleframe`, and a red that measured three wrong theories first",
+    "2026-09-06 — INTEGRATION: the intermittent is now the promotion gate, and `feat/suiteaudit`",
+    "2026-09-06 — AUDIT: the DoD total was stale in both directions at once"
    ],
    "kind": "md"
   },
@@ -1030,7 +1033,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 52574,
+   "bytes": 55739,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -1047,7 +1050,8 @@
     "What the first sweep found: the suites are largely sound",
     "The inert script: a 200 OK that does nothing, and the clause that finally sees it",
     "Giving them eyes (2026-09-06)",
-    "Run it now"
+    "Run it now",
+    "promotion.yml` — was the last promotion *finished*?"
    ],
    "kind": "md"
   },
