@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 232303,
+   "bytes": 234622,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -143,7 +143,8 @@
     "2026-09-06 — AUDIT: the DoD total was stale in both directions at once",
     "2026-09-06 — PROMOTION, and the research tier has been watching the wrong repository",
     "2026-09-06 — the family, counted honestly: ten found, nine closed, one in flight",
-    "2026-09-07 — BLOCKED: no Opus agent capacity until 2026-09-11"
+    "2026-09-07 — BLOCKED: no Opus agent capacity until 2026-09-11",
+    "2026-09-07 — everything the rate limit interrupted is landed, by hand"
    ],
    "kind": "md"
   },
@@ -994,13 +995,14 @@
    "path": "architecture/backlog/head-travel-threshold.md",
    "title": "test_liveliness.mjs`'s head-travel floor is a measurement of the machine",
    "section": "architecture",
-   "bytes": 3293,
+   "bytes": 4307,
    "mermaid": 0,
    "headings": [
     "Where",
     "The evidence",
     "The mechanism",
     "What was tried, and why it is filed rather than fixed",
+    "Narrowed 2026-09-07: the per-sweep `setSpeech()` is NOT the cause",
     "Acceptance criteria",
     "Effort",
     "Files"

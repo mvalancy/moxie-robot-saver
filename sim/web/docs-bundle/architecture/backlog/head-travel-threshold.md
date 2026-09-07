@@ -46,6 +46,22 @@ so the stall is caused by something the test does and the probe does not (the pe
 re-issue is the first suspect, not a conclusion). **That contradiction is unexplained, and the fix was
 reverted rather than shipped on a guess.**
 
+## Narrowed 2026-09-07: the per-sweep `setSpeech()` is NOT the cause
+
+The section above names that re-issue as "the first suspect, not a conclusion". It has since been
+**eliminated by measurement.** A probe replicating the test's sweep exactly — `setSpeech()` per sweep,
+re-issued whenever the bubble goes hidden, both motors commanded to opposite ends, same 1280x900
+viewport — drives motor 6 cleanly in both directions:
+
+    sweep0  f0 motor6=14607  →  f20 motor6=0        (target 0)
+    sweep1  f0 motor6=13998  →  f15 motor6=32767    (target 32767)
+
+So the sweep itself is sound, with speech running, and the stall at 15910 comes from something else in
+the full suite's environment — the preceding blocks, the shared harness, or the `open()` helper. **The
+thread is still worth pulling and is now shorter by one strand.** Recording an elimination is worth as
+much as recording a cause: it is the difference between the next attempt starting where this one
+stopped and starting where this one began.
+
 ## Acceptance criteria
 
 - The mechanism behind the 90-frame stall is **measured**, not reasoned about — the probe/test

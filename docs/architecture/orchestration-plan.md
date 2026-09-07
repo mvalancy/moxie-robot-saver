@@ -1426,3 +1426,35 @@ before/after counts under load are therefore *not in evidence*, and any claim re
 manufactured confidence — the exact failure this session spent two days removing. Where the
 orchestrator lands their work, it re-runs the A/B itself and reports its own numbers, or says plainly
 that the proof is missing.
+
+### 2026-09-07 — everything the rate limit interrupted is landed, by hand
+
+**#208 and #209 are merged**, so both worktrees the weekly limit killed mid-work are recovered and
+nothing was lost. Neither was re-delegated — there are no agents until 2026-09-11 — so the orchestrator
+validated and landed them directly, and where an agent's proof went missing it was **re-measured
+rather than cited**.
+
+**#208 (`holdwait`).** Its agent died at *"Measurements complete. Now the guards and docs"*, so its
+counts were never reported and are not in the PR. A fresh interleaved A/B — three pairs, 40 burner
+processes, load 60–80, pristine `origin/dev` against the branch on the same machine seconds apart —
+put **pristine red in 2 of 3** on `the chatting marker is cleared` and `the paused hint goes away`, and
+the branch **red in 0 of 3**. There are now no fixed sleeps left in that suite.
+
+**#209 (`cspwait`).** Its agent died mid-file at *"Now block 9"*. The suite passes at 108 checks, and
+the brief's hard requirement — that a **broken** CSP must still fail — was proven by mutation:
+deleting the `static.cloudflareinsights.com` allowance from `sim/web/_headers` reddens 4 of 108 with
+the beacon reporting **`"refused"`**, a real verdict rather than a give-up. Its unaudited fixed waits
+are named in the PR as not done.
+
+**The ratchet earned its keep on the very next PR.** #206 taught `test_clock_dependence.py` to scan
+**monotonic** clocks; hours later it refused #209 for an unreviewed `Date.now` in `sim/test_csp.mjs`
+and blocked the merge. The row that now exists says so in as many words: it was written because a
+check refused a merge, not because anyone remembered.
+
+**Two defects filed rather than fixed, both with evidence.** `head-travel-threshold` — the twelfth
+instance of the family, and the first **this project introduced while fixing that family** (block 4a
+came in with #203). A repair was written and **reverted**: polling `getMotor(6)` for arrival stalled at
+15910 where a standalone probe drove the same motor 16384 → 0 in ~20 frames, and shipping past an
+unexplained contradiction is how the other eleven survived. A later probe **eliminated the
+`setSpeech()` re-issue** as the cause. And `smoke-load-sensitivity`, measured by an interleaved A/B in
+which pristine `dev` failed too.
