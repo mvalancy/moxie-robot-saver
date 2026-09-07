@@ -1264,3 +1264,36 @@ is `grep -ciE "sk-[A-Za-z0-9_]{12}"`, and it returned **2** on a commit containi
 both hits the ordinary word `task-notification`. With a word boundary (`\bsk-`) it returns 0. The
 check as written would block a clean commit and, worse, train its reader to wave through a non-zero
 count.
+
+### 2026-09-06 — AUDIT: the DoD total was stale in both directions at once
+
+**#6 downgraded 🟢 → 🟡, and the total ~90 % → ~85 % (four green, two amber).** Not new information —
+this row's *own* standard, written days ago, says *a gate you re-run is not green, because it teaches
+the next reader to merge through red*. Today `sim/test_liveliness.mjs` reddened **three PRs on diffs
+that could not reach it**, twice on the standing `dev → main` PR. PR #203 fixed that instance and
+proved it on untouched `dev` (5 of 65 under 2× load). The amber is for what #203 explicitly did *not*
+close: two conversation-hold checks that fail the same way, on `dev`, right now — a `settle(4600)`
+sleeping on Node's clock while the hold lapses on a page timer. `feat/holdwait` is in flight for it and
+`feat/suiteaudit` is sweeping the other 30 gating suites.
+
+**The interesting part is that the previous total was wrong in two directions simultaneously.** It read
+*five green, one amber* and had not been re-scored after #1 was restored to green — while #6 had
+drifted below green with nobody recording it. The arithmetic came out right by cancellation. **Two
+errors cancelling is not the same as being right**, and a total that is only ever checked when someone
+expects it to move is a total that hides this.
+
+**Secrets: clean, and one alarm is self-inflicted.** `git log -S` on the demo key's prefix returns
+**3 commits**, which reads as a leak and is not one: the longest string ever committed is **6
+characters** against a 25-character key — an earlier audit wrote *its own search pattern* into this
+file and thereby flagged itself forever (fixed in `24984f0`, whose subject says exactly that). The two
+tracked matches are `sk-AbCd…` fixtures in `test_cloud_transport.mjs` and `test_compose.py`. This entry
+deliberately does **not** repeat the literal prefix, because doing so is what caused the false positive.
+
+**Everything else green:** bundle 0-diff, links, consistency, `test_docs` (150 docs, 66 diagrams), SIL
+smoke on :2088 (`state→config(paired)→remote-chat→reply`), `python -m build` at 0.7.0, `mqtt/.env`
+ignored + untracked + mtime unchanged, all four cron tiers armed, no stale worktrees, no orphaned
+branches. **Spec conformance (config-and-telemetry):** DoD #3's named residual is accurate — `DELETE
+/local/robots/{id}/telemetry` exists, `safety.py` honors `NO_DATA` forward via `keep_excerpt=False`, and
+no erase path for the safety journal exists in `server/` or `mqtt/`. A null result, recorded as one.
+
+**Most valuable next slice: the promotion.** `main` is 93 behind and #201 is re-running with #203's fix.
