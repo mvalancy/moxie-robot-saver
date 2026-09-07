@@ -95,7 +95,7 @@
     turns: 0, live: 0, delegated: 0, fallbacks: 0,
     scripted: 0,             // consolation lines the PAGE chose (mic.js's degraded turn)
     scriptedFree: 0,         // ...of those, the ones a live page answered for FREE
-    chatOk: 0, chatRefused: 0, chatErrors: 0,
+    chatOk: 0, diagrams: 0, chatRefused: 0, chatErrors: 0,
     speechOk: 0, speechRefused: 0, speechErrors: 0,
     voiceFirst: 0,           // the TTS message was routed BEFORE the chat message
     chatFirst: 0,            // the 2.5 s wait elapsed, so the words went out alone
@@ -453,6 +453,16 @@
 
       stats.chatOk++;
       status("");
+      /* SHE DREW SOMETHING. Fired and not awaited on purpose: the diagram is a bonus on top
+       * of a turn that has already succeeded, and mermaid's first load is 3.3 MB — making
+       * her words wait on it would trade the thing that matters for the thing that does
+       * not. Every failure inside resolves false and draws nothing (`diagram.js`), so there
+       * is no rejection to handle here and nothing that can turn a good turn into a bad
+       * one. */
+      if (body.diagram && window.moxieDiagram) {
+        stats.diagrams++;
+        window.moxieDiagram.render(body.diagram);
+      }
       contextBlob = typeof body.context === "string" ? body.context : "";
       var ticket = body.speech && body.speech[0] && body.speech[0].ticket;
       if (!ticket) {

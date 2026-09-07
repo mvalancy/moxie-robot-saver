@@ -699,6 +699,67 @@ for (const [label, w, h] of [
   await page.close();
 }
 
+/* ======================================================================== *
+ * 5. SHE DRAWS — lazily, strictly, and never at the cost of her words
+ * ======================================================================== *
+ *
+ * The server half (the fence never reaching what she SPEAKS) is proven hermetically in
+ * `sim/test_demo_proxy.mjs` §15m. This is the browser half: that a diagram she wrote
+ * actually renders, that bad syntax draws nothing rather than something broken, and that
+ * the 3.3 MB mermaid bundle is not on the critical path of a page that mostly never needs
+ * it.
+ */
+{
+  const page = await open(1280, 900);
+
+  // ---- the bundle is NOT loaded until she draws --------------------------- //
+  const before = await page.evaluate(() => ({
+    api: typeof window.moxieDiagram,
+    mermaid: typeof window.mermaid,
+    scripts: [...document.querySelectorAll("script[src]")].filter((s) => /mermaid/.test(s.src)).length,
+  }));
+  eq(before.api, "object", "the renderer is present on the page…");
+  eq(before.mermaid, "undefined", "…but 3.3 MB of mermaid is NOT loaded before she needs it");
+  eq(before.scripts, 0, "…and no mermaid script tag exists yet");
+
+  // ---- a real diagram renders into the log -------------------------------- //
+  const drew = await page.evaluate(() =>
+    window.moxieDiagram.render("graph TD;\n  Child-->Moxie;\n  Moxie-->Gateway;")
+      .then((ok) => ({
+        ok,
+        rows: document.querySelectorAll("#transcript .diagram").length,
+        svg: document.querySelectorAll("#transcript .diagram svg").length,
+        isTurn: document.querySelectorAll("#transcript .diagram.turn").length,
+        label: (document.querySelector("#transcript .diagram") || {}).getAttribute
+          ? document.querySelector("#transcript .diagram").getAttribute("aria-label") : "",
+        stats: window.moxieDiagram.stats,
+      })));
+  eq(drew.ok, true, "a valid diagram renders");
+  eq(drew.rows, 1, "…as one row in the comms log");
+  eq(drew.svg, 1, "…containing real SVG");
+  eq(drew.isTurn, 0,
+     "…and NOT as a `.turn`: addTranscript appends streamed reply chunks into the last " +
+     "`.turn.moxie`, which would weld half a sentence into the picture");
+  eq(drew.label, "A diagram Moxie drew", "…with an accessible label, since SVG is not text");
+  eq(drew.stats.rendered, 1, "…recorded as one render");
+
+  // ---- broken syntax draws NOTHING ---------------------------------------- //
+  const broke = await page.evaluate(() =>
+    window.moxieDiagram.render("this is not mermaid at all {{{")
+      .then((ok) => ({ ok, rows: document.querySelectorAll("#transcript .diagram").length,
+                       stats: window.moxieDiagram.stats })));
+  eq(broke.ok, false, "syntax mermaid rejects resolves FALSE…");
+  eq(broke.rows, 1, "…and adds no row: a broken picture is worse than none");
+  eq(broke.stats.invalid, 1, "…recorded as invalid rather than inferred");
+  eq(broke.stats.rendered, 1, "…and the earlier render still stands");
+
+  // ---- an empty source is a no-op, not an error --------------------------- //
+  eq(await page.evaluate(() => window.moxieDiagram.render("")), false,
+     "an empty diagram draws nothing and does not throw");
+
+  await page.close();
+}
+
 await browser.close();
 await site.close();
 finish(LABEL, { fails, count });
