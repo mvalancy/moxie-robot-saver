@@ -3274,6 +3274,28 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     chat.__resetPenaltyProbe();
   }
 
+  // ---- 4d. A WRONG `happy` IS OVERRULED, AND ONLY A WRONG ONE --------------- //
+  //
+  // Measured twice live: this model collapses onto `happy`. Prompting took it from two
+  // faces to three and no further — it answered "I'm sorry you felt left out" with a happy
+  // face. So when the model says HAPPY and the sentence carries one of the floor's
+  // high-precision cues, the floor wins: those regexes read the words in front of them,
+  // and `happy` is this model's null answer rather than a judgement.
+  //
+  // All three conditions are asserted, because the risk in this change is that it quietly
+  // becomes the floor taking the whole channel back.
+  {
+    const mood = (mk) => (/\+mood\+:(\d+)/.exec(mk) || [])[1];
+    eq(mood(wire.markupFloor("I am sorry you felt left out.", { mood: "happy", gesture: "self" })), "2",
+       "a `happy` on a plainly sad sentence is overruled to SAD");
+    eq(mood(wire.markupFloor("We could draw a picture together.", { mood: "happy", gesture: "talk" })), "1",
+       "…but a `happy` on an ordinary sentence is KEPT: no floor rule matched, so nothing overrules");
+    eq(mood(wire.markupFloor("I am sorry to hear that.", { mood: "curious", gesture: "think" })), "9",
+       "…and any NON-happy choice is taken as written, even against a matching rule");
+    eq(mood(wire.markupFloor("Hooray, well done!", { mood: "happy", gesture: "celebrate" })), "1",
+       "…a `happy` agreeing with a happy rule stays happy");
+  }
+
   // ---- 5. THE PERSONA IS THE ROBOT PATH'S, NOT A SAFETY BLURB --------------- //
   // The single change that made her Moxie rather than an assistant wearing a name tag.
   {
