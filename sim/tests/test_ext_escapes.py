@@ -918,11 +918,28 @@ def test_x10_an_act_is_bounded_declared_and_granted_or_it_does_not_load():
     assert not r.ok and r.effects == [], "an undeclared act must never reach an effect"
 
     # 3 — declared and known, but not granted: still nothing runs.
-    ungranted = E.validate(good, grants=E.DEFAULT_GRANTS | CA.SHIPPED_EXTRA_GRANTS)
+    #
+    # NARROWED 2026-09-08, not dropped. This used to assert that NO `act.<name>` was
+    # granted to a shipped extension. Exactly one now is: `act.eb_timer_request`, because
+    # the shipped `Timer` global had matched and done nothing since it was written, and
+    # making it a program needs that one recovered function. `SHIPPED_EXTRA_GRANTS`' own
+    # comment asked for precisely this — "the day one does, adding that single act.<name>
+    # is a code change in a file a reviewer reads".
+    #
+    # So the invariant is now the SET, which is a stronger claim than "none": widening it
+    # reddens this line, and the gate itself is still asserted with an act that is not
+    # granted. `eb_wake` is used for that because it is in the catalog and is not shipped.
+    shipped_acts = {c for c in set(E.DEFAULT_GRANTS) | set(CA.SHIPPED_EXTRA_GRANTS)
+                    if c.startswith("act.")}
+    assert shipped_acts == {"act.eb_timer_request"}, (
+        f"exactly one act is granted to shipped extensions, got {sorted(shipped_acts)} — "
+        "widening this is a reviewer's decision, not a diff's")
+
+    waker = ext([{"do": [{"act": {"name": "eb_wake", "args": []}}, {"say": "ok"}]}],
+                caps=("say", "act.eb_wake"))
+    ungranted = E.validate(waker, grants=E.DEFAULT_GRANTS | CA.SHIPPED_EXTRA_GRANTS)
     assert ungranted and "has not been granted" in ungranted[0], ungranted
-    assert not any(c.startswith("act.")
-                   for c in set(E.DEFAULT_GRANTS) | set(CA.SHIPPED_EXTRA_GRANTS))
-    r = E.evaluate(good, facts(), grants=E.DEFAULT_GRANTS)
+    r = E.evaluate(waker, facts(), grants=E.DEFAULT_GRANTS)
     assert not r.ok and r.effects == []
 
     # …and with all three satisfied it runs, and says so in words a parent reads.

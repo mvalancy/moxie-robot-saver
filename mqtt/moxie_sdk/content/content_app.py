@@ -926,8 +926,15 @@ EXT_EVENTS_CAP = 50
 #: honour it" is not "every program we ship may do it". Nothing we ship needs one yet, and
 #: the day one does, adding that single `act.<name>` is a code change in a file a reviewer
 #: reads — which is exactly the brake acceptance criterion 5 asks for.
+#: `act.eb_timer_request` JOINED IT ON 2026-09-08, and this is the reviewer-visible code
+#: change the paragraph above asks for. The shipped `Timer` global had matched and done
+#: nothing since it was written — no handler is ever registered for it in production and it
+#: carried no extension, so `respond` fell through to free chat and a child asking for a
+#: timer got a chat reply and no timer. Making it a program needs exactly one action, and
+#: `eb_timer_request` is a RECOVERED robot function with parent-facing words already in
+#: `ext.ACTION_WORDS` — not an invented `function_id`. No other `act.<name>` is granted.
 SHIPPED_EXTRA_GRANTS = frozenset({"clock", "random", "memory.read", "memory.write",
-                                  "presence", "markup"})
+                                  "presence", "markup", "act.eb_timer_request"})
 
 
 def _ext_digest(block: dict) -> str:
