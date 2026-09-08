@@ -813,7 +813,20 @@ def test_a_pack_that_acts_now_reviews_as_something_this_appliance_can_run():
     assert "this activity can ask Moxie to set or cancel a timer" in warnings, warnings
     assert P.validate_item({"kind": "global", "key": "Timer", "data": data}) == []
     # …and the grant is still a real gate, not a formality.
+    #
+    # UPDATED 2026-09-08: `act.eb_timer_request` IS now in `SHIPPED_EXTRA_GRANTS`, because
+    # the shipped `Timer` global became a program (it had matched and done nothing since it
+    # was written). So the gate is asserted with an act that is still ungranted — `eb_wake`
+    # — which is what this block was always testing: that declaring an act is not the same
+    # as being granted one. `test_ext_escapes.py`'s gate 3 pins the granted set to exactly
+    # `{act.eb_timer_request}`, so a second one cannot arrive quietly.
     assert "act.eb_timer_request" not in E.DEFAULT_GRANTS
-    assert "act.eb_timer_request" not in CA.SHIPPED_EXTRA_GRANTS
-    refused = E.validate(ROWS["G2"]["ast"], grants=E.DEFAULT_GRANTS | CA.SHIPPED_EXTRA_GRANTS)
-    assert refused and "has not been granted: act.eb_timer_request" in refused[0]
+    assert "act.eb_wake" not in E.DEFAULT_GRANTS
+    assert "act.eb_wake" not in CA.SHIPPED_EXTRA_GRANTS
+    waker = dict(ROWS["G2"]["ast"])
+    # No `handled`: declared-equals-used is itself a load condition, so an unused
+    # capability would put "declares things it never uses" first and mask the grant reason.
+    waker["capabilities"] = ["say", "act.eb_wake"]
+    waker["rules"] = [{"do": [{"act": {"name": "eb_wake", "args": []}}, {"say": "ok"}]}]
+    refused = E.validate(waker, grants=E.DEFAULT_GRANTS | CA.SHIPPED_EXTRA_GRANTS)
+    assert refused and "has not been granted: act.eb_wake" in refused[0]

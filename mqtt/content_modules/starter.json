@@ -135,7 +135,152 @@
       "name": "Timer",
       "source_version": 1,
       "pattern": "timer for (\\d+) (minute|second)",
-      "entity_groups": "1,2"
+      "entity_groups": "1,2",
+      "_comment": [
+        "THIS GLOBAL MATCHED AND DID NOTHING until 2026-09-08, and that is the exact shape",
+        "the contract's globals section warns about: no handler was ever registered for it",
+        "(register_global is never called in production) and it carried no extension, so",
+        "content_app.respond fell straight through to free chat. A child saying 'set a timer",
+        "for 5 minutes' got a conversational reply and no timer, and nothing anywhere",
+        "raised -- a global that fires and does nothing is indistinguishable from one that",
+        "never fires.",
+        "",
+        "It is now a program, like What Time Is It. `eb_timer_request` is a RECOVERED robot",
+        "function (ACTION_WORDS, from the RemoteChat execute catalog) -- not an invented",
+        "one -- and args are (action=1 start, duration in MILLISECONDS), matching",
+        "sim/tests/test_ext_act.py's worked example.",
+        "",
+        "`act.eb_timer_request` had to be added to SHIPPED_EXTRA_GRANTS, which is a code",
+        "change in a file a reviewer reads -- exactly the brake that comment asks for."
+      ],
+      "extension": {
+        "ext_format": 1,
+        "capabilities": [
+          "handled",
+          "say",
+          "act.eb_timer_request"
+        ],
+        "on": "global",
+        "rules": [
+          {
+            "let": {
+              "n": {
+                "int": [
+                  {
+                    "get": [
+                      {
+                        "var": "entities"
+                      },
+                      0,
+                      "0"
+                    ]
+                  }
+                ]
+              },
+              "unit": {
+                "lower": [
+                  {
+                    "get": [
+                      {
+                        "var": "entities"
+                      },
+                      1,
+                      "minute"
+                    ]
+                  }
+                ]
+              },
+              "ms": {
+                "*": [
+                  {
+                    "int": [
+                      {
+                        "get": [
+                          {
+                            "var": "entities"
+                          },
+                          0,
+                          "0"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "if": [
+                      {
+                        "==": [
+                          {
+                            "lower": [
+                              {
+                                "get": [
+                                  {
+                                    "var": "entities"
+                                  },
+                                  1,
+                                  "minute"
+                                ]
+                              }
+                            ]
+                          },
+                          "minute"
+                        ]
+                      },
+                      60000,
+                      1000
+                    ]
+                  }
+                ]
+              }
+            },
+            "do": [
+              {
+                "act": {
+                  "name": "eb_timer_request",
+                  "args": [
+                    "1",
+                    {
+                      "str": [
+                        {
+                          "var": "ms"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "say": {
+                  "concat": [
+                    "Okay! Timer set for ",
+                    {
+                      "str": [
+                        {
+                          "var": "n"
+                        }
+                      ]
+                    },
+                    " ",
+                    {
+                      "plural": [
+                        {
+                          "var": "unit"
+                        },
+                        {
+                          "var": "n"
+                        }
+                      ]
+                    },
+                    "."
+                  ]
+                }
+              },
+              {
+                "handled": true
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "name": "What Time Is It",
