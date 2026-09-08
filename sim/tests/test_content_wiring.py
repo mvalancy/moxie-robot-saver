@@ -127,3 +127,80 @@ def test_earmuffs_promises_only_what_it_actually_does():
     reply = app.respond(Turn(robot=_robot(), speech="earmuffs")).text.lower()
     assert "not listening" in reply
     assert "say earmuffs off" in reply, "the child is told how to undo it"
+
+
+# --------------------------------------------------------------------------- #
+# No shipped global may fire and do nothing (2026-09-08)
+# --------------------------------------------------------------------------- #
+# `Timer` matched and did nothing from the day it was written. `register_global` is never
+# called in production, and it carried no `extension`, so `respond` fell through to free
+# chat: a child asking for a timer got a conversational reply and no timer.
+#
+# NOTHING ANYWHERE RAISED, and it could not have. A global that fires and does nothing
+# produces the same observable turn as one that never matched — free chat answers either
+# way — so no assertion about the REPLY can tell them apart. That is why this guard is
+# structural: it asks whether each shipped global has any way to act at all, which is a
+# property of the module rather than of a turn.
+def _shipped_globals():
+    with open(STARTER) as fh:
+        return json.load(fh)["globals"]
+
+
+def test_every_shipped_global_can_actually_do_something():
+    dead = [g["name"] for g in _shipped_globals() if not g.get("extension")]
+    assert not dead, (
+        f"these shipped globals match and then fall through to free chat: {dead}. "
+        "A global needs an `extension` (or a handler registered in production, which "
+        "nothing does) or it silently does nothing — indistinguishable from never matching."
+    )
+
+
+def test_every_shipped_extension_actually_runs_under_its_shipped_grants():
+    """Declaring a capability is not being granted one.
+
+    A shipped extension is trusted only when its digest is in the recorded baseline, and
+    it then gets `SHIPPED_EXTRA_GRANTS` on top of the four defaults. An extension that
+    declares something outside that set loads fine and then **fails open at runtime** —
+    `[ext] … stopped: has not been granted: …; Moxie carried on without it` — which lands
+    the turn in free chat looking exactly like the dead global above.
+    """
+    from moxie_sdk.content import packs as P
+    from moxie_sdk.content.content_app import SHIPPED_EXTRA_GRANTS
+    from moxie_sdk.content import ext as E
+
+    allowed = set(E.DEFAULT_GRANTS) | set(SHIPPED_EXTRA_GRANTS)
+    for g in _shipped_globals():
+        block = g.get("extension") or {}
+        declared = set(block.get("capabilities") or [])
+        missing = sorted(declared - allowed)
+        assert not missing, (
+            f"shipped global {g['name']!r} declares {missing}, which is not in "
+            f"DEFAULT_GRANTS | SHIPPED_EXTRA_GRANTS — it would load and then quietly "
+            f"refuse at runtime, falling through to free chat."
+        )
+
+
+def test_the_timer_actually_sets_a_timer():
+    """The behaviour, not just the wiring: the right action with the right milliseconds.
+
+    `eb_timer_request` is a RECOVERED robot function (`ext.ACTION_WORDS`), and args are
+    (action=1 start, duration in ms). The arithmetic is asserted at three points because
+    the first version of this program had `plural` argument-swapped, which made the whole
+    rule fail open — the extension layer logged and carried on, so the symptom was again
+    an ordinary free-chat reply.
+    """
+    from moxie_sdk.content import packs as P
+    with open(STARTER) as fh:
+        raw = json.load(fh)
+    app = ContentApp(load_modules(raw), lambda m: "FREE CHAT", persona="P",
+                     content_defaults=P.shipped_items(raw))
+    for speech, words, ms in [
+        ("set a timer for 5 minute", "5 minutes", "300000"),
+        ("set a timer for 1 minute", "1 minute", "60000"),   # singular, not "1 minutes"
+        ("timer for 30 second", "30 seconds", "30000"),
+    ]:
+        reply = app.respond(Turn(robot=_robot(), speech=speech))
+        assert reply.text != "FREE CHAT", f"{speech!r} fell through to the brain"
+        assert words in reply.text, f"{speech!r} -> {reply.text!r}"
+        assert [a.function for a in reply.actions] == ["eb_timer_request"]
+        assert reply.actions[0].args == ["1", ms], f"{speech!r} -> {reply.actions[0].args}"
