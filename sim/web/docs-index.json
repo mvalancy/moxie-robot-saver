@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 266579,
+   "bytes": 269762,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -157,7 +157,8 @@
     "2026-09-08 — the content-module e2e row CLOSES, and the pirate probe is why it can",
     "2026-09-08 — two code paths that agreed by coincidence, and three commands the robot always knew",
     "2026-09-08 — a shipped global that matched and did nothing, and a `getattr` default that invented a defect",
-    "2026-09-08 — an instrument that could not work, and the controls that proved it"
+    "2026-09-08 — an instrument that could not work, and the controls that proved it",
+    "2026-09-08 — the control arm worked, and the gloss was a RETRIEVAL bug all along"
    ],
    "kind": "md"
   },

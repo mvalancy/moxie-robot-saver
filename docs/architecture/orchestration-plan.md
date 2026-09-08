@@ -1907,3 +1907,54 @@ requires a per-request way to disable the lookup, which does not exist today.
 Zero gateway calls: every case scored offline against recorded transcripts, because `bestPassage` is
 pure and the corpus is local. The firmware row stays open exactly as it was — *measurably better, not
 solved* — now with a recorded reason why the obvious instrument cannot close it.
+
+### 2026-09-08 — the control arm worked, and the gloss was a RETRIEVAL bug all along
+
+Two measured negatives paid for themselves. The deleted lexical detector's parting recommendation was
+*"the signal is the difference a passage makes, not the vocabulary of one answer"* — that instrument
+now exists, and it moved the diagnosis off the layer three prompt attempts had been aimed at.
+
+**Built with no production surface, which was the binding constraint.** `sim/tools/grounding_probe.mjs`
+reuses the route's exported `buildUpstreamBody` and calls the gateway directly, so there is **no flag on
+`/api/chat`, no env var, nothing a visitor could set**. Verified here: `chat.js` gained no suppression
+parameter; the probe imports the body builder rather than the HTTP route. **A measurement that required
+a switch in the serving path would have been the worse trade.**
+
+**Validated in both directions — the thing the lexical attempt could not do:**
+
+- **noise floor zero** — the negative control asks a question where retrieval never fires, so the two
+  prompts are *identical* and every difference is pure sampling at temperature 0.8. No false positive.
+- **mechanism fires** — an answer carrying passage content scores GROUNDED.
+
+So a "not grounded" reading is a **true result**, not an instrument failure. That pair is what the
+previous attempt lacked and why it could not be trusted.
+
+**The finding: right document, wrong passage.**
+
+```
+Q: how does the robot talk to the cloud?
+A (with passage) : "…using special codes, just like sending messages to a friend…"
+B (without)      : "…using special messages!"
+from passage     : (none)
+```
+
+`rank` picks `mqtt-and-conversation.md` correctly **by title**, and `bestPassage` then returns a
+paragraph about **QR pairing stages**, which does not answer the question. **That is "a title is not an
+answer" one level down** — inside a document named after the query's own words, many paragraphs tie on
+the title's vocabulary while saying nothing about the question. Every prompt rewrite was aimed at a
+layer that was never the problem.
+
+**AND IT CORRECTED EVIDENCE THE AGENT HAD BEEN TRUSTING TWICE.** It had cited *"Moxie talks to the cloud
+using…MQTT"* as proof the docs feature worked. **The passage says `MQTTS`, not `MQTT`** — the earlier
+check was a substring regex matching *inside* it, and she had produced MQTT from her own knowledge.
+Verified: `MQTTS` appears 6 times in the corpus. **A substring match is a false witness, and it fooled
+both a regex and a careful reading.**
+
+**One weakness, left deliberately un-tuned:** a common word that happens to sit in the passage (`that`,
+`tells`, `which`) satisfies the discriminator by chance. A stop list is the exact hand-tuning this work
+exists to avoid, and requiring two shared terms would be a threshold moved *after* seeing results. So
+the discriminator stands as stated, the weakness is recorded, and **the firing terms are printed so a
+reader judges the verdict rather than trusting it.**
+
+Next slice is now well-defined and is **retrieval, not prompting**: `bestPassage` selects by query-term
+hits, which fails inside a document whose title *is* the query.
