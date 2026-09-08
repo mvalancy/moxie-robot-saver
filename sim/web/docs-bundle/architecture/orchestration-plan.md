@@ -2094,3 +2094,37 @@ capable of embarrassing me, which is the whole point of running the arm at all.
 right number. If starvation is routine at ordinary CI load, then a red that says *"this machine was too
 slow to measure"* still stops a build, and a check that reddens on the environment is a check people
 learn to ignore. That is a separate decision, and it needs the pristine number first.
+
+### 2026-09-08 — the prediction was WRONG, and the arm that proved it ran at a harder load
+
+```
+r1 FIXED    load=66.74 :: ❌ 2 failure(s) of 97   (3/16 sweeps timed out; 31px of travel)
+r1 PRISTINE load=78.85 :: ✅ 96 checks passed
+```
+
+**The old code passed. The rewrite failed. And the old code did it at a load 18% higher.** The
+prediction committed one hour earlier said `PRISTINE` *must* fail at no more than 31 px, on the
+argument that the rewritten loop runs a floor of four frames and exits early only on a condition the
+old code never tested — so it can never run *fewer* frames, and fewer frames cannot mean more travel.
+
+That argument is wrong somewhere I still cannot see. I have now tried twice to derive the mechanism
+from the source — `setSpeech` is DOM-only, the push condition is logically equivalent to the old
+`continue`, the frame floor is identical — and produced nothing but plausible stories. **That is the
+exact failure this log has spent the day cataloguing, so it stops here: the mechanism will be
+measured, not reasoned about.**
+
+**Standing by the terms as written.** The commitment was *"treated as a regression until that is
+explained — not patched until it goes green"*, and lengthening the deadline until the red disappears
+is precisely the move that phrase was written to forbid. The change stays on `dev` only as long as the
+remaining rounds allow; if the pattern holds across the pairs, it comes out, and the honest artifact
+of the exercise is the split verdict and this entry rather than a fix.
+
+**Two things this run does establish, independent of who wins:**
+
+1. **The split verdict works.** `3/16 sweeps timed out` alongside `31px of travel` reads in one glance
+   as *the runner was too slow to make the measurement*, where the old single assertion printed `31px`
+   and left a reader to guess between a placement defect and a slow machine. That value survives even
+   if the wait it is attached to gets reverted.
+2. **One pair is not a result.** `n=1` against `n=1` falsifies a *"must"* — which is all a universal
+   claim needs — but it cannot establish that the rewrite is worse on average. Those are different
+   claims, and the rounds still running are what separates them.

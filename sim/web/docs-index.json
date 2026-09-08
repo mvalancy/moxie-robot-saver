@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 279292,
+   "bytes": 281527,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -161,7 +161,8 @@
     "2026-09-08 — the control arm worked, and the gloss was a RETRIEVAL bug all along",
     "2026-09-08 — an instrument whose failure mode CONFIRMED the hypothesis it existed to test",
     "2026-09-08 — `git add -A` shipped an untested change inside a docs commit",
-    "2026-09-08 — a prediction, written down before the comparison arm finished"
+    "2026-09-08 — a prediction, written down before the comparison arm finished",
+    "2026-09-08 — the prediction was WRONG, and the arm that proved it ran at a harder load"
    ],
    "kind": "md"
   },
