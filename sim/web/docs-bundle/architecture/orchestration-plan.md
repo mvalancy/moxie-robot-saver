@@ -1607,3 +1607,35 @@ gate failing its own face fix at 3 of 11 (kept, not tuned); `completionText` fla
 which would have shipped mermaid as a dead feature whose symptom read as *"the model writes bad
 diagrams"*; and `#219`'s finding that **a title is not an answer** in the search it had just shipped.
 An agent that re-examines what it just built out-yields one that moves to the next list item.
+
+### 2026-09-08 — the thirteenth instance, and it asserted something TRUE
+
+Docs search shipped across five PRs (#217, #219, #221, #223 + promotions). The features matter less
+than what the agent found in its own test suite.
+
+**"A title is not an answer."** Asked *"what is your protocol?"* she answered *"I don't have a special
+protocol like a big robot"* — confident and wrong. Retrieval had worked. The right document was
+selected. What reached her was the document's **title** — 80 characters that matched the query and
+therefore outscored every paragraph in it. **Lookup succeeded, citation correct, answer invented.**
+
+**Every hermetic test passed while this was broken, because they asserted that the right document was
+chosen — and it was.** That is the sharpest form this family takes. The twelve instances before it were
+assertions that could not fail, or checks whose verdict changed nothing. This one **asserted a true
+property that was not the property that mattered**: retrieval correctness, when the thing at risk was
+whether the retrieved *text* reached the model. A suite can be green, honest, and pointed one inch to
+the left of the defect.
+
+**Only the live site could find it**, and the agent said so plainly rather than trusting the green.
+
+**The second bug is the better story.** After the fix she still glossed — *"it's like the rules we
+follow when we talk"* — and the agent could not tell whether the lookup had fired or been ignored,
+because **from outside those two produce the identical bad answer**. So it shipped `cited` in the
+envelope, rendered as a link under her answer. Framed as a feature first (*"a robot that says 'I
+looked it up' and can't show you where is asserting, not citing"*) and, as a side effect, it turned the
+next diagnosis into a **one-turn check** — proving the passage *was* arriving, which moved the fix from
+the plumbing to the instruction. **An observability seam that pays for itself in the next bug.**
+
+**Honest final state: one of two.** *Protocol* now carries real facts from the document; *firmware*
+still glosses, because that passage is about privileged Android permissions and she would rather
+simplify than say "I'm not sure". **Measurably better, not solved** — the agent's own words, and the
+right way to leave it.
