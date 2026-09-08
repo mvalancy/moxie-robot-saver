@@ -60,3 +60,70 @@ def test_is_offline_error_classification():
     assert is_offline_error(ConnectionError()) is True
     assert is_offline_error(TimeoutError()) is True
     assert is_offline_error(ValueError()) is False
+
+
+# --------------------------------------------------------------------------- #
+# The always-listening commands (2026-09-08)
+# --------------------------------------------------------------------------- #
+# `docs/reverse-engineering/runtime/content-and-conversation.md`:136-138 recovered the ten
+# phrases the real robot recognised at any time, independent of the running activity:
+# Sleep, WakeUp, Hello, ListenToMe, Earmuffs, HoldOn, RepeatThat, SpeakLouder, SpeakSofter,
+# SomethingElse. The shipped module carried none of them.
+#
+# THE FAILURE MODE HERE IS OVER-MATCHING, AND IT IS SILENT. A global short-circuits BEFORE
+# the brain, so a pattern one word too loose does not raise anything — it quietly answers a
+# real sentence with a canned line, and the only symptom is a robot that has become
+# strangely wooden. So both directions are asserted: the command fires with NO llm call,
+# and the sentence that merely contains its words does not.
+#
+# `Hello` is deliberately NOT authored despite being on the list: greeting is exactly what
+# free chat does well, and short-circuiting it to a fixed string would make her less like
+# Moxie, not more.
+def _counting_app():
+    calls = []
+
+    def chat(messages):
+        calls.append(messages)
+        return "FREE CHAT ANSWERED"
+
+    return _app(chat), calls
+
+
+def test_always_listening_commands_fire_without_spending_a_turn():
+    for speech, expect in [
+        ("hold on", "wait right here"),
+        ("hang on a second", "wait right here"),
+        ("can we do something else", "what would you like to do instead"),
+        ("earmuffs", "earmuffs on"),
+    ]:
+        app, calls = _counting_app()
+        reply = app.respond(Turn(robot=_robot(), speech=speech))
+        assert expect in reply.text.lower(), f"{speech!r} -> {reply.text!r}"
+        assert not calls, f"{speech!r} spent an LLM call; a global must short-circuit"
+
+
+def test_an_ordinary_sentence_is_not_hijacked_by_a_global():
+    # "wait a long time" contains "wait a"; "something else happened" contains
+    # "something else". Both are ordinary speech and must reach the brain.
+    for speech in [
+        "I had to wait a long time at school",
+        "hello moxie",
+        "tell me about elephants",
+        "my mum said something else happened at work",
+    ]:
+        app, calls = _counting_app()
+        reply = app.respond(Turn(robot=_robot(), speech=speech))
+        assert reply.text == "FREE CHAT ANSWERED", f"{speech!r} was hijacked -> {reply.text!r}"
+        assert calls, f"{speech!r} never reached the brain"
+
+
+def test_earmuffs_promises_only_what_it_actually_does():
+    """It says the line; it does not stop the microphone or drive the Earmuffs
+    engagement state, because this sim has no such wiring. A global that CLAIMED to stop
+    listening while still listening would be a lie told to a child, so the copy is pinned
+    to the honest half — and this test is what makes the gap deliberate rather than
+    forgotten."""
+    app, _ = _counting_app()
+    reply = app.respond(Turn(robot=_robot(), speech="earmuffs")).text.lower()
+    assert "not listening" in reply
+    assert "say earmuffs off" in reply, "the child is told how to undo it"

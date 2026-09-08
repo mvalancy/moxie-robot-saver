@@ -151,6 +151,34 @@ Regex over the utterance; capture groups become `volley.entities`. `action` sele
 handled; `code` builds the response and fires execution actions. Globals run regardless of the active
 activity (timers, "stop", wake words for commands).
 
+#### The ten the real robot listened for
+
+[`runtime/content-and-conversation.md`](../reverse-engineering/runtime/content-and-conversation.md):136-138
+recovered the always-listening set from `FlexibleGlobalCommand1`: **`Sleep`, `WakeUp`, `Hello`,
+`ListenToMe`, `Earmuffs`, `HoldOn`, `RepeatThat`, `SpeakLouder`, `SpeakSofter`, `SomethingElse`**.
+`starter.json` ships three of them — `HoldOn`, `SomethingElse`, `Earmuffs` — authored as
+`extension` programs (`say` + `handled`), so they cost **no LLM call** and work during any activity.
+
+**`Hello` is deliberately not authored.** A global short-circuits *before* the brain, so matching a
+greeting would replace every "hi Moxie" with one fixed string. Free chat greets better than a canned
+line does; authoring it would make her less like Moxie, not more.
+
+**`Earmuffs` says only what it does.** It is also an `EngagementState` the face renders
+([`turn-taking.md`](../reverse-engineering/runtime/turn-taking.md):20) and an animation
+([`unity-face-animation.md`](../reverse-engineering/runtime/unity-face-animation.md):187-191) — the
+robot visibly covers its ears. This sim has neither wiring, so the line promises only the half that
+happens. A global that *claimed* to stop listening while still listening would be a lie told to a
+child. The face/engagement half is a real follow-up, not a pretence.
+
+> **Over-matching is the silent failure of this whole section, and it is worth one worked example.**
+> A global short-circuits before the brain, so a pattern one word too loose does not raise anything —
+> it quietly answers a real sentence with a canned line, and the only symptom is a robot that has
+> become strangely wooden. `SomethingElse` shipped for ten minutes matching the bare phrase, which
+> swallowed *"my mum said something else happened at work"*. It was caught by the paired test, not by
+> reading. **Anchor a global on the request, not on its words, and assert both directions** —
+> `sim/tests/test_content_wiring.py` pins the command firing with no LLM call *and* the ordinary
+> sentence that merely contains its words reaching the brain.
+
 ### `schedules[]` — what to offer when
 ```json
 { "name":"moxie_go_hub_timers",

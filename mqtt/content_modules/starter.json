@@ -21,6 +21,117 @@
   ],
   "globals": [
     {
+      "name": "Earmuffs",
+      "source_version": 1,
+      "pattern": "\\bearmuffs\\b",
+      "entity_groups": "",
+      "_comment": [
+        "Earmuffs is the most Moxie-specific of the ten: a documented global AND an",
+        "EngagementState the face renders (runtime/turn-taking.md:20) and an animation",
+        "(runtime/unity-face-animation.md:187-191) -- the robot visibly covers its ears.",
+        "WHAT THIS DOES AND DOES NOT DO, stated because the gap matters: it says the line.",
+        "It does NOT stop the microphone or drive the Earmuffs engagement state, because",
+        "this sim has no such wiring. Authoring a global that CLAIMS to stop listening",
+        "while still listening would be a lie told to a child, so the line promises only",
+        "what actually happens -- the face/engagement half is a follow-up, not a pretence."
+      ],
+      "extension": {
+        "ext_format": 1,
+        "capabilities": [
+          "handled",
+          "say"
+        ],
+        "on": "global",
+        "rules": [
+          {
+            "do": [
+              {
+                "say": "Earmuffs on! I'm not listening. Say earmuffs off when you're done."
+              },
+              {
+                "handled": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "Hold On",
+      "source_version": 1,
+      "pattern": "\\b(hold on|hang on|wait a (?:second|minute|sec)|give me a (?:second|minute|sec)|just a (?:second|minute|sec))\\b",
+      "entity_groups": "",
+      "_comment": [
+        "One of the ten always-listening commands the real robot recognised, recovered at",
+        "docs/reverse-engineering/runtime/content-and-conversation.md:136-138 (Sleep,",
+        "WakeUp, Hello, ListenToMe, Earmuffs, HoldOn, RepeatThat, SpeakLouder,",
+        "SpeakSofter, SomethingElse).",
+        "A GLOBAL, not a prompt, because it must work DURING any activity -- that is the",
+        "whole point of the always-listening set. It costs no LLM call: the child said",
+        "'wait', and waiting is not a thing to think about.",
+        "The pattern is anchored on the phrase, not the bare word 'wait', because a global",
+        "short-circuits BEFORE the brain: too loose and it hijacks a real sentence."
+      ],
+      "extension": {
+        "ext_format": 1,
+        "capabilities": [
+          "handled",
+          "say"
+        ],
+        "on": "global",
+        "rules": [
+          {
+            "do": [
+              {
+                "say": "Okay! I'll wait right here. Tell me when you're ready."
+              },
+              {
+                "handled": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "Something Else",
+      "source_version": 1,
+      "pattern": "\\b((?:let'?s|lets|can we|could we|shall we|i want to|i wanna|wanna)\\s+(?:do\\s+)?something (?:else|different)|do something (?:else|different)|change the subject|i'?m bored of this)\\b",
+      "entity_groups": "",
+      "_comment": [
+        "SomethingElse, from the same documented command list. It hands control back to",
+        "the child rather than choosing for them, which is what the name asks for. No",
+        "LLM call: the answer to 'let's do something else' is a question, not a thought.",
+        "",
+        "THE PATTERN REQUIRES A REQUEST, not the bare phrase, and that is a bug this",
+        "file shipped with for about ten minutes. 'something else' alone matched 'my mum",
+        "said something else happened at work' -- an ordinary sentence answered with a",
+        "canned line, silently, because a global short-circuits BEFORE the brain and",
+        "nothing anywhere raises. It was caught by the paired test rather than by",
+        "reading, which is the whole reason that test asserts both directions."
+      ],
+      "extension": {
+        "ext_format": 1,
+        "capabilities": [
+          "handled",
+          "say"
+        ],
+        "on": "global",
+        "rules": [
+          {
+            "do": [
+              {
+                "say": "Sure! What would you like to do instead?"
+              },
+              {
+                "handled": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "name": "Timer",
       "source_version": 1,
       "pattern": "timer for (\\d+) (minute|second)",
