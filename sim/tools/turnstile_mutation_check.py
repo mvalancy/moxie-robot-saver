@@ -400,10 +400,13 @@ MUTATIONS = [
      SUITE, "does NOT credit away the second's charge"),
     # The opposite error, and it is the one that costs real money: refunding a request that
     # DID call the gateway means the budget stops describing what was spent.
+    # ANCHOR REPAIRED 2026-09-07, not the row rewritten: `buildUpstreamBody` grew a
+    # documentation-excerpt parameter, so the call this row pinned changed shape. The
+    # mutation is unchanged — insert a refund on the path that DID reach the gateway — and
+    # it now anchors on the `if (!upstream.ok)` block alone, which is the thing the row is
+    # actually about and does not move when the call's arguments do.
     ("R3  the upstream-failure path refunds too, so real spend is credited back", CHAT,
-     "    const upstream = await callGateway(cfg, buildUpstreamBody(cfg, turns, text));\n"
      "    if (!upstream.ok) {\n      return refusal(cfg, \"chat\", upstream.reason, {",
-     "    const upstream = await callGateway(cfg, buildUpstreamBody(cfg, turns, text));\n"
      "    if (!upstream.ok) {\n      slot.refundBudget();\n      return refusal(cfg, \"chat\", upstream.reason, {",
      SUITE, "its units stay spent"),
     ("R4  the ears' refusals keep their charge (the same drain, 2 units at a time)", TRANSCRIBE,
