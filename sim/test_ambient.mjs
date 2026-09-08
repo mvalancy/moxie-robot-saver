@@ -38,6 +38,33 @@ for (const ln of amb.lines || []) {
   if (rel) ok(existsSync(join(web, "audio", rel)), `ambient clip file missing: ${rel}`);
 }
 
+/* THE THINKING FILLERS — three copies of the same eight sentences, pinned together.
+ *
+ * `mqtt/moxie_sdk/filler.py` is the source (the robot path has had these all along),
+ * `sim/web/bridge.js` speaks them, and `audio/index.json` keys its clips BY THE EXACT
+ * TEXT. Punctuation is load-bearing: an em dash typed as a hyphen, or "Hmmm" for "Hmmmm",
+ * and the lookup misses and she is silently mute at the one moment she is meant to fill.
+ * Silence is also the correct failure, which is precisely why nothing would notice — so
+ * the three copies are compared here rather than trusted. */
+{
+  const py = readFileSync(join(here, "..", "mqtt", "moxie_sdk", "filler.py"), "utf8");
+  const pyLines = [...py.matchAll(/\("([^"]+)",\s*\n?\s*MOOD/g)].map((m) => m[1]);
+  ok(pyLines.length === 8, `filler.py still defines 8 lines (got ${pyLines.length})`);
+
+  const bridge = readFileSync(join(web, "bridge.js"), "utf8");
+  const block = /var FILLERS = \[([\s\S]*?)\];/.exec(bridge);
+  ok(!!block, "bridge.js carries a FILLERS list");
+  const jsLines = block ? [...block[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)]
+    .map((m) => m[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")) : [];
+
+  for (const t of pyLines) {
+    ok(jsLines.includes(t), `bridge.js speaks filler.py's line: ${JSON.stringify(t)}`);
+    ok(!!clips[t], `…and a clip is pre-rendered for it (run prerender_audio.py --ambient)`);
+  }
+  ok(jsLines.length === pyLines.length,
+     `bridge.js has no EXTRA fillers without clips (${jsLines.length} vs ${pyLines.length})`);
+}
+
 // wiring: sim.html loads ambient.js
 const sim = readFileSync(join(web, "sim.html"), "utf8");
 ok(/src="ambient\.js/.test(sim), "sim.html must load ambient.js");
