@@ -114,12 +114,31 @@ export function bestPassage(markdown, query) {
   let best = "", bestScore = 0;
   for (const raw of blocks) {
     const b = raw.trim();
-    // Skip the furniture: fences, tables, front-matter rules and bare headings carry
-    // little prose and read terribly when quoted.
+    // Skip the furniture: fences, tables and front-matter rules carry little prose and
+    // read terribly when quoted.
     if (!b || b.length < 60 || b.startsWith("```") || b.startsWith("|") || b.startsWith("---")) continue;
+    /* AND SKIP HEADINGS, which is the fix for a bug that reached production.
+     *
+     * Asked "what is your protocol?" on the live site she answered "I don't have a special
+     * protocol like a big robot" — confidently, and wrong. The retrieval had worked: it
+     * picked `remote-chat-protocol.md` correctly. What it handed her was the document's
+     * TITLE — "RemoteChat — the robot to brain conversation protocol (v3.6.4-Zephyr…)" —
+     * because that heading is over sixty characters long and matched the query, so it beat
+     * every real paragraph. A title names a subject; it does not explain one, and there was
+     * nothing in it to answer from.
+     *
+     * A block whose every line begins with `#` is a heading and never an answer. */
+    if (b.split("\n").every((ln) => /^\s*#/.test(ln))) continue;
+
     const low = b.toLowerCase();
-    let score = 0;
-    for (const t of want) if (low.includes(t)) score += 1;
+    let hits = 0;
+    for (const t of want) if (low.includes(t)) hits += 1;
+    if (!hits) continue;
+    /* DISTINCT TERMS DOMINATE, LENGTH BREAKS TIES. Counting term hits alone made a
+     * one-line match indistinguishable from a paragraph that actually develops the idea,
+     * which is the same failure as the title in miniature. The length bonus is capped so a
+     * long rambling block cannot outrank a shorter one that matches more of the question. */
+    const score = hits * 10 + Math.min(b.length / 200, 4);
     if (score > bestScore) { bestScore = score; best = b; }
   }
   if (!best) return "";
