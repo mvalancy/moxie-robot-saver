@@ -597,9 +597,10 @@ async function dockGeometry(page) {
  */
 {
   const page = await open(1280, 900);
-  const m = await page.evaluate(async () => {
+  const res = await page.evaluate(async () => {
     const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
     const rows = [];
+    let starved = 0;      // sweeps that hit their deadline without her moving 6px
     const ends = [0, 32767];
     for (let i = 0; i < 16; i++) {
       // Re-said every sweep: the bubble's own hold timer would otherwise hide it midway,
@@ -608,28 +609,53 @@ async function dockGeometry(page) {
       window.moxie.setSpeech("Do you ever think about the sky?");
       window.moxie.setMotor(6, ends[i % 2]);          // body lean: the biggest head arc
       window.moxie.setMotor(4, ends[(i + 1) % 2]);    // nod, on the opposite phase
-      for (let f = 0; f < 4; f++) {
+      // A FIXED FRAME COUNT IS NOT A WAIT FOR MOTION. `animate()` clamps dt to 0.1s, so
+      // four frames on a starved runner advance her a fraction of what four frames advance
+      // her here — and the assertion below is about how far she TRAVELLED. The old form
+      // said `f < 4` and asserted "she swung", which are different claims that agree only
+      // while the runner is fast. Four stays the floor, so sampling on a healthy runner is
+      // unchanged and we only ever wait LONGER; what ends the sweep is the observation the
+      // assertion actually wants, and if that observation never arrives we record it rather
+      // than folding it into the same red as a real placement bug.
+      const start = rows.length;
+      const swEnd = performance.now() + 1500;
+      for (let f = 0; ; f++) {
         await frame();
         // Same reason as the camera block: a starved runner can outrun the hold timer.
         if (document.getElementById("bubble").classList.contains("hidden"))
           window.moxie.setSpeech("Do you ever think about the sky?");
         const a = window.__bubbleAnchor();
-        if (a.frozen || !a.exact) continue;
-        const e = a.exact;
-        rows.push({
-          leader: e.leader,
-          gapErr: Math.abs(e.leader - (e.bubble.top - e.head.y)),
-          anchorErr: Math.abs(e.bubble.cx - (e.above ? e.head.x : e.chest.x)),
-          covers: e.bubble.top <= e.head.y && e.bubble.bottom >= e.head.y,
-          headMoved: e.head.y,
-        });
+        if (!a.frozen && a.exact) {
+          const e = a.exact;
+          rows.push({
+            leader: e.leader,
+            gapErr: Math.abs(e.leader - (e.bubble.top - e.head.y)),
+            anchorErr: Math.abs(e.bubble.cx - (e.above ? e.head.x : e.chest.x)),
+            covers: e.bubble.top <= e.head.y && e.bubble.bottom >= e.head.y,
+            headMoved: e.head.y,
+          });
+        }
+        if (f < 3) continue;                       // the old floor, kept exactly
+        const mine = rows.slice(start);
+        if (mine.length >= 2) {
+          const ys = mine.map((r) => r.headMoved);
+          if (Math.max(...ys) - Math.min(...ys) >= 6) break;  // she demonstrably moved
+        }
+        if (performance.now() > swEnd) { starved++; break; }
       }
     }
-    return rows;
+    return { rows, starved };
   });
+  const m = res.rows;
 
   ok(m.length >= 30, `she was sampled while actually moving (${m.length} placed frames)`);
   const spread = Math.max(...m.map((r) => r.headMoved)) - Math.min(...m.map((r) => r.headMoved));
+  // Two causes, two checks. A small `spread` means either the drive never moved her (a real
+  // defect) or this runner never gave her the frames to move in (an environment fact). The
+  // old single check reported both as the same red, so the one failure it ever produced could
+  // not be read. Whichever of these goes red now says which one it was.
+  ok(res.starved === 0,
+     `…and the runner gave her room to swing in every sweep (${res.starved}/16 timed out)`);
   ok(spread > 40,
      `…and the drive really swung her head across the screen (${spread.toFixed(0)}px of travel)`);
   const leadered = m.filter((r) => r.leader > 0);

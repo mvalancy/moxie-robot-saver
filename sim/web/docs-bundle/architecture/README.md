@@ -110,6 +110,11 @@ A backend + Sim are built from these directly; each cites the study but reads on
   failed on *both* sides including pristine `dev`. The eleventh instance of the family, sitting under the
   INTEGRATION tier's own primary instrument, and the brief requires separating a fixed wait from a real
   capacity limit — the second would be a product finding).
+  [`backlog/grounding-gate-unrun.md`](backlog/grounding-gate-unrun.md) — **the retrieval fix shipped
+  with a narrower proof than the one it was written against**: the right paragraph is provably
+  selected, but the end-to-end gate that would show her answer stops glossing has never executed,
+  because the gateway was 503 for hours. The brief exists so that gap is not read as closed —
+  and it,
   and [`backlog/head-travel-threshold.md`](backlog/head-travel-threshold.md) (**the twelfth
   instance, and the first this project introduced while fixing the family** — block 4a's `spread > 40`
   px floor waits a fixed four frames per sweep, so a loaded runner reads a short arc as a broken drive.

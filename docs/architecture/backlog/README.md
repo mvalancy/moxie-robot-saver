@@ -84,5 +84,7 @@ work down:
   silently overwriting it — a silently-updated marker teaches the next reader nothing about how often
   these drift.
 
+- [`grounding-gate-unrun.md`](grounding-gate-unrun.md) — **the retrieval fix is proven, the answer-quality claim one layer up is not.** Blocked on a multi-hour gateway 503, not on the work.
+
 ---
 📖 [Docs index](../../README.md) · [Architecture index](../README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Implementation plan](../implementation-plan.md)

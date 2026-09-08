@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 12195,
+   "bytes": 12597,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 30444,
+   "bytes": 30637,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -1006,6 +1006,20 @@
     "Acceptance criteria",
     "Effort",
     "Files"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/grounding-gate-unrun.md",
+   "title": "The grounding gate has never run",
+   "section": "architecture",
+   "bytes": 3076,
+   "mermaid": 0,
+   "headings": [
+    "The two claims, which are not the same claim",
+    "The gate, unchanged",
+    "Why it has not run",
+    "What has to happen"
    ],
    "kind": "md"
   },
