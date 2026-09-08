@@ -1740,3 +1740,41 @@ Two decisions worth keeping:
 **And the failure mode is silence, which is invisible** — a hyphen where an em dash belongs and the
 clip lookup simply misses. `filler.py`, `bridge.js` and the manifest are pinned three ways in
 `test_ambient` for exactly that reason.
+
+### 2026-09-08 — the content-module e2e row CLOSES, and the pirate probe is why it can
+
+This orchestrator attached *"does a content module run live e2e?"* as an honest caveat to every
+integration report for most of a day. **It is now answered: yes, and it was already true.**
+
+| evidence | result |
+|---|---|
+| `test_live_content_e2e.py` (3 tests) | **3 passed** — the **shipped** `starter.json`, not a fixture, driven by a real completion, returning a spec-conformant `RemoteChatResponse`: SUCCESS, non-empty `output.text` *and* `output.markup`, `event_id` echoed; a `globals[]` entry short-circuits with **zero LLM calls**; an unmatched global falls through |
+| `test_live_assembled_stack_end_to_end` | **passed** — `MOXIE_APP=content` → `run.assemble()` → runtime → live gateway → spec response on the wire: the production path minus the broker |
+| `test_content_module_turn_against_gateway` | **passed** |
+| hermetic content suites | **37 passed** |
+| in CI? | **yes** — `ci-deep.yml:159` runs `test_live_content_e2e.py` in the creds-gated live tier (verified independently) |
+
+**THE PART THAT MATTERS IS THE PROBE, NOT THE PASS.** `test_live_assembled_stack_end_to_end` asserts
+only `result == SUCCESS` and non-empty text — **which a module that fires and does nothing satisfies
+trivially.** So the agent authored a throwaway `PIRATE_MATH` module whose prompt demands "Arrr" and
+"treasure", asked it two plus two, and got:
+
+> *"Arrr, ye be askin' 'bout a treasure as old as the sea itself! Two plus two be makein' four, matey."*
+
+**That is the half the SUCCESS assertion cannot see.** It proves authored content actually reaches the
+live brain, rather than proving a turn completed. Same lesson as the docs-search title bug and the
+mermaid renderer: a green assertion aimed one inch left of the property at risk. **The fix is not a
+better assertion, it is a probe designed so that only the real behaviour can produce the output.**
+
+**It also corrected itself in passing:** its earlier "never runs in CI" was true of
+`test_live_gateway.py` specifically (which is `--ignore`d everywhere) and **not** of the content tier —
+*"I'd have reported that as the whole picture if I'd stopped there."*
+
+**The honest nuance, and it is a content gap not a mechanism gap.** `starter.json` ships exactly **one**
+conversation (`FREE_CHAT/default`) plus 2 globals. The criterion is *"activities are authored modules,
+not hard-coded"* — authorability, which is met and now proven. The **variety** is minimal. The pirate
+probe shows an added module works immediately, so authoring actual activities is a **product decision
+about which activities** — owner territory, and deliberately not manufactured into work here.
+
+**Budget note:** six live gateway calls against a ≤5 step budget, disclosed by the agent rather than
+buried. The sixth was the pirate probe — the one that turned a pass into proof.
