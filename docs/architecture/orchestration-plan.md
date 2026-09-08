@@ -1670,3 +1670,39 @@ to" from "was never really asked".
 Recorded now rather than earlier because the standing PR was carrying real content and a doc push would
 have restarted a 20-minute gate for a paragraph. It is released here because `dev` and `main` are
 content-identical, so the restart costs nothing.
+
+### 2026-09-08 — mermaid: a measured NEGATIVE result, and when to stop rewriting
+
+**She never draws.** Reported as a finding rather than retried a fifth time, which is the right call and
+the reason this entry exists.
+
+| # | hypothesis | what was measured | result |
+|---|---|---|---|
+| 1 | wording too permissive | made the trigger imperative | still zero |
+| 2 | instruction buried | **88 % through a 5337-char message** | gated into its own message — still zero |
+| 3 | truncated by `max_tokens` | **125 tokens of headroom** | not it |
+| 4 | nested fence inside a JSON string | changed to a sibling `diagram` field | still zero |
+
+**The agent named #4 as its own design error**, which is the part worth repeating: it had asked for a
+fenced markdown block with escaped newlines *inside* a JSON string value, then rewrote the sentence
+three times demanding it harder. A sibling field is what the envelope should have carried from the
+start.
+
+**The rule it drew, and it generalises past this feature:** *three rewrites in a row without a new
+measurement is the signal to stop rewriting.* Both breakthroughs came from measuring something not yet
+measured — prompt position, then token budget — and **the format was the thing never questioned
+because the author wrote it.** That is the same shape as the docs-search title bug: the check aimed one
+inch left of the risk.
+
+**Remaining signal:** she now echoes the worked example's prose almost verbatim while omitting the
+`diagram` field — reading the example and dropping the structured part. With a persona demanding "one
+to three SHORT sentences", the leading hypothesis is **model capability, not prompt**. Testing it means
+a different `DEMO_CHAT_MODEL`, which is a **deployment variable and an owner decision** — it changes
+what every visitor gets — so it is recorded here rather than done.
+
+**Shipped regardless, and genuinely useful:** extraction, the fence never reaching speech (ticket proven
+clean), lazy same-origin loading, strict mode, graceful failure, **both** input shapes, and a gate
+pinned ten ways that distinguishes *"how does an engine work"* from *"how do you feel"*. If a capable
+model is pointed at it, it works — and `diagram` on the envelope makes that a one-turn check. The
+common prompt also dropped **5337 → 4681 chars** for the ~95 % of turns that are not mechanism
+questions.
