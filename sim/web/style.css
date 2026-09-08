@@ -1073,6 +1073,20 @@ body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow:
    the conversation — the same reasoning as `.mutter`. The SVG is scaled to fit rather than
    allowed to set its own size: mermaid emits an intrinsic width that can be far wider than
    a phone, and a log that scrolls sideways is a log nobody reads. */
+/* HER CITATION — a quiet line under an answer she looked up, not a turn of its own.
+   Small and dim on purpose: it is provenance, and provenance that shouts competes with the
+   answer it is supporting. */
+#transcript .cited {
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--muted-2);
+  opacity: 0.85;
+  padding: 1px 6px;
+}
+#transcript .cited a { color: var(--cyan-dim); text-decoration: underline; }
+
 #transcript .diagram {
   align-self: stretch;
   max-width: 100%;

@@ -1575,3 +1575,35 @@ grace. Reconciled (`git diff PRE..HEAD` empty), recreated as **#216**.
 **Kept visible rather than buried:** mermaid's *plumbing* is proven — extraction, the fence never
 reaching speech, lazy render, strict mode, graceful failure — but **no model has drawn a diagram on the
 live site yet**. Proving the pipe is not proving she chooses to draw at sensible moments.
+
+### 2026-09-08 — SELF-IMPROVE: the protocol correction that cost one message
+
+Worth recording because the fix was cheap and the failure was invisible from inside the agent.
+
+A long-running implementation agent was **pushing directly to `dev`** — `4136acf` and `ad2b2e0` both
+landed on the shared branch without a PR. Its work was good; the *route* was wrong, and it could not
+see the cost from where it sat: a direct push skips the full CI matrix (SIL, browser suites, Pages,
+docs), invalidates the standing `dev → main` PR's in-flight run, and lands on the branch every other
+worktree is cut from. Its own reply named the part it had not noticed — *"I'd also invalidated the
+standing `dev → main` run twice without thinking about it."*
+
+**One message fixed it permanently.** Since then: five slices (`evalgate`, `mermaid`, `docsearch`,
+`#219`, `#221`), each via branch → PR → full matrix → squash-merge → cleanup, **zero direct pushes**,
+and two promotions it drove correctly *including* rule 29's trailing steps — reconcile first, verify
+the diff is empty, then recreate the standing PR. The guard had nothing to catch on the second one.
+
+**Two things that made the correction land, both worth repeating:**
+
+1. **Separate the work from the route.** The message said plainly that the work was sound and staying,
+   and that this was about how it arrives. An agent told only "stop doing that" has to guess whether
+   its judgement is also in question.
+2. **Give the cost, not the rule.** *"Skips SIL, browser suites, Pages and docs; invalidates the
+   standing PR; lands on the branch others branch from"* is checkable. "The protocol says commit, never
+   push" is not, and a rule whose reason is withheld gets re-litigated the next time it is inconvenient.
+
+**The pattern in its output is the more interesting finding.** In every one of those five slices the
+most valuable thing was **not the feature** — it was a defect found while examining the feature: its own
+gate failing its own face fix at 3 of 11 (kept, not tuned); `completionText` flattening whitespace,
+which would have shipped mermaid as a dead feature whose symptom read as *"the model writes bad
+diagrams"*; and `#219`'s finding that **a title is not an answer** in the search it had just shipped.
+An agent that re-examines what it just built out-yields one that moves to the next list item.

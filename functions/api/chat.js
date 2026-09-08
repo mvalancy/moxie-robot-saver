@@ -308,6 +308,8 @@ export async function onRequestPost(context) {
         messages: [chatMessage(cfg.deviceId, wire)],
         speech,
         diagram: upstream.diagram || "",
+        // `"<title>|<path>"` when she looked something up. See `PUBLIC_KEYS`.
+        cited: docs ? (docs.title + "|" + docs.path) : "",
         context: nextContext,
         voice: cfg.voice,
         ears: cfg.ears,

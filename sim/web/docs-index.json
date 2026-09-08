@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 243180,
+   "bytes": 245560,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -148,7 +148,8 @@
     "2026-09-07 — promotion #2 of the day, and the Turnstile answer written down",
     "2026-09-07 — AUDIT: the DoD said \"still unknown\" about something already answered",
     "2026-09-07 — #211: a guard whose verdict changed nothing, found beside the one being hunted",
-    "2026-09-07 — the expressive loop closed, and `--is-ancestor` is the WRONG check after a squash"
+    "2026-09-07 — the expressive loop closed, and `--is-ancestor` is the WRONG check after a squash",
+    "2026-09-08 — SELF-IMPROVE: the protocol correction that cost one message"
    ],
    "kind": "md"
   },
