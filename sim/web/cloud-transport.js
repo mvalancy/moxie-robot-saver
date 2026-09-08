@@ -95,7 +95,7 @@
     turns: 0, live: 0, delegated: 0, fallbacks: 0,
     scripted: 0,             // consolation lines the PAGE chose (mic.js's degraded turn)
     scriptedFree: 0,         // ...of those, the ones a live page answered for FREE
-    chatOk: 0, diagrams: 0, chatRefused: 0, chatErrors: 0,
+    chatOk: 0, diagrams: 0, cited: 0, chatRefused: 0, chatErrors: 0,
     speechOk: 0, speechRefused: 0, speechErrors: 0,
     voiceFirst: 0,           // the TTS message was routed BEFORE the chat message
     chatFirst: 0,            // the 2.5 s wait elapsed, so the words went out alone
@@ -459,6 +459,32 @@
        * not. Every failure inside resolves false and draws nothing (`diagram.js`), so there
        * is no rejection to handle here and nothing that can turn a good turn into a bad
        * one. */
+      /* SHE CITES HER SOURCE. `cited` is `"<title>|<path>"` for a document in the corpus
+       * this site already serves, so the link goes to the docs explorer and a visitor can
+       * read the thing she paraphrased. A robot that says "I looked it up" and cannot show
+       * you where is just asserting. */
+      if (body.cited) {
+        var bar = body.cited.indexOf("|");
+        var ctitle = bar < 0 ? body.cited : body.cited.slice(0, bar);
+        var cpath = bar < 0 ? "" : body.cited.slice(bar + 1);
+        var log = document.getElementById("transcript");
+        if (log && ctitle) {
+          stats.cited++;
+          var row = document.createElement("div");
+          row.className = "cited";
+          var lead = document.createElement("span");
+          lead.textContent = "looked it up in ";
+          var a = document.createElement("a");
+          a.textContent = ctitle;                    // textContent = XSS-safe
+          a.href = cpath ? "docs.html#/" + cpath : "docs.html";
+          a.target = "_blank";
+          a.rel = "noopener";
+          row.appendChild(lead);
+          row.appendChild(a);
+          log.appendChild(row);
+          if ((log.scrollHeight - log.scrollTop - log.clientHeight) < 40) log.scrollTop = log.scrollHeight;
+        }
+      }
       if (body.diagram && window.moxieDiagram) {
         stats.diagrams++;
         window.moxieDiagram.render(body.diagram);

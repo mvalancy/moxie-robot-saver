@@ -114,6 +114,20 @@ export const PUBLIC_KEYS = Object.freeze([
    * delivery mechanism. `chat.js::splitDiagram` has already taken it OUT of the spoken
    * line, so nothing here is ever read aloud. */
   "diagram",
+  /* The DOCUMENT she answered from, as `"<title>|<path>"`, or `""` when she looked nothing
+   * up. Two jobs, and both are the point rather than debug scaffolding:
+   *
+   *   · A ROBOT THAT CITES ITS SOURCE. She is answering from a public corpus this site
+   *     already serves; showing which document lets a visitor go and read it, and makes
+   *     "she looked it up" checkable instead of a claim.
+   *   · IT MAKES THE FEATURE OBSERVABLE FROM OUTSIDE. Retrieval runs server-side, so
+   *     whether it fired was previously invisible: a lookup that silently never happened
+   *     and a model that ignored the excerpt produce the identical bad answer. It cost a
+   *     live measurement to notice, and this is what stops the next one costing another.
+   *
+   * The title and path are OURS — index metadata for files we committed — so this leaks
+   * nothing a visitor could not already fetch from `/docs-index.json`. */
+  "cited",
 ]);
 
 /** §4.5's table. A reason absent here is a programming error, not a 500 (see `respond`). */
@@ -390,6 +404,7 @@ export function envelope(partial) {
      * length bound belongs where the shape is guaranteed, not where it happens to be set.
      * `chat.js::splitDiagram` has already removed it from the spoken line. */
     diagram: typeof p.diagram === "string" ? p.diagram.slice(0, 1200) : "",
+    cited: typeof p.cited === "string" ? p.cited.slice(0, 300) : "",
   };
   // Reassemble in PUBLIC_KEYS order so the wire shape is stable and the allowlist is the
   // literal construction, not a filter applied after the fact.

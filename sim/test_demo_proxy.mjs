@@ -3566,6 +3566,34 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
        "…placed BEFORE the child's turn, so reference text is never the last thing read");
   }
 
+  // ---- 4b. SHE CITES WHAT SHE READ ----------------------------------------- //
+  //
+  // Two jobs, and neither is debug scaffolding. A robot that says "I looked it up" and
+  // cannot show you where is asserting, not citing. And retrieval runs server-side, so
+  // whether it fired was previously INVISIBLE from outside — a lookup that silently never
+  // happened and a model that ignored the excerpt produce the identical bad answer. That
+  // cost a live measurement to notice; this is what stops the next one costing another.
+  {
+    const assets = {
+      fetch: async (req) => {
+        const u = String(req.url || req);
+        if (u.endsWith("/docs-index.json")) {
+          return new Response(JSON.stringify({ files: [
+            { path: "reverse-engineering/protocol/p.md", title: "RemoteChat protocol", headings: ["Turns"] },
+          ] }), { status: 200 });
+        }
+        return new Response("The protocol carries one turn at a time: the robot posts what " +
+                            "it heard and the brain answers with words and behaviour markup.\n",
+                            { status: 200 });
+      },
+    };
+    const hit = await docsearch.lookup(assets, ORIGIN, "what is your protocol?");
+    ok(!!hit, "a lookup that succeeds returns a hit…");
+    eq(hit.title, "RemoteChat protocol", "…naming the document…");
+    eq(hit.path, "reverse-engineering/protocol/p.md", "…and its path, so the page can link it");
+    ok(hit.excerpt.includes("one turn at a time"), "…with a passage that actually answers");
+  }
+
   // ---- 5. IT FAILS OPEN, every way ----------------------------------------- //
   for (const [label, assets] of [
     ["no binding at all", null],
