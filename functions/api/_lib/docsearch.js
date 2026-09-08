@@ -80,10 +80,16 @@
  * instead, and the control arm scored it not grounded, correctly.
  *
  * That is "a title is not an answer" one level down: the DOCUMENT is right and the PASSAGE
- * inside it is wrong. `bestPassage` scores paragraphs by query-term hits, and in a document
+ * inside it is wrong. `bestPassage` scored paragraphs by query-term hits, and in a document
  * named after the query's own words many paragraphs tie on the title's vocabulary while
- * saying nothing about the question. Fixing that is the next slice and it is a retrieval
- * problem, not a prompting one.
+ * saying nothing about the question — leaving the capped LENGTH bonus to pick the winner.
+ * A retrieval problem, not a prompting one, and three rounds of prompt rewriting had been
+ * aimed at a layer that was never broken.
+ *
+ * FIXED BELOW by scoring the paragraph's SECTION HEADING, at the weight `rank` already
+ * gives headings. The measured effect on that question: the QR-pairing paragraph is gone
+ * and the passage now handed to the model is the transport paragraph, which contains
+ * `MQTT` as a whole word rather than as a substring of `MQTTS`.
  * ============================================================================ */
 
 /** Words too common to discriminate between 152 documents about one robot. `moxie` is in
@@ -164,33 +170,68 @@ export function bestPassage(markdown, query) {
   if (!text) return "";
   const blocks = text.split(/\n\s*\n/);
   let best = "", bestScore = 0;
+  /* The heading a paragraph lives under, carried down the document as we walk it. This is
+   * read BEFORE the length filter below, and that ordering is the whole point: real
+   * headings are short — `## MQTT / "Talking" Layer Spec` is 30 characters — so a heading
+   * check placed after a `length < 60` test only ever sees the freakishly long ones. That
+   * is exactly how the title bug got in: the one heading big enough to survive the filter
+   * was the one that reached the model. */
+  let heading = "";
   for (const raw of blocks) {
     const b = raw.trim();
+    if (!b) continue;
+    if (b.split("\n").every((ln) => /^\s*#/.test(ln))) {
+      heading = b.replace(/^#+\s*/gm, "").replace(/\n/g, " ");
+      /* A HEADING IS CONTEXT FOR WHAT FOLLOWS AND NEVER AN EXCERPT ITSELF, which is the
+       * fix for a bug that reached production. Asked "what is your protocol?" on the live
+       * site she answered "I don't have a special protocol like a big robot" — confidently,
+       * and wrong. Retrieval had worked and picked `remote-chat-protocol.md` correctly.
+       * What it handed her was the document's TITLE — "RemoteChat — the robot to brain
+       * conversation protocol (v3.6.4-Zephyr…)" — because that heading is over sixty
+       * characters long and matched the query, so it beat every real paragraph. A title
+       * names a subject; it does not explain one, and there was nothing in it to answer
+       * from. */
+      continue;
+    }
     // Skip the furniture: fences, tables and front-matter rules carry little prose and
     // read terribly when quoted.
-    if (!b || b.length < 60 || b.startsWith("```") || b.startsWith("|") || b.startsWith("---")) continue;
-    /* AND SKIP HEADINGS, which is the fix for a bug that reached production.
-     *
-     * Asked "what is your protocol?" on the live site she answered "I don't have a special
-     * protocol like a big robot" — confidently, and wrong. The retrieval had worked: it
-     * picked `remote-chat-protocol.md` correctly. What it handed her was the document's
-     * TITLE — "RemoteChat — the robot to brain conversation protocol (v3.6.4-Zephyr…)" —
-     * because that heading is over sixty characters long and matched the query, so it beat
-     * every real paragraph. A title names a subject; it does not explain one, and there was
-     * nothing in it to answer from.
-     *
-     * A block whose every line begins with `#` is a heading and never an answer. */
-    if (b.split("\n").every((ln) => /^\s*#/.test(ln))) continue;
+    if (b.length < 60 || b.startsWith("```") || b.startsWith("|") || b.startsWith("---")) continue;
 
     const low = b.toLowerCase();
-    let hits = 0;
-    for (const t of want) if (low.includes(t)) hits += 1;
+    const headLow = heading.toLowerCase();
+    let hits = 0, headHits = 0;
+    for (const t of want) {
+      if (low.includes(t)) hits += 1;
+      if (headLow.includes(t)) headHits += 1;
+    }
     if (!hits) continue;
-    /* DISTINCT TERMS DOMINATE, LENGTH BREAKS TIES. Counting term hits alone made a
-     * one-line match indistinguishable from a paragraph that actually develops the idea,
-     * which is the same failure as the title in miniature. The length bonus is capped so a
-     * long rambling block cannot outrank a shorter one that matches more of the question. */
-    const score = hits * 10 + Math.min(b.length / 200, 4);
+    /* DISTINCT TERMS DOMINATE, THE SECTION HEADING IS THE TIEBREAK, LENGTH IS LAST.
+     *
+     * Length used to break the ties and that was a measured failure rather than a
+     * theoretical one. Asked "how does the robot talk to the cloud?" the query reduces to
+     * just two terms — `talk`, `cloud` — so `hits` saturates at 2 across a dozen
+     * paragraphs and the capped length bonus becomes the entire selector. The winner was
+     * the longest paragraph containing both words: one about QR PAIRING STAGES, scoring
+     * 24.0 against 22.9 for the paragraph that actually answers the question, a gap made
+     * up purely of characters.
+     *
+     * Worse, length was double-counted. A longer paragraph is more likely to contain any
+     * given term BY CHANCE, so length already bought the hits — and then got paid again
+     * for having them.
+     *
+     * The heading is the honest signal, and `rank` above already knows it: a heading match
+     * means this section is ABOUT the thing rather than mentioning it in passing. This
+     * applies that same judgement one level down, at the same 6:3 ratio `rank` weights
+     * title against heading — half of a direct hit, enough to settle a tie between
+     * paragraphs that match equally, never enough to beat a paragraph matching more of the
+     * question. The number is reused rather than invented so it cannot be quietly tuned
+     * until the ranking agrees with whoever last looked at it.
+     *
+     * PURE TERM DENSITY WAS TRIED FIRST AND IS WORSE. Normalising hits by paragraph length
+     * is the textbook correction for the double-count, and on this corpus it promotes an
+     * 88-character citation stub — "From `embodied.logging.Cloud2` (…path…)" — over every
+     * real paragraph, because density rewards brevity and a stub is nothing but terms. */
+    const score = hits * 10 + headHits * 5 + Math.min(b.length / 200, 4);
     if (score > bestScore) { bestScore = score; best = b; }
   }
   if (!best) return "";
