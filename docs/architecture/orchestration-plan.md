@@ -1820,3 +1820,42 @@ it herself** through docs search.
 
 Verification: hermetic **5535 passed / 93 skipped / 1 xfailed**, all 34 node suites, doc guards green,
 `test_live_content_e2e` **3 passed against the real gateway** with the new globals in place.
+
+### 2026-09-08 — a shipped global that matched and did nothing, and a `getattr` default that invented a defect
+
+**`SpeakLouder` was refused, correctly, after tracing rather than assuming either way.** The transport
+is real — `SystemVolumeModify { sint32 volume; bool relative; }` is recovered, documented, injectable
+over `/commands/zmq`, and our runtime already publishes on that topic for STT. **But the recovered
+function catalog has no volume entry** (`eb_enable_qr`, `eb_qr_value`, `eb_timer_request`, `eb_wake`),
+and an authored global reaches the robot through `act.<name>` with `ACTION_WORDS` deliberately bounded
+by *recovered* names. So wiring it today means **inventing a `function_id` the real robot never had —
+fabrication — or adding a new capability plumbed to `commands/zmq`**, which is a real slice and the same
+"needs state we don't have" answer `Earmuffs` got. The refusal is the finding.
+
+**THE SHIPPED `Timer` GLOBAL HAD MATCHED AND DONE NOTHING SINCE IT WAS WRITTEN.** No handler
+(`register_global` is never called in production), no extension — so it matched and fell through to
+free chat. **A child asking for a timer got a chat reply and no timer.** Nothing raised, and nothing
+*could*: **that failure is observationally identical to never matching.** It is a program now
+(`eb_timer_request`), verified at three points including *"1 minute"* not *"1 minutes"* → `60000`.
+
+**Then the agent's own program failed the same way** — `plural` is `(word, count)` and it wrote
+`(count, word)`, so the rule failed open with a symptom identical to the bug it was fixing. Found by
+reading the implementation rather than guessing a third time.
+
+**AND A MEASUREMENT THAT INVENTED A DEFECT, caught before reporting.** It twice concluded
+`What Time Is It` was dead. The second time it read `_ext_shipped_digests` — **an attribute that does
+not exist** — and `getattr(..., [])` silently returned `0`. The real name is `_ext_shipped`, it holds
+4 digests, all four extensions are trusted. **No defect.** Verified independently here:
+`content_app.py:109` defines `_ext_shipped`; `_ext_shipped_digests` appears nowhere.
+
+> **A `getattr` default is a silent rename-detector that never fires.** It turned a typo into a
+> confident finding, and the only reason it did not reach a report is that the agent checked its own
+> instrument. Same shape as the mermaid probe: *a measurement that looked like a finding.*
+
+**Three guards, because this class is invisible by construction:** every shipped global must have
+*some* way to act (structural — no turn can distinguish "matched and did nothing" from "never
+matched"); every declared capability must be inside the grantable set, or it loads and quietly refuses;
+and the timer's actual arithmetic. Two escape tests were **narrowed, not relaxed** — from *"no shipped
+extension may act"* to pinning exactly `{act.eb_timer_request}`, which is the stronger claim.
+
+Hermetic **5554 passed**, all 34 node suites, live `test_live_content_e2e` **3 passed**.
