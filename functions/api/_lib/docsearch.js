@@ -65,11 +65,25 @@
  * that admits `mqtt` (55%) also admits `brain` — a word she says constantly whether or not
  * she read anything. The distributions overlap; rarity is not the separating property.
  *
- * WHAT A WORKING INSTRUMENT WOULD NEED is a control arm: the same question asked with the
+ * WHAT A WORKING INSTRUMENT NEEDED was a control arm: the same question asked with the
  * retrieval suppressed, and a comparison of the two answers. The signal is the DIFFERENCE
  * a passage makes, not the vocabulary of one answer — which cannot be read off a single
- * turn however it is scored. That needs a way to disable the lookup per request, which
- * does not exist today, and is the honest next step if this is picked up again.
+ * turn however it is scored. **BUILT 2026-09-08: `sim/tools/grounding_probe.mjs`**, and it
+ * needed no suppression switch in this file at all — the probe builds both prompts with
+ * `buildUpstreamBody` and calls the gateway directly, so the serving path is untouched and
+ * there is nothing a visitor could set.
+ *
+ * AND IT IMMEDIATELY FOUND SOMETHING ABOUT THIS FILE RATHER THAN ABOUT THE MODEL. Asked
+ * "how does the robot talk to the cloud?", `rank` picks `architecture/mqtt-and-conversation
+ * .md` — the right document by title — and `bestPassage` then returns a paragraph about QR
+ * PAIRING STAGES, which does not answer the question. She answered from her own knowledge
+ * instead, and the control arm scored it not grounded, correctly.
+ *
+ * That is "a title is not an answer" one level down: the DOCUMENT is right and the PASSAGE
+ * inside it is wrong. `bestPassage` scores paragraphs by query-term hits, and in a document
+ * named after the query's own words many paragraphs tie on the title's vocabulary while
+ * saying nothing about the question. Fixing that is the next slice and it is a retrieval
+ * problem, not a prompting one.
  * ============================================================================ */
 
 /** Words too common to discriminate between 152 documents about one robot. `moxie` is in
