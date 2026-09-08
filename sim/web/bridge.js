@@ -802,6 +802,26 @@
    *     fight the reply that lands after it.
    */
   var THINK_DELAY_MS = 900;
+  /* THE FILLER LINES — the eight `mqtt/moxie_sdk/filler.py` has always had, now pre-rendered
+   * so the browser can actually say one. Text must match the manifest key CHARACTER FOR
+   * CHARACTER (em dashes, ellipsis, the four m's in "Hmmmm") or the clip lookup misses and
+   * she is silent, which is why they are copied rather than retyped —
+   * `sim/test_ambient.mjs`'s sibling check pins the pair. */
+  var FILLERS = [
+    "Hmm, let me think about that one.",
+    "Ooh, good question! Give me a second.",
+    "One moment — my thinking gears are spinning.",
+    "Hold on, I'm still working that out.",
+    "That's a big one. I'm thinking hard!",
+    "Just a sec — I want to get this right.",
+    "Hmmmm. Almost got it.",
+    "Thinking, thinking… nearly there."
+  ];
+  /* SPOKEN ONLY WHEN THE WAIT EARNS IT. 900 ms gets a thinking FACE; a filler is a whole
+   * spoken sentence and interrupting it two words in is worse than never starting. 1800 ms
+   * is past the median turn, so a quick answer is never talked over by a robot saying it is
+   * thinking about the thing it has already finished thinking about. */
+  var SPEAK_FILLER_AFTER_MS = 1800;
   var thinkTimer = null, thinkStage = 0;
   var lastPick = {};
 
@@ -820,6 +840,8 @@
   }
 
   var alive = {
+    /** Recorded facts for the tests: how many fillers were actually spoken. */
+    stats: { spoke: 0 },
     /** The visitor just opened the microphone. She notices, and leans in a little.
      *  Immediate on purpose: this one IS the acknowledgement that the tap landed. */
     listening: function () {
@@ -845,13 +867,31 @@
           if (thinkStage === 1) {
             window.moxie.setFace(pickDifferent("thinkFace", ["thinking", "curious"]));
             gesture("Gesture_Think_Subtle");
+          } else if (thinkStage === 2) {
+            /* SHE SAYS IT OUT LOUD. Played through the "ambient" group on purpose: that is
+             * the one group `audio.js::heldBy` lets a REPLY take the floor from, so when
+             * the real answer lands it cuts the filler off mid-word — which is exactly
+             * right, and is what a person does when they finish thinking. Any other group
+             * would make her queue the answer behind her own "hmm".
+             *
+             * A missing clip is silence, not an error: `speak()` looks the text up in the
+             * manifest and does nothing if it is absent, so a deployment that never ran
+             * the pre-render degrades to the face-only cue this replaced. */
+            var line = pickDifferent("filler", FILLERS);
+            gesture(pickDifferent("thinkAgain", ["Gesture_Think", "Gesture_Think_Subtle"]));
+            try {
+              if (window.moxieAudio && window.moxieAudio.speak) window.moxieAudio.speak(line, "ambient");
+              alive.stats.spoke++;
+            } catch (e) {}
           } else {
             // Still waiting. A different small move rather than a louder one.
             gesture(pickDifferent("thinkAgain", ["Gesture_Think", "Gesture_Think_Subtle"]));
             set(5, pickDifferent("thinkYaw", [17400, 15600]));
           }
         } catch (e) {}
-        if (thinkStage < 3) thinkTimer = setTimeout(beat, 2200);
+        // Beat 1 at 900 ms is the face; beat 2 is the spoken filler, timed so the whole
+        // wait has to be worth a sentence before she says one.
+        if (thinkStage < 3) thinkTimer = setTimeout(beat, thinkStage === 1 ? (SPEAK_FILLER_AFTER_MS - THINK_DELAY_MS) : 2200);
         else thinkTimer = null;
       };
       thinkTimer = setTimeout(beat, THINK_DELAY_MS);
