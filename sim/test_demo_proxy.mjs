@@ -3417,6 +3417,23 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   ok(!/```|graph TD|-->/.test(ticketed.claims.t || ""),
      "…and the TEXT IT AUTHORISES carries no diagram: nothing pays to synthesise syntax");
 
+  /* THE WORKED EXAMPLE IN THE PROMPT MUST ROUND-TRIP THROUGH THE EXTRACTOR.
+   *
+   * The instruction shows her a sample envelope with a fence inside the `say` string,
+   * because that interaction is the one mechanically confusing part. If the extractor
+   * would not accept the exact shape we teach, we are training the model to produce
+   * something we then throw away — and the symptom would be "she never draws", which is
+   * precisely the state this replaced. So the example is asserted against the real parser
+   * rather than eyeballed. */
+  {
+    const taught = "A seed grows in three steps! ```mermaid\ngraph TD;\n  Seed-->Roots;\n  Roots-->Tree;\n```";
+    const r = chat.splitDiagram(taught);
+    eq(r.spoken, "A seed grows in three steps!",
+       "the example we TEACH her yields clean spoken words…");
+    ok(r.diagram.includes("Seed-->Roots") && r.diagram.includes("\n"),
+       "…and a diagram with its newlines: we do not teach a shape we then discard");
+  }
+
   // A reply with no diagram is byte-identical to before the feature existed.
   fresh();
   plan = { chat: { content: "Just words, no diagram." } };

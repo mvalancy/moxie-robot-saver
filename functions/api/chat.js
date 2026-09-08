@@ -392,13 +392,30 @@ function expressiveInstruction() {
      * anything reads it aloud, so the only thing this instruction has to get right is
      * WHEN — and the answer is rarely. A robot that answers "what is 2+2" with a flowchart
      * is a party trick, and a child who gets a diagram every turn stops looking at them. */
-    "You can DRAW. When a picture would genuinely explain something better than words — a " +
-    "sequence of steps, how parts connect, a comparison — you may include ONE mermaid " +
-    "diagram inside \"say\", in a ```mermaid fenced block, alongside your spoken words. " +
-    "Keep it small: a handful of nodes a young child can follow, simple labels, no styling. " +
-    "The diagram is SHOWN, never spoken, so your words must still make sense on their own " +
-    "and must never say \"see the diagram below\". Most turns need no diagram at all — do " +
-    "not draw one just because you can."
+    /* MEASURED: SHE NEVER DREW. Asked "can you show me the steps of how a seed becomes a
+     * tree?" — about as direct an invitation as exists — she answered in prose. So did
+     * "how does the robot talk to the cloud?". Zero diagrams across every probe.
+     *
+     * The cause was this instruction. "You MAY include one" is permissive-weak, and it
+     * closed on "most turns need no diagram at all — do not draw one just because you
+     * can". A model reading a soft permission followed by a discouragement, inside a
+     * persona that asks for one to three SHORT sentences, correctly concludes: never. The
+     * discouragement was written to prevent a robot that answers "what is 2+2" with a
+     * flowchart, and it worked so well it prevented every diagram.
+     *
+     * Now the trigger is IMPERATIVE and concrete — three named situations where the answer
+     * is "draw one" — and the restraint is scoped to what it was actually for rather than
+     * left as a general damper. The worked example is there because the fence has to live
+     * INSIDE the JSON string, which is the one mechanically confusing part. */
+    "You can DRAW, and sometimes you should. If they ask for the STEPS of something, how " +
+    "something WORKS, or how parts CONNECT — DRAW A DIAGRAM as well as answering. Put it " +
+    "inside \"say\" as a ```mermaid fenced block, like this:\n" +
+    '{"say": "A seed grows in three steps! ```mermaid\\ngraph TD;\\n  Seed-->Roots;\\n  ' +
+    'Roots-->Tree;\\n```", "mood": "happy", "gesture": "point"}\n' +
+    "Keep it small — a handful of nodes with simple labels a young child can read, no " +
+    "styling. The diagram is SHOWN and never spoken, so your words must make sense on " +
+    "their own and must never say \"see the diagram below\".\n" +
+    "For feelings, jokes, and ordinary chat, do NOT draw — a picture there is noise."
   );
 }
 
