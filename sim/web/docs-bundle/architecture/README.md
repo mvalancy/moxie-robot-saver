@@ -110,6 +110,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   failed on *both* sides including pristine `dev`. The eleventh instance of the family, sitting under the
   INTEGRATION tier's own primary instrument, and the brief requires separating a fixed wait from a real
   capacity limit — the second would be a product finding).
+  [`backlog/action-tag-drift.md`](backlog/action-tag-drift.md) — **the runtime never ends a module
+  because the model stopped writing `<exit>`**, 0/3 on real replies, with the line written for exactly
+  this failure still in place and still last. One untested candidate cause, and the wrong first guess
+  recorded beside it —
   [`backlog/one-brain-no-failover.md`](backlog/one-brain-no-failover.md) — **one
   `DEMO_GATEWAY_BASE_URL`, no second provider**, measured against a 33-minute upstream outage that
   took the public demo's brain down while `/api/health` still read `live`. The scripted fallback held.

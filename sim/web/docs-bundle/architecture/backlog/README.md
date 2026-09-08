@@ -88,5 +88,7 @@ work down:
 
 - [`one-brain-no-failover.md`](one-brain-no-failover.md) — **a 33-minute gateway 503 took the live demo's brain out entirely.** The degraded path carried it honestly; there is no second provider. Owner decision, because the fix costs a credential.
 
+- [`action-tag-drift.md`](action-tag-drift.md) — **0/3 goodbyes emit `<exit>`** on real replies. The mitigation written for this exact drift is still correctly wired; the candidate cause is a prompt block whose examples violate the schema it just declared. Untested — needs the gateway.
+
 ---
 📖 [Docs index](../../README.md) · [Architecture index](../README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Implementation plan](../implementation-plan.md)

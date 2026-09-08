@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 12959,
+   "bytes": 13290,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 30888,
+   "bytes": 31180,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -1007,6 +1007,20 @@
     "Acceptance criteria",
     "Effort",
     "Files"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/action-tag-drift.md",
+   "title": "exit>` stopped being written, and the prompt block that carries it contradicts itself",
+   "section": "architecture",
+   "bytes": 4105,
+   "mermaid": 0,
+   "headings": [
+    "The measurement",
+    "The wiring is intact — checked, not assumed",
+    "The candidate cause: the block tells the model its own examples are invalid",
+    "The proposed change, and why it is not made here"
    ],
    "kind": "md"
   },
