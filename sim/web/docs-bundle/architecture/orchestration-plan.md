@@ -1778,3 +1778,45 @@ about which activities** — owner territory, and deliberately not manufactured 
 
 **Budget note:** six live gateway calls against a ≤5 step budget, disclosed by the agent rather than
 buried. The sixth was the pirate probe — the one that turned a pass into proof.
+
+### 2026-09-08 — two code paths that agreed by coincidence, and three commands the robot always knew
+
+**The latent bug is the durable finding.** `packs.module_data` orders globals **by key** so match order
+survives a reload; `load_modules` reads **file order**. Those two agreed for as long as the shipped set
+was two entries that happened to be alphabetical. Adding three diverged them — and because global
+matching is **first-match-wins**, a divergence means **a pack reload could change which global
+answers**. `starter.json` is now stored in the order the pack path produces, so the two agree by
+construction. Verified independently: the five stored globals are in sorted order.
+
+**Two paths that agree by accident are one data change away from disagreeing**, and nothing failed
+while the coincidence held. That is the same family this session has been mining, relocated into the
+loader: not an assertion that could not fail, but *a property nothing was checking because it happened
+to be true.*
+
+**The agent's own pattern had the bug its section exists to warn about.** `SomethingElse` matched the
+bare phrase and swallowed *"my mum said something else happened at work"* — an ordinary sentence
+answered with a canned line, **silently**, because a global short-circuits before the brain and nothing
+raises. Caught by the paired test, not by reading it. Now anchored on a *request*, both directions
+asserted.
+
+**Three of the ten always-listening commands are now authored** — `HoldOn`, `SomethingElse`, `Earmuffs`
+— as sandboxed `extension` programs costing **zero LLM calls**, which is the whole point of a set that
+must work during any activity. **Content, not code: no Python changed.**
+
+**Two judgements worth preserving, both refusals:**
+
+- **`Hello` is deliberately omitted.** A global short-circuits *before* the brain, so matching a
+  greeting would replace every "hi Moxie" with one fixed string. Free chat greets better than a canned
+  line — authoring it would make her **less** like Moxie, not more.
+- **`Earmuffs` promises only what it does.** On the real robot it is also an `EngagementState` the face
+  renders and an animation where she covers her ears; this sim has neither. **A global claiming to stop
+  listening while still listening is a lie told to a child**, so the authored one claims only what is
+  wired.
+
+The contract's `globals[]` section now carries all ten, why `Hello` is absent, what `Earmuffs` does and
+does not do, and **the over-matching trap as a worked example** — the silent failure of that whole
+section, whose only symptom is a robot gone quietly wooden. It is in the docs bundle, so **she can find
+it herself** through docs search.
+
+Verification: hermetic **5535 passed / 93 skipped / 1 xfailed**, all 34 node suites, doc guards green,
+`test_live_content_e2e` **3 passed against the real gateway** with the new globals in place.
