@@ -3496,6 +3496,36 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     ok(!p.includes("(x.md)") && p.includes("board"), "…and a link becomes its words");
   }
 
+  /* A TITLE IS NOT AN ANSWER — the bug that reached production.
+   *
+   * Asked "what is your protocol?" on the live site she answered "I don't have a special
+   * protocol like a big robot": confidently, and wrong. Retrieval had worked and picked
+   * `remote-chat-protocol.md` correctly. What it handed her was the document's TITLE, which
+   * is over sixty characters and matched the query, so it beat every real paragraph. A
+   * title names a subject; it does not explain one, and there was nothing in it to answer
+   * from. That is the worst shape of failure here: the lookup succeeds, the citation is
+   * right, and the answer is invented. */
+  {
+    const md = "# RemoteChat — the robot to brain conversation protocol (v3.6.4-Zephyr / OTA v24.10.803)\n\n" +
+               "The protocol carries one turn at a time: the robot posts what it heard and " +
+               "the brain answers with words and behaviour markup for the same turn.\n";
+    const p = docsearch.bestPassage(md, "what is your protocol?");
+    ok(p.startsWith("The protocol carries one turn"),
+       `a long matching HEADING never wins over prose (got ${JSON.stringify(p.slice(0, 60))})`);
+    ok(!p.includes("v3.6.4-Zephyr"), "…so a version string is not what she tries to explain");
+    eq(docsearch.bestPassage("# Just a very long heading about protocols and nothing else at all here\n", "protocol"), "",
+       "…and a document that is ONLY headings yields no excerpt, rather than its title");
+  }
+
+  /* Against the REAL corpus, which is what the live failure was measured on. */
+  for (const q of ["what is your protocol?", "how does your firmware work?"]) {
+    const top = docsearch.rank(realIndex, q)[0];
+    const body = readFileSync(join(web0, "docs-bundle", top.path), "utf8");
+    const ex = docsearch.bestPassage(body, q);
+    ok(ex.length > 80, `"${q}" yields a real passage, not a fragment (${ex.length} chars)`);
+    ok(!/^#/.test(ex) && !ex.startsWith("💬"), `…and it is prose rather than the title`);
+  }
+
   // ---- 4. THE INJECTED TEXT IS OURS, NEVER THE VISITOR'S -------------------- //
   //
   // A fake ASSETS binding standing in for the Pages one. The hostile part is the QUESTION:
