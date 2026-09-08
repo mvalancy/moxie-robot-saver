@@ -1958,3 +1958,45 @@ reader judges the verdict rather than trusting it.**
 
 Next slice is now well-defined and is **retrieval, not prompting**: `bestPassage` selects by query-term
 hits, which fails inside a document whose title *is* the query.
+
+### 2026-09-08 — an instrument whose failure mode CONFIRMED the hypothesis it existed to test
+
+The sharpest instance of this session's family, and it was caught by one accident.
+
+The grounding gate ran for the first time and returned `VERDICT: not grounded`. **Both answers were
+empty strings.** The gateway had replied `HTTP 503 no_db_connection`, there was no `res.ok` check, an
+error response carries no `choices`, so `raw` fell back to `""` — and an empty answer shares no terms
+with anything.
+
+> **The probe was wrong in the direction of its own hypothesis.** A broken call is indistinguishable
+> from *"the passage didn't help her"*, which is precisely the question the probe exists to decide. It
+> printed the same words for both.
+
+**It was caught only because the answers were empty rather than merely short.** Had the gateway
+degraded instead of failing outright, the verdict would have been read and believed. That is the whole
+class in one sentence: an instrument that fails *toward* the answer you expect will be trusted exactly
+when it is wrong.
+
+Fixed and demonstrated against the live 503: non-2xx throws, a 200 with empty content throws, transients
+retry, and an unusable scenario prints `UNUSABLE` and exits 1. The probe also now loads `mqtt/.env` the
+way `load_repo_dotenv` does — **it was the one instrument in the tree that could not find the file,
+which is exactly why its gap looked like the environment's** and produced a confident "credentials are
+absent from this environment".
+
+**THE GATE IS STILL UNRUN.** `gateway.graphlings.net` returned 503 across 16 polls in ~12 minutes,
+intermittent rather than flat (a pytest run minutes earlier got real replies; the **public site stayed
+`ok=true, degraded=false, mode=live`** throughout — verified). A watcher is armed to run the gate on
+recovery. **The `bestPassage` fix is verified-necessary, not verified-sufficient**, and is not pushed.
+
+**A prior finding dissolved, and a real one replaced it.** The `test_live_*` failures were reported as
+*"they fail instead of skipping without credentials"*. Wrong mechanism: all six carry correct `skipif`
+guards, but `load_repo_dotenv()` had **already** put credentials in the environment, so they never
+skipped — they ran and failed for real reasons. What survives is sharper and is **not** infrastructure:
+`test_live_action_tags` fails on **non-empty** replies, *"only 0/3 goodbye turns emitted `<exit>`"* —
+**prompt-adherence drift**, a behavioural regression in what the model does with `LLMApp._system`. The
+other five are confounded by the outage and undiagnosed.
+
+**And one more silent-failure near-miss worth copying into anyone's shell habits:** a commit silently
+did not happen because `grep -c` **exits 1 when it finds zero matches**, so the secret sweep *passing*
+broke the `&&` chain. **The check succeeding looked identical to the check failing.** (This
+orchestrator's own idiom survives only by accident — `echo "$(… grep -c …)"` swallows the exit status.)
