@@ -1706,3 +1706,37 @@ pinned ten ways that distinguishes *"how does an engine work"* from *"how do you
 model is pointed at it, it works — and `diagram` on the envelope makes that a one-turn check. The
 common prompt also dropped **5337 → 4681 chars** for the ~95 % of turns that are not mechanism
 questions.
+
+### 2026-09-08 — the model hypothesis is UNTESTED, not disproven — and two models are not provisioned
+
+Probed the gateway **directly** rather than changing `DEMO_CHAT_MODEL`, because that variable decides
+what every visitor to the live site receives and is therefore an owner decision, not a test.
+
+- **`graphling-medium` reproduced the failure exactly, with `finish_reason: stop`.** That is
+  independent confirmation of hypothesis #3's earlier finding: the reply is **not** being truncated.
+  The model completes its turn and simply omits the `diagram` field.
+- **`graphling-large` and `graphling-deep` both returned `429`, twice, 45 s apart.** They are **not
+  provisioned for this key**. That is an infrastructure fact, not a rate limit to wait out.
+
+**So the fifth hypothesis is untested, not disproven**, and the agent said so rather than letting a
+spent budget read as a conclusion. It stopped at the ≤5 call limit as instructed. **A hypothesis you
+could not test is not a hypothesis you refuted** — and the difference matters here, because "we tried
+another model and it didn't help" would have closed the row wrongly.
+
+**OWNER ITEM:** testing it needs either a key with `graphling-large`/`graphling-deep` provisioned, or a
+deliberate change of `DEMO_CHAT_MODEL` in production. Both are decisions above this loop.
+
+**Filler audio shipped the same fire** (#232) — the eight lines `filler.py` has carried all along,
+rendered with the same Piper voice and tool as the ambient self-talk, into the same manifest. **Zero
+gateway cost**: a clip lookup. Verified live at `200 audio/mpeg, 19 897 bytes`, all 8 in the manifest.
+Two decisions worth keeping:
+
+- **1800 ms before she speaks**, against 900 ms for the face. A face is free to show and hide; a spoken
+  sentence cut off two words in is worse than never starting.
+- **Played through the `ambient` group** — the one group `audio.js` lets a reply take the floor from,
+  so the real answer cuts the filler off mid-word, which is what a person does when they stop thinking.
+  Any other group would queue the answer *behind* her own "hmm".
+
+**And the failure mode is silence, which is invisible** — a hyphen where an em dash belongs and the
+clip lookup simply misses. `filler.py`, `bridge.js` and the manifest are pinned three ways in
+`test_ambient` for exactly that reason.

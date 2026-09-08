@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 252375,
+   "bytes": 254718,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -152,7 +152,8 @@
     "2026-09-08 — SELF-IMPROVE: the protocol correction that cost one message",
     "2026-09-08 — the thirteenth instance, and it asserted something TRUE",
     "2026-09-08 — a fully-tested feature that never ran, and the two-step fix it took",
-    "2026-09-08 — mermaid: a measured NEGATIVE result, and when to stop rewriting"
+    "2026-09-08 — mermaid: a measured NEGATIVE result, and when to stop rewriting",
+    "2026-09-08 — the model hypothesis is UNTESTED, not disproven — and two models are not provisioned"
    ],
    "kind": "md"
   },
