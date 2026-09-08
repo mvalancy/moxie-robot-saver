@@ -3417,6 +3417,35 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
   ok(!/```|graph TD|-->/.test(ticketed.claims.t || ""),
      "…and the TEXT IT AUTHORISES carries no diagram: nothing pays to synthesise syntax");
 
+  /* THE GATE — asked in both directions, because a diagram in a conversation about
+   * feelings is the exact noise the feature must not become.
+   *
+   * It exists at all because of a measurement: buried at 88 % through a 5 337-character
+   * system message, the drawing instruction was never once obeyed, and TWO rewrites of the
+   * wording changed nothing. Louder wording in a diluted position is not a fix; the
+   * instruction now appears only when it applies, in a message of its own. */
+  for (const q of ["can you show me the steps of how a seed becomes a tree?",
+                   "how does the robot talk to the cloud?", "how does a car engine work?",
+                   "what happens when i press your button?", "how is bread made?"]) {
+    eq(chat.wantsDiagram(q), true, `"${q.slice(0, 44)}" asks for a picture`);
+  }
+  for (const q of ["i had a bad day", "how do you feel?", "tell me a joke",
+                   "how do you like school?", "what is your favourite colour?"]) {
+    eq(chat.wantsDiagram(q), false, `"${q}" does NOT — same grammar, no mechanism`);
+  }
+  {
+    const cfg = wire2.readConfig(FULL);
+    const drew = chat.buildUpstreamBody(cfg, [], "how does a car engine work?");
+    const plain = chat.buildUpstreamBody(cfg, [], "i had a bad day");
+    ok(drew.messages.some((m) => m.content.includes("DRAW A DIAGRAM")),
+       "a mechanism question carries the drawing instruction…");
+    ok(!plain.messages.some((m) => m.content.includes("DRAW A DIAGRAM")),
+       "…and an ordinary turn does not carry it at all");
+    const tail = plain.messages[plain.messages.length - 1].content;
+    ok(tail.length < 5000,
+       `…which also shortens the common prompt (${tail.length} chars, was 5337)`);
+  }
+
   /* THE WORKED EXAMPLE IN THE PROMPT MUST ROUND-TRIP THROUGH THE EXTRACTOR.
    *
    * The instruction shows her a sample envelope with a fence inside the `say` string,
