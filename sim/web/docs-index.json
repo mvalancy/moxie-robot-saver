@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 247856,
+   "bytes": 250004,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -150,7 +150,8 @@
     "2026-09-07 — #211: a guard whose verdict changed nothing, found beside the one being hunted",
     "2026-09-07 — the expressive loop closed, and `--is-ancestor` is the WRONG check after a squash",
     "2026-09-08 — SELF-IMPROVE: the protocol correction that cost one message",
-    "2026-09-08 — the thirteenth instance, and it asserted something TRUE"
+    "2026-09-08 — the thirteenth instance, and it asserted something TRUE",
+    "2026-09-08 — a fully-tested feature that never ran, and the two-step fix it took"
    ],
    "kind": "md"
   },
