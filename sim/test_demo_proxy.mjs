@@ -3463,6 +3463,35 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
        "…and a diagram with its newlines: we do not teach a shape we then discard");
   }
 
+  /* THE SIBLING FIELD — the shape she is actually asked for now, and the reason the
+   * nested fence was replaced.
+   *
+   * Three prompt rewrites produced zero diagrams and the token budget had 125 tokens
+   * spare, so it was never refusal or truncation. What the prompt asked for was a fenced
+   * markdown block with escaped newlines INSIDE a JSON string value — awkward to emit
+   * correctly, easy to decline, and my design. A sibling string field is ordinary JSON with
+   * one level of escaping, exactly like `mood` and `gesture`. */
+  {
+    fresh();
+    plan = { chat: { content: JSON.stringify({
+      say: "A seed grows in three steps!", mood: "happy", gesture: "point",
+      diagram: "graph TD;\n  Seed-->Roots;\n  Roots-->Tree;",
+    }) } };
+    const r = await call(chat, "/api/chat", { text: "how does a seed grow?" });
+    eq(JSON.parse(r.body.messages[0].payload).output.text, "A seed grows in three steps!",
+       "the FIELD form speaks only its words…");
+    ok(r.body.diagram.includes("Seed-->Roots") && r.body.diagram.includes("\n"),
+       "…and its diagram arrives with newlines intact");
+
+    // The FENCE form still works — it is how a diagram arrives from a non-JSON backend.
+    fresh();
+    plan = { chat: { content: "Look! ```mermaid\ngraph TD;\n  A-->B;\n``` See?" } };
+    const f = await call(chat, "/api/chat", { text: "how does a seed grow?" });
+    eq(JSON.parse(f.body.messages[0].payload).output.text, "Look! See?",
+       "the FENCE form still strips out of the spoken line…");
+    ok(f.body.diagram.includes("A-->B"), "…and still yields its diagram");
+  }
+
   // A reply with no diagram is byte-identical to before the feature existed.
   fresh();
   plan = { chat: { content: "Just words, no diagram." } };
