@@ -1,8 +1,10 @@
 # The grounding gate has never run
 
 **Status (2026-09-08): OPEN — blocked upstream, not by the work.** The retrieval fix it was meant to
-judge shipped in [PR #247](https://github.com/mvalancy/moxie-robot-saver/pull/247) with its own
-narrower proof. **This brief exists so the gap between those two proofs is not quietly forgotten.**
+judge **merged to `dev` as `2a4a32d`** ([PR #247](https://github.com/mvalancy/moxie-robot-saver/pull/247),
+all four checks green including the browser suite) with its own narrower proof. `wt-passage2` is kept
+deliberately, not left behind: the gate watcher runs from it at the merged SHA, so the gate will
+exercise exactly the shipped code. **This brief exists so the gap between those two proofs is not quietly forgotten.**
 
 ## The two claims, which are not the same claim
 
