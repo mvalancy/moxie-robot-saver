@@ -1859,3 +1859,51 @@ and the timer's actual arithmetic. Two escape tests were **narrowed, not relaxed
 extension may act"* to pinning exactly `{act.eb_timer_request}`, which is the stronger claim.
 
 Hermetic **5554 passed**, all 34 node suites, live `test_live_content_e2e` **3 passed**.
+
+### 2026-09-08 — an instrument that could not work, and the controls that proved it
+
+The gloss detector was built, measured, and **deleted**. The negative result is the deliverable, and the
+method is worth more than the feature would have been.
+
+**The discriminator was fixed before any numbers existed:** *an answer is grounded iff it shares one
+distinctive term with the cited passage — in the passage, not in the question, and rare in the corpus.*
+Document frequency was computed **from the shipped docs** rather than from a hand-written list of
+"generic words", deliberately: **a hand-written list is exactly how an instrument gets tuned until it
+agrees with whoever wrote it.**
+
+**Why it cannot work here, structurally rather than by threshold.** Every document in this corpus is
+about **one system**, so the terms that would prove she read something are the *common* ones:
+
+```
+robot 88%   firmware 65%   cloud 61%   protocol 61%   brain 54%   mqtt 51%
+rpc 4.6%    privileged 4.6%   earmuffs 5.9%
+```
+
+Only engineer-internal jargon is rare — **and jargon is precisely what the persona forbids**. So the
+test scores a correct child-level answer as glossed *by construction*, and would score GROUNDED only if
+she broke persona. Sweeping `DF_MAX` from 5 % to 90 % does not rescue it: the first value admitting
+`mqtt` (55 %) also admits `brain`, a word she says constantly regardless. **The distributions overlap;
+rarity is not the separating property.**
+
+**The controls are what made it conclusive, and they are the transferable part:**
+
+- a passage read back **verbatim** scored GROUNDED — so the instrument *can* fire positive, it is not
+  merely broken;
+- the live **MQTT answer, which visibly uses the corpus**, scored GLOSSED — **an instrument that calls
+  a correct answer wrong is not measuring what it claims.**
+
+**The agent's prediction was wrong and it kept the result.** It expected protocol=grounded,
+firmware=glossed; the detector called **both** glossed. Moving `DF_MAX` until the split matched that
+intuition was available and was refused. **`sim/grounding.mjs` was written and deleted** — verified
+absent — leaving only a comment in `docsearch.js` recording the reasoning so the same idea is not
+rebuilt from scratch. *An instrument that only works when you already know the answer is worse than
+none, because it would be believed.*
+
+**What a working one needs, and it is a real slice:** a **control arm** — the same question asked with
+retrieval suppressed, comparing the two answers. The signal is **the difference a passage makes**, not
+the vocabulary of a single answer, which cannot be read off one turn however it is scored. That
+requires a per-request way to disable the lookup, which does not exist today.
+
+Zero gateway calls: every case scored offline against recorded transcripts, because `bestPassage` is
+pure and the corpus is local. The firmware row stays open exactly as it was — *measurably better, not
+solved* — now with a recorded reason why the obvious instrument cannot close it.
