@@ -387,35 +387,10 @@ function expressiveInstruction() {
     "child.\n" +
     "Your face has these expressions and no others; anything else is ignored. Leave a " +
     "field out if none fits. Never put emoji, markdown, asterisks or stage directions " +
-    "inside \"say\" — it is read aloud exactly as written.\n" +
-    /* SHE CAN DRAW. The fence is pulled out of the spoken line by `splitDiagram` before
-     * anything reads it aloud, so the only thing this instruction has to get right is
-     * WHEN — and the answer is rarely. A robot that answers "what is 2+2" with a flowchart
-     * is a party trick, and a child who gets a diagram every turn stops looking at them. */
-    /* MEASURED: SHE NEVER DREW. Asked "can you show me the steps of how a seed becomes a
-     * tree?" — about as direct an invitation as exists — she answered in prose. So did
-     * "how does the robot talk to the cloud?". Zero diagrams across every probe.
-     *
-     * The cause was this instruction. "You MAY include one" is permissive-weak, and it
-     * closed on "most turns need no diagram at all — do not draw one just because you
-     * can". A model reading a soft permission followed by a discouragement, inside a
-     * persona that asks for one to three SHORT sentences, correctly concludes: never. The
-     * discouragement was written to prevent a robot that answers "what is 2+2" with a
-     * flowchart, and it worked so well it prevented every diagram.
-     *
-     * Now the trigger is IMPERATIVE and concrete — three named situations where the answer
-     * is "draw one" — and the restraint is scoped to what it was actually for rather than
-     * left as a general damper. The worked example is there because the fence has to live
-     * INSIDE the JSON string, which is the one mechanically confusing part. */
-    "You can DRAW, and sometimes you should. If they ask for the STEPS of something, how " +
-    "something WORKS, or how parts CONNECT — DRAW A DIAGRAM as well as answering. Put it " +
-    "inside \"say\" as a ```mermaid fenced block, like this:\n" +
-    '{"say": "A seed grows in three steps! ```mermaid\\ngraph TD;\\n  Seed-->Roots;\\n  ' +
-    'Roots-->Tree;\\n```", "mood": "happy", "gesture": "point"}\n' +
-    "Keep it small — a handful of nodes with simple labels a young child can read, no " +
-    "styling. The diagram is SHOWN and never spoken, so your words must make sense on " +
-    "their own and must never say \"see the diagram below\".\n" +
-    "For feelings, jokes, and ordinary chat, do NOT draw — a picture there is noise."
+    "inside \"say\" — it is read aloud exactly as written."
+    /* The DRAWING instruction used to live here and no longer does — it is conditional and
+     * gets its own system message now. See `wantsDiagram` for the measurement that moved
+     * it: buried at 88 % through a 5 337-character message, it was never once obeyed. */
   );
 }
 
@@ -485,6 +460,50 @@ function rerollInstruction(line) {
  * @param {string} [avoid] a line the model must not repeat. Empty on the first call of a
  *   turn and set only by `rerollOnce()`, which is the only caller that has one.
  */
+/**
+ * Questions that genuinely want a picture, and the reason this is a GATE rather than a
+ * paragraph in the persona.
+ *
+ * ============================================================================
+ * MEASURED, TWICE, AND THE SECOND MEASUREMENT IS THE INTERESTING ONE.
+ *
+ * She never drew. Not once, across every probe, including "can you show me the STEPS of
+ * how a seed becomes a tree?" — which is as direct an invitation as the language offers.
+ * The first fix made the wording imperative instead of permissive. She still never drew.
+ *
+ * So I measured the prompt instead of rewriting it again. The trailing system message is
+ * 5 337 characters, and the drawing instruction sat at 88 % through it — one paragraph
+ * behind the whole persona, eleven mood triggers, the gesture vocabulary, the turn-shape
+ * rules and a JSON format spec. It was not being refused. It was being drowned.
+ *
+ * Two prompt rewrites failed for the same reason, which is worth stating plainly: LOUDER
+ * WORDING IN A DILUTED POSITION IS NOT A FIX. The lever is position and scarcity, not
+ * emphasis.
+ *
+ * So the instruction is now CONDITIONAL and lives in its OWN system message — exactly how
+ * the documentation excerpt is delivered, for exactly the same reason. On a turn that
+ * wants a picture it is a short, unmissable message of its own; on every other turn it is
+ * ABSENT, which also shortens the common prompt for the ~95 % of turns that are "i had a
+ * bad day".
+ * ============================================================================
+ */
+/* The mechanism verbs. Listed rather than matching any "how does…", because "how do you
+ * feel?" and "how do you like school?" are the same grammar and want no picture at all —
+ * a diagram in the middle of a conversation about feelings is the exact noise the old
+ * discouragement was written to prevent. Widened once already: the first version required
+ * work|happen|go and so missed "how does the robot TALK TO the cloud", which is the
+ * canonical case this feature exists for. */
+const WANTS_DIAGRAM = new RegExp(
+  "\\b(steps?|stages?|sequence|process|life ?cycle|flow ?chart|diagram" +
+  "|what happens when|show me how|how (is|are) .*\\b(made|built)" +
+  "|how (does|do|did) .*\\b(work|works|happen|go|talk|talks|connect|connects|send|sends" +
+  "|communicate|move|moves|travel|travels|reach|reaches|get|gets)\\b)",
+  "i");
+
+export function wantsDiagram(text) {
+  return WANTS_DIAGRAM.test(String(text || ""));
+}
+
 export function buildUpstreamBody(cfg, turns, text, avoid, docs) {
   const messages = [{ role: "system", content: cfg.persona }];
   for (const t of turns) messages.push({ role: t.role, content: t.content });
@@ -525,6 +544,22 @@ export function buildUpstreamBody(cfg, turns, text, avoid, docs) {
         "cloud one turn at a time\" is. You may say you looked it up. If the passage really " +
         "does not answer what they asked, say you are not sure — that is better than a " +
         "gloss.",
+    });
+  }
+  /* THE DRAWING INSTRUCTION, only when the question wants one, and in its own message so
+   * it is not competing with five thousand characters of persona. See `wantsDiagram`. */
+  if (wantsDiagram(text)) {
+    messages.push({
+      role: "system",
+      content:
+        "THIS question is asking how something works or what its steps are, so DRAW A " +
+        "DIAGRAM as well as answering in words. Put it inside \"say\" as a ```mermaid " +
+        "fenced block, exactly like this:\n" +
+        '{"say": "A seed grows in three steps! ```mermaid\\ngraph TD;\\n  Seed-->Roots;\\n  ' +
+        'Roots-->Tree;\\n```", "mood": "happy", "gesture": "point"}\n' +
+        "A handful of nodes with simple labels a young child can read, no styling. The " +
+        "diagram is SHOWN and never spoken, so your words must make sense on their own and " +
+        "must never say \"see the diagram below\".",
     });
   }
   messages.push({ role: "user", content: text });
