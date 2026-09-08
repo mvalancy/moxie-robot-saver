@@ -25,6 +25,24 @@ simply stops"* — and it is still the tail of both `_TAG_EXAMPLES` and `_TAG_EX
 last thing the model reads. **The mitigation for this exact drift is present and correctly placed,
 and the drift is happening anyway.**
 
+## Checked and dismissed: the live tests already tell the two apart
+
+Before blaming the tests, they were run **against the live outage** — the rare case where the
+condition you want to handle is happening while you look at it. They report it unmistakably:
+
+```
+E  openai.InternalServerError: Error code: 503 - {'message': 'Service Unavailable, the
+   authentication database is temporarily unreachable...', 'type': 'no_db_connection'}
+[gateway] busy — InternalServerError; slowing down 0.8s (retry 1) … 5.2s (retry 4)
+3 failed, 3 passed, 1 skipped in 408.66s
+```
+
+An outage surfaces as a **transport exception with the upstream's own words**, after four backoff
+retries; the drift surfaces as an **assertion about non-empty replies**. Nobody reading these two
+reds could confuse them, and no work is needed here. Noting it so the question is not reopened —
+and noting that under the current outage `test_live_action_tags` is red for the *503* reason, not
+the drift reason, so the 0/3 figure below predates it and must be re-measured, not re-cited.
+
 ## The candidate cause: the block tells the model its own examples are invalid
 
 Inside the same block, `fmt` advertises the mood enum and closes with:

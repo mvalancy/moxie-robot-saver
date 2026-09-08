@@ -1031,11 +1031,12 @@
    "path": "architecture/backlog/action-tag-drift.md",
    "title": "exit>` stopped being written, and the prompt block that carries it contradicts itself",
    "section": "architecture",
-   "bytes": 4105,
+   "bytes": 5162,
    "mermaid": 0,
    "headings": [
     "The measurement",
     "The wiring is intact — checked, not assumed",
+    "Checked and dismissed: the live tests already tell the two apart",
     "The candidate cause: the block tells the model its own examples are invalid",
     "The proposed change, and why it is not made here"
    ],
