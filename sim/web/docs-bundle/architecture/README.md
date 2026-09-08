@@ -110,6 +110,9 @@ A backend + Sim are built from these directly; each cites the study but reads on
   failed on *both* sides including pristine `dev`. The eleventh instance of the family, sitting under the
   INTEGRATION tier's own primary instrument, and the brief requires separating a fixed wait from a real
   capacity limit — the second would be a product finding).
+  [`backlog/head-sweep-wait.md`](backlog/head-sweep-wait.md) — **a rewrite that lost to the code it
+  replaced**, reverted on its own committed terms rather than tuned until green; the split verdict it
+  introduced is the part worth keeping —
   [`backlog/action-tag-drift.md`](backlog/action-tag-drift.md) — **the runtime never ends a module
   because the model stopped writing `<exit>`**, 0/3 on real replies, with the line written for exactly
   this failure still in place and still last. One untested candidate cause, and the wrong first guess

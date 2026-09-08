@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 13290,
+   "bytes": 13537,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 31180,
+   "bytes": 31425,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -1009,6 +1009,21 @@
     "Acceptance criteria",
     "Effort",
     "Files"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/head-sweep-wait.md",
+   "title": "The head-sweep wait: a good idea, a failed implementation, and one honest number",
+   "section": "architecture",
+   "bytes": 3650,
+   "mermaid": 0,
+   "headings": [
+    "The defect, which has not gone away",
+    "What was tried",
+    "What happened",
+    "Why it was reverted rather than tuned",
+    "What to do next"
    ],
    "kind": "md"
   },

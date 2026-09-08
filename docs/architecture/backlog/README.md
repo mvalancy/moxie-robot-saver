@@ -90,5 +90,7 @@ work down:
 
 - [`action-tag-drift.md`](action-tag-drift.md) — **0/3 goodbyes emit `<exit>`** on real replies. The mitigation written for this exact drift is still correctly wired; the candidate cause is a prompt block whose examples violate the schema it just declared. Untested — needs the gateway.
 
+- [`head-sweep-wait.md`](head-sweep-wait.md) — **reverted, and the number that killed it is recorded.** The fixed-frame wait it targeted is a real defect; the rewrite lost to the old code at a higher load, and the mechanism is still unknown.
+
 ---
 📖 [Docs index](../../README.md) · [Architecture index](../README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Implementation plan](../implementation-plan.md)
