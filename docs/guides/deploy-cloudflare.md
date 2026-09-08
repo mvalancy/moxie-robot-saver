@@ -183,6 +183,41 @@ alone, so probing is free. What comes back:
 
 `voice` and `ears` are booleans only: whether a TTS/STT model is configured, never which one.
 
+> **`/api/health` GREEN DOES NOT MEAN THE BRAIN WORKS, and the row above is the trap.** That table is
+> the envelope's whole `mode` vocabulary, which `/api/chat` uses in full — but health derives its mode
+> **from configuration alone**, so of the `degraded` causes listed there it can see `DEMO_ENABLED=0`
+> and not-configured, and it **cannot see an upstream outage at all**. Measured, same minute, during a
+> `gateway.graphlings.net` 503:
+>
+> ```
+> GET  /api/health -> ok=true  degraded=false mode=live      reason=null
+> POST /api/chat   -> ok=false degraded=true  mode=degraded  reason=upstream_down
+> ```
+>
+> This is not a bug in `health.js` — never awaiting upstream is what makes a 30-second poll free, and
+> it says so in its own header. It is a bug in reading it as a liveness probe. **Health answers "is
+> this deployment configured?" — nothing more.**
+
+To ask whether a visitor actually gets a real brain right now, you have to spend a real request:
+
+```sh
+curl -s -X POST https://YOUR-DOMAIN/api/chat \
+  -H 'content-type: application/json' -H 'origin: https://YOUR-DOMAIN' \
+  -d '{"text":"hello"}'
+```
+
+Two things about that call, both of which will otherwise look like outages:
+
+- **The field is `text`.** A `messages` array — the OpenAI shape, and the first thing anyone tries —
+  is not merely ignored; it leaves `text` empty and the route answers `too_short` **without touching
+  the gateway**. Client `model`, `system`, `max_tokens` and friends are dropped the same way, by
+  design (`functions/api/chat.js`).
+- **The `origin` header is required.** Without it you get `forbidden_origin`, which is the demo's
+  anti-leech guard doing its job, not a fault.
+
+It costs one request against the visitor rate limit (`chat_per_min`, 5), so poll health for
+configuration and spend this one only when you need to know about upstream.
+
 ## 7. What still does not work
 
 - **The child's voice is mute** (§2). Its clips exist and are unreachable.
