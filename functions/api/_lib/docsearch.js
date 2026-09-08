@@ -34,6 +34,44 @@
  * ============================================================================
  */
 
+/* ============================================================================
+ * MEASURING WHETHER SHE ACTUALLY USED THE PASSAGE: TRIED, AND IT DOES NOT WORK
+ * LEXICALLY. Recorded here so it is not rebuilt (2026-09-08).
+ *
+ * `cited` makes the passage known at answer time, so "did the retrieved content reach the
+ * words" looks like it should become a comparison rather than a judgement. A gloss is
+ * exactly the case where the citation is right and the answer contains none of it —
+ * `"how does your firmware work?"` -> `"a special brain inside me"`.
+ *
+ * The discriminator was fixed BEFORE any numbers were looked at: an answer is grounded iff
+ * it shares one DISTINCTIVE term with the cited passage, where distinctive means "in the
+ * passage, not in the question, and rare in the corpus" — document frequency, computed
+ * from the shipped docs, deliberately instead of a hand-written list of generic words,
+ * because a hand-written list is how an instrument gets tuned until it agrees with whoever
+ * wrote it.
+ *
+ * IT FAILS, AND THE REASON IS STRUCTURAL RATHER THAN A THRESHOLD. Every document here is
+ * about one system, so the terms that would prove she read something are the COMMON ones:
+ *
+ *     mqtt 51% · cloud 61% · brain 54% · protocol 61% · firmware 65% · robot 88%
+ *     rpc 4.6% · privileged 4.6% · earmuffs 5.9%
+ *
+ * Only engineer-internal jargon is rare — and jargon is precisely what the persona forbids
+ * ("no jargon you have not explained", one or two short sentences at a child's level). So
+ * the test scores a CORRECT child-level answer as glossed by construction, and would score
+ * GROUNDED only if she broke persona.
+ *
+ * And no threshold rescues it: sweeping document frequency from 5% to 90%, the first value
+ * that admits `mqtt` (55%) also admits `brain` — a word she says constantly whether or not
+ * she read anything. The distributions overlap; rarity is not the separating property.
+ *
+ * WHAT A WORKING INSTRUMENT WOULD NEED is a control arm: the same question asked with the
+ * retrieval suppressed, and a comparison of the two answers. The signal is the DIFFERENCE
+ * a passage makes, not the vocabulary of one answer — which cannot be read off a single
+ * turn however it is scored. That needs a way to disable the lookup per request, which
+ * does not exist today, and is the honest next step if this is picked up again.
+ * ============================================================================ */
+
 /** Words too common to discriminate between 152 documents about one robot. `moxie` is in
  *  here for that exact reason: it matches almost every document, so scoring on it ranks
  *  noise. The set is deliberately tiny — an aggressive stop list starts throwing away the
