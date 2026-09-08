@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 279666,
+   "bytes": 281861,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -1016,13 +1016,19 @@
    "path": "architecture/backlog/head-sweep-wait.md",
    "title": "The head-sweep wait: a good idea, a failed implementation, and one honest number",
    "section": "architecture",
-   "bytes": 3650,
+   "bytes": 9350,
    "mermaid": 0,
    "headings": [
     "The defect, which has not gone away",
     "What was tried",
     "What happened",
     "Why it was reverted rather than tuned",
+    "Step 1 is done: the red now says which story it is (2026-09-08)",
+    "Step 2 is done, and it overturned the premise this page was written on",
+    "Finding 1 — the dt clamp is a FLOOR on progress per frame, not a ceiling",
+    "Finding 2 — in the whole full-viewport regime the two shapes are the same program",
+    "Finding 3 — a rAF frame is not an `animate()` step, and that is the real starvation channel",
+    "What is still NOT established",
     "What to do next"
    ],
    "kind": "md"
