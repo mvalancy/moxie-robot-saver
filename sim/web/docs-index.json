@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 12597,
+   "bytes": 12959,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 30637,
+   "bytes": 30888,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -1007,6 +1007,20 @@
     "Acceptance criteria",
     "Effort",
     "Files"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/one-brain-no-failover.md",
+   "title": "The demo has exactly one brain, and today it was gone for half an hour",
+   "section": "architecture",
+   "bytes": 3392,
+   "mermaid": 0,
+   "headings": [
+    "What happened",
+    "What worked, and is worth saying plainly",
+    "The gap",
+    "Why it is not built here"
    ],
    "kind": "md"
   },

@@ -86,5 +86,7 @@ work down:
 
 - [`grounding-gate-unrun.md`](grounding-gate-unrun.md) — **the retrieval fix is proven, the answer-quality claim one layer up is not.** Blocked on a multi-hour gateway 503, not on the work.
 
+- [`one-brain-no-failover.md`](one-brain-no-failover.md) — **a 33-minute gateway 503 took the live demo's brain out entirely.** The degraded path carried it honestly; there is no second provider. Owner decision, because the fix costs a credential.
+
 ---
 📖 [Docs index](../../README.md) · [Architecture index](../README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Implementation plan](../implementation-plan.md)

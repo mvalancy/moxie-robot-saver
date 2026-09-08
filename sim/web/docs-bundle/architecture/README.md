@@ -110,6 +110,10 @@ A backend + Sim are built from these directly; each cites the study but reads on
   failed on *both* sides including pristine `dev`. The eleventh instance of the family, sitting under the
   INTEGRATION tier's own primary instrument, and the brief requires separating a fixed wait from a real
   capacity limit — the second would be a product finding).
+  [`backlog/one-brain-no-failover.md`](backlog/one-brain-no-failover.md) — **one
+  `DEMO_GATEWAY_BASE_URL`, no second provider**, measured against a 33-minute upstream outage that
+  took the public demo's brain down while `/api/health` still read `live`. The scripted fallback held.
+  Three options costed, cheapest first, and the cheapest is *do nothing* —
   [`backlog/grounding-gate-unrun.md`](backlog/grounding-gate-unrun.md) — **the retrieval fix shipped
   with a narrower proof than the one it was written against**: the right paragraph is provably
   selected, but the end-to-end gate that would show her answer stops glossing has never executed,
