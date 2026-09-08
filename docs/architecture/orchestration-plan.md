@@ -2000,3 +2000,64 @@ other five are confounded by the outage and undiagnosed.
 did not happen because `grep -c` **exits 1 when it finds zero matches**, so the secret sweep *passing*
 broke the `&&` chain. **The check succeeding looked identical to the check failing.** (This
 orchestrator's own idiom survives only by accident — `echo "$(… grep -c …)"` swallows the exit status.)
+
+### 2026-09-08 — `git add -A` shipped an untested change inside a docs commit
+
+Commit `8e804be` is titled *"backlog: the grounding gate has never run"*. It also contains **50 changed
+lines of `sim/test_liveliness.mjs`**, a rewrite of the head-sweep wait that was sitting uncommitted in
+the working tree while I was measuring it. `git add -A` swept it in, and it is now on `dev` under a
+message that does not mention it.
+
+**The change itself is defensible; shipping it silently is not.** What it does: the sweep block asserted
+`spread > 40` — that the drive really swung her head across the screen — after waiting a fixed
+`for (let f = 0; f < 4; f++)`. `animate()` clamps `dt` to 0.1 s, so four frames on a starved runner
+advance her a fraction of what four frames advance her on an idle one. **"Four frames happened" and
+"she swung" are different claims that agree only while the runner is fast** — the same fixed-wait-for-a-
+condition defect this log has now recorded a dozen times, sitting unnoticed in my own test file.
+
+Four is now the floor, so sampling on a healthy runner is unchanged and the wait can only get longer;
+what ends a sweep is the observation the assertion wants (6 px of measured head travel within that
+sweep) or a 1.5 s per-sweep deadline. **And the verdict is split in two**, because the old single check
+conflated two causes that need different responses:
+
+| Check | Red means |
+|---|---|
+| `res.starved === 0` | the runner never gave her the frames to move — an environment fact |
+| `spread > 40` | the drive genuinely did not move her — a real defect |
+
+**What is NOT established.** That this fixes anything. The earlier comparison — pristine `dev` failing
+1 of 2 runs against a fix branch passing 2 of 2 — is worth nothing, and **that fix branch,
+`feat/holdwait`, is gone entirely**: no reflog, no dangling commit, never committed, removed with its
+worktree. Rewritten from scratch here. The current batch under 40 busy loops has produced
+`1 failure(s) of 97` on its first run, and **my capture regex looked for `✗` when `browser_harness.mjs`
+prints `   · `, so I do not know which check failed** — the split above exists precisely to answer that
+question and my harness threw the answer away. Unloaded: 97/97 green.
+
+**Three separate lessons, all mine:** stage by path when a working tree holds unrelated work; a commit
+message that omits a file is a false record even when the code is fine; and an experiment whose output
+you cannot parse is not an experiment. The load batch was also run at 82 rather than the intended ~45
+because I stacked foreground runs on top of it — comparable to the earlier regime by accident, not by
+design.
+
+**And the sweep on that very commit found two "secrets", both false.** The first was the tail of the
+ordinary word **task-notification** — the four characters from its `s` onward look exactly like a key
+prefix — matched because I dropped the `\b` from my own idiom when I added a `ghp_` alternative to it.
+The document it fired on is *this log*, at the paragraph where I recorded that same false positive the
+last time it happened.
+
+**Writing this paragraph tripped the sweep a third time.** The first draft quoted the offending
+fragment on its own inside backticks, and a backtick **is** a word boundary — so the corrected
+`\b`-anchored regex matched the explanation of why it shouldn't. Left as written, every future sweep
+touching this file would have reported non-zero forever, which is the precise failure this entry is
+about: **a guard that always cries wolf is a guard nobody reads.** The fragment is described here
+instead of quoted. The second was the Turnstile
+**sitekey**, which is public by construction: it is rendered into every visitor's HTML, and it is the
+*secret* half of the pair that must never appear. A prefix rule cannot tell those two apart — both are
+`0x`-prefixed — so the sitekey alternative comes out of the sweep entirely rather than being carried as
+a tripwire that can only ever cry wolf.
+
+The corrected sweep is `\b(sk-[A-Za-z0-9_]{12}|ghp_[A-Za-z0-9]{20})`, and **it was checked in both
+directions before being trusted**: 0 on the `task-notification` decoy, 2 on a synthetic file containing
+key-shaped strings. A sweep that reports zero is worth nothing until you have watched it report
+non-zero — which is the whole subject of this log, arriving this time in the instrument I use to guard
+every commit I make.
