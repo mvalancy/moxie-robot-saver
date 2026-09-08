@@ -2061,3 +2061,36 @@ directions before being trusted**: 0 on the `task-notification` decoy, 2 on a sy
 key-shaped strings. A sweep that reports zero is worth nothing until you have watched it report
 non-zero — which is the whole subject of this log, arriving this time in the instrument I use to guard
 every commit I make.
+
+### 2026-09-08 — a prediction, written down before the comparison arm finished
+
+First instrumented run of the rewritten head-sweep wait, at load 66.7:
+
+```
+❌ liveliness + chat layout: 2 failure(s) of 97 checks
+   · …and the runner gave her room to swing in every sweep (3/16 timed out)
+   · …and the drive really swung her head across the screen (31px of travel)
+```
+
+**That is the split doing its job on its first outing.** Under the old single assertion this run printed
+`31px` and nothing else, and 31px is consistent with two incompatible stories — a placement defect, or
+a machine too slow to move her. The starvation line settles it in one glance: three sweeps hit their
+1.5 s deadline without her travelling 6 px, so the shortfall is the runner, not the drive.
+
+**The prediction, recorded before the paired `PRISTINE` arm has produced a number.** The rewritten loop
+runs a *floor* of four frames and exits early only on a condition the old code never checked, so it
+executes **at least** as many frames per sweep as the old one — never fewer. More frames cannot mean
+less head travel. Therefore:
+
+> **`PRISTINE` must fail this same check at this load, at a `spread` no greater than 31 px — and it
+> will report only that number, with nothing to say which of the two stories produced it.**
+
+If `PRISTINE` instead **passes** at this load, the reasoning above is wrong somewhere I cannot
+currently see, and the change must be treated as a regression until that is explained — not patched
+until it goes green. Writing the prediction down first is the only thing that makes the next number
+capable of embarrassing me, which is the whole point of running the arm at all.
+
+**What this does NOT settle**, whichever way it lands: whether the 1.5 s per-sweep deadline is the
+right number. If starvation is routine at ordinary CI load, then a red that says *"this machine was too
+slow to measure"* still stops a build, and a check that reddens on the environment is a check people
+learn to ignore. That is a separate decision, and it needs the pristine number first.
