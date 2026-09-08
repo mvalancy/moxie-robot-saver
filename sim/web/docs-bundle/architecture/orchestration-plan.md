@@ -1639,3 +1639,34 @@ the plumbing to the instruction. **An observability seam that pays for itself in
 still glosses, because that passage is about privileged Android permissions and she would rather
 simplify than say "I'm not sure". **Measurably better, not solved** — the agent's own words, and the
 right way to leave it.
+
+### 2026-09-08 — a fully-tested feature that never ran, and the two-step fix it took
+
+The fourteenth instance, and a new shape: **not a test that could not fail, and not a check whose
+verdict changed nothing — a feature whose every test passed and which never executed in production.**
+
+Mermaid shipped in #215 with the plumbing proven end to end: extraction, the fence never reaching
+speech, lazy render, `securityLevel: "strict"`, graceful failure. The agent flagged its own gap rather
+than banking the green — *"no model has actually drawn a diagram on the live site yet; I've proven the
+plumbing, not that she chooses to draw at sensible moments."* That flag was the whole reason the next
+two slices existed.
+
+**#225 — "she never drew: the trigger was permission, not instruction."** Asked live, she never once
+produced a diagram. The prompt *allowed* drawing where it needed to *direct* it. Every test still
+passed, because every test exercised the pipe.
+
+**#228 — "the drawing instruction was drowned, not refused."** The first fix was not enough and the
+second finding is sharper than the first: the instruction was present and being **lost among the rest
+of the prompt**, so it was gated and given its own message rather than shouted louder in the same one.
+*Drowned, not refused* is a distinction only a live turn can make — from outside, an instruction that
+is ignored and one that never surfaced produce the identical silence.
+
+**The pattern worth carrying:** this is the third time in two days that *mechanism proven, judgement
+unproven* has been the hiding place — the bubble anchor's readout, docs search handing over a title,
+and now a renderer that worked perfectly and was never invoked. **A test that exercises the pipe says
+nothing about whether anything is ever put through it**, and only a live turn distinguishes "chose not
+to" from "was never really asked".
+
+Recorded now rather than earlier because the standing PR was carrying real content and a doc push would
+have restarted a 20-minute gate for a paragraph. It is released here because `dev` and `main` are
+content-identical, so the restart costs nothing.
