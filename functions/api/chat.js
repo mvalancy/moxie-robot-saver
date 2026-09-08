@@ -553,10 +553,10 @@ export function buildUpstreamBody(cfg, turns, text, avoid, docs) {
       role: "system",
       content:
         "THIS question is asking how something works or what its steps are, so DRAW A " +
-        "DIAGRAM as well as answering in words. Put it inside \"say\" as a ```mermaid " +
-        "fenced block, exactly like this:\n" +
-        '{"say": "A seed grows in three steps! ```mermaid\\ngraph TD;\\n  Seed-->Roots;\\n  ' +
-        'Roots-->Tree;\\n```", "mood": "happy", "gesture": "point"}\n' +
+        "DIAGRAM as well as answering in words. Put the mermaid source in a \"diagram\" " +
+        "field, exactly like this:\n" +
+        '{"say": "A seed grows in three steps!", "mood": "happy", "gesture": "point", ' +
+        '"diagram": "graph TD;\\n  Seed-->Roots;\\n  Roots-->Tree;"}\n' +
         "A handful of nodes with simple labels a young child can read, no styling. The " +
         "diagram is SHOWN and never spoken, so your words must make sense on their own and " +
         "must never say \"see the diagram below\".",
@@ -915,12 +915,14 @@ async function callGateway(cfg, body, timeoutMs) {
   // The envelope is unwrapped HERE, at the boundary, so everything downstream — the safety
   // sweep, the transcript, the TTS ticket, the response body — sees the spoken line and
   // never the JSON. A visitor must never be read a brace out loud.
-  const { text, chosen } = parseExpressive(raw);
+  const parsed = parseExpressive(raw);
   // The diagram leaves the spoken line here, so the safety sweep, the TTS ticket, the wire
   // text and the transcript all see words only. See `splitDiagram`.
-  const { spoken, diagram } = splitDiagram(text);
+  const { spoken, diagram } = splitDiagram(parsed.text);
   if (!spoken) return { ok: false, reason: "upstream_down" };
-  return { ok: true, text: spoken, chosen, diagram };
+  // The FIELD wins where the model used it; the fence is the fallback for prose replies.
+  const drew = (parsed.diagram || diagram || "").slice(0, 1200);
+  return { ok: true, text: spoken, chosen: parsed.chosen, diagram: drew };
 }
 
 /** The OpenAI chat-completions reply shape, defensively. */
@@ -997,7 +999,7 @@ export function splitDiagram(text) {
 
 export function parseExpressive(raw) {
   const line = String(raw || "").trim();
-  const plain = { text: line, chosen: null };
+  const plain = { text: line, chosen: null, diagram: "" };
   if (!line) return plain;
 
   let body = line;
@@ -1017,7 +1019,24 @@ export function parseExpressive(raw) {
   const chosen = {};
   if (typeof obj.mood === "string") chosen.mood = obj.mood;
   if (typeof obj.gesture === "string") chosen.gesture = obj.gesture;
-  return { text: say, chosen: Object.keys(chosen).length ? chosen : null };
+  /* A PLAIN `diagram` FIELD, because the nested fence was my mistake.
+   *
+   * Three prompt rewrites failed to get a single diagram out of her, and the token budget
+   * turned out to have 125 tokens of headroom, so it was never refusal or truncation. What
+   * I had actually asked for was a fenced markdown code block, with escaped newlines,
+   * INSIDE a JSON string value — ```mermaid\ngraph TD;\n…``` nested in "say". That is an
+   * awkward thing to emit correctly and an easy thing to decline, and I designed it.
+   *
+   * A sibling string field is what the envelope should have used from the start: ordinary
+   * JSON, one level of escaping, the same shape as `mood` and `gesture`. The fence path
+   * below stays for prose replies and for a model that ignores the field — it costs
+   * nothing to keep and it is how every diagram would arrive from a non-JSON backend. */
+  const field = typeof obj.diagram === "string" ? obj.diagram.trim() : "";
+  return {
+    text: say,
+    chosen: Object.keys(chosen).length ? chosen : null,
+    diagram: field,
+  };
 }
 
 /** A bounded integer from a `Retry-After` header, or a sane default. Never the string. */
