@@ -488,10 +488,26 @@ export function buildUpstreamBody(cfg, turns, text, avoid, docs) {
         "people who took you apart to work out how you function, so it is true — but it is " +
         "written for engineers.\n\n" +
         "From \"" + docs.title + "\":\n" + docs.excerpt + "\n\n" +
-        "Answer IN YOUR OWN WORDS at a child's level — one or two short sentences, no " +
-        "jargon you have not explained, and never read it out. You may say you looked it " +
-        "up. If it does not actually answer what they asked, say you are not sure rather " +
-        "than stretching it to fit.",
+        /* MEASURED ON THE LIVE SITE, and the fix is "one real fact", not "try harder".
+         *
+         * With `cited` proving the passage arrived, she still answered "what is your
+         * protocol?" with "it's like the rules we follow when we talk. I have lots of ways
+         * to answer and help you!" — a gloss anyone could produce without reading anything.
+         * The old wording asked for her own words at a child's level and got exactly that:
+         * simplification all the way down to no content. Simplifying is the easy half; the
+         * whole point of looking something up is the part that is NEW to the listener.
+         *
+         * So the instruction now demands one CONCRETE thing from the passage and gives her
+         * an explicit out — "I'm not sure" — for when the passage genuinely does not
+         * answer. Between a vague gloss and an honest miss, the miss is worth more. */
+        "Use ONE concrete thing from that passage — a name, a number, a part, something it " +
+        "actually does — and put it in your own words at a child's level, in one or two " +
+        "short sentences. Explain any hard word you use. Never read the passage out.\n" +
+        "A vague answer that could have been given WITHOUT reading it is a failure: " +
+        "\"it's like the rules we follow\" is not an answer, \"I talk to my brain in the " +
+        "cloud one turn at a time\" is. You may say you looked it up. If the passage really " +
+        "does not answer what they asked, say you are not sure — that is better than a " +
+        "gloss.",
     });
   }
   messages.push({ role: "user", content: text });
