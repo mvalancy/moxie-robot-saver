@@ -3592,6 +3592,46 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
        "…and a document that is ONLY headings yields no excerpt, rather than its title");
   }
 
+  /* A TITLE IS NOT AN ANSWER, ONE LEVEL DOWN: right document, WRONG PARAGRAPH.
+   *
+   * Found by the control arm in `sim/tools/grounding_probe.mjs`, not by reading output.
+   * Asked "how does the robot talk to the cloud?" the ranking picked the right document and
+   * `bestPassage` returned a paragraph about QR PAIRING STAGES. The query reduces to two
+   * terms — `talk`, `cloud` — so term hits saturate at 2 across many paragraphs and the
+   * capped LENGTH bonus became the whole selector: the QR paragraph scored 24.0 on 1157
+   * characters against 22.9 for the paragraph that answers the question, a gap made
+   * entirely of characters. Length also double-counts, since a longer paragraph is likelier
+   * to contain a term by chance and then gets paid again for containing it.
+   *
+   * The section heading settles it instead, at the same weight `rank` gives headings. */
+  {
+    const md = "## Where the batteries live\n\n" +
+               "The pack is a sealed unit under the chest plate and the cloud is not involved " +
+               "in charging at all, though a talkative service does log a charge event when " +
+               "the robot is docked and the cloud sees it happen much later on.\n\n" +
+               "## Talking to the cloud\n\n" +
+               "She talks to the cloud over an encrypted link and each turn is one message.\n";
+    const p = docsearch.bestPassage(md, "how does the robot talk to the cloud?");
+    /* Both paragraphs contain BOTH query terms, which is the tie the live failure was made
+     * of. Under the old scoring the longer one wins on characters alone (21.2 vs 20.4);
+     * the heading is what tells them apart. The fixture is built to fail without the fix
+     * rather than to pass with it. */
+    ok(p.startsWith("She talks to the cloud"),
+       `on EQUAL term hits the paragraph under the matching heading wins, even though the ` +
+       `other is 3x longer (got ${JSON.stringify(p.slice(0, 60))})`);
+  }
+
+  /* And on the real document the live failure was measured against. */
+  {
+    const md = readFileSync(join(web0, "docs-bundle", "architecture/mqtt-and-conversation.md"), "utf8");
+    const p = docsearch.bestPassage(md, "how does the robot talk to the cloud?");
+    ok(!/QR #1/.test(p),
+       `the QR-pairing paragraph is no longer what she is handed about talking to the cloud ` +
+       `(got ${JSON.stringify(p.slice(0, 70))})`);
+    ok(/mqtt/i.test(p),
+       `…and the passage is actually about the transport (got ${JSON.stringify(p.slice(0, 70))})`);
+  }
+
   /* Against the REAL corpus, which is what the live failure was measured on. */
   for (const q of ["what is your protocol?", "how does your firmware work?"]) {
     const top = docsearch.rank(realIndex, q)[0];
