@@ -2128,3 +2128,46 @@ of the exercise is the split verdict and this entry rather than a fix.
 2. **One pair is not a result.** `n=1` against `n=1` falsifies a *"must"* — which is all a universal
    claim needs — but it cannot establish that the rewrite is worse on average. Those are different
    claims, and the rounds still running are what separates them.
+
+### 2026-09-08 — the audit's own secrets check can no longer detect a secret
+
+Both commands the AUDIT tier runs to answer *"is a key in this repo?"* now fire on every run, for
+reasons that have nothing to do with keys:
+
+| Command as written | What it actually matches | Reads |
+|---|---|---|
+| `git grep -E "sk-[A-Za-z0-9_]{12}"` | the tail of the ordinary word **task-notification**, in `sim/test_cloud_transport.mjs` and `sim/tests/test_compose.py` | 3 files |
+| `git log -S sk-Afb` | the **documentation of the first check**, including a commit literally titled *"the audit wrote its own search string into the log, flagging itself forever"* | 3 commits |
+
+**Neither is a leak, and both were verified rather than assumed** — every hit was extracted and read
+with the key body masked. **The repository is clean:** scoped past the docs that describe the checks,
+tracked files with a key shape reads **0** and history commits touching the real prefix reads **0**.
+
+**But an audit step that always fires has stopped being an audit step.** Nobody reads a guard that
+cries wolf, and this one is written into the standing procedure, so it would have cried wolf on every
+fire from here on. The corrected commands, which are what future fires should run:
+
+```sh
+DOCEX=(':!docs' ':!sim/web/docs-bundle' ':!sim/web/docs-index.json' ':!sim/web/docs-search.json')
+git grep -lE '\bsk-[A-Za-z0-9_]{12}' -- . "${DOCEX[@]}" | wc -l     # expect 0
+git log -S sk-Afb --format=%H -- . "${DOCEX[@]}" | wc -l            # expect 0
+```
+
+Two changes, each load-bearing: the **`\b`** (without it the pattern cannot distinguish a key from any
+word ending in those two letters), and **excluding the documents that describe the check** (they must
+be free to name the search string; that is what the docs are for).
+
+**And a zero from either is worth nothing until it has been seen to report non-zero.** Verified in
+both directions before being trusted: 0 against the `task-` decoy, and non-zero against a synthetic
+key-shaped string. A passing scan and a broken scan are otherwise the same observation — as this
+session already learned when a bare `grep -c` exited 1 on zero matches and silently broke the `&&`
+chain behind it.
+
+**Hygiene, with a correction.** All 13 `origin/feat/*` refs matched merged PRs — but only **one**
+branch actually existed to delete; the other twelve were **stale remote-tracking refs** for branches
+GitHub had already removed, and a `git fetch --prune` was the whole fix. The success counter is what
+caught it: reporting *"deleted 13 branches"* would have been false. `wt-passage2` is **kept on
+purpose** — it is not stale, a live gate watcher `cd`s into it — and its three files are verified
+byte-identical to `dev` after the squash, because ancestry is meaningless once a branch is squashed.
+All four cron tiers armed; doc guards green; bundle 0-diff; `mqtt/.env` untracked, ignored, mtime
+unchanged.
