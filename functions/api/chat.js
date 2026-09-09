@@ -520,9 +520,7 @@ export function buildUpstreamBody(cfg, turns, text, avoid, docs) {
     messages.push({
       role: "system",
       content:
-        "You looked this up in your own documentation just now. It was written by the " +
-        "people who took you apart to work out how you function, so it is true — but it is " +
-        "written for engineers.\n\n" +
+        "You just looked this up in your own technical documentation.\n\n" +
         "From \"" + docs.title + "\":\n" + docs.excerpt + "\n\n" +
         /* MEASURED ON THE LIVE SITE, and the fix is "one real fact", not "try harder".
          *
@@ -536,14 +534,9 @@ export function buildUpstreamBody(cfg, turns, text, avoid, docs) {
          * So the instruction now demands one CONCRETE thing from the passage and gives her
          * an explicit out — "I'm not sure" — for when the passage genuinely does not
          * answer. Between a vague gloss and an honest miss, the miss is worth more. */
-        "Use ONE concrete thing from that passage — a name, a number, a part, something it " +
-        "actually does — and put it in your own words at a child's level, in one or two " +
-        "short sentences. Explain any hard word you use. Never read the passage out.\n" +
-        "A vague answer that could have been given WITHOUT reading it is a failure: " +
-        "\"it's like the rules we follow\" is not an answer, \"I talk to my brain in the " +
-        "cloud one turn at a time\" is. You may say you looked it up. If the passage really " +
-        "does not answer what they asked, say you are not sure — that is better than a " +
-        "gloss.",
+        "Use ONE concrete fact from it in one or two child-friendly sentences. Explain hard " +
+        "words; do not recite the passage. If it does not answer the question, say you are " +
+        "not sure instead of guessing.",
     });
   }
   /* THE DRAWING INSTRUCTION, only when the question wants one, and in its own message so
