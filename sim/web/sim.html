@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MOXIE &middot; SIL &mdash; Mission Control</title>
+<title>Meet Moxie &mdash; talk with a little robot</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a0a0f'/><path d='M50 22c-16 0-26 10-26 25 0 14 11 25 26 25s26-11 26-25c0-15-10-25-26-25z' fill='%2312b5b0'/><ellipse cx='50' cy='49' rx='20' ry='18' fill='%23f4feff'/><circle cx='43' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='57' cy='48' r='4.2' fill='%230a0a0f'/><circle cx='44.4' cy='46.4' r='1.3' fill='%2300f0ff'/><circle cx='58.4' cy='46.4' r='1.3' fill='%2300f0ff'/></svg>">
 <link rel="stylesheet" href="./vendor/fonts/fonts.css">
 <link rel="stylesheet" href="style.css">
@@ -61,7 +61,7 @@
     </a>
     <div class="brand">
       <span class="glyph" aria-hidden="true"></span>
-      <h1>MOXIE<span class="sep">&middot;</span>SIL</h1>
+      <h1>MOXIE</h1>
       <span class="tag">v24.10.803</span>
       <span class="tag dim">SOFTWARE-IN-THE-LOOP</span>
     </div>
@@ -121,7 +121,7 @@
   <!-- HUD rail -->
   <aside id="panel">
     <button id="rail-toggle" type="button" aria-expanded="true" aria-controls="rail-scroll">
-      <span class="tick" aria-hidden="true"></span>Controls<span class="caret" aria-hidden="true"></span>
+      <span class="tick" aria-hidden="true"></span>Tinker<span class="caret" aria-hidden="true"></span>
     </button>
 
     <div id="rail-scroll">
@@ -333,8 +333,8 @@
          It gets out of the way once there IS a conversation (`:has()` in style.css). If a
          browser does not support `:has()` the rule is simply dropped and the line stays,
          which is the failure this should have: still true, merely redundant. -->
-    <p id="chat-cue">Talk to Moxie<span class="cue-more"> &mdash; type a message, or tap Listen and
-      speak. She answers here.</span></p>
+    <p id="chat-cue"><strong>Talk to Moxie</strong><span class="cue-more"><br class="cue-break">
+      Ask anything, or tap Listen and say hello.</span></p>
 
     <!-- THE PAGE'S ONE LIVE REGION, and the choice of WHICH element is the whole
          accessibility design here.
@@ -365,9 +365,8 @@
 
     <!-- THE THREE OPENERS — the only thing on this page that both NAMES something to say
          to her and SAYS IT. Specified verbatim in
-         docs/architecture/backlog/gamify-the-public-sim.md's 🅐 ("the reachable first
-         turn"): *"Beside it, three tappable openers — Tell me a joke, How are you
-         feeling?, Play a game with me."*
+         docs/architecture/backlog/gamify-the-public-sim.md's decided effortless-chat
+         direction: three inviting prompts, with no mission or game imposed on the visit.
 
          WHY THEY ARE HERE AND NOT WITH THE PHRASE CHIPS, which is the whole distinction.
          `#speech-chips` (above, :182) play PRE-CACHED SHIPPED AUDIO: they make Moxie say a
@@ -398,9 +397,9 @@
          names are three unrelated sentences need something to say what the set IS before
          a screen-reader user tabs into the middle of it. -->
     <div id="chat-openers" role="group" aria-label="Conversation starters">
-      <button class="opener" type="button">Tell me a joke</button>
-      <button class="opener" type="button">How are you feeling?</button>
-      <button class="opener" type="button">Play a game with me</button>
+      <button class="opener" type="button">Tell me a silly joke</button>
+      <button class="opener" type="button">What makes you happy?</button>
+      <button class="opener" type="button">Surprise me!</button>
     </div>
 
     <section class="sub" id="composer">
@@ -410,7 +409,7 @@
              wording, and `cloud-transport.js::adoptSpeechControl` rewrites it to the same
              string when it adopts the box, so the two cannot drift apart.
              `enterkeyhint` makes a phone keyboard say "send" instead of "go". -->
-        <input id="speech-input" type="text" placeholder="Message Moxie&hellip;" autocomplete="off"
+        <input id="speech-input" type="text" placeholder="Ask Moxie anything&hellip;" autocomplete="off"
                enterkeyhint="send" aria-label="Message to Moxie">
         <!-- The mic sits BETWEEN the box and Send, which is where the owner asked for it
              and where a thumb expects it. The word stays "Listen": every piece of copy

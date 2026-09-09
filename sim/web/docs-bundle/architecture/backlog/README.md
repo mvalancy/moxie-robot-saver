@@ -84,5 +84,13 @@ work down:
   silently overwriting it — a silently-updated marker teaches the next reader nothing about how often
   these drift.
 
+- [`grounding-gate-unrun.md`](grounding-gate-unrun.md) — **the retrieval fix is proven, the answer-quality claim one layer up is not.** Blocked on a multi-hour gateway 503, not on the work.
+
+- [`one-brain-no-failover.md`](one-brain-no-failover.md) — **a 33-minute gateway 503 took the live demo's brain out entirely.** The degraded path carried it honestly; there is no second provider. Owner decision, because the fix costs a credential.
+
+- [`action-tag-drift.md`](action-tag-drift.md) — **0/3 goodbyes emit `<exit>`** on real replies. The mitigation written for this exact drift is still correctly wired; the candidate cause is a prompt block whose examples violate the schema it just declared. Untested — needs the gateway.
+
+- [`head-sweep-wait.md`](head-sweep-wait.md) — **reverted, and the number that killed it is recorded.** The fixed-frame wait it targeted is a real defect; the rewrite lost to the old code at a higher load, and the mechanism is still unknown.
+
 ---
 📖 [Docs index](../../README.md) · [Architecture index](../README.md) · [OpenMoxie feature audit](../openmoxie-feature-audit.md) · [Implementation plan](../implementation-plan.md)

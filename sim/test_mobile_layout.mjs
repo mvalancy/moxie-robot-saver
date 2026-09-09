@@ -645,7 +645,7 @@ try {
    * has to think of something to say to a robot, having been told nothing about her.
    * `#chat-openers` — three buttons in the dock, under the log — is
    * docs/architecture/backlog/gamify-the-public-sim.md's 🅐, verbatim: *"three tappable
-   * openers — Tell me a joke, How are you feeling?, Play a game with me."*
+   * openers — Tell me a silly joke, What makes you happy?, Surprise me!"*
    *
    * THE DISTINCTION THIS BLOCK PINS, and the reason the feature was not already shipped:
    * `#speech-chips` in the ENGINEERING RAIL look like these and are not these. They play
@@ -694,7 +694,7 @@ try {
     ok(openers.found, `${L}: #chat-openers exists at all`);
     eq(openers.n, 3, `${L}: three openers, no more and no fewer (got ${openers.n})`);
     eq(JSON.stringify(openers.labels),
-       JSON.stringify(["Tell me a joke", "How are you feeling?", "Play a game with me"]),
+       JSON.stringify(["Tell me a silly joke", "What makes you happy?", "Surprise me!"]),
        `${L}: …and they are the three the brief names — got ${JSON.stringify(openers.labels)}`);
     ok(openers.inDock && !openers.inRail,
        `${L}: they sit in #chat-dock, NOT in the engineering rail (dock=${openers.inDock} rail=${openers.inRail})`);
@@ -750,7 +750,7 @@ try {
       railDisplay: getComputedStyle(document.getElementById("rail-scroll")).display,
       scrollY: window.scrollY,
     }));
-    ok(turn.rows.some((r) => /\buser\b/.test(r.who) && r.msg === "Tell me a joke"),
+    ok(turn.rows.some((r) => /\buser\b/.test(r.who) && r.msg === "Tell me a silly joke"),
        `${L}: ONE TAP put the opener's words in the log as the VISITOR's turn — ` +
        `got ${JSON.stringify(turn.rows)}`);
     ok(turn.rows.some((r) => /\bmoxie\b/.test(r.who) && r.msg.length > 0),

@@ -559,7 +559,7 @@ is caught too — **TIER A findings for this suite: 0**. Each gut reddens exactl
 its file and no other: gutting `mode.js` fires **one** check (`data-mode` … got `"boot"`), gutting
 `qr.js` fires **two** (both qr.js clauses, with every moxie.js and hud.js mark still standing). Green
 and stable on the healthy page 3/3 at **25 checks**, and — the run that matters for a monitor — green
-against live production at **29 checks**: `data-mode="live"`, badge `HOSTED DEMO · LIVE`, 7 named
+against live production at **29 checks**: `data-mode="live"`, badge `MOXIE ONLINE`, 7 named
 sliders, 14 expression glyphs, **10880 ink px** on a 180×180 QR canvas, 0 console errors.
 
 **What clause 4 does not cover, said out loud.** `sw-reset.js`, `stub.js`, `bridge.js`, `audio.js`,

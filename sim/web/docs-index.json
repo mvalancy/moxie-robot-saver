@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 12195,
+   "bytes": 13537,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 30444,
+   "bytes": 31425,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 279666,
+   "bytes": 285386,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -127,7 +127,7 @@
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 269762,
+   "bytes": 284446,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",
@@ -158,7 +158,12 @@
     "2026-09-08 — two code paths that agreed by coincidence, and three commands the robot always knew",
     "2026-09-08 — a shipped global that matched and did nothing, and a `getattr` default that invented a defect",
     "2026-09-08 — an instrument that could not work, and the controls that proved it",
-    "2026-09-08 — the control arm worked, and the gloss was a RETRIEVAL bug all along"
+    "2026-09-08 — the control arm worked, and the gloss was a RETRIEVAL bug all along",
+    "2026-09-08 — an instrument whose failure mode CONFIRMED the hypothesis it existed to test",
+    "2026-09-08 — `git add -A` shipped an untested change inside a docs commit",
+    "2026-09-08 — a prediction, written down before the comparison arm finished",
+    "2026-09-08 — the prediction was WRONG, and the arm that proved it ran at a harder load",
+    "2026-09-08 — the audit's own secrets check can no longer detect a secret"
    ],
    "kind": "md"
   },
@@ -571,7 +576,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 187742,
+   "bytes": 187714,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -1009,6 +1014,70 @@
    "kind": "md"
   },
   {
+   "path": "architecture/backlog/head-sweep-wait.md",
+   "title": "The head-sweep wait: a good idea, a failed implementation, and one honest number",
+   "section": "architecture",
+   "bytes": 9350,
+   "mermaid": 0,
+   "headings": [
+    "The defect, which has not gone away",
+    "What was tried",
+    "What happened",
+    "Why it was reverted rather than tuned",
+    "Step 1 is done: the red now says which story it is (2026-09-08)",
+    "Step 2 is done, and it overturned the premise this page was written on",
+    "Finding 1 — the dt clamp is a FLOOR on progress per frame, not a ceiling",
+    "Finding 2 — in the whole full-viewport regime the two shapes are the same program",
+    "Finding 3 — a rAF frame is not an `animate()` step, and that is the real starvation channel",
+    "What is still NOT established",
+    "What to do next"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/action-tag-drift.md",
+   "title": "exit>` stopped being written, and the prompt block that carries it contradicts itself",
+   "section": "architecture",
+   "bytes": 5162,
+   "mermaid": 0,
+   "headings": [
+    "The measurement",
+    "The wiring is intact — checked, not assumed",
+    "Checked and dismissed: the live tests already tell the two apart",
+    "The candidate cause: the block tells the model its own examples are invalid",
+    "The proposed change, and why it is not made here"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/one-brain-no-failover.md",
+   "title": "The demo has exactly one brain, and today it was gone for half an hour",
+   "section": "architecture",
+   "bytes": 3392,
+   "mermaid": 0,
+   "headings": [
+    "What happened",
+    "What worked, and is worth saying plainly",
+    "The gap",
+    "Why it is not built here"
+   ],
+   "kind": "md"
+  },
+  {
+   "path": "architecture/backlog/grounding-gate-unrun.md",
+   "title": "The grounding gate has never run",
+   "section": "architecture",
+   "bytes": 3305,
+   "mermaid": 0,
+   "headings": [
+    "The two claims, which are not the same claim",
+    "The gate, unchanged",
+    "Why it has not run",
+    "What has to happen"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/backlog/head-travel-threshold.md",
    "title": "test_liveliness.mjs`'s head-travel floor is a measurement of the machine",
    "section": "architecture",
@@ -1030,7 +1099,7 @@
    "path": "architecture/backlog/gamify-the-public-sim.md",
    "title": "Gamify the public sim — evidence for a decision the owner kept",
    "section": "architecture",
-   "bytes": 52877,
+   "bytes": 54032,
    "mermaid": 0,
    "headings": [
     "0. What the owner needs to decide",
@@ -1088,7 +1157,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 55739,
+   "bytes": 55732,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",
@@ -1585,7 +1654,7 @@
    "path": "guides/deploy-cloudflare.md",
    "title": "Deploying the Moxie Sim to Cloudflare Pages",
    "section": "guides",
-   "bytes": 14010,
+   "bytes": 15864,
    "mermaid": 0,
    "headings": [
     "The one thing to understand first",

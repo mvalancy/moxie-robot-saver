@@ -1958,3 +1958,216 @@ reader judges the verdict rather than trusting it.**
 
 Next slice is now well-defined and is **retrieval, not prompting**: `bestPassage` selects by query-term
 hits, which fails inside a document whose title *is* the query.
+
+### 2026-09-08 — an instrument whose failure mode CONFIRMED the hypothesis it existed to test
+
+The sharpest instance of this session's family, and it was caught by one accident.
+
+The grounding gate ran for the first time and returned `VERDICT: not grounded`. **Both answers were
+empty strings.** The gateway had replied `HTTP 503 no_db_connection`, there was no `res.ok` check, an
+error response carries no `choices`, so `raw` fell back to `""` — and an empty answer shares no terms
+with anything.
+
+> **The probe was wrong in the direction of its own hypothesis.** A broken call is indistinguishable
+> from *"the passage didn't help her"*, which is precisely the question the probe exists to decide. It
+> printed the same words for both.
+
+**It was caught only because the answers were empty rather than merely short.** Had the gateway
+degraded instead of failing outright, the verdict would have been read and believed. That is the whole
+class in one sentence: an instrument that fails *toward* the answer you expect will be trusted exactly
+when it is wrong.
+
+Fixed and demonstrated against the live 503: non-2xx throws, a 200 with empty content throws, transients
+retry, and an unusable scenario prints `UNUSABLE` and exits 1. The probe also now loads `mqtt/.env` the
+way `load_repo_dotenv` does — **it was the one instrument in the tree that could not find the file,
+which is exactly why its gap looked like the environment's** and produced a confident "credentials are
+absent from this environment".
+
+**THE GATE IS STILL UNRUN.** `gateway.graphlings.net` returned 503 across 16 polls in ~12 minutes,
+intermittent rather than flat (a pytest run minutes earlier got real replies; the **public site stayed
+`ok=true, degraded=false, mode=live`** throughout — verified). A watcher is armed to run the gate on
+recovery. **The `bestPassage` fix is verified-necessary, not verified-sufficient**, and is not pushed.
+
+**A prior finding dissolved, and a real one replaced it.** The `test_live_*` failures were reported as
+*"they fail instead of skipping without credentials"*. Wrong mechanism: all six carry correct `skipif`
+guards, but `load_repo_dotenv()` had **already** put credentials in the environment, so they never
+skipped — they ran and failed for real reasons. What survives is sharper and is **not** infrastructure:
+`test_live_action_tags` fails on **non-empty** replies, *"only 0/3 goodbye turns emitted `<exit>`"* —
+**prompt-adherence drift**, a behavioural regression in what the model does with `LLMApp._system`. The
+other five are confounded by the outage and undiagnosed.
+
+**And one more silent-failure near-miss worth copying into anyone's shell habits:** a commit silently
+did not happen because `grep -c` **exits 1 when it finds zero matches**, so the secret sweep *passing*
+broke the `&&` chain. **The check succeeding looked identical to the check failing.** (This
+orchestrator's own idiom survives only by accident — `echo "$(… grep -c …)"` swallows the exit status.)
+
+### 2026-09-08 — `git add -A` shipped an untested change inside a docs commit
+
+Commit `8e804be` is titled *"backlog: the grounding gate has never run"*. It also contains **50 changed
+lines of `sim/test_liveliness.mjs`**, a rewrite of the head-sweep wait that was sitting uncommitted in
+the working tree while I was measuring it. `git add -A` swept it in, and it is now on `dev` under a
+message that does not mention it.
+
+**The change itself is defensible; shipping it silently is not.** What it does: the sweep block asserted
+`spread > 40` — that the drive really swung her head across the screen — after waiting a fixed
+`for (let f = 0; f < 4; f++)`. `animate()` clamps `dt` to 0.1 s, so four frames on a starved runner
+advance her a fraction of what four frames advance her on an idle one. **"Four frames happened" and
+"she swung" are different claims that agree only while the runner is fast** — the same fixed-wait-for-a-
+condition defect this log has now recorded a dozen times, sitting unnoticed in my own test file.
+
+Four is now the floor, so sampling on a healthy runner is unchanged and the wait can only get longer;
+what ends a sweep is the observation the assertion wants (6 px of measured head travel within that
+sweep) or a 1.5 s per-sweep deadline. **And the verdict is split in two**, because the old single check
+conflated two causes that need different responses:
+
+| Check | Red means |
+|---|---|
+| `res.starved === 0` | the runner never gave her the frames to move — an environment fact |
+| `spread > 40` | the drive genuinely did not move her — a real defect |
+
+**What is NOT established.** That this fixes anything. The earlier comparison — pristine `dev` failing
+1 of 2 runs against a fix branch passing 2 of 2 — is worth nothing, and **that fix branch,
+`feat/holdwait`, is gone entirely**: no reflog, no dangling commit, never committed, removed with its
+worktree. Rewritten from scratch here. The current batch under 40 busy loops has produced
+`1 failure(s) of 97` on its first run, and **my capture regex looked for `✗` when `browser_harness.mjs`
+prints `   · `, so I do not know which check failed** — the split above exists precisely to answer that
+question and my harness threw the answer away. Unloaded: 97/97 green.
+
+**Three separate lessons, all mine:** stage by path when a working tree holds unrelated work; a commit
+message that omits a file is a false record even when the code is fine; and an experiment whose output
+you cannot parse is not an experiment. The load batch was also run at 82 rather than the intended ~45
+because I stacked foreground runs on top of it — comparable to the earlier regime by accident, not by
+design.
+
+**And the sweep on that very commit found two "secrets", both false.** The first was the tail of the
+ordinary word **task-notification** — the four characters from its `s` onward look exactly like a key
+prefix — matched because I dropped the `\b` from my own idiom when I added a `ghp_` alternative to it.
+The document it fired on is *this log*, at the paragraph where I recorded that same false positive the
+last time it happened.
+
+**Writing this paragraph tripped the sweep a third time.** The first draft quoted the offending
+fragment on its own inside backticks, and a backtick **is** a word boundary — so the corrected
+`\b`-anchored regex matched the explanation of why it shouldn't. Left as written, every future sweep
+touching this file would have reported non-zero forever, which is the precise failure this entry is
+about: **a guard that always cries wolf is a guard nobody reads.** The fragment is described here
+instead of quoted. The second was the Turnstile
+**sitekey**, which is public by construction: it is rendered into every visitor's HTML, and it is the
+*secret* half of the pair that must never appear. A prefix rule cannot tell those two apart — both are
+`0x`-prefixed — so the sitekey alternative comes out of the sweep entirely rather than being carried as
+a tripwire that can only ever cry wolf.
+
+The corrected sweep is `\b(sk-[A-Za-z0-9_]{12}|ghp_[A-Za-z0-9]{20})`, and **it was checked in both
+directions before being trusted**: 0 on the `task-notification` decoy, 2 on a synthetic file containing
+key-shaped strings. A sweep that reports zero is worth nothing until you have watched it report
+non-zero — which is the whole subject of this log, arriving this time in the instrument I use to guard
+every commit I make.
+
+### 2026-09-08 — a prediction, written down before the comparison arm finished
+
+First instrumented run of the rewritten head-sweep wait, at load 66.7:
+
+```
+❌ liveliness + chat layout: 2 failure(s) of 97 checks
+   · …and the runner gave her room to swing in every sweep (3/16 timed out)
+   · …and the drive really swung her head across the screen (31px of travel)
+```
+
+**That is the split doing its job on its first outing.** Under the old single assertion this run printed
+`31px` and nothing else, and 31px is consistent with two incompatible stories — a placement defect, or
+a machine too slow to move her. The starvation line settles it in one glance: three sweeps hit their
+1.5 s deadline without her travelling 6 px, so the shortfall is the runner, not the drive.
+
+**The prediction, recorded before the paired `PRISTINE` arm has produced a number.** The rewritten loop
+runs a *floor* of four frames and exits early only on a condition the old code never checked, so it
+executes **at least** as many frames per sweep as the old one — never fewer. More frames cannot mean
+less head travel. Therefore:
+
+> **`PRISTINE` must fail this same check at this load, at a `spread` no greater than 31 px — and it
+> will report only that number, with nothing to say which of the two stories produced it.**
+
+If `PRISTINE` instead **passes** at this load, the reasoning above is wrong somewhere I cannot
+currently see, and the change must be treated as a regression until that is explained — not patched
+until it goes green. Writing the prediction down first is the only thing that makes the next number
+capable of embarrassing me, which is the whole point of running the arm at all.
+
+**What this does NOT settle**, whichever way it lands: whether the 1.5 s per-sweep deadline is the
+right number. If starvation is routine at ordinary CI load, then a red that says *"this machine was too
+slow to measure"* still stops a build, and a check that reddens on the environment is a check people
+learn to ignore. That is a separate decision, and it needs the pristine number first.
+
+### 2026-09-08 — the prediction was WRONG, and the arm that proved it ran at a harder load
+
+```
+r1 FIXED    load=66.74 :: ❌ 2 failure(s) of 97   (3/16 sweeps timed out; 31px of travel)
+r1 PRISTINE load=78.85 :: ✅ 96 checks passed
+```
+
+**The old code passed. The rewrite failed. And the old code did it at a load 18% higher.** The
+prediction committed one hour earlier said `PRISTINE` *must* fail at no more than 31 px, on the
+argument that the rewritten loop runs a floor of four frames and exits early only on a condition the
+old code never tested — so it can never run *fewer* frames, and fewer frames cannot mean more travel.
+
+That argument is wrong somewhere I still cannot see. I have now tried twice to derive the mechanism
+from the source — `setSpeech` is DOM-only, the push condition is logically equivalent to the old
+`continue`, the frame floor is identical — and produced nothing but plausible stories. **That is the
+exact failure this log has spent the day cataloguing, so it stops here: the mechanism will be
+measured, not reasoned about.**
+
+**Standing by the terms as written.** The commitment was *"treated as a regression until that is
+explained — not patched until it goes green"*, and lengthening the deadline until the red disappears
+is precisely the move that phrase was written to forbid. The change stays on `dev` only as long as the
+remaining rounds allow; if the pattern holds across the pairs, it comes out, and the honest artifact
+of the exercise is the split verdict and this entry rather than a fix.
+
+**Two things this run does establish, independent of who wins:**
+
+1. **The split verdict works.** `3/16 sweeps timed out` alongside `31px of travel` reads in one glance
+   as *the runner was too slow to make the measurement*, where the old single assertion printed `31px`
+   and left a reader to guess between a placement defect and a slow machine. That value survives even
+   if the wait it is attached to gets reverted.
+2. **One pair is not a result.** `n=1` against `n=1` falsifies a *"must"* — which is all a universal
+   claim needs — but it cannot establish that the rewrite is worse on average. Those are different
+   claims, and the rounds still running are what separates them.
+
+### 2026-09-08 — the audit's own secrets check can no longer detect a secret
+
+Both commands the AUDIT tier runs to answer *"is a key in this repo?"* now fire on every run, for
+reasons that have nothing to do with keys:
+
+| Command as written | What it actually matches | Reads |
+|---|---|---|
+| `git grep -E "sk-[A-Za-z0-9_]{12}"` | the tail of the ordinary word **task-notification**, in `sim/test_cloud_transport.mjs` and `sim/tests/test_compose.py` | 3 files |
+| `git log -S sk-Afb` | the **documentation of the first check**, including a commit literally titled *"the audit wrote its own search string into the log, flagging itself forever"* | 3 commits |
+
+**Neither is a leak, and both were verified rather than assumed** — every hit was extracted and read
+with the key body masked. **The repository is clean:** scoped past the docs that describe the checks,
+tracked files with a key shape reads **0** and history commits touching the real prefix reads **0**.
+
+**But an audit step that always fires has stopped being an audit step.** Nobody reads a guard that
+cries wolf, and this one is written into the standing procedure, so it would have cried wolf on every
+fire from here on. The corrected commands, which are what future fires should run:
+
+```sh
+DOCEX=(':!docs' ':!sim/web/docs-bundle' ':!sim/web/docs-index.json' ':!sim/web/docs-search.json')
+git grep -lE '\bsk-[A-Za-z0-9_]{12}' -- . "${DOCEX[@]}" | wc -l     # expect 0
+git log -S sk-Afb --format=%H -- . "${DOCEX[@]}" | wc -l            # expect 0
+```
+
+Two changes, each load-bearing: the **`\b`** (without it the pattern cannot distinguish a key from any
+word ending in those two letters), and **excluding the documents that describe the check** (they must
+be free to name the search string; that is what the docs are for).
+
+**And a zero from either is worth nothing until it has been seen to report non-zero.** Verified in
+both directions before being trusted: 0 against the `task-` decoy, and non-zero against a synthetic
+key-shaped string. A passing scan and a broken scan are otherwise the same observation — as this
+session already learned when a bare `grep -c` exited 1 on zero matches and silently broke the `&&`
+chain behind it.
+
+**Hygiene, with a correction.** All 13 `origin/feat/*` refs matched merged PRs — but only **one**
+branch actually existed to delete; the other twelve were **stale remote-tracking refs** for branches
+GitHub had already removed, and a `git fetch --prune` was the whole fix. The success counter is what
+caught it: reporting *"deleted 13 branches"* would have been false. `wt-passage2` is **kept on
+purpose** — it is not stale, a live gate watcher `cd`s into it — and its three files are verified
+byte-identical to `dev` after the squash, because ancestry is meaningless once a branch is squashed.
+All four cron tiers armed; doc guards green; bundle 0-diff; `mqtt/.env` untracked, ignored, mtime
+unchanged.
