@@ -452,7 +452,8 @@ try {
    * 7. AN OPENER IS A REAL TURN — the same request a typed line makes.
    *
    * WHAT IT IS. `#chat-openers` in the chat dock: three buttons —
-   * *"Tell me a joke"* / *"How are you feeling?"* / *"Play a game with me"* — specified in
+   * *"Tell me a silly joke"* / *"What makes you happy?"* / *"Surprise me!"* — the
+   * owner's chosen effortless-chat direction, with no imposed mission or game structure.
    * docs/architecture/backlog/gamify-the-public-sim.md's 🅐. Tapping one is a whole first
    * turn for a visitor who has been told nothing about this robot and has no idea what
    * she can do.
@@ -492,7 +493,7 @@ try {
     ok(before.inDock,
        "…in #chat-dock, beside the box a visitor types into — not in the engineering rail");
     eq(JSON.stringify(before.labels),
-       JSON.stringify(["Tell me a joke", "How are you feeling?", "Play a game with me"]),
+       JSON.stringify(["Tell me a silly joke", "What makes you happy?", "Surprise me!"]),
        `…and they are the three openers the brief names — got ${JSON.stringify(before.labels)}`);
 
     if (before.found) {
@@ -503,7 +504,7 @@ try {
     const after = await page.evaluate(snapshot);
 
     eq(chats().length, 1, "TAPPING AN OPENER REACHES /api/chat — exactly once, like a typed line");
-    ok(chats().length === 1 && JSON.parse(chats()[0].body).text === "Tell me a joke",
+    ok(chats().length === 1 && JSON.parse(chats()[0].body).text === "Tell me a silly joke",
        `…carrying the opener's own words in the same field a typed line fills ` +
        `(got ${chats()[0] && chats()[0].body})`);
     const speech = bodies.filter((b) => /\/api\/speech\b/.test(b.url));
@@ -514,7 +515,7 @@ try {
        `…and a buffer source really STARTED — her answer was spoken (started=${after.audio.started})`);
     ok(after.audio.peak > 0.5,
        `…audibly, not a silent clip (peak ${after.audio.peak.toFixed(3)} of ${TONE.amp})`);
-    ok(after.chatText.includes("Tell me a joke"),
+    ok(after.chatText.includes("Tell me a silly joke"),
        `…the visitor's line is in the log — got ${JSON.stringify(after.chatText.slice(0, 120))}`);
     ok(after.chatText.includes("What would you like to play"),
        `…and Moxie's answer under it — got ${JSON.stringify(after.chatText.slice(-90))}`);

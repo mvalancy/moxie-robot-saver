@@ -1703,6 +1703,16 @@ moved**, again.
 
 **Most valuable next slice — RE-RANKED 2026-09-05 ON THE OWNER'S STEER: the live public page is the goal.** The owner asked *"when will Moxie Sim be live with AI on our public page? That should be the goal you drive towards"*. The answer to the literal question is **it already is** — verified that day: `/api/health` reports `mode: live`, a real turn returned *"Hi there! I love mornings because the sun makes everything glow!"* (`backend: router`, `result: SUCCESS`), and a browser played **2.69 s / 59 252 frames @ 22050 Hz, peak 0.97**, zero console errors. But the steer stands as a *priority* instruction, and this ranking now obeys it: **anything that makes a stranger's visit to `moxie.mattvalancy.com/sim` better, safer or cheaper outranks anything that serves a robot none of us has.**
 
+**OWNER DECISION, 2026-09-09 — the formerly blocked “gamify” line is closed.** Optimise
+for the stranger's 90-second **meet-Moxie toy**, turn structured missions/games **off**,
+and keep the familiar chat surface playful through character and inviting first turns.
+Measure only the privacy-first aggregate funnel already available at Cloudflare: Web
+Analytics page views plus Pages Functions `/api/chat` request counts; no new tracker,
+cookie, stable visitor id, session replay, or conversation/audio content. The public-page
+slice replaces the engineering-first first impression, removes the live deployment banner
+from a healthy visit, and changes the openers from “play a game” to jokes, feelings and
+surprise while preserving the one real, rate-limited turn path.
+
 **⓪ THE OWNER'S SECOND STEER, AND IT OUTRANKS EVERY NUMBERED ITEM BELOW — recorded
 2026-09-05, having been recorded NOWHERE until then.** This is a process failure worth
 naming: the instruction below was given on 2026-09-04, work was started on it in a

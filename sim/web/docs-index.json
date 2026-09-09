@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 284608,
+   "bytes": 285386,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -576,7 +576,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 187742,
+   "bytes": 187714,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -1099,7 +1099,7 @@
    "path": "architecture/backlog/gamify-the-public-sim.md",
    "title": "Gamify the public sim — evidence for a decision the owner kept",
    "section": "architecture",
-   "bytes": 52877,
+   "bytes": 54032,
    "mermaid": 0,
    "headings": [
     "0. What the owner needs to decide",
@@ -1157,7 +1157,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 55739,
+   "bytes": 55732,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",

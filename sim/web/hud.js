@@ -185,8 +185,8 @@
   /* THE THREE OPENERS — `#chat-openers`, in the chat dock under the log.
    *
    * Three buttons that each send a whole first turn for a visitor who has been told
-   * nothing about this robot: *"Tell me a joke"*, *"How are you feeling?"*, *"Play a game
-   * with me"* (docs/architecture/backlog/gamify-the-public-sim.md, 🅐).
+   * nothing about this robot: *"Tell me a silly joke"*, *"What makes you happy?"*,
+   * *"Surprise me!"* (the owner's decided effortless-chat direction).
    *
    * ONE LINE OF REAL WORK, and every word of the rest of this note is about WHICH PATH it
    * takes. `window.moxieTypedTurn.send` is `cloud-transport.js`'s `sendTyped` — "the one
@@ -204,7 +204,7 @@
    *     `#speech-btn` would NOT. That button is the "ask Moxie" control only on a page
    *     whose typed turn adopted it; on a self-hosted page with a live Piper sidecar it
    *     still means "SAY this text out loud", so faking a click there would have Moxie
-   *     announce "Tell me a joke" in her own voice instead of answering it.
+   *     announce the prompt in her own voice instead of answering it.
    *
    * DELEGATED FROM THE CONTAINER rather than bound per button: the three are static markup
    * today, and one listener on the group keeps that true if a fourth ever arrives from

@@ -586,6 +586,17 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);   /* legible over the 3-D, whatever is behind */
 }
 #chat-cue .cue-more { color: var(--muted); }
+#chat-cue strong {
+  color: var(--text);
+  font-weight: 650;
+}
+#chat-cue strong::before {
+  content: "✦";
+  margin-right: 6px;
+  color: var(--cyan);
+  text-shadow: 0 0 10px var(--glow-50);
+}
+@media (min-width: 900px) { #chat-cue .cue-break { display: none; } }
 #chat-dock:has(#transcript .turn) #chat-cue { display: none; }
 
 /* the conversation, above the box you type into */
@@ -1477,6 +1488,14 @@ body.tts-speaking #tts-status { color: var(--cyan); }
   font-size: 14px; padding: 2px 4px; line-height: 1;
 }
 #env-banner .eb-x:hover { color: var(--text); }
+/* A healthy public page is a conversation, not a deployment explainer. The banner remains
+   available for scripted/degraded hosts, where its warning is actionable, but a live page
+   already says "MOXIE ONLINE" in the header and must not cover the robot on first visit. */
+body[data-env="hosted"][data-mode="live"] #env-banner {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
 @media (max-width: 640px) {
   /* On phones: a wider, evenly-centered card (10px margins each side) with a big,
      easy-to-hit corner X instead of the tiny inline one. */

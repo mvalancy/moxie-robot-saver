@@ -713,7 +713,7 @@
       "Sends your line to Moxie — she answers here. (Speaking arbitrary text needs the local Piper server.)");
     btn.removeAttribute("disabled");
     btn.disabled = false;
-    inp.setAttribute("placeholder", "Message Moxie…");   // the same words sim.html ships
+    inp.setAttribute("placeholder", "Ask Moxie anything…"); // the same words sim.html ships
     inp.setAttribute("maxlength", String(maxChars()));
     inp.removeAttribute("disabled");
     inp.disabled = false;
@@ -767,7 +767,7 @@
     var input = document.createElement("input");
     input.id = "chat-input";
     input.type = "text";
-    input.placeholder = "Message Moxie…";
+    input.placeholder = "Ask Moxie anything…";
     input.autocomplete = "off";
     input.setAttribute("maxlength", "500");     // mirrors DEMO_MAX_INPUT_CHARS (§4.1)
     var send = document.createElement("button");
