@@ -99,6 +99,29 @@ Following the [build-order spine](overview.md); the parent app
 
 Tracked so the status table above isn't over-claimed. Each is a build slice, not a bug:
 
+- **`head-travel-threshold`: the RED now explains itself, and the mechanism behind the one
+  unexplained number is measured — but that number is still unexplained.** `sim/test_liveliness.mjs`'s
+  `spread > 40` waits a fixed four frames and then asserts *she swung*, two claims that agree only
+  while the runner is fast. Shipped 2026-09-08 on `feat/sweepdiag`: the wait is untouched
+  (`for (let f = 0; f < 4; f++)` verbatim, no new `ok()`, still **96 checks**) and only the failure
+  TEXT changed — a red now reports how many of the 16 sweeps moved her less than 6 px, so *the drive
+  is broken* and *this machine was too slow to measure it* are one glance apart. **What the
+  measurement overturned:** the reverted rewrite was argued from *"four frames on a starved runner
+  advance her a fraction of what four frames advance her on an idle one"*, and that is **backwards**.
+  `animate()` clamps `dt` to 0.1 s, which is a **floor** on progress per frame, not a ceiling: motor 6's
+  convergence in four frames measures **0.78–0.86 at 48–69 ms frames and exactly 0.939 at every frame
+  ≥ 100 ms**, i.e. a slower runner records *more* travel until the clamp, then flat. Consequently, at
+  1280×900 on any machine slow enough to matter, the rewrite's break condition fires at its own floor
+  in **every one of 16 sweeps of every run** — the two shapes are the *same program* there
+  (fixed mean 50.7 px, cond mean 51.5 px, n=6 each, interleaved, frame durations 85→450 ms via CDP
+  throttling). **Honest gap:** the `31px` failure that caused the revert was **not reproduced** — it
+  was seen once at machine load 66.74, a condition not recreated here — so its cause is still unknown,
+  and this bullet retires two explanations rather than supplying a third. A third finding is filed and
+  unfixed: the test's `requestAnimationFrame` turns and the page's own `animate()` steps **decouple**
+  under starvation (convergence collapsing to 0.33–0.65 at unchanged frame intervals, i.e. 1–2 physics
+  steps inside 4 test frames), which is exactly what a wait on a *frame count* cannot protect against.
+  Full numbers in [`backlog/head-sweep-wait.md`](backlog/head-sweep-wait.md).
+
 - **the hosted microphone: the ROUTE now hears real speech; no human has ever spoken into it.**
   Until 2026-09-05 every test of [`functions/api/transcribe.js`](../../functions/api/transcribe.js) —
   the route the live page's microphone posts to — used a stubbed `fetch` or a 440 Hz tone.
