@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 282413,
+   "bytes": 283191,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -1093,7 +1093,7 @@
    "path": "architecture/backlog/gamify-the-public-sim.md",
    "title": "Gamify the public sim — evidence for a decision the owner kept",
    "section": "architecture",
-   "bytes": 52877,
+   "bytes": 54032,
    "mermaid": 0,
    "headings": [
     "0. What the owner needs to decide",

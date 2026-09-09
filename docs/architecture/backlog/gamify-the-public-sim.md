@@ -1,5 +1,20 @@
 # 🎮 Gamify the public sim — evidence for a decision the owner kept
 
+> **DECIDED 2026-09-09.** The public page is a **90-second meet-Moxie toy** for someone
+> who may never own a robot. The interaction is **effortless chat with delight**, with
+> mission/game structure explicitly turned off. The first-turn prompts therefore invite
+> jokes, feelings and surprise without putting the visitor into a task or score loop.
+>
+> **Measurement rule.** Use the Cloudflare layer already serving the page: its injected
+> Web Analytics beacon for aggregate page views/performance, and Pages Functions request
+> analytics for aggregate `/api/chat` attempts. Add no second tracker, cookie, fingerprint,
+> stable visitor id, session replay, or capture of message/audio content. This is enough to
+> compare arrivals with attempted turns without learning who a child is or what they said.
+> Cloudflare documents Web Analytics as cookie-free and says it does not collect or use
+> visitors' personal data: <https://developers.cloudflare.com/web-analytics/about/>.
+> The older “zero analytics” finding below was true of repository source only; the deployed
+> checker already proves that Cloudflare injects the beacon at the custom domain.
+
 > **Research brief · scan run 2026-09-05 · this page does not choose the game.**
 >
 > > **⚠️ Re-verified 2026-09-06: §1's precondition CLOSED while this page was being written, and the

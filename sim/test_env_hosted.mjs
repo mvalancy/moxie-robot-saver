@@ -298,7 +298,7 @@ try {
   //        local server, because with a same-origin route that claim is false.
   const live = await load(HOSTED, { health: { status: 200, body: HEALTH_LIVE }, transport: true });
   ok(live.state === "live", `a configured route must read as live (got ${live.state})`);
-  ok(live.badge === "HOSTED DEMO · LIVE", `live badge (got "${live.badge}")`);
+  ok(live.badge === "MOXIE ONLINE", `live badge (got "${live.badge}")`);
   ok(live.mode === "live", `body[data-mode] should say live (got ${live.mode})`);
   ok(live.pillShown === false, "live and idle: nothing to apologise for");
   ok(live.micMarked === false, "live ears must REMOVE #mic-btn's needs-backend mark");

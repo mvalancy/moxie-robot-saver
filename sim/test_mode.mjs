@@ -853,7 +853,7 @@ const snap = (over) => Object.assign({
   // ...then the deployment turns out to be live. Same page object, honest new words.
   v.push(snap({ state: "live", reason: null, badge: "HOSTED DEMO · LIVE", message: "",
                 voice: true, ears: true, liveTurns: true }));
-  eq(v.badge.textContent, "HOSTED DEMO · LIVE", "live: the badge says so");
+  eq(v.badge.textContent, "MOXIE ONLINE", "live: the visitor-facing badge says so plainly");
   eq(v.body.getAttribute("data-mode"), "live", "live: data-mode follows");
   eq(v.pill.hidden, true, "live and idle: nothing to apologise for");
   ok(!v.el("mic-btn").classList.contains("needs-backend"),
