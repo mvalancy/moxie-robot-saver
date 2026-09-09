@@ -1646,7 +1646,7 @@ follows). `offline` never polls at all.
 **Soft degrade (429):** the mode stays `live` — a rate-limited visitor is not a broken deployment. The turn
 is answered from the stub, the pill reads *slow down*, and live turns resume after `Retry-After`.
 
-**Recovery is automatic and visible:** the badge flips back to `HOSTED DEMO · LIVE` and, once, Moxie says a
+**Recovery is automatic and visible:** the badge flips back to `MOXIE ONLINE` and, once, Moxie says a
 short line in-character about being back. Nothing else about the session is reset.
 
 ---
@@ -1657,13 +1657,13 @@ short line in-character about being back. Nothing else about the session is rese
 
 | `level` | Condition | Badge | Copy |
 |---|---|---|---|
-| `ok` | in-flight < 60 % of `DEMO_MAX_CONCURRENT_CHAT` | `HOSTED DEMO · LIVE` | — |
+| `ok` | in-flight < 60 % of `DEMO_MAX_CONCURRENT_CHAT` | `MOXIE ONLINE` | — |
 | `busy` | 60‑99 % | `HOSTED DEMO · BUSY` | "Moxie is talking with a few other people right now — answers may take a moment." |
 | `full` | at the ceiling ⇒ the 503 `at_capacity` | `HOSTED DEMO · BUSY` | "Moxie has her hands full right now. She's answering from her scripted repertoire until a slot opens." |
 | — | `budget_exhausted` | `HOSTED DEMO · SCRIPTED` | "Moxie's live brain has used up today's demo budget. Everything you see still works — she's speaking from her recorded lines." |
 | — | `upstream_down` / `timeout` | `HOSTED DEMO · SCRIPTED` | "Moxie's brain is unreachable right now — she's running on what she remembers." |
 | — | `gateway_not_configured` | `HOSTED DEMO` | Today's existing copy, unchanged. |
-| — | 429 | `HOSTED DEMO · LIVE` + a transient chip | "One at a time! Give Moxie a few seconds." |
+| — | 429 | `MOXIE ONLINE` + a transient chip | "One at a time! Give Moxie a few seconds." |
 
 **Where it goes:** `env.js` already owns this surface — it stamps `document.body[data-env]` (`env.js`:16),
 inserts `span.env-badge` before `#topbar .linkstate` (:20‑29), and paints a one-time dismissible
@@ -1699,7 +1699,7 @@ same trick `sim/test_bridge.mjs`:31‑51 already uses for `bridge.js`.
 | 4 | `node sim/test_mode.mjs` | The state machine against fixture envelopes: boot→offline on a 404; boot→degraded on `gateway_not_configured`; live→degraded on 503; live stays live on 429 but suppresses turns for `Retry-After`; degraded→live on a good poll; the 30 s→5 min backoff; no polling while `document.hidden`; `offline` never polls. |
 | 5 | `node sim/test_cloud_transport.mjs` | Loads `bridge.js` + `cloud-transport.js` under the stubbed-window harness with a stubbed `fetch`: `window.moxieBridge` still exposes all seven members; the **TTS message is routed before the chat message**; on a slow `/api/speech` the chat message still lands by `DEMO_SPEECH_WAIT_MS`; `hasCloudVoice()` is true after; in `degraded` the wrapper delegates to `inner.sendUserTurn` and `stub.js` answers. |
 | 6 | `node sim/test_fallback_coverage.mjs` | Every Moxie line in `sim/web/sessions/*.json` has an `audio/index.json` entry whose file exists on disk — the shape of `sim/test_ambient.mjs`:29‑39. **P0 covers sessions only** (that passes today). **P1 extends it to `stub.js`'s SCRIPT+FALLBACK and `filler.py`'s `_LINES`**, in the same commit as the clips — landing it earlier just paints the build red. |
-| 7 | extend `sim/test_env_hosted.mjs` | Still **zero** `:8081`/`:8082` probes on a hosted hostname; with `/api/health` 404 the badge reads `HOSTED DEMO` and there are no console errors; with a stubbed live health response the badge reads `HOSTED DEMO · LIVE` and `#mic-btn` no longer carries `needs-backend`. |
+| 7 | extend `sim/test_env_hosted.mjs` | Still **zero** `:8081`/`:8082` probes on a hosted hostname; with `/api/health` 404 the badge reads `HOSTED DEMO` and there are no console errors; with a stubbed live health response the badge reads `MOXIE ONLINE` and `#mic-btn` no longer carries `needs-backend`. |
 | 6b | `node sim/test_demo_ears.mjs` | **The ears, both halves, hermetically.** Part A calls `functions/api/transcribe.js` with a synthetic `Request` and a stubbed `fetch`: both byte caps, with a clip under `DEMO_MIN_AUDIO_BYTES` making **zero** upstream calls; the per-IP windows and the unit budget; our own `AbortSignal` timeout and its env override; an unset `DEMO_STT_MODEL` and a foreign `Origin` each making zero upstream calls; a nine-row upstream-status table proving a payload 4xx is per-turn while 401/403/5xx degrade; the container allowlist refusing webm/ogg/mp4/mp3/flac with a **400 and no call** (asserting explicitly that it is *not* a 503); and a hostile upstream body naming the model and a key prefix swept out of every response and every header. Part B evaluates the **real `sim/web/mic.js`** under a stubbed window with a virtual clock and a **fake recorder** — no microphone is opened — and proves the 15 s hard stop actually stops a recorder (still running at 14 999 ms, stopped at 15 001 ms), that the mode machine picks the target, that an explicit `moxie.sttBase` still wins, that every refusal reason still answers with a scripted child line, and that the browser's own WAV encoder produces a file the **server's** RIFF walker reads back at 16 kHz mono 16-bit. |
 | 8 | `python3 -m pytest sim/tests/test_ci_workflows.py` | The six node tests above are wired into `sim/ci/ci.yml` — the guard that already exists for tier drift. |
 | 9 | a repo lint (new step) | No file under `functions/` or `sim/web/` contains `sk-`, a gateway hostname, `mattvalancy`, or a 32-hex account id. `wrangler.toml` contains no `[vars]`. `.dev.vars` is git-ignored. |

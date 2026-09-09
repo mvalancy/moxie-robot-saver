@@ -576,7 +576,7 @@
    "path": "architecture/backlog/live-sim-demo.md",
    "title": "Live Sim demo — the hosted Moxie Sim on a static edge, with a real brain, a real voice and real ears",
    "section": "architecture",
-   "bytes": 187742,
+   "bytes": 187714,
    "mermaid": 2,
    "headings": [
     "1. Why this is worth building, and the one-sentence definition of done",
@@ -1151,7 +1151,7 @@
    "path": "architecture/sil-and-cicd.md",
    "title": "SIL simulator, web UI & the 1-week delivery plan",
    "section": "architecture",
-   "bytes": 55739,
+   "bytes": 55732,
    "mermaid": 1,
    "headings": [
     "What is (and isn't) simulated — honest scope",

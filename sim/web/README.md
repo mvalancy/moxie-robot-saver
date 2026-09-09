@@ -67,7 +67,7 @@ same-origin route and `env.js` paints the answer.
 |---|---|---|
 | `offline` | `/api/health` is not there at all — a fork with no Pages Functions, a plain CDN, `file://`, a 404 | **Byte-identical to the site as it shipped**: `HOSTED DEMO`, stub + clips, and nothing is polled again this session |
 | `degraded` | the route exists and answered honestly — nothing configured, over budget, or the brain is unreachable | The same page, plus the reason on screen: a badge suffix and a pill. `gateway_not_configured` keeps today's exact copy and fires exactly **one** request |
-| `live` | a brain is configured and reachable | `HOSTED DEMO · LIVE`, and the page stops claiming the mic needs a locally-run server, because with a same-origin route that claim is false |
+| `live` | a brain is configured and reachable | `MOXIE ONLINE`, and the page stops claiming the mic needs a locally-run server, because with a same-origin route that claim is false |
 
 `window.moxieMode` exposes `state()`, `reason()`, `badge()`, `message()`, `load()`,
 `limits()`, `voice()`, `ears()`, `apiBase()`, `canSpendLiveTurn()`, `note()`,

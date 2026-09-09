@@ -81,7 +81,7 @@
   // a string; and a raw status code or an upstream error string must never reach a
   // visitor, which is easiest to guarantee when the visitor's words are all local.
   var BADGE_PLAIN = "HOSTED DEMO";
-  var BADGE_LIVE = "HOSTED DEMO · LIVE";
+  var BADGE_LIVE = "MOXIE ONLINE";
   var BADGE_BUSY = "HOSTED DEMO · BUSY";
   var BADGE_SCRIPTED = "HOSTED DEMO · SCRIPTED";
   var COPY = {

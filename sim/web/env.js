@@ -66,9 +66,7 @@
       badgeEl.textContent = "LOCAL";
       badgeEl.title = LOCAL_TITLE;
     } else {
-      badgeEl.textContent = (snap && snap.badge === "HOSTED DEMO · LIVE")
-        ? "MOXIE ONLINE"
-        : ((snap && snap.badge) || "HOSTED DEMO");
+      badgeEl.textContent = (snap && snap.badge) || "HOSTED DEMO";
       badgeEl.title = (snap && snap.state === "live" && snap.liveTurns) ? LIVE_TITLE : HOSTED_TITLE;
     }
     if (document.body)

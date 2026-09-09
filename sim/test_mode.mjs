@@ -557,14 +557,14 @@ for (const body of ["<!doctype html><html>index</html>", "", "null", "[1,2,3]",
 {
   const h = boot({ transport: true, replies: [{ status: 200, body: HEALTH_LIVE }] });
   await flush();
-  eq(h.m.badge(), "HOSTED DEMO · LIVE", "with a transport loaded, live paints LIVE");
+  eq(h.m.badge(), "MOXIE ONLINE", "with a transport loaded, live paints LIVE");
   eq(h.m.message(), "", "§7: the ok/live row has no copy");
   eq(h.m.canSpendLiveTurn(), true, "live + transport => turns are spendable");
 }
 
 // 4d. §7's capacity signal, from the numbers the server sent.
 for (const [inflight, capacity, badge, snippet] of [
-  [0, 4, "HOSTED DEMO · LIVE", ""],
+  [0, 4, "MOXIE ONLINE", ""],
   [3, 4, "HOSTED DEMO · BUSY", "a few other people"],
   [4, 4, "HOSTED DEMO · BUSY", "hands full"],
 ]) {
@@ -620,7 +620,7 @@ for (const [reason, badge, snippet] of [
   eq(h.m.state(), "live", "§6.3: a 429 does NOT leave live");
   eq(h.m.canSpendLiveTurn(), false, "...but suppresses live turns");
   eq(h.m.retryAfterS(), 7, "...for the Retry-After the server sent");
-  eq(h.m.badge(), "HOSTED DEMO · LIVE", "§7: the badge stays LIVE");
+  eq(h.m.badge(), "MOXIE ONLINE", "§7: the badge stays LIVE");
   ok(/One at a time/.test(h.m.message()), `...with the transient chip (got "${h.m.message()}")`);
   h.advance(7001);
   eq(h.m.canSpendLiveTurn(), true, "live turns resume once the window has passed");
@@ -685,7 +685,7 @@ for (const reason of ["bad_request", "too_long", "too_short", "bad_ticket", "blo
   eq(h.m.state(), "degraded", "start degraded");
   h.m.note({ status: 200, reason: null });
   eq(h.m.state(), "live", "a clean turn recovers to live");
-  eq(h.m.badge(), "HOSTED DEMO · LIVE", "...and the badge flips back (§6.3, recovery is visible)");
+  eq(h.m.badge(), "MOXIE ONLINE", "...and the badge flips back (§6.3, recovery is visible)");
 }
 // ...but a not-configured deployment never "recovers" on a stray note: it is sticky.
 {
@@ -708,7 +708,7 @@ for (const reason of ["bad_request", "too_long", "too_short", "bad_ticket", "blo
   eq(h.m.state(), "degraded", "boot lands degraded");
   await h.fire();
   eq(h.m.state(), "live", "§6.3: a health poll returning live recovers, on its own");
-  eq(h.m.badge(), "HOSTED DEMO · LIVE", "...visibly");
+  eq(h.m.badge(), "MOXIE ONLINE", "...visibly");
   eq(h.m.stats().polls, 2, "two polls happened, and that is recorded");
 }
 {
@@ -851,7 +851,7 @@ const snap = (over) => Object.assign({
   ok(/need a locally/.test(v.bannerText), "not configured: today's banner");
 
   // ...then the deployment turns out to be live. Same page object, honest new words.
-  v.push(snap({ state: "live", reason: null, badge: "HOSTED DEMO · LIVE", message: "",
+  v.push(snap({ state: "live", reason: null, badge: "MOXIE ONLINE", message: "",
                 voice: true, ears: true, liveTurns: true }));
   eq(v.badge.textContent, "MOXIE ONLINE", "live: the visitor-facing badge says so plainly");
   eq(v.body.getAttribute("data-mode"), "live", "live: data-mode follows");

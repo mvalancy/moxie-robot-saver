@@ -317,7 +317,7 @@ async function say(text, ms) {
   eq(globalThis.window.moxieCloudTransport, true, "window.moxieCloudTransport === true");
   eq(globalThis.window.moxieMode.hasTransport(), true, "…and mode.js can see it");
   eq(globalThis.window.moxieMode.state(), "live", "a configured health reply puts the mode live");
-  eq(globalThis.window.moxieMode.badge(), "HOSTED DEMO · LIVE",
+  eq(globalThis.window.moxieMode.badge(), "MOXIE ONLINE",
      "…and the badge finally reads LIVE, which is exactly what P0-a withheld");
   eq(globalThis.window.moxieMode.canSpendLiveTurn(), true, "…and a live turn is spendable");
 
@@ -562,7 +562,7 @@ async function say(text, ms) {
 
     eq(globalThis.window.moxieMode.state(), "live", "a 429 does NOT leave the live state (§6.3 soft degrade)");
     eq(globalThis.window.moxieMode.reason(), "rate_limited", "…the reason is recorded");
-    eq(globalThis.window.moxieMode.badge(), "HOSTED DEMO · LIVE", "…the badge stays LIVE");
+    eq(globalThis.window.moxieMode.badge(), "MOXIE ONLINE", "…the badge stays LIVE");
     eq(globalThis.window.moxieMode.message(), "One at a time! Give Moxie a few seconds.",
        "…and §7's transient chip copy is shown");
     ok(globalThis.window.moxieMode.retryAfterS() > 0, "…with a Retry-After window open");
@@ -1082,7 +1082,7 @@ async function say(text, ms) {
     ok(st.fallbacks >= 1, "…answered from stub.js for this one turn");
     // §6.3: the mode STAYS live — a stale token is not a broken deployment.
     eq(globalThis.window.moxieMode.state(), "live", "…and the page STAYS live");
-    eq(globalThis.window.moxieMode.badge(), "HOSTED DEMO · LIVE", "…with the LIVE badge intact");
+    eq(globalThis.window.moxieMode.badge(), "MOXIE ONLINE", "…with the LIVE badge intact");
     ok(/real person/i.test(globalThis.window.moxieMode.message()),
        `…and copy that tells the visitor to try again (${JSON.stringify(globalThis.window.moxieMode.message())})`);
     ok(world.spy.transcript.join(" ").length > 0, "…and the transcript is not empty");
