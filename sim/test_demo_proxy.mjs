@@ -3569,6 +3569,8 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     ok(!p.includes("```") && !p.includes("**") && !p.includes("|"),
        "…with the markdown furniture stripped, since it is about to be paraphrased aloud");
     ok(!p.includes("(x.md)") && p.includes("board"), "…and a link becomes its words");
+    const long = docsearch.bestPassage("A motor " + "controller ".repeat(100), "motor");
+    ok(long.length <= 321, `the passage is bounded for the deployed 2k-token brain (${long.length} chars)`);
   }
 
   /* A TITLE IS NOT AN ANSWER — the bug that reached production.
@@ -3677,6 +3679,8 @@ const upstreamCalls = () => limits.__state().stats.upstreamCalls;
     ok(last.content.startsWith(cfg.persona), "…and still the persona, after the lookup");
     const docMsg = body.messages.find((m) => m.role === "system" && m.content.includes("Firmware image"));
     ok(!!docMsg, "the excerpt rides its own system message…");
+    ok(docMsg.content.length < 700,
+       `…and its complete instruction fits the deployed 2k-token brain (${docMsg.content.length} chars)`);
     ok(body.messages.indexOf(docMsg) < body.messages.findIndex((m) => m.role === "user"),
        "…placed BEFORE the child's turn, so reference text is never the last thing read");
   }
