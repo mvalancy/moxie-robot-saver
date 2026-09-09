@@ -151,9 +151,11 @@ export function rank(index, query) {
   return scored;
 }
 
-/** How much of a document may reach the prompt. Enough for a real passage, small enough
- *  that it cannot crowd out the persona or the conversation in the context window. */
-const MAX_EXCERPT = 900;
+/** How much of a document may reach the prompt. The deployed `graphling-medium` route has
+ *  a 2,048-token window: 900 characters made the measured first-turn prompt 2,215 tokens
+ *  and the gateway refused every documentation question. At 320, that same live control
+ *  fits and still carries the concrete MQTT fact the answer needs. */
+const MAX_EXCERPT = 320;
 
 /**
  * The most relevant passage of a markdown document, as plain-ish text.
