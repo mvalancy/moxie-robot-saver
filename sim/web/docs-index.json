@@ -1082,11 +1082,11 @@
    "path": "architecture/backlog/grounding-gate-unrun.md",
    "title": "The grounding gate has never run",
    "section": "architecture",
-   "bytes": 3305,
+   "bytes": 3888,
    "mermaid": 0,
    "headings": [
     "The two claims, which are not the same claim",
-    "The gate, unchanged",
+    "The gate",
     "Why it has not run",
     "What has to happen"
    ],
