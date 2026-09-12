@@ -159,13 +159,14 @@ const TRANSIENT = new Set([408, 429, 500, 502, 503, 504]);
 const scrub = (t) => (KEY ? String(t).split(KEY).join("[REDACTED]") : String(t));
 
 async function ask(body, attempt = 1) {
-  const res = await budget.fetch(BASE.replace(/\/+$/, "") + "/chat/completions", {
+  const result = await budget.requestText(BASE.replace(/\/+$/, "") + "/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + KEY },
     body: JSON.stringify(body),
   });
+  const res = result.response;
   if (!res.ok) {
-    const detail = scrub(await res.text().catch(() => "")).slice(0, 200);
+    const detail = scrub(result.text).slice(0, 200);
     if (TRANSIENT.has(res.status) && attempt < 4 && budget.remaining > 0) {
       const wait = 15000 * attempt;
       console.log(`   … HTTP ${res.status} (transient), retry ${attempt}/3 in ${wait / 1000}s`);
@@ -174,7 +175,7 @@ async function ask(body, attempt = 1) {
     }
     throw new Error(`gateway HTTP ${res.status} — ${detail}`);
   }
-  const j = await res.json();
+  const j = JSON.parse(result.text);
   const raw = (((j.choices || [])[0] || {}).message || {}).content || "";
   const text = chat.parseExpressive(String(raw).trim()).text;
   if (!text) {

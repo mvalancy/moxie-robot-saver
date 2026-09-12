@@ -32,6 +32,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
 const MODE_SRC = readFileSync(join(here, "web", "mode.js"), "utf8");
 const ENV_SRC = readFileSync(join(here, "web", "env.js"), "utf8");
+const GROUNDING_SRC = readFileSync(join(here, "tools", "grounding_probe.mjs"), "utf8");
 
 const fails = [];
 const ok = (c, m) => { if (!c) fails.push(m); };
@@ -934,6 +935,13 @@ const snap = (over) => Object.assign({
 //    Everything here is injected or refused before dotenv loading: zero network calls.
 // --------------------------------------------------------------------------- //
 {
+  eq((GROUNDING_SRC.match(/budget\.requestText\s*\(/g) || []).length, 1,
+     "the grounding caller has exactly one outbound seam, inside ProbeBudget");
+  ok(!/\bfetch\s*\(/.test(GROUNDING_SRC),
+     "the grounding caller has no direct fetch that can bypass attempt accounting");
+  ok(!/\bres\.(?:text|json)\s*\(/.test(GROUNDING_SRC),
+     "the grounding caller cannot consume a body after ProbeBudget clears its deadline");
+
   // The executable refuses before loading credentials unless both bounds are explicit.
   for (const [args, expected] of [
     [["--yes"], "--max-attempts must be an integer"],
@@ -967,9 +975,9 @@ const snap = (over) => Object.assign({
     return new Response("busy", { status: 503 });
   };
   for (let i = 0; i < 4; i += 1)
-    await budget.fetch("https://gateway.invalid.test", {}, fakeFetch);
+    await budget.requestText("https://gateway.invalid.test", {}, fakeFetch);
   let exhausted = false;
-  try { await budget.fetch("https://gateway.invalid.test", {}, fakeFetch); }
+  try { await budget.requestText("https://gateway.invalid.test", {}, fakeFetch); }
   catch (err) { exhausted = err instanceof ProbeBudgetError && /exhausted/.test(err.message); }
   ok(exhausted, "the first attempt beyond the shared ceiling refuses loudly");
   eq(outbound, 4, "retry-shaped calls cannot amplify past the actual-attempt ceiling");
@@ -984,11 +992,33 @@ const snap = (over) => Object.assign({
     signal.addEventListener("abort", () => reject(new Error("aborted by test signal")), { once: true });
   });
   let timedOut = false;
-  try { await timed.fetch("https://gateway.invalid.test", {}, hangingFetch); }
+  try { await timed.requestText("https://gateway.invalid.test", {}, hangingFetch); }
   catch (err) { timedOut = err instanceof ProbeBudgetError && /timed out after 20 ms/.test(err.message); }
   ok(timedOut, "a hung grounding attempt aborts with an operator-readable deadline");
   eq(hungCalls, 1, "the timeout path starts one actual attempt");
   eq(timed.attempts, 1, "the timed-out attempt remains charged");
+
+  // Run real loopback HTTP in a fresh process because the browser fixtures above replace
+  // global fetch/timers. This is what a Fetch double cannot reveal: automatic redirects
+  // emit extra requests, and Fetch resolves before a delayed body completes.
+  const loopback = spawnSync(process.execPath,
+    [join(here, "tests", "helpers_probe_budget_loopback.mjs")],
+    { encoding: "utf8", env: { PATH: process.env.PATH || "" }, timeout: 3000 });
+  eq(loopback.status, 0,
+     `loopback grounding transport proof exits cleanly — ${loopback.stderr.slice(0, 200)}`);
+  let proof = null;
+  try { proof = JSON.parse(loopback.stdout); } catch { /* asserted below */ }
+  ok(!!proof, "loopback grounding transport proof returns structured evidence");
+  if (proof) {
+    deep(proof.redirect, { status: 307, requests: 1, count: "1/1" },
+         "one counted redirect attempt emits exactly one HTTP request");
+    deep(proof.success, { timedOut: true, requests: 1, count: "1/1" },
+         "a delayed success body remains inside the attempt deadline");
+    deep(proof.error, { timedOut: true, requests: 1, count: "1/1" },
+         "a delayed error body remains inside the attempt deadline");
+    deep(proof.ordinary, { body: '{"done":true}', requests: 1, count: "1/1" },
+         "an ordinary complete response still returns its body and count");
+  }
 }
 
 if (fails.length) {
@@ -1002,6 +1032,6 @@ console.log("✅ mode tests OK — /api/health answers gateway_not_configured wi
   + "live/degraded/busy/budget badges and copy per §7; 429 soft-degrades without leaving live; "
   + "the probe reads the REAL limits.js counters (busy at 3/4, budget_exhausted with its "
   + "Retry-After) and still makes zero upstream calls; "
-  + "the paid grounding gate requires explicit limits, counts retries, and aborts hung attempts; "
+  + "the paid grounding transport refuses redirects, counts retries, and times complete bodies; "
   + "3 strikes → degraded; 30 s→5 min backoff; never polls while hidden; env.js drives the badge, "
   + "pill, banner and needs-backend marks from the MODE, not the hostname");
