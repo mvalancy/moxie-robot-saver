@@ -1,5 +1,10 @@
 # 🎛️ Orchestration plan — delivering the top-level Moxie outcomes
 
+> **Current recurring-work policy:** read [`session-loop-control.md`](session-loop-control.md) first. From
+> 2026-09-12 it supersedes this historical log's Claude Opus/Fable model policy, attribution, cadence, and
+> direct-to-`dev` loop instructions. The clean-room, secrets, verification, green-PR, promotion, and release
+> safeguards below remain in force.
+
 **Mode (from 2026-09-02):** an orchestrator session plans, briefs, and integrates; **Opus agents do the
 implementation**, one bounded task each, in isolated git worktrees. This doc is the plan those agents and
 the layered session loops work from. The technical spec of *what* we're building stays in
