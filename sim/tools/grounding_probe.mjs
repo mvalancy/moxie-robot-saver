@@ -41,21 +41,37 @@
  * So the discriminator stands as stated and the weakness is recorded instead. Read a
  * GROUNDED verdict by looking at WHICH terms fired, which is why they are printed.
  *
- *   node sim/tools/grounding_probe.mjs --yes        # 4 gateway calls
+ *   node sim/tools/grounding_probe.mjs --yes --max-attempts 6 --timeout-ms 20000
+ *                                                   # 4 intended calls, <= 6 actual
  * ============================================================================
  */
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ProbeBudget } from "./probe_budget.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..", "..");
 const web = join(repo, "sim", "web");
 
+function requiredIntFlag(name, min, max) {
+  const at = process.argv.indexOf(name);
+  const raw = at >= 0 ? process.argv[at + 1] : "";
+  const value = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    console.error(`${name} must be an integer from ${min} to ${max}`);
+    process.exit(2);
+  }
+  return value;
+}
+
 if (!process.argv.includes("--yes")) {
-  console.error("Spends 4 real gateway calls. Re-run with --yes.");
+  console.error("Spends 4 intended gateway calls. Re-run with --yes plus explicit limits.");
   process.exit(2);
 }
+const MAX_ATTEMPTS = requiredIntFlag("--max-attempts", 4, 6);
+const TIMEOUT_MS = requiredIntFlag("--timeout-ms", 1000, 60000);
+const budget = new ProbeBudget({ maxAttempts: MAX_ATTEMPTS, timeoutMs: TIMEOUT_MS });
 
 /* CREDENTIALS COME FROM `mqtt/.env` THE WAY EVERY OTHER LIVE TEST HERE GETS THEM.
  *
@@ -143,14 +159,14 @@ const TRANSIENT = new Set([408, 429, 500, 502, 503, 504]);
 const scrub = (t) => (KEY ? String(t).split(KEY).join("[REDACTED]") : String(t));
 
 async function ask(body, attempt = 1) {
-  const res = await fetch(BASE.replace(/\/+$/, "") + "/chat/completions", {
+  const res = await budget.fetch(BASE.replace(/\/+$/, "") + "/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + KEY },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
     const detail = scrub(await res.text().catch(() => "")).slice(0, 200);
-    if (TRANSIENT.has(res.status) && attempt < 4) {
+    if (TRANSIENT.has(res.status) && attempt < 4 && budget.remaining > 0) {
       const wait = 15000 * attempt;
       console.log(`   … HTTP ${res.status} (transient), retry ${attempt}/3 in ${wait / 1000}s`);
       await new Promise((r) => setTimeout(r, wait));
@@ -207,6 +223,8 @@ for (const [label, q] of [
 }
 
 if (failed) {
+  console.log(`\nGATEWAY ATTEMPTS: ${budget.summary()} actual outbound attempts.`);
   console.log("\nAT LEAST ONE SCENARIO WAS UNUSABLE — exit 1 so a broken run cannot be read as a result.");
   process.exit(1);
 }
+console.log(`\nGATEWAY ATTEMPTS: ${budget.summary()} actual outbound attempts.`);
