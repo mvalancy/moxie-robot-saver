@@ -46,7 +46,7 @@
    "path": "architecture/README.md",
    "title": "Architecture",
    "section": "architecture",
-   "bytes": 13537,
+   "bytes": 13771,
    "mermaid": 0,
    "headings": [
     "Orientation",
@@ -124,10 +124,25 @@
    "kind": "md"
   },
   {
+   "path": "architecture/session-loop-control.md",
+   "title": "Current session-loop control",
+   "section": "architecture",
+   "bytes": 6715,
+   "mermaid": 0,
+   "headings": [
+    "Objectives, in order",
+    "One serialized loop, four duties",
+    "Rules per queued batch",
+    "Anti-stagnation controls",
+    "Current ranked evidence gaps (2026-09-12)"
+   ],
+   "kind": "md"
+  },
+  {
    "path": "architecture/orchestration-plan.md",
    "title": "Orchestration plan — delivering the top-level Moxie outcomes",
    "section": "architecture",
-   "bytes": 284446,
+   "bytes": 284806,
    "mermaid": 0,
    "headings": [
     "The three top-level outcomes",

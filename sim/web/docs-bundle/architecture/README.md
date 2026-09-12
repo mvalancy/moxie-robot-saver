@@ -12,7 +12,11 @@ for the bigger picture.
 Versioned, standalone specs distilled from the [reverse-engineering study](../reverse-engineering/README.md).
 A backend + Sim are built from these directly; each cites the study but reads on its own.
 **Now building:** see [`implementation-plan.md`](implementation-plan.md) — the roadmap + honest status.
-- [`orchestration-plan.md`](orchestration-plan.md) — **how the work gets done**: the three top-level outcomes, the orchestrator + Opus-agent protocol, workstreams, and the 24/7 layered loops.
+- [`session-loop-control.md`](session-loop-control.md) — **current recurring-work policy**: fixed objectives,
+  serialized 1h/2h/3h/4h duties, Astra review, and anti-stagnation controls.
+- [`orchestration-plan.md`](orchestration-plan.md) — the **historical evidence log** and detailed learned
+  playbook; its older model, attribution, cadence, and direct-to-`dev` clauses are superseded by the current
+  loop control above.
 - [`rest-api-contract.md`](rest-api-contract.md) — **Channel 1, the control plane**: the REST services the
   parent-app server exposes (auth, children, pairing, robot settings) + the minimum-viable-server path.
 - [`mqtt-and-conversation.md`](mqtt-and-conversation.md) — **Channel 2, the robot cloud**: endpoint QR, the
