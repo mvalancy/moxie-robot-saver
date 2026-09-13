@@ -8,6 +8,7 @@ place understands the endpoint, what "offline" means (endpoint unreachable → t
 caller signals ERROR_OFFLINE), and how to back off when the gateway rate-limits.
 """
 from __future__ import annotations
+import os
 import random
 import time
 from typing import Callable, Iterator, Optional
@@ -52,9 +53,32 @@ StreamFn = Callable[[list], Iterator[str]]   # messages -> a trickle of text del
 _MODEL_CALLS = {"chat": 0, "stream": 0}
 
 
+class ModelCallBudgetExceeded(RuntimeError):
+    """Raised before an outbound model request would exceed a process campaign cap."""
+
+
+def _model_call_limit() -> Optional[int]:
+    """Return the opt-in process campaign cap, failing closed on invalid values."""
+    raw = os.environ.get("MOXIE_MODEL_CALL_LIMIT", "").strip()
+    if not raw:
+        return None
+    try:
+        limit = int(raw)
+    except ValueError as exc:
+        raise ModelCallBudgetExceeded("MOXIE_MODEL_CALL_LIMIT must be a positive integer") from exc
+    if limit < 1:
+        raise ModelCallBudgetExceeded("MOXIE_MODEL_CALL_LIMIT must be a positive integer")
+    return limit
+
+
 def note_model_call(kind: str = "chat") -> None:
     """Record one request attempt against the model endpoint. Called immediately before
     the call that performs it — never after, so a call that raises is still counted."""
+    limit = _model_call_limit()
+    attempted = model_calls()
+    if limit is not None and attempted >= limit:
+        raise ModelCallBudgetExceeded(
+            f"model-call campaign limit exhausted ({attempted}/{limit})")
     _MODEL_CALLS[kind] = _MODEL_CALLS.get(kind, 0) + 1
 
 
