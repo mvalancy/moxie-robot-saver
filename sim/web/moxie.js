@@ -1,6 +1,6 @@
 // Moxie robot simulator — visual front-end.
 // three.js r160, pinned via the importmap in index.html.
-// Exposes window.moxie = { setMotor, getMotor, setFace, setSpeech, setHeartLED,
+// Exposes window.moxie = { setMotor, getMotor, getAnimationStepCount, setFace, setSpeech, setHeartLED,
 //                           setMouthOpen, getMouthOpen, showIcons, clearIcons,
 //                           centerAll, setIdle, setSceneLight }.
 //
@@ -1011,6 +1011,10 @@ function setShowAxes(on) {
 const MOTOR_REST = MOTOR_DEFS.map(d => (d.fromZero ? 0 : MOTOR_CENTER));
 const motorTargets = new Float32Array(MOTOR_REST);
 const motorValues  = new Float32Array(MOTOR_REST);
+// Monotonic diagnostic clock for consumers that need to distinguish their own
+// requestAnimationFrame callbacks from physics/render steps completed here.
+// It is intentionally observable but not writable through the public API.
+let animationStepCount = 0;
 
 const motorNodes = [
   armL.shoulder, armL.elbow,
@@ -1663,6 +1667,8 @@ const api = {
     return Math.round(motorValues[i]);
   },
 
+  getAnimationStepCount() { return animationStepCount; },
+
   setFace(expression) {
     if (expression === 'blink') {
       blink.active = true;
@@ -1845,6 +1851,7 @@ const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
+  animationStepCount++;
   updateBubbleAnchor();      // keep her thought over her head, whatever the camera does
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
