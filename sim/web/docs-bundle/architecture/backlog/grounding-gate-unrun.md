@@ -1,6 +1,6 @@
 # The grounding gate has never run
 
-**Status (2026-09-12): DO NOT RUN — transport bounded, scoring control invalid.** The retrieval fix it was meant to
+**Status (2026-09-12): DO NOT RUN — transport bounded; scoring-control repair awaiting CI.** The retrieval fix it was meant to
 judge **merged to `dev` as `2a4a32d`** ([PR #247](https://github.com/mvalancy/moxie-robot-saver/pull/247),
 all four checks green including the browser suite) with its own narrower proof. The old `wt-passage2`
 watcher worktree no longer exists; run the gate only from a fresh branch at the current `dev` SHA.
@@ -23,10 +23,13 @@ catching: **an assertion that is true but aimed one inch left of the risk.**
 ## The gate
 
 `sim/tools/grounding_probe.mjs`, opt-in behind `--yes`, compares one answer with and without a retrieved
-passage. Its old negative claim is invalid: *"tell me a joke"* retrieves no passage, so the passage-token
-set is empty and `fromPassage` is mathematically empty whatever either answer says. A printed zero cannot
-measure the acknowledged common-word false-positive channel. This is an instrument failure, not evidence
-for or against the shipped answer.
+passage. Its old negative claim was invalid: *"tell me a joke"* retrieved no passage, so the passage-token
+set was empty and `fromPassage` was mathematically empty whatever either answer said. The repaired control
+asks the same production question twice with the real candidate passage withheld from both identical
+prompts, while scoring out of band against that non-empty passage. Any reported overlap is therefore the
+acknowledged sampling/common-word false-positive channel, not grounding. `grounding_score.mjs` exposes the
+pure discriminator, and `sim/test_mode.mjs` proves a real positive, a real negative, and a deliberately
+induced false positive without loading credentials.
 
 The operator must also provide `--max-attempts 4..6` and `--timeout-ms 1000..60000`. One shared
 counter wraps the actual `fetch`, increments before every outbound attempt (including retries and
@@ -52,12 +55,12 @@ question, and the two ways it looks like an outage when it is not.
 
 ## What has to happen
 
-1. Replace the tautological no-passage negative arm with a discriminator that can actually produce a
-   false positive, and prove both directions hermetically before spending.
+1. Merge the scoring-control repair only after its exact-head checks pass.
 2. Run the repaired gate with an explicit remaining batch budget and deadline.
-3. Record the result here, pass **or fail**. A fail is the useful outcome: it would mean the passage
-   reaching the model was never the binding constraint, and the three prompting attempts that came
-   before it were aimed at the right layer after all.
+3. Record the positive-pair evidence and withheld-passage control separately. A control hit makes that
+   run inconclusive; an unusable transport says nothing about the model. A clear sampled control plus no
+   positive-pair evidence supports only the narrow statement that retrieval did not measurably change that
+   answer in that sample — never that the passage cannot be the binding constraint.
 
 ---
 📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Deploy guide](../../guides/deploy-cloudflare.md)

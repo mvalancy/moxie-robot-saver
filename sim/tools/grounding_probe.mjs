@@ -16,11 +16,11 @@
  *   grounded := some term is in A, not in B, not in the question, and IS in the passage.
  *
  * CONFOUND, NAMED BEFORE THE NUMBERS: temperature is 0.8, so A and B differ by sampling as
- * well as by the passage. That is exactly why the last clause is "in the passage" — noise
- * invents words, but not words that happen to be in the document she was shown. Passage
- * membership is what separates signal from sampling, and the negative control below
- * measures the noise floor directly: when retrieval does not fire, the two prompts are
- * IDENTICAL, so anything this reports there is pure sampling and must be zero.
+ * well as by the passage. That is exactly why the last clause is "in the passage" — but
+ * noise can still emit a word that happens to occur there. The negative control measures
+ * that channel directly: both prompts withhold the passage and are IDENTICAL, while the
+ * scorer receives the real, non-empty passage out of band. Anything it reports is
+ * therefore a demonstrated false positive rather than grounding.
  *
  * SUPPRESSION HAS NO PRODUCTION SURFACE, and that is a design decision rather than an
  * omission. There is no flag on `/api/chat`, no env var, nothing a visitor could set and
@@ -29,17 +29,19 @@
  * The route is unchanged. A measurement that required a switch in the serving path would
  * be a worse trade than one that reproduces the path.
  *
- * VALIDATED IN BOTH DIRECTIONS, which is what the lexical attempt could not manage:
- *   · noise floor ZERO — identical prompts, pure sampling, no false positive;
- *   · mechanism FIRES — an answer carrying passage content scores GROUNDED.
+ * VALIDATED IN BOTH DIRECTIONS, which is what the old control could not manage:
+ *   · an answer carrying passage content produces evidence;
+ *   · a withheld-passage answer can produce the exact same evidence shape, proving the
+ *     control can detect the scorer's acknowledged false-positive channel.
  *
  * KNOWN FALSE-POSITIVE CHANNEL, found while validating and left un-tuned. A common word
  * that happens to be in the passage ("that", "tells", "which") satisfies all four clauses
  * by chance, so a single shared term is weaker evidence than it looks. The obvious fix —
  * ignore common words — is the hand-written stop list this whole line of work exists to
  * avoid, and requiring N>1 shared terms would be a threshold moved after seeing results.
- * So the discriminator stands as stated and the weakness is recorded instead. Read a
- * GROUNDED verdict by looking at WHICH terms fired, which is why they are printed.
+ * So the discriminator stands as stated and the weakness is recorded instead. Read the
+ * evidence by looking at WHICH terms fired, which is why they are printed. A single pair
+ * is never promoted into a claim that the answer is grounded or ungrounded.
  *
  *   node sim/tools/grounding_probe.mjs --yes --max-attempts 6 --timeout-ms 20000
  *                                                   # 4 intended calls, <= 6 actual
@@ -49,6 +51,7 @@ import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ProbeBudget } from "./probe_budget.mjs";
+import { passageEvidence } from "./grounding_score.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..", "..");
@@ -129,8 +132,6 @@ const cfg = env.readConfig({ DEMO_GATEWAY_BASE_URL: BASE, DEMO_GATEWAY_API_KEY: 
                              DEMO_CHAT_MODEL: MODEL });
 const index = JSON.parse(readFileSync(join(web, "docs-index.json"), "utf8"));
 
-const tok = (s) => new Set(String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3));
-
 /** The passage production would retrieve for this question, recomputed locally — the same
  *  pure functions the route calls, so arm A is the real prompt and not an approximation. */
 function passageFor(q) {
@@ -187,14 +188,32 @@ async function ask(body, attempt = 1) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let failed = false;
-for (const [label, q] of [
-  ["POSITIVE (needs the corpus)", "how does the robot talk to the cloud?"],
-  ["NEGATIVE (retrieval never fires — noise floor)", "tell me a joke"],
+const question = "how does the robot talk to the cloud?";
+const candidateDocs = passageFor(question);
+if (!candidateDocs || !candidateDocs.excerpt) {
+  console.error("production retrieval produced no candidate passage — refusing before gateway calls");
+  process.exit(2);
+}
+
+let unusable = false;
+let positiveEvidence = [];
+let falsePositiveEvidence = [];
+for (const scenario of [
+  {
+    label: "POSITIVE (candidate passage supplied to A only)",
+    docsA: candidateDocs,
+    docsB: null,
+    control: false,
+  },
+  {
+    label: "NEGATIVE (candidate passage withheld from both prompts)",
+    docsA: null,
+    docsB: null,
+    control: true,
+  },
 ]) {
-  const docs = passageFor(q);
-  const withDocs = chat.buildUpstreamBody(cfg, [], q, undefined, docs);
-  const without = chat.buildUpstreamBody(cfg, [], q, undefined, null);
+  const withDocs = chat.buildUpstreamBody(cfg, [], question, undefined, scenario.docsA);
+  const without = chat.buildUpstreamBody(cfg, [], question, undefined, scenario.docsB);
   const identical = JSON.stringify(withDocs) === JSON.stringify(without);
 
   let a, b;
@@ -202,30 +221,45 @@ for (const [label, q] of [
     a = await ask(withDocs); await sleep(14000);
     b = await ask(without);  await sleep(14000);
   } catch (err) {
-    console.log(`\n── ${label}`);
+    console.log(`\n── ${scenario.label}`);
     console.log(`   UNUSABLE — no verdict was produced: ${err.message}`);
-    console.log(`   (this is NOT "not grounded"; the measurement did not happen)`);
-    failed = true;
+    console.log(`   (this is not negative evidence; the measurement did not happen)`);
+    unusable = true;
     continue;
   }
 
-  const qa = tok(q), tb = tok(b), pass = tok(docs ? docs.excerpt : "");
-  const only = [...tok(a)].filter((t) => !tb.has(t) && !qa.has(t));
-  const fromPassage = only.filter((t) => pass.has(t));
+  const { onlyInA, fromPassage } = passageEvidence(
+    a, b, question, candidateDocs.excerpt);
+  if (scenario.control) falsePositiveEvidence = fromPassage;
+  else positiveEvidence = fromPassage;
 
-  console.log(`\n── ${label}`);
-  console.log(`   passage      : ${docs ? docs.path : "(none — retrieval did not fire)"}`);
+  console.log(`\n── ${scenario.label}`);
+  console.log(`   passage in prompts: ${scenario.docsA ? candidateDocs.path : "(withheld from both)"}`);
+  console.log(`   scoring passage: ${candidateDocs.path} (non-empty in both scenarios)`);
   console.log(`   prompts identical: ${identical}${identical ? "  ← any difference below is pure sampling" : ""}`);
   console.log(`   A (with)     : ${a.slice(0, 120)}`);
   console.log(`   B (without)  : ${b.slice(0, 120)}`);
-  console.log(`   new in A     : ${only.slice(0, 10).join(", ") || "(none)"}`);
+  console.log(`   new in A     : ${onlyInA.slice(0, 10).join(", ") || "(none)"}`);
   console.log(`   …from passage: ${fromPassage.join(", ") || "(none)"}`);
-  console.log(`   VERDICT      : ${fromPassage.length ? "GROUNDED" : "not grounded"}`);
+  console.log(`   OBSERVATION  : ${scenario.control
+    ? (fromPassage.length ? "FALSE-POSITIVE SIGNAL OBSERVED" : "sampled control clear")
+    : (fromPassage.length ? "passage evidence detected" : "no passage evidence detected")}`);
 }
 
-if (failed) {
+if (unusable) {
   console.log(`\nGATEWAY ATTEMPTS: ${budget.summary()} actual outbound attempts.`);
   console.log("\nAT LEAST ONE SCENARIO WAS UNUSABLE — exit 1 so a broken run cannot be read as a result.");
   process.exit(1);
 }
+if (falsePositiveEvidence.length) {
+  console.log(`\nGATEWAY ATTEMPTS: ${budget.summary()} actual outbound attempts.`);
+  console.log("\nCONTROL FIRED — the scorer matched when neither prompt contained the passage; this run is inconclusive.");
+  process.exit(1);
+}
 console.log(`\nGATEWAY ATTEMPTS: ${budget.summary()} actual outbound attempts.`);
+if (!positiveEvidence.length) {
+  console.log("\nRESULT: no passage evidence detected in the positive pair; sampled control clear.");
+  process.exit(1);
+}
+console.log("\nRESULT: passage evidence detected in the positive pair; sampled control clear.");
+console.log("This is one lexical sample, not proof that the answer is grounded.");
