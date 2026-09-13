@@ -3,18 +3,16 @@ Live action tags — does the REAL model actually drive the robot?
 
 `test_action_tags.py` proves the parser, the apps and the wire with canned model
 text: given a tagged line, everything downstream is correct. It cannot prove the one
-thing that matters at the top of the stack — that the brain we ship against
-(graphling-medium, through our LiteLLM gateway) *emits* a tag when it should. When
-this file was written it emphatically did not: **0/3 goodbye turns and 0/2 activity
-turns produced any action** with the prompt as shipped. That is a prompt problem, and
-this file is how it stays fixed.
+thing that matters at the top of the stack — whether the configured model, gateway,
+and shipped prompt produce a tag in this bounded sample. Historical samples observed
+0/3 goodbye actions and 0/2 activity actions; they did not isolate a prompt cause.
 
-What is asserted here is a RATE, not a single lucky sample: `_ACCEPT` of `_TRIALS`
+What is asserted here is a bounded acceptance sample: `_ACCEPT` of `_TRIALS`
 goodbye turns must lift a real `<exit>` action off the model's own text, and likewise
 for `<launch:...>`. A rate is the honest shape for a temperature-0.8 model — a
 1-of-1 assertion would be a coin flip dressed as a test, and demanding 3/3 of a
 sampling model would make the suite flap. The threshold is deliberately well above
-the measured 0/N baseline and at/below what the tuned prompt sustains.
+the measured 0/N historical sample. It is not a population adherence estimate.
 
 Runs only with a gateway key (`MOXIE_LLM_API_KEY` / `LITELLM_MASTER_KEY`, e.g. from
 the git-ignored `mqtt/.env`); skips cleanly otherwise. Retries and the other two tests
@@ -24,11 +22,13 @@ and gives the campaign one deadline. Activity adherence needs its own later budg
 """
 import os
 import sys
+from importlib.util import find_spec
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
+sys.path.insert(0, os.path.join(REPO, "sim"))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_runtime import load_repo_dotenv  # noqa: E402
@@ -37,9 +37,6 @@ load_repo_dotenv()          # mqtt/.env from this tree or the main checkout
 KEY = os.environ.get("MOXIE_LLM_API_KEY") or os.environ.get("LITELLM_MASTER_KEY") or ""
 BASE = os.environ.get("MOXIE_LLM_BASE_URL", "https://gateway.graphlings.net/v1")
 MODEL = os.environ.get("MOXIE_LLM_MODEL", "graphling-medium")
-
-pytestmark = pytest.mark.skipif(
-    not KEY, reason="no gateway key (set MOXIE_LLM_API_KEY in mqtt/.env for live tests)")
 
 # How many turns we sample, and how many of them must carry the action.
 _TRIALS = 3
@@ -65,10 +62,16 @@ LAUNCHES = [
 ]
 
 
-def _app():
+def _app(record=None):
     pytest.importorskip("openai")
     from moxie_sdk.apps import LLMApp
-    return LLMApp(base_url=BASE, api_key=KEY, model=MODEL, max_tokens=160)
+    if record is None:
+        return LLMApp(base_url=BASE, api_key=KEY, model=MODEL, max_tokens=160)
+    from openai import OpenAI
+    from tools.action_tag_campaign import RecordingClient
+    client = RecordingClient(
+        OpenAI(base_url=BASE, api_key=KEY or "sk-local", max_retries=0), record)
+    return LLMApp(base_url=BASE, api_key=KEY, model=MODEL, max_tokens=160, client=client)
 
 
 def _robot():
@@ -76,42 +79,50 @@ def _robot():
     return RobotContext(device_id="d_live_tags", child=ChildProfile(nickname="Sam"))
 
 
-def _run(speeches, history=None):
-    """Drive N real turns; return [(text, [Action]), ...]."""
+def _run(speeches, record=None, history=None):
+    """Drive completed real turns; stop before a fallback can become a sample."""
     from moxie_sdk.types import Turn
-    app, robot = _app(), _robot()
+    app, robot = _app(record), _robot()
     out = []
     for speech in speeches[:_TRIALS]:
+        before = record.completed if record else None
         reply = app.respond(Turn(robot=robot, speech=speech,
                                  history=list(history or [])))
-        out.append((speech, reply))
+        if record and record.completed == before:
+            break
+        out.append(reply if record else (speech, reply))
     return out
 
 
 def _report(label, results, hits):
-    lines = [f"\n[live tags] {label}: {hits}/{len(results)}"]
-    for speech, reply in results:
-        kinds = [(a.type.value, a.module_id) for a in reply.actions]
-        lines.append(f"    {speech!r} -> {reply.text!r} {kinds}")
-    print("\n".join(lines))
+    """Legacy/manual tests also emit counts only; model output is untrusted."""
+    print(f"\n[live tags] {label}: {hits}/{len(results)}")
 
 
-def test_the_model_ends_a_goodbye_with_a_real_exit_action():
+def test_the_model_ends_a_goodbye_with_a_real_exit_action(request):
     """A goodbye turn must produce ActionType.EXIT off the model's own text —
     the action the runtime puts on the wire as `response_actions`."""
+    from moxie_sdk.chat import model_calls, reset_model_calls
     from moxie_sdk.types import ActionType
-    results = _run(GOODBYES)
-    hits = sum(1 for _, r in results
-               if any(a.type is ActionType.EXIT for a in r.actions))
-    _report("goodbye -> <exit>", results, hits)
-    for _, reply in results:
-        assert "<" not in reply.text, f"a tag leaked into speech: {reply.text!r}"
-        assert reply.text.strip(), "goodbye turn produced no spoken line"
-    assert hits >= _ACCEPT, (
-        f"only {hits}/{len(results)} goodbye turns emitted <exit>; the model has "
-        f"stopped following the action-tag prompt in LLMApp._system")
+    from tools.action_tag_campaign import CampaignRecord
+    record = CampaignRecord(
+        "goodbye", _TRIALS, 6,
+        request.config.getoption("--moxie-campaign-state-file") or None)
+    if not KEY or find_spec("openai") is None:
+        record.skipped()
+        pytest.skip("missing live-campaign prerequisite")
+    reset_model_calls()
+    results = _run(GOODBYES, record)
+    for reply in results:
+        exit_hit = any(a.type is ActionType.EXIT for a in reply.actions)
+        record.trial(exit_hit=exit_hit,
+                     output_ok=bool(reply.text.strip()) and "<" not in reply.text)
+    summary = record.finish(model_calls())
+    assert summary["measurement"] == "completed", "goodbye campaign was incomplete"
+    assert summary["adherence"] == "pass", "completed goodbye campaign missed acceptance"
 
 
+@pytest.mark.skipif(not KEY, reason="missing live-test gateway key")
 def test_the_model_launches_an_activity_it_was_told_about():
     """An activity request must produce a LAUNCH action naming the module the
     conversation introduced — and no other module."""
@@ -123,14 +134,15 @@ def test_the_model_launches_an_activity_it_was_told_about():
     _report("activity -> <launch:DRAW>", results, hits)
     for L in launches:
         for a in L:
-            assert a.module_id == "DRAW", f"launched a module nobody mentioned: {a}"
+            assert a.module_id == "DRAW", "model selected an unexpected module"
     for _, reply in results:
-        assert "<" not in reply.text, f"a tag leaked into speech: {reply.text!r}"
+        assert "<" not in reply.text, "an action tag leaked into speech"
     assert hits >= _ACCEPT, (
         f"only {hits}/{len(results)} activity turns emitted <launch:DRAW>; the model "
         f"has stopped following the action-tag prompt in LLMApp._system")
 
 
+@pytest.mark.skipif(not KEY, reason="missing live-test gateway key")
 def test_a_tagged_live_turn_reaches_the_wire_as_response_actions():
     """The whole seam in one go: a real model turn through the real MoxieRuntime, with
     the action arriving on the wire as a spec `RemoteChatAction`. Skipped (not failed)
@@ -153,8 +165,8 @@ def test_a_tagged_live_turn_reaches_the_wire_as_response_actions():
     else:
         pytest.skip("this sample carried no tag; see the rate tests for compliance")
     ra = resp["response_actions"]
-    assert ra[0]["action"] == ActionType.EXIT.value, ra
-    assert ra[0]["output_type"] == "GLOBAL", ra
-    assert "<" not in resp["output"]["text"], resp
-    assert "<exit>" not in resp["output"]["markup"], resp
-    print(f"\n[live tags] wire: {resp['output']['text']!r} actions={ra}")
+    assert ra[0]["action"] == ActionType.EXIT.value, "unexpected wire action"
+    assert ra[0]["output_type"] == "GLOBAL", "unexpected wire action scope"
+    assert "<" not in resp["output"]["text"], "an action tag leaked into wire speech"
+    assert "<exit>" not in resp["output"]["markup"], "an action tag leaked into markup"
+    print(f"\n[live tags] wire: action_count={len(ra)}")
