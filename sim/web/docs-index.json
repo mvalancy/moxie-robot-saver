@@ -1032,7 +1032,7 @@
    "path": "architecture/backlog/head-sweep-wait.md",
    "title": "The head-sweep wait: a good idea, a failed implementation, and one honest number",
    "section": "architecture",
-   "bytes": 9350,
+   "bytes": 10027,
    "mermaid": 0,
    "headings": [
     "The defect, which has not gone away",
@@ -1045,6 +1045,7 @@
     "Finding 2 — in the whole full-viewport regime the two shapes are the same program",
     "Finding 3 — a rAF frame is not an `animate()` step, and that is the real starvation channel",
     "What is still NOT established",
+    "Step 3 makes the real clock durable (2026-09-13)",
     "What to do next"
    ],
    "kind": "md"
