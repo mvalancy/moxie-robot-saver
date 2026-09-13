@@ -742,7 +742,8 @@
       clearCap();
       releaseStream();
       status(navigator.mediaDevices && window.MediaRecorder
-        ? "mic permission denied" : "mic unsupported in this browser");
+        ? "mic permission denied — type a message and tap Ask instead"
+        : "mic unsupported in this browser — type a message and tap Ask instead");
     });
   }
 
