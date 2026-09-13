@@ -1,10 +1,10 @@
 # The grounding gate has never run
 
-**Status (2026-09-08): OPEN — blocked upstream, not by the work.** The retrieval fix it was meant to
+**Status (2026-09-12): DO NOT RUN — transport bounded, scoring control invalid.** The retrieval fix it was meant to
 judge **merged to `dev` as `2a4a32d`** ([PR #247](https://github.com/mvalancy/moxie-robot-saver/pull/247),
-all four checks green including the browser suite) with its own narrower proof. `wt-passage2` is kept
-deliberately, not left behind: the gate watcher runs from it at the merged SHA, so the gate will
-exercise exactly the shipped code. **This brief exists so the gap between those two proofs is not quietly forgotten.**
+all four checks green including the browser suite) with its own narrower proof. The old `wt-passage2`
+watcher worktree no longer exists; run the gate only from a fresh branch at the current `dev` SHA.
+**This brief exists so the gap between those two proofs is not quietly forgotten.**
 
 ## The two claims, which are not the same claim
 
@@ -20,12 +20,21 @@ fix scores the paragraph's section heading at the same 6:3 title-to-heading rati
 Shipping the first and describing it as the second is exactly the substitution this repo keeps
 catching: **an assertion that is true but aimed one inch left of the risk.**
 
-## The gate, unchanged
+## The gate
 
-`sim/tools/grounding_probe.mjs`, opt-in behind `--yes`. It counts as passed when **the MQTT question
-scores GROUNDED and the negative control still reads zero** — not when the ranking looks better to
-whoever wrote it. If the noise floor ever stops reading zero, the instrument has drifted and every
-number after it is meaningless, **including the ones that look like success.**
+`sim/tools/grounding_probe.mjs`, opt-in behind `--yes`, compares one answer with and without a retrieved
+passage. Its old negative claim is invalid: *"tell me a joke"* retrieves no passage, so the passage-token
+set is empty and `fromPassage` is mathematically empty whatever either answer says. A printed zero cannot
+measure the acknowledged common-word false-positive channel. This is an instrument failure, not evidence
+for or against the shipped answer.
+
+The operator must also provide `--max-attempts 4..6` and `--timeout-ms 1000..60000`. One shared
+counter wraps the actual `fetch`, increments before every outbound attempt (including retries and
+timeouts), refuses redirects rather than allowing a second uncounted request, and holds the deadline until
+the complete success or error body has been consumed. The final line reports used/allowed attempts. The
+four logical calls therefore cannot silently amplify to sixteen, forward authorization across a redirect,
+or hang after response headers. The focused grounding-budget block in `sim/test_mode.mjs` proves these
+boundaries against real loopback HTTP without loading credentials or contacting a gateway.
 
 ## Why it has not run
 
@@ -43,9 +52,9 @@ question, and the two ways it looks like an outage when it is not.
 
 ## What has to happen
 
-1. Gateway answers `200` on `/v1/models`.
-2. Run the gate. **Read the negative control first** — if it is non-zero, stop and fix the
-   instrument; the grounded score is not evidence of anything until it reads zero.
+1. Replace the tautological no-passage negative arm with a discriminator that can actually produce a
+   false positive, and prove both directions hermetically before spending.
+2. Run the repaired gate with an explicit remaining batch budget and deadline.
 3. Record the result here, pass **or fail**. A fail is the useful outcome: it would mean the passage
    reaching the model was never the binding constraint, and the three prompting attempts that came
    before it were aimed at the right layer after all.
