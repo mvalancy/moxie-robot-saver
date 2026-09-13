@@ -27,6 +27,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { ProbeBudget, ProbeBudgetError } from "./tools/probe_budget.mjs";
+import { passageEvidence } from "./tools/grounding_score.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -935,6 +936,26 @@ const snap = (over) => Object.assign({
 //    Everything here is injected or refused before dotenv loading: zero network calls.
 // --------------------------------------------------------------------------- //
 {
+  deep(passageEvidence(
+    "I use MQTT messages.", "I talk online.", "How do you talk to the cloud?",
+    "The robot uses MQTT messages for each turn.").fromPassage,
+    ["mqtt", "messages"],
+    "grounding scorer fires when A adds terms from the supplied passage");
+  deep(passageEvidence(
+    "I wave brightly.", "I talk online.", "How do you talk to the cloud?",
+    "The robot uses MQTT messages for each turn.").fromPassage,
+    [],
+    "grounding scorer stays clear when A adds nothing from the candidate passage");
+  deep(passageEvidence(
+    "That is which way I talk.", "I talk online.", "How do you talk to the cloud?",
+    "The link which carries each turn is encrypted.").fromPassage,
+    ["which"],
+    "withheld-passage control can expose the acknowledged common-word false positive");
+  ok(/docsA:\s*null[\s\S]*docsB:\s*null[\s\S]*control:\s*true/.test(GROUNDING_SRC),
+     "live negative arm withholds the passage from both identical prompts");
+  ok(/passageEvidence\([\s\S]*candidateDocs\.excerpt/.test(GROUNDING_SRC),
+     "live negative arm still scores against a non-empty withheld production passage");
+
   eq((GROUNDING_SRC.match(/budget\.requestText\s*\(/g) || []).length, 1,
      "the grounding caller has exactly one outbound seam, inside ProbeBudget");
   ok(!/\bfetch\s*\(/.test(GROUNDING_SRC),
