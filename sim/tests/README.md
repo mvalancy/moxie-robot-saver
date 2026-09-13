@@ -484,9 +484,11 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   credentials in the same session. It is **narrowed** rather than fenced — only
   `helpers_runtime.LIVE_KEYS` (credentials, endpoints, model names) cross, never a
   behavioural knob — see **The dotenv fence** below;
-  `test_dotenv_cannot_perturb_the_suite.py` pins it. `test_live_action_tags.py` asserts a *rate* (2 of 3
-  sampled turns) rather than a single sample, because the brain runs at temperature
-  0.8 — see its docstring for the measured numbers.
+  `test_dotenv_cannot_perturb_the_suite.py` pins it. The scheduler-safe action-tag entry point is
+  `sim/tools/run_live_action_tags.sh`: it selects only goodbye, requires three eligible completions
+  before judging the 2-of-3 acceptance sample, caps retries at six total attempts, suppresses raw
+  model/test output, and emits one counts-only terminal summary. Missing prerequisites, timeout,
+  transport failure, and instrumentation disagreement are not green adherence results.
   **In CI** all three run together in the deep tier's dispatch-only step
   (`gh workflow run ci-deep.yml --ref dev`) as one `pytest -q -ra` invocation against the
   repo secrets — see [`../ci/README.md`](../ci/README.md). That step *fails* on an empty

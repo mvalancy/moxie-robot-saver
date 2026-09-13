@@ -22,6 +22,15 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 SERVE = REPO / "sim" / "serve.py"
 
+
+def pytest_addoption(parser):
+    """Trusted local control path for the counts-only goodbye supervisor.
+
+    This is deliberately a pytest option rather than an environment variable: live
+    modules may import only the narrow credential/endpoint/model dotenv allowlist.
+    """
+    parser.addoption("--moxie-campaign-state-file", default="", metavar="PATH")
+
 # --------------------------------------------------------------------------- #
 # The dotenv fence — the suite decides ONCE, here, whether a deployment's
 # `mqtt/.env` is visible to it. Everything below happens at conftest *import*,

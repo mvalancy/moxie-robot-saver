@@ -29,6 +29,10 @@
   Two branches editing different docs now merge cleanly and byte-identically to a rebuild. Keep both
   properties; the header comment in the script says why, and `check_bundle_fresh.py` stays the sole
   authority on freshness.
+- **`run_live_action_tags.sh`** — the only bounded goodbye-adherence entry point. Its Python
+  supervisor runs one selected three-trial campaign, enforces six attempts and a total deadline,
+  discards untrusted child output, and prints only allow-listed aggregate counts/categories. A
+  completed 2/3 is distinct from an incomplete campaign; activity and wire probes are excluded.
 - **`prerender_audio.py`** — renders scripted session lines with Piper into `../web/audio/` for the
   static demo (both sides of the conversation). See [`../../docs/guides/deploy-cloudflare.md`](../../docs/guides/deploy-cloudflare.md).
 - **`build_ext_conformance.py`** — regenerates
