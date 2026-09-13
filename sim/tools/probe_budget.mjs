@@ -26,7 +26,10 @@ export class ProbeBudget {
 
   get remaining() { return this.maxAttempts - this.attempts; }
 
-  async fetch(input, init = {}, fetchImpl = globalThis.fetch) {
+  /** Perform one HTTP attempt and consume its complete body inside the same deadline.
+   * Redirects are returned to the caller: following one can emit another request (and
+   * forward Authorization) beneath a single JavaScript fetch call. */
+  async requestText(input, init = {}, fetchImpl = globalThis.fetch) {
     if (this.remaining <= 0)
       throw new ProbeBudgetError(`gateway attempt budget exhausted (${this.attempts}/${this.maxAttempts})`);
 
@@ -37,7 +40,13 @@ export class ProbeBudget {
     // test double must not be able to disable the safety deadline by accident.
     const timer = scheduleTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      return await fetchImpl(input, { ...init, signal: controller.signal });
+      const response = await fetchImpl(input, {
+        ...init,
+        redirect: "manual",
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      return { response, text };
     } catch (err) {
       if (controller.signal.aborted)
         throw new ProbeBudgetError(`gateway attempt ${attempt} timed out after ${this.timeoutMs} ms`);

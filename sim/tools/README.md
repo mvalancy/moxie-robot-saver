@@ -101,9 +101,11 @@
 - **`grounding_probe.mjs`** — compares the hosted model's answer with and without the locally
   retrieved passage. It is opt-in and paid: `--yes`, `--max-attempts 4..6`, and
   `--timeout-ms 1000..60000` are all required. One [`probe_budget.mjs`](probe_budget.mjs) instance
-  wraps every actual fetch across both controls, including retries and timeouts, and the probe prints
-  its used/allowed count. The boundary is hermetically guarded by the focused grounding-budget block
-  in [`../test_mode.mjs`](../test_mode.mjs).
+  wraps every actual fetch across both controls, including retries and timeouts, refuses redirects, and
+  holds the deadline through the complete response body; the probe prints its used/allowed count. The
+  transport boundary is hermetically guarded with real loopback HTTP by the focused grounding-budget
+  block in [`../test_mode.mjs`](../test_mode.mjs). **Do not spend on the current scoring probe:** its
+  no-passage negative arm is tautological; the tracked brief names the required discriminator repair.
 - **`prove_broker_acl.py`** — the assertions behind [`../run_acl_proof.sh`](../run_acl_proof.sh)
   (broker hardening P0, [`security-broker-auth.md`](../../docs/architecture/backlog/security-broker-auth.md)
   §2). Driven against a throwaway mosquitto the shell script starts from the repo's own broker config and
