@@ -89,9 +89,10 @@ runner is now:
 sim/tools/run_live_action_tags.sh
 ```
 
-It selects only the goodbye and DRAW rate checks (six successful completions), sets a process-wide
-six-attempt limit that is checked immediately before every request including retries, and gives the
-entire process a 360-second deadline with a five-second kill grace. The direct `LLMApp` request path
+It selects only the three-trial goodbye rate check, sets a process-wide six-attempt ceiling that is
+checked immediately before every request including retries, and gives the entire process a 360-second
+deadline with a five-second kill grace. A normal run therefore spends three attempts, not the ceiling;
+DRAW adherence remains a separate future measurement. The direct `LLMApp` request path
 now participates in the same counter as the other chat seams. Hermetic tests prove attempts one
 through six pass, attempt seven is refused before the client, transient retries cannot cross the
 limit, invalid limits fail closed, and a normal direct reply is counted.

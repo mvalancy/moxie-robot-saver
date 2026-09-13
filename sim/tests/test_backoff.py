@@ -100,7 +100,8 @@ def test_targeted_action_tag_runner_pins_one_bounded_campaign():
               "run_live_action_tags.sh").read_text()
     assert "MOXIE_MODEL_CALL_LIMIT=6" in runner
     assert "timeout --foreground --kill-after=5s 360s" in runner
-    assert runner.count("test_live_action_tags.py::") == 2
+    assert runner.count("test_live_action_tags.py::") == 1
+    assert "test_the_model_launches_an_activity" not in runner
     assert "test_a_tagged_live_turn_reaches_the_wire" not in runner
 
 

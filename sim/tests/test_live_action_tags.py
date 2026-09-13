@@ -17,10 +17,10 @@ sampling model would make the suite flap. The threshold is deliberately well abo
 the measured 0/N baseline and at/below what the tuned prompt sustains.
 
 Runs only with a gateway key (`MOXIE_LLM_API_KEY` / `LITELLM_MASTER_KEY`, e.g. from
-the git-ignored `mqtt/.env`); skips cleanly otherwise. The two rate checks cost six
-successful calls, but retries and the separate wire check make the whole file unsafe
-as a bounded probe. Use `sim/tools/run_live_action_tags.sh`, which selects only the
-rate checks, refuses a seventh request attempt, and gives the campaign one deadline.
+the git-ignored `mqtt/.env`); skips cleanly otherwise. Retries and the other two tests
+make the whole file unsafe as one bounded probe. Use `sim/tools/run_live_action_tags.sh`,
+which selects only the three-trial goodbye rate check, refuses a seventh request attempt,
+and gives the campaign one deadline. Activity adherence needs its own later budget.
 """
 import os
 import sys

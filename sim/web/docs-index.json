@@ -1054,7 +1054,7 @@
    "path": "architecture/backlog/action-tag-drift.md",
    "title": "exit>` stopped being written, and the prompt block that carries it contradicts itself",
    "section": "architecture",
-   "bytes": 6313,
+   "bytes": 6405,
    "mermaid": 0,
    "headings": [
     "The measurement",
