@@ -955,6 +955,10 @@ const snap = (over) => Object.assign({
      "live negative arm withholds the passage from both identical prompts");
   ok(/passageEvidence\([\s\S]*candidateDocs\.excerpt/.test(GROUNDING_SRC),
      "live negative arm still scores against a non-empty withheld production passage");
+  ok(!/console\.log\([^\n]*(?:VERDICT|GROUNDED|not grounded)/.test(GROUNDING_SRC),
+     "the one-sample lexical instrument never prints a broader grounding verdict");
+  ok(/one lexical sample, not proof/.test(GROUNDING_SRC),
+     "the executable states its evidence ceiling at the final success path");
 
   eq((GROUNDING_SRC.match(/budget\.requestText\s*\(/g) || []).length, 1,
      "the grounding caller has exactly one outbound seam, inside ProbeBudget");

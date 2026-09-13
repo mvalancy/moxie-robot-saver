@@ -57,9 +57,10 @@ question, and the two ways it looks like an outage when it is not.
 
 1. Merge the scoring-control repair only after its exact-head checks pass.
 2. Run the repaired gate with an explicit remaining batch budget and deadline.
-3. Record the result here, pass **or fail**. A fail is the useful outcome: it would mean the passage
-   reaching the model was never the binding constraint, and the three prompting attempts that came
-   before it were aimed at the right layer after all.
+3. Record the positive-pair evidence and withheld-passage control separately. A control hit makes that
+   run inconclusive; an unusable transport says nothing about the model. A clear sampled control plus no
+   positive-pair evidence supports only the narrow statement that retrieval did not measurably change that
+   answer in that sample — never that the passage cannot be the binding constraint.
 
 ---
 📖 [Backlog index](README.md) · [Architecture index](../README.md) · [Deploy guide](../../guides/deploy-cloudflare.md)

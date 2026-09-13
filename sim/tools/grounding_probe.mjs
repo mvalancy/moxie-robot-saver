@@ -39,8 +39,9 @@
  * by chance, so a single shared term is weaker evidence than it looks. The obvious fix —
  * ignore common words — is the hand-written stop list this whole line of work exists to
  * avoid, and requiring N>1 shared terms would be a threshold moved after seeing results.
- * So the discriminator stands as stated and the weakness is recorded instead. Read a
- * GROUNDED verdict by looking at WHICH terms fired, which is why they are printed.
+ * So the discriminator stands as stated and the weakness is recorded instead. Read the
+ * evidence by looking at WHICH terms fired, which is why they are printed. A single pair
+ * is never promoted into a claim that the answer is grounded or ungrounded.
  *
  *   node sim/tools/grounding_probe.mjs --yes --max-attempts 6 --timeout-ms 20000
  *                                                   # 4 intended calls, <= 6 actual
@@ -222,7 +223,7 @@ for (const scenario of [
   } catch (err) {
     console.log(`\n── ${scenario.label}`);
     console.log(`   UNUSABLE — no verdict was produced: ${err.message}`);
-    console.log(`   (this is NOT "not grounded"; the measurement did not happen)`);
+    console.log(`   (this is not negative evidence; the measurement did not happen)`);
     unusable = true;
     continue;
   }
@@ -240,9 +241,9 @@ for (const scenario of [
   console.log(`   B (without)  : ${b.slice(0, 120)}`);
   console.log(`   new in A     : ${onlyInA.slice(0, 10).join(", ") || "(none)"}`);
   console.log(`   …from passage: ${fromPassage.join(", ") || "(none)"}`);
-  console.log(`   VERDICT      : ${scenario.control
-    ? (fromPassage.length ? "FALSE POSITIVE OBSERVED" : "control clear")
-    : (fromPassage.length ? "GROUNDED" : "not grounded")}`);
+  console.log(`   OBSERVATION  : ${scenario.control
+    ? (fromPassage.length ? "FALSE-POSITIVE SIGNAL OBSERVED" : "sampled control clear")
+    : (fromPassage.length ? "passage evidence detected" : "no passage evidence detected")}`);
 }
 
 if (unusable) {
@@ -252,12 +253,13 @@ if (unusable) {
 }
 if (falsePositiveEvidence.length) {
   console.log(`\nGATEWAY ATTEMPTS: ${budget.summary()} actual outbound attempts.`);
-  console.log("\nCONTROL FAILED — the scorer fired when neither prompt contained the passage; no grounding verdict.");
+  console.log("\nCONTROL FIRED — the scorer matched when neither prompt contained the passage; this run is inconclusive.");
   process.exit(1);
 }
 console.log(`\nGATEWAY ATTEMPTS: ${budget.summary()} actual outbound attempts.`);
 if (!positiveEvidence.length) {
-  console.log("\nVERDICT: not grounded — the control was clear, but the supplied passage added no passage evidence.");
+  console.log("\nRESULT: no passage evidence detected in the positive pair; sampled control clear.");
   process.exit(1);
 }
-console.log("\nVERDICT: GROUNDED — passage evidence appeared only when the passage was supplied.");
+console.log("\nRESULT: passage evidence detected in the positive pair; sampled control clear.");
+console.log("This is one lexical sample, not proof that the answer is grounded.");
