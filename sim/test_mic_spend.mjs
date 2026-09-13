@@ -49,7 +49,8 @@
  *   4. A REAL TRANSCRIPT                     — exactly one chat + one speech, and Moxie's
  *                                              own gateway voice really plays
  *   5. a clip under min_audio_bytes          — "(too short)", zero requests, no line burnt
- *   6. a microphone that will not open       — an honest status line, zero requests
+ *   6. a microphone that will not open       — explicit typed recovery on desktop and
+ *                                              phone, then response, second turn, goodbye
  *
  * No gateway, no Cloudflare account, no network, and NO LIVE MICROPHONE: `/api/*` is
  * answered at the browser and the recorder is injected through `moxieMic.setCapture`, the
@@ -147,18 +148,23 @@ const browser = await puppeteer.launch({
 /**
  * Open the hosted, live sim with `/api/*` answered at the browser.
  *
- * @param {{transcribe?: "ok"|"refused"|"dead"}} opts — what `POST /api/transcribe` does.
+ * @param {{transcribe?: "ok"|"refused"|"dead", viewport?: {width:number,height:number}}} opts
+ *   — what `POST /api/transcribe` does and the visitor viewport to exercise.
  *   `/api/chat` and `/api/speech` ALWAYS answer successfully here, on purpose: if the
  *   page spends a turn it must be able to complete it, so a request that should never
  *   have happened shows up as a real answer on the page and not as a second failure.
  */
 async function open(opts) {
   const page = await browser.newPage();
-  await page.setViewport({ width: 1440, height: 900 });
-  const errs = [], reqs = [], aborted = { n: 0 };
+  await page.setViewport(opts.viewport || { width: 1440, height: 900 });
+  const errs = [], reqs = [], bodies = [], aborted = { n: 0 };
   page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
   page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
-  page.on("request", (r) => reqs.push(r.url()));
+  page.on("request", (r) => {
+    reqs.push(r.url());
+    if (/\/api\/(chat|speech|transcribe)\b/.test(r.url()))
+      bodies.push({ url: r.url(), body: r.postData() || "" });
+  });
 
   /* Web Audio, instrumented where sound is actually made. `createBuffer` + a wrapped
    * `start()` is where the GATEWAY voice lands (`audio.js` builds the buffer by hand from
@@ -247,7 +253,7 @@ async function open(opts) {
   await page.waitForFunction("window.moxieMode.canSpendLiveTurn() === true", { timeout: 15000 })
     .catch(() => {});
   await new Promise((r) => setTimeout(r, 500));
-  return { page, errs, reqs, aborted };
+  return { page, errs, reqs, bodies, aborted };
 }
 
 /** How many of each `/api/*` route the browser actually asked for. */
@@ -511,28 +517,79 @@ try {
   }
 
   /* =======================================================================
-   * 6. A MICROPHONE THAT WILL NOT OPEN — the audit's headline case, and the one
-   *    place its description did not match the code.
+   * 6. A MICROPHONE THAT WILL NOT OPEN — the complete first-visitor recovery path.
    *
-   * A denied permission takes `start()`'s `catch`, which shows an honest status line and
-   * stops. It reaches no fallback, so it never reached `sendUserTurn` and never spent
-   * anything — before this fix or after. Pinned here so that stays true, and so the claim
-   * is on the record rather than in a report nobody can re-run.
+   * A denied permission takes `start()`'s `catch`. The old line stopped at "mic permission
+   * denied", even though the working typed composer was already on screen. Drive the same
+   * stranger path at desktop and phone widths: denial must cost nothing, name the exact
+   * recovery controls, and leave those controls usable for a response, a context-bearing
+   * second turn, and goodbye. This is hermetic Sim behavior evidence, not physical-device
+   * evidence and not a claim about current upstream inference.
    * ===================================================================== */
-  {
-    const { page, errs, reqs, aborted } = await open({ transcribe: "ok" });
-    await press(page, null);
+  for (const visit of [
+    { label: "desktop", viewport: { width: 1440, height: 900 } },
+    { label: "phone", viewport: { width: 390, height: 844 } },
+  ]) {
+    const { page, errs, reqs, bodies, aborted } = await open({
+      transcribe: "ok", viewport: visit.viewport,
+    });
+    // One click is the actual denial. `press()` deliberately clicks twice for recorder
+    // start/stop scenarios, which would ask for permission twice and is not this journey.
+    await page.evaluate(() => window.moxieMic.setCapture(
+      () => Promise.reject(new Error("NotAllowedError"))));
+    await page.click("#mic-btn");
+    await page.waitForFunction(
+      "/permission denied|unsupported/.test(document.getElementById('mic-status').textContent)",
+      { timeout: 5000 });
     const s = await page.evaluate(snapshot);
     const paid = spend(reqs);
 
-    eq(paid.transcribe, 0, "a microphone that will not open uploads nothing");
-    eq(paid.chat, 0, "…spends no /api/chat — it never did");
-    eq(paid.speech, 0, "…and no /api/speech");
-    eq(s.stats.fallbacks, 0, "…and reaches no fallback at all");
-    ok(s.status.length > 0, `…but says something honest (got ${JSON.stringify(s.status)})`);
-    eq(await page.evaluate(() => window.moxieMic.isRecording()), false, "…and is not left recording");
+    eq(paid.transcribe, 0, `${visit.label}: denied microphone uploads nothing`);
+    eq(paid.chat, 0, `${visit.label}: …spends no /api/chat — it never did`);
+    eq(paid.speech, 0, `${visit.label}: …and no /api/speech`);
+    eq(s.stats.fallbacks, 0, `${visit.label}: …and reaches no fallback at all`);
+    ok(/type a message/i.test(s.status) && /tap Ask/i.test(s.status),
+       `${visit.label}: …names the exact typed recovery (got ${JSON.stringify(s.status)})`);
+    eq(await page.evaluate(() => window.moxieMic.isRecording()), false,
+       `${visit.label}: …and is not left recording`);
+
+    const reachable = await page.evaluate(() => {
+      const input = document.getElementById("speech-input");
+      const ask = document.getElementById("speech-btn");
+      function hit(el) {
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height || r.top < 0 || r.bottom > innerHeight) return false;
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return top === el || el.contains(top);
+      }
+      return { input: hit(input), ask: hit(ask), askText: (ask || {}).textContent || "" };
+    });
+    ok(reachable.input && reachable.ask,
+       `${visit.label}: the message field and Ask button are both visible and tappable after denial`);
+    eq(reachable.askText, "Ask", `${visit.label}: the recovery copy names the button verbatim`);
+
+    const turns = ["hello moxie", "what do you remember?", "goodbye moxie"];
+    for (let i = 0; i < turns.length; i++) {
+      await page.$eval("#speech-input", (el, text) => { el.value = text; }, turns[i]);
+      await page.click("#speech-btn");
+      await page.waitForFunction((n) =>
+        window.moxieBridge.transportStats().chatOk >= n, { timeout: 10000 }, i + 1);
+    }
+    const chat = bodies.filter((b) => /\/api\/chat\b/.test(b.url)).map((b) => JSON.parse(b.body));
+    const after = await page.evaluate(snapshot);
+    eq(chat.length, 3, `${visit.label}: recovery completes response, second turn, and goodbye`);
+    eq(JSON.stringify(chat.map((b) => b.text)), JSON.stringify(turns),
+       `${visit.label}: all three visitor lines reach the brain in order`);
+    eq(chat[0] && chat[0].context, "", `${visit.label}: the first recovered turn starts a session`);
+    ok(chat.slice(1).every((b) => b.context === "v1.CTX.MAC"),
+       `${visit.label}: second turn and goodbye carry the signed conversation context`);
+    eq(spend(reqs).transcribe, 0,
+       `${visit.label}: typed recovery never retries the denied microphone behind the visitor's back`);
+    ok(after.chatText.includes("goodbye moxie") && after.chatText.includes(REPLY),
+       `${visit.label}: goodbye and Moxie's response are visible in the conversation`);
     eq(notable(errs, aborted).length, 0,
-       `no console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
+       `${visit.label}: no console errors: ${notable(errs, aborted).slice(0, 3).join(" | ")}`);
     await page.close();
   }
 } catch (e) {
