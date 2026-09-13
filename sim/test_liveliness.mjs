@@ -640,8 +640,10 @@ async function dockGeometry(page) {
   const m = probe.rows;
 
   ok(m.length >= 30, `she was sampled while actually moving (${m.length} placed frames)`);
-  ok(probe.stepDeltas.length === 16 &&
-     probe.stepDeltas.every((steps) => Number.isInteger(steps) && steps >= 0),
+  const validStepDeltas = (deltas) => deltas.length === 16 &&
+    deltas.every((steps) => Number.isInteger(steps) && steps >= 0) &&
+    deltas.some((steps) => steps > 0);
+  ok(validStepDeltas(probe.stepDeltas) && !validStepDeltas(Array(16).fill(0)),
      `the page counted its own animation steps (${probe.stepDeltas.join(", ")})`);
   const spread = Math.max(...m.map((r) => r.headMoved)) - Math.min(...m.map((r) => r.headMoved));
   // One check, two stories. A small `spread` means EITHER the drive never moved her (a real
