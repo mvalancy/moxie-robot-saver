@@ -453,8 +453,12 @@ class LLMApp(MoxieApp):
     def respond(self, turn: Turn) -> Reply:
         messages = self._messages(turn)
         try:
-            from ..chat import call_with_backoff
+            from ..chat import call_with_backoff, note_model_call
             def _once():
+                # This direct path does not pass through make_openai_chat(), so it
+                # shares that seam's attempt counter and campaign guard explicitly.
+                # A retry re-enters _once and is therefore another counted attempt.
+                note_model_call("chat")
                 r = self._client.chat.completions.create(
                     model=self._model, messages=messages,
                     max_tokens=self._max_tokens, temperature=self._temperature)

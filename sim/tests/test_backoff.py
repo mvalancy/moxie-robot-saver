@@ -4,6 +4,7 @@ A busy gateway should slow us down and recover, not fail the child.
 """
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +13,8 @@ sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.chat import (  # noqa: E402
     is_rate_limit_error, is_offline_error, is_server_error,
-    call_with_backoff, Pacer,
+    call_with_backoff, model_calls, note_model_call, reset_model_calls,
+    ModelCallBudgetExceeded, Pacer,
 )
 from moxie_sdk.content import ContentApp, load_module  # noqa: E402
 from moxie_sdk.types import Turn, RobotContext, ChildProfile, ResultCode  # noqa: E402
@@ -55,6 +57,52 @@ def test_backoff_gives_up_after_max_retries():
         raise _RateLimit()
     with pytest.raises(_RateLimit):
         call_with_backoff(always, max_retries=2, base=0.01, sleep=lambda s: None)
+
+
+def test_model_call_campaign_allows_six_attempts_then_refuses_before_seven(monkeypatch):
+    monkeypatch.setenv("MOXIE_MODEL_CALL_LIMIT", "6")
+    reset_model_calls()
+    for _ in range(6):
+        note_model_call()
+    assert model_calls() == 6
+    with pytest.raises(ModelCallBudgetExceeded, match="6/6"):
+        note_model_call()
+    assert model_calls() == 6
+    reset_model_calls()
+
+
+def test_model_call_campaign_stops_retry_amplification_before_request(monkeypatch):
+    monkeypatch.setenv("MOXIE_MODEL_CALL_LIMIT", "2")
+    reset_model_calls()
+    outbound = {"n": 0}
+
+    def transient():
+        note_model_call()
+        outbound["n"] += 1
+        raise _ServerErr()
+
+    with pytest.raises(ModelCallBudgetExceeded, match="2/2"):
+        call_with_backoff(transient, max_retries=4, base=0.01, sleep=lambda _: None)
+    assert outbound["n"] == model_calls() == 2
+    reset_model_calls()
+
+
+def test_invalid_model_call_campaign_limit_fails_closed(monkeypatch):
+    monkeypatch.setenv("MOXIE_MODEL_CALL_LIMIT", "unbounded")
+    reset_model_calls()
+    with pytest.raises(ModelCallBudgetExceeded, match="positive integer"):
+        note_model_call()
+    assert model_calls() == 0
+
+
+def test_targeted_action_tag_runner_pins_one_bounded_campaign():
+    runner = (Path(__file__).resolve().parents[1] / "tools" /
+              "run_live_action_tags.sh").read_text()
+    assert "MOXIE_MODEL_CALL_LIMIT=6" in runner
+    assert "timeout --foreground --kill-after=5s 360s" in runner
+    assert runner.count("test_live_action_tags.py::") == 1
+    assert "test_the_model_launches_an_activity" not in runner
+    assert "test_a_tagged_live_turn_reaches_the_wire" not in runner
 
 
 def test_non_transient_error_not_retried():

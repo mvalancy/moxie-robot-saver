@@ -199,6 +199,15 @@ def test_llm_app_untagged_reply_is_unchanged():
     assert reply.actions == []
 
 
+def test_llm_app_records_the_direct_request_attempt():
+    from moxie_sdk.chat import model_calls, reset_model_calls
+    reset_model_calls()
+    app, _ = _llm_app('{"say": "Hello!", "mood": "happy"}')
+    app.respond(Turn(robot=RobotContext(device_id="d1"), speech="hi"))
+    assert model_calls("chat") == 1
+    reset_model_calls()
+
+
 def test_llm_app_teaches_the_model_the_tags():
     app, fake = _llm_app('{"say": "hi"}')
     app.respond(Turn(robot=RobotContext(device_id="d1"), speech="hi"))

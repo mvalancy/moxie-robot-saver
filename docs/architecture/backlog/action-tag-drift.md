@@ -1,7 +1,8 @@
 # `<exit>` stopped being written, and the prompt block that carries it contradicts itself
 
-**Status (2026-09-08): OPEN — one measurement, one candidate cause, and the candidate is UNTESTED
-because the gateway is down.** Do not read the second half of this brief as a diagnosis of the first.
+**Status (2026-09-13): OPEN — one historical measurement, one candidate cause, and no current
+re-measurement. A bounded runner is now available; gateway availability and model adherence are still
+unmeasured.** Do not read the second half of this brief as a diagnosis of the first.
 
 ## The measurement
 
@@ -77,6 +78,27 @@ apply the three edits and run `test_live_action_tags`; the honest baseline to be
 
 If it still reads 0/3, the contradiction was a red herring and the cause is upstream of the prompt —
 which is worth knowing, and is why the number goes in this file either way.
+
+## The next measurement is mechanically bounded
+
+Do not run the whole live test file for this question. It contains a third wire test, and each
+`LLMApp.respond()` used to hide up to four retries from the shared model-call counter. The targeted
+runner is now:
+
+```sh
+sim/tools/run_live_action_tags.sh
+```
+
+It selects only the three-trial goodbye rate check, sets a process-wide six-attempt ceiling that is
+checked immediately before every request including retries, and gives the entire process a 360-second
+deadline with a five-second kill grace. A normal run therefore spends three attempts, not the ceiling;
+DRAW adherence remains a separate future measurement. The direct `LLMApp` request path
+now participates in the same counter as the other chat seams. Hermetic tests prove attempts one
+through six pass, attempt seven is refused before the client, transient retries cannot cross the
+limit, invalid limits fail closed, and a normal direct reply is counted.
+
+This makes the test safe to schedule under an explicit six-attempt budget; it does not spend that
+budget, establish current gateway availability, or update the historical 0/3 and 0/2 observations.
 
 ---
 📖 [Backlog index](README.md) · [Architecture index](../README.md) · [One brain, no failover](one-brain-no-failover.md)
