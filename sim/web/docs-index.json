@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 31425,
+   "bytes": 31498,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -1052,14 +1052,14 @@
   },
   {
    "path": "architecture/backlog/action-tag-drift.md",
-   "title": "exit>` stopped being written, and the prompt block that carries it contradicts itself",
+   "title": "Historical `<exit>` absence and the prompt-block hypothesis",
    "section": "architecture",
-   "bytes": 6405,
+   "bytes": 7491,
    "mermaid": 0,
    "headings": [
     "The measurement",
     "The wiring is intact — checked, not assumed",
-    "Checked and dismissed: the live tests already tell the two apart",
+    "The old assertion did not reliably tell completion from adherence",
     "The candidate cause: the block tells the model its own examples are invalid",
     "The proposed change, and why it is not made here",
     "The next measurement is mechanically bounded"

@@ -88,7 +88,7 @@ work down:
 
 - [`one-brain-no-failover.md`](one-brain-no-failover.md) — **a 33-minute gateway 503 took the live demo's brain out entirely.** The degraded path carried it honestly; there is no second provider. Owner decision, because the fix costs a credential.
 
-- [`action-tag-drift.md`](action-tag-drift.md) — **0/3 goodbyes emit `<exit>`** on real replies. The mitigation written for this exact drift is still correctly wired; the candidate cause is a prompt block whose examples violate the schema it just declared. Untested — needs the gateway.
+- [`action-tag-drift.md`](action-tag-drift.md) — a historical live sample observed **0/3 goodbye `<exit>` actions**; current adherence and cause are unknown. The bounded campaign now requires three eligible completions and emits counts-only terminal state so outage/fallback cannot masquerade as adherence. A later explicit gateway measurement remains required.
 
 - [`head-sweep-wait.md`](head-sweep-wait.md) — **reverted, and the number that killed it is recorded.** The fixed-frame wait it targeted is a real defect; the rewrite lost to the old code at a higher load, and the mechanism is still unknown.
 

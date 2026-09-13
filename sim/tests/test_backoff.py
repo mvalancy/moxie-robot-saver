@@ -98,11 +98,16 @@ def test_invalid_model_call_campaign_limit_fails_closed(monkeypatch):
 def test_targeted_action_tag_runner_pins_one_bounded_campaign():
     runner = (Path(__file__).resolve().parents[1] / "tools" /
               "run_live_action_tags.sh").read_text()
-    assert "MOXIE_MODEL_CALL_LIMIT=6" in runner
-    assert "timeout --foreground --kill-after=5s 360s" in runner
-    assert runner.count("test_live_action_tags.py::") == 1
-    assert "test_the_model_launches_an_activity" not in runner
-    assert "test_a_tagged_live_turn_reaches_the_wire" not in runner
+    supervisor = (Path(__file__).resolve().parents[1] / "tools" /
+                  "run_live_action_tags.py").read_text()
+    assert "run_live_action_tags.py" in runner
+    assert 'MOXIE_MODEL_CALL_LIMIT="6"' in supervisor
+    assert '"360"' in supervisor
+    assert supervisor.count("test_live_action_tags.py::") == 1
+    assert "test_the_model_launches_an_activity" not in supervisor
+    assert "test_a_tagged_live_turn_reaches_the_wire" not in supervisor
+    assert "stdout=subprocess.DEVNULL" in supervisor
+    assert "stderr=subprocess.DEVNULL" in supervisor
 
 
 def test_non_transient_error_not_retried():

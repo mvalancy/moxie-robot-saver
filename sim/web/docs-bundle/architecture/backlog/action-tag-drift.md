@@ -1,8 +1,8 @@
-# `<exit>` stopped being written, and the prompt block that carries it contradicts itself
+# Historical `<exit>` absence and the prompt-block hypothesis
 
 **Status (2026-09-13): OPEN — one historical measurement, one candidate cause, and no current
-re-measurement. A bounded runner is now available; gateway availability and model adherence are still
-unmeasured.** Do not read the second half of this brief as a diagnosis of the first.
+re-measurement. A bounded, counts-only runner is under review; gateway availability and model adherence
+are still unmeasured.** Do not read the second half of this brief as a diagnosis of the first.
 
 ## The measurement
 
@@ -23,10 +23,10 @@ The obvious hypothesis is that the instruction stopped reaching the model. It di
 *"the single most load-bearing line of the tag prompt: graphling-medium writes a warm goodbye and
 simply stops"* — and it is still the tail of both `_TAG_EXAMPLES` and `_TAG_EXAMPLES_PLAIN`
 (`:248`, `:256`), while `_system()` returns `persona + who + fmt + tags` (`:340`), so it remains the
-last thing the model reads. **The mitigation for this exact drift is present and correctly placed,
-and the drift is happening anyway.**
+last thing the model reads. **The mitigation for this exact drift was present and correctly placed
+when the historical 0/3 sample was observed.**
 
-## Checked and dismissed: the live tests already tell the two apart
+## The old assertion did not reliably tell completion from adherence
 
 Before blaming the tests, they were run **against the live outage** — the rare case where the
 condition you want to handle is happening while you look at it. They report it unmistakably:
@@ -38,11 +38,19 @@ E  openai.InternalServerError: Error code: 503 - {'message': 'Service Unavailabl
 3 failed, 3 passed, 1 skipped in 408.66s
 ```
 
-An outage surfaces as a **transport exception with the upstream's own words**, after four backoff
-retries; the drift surfaces as an **assertion about non-empty replies**. Nobody reading these two
-reds could confuse them, and no work is needed here. Noting it so the question is not reopened —
-and noting that under the current outage `test_live_action_tags` is red for the *503* reason, not
-the drift reason, so the 0/3 figure below predates it and must be re-measured, not re-cited.
+That historical output distinguished those particular runs, but it did not prove the harness always
+could. `LLMApp.respond()` converts exhausted server and budget errors into a friendly fallback, while
+the old assertion accepted any two tagged replies in its three returned `Reply` objects. A hermetic
+negative control reproduced a false green: two tagged completions, then four 503 attempts and refusal
+before a seventh request still satisfied the 2/3 assertion because the third trial returned fallback
+speech. Non-empty speech is therefore not evidence of a completed model response.
+
+The repaired campaign wraps the existing client boundary, counts attempts and structurally valid,
+non-empty responses independently of `Reply`, and stops scoring at the first incomplete trial. Three
+eligible completions are required before adherence is evaluated. Provider replies, action identifiers,
+and exception text are discarded; the supervisor emits only allow-listed aggregate counts and fixed
+termination categories. Timeout, missing prerequisites, child failure, and counter disagreement cannot
+be reported as a passing measurement.
 
 ## The candidate cause: the block tells the model its own examples are invalid
 
@@ -89,13 +97,17 @@ runner is now:
 sim/tools/run_live_action_tags.sh
 ```
 
-It selects only the three-trial goodbye rate check, sets a process-wide six-attempt ceiling that is
-checked immediately before every request including retries, and gives the entire process a 360-second
-deadline with a five-second kill grace. A normal run therefore spends three attempts, not the ceiling;
-DRAW adherence remains a separate future measurement. The direct `LLMApp` request path
+It selects only the three-trial goodbye acceptance check, sets a process-wide six-attempt ceiling that
+is checked immediately before every request including retries, and gives the entire process a 360-second
+deadline with a five-second termination grace. A normal run therefore spends three attempts, not the
+ceiling; DRAW adherence remains a separate future measurement. The direct `LLMApp` request path
 now participates in the same counter as the other chat seams. Hermetic tests prove attempts one
 through six pass, attempt seven is refused before the client, transient retries cannot cross the
-limit, invalid limits fail closed, and a normal direct reply is counted.
+limit, invalid limits fail closed, and a normal direct reply is counted. Campaign controls additionally
+prove that a completed 2/3 passes, a completed 1/3 fails, two successes plus exhaustion is inconclusive,
+retry recovery counts every attempt, invalid/empty responses do not become completions, missing
+prerequisites are visible, a hanging child reports timeout with its flushed attempt count, inconsistent
+instruments fail closed, and secret-like model/exception text never enters the aggregate result.
 
 This makes the test safe to schedule under an explicit six-attempt budget; it does not spend that
 budget, establish current gateway availability, or update the historical 0/3 and 0/2 observations.
