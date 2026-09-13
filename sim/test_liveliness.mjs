@@ -604,9 +604,11 @@ async function dockGeometry(page) {
     const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
     const rows = [];
     const sweeps = [];        // head-y range measured within each sweep, 0 if unsampled
+    const stepDeltas = [];    // actual renderer/physics steps, not this test's rAF turns
     const ends = [0, 32767];
     for (let i = 0; i < 16; i++) {
       const start = rows.length;
+      const stepStart = window.moxie.getAnimationStepCount();
       // Re-said every sweep: the bubble's own hold timer would otherwise hide it midway,
       // and a hidden bubble freezes the anchor BY DESIGN (nothing is placed, so nothing is
       // recorded) — which would quietly turn this into a test of nothing.
@@ -631,12 +633,16 @@ async function dockGeometry(page) {
       }
       const ys = rows.slice(start).map((r) => r.headMoved);
       sweeps.push(ys.length ? Math.max(...ys) - Math.min(...ys) : 0);
+      stepDeltas.push(window.moxie.getAnimationStepCount() - stepStart);
     }
-    return { rows, sweeps };
+    return { rows, sweeps, stepDeltas };
   });
   const m = probe.rows;
 
   ok(m.length >= 30, `she was sampled while actually moving (${m.length} placed frames)`);
+  ok(probe.stepDeltas.length === 16 &&
+     probe.stepDeltas.every((steps) => Number.isInteger(steps) && steps >= 0),
+     `the page counted its own animation steps (${probe.stepDeltas.join(", ")})`);
   const spread = Math.max(...m.map((r) => r.headMoved)) - Math.min(...m.map((r) => r.headMoved));
   // One check, two stories. A small `spread` means EITHER the drive never moved her (a real
   // defect) OR this runner was too starved to advance her far enough to measure it. The fixed
@@ -644,9 +650,11 @@ async function dockGeometry(page) {
   // than the 6px this assertion is really about are counted and reported. Nearly all of them
   // stalled -> the machine; the drive moved her every sweep and she still went nowhere -> the drive.
   const stalled = probe.sweeps.filter((r) => r < 6).length;
+  const underStepped = probe.stepDeltas.filter((steps) => steps < 4).length;
   ok(spread > 40,
      `…and the drive really swung her head across the screen (${spread.toFixed(0)}px of travel${
-       spread > 40 ? "" : `; ${stalled}/16 sweeps moved her <6px, so ${
+       spread > 40 ? "" : `; ${underStepped}/16 sweeps received <4 renderer steps; ` +
+       `${stalled}/16 moved her <6px, so ${
          stalled > 8 ? "this runner never gave her the frames to move in" : "the drive itself did not swing her"}`})`);
   const leadered = m.filter((r) => r.leader > 0);
   ok(leadered.length >= 20, `…on a leader for most of it (${leadered.length} frames)`);

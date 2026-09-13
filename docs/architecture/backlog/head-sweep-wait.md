@@ -134,6 +134,17 @@ the identical 4-frame loop). Finding 3 is a candidate — sustained rAF/animate 
 whichever arm ran during it — but it was measured as symmetric, so it explains a bad *run*, not a bad
 *shape*.
 
+## Step 3 makes the real clock durable (2026-09-13)
+
+The page now exposes a monotonic, read-only `getAnimationStepCount()` diagnostic that advances once
+inside `animate()`. The existing sweep test records the delta beside each of its 16 four-rAF sweeps.
+The wait and `spread > 40` product threshold are unchanged; if that threshold fails, its message now
+also says how many sweeps received fewer than four actual renderer steps.
+
+The hermetic liveliness scenario passed 97 checks after this instrumentation. That run did **not**
+reproduce the historical 31 px result, so it establishes the diagnostic seam, not a cause for the old
+failure and not a reason to change motion behavior.
+
 ## What to do next
 
 1. **Do not re-land the rewrite on the reasoning this page used to carry.** Its stated justification —
@@ -141,8 +152,8 @@ whichever arm ran during it — but it was measured as symmetric, so it explains
    a different argument, and one that survives Finding 2: on any runner slow enough to matter, it is
    the same program as the code it replaces.
 2. **Any real fix is upstream of the wait.** Finding 3 says the quantity the test needs is `animate()`
-   steps, not rAF turns. The page could simply count them and expose the counter; then "she was given
-   room to move" becomes a fact the page reports rather than a proxy the test guesses at.
+   steps, not rAF turns. That counter is now exposed and included in a red's evidence; do not change
+   the wait until an instrumented failure establishes which clock actually stalled.
 3. **Reproduce 31 px before theorising about it again.** It has been seen once, and three explanations
    have now been offered for it, of which this page has retired two.
 
