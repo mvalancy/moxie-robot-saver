@@ -13,7 +13,7 @@ never be split across commits that could be dropped separately.
 > `git diff --quiet origin/<branch>:sim/ci/<file>.yml origin/<branch>:.github/workflows/<file>.yml`.
 
 ```sh
-cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml sim/ci/deployed.yml sim/ci/promotion.yml .github/workflows/
+cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml sim/ci/deployed.yml sim/ci/promotion.yml sim/ci/cleanup.yml .github/workflows/
 ```
 
 | File | Tier | Trigger | What it proves |
@@ -22,7 +22,8 @@ cp sim/ci/ci.yml sim/ci/ci-deep.yml sim/ci/release.yml sim/ci/deployed.yml sim/c
 | **`ci-deep.yml`** | deep (main) + HIL | PR → `main`, **manual dispatch** | everything above, plus the packaged build, the compose stack, and the **live tiers** below |
 | **`release.yml`** | release | tag `v*` | sdist+wheel, version==tag, GitHub Release |
 | **`deployed.yml`** | monitor | **schedule** (4×/day) + manual dispatch | the LIVE deployment in a real phone-sized browser: the composer is reachable without opening the rail, and Cloudflare's injected analytics beacon loads with zero CSP violations |
-| **`promotion.yml`** | monitor | **schedule** (hourly, :37) + manual dispatch | the last `dev → main` promotion was **finished**: `dev` is not left behind `main`, and the standing PR was recreated. See below |
+| **`promotion.yml`** | monitor | **schedule** (hourly, :37) + manual dispatch | the last `dev → main` promotion was **finished**: `dev` is not left behind `main`. Promotion PRs exist only at owner-approved major milestones. See below |
+| **`cleanup.yml`** | cleanup | PR close | deletes only that closed PR's cache namespace; branch caches remain reusable |
 
 ## What the fast tier's `sil` job actually runs (measured 2026-09-04)
 
@@ -178,16 +179,15 @@ python3 sim/ci/fetch_piper_voices.py --check    # verify only; exit 1 if anythin
 ---
 📖 [Releases & CI tiers](../../RELEASING.md) · [SIL & CI/CD](../../docs/architecture/sil-and-cicd.md) · [The test suites](../tests/README.md)
 
-## `promotion.yml` — the two steps `gh pr merge` will not do for you
+## `promotion.yml` — the ancestry step `gh pr merge` will not do for you
 
-Squash-merging the standing `dev → main` PR leaves `dev` **one commit behind `main`** (the squash
-is a commit `dev` has never seen) and **deletes the standing PR** (merging closes it; nothing
-re-opens it). Neither is visible from the merge output and nothing goes red — the damage surfaces
-days later, as a `CONFLICTING` promotion PR or as "is `dev` green?" with no PR to read.
+Squash-merging a milestone `dev → main` PR leaves `dev` **one commit behind `main`** (the squash
+is a commit `dev` has never seen). That is invisible from the merge output and nothing goes red —
+the damage surfaces later when a feature branches from stale ancestry or the next promotion conflicts.
 
 Measured 2026-09-06: **missed after five of the last seven promotions** (#174, #177, #190, #191,
 #197) by **three different actors**, while already written down in four places
-([`RELEASING.md`](../../RELEASING.md), playbook rule 29, the standing PR's body, the status log).
+([`RELEASING.md`](../../RELEASING.md), playbook rule 29, and the status log).
 Prose was not the fix. This is, and it adds no fifth explanation —
 [`sim/tools/check_promotion_state.py`](../tools/check_promotion_state.py) points back at
 `RELEASING.md`, which carries the corrected order.
@@ -205,13 +205,12 @@ reddening someone else's change for a reason unrelated to it, which is the gate-
 than-read failure `ci.yml`'s own header records this repo paying for once (PR #125).
 
 **Why it does not cry wolf.** Between the squash and the reconcile the defect state is legitimate,
-so both conditions are gated on one clock — the committer date of `main`'s tip — and forgiven for
+so the condition is gated on one clock — the committer date of `main`'s tip — and forgiven for
 30 minutes. That number is measured, not chosen: across the ten promotions in this repo's history
 the reconcile followed the squash by 11s–990s (median 18s), so the grace is 1.8× the worst case
 ever seen. Worst case from squash to red is grace + cadence ≈ 90 minutes.
 
 Its teeth are asserted in the **fast tier**, not here: `sim/tests/test_promotion_guard.py` builds
-real git repositories (a branch genuinely behind its base, a stubbed `gh` with and without the
-standing PR), walks the whole truth table, checks both sides of the grace edge one second apart,
-and carries three negative controls that blind one measurement each and require the corresponding
+real git repositories (a branch genuinely behind its base), checks both sides of the grace edge,
+and carries negative controls that blind each measurement and require the corresponding
 verdict to flip. A red from this workflow therefore means the *repository* is in the state.

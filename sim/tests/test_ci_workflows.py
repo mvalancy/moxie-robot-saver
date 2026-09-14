@@ -60,14 +60,16 @@ INSTALLED = os.path.join(REPO, ".github", "workflows")
 #:
 #: `promotion.yml` joined on 2026-09-06 and is a MONITOR for the same reason `deployed.yml` is —
 #: schedule + dispatch, gating nothing. It watches the repository rather than the product: whether
-#: the last `dev → main` promotion was finished (`dev` reconciled, standing PR recreated), a pair of
-#: steps `gh pr merge` does not do and that were missed after five of the last seven promotions. It
+#: the last `dev → main` promotion was finished (`dev` reconciled), a step `gh pr merge` does not do
+#: and that was missed after five of the last seven promotions. It
 #: is named here for the same single reason `deployed.yml` is: outside this tuple nothing keeps
 #: `sim/ci/promotion.yml` and `.github/workflows/promotion.yml` from drifting, and a workflow that
 #: drifts behaves unlike the file we read. Its own behaviour is asserted by
 #: `sim/tests/test_promotion_guard.py`, not here.
-TIERS = ("ci.yml", "ci-deep.yml", "release.yml", "deployed.yml", "promotion.yml")
+TIERS = ("ci.yml", "ci-deep.yml", "release.yml", "deployed.yml", "promotion.yml",
+         "cleanup.yml")
 FAST = "ci.yml"
+NON_RELEASE = ("ci.yml", "ci-deep.yml", "deployed.yml", "promotion.yml", "cleanup.yml")
 
 
 def _load(path: str) -> dict:
@@ -115,6 +117,69 @@ def test_every_installed_workflow_has_a_template():
     installed = {f for f in os.listdir(INSTALLED) if f.endswith((".yml", ".yaml"))}
     templated = {f for f in os.listdir(TEMPLATES) if f.endswith((".yml", ".yaml"))}
     assert installed <= templated, sorted(installed - templated)
+
+
+def test_ci_runs_do_not_publish_actions_artifacts():
+    """CI verdicts live in checks and logs; they are not durable release outputs.
+
+    In eleven days this repo accumulated 1,295 Actions artifacts. Twenty came from
+    explicit CI uploads (SDK builds, contact sheets, and soak JSON); none had a consumer.
+    Release assets use softprops/action-gh-release in release.yml and are deliberately
+    outside this assertion.
+    """
+    offenders = []
+    for workflow in NON_RELEASE:
+        doc = _load(os.path.join(TEMPLATES, workflow))
+        for job_id, job in doc["jobs"].items():
+            for step in _steps(job):
+                uses = step.get("uses", "")
+                if uses.startswith("actions/upload-artifact@"):
+                    offenders.append(f"{workflow}:{job_id}:{step.get('name', uses)}")
+    assert not offenders, (
+        "non-release workflows must not create durable Actions artifacts: "
+        + ", ".join(offenders))
+
+
+def test_buildx_diagnostic_record_uploads_are_disabled():
+    """build-push-action uploads .dockerbuild records unless explicitly disabled.
+
+    Those implicit records caused 1,275 of the 1,295 accumulated artifacts, including
+    three more on every deep-CI run. Assert the environment switch in every workflow
+    that invokes Buildx so a new Docker job cannot silently restore the leak.
+    """
+    found = []
+    for workflow in TIERS:
+        doc = _load(os.path.join(TEMPLATES, workflow))
+        build_steps = [
+            (job_id, step)
+            for job_id, job in doc["jobs"].items()
+            for step in _steps(job)
+            if step.get("uses", "").startswith("docker/build-push-action@")
+        ]
+        if not build_steps:
+            continue
+        found.extend((workflow, job_id) for job_id, _ in build_steps)
+        value = str((doc.get("env") or {}).get("DOCKER_BUILD_RECORD_UPLOAD", "")).lower()
+        assert value == "false", (
+            f"{workflow} invokes docker/build-push-action but does not set "
+            "DOCKER_BUILD_RECORD_UPLOAD=false")
+    assert found, "the Buildx artifact guard found no docker/build-push-action steps"
+
+
+def test_closed_pr_cleanup_deletes_only_that_prs_cache_namespace():
+    """Closed PR caches cannot be restored by another ref; branch caches still can."""
+    doc = _load(os.path.join(TEMPLATES, "cleanup.yml"))
+    trigger = _triggers(doc)
+    assert trigger == {"pull_request": {"types": ["closed"]}}
+    assert doc["permissions"] == {"contents": "read", "actions": "write"}
+    steps = _steps(doc["jobs"]["cleanup"])
+    assert len(steps) == 1
+    step = steps[0]
+    assert step["env"]["PR_REF"] == (
+        "${{ format('refs/pull/{0}/merge', github.event.pull_request.number) }}")
+    assert step["run"] == (
+        'gh cache delete --all --ref "$PR_REF" --succeed-on-no-caches')
+    assert "${{" not in step["run"], "event data must reach the shell only through env"
 
 
 # --------------------------------------------------------------------------- #

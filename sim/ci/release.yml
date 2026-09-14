@@ -13,6 +13,11 @@ on:
   push:
     tags: ["v*"]
 
+# The release assets and GHCR images are the durable outputs. Buildx's diagnostic
+# .dockerbuild records are CI implementation detail and must not become a second archive.
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
 # Least privilege: the default for the workflow is read-only, and each job asks for
 # exactly the write scope it needs (contents for the Release, packages for GHCR).
 permissions:

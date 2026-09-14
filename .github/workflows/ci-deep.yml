@@ -24,6 +24,12 @@ on:
         options: [quick, smoke, week]
         default: quick
 
+# build-push-action otherwise uploads one disposable .dockerbuild record per matrix
+# entry. The test result is the artifact we care about; release assets are published by
+# release.yml only when an owner-approved milestone is tagged.
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
 jobs:
   docs:
     name: Docs & protocol integrity
@@ -50,8 +56,6 @@ jobs:
         run: |
           python -m pip install --quiet build
           cd mqtt && python -m build --outdir ../dist
-      - uses: actions/upload-artifact@v4
-        with: { name: moxie-cloud-sdk, path: dist/* }
 
   hil-sim:
     name: HIL — full end-to-end (virtual robot; real infra when secrets present)
@@ -348,10 +352,6 @@ jobs:
         env:
           SOAK_PROFILE: ${{ github.event.inputs.soak_profile || (github.event_name == 'schedule' && 'week' || 'quick') }}
         run: bash sim/run_soak.sh --profile "$SOAK_PROFILE" --json soak-result.json
-      - name: Soak result
-        if: always()
-        uses: actions/upload-artifact@v4
-        with: { name: soak-result, path: soak-result.json, if-no-files-found: warn }
 
   # The release workflow pushes linux/amd64 + linux/arm64 on a v* tag. A broken arm64
   # build would only surface at release time, which is exactly the wrong moment — so the

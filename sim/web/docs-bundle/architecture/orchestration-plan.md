@@ -52,7 +52,7 @@ Android app* (never read it or its decompiled output) — it does **not** apply 
 ```
 orchestrator: read plan → cut the next slice → brief an Opus agent → review → integrate → verify CI → update plan
 agent:        own worktree on feat/<slice> off origin/dev → build + test → commit locally → report (never push)
-integration:  push feat branch → PR into dev (fast CI) → merge → standing dev→main PR (deep CI) → promote + tag (RELEASING.md)
+integration:  push feat branch → PR into dev (fast CI) → merge → milestone dev→main PR (deep CI) only on owner approval (RELEASING.md)
 ```
 
 **Every agent brief carries the same protocol** (copy it verbatim):
@@ -75,8 +75,8 @@ integration:  push feat branch → PR into dev (fast CI) → merge → standing 
 
 **Integration rules (orchestrator):** review the diff before pushing; one PR per slice into `dev`; merge only
 green; resolve doc-index/README link conflicts in one place; after a `dev→main` squash-promotion,
-reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR number with
-`scripts/standing-pr.sh`.
+reconcile `dev` (see RELEASING.md "After a promotion"); leave no promotion PR open between
+owner-approved major milestones. `scripts/standing-pr.sh` prints `none` in that normal state.
 
 ## Workstreams (the backlog agents draw from)
 
@@ -311,7 +311,7 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     notification is expected**, or do the merge-forward in a throwaway worktree off the same branch and
     push from there. Integration is not urgent enough to race an agent that is still measuring.
 
-29. **A `dev → main` promotion has TWO trailing steps that `gh pr merge` will not do for you, and
+29. **Historical rule, amended by the owner on 2026-09-13:** a `dev → main` promotion originally had TWO trailing steps that `gh pr merge` would not do for you, and
     both were missed after both promotions on 2026-09-05/06.** Squash-merging the standing PR leaves
     `dev` **one commit behind `main`** (the squash is a new commit `dev` has never seen) and
     **deletes the only PR tracking the relationship**. Neither is visible from the merge output, and
@@ -331,10 +331,11 @@ reconcile `dev` (see RELEASING.md "After a promotion"); resolve the standing PR 
     chain cleanup behind a merge) and rule 25 (`--delete-branch` silently leaves the remote when a
     worktree holds the branch). Anything a merge is supposed to tidy up afterwards should be
     *verified*, never assumed.
-    **Mechanised 2026-09-06, and that supersedes remembering it:** `sim/ci/promotion.yml` (a
+    **Current policy:** continuous standing promotion PRs are retired; promotion PRs open only for
+    owner-approved major milestones. The ancestry half remains mechanised: `sim/ci/promotion.yml` (a
     schedule-and-dispatch monitor, gating nothing) runs `sim/tools/check_promotion_state.py`
-    hourly and reddens when `dev` is behind `main` or no `dev → main` PR is open, 30 minutes
-    after the squash. This rule stays for the *why*; the check is what will actually notice.
+    hourly and reddens when `dev` is behind `main`, 30 minutes after the squash. A missing PR is now
+    the healthy between-milestones state. This rule stays for the history; the check carries current policy.
 
 30. **When a check says the product did X, measure X before you change the product.** On 2026-09-06
     the failure `packets grew while the tab was hidden (1 -> 2 in 20s)` was taken at face value
