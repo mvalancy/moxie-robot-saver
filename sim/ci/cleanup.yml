@@ -21,4 +21,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_REF: ${{ format('refs/pull/{0}/merge', github.event.pull_request.number) }}
-        run: gh cache delete --all --ref "$PR_REF" --succeed-on-no-caches
+          REPOSITORY: ${{ github.repository }}
+        # This job deliberately has no checkout. Pass the repository explicitly so `gh`
+        # never tries (and fails) to infer it from a nonexistent .git directory.
+        run: gh cache delete --repo "$REPOSITORY" --all --ref "$PR_REF" --succeed-on-no-caches
