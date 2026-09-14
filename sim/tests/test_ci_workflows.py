@@ -177,8 +177,10 @@ def test_closed_pr_cleanup_deletes_only_that_prs_cache_namespace():
     step = steps[0]
     assert step["env"]["PR_REF"] == (
         "${{ format('refs/pull/{0}/merge', github.event.pull_request.number) }}")
+    assert step["env"]["REPOSITORY"] == "${{ github.repository }}"
     assert step["run"] == (
-        'gh cache delete --all --ref "$PR_REF" --succeed-on-no-caches')
+        'gh cache delete --repo "$REPOSITORY" --all --ref "$PR_REF" '
+        '--succeed-on-no-caches')
     assert "${{" not in step["run"], "event data must reach the shell only through env"
 
 
