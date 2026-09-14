@@ -54,7 +54,7 @@ Missed duties coalesce once after recovery; they never become a catch-up storm.
 - Conclude with `shipped`, `verified`, `hypothesis-falsified`, `blocked`, or `clean-noop`. A commit is not
   evidence of progress, and no work is manufactured to fill an interval.
 - Dynamic receipts, questions, blocker counts, and four-hour reports live in machine-local scheduler state.
-  Do not push a status-only commit that restarts the standing PR's long gate.
+  Do not push a status-only commit, and do not open a promotion PR except for an owner-approved major milestone.
 
 ## Anti-stagnation controls
 

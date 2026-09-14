@@ -18,35 +18,24 @@ feat/*  ──PR──▶  dev  ──PR──▶  main  ──tag v X.Y.Z──
 | **`main`** | Released, tag-able, deploy-quality. | Tag `vX.Y.Z` → release workflow. |
 
 - **Features / contributors:** branch `feat/<name>` off `dev`, PR into `dev` (fast CI gates it).
-- **Build loops:** commit to `dev` (the integration RC branch); a standing **`dev → main`** PR shows
-  rolling CI. Larger/riskier work still uses a `feat/*` → `dev` PR.
-- **Promotion:** when `dev` is a stable RC, merge the standing dev→main PR into `main` (deep CI must
-  pass), then tag. **Resolve its number dynamically** — it changes on every promotion — with
-  `bash scripts/standing-pr.sh` (never hardcode `#1`).
+- **Build loops:** commit to `dev` (the integration RC branch). Larger/riskier work still uses a
+  `feat/*` → `dev` PR.
+- **Promotion:** only for an owner-approved major project milestone, open a `dev → main` PR and merge
+  it after deep CI passes. `bash scripts/standing-pr.sh` resolves that PR when it exists and prints
+  `none` between milestones; never hardcode its number.
 - **After a promotion (squash) — reconcile `dev`:** a squash-merge gives `main` one commit that shares
   **no ancestry** with `dev`'s granular history, so both branches look like they independently "added"
-  the same files — the recreated standing PR reads **CONFLICTING**, not empty. Fix it in two steps,
-  right after the squash:
-  **Order matters — reconcile FIRST, then recreate** (corrected 2026-09-06 after running this four
-  times). These steps were originally numbered the other way round, which accepted a window where
-  the freshly-created standing PR read `CONFLICTING`. That window is avoidable for free.
-  1. On `dev`: `git fetch origin && git merge origin/main -X ours --no-edit`. **Verify
+  the same files. Fix the ancestry immediately after the squash: on `dev`, run
+  `git fetch origin && git merge origin/main -X ours --no-edit`. **Verify
      `git diff <pre> HEAD` is empty BEFORE pushing** — if it prints anything, the `-X ours`
      swallowed a real change and the promotion needs unpicking, not pushing.
-  2. `gh pr create --base main --head dev` — recreate the standing PR, clean from birth.
 
-  (Step 2 appeared twice here until 2026-09-06 — the leftover of the pre-correction ordering, kept
-  by accident when the steps were swapped. Deleted, because this is the paragraph the mechanical
-  check below sends people to at 2am.)
-
-  **This is now checked mechanically, and that is the only reason to trust it.** The two steps were
-  missed after five of the last seven promotions by three different actors — *while* being written
-  down here, in playbook rule 29, in the standing PR's body and in the status log. So
+  **This is checked mechanically.** Reconciliation was missed after five of seven promotions by
+  three different actors, so
   [`sim/ci/promotion.yml`](sim/ci/promotion.yml) runs
   [`sim/tools/check_promotion_state.py`](sim/tools/check_promotion_state.py) hourly and **reddens**
-  if `dev` is left behind `main` or the standing PR is left missing, forgiving the first 30 minutes
-  after the squash (the measured window: ten promotions reconciled in 11s–990s). It quotes these two
-  steps back at you — it is deliberately **not** a fifth place to keep them in sync.
+  if `dev` is left behind `main`, forgiving the first 30 minutes after the squash (the measured
+  window: ten promotions reconciled in 11s–990s). It deliberately does **not** require a standing PR.
 
   (Alternative: promote with a **merge commit** instead of squash — `main` keeps full history and no
   reconcile is needed. We use squash for a clean one-commit-per-release `main`, and pay the reconcile.)
@@ -109,23 +98,29 @@ Single source: `mqtt/moxie_sdk/__init__.py` `__version__`; `pyproject.toml` read
 
 ## Release cadence — promotions are not releases
 
-**Promotion (dev → main) is the end-to-end exercise; a tag is a milestone.** The deep gate on the
-standing PR already builds the package, runs the compose stack and HIL end to end, and builds all
+**Promotion (dev → main) is the end-to-end exercise; a tag is a major project milestone.** The deep gate on a
+promotion PR builds the package, runs the compose stack and HIL end to end, and builds all
 three images multi-arch *without pushing* — so `main` moves whenever `dev` is a green RC. A **tag**
-(which publishes a GitHub Release and three GHCR image versions) is cut **only when the owner says so**
-or at a milestone the implementation plan names (e.g. Definition of done 6/6) — never per promotion.
+(which publishes a GitHub Release and three GHCR image versions) is cut **only when the owner explicitly
+approves a major milestone** — never for a routine promotion, intermediate test pass, or arbitrary version
+increment.
 Everything before 1.0 is marked **pre-release**. (Owner rule, 2026-09-02: "don't clog GitHub with
 unlimited packages/releases since they aren't good yet, but exercise the whole system end to end.")
 
+CI creates **no durable Actions artifacts**. Package builds, contact sheets, soak results, and Buildx
+diagnostic records are validation intermediates; their check/log is enough. The only durable binaries are
+the SDK files attached to an explicitly tagged GitHub Release and its three GHCR images. Repository Actions
+artifacts and logs use a 7-day retention window as a backstop.
+
 ## Cutting a release
 
-1. `dev` green as an RC → open/refresh PR `dev → main` → **deep CI passes**.
+1. At an owner-approved major milestone, open PR `dev → main` → **deep CI passes**.
 2. Bump `__version__` (in the PR); merge to `main`.
-3. Only at a named milestone or on the owner's word: `git tag vX.Y.Z && git push origin vX.Y.Z` → the release workflow builds + publishes the
+3. Only after the owner explicitly approves a major milestone: `git tag vX.Y.Z && git push origin vX.Y.Z` → the release workflow builds + publishes the
    package **and** the three images. Verify after the run: `docker pull
    ghcr.io/mvalancy/moxie-robot-saver/supervisor:X.Y.Z` and, on the very first release, flip the
    three packages to public.
-4. Recreate the standing `dev → main` PR (`gh pr create --base main --head dev`).
+4. Reconcile the squash back into `dev`; leave no promotion PR open between milestones.
 
 Build a package locally anytime: `cd mqtt && python -m build` → `dist/moxie_cloud_sdk-<version>.*`.
 

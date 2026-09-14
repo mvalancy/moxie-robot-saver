@@ -1,0 +1,24 @@
+# Moxie closed-PR cache cleanup — INSTALL: copy to .github/workflows/cleanup.yml
+#
+# Buildx's GHA cache is useful while a PR is active, but pull-request caches are scoped to
+# refs/pull/<n>/merge and cannot help another ref after the PR closes. Delete that exact
+# namespace on close; branch caches remain available to future builds.
+name: Closed PR cache cleanup
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cleanup:
+    name: Remove the closed PR's Actions caches
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete this PR's cache namespace
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_REF: ${{ format('refs/pull/{0}/merge', github.event.pull_request.number) }}
+        run: gh cache delete --all --ref "$PR_REF" --succeed-on-no-caches
