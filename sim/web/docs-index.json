@@ -186,7 +186,7 @@
    "path": "architecture/rest-api-contract.md",
    "title": "Parent-app server — REST services contract",
    "section": "architecture",
-   "bytes": 12022,
+   "bytes": 12096,
    "mermaid": 0,
    "headings": [
     "What this server is",
@@ -303,7 +303,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 66950,
+   "bytes": 66942,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -393,7 +393,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 198471,
+   "bytes": 198455,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -510,7 +510,7 @@
    "path": "architecture/backlog/telehealth.md",
    "title": "Telehealth — \"Be Moxie\": the operator drives the body (ADOPT #7)",
    "section": "architecture",
-   "bytes": 36638,
+   "bytes": 36633,
    "mermaid": 1,
    "headings": [
     "Why this is worth building",
@@ -560,7 +560,7 @@
    "path": "architecture/backlog/content-packs.md",
    "title": "Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)",
    "section": "architecture",
-   "bytes": 46130,
+   "bytes": 46123,
    "mermaid": 0,
    "headings": [
     "Why this is worth building",
@@ -691,7 +691,7 @@
    "path": "architecture/backlog/brain-picker.md",
    "title": "Any brain, hot-swappable, per child",
    "section": "architecture",
-   "bytes": 8552,
+   "bytes": 8550,
    "mermaid": 0,
    "headings": [
     "1. What was actually missing",
@@ -748,7 +748,7 @@
    "path": "architecture/backlog/content-authoring.md",
    "title": "Content authoring — the verb packs did not ship (§4.4 #6)",
    "section": "architecture",
-   "bytes": 58621,
+   "bytes": 58618,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -797,7 +797,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 48431,
+   "bytes": 48429,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
@@ -820,7 +820,7 @@
    "path": "architecture/backlog/insights.md",
    "title": "Insights that mean something — the vocabulary this history does not have (BEYOND #5)",
    "section": "architecture",
-   "bytes": 51889,
+   "bytes": 51874,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",

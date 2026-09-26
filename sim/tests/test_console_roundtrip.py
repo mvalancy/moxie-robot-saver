@@ -2240,7 +2240,7 @@ def test_the_console_serves_the_ids_the_insights_and_device_code_drives(client):
 
 
 def test_the_reboot_button_ships_disabled_in_the_markup(client):
-    """Belt and braces with `app.js`: even before any JS runs, the button a parent can
+    """Belt and braces with the console JS: even before any JS runs, the button a parent can
     see must not look like a working control for something we cannot do."""
     html = _static(client, "/index.html")
     row = [ln for ln in html.splitlines() if 'id="btn-reboot"' in ln]

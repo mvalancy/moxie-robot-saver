@@ -599,7 +599,7 @@ def test_the_chip_list_is_closed_to_the_two_portable_forms():
     import re
     js = console_js()
     m = re.search(r"const ED_CHIPS\s*=\s*\[(.*?)\n\];", js, re.S)
-    assert m, "app.js has no ED_CHIPS table"
+    assert m, "the console JS has no ED_CHIPS table"
     fragments = re.findall(r"insert:\s*'((?:[^'\\]|\\.)*)'", m.group(1))
     assert len(fragments) >= 4, fragments
     ctx = {"volley": {"config": {"child_pii": {"nickname": "Ada"}},
@@ -633,7 +633,7 @@ def test_the_card_grew_the_four_functions_the_brief_names():
     js = console_js()
     for fn in ("function openEditor(", "async function saveItem(",
                "async function renderDraftPrompt(", "function renderChips("):
-        assert fn in js, f"app.js has no {fn}…)"
+        assert fn in js, f"the console JS has no {fn}…)"
     assert "'/local/content/item'" in js and "'/local/content/render'" in js
 
 

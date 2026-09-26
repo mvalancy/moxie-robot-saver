@@ -47,10 +47,11 @@ recovery phrase via Argon2id) is the key; the server never sees plaintext or the
 > of that table disagree with each other — which is the strongest evidence that the posture is a
 > choice rather than an oversight:
 >
-> * [`main.py`](../../server/moxie_server/main.py):249 (the phone-facing pairing call) writes
->   `VALUES(?,?,?,?,0,?,NULL,NULL)` — the seed and phrase columns are **deliberately NULL**.
-> * [`main.py`](../../server/moxie_server/main.py):425 (the local setup flow that mints the QR for our
->   own web UI) writes `…, keys.seed.hex(), phrase)` — **both in plaintext**.
+> * [`routes/robots.py`](../../server/moxie_server/routes/robots.py) `pairing_info` (the phone-facing
+>   pairing call) leaves the seed and phrase columns **deliberately NULL**.
+> * [`routes/pairing.py`](../../server/moxie_server/routes/pairing.py) `pairing_prepare` (the local
+>   setup flow that mints the QR for our own web UI) writes `keys.seed.hex(), phrase` — **both in
+>   plaintext** (deleted with the account by `DELETE /api/users/me`).
 >
 > **Why it matters, stated precisely rather than dramatically.** Per
 > [`crypto.py`](../../server/moxie_server/crypto.py):5-10, the recovery phrase is the Argon2id input to

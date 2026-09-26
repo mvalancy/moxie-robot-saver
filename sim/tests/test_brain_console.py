@@ -1,7 +1,7 @@
 """
 🧠 The brain picker's console layer — the normalizer between the supervisor and the card.
 
-`server/moxie_server/fleet.py::normalize_brain` is the only thing standing between a
+`server/moxie_server/fleet/::normalize_brain` is the only thing standing between a
 runtime payload and a parent's screen, and its contract is defensive rather than clever:
 **a card must never be a 500, and it must never look empty when the truth is "unreachable"**
 — an empty dropdown reads as *"this appliance has no brains"*, which is a different and

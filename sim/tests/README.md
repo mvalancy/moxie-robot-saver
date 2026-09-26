@@ -83,7 +83,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   in-process against a status-server double whose payload keys are diffed against the
   real runtime. Needs `fastapi` + `httpx`; skips cleanly without them (CI has neither).
 - **`test_memory_view.py`** — the pure transform behind the console's 🧠 What Moxie
-  remembers card (`moxie_server/fleet.py::normalize_memory`): the runtime's namespaced
+  remembers card (`moxie_server/fleet/memory.py::normalize_memory`): the runtime's namespaced
   `/memory` payload flattened into dated rows per activity, newest first, with counts —
   plus the tolerance that matters on a parent's screen (a partial namespace, a list a
   module invented, a raw `memory.json` off disk, and a supervisor that is down).
