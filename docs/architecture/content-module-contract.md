@@ -211,7 +211,7 @@ Progress comes back the other way: the robot **reports** each finished or abando
 [`MentorBehavior`](../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/MentorBehavior.proto)
 `{module_id, content_id, content_day, timestamp, action, instance_id, ended_reason}`). The server stores
 that history per robot and answers `query:"mentor_behaviors"` with it — which is what lets the next day's
-plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py)
+plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule/)
 (the builder) and [`../../mqtt/moxie_sdk/store.py`](../../mqtt/moxie_sdk/store.py) (the history).
 
 #### The recommender: history + preferences + the clock → today's plan *(2026-09-02)*
@@ -219,7 +219,7 @@ plan skip what's already done. Where it lives: [`../../mqtt/moxie_sdk/schedule.p
 The builder used to be a `(device_id, day)` rotation. It is still **deterministic** — the same
 inputs produce byte-identical bytes, in any process, under any `PYTHONHASHSEED` — but it is now a
 *scored* recommender ([`openmoxie-feature-audit.md`](openmoxie-feature-audit.md) §4.2 row 7).
-Two pure functions, both in [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule.py):
+Two pure functions, both in [`../../mqtt/moxie_sdk/schedule.py`](../../mqtt/moxie_sdk/schedule/):
 
 - **`plan_inputs(device_id, now, …)`** gathers the signals — the `schedules[]` template, the
   robot's `mentor_behaviors`, its effective config, its telemetry, the clock — into one JSON-safe
@@ -576,7 +576,7 @@ speech therapist can be handed, reviewed item by item before it changes anything
 afterwards. Design record and the full assumption ledger:
 [`backlog/content-packs.md`](backlog/content-packs.md) (audit
 [ADOPT #5](openmoxie-feature-audit.md)). Implementation:
-[`../../mqtt/moxie_sdk/content/packs.py`](../../mqtt/moxie_sdk/content/packs.py) — pure,
+[`../../mqtt/moxie_sdk/content/packs.py`](../../mqtt/moxie_sdk/content/packs/) — pure,
 stdlib only, no store and no clock except an injected `now`.
 
 ### The file
@@ -659,7 +659,7 @@ means something other than what the reviewer read. Six upstream hooks is a hand-
 
 *(BEYOND #6 P0, built 2026-09-03. Design:
 [`backlog/sandboxed-extensions.md`](backlog/sandboxed-extensions.md). Code:
-[`ext.py`](../../mqtt/moxie_sdk/content/ext.py). Tests:
+[`ext.py`](../../mqtt/moxie_sdk/content/ext/). Tests:
 [`test_ext_escapes.py`](../../sim/tests/test_ext_escapes.py) ·
 [`test_ext.py`](../../sim/tests/test_ext.py).)*
 
@@ -726,7 +726,7 @@ network, the filesystem, a subprocess, an environment variable, any credential, 
 device's store, another module's namespace, the safety rule table, `LoggingPolicy`, or the
 host's own clock and entropy (both are injected). The complete set of strings that resolve
 to anything is the operator table plus the fact base, and both are enumerated in
-[`ext.py`](../../mqtt/moxie_sdk/content/ext.py).
+[`ext.py`](../../mqtt/moxie_sdk/content/ext/).
 
 **The fact base** is a plain-JSON dict the host builds before a single node is evaluated —
 `speech`, `entities`, `input_vars`, `child`, `memory` (its own namespace only), `scratch`,

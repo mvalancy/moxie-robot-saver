@@ -33,7 +33,7 @@ import pathlib, subprocess
 
 WT = pathlib.Path(__file__).resolve().parents[2]
 RT_CONTENT = WT / "mqtt/supervisor/moxie_runtime/content.py"
-PK = WT / "mqtt/moxie_sdk/content/packs.py"
+PK = WT / "mqtt/moxie_sdk/content/packs/authoring.py"
 REN = WT / "mqtt/moxie_sdk/content/render.py"
 
 MUTATIONS = [

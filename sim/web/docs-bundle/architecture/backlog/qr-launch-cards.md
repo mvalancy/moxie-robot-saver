@@ -139,7 +139,7 @@ with a greeting or `ResultCode.NOREPLY_ACK` and **never** carries an action.
 >    landed, **all four** `xfail(strict)` rows still xfailed, refused at load with *"needs something this
 >    appliance cannot grant yet: `act.eb_timer_request`"* — so *"this slice flips four rows green"* was a
 >    claim and the wire was **necessary, not sufficient**: the gate was
->    [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py)'s `_is_p1` / `P1_CAPABILITIES` plus
+>    [`ext.py`](../../../mqtt/moxie_sdk/content/ext/)'s `_is_p1` / `P1_CAPABILITIES` plus
 >    `content_app._reply_from_volley`.
 > 3. ~~**The browser SIM still cannot read it.**~~ — **fixed 2026-09-04.**
 >    [`bridge.js::applyAction`](../../../sim/web/bridge/) now reads `function_id` before the SIM's
@@ -178,7 +178,7 @@ MOXIE_GO/QR-enabled module (`eb_enable_qr` + `eb-qr-event` subscription)"*). Tod
   and nothing ever reads `Volley.execution_actions` onto the wire — the audit's §3.2 *"Execution
   actions … not plumbed onto the wire"* row (ADOPT, **S**), and the blocker
   [`sandboxed-extensions.md`](sandboxed-extensions.md) calls **S5** (its `act.*` capabilities are
-  *refused at load* because of it — [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py):177-181).
+  *refused at load* because of it — [`ext.py`](../../../mqtt/moxie_sdk/content/ext/):177-181).
 * ~~[`wire.py::build_chat_response`](../../../mqtt/moxie_sdk/wire.py) builds each action as
   `{output_type, action, module_id, content_id}` and **silently drops** `Action.function` /
   `Action.args`~~ — **fixed 2026-09-04**; see the box above.
@@ -217,7 +217,7 @@ wire value the enum does not define — the same rule `actions.py` already appli
 > no action. `_publish_chat` already took `actions=`, so no plumbing was added.
 >
 > **The catalog is derived, and it is 24.** `_catalog()` reads
-> [`schedule.py`](../../../mqtt/moxie_sdk/schedule.py) through the *module* (not `from … import`), so it
+> [`schedule.py`](../../../mqtt/moxie_sdk/schedule/) through the *module* (not `from … import`), so it
 > is a live function of that file: 23 ids out of `ONBOARD_MODULES`, plus `DM` — and `DM` is
 > **intersected** with what `DEFAULT_TEMPLATE.provided_schedule` actually names rather than trusted. If a
 > future edit drops or renames it the allowlist gets *smaller* and a test reddens, because an allowlist
@@ -304,7 +304,7 @@ already tested (`sim/tests/test_action_tags.py`). What it was never wired to is 
 
 **The catalog is a closed allowlist, and this is a safety property, not tidiness.** A QR code is an
 input any stranger can print and leave on a table in front of a child. The permitted module ids are the
-23 in [`schedule.py::ONBOARD_MODULES`](../../../mqtt/moxie_sdk/schedule.py):124-148 plus `DM`
+23 in [`schedule.py::ONBOARD_MODULES`](../../../mqtt/moxie_sdk/schedule/):124-148 plus `DM`
 (carried separately in `DEFAULT_TEMPLATE`, per `:118-123`). `<sleep>`, `<exit>` and
 `<launch_if_confirmed:…>` on a card are **refused** even though the grammar parses them: a card may
 start an activity and may do nothing else.
@@ -312,7 +312,7 @@ start an activity and may do nothing else.
 ### P0-c — the sheet · **S** — ✅ **shipped 2026-09-06**
 
 A printable page of cards, one per module, each with its QR and its friendly label from
-[`schedule.py::MODULE_LABELS`](../../../mqtt/moxie_sdk/schedule.py):223-233. Built as
+[`schedule.py::MODULE_LABELS`](../../../mqtt/moxie_sdk/schedule/):223-233. Built as
 [`mqtt/moxie_sdk/launch_sheet.py`](../../../mqtt/moxie_sdk/launch_sheet.py) —
 `python3 -m moxie_sdk.launch_sheet -o cards.html`, then open it and press Ctrl-P.
 
@@ -357,8 +357,8 @@ import explicitly; a static page under [`sim/web/`](../../../sim/web/) driven by
 
 | Vocabulary | Source, cited | Size |
 |---|---|---|
-| Module ids a card may launch | [`schedule.py`](../../../mqtt/moxie_sdk/schedule.py):124-148 (`ONBOARD_MODULES`, transcribed from [`mqtt-and-conversation.md`](../mqtt-and-conversation.md):1123-1129) + `DM` | 24 |
-| Friendly labels | [`schedule.py`](../../../mqtt/moxie_sdk/schedule.py):223-233 (`MODULE_LABELS`) | 24 |
+| Module ids a card may launch | [`schedule.py`](../../../mqtt/moxie_sdk/schedule/):124-148 (`ONBOARD_MODULES`, transcribed from [`mqtt-and-conversation.md`](../mqtt-and-conversation.md):1123-1129) + `DM` | 24 |
+| Friendly labels | [`schedule.py`](../../../mqtt/moxie_sdk/schedule/):223-233 (`MODULE_LABELS`) | 24 |
 | Card payload grammar | `GO` + `<launch:MODULE[:CONTENT]>` — [`mqtt-and-conversation.md`](../mqtt-and-conversation.md):1133-1137, upstream `site/data/qr/extract.py` | 1 form |
 | Action wire shape | [`RemoteChat.proto`](../../reverse-engineering/protocol/recovered-proto/embodied/robotbrain/RemoteChat.proto):255-281 (`ActionID`, `function_id`, `function_args`) | 9 verbs, 2 used |
 | Event name + payload key | `eb-qr-event` / `$eb_qr_value` — [`vision.md`](../vision.md):73-74, [`presence.py`](../../../mqtt/moxie_sdk/presence.py):65-78 | 1 |

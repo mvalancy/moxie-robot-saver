@@ -1,30 +1,21 @@
 """
-✍️ Content authoring P0 — a parent's conversation is exactly as untrusted as a stranger's.
+✍️ Content authoring P0 (`backlog/content-authoring.md` §7, minus P1's `/content/try`):
+a parent's conversation is exactly as untrusted as a stranger's.
 
-`docs/architecture/backlog/content-authoring.md` §7, minus P1's rungs (`/content/try`, its
-budget and the brain call — nothing here calls a model).
-
-The property worth proving is negative: an authored item goes through the SAME functions
-an imported one does. `POST /content/item` must call `packs.validate_item` itself (§6.3),
-because `packs.mark_edited` normalizes but does not validate; `sim/tools/
-authoring_mutation_check.py` deletes that call and four other guards and requires a named
-test here to go red.
-
-Runs against a real `MoxieRuntime` with a fake MQTT transport and its own status HTTP
-server (`helpers_runtime`). No broker, gateway or sleeps, and no brain: `build()`'s chat
-function raises if called, which is how T10 proves the render panel is free. The pure
-half (`packs.shadow_check`, `render_prompt` counts, the chip list) runs in every tier.
+An authored item goes through the SAME functions an imported one does. `POST /content/item`
+must call `packs.validate_item` itself (§6.3) because `mark_edited` only normalizes;
+`sim/tools/authoring_mutation_check.py` deletes that and other guards and needs a test here
+to go red. Real `MoxieRuntime` + status HTTP server (`helpers_runtime`); `build()`'s brain
+raises if called, which is how T10 proves the render panel is free.
 """
 from __future__ import annotations
 
-import json
 import os
-import sys
-import urllib.error
 
 import pytest
 
 from helpers_console import console_js
+from helpers_content import boot_runtime, post_status
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -41,9 +32,7 @@ needs_runtime = pytest.mark.skipif(not HAVE_PAHO,
                                    reason="the runtime's transport (paho) is not installed")
 
 
-# --------------------------------------------------------------------------- #
-# Fixtures — a real supervisor over a shipped module, and a brain that must not run
-# --------------------------------------------------------------------------- #
+# --- Fixtures — a real supervisor over a shipped module, and a brain that must not run ---
 
 SHIPPED_PROMPT = "You are Moxie, the shipped starter chat."
 SHIPPED_CODE = "def post_process(volley, session):\n    raise RuntimeError('never run')\n"
@@ -52,9 +41,8 @@ SHIPPED_EXT = {"ext_format": 1, "capabilities": ["say"], "on": "turn.before",
 
 
 def shipped_module():
-    """The `MOXIE_CONTENT_MODULE` file on disk. `FREE_CHAT/default` carries both `code` and
-    an `extension` because T4/T16 test what a save does to fields the editor may not author.
-    """
+    """`FREE_CHAT/default` carries `code` and an `extension`: T4/T16 test what a save does
+    to fields the editor may not author."""
     return {
         "conversations": [
             {"name": "Free Chat", "module_id": "FREE_CHAT", "content_id": "default",
@@ -75,21 +63,7 @@ def no_brain(messages):
 
 
 def build(tmp_path, chat=no_brain):
-    """A real runtime over a real `ContentApp`, booted like `config.build_content_app()`
-    (shipped defaults, then this data dir's overlay) — so two calls are a faithful restart.
-    """
-    from helpers_runtime import make_runtime
-    from moxie_sdk.content import ContentApp
-    from moxie_sdk.store import JsonStore
-
-    store = JsonStore(str(tmp_path))
-    shipped = P.shipped_items(shipped_module())
-    stored = store.read_shared("content_items", {}) or {}
-    overlay = stored.get("items") if isinstance(stored, dict) else None
-    app = ContentApp(P.build_module(shipped, overlay if isinstance(overlay, dict) else {}),
-                     chat, memory=False, content_defaults=shipped)
-    rt, _device_id = make_runtime(app, store=store)
-    return rt
+    return boot_runtime(tmp_path, shipped_module(), chat)[0]
 
 
 @pytest.fixture
@@ -105,15 +79,9 @@ def base(rt):
 
 
 def post(base, path, body, *, expect=200):
-    """One POST against the status server → `(status, payload)`. A refusal is a value;
-    `expect` is asserted so a 200 is never mistaken for the 400 under test."""
-    from helpers_runtime import http_json
-    try:
-        payload = http_json(base + path, method="POST", body=body)
-        status = 200
-    except urllib.error.HTTPError as e:
-        status = e.code
-        payload = json.loads(e.read().decode() or "{}")
+    """`(status, payload)`, with `expect` asserted so a 200 is never mistaken for the 400
+    under test."""
+    status, payload = post_status(base, path, body)
     assert status == expect, f"{path} → {status} {payload!r}"
     return status, payload
 
@@ -133,15 +101,12 @@ def conversation(**over):
     return data
 
 
-# --------------------------------------------------------------------------- #
-# T1 — the round trip
-# --------------------------------------------------------------------------- #
+# --- T1 — the round trip ---
 
 @needs_runtime
 def test_authored_item_round_trips(rt, base):
-    """A saved conversation shows up as a local edit, and the module the next turn renders
-    from (`build_module(defaults, overlay)`, as `reload_content()` does) carries the
-    author's prompt byte for byte — stored is not authored."""
+    """A save shows up as a local edit, and the module the next turn renders from carries
+    the author's prompt byte for byte."""
     draft = conversation()
     _, out = post(base, "/content/item", {"kind": "conversation", "data": draft})
     assert out["ok"] and out["created"] is True, out
@@ -160,22 +125,18 @@ def test_authored_item_round_trips(rt, base):
     assert conv.prompt == draft["prompt"], (conv.prompt, draft["prompt"])
     assert conv.opener == draft["opener"]
 
-    # The live app was swapped, not just the file — `reload_content()` is a guard the
-    # mutation checker deletes, and this is the assertion that must notice.
+    # The live app was swapped, not just the file (the checker deletes `reload_content()`).
     live = next((c for c in rt.app.module.conversations if c.module_id == "BEDTIME"), None)
     assert live is not None and live.prompt == draft["prompt"], \
         "the save wrote the overlay but never reloaded the live module"
 
 
-# --------------------------------------------------------------------------- #
-# T2 — §6.3's one `if`
-# --------------------------------------------------------------------------- #
+# --- T2 — §6.3's one `if` ---
 
 @needs_runtime
 def test_a_bad_pattern_is_refused_with_validate_items_own_sentence(base):
-    """The route must call `validate_item` itself (§6.3): a global whose `pattern` does not
-    compile would otherwise break the next `reload_content()`. The refusal is
-    `validate_item`'s own string — a paraphrase would be a second validator."""
+    """§6.3: the route calls `validate_item` itself, else an uncompilable `pattern` breaks
+    the next `reload_content()`. The refusal is its own string, not a second validator."""
     bad = {"name": "Broken", "pattern": "what time is it("}
     _, out = post(base, "/content/item", {"kind": "global", "data": bad}, expect=400)
     assert out["ok"] is False, out
@@ -186,20 +147,16 @@ def test_a_bad_pattern_is_refused_with_validate_items_own_sentence(base):
     assert expected[0] in (out.get("error") or ""), (expected, out)
     assert "pattern does not compile" in expected[0], expected
 
-    # And nothing landed: a refusal that half-wrote is worse than no refusal.
+    # And nothing landed.
     view = get(base, "/content")
     assert not [r for r in view["items"] if r["id"] == "global:Broken"], view["items"]
 
 
-# --------------------------------------------------------------------------- #
-# T3 — the allowlist
-# --------------------------------------------------------------------------- #
+# --- T3 — the allowlist ---
 
 @needs_runtime
 def test_a_field_outside_the_allowlist_never_lands(rt, base):
-    """`normalize_data` is G1 and the editor gets it for free — the stored `data` has
-    exactly `FIELDS[kind]`, so a key the form never offered cannot be smuggled in by a
-    hand-rolled POST."""
+    """G1: stored `data` has exactly `FIELDS[kind]`; a hand-rolled POST smuggles nothing."""
     draft = dict(conversation(), secret="not-a-field-this-appliance-has", code_exec=True)
     _, out = post(base, "/content/item", {"kind": "conversation", "data": draft})
     assert out["ok"], out
@@ -209,15 +166,11 @@ def test_a_field_outside_the_allowlist_never_lands(rt, base):
     assert "secret" not in stored and "code_exec" not in stored
 
 
-# --------------------------------------------------------------------------- #
-# T4 — what a save must not lose
-# --------------------------------------------------------------------------- #
+# --- T4 — what a save must not lose ---
 
 @needs_runtime
 def test_saving_a_name_change_preserves_code_and_extension(rt, base):
-    """§4.2's hard requirement. The editor round-trips the **whole** normalized `data`, so
-    renaming a shipped item that carries a `code` block and an extension must not quietly
-    drop either. Byte-identical, not merely present."""
+    """§4.2: renaming a shipped item keeps its `code` and extension byte-identical."""
     view = get(base, "/content")
     assert any(r["id"] == "conversation:FREE_CHAT/default" and r["has_code"]
                for r in view["items"]), view["items"]
@@ -238,15 +191,12 @@ def test_saving_a_name_change_preserves_code_and_extension(rt, base):
         "the save altered the extension"
 
 
-# --------------------------------------------------------------------------- #
-# T5 — provenance, for free
-# --------------------------------------------------------------------------- #
+# --- T5 — provenance, for free ---
 
 @needs_runtime
 def test_authored_then_imported_reports_conflict(base):
-    """An authored item is `local_edited` (no `imported_rev`), so a stranger's pack with
-    the same key at a higher `source_version` reports CONFLICT, un-ticked — A3 with no
-    change to `review_pack`."""
+    """An authored item is `local_edited`, so a stranger's newer pack with the same key is
+    CONFLICT, un-ticked (A3) with no change to `review_pack`."""
     mine = {"name": "Time", "pattern": "(what o'?clock|what time is it)",
             "entity_groups": "1"}
     _, saved = post(base, "/content/item", {"kind": "global", "data": mine})
@@ -264,15 +214,12 @@ def test_authored_then_imported_reports_conflict(base):
     assert "global:Time" not in review["accept"], review["accept"]
 
 
-# --------------------------------------------------------------------------- #
-# T10 / T11 — rung 1, the free feedback
-# --------------------------------------------------------------------------- #
+# --- T10 / T11 — rung 1, the free feedback ---
 
 @needs_runtime
 def test_render_route_calls_no_brain(base):
-    """Rung 1 costs zero gateway calls. `build()`'s chat function raises on any call, so
-    this is a real absence rather than a comment — and the route still returns the resolved
-    system prompt, with the sample nickname substituted."""
+    """Rung 1 costs zero brain calls (`build()`'s brain raises) yet returns the resolved
+    prompt with the sample nickname."""
     draft = conversation(prompt="Hello {{ volley.config.child_pii.nickname }}, "
                                 "{% if presence.face_present %}you are here.{% endif %}")
     _, out = post(base, "/content/render",
@@ -287,10 +234,8 @@ def test_render_route_calls_no_brain(base):
 
 @needs_runtime
 def test_render_reports_stripped_for_a_construct_the_fallback_drops(base):
-    """§4.3 portability: the panel reports both renders. A `{% for %}` (only jinja2 can
-    evaluate it) must show non-zero `stripped` and `portable_identical: false` — reading
-    `render.STRIPPED` around one call would always read zero where jinja2 is installed.
-    Negative control inline: a portable prompt → zero."""
+    """§4.3: a `{% for %}` (jinja2-only) shows non-zero `stripped` and
+    `portable_identical: false`; a portable prompt (the control) shows zero."""
     portable = conversation(prompt="Hi {{ volley.config.child_pii.nickname }}.")
     _, clean = post(base, "/content/render", {"kind": "conversation", "data": portable})
     assert clean["ok"] and clean["counts"]["stripped"] == 0, clean
@@ -307,8 +252,7 @@ def test_render_reports_stripped_for_a_construct_the_fallback_drops(base):
 
 
 def test_render_prompt_hands_a_caller_its_own_counts():
-    """The `counts` out-parameter, both directions: a construct the fallback drops moves
-    `stripped`; one it renders does not."""
+    """`counts`, both directions: a dropped construct moves `stripped`, a rendered one not."""
     counts = {}
     R._minimal_render("{{ volley.config.child_pii.nickname }}", {"volley": None})
     text = R.render_prompt("{{ x.y }}", {"x": {"y": "ok"}}, counts=counts)
@@ -320,16 +264,12 @@ def test_render_prompt_hands_a_caller_its_own_counts():
     assert counts2["stripped"] >= 1, counts2
 
 
-# --------------------------------------------------------------------------- #
-# T12 / T13 — the shadow rule (§4.4)
-# --------------------------------------------------------------------------- #
+# --- T12 / T13 — the shadow rule (§4.4) ---
 
 @needs_runtime
 def test_shadow_warning_names_the_earlier_command(base):
-    """`match_global` returns the FIRST pattern that fires and `module_data` sorts by
-    `kind:key`, so a global's precedence is alphabetical by its `name` — and nothing on
-    screen would say so. Authoring *When is it* behind the installed *Time* must come back
-    naming Time and saying commands are tried in name order."""
+    """Globals fire first-match in name order, invisibly; authoring *When is it* behind
+    *Time* must name Time and say commands are tried in name order."""
     draft = {"name": "When is it", "pattern": "(what time is it)", "entity_groups": ""}
     _, out = post(base, "/content/item",
                   {"kind": "global", "data": draft,
@@ -345,9 +285,8 @@ def test_shadow_warning_names_the_earlier_command(base):
 
 @needs_runtime
 def test_no_shadow_warning_when_nothing_shadows(base):
-    """T12's vacuity guard, with its own positive control first: the same route, the same
-    item, one phrase that IS shadowed → a warning; then a disjoint phrase → none. If the
-    route simply never warned, the first half fails and this test cannot pass by silence."""
+    """T12's vacuity guard: a shadowed phrase warns (positive control), a disjoint one
+    does not — so the test cannot pass by silence."""
     draft = {"name": "When is it", "pattern": "(tell me a joke)", "entity_groups": ""}
     _, control = post(base, "/content/item",
                       {"kind": "global", "data": draft,
@@ -362,9 +301,7 @@ def test_no_shadow_warning_when_nothing_shadows(base):
 
 
 def test_shadow_check_is_exact_for_the_phrases_and_claims_nothing_more():
-    """The pure half (A5). The check runs the author's own phrases against installed
-    patterns in `sorted` order and reports only an installed global that sorts EARLIER —
-    a later-sorting one loses the race and is not a shadow."""
+    """A5: only an installed global that sorts EARLIER and matches a typed phrase shadows."""
     installed = {
         "global:Time": {"kind": "global", "key": "Time",
                         "data": {"name": "Time", "pattern": "(what time is it)"}},
@@ -390,15 +327,12 @@ def test_shadow_check_never_reports_the_item_against_itself():
                           installed, ["what time is it"]) == []
 
 
-# --------------------------------------------------------------------------- #
-# T14 — undo, unchanged
-# --------------------------------------------------------------------------- #
+# --- T14 — undo, unchanged ---
 
 @needs_runtime
 def test_undo_restores_an_authored_save(rt, base):
-    """A save snapshots the overlay exactly as an import does, so `POST /content/undo`
-    puts an authored item back into non-existence with no new mechanism — and leaves the
-    pack ledger alone, because a save is not an import."""
+    """A save snapshots like an import, so undo removes an authored item and leaves the
+    pack ledger alone (a save is not an import)."""
     ledger_before = rt._content_packs()
     _, out = post(base, "/content/item", {"kind": "conversation", "data": conversation()})
     assert out["ok"] and out["undo_available"] is True, out
@@ -414,8 +348,7 @@ def test_undo_restores_an_authored_save(rt, base):
 
 @needs_runtime
 def test_the_undo_slot_holds_one_save_and_the_route_says_so(rt, base):
-    """§3.3, made checkable: there is no history. Saving twice and undoing once returns the
-    PREVIOUS save, not the original — and the response says the slot is single."""
+    """§3.3: no history — two saves and one undo return the PREVIOUS save."""
     post(base, "/content/item", {"kind": "conversation", "data": conversation()})
     post(base, "/content/item",
          {"kind": "conversation", "data": conversation(prompt="Second version.")})
@@ -431,16 +364,12 @@ def test_the_undo_slot_holds_one_save_and_the_route_says_so(rt, base):
         "one slot means the FIRST save survives a single undo"
 
 
-# --------------------------------------------------------------------------- #
-# T15 / T16 — what the editor refuses
-# --------------------------------------------------------------------------- #
+# --- T15 / T16 — what the editor refuses ---
 
 @needs_runtime
 def test_schedule_is_refused_by_the_editor_route(rt, base):
-    """§0's ceiling, enforced at the route rather than in the form. A schedule is the one
-    item kind that reaches the robot as `ContentSchedule`, and no physical Moxie has ever
-    been served a pack-authored one — so a parent-facing button must not put an unobserved
-    wire behaviour behind it. The refusal names the reason, not just the rule."""
+    """§0, at the route: no real Moxie has been served an authored `ContentSchedule`, so
+    the editor refuses one and says why."""
     _, out = post(base, "/content/item",
                   {"kind": "schedule", "data": {"name": "Morning", "schedule": {}}},
                   expect=400)
@@ -453,10 +382,8 @@ def test_schedule_is_refused_by_the_editor_route(rt, base):
 
 @needs_runtime
 def test_extension_and_code_are_not_writable(rt, base):
-    """§4.5: the AST stays read-only in every phase, and `code` is not editable, not
-    creatable and not runnable. A save that CHANGES either is refused with a sentence that
-    points somewhere — the extensions brief owns the text→AST surface, and building a
-    second compiler in this card would be the mistake that brief already refused."""
+    """§4.5: a save that CHANGES `extension` or `code` is refused, pointing at the
+    extensions brief (no second compiler in this card)."""
     module = P.build_module(rt._content_defaults(), {})
     shipped = next(c for c in module.conversations if c.module_id == "FREE_CHAT")
     data = {f: getattr(shipped, f) for f in P.FIELDS["conversation"]}
@@ -477,8 +404,7 @@ def test_extension_and_code_are_not_writable(rt, base):
     # Neither refusal wrote anything, and the shipped item is untouched.
     assert "conversation:FREE_CHAT/default" not in rt._content_overlay()
 
-    # The control: the SAME payload with the extension and code left alone saves fine, so
-    # the refusal is about the change and not about the fields being present at all.
+    # Control: the same payload with both untouched saves — the refusal is about change.
     _, ok = post(base, "/content/item",
                  {"kind": "conversation", "data": dict(data, name="Renamed")})
     assert ok["ok"], ok
@@ -486,9 +412,7 @@ def test_extension_and_code_are_not_writable(rt, base):
 
 @needs_runtime
 def test_a_second_tab_cannot_silently_discard_the_first(rt, base):
-    """R7. The save carries the `local_rev` it opened with; a mismatch is a **409** with
-    the same wording the import conflict uses. One slot of undo is not a fix for this and
-    the response must not pretend it is."""
+    """R7: a save carrying a stale `local_rev` is a 409 and writes nothing."""
     post(base, "/content/item", {"kind": "conversation", "data": conversation()})
     entry = rt._content_overlay()["conversation:BEDTIME/default"]
     stale = P.local_rev({"kind": "conversation", "data": conversation(prompt="older")})
@@ -502,9 +426,7 @@ def test_a_second_tab_cannot_silently_discard_the_first(rt, base):
     assert kept["prompt"] == conversation()["prompt"], "the 409 wrote anyway"
 
 
-# --------------------------------------------------------------------------- #
-# T17 — the routes are declared where the console says they are
-# --------------------------------------------------------------------------- #
+# --- T17 — the routes are declared where the console says they are ---
 
 def _asset(name):
     with open(os.path.join(REPO, "server", "static", name)) as fh:
@@ -512,19 +434,14 @@ def _asset(name):
 
 
 def test_the_authoring_routes_are_declared():
-    """The console's route decorators pinned as literal source strings — the idiom
-    `test_brain_console.py`:179 already uses. A route that quietly moves fails a test
-    rather than a parent.
-
-    Read as text rather than imported: the hermetic tier has no fastapi."""
+    """Route decorators pinned as source strings (the hermetic tier has no fastapi)."""
     from helpers_console import server_source
     main = server_source()
     assert '.post("/local/content/item")' in main
     assert '.post("/local/content/render")' in main
     assert "normalize_content_item_result" in main, \
         "the item route does not normalize its answer, so a card could 500 on a refusal"
-    # P0 does not build the paid rung, and must not accidentally ship its route. Matched
-    # as a route LITERAL rather than as a substring, so prose about P1 does not trip it.
+    # P0 must not ship the paid rung; matched as a route literal so prose does not trip it.
     assert '.post("/local/content/try")' not in main, "`/content/try` is P1 (§9), not P0"
 
     from helpers_runtime import runtime_source
@@ -534,9 +451,8 @@ def test_the_authoring_routes_are_declared():
 
 
 def test_the_supervisor_route_owns_the_validation_not_the_proxy():
-    """R6. `validate_item` belongs to the route that WRITES; a check in the console proxy
-    would be bypassed by a direct `curl` at the supervisor. So the supervisor's source
-    names it and the console's does not."""
+    """R6: `validate_item` lives in the supervisor route that writes, not the console proxy
+    a direct `curl` would bypass."""
     from helpers_runtime import runtime_source
     runtime = runtime_source()
     from helpers_console import server_source
@@ -548,13 +464,8 @@ def test_the_supervisor_route_owns_the_validation_not_the_proxy():
 
 
 def test_the_chip_list_is_closed_to_the_two_portable_forms():
-    """AC10. The guided surface may only emit `{{ dotted.path }}` and
-    `{% if dotted.path %}` — exactly the intersection the dependency-free fallback renders
-    identically to the sandbox — so a guided prompt renders the same with and without
-    jinja2 by construction rather than by discipline.
-
-    Asserted over the chip table's own source: every fragment it can insert is run through
-    `_minimal_render` and must come back with `STRIPPED` unmoved."""
+    """AC10: every chip fragment renders under the dependency-free fallback with
+    `STRIPPED` unmoved, so a guided prompt is portable by construction."""
     import re
     js = console_js()
     m = re.search(r"const ED_CHIPS\s*=\s*\[(.*?)\n\];", js, re.S)
@@ -573,9 +484,7 @@ def test_the_chip_list_is_closed_to_the_two_portable_forms():
 
 
 def test_the_editor_never_offers_a_verb_p0_refuses():
-    """The card must not grow a button for something the route will refuse. Deletion has
-    no `merge_items` operation at all (§3.3), schedules are §0, and `code`/`extension` are
-    read-only windows."""
+    """No button for something the route refuses; `code`/`extension` are read-only."""
     html = _asset("index.html")
     js = console_js()
     assert "ed-panel" in html, "the editor panel is not on the page"
@@ -585,10 +494,7 @@ def test_the_editor_never_offers_a_verb_p0_refuses():
 
 
 def test_the_card_grew_the_four_functions_the_brief_names():
-    """§9 item 9's file list, pinned by name. Not decoration: `openEditor` / `saveItem` /
-    `renderDraftPrompt` / `renderChips` are the four seams the brief hands a later agent,
-    and a rename that silently split one of them would leave that agent reading a plan
-    that no longer describes the file."""
+    """§9 item 9: the four seams the brief hands a later agent, pinned by name."""
     js = console_js()
     for fn in ("function openEditor(", "async function saveItem(",
                "async function renderDraftPrompt(", "function renderChips("):
@@ -597,14 +503,8 @@ def test_the_card_grew_the_four_functions_the_brief_names():
 
 
 def test_no_timer_in_the_editor_can_reach_a_model():
-    """P0's shape of T9. The paid rung does not exist yet, so the property to hold now is
-    the one that makes adding it safe: **the only thing on a timer is the free route.**
-
-    `renderDraftPrompt` is debounced (400 ms) and calls `/content/render`, which makes no
-    brain call by construction; `saveItem` is bound to a click and nothing else. If a
-    later pass adds a *Try it*, this assertion is what stops it from being wired to the
-    same debounce — the mistake upstream's harness makes, where every keypress-to-answer
-    is a real model call with no budget and no counter."""
+    """T9 for P0: the only thing on a timer is the free render route; Save is click-only.
+    This is what stops a later *Try it* being wired to the keypress debounce."""
     js = console_js()
     editor = js[js.index("const ED_CHIPS"):]
     timers = [ln for ln in editor.splitlines()
@@ -617,13 +517,9 @@ def test_no_timer_in_the_editor_can_reach_a_model():
         "Save is not bound to a click"
 
 
-# --------------------------------------------------------------------------- #
-# The console proxy, end to end — the URL, the body and the status code
-# --------------------------------------------------------------------------- #
-# Everything above drives the SUPERVISOR route directly, deliberately: that is where the
-# validation lives (R6). But a proxy with a typo in its path is a card that silently 503s
-# on a real appliance and passes every test in this file, so the two hops are joined here
-# once. `importorskip` because the hermetic tier has no fastapi.
+# --- The console proxy, end to end — the URL, the body and the status code ---
+# Above drives the supervisor route (where validation lives, R6); a proxy path typo would
+# still 503 on a real appliance, so the two hops are joined here once.
 
 @pytest.fixture
 def console(rt, base, tmp_path, monkeypatch):
@@ -637,11 +533,7 @@ def console(rt, base, tmp_path, monkeypatch):
 
 @needs_runtime
 def test_the_console_proxies_a_save_and_a_render(console, rt):
-    """Both proxies, both hops, and the shape the card reads.
-
-    `/local/content/item` is the only one that writes, so the assertion that matters is
-    the last: what came back through two normalizers is the same item the supervisor put
-    in the overlay."""
+    """Both proxies, both hops, and the shape the card reads."""
     r = console.post("/local/content/item",
                      json={"kind": "conversation", "data": conversation()})
     assert r.status_code == 200, r.text
@@ -665,10 +557,7 @@ def test_the_console_proxies_a_save_and_a_render(console, rt):
 
 @needs_runtime
 def test_the_console_forwards_a_refusal_as_a_sentence_not_a_500(console):
-    """A card must never be a 500. A schedule is refused by the supervisor with a reason,
-    and the proxy has to carry the status code AND the sentence through — `error` is what
-    the card renders, so a normalizer that dropped it would leave a parent with a silent
-    failure."""
+    """A refusal reaches the card as its status code AND sentence, never a 500."""
     r = console.post("/local/content/item",
                      json={"kind": "schedule", "data": {"name": "Morning", "schedule": {}}})
     assert r.status_code == 400, r.text

@@ -3,7 +3,7 @@
 **Status:** ✅ **SHIPPED** — P0 *and* P1 landed 2026-09-02; import-path hardening 2026-09-03.
 *(was: "build-ready brief (2026-09-02)" — this line still said **build-ready** on 2026-09-06, four days
 after the code merged, while the banner immediately below it said `✅ P0 shipped`. Re-verified against the
-code, not against the audit: [`mqtt/moxie_sdk/content/packs.py`](../../../mqtt/moxie_sdk/content/packs.py)
+code, not against the audit: [`mqtt/moxie_sdk/content/packs.py`](../../../mqtt/moxie_sdk/content/packs/)
 is **1 145 lines** — `SPEC`:123, `validate_item`:272, `export_pack`:352, `parse_pack`:459,
 `review_pack`:626, `apply_pack`:810, `mark_edited`:872 — and the five status-HTTP routes are live at
 [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):1003 `/content`, :1007 `/content/export`,
@@ -21,7 +21,7 @@ deliberately not scheduled.
 > ## ✅ P0 shipped 2026-09-02 (+ the P1 card)
 >
 > Built as specified, on `feat/content-packs`. What landed: the pure
-> [`mqtt/moxie_sdk/content/packs.py`](../../../mqtt/moxie_sdk/content/packs.py); the three
+> [`mqtt/moxie_sdk/content/packs.py`](../../../mqtt/moxie_sdk/content/packs/); the three
 > fleet `JsonStore` collections; the five status-HTTP routes; `reload_content()`;
 > `build_content_app()`'s defaults ⊕ overlay merge; **and** the 📦 console card of §2.6,
 > which the split calls P1 — it was in the same brief and is shipped in the same slice.

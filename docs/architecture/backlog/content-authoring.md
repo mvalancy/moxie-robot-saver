@@ -14,7 +14,7 @@
 > (docs/architecture/backlog/content-authoring.md §4.1)"*) driving
 > [`server/static/app.js`](../../../server/static/js/):1588 and :1862
 > (`fetch('/local/content/item', {method:'POST'…})`); the validator it must call is
-> [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py):272. Guarded by
+> [`packs.py`](../../../mqtt/moxie_sdk/content/packs/):272. Guarded by
 > [`sim/tests/test_content_authoring.py`](../../../sim/tests/test_content_authoring.py).
 >
 > **What genuinely remains** (§11's P1/P2, unchanged and still build-ready): the paid *try* with its
@@ -90,7 +90,7 @@ the audit row stays 🟠. §11 says which of the four are settled and which are 
 ### 2.1 The content model, exactly
 
 Three dataclasses in [`mqtt/moxie_sdk/content/module.py`](../../../mqtt/moxie_sdk/content/module.py),
-and the pack allowlist `SPEC` in [`packs.py`](../../../mqtt/moxie_sdk/content/packs.py):123-141 is
+and the pack allowlist `SPEC` in [`packs.py`](../../../mqtt/moxie_sdk/content/packs/):123-141 is
 pinned against `dataclasses.fields()`, so these two lists cannot drift.
 
 | Kind | Fields (`packs.FIELDS`) | Identity (`item_key`) |
@@ -110,7 +110,7 @@ Two of those fields are not text a person types:
   **exactly three top-level names** — `volley`, `session` and `presence` (`content_app.py`:312 for the
   opener, :371 for the prompt) — which is what makes §4.3's chip list closeable at all.
 - **`extension` is a JSON-AST program** validated by
-  [`ext.py`](../../../mqtt/moxie_sdk/content/ext.py)`::validate()` — 53 frozen operators, no `exec`, no
+  [`ext.py`](../../../mqtt/moxie_sdk/content/ext/)`::validate()` — 53 frozen operators, no `exec`, no
   loops, and capabilities checked in both directions at load
   ([`sandboxed-extensions.md`](sandboxed-extensions.md)).
 

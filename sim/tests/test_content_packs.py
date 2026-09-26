@@ -1,17 +1,8 @@
 """
-📦 Content packs — the pure engine (`moxie_sdk/content/packs.py`).
-
-Tests 1-9 of `docs/architecture/backlog/content-packs.md` §3. Stdlib and hermetic: no
-store, HTTP, gateway or clock (`now=` is injected everywhere).
-
-The three that carry the design:
-
-* `test_the_allowlist_is_pinned_to_the_dataclass_fields` — risk R6: a field added to
-  `Conversation` fails HERE before it ships in everybody's packs.
-* `test_nothing_private_leaves_in_an_exported_pack` — §2.2, asserted on the serialized
-  bytes with sentinels for every record a pack must never carry.
-* `test_re_importing_after_a_local_edit_never_clobbers_it` — §3 row 5, the reason our
-  review is a 2×2 rather than two integers.
+📦 Content packs — the pure engine (`moxie_sdk/content/packs/`), tests 1-9 of
+`backlog/content-packs.md` §3. Hermetic; `now=` is injected everywhere. The three that
+carry the design: the allowlist pinned to the dataclass fields (R6), nothing private in an
+exported pack's bytes (§2.2), and a re-import never clobbering a local edit (§3 row 5).
 """
 from __future__ import annotations
 
@@ -30,9 +21,7 @@ from moxie_sdk.content.module import (Conversation, Global,  # noqa: E402
 NOW = 1788400000            # a fixed instant, so every assertion here is reproducible
 
 
-# --------------------------------------------------------------------------- #
-# Fixtures — three items, one of each kind, with something interesting in each
-# --------------------------------------------------------------------------- #
+# --- Fixtures — three items, one of each kind, with something interesting in each ---
 
 def conv(prompt="You are Moxie. Be kind.", version=1, **kw) -> dict:
     data = {"name": "Free Chat", "module_id": "FREE_CHAT", "content_id": "default",
@@ -71,9 +60,7 @@ def install(pack, accept=None, installed=None, now=NOW + 10):
     return items
 
 
-# --------------------------------------------------------------------------- #
-# 1 · Round trip
-# --------------------------------------------------------------------------- #
+# --- 1 · Round trip ---
 
 def test_export_serialize_parse_is_an_identity_on_the_item_set():
     pack = make_pack()
@@ -123,13 +110,8 @@ def test_an_exported_pack_loads_as_a_content_module():
 
 
 def test_a_clean_appliance_that_imports_a_pack_re_exports_the_same_file():
-    """Acceptance criterion 2, the full loop:
-
-        export → serialize → parse → apply into an empty appliance → export again
-
-    must produce the same bytes. Catches what one-leg round-trips cannot: a field the
-    STORE drops (provenance stamping, a reverted `source_version`, a float coerced to int).
-    """
+    """AC2: export → parse → apply into an empty appliance → export gives the same bytes,
+    catching what the STORE drops (provenance, `source_version`, float→int)."""
     original = P.dumps_pack(make_pack())
     parsed, meta = P.parse_pack(original)
     assert meta["digest"] == "ok"
@@ -145,8 +127,7 @@ def test_a_clean_appliance_that_imports_a_pack_re_exports_the_same_file():
 
 
 def test_the_circle_still_closes_when_the_pack_upgrades_something_installed():
-    """The same proof over the path that *replaces* rather than adds, because that is
-    the path with a previous version's provenance already in the store to confuse it."""
+    """The same proof over the path that *replaces*, with old provenance in the store."""
     v1 = make_pack([conv(prompt="Version one.", version=1)])
     installed = install(v1)
     v2 = P.export_pack([conv(prompt="Version two.", version=2)],
@@ -161,9 +142,7 @@ def test_the_circle_still_closes_when_the_pack_upgrades_something_installed():
     assert again["items"][0]["source_version"] == 2
 
 
-# --------------------------------------------------------------------------- #
-# 2 · Tamper detection
-# --------------------------------------------------------------------------- #
+# --- 2 · Tamper detection ---
 
 def test_a_pack_edited_after_export_is_reported_as_mismatched():
     raw = P.dumps_pack(make_pack())
@@ -210,9 +189,7 @@ def test_the_reserved_signatures_field_is_outside_the_digest():
     assert meta["digest"] == "ok"
 
 
-# --------------------------------------------------------------------------- #
-# 3 · Format guard — a readable refusal, never a traceback
-# --------------------------------------------------------------------------- #
+# --- 3 · Format guard — a readable refusal, never a traceback ---
 
 @pytest.mark.parametrize("body, needle", [
     ('{"pack_format": 2, "items": []}', "pack_format"),
@@ -258,9 +235,7 @@ def test_non_utf8_bytes_are_refused_readably():
     assert "UTF-8" in str(e.value)
 
 
-# --------------------------------------------------------------------------- #
-# 4 · The review matrix — one case per cell of §2.3
-# --------------------------------------------------------------------------- #
+# --- 4 · The review matrix — one case per cell of §2.3 ---
 
 def edit(items, ident="conversation:FREE_CHAT/default", prompt="I edited this myself."):
     data = dict(items[ident]["data"], prompt=prompt)
@@ -375,9 +350,7 @@ def test_diff_item_against_nothing_lists_every_field():
     assert {r["field"] for r in rows} >= {"prompt", "module_id", "opener"}
 
 
-# --------------------------------------------------------------------------- #
-# 5 · The clobber test — §3 row 5, the requirement the 2×2 exists for
-# --------------------------------------------------------------------------- #
+# --- 5 · The clobber test — §3 row 5, the requirement the 2×2 exists for ---
 
 def test_re_importing_after_a_local_edit_never_clobbers_it():
     v1 = make_pack([conv(prompt="the shipped prompt", version=1)])
@@ -420,9 +393,7 @@ def test_the_shipped_defaults_are_upgraded_by_the_same_rule_as_a_stranger_s_pack
     assert row_for(release, parent_edited)["state"] == P.CONFLICT
 
 
-# --------------------------------------------------------------------------- #
-# 6 · Selection by key
-# --------------------------------------------------------------------------- #
+# --- 6 · Selection by key ---
 
 def test_accepting_a_key_that_is_not_in_the_pack_is_an_error():
     with pytest.raises(P.PackError) as e:
@@ -478,9 +449,7 @@ def test_provenance_is_stamped_on_every_applied_item():
     assert P.is_local_edited(items["conversation:FREE_CHAT/default"]) is False
 
 
-# --------------------------------------------------------------------------- #
-# 7 · Nothing private leaves — the §2.2 guarantee
-# --------------------------------------------------------------------------- #
+# --- 7 · Nothing private leaves — the §2.2 guarantee ---
 
 def test_the_allowlist_is_pinned_to_the_dataclass_fields():
     """Risk R6. A new field on a content dataclass fails HERE, before it ships in packs."""
@@ -559,9 +528,7 @@ def test_scan_outgoing_flags_a_name_the_appliance_knows():
     assert P.scan_outgoing([conv(prompt="Be adamant.")], ["Ada"]) == []
 
 
-# --------------------------------------------------------------------------- #
-# 8 · `code` stays inert
-# --------------------------------------------------------------------------- #
+# --- 8 · `code` stays inert ---
 
 def test_a_pack_carrying_code_imports_with_a_warning_and_the_string_is_kept():
     pack = make_pack([conv(code="def complete_handler(v, s):\n    s.summarize()\n")])
@@ -580,9 +547,7 @@ def test_the_inventory_marks_an_item_that_carries_code():
     assert rows["global:Timer"]["has_code"] is False
 
 
-# --------------------------------------------------------------------------- #
-# 9 · Hostile input
-# --------------------------------------------------------------------------- #
+# --- 9 · Hostile input ---
 
 def test_a_pattern_that_does_not_compile_is_refused_at_review_with_the_item_named():
     """Never at `load_module` time: `Global.from_dict` compiles at load, and a pack that
@@ -642,9 +607,7 @@ def test_a_known_onboard_module_does_not_warn():
     assert not row["warnings"]
 
 
-# --------------------------------------------------------------------------- #
-# The overlay: shipped defaults ⊕ installed items
-# --------------------------------------------------------------------------- #
+# --- The overlay: shipped defaults ⊕ installed items ---
 
 def test_the_overlay_wins_over_the_shipped_default_by_key():
     shipped = P.shipped_items({"conversations": [conv(prompt="the shipped one")["data"]],
@@ -707,9 +670,7 @@ def test_module_data_keeps_source_version_so_a_reload_does_not_lose_it():
     assert load_modules(P.module_data(items)).conversations[0].source_version == 5
 
 
-# --------------------------------------------------------------------------- #
-# Housekeeping: ids, ledger rows, inventory
-# --------------------------------------------------------------------------- #
+# --- Housekeeping: ids, ledger rows, inventory ---
 
 @pytest.mark.parametrize("raw, want", [
     ("Bedtime Wind-Down!", "bedtime-wind-down"),

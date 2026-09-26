@@ -1,21 +1,10 @@
 """
-Unit tests for the day-plan builder (mqtt/moxie_sdk/schedule.py) — audit ADOPT #1.
-
-Shape is checked against the recovered protos:
-  * `CloudQueryResponse.schedule` = field 6, an `embodied.robotbrain.ContentSchedule`
-    (recovered-proto/embodied/logging/Cloud.proto:343)
-  * `ContentSchedule.provided_schedule` = field 3, `Recommendation[]`
-    (recovered-proto/embodied/robotbrain/ContentSchedule.proto)
-  * `RecommendationContext.Recommendation{module_id, content_id, entry_line, module_name,
-    module_description, seen, skip_hub}` (recovered-proto/.../RemoteChat.proto:26-34)
-
-Pure: no MQTT, no store, no broker.
+The day-plan builder (`moxie_sdk/schedule/`), shape-checked against the recovered protos:
+`CloudQueryResponse.schedule` (field 6) is a `ContentSchedule` whose `provided_schedule`
+(field 3) is `Recommendation{module_id, content_id, entry_line, module_name,
+module_description, seen, skip_hub}[]` (RemoteChat.proto:26-34). Pure: no MQTT, no store.
 """
-import os
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from moxie_sdk.schedule import (  # noqa: E402
+from moxie_sdk.schedule import (
     DEFAULT_TEMPLATE, ONBOARD_MODULES, RECOMMENDATION_FIELDS, SCHEDULE_FIELDS,
     build_schedule, completed_counts, ftue_skips, schedule_template, validate_schedule)
 
@@ -231,9 +220,8 @@ def test_schedule_template_picks_a_named_schedule():
     assert schedule_template(module)["provided_schedule"] == [{"module_id": "A"}]
 
 
-# ---- the wire is unchanged by the recommender (audit §4.2 BEYOND #7) ----
-# New inputs (clock, effective config, telemetry) and the `explanations` sibling must never
-# reach the robot: shape guards re-run with every input on. Factors: `test_schedule_planner.py`.
+# ---- the wire is unchanged by the recommender ----
+# Shape guards re-run with every planner input on; per-factor tests: test_schedule_planner.py.
 
 def _rich_kwargs(**over):
     import datetime
@@ -271,8 +259,8 @@ def test_no_planner_bookkeeping_leaks_onto_the_wire():
 
 
 def test_build_schedule_keeps_its_pre_recommender_signature():
-    """PR #7's callers pass a template, mentor_behaviors, device_id and day — and still
-    get exactly a ContentSchedule back, with no new required argument."""
+    """The original call shape (template, mentor_behaviors, device_id, day) still returns
+    exactly a ContentSchedule, with no new required argument."""
     sched = build_schedule(DEFAULT_TEMPLATE, mentor_behaviors=[_mbh("TNT")],
                            device_id="d_1", day="2026-09-02")
     assert validate_schedule(sched) == [] and "WELCOME" not in _ids(sched)
