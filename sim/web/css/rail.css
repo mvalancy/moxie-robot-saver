@@ -1,0 +1,494 @@
+/* Engineering rail: panel groups, motors, buttons, inputs, comms log, session — part of the SIM skin; see style.css for the file order. */
+/* ---- panel groups (collapsible) ------------------------------------------- */
+.group {
+  flex: none;
+  background: rgba(14, 14, 20, 0.85);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.03);
+  transition: border-color 0.2s ease;
+}
+.group:hover { border-color: #343c4c; }
+
+.group summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 10px var(--sp-3);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+.group summary::-webkit-details-marker { display: none; }
+.group summary .tick {
+  width: 12px;
+  height: 2px;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--glow-30);
+  flex: none;
+}
+.group summary .hint {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--dim);
+  text-align: right;
+}
+.caret {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-right: 1px solid var(--muted-2);
+  border-bottom: 1px solid var(--muted-2);
+  transform: rotate(45deg);            /* points down = open */
+  transition: transform 0.15s ease;
+}
+.group:not([open]) summary .caret { transform: rotate(-45deg); }  /* points right = closed */
+.group summary:hover .caret { border-color: var(--cyan); }
+.group summary:focus-visible {
+  outline: none;
+  color: var(--cyan);
+}
+
+/* subsections inside a group: flat, separated by hairlines — instrumentation,
+   not a stack of forms */
+.sub {
+  padding: 10px var(--sp-3) var(--sp-3);
+  border-top: 1px solid rgba(42, 48, 60, 0.6);
+}
+.sub h3 {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+.sub h3 .hint {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--dim);
+  text-align: right;
+}
+.sub p.hint {
+  margin: var(--sp-2) 0 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+/* ---- motors: telemetry sliders ------------------------------------------- */
+.motor { margin-bottom: 11px; }
+.motor label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.motor .val {
+  font-variant-numeric: tabular-nums;
+  color: var(--cyan);
+  text-shadow: 0 0 8px var(--glow-30);
+}
+
+.motor input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+/* track: dark channel with a cyan center notch at the rest pose */
+.motor input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background:
+    linear-gradient(var(--glow-30), var(--glow-30)) 50% 0 / 2px 100% no-repeat,
+    linear-gradient(90deg, #171c28, #1e2534);
+  border: 1px solid #232a38;
+}
+.motor input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background:
+    linear-gradient(var(--glow-30), var(--glow-30)) 50% 0 / 2px 100% no-repeat,
+    linear-gradient(90deg, #171c28, #1e2534);
+  border: 1px solid #232a38;
+}
+/* thumb: square-ish cyan indicator, soft glow */
+.motor input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4.5px;
+  border-radius: 2px;
+  background: var(--cyan);
+  border: none;
+  box-shadow: 0 0 8px var(--glow-30);
+  transition: box-shadow 0.15s ease;
+}
+.motor input[type="range"]::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--cyan);
+  border: none;
+  box-shadow: 0 0 8px var(--glow-30);
+}
+.motor input[type="range"]:hover::-webkit-slider-thumb,
+.motor input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.55);
+}
+.motor input[type="range"]:focus-visible { outline: none; }
+
+/* ---- buttons -------------------------------------------------------------- */
+button {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 7px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease,
+              background 0.15s ease, box-shadow 0.15s ease;
+}
+button:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: var(--surface-3);
+  box-shadow: 0 0 10px var(--glow-12);
+}
+button:active { background: #101826; }
+button.wide { width: 100%; margin-top: 2px; }
+/* tap-to-play speech phrase chips (pre-cached voice) */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip {
+  text-transform: none; letter-spacing: 0; font-weight: 500;
+  padding: 5px 10px; font-size: 11px; max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+button.active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: rgba(0, 240, 255, 0.08);
+  box-shadow: inset 0 0 12px var(--glow-06), 0 0 10px var(--glow-12);
+}
+button:focus-visible {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 1px var(--glow-30);
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* 13 expression chips (the full Bht_Eyeseme_* set) rendered as emoji — compact, cute,
+   and self-explanatory. A tidy rounded-chip grid that stays short enough to share a
+   column in the multi-column rail. id-specificity beats the touch min-height rule. */
+#faces { gap: 6px; }
+#faces button.face-emoji {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  min-height: 0;
+  padding: 0;
+  font-size: 19px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  filter: saturate(1.05);
+}
+#faces button.face-emoji:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 12px var(--glow-12);
+}
+#faces button.face-emoji.active {
+  border-color: var(--cyan);
+  background: rgba(0, 240, 255, 0.12);
+  box-shadow: inset 0 0 10px var(--glow-06), 0 0 12px var(--glow-12);
+}
+
+/* recording: the REC button burns amber while the bus reports recording */
+body[data-bus="rec"] #rec-toggle {
+  border-color: var(--amber);
+  color: var(--amber);
+  box-shadow: 0 0 10px rgba(252, 238, 10, 0.18);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* ---- inputs --------------------------------------------------------------- */
+.row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+.row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.row input[type="text"]::placeholder { color: var(--dimmer); }
+.row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 1px var(--glow-30), 0 0 14px var(--glow-06);
+}
+.row input[type="color"] {
+  width: 44px;
+  height: 28px;
+  padding: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.row input[type="color"]:hover { border-color: var(--cyan); }
+
+label.chk {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  user-select: none;
+  cursor: pointer;
+}
+label.chk input {
+  accent-color: var(--cyan);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+/* ---- bus status line ------------------------------------------------------ */
+#bus-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+#bus-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dimmer);
+  flex: none;
+}
+body[data-bus="live"] #bus-status { color: var(--mint); }
+body[data-bus="live"] #bus-status::before { background: var(--mint); box-shadow: 0 0 8px rgba(5, 255, 161, 0.6); animation: pulse 2s ease-in-out infinite; }
+body[data-bus="down"] #bus-status { color: var(--magenta); }
+body[data-bus="down"] #bus-status::before { background: var(--magenta); box-shadow: 0 0 8px rgba(255, 42, 109, 0.6); }
+body[data-bus="rec"] #bus-status { color: var(--amber); }
+body[data-bus="rec"] #bus-status::before { background: var(--amber); box-shadow: 0 0 8px rgba(252, 238, 10, 0.55); animation: pulse 1.2s ease-in-out infinite; }
+body[data-bus="wait"] #bus-status { color: var(--cyan); }
+body[data-bus="wait"] #bus-status::before { background: var(--cyan); box-shadow: 0 0 8px var(--glow-30); animation: pulse 1.2s ease-in-out infinite; }
+
+/* ---- comms log ------------------------------------------------------------ */
+#transcript {
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Generated content: `::before` is not a child node, so `:empty` still matches and it can
+   never be announced by the live region or mistaken for something Moxie said. */
+#transcript:empty::before {
+  content: "Nothing said yet.";
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  letter-spacing: 0;
+  color: var(--dimmer);
+  align-self: center;
+  padding: 4px 0;
+}
+#transcript .turn,
+#transcript .mutter {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 5px 9px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  /* Two bounds, and the `ch` one is the reason the dock itself no longer needs a
+     `max-width`: a row stops growing at roughly 78 characters, which is a readable
+     measure, so a 2560 px viewport gets a full-width CONTROL and still-legible PROSE. */
+  max-width: min(92%, 78ch);
+  overflow-wrap: anywhere;
+}
+#transcript .turn.user {
+  align-self: flex-start;
+  border-left: 2px solid var(--muted-2);
+  color: var(--text-dim);
+}
+#transcript .turn.moxie {
+  align-self: flex-end;
+  text-align: right;
+  border-right: 2px solid var(--cyan);
+  color: #a9eef6;
+  background: rgba(0, 240, 255, 0.05);
+}
+#transcript .who {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+#transcript .turn.moxie .who { color: var(--cyan-dim); }
+
+/* Her self-talk: centred, dim, italic — addressed to nobody, so neither side of the
+   conversation. aria-hidden from ambient.js (logMutter); purely visual. */
+#transcript .mutter {
+  align-self: center;
+  text-align: center;
+  font-style: italic;
+  color: var(--muted-2);
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.09);
+  opacity: 0.85;
+}
+/* A diagram she drew: full width and centred like `.mutter`; the SVG is scaled to fit
+   because mermaid's intrinsic width can exceed a phone. */
+/* HER CITATION — a quiet line under an answer she looked up, not a turn of its own.
+   Small and dim on purpose: it is provenance, and provenance that shouts competes with the
+   answer it is supporting. */
+#transcript .cited {
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--muted-2);
+  opacity: 0.85;
+  padding: 1px 6px;
+}
+#transcript .cited a { color: var(--cyan-dim); text-decoration: underline; }
+
+#transcript .diagram {
+  align-self: stretch;
+  max-width: 100%;
+  margin: 2px 0;
+  padding: 8px;
+  border: 1px solid rgba(0, 240, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(0, 240, 255, 0.04);
+  overflow-x: auto;
+}
+#transcript .diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+#transcript .mutter .who {
+  color: var(--muted-2);
+  opacity: 0.75;
+  letter-spacing: 0.1em;
+}
+
+/* ---- session / file load -------------------------------------------------- */
+.file-load {
+  display: block;
+  margin-top: 9px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.file-load input[type="file"] {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  max-width: 100%;
+}
+.file-load input[type="file"]::file-selector-button {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-right: 8px;
+  padding: 4px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.file-load input[type="file"]::file-selector-button:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+/* scene lighting slider */
+.rng { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.rng-name { font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; color: var(--muted); }
+.rng input[type=range] { flex: 1; min-width: 0; accent-color: var(--cyan); }
+.rng-val { font-family: var(--font-mono); font-size: 11px; color: var(--cyan); min-width: 2.6em; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- scrollbars ----------------------------------------------------------- */
+#rail-scroll, #transcript { scrollbar-width: thin; scrollbar-color: #232a38 transparent; }
+#rail-scroll::-webkit-scrollbar, #transcript::-webkit-scrollbar { width: 8px; }
+#rail-scroll::-webkit-scrollbar-track, #transcript::-webkit-scrollbar-track { background: transparent; }
+#rail-scroll::-webkit-scrollbar-thumb, #transcript::-webkit-scrollbar-thumb {
+  background: #232a38;
+  border-radius: 4px;
+}
+#rail-scroll::-webkit-scrollbar-thumb:hover, #transcript::-webkit-scrollbar-thumb:hover {
+  background: var(--cyan-dim);
+}

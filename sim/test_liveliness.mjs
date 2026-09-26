@@ -489,6 +489,19 @@ async function dockGeometry(page) {
     const gap = e.bubble.top - e.head.y;
     ok(Math.abs(e.leader - gap) <= 0.2,
        `…on a leader that spans exactly the gap (${e.leader.toFixed(2)}px for ${gap.toFixed(2)}px)`);
+    /* …AND THE LINE ON SCREEN IS THAT LEADER. `--leader` was right while the drawn line was
+     * not: the corner-tick `#bubble::before { top: -1px; border-left: 2px }` survived into
+     * the leadered rule, `top` beat `bottom: 100%`, and a cyan bar ran DOWN through the
+     * text instead of up to her head. The pseudo-element's used box must end at the
+     * bubble's top edge and carry no tick borders. */
+    const drawn = await page.evaluate(() => {
+      const cs = getComputedStyle(document.getElementById("bubble"), "::before");
+      return { top: parseFloat(cs.top), h: parseFloat(cs.height), bl: cs.borderLeftWidth, bt: cs.borderTopWidth };
+    });
+    ok(Math.abs(drawn.top + drawn.h) <= 1.5 && drawn.h > 0,
+       `…and the DRAWN leader rises from the box top to her head (top ${drawn.top}, height ${drawn.h})`);
+    ok(drawn.bl === "0px" && drawn.bt === "0px",
+       `…as a plain line, not the corner tick stretched (border-left ${drawn.bl}, border-top ${drawn.bt})`);
   } else {
     ok(e.bubble.bottom < e.head.y,
        `…above the head (bubble bottom ${e.bubble.bottom.toFixed(1)} vs head ${e.head.y.toFixed(1)})`);

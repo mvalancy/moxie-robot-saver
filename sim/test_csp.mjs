@@ -839,6 +839,15 @@ try {
        `EVERY script in sim/web has its own no-cache entry — unlisted: ${JSON.stringify(unlisted)}`);
     ok(listed.has("turnstile.js"),
        "…including turnstile.js, whose staleness would mint tokens for the wrong action");
+    // App-script SUBDIRECTORIES (the split ES modules of moxie.js) are covered by one
+    // directory rule each, so a new module file cannot be forgotten either.
+    for (const dir of readdirSync(web, { withFileTypes: true })) {
+      if (!dir.isDirectory() || dir.name === "vendor") continue;
+      const js = readdirSync(join(web, dir.name)).filter((f) => f.endsWith(".js"));
+      if (!js.length) continue;
+      ok(new RegExp(`^/${dir.name}/\\*\\n\\s+Cache-Control:\\s*no-cache$`, "m").test(headerText),
+         `sim/web/${dir.name}/ ships ${js.length} scripts and has a /${dir.name}/* no-cache rule`);
+    }
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1440, height: 900 });

@@ -163,13 +163,19 @@ export function pagesHeaders() {
  */
 export function pageSource(name) {
   const html = readFileSync(join(web, name), "utf8");
-  const parts = [html];
-  for (const m of html.matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) {
-    const ref = m[1].split("?")[0].replace(/^\.\//, "");
-    if (/^[a-z]+:|^\/\//i.test(ref) || ref.startsWith("vendor/") || ref.includes("..")) continue;
+  const parts = [html], seen = new Set();
+  const add = (ref, by) => {
+    ref = normalize(ref.split("?")[0].replace(/^\.\//, ""));
+    if (seen.has(ref) || /^[a-z]+:|^\/\//i.test(ref) || ref.startsWith("vendor/") || ref.startsWith("..")) return;
+    seen.add(ref);
     const f = join(web, ref);
-    if (existsSync(f)) parts.push(`\n/* ==== ${ref} (loaded by ${name}) ==== */\n` + readFileSync(f, "utf8"));
-  }
+    if (!existsSync(f)) return;
+    const src = readFileSync(f, "utf8");
+    parts.push(`\n/* ==== ${ref} (loaded by ${by}) ==== */\n` + src);
+    // follow relative ES-module imports (moxie.js -> moxie/*.js)
+    for (const m of src.matchAll(/\bfrom\s+["'](\.{1,2}\/[^"']+)["']/g)) add(join(dirname(ref), m[1]), ref);
+  };
+  for (const m of html.matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) add(m[1], name);
   return parts.join("\n");
 }
 

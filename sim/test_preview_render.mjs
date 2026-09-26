@@ -26,11 +26,7 @@
  * No browser, no network.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, "web", "bridge.js"), "utf8");
+import { loadBridge, readGolden } from "./bridge_harness.mjs";
 
 const capturePath = process.argv[2] || "";
 let messages;
@@ -46,8 +42,7 @@ if (capturePath) {
 } else {
   /* Standalone fallback: the committed goldens, wrapped in the payload shape the
    * supervisor publishes. Same assertions, so a hand run is a real run. */
-  const goldens = JSON.parse(
-    readFileSync(join(here, "tests", "goldens", "performance.json"), "utf8"));
+  const goldens = readGolden("performance.json");
   messages = goldens.cases.map((c, i) => ({
     command: "remote_chat", result: "SUCCESS", backend: "router",
     event_id: `preview-golden-${i}`,
@@ -61,50 +56,7 @@ if (!messages.length) {
   process.exit(1);
 }
 
-// ---- stubs: the same minimal window/document/mqtt shims the sibling render test uses --
-let calls = { setFace: [], setSpeech: [], setMotor: [], showIcons: [], clearIcons: [] };
-const reset = () => {
-  calls = { setFace: [], setSpeech: [], setMotor: [], showIcons: [], clearIcons: [] };
-};
-const moxie = {
-  setFace: (f) => calls.setFace.push(f),
-  setSpeech: (t) => calls.setSpeech.push(t),
-  setMotor: (i, v) => calls.setMotor.push([i, v]),
-  getMotor: () => 16384,
-  showIcons: (n) => calls.showIcons.push(n),
-  clearIcons: () => calls.clearIcons.push(true),
-  setHeartLED: () => {},
-};
-const clickHandlers = {}, mqttClientRef = { c: null }, els = {};
-const fakeEl = (id) => ({
-  id, value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0,
-  scrollHeight: 0,
-  addEventListener: (e, cb) => { if (e === "click" && id) clickHandlers[id] = cb; },
-  appendChild: () => {},
-  querySelector: () => ({ set textContent(v) {}, get textContent() { return ""; } }),
-});
-globalThis.window = { moxie, addEventListener: () => {} };
-globalThis.location = { hostname: "127.0.0.1" };
-globalThis.document = {
-  getElementById: (id) => (els[id] ||= fakeEl(id)),
-  createElement: () => fakeEl(),
-};
-globalThis.mqtt = {
-  connect: () => {
-    const h = {};
-    mqttClientRef.c = {
-      on: (e, cb) => { h[e] = cb; }, subscribe: () => {}, end: () => {},
-      _emit: (e, ...a) => h[e] && h[e](...a),
-    };
-    return mqttClientRef.c;
-  },
-};
-
-(0, eval)(src);
-clickHandlers["bus-connect"]();
-const client = mqttClientRef.c;
-if (!client) throw new Error("bridge did not connect over mqtt");
-client._emit("connect");
+const { calls, reset, client } = loadBridge();
 
 const REST = 16384;
 const fails = [];

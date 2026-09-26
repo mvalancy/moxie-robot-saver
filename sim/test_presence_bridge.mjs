@@ -7,56 +7,9 @@
  *
  * Run: node sim/test_presence_bridge.mjs
  */
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { loadBridge } from "./bridge_harness.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, "web", "bridge.js"), "utf8");
-
-// ---- stubs ----
-const calls = { transcript: [], speech: [] };
-const moxie = {
-  setFace: () => {}, setSpeech: (t) => calls.speech.push(t), setMotor: () => {},
-  getMotor: () => 16384, showIcons: () => {}, clearIcons: () => {}, setHeartLED: () => {},
-};
-const clickHandlers = {}, mqttClientRef = { c: null }, els = {}, attrs = {};
-const fakeEl = (id) => ({
-  id, value: "", textContent: "", innerHTML: "", className: "", scrollTop: 0, scrollHeight: 0,
-  setAttribute: (k, v) => { attrs[id + "/" + k] = v; },
-  addEventListener: (e, cb) => { if (e === "click" && id) clickHandlers[id] = cb; },
-  appendChild: (child) => calls.transcript.push(child && child._text),
-  querySelector: () => ({ set textContent(v) {}, get textContent() { return ""; } }),
-});
-globalThis.window = { moxie, addEventListener: () => {} };
-globalThis.location = { hostname: "127.0.0.1" };
-globalThis.document = {
-  getElementById: (id) => (els[id] ||= fakeEl(id)),
-  createElement: () => {
-    const el = fakeEl();
-    Object.defineProperty(el, "querySelector", { value: () => ({ set textContent(v) { el._text = v; } }) });
-    return el;
-  },
-};
-const published = [];
-globalThis.mqtt = {
-  connect: () => {
-    const h = {};
-    mqttClientRef.c = {
-      connected: true,
-      on: (e, cb) => { h[e] = cb; }, subscribe: () => {}, end: () => {},
-      publish: (topic, payload) => published.push([topic, payload]),
-      _emit: (e, ...a) => h[e] && h[e](...a),
-    };
-    return mqttClientRef.c;
-  },
-};
-
-// ---- load bridge.js and connect ----
-(0, eval)(src);
-clickHandlers["bus-connect"]();
-const client = mqttClientRef.c;
-client._emit("connect");
+const { calls, published, attrs, els, clickHandlers, client } = loadBridge();
 
 const fails = [];
 const ok = (cond, msg) => { if (!cond) fails.push(msg); };
@@ -69,7 +22,7 @@ ok(attrs["presence-badge/data-presence"] === "unknown",
 
 // ---- 2. "walk in" publishes the recovered event as an ordinary chat request ----
 const foundId = B.faceEvent("found");
-const [topic, payload] = published[published.length - 1] || [];
+const { topic, payload } = published[published.length - 1] || {};
 ok(topic === "/devices/d_sim/events/remote-chat",
    `face event rides the remote-chat topic; got ${topic}`);
 const msg = JSON.parse(payload || "{}");
