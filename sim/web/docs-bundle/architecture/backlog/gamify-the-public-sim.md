@@ -288,7 +288,7 @@ prompt-and-copy, not engineering.
 ### 3.3 Our own recovered vocabulary corroborates the press record exactly
 
 This is the cross-check that makes §3.1 more than marketing copy. Our clean-room
-[`schedule.py`](../../../mqtt/moxie_sdk/schedule.py):124 carries the 23 recovered `ONBOARD_MODULES` with
+[`schedule.py`](../../../mqtt/moxie_sdk/schedule/):124 carries the 23 recovered `ONBOARD_MODULES` with
 their categories. The games the press named in 2024 are **in it, by id**:
 
 | What the press described | Recovered `module_id` | Category |
@@ -488,7 +488,7 @@ can fail.
 - **Evidence.** The strongest-grounded candidate. Missions were the **marketed core**, with the child cast
   as helper (§3.1, Stardock + Axios 2024-05-31 + Reviewed 2024-06-18). The exact games are in **our own
   recovered `ONBOARD_MODULES`** by id — `MENTORSAYS`, `SCAVENGERHUNT`, `JOKE`, `PASSWORDGAME` (§3.3,
-  [`schedule.py`](../../../mqtt/moxie_sdk/schedule.py):124). Upstream's own README confirms **Daily
+  [`schedule.py`](../../../mqtt/moxie_sdk/schedule/):124). Upstream's own README confirms **Daily
   Missions still run** in the revival (§4.1). And the one actively-maintained fork independently built
   **trivia and jokes** as startable activities (§5's 🅒 evidence).
 - **What it touches.** A **new data file** `sim/web/missions.json`, deliberately shaped like

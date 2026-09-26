@@ -85,7 +85,7 @@ What is **not** shipped is everything the row was actually about: *sessions, act
 time-of-day patterns, "what did we talk about this week"*. And the reason is not effort. It is that
 the only thing the shipped store can group by is `Packet.event_name`, which the recovered proto
 declares a **free string** and for which our corpus establishes **no vocabulary at all** — the point
-[`schedule.py::telemetry_signals`](../../../mqtt/moxie_sdk/schedule.py) already makes in the code, in
+[`schedule.py::telemetry_signals`](../../../mqtt/moxie_sdk/schedule/) already makes in the code, in
 a docstring, with `carries_module_signal: False` returned as a fact:
 
 > `event_name` is a free string and `event_data` opaque bytes: **our RE corpus recovers no
@@ -422,7 +422,7 @@ not fourteen.
 ```
 
 Four fixed keys, ~40 bytes a day, computed with the **existing** `schedule.time_bucket`
-([`schedule.py`:381](../../../mqtt/moxie_sdk/schedule.py) — `morning` 05:00-11:59, `afternoon`
+([`schedule.py`:381](../../../mqtt/moxie_sdk/schedule/) — `morning` 05:00-11:59, `afternoon`
 12:00-16:59, `evening` 17:00-20:59, `night` 21:00-04:59), from the same stamp `packet_day` already
 resolves. Signature: `roll_up_packet(rollup, pkt, *, now=None, max_days=None, bucket_events=(TURN,))`.
 
