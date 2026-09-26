@@ -1,31 +1,16 @@
 """
-🤖 The durable robot roster — the appliance stops waiting for an event that never comes.
+🤖 The durable robot roster — a restart re-pushes config to every robot it has served.
 
-Build document:
-[`docs/architecture/backlog/production-hardening.md`](../../docs/architecture/backlog/production-hardening.md)
-**§8 P1** — *"a durable robot roster (a 15th collection) so a restart re-pushes config to
-every robot it has ever seen rather than waiting for an event."*
+`production-hardening.md` §8 P1. `MoxieRuntime.robots` is memory-only and every presence
+signal is an event: the `$SYS/broker/log` connect line is never replayed, `/state` is sent
+on the ROBOT's connect, and C6 registers a device only when it next speaks. So after a
+supervisor restart the appliance would otherwise stay silent until the child speaks.
 
-The hole, precisely (§2.2, A15). `MoxieRuntime.robots` is memory-only, and every way the
-supervisor learns a robot is present is an **event**:
+The property guarded hardest is negative: a rostered robot must NOT be marked connected.
+Inventing presence to populate `/status` would be a comfortable belief posing as an
+observation.
 
-* the `$SYS/broker/log` connect line is published **live and never replayed** on
-  re-subscribe;
-* `/state` is something a real Moxie sends on **its own** connect, not on ours;
-* P0's C6 registers an unknown device — but only when it next speaks.
-
-So after a supervisor restart, with the robot still happily connected, there is no event
-to wait for. C6 made that recovery *possible*. It did not make it *prompt*: the appliance
-stays silent until the child does, which at bedtime is tomorrow.
-
-**The property this file guards hardest is a negative one.** A rostered robot must NOT be
-marked connected. Inventing presence to make `/status` look populated is precisely the
-disease this brief was written about — a status field reporting a comfortable belief
-instead of an observation — and it is the single easiest way to "improve" this feature
-into a lie.
-
-Hermetic: no broker, no network, no sleeping. The resume path is driven directly rather
-than through its settle timer, so nothing here waits on wall clock.
+Hermetic: no broker, no network, no sleeping; the resume path is driven directly.
 """
 from __future__ import annotations
 
@@ -33,9 +18,6 @@ import os
 import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_runtime import make_runtime                          # noqa: E402
 from moxie_sdk import roster as roster_seam                       # noqa: E402
@@ -202,16 +184,9 @@ def test_the_roster_survives_the_process_that_wrote_it(tmp_path):
 
 
 def test_a_rostered_robot_is_not_reported_as_connected(tmp_path):
-    """**The negative property, and the reason this feature is not a lie.** A restart
-    knows who it serves; it does not know who is *there*. `/status` must keep saying so.
-
-    The assertion is made **after `resume_roster()` has actually run**, which is the only
-    moment the lie can be told. An earlier draft of this test checked a freshly-restarted
-    runtime and never called the resume — so `sim/tools/hardening_p1_mutation_check.py`'s
-    R10 (the resume `setdefault`-ing every rostered device into `self.robots`, which is
-    exactly the plausible "improvement" that makes the console look populated) went
-    **UNCAUGHT**. The test asserted a property of a code path it never exercised.
-    """
+    """The negative property: a restart knows who it serves, not who is THERE. Asserted
+    after `resume_roster()` has run — the only moment the lie can be told (mutation R10,
+    `setdefault`-ing rostered devices into `self.robots`, must fail here)."""
     rt, _ = _rt(tmp_path)
     rt._device_connect("d_1")
 
@@ -286,16 +261,9 @@ def test_the_resume_is_silent_when_it_is_turned_off(monkeypatch, tmp_path):
 
 
 class _HeldTimer:
-    """A `threading.Timer` stand-in that never fires on its own.
-
-    The first draft of the storm test collapsed `ROSTER_RESUME_DELAY_S` to zero and let
-    real timers run — and it failed, because at zero delay each timer fired *before* the
-    next CONNACK bumped the generation, so every one of them was legitimately the newest.
-    That is a race in the test, not a bug in the subject (at the real 1.0 s settle all six
-    are queued long before any fires), and "make the delay smaller" is the wrong repair:
-    it trades one timing assumption for a tighter one. Holding the callbacks and firing
-    them explicitly asserts the generation logic itself, with no timing assumption at all —
-    playbook rule 11, assert recorded state rather than a live sample.
+    """A `threading.Timer` stand-in that never fires on its own. Firing callbacks
+    explicitly tests the generation logic with no timing assumption (a zero delay would
+    let each timer fire before the next CONNACK, legitimately the newest).
     """
 
     pending: list = []
@@ -385,24 +353,13 @@ def test_a_resume_that_raises_does_not_kill_the_timer_thread(monkeypatch, tmp_pa
 
 
 def test_two_supervisors_on_one_data_directory_do_not_lose_each_others_robots(tmp_path):
-    """The roster is a read-modify-write, and §3 is about exactly this shape.
-
-    Two processes each register 30 distinct robots. Without `transaction_shared()` around
-    the read and the write, they interleave read-read-write-write and one process's
-    additions vanish silently — the `append()` bug, in a new place, on the record that
-    decides who gets served after a restart.
-
-    Written because the mutation check found it: R15 (replacing the transaction with
-    `if True:`) went **UNCAUGHT**, since every other roster test is single-writer and a
-    single writer cannot see a missing lock.
+    """The roster is a read-modify-write: two processes each register 30 robots and
+    neither loses the other's, which needs `transaction_shared()` (mutation R15 —
+    replacing it with `if True:` — is invisible to single-writer tests).
     """
-    # The writers call the runtime's **real** `_roster_seen`, not a copy of it. An
-    # earlier draft inlined the read-modify-write into the script, which proved the
-    # store's transaction works on this shape and said nothing about whether the runtime
-    # uses it — so R15 (replacing `_roster_seen`'s transaction with `if True:`) stayed
-    # UNCAUGHT. `__new__` rather than a constructed runtime because `_roster_seen` and
-    # `roster()` touch exactly one attribute between them, and booting a whole supervisor
-    # per writer would make the test about process startup.
+    # The writers call the runtime's REAL `_roster_seen` (an inlined copy proved nothing
+    # about the runtime). `__new__` because it and `roster()` touch one attribute, and a
+    # full supervisor boot per writer would make this about process startup.
     script = (
         "import os, sys\n"
         f"sys.path.insert(0, {os.path.join(REPO, 'mqtt')!r})\n"
@@ -431,12 +388,8 @@ def test_two_supervisors_on_one_data_directory_do_not_lose_each_others_robots(tm
 
 
 def test_the_runtimes_own_roster_write_is_inside_the_lock(tmp_path):
-    """The same property at the runtime's seam rather than the store's: `_roster_seen`
-    must do its read-modify-write **inside** `transaction_shared`, not beside it.
-
-    Structural on purpose — the cross-process test above proves the behaviour, and this
-    pins the mechanism at the one line a refactor would move.
-    """
+    """Structural pin at the runtime seam: `_roster_seen` does its read-modify-write
+    INSIDE `transaction_shared` (the test above proves the behaviour)."""
     rt, _ = _rt(tmp_path)
     order = []
     real_tx = rt.store.transaction_shared
@@ -477,23 +430,11 @@ def test_a_broken_store_never_costs_a_robot_its_connection(tmp_path):
 # The returning robot — a broker restart must not leave it half-connected
 # --------------------------------------------------------------------------- #
 #
-# Found by `sim/run_broker_outage.sh` phase 5c (feat/integration-10), 4/4 runs. The
-# mechanism, verified in the code:
-#
-#   * `_device_connect` early-returned on `if device_id in self.robots`;
-#   * the ONLY thing that removed a robot was `_device_disconnect`, driven by a
-#     `$SYS/broker/log` line — which dies with the broker;
-#   * `_on_disconnect` bumped `_turn_seq` and recorded the gap, and cleared neither.
-#
-# So a robot returning with the same device id after a broker restart was already
-# "known", was never re-onboarded, and got no config push and no `app.on_connect` — for
-# the rest of the session. `/status` meanwhile listed every robot as present, including
-# the ones that never came back.
-#
-# The fix separates two things this file had fused: **membership** (`self.robots` — who
-# have we served) and **confirmation** (`_seen_since_connect` — who have we heard from on
-# *this* socket). The disconnect clears confirmation and nothing else. See
-# `_device_connect`'s docstring for why clearing membership instead is the wrong fix.
+# A broker restart loses the `$SYS` disconnect line, so a robot returning with the same id
+# was still "known" and never re-onboarded (no config push, no `app.on_connect`). The fix
+# separates MEMBERSHIP (`self.robots` — who we serve) from CONFIRMATION
+# (`_seen_since_connect` — who we heard from on this socket); a disconnect clears only the
+# latter. See `_device_connect`'s docstring. (Found by `sim/run_broker_outage.sh` 5c.)
 
 class CountingApp(MoxieApp):
     """Counts `on_connect`, so "was the robot re-onboarded" is a number, not an inference."""
@@ -679,27 +620,11 @@ def test_the_roster_resume_reaches_robots_the_outage_made_unconfirmed(tmp_path):
 
 # ── the bench half: one run's throwaway device ids must not reach the next run ──────────
 #
-# A live observation, 2026-09-03 (feat/integration-11), turned into a guard. The SIL
-# scripts each mint a throwaway `d_<uuid>` per invocation, and the supervisor's data
-# directory defaults to the repo's `mqtt/data` — so a fresh `sim/run_smoke.sh` started by
-# re-pushing config to two `d_outage…` ids that `sim/run_broker_outage.sh` had minted a
-# quarter of an hour earlier, against a different broker, from a roster neither script
-# owned.
-#
-# **The runtime is not the defect and must not be "fixed".** In a household every id in
-# this file is a robot the appliance really has served, the roster is capped at
-# `MAX_DEVICES` with least-recently-seen eviction, each resume push is a QoS 0 publish the
-# broker discards when nobody is listening, un-permitting calls `forget()`, and
-# `MOXIE_ROSTER_RESUME=0` turns the whole thing off. Trading that for an age-based expiry
-# would cost a robot that has been quiet for a month its config on the next restart —
-# which is the feature — to remove noise that exists only on a bench.
-#
-# The defect is **harness hermeticity**, and it is the shape `run_broker_outage.sh` phase
-# 5c was rewritten to close: a leftover mechanism quietly satisfying an assertion the test
-# did not intend, here "a config push happened". `sim/tools/soak.py` had always scoped its
-# own `MOXIE_DATA_DIR`; the three scripts that boot a supervisor had not. So this guard is
-# about the *scripts*, and it generalises — a new SIL script that boots `mqtt/run.py`
-# without scoping its data directory fails here rather than on somebody's bench.
+# SIL scripts mint a throwaway `d_<uuid>` per run; with the default `mqtt/data` a later run
+# would re-push config to earlier runs' ids. The runtime is right (in a household every
+# rostered id is real; the roster is capped, resume pushes are QoS 0, `forget()` and
+# `MOXIE_ROSTER_RESUME=0` exist). The defect is harness hermeticity, so this guard requires
+# every script that boots `mqtt/run.py` to scope its own `MOXIE_DATA_DIR`.
 def test_every_sil_script_that_boots_a_supervisor_scopes_its_own_data_dir():
     sim_dir = os.path.join(REPO, "sim")
     offenders = []

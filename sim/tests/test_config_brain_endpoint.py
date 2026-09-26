@@ -29,7 +29,7 @@ moment someone substituted a different deployment:
 The class-wide guard — no deployment hostname anywhere in shipped Python or JS — is
 `test_no_deployment_defaults.py`. This file is about the one variable's behaviour.
 """
-import importlib
+from helpers_runtime import reload_config                      # noqa: E402
 import os
 import re
 import sys
@@ -58,19 +58,7 @@ _URL = re.compile(r"https?://([A-Za-z0-9_.\-\[\]:]+?)(?:[:/]|$)")
 
 
 def _fresh(monkeypatch, **env):
-    """`config` re-imported with a controlled environment and NO dotenv.
-
-    `MOXIE_SKIP_DOTENV` is not optional here: `_load_env` reads `mqtt/.env` with
-    `setdefault` on every import, so without it a developer's own file refills the
-    variables deleted below and the whole file tests that developer's machine.
-    """
-    monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
-    for k in _ENV:
-        monkeypatch.delenv(k, raising=False)
-    for k, v in env.items():
-        monkeypatch.setenv(k, v)
-    import config as _c
-    return importlib.reload(_c)
+    return reload_config(monkeypatch, _ENV, **env)
 
 
 def _remote_hosts(text: str) -> list:
@@ -126,9 +114,9 @@ def test_an_app_that_needs_a_brain_refuses_to_guess_one(monkeypatch, app):
 def test_the_refusal_arrives_at_assembly_not_on_the_first_turn(monkeypatch):
     """`run.assemble()` is where an operator is still watching the log. A brain that only
     failed when a child spoke would be discovered as a fuzzy reply, hours later."""
-    import run
+    from helpers_runtime import load_mqtt_run
     c = _fresh(monkeypatch, MOXIE_APP="llm")
-    importlib.reload(run)
+    run = load_mqtt_run()
     with pytest.raises(SystemExit):
         run.assemble(c)
 

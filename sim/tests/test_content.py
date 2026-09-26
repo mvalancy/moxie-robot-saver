@@ -4,10 +4,8 @@ Covers docs/architecture/content-module-contract.md: the module loader, globals
 regex + entity capture, the volley/session API, and prompt rendering.
 """
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.content import (  # noqa: E402
     load_module, load_modules, Volley, Session, render_prompt,

@@ -1,27 +1,23 @@
 """
 Presence in the runtime — the robot's own eyes reaching the turn loop.
 
-The recovered contract delivers a subscribed perception event as the `speech` of an
-ordinary `RemoteChatRequest` (docs/architecture/vision.md §1.1; OpenMoxie
-`doc/RemoteModuleAPI.md` §Event Handling, MIT), and requires the brain to answer it. So
-everything here drives real `events/remote-chat` payloads through the real
-`MoxieRuntime` over a fake transport — the same harness the other turn-loop suites use.
+A subscribed perception event arrives as the `speech` of an ordinary `RemoteChatRequest`
+(vision.md §1.1; OpenMoxie `doc/RemoteModuleAPI.md`, MIT), so these tests drive real
+`events/remote-chat` payloads through `MoxieRuntime` over a fake transport.
 
-Hermetic: no sleeps, no broker, no model. Elapsed time is expressed by *seeding* the
-presence record (a robot that went out of sight N seconds ago), never by waiting.
+Hermetic: no sleeps, broker or model. Elapsed time is expressed by seeding the presence
+record, never by waiting.
 """
 import os
-import sys
 import time
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
-from helpers_runtime import (CountingSynth, LatchClient, drive_turn,   # noqa: E402
+from helpers_runtime import fresh_pool, seed_absent  # noqa: E402
+from helpers_runtime import (CountingSynth, drive_turn,   # noqa: E402
                              make_runtime)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 from moxie_sdk import presence as P                                    # noqa: E402
 from moxie_sdk.app import MoxieApp                                     # noqa: E402
 from moxie_sdk.types import Reply                                      # noqa: E402
@@ -49,34 +45,6 @@ def _runtime(app=None, *, greet_after_s=300.0, **kw):
     rt, dev = make_runtime(app or EchoApp(), **kw)
     rt.greet_after_s = greet_after_s
     return rt, dev
-
-
-def _seed_absent(rt, dev, away_s, *, greeted=False):
-    """Put this robot's presence where it would be `away_s` seconds after a departure.
-
-    Clock-relative and correct: presence is scored as an AGE (`greet_after_s`), so the
-    state is defined by offsets from now and means the same thing at any hour. A pinned
-    epoch would make every robot look absent for years."""
-    robot = rt.robots[dev]
-    now = time.time()
-    state = P.new_state()
-    state.update({"face_present": False, "announced": "left",
-                  "last_seen_at": now - away_s - 30.0,
-                  "present_since": now - away_s - 60.0,
-                  "last_lost_at": now - away_s, "absent_since": now - away_s,
-                  "faces_seen": 1, "events": 2})
-    if greeted:
-        state["greeted_at"] = now - away_s + 0.1
-    robot.extra["presence"] = state
-    return state
-
-
-def _fresh_pool(rt):
-    """`drive_turn` shuts the worker pool down when it drains it, so a test that drives
-    a SECOND turn through the same runtime needs a live one."""
-    from concurrent.futures import ThreadPoolExecutor
-    rt._pool = ThreadPoolExecutor(max_workers=4)
-    return rt
 
 
 def _vision(rt, dev, name, *, event_id="evt-eye", input_vars=None):
@@ -155,7 +123,7 @@ def test_the_first_reply_subscribes_the_robot_to_its_own_vision_events():
 def test_the_subscription_is_sent_once_per_module_not_once_per_turn():
     rt, dev = _runtime()
     drive_turn(rt, dev, "hello", event_id="e1")
-    _fresh_pool(rt)
+    fresh_pool(rt)
     second = drive_turn(rt, dev, "again", event_id="e2")
     assert "response_actions" not in second, second
 
@@ -164,26 +132,14 @@ def test_the_subscription_is_sent_once_per_module_not_once_per_turn():
 # 2b. …and the latch that says "once" must stop saying it when it stops being true
 # --------------------------------------------------------------------------- #
 #
-# `_vision_subscribed[device] = module` was set and **never cleared** — not on a module
-# exit, not on a wake, not on a broker outage. Meanwhile the recovered contract says
-# *"events are automatically unsubscribed when the module exits"* (RemoteModuleAPI
-# §Unsubscribing), which the latch's own docstring quoted. So the robot dropped the
-# subscription while our latch still claimed we held it, and we never re-sent
-# `EventSubscription.active[]`: vision and QR events went nowhere, silently, with nothing
-# logged on either side.
+# The robot drops subscriptions when a module exits (RemoteModuleAPI §Unsubscribing), so
+# `_vision_subscribed[device] = module` must be cleared on exit, wake and outage — else we
+# never re-send `EventSubscription.active[]` and vision/QR events silently go nowhere
+# (cf. owner "crossed ears" reports, upstream openmoxie PR #59). Shares the roster fix
+# (`_forget_robot_state`): forgetting costs one redundant message, remembering costs eyes.
 #
-# Evidence this is real and not just readable-from-the-code: four independent owner
-# reports of "crossed ears", and upstream openmoxie PR #59 diagnoses the sleep/wake
-# variant as exactly this (the STT subscribe must be re-sent on wake).
-#
-# **The ceiling, stated where it cannot be missed:** no physical robot has ever sent this
-# appliance a vision event. These tests prove *we re-subscribe*. They cannot prove a robot
-# then delivers, and a green run here must never be read as saying it does.
-#
-# This is the same defect as the roster ghost, and deliberately shares its fix
-# (`_forget_robot_state`): a cached belief about the robot's state outliving the robot's
-# actual state. Both caches are pure optimisation — being wrong by forgetting costs one
-# redundant message; being wrong by remembering costs eyes that never report.
+# Ceiling: no physical robot has sent this appliance a vision event. These tests prove we
+# RE-SUBSCRIBE, not that a robot then delivers.
 
 def _subscribed(resp) -> bool:
     """Did this reply carry an `EventSubscription.active[]`?"""
@@ -197,11 +153,11 @@ def test_a_broker_outage_makes_the_next_reply_re_subscribe():
     """The robot's session went with the broker; our latch must not outlive it."""
     rt, dev = _runtime()
     assert _subscribed(drive_turn(rt, dev, "hello", event_id="e1"))
-    _fresh_pool(rt)
+    fresh_pool(rt)
 
     rt.client.drop()
     rt.client.up()
-    _fresh_pool(rt)
+    fresh_pool(rt)
     assert _subscribed(drive_turn(rt, dev, "again", event_id="e2")), \
         "after an outage the robot has no subscription and we never re-sent one"
 
@@ -213,11 +169,11 @@ def test_a_module_exit_makes_the_next_reply_re_subscribe():
     rt, dev = _runtime()
     module = rt.robots[dev].module_id
     assert _subscribed(drive_turn(rt, dev, "hello", event_id="e1"))
-    _fresh_pool(rt)
+    fresh_pool(rt)
 
     rt._end_conversation(dev, "module exit")        # A exits
     rt._pool.shutdown(wait=True)
-    _fresh_pool(rt)
+    fresh_pool(rt)
     assert rt.robots[dev].module_id == module, "the test needs the SAME module re-entered"
     assert _subscribed(drive_turn(rt, dev, "again", event_id="e2")), \
         "the module exited and dropped the subscription; we never re-sent it"
@@ -228,24 +184,19 @@ def test_waking_a_robot_makes_the_next_reply_re_subscribe():
     subscriptions, so a wake is one of the moments our latch stops being true."""
     rt, dev = _runtime()
     assert _subscribed(drive_turn(rt, dev, "hello", event_id="e1"))
-    _fresh_pool(rt)
+    fresh_pool(rt)
 
     out = rt.wake_robot(dev)
     assert out["published"] is True, out
-    _fresh_pool(rt)
+    fresh_pool(rt)
     assert _subscribed(drive_turn(rt, dev, "again", event_id="e2")), \
         "the robot was woken with no subscription and we never re-sent one"
 
 
 def test_a_robot_the_broker_says_left_forgets_everything_we_believed_about_it():
-    """`_device_disconnect` is the one place with *real evidence about the robot* — the
-    broker told us the client went away — so it drops both caches, not just one.
-
-    Asserting both matters: the vision half is **also** covered by `_end_conversation`,
-    which `_device_disconnect` calls, so a test that checked only the latch passed with
-    this line deleted (found by the mutation checker, V4). The half that is uniquely
-    load-bearing here is `_seen_since_connect` — without it a robot that genuinely left
-    stays 'confirmed' forever and is never re-onboarded when it returns.
+    """`_device_disconnect` (real evidence the client left) drops BOTH caches. The vision
+    latch is also cleared via `_end_conversation`, so the uniquely load-bearing half here is
+    `_seen_since_connect` — without it a departed robot is never re-onboarded (mutation V4).
     """
     rt, dev = _runtime()
     drive_turn(rt, dev, "hello", event_id="e1")
@@ -320,7 +271,7 @@ def test_the_subscription_can_be_turned_off():
 def test_walking_back_in_after_a_long_absence_earns_one_spoken_hello():
     rt, dev = _runtime(greet_after_s=300.0)
     rt.set_synthesizer(CountingSynth())
-    _seed_absent(rt, dev, away_s=900.0)
+    seed_absent(rt, dev, away_s=900.0)
     resp = _vision(rt, dev, FOUND)
     assert resp["result"] == "SUCCESS", resp
     text = resp["output"]["text"]
@@ -334,7 +285,7 @@ def test_walking_back_in_after_a_long_absence_earns_one_spoken_hello():
 
 def test_the_hello_is_rate_limited_to_once_per_absence():
     rt, dev = _runtime()
-    _seed_absent(rt, dev, away_s=900.0)
+    seed_absent(rt, dev, away_s=900.0)
     first = _vision(rt, dev, FOUND, event_id="e1")
     assert first["result"] == "SUCCESS"
     # the tracker re-announces the same face: no second hello, no second turn
@@ -347,7 +298,7 @@ def test_the_hello_is_rate_limited_to_once_per_absence():
 
 def test_a_short_step_out_of_frame_earns_nothing():
     rt, dev = _runtime(greet_after_s=300.0)
-    _seed_absent(rt, dev, away_s=30.0)
+    seed_absent(rt, dev, away_s=30.0)
     assert _vision(rt, dev, FOUND)["result"] == "NOREPLY_ACK"
 
 
@@ -359,30 +310,24 @@ def test_a_first_ever_sighting_never_greets():
 
 def test_the_greeting_can_be_switched_off_entirely():
     rt, dev = _runtime(greet_after_s=0.0)
-    _seed_absent(rt, dev, away_s=9000.0)
+    seed_absent(rt, dev, away_s=9000.0)
     assert _vision(rt, dev, FOUND)["result"] == "NOREPLY_ACK"
 
 
 def test_an_unpermitted_robot_is_never_greeted():
     rt, dev = _runtime(allow_unverified_bots=False)
-    _seed_absent(rt, dev, away_s=9000.0)
+    seed_absent(rt, dev, away_s=9000.0)
     assert rt._greeting_for(dev, rt.robots[dev],
                             [{"name": "arrived", "away_s": 9000.0}]) is None
 
 
 def test_bedtime_hours_suppress_the_hello():
-    """Clock-RELATIVE on purpose: the subject is `rt._in_bedtime`, which reads the real
-    `datetime.now()` itself (moxie_runtime.py:1723), so pinning the test's clock would
-    only test a different function. A window of now±30 min contains now at every one of
-    the 1440 minutes of a day, wrap included — verified exhaustively against
-    `cloud_config.in_bedtime`, whose `start > end` branch is what makes the wrap work.
-
-    **Both** keys are written, never just the one today's weekday picks: the runtime
-    re-reads the clock a moment after this test does, and on a Fri→Sat / Sun→Mon midnight
-    those two reads disagree about which key to look at. Writing both makes the weekday
-    irrelevant instead of nearly-always-right. (Same move as the PR #63 telehealth fix.)"""
+    """Clock-RELATIVE on purpose: `rt._in_bedtime` reads the real clock itself, so pinning
+    ours would test a different function. now±30 min contains now at all 1440 minutes,
+    wrap included (see the premise test below). Both weekday keys are written, so a
+    midnight between our read and the runtime's cannot pick the wrong one."""
     rt, dev = _runtime()
-    _seed_absent(rt, dev, away_s=9000.0)
+    seed_absent(rt, dev, away_s=9000.0)
     import datetime
     cur = datetime.datetime.now()
     start = (cur - datetime.timedelta(minutes=30)).strftime("%H:%M")
@@ -394,16 +339,10 @@ def test_bedtime_hours_suppress_the_hello():
 
 
 def test_outside_the_bedtime_window_the_hello_is_allowed():
-    """The other side of the same clock-relative gate, and for the same reason.
-
-    A window of now+2 h … now+4 h excludes now at every one of the 1440 minutes of a day
-    — including the hours where it wraps midnight, because it then reads `start < end`
-    over a wrapped pair rather than as a wrapping window. That was verified exhaustively,
-    which is why the `pytest.skip("the synthetic window wrapped onto now")` this test used
-    to carry is gone: it could never fire, and a skip that cannot fire is an escape hatch
-    a future regression would slip through silently. Both keys, as above."""
+    """The other side: now+2 h … now+4 h excludes now at all 1440 minutes, wrap included
+    (verified by the premise test, so no escape-hatch skip). Both keys, as above."""
     rt, dev = _runtime()
-    _seed_absent(rt, dev, away_s=9000.0)
+    seed_absent(rt, dev, away_s=9000.0)
     import datetime
     cur = datetime.datetime.now()
     start = (cur + datetime.timedelta(hours=2)).strftime("%H:%M")
@@ -415,16 +354,9 @@ def test_outside_the_bedtime_window_the_hello_is_allowed():
 
 
 def test_the_synthetic_windows_the_two_tests_above_build_hold_at_every_minute():
-    """The premise the two clock-relative tests above rest on, asserted rather than
-    claimed — with no wall clock at all, over all 1440 minutes of a day.
-
-    Those tests cannot pin their own clock (the runtime reads it), so their correctness
-    depends on a property of the *window they synthesize*: now±30 min always contains
-    now, and now+2 h…+4 h never does. That property is exactly the kind of thing that
-    reads as obvious and is not — `["00:00", "23:59"]` also read as "all day" and was
-    false for one minute a night (PR #63). Checked here against the same pure helper the
-    runtime calls, so if a future change to `in_bedtime`'s wrap handling breaks the
-    premise, this fails deterministically instead of the pair above going red once a day."""
+    """The premise of the two clock-relative tests, checked with no wall clock over all
+    1440 minutes against the same `in_bedtime` helper the runtime calls — so a wrap bug
+    fails here deterministically, not once a day above."""
     import datetime
     from moxie_sdk.cloud_config import in_bedtime
     base = datetime.datetime(2026, 9, 2)                      # any day; only H:M matters
@@ -448,13 +380,9 @@ def test_no_bedtime_configured_is_never_bedtime():
 
 
 def test_a_bedtime_window_that_wraps_midnight_is_understood():
-    """Clock-INDEPENDENT despite the `datetime.now()`: only today's *date* is borrowed,
-    the hour and minute are overwritten, and the fixed 20:30-07:00 window's answer for
-    21:30 / 03:00 / 12:00 is the same on every date. The timestamp is passed to
-    `_in_bedtime` explicitly, so the runtime does not read its own clock here either, and
-    the weekday the key is chosen by is `at`'s — the same one the runtime will resolve.
-    Leave it reading `now()`: pinning a date would test nothing extra and would hide a
-    real DST/timezone regression that a real date would surface."""
+    """Clock-independent: only today's DATE is borrowed (hour/minute overwritten) and the
+    timestamp is passed explicitly, so 20:30-07:00 gives the same answers for 21:30 / 03:00
+    / 12:00 on any date. A real date is kept so a DST/timezone regression would surface."""
     rt, dev = _runtime()
     import datetime
     for hhmm, inside in (("21:30", True), ("03:00", True), ("12:00", False)):
@@ -486,7 +414,7 @@ def test_the_runtime_marks_a_robot_busy_for_the_whole_of_a_real_turn():
 
 def test_a_hello_earned_mid_turn_is_queued_not_spoken_over_the_answer():
     rt, dev = _runtime()
-    _seed_absent(rt, dev, away_s=900.0)
+    seed_absent(rt, dev, away_s=900.0)
     rt._busy.add(dev)                       # a turn is in flight
     resp = _vision(rt, dev, FOUND)
     assert resp["result"] == "NOREPLY_ACK", "never talk over Moxie's own answer"
@@ -539,9 +467,9 @@ def test_a_queued_hello_is_delivered_ahead_of_a_streamed_answer_too():
 def test_the_turn_carries_a_presence_snapshot():
     app = EchoApp()
     rt, dev = _runtime(app)
-    _seed_absent(rt, dev, away_s=900.0)
+    seed_absent(rt, dev, away_s=900.0)
     _vision(rt, dev, FOUND, event_id="eye")
-    _fresh_pool(rt)
+    fresh_pool(rt)
     drive_turn(rt, dev, "hi moxie", event_id="talk")
     turn = app.turns[-1]
     assert turn.presence["face_present"] is True
@@ -571,16 +499,10 @@ def test_the_llm_system_prompt_gains_the_presence_line_only_when_it_matters():
 
 
 def test_a_content_module_prompt_can_read_presence():
-    # This prompt uses a Jinja `{% if %}` block. jinja2 is still an OPTIONAL extra of the
-    # SDK (`pyproject.toml` `content`), so a bare `pip install moxie-cloud-sdk` reaches
-    # the dependency-free fallback and this exact assertion would not hold there — hence
-    # the importorskip. What is NO LONGER true is the reason this comment used to give
-    # ("the shipped container ships without it"): PR #62 added `jinja2>=3.0` to
-    # `mqtt/requirements.txt`, so the container runs the real renderer on purpose, and
-    # `test_render_container_deps.py` pins that split in both directions. Since PR #62's
-    # second half the fallback *strips* a block it cannot evaluate rather than leaking
-    # the template source into a system prompt, so the two paths differ in what they
-    # render, never in whether they leak — see `test_render_fallback.py`.
+    # This prompt uses a Jinja `{% if %}` block. jinja2 is an optional SDK extra
+    # (`content`), so a bare `pip install moxie-cloud-sdk` uses the fallback, which strips
+    # the block — hence the importorskip. The container ships jinja2
+    # (`test_render_container_deps.py`); see `test_render_fallback.py`.
     pytest.importorskip("jinja2", reason="the `{% if %}` form needs the full renderer")
     from moxie_sdk.content.render import render_prompt
     from moxie_sdk.content.content_app import _presence_vars
@@ -596,17 +518,10 @@ def test_a_content_module_prompt_can_read_presence():
 
 
 def test_no_presence_lock_block_calls_something_that_retakes_it():
-    """`_presence_lock` is a plain `threading.Lock` — **not** reentrant — and P1 added a
-    new acquisition to it (`_forget_robot_state`) that is reached from the paho network
-    thread, from `_end_conversation`, from `wake_robot` and from `_device_disconnect`.
-
-    A future edit that calls one of those from inside a `with self._presence_lock:` block
-    would self-deadlock the MQTT loop: no exception, no log line, the appliance simply
-    stops answering. That is unusually hard to catch at review and impossible to catch by
-    running the happy path, so it is checked structurally.
-
-    Verified at the time of writing by the same walk, over all eight blocks: none of them
-    calls out at all, and every one is one to fourteen lines long.
+    """`_presence_lock` is NOT reentrant, and `_forget_robot_state` (reached from the paho
+    thread, `_end_conversation`, `wake_robot`, `_device_disconnect`) acquires it. Calling one
+    of those inside a `with self._presence_lock:` block would silently deadlock the MQTT
+    loop, so it is checked structurally over the runtime's source.
     """
     from helpers_runtime import runtime_source
     src = runtime_source().split("\n")

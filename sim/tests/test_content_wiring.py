@@ -5,10 +5,8 @@ Pure (no openai/broker); runs in CI's pytest.
 """
 import json
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.content import load_modules, ContentApp  # noqa: E402
 from moxie_sdk.types import Turn, RobotContext, ChildProfile, ResultCode  # noqa: E402
@@ -63,22 +61,12 @@ def test_is_offline_error_classification():
 
 
 # --------------------------------------------------------------------------- #
-# The always-listening commands (2026-09-08)
+# The always-listening commands
 # --------------------------------------------------------------------------- #
-# `docs/reverse-engineering/runtime/content-and-conversation.md`:136-138 recovered the ten
-# phrases the real robot recognised at any time, independent of the running activity:
-# Sleep, WakeUp, Hello, ListenToMe, Earmuffs, HoldOn, RepeatThat, SpeakLouder, SpeakSofter,
-# SomethingElse. The shipped module carried none of them.
-#
-# THE FAILURE MODE HERE IS OVER-MATCHING, AND IT IS SILENT. A global short-circuits BEFORE
-# the brain, so a pattern one word too loose does not raise anything — it quietly answers a
-# real sentence with a canned line, and the only symptom is a robot that has become
-# strangely wooden. So both directions are asserted: the command fires with NO llm call,
-# and the sentence that merely contains its words does not.
-#
-# `Hello` is deliberately NOT authored despite being on the list: greeting is exactly what
-# free chat does well, and short-circuiting it to a fixed string would make her less like
-# Moxie, not more.
+# The robot's ten any-time phrases (content-and-conversation.md:136-138). A global answers
+# BEFORE the brain, so over-matching is silent (a real sentence gets a canned line); both
+# directions are asserted — the command fires with NO llm call, a sentence merely containing
+# its words does not. `Hello` is deliberately not authored: greeting is what free chat does well.
 def _counting_app():
     calls = []
 
@@ -118,11 +106,9 @@ def test_an_ordinary_sentence_is_not_hijacked_by_a_global():
 
 
 def test_earmuffs_promises_only_what_it_actually_does():
-    """It says the line; it does not stop the microphone or drive the Earmuffs
-    engagement state, because this sim has no such wiring. A global that CLAIMED to stop
-    listening while still listening would be a lie told to a child, so the copy is pinned
-    to the honest half — and this test is what makes the gap deliberate rather than
-    forgotten."""
+    """It says the line but cannot stop the microphone (the sim has no such wiring), so the
+    copy is pinned to the honest half — a global claiming to stop listening would lie to a
+    child."""
     app, _ = _counting_app()
     reply = app.respond(Turn(robot=_robot(), speech="earmuffs")).text.lower()
     assert "not listening" in reply
@@ -130,17 +116,11 @@ def test_earmuffs_promises_only_what_it_actually_does():
 
 
 # --------------------------------------------------------------------------- #
-# No shipped global may fire and do nothing (2026-09-08)
+# No shipped global may fire and do nothing
 # --------------------------------------------------------------------------- #
-# `Timer` matched and did nothing from the day it was written. `register_global` is never
-# called in production, and it carried no `extension`, so `respond` fell through to free
-# chat: a child asking for a timer got a conversational reply and no timer.
-#
-# NOTHING ANYWHERE RAISED, and it could not have. A global that fires and does nothing
-# produces the same observable turn as one that never matched — free chat answers either
-# way — so no assertion about the REPLY can tell them apart. That is why this guard is
-# structural: it asks whether each shipped global has any way to act at all, which is a
-# property of the module rather than of a turn.
+# A global that matches but has no handler or extension falls through to free chat, which
+# looks identical to never matching — no assertion on the REPLY can tell. So this guard is
+# structural: every shipped global must have some way to act.
 def _shipped_globals():
     with open(STARTER) as fh:
         return json.load(fh)["globals"]
@@ -156,14 +136,9 @@ def test_every_shipped_global_can_actually_do_something():
 
 
 def test_every_shipped_extension_actually_runs_under_its_shipped_grants():
-    """Declaring a capability is not being granted one.
-
-    A shipped extension is trusted only when its digest is in the recorded baseline, and
-    it then gets `SHIPPED_EXTRA_GRANTS` on top of the four defaults. An extension that
-    declares something outside that set loads fine and then **fails open at runtime** —
-    `[ext] … stopped: has not been granted: …; Moxie carried on without it` — which lands
-    the turn in free chat looking exactly like the dead global above.
-    """
+    """Declaring a capability is not being granted one: a shipped extension (digest in the
+    baseline) gets `SHIPPED_EXTRA_GRANTS` + defaults; anything else fails open at runtime and
+    lands in free chat like a dead global."""
     from moxie_sdk.content import packs as P
     from moxie_sdk.content.content_app import SHIPPED_EXTRA_GRANTS
     from moxie_sdk.content import ext as E
@@ -181,14 +156,8 @@ def test_every_shipped_extension_actually_runs_under_its_shipped_grants():
 
 
 def test_the_timer_actually_sets_a_timer():
-    """The behaviour, not just the wiring: the right action with the right milliseconds.
-
-    `eb_timer_request` is a RECOVERED robot function (`ext.ACTION_WORDS`), and args are
-    (action=1 start, duration in ms). The arithmetic is asserted at three points because
-    the first version of this program had `plural` argument-swapped, which made the whole
-    rule fail open — the extension layer logged and carried on, so the symptom was again
-    an ordinary free-chat reply.
-    """
+    """The behaviour: `eb_timer_request` (a recovered function) with args (1 = start, duration
+    in ms), checked at three points — an argument-swapped draft failed open silently."""
     from moxie_sdk.content import packs as P
     with open(STARTER) as fh:
         raw = json.load(fh)

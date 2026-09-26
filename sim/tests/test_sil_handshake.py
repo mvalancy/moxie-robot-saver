@@ -1,73 +1,24 @@
 """🤝 A robot must not announce itself before the broker can answer it.
 
-**The finding (2026-09-04, SIL contention pass).** The `sil` job produced two
-intermittent reds on PR diffs that could not touch them, both green on re-run, neither
-reproducible locally. One of them was twelve setup errors reading
+`client.connect()` does not wait for CONNACK, and `on_connect` (where every client here
+subscribes) runs later on paho's network thread. Publishing `/devices/<id>/state` from the
+calling thread right after connecting can therefore reach the supervisor before our
+SUBSCRIBE exists. The supervisor answers with `/config` at QoS 0, not retained
+(`moxie_runtime._publish`; QoS 1 refused per production-hardening.md §4.3), so the answer is
+delivered to nobody and never replayed — a DELETED config, not a slow one, which no timeout
+can fix. The fix: the handshake observes the SUBACK (`VirtualMoxie.announce`).
 
-    RuntimeError: no paired config pushed within timeout        (a 60 s wait)
+Small injected delays do NOT reproduce it: the real supervisor pushes config on a 1.0 s
+settle timer, absorbing any SUBSCRIBE delay under ~1 s (measured: 0/4 lost up to 1100 ms,
+1/4 at 1500 ms, all lost at 3000 ms). So this file's fake cloud answers IMMEDIATELY, making
+the question purely ordinal — did the subscription exist when the answer was sent.
 
-…while the supervisor in the very same run had logged
+Proven three ways:
+1. the shipped `VirtualMoxie` survives a SUBSCRIBE 1.5 s late (§1);
+2. the replaced idiom does NOT survive it, so §1 cannot pass vacuously (§2);
+3. no SIL client in the tree announces without waiting for its SUBACK (§3).
 
-    [runtime] → pushed config to d_… (pairing_status=paired)
-
-Two halves of one appliance disagreeing about whether a config exists. It is not a slow
-config, it is a **deleted** one, and the deletion is in the robot's own handshake:
-
-* `client.connect()` writes CONNECT and returns; it does **not** wait for CONNACK.
-* `loop_start()`'s network thread reads the CONNACK and only then runs `on_connect`,
-  which is where every client in this repo sends its SUBSCRIBE.
-* the caller's very next line published `/devices/<id>/state` from the **calling**
-  thread — so the broker could be handing our announcement to the supervisor while our
-  SUBSCRIBE was still an unscheduled callback.
-
-The supervisor answers a `/state` with `/config` at **QoS 0 and not retained**
-(`moxie_runtime._publish`; QoS 1 is refused on purpose by production-hardening.md §4.3).
-A QoS-0 message with no matching subscription is delivered to nobody and never replayed.
-So the loser of that race waits out its entire timeout for a message that no longer
-exists — which is exactly why **raising the timeout cannot fix it**, and why the fix is
-to make the handshake *observe* the SUBACK instead of assuming it.
-
-**WHY A SMALL INJECTED DELAY DOES NOT REPRODUCE IT — read this before trying.** The
-obvious experiment is to sleep inside `on_connect` and watch the config go missing, and
-it *fails*, which is how this was misdiagnosed once already. The supervisor does not
-answer a `/state` at once: `_device_connect` schedules `_push_config` on a **1.0 s settle
-timer** (`moxie_runtime.MoxieRuntime` — `threading.Timer(1.0, _settle)`). So the robot has
-a whole second of slack it did not ask for, and any injected delay *inside* that second is
-absorbed with nothing to see. Measured against the real stack on 2026-09-04:
-
-    subscribe delayed    0 ms → 0/4 robots lost the config   (waits ≈ 1.02 s)
-    subscribe delayed  100 ms → 0/4 robots lost the config
-    subscribe delayed  500 ms → 0/4 robots lost the config   ← the experiment that "clears" it
-    subscribe delayed 1100 ms → 0/4 robots lost the config
-    subscribe delayed 1500 ms → 1/4 robots lost the config   ← the margin runs out
-    subscribe delayed 3000 ms → paired=False after 35.00 s, configs_seen=[]
-
-with the supervisor's own log for that last run reading
-
-    [runtime] 🤖 robot connected: d_f51eb0b8-…
-    [runtime] → pushed config to d_f51eb0b8-… (pairing_status=paired)
-
-— one push, sent, gone. A 0.5 s injection is therefore not evidence of anything; the
-threshold is the settle timer, and the failing region starts past it.
-
-That is also why this file's fake cloud answers **immediately** rather than imitating the
-settle timer: with the timer in the picture the question is "was the SUBSCRIBE more or
-less than one second late", which is a measurement of the runner. Without it the question
-is purely ordinal — *did the subscription exist when the answer was sent* — which is the
-property actually under test, and it is decided by ordering rather than by speed.
-
-**What this file proves.** Not the fix in one client — the *rule*, in three ways:
-
-1. the shipped `VirtualMoxie` survives a SUBSCRIBE that is 1.5 s late (§1);
-2. the idiom it replaced does **not** survive the same 1.5 s, so §1 cannot pass
-   vacuously (§2 — the teeth);
-3. no SIL client in the tree announces itself without waiting for its SUBACK (§3), so
-   the next one written cannot quietly reintroduce it.
-
-Needs a broker and nothing else — no supervisor, no brain, no network. The "cloud" here
-is nine lines of paho that answers a `/state` the way the supervisor does: QoS 0, not
-retained, immediately. The file is named `test_sil_*` because it needs that broker, which
-is what both CI tiers' `-k "not test_sil"` hermetic selection means.
+Needs a broker only (hence `test_sil_*`); the "cloud" is a few lines of paho.
 
     .venv/bin/python -m pytest sim/tests/test_sil_handshake.py -q
 """
@@ -108,18 +59,9 @@ CONFIG_WAIT_S = 10.0
 # A cloud that answers a /state the way the supervisor does
 # --------------------------------------------------------------------------- #
 class InstantCloud:
-    """Subscribes to `/devices/+/state`; answers each one with a QoS-0, non-retained
-    `/devices/<id>/config` **immediately**.
-
-    Immediately, and not on the supervisor's 1.0 s settle timer, because the settle timer
-    is the *slack* this test is trying to remove from the picture: with it, whether the
-    race is lost depends on how late the SUBSCRIBE is relative to one second, and this
-    file would be measuring the runner again. Answering at once makes the question purely
-    ordinal — did the subscription exist when the answer was sent — which is the actual
-    property under test.
-
-    It waits for its own SUBACK before reporting ready, for the same reason everything
-    else in this file does.
+    """Answers each `/devices/+/state` with a QoS-0, non-retained `/config` IMMEDIATELY (not
+    on the supervisor's settle timer, which would reintroduce timing slack). Waits for its
+    own SUBACK before reporting ready.
     """
 
     def __init__(self, port: int):
@@ -176,12 +118,9 @@ def cloud(broker):
 
 
 def _make_subscribe_late(client, seconds: float):
-    """Delay the SUBSCRIBE the way a loaded runner does: inside `on_connect`, on paho's
-    network thread, after the CONNACK has already been read.
-
-    Patching the client rather than sleeping in the test is deliberate — it leaves the
-    *shipped* `_on_connect` and the *shipped* announcement path running exactly as they
-    ship, and moves only the thing the runner actually moves.
+    """Delay the SUBSCRIBE as a loaded runner does — inside `on_connect` on paho's thread,
+    after CONNACK — by patching the client, so the shipped `_on_connect` and announcement
+    path run unchanged.
     """
     real = client.subscribe
     first = {"done": False}
@@ -245,21 +184,11 @@ def test_the_announcement_really_did_wait_for_the_suback(broker, cloud):
 # 2. THE TEETH — the idiom this replaced loses the config outright
 # --------------------------------------------------------------------------- #
 def test_the_teeth_the_pre_change_handshake_loses_the_config(broker, cloud):
-    """Run the handshake **this repo shipped until 2026-09-04** and require it to FAIL.
-
-    Not a hand-rolled paho client: the object below is the real `VirtualMoxie`, with its
-    real `_on_connect`, its real `_on_message` and its real `got_config` event. The only
-    thing restored is the one line the fix replaced —
+    """The teeth: the real `VirtualMoxie` with only the replaced line restored —
 
         self.client.publish(self.t_state, json.dumps({...}))     # instead of announce()
 
-    — which is exactly what `run_smoke`, `run_scenario`, `run_unpaired`, `run_queries`,
-    the telehealth run and the vision run all opened with. So this is a test that goes RED
-    against the pre-change `sim/virtual_moxie.py` and green after it, which is the only
-    thing that makes §1 above a proof rather than a restatement of "MQTT works".
-
-    Verified by reverting: with `git stash` holding the fix, this same body received no
-    config and §1 could not even be expressed (there was no `announce()` to call).
+    — must FAIL to receive a config under the same 1.5 s delay.
     """
     vm = VirtualMoxie("127.0.0.1", broker.port, timeout=CONFIG_WAIT_S, verbose=False)
     vm.client.connect("127.0.0.1", broker.port, 30)
@@ -286,15 +215,9 @@ def test_the_teeth_the_pre_change_handshake_loses_the_config(broker, cloud):
 # --------------------------------------------------------------------------- #
 # 3. the class, not the instance — no SIL client may announce itself deaf
 # --------------------------------------------------------------------------- #
-#: Every `.py` under `sim/` is swept. A file is IN SCOPE when it drives a real broker
-#: (`loop_start()`) **and** publishes a `…/state` topic — i.e. when it is a SIL client
-#: performing this exact handshake. Everything else (the in-process loopback tests, the
-#: doc guards) is untouched by the rule and is not listed anywhere, so the sweep cannot
-#: rot into a stale allowlist the way a hand-written file list would.
-#:
-#: Both spellings of the topic count: the literal `…/state"` and `t_state`, the property
-#: `VirtualMoxie` names it by. Matching only the literal is how the first draft of this
-#: sweep silently skipped the very client the whole finding came from.
+#: Every `.py` under `sim/` is swept; a file is in scope when it drives a real broker
+#: (`loop_start()`) AND publishes a `…/state` topic — either the literal or `t_state`
+#: (`VirtualMoxie`'s property name). No hand-written list to rot.
 _STATE_TOPIC = ('/state"', "t_state")
 
 
@@ -329,13 +252,9 @@ def _publish_lines(src: str):
 
 
 def test_every_sil_client_waits_for_its_suback_before_it_announces():
-    """The generalisation, shaped like `test_harness_readiness.py`: that file made "a SIL
-    *script* must wait for the supervisor, never sleep at it" a rule about the class, and
-    this one does the same for the client half of the same handshake.
-
-    The rule as asserted: a file that drives a real broker and publishes a `/state` must
-    either wire `on_subscribe` (and therefore have a SUBACK to wait on) or delegate the
-    announcement to `VirtualMoxie.announce`, which does.
+    """The class rule (sibling of `test_harness_readiness.py`'s script rule): a file that
+    drives a real broker and publishes `/state` must wire `on_subscribe` or delegate to
+    `VirtualMoxie.announce`.
     """
     clients = list(_sil_clients())
     assert clients, ("the sweep found no SIL clients at all — the shape it looks for has "

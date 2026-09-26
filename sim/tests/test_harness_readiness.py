@@ -1,40 +1,16 @@
 """A SIL script must WAIT for the stack, never guess at it.
 
-**The finding (2026-09-03, integration pass).** PR #103 made the supervisor's readiness
-line honest: `_on_connect` subscribes and *then* prints `[runtime] broker connected`, so
-the line finally means what it says (`test_connect_readiness.py` asserts that order of
-effects). `run_scenarios.sh` already waited on it. `sim/run_smoke.sh` — the harness CI
-gates on, and the one the docs tell an operator to run first — did not: it booted on
-`sleep 2` for the broker and `sleep 3` for the supervisor. So the fix landed and the
-script that most needed it could not benefit.
+A blind `sleep` is wrong both ways: measured with a docker broker, the broker listened after
+0.35 s and the supervisor was ready after 0.11 s (the script slept 2 + 3), while an 8 s slow
+`mqtt/run.py` (a loaded runner) produced "no config pushed within timeout" — a boot failure
+reported as a false accusation against the subject under test.
 
-Both numbers were wrong in both directions, measured on this box with a docker broker:
+This guards the CLASS: any `sim/*.sh` that boots `mqtt/run.py` must wait on an observable
+condition (shaped like `test_roster.py::test_every_sil_script_that_boots_a_supervisor_
+scopes_its_own_data_dir`).
 
-    broker listening after  0.35 s   (the script slept 2)
-    supervisor ready after  0.11 s   (the script slept 3)
-
-— 4.5 s of pure waiting per run, and still blind. Reproduced in the other direction by
-making `mqtt/run.py` 8 s slow, which is a loaded CI runner:
-
-    ❌ SIL round-trip FAILED:
-       - no config pushed within timeout
-
-Twenty seconds to a message that names the config push, the robot and the broker, and
-never the boot that had not happened — the same signature the sixth integration pass
-chased into the runtime. A blind sleep does not just waste time; it converts a boot
-failure into a false accusation against the subject under test.
-
-**What this file guards.** Not the fix — the *class*. Any `sim/*.sh` that boots
-`mqtt/run.py` must wait on an observable condition, so the next harness cannot be written
-with a `sleep` where a poll belongs. It is deliberately shaped like
-`test_roster.py::test_every_sil_script_that_boots_a_supervisor_scopes_its_own_data_dir`,
-which generalised the previous pass's harness finding the same way.
-
-Pure file reading: no broker, no supervisor, no network — which is why the file is NOT
-named `test_sil_*`. Both CI tiers select the hermetic suite with
-`-k "not test_sil and not test_docs"`, so a guard about the SIL scripts that wore the SIL
-prefix would have been deselected everywhere it was supposed to run: a test that does not
-exist, which is the very shape this file is here to prevent.
+Pure file reading, so deliberately NOT named `test_sil_*` — both CI tiers deselect
+`-k "not test_sil and not test_docs"`, which would make this guard a test that never runs.
 """
 import os
 import re
@@ -42,18 +18,10 @@ import re
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SIM = os.path.join(REPO, "sim")
 
-#: The readiness line every supervisor-booting script waits for. Kept as a literal here
-#: on purpose: if somebody changes the runtime's wording, this guard should go red next
-#: to `test_connect_readiness.py` rather than silently start waiting for nothing.
-#:
-#: **It moved on 2026-09-05, one handshake later.** `[runtime] broker connected` (below)
-#: is printed after `subscribe()` — but `subscribe()` only queues a SUBSCRIBE packet, so
-#: the line means *"we asked"*. A robot booted on it announces `/state` into a broker with
-#: no matching subscription, and the config push answering a `/state` is QoS 0 and not
-#: retained: the message is deleted, not delayed, which is why widening a timeout could
-#: never have helped. HIL caught it as `0/4 turns OK — no config pushed within timeout` on
-#: the FIRST scenario with the second green — the signature of a startup race. The
-#: harnesses now wait for the SUBACK line, printed from the runtime's `_on_subscribe`.
+#: The readiness line every supervisor-booting script waits for, kept literal so a runtime
+#: rewording goes red here. It is the SUBACK line from `_on_subscribe`, not
+#: `[runtime] broker connected`: `subscribe()` only queues a packet, and a robot announcing
+#: before the SUBACK has its QoS-0, non-retained config push deleted (not delayed).
 READY_LINE = "[runtime] subscriptions acknowledged by the broker"
 
 #: The CONNACK line. Still printed, still true, still what `/status`'s `broker_connected`
@@ -92,12 +60,9 @@ def test_every_supervisor_booting_script_waits_for_the_readiness_line():
 
 
 def test_no_supervisor_booting_script_guesses_the_boot_with_a_bare_sleep():
-    """A `sleep N` with N >= 1 in a boot path is the anti-pattern itself.
-
-    Sub-second sleeps are poll cadences (`sleep 0.2` inside a wait loop) and stay. The one
-    long sleep that survives is `run_broker_outage.sh`'s `sleep 6`, which is not a guess
-    at readiness but the assertion *"still alive after 6 s with nothing listening"* — a
-    duration under test, not a duration hoped for."""
+    """A `sleep N` (N >= 1) in a boot path is the anti-pattern. Sub-second poll cadences stay,
+    as does `run_broker_outage.sh`'s `sleep 6` — the duration UNDER TEST ("still alive after
+    6 s with nothing listening")."""
     allowed = {"run_broker_outage.sh": {"6"}, "run_compose_smoke.sh": {"2"}}
     offenders = []
     for name, src in _scripts():
@@ -113,11 +78,8 @@ def test_no_supervisor_booting_script_guesses_the_boot_with_a_bare_sleep():
 
 
 def test_the_readiness_helpers_live_in_one_place():
-    """Two copies of a wait are two waits.
-
-    `run_scenarios.sh` grew private copies when it was fixed first; `run_smoke.sh` needed
-    the identical pair. Both now source `sim/readiness.sh`, so a timeout or a poll cadence
-    is changed once."""
+    """Two copies of a wait are two waits: `run_scenarios.sh` and `run_smoke.sh` both source
+    `sim/readiness.sh`."""
     helpers = os.path.join(SIM, "readiness.sh")
     assert os.path.isfile(helpers), "sim/readiness.sh is gone"
     text = open(helpers, encoding="utf-8").read()
@@ -136,11 +98,8 @@ def test_the_readiness_helpers_live_in_one_place():
 
 
 def test_the_readiness_line_is_the_one_the_runtime_actually_prints():
-    """The guard above is only worth anything if the needle still exists in the runtime.
-
-    A rename in `moxie_runtime.py` would otherwise leave every script waiting 40 s for a
-    line nobody prints — a boot failure disguised as a slow boot, which is where this
-    whole thread started."""
+    """The needle must still exist in the runtime, or every script waits 40 s for a line
+    nobody prints — a boot failure disguised as a slow boot."""
     from helpers_runtime import runtime_source
     src = runtime_source()
     # The needle, not the whole call — the call also carries `flush=True`, which the
@@ -159,15 +118,9 @@ def test_the_readiness_line_is_the_one_the_runtime_actually_prints():
 # --------------------------------------------------------------------------- #
 # The other half of the readiness contract: printed last AND actually observable.
 # --------------------------------------------------------------------------- #
-# `test_connect_readiness.py` proves the line is printed only after every subscribe.
-# That makes it TRUE. It does not make it VISIBLE: every consumer of this signal redirects
-# the supervisor's stdout to a FILE, where Python is block-buffered, so an unflushed line
-# sits in an 8 KB buffer until the process exits or says 8 KB more. Four callers carried
-# `PYTHONUNBUFFERED=1` to compensate (`helpers_stack.py` even says why in a comment) —
-# and the fifth, a straightforward rewrite of `run_smoke.sh` on 2026-09-03, did not, and
-# waited the full 40 s for a supervisor that had connected in 0.11 s. The refusal branch
-# beside it had always flushed. So the environment variable is now belt, and the keyword
-# is braces.
+# `test_connect_readiness.py` makes the line TRUE; this makes it VISIBLE. Consumers redirect
+# stdout to a file, where Python block-buffers, so the line must be printed with
+# `flush=True` — `PYTHONUNBUFFERED=1` in callers is belt, the keyword is braces.
 class _FlushRecordingIO:
     """Enough of a text stream for `print`, recording the order of writes and flushes."""
 
@@ -225,16 +178,10 @@ def test_the_readiness_line_is_flushed_when_it_is_printed():
 # --------------------------------------------------------------------------- #
 # The same class again, one port along: a precondition nobody looked at.
 # --------------------------------------------------------------------------- #
-# `run_smoke.sh --telehealth` drives the robot over the supervisor's own status HTTP, so
-# that endpoint is the mode's SUBJECT. The script derived its port from the broker port
-# and called the bind "best-effort either way" — true when nothing read it, and never
-# revisited when `--telehealth` made it load-bearing. Observed 2026-09-03 on
-# `MOXIE_SIL_PORT=1930` → `:8930`, held by a stale supervisor from an unrelated run: the
-# runtime logged `status server failed: [Errno 98] Address already in use`, carried on,
-# and the telehealth robot POSTed **into that stranger**, failing 20 s later as
-# `exception: Expecting value: line 1 column 1 (char 0)` — a JSON error blamed on the
-# TeleHealth wire. Both outcomes are printed by `_start_status_server`, so both are
-# observable; the script simply did not look.
+# `run_smoke.sh --telehealth` drives the robot over the supervisor's status HTTP, so that
+# bind is load-bearing: a stale process holding the port made the robot POST into a stranger
+# and fail as a misleading JSON error. `_start_status_server` prints both outcomes; the
+# script must check them.
 def _smoke() -> str:
     return open(os.path.join(SIM, "run_smoke.sh"), encoding="utf-8").read()
 
@@ -275,18 +222,9 @@ def test_the_runtime_still_prints_both_status_bind_outcomes():
 # --------------------------------------------------------------------------- #
 # The fourth location of the same shape: a wait that could not fail.
 # --------------------------------------------------------------------------- #
-# `test_sil_durable_telemetry.py::test_the_buffer_is_a_cache_hydrated_on_first_touch`
-# waited for its status row with, among other clauses, `row.get("telemetry_count") is not
-# None`. The intent was "wait until the ring has been hydrated". The field is
-# `len(self._telemetry_buffer(...))` (`moxie_runtime.py`:533) — a LENGTH, so it is `0`,
-# never `None`, and the clause could not be false. A row that had hydrated nothing
-# satisfied the wait and fell straight through to a bare `assert 0 == 3`.
-#
-# This guard pins the fact that made the predicate vacuous, so the day somebody makes the
-# field nullable — which is the only way that predicate could ever have worked — this goes
-# red next to the test that depends on it. It is not a substitute for the fix (the wait
-# now covers the genuinely asynchronous part and hydration is asserted with a named
-# reason); it is the fact the fix rests on.
+# A SIL wait once used `row.get("telemetry_count") is not None` as "hydrated", but the field
+# is `len(self._telemetry_buffer(...))` — never None — so the clause could not be false.
+# This pins that fact, so making the field nullable goes red next to the test relying on it.
 def test_the_status_rows_telemetry_count_is_a_length_and_never_none():
     import sys as _sys
 
@@ -316,21 +254,11 @@ def test_the_status_rows_telemetry_count_is_a_length_and_never_none():
 # ---------------------------------------------------------------------------
 # TEARDOWN MUST NOT RACE, AND MUST NOT FAIL A PASSING RUN
 #
-# Observed in CI (PR #111, run against a tree where the scenarios all passed):
-#
-#     ✅ SIL scenarios OK — 2/2 scenarios passed
-#     rm: cannot remove '/tmp/moxie-scenarios-data-A41rj3/fleet': Directory not empty
-#     ##[error]Process completed with exit code 1
-#
-# Two independent defects, both of the shape this file exists to catch — a step
-# that trusts something it never confirmed:
-#
-#   1. `kill` only REQUESTS an exit. Since the supervisor grew a SIGTERM handler it
-#      flushes state on the way out, so `rm -rf` could walk the tree while a dying
-#      process was still writing into it. The graceful-shutdown work made the race
-#      likely; it did not create it.
-#   2. Under `bash -e` the failing `rm` aborted the cleanup function BEFORE its
-#      `return 0`, so a teardown problem was reported as a test failure.
+# Seen as "✅ 2/2 scenarios passed" followed by `rm: cannot remove …/fleet: Directory not
+# empty` and exit 1. Two defects:
+#   1. `kill` only REQUESTS an exit; the SIGTERM handler flushes state, so `rm -rf` could
+#      race a dying writer. Wait for the processes to be gone first.
+#   2. Under `bash -e` the failing `rm` aborted cleanup before `return 0`.
 # ---------------------------------------------------------------------------
 def test_sil_scripts_wait_for_their_children_before_deleting_the_data_dir():
     """Signal, confirm gone, then remove — and never let teardown fail the run."""

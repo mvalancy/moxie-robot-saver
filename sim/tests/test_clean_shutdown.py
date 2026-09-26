@@ -1,31 +1,15 @@
 """
 👋 The supervisor stops on purpose — and the broker finds out now, not in 45 seconds.
 
-Build document:
-[`docs/architecture/backlog/production-hardening.md`](../../docs/architecture/backlog/production-hardening.md)
-**§8 P1** — *"a SIGTERM handler that calls `disconnect()` so the broker logs a clean close
-instead of a 45 s keepalive timeout (which is also what makes `_device_disconnect`'s regex
-fire promptly)."*
+`production-hardening.md` §8 P1: SIGTERM/SIGINT (`docker stop`, `compose restart`,
+`systemctl stop`, Ctrl-C) call `disconnect()`. With keepalive 30 s the broker waits
+1.5 × keepalive = 45 s to declare a killed client dead, holding a ghost session for
+`client_id="supervisor"` and emitting nothing on `$SYS/broker/log` (so `DISCONNECT_RE`
+never fires).
 
-Why 45 seconds is the number. §4.1's C2 keeps the keepalive at **30 s** deliberately, and
-MQTT gives the broker 1.5 × keepalive before it declares a client dead. So a supervisor
-killed with its TCP session open is, from mosquitto's point of view, still connected for
-three-quarters of a minute. Two things follow, and the second is the one that bites:
-
-* the broker holds a session for `client_id="supervisor"` that no longer exists — and a
-  supervisor that comes back inside that window is talking past its own ghost;
-* `$SYS/broker/log` emits **nothing** until the timeout, so `DISCONNECT_RE` never fires.
-  The appliance's own record of the stop is a silence.
-
-`docker stop`, `docker compose restart`, `systemctl stop` and Ctrl-C all send SIGTERM or
-SIGINT — i.e. every ordinary way this process ever ends, apart from a crash.
-
-Hermetic. One test starts a **real supervisor subprocess** and sends it a **real SIGTERM**,
-because the thing under test is a signal handler and a `signal.signal` call that works in
-one thread and not another; a mock of it would assert the mock. It needs no broker: it
-points the supervisor at a closed port, which also proves the case `docker stop` actually
-hits — a stop *during* the reconnect ladder, where the client has no socket to close and
-`loop_forever` is inside its backoff.
+One test starts a REAL supervisor subprocess and sends a REAL SIGTERM (a mocked
+`signal.signal` would assert the mock), pointed at a closed port — the stop-during-
+reconnect-backoff case `docker stop` actually hits, with no socket to close.
 """
 from __future__ import annotations
 
@@ -39,9 +23,6 @@ import time
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_runtime import make_runtime                          # noqa: E402
 from moxie_sdk import conn_telemetry as conn                      # noqa: E402
@@ -68,13 +49,8 @@ def _rt(tmp_path, **kw):
 
 @pytest.fixture
 def restore_signals():
-    """Put the process's own handlers back.
-
-    `_install_signal_handlers` really calls `signal.signal`, so a test that installed one
-    and walked away would leave pytest's SIGINT handling replaced by a runtime that has
-    been garbage collected — and the failure would surface in some *other* test, as a
-    Ctrl-C that does nothing.
-    """
+    """Restore the process's own signal handlers, so pytest's SIGINT handling is not left
+    replaced by a collected runtime (surfacing later as a Ctrl-C that does nothing)."""
     previous = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
     yield
     for sig, handler in previous.items():
@@ -241,16 +217,9 @@ def test_the_handler_starts_a_real_stop(restore_signals, tmp_path):
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX signals")
 def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
-    """The one test that cannot be faked, and the case `docker stop` actually hits.
-
-    The supervisor is pointed at a **closed** port, so it is inside `loop_forever`'s
-    reconnect backoff with no socket to close — which is where a naive handler is most
-    likely to leave the process wedged, because there is no connection for `disconnect()`
-    to tear down and paho has to notice the state change on its own. Before this slice
-    there was no handler at all: the default SIGTERM disposition killed the process, which
-    *looks* the same from outside and is exactly why an assertion on "it exited" alone
-    would prove nothing. So the assertions are on what only a handled stop can produce —
-    the log lines and `rc == 0`.
+    """The un-fakeable case: SIGTERM while inside `loop_forever`'s reconnect backoff (closed
+    port, no socket). The default disposition also "exits", so the assertions are on what
+    only a HANDLED stop produces — the two log lines and `rc == 0`.
     """
     env = dict(os.environ)
     env.update(MOXIE_APP="echo", MOXIE_MQTT_HOST="127.0.0.1", MOXIE_MQTT_PORT=DEAD_PORT,
@@ -265,35 +234,16 @@ def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     tail = _Tail(proc)
     try:
-        # Generous on purpose, and the generosity is about the *boot*, not about the
-        # subject. Booting a supervisor is not what this test asserts; a slow boot on a
-        # loaded runner making it red would be the test measuring the machine. (Seen once,
-        # at 40 s, with 16 CPU burners and a soak running — the process was alive and
-        # still importing.) The assertions that matter — rc == 0 and the two log lines —
-        # are unaffected by how long the boot took, and `_Tail` fails fast if the child
-        # dies instead of printing. Playbook rule 11: assert recorded state, and do not
-        # let a live timing sample decide the verdict.
+        # Generous for the BOOT, which is not the subject (seen at 40 s on a saturated box).
+        # rc == 0 and the log lines don't depend on boot time, and `_Tail` fails fast if the
+        # child dies instead of printing.
         assert tail.wait_for("clean shutdown armed", timeout=180), \
             ("the supervisor never armed its stop signals "
              f"(alive={proc.poll() is None}):\n{tail.text()}")
         proc.send_signal(signal.SIGTERM)
-        # OBSERVE THE EXIT; DO NOT SAMPLE IT. This used to read
-        #
-        #     if not tail.wait_closed(timeout=30) or proc.poll() is None: fail(...)
-        #
-        # and the second half is a race, not a check. `wait_closed` returns the instant
-        # the child's stdout reaches EOF — which happens while the kernel is still tearing
-        # the process down — so `poll()` on the very next line can legitimately answer
-        # `None` for a process that has already stopped. Measured on 2026-09-04 with the
-        # box oversubscribed 40 CPU burners deep: `poll()` was None at EOF in 3 of 6 runs,
-        # every one of which had already printed both shutdown lines and exited 0. The
-        # message that fell out of it — "SIGTERM did not stop the supervisor within 30s" —
-        # was reached in under a tenth of a second and was simply untrue, which is exactly
-        # how a gate teaches people to re-run it instead of reading it.
-        #
-        # `proc.wait(timeout=30)` is the same 30-second bound (NOT widened) spent on the
-        # thing actually being claimed: it blocks in `waitpid` until the child is really
-        # gone, so there is no window to be scheduled into.
+        # OBSERVE the exit, don't sample it: stdout EOF arrives while the kernel is still
+        # tearing the process down, so `poll()` right after can be None for a process that
+        # already exited 0. `proc.wait(timeout=30)` blocks in `waitpid` — same bound, no race.
         try:
             proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
@@ -318,23 +268,9 @@ def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
 
 @pytest.mark.skipif(os.name != "posix", reason="fd surgery on the child's stdout")
 def test_a_closed_stdout_is_not_proof_that_the_process_has_exited():
-    """THE TEETH for the line above, and the whole reason it changed.
-
-    The test above used to decide "the supervisor did not stop" from two facts read a few
-    microseconds apart: the child's stdout had reached EOF, and `poll()` had not yet seen
-    an exit status. Those are not contradictory — a process closes its file descriptors
-    on the way out and is reapable slightly later — so the pair proves nothing, and on a
-    loaded runner it produced a confident thirty-second verdict in about a tenth of a
-    second.
-
-    This builds that window on purpose and with **no wall clock in it at all**: the child
-    closes fd 1 itself and then blocks forever on stdin, so it is unambiguously alive with
-    its output stream unambiguously ended. If `poll()` at EOF were sound, this test could
-    not exist.
-
-    Then it shows the replacement doing the right thing on the same process: close stdin,
-    and `wait()` — which blocks in `waitpid` rather than sampling it — reports the true
-    exit.
+    """Teeth for the line above: a child that closes fd 1 and then blocks on stdin is alive
+    with its output ended — so "EOF + `poll() is None`" proves nothing. Then closing stdin
+    and `wait()` reports the true exit. No wall clock involved.
     """
     child = subprocess.Popen(
         [sys.executable, "-c",
@@ -359,15 +295,9 @@ def test_a_closed_stdout_is_not_proof_that_the_process_has_exited():
 
 
 class _Tail:
-    """Drain a child's stdout on a thread, keeping every line.
-
-    The first draft had the reader thread `return` as soon as it found the line it was
-    waiting for, and then read the rest with `communicate()`. That works and is subtly
-    racy: `for line in proc.stdout` reads through a buffer, so the lines already pulled
-    into it when the thread returned were simply lost — including, on an unlucky
-    scheduling, the two lines the assertions are about. One reader, one buffer, nothing
-    handed over: `wait_for` watches what has been collected instead of consuming it.
-    """
+    """Drain a child's stdout on one thread, keeping every line; `wait_for` watches what was
+    collected rather than consuming it (handing a buffered pipe to a second reader loses
+    lines)."""
 
     def __init__(self, proc):
         self._lines: list = []

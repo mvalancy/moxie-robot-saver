@@ -1,30 +1,23 @@
 """
 🎭 Telehealth through the REAL runtime — the six verbs, the three gates, the transcript.
 
-A real `MoxieRuntime` with a fake transport (`helpers_runtime.FakeClient`): no broker, no
-robot, no gateway, but the actual permit check, the actual mode gate, the actual safety
-classifier and the actual markup floor. What each block is here to pin:
+A real `MoxieRuntime` over `helpers_runtime.FakeClient`: the actual permit check, mode
+gate, safety classifier and markup floor. Pinned:
 
-  * **the speak round-trip** — exactly one `commands/telehealth` PLAY_OUTPUT and one
-    `commands/tts`, the markup valid against the frozen catalog, and the mood the operator
-    picked really on the wire;
-  * **the mode gate** — speaking at a robot still running its own brain is refused and
-    publishes nothing, because two voices in one mouth is the failure a child would see;
-  * **the permit gate** — a *pending* robot cannot be puppeted by any verb;
-  * **safety** — the operator's line is classified as `MOXIE`; a BLOCK is returned to the
-    operator with its reason and nothing is spoken (never silently rewritten, because a
-    human is at the keyboard); a FLAG is spoken and journaled;
-  * **no brain during a session** (B3) — a `events/remote-chat` that arrives mid-session
-    produces no `commands/remote_chat`;
-  * **state ingest** — what the robot reported, verbatim, and "never reported" until then;
-  * **the status HTTP verbs** the console proxies, driven against a real handler.
+  * speak round-trip — one `commands/telehealth` PLAY_OUTPUT + one `commands/tts`, markup
+    valid against the catalog, the operator's mood on the wire;
+  * mode gate — speaking at a robot still running its own brain publishes nothing;
+  * permit gate — a pending robot cannot be puppeted by any verb;
+  * safety — the operator's line is classified as `MOXIE`; a BLOCK is returned with its
+    reason and nothing is spoken (never silently rewritten); a FLAG is spoken + journaled;
+  * no brain mid-session (B3) — a `remote-chat` produces no `commands/remote_chat`;
+  * state ingest — verbatim, and "never reported" until then;
+  * the status HTTP verbs the console proxies.
 
-Every assumption these exercise is flagged in `mqtt/moxie_sdk/telehealth.py`; nothing here
-has run against a physical robot.
+Assumptions are flagged in `mqtt/moxie_sdk/telehealth.py`; not run on a physical robot.
 """
 import json
 import os
-import sys
 import threading
 import urllib.error
 import urllib.request
@@ -32,9 +25,6 @@ import urllib.request
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_runtime import CountingSynth, FakeClient, make_runtime   # noqa: E402
 from moxie_sdk import safety as safety_seam                           # noqa: E402
@@ -483,12 +473,8 @@ def test_the_bedtime_warning_is_reported_and_the_line_is_still_sent(rt):
     import datetime
     runtime, device_id = rt
 
-    # A window centred on *now*, so this test cannot depend on the hour it runs at.
-    # It used to say ["00:00", "23:59"], which reads as "all day" but is not: the helper
-    # compares `start <= cur < end`, so that window is false for exactly the minute
-    # 23:59, and the test failed there once a day. A now±1h window always contains now,
-    # including when it wraps midnight — `in_bedtime` handles `start > end` explicitly,
-    # and the wrap is the normal case for a real bedtime (20:30-07:00).
+    # now±1h always contains now, wrap included. (["00:00", "23:59"] is false for the
+    # minute 23:59 because the helper compares `start <= cur < end`.)
     now = datetime.datetime.now()
     start = (now - datetime.timedelta(hours=1)).strftime("%H:%M")
     end = (now + datetime.timedelta(hours=1)).strftime("%H:%M")

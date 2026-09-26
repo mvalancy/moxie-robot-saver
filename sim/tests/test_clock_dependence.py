@@ -220,18 +220,11 @@ REVIEWED: dict = {
         "timeout with a named reason."),
 
     # ---- presence --------------------------------------------------------------------
-    "sim/tests/test_presence_runtime.py::_seed_absent": (
+    "sim/tests/helpers_runtime.py::seed_absent": (
         ("time.time",),
         "RELATIVE — presence is scored as an AGE against `greet_after_s`, so the seeded "
         "state is offsets from now. A pinned epoch would make every robot absent for "
-        "years and the suite would assert nothing."),
-    "sim/tests/test_launch_cards_runtime.py::_seed_absent": (
-        ("time.time",),
-        "RELATIVE — same reason as its `test_presence_runtime.py` twin: a robot's absence "
-        "is an AGE measured against `greet_after_s`, so the seeded record is offsets from "
-        "now. The two card tests that use it assert the OPPOSITE of a greeting (a scan is "
-        "not a sighting, so no hello is due however long the robot has been away), which "
-        "a pinned epoch could not distinguish from the clock simply not mattering."),
+        "years and the suites would assert nothing."),
     "sim/tests/test_presence_runtime.py::test_a_bedtime_window_that_wraps_midnight_is_understood": (
         ("datetime.now",),
         "RELATIVE (but hour-independent) — only today's *date* is borrowed; hour and "
@@ -245,7 +238,7 @@ REVIEWED: dict = {
     "sim/tests/test_presence_runtime.py::test_bedtime_hours_suppress_the_hello": (
         ("datetime.now",),
         "RELATIVE by necessity — the subject `rt._in_bedtime` reads the real clock itself "
-        "(moxie_runtime.py:1723), so pinning the test's clock would test a different "
+        "(moxie_runtime/presence.py), so pinning the test's clock would test a different "
         "function. A now±30 min window contains now at all 1440 minutes; asserted "
         "exhaustively by `test_the_synthetic_windows_the_two_tests_above_build_hold_at_"
         "every_minute`. Both bedtime keys are written so a Fri→Sat midnight between the "
@@ -256,19 +249,6 @@ REVIEWED: dict = {
         "now at all 1440 minutes, asserted by the same exhaustive test. Its "
         "`pytest.skip(\"the synthetic window wrapped onto now\")` was removed here: it "
         "could never fire, and a skip that cannot fire is an escape hatch for a regression."),
-    "sim/tests/test_ext_subscribe.py::_seed_absent": (
-        ("time.time",),
-        "RELATIVE — a third copy of the same helper, for the same reason: the two A2 "
-        "regressions below it prove that a woken content pack which matches nothing "
-        "leaves the greeting rule exactly as it was, and the greeting is scored as an AGE "
-        "against `greet_after_s`. A pinned epoch would make the robot absent for years, "
-        "which is a state the rule answers identically to the one under test — so the "
-        "regression would pass without asserting anything."),
-    "sim/tests/test_presence_sil.py::_seed_absent": (
-        ("time.time",),
-        "RELATIVE — offsets from now, for the same reason as the runtime suite's "
-        "`_seed_absent`: the SIL robot's presence record is read as an age, so a pinned "
-        "epoch would describe a robot that left years ago."),
 
     # ---- the day plan ----------------------------------------------------------------
     "sim/tests/test_schedule_sil_e2e.py::_bedtime_body": (

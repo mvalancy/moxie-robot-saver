@@ -1,31 +1,24 @@
 """
-Gateway EARS — the hermetic tier for `moxie_sdk/stt.py`'s cloud transcriber and for the
-`MOXIE_STT` switch that chooses between it and local whisper.
+Gateway EARS — hermetic tests for `moxie_sdk/stt.py`'s cloud transcriber and the
+`MOXIE_STT` switch between it and local whisper.
 
-`test_stt.py` covers the VAD accumulator and the wire encoder; this file covers what was
-added when the gateway's `/v1/audio/transcriptions` went live (2026-09-02): the in-memory
-WAV wrapping (the robot's mic is headerless 16 kHz PCM and the endpoint wants a *file*),
-the request shape, the retry/backoff seam, the latching fallback, and the config
-precedence — including the one the deployment story depends on, that
-**`MOXIE_STT=whisper` keeps the ears local even when a gateway URL is configured**.
+`test_stt.py` covers VAD and the wire encoder. Here: in-memory WAV wrapping (the mic is
+headerless 16 kHz PCM; the endpoint wants a file), the request shape, retry/backoff, the
+latching fallback, and config precedence — notably `MOXIE_STT=whisper` keeps the ears
+local even with a gateway URL configured.
 
-Everything here runs with **no `openai` installed** (playbook rule 9): the transcriber
-takes a `client=` fake, the config tests stub `make_openai_transcriber`, and the only
-network in the file is imaginary. The real endpoint is exercised in
-`sim/tests/test_live_gateway_stt.py`.
+No `openai` needed: the transcriber takes a `client=` fake and config tests stub
+`make_openai_transcriber`. The real endpoint is `test_live_gateway_stt.py`.
 """
-import importlib
+from helpers_runtime import reload_config                      # noqa: E402
 import io
 import os
-import sys
 import wave
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MQTT = os.path.join(REPO, "mqtt")
-sys.path.insert(0, MQTT)
-sys.path.insert(0, os.path.join(MQTT, "supervisor"))
 
 from moxie_sdk.stt import (  # noqa: E402
     FallbackTranscriber, NullTranscriber, OpenAITranscriber, SttServerError,
@@ -255,19 +248,7 @@ _STT_ENV = ("MOXIE_STT", "MOXIE_STT_MODEL", "MOXIE_STT_BASE_URL", "MOXIE_STT_API
 
 
 def _fresh_config(monkeypatch, **env):
-    """`mqtt/config.py` re-imported with a controlled environment (the pattern
-    `test_assemble.py` uses for the voice knobs).
-
-    `MOXIE_SKIP_DOTENV` first: without it a real `mqtt/.env` is re-read by `_load_env`
-    on every reload and refills exactly the variables deleted below, so "nothing is set"
-    silently became "whatever the developer has" (playbook rule 20)."""
-    monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
-    for k in _STT_ENV:
-        monkeypatch.delenv(k, raising=False)
-    for k, v in env.items():
-        monkeypatch.setenv(k, v)
-    import config as _c
-    return importlib.reload(_c)
+    return reload_config(monkeypatch, _STT_ENV, **env)
 
 
 def _stub_engines(monkeypatch, *, whisper=True, openai_sdk=True):
@@ -456,17 +437,9 @@ def test_the_endpoint_and_key_fall_back_voice_then_llm(monkeypatch):
 
 
 def test_nothing_set_still_returns_what_it_returned_before(monkeypatch):
-    """The no-regression pin: an unset environment builds local whisper when it is
-    installed and None when it is not — the M3 contract, unchanged.
-
-    Through `_fresh_config`, not by hand. This test used to inline the delete-and-reload
-    loop and so was the one test in this file that skipped the helper's
-    `MOXIE_SKIP_DOTENV` — which is the entire reason the helper exists. With a dotenv
-    visible it built a gateway transcriber and asserted `is None` against a machine that
-    has ears, i.e. it asserted nothing (playbook rule 20). It is the only test here that
-    fails on a real developer's box even when this FILE is run alone, so it is a defect
-    in the test rather than in collection order; the suite-wide fence in `conftest.py`
-    covers the order-dependent half."""
+    """No-regression pin: an unset environment builds local whisper when installed and
+    None when not (M3). Goes through `_fresh_config` so a visible dotenv cannot turn it
+    into a gateway transcriber."""
     c = _fresh_config(monkeypatch)
     t = c.build_transcriber()
     if WhisperTranscriber.available():
@@ -493,10 +466,9 @@ def test_the_startup_log_line_says_which_ears_are_listening(monkeypatch):
 
 
 # --------------------------------------------- which gateway models are audio --
-# Groundwork for a console model picker: `GET /v1/models` returns one flat list with
-# nothing marking a model as audio, so the names are the only contract. The golden list
-# below is exactly what the gateway served on 2026-09-02 (six voices, three ears, and
-# chat models that must not leak into either).
+# `GET /v1/models` is one flat list with nothing marking a model as audio, so names are
+# the only contract. The golden is a real gateway listing (six voices, three ears, and
+# chat models that must leak into neither).
 
 GATEWAY_MODELS = [
     "piper-amy", "piper-ryan", "graphling-tts-narrator", "graphling-tts-character",

@@ -7,24 +7,13 @@ _publish_chat → build_chat_response → client.publish — the actual runtime 
 """
 import json
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
 from moxie_sdk.app import MoxieApp                       # noqa: E402
 from moxie_sdk.types import Reply, Action, ActionType, RobotContext, ChildProfile  # noqa: E402
 import moxie_runtime                                     # noqa: E402
-
-
-class _FakeClient:
-    """Records publishes; no network."""
-    def __init__(self):
-        self.published = []
-
-    def publish(self, topic, payload):
-        self.published.append((topic, json.loads(payload)))
+from helpers_runtime import FakeClient                   # noqa: E402
 
 
 class _ActionApp(MoxieApp):
@@ -45,7 +34,7 @@ class _OfflineApp(MoxieApp):
 
 def _drive(app, device_id="d_test", speech="hello", synth=None):
     rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname="Sam"))
-    rt.client = _FakeClient()                             # inject fake transport
+    rt.client = FakeClient()                             # inject fake transport
     if synth is not None:
         rt.set_synthesizer(synth)                         # server-side voice for the SIM
     rt.robots[device_id] = RobotContext(device_id=device_id, child=rt.child)
@@ -108,7 +97,7 @@ def test_content_module_runs_through_the_runtime():
         module = load_modules(json.load(fh))
     app = ContentApp(module, lambda messages: "Dinosaurs are amazing!")
     rt = moxie_runtime.MoxieRuntime(app=app, child=ChildProfile(nickname="Sam"))
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_content"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child,
                                   module_id="FREE_CHAT", content_id="default")
@@ -123,7 +112,7 @@ def test_content_module_runs_through_the_runtime():
 
 def test_history_accumulates_across_the_pipeline():
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_hist"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     rt._on_remote_chat(did, rt.robots[did],
@@ -144,7 +133,7 @@ def test_stt_frames_through_runtime_publish_transcript():
             return f"heard {len(pcm)}b"
 
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     rt.set_transcriber(_Fake())
     did = "d_stt"
     assert rt.feed_stt(did, 1, b"aa", uuid="u1") is None        # START_OF_SPEECH
@@ -167,7 +156,7 @@ def test_handle_zmq_json_audio_frame_drives_stt():
             return "hello moxie"
 
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     rt.set_transcriber(_Fake())
     did = "d_zmq"
     a = base64.b64encode(b"xy").decode()
@@ -180,7 +169,7 @@ def test_handle_zmq_json_audio_frame_drives_stt():
 
 def test_no_transcriber_ignores_audio():
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     assert rt.feed_stt("d", 3, b"aa") is None            # no transcriber → no-op
     assert rt.client.published == []
 
@@ -193,7 +182,7 @@ def test_push_config_publishes_spec_robot_cloud_config():
     (no `child_pii`, `pairing_status:"unpairing"`) is `test_device_permits.py`."""
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"),
                                     allow_unverified_bots=True)
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_cfg"
     rt._push_config(did)
     msgs = [p for (t, p) in rt.client.published if t == f"/devices/{did}/config"]
@@ -209,7 +198,7 @@ def test_push_config_publishes_spec_robot_cloud_config():
 def test_state_ingest_stores_robot_status():
     """M5 integration: a /state RobotStatus updates firmware + is stored for the UI."""
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_state"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     rt._on_state(did, json.dumps({"robot_firmware_version": "v24.10.803",
@@ -223,7 +212,7 @@ def test_update_config_republishes_with_merged_overrides():
     overrides merge + persist across pushes."""
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"),
                                     allow_unverified_bots=True)
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_upd"
     rt.update_config(did, audio_volume=0.9, timezone_id="America/New_York")
     cfg = [p for (t, p) in rt.client.published if t == f"/devices/{did}/config"][-1]
@@ -237,7 +226,7 @@ def test_update_config_republishes_with_merged_overrides():
 def test_update_config_bedtime_window():
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(),
                                     allow_unverified_bots=True)
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     cfg = rt.update_config("d_bt", weekday_bedtime=("20:00", "07:00"))
     assert cfg["weekday_bedtime_enabled"] is True
     assert cfg["weekday_bedtime_starts_at"] == "20:00"
@@ -246,7 +235,7 @@ def test_update_config_bedtime_window():
 def test_status_snapshot_surfaces_robot_state():
     """M6: the console snapshot carries each robot's live state from /state."""
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"))
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_snap"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     rt._on_state(did, json.dumps({"robot_firmware_version": "v24.10.803",
@@ -273,7 +262,7 @@ def test_tts_synthesizes_and_publishes_on_a_turn():
             return b"PCM:" + text.encode()
 
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"))
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     rt.set_synthesizer(_FakeSynth())
     did = "d_tts"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
@@ -290,7 +279,7 @@ def test_tts_synthesizes_and_publishes_on_a_turn():
 
 def test_no_synthesizer_no_tts_published():
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_notts"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     rt._on_remote_chat(did, rt.robots[did],
@@ -304,7 +293,7 @@ def test_telemetry_ingest_stores_and_counts():
     the console status snapshot."""
     from moxie_sdk.telemetry import build_packet
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_tel"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     pkt = build_packet("wake", b"x", moxie_id=did)
@@ -338,7 +327,7 @@ def test_handle_zmq_real_protobuf_frame_drives_stt():
             return f"pb {len(pcm)}b"
 
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     rt.set_transcriber(_Fake())
     did = "d_pb"
     rt.handle_zmq(did, _frame(1, b"aa", "u5"))         # START
@@ -353,7 +342,7 @@ def test_telemetry_view_summarizes_stored_packets():
     rolls the ingested Packets up by event and returns them newest-first."""
     from moxie_sdk.telemetry import build_packet
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_view"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     for name, ts in (("wake", 100), ("said", 200), ("wake", 300)):
@@ -370,7 +359,7 @@ def test_telemetry_view_summarizes_stored_packets():
 def test_telemetry_view_honors_limit_and_unknown_device():
     from moxie_sdk.telemetry import build_packet
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_lim"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     for i in range(4):
@@ -389,7 +378,7 @@ def test_status_server_serves_status_and_telemetry():
     from moxie_sdk.telemetry import build_packet
 
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile())
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_http"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     rt.ingest_telemetry(did, json.dumps(build_packet("wake", b"", moxie_id=did,
@@ -420,7 +409,7 @@ def _activity_runtime(device_id="d_test", tmp_path=None):
     from moxie_sdk.store import JsonStore
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(),
                                     store=JsonStore(str(tmp_path)) if tmp_path else None)
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     rt.robots[device_id] = RobotContext(device_id=device_id, child=rt.child)
     return rt
 
@@ -568,7 +557,7 @@ def test_schedule_uses_the_running_content_modules_schedules_block(tmp_path):
         {"name": "quiet", "schedule": {"provided_schedule": [{"module_id": "AUDMED"}]}}]})
     rt = moxie_runtime.MoxieRuntime(app=ContentApp(module, lambda m: "hi"),
                                     child=ChildProfile(), store=JsonStore(str(tmp_path)))
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_authored"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     _, msg = _activity(rt, {"subtopic": "query", "query": "schedule",
@@ -628,20 +617,13 @@ def test_schedule_view_plans_for_an_offline_robot_the_roster_knows(tmp_path):
 
 def test_a_parent_requested_activity_lands_at_the_hour_they_asked_for(tmp_path):
     """`SchedulePreferences.parent_requests[]` (RobotCloudConfig field 28) is honored by
-    the planner, not just stored: a 16:00 request is pinned to the 16:00 slot.
-
-    No wall clock anywhere. `parent_requests_due` pins a request only when
-    `when.date() == now.date()`, and `plan_schedule_for` takes `now` — so a **fixed**
-    day serves the assertion exactly as well as today does, and cannot drift.
-    It used to read `datetime.date.today()` twice, once for the request and once for
-    `now`: a run that crossed local midnight between those two calls put the request on
-    the day before "today", left it unpinned, and failed. Same family as the flakes fixed
-    in PR #60/#63 — narrow, but there is no reason to carry it."""
+    the planner: a 16:00 request is pinned to the 16:00 slot. A FIXED day is used for both
+    the request and `now`, so a run crossing local midnight cannot unpin it."""
     import datetime
     from moxie_sdk.store import JsonStore
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"),
                                     store=JsonStore(str(tmp_path)))
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_pref"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     day = datetime.date(2026, 9, 2)                       # a Wednesday, fixed on purpose
@@ -667,7 +649,7 @@ def test_status_server_serves_the_schedule_and_its_explanations(tmp_path):
 
     rt = moxie_runtime.MoxieRuntime(app=_ActionApp(), child=ChildProfile(nickname="Sam"),
                                     store=JsonStore(str(tmp_path)))
-    rt.client = _FakeClient()
+    rt.client = FakeClient()
     did = "d_httpsched"
     rt.robots[did] = RobotContext(device_id=did, child=rt.child)
     _activity(rt, {"subtopic": "query", "query": "schedule"}, did)

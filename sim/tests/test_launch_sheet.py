@@ -1,24 +1,15 @@
 """
 🎴 The printable sheet — the paper half of the launch-card feature.
 
-`test_launch_cards.py` proves what a scanned string may do. This file proves the other
-direction: that the page a parent prints carries exactly the cards the decoder admits,
-and nothing else.
+`test_launch_cards.py` proves what a scanned string may do; this file proves the printed
+page carries exactly the cards the decoder admits. The key test is
+`test_every_card_reads_back_out_of_its_own_modules_and_decodes`: it walks the rendered QR
+module matrix as a scanner does (`helpers_qr_matrix.py`) and hands the result to the real
+`launch_cards.decode`. Optics are NOT proven — no Moxie has read one of these cards; the
+geometry tests check only the paper arithmetic (module size, quiet zone, A4 + Letter fit).
 
-The assertion that carries the weight is not "the caption under the code says
-`GO<launch:DRAW>`" — that only proves a string we already had. It is
-`test_every_card_reads_back_out_of_its_own_modules_and_decodes`, which walks the rendered
-QR **module matrix** the way a scanner does (`helpers_qr_matrix.py`: format information,
-un-mask, zig-zag, de-interleave, byte segment) and hands the result to the real
-`launch_cards.decode`. Everything between the catalog and the ink is then proven.
-**What is not proven is optics**: no physical Moxie has ever read one of these, our
-corpus says nothing about its camera, and nobody here can print a sheet and scan it. The
-geometry tests below check the arithmetic of the paper — module size, quiet zone, that
-the grid fits both A4 and Letter — which is the part a test can see.
-
-Hermetic and pure: no broker, no clock, no model, no network. `segno` is a declared test
-dependency (`requirements-hermetic.txt` -> `server/requirements.txt`), so it is a hard
-requirement here rather than an `importorskip` that would read as a pass.
+Hermetic and pure. `segno` is a declared test dependency, so it is required rather than
+importorskipped.
 """
 from __future__ import annotations
 
@@ -30,8 +21,6 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 import helpers_qr_matrix as qrm                                         # noqa: E402
 from moxie_sdk import launch_cards as cards                             # noqa: E402
@@ -69,12 +58,8 @@ def test_every_card_payload_is_the_one_launch_cards_encode_produces(deck):
 
 
 def _code_string_literals(path):
-    """Every string literal in the module's *code* — docstrings and comments excluded.
-
-    Playbook rule 17: a guard must assert over code, not over the whole file. This module
-    quotes `GO<launch:DM>` in its docstring on purpose, which is the house style
-    everywhere else here; what must not exist is a literal in an executable position.
-    """
+    """Every string literal in the module's CODE (docstrings/comments excluded), so a
+    quoted `GO<launch:DM>` in prose does not count."""
     tree = ast.parse(open(path, encoding="utf-8").read())
     docs = set()
     for node in ast.walk(tree):
@@ -222,12 +207,9 @@ def test_the_matrix_reader_refuses_a_symbol_it_cannot_honestly_read():
 
 
 def test_the_matrix_reader_notices_a_flipped_module(deck, version):
-    """The second anti-vacuity leg: no Reed-Solomon, deliberately, so damage surfaces
-    instead of being repaired rather than a wrong card being read as a right one.
-
-    The bottom-right corner is where symbol character placement starts, so those modules
-    carry the mode indicator, the length and the first characters — the bytes a repair
-    would have to invent. Each flip must change what comes out, or be refused outright."""
+    """No Reed-Solomon repair, deliberately, so damage surfaces instead of a wrong card
+    reading as a right one: flipping modules in the bottom-right corner (mode, length,
+    first characters) must change the output or be refused."""
     payload = cards.encode("DRAW")
     clean = sheet.qr_matrix(payload, version)
     size = len(clean)
@@ -435,17 +417,11 @@ def test_the_cli_writes_to_stdout_by_default(capsys):
 # --------------------------------------------------------------------------- #
 # 8. A real browser, a real rasteriser — the closest thing to a scan we can run
 # --------------------------------------------------------------------------- #
-# Everything above this line reasons about the sheet. These two put it through the engine
-# a parent will actually print with. They use the suite's shared `browser` fixture, which
-# falls back to a system Chrome and skips cleanly where there is none.
+# Uses the shared `browser` fixture (system Chrome fallback; skips cleanly without one).
 
 def test_a_real_browser_paginates_the_sheet_onto_four_pages_of_a4_and_letter(browser):
-    """The print stylesheet, checked by a paginator instead of by arithmetic.
-
-    Every other geometry test here computes whether the cards fit. This one prints the
-    page to PDF at both paper sizes and counts what came out: four sheets, not five and
-    not a card orphaned onto a fifth. It is the one assertion that would notice a browser
-    disagreeing with our millimetres."""
+    """The print stylesheet checked by a paginator: printed to PDF at both paper sizes,
+    exactly four sheets and no orphaned card."""
     page = browser.new_page()
     try:
         page.set_content(sheet.render_sheet())
@@ -467,17 +443,10 @@ def test_a_real_browser_paginates_the_sheet_onto_four_pages_of_a4_and_letter(bro
 
 def test_a_printed_symbol_still_reads_back_after_a_browser_rasterises_it(browser, deck,
                                                                          version):
-    """**The closest thing to a scan anyone here can perform.**
-
-    The SVG goes through a real rasteriser at 300 dpi — the resolution a home printer
-    actually lays down — and comes back as pixels. Those pixels are thresholded, the
-    module centres sampled, and the recovered matrix handed to the same reader and the
-    same `launch_cards.decode` as everywhere else. Antialiasing, the fractional
-    millimetre-to-pixel mapping and the browser's own path filling are all inside the loop.
-
-    What it still does not prove is **optics**: lens blur, glare, angle, motion, and
-    Moxie's camera, which our corpus does not describe. No physical robot has read one of
-    these cards, and this test does not change that."""
+    """The closest thing to a scan available: the SVG rasterised at 300 dpi (a home
+    printer's resolution), thresholded, module centres sampled, and decoded by the same
+    reader and `launch_cards.decode`. Optics (blur, glare, angle, Moxie's camera) remain
+    unproven."""
     scale = 300 / 96.0                       # CSS px are 1/96 inch; this makes them 1/300
     units = int(sheet.geometry(version)["units"])
     context = browser.new_context(device_scale_factor=scale)

@@ -13,10 +13,8 @@ gap, or — the subtle one — the LAST sentence escaping through `feed` so noth
 for `flush` to close the turn with.
 """
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.segment import SentenceSegmenter, segment       # noqa: E402
 

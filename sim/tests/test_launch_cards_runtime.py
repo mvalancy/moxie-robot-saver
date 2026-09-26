@@ -1,31 +1,24 @@
 """
 🎴 Launch cards in the runtime — a scanned card reaching the reply the robot waits on.
 
-The decoder's own behaviour lives in `test_launch_cards.py`. This file is about the one
-call site: `_on_vision_turn`, the only place a QR value is in scope while a reply is
-being built. Everything here drives real `events/remote-chat` payloads through the real
-`MoxieRuntime` over a fake transport, the same way `test_presence_runtime.py` does.
+The decoder is `test_launch_cards.py`; this is its one call site, `_on_vision_turn`, driven
+with real `events/remote-chat` payloads over a fake transport.
 
-**Honest ceiling.** No physical Moxie has ever sent us an `eb-qr-event`. Nothing in this
-file proves a robot scans paper, or that a robot acts on the launch it is handed; it
-proves that a scanned value which *did* arrive produces exactly the reply the recovered
-contract describes, and that a value which is not a card produces none.
+Ceiling: no physical Moxie has sent an `eb-qr-event`. Proven: a scanned value that DID arrive
+produces exactly the contract's reply, and a non-card produces none.
 
-Hermetic: no sleeps, no broker, no model.
+Hermetic: no sleeps, broker or model.
 """
 from __future__ import annotations
 
 import os
-import sys
-import time
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+from helpers_runtime import seed_absent  # noqa: E402
 from helpers_runtime import drive_turn, make_runtime                    # noqa: E402
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 from moxie_sdk import launch_cards as cards                             # noqa: E402
 from moxie_sdk import presence as P                                     # noqa: E402
 from moxie_sdk.app import MoxieApp                                      # noqa: E402
@@ -65,17 +58,6 @@ def _actions(resp):
     also carry the runtime's vision `event_subscription` — an entry with no `action` at
     all — and that one is not something a card did."""
     return [a for a in _all_actions(resp) if a.get("action")]
-
-
-def _seed_absent(rt, dev, away_s):
-    """This robot went out of sight `away_s` ago — copied in spirit from
-    `test_presence_runtime.py::_seed_absent`, clock-relative so it means the same thing
-    at any hour."""
-    now = time.time()
-    rt.robots[dev].extra["presence"] = dict(
-        P.new_state(), face_present=False, announced="left",
-        last_seen_at=now - away_s - 30.0, present_since=now - away_s - 60.0,
-        last_lost_at=now - away_s, absent_since=now - away_s, faces_seen=1, events=2)
 
 
 # --------------------------------------------------------------------------- #
@@ -157,12 +139,9 @@ def test_a_refused_card_still_answers_the_turn_the_robot_is_waiting_on():
 
 @pytest.mark.parametrize("event", [P.MARKER_EVENT, P.BOOK_EVENT, P.FOUND_FACE, P.LOST_TARGET])
 def test_a_card_on_any_event_but_the_qr_one_launches_nothing(event):
-    """`eb-dr-event` (an ArUco id) and `eb-br-event` (a book cover) arrive in the identical
-    shape. Only the QR reader scans paper we printed.
-
-    The payload deliberately carries **every** marker key at once — the hostile case. A
-    route that looked at `input_vars` without checking which event it belongs to would
-    find `$eb_qr_value` sitting right there and launch off a book cover."""
+    """`eb-dr-event` (ArUco) and `eb-br-event` (book cover) share the shape; only QR reads our
+    paper. The payload carries EVERY marker key at once, so a route ignoring the event name
+    would launch off a book cover."""
     rt, dev = _runtime()
     resp = drive_turn(rt, dev, event, event_id="evt-other",
                       input_vars={"$eb_qr_value": "GO<launch:DM>",
@@ -191,14 +170,10 @@ def test_a_face_event_is_unchanged_by_this_slice():
 # --------------------------------------------------------------------------- #
 # T8 — a card and a hello are independent
 # --------------------------------------------------------------------------- #
-# A finding worth stating plainly, because the brief's T8 assumed otherwise: the two
-# **cannot** co-occur in the field today. A greeting needs an `arrived` signal, and only
-# `eb-found-face` produces one (`presence.update_presence` — a QR event yields a `qr`
-# signal and touches neither `face_present` nor `present_since`). So a scan never earns a
-# hello and a hello never carries a card, whatever the state of the robot. The runtime
-# still composes the two on one reply rather than picking one, because that is the shape
-# that stays correct if presence ever changes; the last test in this section pins that
-# composition directly, since no wire input can reach it.
+# They cannot co-occur on the wire today: only `eb-found-face` yields the `arrived` signal a
+# greeting needs, and a QR event touches neither `face_present` nor `present_since`. The
+# runtime still COMPOSES both on one reply (correct if presence changes); the last test here
+# pins that composition directly.
 def test_a_qr_event_produces_no_arrival_signal_which_is_why_a_scan_never_greets():
     """The structural reason, asserted rather than assumed."""
     _, signals = P.update_presence(P.new_state(), QR, {"$eb_qr_value": "GO<launch:DM>"})
@@ -209,7 +184,7 @@ def test_a_card_scanned_after_a_long_absence_launches_and_stays_silent():
     """Even a robot that has been away for ten minutes: the card launches, and the hello
     is not triggered, because a scan is not a sighting."""
     rt, dev = _runtime(greet_after_s=60.0)
-    _seed_absent(rt, dev, away_s=600.0)
+    seed_absent(rt, dev, away_s=600.0)
     resp = _scan(rt, dev, "GO<launch:DM>", event_id="evt-both")
     assert len(rt.client.chat_replies(dev)) == 1
     assert (resp["output"].get("text") or "") == "", resp
@@ -221,7 +196,7 @@ def test_the_greeting_still_fires_on_its_own_and_carries_no_launch():
     reply, spoken, with no verb on it (the vision `event_subscription` that rides an
     action-free reply is not a verb; see the next test)."""
     rt, dev = _runtime(greet_after_s=60.0)
-    _seed_absent(rt, dev, away_s=600.0)
+    seed_absent(rt, dev, away_s=600.0)
     resp = drive_turn(rt, dev, FOUND, event_id="evt-hello")
     assert len(rt.client.chat_replies(dev)) == 1
     assert resp["result"] == "SUCCESS" and resp["output"]["text"], resp

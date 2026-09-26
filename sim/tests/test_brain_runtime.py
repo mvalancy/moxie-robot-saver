@@ -1,25 +1,19 @@
 """
-🧠 Any brain, hot-swappable, per child — the live half.
+🧠 Any brain, hot-swappable, per child — the live half (`test_brains.py` is the pure
+registry). What a parent's click does to a RUNNING supervisor:
 
-`test_brains.py` covers the pure registry: the table, the layering, the pin. This file
-covers what a parent's click does to a RUNNING supervisor — which brain answers which
-child, on the next turn, with no restart:
+  * two robots on one appliance answered by two brains in one process;
+  * a swap lands on the NEXT turn; a turn in flight finishes with its own brain;
+  * an explicit `MOXIE_APP` beats a stored per-child pick and refuses a stale page's,
+    naming the variable;
+  * an unbuildable brain keeps the appliance talking and says so once;
+  * `brain` rides the config layers and never reaches the robot's document.
 
-  * two robots on one appliance, answered by two different brains in the same process;
-  * a swap that lands on the NEXT turn while a turn already in flight finishes with the
-    brain it started with (the `voice_update` / `reload_content` rule);
-  * an explicit `MOXIE_APP` beating a stored per-child pick, and refusing a stale page's
-    with the variable named;
-  * a brain that cannot be built keeping the appliance talking, and saying so once;
-  * `brain` riding the ordinary config layers and never reaching the robot's document.
-
-Hermetic: the builders arrive through `set_brain_engines()` — the seam the runtime was
-given so no test needs `openai`, an endpoint or a key — and the HTTP tier goes through
-`MoxieRuntime._start_status_server` itself, so the real handlers are what is exercised.
+Hermetic: builders arrive through `set_brain_engines()`; HTTP goes through the real
+`_start_status_server`.
 """
 import json
 import os
-import sys
 import threading
 import urllib.error
 
@@ -27,10 +21,8 @@ import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MQTT = os.path.join(REPO, "mqtt")
-for _p in (MQTT, os.path.join(MQTT, "supervisor")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
+from helpers_runtime import fresh_pool  # noqa: E402
 from helpers_runtime import (drive_turn, http_json, make_runtime,     # noqa: E402
                              status_server)
 from moxie_sdk import brains                                          # noqa: E402
@@ -89,12 +81,9 @@ class _Slow(_Brain):
 
 
 class _Engines:
-    """Stands in for `config.BrainEngines`: scripted pin, recording builders.
-
-    `fail` names brains whose build must raise `SystemExit` — the real shape of "this
-    brain's environment is missing" (`config.build_brain` → `require_llm_base_url`), which
-    must never cost the appliance the brain it already had.
-    """
+    """Stands in for `config.BrainEngines`: scripted pin, recording builders. `fail` names
+    brains whose build raises `SystemExit` (as `require_llm_base_url` does), which must
+    never cost the appliance its current brain."""
 
     def __init__(self, *, pin="", default="echo", fail=(), boom=()):
         self.pin, self.default = pin, default
@@ -131,15 +120,6 @@ def _runtime(tmp_path, *, app=None, pin="", default="echo", fail=(), boom=(),
     return rt, engines
 
 
-def _fresh_pool(rt):
-    """`drive_turn` drains and shuts the runtime's pool; a test that drives a SECOND turn
-    through the same supervisor needs a live one. Re-arming it is the only way to assert
-    "the same running process answered the next turn differently", which is the whole
-    claim of a swap with no restart."""
-    from concurrent.futures import ThreadPoolExecutor
-    rt._pool = ThreadPoolExecutor(max_workers=4)
-
-
 # --------------------------------------------------- one appliance, two brains --
 
 def test_two_children_on_one_appliance_get_two_different_brains(tmp_path):
@@ -149,7 +129,7 @@ def test_two_children_on_one_appliance_get_two_different_brains(tmp_path):
     rt.update_config("d_two", brain="webhook")
 
     assert drive_turn(rt, "d_one", "hi")["output"]["text"].startswith("echo heard")
-    _fresh_pool(rt)
+    fresh_pool(rt)
     assert drive_turn(rt, "d_two", "hi")["output"]["text"].startswith("webhook heard")
     assert engines.built == ["webhook"], \
         "only the brain nobody had was built; the appliance's own was reused"
@@ -191,7 +171,7 @@ def test_a_swap_lands_on_the_next_turn_of_the_same_running_supervisor(tmp_path):
     rule, applied to the brain itself."""
     rt, _ = _runtime(tmp_path, default="echo")
     assert drive_turn(rt, "d_one", "one")["output"]["text"].startswith("echo heard")
-    _fresh_pool(rt)
+    fresh_pool(rt)
     rt.brain_update({"brain": "content"}, device_id="d_one")
     assert drive_turn(rt, "d_one", "two")["output"]["text"].startswith("content heard")
 
@@ -213,7 +193,7 @@ def test_a_turn_already_in_flight_finishes_with_the_brain_it_started_with(tmp_pa
     rt._pool.shutdown(wait=True)
     answer = rt.client.chat_replies("d_one")[-1]["output"]["text"]
     assert answer.startswith("echo heard"), "the turn changed brains mid-answer"
-    _fresh_pool(rt)
+    fresh_pool(rt)
     assert drive_turn(rt, "d_one", "after")["output"]["text"].startswith("webhook heard")
 
 

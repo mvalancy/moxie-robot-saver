@@ -1,28 +1,19 @@
 """
-✍️ Content authoring P0 — a parent writes a conversation, and it is exactly as untrusted
-as a stranger's.
+✍️ Content authoring P0 — a parent's conversation is exactly as untrusted as a stranger's.
 
-The build document is `docs/architecture/backlog/content-authoring.md`; this file is its
-§7, minus the rungs P0 does not build (`/content/try`, its budget, and the brain call —
-T6-T9 and T18 belong to P1, and there is deliberately nothing here that calls a model).
+`docs/architecture/backlog/content-authoring.md` §7, minus P1's rungs (`/content/try`, its
+budget and the brain call — nothing here calls a model).
 
-**What this suite is actually for.** Authoring adds two write-shaped routes to an
-appliance that already has five, and the one property worth proving is negative: an
-authored item goes through the *same* functions an imported one does, so the editor
-contributes no second validation path. §6.3 names the single `if` that makes that true —
-`POST /content/item` must call `packs.validate_item` itself, because `packs.mark_edited`
-normalizes and does **not** validate — and `sim/tools/authoring_mutation_check.py` deletes
-that call (and four more guards) and requires a named test below to go red. A green run of
-this file says the guards are present; the checker says they are load-bearing.
+The property worth proving is negative: an authored item goes through the SAME functions
+an imported one does. `POST /content/item` must call `packs.validate_item` itself (§6.3),
+because `packs.mark_edited` normalizes but does not validate; `sim/tools/
+authoring_mutation_check.py` deletes that call and four other guards and requires a named
+test here to go red.
 
-Everything runs against a genuine `MoxieRuntime` on a scratch data dir with a fake MQTT
-transport and its own status HTTP server on a free port (`helpers_runtime`), so what is
-proved is the handler the parent console really talks to. No broker, no gateway, no robot,
-no sleeps, and — by design — **no brain**: `build()`'s chat function raises if anything
-calls it, which is how T10 proves the render panel is free rather than merely cheap.
-
-The pure half (`packs.shadow_check`, `render.render_prompt`'s counts out-parameter, the
-console's closed chip list) needs neither paho nor a runtime and runs in every tier.
+Runs against a real `MoxieRuntime` with a fake MQTT transport and its own status HTTP
+server (`helpers_runtime`). No broker, gateway or sleeps, and no brain: `build()`'s chat
+function raises if called, which is how T10 proves the render panel is free. The pure
+half (`packs.shadow_check`, `render_prompt` counts, the chip list) runs in every tier.
 """
 from __future__ import annotations
 
@@ -34,9 +25,6 @@ import urllib.error
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from moxie_sdk.content import packs as P                            # noqa: E402
 from moxie_sdk.content import render as R                           # noqa: E402
@@ -62,10 +50,8 @@ SHIPPED_EXT = {"ext_format": 1, "capabilities": ["say"], "on": "turn.before",
 
 
 def shipped_module():
-    """The `MOXIE_CONTENT_MODULE` file an appliance has on disk today.
-
-    `FREE_CHAT/default` deliberately carries **both** a `code` block and an `extension`,
-    because T4 and T16 are about what a save does to fields the editor may not author.
+    """The `MOXIE_CONTENT_MODULE` file on disk. `FREE_CHAT/default` carries both `code` and
+    an `extension` because T4/T16 test what a save does to fields the editor may not author.
     """
     return {
         "conversations": [
@@ -87,11 +73,8 @@ def no_brain(messages):
 
 
 def build(tmp_path, chat=no_brain):
-    """A real runtime whose app is a real `ContentApp` over `shipped_module()`.
-
-    Boots the way `config.build_content_app()` does — shipped defaults first, then the
-    overlay already in this data dir — so calling it twice against one `tmp_path` is a
-    faithful restart.
+    """A real runtime over a real `ContentApp`, booted like `config.build_content_app()`
+    (shipped defaults, then this data dir's overlay) — so two calls are a faithful restart.
     """
     from helpers_runtime import make_runtime
     from moxie_sdk.content import ContentApp
@@ -120,12 +103,8 @@ def base(rt):
 
 
 def post(base, path, body, *, expect=200):
-    """One POST against the status server; returns `(status, payload)`.
-
-    A refusal is a *value* here, not an exception, because most of this file is about
-    what a refusal says — `expect` is asserted so a test can never mistake a 200 for the
-    400 it was written to prove.
-    """
+    """One POST against the status server → `(status, payload)`. A refusal is a value;
+    `expect` is asserted so a 200 is never mistaken for the 400 under test."""
     from helpers_runtime import http_json
     try:
         payload = http_json(base + path, method="POST", body=body)
@@ -158,13 +137,9 @@ def conversation(**over):
 
 @needs_runtime
 def test_authored_item_round_trips(rt, base):
-    """Save a new conversation → it is in the inventory as a local edit, and the module
-    the next turn renders from carries the author's prompt byte for byte.
-
-    The last clause is the one that matters: an item that is merely *stored* has not been
-    authored. `build_module(defaults, overlay)` is the same call `reload_content()` makes,
-    so reading the prompt back out of a `Conversation` proves the write reached the thing
-    Moxie actually talks from."""
+    """A saved conversation shows up as a local edit, and the module the next turn renders
+    from (`build_module(defaults, overlay)`, as `reload_content()` does) carries the
+    author's prompt byte for byte — stored is not authored."""
     draft = conversation()
     _, out = post(base, "/content/item", {"kind": "conversation", "data": draft})
     assert out["ok"] and out["created"] is True, out
@@ -196,13 +171,9 @@ def test_authored_item_round_trips(rt, base):
 
 @needs_runtime
 def test_a_bad_pattern_is_refused_with_validate_items_own_sentence(base):
-    """`mark_edited` normalizes and does not validate, so the route must call
-    `validate_item` itself (§6.3). A global whose `pattern` does not compile is the case
-    that proves it: `Global.from_dict` compiles at **load**, so an unvalidated save takes
-    down the next `reload_content()` rather than failing here.
-
-    The refusal must be `validate_item`'s own string, not a paraphrase — a second sentence
-    is a second validator wearing a coat."""
+    """The route must call `validate_item` itself (§6.3): a global whose `pattern` does not
+    compile would otherwise break the next `reload_content()`. The refusal is
+    `validate_item`'s own string — a paraphrase would be a second validator."""
     bad = {"name": "Broken", "pattern": "what time is it("}
     _, out = post(base, "/content/item", {"kind": "global", "data": bad}, expect=400)
     assert out["ok"] is False, out
@@ -271,11 +242,9 @@ def test_saving_a_name_change_preserves_code_and_extension(rt, base):
 
 @needs_runtime
 def test_authored_then_imported_reports_conflict(base):
-    """An authored item is `local_edited` because it has no `imported_rev`
-    (`is_local_edited`:577, deliberately). So a stranger's pack carrying the same key at a
-    higher `source_version` reports CONFLICT and defaults **un-ticked** — with no change to
-    `review_pack` at all. That is the whole of A3, and it is why authoring needed no new
-    review state."""
+    """An authored item is `local_edited` (no `imported_rev`), so a stranger's pack with
+    the same key at a higher `source_version` reports CONFLICT, un-ticked — A3 with no
+    change to `review_pack`."""
     mine = {"name": "Time", "pattern": "(what o'?clock|what time is it)",
             "entity_groups": "1"}
     _, saved = post(base, "/content/item", {"kind": "global", "data": mine})
@@ -316,17 +285,10 @@ def test_render_route_calls_no_brain(base):
 
 @needs_runtime
 def test_render_reports_stripped_for_a_construct_the_fallback_drops(base):
-    """§4.3's promise is *portability*: a guided prompt renders the same on an appliance
-    with jinja2 and on a bare `pip install moxie-cloud-sdk` without the `content` extra.
-
-    So the panel reports both renders — and a `{% for %}`, which only the real renderer can
-    evaluate, must come back with a non-zero `stripped` and `portable_identical: false`.
-    Written this way on purpose: reading `render.STRIPPED` around a single `render_prompt`
-    call would report **zero** on any machine that has jinja2, i.e. on every appliance we
-    ship, which is a counter that can never fire where it matters.
-
-    The negative control is inline: the same route, the same probe, a portable prompt →
-    zero. Without it, a route that hard-coded `stripped: 1` would pass the first half."""
+    """§4.3 portability: the panel reports both renders. A `{% for %}` (only jinja2 can
+    evaluate it) must show non-zero `stripped` and `portable_identical: false` — reading
+    `render.STRIPPED` around one call would always read zero where jinja2 is installed.
+    Negative control inline: a portable prompt → zero."""
     portable = conversation(prompt="Hi {{ volley.config.child_pii.nickname }}.")
     _, clean = post(base, "/content/render", {"kind": "conversation", "data": portable})
     assert clean["ok"] and clean["counts"]["stripped"] == 0, clean
@@ -343,11 +305,8 @@ def test_render_reports_stripped_for_a_construct_the_fallback_drops(base):
 
 
 def test_render_prompt_hands_a_caller_its_own_counts():
-    """§9 item 2's one line. The out-parameter exists so a route does not have to take a
-    before/after delta of two process-global integers by hand.
-
-    Both directions, because a `counts` dict that is merely *written* proves nothing: a
-    construct the fallback drops must move `stripped`, and one it renders must not."""
+    """The `counts` out-parameter, both directions: a construct the fallback drops moves
+    `stripped`; one it renders does not."""
     counts = {}
     R._minimal_render("{{ volley.config.child_pii.nickname }}", {"volley": None})
     text = R.render_prompt("{{ x.y }}", {"x": {"y": "ok"}}, counts=counts)

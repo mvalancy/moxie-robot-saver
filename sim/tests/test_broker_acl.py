@@ -18,10 +18,8 @@ The end-to-end proof that a real broker enforces all this is `sim/run_acl_proof.
 """
 import os
 import re
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.broker_acl import PATTERN_FLOOR, render_acl   # noqa: E402
 
@@ -272,10 +270,10 @@ def _listeners(text):
 # ====================================================================================
 
 import importlib                                             # noqa: E402
+from helpers_runtime import reload_config                      # noqa: E402
 
 import pytest                                                # noqa: E402
 
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
 CRED_ENV = ("MOXIE_MQTT_USER", "MOXIE_MQTT_PASSWORD", "MOXIE_MQTT_PASSWORD_FILE")
 
@@ -283,18 +281,7 @@ CRED_ENV = ("MOXIE_MQTT_USER", "MOXIE_MQTT_PASSWORD", "MOXIE_MQTT_PASSWORD_FILE"
 @pytest.fixture
 def fresh_config(monkeypatch):
     """Import `config` with a controlled credential environment (it caches at import)."""
-    def _load(**env):
-        # Same reason as `test_stt_gateway._fresh_config`: a real `mqtt/.env` is re-read
-        # on every reload and would refill the credentials deleted here, so a test named
-        # "unset credentials" would assert whatever the developer happens to have.
-        monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
-        for key in CRED_ENV:
-            monkeypatch.delenv(key, raising=False)
-        for key, value in env.items():
-            monkeypatch.setenv(key, value)
-        import config as _c
-        return importlib.reload(_c)
-    yield _load
+    yield lambda **env: reload_config(monkeypatch, CRED_ENV, **env)
     for key in CRED_ENV:
         monkeypatch.delenv(key, raising=False)
     import config as _c

@@ -22,6 +22,12 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 SERVE = REPO / "sim" / "serve.py"
 
+# Import roots for the mqtt/ suites (moxie_sdk, config, moxie_runtime, markup, helpers_*).
+# Appended, so a module that prepends its own path still wins.
+for _p in (REPO / "mqtt", REPO / "mqtt" / "supervisor", Path(__file__).resolve().parent):
+    if str(_p) not in sys.path:
+        sys.path.append(str(_p))
+
 
 def pytest_addoption(parser):
     """Trusted local control path for the counts-only goodbye supervisor.

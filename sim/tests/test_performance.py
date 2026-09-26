@@ -1,26 +1,19 @@
 """
 The behavior planner — `Performance` + `plan`/`validate`/`render`, and the seam it sits on.
 
-What this file is asserting, and why each assertion exists
-----------------------------------------------------------
-The planner's promise (`docs/architecture/backlog/expressiveness.md` §2) is not "nicer
-markup". It is four properties, and every one of them is load-bearing:
+The planner's promise (`backlog/expressiveness.md` §2) is four properties:
 
-* **It does not emit strings.** `plan()` returns a structure; `render()` is the only
-  function in the tree that mints a mark. So the goldens here are readable JSON
-  `Performance` objects (`goldens/performance.json`) — one line per dialog act, all 22 —
-  and a rendering change cannot silently rewrite what a line MEANS.
-* **A brain may suggest, it may never authorize.** Every id, wherever it came from, goes
-  through `validate()` against the frozen catalog in `vocab.py`. The property test below
-  throws mutated performances at it and asserts nothing outside the catalog survives.
-* **It always degrades to the floor.** The fault-injection tests break `plan`, `validate`
-  and `render` in turn and require the seam to answer with the floor's markup anyway. A
-  planner failure costs expressiveness; it may never cost a turn.
-* **It never adds a model call, and never adds latency.** It is pure, stdlib, deterministic
-  across processes and hash seeds, and measured against the floor rather than against a
-  round number.
+* **It does not emit strings.** `plan()` returns a structure and only `render()` mints
+  marks, so the goldens are readable `Performance` JSON (`goldens/performance.json`, one
+  per dialog act, all 22) and a rendering change cannot rewrite what a line MEANS.
+* **A brain may suggest, never authorize.** Every id goes through `validate()` against the
+  frozen `vocab.py` catalog; a property test throws mutated performances at it.
+* **It always degrades to the floor.** Fault injection breaks `plan`, `validate` and
+  `render` in turn; the seam must still answer with the floor's markup.
+* **No model call, no added latency.** Pure, stdlib, deterministic across processes and
+  hash seeds, and timed against the floor rather than a round number.
 
-Hermetic: no creds, no network, no model. Runs in the fast CI tier.
+Hermetic: no creds, no network, no model.
 """
 from __future__ import annotations
 
@@ -39,9 +32,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 MQTT_DIR = os.path.join(REPO, "mqtt")
 SUPERVISOR_DIR = os.path.join(MQTT_DIR, "supervisor")
-for _p in (MQTT_DIR, SUPERVISOR_DIR):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
 from moxie_sdk import performance as perf          # noqa: E402
 from moxie_sdk import vocab                        # noqa: E402
@@ -120,11 +110,9 @@ def test_goldens_round_trip_through_json():
 
 
 def test_acts_are_distinguishable_on_the_wire():
-    """22 acts that all perform identically would pass every test above and be worthless.
-
-    The point of scoring the act is that the body differs, so require real spread: many
-    distinct moods, and questions/apologies/praise/backchannels that are visibly not each
-    other."""
+    """22 acts that all perform identically would pass everything above and be worthless,
+    so require real spread: many moods, and visibly different question/apology/praise/
+    backchannel bodies."""
     by_act = {c["act"]: staged(c["line"], **(c.get("ctx") or {}))
               for c in _goldens()["cases"]}
     moods = {p.mood for p in by_act.values()}
@@ -203,12 +191,8 @@ def test_the_corpus_is_actually_a_corpus():
 # (b) ZERO unknown ids over the corpus
 # =====================================================================================
 def test_no_unknown_id_anywhere_in_the_corpus():
-    """Every id in every staged line — and in the markup it renders to — is in the frozen
-    catalog, and `validate()` dropped nothing.
-
-    This is the criterion the whole positive-list design exists to make checkable. A
-    non-zero drop count means the planner is choosing vocabulary we cannot justify from
-    our own reverse-engineering."""
+    """Every id in every staged line (and its rendered markup) is in the frozen catalog,
+    and `validate()` dropped nothing — a drop means vocabulary we cannot justify."""
     perf.reset_dropped()
     bad = []
     for line in CORPUS:
@@ -585,11 +569,8 @@ def test_a_streamed_answer_holds_one_face():
 
 
 def test_no_publish_path_can_forget_to_score(monkeypatch):
-    """(c) says **100 %** of published turns, and a test that drives four of them proves
-    four. So read the runtime instead: every `_publish_chat` call that carries words must
-    pass `scored=`. A new path added later fails here rather than shipping an unscored
-    turn nobody notices — this is the only assertion in the file that is about *coverage*
-    rather than about behavior, which is exactly why it is written over the source."""
+    """Coverage, read over the source: every `_publish_chat` call that carries words must
+    pass `scored=`, so a new publish path cannot ship unscored turns."""
     from helpers_runtime import runtime_source
     src = runtime_source()
     unscored, seen = [], 0
@@ -860,13 +841,8 @@ def test_every_emitted_id_is_rendered_by_the_browser_sim():
 # (f) Budget — measured against the floor, not against a round number
 # =====================================================================================
 def _interleaved_medians(a, b, n=400):
-    """Median cost (ms) of `a` and of `b`, sampled ALTERNATELY in a single loop.
-
-    Interleaving is what makes the ratio mean something: a preemption lands on whichever
-    call it happens to land on, so over 400 pairs both medians absorb the same scheduler
-    weather and what is left is the code. Timed in two separate loops instead, the two
-    halves drift apart by up to 38% on a loaded box (measured 2026-09-06).
-    """
+    """Median cost (ms) of `a` and `b`, sampled ALTERNATELY in one loop so both absorb the
+    same scheduler noise (separate loops drift up to ~38% apart on a loaded box)."""
     xs, ys = [], []
     for i in range(n):
         t0 = time.perf_counter()
@@ -882,31 +858,16 @@ def _interleaved_medians(a, b, n=400):
 
 
 def test_the_planner_costs_about_what_the_floor_costs():
-    """(f) no first-audio latency regression. The seam runs once per spoken chunk on the
-    hot path between the first token and the first audio, so the planner is measured
-    against the generator it replaces rather than against a number someone liked: it may
-    not be more than 4x the floor.
+    """(f) no first-audio latency regression: the seam runs per spoken chunk, so the planner
+    may cost at most 4x the floor generator it replaces, compared at the MEDIAN.
 
-    Two things changed here on 2026-09-06, both measured rather than guessed.
+    p95 under load measures the scheduler (one loaded run read 45x at p95 vs ~2x median),
+    and an absolute ms budget measures the machine, so neither is used.
 
-    * The ratio used to be taken at **p95**, and a p95 under load is not the planner —
-      it is the scheduler. Five trials on a box at load average 104 gave a *median*
-      ratio of 1.999, 2.025, 2.020, 2.017 and 2.008 (stable to ~1%), while the p95 ratio
-      over the same samples read 2.03, 2.20, 2.91, 1.80 and **45.48**. That last sample
-      would have sailed straight through the 4x gate as a false red on a green tree: at
-      p95 this assertion was comparing one scheduler tail against another. The median is
-      where the planner actually shows up, so the ratio is taken there.
-    * `assert planner < 1.0` ms is gone. It was the half that failed — 6.390 ms observed
-      at load 104 against a 0.38 ms median — and it was an absolute compiled from one
-      developer's laptop, so it measured the machine and not the seam. The floor's own
-      cost is the yardstick, and it is measured in the same loop.
-
-    What this catches: the planner becoming materially more expensive than the generator
-    it replaces — a model call, a socket, a lock, an algorithmic regression. What it does
-    not catch: both halves regressing together, which is
-    `test_automarkup.py::test_the_floor_costs_about_what_one_pass_over_the_line_costs`'s
-    job, and I/O too small to time, which is
-    `test_the_planner_makes_no_model_call_and_touches_no_io`'s.
+    Catches: a model call, socket, lock or algorithmic regression in the planner. Not
+    caught here: both halves regressing together
+    (`test_automarkup.py::test_the_floor_costs_about_what_one_pass_over_the_line_costs`) or
+    tiny I/O (`test_the_planner_makes_no_model_call_and_touches_no_io`).
     """
     from moxie_sdk.automarkup import annotate
     line = ("I looked out of the window and the sky had gone completely orange, and I "
@@ -926,17 +887,9 @@ def test_the_planner_costs_about_what_the_floor_costs():
 
 
 def test_the_planner_makes_no_model_call_and_touches_no_io(monkeypatch):
-    """Deterministic means deterministic: no clock, no `random`, no socket, no file. A
-    regression that reached for any of them would make the goldens flaky instead of
-    failing here.
-
-    Two holes were measured shut on 2026-09-06, by injecting the regression and watching
-    what stayed green. `open()` was not trapped at all, and the only path exercised was
-    `perf.render`, so an `open()` added to `markup.make_markup` — the seam the robot
-    actually calls, once per spoken chunk — reddened NOTHING in the suite: it is a ~10%
-    blip on a 0.38 ms median, far under what any timing budget can resolve, and no
-    assertion looked for it directly. Both are covered now, and the timing budget above
-    is deliberately not asked to do this job.
+    """Deterministic: no clock, `random`, socket or file — on both `perf.render` and
+    `markup.make_markup`, the seam the robot calls. A stray `open()` there is a ~10% blip
+    no timing budget resolves, so it is trapped directly here.
     """
     import builtins
     import random

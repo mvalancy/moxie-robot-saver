@@ -1,44 +1,33 @@
 """
 Brain latency — a slow brain must not leave a child listening to silence.
 
-PR #12 measured a live gateway turn at **45 s healthy / 18 s degraded** against the
-robot's **~20 s reprompt window** (docs/architecture/implementation-plan.md:138,
-docs/architecture/openmoxie-feature-audit.md:347) while the voice legs cost ≈1.5 s. So
-the runtime now runs the inference in the background and, once `brain_budget_s` is up,
-speaks a short filler as **chunk 0 with `result=REPLY_PENDING`** ("more chunks to come"
-— RemoteChat.proto ResultCode 9, remote-chat-protocol.md:63), then delivers the real
-line as **chunk 1 with `result=SUCCESS`** plus `consistency_control.is_completed`
-(RemoteChat.proto fields 22 / 18) to close the sequence.
+A live gateway turn can take 45 s against the robot's ~20 s reprompt window, so inference
+runs in the background and, once `brain_budget_s` is up, a short filler goes out as chunk 0
+with `result=REPLY_PENDING` (RemoteChat.proto ResultCode 9), then the real line as chunk 1
+with `SUCCESS` + `consistency_control.is_completed` (fields 22 / 18).
 
-These tests pin that behavior with **no sleeps**: the fake brain blocks on an
-`Event` the test releases, and the fake transport is a `Condition` a test can wait on,
-so timing is causal rather than wall-clock. The one timing assertion (the filler is not
-published before the budget) uses a monotonic clock and a deliberately loose ceiling.
+No sleeps: the fake brain blocks on an `Event` and the fake transport is a `Condition`. The
+one timing assertion (no filler before the budget) uses a monotonic clock, loosely.
 
-Covered here: fast brain → one plain SUCCESS; slow brain → filler + real chunk; the
-stale guard (never answer a superseded question); filler rotation; both chunks
-synthesized; the budget knob; and the `mqtt/.env`-from-a-worktree helper the live tier
-needs (PR #12 finding: the creds-gated tests silently skipped inside a `git worktree`).
+Covered: fast brain → one SUCCESS; slow brain → filler + real chunk; the stale guard; filler
+rotation; both chunks synthesized; the budget knob; and the `mqtt/.env`-from-a-worktree
+helper the live tier needs.
 """
 import json
 import os
-import sys
 import threading
 import time
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
-from helpers_runtime import (CHAT_TOPIC, FakeClient, drive_turn,  # noqa: E402
+from helpers_runtime import (CHAT_TOPIC, CountingSynth, LatchClient, drive_turn,  # noqa: E402
                              dotenv_values, find_repo_dotenv, load_repo_dotenv,
                              main_worktree, make_runtime)
 from moxie_sdk.app import MoxieApp                                # noqa: E402
 from moxie_sdk.filler import FILLERS, pick_filler                 # noqa: E402
-from moxie_sdk.tts import Synthesizer, strip_markup               # noqa: E402
+from moxie_sdk.tts import strip_markup               # noqa: E402
 from moxie_sdk.types import Reply                                 # noqa: E402
 from moxie_sdk.wire import build_chat_response                    # noqa: E402
 
@@ -97,39 +86,9 @@ class _SlowThenFastApp(MoxieApp):
         return Reply(text=f"the NEW answer about {turn.speech}")
 
 
-class _LatchClient(FakeClient):
-    """FakeClient a test can *wait on* — `wait_for(predicate)` instead of sleeping."""
-
-    def __init__(self):
-        super().__init__()
-        self._cond = threading.Condition()
-
-    def publish(self, topic, payload):
-        with self._cond:
-            super().publish(topic, payload)
-            self._cond.notify_all()
-
-    def wait_for(self, predicate, timeout=PATIENCE) -> bool:
-        with self._cond:
-            return self._cond.wait_for(lambda: predicate(list(self.published)), timeout)
-
-
-class _CountingSynth(Synthesizer):
-    """Records every line it was asked to speak (and returns a byte of 'audio')."""
-    name = "counting"
-    sample_rate = 16000
-
-    def __init__(self):
-        self.spoken = []
-
-    def synthesize(self, text, voice=None):
-        self.spoken.append(text)
-        return b"\x01\x02" * 8
-
-
 def _slow_runtime(app, *, budget=0.2, device_id="d_slow", synth=None):
     rt, dev = make_runtime(app, device_id=device_id)
-    rt.client = _LatchClient()
+    rt.client = LatchClient()
     rt.brain_budget_s = budget
     if synth is not None:
         rt.set_synthesizer(synth)
@@ -282,7 +241,7 @@ def test_both_chunks_are_synthesized_when_a_voice_is_set():
     """The SIM (and a robot without on-device TTS) must HEAR the filler, not just read
     it — so each chunk gets its own CloudTTSResponse, tagged with its chunk_num."""
     app = _SlowApp(text="Because sunlight scatters in the air.")
-    synth = _CountingSynth()
+    synth = CountingSynth()
     rt, dev = _slow_runtime(app, budget=0.2, synth=synth)
     _push(rt, dev, "why is the sky blue?", "evt-tts")
 
@@ -375,11 +334,8 @@ def test_no_dotenv_anywhere_is_not_an_error(tmp_path):
 
 
 def test_load_repo_dotenv_never_overrides_the_real_environment(tmp_path, monkeypatch):
-    # `allow` names the two probes explicitly because the loader now exports only
-    # `LIVE_KEYS`, and these deliberately inert names are not among them. That is the
-    # point of the parameter: the `setdefault` semantics under test are independent of
-    # *which* keys are allowed through, so the test says which it means instead of
-    # borrowing a real credential's name and mutating it mid-session.
+    # `allow` names the two inert probe keys explicitly (the loader exports only
+    # `LIVE_KEYS`); the `setdefault` semantics under test don't depend on which keys pass.
     path = tmp_path / "sample.env"
     path.write_text("# a comment\n\nMOXIE_TEST_A=fromfile\nMOXIE_TEST_B=fromfile\n")
     monkeypatch.setenv("MOXIE_TEST_A", "already-set")

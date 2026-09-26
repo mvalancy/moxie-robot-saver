@@ -12,10 +12,8 @@ Shape is checked against the recovered protos:
 Pure: no MQTT, no store, no broker.
 """
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.schedule import (  # noqa: E402
     DEFAULT_TEMPLATE, ONBOARD_MODULES, RECOMMENDATION_FIELDS, SCHEDULE_FIELDS,
@@ -234,12 +232,8 @@ def test_schedule_template_picks_a_named_schedule():
 
 
 # ---- the wire is unchanged by the recommender (audit §4.2 BEYOND #7) ----
-#
-# `build_schedule` grew inputs (a clock, the robot's effective config, telemetry) and an
-# `explanations` sibling. None of that may reach the robot: `CloudQueryResponse.schedule`
-# is still exactly a `ContentSchedule` of `Recommendation`s. The factors themselves live
-# in `test_schedule_planner.py`; these are the shape guards, re-run with every new input
-# switched on at once.
+# New inputs (clock, effective config, telemetry) and the `explanations` sibling must never
+# reach the robot: shape guards re-run with every input on. Factors: `test_schedule_planner.py`.
 
 def _rich_kwargs(**over):
     import datetime

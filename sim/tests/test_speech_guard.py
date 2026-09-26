@@ -1,57 +1,29 @@
 """
 The speech/tone guard, guarded — and the rule that keeps a numpy-free suite numpy-free.
 
-WHAT THE SPEECH GUARD IS. Every live audio assertion in this repo has the same hole under
-it: `moxie_sdk.tts.ToneSynthesizer` emits 22050 Hz mono PCM16 exactly like the gateway
-voice and Piper do, so byte counts, sample rates and WAV headers prove nothing about who
-spoke. `helpers_audio.is_real_speech` closes it with spectral flatness — a pure sine puts
-all its energy in one bin, speech spreads it across formants, fricatives and silences —
-and the observed separation is ten orders of magnitude around a floor of 1e-6.
+`ToneSynthesizer` emits 22050 Hz mono PCM16 exactly like the gateway voice and Piper, so
+byte counts and WAV headers prove nothing about who spoke. `helpers_audio.is_real_speech`
+uses spectral flatness (a sine puts its energy in one bin; speech spreads it), with ten
+orders of magnitude of separation around a 1e-6 floor.
 
-WHY THIS FILE EXISTS (2026-09-05). That predicate needed numpy, and TWO of its callers are
-numpy-free on purpose: `test_live_gateway_stt.py` and `test_live_hosted_ears.py` exist to
-prove the CLOUD ears and voice work on a box that installed nothing but `openai`, because
-that is what a hosted deployment is. The consequences were both live and both measured:
+That predicate needs numpy, but `test_live_gateway_stt.py` and `test_live_hosted_ears.py`
+must prove the cloud ears/voice on a box with only `openai` installed. `importorskip("numpy")`
+would turn that proof into a silent skip, so the measurement has a stdlib twin
+(`spectral_flatness_stdlib` / `is_real_speech_stdlib`), like `resample_pcm16_stdlib`.
 
-  · `test_live_gateway_stt.py` ran a complete, healthy live turn — word overlap 1.00, a
-    real reply, 203 612 B @ 22050 Hz — and then failed with `ModuleNotFoundError: No module
-    named 'numpy'` at `helpers_audio.py:157`, on the last assertion in the file, four
-    gateway calls in. Its two siblings `importorskip("numpy")` at module scope, so the
-    identical situation made THEM skip; the inconsistency was the whole defect.
-  · `test_live_hosted_ears.py`'s first assertion — "the audio we are about to upload is
-    speech" — sat inside `try: … except ImportError: pytest.skip(…)`, so on exactly the
-    numpy-free machine the file is about, it skipped.
-
-The obvious fix (a third `importorskip("numpy")`) was rejected: this repo's recorded trap
-is that a missing package makes the tests that need it importorskip themselves away — a
-skip that reads as a pass, which is worse than a loud failure — and here it would have
-deleted the gateway-ears proof on the one deployment shape it exists to cover. So the
-measurement grew a standard-library twin (`spectral_flatness_stdlib` /
-`is_real_speech_stdlib`), exactly as `resample_pcm16` / `resample_pcm16_stdlib` already
-had, for exactly the same reason.
-
-A twin is only worth having if it agrees, so this file asserts that — hermetically, with no
-credentials, no gateway, no model wheels and (for the load-bearing half) no numpy:
-
+Asserted hermetically (the load-bearing half with no numpy):
   1. the placeholder tone FAILS the stdlib guard;
   2. speech-shaped audio PASSES it;
-  3. the two implementations return the same verdict, with orders of magnitude to spare;
-  4. the stdlib one still computes with numpy forcibly unimportable, and the numpy one
-     then raises a message that names the twin instead of a bare `ModuleNotFoundError`;
-  5. a REAL recorded voice clears the floor on both implementations, by a margin this file
-     also asserts — read from a committed mono PCM16 WAV with the `wave` module, so it
-     needs no decoder. The first version of this test shelled out to `ffmpeg` and reddened
-     CI (run 33985062379), which is the joke writing itself: a change about declaring every
-     dependency once, depending on an undeclared external binary. See `RECORDED_VOICE`;
-  6. **no numpy-free suite calls a numpy-only helper.** That one is the guard for the
-     defect *class* rather than for the instance, and it is the one that fails on the
-     pre-fix tree. Its numpy-only set is derived from `helpers_audio.py`'s own call graph,
-     so a new helper that reaches numpy joins it without anyone remembering to;
-  7. **no test in `sim/tests` shells out to an undeclared external binary** — the general
-     form of the ffmpeg mistake, which is now impossible to repeat quietly.
+  3. both implementations give the same verdict, with margin;
+  4. the stdlib one computes with numpy unimportable, and the numpy one then raises a
+     message naming the twin;
+  5. a REAL recorded voice (a committed PCM16 WAV read with `wave`) clears the floor on
+     both, by an asserted margin;
+  6. no numpy-free suite calls a numpy-only helper (derived from `helpers_audio.py`'s call
+     graph — the guard for the defect class);
+  7. no test shells out to an undeclared external binary.
 
-Deliberately NOT named `test_sil_*`: both CI tiers select with `-k "not test_sil"`, so a
-SIL-prefixed guard would be deselected in every tier it is meant to run in.
+Not named `test_sil_*`: both CI tiers deselect `-k "not test_sil"`.
 """
 from __future__ import annotations
 
@@ -69,8 +41,6 @@ import pytest
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HERE = os.path.dirname(os.path.abspath(__file__))
 MQTT = os.path.join(REPO, "mqtt")
-sys.path.insert(0, MQTT)
-sys.path.insert(0, HERE)
 
 import helpers_audio as A                                    # noqa: E402
 
@@ -93,17 +63,9 @@ def _tone() -> bytes:
 
 
 def _speech_shaped(samples: int, sample_rate: int = 22050) -> bytes:
-    """Audio with the three properties that make speech broadband, and nothing else.
-
-    A voiced excitation whose f0 wanders, seven inharmonically-spaced overtones standing in
-    for formants, additive noise standing in for fricatives, and an envelope that goes to
-    silence a third of the time. Seeded, so it is the same buffer on every machine and in
-    every run. It is NOT a recording — test 5 uses a real one, committed as a WAV — it is
-    the positive control that needs no fixture at all.
-
-    `samples` is passed in rather than defaulted so the caller can make this buffer exactly
-    as long as the tone it is compared against; that turns the length control below into an
-    equality instead of a tolerance.
+    """Seeded, speech-shaped audio: a wandering-f0 excitation, seven inharmonic overtones
+    (formants), noise (fricatives), and silence a third of the time — the fixture-free
+    positive control. `samples` matches the compared tone's length exactly.
     """
     rng = random.Random(20260905)
     out = bytearray()
@@ -169,13 +131,9 @@ def test_the_stdlib_guard_is_not_secretly_a_length_check(tone, speech):
 # 3. the twin agrees with the original
 # --------------------------------------------------------------------------- #
 def test_both_speech_guards_return_the_same_verdict(tone, speech):
-    """A twin nobody compared is two predicates, and two predicates are two thresholds.
-
-    The two are NOT bit-identical by construction — the numpy one windows the whole buffer
-    in a single transform, the stdlib one averages eight 2048-sample frames — so what is
-    asserted is the verdict, plus the fact that both sit on the same side of the floor with
-    room to spare. Measured 2026-09-05: tone 8.968e-10 (stdlib) vs 5.415e-16 (numpy); speech
-    1.177e-01 vs 1.396e-01; a real recorded clip 1.068e-02 vs 6.931e-03.
+    """The twins are not bit-identical (numpy: one whole-buffer transform; stdlib: eight
+    2048-sample frames), so the VERDICT is asserted, with both on the same side of the
+    floor with room to spare (e.g. tone ~1e-9 vs ~1e-16; speech ~0.12 vs ~0.14).
     """
     pytest.importorskip("numpy", reason="comparing the numpy implementation needs numpy")
     for label, pcm, expected in (("tone", tone, False), ("speech", speech, True)):
@@ -189,10 +147,8 @@ def test_both_speech_guards_return_the_same_verdict(tone, speech):
 # --------------------------------------------------------------------------- #
 # 4. …and it really does compute with numpy gone
 # --------------------------------------------------------------------------- #
-#: Import-time blocker, the same idiom `test_package_contents.py` uses to prove the SDK
-#: imports without its optional backends: a `sys.meta_path` finder that refuses one name.
-#: `ModuleNotFoundError` rather than a bare `ImportError`, because that is what an absent
-#: wheel actually raises and the point is to reproduce an absent wheel faithfully.
+#: A `sys.meta_path` finder refusing one name (as in `test_package_contents.py`), raising
+#: `ModuleNotFoundError` — what an absent wheel actually raises.
 _BLOCK_NUMPY = (
     "import sys\n"
     "class Block:\n"
@@ -254,31 +210,13 @@ def test_the_numpy_only_predicate_names_its_stdlib_twin_when_numpy_is_absent():
 # --------------------------------------------------------------------------- #
 # 5. a real recorded voice — read with the standard library, no decoder needed
 # --------------------------------------------------------------------------- #
-#: A real voice, committed in a form `wave` can read: 0.75 s of the SIM's own prerendered
-#: Moxie speech, mono PCM16 @ 22050 Hz, 33 118 B.
+#: 0.75 s of the SIM's prerendered Moxie speech, mono PCM16 @ 22050 Hz, 33 118 B, stored so
+#: `wave` can read it (decoding the MP3 needed an undeclared `ffmpeg`, absent in CI).
 #:
-#: IT USED TO BE THE MP3, DECODED BY SHELLING OUT TO `ffmpeg`, and that was wrong in this
-#: PR of all PRs: a change about declaring every dependency exactly once, which added a
-#: test that depended on an undeclared external binary. CI run 33985062379 duly failed with
-#: `FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'` — the runner has no
-#: ffmpeg — with everything else green.
-#:
-#: Both easy fixes were refused for reasons this file already argues. A `shutil.which`
-#: skip converts a loud red into a silent pass, which is precisely what
-#: `test_a_numpy_free_suite_declares_itself_so` exists to prevent. `apt-get install ffmpeg`
-#: puts a heavyweight system package on every run of the tier to decode ONE fixture, and it
-#: cannot be declared in `requirements-hermetic.txt`, the single source of truth this PR
-#: just created. So the dependency was REMOVED instead of skipped — the same move as
-#: `spectral_flatness_stdlib` itself: store the fixture in a form the stdlib can read.
-#:
-#: WHY 0.75 s AND WHY THIS OFFSET: it is the shortest window that keeps a comfortable
-#: margin in BOTH implementations. Measured across candidate trims of the loudest window —
-#: 0.25 s scored 2.980e-04 (298x the floor), 0.50 s 3.878e-04 (388x), and this one
-#: 3.073e-02 on the stdlib path (30 727x) and 3.200e-03 on the numpy path (3 200x), the
-#: smaller of which is the one that matters. Anyone trimming this further must re-state the
-#: margin here: a fixture whose flatness creeps toward 1e-6 makes the assertion vacuous
-#: without failing, and `test_the_recorded_fixture_clears_the_floor_by_orders_of_magnitude`
-#: below fails if the smaller margin drops under 100x.
+#: 0.75 s at this offset is the shortest window with a comfortable margin on BOTH paths:
+#: 3.1e-02 stdlib (~30 000x the floor) and 3.2e-03 numpy (~3 200x); 0.25-0.50 s gave only
+#: ~300-400x. Re-state the margin if trimming: a fixture creeping toward 1e-6 makes the
+#: assertion vacuous, and the margin test below fails under 100x.
 RECORDED_VOICE = os.path.join(HERE, "goldens", "real_voice_22050_mono.wav")
 RECORDED_RATE = 22050
 
@@ -337,13 +275,9 @@ def test_the_recorded_fixture_clears_the_floor_by_orders_of_magnitude():
 # 6. THE CLASS GUARD — no numpy-free suite may call a numpy-only helper
 # --------------------------------------------------------------------------- #
 def _numpy_only_helpers() -> set:
-    """The public names in `helpers_audio` that reach numpy, from its own call graph.
-
-    Derived rather than listed, so a helper added tomorrow that calls `_np()` — directly or
-    through another helper — is covered without anyone remembering this file exists. The
-    graph is module-level `def`s and the plain `name(...)` calls in their bodies, which is
-    all this module contains; a helper that reached numpy through `getattr` would escape,
-    and that is worth knowing rather than pretending otherwise.
+    """Public `helpers_audio` names that reach numpy, derived from its call graph
+    (module-level defs + plain `name(...)` calls), so a new helper is covered
+    automatically. A `getattr` route would escape — stated, not hidden.
     """
     tree = ast.parse(open(os.path.join(HERE, "helpers_audio.py")).read())
     bodies = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
@@ -382,14 +316,8 @@ def test_the_call_graph_scan_found_the_helpers_we_know_reach_numpy():
 
 
 def _importorskipped(path: str) -> set:
-    """Every module name the file passes to `pytest.importorskip`, from the AST.
-
-    Playbook rule 17 — "a guard must assert over code, not over the whole file" — the hard
-    way, again, and within a minute of writing this file: the first version was
-    `'importorskip("numpy"' not in src`, which fired on `test_live_gateway_stt.py` because
-    the comment I had just added there *explains* why an importorskip would be the wrong
-    fix. Citing what you rejected is the house style, so a guard that cannot tell a comment
-    from a call is a guard that punishes the style.
+    """Module names passed to `pytest.importorskip`, from the AST — a substring check fired
+    on a comment explaining why importorskip would be wrong (guards assert over code).
     """
     out = set()
     for node in ast.walk(ast.parse(open(path).read())):
@@ -434,14 +362,9 @@ def test_a_numpy_free_suite_calls_no_numpy_only_helper(suite):
 
 
 def test_every_other_caller_of_a_numpy_only_helper_requires_numpy():
-    """The general direction: a file that is *not* on the numpy-free list may use the numpy
-    helpers, but then it must say so at module scope, or it is a hard `ModuleNotFoundError`
-    waiting for the first tier that does not happen to install numpy.
-
-    (It is now installed in every tier — `sim/tests/requirements-hermetic.txt`, one
-    declaration, enforced by `test_ci_workflows.py`. This asserts the *file* is honest
-    regardless, because the tier's list is one edit away from changing and a suite should
-    not depend on being lucky.)"""
+    """A file NOT on the numpy-free list may use numpy helpers only if it says so at module
+    scope; numpy is installed in every tier today (`requirements-hermetic.txt`), but the
+    file should be honest regardless."""
     numpy_only = _numpy_only_helpers()
     unguarded = {}
     for name in sorted(os.listdir(HERE)):
@@ -466,21 +389,10 @@ def test_every_other_caller_of_a_numpy_only_helper_requires_numpy():
 # --------------------------------------------------------------------------- #
 # 7. no test may shell out to an UNDECLARED external binary
 # --------------------------------------------------------------------------- #
-#: Every external program the suite is allowed to invoke, and why. A binary is not a python
-#: package, so it cannot live in `sim/tests/requirements-hermetic.txt` — which means the only
-#: honest place to declare one is a list a reviewer reads, with the tier that provides it
-#: named beside it.
-#:
-#: THIS LIST EXISTS BECAUSE OF ONE LINE OF MINE. The first version of test 5 above decoded an
-#: mp3 by calling `ffmpeg`, in a change whose entire subject was declaring dependencies once.
-#: CI has no ffmpeg, so run 33985062379 failed with `FileNotFoundError` and nothing in the
-#: repo had objected beforehand: the dependency guards in `test_ci_workflows.py` read
-#: `pip install` lines, and an external binary is invisible to them by construction. So this
-#: is the same closure one layer out — the workflows declare the python packages, this
-#: declares the programs.
-#:
-#: `sys.executable` is deliberately absent: re-entering THIS interpreter is not an external
-#: dependency, and it is how the numpy-blocked subprocess above works.
+#: Every external program the suite may invoke, and the tier that provides it. Binaries
+#: cannot live in `requirements-hermetic.txt` and the pip-line guards in
+#: `test_ci_workflows.py` cannot see them, so they are declared here for a reviewer.
+#: `sys.executable` is absent on purpose: re-entering this interpreter is not a dependency.
 DECLARED_BINARIES = {
     # apt-get in sim/ci/ci.yml's sil job; helpers_stack falls back to docker without it.
     "mosquitto": "the real broker the SIL tests round-trip through",
@@ -496,13 +408,8 @@ DECLARED_BINARIES = {
 
 
 def _spawned_binaries() -> dict:
-    """{binary: [files]} for every literal argv[0] the suite hands to `subprocess`.
-
-    Only the literal, first-element string forms are resolved — `subprocess.run(["ffmpeg",
-    ...])` and `run([node, ...])` where `node` is a module-level string constant. A binary
-    named through a computed expression escapes, which is worth stating rather than
-    implying; the point is to make the accidental case loud, and the accidental case is
-    always a literal.
+    """{binary: [files]} for every literal argv[0] handed to `subprocess` (a literal, or a
+    module-level string constant). Computed names escape; the accidental case is literal.
     """
     tests = os.path.join(REPO, "sim", "tests")
     found = {}

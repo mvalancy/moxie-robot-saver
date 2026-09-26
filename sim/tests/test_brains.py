@@ -1,39 +1,27 @@
 """
 🧠 The brain registry — the pure half: the positive list, the layering, and the pin.
 
-`moxie_sdk/brains.py` is what makes `ai-seam.md` §2's "any AI wears the shell" an
-operation rather than a diagram. Until it existed a brain was chosen once, globally, by
-`MOXIE_APP`, and `build_app()` returned the LLM app for **anything it did not recognise**.
+`moxie_sdk/brains.py` makes "any AI wears the shell" (ai-seam.md §2) an operation. Each of
+its three properties is asserted so removing it (not rewording it) fails:
 
-What is asserted here is the three properties the feature stands on, each in a way that
-fails if the property is removed rather than if the code is merely reworded:
+  * positive list — the table is a frozen literal; near-brains (`llm # the brain`, `gpt5`,
+    `chatgpt`, a dict) are refused on every path rather than defaulted, while `Echo` and
+    ` echo ` normalise (normalising is not guessing);
+  * one layering — `resolve_brain` is checked against `cloud_config.merge_config_layers`
+    over generated combinations, so it cannot grow its own precedence;
+  * the pin — an explicit `MOXIE_APP` beats every stored pick, and `config.MOXIE_APP`'s own
+    `llm` default does not pin.
 
-  * **positive list** — the table is frozen as a literal, every path that takes a name is
-    swept with things that are *nearly* a brain (`llm # the brain`, `gpt5`, `chatgpt`, a
-    dict), and each one is refused rather than resolved to a default — while `Echo` and
-    ` echo ` are normalised, because normalising a name is not guessing one;
-  * **one layering** — `resolve_brain` is checked *against `cloud_config.merge_config_layers`
-    itself* over generated layer combinations, so this cannot quietly become a second
-    layering with its own precedence;
-  * **the pin** — an explicit `MOXIE_APP` beats every stored pick, and the value that
-    would have pinned every unconfigured box by accident (`config.MOXIE_APP`'s own `llm`
-    default) is proven not to.
-
-Dependency-free, like the module: no `openai`, no gateway, no store, no runtime. The
-runtime half — the live swap, the routes, the pushed document — is `test_brain_runtime.py`.
+Dependency-free. The runtime half is `test_brain_runtime.py`.
 """
 import importlib
 import itertools
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MQTT = os.path.join(REPO, "mqtt")
-for _p in (MQTT, os.path.join(MQTT, "supervisor")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
 from moxie_sdk import brains                                        # noqa: E402
 from moxie_sdk.cloud_config import (SERVER_ONLY_KEYS,               # noqa: E402
@@ -192,13 +180,8 @@ def test_an_unset_layer_is_not_a_choice_of_the_default():
 @pytest.mark.parametrize("layers", list(itertools.product(
     ("llm", "content"), (None, "echo", "webhook"), (None, "echo", "content"))))
 def test_the_resolution_agrees_with_the_config_merge_it_claims_to_be(layers):
-    """The guard against a SECOND layering.
-
-    `brain` is an ordinary key in the ordinary config layers, so resolving it must give
-    the same answer as running those layers through `cloud_config.merge_config_layers` —
-    the function the pushed document already goes through. If someone gives the brain its
-    own precedence (robot under fleet, say, or a default that wins), this fails.
-    """
+    """No second layering: resolving `brain` must equal running the ordinary config layers
+    through `cloud_config.merge_config_layers`, which the pushed document uses."""
     default, fleet, robot = layers
     merged = merge_config_layers(
         {brains.CONFIG_KEY: default},

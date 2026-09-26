@@ -1,27 +1,21 @@
 """
 Streamed replies — the child hears the FIRST sentence, not the whole answer.
 
-PR #14 stopped the silence of a slow brain with one filler line; it did not shorten the
-wait for real words, so a 45 s turn still went quiet at ~26 s
-(docs/architecture/implementation-plan.md:138). This slice streams the answer: every
-finished sentence goes out as its own `RemoteChatResponse` — `result=REPLY_PENDING` with
-a `chunk_num` (RemoteChat.proto field 22), closed by a `SUCCESS` carrying
-`consistency_control.is_completed` (field 18) — which is the contract's own "one
-event_id, several responses" shape (docs/reverse-engineering/protocol/
-remote-chat-protocol.md:26,:63; docs/architecture/mqtt-and-conversation.md §4.5).
+Each finished sentence goes out as its own `RemoteChatResponse` (`REPLY_PENDING` with a
+`chunk_num`, RemoteChat.proto field 22), closed by a `SUCCESS` carrying
+`consistency_control.is_completed` (field 18) — the contract's "one event_id, several
+responses" shape (remote-chat-protocol.md; mqtt-and-conversation.md §4.5).
 
-**No sleeps.** The fake brain yields each chunk only when the test opens that chunk's
-`Event`, and the fake transport is a `Condition` a test waits on, so every ordering here
-is causal rather than wall-clock. The two bounded waits that remain are the honest ones:
-"a filler appeared inside the budget" and "a THIRD filler never appeared".
+No sleeps: the fake brain yields each chunk when the test opens its `Event` and the fake
+transport is a `Condition`, so ordering is causal. The only bounded waits are "a filler
+appeared inside the budget" and "a THIRD filler never appeared".
 
-Covered: a fast stream (chunk numbering, one constant event_id, every chunk synthesized,
-the final one completed); a late first token (filler, then the stream); a mid-answer
-stall (a second filler, and never a third); the stale guard cancelling a stream; a
-streaming failure falling back to the ordinary reply; `MOXIE_STREAMING=0` reproducing
-today's single-reply wire byte for byte; LLMApp's own streaming path (the JSON envelope
-decoded incrementally, a leading action tag lifted onto chunk 0, per-chunk markup); and
-the SIL client joining the chunks of one turn.
+Covered: a fast stream (numbering, one event_id, every chunk synthesized, final completed);
+a late first token (filler, then stream); a mid-answer stall (second filler, never a third);
+the stale guard cancelling a stream; stream failure falling back to a single reply;
+`MOXIE_STREAMING=0` reproducing the single-reply wire byte for byte; LLMApp's own streaming
+(incremental JSON envelope, leading action tag on chunk 0, per-chunk markup); and the SIL
+client joining one turn's chunks.
 """
 import json
 import os
@@ -31,10 +25,7 @@ import threading
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 sys.path.insert(0, os.path.join(REPO, "sim"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_runtime import (CHAT_TOPIC, CountingSynth, LatchClient,  # noqa: E402
                              make_runtime)

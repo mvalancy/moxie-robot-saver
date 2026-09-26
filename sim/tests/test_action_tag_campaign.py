@@ -11,7 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "mqtt"))
 sys.path.insert(0, str(REPO / "sim" / "tools"))
 
 import moxie_sdk.chat as chat  # noqa: E402

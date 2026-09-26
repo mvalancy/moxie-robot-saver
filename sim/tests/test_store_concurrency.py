@@ -1,30 +1,19 @@
 """
-T1–T9 — two processes writing one appliance's data must not lose each other's writes.
+T1–T11 — two processes writing one appliance's data must not lose each other's writes.
 
-The build document is
-[`docs/architecture/backlog/production-hardening.md`](../../docs/architecture/backlog/production-hardening.md);
-this file is its §6 T-series and it was written **before** the fix, in the shape
-`test_ext_escapes.py`'s X3 was: every test here failed on `origin/dev` at 341965d, and
-the ones that could pass for the wrong reason assert the *mechanism* as well as the
-outcome.
+The §6 T-series of `docs/architecture/backlog/production-hardening.md`. The decision under
+test (§3.2): advisory `flock` on a per-record sidecar lock file behind a public
+`JsonStore.transaction()`, JSON staying on disk. The tests target what a plausible `flock`
+patch gets wrong (§3.3):
 
-The decision under test (§3.2) is **advisory `flock` on a per-record sidecar lock file,
-behind a public `JsonStore.transaction()`, with JSON staying on disk** — not SQLite, and
-not a single-writer rule. So these tests are deliberately about the three things a
-plausible-looking `flock` patch gets wrong (§3.3):
+* **T4** — locking the *data* file locks an inode `os.replace` swaps out; the sidecar's
+  inode must be stable across a write.
+* **T2/T3** — `flock` is per open file description, so two `open()`s in one process
+  deadlock; `RLock` outside, `flock` inside, one `open()` per outermost acquisition.
+* **T5** — some writes run on the paho thread, so the wait is bounded (`LOCK_NB` + backoff,
+  `MOXIE_STORE_LOCK_TIMEOUT_S`) and an exhausted wait fails loudly.
 
-* **T4** — a lock taken on the *data* file is a lock on an inode `os.replace` is about to
-  swap out, i.e. no lock at all. The sidecar's inode must be stable across a write.
-* **T2/T3** — `flock` is per *open file description*, so two `open()`s in one process
-  deadlock where the old `threading.RLock` was reentrant. `RLock` outside, `flock`
-  inside, one `open()` per outermost acquisition.
-* **T5** — some store writes happen on the paho network thread, so the wait is bounded
-  (`LOCK_EX | LOCK_NB` + backoff, `MOXIE_STORE_LOCK_TIMEOUT_S`) and an exhausted wait
-  **fails loudly** rather than hanging the MQTT loop or vanishing.
-
-Hermetic: a tmp directory, real `fork`ed/`spawn`ed subprocesses, no MQTT, no broker, no
-network. No wall-clock read anywhere (see `test_clock_dependence.py`) — durations come
-from `time.monotonic` inside the store, and every test here counts events instead.
+Hermetic: tmp dir, real subprocesses, no broker. No wall-clock reads — tests count events.
 """
 from __future__ import annotations
 
@@ -37,7 +26,6 @@ import threading
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk import store as store_mod                      # noqa: E402
 from moxie_sdk.store import JsonStore, MemoryStore, StoreLockTimeout   # noqa: E402
@@ -45,12 +33,8 @@ from moxie_sdk.store import JsonStore, MemoryStore, StoreLockTimeout   # noqa: E
 DEVICE = "d_conc"
 COLLECTION = "safety_events"
 
-#: Appends per writer process. The brief's T1 says 5 000 each; `append` rewrites the
-#: whole list every time, so 5 000 × 2 is ~750 MB of fsync'd I/O and minutes of fast-tier
-#: wall clock. 250 × 2 lost **half of every run** on the unfixed store measured while
-#: writing this file (500 of 500 appends by one writer, three trials, plus 2-4 more from
-#: starvation), which is far more than a test needs to see. The number is a knob, not a
-#: claim: `MOXIE_TEST_STORE_APPENDS` raises it for a soak.
+#: Appends per writer process. 250 × 2 already loses about half on an unlocked store (the
+#: brief's 5 000 would be ~750 MB of fsync'd I/O); `MOXIE_TEST_STORE_APPENDS` raises it.
 APPENDS = int(os.environ.get("MOXIE_TEST_STORE_APPENDS") or 250)
 
 
@@ -62,11 +46,9 @@ import os, sys
 sys.path.insert(0, os.path.join(%(repo)r, "mqtt"))
 from moxie_sdk.store import JsonStore
 root, tag, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
-# A generous lock budget on purpose. T1 is about **lost updates**, and the store's other
-# failure — a starved `LOCK_NB` poller giving up (T5) — would show up here as the same
-# missing item for an entirely different reason. `flock` has no queue, so a process
-# appending in a tight loop can starve its peer; 30 s makes that vanishingly unlikely and
-# leaves T1 measuring the thing it claims to measure. The refusal path has its own test.
+# A generous lock budget on purpose: `flock` has no queue, so a tight-loop writer can
+# starve its peer, and a starved poller giving up (T5) would look like a lost update. 30 s
+# keeps T1 measuring lost updates only; the refusal path has its own test.
 s = JsonStore(root, lock_timeout_s=30.0)
 for i in range(n):
     assert s.append(%(device)r, %(collection)r, {"who": tag, "i": i}) is not None, \
@@ -93,14 +75,8 @@ def _spawn_writers(root: str, tags, n: int, script: str = WRITER):
 # --------------------------------------------------------------------------- #
 
 def test_t1_two_processes_appending_lose_nothing(tmp_path):
-    """T1 — 2 processes × `APPENDS` appends to one collection: the final list is exactly
-    `2 × APPENDS` items and every one of them is there.
-
-    This is the §3.2 decision stated as an assertion. It **fails on `origin/dev`**: two
-    `append()` calls interleave read-read-write-write across processes and one of the
-    items vanishes with no error anywhere — the single most damaging property of the
-    store today, because nothing observes it.
-    """
+    """T1 — 2 processes × `APPENDS` appends to one collection leave exactly `2 × APPENDS`
+    items. Without locking, read-read-write-write interleaving silently drops items."""
     root = str(tmp_path / "data")
     _spawn_writers(root, ("a", "b"), APPENDS)
 
@@ -114,11 +90,8 @@ def test_t1_two_processes_appending_lose_nothing(tmp_path):
 
 
 def test_t1b_the_test_can_actually_see_a_lost_update(tmp_path):
-    """Teeth for T1. A guard that has never been observed failing proves nothing, so run
-    the *unlocked* read-modify-write — today's `append`, transcribed — through the same
-    harness and require that it loses something. If this ever passes, T1 above has stopped
-    being a test of anything and the harness is what needs fixing.
-    """
+    """Teeth for T1: the UNLOCKED read-modify-write run through the same harness must lose
+    something, or T1 has stopped testing anything."""
     unlocked = r'''
 import json, os, sys
 sys.path.insert(0, os.path.join(%(repo)r, "mqtt"))
@@ -148,13 +121,9 @@ for i in range(n):
 # --------------------------------------------------------------------------- #
 
 def test_t2_nested_transaction_on_one_record_does_not_deadlock(tmp_path):
-    """T2 — reentrancy. `flock` is per open file *description*: a second `open()` +
-    `LOCK_EX` from the same thread blocks on itself forever. The old `threading.RLock`
-    was reentrant and the five `MemoryStore` call sites rely on that, so the outermost
-    acquisition is the only one that opens an fd.
-
-    Guarded by a watchdog thread so a regression reports "deadlock" instead of hanging the
-    fast tier until CI's job timeout.
+    """T2 — reentrancy: a second `open()` + `LOCK_EX` from the same thread would block on
+    itself, and `MemoryStore` call sites nest, so only the outermost acquisition opens an
+    fd. A watchdog turns a regression into "deadlock" instead of a CI timeout.
     """
     s = JsonStore(str(tmp_path))
     done = threading.Event()
@@ -174,12 +143,8 @@ def test_t2_nested_transaction_on_one_record_does_not_deadlock(tmp_path):
 
 
 def test_t2b_the_reentry_does_not_open_a_second_fd(tmp_path):
-    """The mechanism behind T2, not just its outcome: a nested acquisition must be a
-    *no-op re-entry*, so exactly ONE lock fd exists however deep the nesting goes.
-
-    Asserted rather than inferred because "it did not deadlock" is also what you get from
-    a patch that quietly stopped locking.
-    """
+    """T2's mechanism: nested acquisition is a no-op re-entry — exactly ONE lock fd however
+    deep — since "did not deadlock" is also what a patch that stopped locking gives."""
     s = JsonStore(str(tmp_path))
     opens = []
     real_open = os.open
@@ -198,11 +163,8 @@ def test_t2b_the_reentry_does_not_open_a_second_fd(tmp_path):
 
 
 def test_t3_two_threads_serialize_through_transaction(tmp_path):
-    """T3 — two threads in one process must not interleave a read-modify-write.
-
-    The probe is a *witness*, not a timing guess: each thread records the depth of
-    concurrent entry, and any value above 1 means two bodies were inside at once.
-    """
+    """T3 — two threads in one process never interleave a read-modify-write; each records
+    concurrent entry depth, and any value above 1 is a witness."""
     s = JsonStore(str(tmp_path))
     inside = 0
     peak = 0
@@ -238,13 +200,8 @@ def test_t3_two_threads_serialize_through_transaction(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_t4_the_lock_is_a_sidecar_whose_inode_survives_a_write(tmp_path):
-    """T4 — `os.replace()` swaps the **inode**. A lock held on the data file is a lock on
-    an inode the next writer will never open, so a patch that locks `memory.json` looks
-    correct, passes casual review, and serializes nothing.
-
-    Pinned three ways: the lock path is a `.lock` sidecar, it is *not* the data path, and
-    its inode is unchanged across a write that definitely replaced the data file's.
-    """
+    """T4 — the lock is a `.lock` sidecar, not the data path, and its inode survives a write
+    that replaced the data file's (a lock on `memory.json` would serialize nothing)."""
     s = JsonStore(str(tmp_path))
     data = s.path(DEVICE, COLLECTION)
     lock = s.lock_path(data)
@@ -307,12 +264,9 @@ with s.transaction(%(device)r, %(collection)r):
 
 @pytest.mark.skipif(store_mod.fcntl is None, reason="no fcntl on this platform")
 def test_t5_a_lock_held_past_the_timeout_fails_the_write_and_records_it(tmp_path):
-    """T5 — the wedged-holder case. A second process holds the record's lock; our write
-    must give up inside `MOXIE_STORE_LOCK_TIMEOUT_S`, return **False**, and leave a
-    record of it — never block the MQTT loop, never swallow the failure.
-
-    The timeout is driven down to 0.2 s and the holder waits on a *file*, so nothing here
-    depends on how long a process takes to start.
+    """T5 — a wedged holder in another process: our write gives up inside
+    `MOXIE_STORE_LOCK_TIMEOUT_S` (0.2 s here), returns False and records it — never blocks
+    the MQTT loop, never swallows the failure. The holder waits on a file, not a clock.
     """
     root = str(tmp_path / "data")
     ready = str(tmp_path / "held")
@@ -396,15 +350,9 @@ def test_t5c_a_refused_write_from_memorystore_returns_nothing_stored(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_t6_the_lock_timeout_must_be_inside_the_turn_budget(monkeypatch):
-    """T6 — a lock wait is a **slice** of a turn, not a claim on it. A deployment that
-    sets `MOXIE_STORE_LOCK_TIMEOUT_S` at or above `MOXIE_BRAIN_BUDGET_S` has written a
-    configuration in which one wedged writer can eat a whole turn, and it fails at
-    startup with a sentence rather than at 3 a.m. with a silent robot.
-
-    Exactly the guard `MOXIE_EXT_BUDGET_S` gets (`test_ext.py::test_t16_…`), for exactly
-    the same reason — and 2.0 s is **chosen, not measured** (§9 A13), which is why it is
-    an env var at all.
-    """
+    """T6 — a lock wait is a slice of a turn: `MOXIE_STORE_LOCK_TIMEOUT_S` >=
+    `MOXIE_BRAIN_BUDGET_S` fails startup with a sentence (same guard as `MOXIE_EXT_BUDGET_S`;
+    2.0 s is chosen, not measured, hence an env var)."""
     import importlib
     import config as cfg
     assert cfg.STORE_LOCK_TIMEOUT_S == pytest.approx(2.0)
@@ -433,11 +381,9 @@ def test_t6b_the_store_reads_the_env_var_itself(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 
 def test_t7_without_fcntl_the_store_still_works_and_says_so(tmp_path, monkeypatch, capsys):
-    """T7 — `fcntl` is POSIX-only. With it absent the store degrades to exactly today's
-    in-process `RLock` behaviour (a Windows developer keeps working) and the supervisor
-    prints **one** line saying cross-process locking is unavailable. Not a crash, and not
-    a silent downgrade — a silent downgrade is how someone ships a Windows appliance
-    believing it is safe."""
+    """T7 — without `fcntl` (non-POSIX) the store degrades to in-process `RLock` and the
+    supervisor prints ONE line saying cross-process locking is unavailable — no crash, no
+    silent downgrade."""
     monkeypatch.setattr(store_mod, "fcntl", None)
     s = JsonStore(str(tmp_path))
     with s.transaction(DEVICE, COLLECTION):
@@ -499,13 +445,8 @@ for i in range(1000):
 
 
 def test_t8_a_sigkill_between_write_and_replace_never_leaves_a_torn_file(tmp_path):
-    """T8 — 20 writers, each SIGKILLed in the window between a complete temp file and the
-    `os.replace` that publishes it. Every surviving record must parse as either the old
-    value or the new one — never half of one (A6).
-
-    This is the property `os.replace` already gave us; the test exists so a locking patch
-    cannot take it away, and so the temp-file cleanup is proved rather than assumed.
-    """
+    """T8 — 20 writers SIGKILLed between a complete temp file and `os.replace`: every
+    record parses as old or new, never half (A6), and temp files are cleaned up."""
     root = str(tmp_path / "data")
     s = JsonStore(root)
     s.write(DEVICE, COLLECTION, [])
@@ -536,13 +477,8 @@ def test_t8_a_sigkill_between_write_and_replace_never_leaves_a_torn_file(tmp_pat
 
 
 def test_t9_the_directory_is_fsynced_after_the_rename(tmp_path):
-    """T9 — the file's *contents* were already durable (`fsync` before the rename); the
-    **directory entry** pointing at them was not (§2.1, A12). On ext4 with `data=ordered`
-    you get old-or-new anyway, which is why nobody has been bitten — but that is the
-    filesystem being kind, not the code being correct.
-
-    Asserted by watching for an fsync on a **directory** fd, which is the only thing that
-    distinguishes the fix from the four lines that look like it.
+    """T9 — the directory entry is fsynced too, not just the contents (§2.1, A12); asserted
+    by watching for an fsync on a DIRECTORY fd, the only thing that distinguishes the fix.
     """
     s = JsonStore(str(tmp_path))
     synced_dirs = []
@@ -639,24 +575,15 @@ def test_a_transaction_on_one_record_does_not_block_another(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# T10 — `append` reads the write's return code (production hardening P1)
+# T10 — `append` reads the write's return code
 # --------------------------------------------------------------------------- #
 #
-# Found while wiring P1's connection ring onto the store. `append()` called `write()` and
-# returned `items` regardless of what it said, so an `OSError` — a full disk, a read-only
-# `/data`, a permission change under a running appliance — produced a **successful** append
-# of an item that reached no file.
-#
-# That is the same disease as the eight `publish()` sites whose `info.rc` nobody read
-# (§4.1 C5) and the CONNACK that logged "broker connected" for a refusal (C3): a
-# comfortable answer at the one boundary that knows the truth. It also breaks the identity
-# the soak's contention probe is built on —
+# `append()` must not report success for an item a failed `write()` (full disk, read-only
+# `/data`) never stored. The soak's contention probe depends on the identity
 #
 #     attempted == items_on_disk + refusals
 #
-# — which is the only thing that tells a **recorded refusal** (§3.2 point 4 accepts it,
-# A11 asks it to be recorded) apart from a **silent loss** (A5 forbids it). With `append`
-# lying about a failed write, a lost item looks exactly like a successful one.
+# which separates a recorded refusal (§3.2 point 4, A11) from a silent loss (A5).
 
 def test_t10_append_reports_failure_when_the_write_failed(tmp_path, monkeypatch):
     """A write that did not land must not come back as a list that says it did."""
@@ -697,12 +624,8 @@ def test_t10c_append_shared_reports_the_same_way(tmp_path, monkeypatch):
 
 
 def test_t10d_the_identity_the_soak_rests_on_holds_under_real_contention(tmp_path):
-    """`attempted == on_disk + refused`, proved in-process over threads.
-
-    The soak (`sim/tools/soak.py`) asserts this across **processes** at a rate CI cannot
-    afford; this is the same invariant at a size the fast tier can run, so a regression in
-    it fails in seconds rather than in the nightly job.
-    """
+    """`attempted == on_disk + refused` over threads — the soak (`sim/tools/soak.py`)
+    checks it across processes; this fails in seconds in the fast tier."""
     s = JsonStore(str(tmp_path))
     attempted, refused = 200, 0
     lock = threading.Lock()
@@ -728,44 +651,17 @@ def test_t10d_the_identity_the_soak_rests_on_holds_under_real_contention(tmp_pat
 # T11 — a raised lock budget must time out, not crash the caller
 # --------------------------------------------------------------------------- #
 #
-# Found 2026-09-03 while characterising a reported `test_t1` flake ("failed once under
-# full-suite load, then passed 5/5 isolated"). It is not a flake and it is not starvation.
-#
-# `_wait_flock`'s backoff computed `LOCK_BACKOFF_BASE_S * (2 ** attempt)`, and `2 **
-# attempt` is an arbitrary-precision **int**. The loop runs until the budget is spent —
-# about `timeout / LOCK_BACKOFF_CAP_S` iterations — so:
-#
-#     MOXIE_STORE_LOCK_TIMEOUT_S = 2.0  (default)  →  ~1 000 polls   — 24 short of the cliff
-#     MOXIE_STORE_LOCK_TIMEOUT_S = 5.0             →  ~2 500 polls   — CRASHES
-#     MOXIE_STORE_LOCK_TIMEOUT_S = 30.0            →  ~15 000 polls  — CRASHES
-#
-# At `attempt == 1024` the product overflows a float and raises `OverflowError: int too
-# large to convert to float` — straight out of `transaction()`, **past** `append`'s
-# `except StoreLockTimeout`, into whatever called it. On the paho network thread that is
-# the "never take the MQTT loop down for a store write" property broken outright.
-#
-# Three things make it nasty rather than merely wrong:
-#
-# * **the default hides it by 24 polls**, so nobody sees it until an operator tunes;
-# * **`config.py` invites the tuning** — the only bound it enforces is
-#   `< MOXIE_BRAIN_BUDGET_S`, which is far above the cliff;
-# * **it needs real contention to reach**, so it presents as a rare, load-dependent test
-#   failure rather than as a bug.
-#
-# `test_t1` uses a 30 s budget *deliberately* (so that starvation cannot be mistaken for a
-# lost update), which is precisely why the flake surfaced there first. It is also the most
-# likely explanation for the unexplained single lost append in the handed-down
-# "999 of 1 000 at 30 s" measurement: not a starved waiter, a crashed writer.
+# `_wait_flock`'s backoff was `BASE * (2 ** attempt)` with an unbounded int exponent. The
+# loop runs ~`timeout / CAP` polls, so at `attempt == 1024` the float conversion raised
+# `OverflowError` straight out of `transaction()`, past `append`'s `StoreLockTimeout`
+# handler — on the paho thread. The 2.0 s default sat 24 polls short of it; 5 s and 30 s
+# crashed. It needs real contention to reach, so it looked like a rare T1 flake.
 
 @pytest.mark.parametrize("timeout_s", [2.0, 5.0, 30.0, 120.0])
 def test_t11_a_contended_waiter_times_out_at_any_budget(tmp_path, timeout_s):
-    """Whatever the budget, exhausting it is a `StoreLockTimeout` — never an
-    `OverflowError`, and never anything else the caller has not been told to expect.
-
-    The sleep is injected and does nothing, so ~15 000 polls take milliseconds and no wall
-    clock is read (`test_clock_dependence.py`'s ratchet). That also means the test is
-    measuring the **poll count**, which is exactly the axis the bug lives on.
-    """
+    """Whatever the budget, exhausting it is a `StoreLockTimeout`, never an
+    `OverflowError`. The injected sleep does nothing, so ~15 000 polls take milliseconds —
+    measuring the poll count, the axis the bug lives on."""
     s = JsonStore(str(tmp_path), lock_timeout_s=timeout_s, sleep=lambda _: None)
     path = s.path(DEVICE, COLLECTION)
     lock = s.lock_path(path)
@@ -786,12 +682,8 @@ def test_t11_a_contended_waiter_times_out_at_any_budget(tmp_path, timeout_s):
 
 
 def test_t11b_the_backoff_never_computes_an_unbounded_exponent(tmp_path):
-    """The mechanism, pinned at the line rather than only at the symptom.
-
-    Asserted as a property of the delays themselves — every one is a real float inside
-    `[0, cap + base]` — because the symptom (an `OverflowError`) is reachable only through
-    a poll count that a future refactor of the loop could change without fixing anything.
-    """
+    """The mechanism: every backoff delay is a real float in `[0, cap + base]`, so a loop
+    refactor that changes the poll count cannot hide a regression."""
     delays: list = []
     s = JsonStore(str(tmp_path), lock_timeout_s=30.0, sleep=delays.append)
     path = s.path(DEVICE, COLLECTION)
