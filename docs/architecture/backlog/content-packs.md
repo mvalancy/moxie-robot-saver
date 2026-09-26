@@ -6,7 +6,7 @@ after the code merged, while the banner immediately below it said `✅ P0 shippe
 code, not against the audit: [`mqtt/moxie_sdk/content/packs.py`](../../../mqtt/moxie_sdk/content/packs.py)
 is **1 145 lines** — `SPEC`:123, `validate_item`:272, `export_pack`:352, `parse_pack`:459,
 `review_pack`:626, `apply_pack`:810, `mark_edited`:872 — and the five status-HTTP routes are live at
-[`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):1003 `/content`, :1007 `/content/export`,
+[`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):1003 `/content`, :1007 `/content/export`,
 :1163 `/content/undo`, :1166 `/content/review`, :1303 the write set. A brief that announces itself as
 ready hands the reader a plan; that is why this marker was more dangerous than a stale audit row.)*
 **Covers:** [`../openmoxie-feature-audit.md`](../openmoxie-feature-audit.md)
@@ -88,7 +88,7 @@ deliberately not scheduled.
 > cannot make it.
 
 **Reserved-region note up front.** P0 touches the status-HTTP handler block in
-[`../../../mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py)
+[`../../../mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/)
 (`_start_status_server`) and adds one runtime method region. It **must not touch `_push_config`, the
 turn/streaming loop, or the safety gates** — nothing a content pack carries in P0 changes
 `RobotCloudConfig`, which is exactly why face/config packs are P2 (§5). Playbook rule 10: check
@@ -546,7 +546,7 @@ with the honest caveat of §2.2); detached signatures, if a publisher identity e
 | `mqtt/moxie_sdk/content/__init__.py` | export them |
 | `mqtt/moxie_sdk/content/module.py` | accept + preserve `source_version` on the three dataclasses (default 1) |
 | `mqtt/config.py` | `build_content_app()` applies the overlay after the shipped file |
-| [`../../../mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) | the content region + five status-HTTP routes + `reload_content()`. **Not** `_push_config`, **not** the turn loop |
+| [`../../../mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) | the content region + five status-HTTP routes + `reload_content()`. **Not** `_push_config`, **not** the turn loop |
 | `mqtt/content_modules/*.json` + `README.md` | add `source_version` to the shipped records; document the overlay |
 | `sim/tests/test_content_packs.py`, `test_content_packs_runtime.py` | **new** — tests 1-11 |
 | `sim/tests/test_content_app.py` | extend test 8 |

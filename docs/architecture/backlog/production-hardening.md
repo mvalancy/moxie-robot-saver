@@ -10,11 +10,11 @@
 > | §3's decision | Where it actually is |
 > |---|---|
 > | advisory `flock` on a per-record sidecar, JSON staying on disk | [`store.py`](../../../mqtt/moxie_sdk/store.py):444 `transaction()` · :462 `transaction_shared()` · :344 `flock(fd, LOCK_EX \| LOCK_NB)` · the argument at :60 and :110 |
-> | §4's reconnection, incl. the `retry_first_connection` trap | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):372 `reconnect_delay_set` · :797 `loop_forever(retry_first_connection=True)` · :789 the comment naming the trap |
+> | §4's reconnection, incl. the `retry_first_connection` trap | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):372 `reconnect_delay_set` · :797 `loop_forever(retry_first_connection=True)` · :789 the comment naming the trap |
 > | §5's soak | [`sim/run_soak.sh`](../../../sim/run_soak.sh) + [`sim/tools/soak.py`](../../../sim/tools/soak.py) |
 > | P1's durable roster (15th collection) | [`roster.py`](../../../mqtt/moxie_sdk/roster.py):41 `fleet/roster.json` · re-read at `moxie_runtime.py`:1745 |
 > | P1's connection telemetry (16th collection) | [`conn_telemetry.py`](../../../mqtt/moxie_sdk/conn_telemetry.py):49 `fleet/conn_events.json` · `summarize`:175 |
-> | P1's SIGTERM/SIGINT handler | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):808 `_install_signal_handlers` |
+> | P1's SIGTERM/SIGINT handler | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):808 `_install_signal_handlers` |
 >
 > **What genuinely remains:** only **P2** (§11) — a `MOXIE_STORE=sqlite` backend behind the unchanged
 > five-method API, and only *if* a caller appears that needs a transaction or a query (§3.2's trigger).
@@ -74,7 +74,7 @@ agent could not start:
 
 | | The defect | The owed decision |
 |---|---|---|
-| **Connection** | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):484 is a plain blocking `client.connect(...)` | none — the fix is known, and §4 just writes it down precisely, because the *precise* version is not what a PR review would guess (§2.2) |
+| **Connection** | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):484 is a plain blocking `client.connect(...)` | none — the fix is known, and §4 just writes it down precisely, because the *precise* version is not what a PR review would guess (§2.2) |
 | **Store** | [`store.py`](../../../mqtt/moxie_sdk/store.py):71 is an in-process `threading.RLock()` and nothing else | **this one.** WAL-backed SQLite, a single-writer process, or advisory file locks — three answers with different costs, and ADOPT #8 deferred it three times |
 
 An agent briefed on "harden the store" without §3 would spend its run arguing the option table into
@@ -122,7 +122,7 @@ Nothing about this brief depends on the count being 14 rather than 13 — it dep
 
 ### 2.2 The connection, exactly — and the part a PR review would get wrong
 
-[`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py), 3 521 lines.
+[`mqtt/supervisor/moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/), 3 521 lines.
 
 - **:215** — `mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="supervisor")`. A fixed client id,
   the default `clean_session`, no `will_set`.

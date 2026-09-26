@@ -516,7 +516,7 @@ never re-summarizes, or re-pays for, the same turns) and merges it in.
 ### What a parent can do
 
 The supervisor's localhost status server serves the memory
-([`moxie_runtime.py`](../../mqtt/supervisor/moxie_runtime.py), the memory region):
+([`moxie_runtime.py`](../../mqtt/supervisor/moxie_runtime/), the memory region):
 
 | Endpoint | Effect |
 |---|---|

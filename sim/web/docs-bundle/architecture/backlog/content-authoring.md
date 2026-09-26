@@ -5,7 +5,7 @@
 > *This page carried **no status marker at all** until 2026-09-06, while its title still read "the verb
 > packs did not ship" and §1 below still opens "Why this is 🟠 today". Both were true when filed and
 > neither is true now.* Re-verified against the code:
-> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):1177 routes `POST /content/item` to
+> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):1177 routes `POST /content/item` to
 > `content_save_item` and its own comment names this brief — *"✍️ Rung 4 … the one authoring verb that
 > writes, and the one that owns `validate_item` — deliberately HERE and not in the console proxy, so a
 > direct `curl` at this port cannot skip it (brief R6)"*. The R6 mitigation is restated at
