@@ -166,7 +166,7 @@ flowchart LR
 | Where | File | What exists today |
 |---|---|---|
 | The mode | [`moxie_sdk/cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py) | `MoxieMode.TELEHEALTH = 1`, emitted as `"moxie_mode"` by `build_robot_cloud_config`. **Never set to anything but `DEFAULT_MODE`.** |
-| Config push | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) `update_config` / `_push_config` | per-robot overrides, deep-merged over the fleet layer, re-pushed on change — **exactly the machinery the mode toggle needs**, no new plumbing |
+| Config push | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) `update_config` / `_push_config` | per-robot overrides, deep-merged over the fleet layer, re-pushed on change — **exactly the machinery the mode toggle needs**, no new plumbing |
 | Command publish | same, `_publish_chat` / `_query_payload` / `feed_stt` | the file already publishes to `commands/remote_chat`, `commands/query_result`, `commands/tts`, `commands/zmq`. `commands/telehealth` is the one command in the recovered table with no publisher. |
 | Robot → cloud | same, `_on_activity` | parses `client-service-activity-log`, handles `query` and `mentor_behavior`; **no `subtopic == "telehealth"` branch** |
 | Markup | [`moxie_sdk/automarkup.py`](../../../mqtt/moxie_sdk/automarkup.py) `annotate` | pure, deterministic, mood/gesture hints, golden-pinned. p95 0.23 ms/line. |

@@ -5,11 +5,9 @@ upload-gate. Field names verified against embodied/logging/Cloud.proto.
 import base64
 import json
 import os
-import sys
 import time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.telemetry import (  # noqa: E402
     PacketModel, build_packet, parse_packet, should_upload, summarize_events,
@@ -100,9 +98,7 @@ def test_summarize_events_limit_zero_returns_no_rows():
 # ---------------------------------------------------------------------------
 # Durable, bounded telemetry — the privacy gate, the caps, the day arithmetic
 # ---------------------------------------------------------------------------
-# These are the pure half of the "telemetry survives a restart" slice. The runtime side
-# (write → restart → read back) is `test_telemetry_runtime.py`; the console side is
-# `test_fleet.py` + `test_console_roundtrip.py`.
+# The pure half; runtime: `test_telemetry_runtime.py`; console: `test_fleet.py`.
 
 from moxie_sdk.telemetry import (  # noqa: E402
     DAILY_COLLECTION, MAX_DAY_EVENTS, OTHER_EVENT, PACKETS_COLLECTION,
@@ -185,12 +181,9 @@ def test_storable_packet_never_mutates_the_caller_and_drops_junk_fields():
 
 
 # --- the day arithmetic ---
-# Every test below reads the clock through `time.strftime(..., time.localtime(<FIXED
-# epoch>))`, never through a real "now": the epoch is a literal, and strftime is used to
-# compute the EXPECTATION the same way `telemetry.packet_day` computes the answer. That
-# makes them timezone-aware (deliberately — the roll-up is keyed on the LOCAL calendar
-# day, so a hard-coded "2026-09-02" would fail west of UTC) and hour-independent. Do not
-# "fix" them into string literals: that would silently pin the runner's timezone.
+# Expectations are computed with `time.strftime(..., time.localtime(<FIXED epoch>))`, as
+# `telemetry.packet_day` does, so these are timezone-aware (the roll-up keys on the LOCAL
+# day) and hour-independent. Don't turn them into date literals — that pins the runner's TZ.
 
 def test_packet_day_uses_recorded_at_when_it_is_plausible():
     ts = 1756800000                                  # 2026-09-02 in the local zone

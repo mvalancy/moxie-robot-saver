@@ -1,54 +1,22 @@
 """🔌 The SUPERVISOR must not be booted on a promise the broker has not kept.
 
-**The finding (2026-09-05, promotion PR).** The HIL job went red with
+Mirror image of `test_sil_handshake.py`, on the supervisor's side. `client.subscribe()`
+only queues a SUBSCRIBE (sent later on paho's thread), and `[runtime] broker connected` is
+printed right after it — "we asked", not "the broker agreed". A robot announcing in that
+gap publishes `/state` to a broker with no matching subscription, so no config push is ever
+generated (it is QoS 0, not retained): deleted, not delayed, and no timeout helps. Seen as
+the FIRST scenario failing 0/4 with the second passing. The fix is a second readiness line
+printed from `_on_subscribe`.
 
-    ❌ scenario 'basic-conversation': 0/4 turns OK — no config pushed within timeout
+Sleeping inside `_on_connect` cannot reproduce this (the line is printed after the loop, so
+it is delayed too). The gap is on the WIRE, so a TCP relay holds the SUBSCRIBE packet for
+`HOLD_SUBSCRIBE_S`; `mqtt/run.py` runs unpatched.
 
-while `motion-demo` — the **second** scenario in the same job, against the same
-supervisor — passed 4/4. First fails, second passes: that split is a startup race, not a
-scenario bug, and it is the *mirror image* of the one PR #143 fixed in the robot
-(`test_sil_handshake.py`). Same wire, other end:
+1. §1 — booted on the SUBACK line, the supervisor serves the robot.
+2. §2 — the teeth: the identical run booted on `broker connected` loses the config.
 
-* `client.subscribe(topic)` does not subscribe. It generates a mid, queues a SUBSCRIBE
-  packet and returns; under `loop_forever()` the bytes leave on paho's network thread
-  **after** `_on_connect` returns.
-* `sim/run_scenarios.sh` and `sim/run_smoke.sh` booted their robots on
-  `[runtime] broker connected`, which `_on_connect` prints immediately after that call —
-  so the line meant *"we asked"*, never *"the broker agreed"*.
-* Until 2026-09-05 the supervisor had no `on_subscribe` handler at all, so it had no way
-  to know the difference.
-
-A robot announcing in that window publishes `/devices/<id>/state` to a broker holding no
-matching subscription. The supervisor answers a `/state` with a config push at **QoS 0
-and not retained** (`moxie_runtime._publish`; QoS 1 is refused on purpose,
-production-hardening.md §4.3), so nobody receives the announcement, no push is ever
-generated, and nothing replays it. **The message is deleted, not delayed** — which is the
-whole reason a bigger timeout cannot help, and why the fix is a second readiness line
-rather than a bigger number.
-
-**How the race is created here — and why the robot-side trick does NOT work.**
-`test_sil_handshake.py` reproduces its race by sleeping inside `on_connect` before
-subscribing. Doing that to the supervisor proves nothing: `_on_connect` prints its
-readiness line *after* the subscribe loop, so a sleep there delays the line too and the
-gap never opens. The supervisor's gap is on the **wire**, after the callback returns. So
-this file puts a TCP relay in front of the broker and holds the SUBSCRIBE packet back for
-`HOLD_SUBSCRIBE_S`. Nothing in the appliance is patched, nothing is monkeypatched, and
-`mqtt/run.py` runs exactly as it ships: the SUBSCRIBE really is sent when the runtime
-sends it and really does take that long to arrive, which is what a loaded CI runner does
-to it for free — only bigger, and repeatable.
-
-**What this file proves.**
-
-1. §1 — the shipped supervisor, booted on the SUBACK line, serves a robot whose config
-   push it would otherwise have thrown away.
-2. §2 — the teeth: the identical run booted on `[runtime] broker connected` loses the
-   config **outright**, so §1 cannot pass vacuously. This is the HIL failure, on demand.
-
-Needs a broker (mosquitto binary or docker), which is why the file is named `test_sil_*`:
-both CI tiers select the hermetic suite with `-k "not test_sil"`. The hermetic halves of
-this contract — that the runtime prints the line only on the SUBACK, and that every
-supervisor-booting script waits for *that* line — live in `test_connect_readiness.py` and
-`test_harness_readiness.py`, which do run in CI.
+Needs a broker (hence `test_sil_*`). The hermetic halves are `test_connect_readiness.py` and
+`test_harness_readiness.py`.
 
     .venv/bin/python -m pytest sim/tests/test_sil_supervisor_readiness.py -q
 """
@@ -72,14 +40,9 @@ pytest.importorskip("paho.mqtt.client", reason="the handshake under test is a pa
 import helpers_stack as S                                            # noqa: E402
 from virtual_moxie import VirtualMoxie                               # noqa: E402
 
-#: How long the supervisor's SUBSCRIBE packet is held on the wire.
-#:
-#: There is no settle timer to out-wait on this side — the robot-side race had to beat
-#: `_device_connect`'s 1.0 s window, but a `/state` that arrives with no subscription in
-#: place is dropped by the broker instantly and is never seen again. So the only thing
-#: this number has to exceed is how long a robot takes to connect and announce (~0.1 s),
-#: and three seconds is that with two orders of magnitude of margin — chosen so the test
-#: cannot become a stopwatch reading of the runner.
+#: How long the supervisor's SUBSCRIBE is held on the wire. It only has to exceed a robot's
+#: connect + announce (~0.1 s) — a `/state` with no subscription is dropped instantly — so
+#: 3 s is two orders of magnitude of margin, not a stopwatch reading of the runner.
 HOLD_SUBSCRIBE_S = 3.0
 
 #: A config is answered within milliseconds of the announcement once anybody is listening
@@ -92,12 +55,8 @@ CONFIG_WAIT_S = 8.0
 # A broker relay that holds SUBSCRIBE packets back
 # --------------------------------------------------------------------------- #
 def _split_packet(buf: bytes):
-    """One whole MQTT control packet off the front of `buf`, or `(None, buf)`.
-
-    Fixed header: one type/flags byte, then a 1-4 byte varint remaining-length. We only
-    ever need to know a packet's TYPE and its LENGTH, never its contents, so this is the
-    whole parser.
-    """
+    """One MQTT control packet off the front of `buf`, or `(None, buf)` — just the type byte
+    and the 1-4 byte varint remaining-length; contents are never needed."""
     if len(buf) < 2:
         return None, buf
     multiplier, length, i = 1, 0, 1
@@ -122,16 +81,9 @@ SUBSCRIBE = 8          # MQTT control packet type, high nibble of byte 0
 
 
 class LateSubscribeProxy:
-    """A TCP relay in front of the broker that delays SUBSCRIBE packets by `delay_s`.
-
-    Everything else — CONNECT, PUBLISH, PINGREQ, and every byte coming back — is copied
-    straight through, so the only thing that changes is the one packet whose lateness is
-    the subject. The supervisor connects here; robots connect to the real broker, so a
-    test can stand in the gap the relay opens.
-
-    Deliberately at the transport, not in the appliance: a delay injected into
-    `client.subscribe` would be a claim about a client double, and this is a claim about
-    the shipped `mqtt/run.py` talking to a real mosquitto.
+    """A TCP relay in front of the broker that delays only SUBSCRIBE packets by `delay_s`;
+    everything else passes straight through. The supervisor connects here, robots to the
+    real broker. Injected at the transport, so the claim is about the shipped `mqtt/run.py`.
     """
 
     def __init__(self, upstream_port: int, delay_s: float):
@@ -305,18 +257,10 @@ def test_a_supervisor_whose_subscribe_is_late_still_serves_the_robot(tmp_path, b
 # --------------------------------------------------------------------------- #
 def test_the_teeth_a_robot_booted_on_the_connack_line_never_gets_its_config(
         tmp_path, broker, proxy):
-    """The HIL red, on demand.
-
-    Identical supervisor, identical robot, identical relay: the *only* difference is
-    which line the harness treated as readiness. Booted on `[runtime] broker connected`
-    the announcement lands in the gap, the broker drops it, and the config that would
-    have answered it is never generated — so the robot waits out its whole timeout for a
-    message that does not exist. Without this, §1 above is a restatement of "MQTT works".
-
-    Note what is NOT asserted: that the supervisor is slow. `got_config` is waited on for
-    a full `CONFIG_WAIT_S`, which is longer than the SUBSCRIBE is held — so a config that
-    was merely late would arrive and fail this test. It never does, because there is
-    nothing to arrive.
+    """The HIL red on demand: same supervisor, robot and relay, but booted on
+    `[runtime] broker connected` — the announcement lands in the gap and no config ever
+    exists. `got_config` waits longer than the hold, so a merely LATE config would arrive
+    and fail this test.
     """
     sup = _supervisor(tmp_path, proxy, ready_line=S.CONNECT_LINE)
     vm = _connected_robot(broker)

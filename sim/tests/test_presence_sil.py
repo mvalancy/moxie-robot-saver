@@ -13,20 +13,17 @@ with no network, no sleeps and no mosquitto. Elapsed absence is seeded, never wa
 import json
 import os
 import sys
-import time
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "sim"))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 pytest.importorskip("paho.mqtt.client")            # the SIL client needs paho
 from virtual_moxie import VirtualMoxie              # noqa: E402
 
+from helpers_runtime import seed_absent  # noqa: E402
 from helpers_runtime import make_runtime            # noqa: E402
-from moxie_sdk import presence as P                 # noqa: E402
 from moxie_sdk.app import MoxieApp                  # noqa: E402
 from moxie_sdk.types import Reply                   # noqa: E402
 
@@ -79,16 +76,6 @@ def _loopback(greet_after_s=300.0):
     return rt, vm, dev
 
 
-def _seed_absent(rt, dev, away_s):
-    # Offsets from now, not dates — presence is scored as an age. Same reasoning as
-    # `test_presence_runtime._seed_absent`; reviewed in `test_clock_dependence.py`.
-    now = time.time()
-    rt.robots[dev].extra["presence"] = dict(
-        P.new_state(), face_present=False, announced="left", faces_seen=1,
-        last_seen_at=now - away_s - 30.0, present_since=now - away_s - 60.0,
-        last_lost_at=now - away_s, absent_since=now - away_s)
-
-
 # --------------------------------------------------------------------------- #
 # The wire shape the SIL robot emits
 # --------------------------------------------------------------------------- #
@@ -135,7 +122,7 @@ def test_lost_then_found_round_trips_through_the_real_runtime():
 
 def test_walking_back_in_after_a_long_absence_reaches_the_sil_robot_as_a_spoken_line():
     rt, vm, dev = _loopback(greet_after_s=300.0)
-    _seed_absent(rt, dev, away_s=900.0)
+    seed_absent(rt, dev, away_s=900.0)
     vm.send_face_event("found")
     assert vm.got_reply.is_set(), "the SIL robot never saw a response"
     assert vm.reply_payload["result"] == "SUCCESS", vm.reply_payload
@@ -155,7 +142,7 @@ def test_a_silent_acknowledgement_still_wakes_the_sil_robot():
 
 def test_run_face_events_records_what_the_server_answered():
     rt, vm, dev = _loopback(greet_after_s=300.0)
-    _seed_absent(rt, dev, away_s=900.0)
+    seed_absent(rt, dev, away_s=900.0)
     # The live sequence is `lost` -> wait -> `found`; the wait is the only part a
     # hermetic test may not actually spend, so it is re-seeded onto the record the
     # `lost` just wrote. Drive it by hand: `run_face_events` owns connect/loop_start,
@@ -163,7 +150,7 @@ def test_run_face_events_records_what_the_server_answered():
     for kind in ("lost", "found"):
         vm._reset_turn()
         if kind == "found":
-            _seed_absent(rt, dev, away_s=900.0)      # stands in for the wait
+            seed_absent(rt, dev, away_s=900.0)      # stands in for the wait
         vm.send_face_event(kind)
         vm.face_replies.append({"kind": kind,
                                 "result": (vm.reply_payload or {}).get("result"),

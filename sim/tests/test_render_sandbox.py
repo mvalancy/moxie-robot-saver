@@ -1,35 +1,19 @@
 """A content pack's `prompt` is untrusted input, so its renderer must be a sandbox.
 
-`moxie_sdk/content/packs.py` (PR #51) makes content **shareable**: a parent can import a
-pack somebody else exported. A pack carries `prompt` and `opener` strings, and
-`moxie_sdk/content/render.py` renders them. Under a plain `jinja2.Environment` that is
-server-side code execution, and it was: on jinja2 3.1.2 in a dev checkout,
-`{{ cycler.__init__.__globals__['os'].name }}` returned the host platform and
-`''.__class__.__mro__[1].__subclasses__()` enumerated 364 host classes. The shipped
-container happened to be safe only because it has no jinja2 at all
-(`mqtt/requirements.txt`; `pyproject.toml`:25 gates it behind the `content` extra), so the
-hole was live in every dev checkout and every `.[content]` / `.[all]` install.
-**That accident is over:** `mqtt/requirements.txt` now lists `jinja2>=3.0` on purpose, because
-`content-module-contract.md`:42 advertises `{% if %}` and the fallback cannot render it.
-Shipping jinja2 into the container is only safe *because* of this
-sandbox, so these probes now fence the renderer every real deployment runs.
+Packs are shareable, and `prompt`/`opener` are rendered by `moxie_sdk/content/render.py`.
+Under a plain `jinja2.Environment` that is server-side code execution
+(`{{ cycler.__init__.__globals__['os'].name }}`, `''.__class__.__mro__[1].__subclasses__()`).
+The container ships jinja2 on purpose (`content-module-contract.md`:42 advertises
+`{% if %}`), which is safe only because of this sandbox.
 
-Found by the research pass that specced `backlog/sandboxed-extensions.md` — which is the
-irony worth recording: the brief's whole subject is "we never execute untrusted code", and
-the audit's ⚠️ pointed at a pack's `code` field, which never runs, while saying nothing
-about `prompt`, which does.
-
-These tests are the regression fence. Each probe is a real escape technique, and each must
-come back inert while ordinary templating keeps working — a sandbox that breaks
-`Hi {{ nickname }}` would just get reverted.
+Each probe is a real escape technique and must come back inert, while ordinary templating
+(`Hi {{ nickname }}`) keeps working.
 """
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.content import render as R  # noqa: E402
 

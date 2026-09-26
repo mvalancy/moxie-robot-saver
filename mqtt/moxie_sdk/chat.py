@@ -19,36 +19,16 @@ StreamFn = Callable[[list], Iterator[str]]   # messages -> a trickle of text del
 
 # ---- the recorded upstream-call counter ----------------------------------- #
 #
-# 💰 **Why a counter and not a stub.** Several properties in this appliance are of the
-# form *"this path must never cost a model call"* — the loudest is presence: a vision
-# event is answered by `moxie_runtime._on_vision_turn` and is "never assessed as a
-# child's utterance, never enters history, **never costs a model call**"
-# (docs/architecture/vision.md §7.1), because `eb-found-face` fires every time a child
-# moves around a room and routing it to a brain would turn presence into a billing event.
+# 💰 Several paths must never cost a model call (loudest: presence — a vision event is
+# never routed to a brain, vision.md §7.1). A stub brain that fails when called proves
+# only that *that* double was quiet, not that no retry or second path spent a request. So,
+# like the edge's `functions/api/_lib/limits.js::noteUpstreamCall()`, this counter sits
+# immediately before the call that becomes an HTTP request, and tests assert on the RECORD.
 #
-# A test can *assert* that by handing the app a brain double that fails when called — and
-# that proves only that **this** double was not called. It says nothing about a second
-# path, a retry inside `call_with_backoff`, or a stream opened somewhere else in the same
-# turn. The edge already learned this lesson and solved it the other way round:
-# `functions/api/_lib/limits.js::noteUpstreamCall()` sits immediately before the one
-# `fetch()` in each route, and `sim/tests/test_live_hosted_ears.py` asserts
-# `upstream_calls == 1` against that RECORD rather than against a stub's silence. This is
-# the same instrument on the Python side, in the same position: immediately before the
-# call that becomes an HTTP request to the gateway.
-#
-# **What it counts, exactly, and what it does not.** One increment per *request attempt*
-# on the chat/completions seam — so a `call_with_backoff` retry counts again, which is
-# right: each attempt is a request the gateway may bill. Opening a stream counts once; its
-# deltas do not. It does **not** cover `moxie_sdk/tts.py` or `moxie_sdk/stt.py`, whose
-# gateway calls are a different budget with a different shape (a spoken line is
-# synthesized identically whether a greeting, a pack rule or a brain produced it). The
-# name says `model`, not `gateway`, so that boundary is in the identifier rather than in a
-# comment somebody has to find.
-#
-# It is process-global and deliberately not thread-local: the runtime answers turns on a
-# worker pool, and a test that drives one turn wants the count for the whole process. The
-# GIL makes `+= 1` on an int safe enough for a diagnostic counter; this is not a billing
-# ledger and must never become one.
+# One increment per *request attempt* on chat/completions (a backoff retry counts again;
+# a stream counts once on open). TTS/STT gateway calls are a different budget and are not
+# counted — hence `model`, not `gateway`. Process-global (turns run on a worker pool); a
+# diagnostic, never a billing ledger.
 
 _MODEL_CALLS = {"chat": 0, "stream": 0}
 
@@ -213,11 +193,8 @@ def make_openai_chat(base_url: str, api_key: str, model: str = "graphling-medium
     rate-limit backoff + adaptive pacing. Raises on failure after retries (the caller
     decides offline vs rate-limited vs soft — see the is_* helpers).
 
-    `client` is the injection seam of playbook rule 9: pass anything exposing
-    `.chat.completions.create(...)` and no `openai` client is constructed and no socket is
-    opened. It exists so a test can drive **this function**, counter and backoff included,
-    rather than a re-implementation of it — which is the difference between asserting the
-    real seam spends nothing and asserting a double stayed quiet."""
+    `client` is the injection seam: anything exposing `.chat.completions.create(...)`, so
+    a test drives this real function (counter and backoff included) with no socket."""
     if client is None:
         from openai import OpenAI      # lazy import so the SDK has no hard dep
         client = OpenAI(base_url=base_url, api_key=api_key or "sk-local", max_retries=0)
@@ -225,9 +202,7 @@ def make_openai_chat(base_url: str, api_key: str, model: str = "graphling-medium
 
     def chat(messages: list) -> str:
         def _once():
-            # Immediately before the request, never after: a call that raises still cost
-            # the gateway an attempt, and this counter's whole job is to be believed when
-            # it reads zero (`note_model_call`).
+            # Before the request: a call that raises still cost an attempt.
             note_model_call("chat")
             resp = client.chat.completions.create(
                 model=model, messages=messages,
@@ -240,17 +215,12 @@ def make_openai_chat(base_url: str, api_key: str, model: str = "graphling-medium
 
 
 # ---- streaming ------------------------------------------------------------ #
-# The same seam, one token at a time. A whole completion costs 18-45 s on our gateway
-# (docs/architecture/implementation-plan.md:138) but its FIRST sentence is finished after
-# a handful of tokens — so a streaming brain lets the runtime speak real words at
-# first-token latency (moxie_sdk/segment.py cuts the stream into sentences, and the
-# runtime puts each one on the wire as its own RemoteChatResponse chunk).
+# The same seam, one token at a time: a whole completion can take 18-45 s, but its first
+# sentence is ready after a few tokens, so the runtime speaks at first-token latency
+# (`segment.py` cuts sentences; each goes out as its own RemoteChatResponse chunk).
 
 def delta_text(event) -> str:
-    """The text carried by one streamed chunk, or "".
-
-    Accepts both the SDK's objects and plain dicts (which is what a test fake and a
-    raw SSE decode look like), so nothing here depends on the openai package."""
+    """The text carried by one streamed chunk, or "" (SDK objects or plain dicts)."""
     if event is None:
         return ""
     if isinstance(event, str):
@@ -277,15 +247,11 @@ def stream_completion(client, model: str, messages: list, *, max_tokens: int = 2
                       pacer: Optional[Pacer] = None) -> Iterator[str]:
     """Yield the text deltas of one streaming chat completion.
 
-    `call_with_backoff` + the `Pacer` wrap **opening** the stream — that is where a 429 /
-    5xx / connection failure surfaces, and where a retry is still free. Once the response
-    is open we are committed: an error mid-stream propagates to the caller, whose job it
-    is to fall back (see `LLMApp.respond_stream`, which restarts on the non-streaming
-    path when the stream dies before it produced anything)."""
+    Backoff wraps **opening** the stream (where 429/5xx surface and a retry is free).
+    Once open, a mid-stream error propagates; the caller falls back
+    (`LLMApp.respond_stream`)."""
     def _open():
-        # One increment per *opening* attempt — the deltas that follow are the same
-        # request, and a retried open is a second request. Same position as the
-        # non-streaming seam above.
+        # One increment per opening attempt (deltas are the same request).
         note_model_call("stream")
         return client.chat.completions.create(
             model=model, messages=messages, max_tokens=max_tokens,

@@ -40,7 +40,7 @@ robot-cloud layer builds on its groundwork:
   `HiveConfiguration.allow_unverified_bots`) and that `pairing_status:"unpairing"` is the value a
   *not-paired* robot is sent (`models.py::MoxieDevice.is_paired`). Upstream stores the flag without
   enforcing it on the MQTT path; our enforcement, the pending state and the minimal child-free config
-  are ours — [`mqtt/supervisor/moxie_runtime.py`](mqtt/supervisor/moxie_runtime.py)`::permits` +
+  are ours — [`mqtt/supervisor/moxie_runtime.py`](mqtt/supervisor/moxie_runtime/)`::permits` +
   [`mqtt/moxie_sdk/cloud_config.py`](mqtt/moxie_sdk/cloud_config.py)`::build_unpaired_cloud_config`,
 - the **face cache-buster** — the observation that Moxie's Unity layer keeps a *composited face
   texture keyed on the child's `id`*, so changing a child's appearance must also change that id or the

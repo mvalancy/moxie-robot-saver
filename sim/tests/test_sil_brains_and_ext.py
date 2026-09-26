@@ -1,35 +1,17 @@
 """
-The two slices that had never met: **any brain, per robot** (#88) and **sandboxed
-content extensions** (#86), through the real stack — a real broker, `mqtt/run.py` as its
-own process, and protocol-faithful SIL robots on the wire.
+Any brain per robot + sandboxed content extensions, through the real stack — a broker,
+`mqtt/run.py` as its own process, and SIL robots on the wire. Both slices touch the same
+turn path (the extension runs inside the content app; the brain picker chooses which app).
 
-Both slices changed the same few lines of one turn. #86 put an evaluator *inside* the
-content app's turn path; #88 changed *which app that path even is*, per robot, resolved
-once at the top of every turn. Their unit suites are large (167 + 126 tests) and neither
-had ever been exercised against a running appliance, let alone against each other.
+  1. A brain set through the real status HTTP is used by the NEXT turn (fleet, then a
+     per-robot override), read back as different answers on the wire.
+  2. A turn already in flight finishes with the brain it started with (a slow brain; the
+     swap is posted while the robot waits).
+  3. The shipped clock extension (`starter.json` G1) answers on the wire with zero model
+     calls — counted, because the brain endpoint is a local counting stub.
+  4. Both at once: `content` and `echo` robots on one supervisor.
 
-What is proved here, and why each one needs a running stack rather than a unit test:
-
-  1. **A brain set through the real status HTTP is used by the NEXT turn.** The swap is
-     documented as landing *between* turns (`MoxieRuntime.app_for`, the 🎚️ voice picker's
-     rule), so asserting the stored value proves nothing — the claim is about the turn
-     boundary. Fleet first, then a per-robot override on top of it, each read back as a
-     different answer on the wire from the same robot.
-  2. **A turn already in flight finishes with the brain it started with.** The other half
-     of the same sentence, and the only half a stored value can never show. The brain is
-     made slow on purpose, the swap is posted while the robot is waiting, and the answer
-     that arrives is the OLD brain's.
-  3. **The shipped clock extension answers on the wire with no model call.** `starter.json`
-     ships G1 — *"what time is it"* — as a real activity whose behaviour is a program.
-     The whole claim of the slice is *no model call*, and the only honest way to assert
-     zero is to be the model: the brain endpoint here is a counting stub, so "the gateway
-     was not called" is a number this file read, not a promise.
-  4. **The two slices at once.** One supervisor, two robots: one on `content` answering
-     from the extension, one on `echo`, each getting its own brain on the same broker.
-
-The brain endpoint is a **local counting stub**, not the gateway: it makes "zero model
-calls" checkable, it costs nothing, and it lets the brain be made slow to order. Nothing
-in this file needs credentials, and nothing in it reaches the network.
+No credentials, no network.
 """
 from __future__ import annotations
 
@@ -58,12 +40,8 @@ BRAIN_LINE = "Stub brain speaking."
 
 
 class _Brain(ThreadingHTTPServer):
-    """An OpenAI-compatible `/v1/chat/completions` that counts and can stall.
-
-    `daemon_threads` because a stalled request must not hold the process open, and
-    `ThreadingHTTPServer` because the in-flight test has one request parked while another
-    thread posts to the supervisor.
-    """
+    """An OpenAI-compatible `/v1/chat/completions` that counts and can stall. Threaded
+    (one request parks while another thread posts) with daemon threads."""
 
     daemon_threads = True
     allow_reuse_address = True
@@ -151,12 +129,8 @@ def _get(url: str, timeout: float = 10.0) -> dict:
 
 
 class Robot:
-    """A connected SIL robot that can be driven one turn at a time.
-
-    `VirtualMoxie.run_scenario` connects and disconnects around a whole script; the turn
-    *boundary* is what this file is about, so the connection is held open and each turn
-    is published by hand with the config round-trip done once.
-    """
+    """A connected SIL robot driven one turn at a time: the connection is held open (the
+    turn BOUNDARY is the subject) and the config round-trip is done once."""
 
     def __init__(self, port: int, timeout: float = 60.0):
         from virtual_moxie import VirtualMoxie
@@ -206,13 +180,9 @@ class Robot:
 
 @pytest.fixture(scope="module")
 def lab(tmp_path_factory):
-    """One boot: a broker, `mqtt/run.py`, and a counting stub brain behind it.
-
-    `MOXIE_APP=any` is the deployment that wants the per-child picker — it selects
-    nothing and pins nothing (`brains.NO_PIN_VALUES`), so the layers below are free to
-    decide. Everything this module asserts about layering is meaningless under a pin, and
-    a pin is exactly what a bare `docker compose up` has (see `sim/run_compose_smoke.sh`
-    step 3e), which is why it is named here rather than inherited.
+    """One boot: broker, `mqtt/run.py`, and the counting stub. `MOXIE_APP=any` pins nothing
+    (`brains.NO_PIN_VALUES`) so the layers can decide; a bare `docker compose up` pins, so
+    it is set explicitly here.
     """
     if not S.broker_available():
         pytest.skip("no mosquitto binary and no runnable docker — cannot boot a broker")
@@ -265,11 +235,8 @@ def test_the_first_turn_is_answered_by_that_brain(lab, alice):
 
 # ------------------------------------------- 2. a fleet brain, on the next turn --
 def test_a_fleet_brain_set_over_http_answers_the_next_turn(lab, alice):
-    """The house rule, through the real status HTTP the console proxies.
-
-    Read back as a different answer *on the wire*, not as a stored value: the claim #88
-    makes is about which app the next turn runs, and only the next turn can say.
-    """
+    """The house rule via the real status HTTP, read back as a different answer on the WIRE —
+    only the next turn can say which app runs."""
     out = _post(lab["status"] + "/brain?scope=fleet", {"brain": "echo"})
     assert out.get("ok"), out
     before = lab["brain"].count
@@ -289,11 +256,8 @@ def test_the_brain_view_attributes_that_answer_to_the_fleet_layer(lab, alice):
 
 # --------------------------------------- 3. a per-robot brain on top of the fleet --
 def test_a_per_robot_brain_overrides_the_fleet_one_for_that_robot_only(lab, alice, bob):
-    """Alice → `content`; Bob, who was never named, stays on the house rule.
-
-    This is risk 4 in one assertion: two robots, two brains, one supervisor, one broker,
-    at the same moment — the state neither slice's unit suite can construct.
-    """
+    """Alice → `content`; Bob stays on the house rule: two robots, two brains, one
+    supervisor, one broker, at the same moment."""
     out = _post(lab["status"] + f"/brain?device_id={alice.device_id}",
                 {"brain": "content"})
     assert out.get("ok"), out
@@ -311,28 +275,15 @@ def test_a_per_robot_brain_overrides_the_fleet_one_for_that_robot_only(lab, alic
 
 # ------------------------------------ 4. the shipped extension, live, no model call --
 def test_the_shipped_clock_extension_answers_on_the_wire_with_no_model_call(lab, alice):
-    """#86's whole claim, on the wire: `starter.json`'s G1 answers *"what time is it"*
-    from a program, and the model endpoint is never called.
-
-    `alice` is on the `content` brain from the test above, so this is also the first time
-    an extension has ever run under a brain that was chosen per robot rather than by
-    `MOXIE_APP` — which is the intersection the two slices were never tested at.
-    """
+    """G1 answers "what time is it" from a program with zero model calls, under a brain
+    chosen per robot rather than by `MOXIE_APP`."""
     before = lab["brain"].count
     text = alice.ask("what time is it")
     assert text.startswith("The time is "), text
-    # `AY M`, not `A M`. That is the shipped program's own spelling
-    # (`content_modules/starter.json`, G1's `half` binding) — a TTS pronunciation hint so
-    # the voice says "ay-em" instead of the word "am". Getting it wrong made this test
-    # **wall-clock dependent**: it passed every afternoon and failed after midnight UTC,
-    # which is exactly how it first went red here (`The time is 1:18 AY M`).
-    #
-    # Both halves are accepted because *which* one appears is a fact about the hour, not
-    # about the feature under test — this test's claim is "an extension answered on the
-    # wire for zero model calls", and `sim/tests/data/ext_conformance.json` is where the
-    # exact rendering is pinned. Note `sim/tests/test_clock_dependence.py` cannot catch
-    # this class: it scans test sources for `datetime.now` and friends, and here the clock
-    # is read by the *extension* inside the runtime while the test only reads the result.
+    # `AY M` is the shipped program's own TTS hint ("ay-em", not "am"). Either half is
+    # accepted — which appears depends on the hour; the exact rendering is pinned in
+    # `data/ext_conformance.json`. (`test_clock_dependence.py` cannot see this: the clock is
+    # read by the extension inside the runtime.)
     assert text.rstrip().endswith(("AY M", "P M")), text
     assert lab["brain"].count == before, (
         f"the clock extension cost {lab['brain'].count - before} model call(s) — "
@@ -360,13 +311,8 @@ def test_a_content_turn_that_is_not_the_extension_still_reaches_the_brain(lab, a
 
 # ------------------------------------------- 5. the swap lands BETWEEN turns, not in --
 def test_a_turn_in_flight_finishes_with_the_brain_it_started_with(lab, bob):
-    """The boundary itself.
-
-    `app_for` is called once, at the top of `_handle_turn`. So a parent who swaps a brain
-    while a child is waiting must get the new brain on the child's NEXT sentence and
-    never halfway through this one. The brain is made to take two seconds, the swap is
-    posted while the robot is waiting, and the answer that comes back must be the old
-    brain's.
+    """The boundary: `app_for` runs once at the top of `_handle_turn`, so a swap posted while
+    a two-second brain is answering lands on the NEXT sentence — the reply is the old brain's.
     """
     assert _post(lab["status"] + f"/brain?device_id={bob.device_id}",
                  {"brain": "llm"}).get("ok")

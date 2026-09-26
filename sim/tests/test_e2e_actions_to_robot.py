@@ -1,36 +1,14 @@
 """
-Do `Reply.actions` actually reach the ROBOT? — the last hop nothing had asserted.
+Do `Reply.actions` actually reach the ROBOT? — the delivery half.
 
-`test_action_tags.py` proves the brain's `<launch:…>` / `<exit>` become
-`response_actions` on the RemoteChatResponse the runtime *publishes*: it reads them back
-off a `FakeClient` that records the publish and stops there. That is the server's side of
-the contract. The client's side — a robot subscribing to
-`/devices/<id>/commands/remote_chat`, decoding the payload it was handed and finding the
-action in the recovered shape — was never exercised by anything, which is the difference
-between "we sent it" and "it arrived".
+`test_action_tags.py` reads `response_actions` off a recording `FakeClient`. Here the REAL
+`MoxieRuntime` and the SIL robot (`sim/virtual_moxie.py`) share `helpers_runtime.loopback()`,
+the robot starts the turn, and assertions read `payload["response_actions"]` as the robot's
+own handler decoded it. That the robot then ACTS on it is `test_actions_reach_the_robot.py`
+(and `sim/test_bridge.mjs` for the browser), both held to
+`goldens/cloud_to_robot_actions.json`.
 
-So this file drives the REAL `MoxieRuntime` and the REAL protocol-faithful SIL robot
-(`sim/virtual_moxie.py`) through `helpers_runtime.loopback()` — every runtime publish is
-delivered byte for byte to the robot's own `_on_message`, and vice versa — and asserts
-what the ROBOT ended up holding. The robot starts the turn (`events/remote-chat`, the way
-a real one does), so the whole round trip is the shipped code on both ends.
-
-Hermetic and instant: no broker, no network, no gateway (`LLMApp` takes the canned
-`client=` seam PR #21 added, so not even the `openai` import is needed), no sleeps —
-the loopback is synchronous.
-
-WHAT THIS FILE CLAIMS, AND WHERE THE REST OF IT LIVES. This file is the DELIVERY half:
-every assertion below reads `payload["response_actions"]` off the wire the robot was
-handed. That the robot then *acts* on it — launches the module, leaves it, records the
-execute — is asserted in `test_actions_reach_the_robot.py` against the client's own state
-(`VirtualMoxie.action_stats()`), and for the browser SIM in `sim/test_bridge.mjs` against
-`bridge.js::actionStats()`. Both are held to one script in
-`sim/tests/goldens/cloud_to_robot_actions.json`.
-
-(This paragraph used to say that neither SIM client acted on `response_actions`. That
-stopped being true of the browser SIM when `bridge.js::applyAction` landed in PR #52, and
-of the SIL robot on 2026-09-03 — the gap it described in DoD criterion 4 is closed, and
-the docstring outlived it by a day.)
+Hermetic and instant: synchronous loopback, `LLMApp`'s canned `client=` seam, no sleeps.
 """
 import json
 import os
@@ -39,10 +17,7 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(REPO, "sim"))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
 pytest.importorskip("paho.mqtt.client", reason="the SIL robot needs paho")
 

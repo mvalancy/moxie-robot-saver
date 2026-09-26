@@ -6,7 +6,7 @@
 > the *mechanism* is still there and the *toggle* is still not: `UNPAIRED_PAIRING_STATUS` and
 > `build_unpaired_cloud_config()` are at
 > [`cloud_config.py`](../../../mqtt/moxie_sdk/cloud_config.py):75 and :78 (used at
-> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py):2533), and there is **no unpair control
+> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/):2533), and there is **no unpair control
 > in `server/static/` or `sim/web/`** — the only `Unpair` string in the tree is the *vendor* API described
 > in `docs/guides/factory-reset-a-paired-moxie.md`, which is not ours. *No finding below is re-ranked;
 > only re-checked.* The [OpenMoxie feature audit](../openmoxie-feature-audit.md) ranks what to

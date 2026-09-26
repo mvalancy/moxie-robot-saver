@@ -9,7 +9,7 @@ string it appends, the method and body it forwards, and what it does with a 400 
 404 from the other side.
 
 So: stand a tiny status server on a free port that speaks exactly what
-`mqtt/supervisor/moxie_runtime.py`'s `_start_status_server` speaks (GET /status,
+`mqtt/supervisor/moxie_runtime/status_http.py`'s `_start_status_server` speaks (GET /status,
 GET /telemetry, GET+POST /safety, GET+DELETE /memory, POST /config — same payload
 shapes, same status codes, and the REAL `sanitize_config_overrides` behind /config so
 validation is not mocked away, the REAL `MoxieRuntime.safety_view`/`acknowledge_safety`

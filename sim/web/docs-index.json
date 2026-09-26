@@ -95,7 +95,7 @@
    "path": "architecture/backlog/README.md",
    "title": "Backlog briefs — a ranked line, turned into something a build agent can execute",
    "section": "architecture",
-   "bytes": 31498,
+   "bytes": 31492,
    "mermaid": 0,
    "headings": [
     "What a brief contains",
@@ -108,7 +108,7 @@
    "path": "architecture/implementation-plan.md",
    "title": "Implementation plan — building our cloud server",
    "section": "architecture",
-   "bytes": 285386,
+   "bytes": 285384,
    "mermaid": 0,
    "headings": [
     "What \"beyond OpenMoxie\" means here",
@@ -303,7 +303,7 @@
    "path": "architecture/content-module-contract.md",
    "title": "Content-module contract — activities, the volley API, execution actions",
    "section": "architecture",
-   "bytes": 66942,
+   "bytes": 66940,
    "mermaid": 1,
    "headings": [
     "Where this fits",
@@ -393,7 +393,7 @@
    "path": "architecture/openmoxie-feature-audit.md",
    "title": "OpenMoxie feature audit — what to adopt, and where to go beyond",
    "section": "architecture",
-   "bytes": 198455,
+   "bytes": 198431,
    "mermaid": 1,
    "headings": [
     "Credit — OpenMoxie is MIT, and it is the reason any of this is possible",
@@ -443,7 +443,7 @@
    "path": "architecture/backlog/expressiveness.md",
    "title": "Expressiveness — the markup floor (ADOPT #3) and the behavior planner (BEYOND #1)",
    "section": "architecture",
-   "bytes": 54124,
+   "bytes": 54122,
    "mermaid": 1,
    "headings": [
     "Why this is the next slice",
@@ -475,7 +475,7 @@
    "path": "architecture/backlog/security-broker-auth.md",
    "title": "Broker authentication — from service refusal to identity, in three phases",
    "section": "architecture",
-   "bytes": 44448,
+   "bytes": 44444,
    "mermaid": 2,
    "headings": [
     "Why this is the next slice",
@@ -510,7 +510,7 @@
    "path": "architecture/backlog/telehealth.md",
    "title": "Telehealth — \"Be Moxie\": the operator drives the body (ADOPT #7)",
    "section": "architecture",
-   "bytes": 36633,
+   "bytes": 36631,
    "mermaid": 1,
    "headings": [
     "Why this is worth building",
@@ -560,7 +560,7 @@
    "path": "architecture/backlog/content-packs.md",
    "title": "Content packs — export, import-with-review, and an upgrade that does not clobber (ADOPT #5)",
    "section": "architecture",
-   "bytes": 46123,
+   "bytes": 46117,
    "mermaid": 0,
    "headings": [
     "Why this is worth building",
@@ -691,7 +691,7 @@
    "path": "architecture/backlog/brain-picker.md",
    "title": "Any brain, hot-swappable, per child",
    "section": "architecture",
-   "bytes": 8550,
+   "bytes": 8548,
    "mermaid": 0,
    "headings": [
     "1. What was actually missing",
@@ -707,7 +707,7 @@
    "path": "architecture/backlog/production-hardening.md",
    "title": "Production hardening — a robot that stays connected, and a store two processes can share",
    "section": "architecture",
-   "bytes": 86146,
+   "bytes": 86138,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first — before anything optimistic",
@@ -748,7 +748,7 @@
    "path": "architecture/backlog/content-authoring.md",
    "title": "Content authoring — the verb packs did not ship (§4.4 #6)",
    "section": "architecture",
-   "bytes": 58618,
+   "bytes": 58616,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -797,7 +797,7 @@
    "path": "architecture/backlog/qr-launch-cards.md",
    "title": "Printable launch cards — a QR a child shows Moxie, and an activity starts",
    "section": "architecture",
-   "bytes": 48429,
+   "bytes": 48417,
    "mermaid": 0,
    "headings": [
     "0. The two facts that set the scope",
@@ -820,7 +820,7 @@
    "path": "architecture/backlog/insights.md",
    "title": "Insights that mean something — the vocabulary this history does not have (BEYOND #5)",
    "section": "architecture",
-   "bytes": 51874,
+   "bytes": 51854,
    "mermaid": 0,
    "headings": [
     "0. The ceiling, stated first",
@@ -902,7 +902,7 @@
    "path": "architecture/backlog/ota-push.md",
    "title": "OTA push — the specification, and the argument for not building it yet",
    "section": "architecture",
-   "bytes": 43414,
+   "bytes": 43396,
    "mermaid": 2,
    "headings": [
     "0. Why this one gets a spec first, when the other fourteen briefs got a build",
@@ -973,7 +973,7 @@
    "path": "architecture/backlog/community-signals.md",
    "title": "Community signals — what owners actually hit, ranked by evidence",
    "section": "architecture",
-   "bytes": 33481,
+   "bytes": 33479,
    "mermaid": 0,
    "headings": [
     "1. What was searched, and when",

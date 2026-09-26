@@ -1,70 +1,32 @@
 """
 The two telemetry records must not be able to disagree — constructed, not waited for.
 
-WHAT THIS FILE IS ABOUT. Durable telemetry is deliberately **two records, not one**
-(`moxie_sdk/telemetry.py`): a rolling ring of Packet envelopes for *"what just
-happened"*, and a daily roll-up for *"what has been happening"*. The parent console's
-📈 insights card reads the **roll-up** for its lifetime total and its week; it reads the
-**ring** for the event list. So the two answering differently is not a cosmetic split —
-it is the card stating a number confidently and wrongly, which is worse than a card that
-states nothing.
+Durable telemetry is two records (`moxie_sdk/telemetry.py`): a ring of Packet envelopes
+("what just happened") and a daily roll-up ("what has been happening"). The insights card
+reads its totals from the roll-up and its list from the ring, so disagreement means a
+confidently wrong number.
 
-WHY IT EXISTS. On 2026-09-05 the `sil` job went red on a PR whose diff could not reach
-this code (PR #164 — mutation-check runners and test files only), with::
+The ring and roll-up were written by two independent `os.replace` calls, ring first. Any
+observer between them (a SIL fixture, a parent, a kill -9) saw the ring hold a packet the
+roll-up never counted; after a restart in that window the disagreement was permanent,
+since the roll-up was only ever advanced incrementally. (Seen as a CI red: ring 3, total 2.)
 
-    assert [p["event_name"] for p in ring] == list(EVENTS)   # PASSED, all 3
-    assert daily and daily["total"] == 3, daily
-    E  AssertionError: {'days': {...'count': 2...}, 'total': 2, ...}
+Reproduced by construction, not by looping:
+* `_OrderedStore` records both collections' on-disk state after EVERY write, so "the ring
+  never leads the roll-up" is asserted at every instant, not one arbitrary one.
+* `_LosingStore` drops one nominated write (the state a kill between the two writes
+  leaves), then a new runtime over the same data dir is asked what happened.
 
-Three packets in the ring on disk, two counted in the roll-up on disk. The playbook rule
-this repo records for exactly that shape (`orchestration-plan.md` §Integration playbook)
-is that a check which reddens on a diff that cannot reach it is telling you about a real
-defect that has been shipping, and that re-running is how it stays hidden.
-
-THE MECHANISM, which is not a mystery once the two writes are put side by side.
-`_persist_telemetry` used to do this, in this order::
-
-    self.store.append(device_id, PACKETS_COLLECTION, row, cap=…)     # 1
-    self.store.write(device_id, DAILY_COLLECTION, roll_up_packet(…)) # 2
-
-Two files, two `os.replace` calls, no relationship between them. The SIL fixture's
-leading edge is the **ring** file (it waits for three envelopes there and then reads the
-daily file), so any observer — the fixture, a parent refreshing the console, a supervisor
-that is killed — that lands between (1) and (2) sees the ring hold a packet the roll-up
-has never counted. On a loaded CI runner that window is wide enough to hit; here it is
-1-in-many, which under the same rule makes it a race with a stable rate rather than a
-flake. Worse than the red test: a **restart** in that window makes the disagreement
-**permanent**, because the roll-up was only ever advanced incrementally and nothing ever
-reconciled it against the ring again.
-
-HOW THIS FILE REPRODUCES IT. Not by sending packets in a loop and hoping. Two
-constructions, each driving one exact interleaving:
-
-* `_OrderedStore` records the on-disk state of **both** collections after every single
-  write the runtime makes, so the sequence of intermediate states is a value a test can
-  assert over. The invariant is *"the ring never leads the roll-up"* — at no moment may
-  the ring file hold more envelopes than the roll-up file has counted. That is precisely
-  the assertion the SIL test makes at one arbitrary instant, made at **every** instant.
-* `_LosingStore` drops one nominated write and lets every other one through — the state a
-  `kill -9` between the two `os.replace` calls leaves behind. The test then throws the
-  runtime away and builds a new one over the same data directory (the restart), and asks
-  it what happened.
-
-Both fail against the pre-fix runtime and pass against the fixed one; that negative
-control was run and is recorded in the commit that introduced them.
+Both failed against the pre-fix runtime.
 """
 from __future__ import annotations
 
 import json
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 pytest.importorskip("paho.mqtt.client", reason="the runtime needs paho")
 
@@ -84,20 +46,13 @@ EVENTS = ("module_started", "module_finished", "battery_report")
 # --------------------------------------------------------------------------- #
 # The instruments
 # --------------------------------------------------------------------------- #
-# Both subclass `JsonStore` at `_write_path`, the single choke point every write in the
-# store funnels through (`write` → `_locked_write` → `_write_path`, `append` →
-# `_append_path` → `_write_path`). Subclassing there rather than monkeypatching `write`
-# and `append` separately is what makes the instrument order-agnostic: it sees the writes
-# in the order the runtime actually issues them, whatever that order is, which is the
-# property under test rather than an assumption about it.
+# Both subclass `JsonStore._write_path`, the choke point every write funnels through, so
+# they observe writes in whatever order the runtime issues them (the property under test).
 
 
 class _OrderedStore(JsonStore):
-    """Records the on-disk state of both telemetry collections after every write.
-
-    `states` is a list of `(collection, ring_length, rollup_total)` read **off disk**,
-    appended once per successful write. A test asserts over the whole sequence, so the
-    window between two writes is a value rather than something to be timed."""
+    """Records `(collection, ring_length, rollup_total)`, read off disk, after every
+    successful write — the window between writes becomes a value, not a timing."""
 
     def __init__(self, root, device_id):
         super().__init__(root)
@@ -119,13 +74,9 @@ class _OrderedStore(JsonStore):
 
 
 class _LosingStore(JsonStore):
-    """Drops the writes a test nominates, and lets every other one through.
-
-    `lose(collection)` makes the *next* write to that collection a no-op that still
-    reports success — the store's own contract for a write that reached `os.replace` and
-    then had the process killed before the next one started. It reports success on purpose:
-    a caller that retried would be simulating a different failure than the one that
-    produced the CI red."""
+    """`lose(collection)` makes the next write to it a no-op that still reports success —
+    a write that "happened" before the process was killed (a retrying caller would
+    simulate a different failure)."""
 
     def __init__(self, root):
         super().__init__(root)
@@ -166,16 +117,9 @@ def _on_disk(tmp_path, device_id, collection, default):
 # --------------------------------------------------------------------------- #
 
 def test_the_ring_on_disk_never_leads_the_rollup_on_disk(tmp_path):
-    """**The CI red, made deterministic.**
-
-    The SIL fixture waits for three envelopes in `telemetry_packets.json` and then reads
-    `telemetry_daily.json`. Whether that read finds 3 or 2 depends entirely on where it
-    lands between the runtime's two writes — so this asserts the property the fixture
-    depends on, over the *whole* sequence of intermediate on-disk states rather than at
-    the one instant a loaded runner happens to schedule.
-
-    Pre-fix this fails on the very first packet: the ring is written first, so the state
-    right after it is `(telemetry_packets, ring=1, total=0)`."""
+    """The CI red, deterministic: over the whole sequence of on-disk states, the ring never
+    holds more envelopes than the roll-up has counted. Pre-fix, the first state is
+    `(telemetry_packets, ring=1, total=0)`."""
     store = _OrderedStore(str(tmp_path), "d_test")
     rt, did = _rt(tmp_path, store)
     for name in EVENTS:
@@ -193,12 +137,8 @@ def test_the_ring_on_disk_never_leads_the_rollup_on_disk(tmp_path):
 
 
 def test_every_packet_is_counted_before_its_envelope_is_visible(tmp_path):
-    """The same invariant said the other way round, because the sequence above could in
-    principle be satisfied by writing nothing at all.
-
-    Each packet must move the roll-up's total to N *before* the ring's length reaches N,
-    so the recorded states contain, for every N, a moment where the roll-up already says
-    N and the ring does not yet."""
+    """The same invariant from the other side (so writing nothing cannot satisfy it): for
+    every N there is a moment where the roll-up says N and the ring does not yet."""
     store = _OrderedStore(str(tmp_path), "d_test")
     rt, did = _rt(tmp_path, store)
     for name in EVENTS:
@@ -217,16 +157,9 @@ def test_every_packet_is_counted_before_its_envelope_is_visible(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_a_lost_rollup_write_is_repaired_from_the_ring_after_a_restart(tmp_path):
-    """**The defect that outlives the red test.**
-
-    Construct the exact state a supervisor killed between the two writes leaves behind —
-    three envelopes in the ring, two counted in the roll-up — then restart (a brand-new
-    `MoxieRuntime` over the same data directory, with an ordinary store) and ask it what
-    happened. The ring is the durable log; the roll-up is a view over it, so the third
-    packet's contribution has to be recoverable rather than gone.
-
-    Pre-fix the new runtime answers 2 and always will: nothing ever looked at the two
-    records together again."""
+    """The defect that outlives the red: construct ring=3/roll-up=2 (killed between the
+    writes), restart with an ordinary store, and the third packet must be recovered — the
+    ring is the durable log, the roll-up a view over it."""
     store = _LosingStore(str(tmp_path))
     rt, did = _rt(tmp_path, store)
     _send(rt, did, EVENTS[0])
@@ -323,12 +256,9 @@ def test_a_robot_cannot_forge_its_own_sequence_number(tmp_path):
 
 
 def test_a_pre_seq_store_is_not_re_folded_on_upgrade(tmp_path):
-    """The migration case, and the one where guessing is expensive. An appliance
-    upgrading into this fix has a ring of envelopes with no `seq` and a roll-up that
-    already counted every one of them. Treating an unstamped row as *unfolded* would
-    double the lifetime total of every existing installation on its first read, so an
-    unstamped row is treated as folded — the only direction in which being wrong is
-    invisible rather than alarming."""
+    """Migration: legacy ring rows have no `seq` and were already counted, so an unstamped
+    row is treated as FOLDED — the only direction where being wrong is invisible rather
+    than doubling every installation's lifetime total."""
     did = "d_test"
     legacy_ring = [T.storable_packet(T.build_packet(n, b"", moxie_id=did), 1)
                    for n in EVENTS]
@@ -348,12 +278,9 @@ def test_a_pre_seq_store_is_not_re_folded_on_upgrade(tmp_path):
 
 
 def test_a_lost_ring_write_never_lets_the_next_packet_reuse_a_sequence(tmp_path):
-    """The other half of the pair, and the reason `next_seq` consults both records.
-
-    If the *ring* append is the write that is lost, the roll-up's watermark is briefly
-    ahead of anything on disk. Deriving the next sequence from the ring alone would hand
-    the following packet a number the roll-up has already marked as counted, and the
-    repair would then skip a packet that really is missing. Monotonic beats gapless."""
+    """If the RING append is the lost write, the roll-up watermark is briefly ahead; `next_seq`
+    consults both records so the next packet is not given an already-counted number.
+    Monotonic beats gapless."""
     store = _LosingStore(str(tmp_path))
     rt, did = _rt(tmp_path, store)
     store.lose(T.PACKETS_COLLECTION)
@@ -371,15 +298,9 @@ def test_a_lost_ring_write_never_lets_the_next_packet_reuse_a_sequence(tmp_path)
 
 
 def test_two_ingests_at_once_do_not_lose_a_rollup_update(tmp_path):
-    """The divergence that needs no crash at all.
-
-    The ring's `append` is a read-modify-write **inside** `transaction()`; the roll-up's
-    write was a read-modify-write with nothing around it, so two ingests landing together
-    both read the same roll-up and the second overwrote the first's count — the ring
-    keeping both and the roll-up keeping one. Telemetry arrives on the paho callback
-    thread today, which is why this was latent rather than constant; the store's own
-    docstring is explicit that two supervisors may share one data directory, and a worker
-    pool is one refactor away."""
+    """No crash needed: the roll-up's read-modify-write must be inside a transaction too, or
+    two concurrent ingests both read the same roll-up and one count is lost (latent while
+    telemetry arrives on one paho thread; two supervisors may share a data dir)."""
     import threading
 
     store = JsonStore(str(tmp_path))

@@ -1,28 +1,22 @@
 """
 🎚️ The voice picker's pure half — `mqtt/moxie_sdk/voice_settings.py` and the `override=`
-argument the two `mqtt/config.py` builders grew for it.
+argument of the two `mqtt/config.py` builders.
 
-`test_stt_gateway.py` already pins `classify_audio_models` against the list the gateway
-really served on 2026-09-02; this file pins what a console does with that list: the
-entries the two dropdowns render, the "`piper-amy` when possible" default, the refusal a
-stale page gets, the record that survives a restart, and the TTL that keeps discovery off
-a turn's path.
+`test_stt_gateway.py` pins `classify_audio_models` against a real gateway listing; this
+file pins what the console does with it: the dropdown entries, the "`piper-amy` when
+possible" default, the refusal a stale page gets, the record that survives a restart, and
+the TTL that keeps discovery off a turn's path.
 
-Everything runs with **no `openai`, no `piper`, no `faster-whisper`** (playbook rule 9):
-the gateway listing arrives through a `list_models()` fake, and the engine tests swap the
-constructors `config` calls. Nothing here spends a request. The real endpoint is exercised
-once, by hand, in the slice's live step (`docs/architecture/backlog/voice-picker.md`).
+No `openai`, `piper` or `faster-whisper` needed: listings come from a `list_models()` fake
+and engine constructors are swapped. Nothing here spends a request.
 """
-import importlib
+from helpers_runtime import reload_config                      # noqa: E402
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MQTT = os.path.join(REPO, "mqtt")
-sys.path.insert(0, MQTT)
-sys.path.insert(0, os.path.join(MQTT, "supervisor"))
 
 from moxie_sdk import voice_settings as vs                       # noqa: E402
 from moxie_sdk.store import JsonStore                            # noqa: E402
@@ -398,15 +392,7 @@ _ENV = ("MOXIE_TTS", "MOXIE_STT", "MOXIE_STT_MODEL", "MOXIE_STT_BASE_URL",
 
 
 def _fresh_config(monkeypatch, **env):
-    # The dotenv opt-out comes first: `config._load_env` would otherwise refill every
-    # variable deleted below from a real `mqtt/.env` (playbook rule 20).
-    monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
-    for k in _ENV:
-        monkeypatch.delenv(k, raising=False)
-    for k, v in env.items():
-        monkeypatch.setenv(k, v)
-    import config as _c
-    return importlib.reload(_c)
+    return reload_config(monkeypatch, _ENV, **env)
 
 
 def _stub_tts(monkeypatch, built):
@@ -661,11 +647,9 @@ def test_the_appliance_adapter_turns_a_listing_into_the_two_dropdowns(monkeypatc
 
 
 # ------------------------------------------------- the environment's pin -----
-# The owner rule, from the other direction: `MOXIE_TTS=piper` / `MOXIE_STT=whisper` are an
-# OPERATOR'S statement that this deployment runs local engines, and a dropdown must not be
-# able to move it off them. Before this section the console pick sat above every env value
-# except `off`, so a pick of `gateway:piper-ryan` silently overruled `MOXIE_TTS=piper` —
-# the exact "picker silently overrides an explicit operator setting" bug.
+# `MOXIE_TTS=piper` / `MOXIE_STT=whisper` are the operator's statement that this deployment
+# runs local engines; a console pick (e.g. `gateway:piper-ryan`) must not silently overrule
+# them.
 
 def test_an_explicit_value_pins_an_engine_and_auto_pins_nothing():
     assert vs.pin_for_env(vs.SPEECH, "piper") == "piper"
@@ -803,11 +787,9 @@ def test_the_dropdown_offers_only_what_the_pin_would_install(monkeypatch, voices
 
 
 def test_the_compose_default_leaves_the_whole_picker_in_charge(monkeypatch):
-    """Both compose files ship `MOXIE_TTS=tone` / `MOXIE_STT=auto`. Neither selects an
-    engine — `tone` is the last rung `build_synthesizer` reaches, `auto` is the absence of
-    a choice — so the dropdowns must be exactly as full as with nothing set at all.
-    `sim/tests/test_compose.py` guards the other end of this coupling: that the defaults
-    in the two files are still values that pin nothing."""
+    """Both compose files ship `MOXIE_TTS=tone` / `MOXIE_STT=auto`, which select no engine,
+    so the dropdowns must be as full as with nothing set (`test_compose.py` guards the other
+    end: those defaults still pin nothing)."""
     c = _fresh_config(monkeypatch, MOXIE_TTS="tone", MOXIE_STT="auto")
     cat = vs.GatewayCatalog(lambda: GATEWAY_MODELS, submit=lambda fn: fn())
     out = c.voice_engines(cat).available()
@@ -837,11 +819,10 @@ def test_the_boot_line_says_what_was_installed_and_why():
                         chosen=True) == "listening: base.en (local whisper, chosen)"
 
 
-# --------------------------------- the cold-supervisor race (found live 2026-09-02) ---
-# `GET /voice` deliberately answers before the first listing lands. `POST /voice` must
-# NOT: judged against a catalog that is still empty, a perfectly good `gateway:piper-amy`
-# is refused with "choose one of: tone". That is exactly what the live run hit three
-# seconds after boot, so `snapshot(settle_s=…)` gives a WRITE a bounded wait.
+# --------------------------------- the cold-supervisor race ---------------------------
+# `GET /voice` answers before the first listing lands; `POST /voice` must not, or a good
+# `gateway:piper-amy` is refused against an empty catalog ("choose one of: tone"). So
+# `snapshot(settle_s=…)` gives a WRITE a bounded wait.
 
 def test_a_write_may_wait_for_the_first_listing_a_read_never_does():
     import threading

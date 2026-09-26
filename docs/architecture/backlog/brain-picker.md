@@ -13,7 +13,7 @@
 >
 > Files: [`mqtt/moxie_sdk/brains.py`](../../../mqtt/moxie_sdk/brains.py) ·
 > [`mqtt/config.py`](../../../mqtt/config.py) (`BRAIN_BUILDERS`, `BrainEngines`) ·
-> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) (`app_for`, `brain_for`,
+> [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) (`app_for`, `brain_for`,
 > `brain_view`, `brain_update`).
 > Console: [`fleet.py`](../../../server/moxie_server/fleet/)`::normalize_brain_option`:1017 +
 > `::normalize_brain_robot`:1032 + two proxy routes

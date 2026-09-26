@@ -1,31 +1,22 @@
 """
-Child safety as an enforced contract — the `InputSafety` stage, both sides of a turn.
+Child safety as an enforced contract — the `InputSafety` stage, both sides of a turn
+(`RemoteChatInput.InputSafety`, ai-seam.md §2). Streaming makes it urgent: a sentence is
+published before the rest exists, so a bad one must be stopped before its chunk is sent.
 
-`RemoteChatInput.InputSafety{is_unsafe, blocked_by[], intents[], phrase_id}` is specified
-in `docs/architecture/ai-seam.md` §2 and was, until this slice, unbuilt. Streaming made it
-urgent: a sentence is published while the rest of the answer does not exist yet, so the
-only place a bad sentence can be stopped is *before that chunk goes on the wire*.
-
-What is proven here, top to bottom:
-
-  * the rule tables themselves — every category's positives, its near-miss negatives, the
-    documented false-positive guards ("shoot a photo", "kill the lights", "my feet are
-    killing me"), and case/accent/leet/elongation normalization;
-  * the role split — a child swearing is flagged for a parent, Moxie swearing is blocked;
-  * **pre-inference**: a hard-blocked utterance never reaches the brain (the app's respond
-    counter stays at 0), the redirect is published as a spec-conformant response carrying
-    `input.safety`, and the blocked words never enter the conversation history;
-  * flagged-but-allowed: the brain IS called and the event is still recorded;
-  * **post-inference, per chunk**: earlier chunks stay published, the blocked chunk never
-    is, the sequence closes safely with SUCCESS + `is_completed`, and the generator is
-    cancelled — proven by the fake stream's own `GeneratorExit` latch, no sleeps;
-  * the non-streaming post-inference check on a whole reply;
-  * the review queue: store → serve → acknowledge, and the LoggingPolicy `NO_DATA`
-    behavior (counts only, no rows, no excerpt);
+Proven here:
+  * the rule tables — positives, near-miss negatives and false-positive guards ("shoot a
+    photo", "kill the lights"), plus case/accent/leet/elongation/invisible-char folding;
+  * the role split — a child swearing is flagged, Moxie swearing is blocked;
+  * pre-inference: a hard block never reaches the brain, the redirect carries
+    `input.safety`, and the blocked words never enter history;
+  * flagged-but-allowed: the brain IS called and the event is recorded;
+  * post-inference per chunk: earlier chunks stay, the blocked one is never sent, the
+    sequence closes with SUCCESS + `is_completed`, and the generator is cancelled
+    (observed via its `GeneratorExit` latch, no sleeps); and the whole-reply check;
+  * the review queue (store → serve → acknowledge) and `NO_DATA` (counts only);
   * the console's pure transforms.
 
-No network, no broker, no model: the classifier is pure, the transport is `FakeClient`,
-and the streaming brain is scripted with `threading.Event` latches.
+No network, broker or model: `FakeClient` transport and a latch-scripted stream.
 """
 import json
 import os
@@ -37,10 +28,7 @@ import threading
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 sys.path.insert(0, os.path.join(REPO, "server"))
-sys.path.insert(0, os.path.dirname(__file__))
 
 from helpers_runtime import CHAT_TOPIC, LatchClient, make_runtime, drive_turn  # noqa: E402
 from moxie_sdk import safety as S                                             # noqa: E402
@@ -57,8 +45,7 @@ PATIENCE = 10.0
 # 1. the rule tables
 # --------------------------------------------------------------------------- #
 # (category, role, text, expected action). Every category gets positives AND the
-# near-misses that must NOT trip it — a safety table with no negatives is a table nobody
-# can trust on a child's device.
+# near-misses that must NOT trip it.
 CASES = [
     # -- self_harm: hard block on both sides, the escalate category
     ("self_harm", S.CHILD, "I want to kill myself", S.BLOCK),
@@ -179,21 +166,10 @@ def test_a_broken_rules_file_raises_rather_than_failing_open(tmp_path):
 # --------------------------------------------------------------------------- #
 # 1b. the floor cannot be walked past with an invisible character
 # --------------------------------------------------------------------------- #
-# THE BUG THIS SECTION EXISTS FOR. `safety.py`'s `_ALWAYS` was a `str.maketrans` naming
-# exactly four code points — U+200B/C/D and U+FEFF. Everything else invisible reached the
-# matcher intact, so `"suicide"` blocked and the same word with a U+00AD SOFT HYPHEN or a
-# U+2060 WORD JOINER between each letter did NOT, while rendering identically to a reader.
-# `self_harm` is the FIRST blocking category and this floor runs BEFORE the brain is called,
-# so one pasted character defeated the whole pre-inference block.
-#
-# `functions/api/_lib/safety.js` closed the same hole for the hosted demo first. THIS module
-# is the one a self-hosted stack, the `docker compose` appliance and a real robot run, which
-# is the higher-stakes half: until this slice the public demo blocked a strict superset of
-# what a child's actual robot blocked, while `safety.js`'s header promised the two agree.
-#
-# WHY THE TRIGGERS BELOW ARE THE MILD ONES. Every case uses `suicide` / `kill myself` — the
-# same category, the same code path, the mildest phrasing that proves the property. This
-# repo is public and nothing is learned by writing a worse sentence.
+# Stripping only U+200B/C/D and U+FEFF let a word spread with U+00AD or U+2060 render
+# identically yet not block — and this floor runs BEFORE the brain. This module is what
+# a self-hosted robot runs, so it must block at least what `functions/api/_lib/safety.js`
+# (the hosted demo) blocks. Triggers are deliberately the mildest self-harm phrasing.
 
 #: (name, character) — everything `normalize()` must delete before matching. Every entry
 #: was probed against THIS interpreter's `unicodedata`, not carried over from the JS side.
@@ -279,25 +255,16 @@ def test_the_stripped_set_is_a_unicode_category_not_a_hand_picked_list():
 
 
 def test_u180e_is_cf_in_this_interpreter_which_is_why_the_category_is_probed():
-    """U+180E MONGOLIAN VOWEL SEPARATOR moved category across Unicode versions — it was
-    `Zs` until Unicode 6.3. `safety.js` recorded that V8 reports it as `Cf`; this pins
-    what PYTHON reports, because the JS analysis does not transfer by assumption.
-    If a future CPython moved it back to `Zs` it would become a space, not a hole — but
-    the parity claim would be false, and this test is where that shows up."""
+    """U+180E moved category (`Zs` until Unicode 6.3; V8 reports `Cf`). Pin what PYTHON
+    reports: a move back to `Zs` would be a space, not a hole, but would break parity."""
     import unicodedata
     assert unicodedata.category("᠎") == "Cf", unicodedata.unidata_version
 
 
 def test_the_combining_grapheme_joiner_is_closed_by_the_category_test_not_by_nfkd():
-    r"""WHERE PYTHON AND V8 DID NOT AGREE, and the one place `safety.js`'s reasoning did
-    NOT carry over.
-
-    `safety.js` leaves U+034F alone on the grounds that `normalize` "already drops every
-    `\p{M}`". Python's old line was `if not unicodedata.combining(c)` — and
-    `unicodedata.combining()` returns the CANONICAL COMBINING CLASS, not the category.
-    CGJ is category `Mn` with **ccc 0**, so the old code kept it and the spread word did
-    not block here even though the identical string blocked in the Function. Testing the
-    category is what `\p{M}` meant, and is what closes it."""
+    r"""Where Python and V8 differ: `unicodedata.combining()` is the canonical combining
+    CLASS, not the category. CGJ (U+034F) is `Mn` with ccc 0, so testing ccc kept it;
+    testing the category is what `\p{M}` in `safety.js` means."""
     import unicodedata
     assert unicodedata.category("͏") == "Mn"
     assert unicodedata.combining("͏") == 0, "ccc 0 is the whole reason this was open"
@@ -317,24 +284,15 @@ def test_the_hangul_fillers_are_letters_and_still_have_to_go():
 
 @pytest.mark.parametrize("name,ch", SPACES, ids=[n.split()[0] for n, _ in SPACES])
 def test_an_exotic_space_becomes_a_real_space_and_is_not_deleted(name, ch):
-    """These are NOT stripped and must not be. Python's NFKD folds every one of them onto
-    an ordinary U+0020 (U+1680 falls to the `\\s+` collapse instead), so an exotic space
-    behaves as a REAL space — which is the correct answer, because a no-break space IS a
-    space. The property to pin is that one used as a word separator does not break a
-    multi-word phrase, and that it becomes a space rather than nothing."""
+    """Exotic spaces are NOT stripped: NFKD folds them to U+0020 (U+1680 via the `\\s+`
+    collapse), so they act as real word separators and multi-word phrases still match."""
     assert S.normalize("a" + ch + "b") == "a b", name
     assert S.assess("i want to" + ch + "kill myself").blocked_by == ["self_harm"], name
 
 
 def test_intra_letter_spacing_stays_open_deliberately():
-    """THE HONEST LIMIT, written down as a test so nobody reads the table above and
-    concludes that intra-letter spacing is covered.
-
-    `s u i c i d e` renders as `s u i c i d e`: a VISIBLE evasion, identical to typing
-    real spaces, which this floor has never caught and cannot catch without deleting
-    spaces from every utterance — which would fold `i want to` into `iwantto` and break
-    every phrase regex in the table. Out of scope on purpose, not silently half-closed.
-    `functions/api/_lib/safety.js` pins the same limit, the same way."""
+    """The honest limit: `s u i c i d e` (visible spaces) is not caught — deleting spaces
+    would break every phrase regex. Out of scope on purpose; `safety.js` pins the same."""
     assert S.assess(_spread("suicide", " ")).blocked_by == []
     assert S.assess(_spread("suicide", " ")).blocked_by == [], \
         "the exotic-space form folds onto the plain one, which is the point"
@@ -358,21 +316,11 @@ def test_the_punctuation_variant_is_a_fourth_form_not_a_replacement():
 
 # --- the false-positive guard, and why the punctuation variant is the NARROW one ------
 #
-# A filter that blocks ordinary speech is its own failure: a child told "let's find a
-# grown-up" for saying something harmless is a real harm, not a safe default — the exact
-# thing `safety.py`'s own docstring warns about ("it will occasionally flag something
-# innocent"). So the corpus is the GATE on this change, not the evasion table above:
-# adding a variant can only add matches, so a missed evasion is the floor we already had
-# and a false positive is a new harm.
-#
-# The two sentences marked (*) are the ones that made the choice, MEASURED IN PYTHON — not
-# taken from the JS side, because `casefold()` and Python's NFKD are not `toLowerCase()`
-# and V8's. With the obvious broad transform (`[^a-z0-9 ]+` everywhere) both fold onto
-# `... i want to die ...` / `... i want to not be ...` and BLOCK as self_harm, because
-# dropping all punctuation also deletes the boundary BETWEEN SENTENCES and the phrase
-# regexes are written across `\s+`. Requiring a letter or digit on both sides keeps every
-# sentence boundary intact (`want.` is followed by a SPACE, so it is left alone) and still
-# closes `s.u.i.c.i.d.e`. Measured here: broad form 2 false positives, narrow form 0.
+# Blocking ordinary speech is its own harm, so the innocent corpus GATES this change. The
+# (*) sentences decided it, measured in Python: stripping all punctuation (`[^a-z0-9 ]+`)
+# erases sentence boundaries and makes both block as self_harm (phrase regexes span
+# `\s+`). Requiring a letter/digit on both sides keeps `want. ` intact and still closes
+# `s.u.i.c.i.d.e`: broad form 2 false positives, narrow form 0.
 INNOCENT = [
     "that's what i want. To die of laughter would be great, honestly",   # (*)
     "i don't know what i want. To not be so shy would be nice",          # (*)
@@ -412,12 +360,9 @@ def test_an_innocent_sentence_is_not_blocked(text):
 
 
 def test_the_broad_punctuation_transform_is_the_one_that_was_measured_and_rejected():
-    """The measurement itself, kept executable rather than written down as a claim.
-
-    Swap `_INWORD_PUNCT` for the obvious `[^a-z0-9 ]+` and re-run the same corpus: the two
-    (*) sentences become self_harm blocks. If this test ever goes green with zero, either
-    the corpus or the phrase table changed and the narrow form's justification needs
-    re-deriving — it does not silently become unnecessary."""
+    """The measurement, kept executable: with the broad `[^a-z0-9 ]+` form the two (*)
+    sentences block. If this ever reads zero, the corpus or table changed and the narrow
+    form's justification needs re-deriving."""
     import re as _re
 
     class _Broad:
@@ -440,11 +385,9 @@ def test_the_broad_punctuation_transform_is_the_one_that_was_measured_and_reject
 
 
 def test_normalize_output_never_reaches_the_verdict_a_parent_or_the_child():
-    """`normalize()` is a MATCHING transform, never a display one. Deleting characters in
-    it is safe only because its output cannot escape: `assess()` consumes `_variants()`
-    internally, the excerpt is `redact()`'s masking of the ORIGINAL text, and the spoken
-    line comes out of the rule table. Pinned so a future caller that echoes it has to
-    break a test first."""
+    """`normalize()` is a MATCHING transform, never a display one: its output never escapes
+    (`assess()` uses it internally, the excerpt redacts the ORIGINAL text, spoken lines come
+    from the table). Pinned so a caller that echoes it breaks a test first."""
     weird = "i want to­ kill​ myself"
     v = S.assess(weird)
     assert v.blocked_by == ["self_harm"]
@@ -455,13 +398,8 @@ def test_normalize_output_never_reaches_the_verdict_a_parent_or_the_child():
 
 # --- parity with the hosted demo -------------------------------------------------------
 def _js_probe(tmp_path, cases):
-    """Run `functions/api/_lib/safety.js` over `cases` and return its answers.
-
-    HERMETIC: a four-line ES module written into `tmp_path`, `node` on the repo's own
-    file, no network, no server, no fixture to keep in sync — the JS side is read as the
-    Function actually runs it. `sim/tests/test_sil_performance_e2e.py` already drives
-    `node` from pytest this way; CI runs ~25 `.mjs` suites, so the binary is a hard
-    dependency of this repo rather than an optional extra."""
+    """Run `functions/api/_lib/safety.js` over `cases` via a tiny ES module in `tmp_path`
+    and `node` (a hard CI dependency already). Hermetic: no network, no fixture to sync."""
     node = shutil.which("node")
     if not node:                                # pragma: no cover - CI always has node
         pytest.skip("node is not installed; the Python↔JS parity guarantee is UNCHECKED")
@@ -499,15 +437,9 @@ PARITY_KNOWN_DIVERGENCE = ["straße", "STRASSE", "ẞ"]
 
 
 def test_python_and_js_normalize_identically(tmp_path):
-    """`functions/api/_lib/safety.js`'s header says its normalization is "transcribed from
-    `mqtt/moxie_sdk/safety.py`… so the two tables agree about what a word IS", and that
-    "divergence here would mean a phrase the local stack blocks and the hosted demo does
-    not, which is the worst kind of inconsistency: invisible."
-
-    NOTHING ENFORCED THAT until this test. The promise was true when it was written, then
-    `safety.js` was fixed for the invisible-character hole and this module was not, and
-    for the life of that gap the public demo blocked a STRICT SUPERSET of what a child's
-    own robot blocked. This is the guard that makes the header's claim checkable."""
+    """`safety.js` claims its normalization is transcribed from `safety.py` so both agree
+    on what a word IS; a divergence would be an invisible phrase blocked locally but not
+    on the demo (or vice versa). This makes that claim checkable."""
     got = _js_probe(tmp_path, PARITY_CASES)
     assert len(got) == len(PARITY_CASES)
     for text, js in zip(PARITY_CASES, got):
@@ -518,12 +450,8 @@ def test_python_and_js_normalize_identically(tmp_path):
 
 
 def test_python_and_js_reach_the_same_verdict(tmp_path):
-    """The verdict, not just the transform. `blocked` on both sides over the same table.
-
-    The two RULE tables are not identical — the JS one is deliberately the child-side
-    blocking subset (`safety.rules.js`'s `_readme` says so) — so this asserts agreement on
-    BLOCKED/NOT BLOCKED for the self-harm cases both tables carry and for the innocent
-    corpus, which is where a divergence would actually hurt a child."""
+    """Verdict parity: BLOCKED/NOT BLOCKED on the self-harm cases both tables carry and on
+    the innocent corpus. (The JS table is deliberately the child-side blocking subset.)"""
     got = _js_probe(tmp_path, PARITY_CASES)
     for text, js in zip(PARITY_CASES, got):
         assert bool(S.assess(text).blocked_by) == js["b"], (

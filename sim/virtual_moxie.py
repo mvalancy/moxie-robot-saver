@@ -2,12 +2,11 @@
 """
 🤖 Virtual Moxie — a software-in-the-loop (SIL) robot.
 
-Speaks the **exact MQTT protocol reverse-engineered from firmware
-v3.6.4-Zephyr / OTA v24.10.803** (see docs/reverse-engineering/cloud-protocol.md),
-so the server (mqtt/ supervisor + broker) can be built and tested with **no
-hardware**. This is the "robot" half of the client/server pair, simulated.
+Speaks the MQTT protocol recovered from firmware OTA v24.10.803
+(docs/reverse-engineering/cloud-protocol.md), so the server can be tested with no
+hardware. It decodes the wire itself and never imports the server SDK it tests.
 
-What it does (the protocol round-trip a real Moxie performs):
+The protocol round-trip a real Moxie performs:
   1. Connect to the broker with client_id ``d_<uuid>`` (the robot's device id form).
   2. Subscribe to ``/devices/{id}/config`` and ``/devices/{id}/commands/#``.
   3. Publish ``/devices/{id}/state`` {software_version: 24.10.803} — this is what
@@ -15,15 +14,9 @@ What it does (the protocol round-trip a real Moxie performs):
   4. Assert the pushed config has ``pairing_status == "paired"``.
   5. Publish a ``/devices/{id}/events/remote-chat`` prompt ("hello").
   6. Assert a ``/devices/{id}/commands/remote_chat`` reply with ``output.text`` arrives.
-     One turn may answer with SEVERAL responses (a filler while the brain thinks, then
-     the answer streamed sentence by sentence): they share an ``event_id``, carry a
-     ``chunk_num``, and the last one is ``result=SUCCESS`` /
-     ``consistency_control.is_completed``. We join them in order — see
-     ``_on_chat_reply`` and docs/architecture/mqtt-and-conversation.md §4.5.
+     One turn may be several chunked responses (see ``_on_chat_reply``).
 
-Exit code 0 = the full round-trip worked. Used by the CI workflow (sim/ci/ci.yml;
-install to .github/workflows/ to run it on GitHub)
-and by ``sim/run_smoke.sh`` locally.
+Exit code 0 = the round-trip worked. Used by CI and ``sim/run_smoke.sh``.
 
 Usage:
   python3 sim/virtual_moxie.py --host 127.0.0.1 --port 1883 --timeout 15
@@ -39,55 +32,30 @@ except ImportError:
 
 FIRMWARE = "24.10.803"           # the analyzed build; robot reports this in /state
 
-#: The scored half of `RemoteChatOutput` — what the line MEANS and how it is performed
-#: (docs/architecture/ai-seam.md §2; backlog/expressiveness.md §2.3 C1/C3). A robot that
-#: only ever checked `output.text` cannot tell a scored appliance from an unscored one, so
-#: `--expect-scored` asserts these arrive on **every** response of a turn, streamed chunks
-#: included. `signals` is plural on the wire (the field is `repeated`) even though the
-#: planner's own dict spells it `signal`.
+#: The scored half of `RemoteChatOutput` (ai-seam.md §2); `--expect-scored` asserts these
+#: on every response of a turn. `signals` is plural on the wire (`repeated`).
 SCORED_FIELDS = ("mood", "mood_intensity", "dialog_act", "emotion", "signals")
 
-#: The prompt the standing smoke speaks. A constant because `--reject-echo` has to
-#: reconstruct the *exact* answer the built-in echo app would have given to it, and a
-#: prompt that drifted away from that reconstruction would silently disarm the check.
+#: The smoke's prompt; `--reject-echo` reconstructs the echo app's answer to it.
 SMOKE_PROMPT = "hello Moxie"
 
-#: What `moxie_sdk/apps/echo_app.py` answers with — the no-brain app every smoke has run
-#: against since the first one. `--reject-echo` exists because a round-trip that is real
-#: at every other layer (real broker, real supervisor, real TTS, real robot) proves
-#: nothing about the AI seam while this string is the reply.
+#: What `moxie_sdk/apps/echo_app.py` answers with (the no-brain app).
 ECHO_TEMPLATE = "You said: {speech}"
 
 
 def is_echo_reply(text: str, prompt: str = SMOKE_PROMPT) -> bool:
-    """Whether `text` is the built-in echo app's verbatim answer to `prompt`.
-
-    Markup is stripped before comparing. `MOXIE_EXPRESSIVE` can dress a reply in
-    `<mark …>` tags on the way out, and an echoed line wearing markup is still an echoed
-    line — the claim under test is *no model was consulted*, not how the words were
-    decorated. Anything else — including an empty reply — is not the echo app, and is
-    left for the assertions that already cover it.
-    """
+    """Whether `text` is the echo app's verbatim answer to `prompt` (markup stripped,
+    since an echoed line wearing `<mark>` tags is still an echo)."""
     bare = re.sub(r"<[^>]*>", "", text or "").strip()
     return bare == ECHO_TEMPLATE.format(speech=prompt).strip()
 
 
-#: 🎬 The action verbs this client implements — `RemoteChatAction.ActionID` as our server
-#: can spell it (`mqtt/moxie_sdk/types.py::ActionType`), and exactly the five
-#: `sim/web/bridge.js::ACTION_KINDS` implements. Written out as a literal ON PURPOSE: the
-#: SIL robot decodes the wire itself, the way firmware does, and never imports the server
-#: SDK it exists to test — the same rule `QUERY_FIELD` below is written under.
-#: `sim/tests/test_sim_client_parity.py` asserts the three lists agree, so the duplication
-#: cannot drift.
-#:
-#: ⚠️ Two of these are **not** names in the recovered `ActionID` enum (`launch`,
-#: `launch_if_confirmed`, `exit_module`, `request_next`, `abort_module`, `execute`,
-#: `sleep`, `tangent` — proto-catalog.md:2091): `exit` should be `exit_module`, and
-#: `enable_qr` is not a verb at all (the contract spells it `execute` +
-#: `function_id: "eb_enable_qr"`). This client decodes what our server actually sends,
-#: which is what "interchangeable clients" means; correcting the *wire* is a contract
-#: change filed against `build_chat_response`, not a harness change — see
-#: docs/architecture/backlog/qr-launch-cards.md §P0-a and §7 R3.
+#: 🎬 The action verbs this client implements: our server's `ActionType` and
+#: `sim/web/bridge.js::ACTION_KINDS`. A literal on purpose (no SDK import);
+#: `test_sim_client_parity.py` pins the three lists together.
+#: ⚠️ `exit` and `enable_qr` are not recovered `ActionID` names (proto-catalog.md:2091:
+#: `exit_module`; `execute` + `function_id: "eb_enable_qr"`). This client decodes what our
+#: server sends; fixing the wire is a contract change (backlog/qr-launch-cards.md §7 R3).
 ACTION_KINDS = ("launch", "exit", "sleep", "enable_qr", "execute")
 
 
@@ -102,13 +70,9 @@ class VirtualMoxie:
         self.expect_tts = expect_tts        # also assert a CloudTTSResponse (audio) arrives
         self.expect_scored = expect_scored  # ...and that every response carries its score
         self.reject_echo = reject_echo      # ...and that a real brain, not `echo`, wrote it
-        #: The supervisor's localhost status server, when the caller knows it. Used ONLY
-        #: to answer "which was it?" when a wait expires - see `_why_no_config`.
+        #: The supervisor's localhost status server; used only by `_why_no_config`.
         self.status_url = status_url
-        #: Set when the broker has ACKNOWLEDGED every subscription this robot needs.
-        #: Not a convenience: the config push that answers `/state` is QoS 0 and NOT
-        #: retained, so a robot that announces itself before its SUBSCRIBE has landed is
-        #: deaf to the only answer it will ever get. See `announce()`.
+        #: Set when the broker has ACKed every subscription (see `announce()`).
         self.subscribed = threading.Event()
         self._pending_subs: set = set()
         self.got_config = threading.Event()
@@ -119,22 +83,17 @@ class VirtualMoxie:
         self.reply_payload: dict | None = None   # the FINAL RemoteChatResponse of a turn
         self.reply_text: str = ""                # every chunk of that turn, in order
         self._chunks: dict[str, dict[int, str]] = {}   # event_id -> {chunk_num: text}
-        #: Every RemoteChatResponse of the CURRENT turn, verbatim and in arrival order.
-        #: `reply_payload` is only the closing one, so a claim about what a *streamed*
-        #: answer carried has nowhere else to look.
+        #: Every RemoteChatResponse of the current turn, in arrival order.
         self.chat_payloads: list = []
         self.query_results: dict = {}       # CloudQuery name -> last CloudQueryResponse
         self.spoke: dict | None = None      # last decoded CloudTTSResponse (audio playback)
         self.face_replies: list = []        # what the server answered each vision event
-        # 🎭 telehealth: every TelehealthRobotCommand this robot was sent, in order, plus
-        # the state we have told the cloud we are in (READY → IN_SESSION → EXITING).
+        # 🎭 telehealth: commands received, and the state we reported.
         self.got_telehealth = threading.Event()
         self.telehealth: list = []
         self.telehealth_state: str = ""
-        # 🎬 What the cloud's `response_actions` have DONE to this robot, in the same
-        # shape `sim/web/bridge.js::actionStats()` reports — see `_apply_action`. Client
-        # lifetime, not per-turn: the module the cloud last put us in outlives the turn
-        # that put us there, exactly as it does on the browser SIM.
+        # 🎬 What `response_actions` did to this robot, shaped like bridge.js's
+        # `actionStats()`. Client lifetime, not per turn (as on the browser SIM).
         self.got_action = threading.Event()
         self.actions: dict = {
             "applied": [],          # [{action, module_id, content_id, function, args}]
@@ -165,70 +124,19 @@ class VirtualMoxie:
     def t_event(self, name): return f"/devices/{self.device_id}/events/{name}"
 
     # -- the handshake: SUBSCRIBE, then announce (never the other way round) --
-    #
-    # THE DEFECT THIS EXISTS FOR (2026-09-04). Every SIL client in this repo used to open
-    # with the same three lines — `connect()`, `loop_start()`, `publish(/state)` — and the
-    # third one is a race the other two cannot win reliably:
-    #
-    #   * `connect()` writes CONNECT and returns; it does not wait for CONNACK.
-    #   * `loop_start()`'s thread reads the CONNACK, and only THEN does `_on_connect`
-    #     send our SUBSCRIBE.
-    #   * `publish(/state)` is written by the CALLING thread immediately, so the broker
-    #     can be handing our announcement to the supervisor while our SUBSCRIBE is still
-    #     a callback that has not been scheduled.
-    #
-    # The supervisor answers a `/state` with `/config` at **QoS 0, not retained**
-    # (`moxie_runtime._publish` — QoS 1 is refused on purpose by §4.3). A QoS-0 publish
-    # with no matching subscription is delivered to nobody and is not replayed. So when
-    # the robot loses that race the config is not late, it is **gone** — and the robot
-    # then sits out its entire timeout for a message that will never be sent again.
-    #
-    # Measured on this repo, on 2026-09-04, with the robot's SUBSCRIBE artificially
-    # delayed (which is what a loaded runner does to a thread for free):
-    #
-    #     subscribe delayed 3000 ms → paired=False after 35.00s, configs_seen=[]
-    #     supervisor log:  [runtime] → pushed config to d_… (pairing_status=paired)
-    #
-    # — the two halves of the same run disagreeing about whether a config exists. That is
-    # the signature of the intermittent `no paired config pushed within timeout` reds in
-    # the SIL job, and it is why RAISING THE TIMEOUT CANNOT FIX IT: no wait is long
-    # enough for a message that was never queued.
-    #
-    # ⚠️  AND WHY A SMALL DELAY "DISPROVES" IT. `_device_connect` schedules the push on a
-    # **1.0 s settle timer**, so the robot gets a second of slack for free and every
-    # injected delay inside that second is absorbed with nothing to see:
-    #
-    #     delayed  500 ms → 0/4 lost      delayed 1500 ms → 1/4 lost
-    #     delayed 1100 ms → 0/4 lost      delayed 3000 ms → lost, every time
-    #
-    # A half-second experiment that comes back clean is measuring the settle timer, not
-    # the race. `sim/tests/test_sil_handshake.py` holds the whole table, and its teeth run
-    # the pre-change line below against a cloud with no settle timer at all, which makes
-    # the question ordinal instead of a stopwatch.
+    # `connect()` does not wait for CONNACK and our SUBSCRIBE is only sent from
+    # `_on_connect`, so publishing `/state` straight away races it. The supervisor answers
+    # with `/config` at QoS 0, not retained: losing the race deletes the config rather
+    # than delaying it, and no timeout can fix that. (The supervisor's 1 s settle timer
+    # hides small delays; `sim/tests/test_sil_handshake.py` tests the ordering directly.)
     SUBACK_TIMEOUT_S = 30.0
 
     def _why_no_config(self) -> str:
         """Say WHICH it was when the config wait expires: starved, or wedged.
 
-        **The finding (2026-09-07).** `no config pushed within timeout` was this suite's
-        most misleading line. It is emitted when `got_config.wait()` expires, and it reads
-        as *the appliance did not answer* - but a 20 s budget is not tight, and a failure
-        captured at load 147 showed the robot's own SUBSCRIBE acknowledged before it
-        announced, so the message was reporting a **starved supervisor** in exactly the
-        words reserved for a broken one. A wait whose expiry means "we stopped waiting"
-        must not be phrased as a verdict about the thing waited for.
-
-        That is the correction PR #209 made to `sim/test_csp.mjs`, where a hardcoded
-        `setTimeout(resolve("timeout"), 3000)` raced `onload`/`onerror` and `"timeout"` was
-        then compared against `"loaded"` and `"refused"` as if it were a third verdict.
-
-        So when the wait expires, ASK. The status server is a DIFFERENT TRANSPORT (HTTP on
-        localhost) from the one that just went quiet (MQTT), which is what makes the answer
-        worth having: it separates "alive but did not push" from "not answering anything".
-        Three seconds, because this runs only on the failure path and a diagnosis that
-        hangs is worse than no diagnosis.
-
-        Never raises: every outcome, including a broken `--status-url`, is an answer.
+        An expired wait means "we stopped waiting", not "the appliance is broken" (a loaded
+        host starves the supervisor too). So ask the status server — a different transport
+        from the MQTT that went quiet — with a 3 s cap. Never raises.
         """
         import urllib.error
         import urllib.request
@@ -251,15 +159,8 @@ class VirtualMoxie:
                     f"({type(exc).__name__} after {ms} ms) - wedged, gone, or starved past 3 s")
 
     def announce(self, state: str = "config") -> bool:
-        """Publish `/state`, but **only once the broker has acknowledged our SUBSCRIBEs**.
-
-        Waiting on `subscribed` is an observation, not an estimate: it is set by
-        `_on_subscribe`, i.e. by the broker's own SUBACK, so the config push this
-        announcement triggers cannot be published into a subscription that does not exist
-        yet. Returns False (with a line in `errors`) if the broker never acknowledged —
-        which is a broker fault worth saying out loud, and is nothing like the silent
-        deafness it replaces.
-        """
+        """Publish `/state`, but only once the broker has SUBACKed our subscriptions, so
+        the config push it triggers has somewhere to land. False (+ an error) if never."""
         if not self.subscribed.wait(self.SUBACK_TIMEOUT_S):
             self.errors.append(
                 f"the broker did not acknowledge our subscriptions within "
@@ -273,9 +174,8 @@ class VirtualMoxie:
 
     def _on_connect(self, c, u, flags, rc, props=None):
         self.log(f"connected to broker rc={rc} as {self.device_id}")
-        # The mids are collected BEFORE `subscribed` is armed, and both callbacks are
-        # dispatched by paho's one network thread — so no SUBACK can be processed while
-        # this method is still deciding what it is waiting for.
+        # Safe: both callbacks run on paho's one network thread, so no SUBACK is handled
+        # before the pending mids are recorded.
         pending = set()
         for topic in (self.t_config, self.t_commands):
             pending.add(c.subscribe(topic)[1])
@@ -311,28 +211,19 @@ class VirtualMoxie:
             self.log(f"← {topic.split('/commands/')[-1]}: {str(payload)[:60]}")
 
     def _on_chat_reply(self, payload):
-        """Accumulate one turn's answer, which may arrive as SEVERAL responses.
+        """Accumulate one turn's answer, which may arrive as several responses.
 
-        The contract lets one ``event_id`` be answered by more than one
-        ``RemoteChatResponse``: ``result=REPLY_PENDING`` (ResultCode 9) means "more chunks
-        to come", ``chunk_num`` (field 22) orders them, and
-        ``consistency_control.is_completed`` (field 18) marks the last one — see
-        docs/architecture/mqtt-and-conversation.md §4.5. Our server uses that to speak a
-        filler while a slow brain thinks, and to stream an answer sentence by sentence.
-
-        So a real client cannot treat the FIRST reply as the answer. This joins the chunks
-        of an event in ``chunk_num`` order and only wakes the waiter on the closing chunk
-        (a terminal ``result``, or ``is_completed``). ``reply_payload`` stays the final
-        response; ``reply_text`` is the whole thing the child heard.
+        ``result=REPLY_PENDING`` means more to come, ``chunk_num`` orders them, and a
+        terminal ``result`` or ``consistency_control.is_completed`` closes the turn
+        (mqtt-and-conversation.md §4.5). Chunks are joined in order; the waiter wakes on the
+        closing one. ``reply_payload`` is the final response, ``reply_text`` the whole line.
         """
         event_id = payload.get("event_id") or ""
         chunk_num = payload.get("chunk_num")
         text = (payload.get("output") or {}).get("text", "")
         self.chat_payloads.append(payload)
-        # …and then what the cloud asked this ROBOT to DO. Applied per RESPONSE, not per
-        # turn — a streamed answer is several publishes and an action may ride any of
-        # them — and BEFORE `got_reply` is set, so a waiter that wakes on the reply is
-        # already looking at settled action state rather than racing it.
+        # Actions are applied per response (any chunk may carry one) and before
+        # `got_reply` is set, so a woken waiter sees settled action state.
         self._on_actions(payload)
         parts = self._chunks.setdefault(event_id, {})
         parts[int(chunk_num) if chunk_num is not None else 0] = text
@@ -354,51 +245,21 @@ class VirtualMoxie:
         self.reply_text = ""
         self._chunks.clear()
         self.chat_payloads = []
-        # Only the EDGE is per-turn. `self.actions` is client state (which module we are
-        # in, whether we are asleep, what we are subscribed to) and a new prompt does not
-        # undo it — the browser SIM's `actionState` has the same lifetime.
+        # Only the edge is per turn; `self.actions` is client state.
         self.got_action.clear()
 
     # -- 🎬 response_actions: the brain drives this robot, not just its mouth --
-    #
-    # `RemoteChatResponse.response_actions[]` is a list of `RemoteChatAction`s
-    # (docs/reverse-engineering/protocol/remote-chat-protocol.md §"RemoteChatAction — the
-    # brain drives navigation"): the brain can start a content module, leave one, put
-    # Moxie to sleep, run a named on-robot function, and subscribe to the robot's own
-    # perception events. `docs/architecture/ai-seam.md` §2 and
-    # `mqtt/moxie_sdk/wire.py::build_chat_response` are our server's half of it.
-    #
-    # Until this landed the SIL robot read `output.text` and the audio and **ignored the
-    # actions completely**, so no test could assert that a robot RECEIVED AND ACTED ON a
-    # launch — only that the runtime published one. That was DoD criterion 4's
-    # ("interchangeable clients") one untrue clause, because the browser SIM
-    # (`sim/web/bridge.js::applyAction`) has acted on them since PR #52.
-    #
-    # WHAT THIS DELIBERATELY DOES NOT DO. A stub that RECORDS is right here; a stub that
-    # pretends to run a module is not. So:
-    #   * `launch` does not start anything — there is no content engine on this client,
-    #     and inventing one would make the SIL robot lie about what a real robot did.
-    #   * `execute` is recorded by name and never called. The contract says the result
-    #     comes back next turn in `RemoteChatRequest.execute_returns[]`; we do not send
-    #     that, because we would have to invent a return value for a function we did not
-    #     run. Named as a gap rather than faked.
-    #   * `sleep` records that we were told to sleep; it does not stop the client. The
-    #     corpus describes no wake handshake this robot could then honour.
-    #   * `enable_qr` records that the scanner was armed. A headless client has no camera.
-    # Everything it DOES do mirrors `bridge.js::applyAction` state for state, which is the
-    # whole point: the two clients must agree about what an action meant.
+    # `RemoteChatAction`s (remote-chat-protocol.md) launch/exit modules, sleep, run a named
+    # function, and subscribe to perception events. This client RECORDS them, state for
+    # state like `bridge.js::applyAction`, and runs nothing: no module engine, no
+    # `execute_returns[]` (it would have to invent a return value), no sleep/wake, no camera.
 
     def _on_actions(self, payload: dict):
-        """Consume one response's `response_actions` — the mirror of `bridge.js::handleActions`.
+        """Consume one response's `response_actions` (mirror of `bridge.js::handleActions`).
 
-        The plural `response_actions[]` is the contract's list; a legacy singular
-        `response_action` mirrors `response_actions[0]`
-        (docs/architecture/mqtt-and-conversation.md §4.1), so it is read **only** when the
-        plural is absent — otherwise one action would fire twice.
-
-        An entry with no `action` is legal and is not an error: that is the shape
-        `build_chat_response` sends when a brain is only subscribing to events. Nothing
-        here raises — a future server verb must not be able to break an old client's turn.
+        The legacy singular `response_action` mirrors `[0]`, so it is read only when the
+        plural is absent. An entry with no `action` is a subscription-only entry. Never
+        raises: an unknown future verb must not break a turn.
         """
         entries = payload.get("response_actions")
         if not isinstance(entries, list):
@@ -431,33 +292,19 @@ class VirtualMoxie:
 
     @staticmethod
     def _action_args(entries):
-        """`RemoteChatAction.action_args` — `repeated ActionArgsEntry{key, value}`, proto
-        field 10 — as the `{key: value}` mapping it encodes. `None` when the field is
-        absent or unreadable, so the caller falls through to its next spelling rather than
-        recording an empty dict as if the brain had sent one."""
+        """`action_args` (`repeated ActionArgsEntry{key, value}`) as a dict; None when absent
+        or unreadable so the caller falls through to its next spelling."""
         if not isinstance(entries, list):
             return None
         pairs = [(e.get("key"), e.get("value")) for e in entries if isinstance(e, dict)]
         return {str(k): v for k, v in pairs if k is not None} or None
 
     def _apply_action(self, entry: dict) -> bool:
-        """Act on one `RemoteChatAction`. Returns False for a verb we do not implement.
+        """Record one `RemoteChatAction`. Returns False for a verb we do not implement.
 
-        `function` is read from `function_id` first and the SIM's `function` second.
-        `RemoteChat.proto`:255-281 names the fields `function_id` (7) / `function_args`
-        (8) / `action_args` (10), and that is what a real robot decodes;
-        `sim/web/bridge.js`:258 reads `entry.function`.
-
-        **Since 2026-09-04 our own server emits the contract's spelling** —
-        `wire.py::encode_action` sends `function_id` plus `function_args` (a list) or
-        `action_args` (a dict), so an `execute` we send arrives NAMED and this client
-        records the name it was given. All four spellings are still accepted, because a
-        client that only understood the one server it was written against would not be a
-        client. An `execute` with nothing to read still records `""` rather than a guess.
-
-        **It records; it does not run.** No function is called and no
-        `RemoteChatRequest.execute_returns[]` is published — we would have to invent a
-        return value for a function this headless client does not have.
+        Function name: `function_id` (RemoteChat.proto field 7) first, then the older
+        `function`. Args: `function_args`, then `action_args`, then `args` — each tested for
+        absence, not falsiness. Records only; nothing is run.
         """
         kind = str(entry.get("action") or "").lower()
         module_id = entry.get("module_id") or ""
@@ -473,8 +320,6 @@ class VirtualMoxie:
             self.log(f"🎬 ignored unknown action {entry.get('action')!r}")
             return False
         if kind == "launch":
-            # We are now IN that module as far as this client is concerned. Nothing is
-            # started; the navigation state is the honest part and the part a test asserts.
             self.actions["module_id"] = module_id
             self.actions["content_id"] = content_id
             self.actions["asleep"] = False
@@ -503,9 +348,8 @@ class VirtualMoxie:
         return True
 
     def action_stats(self) -> dict:
-        """What the cloud's actions did to this robot — the same keys, in the same
-        meanings, as `sim/web/bridge.js::actionStats()`. Tests assert this; the parity of
-        the two shapes is asserted in `sim/tests/test_sim_client_parity.py`."""
+        """What the cloud's actions did to this robot — same keys as bridge.js's
+        `actionStats()` (parity: `test_sim_client_parity.py`)."""
         a = self.actions
         return {"applied": [dict(x) for x in a["applied"]], "unknown": a["unknown"],
                 "module_id": a["module_id"], "content_id": a["content_id"],
@@ -514,11 +358,8 @@ class VirtualMoxie:
                 "last": a["last"]}
 
     def _play_tts(self, payload):
-        """Consume a CloudTTSResponse: decode the audio buffer + marks and 'play' it.
-        A real robot renders audio to the speaker; the headless SIM records that Moxie
-        spoke (bytes + sample rate) so scenarios/tests can assert the voice reached it.
-        Decodes the wire shape directly (base64 AudioBuffer) — the SIM is a protocol
-        client and stays independent of the server SDK, like a real robot's firmware."""
+        """Consume a CloudTTSResponse: decode the base64 AudioBuffer + marks and record that
+        Moxie spoke, so tests can assert the voice arrived."""
         import base64
         audio_obj = (payload or {}).get("audio") or {}
         try:
@@ -536,11 +377,7 @@ class VirtualMoxie:
         self.got_tts.set()
 
     # -- content queries (CloudQueryRequest / CloudQueryResponse) --
-    # The CloudQueryResponse field each answer is keyed under, per the recovered
-    # embodied.logging.CloudQueryResponse (docs/reverse-engineering/protocol/
-    # recovered-proto/embodied/logging/Cloud.proto:310-352). Duplicated here on purpose:
-    # the SIL robot decodes the wire itself, like real firmware, and never imports the
-    # server SDK it is meant to be testing.
+    # The response field each answer is keyed under (recovered Cloud.proto:310-352).
     QUERY_FIELD = {"idf": "idf_values", "license": "license_values",
                    "schedule": "schedule", "contexts": "contexts",
                    "context_store": "versioned_contexts",
@@ -558,9 +395,8 @@ class VirtualMoxie:
         self.got_query.set()
 
     def send_query(self, query: str) -> str:
-        """Publish a CloudQueryRequest (Cloud.proto:292-305) on the activity-log topic —
-        exactly how the robot pulls its schedule/history at session start
-        (cloud-protocol.md:172: `client-service-activity-log`, `subtopic:"query"`)."""
+        """Publish a CloudQueryRequest (Cloud.proto:292-305) on the activity-log topic, as
+        the robot pulls its schedule/history at session start."""
         request_id = str(uuid.uuid4())
         self.client.publish(self.t_event("client-service-activity-log"), json.dumps(
             {"timestamp": int(time.time() * 1000), "subtopic": "query", "query": query,
@@ -603,9 +439,7 @@ class VirtualMoxie:
         try:
             if not self.announce():
                 return False
-            # A config push is nice-to-have here, not required: a server only re-pushes
-            # config for a robot it hasn't seen, and a real Moxie re-queries its schedule
-            # every session regardless. Queries are what this run is testing.
+            # A config push is optional here: a known robot may not get one.
             if not self.got_config.wait(min(3.0, self.timeout)):
                 self.log("(no config push — already-known robot; continuing to queries)")
             if report:
@@ -620,40 +454,22 @@ class VirtualMoxie:
             self.client.loop_stop()
             self.client.disconnect()
 
-    # -- vision: the robot's own eyes (docs/architecture/vision.md) --
-    #
-    # The stock robot runs vision ON-DEVICE and emits semantic events only — no pixels,
-    # no bounding boxes (vision.md §1.1). A subscribed event is delivered to the brain as
-    # the `speech` of an ordinary RemoteChatRequest ("instead of the modules receiving
-    # something the user said, it receives a special event string like `eb-found-face`" —
-    # RemoteModuleAPI §Event Handling), so the SIL robot publishes it on exactly the topic
-    # and in exactly the envelope it publishes a child's utterance in. Nothing new on the
-    # wire: that IS the protocol-faithful shape.
+    # -- vision (docs/architecture/vision.md) --
+    # On-device vision emits semantic events only; a subscribed event reaches the brain as
+    # the `speech` of an ordinary RemoteChatRequest, so it is published like an utterance.
     FACE_EVENTS = {"found": "eb-found-face", "lost": "eb-lost-target"}
 
-    #: The three vision events that carry a **semantic payload** as well as a name, and
-    #: the `input_vars` key each one rides in on: a scanned QR string, an ArUco fiducial
-    #: id, a Moxie book cover (docs/architecture/vision.md:73-74 and the table in
-    #: `moxie_sdk/presence.py`:16-19). The `$`-prefixed spelling is the one
-    #: RemoteModuleAPI's catalog documents.
-    #:
-    #: A **second copy** of `presence.VALUE_KEYS` on purpose. This file is the ROBOT half
-    #: of the pair and must not import the server SDK — the same reason `_play_tts`
-    #: decodes the base64 `AudioBuffer` off the wire instead of calling the SDK's codec.
-    #: A robot that borrowed the server's constants could not detect the server changing
-    #: them, which is exactly what a client-side test is for.
+    #: Marker events carrying a value (QR string, ArUco id, book cover) and their
+    #: `input_vars` key (vision.md:73-74). A deliberate copy of `presence.VALUE_KEYS`: a
+    #: robot that borrowed the server's constants could not detect the server changing them.
     EVENT_VALUE_KEYS = {"eb-qr-event": "$eb_qr_value",
                         "eb-dr-event": "$eb_dr_value",
                         "eb-br-event": "$eb_br_value"}
 
     @classmethod
     def value_vars(cls, name: str, value) -> dict | None:
-        """`input_vars` carrying `value` for a marker event — or None.
-
-        None (rather than `{}`) for an event with no value slot and for an empty value, so
-        `send_face_event` keeps publishing the bare envelope a plain `eb-found-face` uses
-        instead of an empty `input_vars` no real robot would send.
-        """
+        """`input_vars` carrying `value` for a marker event — or None (never `{}`, which no
+        real robot sends)."""
         key = cls.EVENT_VALUE_KEYS.get(name)
         if not key or value in (None, ""):
             return None
@@ -663,11 +479,8 @@ class VirtualMoxie:
                         value=None) -> str:
         """Publish one vision event. `kind` is `found`/`lost` or a raw `eb-*` name.
 
-        `value` is the marker payload — the string the camera READ — and is routed to the
-        right `input_vars` key for the event by `value_vars`. That is the whole difference
-        between "the robot saw a QR code" and "the robot saw *this* QR code", and it is
-        what a launch card travels in. An explicit `input_vars` wins, so a test can still
-        hand over a hand-built envelope (`test_presence_sil.py` does).
+        `value` is what the camera read (routed by `value_vars`); an explicit `input_vars`
+        wins.
         """
         name = self.FACE_EVENTS.get(kind, kind)
         event_id = str(uuid.uuid4())
@@ -683,19 +496,11 @@ class VirtualMoxie:
         return event_id
 
     def run_face_events(self, kinds, gap: float = 0.0, value=None) -> bool:
-        """Announce, then play a list of vision events, asserting the server answers each.
+        """Announce, then play vision events, asserting the server answers each.
 
-        A server that has nothing to say answers `NOREPLY_ACK` (ResultCode 6, "acknowledge
-        only, no spoken line") — the contract still requires *a* response, because "the
-        remote module must produce some response for this input to continue the
-        interaction". A hello is a `SUCCESS` with real `output.text`. Both count as
-        answered; `self.face_replies` records which was which.
-
-        `value` is the marker payload every event in `kinds` carries (`--face-value`) —
-        a scanned QR string for `eb-qr-event`, an ArUco id for `eb-dr-event`, a book cover
-        for `eb-br-event`. Each row of `face_replies` also records the **actions this
-        robot applied** during that event's turn, which is how a card scan shows up as
-        something the robot RECEIVED rather than only as something the server logged.
+        `NOREPLY_ACK` (silent) and `SUCCESS` (spoken) both count as answered. `value` is the
+        marker payload every event carries (`--face-value`). Each `face_replies` row records
+        the result, text and the actions this robot applied during that turn.
         """
         self.face_replies = []
         self.client.connect(self.host, self.port, 30)
@@ -729,13 +534,8 @@ class VirtualMoxie:
 
     # -- the pairing gate: what a NOT-permitted robot is served --
     def run_unpaired(self) -> bool:
-        """Announce ourselves and assert we are treated as **pending**.
-
-        The supervisor's device allowlist (`fleet/permits.json`) is closed by default, so
-        a robot it has never been told about must receive the minimal config: a
-        `pairing_status` that is not `"paired"` and — the point of the whole gate — **no
-        `child_pii`**. Prints the document it got, so a live check can show it verbatim.
-        """
+        """Announce ourselves and assert we are treated as pending by the (closed-by-default)
+        permit list: not `"paired"` and no `child_pii`. Prints the config received."""
         self.client.connect(self.host, self.port, 30)
         self.client.loop_start()
         try:
@@ -755,16 +555,10 @@ class VirtualMoxie:
             self.client.loop_stop()
             self.client.disconnect()
 
-    # -- 🎭 telehealth / "Be Moxie": the operator drives the body --
-    #
-    # The recovered `embodied.telehealth.TeleHealth.proto`
-    # (docs/reverse-engineering/protocol/telehealth.md) puts a remote human where the
-    # on-device BRAIN normally is: the cloud sends `TelehealthRobotCommand` on
-    # `commands/telehealth` and the robot reports its `RobotState` back on the
-    # `client-service-activity-log` `telehealth` subtopic. This SIL robot plays both
-    # halves of that faithfully — it decodes the JSON itself, like firmware, and never
-    # imports the server SDK it is testing — while a *third* half, the operator, is driven
-    # over the supervisor's localhost status HTTP, which is exactly what the console does.
+    # -- 🎭 telehealth / "Be Moxie" (protocol/telehealth.md) --
+    # The cloud sends `TelehealthRobotCommand` on `commands/telehealth`; the robot reports
+    # `RobotState` on the activity log's `telehealth` subtopic. The operator is driven over
+    # the supervisor's status HTTP, as the console does.
 
     def _on_telehealth(self, payload):
         """Consume one `TelehealthRobotCommand` and answer the way the protocol says."""
@@ -811,19 +605,12 @@ class VirtualMoxie:
 
     def run_telehealth(self, status_url: str, line: str = "Hello from the operator.",
                        mood: str = "happy", intensity: int = 2) -> bool:
-        """The end-to-end puppet check: an operator drives this robot from the console's
-        own seam and the robot speaks their line.
+        """End-to-end puppet check over the supervisor's status server (the endpoint the
+        console proxies): enable → start → speak → GET → interrupt → end.
 
-        `status_url` is the supervisor's localhost status server (`http://127.0.0.1:PORT`)
-        — the same endpoint `server/moxie_server/main.py` proxies, so this exercises the
-        real verb chain rather than a test double:
-
-            enable → start → speak(mood, intensity) → GET → interrupt → end
-
-        Asserts the recovered wire at every step: `PLAY_OUTPUT` carries the operator's text
-        AND markup; `INTERRUPT` carries **no** `output` at all; the pushed `/config` really
-        did flip `moxie_mode` to `TELEHEALTH`; and the supervisor's own `/telehealth` view
-        shows the state THIS robot reported plus the operator's line in the transcript.
+        Asserts: `/config` flips `moxie_mode` to TELEHEALTH; `PLAY_OUTPUT` carries text and
+        markup; `INTERRUPT` carries no `output`; the supervisor's view shows our state and
+        the operator's line.
         """
         import urllib.error
         import urllib.request
@@ -853,10 +640,7 @@ class VirtualMoxie:
                 return False
             self.report_telehealth_state("READY")
 
-            # ASSUMPTION B1 made observable: the re-pushed config really carries the mode.
-            # Armed BEFORE the call — the supervisor publishes the new config before its
-            # HTTP reply comes back, so clearing afterwards would drop the very push we
-            # are waiting for.
+            # Cleared BEFORE the call: the config is re-pushed before the HTTP reply returns.
             self.got_config.clear()
             out, code = call({"action": "enable"})
             if code != 200 or not out.get("ok"):
@@ -950,14 +734,7 @@ class VirtualMoxie:
                 self.errors.append("remote_chat reply had empty output.text")
                 return False
 
-            # 4b) (optional) assert a real brain — not the built-in echo app — wrote it.
-            # Every other layer of this smoke has always been real (a broker on a socket,
-            # the supervisor process, synthesized audio, this robot decoding the wire);
-            # the brain was the one mock left, and `MOXIE_APP=echo` was pinned in
-            # `run_smoke.sh` with no way to change it. `--reject-echo` is what makes
-            # `run_smoke.sh --live-brain` a claim about the AI seam rather than about
-            # five layers around a stub. See docs/architecture/implementation-plan.md,
-            # Definition of done #1.
+            # 4b) (optional) assert a real brain, not the echo app, wrote it (--live-brain).
             if self.reject_echo:
                 if is_echo_reply(text, SMOKE_PROMPT):
                     self.errors.append(
@@ -967,10 +744,7 @@ class VirtualMoxie:
                     return False
                 self.log(f"🧠 live brain reply: {text!r}")
 
-            # 5) (optional) assert the appliance SCORED the line it sent us. The five
-            # fields are the difference between a speaker and a performance, and until
-            # now nothing on the standing smoke path looked at them — a regression that
-            # emptied `dialog_act` on the wire would have kept this smoke green.
+            # 5) (optional) assert the appliance scored every response.
             if self.expect_scored and not self.check_scored():
                 return False
 
@@ -988,13 +762,8 @@ class VirtualMoxie:
             self.client.disconnect()
 
     def check_scored(self) -> bool:
-        """Every response of the last turn carries every scored field. Logs what arrived.
-
-        Asserted per RESPONSE, not per turn: a streamed answer is several publishes and
-        the fields were added to the chunk path separately from the reply path
-        (backlog/expressiveness.md §2.3, C2/C4), so "the turn was scored" is exactly the
-        claim that would hide a chunk which was not.
-        """
+        """Every response of the last turn carries every scored field (per response, so an
+        unscored streamed chunk cannot hide). Logs what arrived."""
         if not self.chat_payloads:
             self.errors.append("no remote_chat responses to check for scored output")
             return False
@@ -1213,8 +982,6 @@ def main():
     except Exception as e:
         vm.errors.append(f"exception: {e}")
     if ok:
-        # The default line is unchanged, byte for byte — `--reject-echo` only ADDS the
-        # half a reader cannot otherwise see (that a model, not the stub, answered).
         print("✅ SIL round-trip OK — state→config(paired)→remote-chat→reply"
               + (" (🧠 live brain: the reply is not the echo app's)"
                  if args.reject_echo else ""))

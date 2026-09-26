@@ -12,14 +12,8 @@ from .types import ResultCode
 
 
 def _arg_str(value) -> str:
-    """One `function_args` / `ActionArgsEntry.value` element as the wire spells it.
-
-    Both fields are `string` in the recovered proto (RemoteChat.proto:271-273,:280), so a
-    caller's `True` / `3` has to become text somewhere. Booleans go out lowercase
-    (`"true"`), which is the spelling the brief's own worked example uses
-    (qr-launch-cards.md §P0-a: `"function_args": ["true"]`) and the one JSON itself uses,
-    rather than Python's `"True"`. Everything else is `str()`.
-    """
+    """One `function_args` / `ActionArgsEntry.value` element as a wire string (both are
+    `string` in RemoteChat.proto:271-273,:280). Booleans go out JSON-style: `"true"`."""
     if isinstance(value, bool):
         return "true" if value else "false"
     return value if isinstance(value, str) else str(value)
@@ -28,31 +22,11 @@ def _arg_str(value) -> str:
 def encode_action(a) -> dict:
     """One `moxie_sdk.types.Action` as one `RemoteChatAction` JSON entry.
 
-    `{output_type, action, module_id, content_id}` as before, plus — and this is what
-    changed on 2026-09-04 — **the name of the function an `execute` wants run**.
-
-    `RemoteChatAction` (recovered-proto/embodied/robotbrain/RemoteChat.proto:255-281,
-    read back by remote-chat-protocol.md:99 as *"`execute` — run a robot-side
-    `function_id(function_args…)`"*) carries:
-
-      * `function_id`   — field 7, `optional string`
-      * `function_args` — field 8, `repeated string`
-      * `action_args`   — field 10, `repeated ActionArgsEntry{key = 1, value = 2}`
-
-    Until now `Action.function` and `Action.args` were dropped on the floor here, so every
-    `execute` this appliance could emit reached a robot **unnamed** — the blocker under
-    qr-launch-cards.md §P0-a and sandboxed-extensions.md S5.
-
-    `Action.args` has two honest homes and which one is used is decided by its *type*, not
-    guessed: a **sequence** (`["true"]` — what `volley.add_execution_action` and the
-    brief's §5 T9 example produce) is the positional `function_args`; a **mapping**
-    (`{"run": True}` — the dataclass's own default type) is `action_args`, the one field
-    in the contract that is a key/value list. Neither is invented, and a dict is never
-    flattened into a `k=v` string the proto does not define.
-
-    **Emitted only when present.** An action with no function and no args gains no empty
-    keys, so every launch/exit/sleep response stays byte-identical to what we sent before
-    and no golden moves for free.
+    `{output_type, action, module_id, content_id}` plus, for an `execute`, the recovered
+    fields (RemoteChat.proto:255-281): `function_id` (7), and `Action.args` by type — a
+    sequence → `function_args` (8, `repeated string`), a mapping → `action_args`
+    (10, `repeated ActionArgsEntry{key, value}`). Omitted when absent, so other actions
+    stay byte-identical.
     """
     entry = {"output_type": "GLOBAL", "action": a.type.value,
              "module_id": a.module_id, "content_id": a.content_id}
@@ -77,60 +51,25 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
                         chunk_num=None, is_completed=None, safety=None,
                         subscribe_events=None, mood_intensity=None, emotion=None,
                         signals=None) -> dict:
-    """Build the RemoteChatResponse JSON.
+    """Build the RemoteChatResponse JSON (embodied/robotbrain/RemoteChat.proto).
 
-    Matches embodied/robotbrain/RemoteChat.proto: `result` is the ResultCode enum
-    NAME, `output` is a RemoteChatOutput (text/markup + optional scored fields),
-    `response_actions` are RemoteChatActions.
+    Every optional part is omitted when empty, so a plain reply stays byte-identical.
 
-    **Multi-chunk (streaming) turns.** One `event_id` may be answered by several
-    responses: `result=REPLY_PENDING` (ResultCode 9) means "more chunks to come" and
-    `chunk_num` (RemoteChat.proto field 22) orders them; the robot/SIM plays the chunks
-    of an event_id in `chunk_num` order (docs/architecture/sim-as-a-client.md:77).
-    `is_completed` sets `consistency_control.is_completed`
-    (`RemoteConsistencyControl`, field 18 — RemoteChat.proto:201-205), which marks the
-    last chunk of the sequence. Both are omitted unless a caller asks for them, so a
-    plain single-chunk reply stays byte-identical to what we sent before (chunk 0 /
-    not-streaming is the proto default anyway).
-
-    **Scored output.** `RemoteChatOutput` is a *scored* line, not just text
-    (ai-seam.md §2, "Response out (a)"): `mood` + `mood_intensity` are the emotional
-    performance to render on the face, and `dialog_act` / `emotion` / `signals` are what
-    the line MEANS. `mood` and `emotion` are label strings — `mood` from `ePlaybackMood`
-    (`happy`, `curious`, …; the int form lives in the `cmd:playback-mood` mark inside
-    `markup`) and `emotion` from `RemoteDialog.EmotionState`. `signals` accepts one
-    `RemoteSignals.Signal` name or a list of them and always goes out as a list, because
-    the field is `repeated` (remote-chat-protocol.md:124-126). Every one of them is
-    omitted when empty, so a turn that scores nothing is byte-identical to what we sent
-    before. Who fills them: the behavior planner, through `supervisor/markup.py::perform`
-    — see backlog/expressiveness.md §2.3 (C3).
-
-    **Moderation.** `safety` (a `moxie_sdk.safety.InputSafety`) fills
-    `RemoteChatResponse.input.safety` — `input` is field 17, a `RemoteChatInput`, whose
-    field 12 is the `InputSafety{is_unsafe, blocked_by, intents, phrase_id}` message
-    (RemoteChat.proto:180-186,:198,:335). Its `intents` are also mirrored onto
-    `RemoteChatResponse.input_intents` (field 10, `repeated string`) so a client that
-    reads only the flat field still sees the verdict. `RemoteChatInput` is by definition
-    the brain's read of *the child's input*, so only a pre-inference (child-side) verdict
-    is published here; a block on Moxie's own output has no field in the contract and is
-    recorded in the parent review queue instead (docs/architecture/ai-seam.md §2).
-
-    **Actions.** Each `Action` is encoded by `encode_action` above — including, since
-    2026-09-04, the `function_id` / `function_args` / `action_args` an `execute` needs to
-    name what it wants run. Read that docstring for the citation and the arg mapping.
-
-    **Event subscription.** `subscribe_events` (robot event names, e.g.
-    `["eb-found-face", "eb-lost-target"]`) fills
-    `RemoteChatAction.EventSubscription{clear, active[]}` — the contract's own way for a
-    brain to ask the robot to *push* it perception events (remote-chat-protocol.md:103-106;
-    ai-seam.md §2(b); the record's `clear`/`active` field names per OpenMoxie
-    `doc/RemoteModuleAPI.md` §"Event subscription record", MIT). Without it the robot
-    discards its own vision events — they are "internal events that are discarded by the
-    application stack unless the active module is specifically interested". It rides an
-    *action-less* `response_actions[0]` (a bare `{output_type}` entry is the shape a
-    field-proven server sends) and is mirrored onto the legacy singular `response_action`
-    (mqtt-and-conversation.md §4.1). Omitted when empty/None, so every reply that does not
-    ask for events is byte-identical to what we sent before."""
+    * **Chunks.** `result=REPLY_PENDING` + `chunk_num` (field 22) order a streamed turn;
+      `is_completed` sets `consistency_control.is_completed` (field 18) on the last.
+    * **Scored output** (ai-seam.md §2): `mood`/`mood_intensity` (ePlaybackMood label +
+      0-2), `dialog_act`, `emotion` (EmotionState label), `signals` (always a list —
+      `repeated`). Filled by the behavior planner (`supervisor/markup.py::perform`).
+    * **Moderation.** `safety` (an `InputSafety`) fills `input.safety` (field 17 → 12)
+      and mirrors its intents onto `input_intents` (field 10). Child-side verdicts only;
+      an output-side block has no contract field (it goes to the parent review queue).
+    * **Actions** via `encode_action`.
+    * **Event subscription.** `subscribe_events` fills
+      `RemoteChatAction.EventSubscription{clear, active[]}` (remote-chat-protocol.md:103-106)
+      on `response_actions[0]` (a bare `{output_type}` entry if there is no action), mirrored
+      onto the legacy singular `response_action` (mqtt-and-conversation.md §4.1). Without
+      it the robot discards its own vision events.
+    """
     rc = result if isinstance(result, ResultCode) else ResultCode(result)
     output = {"text": text, "markup": markup or text}
     if mood:
@@ -147,8 +86,6 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
             "event_id": event_id, "output": output, "end_turn": bool(end_turn)}
     ra = [encode_action(a) for a in (actions or [])]
     if subscribe_events:
-        # An action-less entry carrying only the subscription: we are not asking the
-        # robot to launch/exit anything, only to start pushing us these events.
         if not ra:
             ra.append({"output_type": "GLOBAL"})
         ra[0]["event_subscription"] = {"active": list(subscribe_events), "clear": False}
@@ -169,11 +106,8 @@ def build_chat_response(event_id, text, markup="", *, backend="router",
     return resp
 
 
-# CloudQuery -> the CloudQueryResponse field the answer is keyed under, and that
-# field's empty value. Transcribed from the recovered
-# `embodied.logging.CloudQueryResponse` (docs/reverse-engineering/protocol/
-# recovered-proto/embodied/logging/Cloud.proto:310-352, catalogued in
-# proto-catalog.md:213 + :466). Repeated fields default to [], message fields to {}.
+# CloudQuery -> (CloudQueryResponse field, its empty value), per the recovered
+# Cloud.proto:310-352.
 _QUERY_PAYLOAD = {
     "idf":              ("idf_values",         []),   # field 4,  repeated IDFRecord
     "license":          ("license_values",     []),   # field 5,  repeated LicenseRecord
@@ -187,26 +121,12 @@ _QUERY_PAYLOAD = {
 
 def build_activity_response(query, payload=None, request_id=None, *,
                             response_code=None) -> dict:
-    """Build the `query_result` JSON (a CloudQueryResponse) that answers a robot's
-    `client-service-activity-log` / `subtopic:"query"` request.
+    """Build the `query_result` CloudQueryResponse answering a robot's activity-log
+    `subtopic:"query"` request (published to `/devices/{id}/commands/query_result`).
 
-    Published to `/devices/{id}/commands/query_result`
-    (docs/reverse-engineering/protocol/cloud-protocol.md:147,
-    docs/architecture/mqtt-and-conversation.md:296).
-
-    Two things the robot needs and a generic `result` key cannot give it:
-      * `request_id` — echoed from `CloudQueryRequest.request_id` (field 5) into
-        `CloudQueryResponse.request_id` (field 3) so the robot can correlate the
-        answer with its outstanding request. Omitted when the request carried none.
-      * the payload keyed by its **own** CloudQueryResponse field — `schedule`,
-        `mentor_behaviors`, `license_values`, … — not a generic `result`.
-
-    `payload=None` sends that field's empty value (we answer honestly-empty until
-    there is a schedule/mentor-behavior store behind it).
-
-    `response_code` (field 99, QUERY_OK / QUERY_NO_CHANGE / QUERY_NETWORK_FAIL) is
-    omitted by default: cloud-protocol.md:232-237 documents the enum but not its JSON
-    spelling (name vs. int), and a field-proven server sends the answer without it.
+    Echoes `request_id` (when given) and keys the payload by its own response field
+    (`schedule`, `mentor_behaviors`, …); `payload=None` sends that field's empty value.
+    `response_code` (field 99) is omitted by default — its JSON spelling is unrecorded.
     """
     try:
         key, empty = _QUERY_PAYLOAD[query]
@@ -221,30 +141,16 @@ def build_activity_response(query, payload=None, request_id=None, *,
     return resp
 
 
-# `embodied.robotbrain.MentorBehavior` fields 1-7 — one record of "what the child did"
-# (docs/reverse-engineering/protocol/recovered-proto/embodied/robotbrain/
-# MentorBehavior.proto:26-36). `action` is a MentorAction (UNKNOWN/QUIT/REFUSED/COMPLETED/
-# REQUESTED/PRESENTED/SCHEDULED/SUGGESTED) and `ended_reason` an EndedReason; the docs give
-# the enums but not their JSON spelling, so we keep whatever the robot sent verbatim.
-# Envelope fields 100 (`software_version`) / 101 (`module_name`) are per-report metadata,
-# not history, and are dropped — as OpenMoxie's field-proven `MentorBehavior` model does.
+# `MentorBehavior` fields 1-7 (MentorBehavior.proto:26-36) — what the child did. Enum
+# values are kept verbatim (JSON spelling unrecorded); envelope fields 100/101 dropped.
 MENTOR_BEHAVIOR_FIELDS = ("module_id", "content_id", "content_day", "timestamp",
                           "action", "instance_id", "ended_reason")
 
 
 def parse_mentor_behavior(report):
-    """Extract one MentorBehavior record from a robot's activity-log report.
-
-    The robot reports a completed/abandoned activity on
-    `/devices/{id}/events/client-service-activity-log` — the same topic as the pull
-    queries, multiplexed by content rather than `subtopic`
-    (docs/reverse-engineering/protocol/cloud-protocol.md:172, "…or a `mentor_behavior`
-    report"). The carrier is an `embodied.logging.ActivityUpdate`, whose field 14 *is*
-    `mentor_behavior` (Cloud.proto:241) — so the record arrives under that key.
-
-    Accepts either the whole envelope (`{"mentor_behavior": {...}, "timestamp": …}`) or a
-    bare record. Returns the record reduced to `MENTOR_BEHAVIOR_FIELDS`, or None if there
-    is no usable record (no `module_id` → nothing a schedule could ever act on).
+    """Extract one MentorBehavior from an activity-log report (`ActivityUpdate` field 14,
+    Cloud.proto:241), given the envelope or a bare record. Reduced to
+    `MENTOR_BEHAVIOR_FIELDS`; None without a `module_id`.
     """
     if isinstance(report, dict) and isinstance(report.get("mentor_behavior"), dict):
         report = report["mentor_behavior"]

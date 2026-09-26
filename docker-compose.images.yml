@@ -82,7 +82,7 @@ configs:
       acl_file /mosquitto/config/acl
 
       # The supervisor detects robot connect/disconnect by watching $$SYS/broker/log, so the
-      # broker must republish its log to that topic (see supervisor/moxie_runtime.py).
+      # broker must republish its log to that topic (see supervisor/moxie_runtime/connection.py).
       log_dest stdout
       log_dest topic
       log_type all

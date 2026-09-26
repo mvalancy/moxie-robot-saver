@@ -1,48 +1,20 @@
 """
 Conversation memory — turning a finished chat into a few durable facts.
 
-`docs/architecture/content-module-contract.md` → "The volley / session API" lists two
-memory calls a content module may make:
-
-    volley.persist_data      cross-session storage (this module's namespace)
-    session.summarize(...)   LLM-summarize the transcript (memory)
-
-`persist_data` is the *storage* (`moxie_sdk/store.py::MemoryStore` — bounded, namespaced,
-policy-gated JSON under the robot's data dir). This module is the *summarizer*: the
-prompt that asks the brain for a short, structured, kid-safe account of a conversation,
-the tolerant parse of what comes back, and the filters that decide what is allowed to be
-remembered at all.
-
-What we ask for, and why it is structured
------------------------------------------
-A free-text summary is a blob: it cannot be shown to a parent item by item, cannot be
-erased selectively, and cannot be capped. So we ask for JSON::
+`volley.persist_data` is the storage (`store.MemoryStore`); this module is the
+*summarizer* behind `session.summarize()` (content-module-contract.md): the prompt, a
+tolerant parse, and the filters on what may be remembered. We ask for structured JSON so
+a parent can see, erase and cap items one by one::
 
     {"facts": [...], "preferences": [...], "open_threads": [...], "summary": "..."}
 
-…and treat anything else the model says as a plain `summary`. Every item is a short
-third-person sentence about the child ("Sam has a dog named Pepper"), never a quote.
+Never remembered: anything the safety classifier would block (a memory is re-injected into
+every later prompt), and long spans of the child's own words (`strip_verbatim` — a floor,
+not a guarantee; parents can read and erase). A wrong fact is sticky, so every item carries
+provenance.
 
-What is never remembered
-------------------------
-* anything the safety classifier would block (`moxie_sdk/safety.py`) — a memory file is
-  the one place an unsafe line would live *forever* and get re-injected into every later
-  prompt, so a blocked item is dropped, not redacted;
-* the child's own words. The prompt forbids quoting, and `strip_verbatim` enforces it:
-  an "insight" that is really a long span copied out of what the child said is dropped.
-  This is a floor, not a guarantee — a paraphrase can still carry something private,
-  which is exactly why the parent-facing read/erase endpoints exist.
-
-Honest limits: the model can be wrong, and a wrong fact is *sticky* — it will be fed
-back into later conversations until someone erases it. Facts carry provenance (which
-conversation, when, how many turns) so a parent can see where one came from.
-
-Pattern credit: OpenMoxie (MIT) ships `content_modules/MemoryChat.json`, whose
-`complete_handler` calls `session.summarize()` and accumulates facts in
-`volley.persist_data`; provenance-on-every-item and the "quarantine what you cannot
-attribute" instinct come from its Fork A `conversation_memory.py`
-(docs/architecture/openmoxie-feature-audit.md §3.2, §4.2 BEYOND #4). The ideas are
-theirs; this prompt, this JSON contract, these filters and this code are ours.
+Pattern credit: OpenMoxie (MIT) `MemoryChat.json` and its Fork A `conversation_memory.py`
+(openmoxie-feature-audit.md §3.2, §4.2 BEYOND #4); this prompt, contract and code are ours.
 """
 from __future__ import annotations
 
@@ -82,25 +54,17 @@ DEFAULT_SUMMARY_PROMPT = (
 # ---------------------------------------------------------------------------
 
 class FactList(list):
-    """A list of remembered items that renders as bullet lines inside a prompt.
-
-    `persist_data` must be JSON (a list, so a parent browser can show and erase one
-    item) *and* readable when a module writes `{{ volley.persist_data.ns.facts }}`
-    (a list's `repr` in the middle of a prompt is noise). A `list` subclass with a
-    `__str__` gives both, in real Jinja2 and in `render.py`'s minimal fallback, and
-    `json.dump` still writes a plain array."""
+    """A list of remembered items that renders as bullet lines inside a prompt, yet still
+    serializes as a plain JSON array."""
 
     def __str__(self) -> str:                       # pragma: no cover - trivial
         return "\n".join(f"- {item}" for item in self)
 
 
 def wrap_facts(data):
-    """Recursively turn stored lists of items into `FactList` for prompt rendering.
-
-    A stored item is either a bare string (files written before ids existed) or the
-    record `moxie_sdk/store.py` writes now (`{id, text, _provenance, use_count, …}`).
-    Both render as the same bullet line: the prompt gets the sentence and nothing else,
-    so adding ids and provenance to the file changed no prompt anywhere."""
+    """Recursively turn stored item lists into `FactList`s for prompt rendering. Items may
+    be bare strings (legacy) or store records (`{id, text, _provenance, …}`); both render
+    as just the sentence."""
     if isinstance(data, dict):
         return {k: wrap_facts(v) for k, v in data.items()}
     if isinstance(data, list):
@@ -137,12 +101,8 @@ _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.M)
 
 
 def parse_summary(text: str) -> dict:
-    """The model's answer as `{facts, preferences, open_threads, summary}`.
-
-    Tolerant on purpose: fenced JSON, JSON with prose around it, and a plain sentence
-    all produce a usable dict — a memory feature that only works when the model emits
-    perfect JSON would be off most of the time. Unparseable → the whole answer becomes
-    `summary`, which is still something a parent can read and erase."""
+    """The model's answer as `{facts, preferences, open_threads, summary}`. Tolerant of
+    fences and surrounding prose; unparseable → the whole answer becomes `summary`."""
     raw = (text or "").strip()
     out = {k: [] for k in LIST_KEYS}
     out["summary"] = ""
@@ -179,10 +139,8 @@ def _norm(text: str) -> str:
 
 
 def strip_verbatim(items: list, history: list, *, span: int = VERBATIM_SPAN) -> list:
-    """Drop items that repeat a long span of the CHILD's own words.
-
-    The prompt already forbids quoting; this is the check. A shingle of `span`
-    normalized characters shared with any child utterance is treated as a quote."""
+    """Drop items sharing a `span`-character normalized shingle with any child utterance
+    (the prompt forbids quoting; this enforces it)."""
     child = [_norm(m.get("content")) for m in (history or [])
              if isinstance(m, dict) and m.get("role") not in ("assistant", "system")]
     child = [c for c in child if len(c) >= span]
@@ -241,17 +199,9 @@ def is_empty(summary: dict) -> bool:
 
 
 def check_text(text: str, *, history=(), classifier=None) -> bool:
-    """May this line be stored as a memory item? (the parent's edit runs through here)
-
-    The same two rules a model's summary faces, for the same reason: whatever ends up in
-    `memory.json` is read back into **every** later prompt, so the safety classifier must
-    not BLOCK it, and it must not be a long span of the child's own words. A parent typing
-    a correction is trusted — but a text box that writes straight into the child's future
-    conversations is exactly the hole those two rules exist to close, and the second one
-    also catches the innocent mistake of pasting the transcript back in.
-
-    `classifier=None` resolves the default rule classifier; a classifier that cannot be
-    loaded means "allowed", never "silently eat the parent's correction"."""
+    """May this line be stored as a memory item? A parent's edit faces the same two rules
+    as a model summary (not BLOCKed, not a verbatim child span), because it is fed into
+    every later prompt. An unloadable classifier means "allowed"."""
     line = str(text or "").strip()
     if not line:
         return False
@@ -263,12 +213,8 @@ def check_text(text: str, *, history=(), classifier=None) -> bool:
 
 
 def note_used(store, device_id: str, rendered: str) -> int:
-    """Decay's clock, as one call a caller can make from the render path.
-
-    `ContentApp` renders a module's prompt and hands the result here; the store marks the
-    items whose sentence actually appears in it (`MemoryStore.note_used`). Kept as a
-    module-level function so the render path stays a single line and never has to know
-    whether memory is configured, or care that a broken memory file must not end a turn."""
+    """Decay's clock: mark the items whose sentence appears in the rendered prompt
+    (`MemoryStore.note_used`). Never raises; a no-op without a store."""
     if store is None or not device_id:
         return 0
     try:
@@ -286,12 +232,9 @@ def summarize_history(history: list, chat, *, prompt_base: str | None = None,
                       append_transcript: bool = True, classifier=None,
                       max_items: int = 5, max_retries: int = 2,
                       sleep=None, history_limit: int = 40) -> Optional[dict]:
-    """Ask the brain to summarize `history`; return the filtered structured summary.
-
-    Returns **None** when the brain could not be reached (after `call_with_backoff`) or
-    when it produced nothing usable — the caller then writes nothing at all, which is
-    the right failure mode for memory: a missing fact is recoverable, a wrong one is not.
-    """
+    """Ask the brain to summarize `history`; return the filtered structured summary, or
+    None if unreachable or empty — writing nothing is the right failure (a missing fact is
+    recoverable, a wrong one is not)."""
     if chat is None:
         return None
     prompt = prompt_base or DEFAULT_SUMMARY_PROMPT
@@ -317,11 +260,8 @@ def summarize_history(history: list, chat, *, prompt_base: str | None = None,
 
 def provenance(*, module_id: str = "", content_id: str = "", turns: int = 0,
                conversation_id: str = "", reason: str = "", clock=time.time) -> dict:
-    """Where a remembered thing came from — stamped on every merge.
-
-    Fork A's rule, adopted: a memory item without a source is not trustworthy enough to
-    put back into a prompt, and a parent asking "why does Moxie think that?" deserves an
-    answer more specific than "it learned it somewhere"."""
+    """Where a remembered thing came from — stamped on every merge, so a parent can ask
+    "why does Moxie think that?"."""
     now = clock()
     return {"at": round(float(now), 3),
             "date": time.strftime("%Y-%m-%d", time.localtime(now)),

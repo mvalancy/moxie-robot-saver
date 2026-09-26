@@ -1,24 +1,19 @@
 """
 🎭 Telehealth — the wire an operator drives the body with (audit ADOPT #7).
 
-`mqtt/moxie_sdk/telehealth.py` is pure: builders for the recovered
-`TelehealthRobotCommand`, a parser for the robot's state reports, and the closed
-vocabulary a human picks from. Four things earn a test here and they are all in this file:
+`mqtt/moxie_sdk/telehealth.py` is pure: builders for `TelehealthRobotCommand`, a parser for
+state reports, and the closed vocabulary. Tested:
 
-  * **the JSON keys are the recovered proto's, proven and not reviewed** — the highest
-    value test in the file is `test_every_key_we_emit_is_a_recovered_field_name`, which
-    reads `docs/reverse-engineering/protocol/recovered-proto/.../TeleHealth.proto` as the
-    oracle (and cross-checks the compiled `TeleHealth_pb2` when protobuf is installed);
-  * **the builder's refusals** — an unknown action, an empty `PLAY_OUTPUT`, and the two
-    fields we deliberately never emit (`line_id` / `line_params`, assumption B5);
-  * **the parser's honesty** — the four `RobotState` names, an unknown state kept verbatim
-    and flagged rather than coerced, and a malformed payload that returns an empty view
-    instead of raising on the MQTT loop;
-  * **the vocabulary** — the 11 recovered moods, intensity 0-2 (not a 0.0-1.0 float),
-    and the assumption constants that must not drift from `cloud_config.MoxieMode`.
+  * JSON keys are the recovered proto's — `test_every_key_we_emit_is_a_recovered_field_name`
+    reads `TeleHealth.proto` as the oracle (and `TeleHealth_pb2` when protobuf is present);
+  * builder refusals — unknown action, empty `PLAY_OUTPUT`, and never `line_id` /
+    `line_params` (assumption B5);
+  * parser honesty — the four `RobotState` names, unknown states kept verbatim and
+    flagged, malformed payloads giving an empty view rather than raising on the MQTT loop;
+  * vocabulary — 11 moods, intensity 0-2 (not a float), constants aligned with
+    `cloud_config.MoxieMode`.
 
-Nothing here has been exercised against a physical robot; see
-`docs/architecture/backlog/telehealth.md` §6 for the questions only one can settle.
+Not exercised on a physical robot; see `backlog/telehealth.md` §6.
 """
 import os
 import re
@@ -27,7 +22,6 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk import telehealth as th                        # noqa: E402
 from moxie_sdk import vocab                                   # noqa: E402
@@ -129,11 +123,8 @@ def test_the_action_name_is_case_insensitive_but_canonical_on_the_wire():
 
 
 def test_the_timestamp_defaults_to_milliseconds():
-    """Deliberately clock-relative: the subject IS the default clock read. `build_…`
-    stamps `time.time() * 1000` when the caller passes none, and the only way to prove
-    the unit is milliseconds (not seconds, not microseconds) is to compare against a real
-    now. Pinning the clock here would delete the test. The 5 s tolerance is slack for a
-    loaded runner, not a window the hour of day can move."""
+    """Clock-relative on purpose: the subject IS the default `time.time() * 1000` stamp, and
+    only a real now proves the unit is milliseconds. 5 s is runner slack."""
     import time
     ts = th.build_telehealth_command("UPDATE_STATE")["message"]["timestamp"]
     assert abs(ts - time.time() * 1000) < 5000

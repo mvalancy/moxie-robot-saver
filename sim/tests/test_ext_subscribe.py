@@ -1,20 +1,8 @@
-"""The `subscribe` path, end to end — a content extension that actually *perceives*.
+"""The `subscribe` path end to end — a content extension that actually perceives.
 
-`test_ext.py` proves the evaluator produces the right effect list; `test_ext_escapes.py`
-proves a `subscribe` cannot be declared, granted or emitted outside the recovered event
-catalog. This file proves the middle, and one thing neither of those can: that the
-subscription reaches **the wire** and that it reaches it *alongside* the supervisor's own
-vision subscription rather than instead of it.
-
-The gap this closes is the third of the four `xfail(strict=True)` conformance rows.
-`Volley.subscriptions` was **assigned** by `update_subscriptions` and **read by nothing**
-— re-verified by grep on 2026-09-05, whose only other mentions in the tree were its own
-declaration and the comment in `ext.py` saying it had no host. Meanwhile
-`moxie_runtime._publish_chat` filled `RemoteChatAction.EventSubscription` from its own
-vision bookkeeping. So a pack could declare `subscribe`, the parent could read *"can
-listen for things the robot notices"* in the review, and nothing would happen.
-
-The chain, and where each link is asserted below:
+`test_ext.py` proves the effect list and `test_ext_escapes.py` the closed catalog; this file
+proves the subscription reaches the WIRE, merged alongside the supervisor's own vision
+subscription rather than instead of it:
 
     {"subscribe": [event, …]}                     ext.py  `_st_subscribe` / `_run_stmt`
       → {"kind": "subscribe", "events": […]}       ext.evaluate's effect list
@@ -22,30 +10,21 @@ The chain, and where each link is asserted below:
       → Reply.subscribe                           content_app.subscriptions_of
       → merged with the runtime's own list         moxie_runtime._merge_subscriptions
       → EventSubscription.active[] on the wire     wire.build_chat_response
-      → the robot starts pushing us the event      (unproven — see the last section)
+      → the robot pushes the event back            (inbound section below)
 
-**The direction of that merge is the point of this file.** A pack must be able to say
-*"also tell me about this"* and must never be able to say *"only tell me about this"*: the
-appliance's presence, greeting and launch-card behaviour are all downstream of the
-runtime's own subscription, and a shorter list would switch them off. Worse, it would do
-it silently — `_vision_subscription` latches `_vision_subscribed[device] = module` at the
-moment it hands its list over, so a pack-wins merge sets the latch and then publishes a
-list without the vision events in it, and the runtime never asks again for that
-`(device, module)`. That is the cached-belief defect the integration playbook keeps
-re-finding (rule 23), and `test_a_packs_list_can_never_remove_what_the_runtime_put_there`
-below is the test that fails if the direction ever flips.
+The merge direction is the point: a pack may say "also tell me about this", never "only
+this". Presence, greetings and launch cards depend on the runtime's list, and
+`_vision_subscription` latches `_vision_subscribed[device] = module` when it hands the list
+over — so a pack-wins merge would silently switch them off for that `(device, module)`.
 
-Design: `sandboxed-extensions.md` §4.5/§5.1. The event catalog and the subscription's own
-contract: `vision.md` §1.1-1.2 and §7.1.
+Design: `sandboxed-extensions.md` §4.5/§5.1; catalog: `vision.md` §1.1-1.2, §7.1.
 """
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
+from helpers_runtime import fresh_pool, seed_absent  # noqa: E402
 from helpers_runtime import CountingSynth, drive_turn, make_runtime    # noqa: E402
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk import presence as P                                    # noqa: E402
 from moxie_sdk.app import MoxieApp                                     # noqa: E402
@@ -108,27 +87,16 @@ def app_with(module_json, chat=None, **kw):
 # --------------------------------------------------------------------------- #
 
 def test_the_subscribable_events_are_exactly_the_recovered_vision_catalog():
-    """`ext.SUBSCRIBE_EVENTS` == `presence.VISION_EVENTS`, asserted as an equality.
+    """`ext.SUBSCRIBE_EVENTS` == `presence.VISION_EVENTS`, order included.
 
-    The two lists are **deliberately** separate objects: X7 makes `ext.py`'s import list a
-    security boundary (`math`, `re`, `unicodedata` and nothing else, asserted by parsing
-    its own source), and `presence.py` imports `os` for its hysteresis knobs — so
-    importing the tuple would trade a real invariant for a saved line. This test is what
-    makes the duplication safe, and it is the only thing that does, so it asserts on
-    *order* too: the tuple is what a subscription's `active[]` list is built from and the
-    goldens compare byte for byte.
-
-    `presence.VISION_EVENTS` is also the set `_on_remote_chat` / `_on_event` can route, so
-    the equality says something stronger than "no drift": **this appliance only asks the
-    robot for events it could actually act on if the robot sent them.**
+    Deliberately separate objects: `ext.py`'s import list is a security boundary (X7) and
+    `presence.py` imports `os`. This equality is what makes the duplication safe, and it
+    also means the appliance only asks for events `_on_remote_chat`/`_on_event` can route.
     """
     assert E.SUBSCRIBE_EVENTS == P.VISION_EVENTS
     assert CA.robot_events() == frozenset(P.VISION_EVENTS)
-    # Every one of them has the parent-facing sentence the review renders. There is one
-    # sentence for the capability rather than one per event, which is a deliberate
-    # difference from `act.<name>`: "can listen for things the robot notices" is one
-    # decision a parent makes, where "can set a timer" and "can turn on the camera" are
-    # two (§5.1).
+    # One parent-facing sentence for the whole capability (unlike `act.<name>`): "can
+    # listen for things the robot notices" is one decision for a parent (§5.1).
     assert E.CAPABILITY_WORDS["subscribe"].startswith("Can ")
 
 
@@ -157,14 +125,9 @@ def test_two_rules_asking_for_the_same_event_produce_one_entry():
 
 
 def test_an_extension_adds_to_the_volley_and_never_replaces_it():
-    """The merge rule at its first layer — *within* one volley.
-
-    `Volley.update_subscriptions` REPLACES, and it stays that way because a registered
-    Python handler is our own code and owns the whole volley. `apply_ext_effects` must
-    therefore call `add_subscriptions`, not that: an extension that could replace could
-    delete a handler's subscription, and the *"merged, never replaced"* rule has to hold at
-    every layer or it holds at none.
-    """
+    """Merge rule, layer one — within a volley. `update_subscriptions` REPLACES (a Python
+    handler owns the volley), so `apply_ext_effects` must use `add_subscriptions`: an
+    extension must never delete a handler's subscription."""
     v = Volley("")
     v.update_subscriptions([FOUND])                # what a Python handler asked for
     CA.apply_ext_effects([{"kind": "subscribe", "events": [QR]}], volley=v)
@@ -186,14 +149,8 @@ def test_the_subscription_becomes_a_reply_the_runtime_can_read():
 
 
 def test_a_turn_before_extension_that_only_subscribes_does_not_lose_it():
-    """The branch a naive implementation drops on the floor — the `act` slice's lesson,
-    applied to the other half of the pair.
-
-    `WATCH_ONLY` neither speaks nor sets `handled`, so the model answers the child. The
-    robot must **still** be asked for the event. Before this slice the volley's
-    subscriptions were only ever read where a pack took the whole turn — which is to say,
-    nowhere, because they were never read at all.
-    """
+    """`WATCH_ONLY` neither speaks nor sets `handled`, so the model answers the child — and
+    the robot must STILL be asked for the event."""
     app = app_with({**MODULE,
                     "conversations": [{**MODULE["conversations"][0],
                                        "extension": WATCH_ONLY}]},
@@ -233,15 +190,6 @@ class _SubscribeApp(MoxieApp):
         return Reply(text=self.text, subscribe=list(self.events))
 
 
-def _fresh_pool(rt):
-    """`drive_turn` shuts the worker pool down when it drains it, so a test that drives a
-    SECOND turn through the same runtime needs a live one. (The idiom is
-    `test_presence_runtime.py`'s; a second local copy beats importing across suites.)"""
-    from concurrent.futures import ThreadPoolExecutor
-    rt._pool = ThreadPoolExecutor(max_workers=4)
-    return rt
-
-
 def _active(resp) -> list:
     """The `EventSubscription.active[]` list on a published response, or []."""
     for action in resp.get("response_actions") or []:
@@ -252,20 +200,11 @@ def _active(resp) -> list:
 
 
 def test_a_packs_list_can_never_remove_what_the_runtime_put_there():
-    """**Requirement 1, and the reason this slice is a merge rather than a plumb.**
+    """Requirement 1 — the runtime's full vision list survives, in its order, with the
+    pack's new request appended; a pack that omits events cannot remove them.
 
-    The runtime is about to send its own vision subscription — all six recovered events,
-    which presence, the greeting rule and launch cards all depend on. The pack asks for
-    exactly one of them and, crucially, *omits* the rest. Every runtime entry must survive,
-    in the runtime's own order, with the pack's request appended if it is new.
-
-    The second assertion is the one that makes this more than a set-union test: the LATCH
-    must be consistent with what was actually sent. `_vision_subscription` records
-    `_vision_subscribed[device] = module` when it hands its list over. If a pack could win
-    the merge, the latch would say "sent" while the wire carried a list without the vision
-    events in it, and the runtime would never ask again for that `(device, module)` — eyes
-    that never report, nothing logged. That is playbook rule 23's *"a cached belief about a
-    moving thing"*, and it is why the merge is one function with one direction.
+    The latch assertion matters as much: `_vision_subscribed` must match what was actually
+    sent, or the runtime would never ask again for that `(device, module)`.
     """
     rt, dev = make_runtime(_SubscribeApp(events=[QR]))
     resp = drive_turn(rt, dev, "hello")
@@ -285,29 +224,21 @@ def test_a_packs_list_can_never_remove_what_the_runtime_put_there():
 
 
 def test_a_pack_can_add_an_event_the_runtime_did_not_ask_for():
-    """The other direction of the same rule: merging is not a no-op.
-
-    With the vision latch already set — the runtime has said its piece for this
-    `(device, module)` and returns None from `_vision_subscription` — a pack's request is
-    the *only* thing in the merged list, and it must still reach the wire. A gate that
-    required the runtime's own list to be present would make `subscribe` work exactly once
-    per module and then stop.
-    """
+    """Merging is not a no-op: with the vision latch already spent (runtime sends None),
+    the pack's request alone must still reach the wire — else `subscribe` works once per
+    module."""
     rt, dev = make_runtime(_SubscribeApp(events=[QR]))
     first = drive_turn(rt, dev, "hello", event_id="e1")
     assert _active(first), "sanity: the first reply carries the runtime's own list"
-    _fresh_pool(rt)                                # drive_turn drained the old one
+    fresh_pool(rt)                                # drive_turn drained the old one
     second = drive_turn(rt, dev, "again", event_id="e2")
     assert _active(second) == [QR], \
         "the pack's request rides a reply the runtime had nothing of its own to send on"
 
 
 def test_the_merge_is_a_pure_function_with_one_direction():
-    """`_merge_subscriptions` on its own, so the direction is pinned without a turn.
-
-    Four cases, and `None` rather than `[]` for the empty one because that is what
-    `build_chat_response` treats as *"do not add a subscription to this reply"*.
-    """
+    """`_merge_subscriptions` alone, four cases. Empty is `None`, not `[]`, because that is
+    what `build_chat_response` reads as "no subscription on this reply"."""
     rt, dev = make_runtime(_SubscribeApp())
     mine = list(P.VISION_EVENTS)
     assert rt._merge_subscriptions(dev, None, None) is None
@@ -323,28 +254,16 @@ def test_the_merge_is_a_pure_function_with_one_direction():
 # --------------------------------------------------------------------------- #
 
 def test_the_merged_list_is_on_the_published_event_subscription():
-    """**Requirement 2.** Asserted against the published `commands/remote_chat` payload,
-    not against any in-memory structure.
+    """Requirement 2 — asserted on the published `commands/remote_chat` JSON (including the
+    legacy `response_action` mirror), not on in-memory state.
 
-    This repo has been burned repeatedly by a value that was set and never sent — the
-    readiness line, the roster ghost, the vision latch itself. `Volley.subscriptions` was
-    the same shape of defect in its purest form: assigned, and read by nothing. So the
-    assertion here is on the JSON that went to the transport, key for key, including the
-    legacy singular `response_action` mirror `build_chat_response` keeps in sync.
-
-    ⚠️ **The first turn is not decoration, and this test was WRONG without it.** Every
-    grantable event is in the runtime's own list, so on turn one `QR in active` is
-    satisfied by the *runtime's* subscription whatever the pack asked for — the assertion
-    passes with the pack's contribution deleted entirely. The mutation harness is what
-    said so: rows S12 (*"the merged list is computed and then not sent"*) and S13 (*"the
-    turn loop drops `Reply.subscribe`"*) left this test **green** in its first draft. So
-    the first turn spends the latch, and everything below is asserted on a reply the
-    runtime had nothing of its own to say. A test that cannot fail for the reason it is
-    named after is not a test, which is the whole argument for running the mutations.
+    The first turn spends the vision latch on purpose: every grantable event is in the
+    runtime's own list, so without it this passes with the pack's contribution deleted
+    (mutation rows S12/S13 stayed green in a draft that skipped it).
     """
     rt, dev = make_runtime(_SubscribeApp(events=[QR]))
     drive_turn(rt, dev, "hello", event_id="e1")     # spends the runtime's own list
-    _fresh_pool(rt)
+    fresh_pool(rt)
     resp = drive_turn(rt, dev, "again", event_id="e2")
     ra = resp["response_actions"]
     sub = ra[0]["event_subscription"]
@@ -358,16 +277,9 @@ def test_the_merged_list_is_on_the_published_event_subscription():
 
 
 def test_a_subscription_rides_a_reply_that_already_carries_an_action():
-    """The runtime's own subscription is attached only to a plain, action-free closing
-    reply, so that no reply already carrying a launch/exit changes shape. A **pack's**
-    request must not inherit that restriction, because `MoxieGo`'s opening move is an
-    `act` and a `subscribe` together — the exact pair §5.1 describes. A gate that dropped
-    one whenever the other was present would make the pair unusable, which is the whole
-    behaviour G6 ports.
-
-    `build_chat_response` hangs the subscription on `response_actions[0]` whatever else
-    that entry carries, so the `execute` and the `event_subscription` ride one action.
-    """
+    """The runtime's own subscription rides only an action-free closing reply; a PACK's must
+    not inherit that restriction, since `MoxieGo` opens with an `act` + `subscribe` pair.
+    Both ride `response_actions[0]`."""
     from moxie_sdk.types import Action, ActionType
     act = Action(type=ActionType.EXECUTE, function="eb_enable_qr", args=["true"])
     resp = build_chat_response("e", "Show me a card!", actions=[act],
@@ -403,7 +315,7 @@ def test_a_reply_that_asks_for_nothing_is_unchanged_on_the_wire():
 
     rt, dev = make_runtime(_Quiet())
     drive_turn(rt, dev, "hello", event_id="e1")     # spends the runtime's own list
-    _fresh_pool(rt)
+    fresh_pool(rt)
     resp = drive_turn(rt, dev, "again", event_id="e2")
     assert "response_actions" not in resp and "response_action" not in resp
 
@@ -413,12 +325,8 @@ def test_a_reply_that_asks_for_nothing_is_unchanged_on_the_wire():
 # --------------------------------------------------------------------------- #
 
 def test_vision_off_refuses_a_packs_request_too():
-    """`MOXIE_VISION=0` is the operator's kill switch, and it is above a content pack.
-
-    If this appliance is not asking the robot for perception events, a pack cannot ask on
-    its behalf — otherwise an imported pack would be a way around a switch somebody set
-    deliberately.
-    """
+    """`MOXIE_VISION=0` is the operator's kill switch and outranks a pack — an imported pack
+    must not be a way around it."""
     rt, dev = make_runtime(_SubscribeApp(events=[QR]))
     rt.vision = False
     resp = drive_turn(rt, dev, "hello")
@@ -440,24 +348,16 @@ def test_an_unpermitted_robot_is_asked_for_nothing():
 
 
 def test_the_runtime_drops_an_event_it_could_not_route():
-    """The third check on the same table, at the last function before the wire.
-
-    `ext._st_subscribe` refuses an unknown event at load and `content_app.subscriptions_of`
-    refuses it again at the host boundary — but `Reply.subscribe` is a public field on a
-    public type, and any `MoxieApp` may set it. So the runtime bounds it once more against
-    the events it can actually route when they arrive.
-    """
+    """Third check on the event table, at the last step before the wire: `Reply.subscribe`
+    is public and any `MoxieApp` may set it, so the runtime bounds it to routable events."""
     rt, dev = make_runtime(_SubscribeApp(events=["eb-shell", QR]))
     assert rt._merge_subscriptions(dev, None, ["eb-shell", QR]) == [QR]
     assert rt._merge_subscriptions(dev, None, ["eb-shell"]) is None
 
 
 def test_the_cap_is_structural_because_the_allowlist_is_shorter_than_it():
-    """§6.3 caps a program at `MAX_SUBSCRIPTIONS` events, counted across the whole effect
-    list by `_over_output_caps`. Past the closed vocabulary that cap can never bind: the
-    merged list is a subset of six names, and `MAX_SUBSCRIPTIONS` is eight. Recorded as a
-    test rather than as a comment, because the day somebody widens the catalog to nine
-    events this is the line that notices the two numbers now disagree."""
+    """`MAX_SUBSCRIPTIONS` (8) cannot bind while the catalog is six events; this notices the
+    day the two numbers disagree."""
     assert len(E.SUBSCRIBE_EVENTS) <= E.MAX_SUBSCRIPTIONS
     v = Volley("")
     CA.apply_ext_effects([{"kind": "subscribe", "events": list(E.SUBSCRIBE_EVENTS)}],
@@ -472,33 +372,16 @@ def test_the_cap_is_structural_because_the_allowlist_is_shorter_than_it():
 # The inbound half — a subscribed event WAKES the pack that asked for it
 # --------------------------------------------------------------------------- #
 #
-# Until 2026-09-05 this section held the opposite assertion. `test_a_subscribed_event_
-# still_never_reaches_the_pack_that_asked_for_it` pinned the divert in
-# `moxie_runtime._on_remote_chat` as it stood — a pack could *ask* to perceive an event
-# and could never be *woken* by one — and its docstring said in as many words that the day
-# somebody routed events to the app layer it would go red and be rewritten. That day is
-# this commit, so it is rewritten rather than deleted: same subject, inverted assertion,
-# `seen == [QR]` where it used to say `seen == []`.
-#
-# **What did NOT change, and this is the whole reason the slice is safe.** The divert is
-# still there and still diverts. A vision event is still never assessed as a child's
-# utterance, never written to history and never handed to `app.respond`. What is new is
-# one branch *inside* `_on_vision_turn` that offers the event to `MoxieApp.perceive`,
-# whose `ContentApp` implementation runs the sandboxed evaluator and nothing else — no
-# network, no brain. `eb-found-face` fires whenever a child moves around a room, so
-# vision.md §7.1's *"never costs a model call"* is the property everything here is
-# arranged around, and the first test below asserts it from a RECORDED counter rather
-# than from a double that stayed quiet.
+# `_on_remote_chat` still diverts a vision event away from the turn loop: never assessed as
+# a child's utterance, never in history, never handed to `app.respond`. The one new branch
+# inside `_on_vision_turn` offers it to `MoxieApp.perceive`, which for `ContentApp` runs
+# only the sandboxed evaluator. `eb-found-face` fires constantly, so "never costs a model
+# call" (vision.md §7.1) is asserted from a RECORDED counter below.
 
 
 class _WokenProbe(MoxieApp):
-    """Records every event offered to `perceive`, and answers a fixed line.
-
-    Stands in for a `ContentApp` running a pack wherever the subject is the runtime's
-    GATE rather than the evaluator: `perceived` is the assertion surface for *"a pack must
-    not be woken by an event it did not ask for"*, which is a question about the gate and
-    would be invisible if the only evidence were a missing line on the wire.
-    """
+    """Records every event offered to `perceive` and answers a fixed line — the assertion
+    surface for "a pack is not woken by an event it did not ask for"."""
     name = "woken-probe"
 
     def __init__(self, events=(QR,), text="I saw a card!"):
@@ -517,32 +400,19 @@ class _WokenProbe(MoxieApp):
 
 
 def _subscribed(rt, dev, app, *, speech="hello", event_id="e-sub"):
-    """Spend one ordinary turn so the pack's request is accepted and RECORDED.
-
-    Every test below needs this because the inbound gate reads `_pack_subscribed`, which
-    only `_merge_subscriptions` writes — asking and being woken are deliberately the same
-    dict, so there is no way to arrange the second without the first.
-    """
+    """Spend one ordinary turn so the pack's request is accepted and recorded: the inbound
+    gate reads `_pack_subscribed`, which only `_merge_subscriptions` writes."""
     resp = drive_turn(rt, dev, speech, event_id=event_id)
     assert rt._pack_subscribed.get(dev), "sanity: the request was not recorded"
-    _fresh_pool(rt)
+    fresh_pool(rt)
     return resp
 
 
 def test_a_subscribed_event_now_wakes_the_pack_that_asked_for_it():
-    """⚠️ **The inversion.** This test used to be named `…still_never_reaches…` and to
-    assert `seen == []`. It asserts the opposite now, on purpose and in one commit with
-    the change that made it true.
-
-    A perception event still arrives as the `speech` of an ordinary `RemoteChatRequest`
-    and `_on_remote_chat` still diverts it to `_on_vision_turn` before `app.respond` can
-    see it — `responded` below is the proof that the divert survived. What is new is that
-    `_on_vision_turn` offers the event to `perceive` first, and a pack that asked for this
-    event answers it.
-
-    The concrete consequence for §8's G6: its middle rule, keyed on
-    `speech == "eb-qr-event"`, is now reachable by a live robot's event and not only by
-    the conformance golden. Its arming rules were always live.
+    """A perception event still arrives as a `RemoteChatRequest`'s `speech` and is still
+    diverted before `app.respond` (`responded` proves it), but `_on_vision_turn` now offers
+    it to `perceive` first and a pack that asked for it answers. So G6's middle rule
+    (`speech == "eb-qr-event"`) is reachable by a live robot's event.
     """
     app = _WokenProbe(events=[QR])
     rt, dev = make_runtime(app)
@@ -576,9 +446,8 @@ def test_the_event_is_still_never_written_to_history():
 # A1 — zero model calls, from a counter that RECORDS, not from a quiet stub
 # --------------------------------------------------------------------------- #
 #
-# §8's G6 middle rule, hand-copied down to the `slice`, as a pack a runtime can run. The
-# first rule arms on the opener (empty speech) and is what puts `eb-qr-event` into
-# `_pack_subscribed`; the second is the one a live event now reaches.
+# §8's G6 middle rule as a runnable pack: the first rule arms on the opener (empty speech),
+# putting `eb-qr-event` into `_pack_subscribed`; the second is what a live event reaches.
 GO_PACK = {
     "ext_format": 1,
     "capabilities": ["handled", "say", "subscribe"],
@@ -633,26 +502,13 @@ def _recording_brain():
 
 
 def test_a_woken_pack_costs_zero_model_calls_and_a_counter_says_so():
-    """**A1, the property the whole design rests on.**
+    """A1 — a perception event never costs a model call (vision.md §7.1); a brain call per
+    `eb-found-face` would make presence a billing event.
 
-    vision.md §7.1: a vision event *"is never assessed as a child's utterance, never
-    enters history, **never costs a model call**"*. `eb-found-face` fires every time a
-    child walks back into frame, so a brain call per perception event would turn presence
-    into a billing event — which is exactly why `_on_remote_chat` diverts these away from
-    the turn loop, and exactly what the inbound branch could have quietly undone by
-    reaching for `app.respond`.
-
-    **Why a counter and not a stub.** Handing the app a brain that raises when called
-    proves only that *that* double was not called; it says nothing about a retry inside
-    `call_with_backoff`, a stream opened elsewhere in the same turn, or a second brain the
-    runtime built for this device. `moxie_sdk.chat.note_model_call()` sits immediately
-    before the request itself — the same position and the same argument as
-    `functions/api/_lib/limits.js::noteUpstreamCall()` on the edge, which
-    `test_live_hosted_ears.py` asserts against for the same reason.
-
-    The **control turn is the half that makes the zero mean something**: the same brain,
-    the same runtime, an ordinary sentence, and the counter moves. A test whose counter
-    can only ever read zero is not measuring anything.
+    Measured with `moxie_sdk.chat.note_model_call()`, which sits right before every request
+    (retries and streams included), not with a raising stub that only proves one double was
+    unused. The control turn — same brain, ordinary sentence, counter moves — is what makes
+    the zero meaningful.
     """
     C.reset_model_calls()
     app = app_with(GO_MODULE, chat=_recording_brain(), ext_grants=SUB_GRANTS)
@@ -665,13 +521,13 @@ def test_a_woken_pack_costs_zero_model_calls_and_a_counter_says_so():
 
     # 2) THE CONTROL. An ordinary sentence matches no rule, falls through to the
     #    conversation, and the counter records the call that really happened.
-    _fresh_pool(rt)
+    fresh_pool(rt)
     drive_turn(rt, dev, "what is a dinosaur", event_id="e2")
     assert C.model_calls() == 1, "control: an ordinary turn DOES reach the brain"
 
     # 3) THE PROPERTY. The same brain, the same app, a subscribed event: the pack answers
     #    out of its own evaluator and the counter does not move.
-    _fresh_pool(rt)
+    fresh_pool(rt)
     before = C.model_calls()
     resp = drive_turn(rt, dev, QR, input_vars={"$eb_qr_value": "GOdinosaur_quiz"},
                       event_id="e3")
@@ -679,16 +535,10 @@ def test_a_woken_pack_costs_zero_model_calls_and_a_counter_says_so():
     assert C.model_calls() == before, \
         f"a perception event spent {C.model_calls() - before} model call(s)"
 
-    # 4) THE SHARP EDGE, and the mutation harness is what found it. Routing a perceived
-    #    event through `app.respond` instead of `perceive` costs NOTHING in step 3 —
-    #    the pack's own rule handles the turn and the model is never reached — so a
-    #    counter checked only there would agree with the wrong implementation. The case
-    #    that costs money is a subscribed event with **no rule for it**: the extension
-    #    matches nothing, the conversation runs, and a brain answers a robot's eye. That
-    #    is `eb-found-face` on any pack that subscribed to it for its own reasons, i.e.
-    #    the exact event that fires every time a child walks back into frame. The counter
-    #    assertion comes FIRST here so that it, and not the reply shape, is the guard.
-    _fresh_pool(rt)
+    # 4) The costly case: a subscribed event with NO rule for it. Routing via `app.respond`
+    #    instead of `perceive` is free in step 3 (the pack's rule answers), but here the
+    #    brain would answer a robot's eye. The counter is asserted FIRST so it is the guard.
+    fresh_pool(rt)
     with rt._presence_lock:
         rt._pack_subscribed[dev][FOUND] = "CHAT"
     before = C.model_calls()
@@ -718,34 +568,10 @@ def test_the_counter_is_wired_to_the_real_gateway_seam():
 # A2 — with no rule to match, the presence behaviour is what it always was
 # --------------------------------------------------------------------------- #
 
-def _seed_absent(rt, dev, away_s):
-    """Put this robot where it would be `away_s` seconds after a departure.
-
-    Clock-RELATIVE, for the reason `test_presence_runtime.py`'s copy gives: the greeting
-    is scored as an AGE, so a pinned epoch would make every robot look absent for years.
-    A local copy rather than a cross-suite import, per `helpers_runtime.py`'s docstring.
-    """
-    import time
-    now = time.time()
-    state = P.new_state()
-    state.update({"face_present": False, "announced": "left",
-                  "last_seen_at": now - away_s - 30.0,
-                  "present_since": now - away_s - 60.0,
-                  "last_lost_at": now - away_s, "absent_since": now - away_s,
-                  "faces_seen": 1, "events": 2})
-    rt.robots[dev].extra["presence"] = state
-    return state
-
-
 def test_a_pack_that_matches_nothing_leaves_the_greeting_exactly_as_it_was():
-    """**A2.** The regression that matters most, because the inbound branch sits directly
-    upstream of the hello.
-
-    A pack is installed, subscribed to `eb-found-face`, and its rules match only
-    `eb-qr-event` — so `perceive` runs, finds nothing, and returns None. Everything below
-    it must then be byte-for-byte the pre-slice behaviour: `MOXIE_GREET_AFTER_S` honoured,
-    one performed hello on the event's own `event_id`, a `CloudTTSResponse` for the same
-    id, and the `greeted_at` stamp that rate-limits the next one.
+    """A2 — a subscribed pack whose rules don't match leaves the greeting byte-for-byte
+    unchanged: `MOXIE_GREET_AFTER_S` honoured, one performed hello on the event's own
+    `event_id`, a `CloudTTSResponse` for it, and the `greeted_at` stamp.
     """
     C.reset_model_calls()
     app = app_with(GO_MODULE, chat=_recording_brain(), ext_grants=SUB_GRANTS)
@@ -756,8 +582,8 @@ def test_a_pack_that_matches_nothing_leaves_the_greeting_exactly_as_it_was():
     drive_turn(rt, dev, "", event_id="e1")
     with rt._presence_lock:
         rt._pack_subscribed[dev][FOUND] = "CHAT"
-    _fresh_pool(rt)
-    _seed_absent(rt, dev, away_s=900.0)
+    fresh_pool(rt)
+    seed_absent(rt, dev, away_s=900.0)
     resp = drive_turn(rt, dev, FOUND, event_id="evt-eye")
     assert resp["result"] == "SUCCESS", resp
     text = resp["output"]["text"]
@@ -780,8 +606,8 @@ def test_the_greeting_switch_still_switches_it_off_with_a_pack_installed():
     drive_turn(rt, dev, "", event_id="e1")
     with rt._presence_lock:
         rt._pack_subscribed[dev][FOUND] = "CHAT"
-    _fresh_pool(rt)
-    _seed_absent(rt, dev, away_s=9000.0)
+    fresh_pool(rt)
+    seed_absent(rt, dev, away_s=9000.0)
     assert drive_turn(rt, dev, FOUND, event_id="e2")["result"] == "NOREPLY_ACK"
 
 
@@ -792,7 +618,7 @@ def test_an_app_that_never_heard_of_perception_is_untouched():
     assert MoxieApp().perceive(Turn(robot=robot(), speech=QR)) is None
     rt, dev = make_runtime(_SubscribeApp(events=[QR]))
     drive_turn(rt, dev, "hello", event_id="e1")
-    _fresh_pool(rt)
+    fresh_pool(rt)
     assert drive_turn(rt, dev, QR, event_id="e2")["result"] == "NOREPLY_ACK"
 
 
@@ -872,7 +698,7 @@ def test_a_pack_that_raises_still_leaves_the_child_a_hello():
     rt, dev = make_runtime(app)
     _subscribed(rt, dev, app)
     rt.greet_after_s = 300.0
-    _seed_absent(rt, dev, away_s=900.0)
+    seed_absent(rt, dev, away_s=900.0)
     resp = drive_turn(rt, dev, FOUND, event_id="e2")
     assert app.perceived == [FOUND]
     assert resp["result"] == "SUCCESS" and "Sam" in resp["output"]["text"]
@@ -891,7 +717,7 @@ def test_a_pack_that_answers_with_nothing_falls_through_to_the_greeting():
     rt, dev = make_runtime(app)
     _subscribed(rt, dev, app)
     rt.greet_after_s = 300.0
-    _seed_absent(rt, dev, away_s=900.0)
+    seed_absent(rt, dev, away_s=900.0)
     resp = drive_turn(rt, dev, FOUND, event_id="e2")
     assert app.perceived == [FOUND]
     assert resp["result"] == "SUCCESS" and "Sam" in resp["output"]["text"]

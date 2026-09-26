@@ -32,7 +32,7 @@ ENV MOXIE_MQTT_HOST=broker \
     MOXIE_DATA_DIR=/data \
     MOXIE_MEMORY_DIR=/data/memory
 
-# The runtime's status server binds 127.0.0.1 on purpose (moxie_runtime.py). The
+# The runtime's status server binds 127.0.0.1 on purpose (supervisor/moxie_runtime/status_http.py). The
 # console lives in another container, so the entrypoint can expose a read/write proxy
 # on MOXIE_STATUS_PROXY_PORT — opt-in, set by the compose file, never on by default.
 EXPOSE 8931

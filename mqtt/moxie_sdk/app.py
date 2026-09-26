@@ -35,43 +35,24 @@ class MoxieApp:
         """Return an `Iterator[ReplyChunk]` to answer *while* the brain is still writing,
         or **None** to say "I don't stream" (the default).
 
-        The runtime publishes each chunk as its own `RemoteChatResponse`
-        (`result=REPLY_PENDING` + `chunk_num`) and closes the sequence on the chunk marked
-        `final`. That is what gets a real first sentence to a child in ~3 s instead of
-        waiting 18-45 s for a whole completion — see
-        docs/architecture/mqtt-and-conversation.md §4.5.
-
-        Returning None (or raising) is always safe: the runtime falls straight back to
-        `respond`, so an app that never heard of streaming behaves exactly as before."""
+        Each chunk is published as its own REPLY_PENDING response and the `final` one
+        closes the turn (mqtt-and-conversation.md §4.5). Returning None (or raising)
+        falls back to `respond`."""
         return None
 
     # --- optional: be WOKEN by something the robot noticed ---
     def perceive(self, turn: Turn) -> Optional[Reply]:
         """A subscribed robot event reached the server — answer it, or return **None**.
 
-        `turn.speech` is the event name (`eb-qr-event`, `eb-found-face`, …) rather than
-        words a child said, exactly as the robot delivers it: a subscribed event arrives
-        as the `speech` of an ordinary `RemoteChatRequest`
-        (docs/architecture/vision.md §7.1). `turn.input_vars` carries whatever rode with
-        it — `$eb_qr_value` for a scanned card, and so on.
+        `turn.speech` is the event name (`eb-qr-event`, …) as the robot delivers it
+        (vision.md §7.1); `turn.input_vars` carries its payload (`$eb_qr_value`, …).
 
-        **The contract this hook exists to keep, and it is not a style note: an
-        implementation of `perceive` must not call a model.** `eb-found-face` fires every
-        time a child walks back into frame; a brain call per event would turn a child
-        moving around a room into a bill, which is why the runtime diverts perception away
-        from `respond` in the first place. `ContentApp.perceive` therefore runs only the
-        *local* extension evaluator — pure, budgeted, no network — and the property is
-        asserted from `moxie_sdk.chat.model_calls()`, a recorded counter, rather than from
-        a silent stub.
+        **Must not call a model**: `eb-found-face` fires every time a child walks into
+        frame (tests assert this via `chat.model_calls()`). None means "nothing to say" and
+        the runtime does its own presence handling (greeting, launch card, `NOREPLY_ACK`).
 
-        Returning None means "I have nothing to say about that", and the runtime carries
-        on with its own presence handling (the greeting rule, a 🎴 launch card, or a
-        `NOREPLY_ACK`) exactly as if this hook did not exist. The default does precisely
-        that, so an app that never heard of perception is unaffected.
-
-        The runtime calls this **only** for an event the app itself asked for, on the
-        module it asked under (`Reply.subscribe` → `EventSubscription.active[]`), never
-        under `MOXIE_VISION=0`, and never for a robot the pairing gate has not permitted.
+        Called only for events the app subscribed to (`Reply.subscribe`), on that module,
+        never under `MOXIE_VISION=0` or for an unpermitted robot.
         """
         return None
 
@@ -95,11 +76,7 @@ class MoxieApp:
         """Called when a conversation *finishes* — the module exited (`<exit>` / an EXIT
         action), the robot switched to another module, or it went offline.
 
-        This is the contract's `complete_handler` moment
-        (docs/architecture/content-module-contract.md → the `code` hooks): the last point
-        at which the whole transcript still exists, and therefore where long-term memory
-        is written (`ContentApp` summarizes it into `volley.persist_data`).
-
-        `reason` is one of "exit" / "module_switch" / "disconnect". Called off the MQTT
-        loop; it may take as long as a brain call, and anything it raises is swallowed by
-        the runtime — a failed summary must never end a child's session badly."""
+        The contract's `complete_handler` moment (content-module-contract.md): the last
+        point the whole transcript exists, so long-term memory is written here. `reason`
+        is "exit" / "module_switch" / "disconnect". Runs off the MQTT loop; exceptions are
+        swallowed."""

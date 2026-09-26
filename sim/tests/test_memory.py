@@ -17,12 +17,10 @@ and nothing here imports `openai`.
 """
 import json
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.store import (JsonStore, MemoryStore, item_id,  # noqa: E402
                              item_text, json_safe, normalize_items, prune_stale)

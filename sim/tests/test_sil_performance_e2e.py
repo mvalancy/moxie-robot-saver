@@ -1,48 +1,26 @@
 """The behavior planner on the wire — scored output, rehearsal, and all four slices at once.
 
-P1 (#92) landed with 124 hermetic cases, 22 goldens and a 39/39 mutation check, and with
-one thing none of them can do: put a **broker** between the planner and the client. Its
-criterion (c) — *scored fields on 100 % of published turns, streamed included* — was
-proven "through the real runtime", which means an in-process runtime with a fake MQTT
-client. A `dialog_act` that is dropped by `json.dumps`, by `build_chat_response`'s
-omit-when-empty rules, or by the chunk path's own argument list would pass every one of
-those tests and reach no robot at all.
+The hermetic planner tests use an in-process runtime with a fake MQTT client, so a scored
+field dropped by `json.dumps`, `build_chat_response`'s omit-when-empty rules or the chunk
+path's arguments would pass them and reach no robot. This file asserts the same claims
+through a real mosquitto, `mqtt/run.py` as its own process, and robots reading
+`commands/remote_chat` off the wire:
 
-So this file asserts the same claim one layer out: a real mosquitto, `mqtt/run.py` as its
-own process, and protocol-faithful robots reading `commands/remote_chat` off the wire.
+  1. The single reply carries the five scored fields as the contract spells them
+     (`mood`, `mood_intensity`, `dialog_act`, `emotion`, `signals` — plural on the wire,
+     the planner's singular `signal` renamed in `_publish_chat`).
+  2. Every streamed chunk carries them too, including the closing `SUCCESS`, and a chunk
+     past the first plans no mood (§2.2) — a claim about the markup, on the wire.
+  3. Zero unknown ids in the markup a robot actually received.
+  4. The 🎬 rehearsal card end to end: `POST /preview` on the supervisor and
+     `POST /local/robots/{id}/preview` on the console, then the captured payloads played
+     through the real `sim/web/bridge.js`.
+  5. All four slices at once: extensions, per-robot brains, the planner and the child's
+     voice — `content`, `echo` and streaming `llm` robots on one supervisor.
+  6. `MOXIE_EXPRESSIVE=floor` (the rollback lever) does not strip the score.
 
-What each section proves, and why a running stack is the only place it can be proved:
-
-  1. **The single-reply path carries the score.** One `echo` turn, one publish, and the
-     five scored fields present in `output` as the contract spells them
-     (`mood`, `mood_intensity`, `dialog_act`, `emotion`, `signals` — note the **plural**:
-     `_publish_chat` passes the planner's singular `signal` into `build_chat_response`'s
-     `signals`, and a rename on either side of that seam is invisible in-process).
-  2. **Every streamed chunk carries it too.** C2/C4's whole point: before #92 a
-     `ReplyChunk` had no scored fields at all, so a streamed answer could not be scored
-     even in principle. A four-sentence answer here is four publishes, and the assertion
-     is over *all* of them including the closing `SUCCESS` — plus §2.2's "a chunk past
-     the first plans no mood at all", which is a claim about the *markup*, on the wire.
-  3. **Zero unknown ids, on the wire.** `vocab.validate_markup` runs over the markup a
-     robot actually received, not over a string a test built.
-  4. **The 🎬 rehearsal card, end to end.** `POST /preview` on the supervisor's real
-     status HTTP *and* `POST /local/robots/{id}/preview` on the real console app, each
-     driven until a robot has the message in its hands — then the captured payloads are
-     played through the real `sim/web/bridge.js`, so "the SIM renders what comes back" is
-     an assertion rather than a hope.
-  5. **All four slices at once.** Extensions (#86), per-robot brains (#88), the planner
-     (#92) and the child's voice share one turn path and had never met. One supervisor:
-     `clock` on `content` answering from the shipped clock extension, `plain` on `echo`,
-     `chatty` on `llm` streaming — three brains, three robots, one broker, planner on for
-     all of them.
-  6. **The rollback lever does not strip the score.** `MOXIE_EXPRESSIVE=floor` is the
-     documented one-variable rollback; a rollback that silently emptied `dialog_act`
-     would be a regression hiding inside a safety net. Its own stack, its own turn.
-
-The brain is a **local** OpenAI-compatible stub (`sim/tools/first_audio_ab.py`, imported
-rather than re-written so there is one stub in the tree): it streams a fixed four-sentence
-answer at a fixed pace, which is what makes chunk 2 and chunk 3 exist to assert about.
-Nothing here needs credentials and nothing reaches the network.
+The brain is the local OpenAI-compatible stub in `sim/tools/first_audio_ab.py`, streaming
+a fixed four-sentence answer at a fixed pace. No credentials, no network.
 
     .venv/bin/python -m pytest sim/tests/test_sil_performance_e2e.py -q
 """
@@ -84,12 +62,8 @@ SCORED_FIELDS = ("mood", "mood_intensity", "dialog_act", "emotion", "signals")
 # A robot that keeps the receipts
 # --------------------------------------------------------------------------- #
 class WireRobot:
-    """A SIL robot that records every `commands/*` payload verbatim, in arrival order.
-
-    `VirtualMoxie` joins a turn's chunks into one string and wakes a single event on the
-    closing one — which is the right shape for a smoke and the wrong shape here, where
-    the per-chunk payload *is* the subject. So: same handshake, same topics, no joining.
-    """
+    """A SIL robot that records every `commands/*` payload verbatim, in arrival order
+    (`VirtualMoxie` joins chunks; here the per-chunk payload is the subject)."""
 
     FIRMWARE = "24.10.803"
 
@@ -109,15 +83,10 @@ class WireRobot:
         self.c.on_message = self._on_message
         self.c.connect("127.0.0.1", port, 30)
         self.c.loop_start()
-        # ANNOUNCE ONLY ONCE THE BROKER HAS ACKNOWLEDGED THE SUBSCRIPTION THAT CARRIES
-        # THE ANSWER. `connect()` does not wait for CONNACK and `_on_connect` — which
-        # sends our SUBSCRIBE — runs on paho's network thread, so publishing `/state`
-        # from this thread on the next line used to race it. The supervisor answers a
-        # `/state` with a QoS-0, NON-RETAINED `/config` (`moxie_runtime._publish`), so
-        # losing that race does not delay the config, it deletes it: the 12 `no paired
-        # config pushed within timeout` setup errors in CI on 2026-09-04 spent the whole
-        # 60 s waiting for a message the supervisor's own log says it had already
-        # published. See `virtual_moxie.VirtualMoxie.announce` for the measurement.
+        # Announce only once the broker has ACKed the subscription that carries the answer:
+        # `_on_connect` subscribes on paho's thread, and the supervisor answers `/state`
+        # with a QoS-0, non-retained `/config`, so losing that race deletes the config.
+        # See `virtual_moxie.VirtualMoxie.announce`.
         if not self.subscribed.wait(timeout):
             raise RuntimeError(
                 f"{self.device_id}: the broker never acknowledged our subscriptions")
@@ -252,11 +221,8 @@ def _robot(lab, brain: str) -> WireRobot:
     try:
         r = WireRobot(lab["stack"].port)
     except RuntimeError as e:
-        # The supervisor's own log is the other half of this failure and the fixture used
-        # to throw it away: `no paired config pushed within timeout` next to
-        # `[runtime] → pushed config to d_…` is a lost message, while the same error with
-        # no push line is a supervisor that never answered. Two different bugs, one
-        # message — so the log travels with the error.
+        # Attach the supervisor's log: "no paired config" next to a "pushed config" line
+        # is a lost message; without one, the supervisor never answered.
         raise RuntimeError(f"{e}\n--- supervisor log ---\n"
                            f"{lab['stack'].supervisor.text()}") from None
     out, code = _req(f"{lab['status']}/brain?device_id={r.device_id}", {"brain": brain},
@@ -319,12 +285,10 @@ def test_the_score_on_the_wire_is_the_planners_and_not_a_leftover_default(plain)
 
 
 # --------------------------------------------------------------------------- #
-# 2. the streamed path — C2/C4, the gap PR #17 opened
+# 2. the streamed path — C2/C4
 # --------------------------------------------------------------------------- #
-#: The prompt the streamed turn is driven with. Named because `LLMApp`'s own gesture
-#: seed is `f"{device_id}|{speech}"` (`llm_app._turn_key`) — the floor cannot see an
-#: `event_id`, which the runtime owns — so a test that wants to recompute the app's
-#: markup has to know the speech, not just the reply.
+#: The prompt the streamed turn is driven with. `LLMApp`'s gesture seed is
+#: `f"{device_id}|{speech}"` (`llm_app._turn_key`), so recomputing its markup needs this.
 STREAM_PROMPT = "why does the moon change shape?"
 
 
@@ -538,12 +502,8 @@ def test_the_console_route_drives_the_same_rehearsal(lab, plain, tmp_path_factor
 
 
 def test_the_sim_renders_what_the_rehearsal_published(rehearsed, tmp_path):
-    """"…and confirm the SIM renders what comes back."
-
-    The captured payloads — the exact bytes the robot was handed, not a re-rendered
-    string — are played through the real `sim/web/bridge.js`, which is the only renderer
-    of our markup anyone can execute. A planner that staged an id the SIM does not
-    animate fails here instead of leaving a robot silently still."""
+    """"…and confirm the SIM renders what comes back": the exact payloads the robot got are
+    played through the real `sim/web/bridge.js`, so an id the SIM does not animate fails."""
     if not any(os.path.exists(os.path.join(d, "node"))
                for d in os.environ.get("PATH", "").split(os.pathsep)):
         pytest.skip("node is not installed")
@@ -583,30 +543,15 @@ def test_the_floor_is_a_rollback_not_a_downgrade_of_the_wire(tmp_path_factory):
 # 7. WHOSE markup does the robot actually perform?  (the finding, pinned)
 # --------------------------------------------------------------------------- #
 #
-# C6 in `backlog/expressiveness.md` §2.3 reads: *"`markup` is derived, never authored:
-# `Reply.markup = render(validate(plan(text)))` — one renderer ⇒ one validator ⇒ the
-# 'no unknown id' guarantee holds for every path."*
-#
-# On the wire that is true of the **scored fields** and only partly true of the markup,
-# because `_stage`'s documented precedence is that an app's *authored* markup is spoken
-# verbatim — and `LLMApp` authors markup on every reply and every chunk
-# (`build_markup` → `automarkup.annotate`, the floor). So on the brain a real deployment
-# runs, `MOXIE_EXPRESSIVE=planner` changes the five scored fields and **not** the
-# performance: the body a child sees is still the markup floor's.
-#
-# That is a design gap, not a crash, and it is not this file's to decide — so it is
-# **pinned** here rather than narrated. These two tests compute both candidate markups
-# from the very text the robot received and say which one won. The day someone closes C6
-# on the model path, `test_the_model_path_performs_the_floors_markup` goes red, which is
-# exactly the notification that change should send.
+# C6 (`backlog/expressiveness.md` §2.3) says markup is always `render(validate(plan(text)))`.
+# On the wire that holds for the scored fields but not the markup: `_stage` speaks an app's
+# AUTHORED markup verbatim, and `LLMApp` authors the floor's `annotate` markup on every
+# reply and chunk. So on the model path `MOXIE_EXPRESSIVE=planner` changes the scored
+# fields, not the performance. A design gap, pinned here: the day C6 is closed on the
+# model path, `test_the_model_path_performs_the_floors_markup` goes red.
 def _floor_and_planner(text: str, turn_key: str, chunk_index: int):
-    """`(annotate(...), perform(...))` for one line — the two candidate performances.
-
-    `markup.mode()` reads `MOXIE_EXPRESSIVE` per call, so `perform` has to be pinned here
-    — and the pin is **restored**. A test that leaves a mode behind in `os.environ`
-    changes what every later test in the same process publishes, which is exactly the
-    leak `test_env_hygiene_live_suites.py` exists to fence (playbook rule 20).
-    """
+    """`(annotate(...), perform(...))` — the two candidate performances for one line. Pins
+    `MOXIE_EXPRESSIVE` (read per call) and restores it so no mode leaks to later tests."""
     from moxie_sdk.automarkup import annotate
     from supervisor.markup import perform
     was = os.environ.get("MOXIE_EXPRESSIVE")
@@ -634,15 +579,10 @@ def test_an_app_that_authors_no_markup_performs_the_planners(plain):
 
 
 def test_the_model_path_performs_the_floors_markup(chatty, streamed):
-    """The gap, asserted. Every chunk of a streamed model answer arrives carrying the
-    **floor's** `annotate` output byte for byte, not `render(validate(plan(…)))` —
-    because `LLMApp._stream_chunks` authors `ReplyChunk.markup` itself and `_stage`
-    honours authored markup verbatim. The planner still scores the line (the tests
-    above), so what a robot loses here is the *performance*: the act profile, the gaze
-    tree and the per-clause staging never reach the wire on this path.
-
-    If this test fails, read it as good news that needs its docs updated, not as a
-    regression: it means the model path started performing the planner's own markup."""
+    """The gap, asserted: every chunk of a streamed model answer carries the floor's
+    `annotate` output byte for byte (`LLMApp._stream_chunks` authors `ReplyChunk.markup`),
+    so the planner scores the line but its staging never reaches the wire. A failure here
+    is good news needing a docs update, not a regression."""
     differed = 0
     app_key = f"{chatty.device_id}|{STREAM_PROMPT}"     # llm_app._turn_key
     for i, c in enumerate(streamed):

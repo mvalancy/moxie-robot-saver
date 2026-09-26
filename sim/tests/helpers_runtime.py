@@ -1,20 +1,11 @@
 """
 Shared harness for tests that drive a turn through the REAL `MoxieRuntime`.
 
-Two suites had already grown their own private copy of "a fake MQTT transport plus
-twenty lines that push one `events/remote-chat` payload through the runtime and dig
-the reply back out" (`test_runtime_turn.py`, `test_action_tags.py`). A third copy
-was about to appear for the live-gateway tests, so the helper lives here instead.
-
-Deliberately NOT retrofitted into the existing two files: those are owned/edited
-elsewhere, and a shared fixture that breaks them for reasons unrelated to the thing
-under test is exactly the failure mode their own docstrings warn about. New tests
-import this; the old copies stay until someone retires them on purpose.
-
-Nothing here talks to a network: `FakeClient` records `publish()` calls, and the
-runtime's MQTT client is never built (`MoxieRuntime` creates it lazily in `run()`).
-The *app* passed in may of course be a live one — that is how the live e2e tests
-reach the gateway while the transport stays fake.
+`FakeClient` records `publish()` calls and the runtime's MQTT client is never built
+(`MoxieRuntime` creates it lazily in `run()`), so nothing here touches a network. The app
+may be a live one — that is how the live e2e tests reach the gateway over a fake transport.
+Also: the live tier's credential loader, a status-HTTP server on a free port, an in-process
+robot↔runtime loopback, and source/`run.py` loaders for guards.
 """
 from __future__ import annotations
 import json
@@ -31,23 +22,87 @@ for _p in (MQTT_DIR, SUPERVISOR_DIR):
 from moxie_sdk.tts import Synthesizer          # noqa: E402  (needs the path above)
 
 CHAT_TOPIC = "/devices/{device_id}/commands/remote_chat"
+RUNTIME_PKG = os.path.join(SUPERVISOR_DIR, "moxie_runtime")
+
+
+def reload_config(monkeypatch, clear=(), **env):
+    """`mqtt/config.py` re-imported under a controlled environment (it caches at import):
+    `MOXIE_SKIP_DOTENV` first, so a developer's `mqtt/.env` cannot refill the `clear`ed
+    variables, then `env` applied."""
+    import importlib
+    monkeypatch.setenv("MOXIE_SKIP_DOTENV", "1")
+    for k in clear:
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    import config
+    return importlib.reload(config)
+
+
+def fresh_pool(rt):
+    """Re-arm the runtime's worker pool: `drive_turn` shuts it down when it drains it, so a
+    SECOND turn through the same runtime needs a live one."""
+    from concurrent.futures import ThreadPoolExecutor
+    rt._pool = ThreadPoolExecutor(max_workers=4)
+    return rt
+
+
+def seed_absent(rt, dev, away_s, *, greeted=False):
+    """Seed presence as if the robot left `away_s` seconds ago. Clock-relative because
+    presence is scored as an AGE against `greet_after_s`; a pinned epoch would make every
+    robot look long gone."""
+    import time
+    from moxie_sdk import presence
+    now = time.time()
+    state = presence.new_state()
+    state.update({"face_present": False, "announced": "left",
+                  "last_seen_at": now - away_s - 30.0,
+                  "present_since": now - away_s - 60.0,
+                  "last_lost_at": now - away_s, "absent_since": now - away_s,
+                  "faces_seen": 1, "events": 2})
+    if greeted:
+        state["greeted_at"] = now - away_s + 0.1
+    rt.robots[dev].extra["presence"] = state
+    return state
+
+
+def load_mqtt_run():
+    """A fresh `mqtt/run.py` module, loaded by PATH: `server/run.py` shares the name `run`,
+    so a bare `import run` depends on which suite last prepended its directory."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("run", os.path.join(MQTT_DIR, "run.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def runtime_sources() -> dict:
+    """`{path: text}` for every module of the `moxie_runtime` package, for tests that
+    assert over the supervisor's source (a guard over one file would miss the others)."""
+    out = {}
+    for name in sorted(os.listdir(RUNTIME_PKG)):
+        if name.endswith(".py"):
+            path = os.path.join(RUNTIME_PKG, name)
+            with open(path, encoding="utf-8") as fh:
+                out[path] = fh.read()
+    return out
+
+
+def runtime_source() -> str:
+    """The whole supervisor package's source as one string (for substring guards)."""
+    return "\n".join(runtime_sources().values())
 
 
 # ---------------------------------------------------------------------------
 # Credentials for the live tests: mqtt/.env, found from ANY worktree
 # ---------------------------------------------------------------------------
-# `mqtt/.env` is git-ignored, so it exists only in the main checkout. Every live test
-# used to look for it beside its own file — which is right in the main tree and wrong in
-# a `git worktree`, where the whole creds-gated tier silently skipped (PR #12 finding).
-# These helpers look in this tree first and then in the MAIN worktree, so a live test
-# run from a feature worktree finds the same key the main checkout uses.
+# `mqtt/.env` is git-ignored and exists only in the main checkout, so these look in this
+# tree first and then the MAIN worktree (else the creds-gated tier silently skips in a
+# `git worktree`).
 
 def main_worktree(tree: str) -> str:
-    """The main checkout's root, given any worktree root.
-
-    A linked worktree's `.git` is a FILE holding `gitdir: <main>/.git/worktrees/<name>`;
-    in the main checkout it is a directory. Pure path work — no subprocess, and any
-    surprise (no .git at all, a bare/odd layout) just returns `tree`."""
+    """The main checkout's root, given any worktree root: a linked worktree's `.git` is a
+    FILE (`gitdir: <main>/.git/worktrees/<name>`). Pure path work; surprises return `tree`."""
     dotgit = os.path.join(tree, ".git")
     if os.path.isfile(dotgit):
         try:
@@ -87,36 +142,16 @@ def dotenv_values(path: str) -> dict:
     return values
 
 
-#: The ONLY keys a deployment's `mqtt/.env` may export into the suite's environment.
+#: The ONLY keys a deployment's `mqtt/.env` may export into the suite's environment:
+#: credentials, endpoints and model names. `setdefault` at collection time would otherwise
+#: promote every key for the whole session, so a hermetic test "with nothing configured"
+#: would run on the developer's settings (e.g. `MOXIE_ALLOW_UNVERIFIED_BOTS=1` made
+#: "an unpermitted stranger is refused" tests pass with the gate open). Behavioural knobs
+#: (`MOXIE_APP`, `MOXIE_STT`, `MOXIE_TTS`, …) never cross; no live suite reads them.
 #:
-#: `load_repo_dotenv` exists so the live tier can find real credentials, and it used to
-#: copy the **whole file** in. That is the same defect `conftest.py`'s fence was built for
-#: (playbook rule 20), through a second door: `setdefault` at collection time promotes
-#: every key to a real environment variable for the rest of the session, and nothing ever
-#: removes them, so a hermetic test that says "nothing is configured" was quietly running
-#: on whatever this developer configured. Measured 2026-09-05 with a maximal fixture at
-#: the default path: **21 tests** in six files went red that way — and the shape that
-#: matters is not the red one. `MOXIE_ALLOW_UNVERIFIED_BOTS=1` is a documented, plausible
-#: setting, and with it exported **thirteen** `test_device_permits.py` tests asserting
-#: *"an unpermitted stranger is refused"* **passed while the gate stood open**.
-#:
-#: Deleting the loader is not the fix: the live suites read their key and endpoints from
-#: that file and nowhere else — ten `test_live_*.py` modules call this at import — so
-#: they would all become silent skips, the exact regression PR #157 was opened to
-#: close. So it is narrowed instead, to credentials,
-#: endpoints and model names. A *behavioural* knob (`MOXIE_ALLOW_UNVERIFIED_BOTS`,
-#: `MOXIE_APP`, `MOXIE_STT`, `MOXIE_TTS`, `MOXIE_STREAMING`, …) never crosses: no live
-#: suite reads one, and the two that care — `test_live_gateway_tts.py::_config` and
-#: `test_live_gateway_stt.py::_config` — already *delete* them before reloading `config`,
-#: which is the codebase agreeing that they are noise rather than input.
-#:
-#: **This list is derived, not remembered.** Every name below is one an AST walk finds a
-#: `test_live_*.py` module actually READING out of `os.environ`; a name it only writes
-#: (`MOXIE_VOICE_FORMAT`) is absent, because a value the module sets for itself cannot
-#: need to arrive from a file. `test_dotenv_cannot_perturb_the_suite.py` re-derives it and
-#: fails if this list stops matching, so a new live suite that needs a new credential is a
-#: red test rather than a silent skip, and a knob added here is a red test rather than a
-#: reopened door.
+#: Derived, not remembered: every name is one an AST walk finds a `test_live_*.py` READING
+#: from `os.environ` (names a module only writes are absent).
+#: `test_dotenv_cannot_perturb_the_suite.py` re-derives the list and fails on a mismatch.
 LIVE_KEYS = (
     # --- the brain -------------------------------------------------------------
     "MOXIE_LLM_API_KEY", "LITELLM_MASTER_KEY",   # credential, and the gateway's own name
@@ -135,19 +170,12 @@ LIVE_KEYS = (
 
 
 def load_repo_dotenv(path: str | None = None, *, allow=LIVE_KEYS) -> str | None:
-    """Best-effort: load the live tier's credentials out of the repo's git-ignored
-    `mqtt/.env` into `os.environ`. Returns the file it used, or None when there is none.
-    Values are never printed.
+    """Best-effort: load the live tier's credentials from the git-ignored `mqtt/.env` into
+    `os.environ`; returns the file used or None. Values are never printed.
 
-    Only the keys in `allow` (`LIVE_KEYS` — see above) cross; everything else in the file
-    is read and dropped, so a developer's own configuration cannot decide what a hermetic
-    test asserts. The existing environment still wins (`setdefault`), exactly like the
-    supervisor's own `config._load_env`.
-
-    `allow` is a parameter rather than a constant so that a test can say otherwise *in the
-    open* — pass this file's own key names and you have the un-narrowed loader back, which
-    is how the guard proves the narrowing is load-bearing. No production caller passes it,
-    and a guard asserts that stays true."""
+    Only keys in `allow` (default `LIVE_KEYS`) cross, and the existing environment wins
+    (`setdefault`, like `config._load_env`). `allow` exists so a guard can pass the file's
+    own keys and prove the narrowing is load-bearing; no production caller passes it."""
     path = path or find_repo_dotenv()
     if not path:
         return None
@@ -176,14 +204,10 @@ class FakeInfo:
 
 
 class FakeClient:
-    """Stands in for the paho client: records `(topic, decoded_payload)` publishes.
-
-    Since the production-hardening slice it also models the **connection**, because that
-    is the thing the runtime was getting wrong: a QoS 0 publish with no socket is dropped
-    rather than queued, and returns `MQTT_ERR_NO_CONN` on `info.rc` (A3, proven by reading
-    the installed paho). `drop()` / `up()` / `refuse()` are §5.1's three fault-injection
-    verbs; they drive the runtime's real callbacks, so a test never has to know how a
-    disconnect is plumbed.
+    """Stands in for the paho client: records `(topic, decoded_payload)` publishes, and
+    models the connection — a QoS 0 publish with no socket is dropped and returns
+    `MQTT_ERR_NO_CONN` (A3). `drop()` / `up()` / `refuse()` are §5.1's fault-injection
+    verbs and drive the runtime's real callbacks.
     """
 
     def __init__(self, runtime=None):
@@ -197,13 +221,8 @@ class FakeClient:
         #: as a single unambiguous event (see `_on_subscribe`).
         self.subscribe_calls = 0
         self._mid = 0
-        #: Whether there is a socket. **True by default**: a `FakeClient` stands in for a
-        #: working transport, which is what every existing suite that drives a turn
-        #: assumes. `drop()` is how a test says otherwise. (The runtime's own
-        #: `broker_connected` is a different thing and starts False — it records what a
-        #: CONNACK told us, and a client object that has never connected has told us
-        #: nothing, which is the confusion `wake_robot`'s `if self.client is None` was
-        #: built on.)
+        #: Whether there is a socket — True by default (a working transport). Distinct from
+        #: the runtime's own `broker_connected`, which starts False until a CONNACK.
         self.connected = True
         #: The runtime whose callbacks the verbs drive. `make_runtime` sets it.
         self.runtime = runtime
@@ -243,15 +262,9 @@ class FakeClient:
             return rc
 
     def up(self, rc=0):
-        """A successful CONNACK: the socket is live, the runtime re-subscribes, and the
-        broker acknowledges — **in that order**.
-
-        The SUBACK is delivered *after* `_on_connect` returns because that is where a real
-        one arrives: `subscribe()` only queues the packet, and paho writes it on the
-        network thread once the callback is done. A double that acknowledged inside
-        `subscribe()` would quietly close the very window this models — the one in which
-        the supervisor is connected and deaf, where a robot's `/state` and the QoS-0
-        config answering it are both lost (see `_on_subscribe` in `moxie_runtime.py`).
+        """A successful CONNACK: socket live, runtime re-subscribes, broker acknowledges — in
+        that order. The SUBACK comes AFTER `_on_connect` returns, as paho's does, so the
+        connected-but-deaf window (see `_on_subscribe`) is modelled rather than closed.
         """
         before = len(self.subscribed)
         self.connected = True
@@ -287,12 +300,8 @@ class FakeClient:
 
 
 class LatchClient(FakeClient):
-    """A `FakeClient` a test can *wait on* — `wait_for(predicate)` instead of sleeping.
-
-    A streaming/filler turn publishes several times from several threads, so a test needs
-    to block until the wire looks a certain way rather than guess how long that takes.
-    (`test_brain_latency.py` has its own private copy from PR #14; new suites use this
-    one — see this module's docstring on why the old copies stay put.)"""
+    """A `FakeClient` a test can wait on (`wait_for(predicate)`) instead of sleeping, for
+    turns that publish several times from several threads."""
 
     def __init__(self, runtime=None):
         super().__init__(runtime)
@@ -326,18 +335,12 @@ class CountingSynth(Synthesizer):
 def make_runtime(app, *, device_id: str = "d_test", nickname: str = "Sam",
                  module_id: str = "FREE_CHAT", content_id: str = "default",
                  allow_unverified_bots: bool = True, store=None):
-    """A real `MoxieRuntime` wired to `app`, with a fake transport and one robot
-    already 'connected'. Returns `(runtime, device_id)`.
+    """A real `MoxieRuntime` wired to `app`, with a fake transport and one robot already
+    'connected'. Returns `(runtime, device_id)`.
 
-    `store` is the runtime's durable `JsonStore` (mentor behaviors, the schedule audit,
-    permits). It defaults to None, which is exactly what `MoxieRuntime` already did —
-    a store rooted at `MOXIE_DATA_DIR`/`mqtt/data`. Pass `JsonStore(str(tmp_path))` so a
-    test that writes durable state cannot touch the developer's own data dir.
-
-    `allow_unverified_bots` defaults to **True** — this harness exists to drive the turn
-    loop, and its robot is hand-placed into `rt.robots` rather than let in through the
-    device allowlist. Tests *about* the pairing gate build their own runtime with the
-    default (closed) policy; see `sim/tests/test_device_permits.py`.
+    Pass `store=JsonStore(str(tmp_path))` so durable writes stay out of the developer's data
+    dir (None keeps the runtime's default). `allow_unverified_bots` defaults True because the
+    robot is hand-placed into `rt.robots`; pairing-gate tests build their own runtime.
     """
     import moxie_runtime
     from moxie_sdk.types import ChildProfile, RobotContext
@@ -354,10 +357,8 @@ def make_runtime(app, *, device_id: str = "d_test", nickname: str = "Sam",
 def drive_turn(rt, device_id: str, speech: str, *, event_id: str = "evt-1",
                command: str = "prompt", backend: str = "router", **extra) -> dict:
     """Push one `events/remote-chat` payload through the runtime and return the last
-    `commands/remote_chat` response it published (the RemoteChatResponse dict).
-
-    The runtime answers on a worker pool, so this waits for it to drain — which also
-    means the returned runtime is spent; build a fresh one per turn (`drive_once`).
+    `commands/remote_chat` response. Waits for the worker pool to drain, so the runtime is
+    spent afterwards — build a fresh one per turn (`drive_once`).
     """
     robot = rt.robots[device_id]
     payload = dict(command=command, backend=backend, event_id=event_id, speech=speech)
@@ -400,21 +401,10 @@ def assert_spec_response(resp: dict, *, device_id: str = None, event_id: str = N
 # A supervisor on a scratch data dir, its real status HTTP server, and an
 # in-process robot↔runtime loopback
 # ---------------------------------------------------------------------------
-# Four suites had already hand-rolled `socket(); bind(("127.0.0.1", 0))` to find a free
-# port before `rt._start_status_server(port)` (test_memory_runtime ×2, test_runtime_turn
-# ×2, test_console_roundtrip), and `test_presence_sil.py` hand-rolled the two-subscriber
-# loopback that lets a `sim/virtual_moxie.py` robot talk to a real `MoxieRuntime` with no
-# broker. New suites use these; the existing copies stay put for the reason this module's
-# docstring gives (a shared fixture must not break a suite for reasons unrelated to the
-# thing under test).
 
 def free_port() -> int:
-    """A port nothing is listening on right now — bind :0 and let the OS choose.
-
-    Never a hard-coded number: the lab machine has stale supervisors on 8930/8932 and
-    concurrent agents on 19xx, and a test that picks a port by hand eventually collides
-    with one of them (see the port rules in docs/architecture/orchestration-plan.md).
-    """
+    """A port nothing listens on right now (bind :0). Never hard-code one: stale supervisors
+    and concurrent agents hold 8930/8932/19xx on lab machines."""
     import socket
     s = socket.socket()
     try:
@@ -425,12 +415,8 @@ def free_port() -> int:
 
 
 def status_server(rt) -> str:
-    """Start the runtime's REAL status HTTP server on a free port; return its base URL.
-
-    This is `MoxieRuntime._start_status_server` itself — the same handlers the parent
-    console talks to — so a test that goes through it proves the HTTP layer, not a double.
-    The server is a daemon thread and dies with the process.
-    """
+    """Start the runtime's REAL status HTTP server (`_start_status_server`) on a free port and
+    return its base URL. Daemon thread; dies with the process."""
     port = free_port()
     rt._start_status_server(port)
     return f"http://127.0.0.1:{port}"
@@ -472,12 +458,9 @@ class _LoopSide:
 
 
 def loopback(rt, vm):
-    """Wire a real `MoxieRuntime` and a `sim/virtual_moxie.py` robot together in-process.
-
-    Stands in for the broker: every runtime publish reaches the robot's `_on_message` and
-    every robot publish reaches the runtime's, byte for byte on the real topics. No
-    network, no mosquitto, no sleeps. Returns `(runtime_side, robot_side)` so a test can
-    read what each end put on the wire.
+    """Wire a real `MoxieRuntime` and a `sim/virtual_moxie.py` robot together in-process: each
+    side's publishes reach the other's `_on_message` on the real topics. No broker, network or
+    sleeps. Returns `(runtime_side, robot_side)`.
     """
     rt.client = _LoopSide(vm._on_message)
     vm.client = _LoopSide(rt._on_message)

@@ -5,10 +5,8 @@ the conversation path (Jinja prompt personalization → brain → Reply), global
 handling, and the opener greeting.
 """
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.content import load_module, ContentApp  # noqa: E402
 from moxie_sdk.types import Turn, RobotContext, ChildProfile  # noqa: E402
@@ -98,13 +96,9 @@ def test_empty_brain_reply_is_graceful():
 # --------------------------------------------------------------------------- #
 # 📦 A module's `code` string is DATA — never behaviour (backlog/content-packs.md §2.2)
 # --------------------------------------------------------------------------- #
-# `ContentApp`'s docstring has always promised this ("arbitrary `code`-string execution
-# from module JSON is deliberately NOT done here"), and content packs make it a security
-# property rather than a deferral: an imported pack cannot execute anything, which is what
-# lets a pack be unsigned and still safe to install on a child's appliance. The honest cost
-# is that upstream's `MoxieTime`/`MoxieTimers` would import as a global that matches an
-# utterance and then does nothing — the review says so, and the audit's BEYOND #6 (a
-# sandboxed module runtime) is what would change it.
+# An imported pack cannot execute anything, which is what lets an unsigned pack be safe on a
+# child's appliance. The cost: upstream's `MoxieTime`/`MoxieTimers` import as globals that
+# match and do nothing (the review says so; sandboxed extensions are the answer).
 
 CODE_MODULE = {
     "conversations": [dict(MODULE["conversations"][0],

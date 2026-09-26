@@ -273,7 +273,7 @@ class Supervisor:
         # drivers below announce robots the moment this returns, and between the CONNACK
         # and the SUBACK the supervisor hears nothing — the `/state` is dropped and the
         # QoS-0 config answering it is never sent (see `_on_subscribe` in
-        # moxie_runtime.py). A soak that boots on the CONNACK measures its own startup
+        # moxie_runtime/connection.py). A soak that boots on the CONNACK measures its own startup
         # race and calls it a lost turn.
         assert _wait_until(self.subscribed, 90) is not None, \
             "the supervisor never reported acknowledged subscriptions"

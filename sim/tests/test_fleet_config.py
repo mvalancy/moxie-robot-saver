@@ -20,7 +20,6 @@ import sys
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.cloud_config import merge_config_layers          # noqa: E402
 from moxie_sdk.store import JsonStore                           # noqa: E402

@@ -79,7 +79,7 @@ useless: parity with a project that also punts is not a security property. This 
 
 > **E5 vs E6 is not a contradiction we need to resolve to build.** E6 is the Google-IoT-Core-era form; E5
 > is what a broker serving 803 robots actually logs, and it is the string our own
-> [`CONNECT_RE`](../../../mqtt/supervisor/moxie_runtime.py) already matches. Everything below keys on
+> [`CONNECT_RE`](../../../mqtt/supervisor/moxie_runtime/) already matches. Everything below keys on
 > `d_<uuid>` and treats E6 as history.
 
 ### 0.2 What the endpoint QR can carry — and what it cannot
@@ -165,7 +165,7 @@ flowchart LR
 | Broker (prebuilt) | [`docker-compose.images.yml`](../../../docker-compose.images.yml) | the same config **inlined** as a `configs:` block, kept byte-identical by the PR #34 drift guard. |
 | Ports | [`docker-compose.yml`](../../../docker-compose.yml) | all three published on `${MOXIE_BIND_HOST:-0.0.0.0}` — **1883 and 9001 are LAN doors by default.** |
 | Certs | [`gen-certs.sh`](../../../mqtt/broker/gen-certs.sh) + [`docker-certs-init.sh`](../../../mqtt/broker/docker-certs-init.sh) | a one-shot `certs` service mints a per-appliance CA + broker cert into the `moxie-certs` volume, idempotently. **The natural home for a per-appliance credential.** |
-| Supervisor client | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime.py) `_build_client` | `mqtt.Client(…, client_id="supervisor")` — **no `username_pw_set`**; subscribes `/devices/+/events/#`, `/devices/+/state`, `$SYS/broker/log/#`, `$SYS/broker/clients/#`. |
+| Supervisor client | [`moxie_runtime.py`](../../../mqtt/supervisor/moxie_runtime/) `_build_client` | `mqtt.Client(…, client_id="supervisor")` — **no `username_pw_set`**; subscribes `/devices/+/events/#`, `/devices/+/state`, `$SYS/broker/log/#`, `$SYS/broker/clients/#`. |
 | SIL robot | [`sim/virtual_moxie.py`](../../../sim/virtual_moxie.py) | `client_id = f"d_{uuid.uuid4()}"`, no credentials — a faithful double of the anonymous robot. |
 | Service gate | `moxie_runtime.py` `is_permitted` / `_serve_unpermitted` | the permit list, closed by default, on the transport boundary. |
 | Store | `$MOXIE_DATA_DIR/fleet/permits.json` | `{"allow_unverified_bots": bool, "devices": {id: {permitted_at, label}}}` ([config contract](../config-and-telemetry-contract.md#the-pairing-gate-permits-and-what-a-pending-robot-is-sent)). |

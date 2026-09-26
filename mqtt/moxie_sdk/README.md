@@ -18,6 +18,8 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
   list stays the one place that says which robots are ours. Pure, stdlib only, byte-stable;
   `python3 -m moxie_sdk.broker_acl <permits.json>` prints it.
   ([`security-broker-auth.md`](../../docs/architecture/backlog/security-broker-auth.md) §2.3)
+- [`memory_items.py`](memory_items.py) — the long-term memory item model (limits, ids,
+  provenance, decay) that `store.MemoryStore` persists; re-exported by `store.py`.
 - [`store.py`](store.py) — the durable per-robot store (JSON under `MOXIE_DATA_DIR`, default
   [`../data/`](../data/)) that remembers reported `mentor_behaviors` across restarts.
 - [`faces.py`](faces.py) — 🎨 **Moxie's look**: the appearance catalog and how a selection
@@ -98,6 +100,9 @@ protocol. The [supervisor](../supervisor/) translates the robot's MQTT traffic i
 - [`chat.py`](chat.py) — the LLM boundary: `make_openai_chat` (a whole completion),
   `make_openai_stream` / `stream_completion` (text deltas), plus the rate-limit
   classification, `Pacer` and `call_with_backoff` both share.
+- [`content/`](content/README.md) — the data-driven activity engine (`ContentApp`), content packs,
+  the sandboxed extension language and the prompt-template sandbox.
+- [`apps/`](apps/README.md) — the built-in apps (`LLMApp`, `WebhookApp`, `EchoApp`).
 
 ---
 📖 [Back to top](../../README.md)

@@ -1,19 +1,12 @@
 """
 Boot the REAL stack — broker + `mqtt/run.py` supervisor — from a test, on free ports.
 
-`sim/run_smoke.sh` already does this for the shell; a pytest that wants to prove
-something about the *assembled appliance* (which voice `config.build_synthesizer()`
-actually picked, what the supervisor logged at startup, what a real robot heard back)
-had no way to say so without re-implementing the boot each time.
+For tests about the assembled appliance (which voice `config` picked, what the supervisor
+logged, what a real robot heard). Free ports only (never 1883/8930), a caller-supplied
+scratch data dir, and teardown of only the processes it started.
 
-Everything here picks its own free port (never 1883/8930 — a lab machine has stale
-supervisors and sibling agents on those), keeps its data in a caller-supplied scratch
-dir, and tears down only the processes it started. Nothing kills a process it did not
-create; a leftover broker on the default port is stepped around, never over.
-
-Used by `test_live_gateway_turn_e2e.py`. It is deliberately NOT imported by the hermetic
-tier: booting a broker is seconds, not milliseconds, and hermetic tests get the
-in-process loopback in `helpers_runtime.loopback()` instead.
+Not used by the hermetic tier (a broker takes seconds); that tier uses
+`helpers_runtime.loopback()`.
 """
 from __future__ import annotations
 
@@ -26,21 +19,11 @@ import time
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 BROKER_CONF = os.path.join(REPO, "sim", "broker", "ci-mosquitto.conf")
 
-#: THE SUPERVISOR'S TWO READINESS LINES, AND WHY THERE ARE TWO.
-#:
-#: `CONNECT_LINE` is the CONNACK: a socket exists, the broker said yes, and the runtime
-#: has CALLED `subscribe()`. That call only queues a SUBSCRIBE packet — under
-#: `loop_forever()` the bytes leave on the network thread after the callback returns — so
-#: the line means *"we asked"*. Anything that then puts a robot on the bus is racing: a
-#: `/state` published in that window reaches a broker holding no matching subscription,
-#: and the config push that answers a `/state` is QoS 0 and not retained, so it is never
-#: generated and never replayed. HIL, 2026-09-05:
-#: `❌ scenario 'basic-conversation': 0/4 turns OK — no config pushed within timeout`,
-#: with the *second* scenario green in the same job.
-#:
-#: `SUBSCRIBED_LINE` is the SUBACK, printed from the runtime's `_on_subscribe`, and it is
-#: the only one a robot may be booted on. `Supervisor.start()` waits for it by default;
-#: `start(ready_line=CONNECT_LINE)` exists so a test can deliberately stand in the gap.
+#: The supervisor's two readiness lines. `CONNECT_LINE` (CONNACK) means the runtime has
+#: CALLED `subscribe()`, which only queues a packet — "we asked". A robot's `/state` in that
+#: window hits a broker with no subscription and its QoS-0 config answer is never generated.
+#: `SUBSCRIBED_LINE` (SUBACK, from `_on_subscribe`) is the only one to boot a robot on;
+#: `start(ready_line=CONNECT_LINE)` lets a test stand in the gap deliberately.
 CONNECT_LINE = "[runtime] broker connected"
 SUBSCRIBED_LINE = "[runtime] subscriptions acknowledged by the broker"
 
@@ -65,13 +48,8 @@ def broker_available() -> bool:
 
 
 class Broker:
-    """An anonymous mosquitto on a free port, exactly the one CI/SIL uses.
-
-    Binary first (that is what CI installs); docker `eclipse-mosquitto:2` otherwise. The
-    docker path mounts the conf UNCHANGED and publishes `host:free → container:1883` —
-    rewriting the listener inside the container while mapping to 1883 is the trap
-    `run_smoke.sh` avoids by mounting the original file, and so do we.
-    """
+    """An anonymous mosquitto on a free port, as CI/SIL uses: the binary if present, else
+    docker `eclipse-mosquitto:2` with the conf mounted UNCHANGED and `host:free → 1883`."""
 
     def __init__(self, log_dir: str):
         self.port = free_port()
@@ -132,12 +110,8 @@ class Broker:
 
 
 class Supervisor:
-    """`mqtt/run.py` in a subprocess — the shipped entry point, not an in-test assembly.
-
-    That matters for anything asserted about `config.build_app()` /
-    `config.build_synthesizer()`: those precedence rules are only really exercised when
-    the process reads its own environment, which is what an appliance does.
-    """
+    """`mqtt/run.py` in a subprocess — the shipped entry point, so `config.build_app()` /
+    `build_synthesizer()` precedence is exercised as an appliance reads its environment."""
 
     def __init__(self, log_dir: str, *, broker_port: int, data_dir: str, env=None):
         self.status_port = free_port()
@@ -150,11 +124,8 @@ class Supervisor:
             MOXIE_ALLOW_UNVERIFIED_BOTS="1",        # throwaway d_<uuid> per run, as in run_smoke.sh
             MOXIE_DATA_DIR=data_dir,
             MOXIE_STT="off",                        # nothing here speaks TO the robot
-            # ...and nothing here needs a brain, so it does not demand one. `llm` (the
-            # module default) now exits unless MOXIE_LLM_BASE_URL names an endpoint —
-            # this repo ships no default gateway (config.require_llm_base_url) — which is
-            # the same reason run_smoke.sh and sim/compose-smoke.env both pick `echo`.
-            # A test that IS about the brain passes MOXIE_APP itself, as the live suites do.
+            # No brain needed, so `echo`: `llm` (the default) exits without
+            # MOXIE_LLM_BASE_URL (`config.require_llm_base_url`). Brain tests pass MOXIE_APP.
             MOXIE_APP="echo",
         )
         self.env.update(env or {})
@@ -162,16 +133,8 @@ class Supervisor:
 
     def start(self, timeout: float = 60.0,
               ready_line: str = SUBSCRIBED_LINE) -> "Supervisor":
-        """Boot `mqtt/run.py` and block until it can actually be talked to.
-
-        The default is the SUBACK line, not `[runtime] broker connected`: the caller's
-        very next move is to point a robot at this supervisor, and between the CONNACK and
-        the SUBACK the supervisor is connected and DEAF — the robot's `/state` is dropped
-        by the broker and the QoS-0 config push that answers it is never sent. See
-        `_on_subscribe` in mqtt/supervisor/moxie_runtime.py; PR #143 fixed the mirror
-        image in the robot. `ready_line=CONNECT_LINE` is for the one test that wants to
-        stand in that gap on purpose.
-        """
+        """Boot `mqtt/run.py` and block until it can be talked to — the SUBACK line by
+        default, since between CONNACK and SUBACK the supervisor is connected and deaf."""
         self._proc = subprocess.Popen([sys.executable, os.path.join(REPO, "mqtt", "run.py")],
                                       cwd=REPO, env=self.env,
                                       stdout=open(self.log, "wb"),
@@ -248,21 +211,12 @@ class Stack:
         return self.broker.port
 
     def restart_supervisor(self, *, env=None, timeout: float = 60.0) -> "Supervisor":
-        """Stop `mqtt/run.py` and start a NEW one on the same broker and the same
-        `MOXIE_DATA_DIR` — a real process restart, which is the only honest way to prove
-        that durable state is durable.
+        """Stop `mqtt/run.py` and start a NEW one on the same broker and `MOXIE_DATA_DIR` — a
+        real process restart, the only honest proof that durable state is durable.
 
-        A fresh `MoxieRuntime` object over the same `JsonStore` proves the hydration
-        *code path*, but it shares the test's interpreter: module-level caches, an
-        `atexit` flush or a store the runtime happened to keep open would all survive it
-        and nobody would notice. This does not — the old process is gone, and the new one
-        is the shipped entry point reading its own environment again.
-
-        The status port is re-picked (a `TIME_WAIT` socket on the old one would make the
-        new supervisor's status server fail to bind, and that failure is best-effort and
-        silent), so a caller holding the old `status_url` must re-read it from the
-        returned `Supervisor`. `env` overlays the new process's environment; omitted, it
-        inherits exactly what the first one had.
+        The status port is re-picked (a `TIME_WAIT` socket would silently fail the bind), so
+        re-read `status_url` from the returned `Supervisor`. `env` overlays the new
+        process's environment; omitted, it inherits the first one's.
         """
         assert self.supervisor is not None, "nothing to restart"
         previous = dict(self.supervisor.env)

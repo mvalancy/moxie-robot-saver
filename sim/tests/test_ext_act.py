@@ -1,19 +1,8 @@
-"""The `act` path, end to end — a content extension that actually makes the robot do a thing.
+"""The `act` path end to end — a content extension that makes the robot do a thing.
 
-`test_ext.py` proves the evaluator produces the right **effect list**; `test_ext_escapes.py`
-proves an `act` cannot be declared, granted or emitted outside a closed table. This file
-proves the middle: that an effect list becomes a `RemoteChatAction` a robot can carry out,
-and that it is spelled the way the recovered contract spells it.
-
-The gap this closes is brief S5, *"the single most important scoping fact"* in
-`docs/architecture/backlog/sandboxed-extensions.md`: `volley.execution_actions` was not on
-the wire, so an `act` capability could not do anything and was refused at load rather than
-shipped as a promise the appliance could not keep. Two changes closed it —
-`wire.encode_action` learned `function_id` / `function_args` (#119, cited to
-`RemoteChat.proto`:255-281), and `content_app.execution_actions_of` turns the effect into
-an `execute` `Action`.
-
-The chain, and where each link is asserted below:
+`test_ext.py` proves the effect list, `test_ext_escapes.py` the closed table; this proves the
+effect list becomes a `RemoteChatAction` spelled the way the recovered contract spells it
+(`wire.encode_action` carries `function_id`/`function_args`, RemoteChat.proto:255-281):
 
     {"act": {"name, args}}                       ext.py  `_st_act` / `_run_stmt`
       → {"kind": "act", …}                       ext.evaluate's effect list
@@ -22,16 +11,13 @@ The chain, and where each link is asserted below:
       → {"action": "execute", "function_id": …}  wire.encode_action
       → the robot does it                        sim/virtual_moxie.py
 
-Design: `sandboxed-extensions.md` §4.5/§5.3. Wire shape and the closed-allowlist argument:
-`qr-launch-cards.md` §P0-a/§P0-b.
+Design: `sandboxed-extensions.md` §4.5/§5.3; wire shape: `qr-launch-cards.md` §P0-a/§P0-b.
 """
 import os
-import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.content import ext as E                              # noqa: E402
 from moxie_sdk.content import content_app as CA                     # noqa: E402
@@ -97,15 +83,10 @@ def test_an_act_effect_reaches_the_volley_as_an_execution_action():
 
 
 def test_an_execution_action_becomes_an_execute_action_not_an_invented_verb():
-    """Link 4 — and the one naming decision in this slice.
-
-    Every robot function goes out as `execute` + `function_id`, which is what the recovered
-    `RemoteChatAction.ActionID` actually defines (`execute` = 6, with `function_id` field 7
-    and `repeated function_args` field 8 — `RemoteChat.proto`:255-281). `ActionType.ENABLE_QR`
-    is **not** used, because `"enable_qr"` is not a verb in that enum at all; that member is a
-    known naming defect owned by `qr-launch-cards.md` §P0-a and pinned, deliberately unfixed,
-    by `test_actions_reach_the_robot.py::test_the_naming_defects_p0a_still_owns_are_pinned_here_not_fixed`.
-    Routing *around* it is this slice's business; renaming it is not.
+    """Link 4 — every robot function goes out as `execute` + `function_id` (ActionID
+    `execute` = 6; `function_id` field 7, `function_args` field 8). `ActionType.ENABLE_QR`
+    is NOT used: `"enable_qr"` is not in that enum (a known defect pinned in
+    `test_actions_reach_the_robot.py`, owned by `qr-launch-cards.md` §P0-a).
     """
     v = Volley("hi")
     v.add_execution_action("eb_enable_qr", ["true"])
@@ -116,12 +97,8 @@ def test_an_execution_action_becomes_an_execute_action_not_an_invented_verb():
 
 
 def test_the_wire_shape_is_the_briefs_own_worked_example():
-    """Link 5 — asserted key for key against the JSON `qr-launch-cards.md` §P0-a prints.
-
-    A **list** of args lands in `function_args` (field 8, `repeated string`), which is the
-    type-decided mapping #119 introduced — a dict would have gone to `action_args` instead.
-    This asserts the extension path produces the list form, so no third convention crept in.
-    """
+    """Link 5 — key for key against `qr-launch-cards.md` §P0-a's JSON: a LIST of args lands in
+    `function_args` (a dict would go to `action_args`)."""
     v = Volley("hi")
     v.add_execution_action("eb_enable_qr", ["true"])
     resp = build_chat_response("e", "Show me a card!",
@@ -132,11 +109,8 @@ def test_the_wire_shape_is_the_briefs_own_worked_example():
 
 
 def test_a_global_extension_acts_and_speaks_in_one_reply():
-    """The whole chain through `ContentApp.respond()` — the socket brief S1 describes,
-    filled by a program instead of by Python, now producing an action as well as a line.
-
-    And no model call: `handled` suppressed it, which is the point of a global.
-    """
+    """The whole chain through `ContentApp.respond()`: a program produces an action and a
+    line, and `handled` means no model call."""
     calls = []
     app = app_with({**MODULE, "globals": [{"name": "Timer", "pattern": "set a timer",
                                            "extension": TIMER}]},
@@ -150,13 +124,8 @@ def test_a_global_extension_acts_and_speaks_in_one_reply():
 
 
 def test_a_turn_before_extension_that_only_acts_does_not_lose_its_action():
-    """The branch a naive implementation drops on the floor.
-
-    `ARM_QR` neither speaks nor sets `handled`, so the model answers the child — and the
-    robot must **still** be told to arm its scanner. Before this slice `_reply_from_volley`
-    was only reached when a pack took the whole turn; an action that rode alongside a model
-    answer had nowhere to go.
-    """
+    """`ARM_QR` neither speaks nor sets `handled`, so the model answers — and the robot must
+    STILL be told to arm its scanner (an action alongside a model answer)."""
     app = app_with({**MODULE,
                     "conversations": [{**MODULE["conversations"][0],
                                        "extension": ARM_QR}]},
@@ -188,14 +157,9 @@ def test_a_turn_before_extension_that_acts_and_handles_answers_the_turn():
 # --------------------------------------------------------------------------- #
 
 def test_the_nameable_functions_are_exactly_the_ones_with_parent_facing_words():
-    """The bound, stated as an equality rather than as two lists that could drift.
-
-    `ext.ACTION_WORDS` is simultaneously the allowlist of robot functions and the source of
-    the sentence a parent reads before granting one — so a function nobody wrote English
-    for cannot be declared, cannot be granted, and cannot be emitted. That is the same
-    argument `qr-launch-cards.md` §P0-b makes for the launch-card catalogue: *"the catalog
-    is a closed allowlist, and this is a safety property, not tidiness."*
-    """
+    """`ext.ACTION_WORDS` is both the allowlist and the source of the parent-facing sentence,
+    so a function with no English cannot be declared, granted or emitted (§P0-b: a safety
+    property, not tidiness)."""
     assert CA.robot_functions() == frozenset(E.ACTION_WORDS)
     for name in CA.robot_functions():
         assert E.ACTION_WORDS[name].startswith("Can "), name
@@ -213,12 +177,9 @@ def test_the_nameable_functions_are_exactly_the_ones_with_parent_facing_words():
     (["say", "handled", "act.eb_wake"], ACT_GRANTS, "declared the wrong one"),
 ])
 def test_an_act_that_is_not_declared_and_granted_fails_at_load_not_at_runtime(caps, grants, why):
-    """§4.2's *"absent, not refused, when not granted"*, for `act` specifically.
-
-    Each of these is a **load** refusal, so the program never runs and the turn is never at
-    risk: the child gets the model's answer and the robot is told nothing. A runtime refusal
-    would mean a pack could get half its effects applied, which §4.5 forbids.
-    """
+    """"Absent, not refused, when not granted" (§4.2): each is a LOAD refusal, so the program
+    never runs and the child gets the model's answer; a runtime refusal could half-apply
+    effects (§4.5)."""
     e = {**TIMER, "capabilities": caps}
     assert E.validate(e, grants=grants), why
     r = E.evaluate(e, {"speech": "", "entities": [], "input_vars": {}, "scratch": {},

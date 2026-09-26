@@ -1,31 +1,23 @@
 """
-Memory through the REAL runtime — the end-of-conversation hook and the parent's
-read/erase endpoints.
+Memory through the REAL runtime — the end-of-conversation hook and the parent's read/erase.
 
-`test_memory.py` covers the store and the summarizer in isolation. This suite proves
-the two things only the runtime can do:
+`test_memory.py` covers the store and summarizer. Here, what only the runtime does:
 
-  * it **notices a conversation ended** — an `<exit>` in the answer, a module switch, or
-    the robot going offline — and calls `MoxieApp.on_session_end`, which is where
-    long-term memory gets written (the contract's `complete_handler` moment);
-  * it **serves the memory to a parent**: `GET /memory` (what Moxie remembers, by
-    namespace, with provenance) and `DELETE` / `POST /memory` (erase one namespace or
-    everything) on the same localhost-only status server as `/status` and `/safety`.
-    That is BEYOND #4's floor (openmoxie-feature-audit.md §4.2): a memory a parent
-    cannot read or erase is not acceptable on a child's device.
+  * notice a conversation ended (`<exit>`, a module switch, the robot going offline) and
+    call `MoxieApp.on_session_end`, where long-term memory is written;
+  * serve it to a parent: `GET /memory` (by namespace, with provenance) and `DELETE` /
+    `POST /memory` (erase one namespace or all) on the localhost status server — memory a
+    parent cannot read or erase is unacceptable on a child's device (audit §4.2 BEYOND #4).
 
-Hermetic: fake MQTT transport, fake brain, tmp storage, no sleeps, no `openai`.
+Hermetic: fake transport, fake brain, tmp storage, no sleeps, no `openai`.
 """
 import json
 import os
 import socket
-import sys
 import urllib.error
 import urllib.request
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
-sys.path.insert(0, os.path.join(REPO, "mqtt", "supervisor"))
 
 from helpers_runtime import CHAT_TOPIC, LatchClient, make_runtime  # noqa: E402
 import moxie_runtime  # noqa: E402
@@ -55,11 +47,8 @@ def texts(values):
 
 
 def _brain(answer="Okay!", record=None):
-    """A fake brain that answers turns normally and returns our canned JSON when it is
-    asked to summarize (the summarization prompt is the one that asks for JSON).
-
-    Saying "bye" gets an answer carrying `<exit>` — which is how a real module ends a
-    conversation, and therefore how this suite reaches the memory hook."""
+    """A fake brain: normal turns, canned JSON when asked to summarize, and `<exit>` on
+    "bye" (how a real module ends a conversation, reaching the memory hook)."""
     def chat(messages):
         text = messages[0]["content"]
         if record is not None:

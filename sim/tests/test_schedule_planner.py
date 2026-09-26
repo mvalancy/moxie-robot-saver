@@ -1,16 +1,13 @@
 """
 The adaptive day-planner (mqtt/moxie_sdk/schedule.py) — audit §4.2 BEYOND #7.
 
-`build_schedule` used to be a `(device_id, day)` rotation. It is now a scored recommender
-that plans from history, parent preferences, the clock and the robot's config, and hands
-back a parent-readable *why* for every entry. The wire is unchanged: still exactly the
-recovered `ContentSchedule` (`recovered-proto/embodied/logging/Cloud.proto`:343) with
-`Recommendation`-only entries (`RemoteChat.proto`:26-34) — `test_schedule.py` guards that.
+A scored recommender over history, parent preferences, the clock and the robot's config,
+with a parent-readable "why" per entry. The wire is unchanged: the recovered
+`ContentSchedule` (Cloud.proto:343) of `Recommendation`s (RemoteChat.proto:26-34), guarded
+by `test_schedule.py`.
 
-Each test here isolates ONE scoring factor by flattening its neighbours (a catalog of two
-modules in the same category, or a template with `chat_count: 0`), so a failure names the
-factor that broke. The clock is always injected — no test reads the wall clock, and none
-sleeps.
+Each test isolates ONE scoring factor by flattening its neighbours, so a failure names the
+factor. The clock is always injected; nothing sleeps.
 """
 import datetime
 import json
@@ -19,7 +16,6 @@ import subprocess
 import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
 from moxie_sdk.schedule import (  # noqa: E402
     AFFINITY_FLOOR, CATEGORY_ENERGY, DEFAULT_TEMPLATE, ONBOARD_MODULES, SLOT_MINUTES,
@@ -245,14 +241,9 @@ def test_a_request_for_another_day_is_not_scheduled_today():
 
 
 def test_the_requested_module_is_held_for_its_slot_not_eaten_by_an_earlier_one():
-    """The scored fill must not spend the parent's module before its own slot arrives.
-
-    The isolated factor is the reservation itself. STORY is the only unseen module in this
-    catalog — the other three have been played nine times each, so `coverage` sinks them —
-    which means the free choice would take STORY first on score alone. It was asked for two
-    slots out. Without the hold, slot 0 takes it, slot 2 finds it gone, and the pin
-    evaporates *silently*: a day carrying the requested activity at the wrong time whose
-    audit trail never mentions that a parent asked for anything."""
+    """The scored fill must not spend the parent's requested module before its slot:
+    STORY is the only unseen module, so on score alone slot 0 would take it and the pin
+    two slots out would silently vanish."""
     now = datetime.datetime(2026, 9, 2, 15, 0)
     catalog = [{"module_id": "STORY", "category": "READING"},
                {"module_id": "AUDMED", "category": "REGULATION"},
@@ -292,21 +283,13 @@ def test_a_held_module_is_released_when_there_is_nothing_else_left_to_plan():
 
 
 def test_a_parent_request_survives_every_hour_the_planner_could_run_at():
-    """The regression this guard exists to hold shut. Which module tops the board in the
-    first scored slot is decided by `time_of_day` and settled by the `(device_id, day,
-    module_id)` tiebreak, so before the hold a parent request could be eaten by an earlier
-    slot in the *afternoon* and survive the morning — green on a developer's machine in
-    PDT, red on a CI runner sitting in UTC, on three unrelated PRs at once.
+    """Swept, not claimed: every hour of a fixed day across several device ids (the
+    per-device tiebreak decides the race), since an earlier slot eating the request
+    depended on the hour — green in one timezone, red in another.
 
-    So sweep it rather than claim it: every hour of a fixed day, across several device ids
-    (the tiebreak is per device, and it is what decides the race). The clock is injected,
-    so the sweep means the same thing at every hour it is itself run at.
-
-    The scenario is `test_schedule_sil_e2e`'s: FTUE finished, so the pinned spine is one
-    entry and the request resolves to a *scored* slot rather than slot 0; bedtime an hour
-    out; one activity asked for two slots ahead. Both real branches are covered from fixed
-    instants — in the last 20 minutes of a day that request belongs to tomorrow, and the
-    contract there is that it is NOT pinned into today."""
+    Scenario as `test_schedule_sil_e2e`: FTUE done, bedtime an hour out, one activity asked
+    for two slots ahead. In the last 20 minutes of a day the request belongs to tomorrow
+    and must NOT be pinned into today."""
     day = datetime.datetime(2026, 9, 2)
     seeded = ([_mbh("WELCOME")] + [_mbh("TNT", content_id=f"tnt{i}") for i in range(9)]
               + [_mbh("SYSTEMSCHECK") for _ in range(4)])

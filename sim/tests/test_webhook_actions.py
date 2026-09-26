@@ -1,33 +1,18 @@
 """
-`WebhookApp` must strip its own tags — the external brain that spoke its markup aloud.
+`WebhookApp` must strip its own tags — an external brain must not speak its markup aloud.
 
-`WebhookApp` is how a service outside this repo becomes Moxie's brain: the runtime POSTs
-the turn, the service answers `{"text", "markup", "actions", "end_turn"}`. Its contract
-lets a service name `actions` outright, and `sim/tests/test_e2e_actions_to_robot.py`
-already proves those reach the robot.
+A webhook service answers `{"text", "markup", "actions", "end_turn"}`; declared `actions`
+already reach the robot (`test_e2e_actions_to_robot.py`). An INLINE tag (`<launch:DRAW>`,
+`<exit>`, `<sleep>` — the grammar `actions.py` teaches every model) must likewise be lifted
+out of the spoken text and still fire, as `LLMApp` and `ContentApp` do. Also pinned: declared
+actions still work, both sources compose, `<mark .../>` markup is untouched, and tags we do
+not own are left alone.
 
-But an action tag written INLINE — `<launch:DRAW>`, `<exit>`, `<sleep>`, the grammar
-`mqtt/moxie_sdk/actions.py` defines and teaches to every model — was handled by
-`LLMApp.respond` and by `ContentApp` (`content_app.py:141-142, :217`) and by NOTHING in
-`WebhookApp._json_to_reply`. So an external brain writing the tag the way our own prompt
-teaches got the worst of both: the tag was **spoken to the child verbatim** ("Let's draw
-less-than launch colon DRAW greater-than") and it produced **no action at all**.
-
-These tests pin the fix from both sides — the tag never reaches the spoken text, and the
-action it asked for still fires — and pin the properties that make it safe: declared
-`actions` still work, the two sources compose, behavior markup (`<mark .../>`) is not
-touched, and a tag we do not own is left alone rather than eaten.
-
-Hermetic: `_post` is stubbed, so everything after the one network call is the shipped
-code. No broker, no network, no gateway.
+Hermetic: `_post` is stubbed; everything after the one network call is shipped code.
 """
 import os
-import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-for _p in (os.path.join(REPO, "mqtt"), os.path.join(REPO, "mqtt", "supervisor")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
 from moxie_sdk.apps import WebhookApp           # noqa: E402
 from moxie_sdk.types import (ActionType, ChildProfile, RobotContext,  # noqa: E402

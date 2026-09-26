@@ -211,7 +211,7 @@ ok "SIL round-trip SUCCESS after the outage (a robot the appliance had not seen)
 # `app.on_connect`, while `/status` went on listing it as present.
 #
 # **Fixed 2026-09-03 by production-hardening P1**, which is the slice this comment used to
-# hand the file to. `moxie_runtime.py` now separates *membership* (`self.robots` — who
+# hand the file to. `moxie_runtime/` now separates *membership* (`self.robots` — who
 # have we served) from *confirmation* (`_seen_since_connect` — who have we heard from on
 # THIS socket); a disconnect clears only the second, so nothing happens until a robot
 # gives real evidence and then exactly one robot is re-onboarded, reusing its
@@ -239,10 +239,10 @@ else
   echo "      The supervisor still lists it as connected: the \$SYS/broker/log line that"
   echo "      would have called _device_disconnect died with the broker, so _device_connect"
   echo "      early-returns on 'device already in self.robots'. Stale roster + no re-onboard."
-  echo "      → mqtt/supervisor/moxie_runtime.py:_device_connect / _on_disconnect"
+  echo "      → mqtt/supervisor/moxie_runtime/connection.py:_device_connect / _on_disconnect"
   if [ "${MOXIE_OUTAGE_STRICT_ROSTER:-1}" = "1" ]; then
     fail "the returning robot was not re-onboarded — this REGRESSED (fixed by hardening P1;
-      see moxie_runtime.py::_device_connect and _seen_since_connect). Set
+      see moxie_runtime/connection.py::_device_connect and _seen_since_connect). Set
       MOXIE_OUTAGE_STRICT_ROSTER=0 only to bisect an unrelated failure."
   fi
   FINDINGS=1

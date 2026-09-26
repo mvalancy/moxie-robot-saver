@@ -66,14 +66,8 @@ class ActionType(str, Enum):
 class Action:
     """One `RemoteChatAction` for the robot to carry out.
 
-    `function` / `args` are the `execute` half: `function` is the robot-side function to
-    run and `args` are its arguments. Both reach the wire through
-    `moxie_sdk.wire.encode_action`, which spells them `function_id` (proto field 7) and,
-    **by type**, either `function_args` (field 8, `repeated string` — for a list/tuple) or
-    `action_args` (field 10, `repeated {key, value}` — for a dict). Empty means the keys
-    are not emitted at all. They were silently dropped before 2026-09-04, which made every
-    `execute` this appliance could send arrive unnamed
-    (docs/architecture/backlog/qr-launch-cards.md §P0-a).
+    `function` / `args` are the `execute` half; `wire.encode_action` spells them
+    `function_id` and, by type, `function_args` (list) or `action_args` (dict).
     """
     type: ActionType
     module_id: Optional[str] = None
@@ -94,13 +88,9 @@ class Turn:
     """What Moxie's own eyes have told the server — `moxie_sdk.presence.snapshot()`:
     `{known, face_present, present_s, away_s, faces_seen, last_qr/marker/book, line}`.
 
-    The robot emits `eb-found-face` / `eb-lost-target` / QR / ArUco / book events and
-    nothing else — no pixels, no bounding boxes, no identity
-    (docs/architecture/vision.md §1.1) — so this is presence, not vision. `line` is a
-    short, kid-safe sentence for the system prompt, and is `""` unless something
-    actually changed. Empty dict = a robot whose vision events we have never seen.
-    The same snapshot is on `robot.extra["presence"]` for apps that only get a
-    `RobotContext` (`greeting`, `on_event`)."""
+    Presence, not vision (vision.md §1.1). `line` is a kid-safe prompt sentence, `""`
+    unless something changed. Empty = no vision events seen. Also on
+    `robot.extra["presence"]` for apps that only get a `RobotContext`."""
 
 
 @dataclass
@@ -116,17 +106,9 @@ class Reply:
     """Robot events this reply ASKS the robot to start pushing us — the app's half of
     `RemoteChatAction.EventSubscription.active[]` (remote-chat-protocol.md §RemoteChatAction).
 
-    This is a **request, not the final list.** `moxie_runtime._publish_chat` merges it
-    *into* the supervisor's own vision subscription and never the other way round, so an
-    app (or a sandboxed content pack, which is where these come from — `content_app
-    .subscriptions_of`) can add a perception it needs and cannot switch off the events
-    presence and greeting depend on. Empty for every app that does not ask, which is why
-    a reply that never sets it is byte-identical on the wire to what we sent before."""
-    # ---- scored output (docs/architecture/ai-seam.md §② "Response out") ----------
-    # `RemoteChatOutput` is not just text: it is a fully-scored line. Everything below is
-    # optional, and everything below is FILLED IN by the seam when the app leaves it None
-    # — `supervisor/markup.py::perform` scores every line it performs, so a brain that
-    # says nothing about its own delivery still ships a scored turn.
+    A request: the runtime merges it into its own vision subscription, so an app (or a
+    content pack) can add events but never switch off the ones presence depends on."""
+    # ---- scored output (ai-seam.md §②) — optional; the seam fills whatever is None ----
     mood: Optional[str] = None           # ePlaybackMood by NAME (happy/curious/…)
     dialog_act: Optional[str] = None     # one of the 22 RemoteDialog.DialogActs
     mood_intensity: int = 0              # 0-2 (`maxIntensity=2`)
@@ -137,10 +119,8 @@ class Reply:
     icon: Optional[str] = None           # an `icons-v2` value (4 confirmed)
     sfx: Optional[str] = None            # a `SoundToPlay` id (2 confirmed)
     performance: Optional["Performance"] = None
-    """The staged `moxie_sdk.performance.Performance` behind `markup`, when the behavior
-    planner performed this line. Diagnostics and the preview console — the wire carries
-    the rendered `markup` plus the scored fields above, never this structure. An app may
-    also SET it to stage a line itself; every id in it still passes `validate()`."""
+    """The staged `Performance` behind `markup` (diagnostics/preview; never on the wire).
+    An app may set it to stage a line itself; it is still validated."""
 
     @classmethod
     def offline(cls, text: str = "") -> "Reply":
@@ -153,20 +133,9 @@ class Reply:
 class ReplyChunk:
     """One piece of a **streamed** Reply — a finished sentence, ready to speak.
 
-    An app that can answer incrementally implements `MoxieApp.respond_stream(turn) ->
-    Iterator[ReplyChunk]`; the runtime publishes each chunk as its own
-    `RemoteChatResponse` (`result=REPLY_PENDING` + `chunk_num`) and closes the sequence
-    on the chunk marked `final`, which goes out as `SUCCESS` with
-    `consistency_control.is_completed` (RemoteChat.proto fields 22 / 18 — see
-    docs/architecture/mqtt-and-conversation.md §4.5).
-
-    `actions` are the robot-control tags found *in this chunk*. Our prompt convention puts
-    them at the very front of the answer, so in practice they ride on chunk 0 — but the
-    field is per-chunk so a tag can never be lost by arriving late.
-
-    `result_code` is normally left None: the runtime picks REPLY_PENDING for a
-    non-final chunk and SUCCESS for the final one. Set it to override the final chunk's
-    outcome (e.g. `ResultCode.ERROR_OFFLINE`).
+    Yielded by `MoxieApp.respond_stream`; each is published as a REPLY_PENDING chunk and
+    the `final` one closes the sequence (mqtt-and-conversation.md §4.5). `actions` are
+    per chunk so a late tag is never lost. `result_code=None` lets the runtime choose.
     """
     text: str
     markup: Optional[str] = None
@@ -174,12 +143,7 @@ class ReplyChunk:
     final: bool = False                  # last chunk of the answer (closes the sequence)
     end_turn: bool = False
     result_code: Optional[ResultCode] = None
-    # ---- scored output, per chunk ------------------------------------------------
-    # These did not exist before the behavior planner, which meant a STREAMED answer
-    # could not carry scored output even in principle: `_publish_stream_chunk` had
-    # nothing to pass (docs/architecture/backlog/expressiveness.md §2.3, C2/C4). They
-    # mirror `Reply`'s, and like `Reply`'s they are filled in by the seam when an app
-    # leaves them None, so every published chunk is scored.
+    # ---- scored output, per chunk (mirrors `Reply`; filled in by the seam) ----
     mood: Optional[str] = None
     dialog_act: Optional[str] = None
     mood_intensity: int = 0

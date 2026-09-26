@@ -1,75 +1,40 @@
 """
 The behavior planner — score the line's *job*, stage a performance, render it once.
 
-Why a planner on top of the floor
----------------------------------
-The markup floor (`automarkup.annotate`) maps **words** to tags: a mood for the line, a
-`<usel>` for a question, an arm gesture on the carrying words. It is good and it is cheap,
-and it is still word-level. The planner scores what the line is *doing* — its
-`RemoteDialog.DialogAct` — and stages a performance from that: a `factual_question` holds
-its gaze and tilts, an `apology` goes quiet and stops gesturing, `appreciation` celebrates,
-`backchannelling` ("mm-hm", "I see") gets **no arm gesture at all**. A child reads intent
-off the body before the words land.
+The markup floor (`automarkup.annotate`) maps **words** to tags. The planner scores what
+the line is *doing* — its `RemoteDialog.DialogAct` — and stages a performance from that:
+a `factual_question` holds its gaze and tilts, an `apology` goes quiet, `appreciation`
+celebrates, `backchannelling` ("mm-hm") gets **no arm gesture at all**.
 
-Three rules this module exists to enforce
------------------------------------------
-1. **The planner does not emit strings.** `plan()` returns a validated `Performance`
-   structure and `render()` is the *only* function that mints a mark. Validation is
-   therefore total, and the goldens are readable JSON instead of tag soup.
-2. **A brain may suggest, it may never authorize.** Every id — rule-chosen or handed to us
-   by a model in `ctx` — goes through the same `validate()` against the frozen catalog in
-   `vocab.py`. An id that is not in the catalog is **dropped and counted**, never
-   forwarded. This is the positive-list rule the rest of this codebase runs on
-   (`content/packs.py::SPEC`, `content/ext.py::OPS`, `brains.py`).
-3. **Always degrade to the floor.** `plan()` returns `None` rather than raising for
-   anything it cannot stage, and the seam (`supervisor/markup.py`) falls back to
-   `annotate()` on `None` *and* on any exception. A planner failure costs expressiveness,
-   never a turn — the floor already produces good markup.
+Three rules:
+1. **The planner does not emit strings.** `plan()` returns a `Performance`; `render()` is
+   the *only* function that mints a mark, so validation is total and goldens are JSON.
+2. **A brain may suggest, never authorize.** Every id — rule-chosen or from a model via
+   `ctx` — passes the same `validate()` against the frozen catalog in `vocab.py`; unknown
+   ids are **dropped and counted** (the codebase's positive-list rule).
+3. **Always degrade to the floor.** `plan()` returns `None` rather than raising, and the
+   seam (`supervisor/markup.py`) falls back to `annotate()` on `None` or any exception.
 
-Deterministic — still no model call
------------------------------------
-Same input, same bytes, every time. No `random`, no clock, no network, no model call: it
-scores from the model's own mood/act when the brain supplied one (`ctx`), and from rules
-otherwise. Where the floor takes a `blake2b` digest instead of a die, so does this — the
-talking-gesture spacing is shared with `automarkup` rather than reimplemented.
+Deterministic: no `random`, clock, network or model call. Talking-gesture spacing reuses
+the floor's `blake2b` digest.
 
-What a `Beat` is
-----------------
-One run of words that is performed in one state. Beats come from sentences, sub-split at
-clause punctuation (`, ; : — –`) and again at the talking-gesture stride, so that every
-mark falls at a beat boundary and `render()` never has to reach inside a beat's text.
-That is what makes rendering total: a beat is either performed or it is not.
+A `Beat` is one run of words performed in one state: sentences sub-split at clause
+punctuation and at the talking-gesture stride, so every mark falls on a beat boundary.
 
-Honest limits, recorded rather than papered over
-------------------------------------------------
-* **There is no gaze verb** (24 recovered markup commands, none of them gaze). Gaze lives
-  on the robot: weighted interest points -> `AttentionTarget` -> IK look-at
-  (`gaze-and-attention.md`). The only cloud-side handle is *choosing a look-bearing tree*,
-  so `Beat.gaze` is a closed 4-value enum over `vocab.GAZE_TREES`, not a direction. In
-  particular **we cannot lower the gaze**: the audit's "an apology lowers the gaze" has no
-  id behind it, so an apology gets the least-searching tree we have
-  (`Bht_Idle_Listening`) and the wish is written down here instead of invented.
-* **A nod has no id either.** `backchannelling` is therefore rendered as "no arm gesture,
-  attentive tree" — the assertable half of "a subtle nod and no arm gesture at all".
-* **`timeout` is a turn state, not a property of text.** No rule over words can see it, so
-  the classifier reaches it only when a caller says so (`ctx={"timed_out": True}`).
-  Same for a brain-supplied `dialog_act`: it is a hint, checked like any other id.
-* **The act classifier is a rule engine.** It reads cue phrases and sentence shape; it
-  cannot read context or sarcasm, and it will call an unfamiliar declarative
-  `statement_non_opinion`. That is the floor of the taxonomy, not a model of it — P2 is
-  where a classifier that learns belongs (`backlog/expressiveness.md` §2.7).
-* **No hardware has ever played our markup.** Everything about how a robot performs these
-  ids is inferred from the recovered generators; the browser SIM is the only renderer we
-  can assert against.
+Honest limits:
+* **No gaze verb** exists among the 24 recovered markup commands; gaze lives on the robot
+  (`gaze-and-attention.md`). The only handle is choosing a look-bearing tree, so
+  `Beat.gaze` is a closed enum over `vocab.GAZE_TREES`. We **cannot lower the gaze**; an
+  apology gets the least-searching tree (`Bht_Idle_Listening`).
+* **No nod id** either: `backchannelling` renders as "no arm gesture, attentive tree".
+* **`timeout` is a turn state**, reachable only via `ctx={"timed_out": True}`.
+* **The act classifier is a rule engine** over cue phrases and sentence shape; a learned
+  classifier is P2 (`backlog/expressiveness.md` §2.7).
+* **No hardware has played our markup**; the browser SIM is the only renderer we test.
 
-Prior art, credited
--------------------
-OpenMoxie (MIT, (c) Justin Beghtol) is read as prior art and cited by path — its
-`site/hive/automarkup/` engine is described in `backlog/expressiveness.md` §1.4 and its
-*behaviors* informed the floor. **No code and no data table was copied**, here or there.
-Its learned rule table (`ml/data/_mlprocesseddata.txt`) is the thing P2 answers properly.
-
-Sources for every id: see `vocab.py`, which cites the recovered page and line for each.
+Prior art: OpenMoxie (MIT) `site/hive/automarkup/` informed the floor's behaviors
+(`backlog/expressiveness.md` §1.4). No code or data table was copied. Sources for every
+id are cited in `vocab.py`.
 """
 from __future__ import annotations
 
@@ -79,8 +44,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import vocab
 from .segment import segment
-# The floor's rules ARE the recovered rules; the planner reuses them rather than growing a
-# second, divergent copy of the word classes and the digest that spaces talking gestures.
+# Reuse the floor's recovered rules rather than a divergent copy.
 from .automarkup import (
     BREAK_TIME, TALK_EVERY, TALK_MIN_WORDS, TALK_TAIL, TALK_PROBABILITY,
     MAX_GESTURES_PER_LINE, MAX_GESTURES_PER_SENTENCE,
@@ -97,19 +61,15 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 # Budget guards — a planner may never make a turn worse
 # --------------------------------------------------------------------------- #
-#: Longer than this and `plan()` declines (returns None) so the floor answers. A spoken
-#: chunk is a sentence or two; anything past this is a caller misusing the seam, and
-#: staging it would put unbounded work on the hot path between first token and first audio.
+#: Longer than this and `plan()` declines so the floor answers — bounds hot-path work.
 MAX_PLAN_CHARS = 2000
-#: At most this many `cmd:playback-mood` marks per rendered line — the initial mood plus
-#: **one** transition (`backlog/expressiveness.md` §2.5, "one mood transition at most").
-#: A face that changes on every clause is the twitchiness a child actually notices.
+#: At most this many `cmd:playback-mood` marks per line: the initial mood plus one
+#: transition (`backlog/expressiveness.md` §2.5) — no twitchy face.
 MAX_MOOD_MARKS = 2
 #: Beats past this are performed as plain text. Bounds `render()` on a pathological line.
 MAX_BEATS = 96
 
-#: Counts ids `validate()` refused. The corpus test asserts this stays 0 for our own
-#: output — a non-zero value means something is feeding us vocabulary we cannot justify.
+#: Counts ids `validate()` refused; the corpus test asserts 0 for our own output.
 _DROPPED = 0
 
 
@@ -134,11 +94,8 @@ def _drop(bad: List[str], what: str) -> None:
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class Beat:
-    """One run of words performed in one state (a clause, or a stride inside one).
-
-    Every slot is a **closed** vocabulary from `vocab.py`; `validate()` is what enforces
-    that, and `render()` refuses to mint anything a `Beat` does not carry.
-    """
+    """One run of words performed in one state. Every slot is a closed `vocab.py`
+    vocabulary, enforced by `validate()`."""
     text: str
     mood: Optional[int] = None          # ePlaybackMood 0-10; None = keep the current face
     mood_intensity: int = 0             # 0-2 (`maxIntensity=2`)
@@ -156,10 +113,9 @@ class Beat:
 class Performance:
     """A whole staged line: its beats plus the scored output the wire carries.
 
-    `mood`/`mood_intensity` are the **line's** score (what `RemoteChatOutput.mood` gets);
-    a beat's own `mood` is what drives a face change mid-line. `dropped` lists every id
-    `validate()` removed, so the preview console can flag them in red instead of a caller
-    wondering why a gesture never played.
+    `mood`/`mood_intensity` are the **line's** score (`RemoteChatOutput.mood`); a beat's
+    `mood` is a mid-line face change. `dropped` lists ids `validate()` removed (the
+    preview console shows them).
     """
     beats: Tuple[Beat, ...] = ()
     dialog_act: Optional[str] = None    # one of the 22 `RemoteDialog.DialogAct`
@@ -175,11 +131,8 @@ class Performance:
         return " ".join(b.text for b in self.beats if b.text)
 
     def scored(self) -> Dict[str, Any]:
-        """The scored output fields, ready for `build_chat_response` (ai-seam.md §②).
-
-        `mood` goes out as the **name** (`ePlaybackMood` 0-10 -> `happy`, `curious`, …):
-        `RemoteChatOutput.mood` is a label, while `cmd:playback-mood` carries the int.
-        """
+        """The scored output fields for `build_chat_response` (ai-seam.md §②). `mood`
+        goes out as the **name** (the wire field is a label; `cmd:playback-mood` takes the int)."""
         out: Dict[str, Any] = {}
         if self.mood is not None:
             out["mood"] = vocab.MOOD_NAME_BY_ID.get(self.mood)
@@ -218,8 +171,7 @@ ACT_PROFILES: Dict[str, _Profile] = {
                         signal="closing"),
     # -- repair ---------------------------------------------------------------
     "apology": _Profile(mood=vocab.MOODS["sad"], intensity=1, gesture="Gesture_Self",
-                        # No id lowers the gaze; the least-searching tree is the honest
-                        # substitute, and the wish is recorded in the module docstring.
+                        # No id lowers the gaze (see the module docstring).
                         gaze="Bht_Idle_Listening", signal="apology"),
     "apology_response": _Profile(mood=vocab.MOODS["happy"], intensity=1,
                                  gesture="Gesture_Point", gaze="Bht_Idle_Near_Focused",
@@ -270,10 +222,8 @@ ACT_PROFILES: Dict[str, _Profile] = {
     "other": _Profile(),
 }
 
-#: ePlaybackMood -> `RemoteDialog.EmotionState` (7) — the *perception* enum on the chat
-#: wire (remote-chat-protocol.md:123), which is not the same enum as the face. Moods with
-#: no honest counterpart (shy, concerned, confused, curious, embarrassed) map to neutral
-#: rather than to the nearest-sounding word.
+#: ePlaybackMood -> `RemoteDialog.EmotionState` (remote-chat-protocol.md:123), a different
+#: enum from the face. Moods with no honest counterpart map to neutral.
 _EMOTION_BY_MOOD: Dict[int, str] = {
     vocab.MOODS["neutral"]: "neutral", vocab.MOODS["happy"]: "joy",
     vocab.MOODS["sad"]: "sadness", vocab.MOODS["angry"]: "anger",
@@ -334,8 +284,7 @@ _Q_YES_NO = _rx(r"^(do|does|did|are|is|was|were|can|could|will|would|have|has|ha
                 r"should|shall|may|might|am)\b")
 _Q_FACTUAL = _rx(r"^(what|where|when|who|whose|whom|which|how|why)\b")
 
-#: An imperative opener — the `command` act. Deliberately short and concrete: a long
-#: verb list would swallow every declarative that happens to start with a verb.
+#: An imperative opener — the `command` act. Kept short so declaratives are not swallowed.
 _COMMAND = _rx(r"^(tell|show|say|try|look|listen|come|let'?s|let us|close|open|put|take|"
                r"pick|give|find|guess|touch|press|hold|stop|start|go|sit|stand|clap|"
                r"wave|repeat|point|count|imagine|pretend|draw|sing|read|watch|help)\b")
@@ -346,10 +295,8 @@ _HAS_LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
 def classify(text: str, *, ctx: Optional[dict] = None) -> str:
     """Which of the 22 `RemoteDialog.DialogAct`s this line performs.
 
-    A brain's own `ctx["dialog_act"]` wins **if it is one of the 22** — a suggestion, not
-    an authorization: an unrecognized act falls through to the rules rather than reaching
-    the wire. `ctx={"timed_out": True}` is the only way to reach `timeout`, because no
-    rule over words can see a turn that never arrived.
+    A brain's `ctx["dialog_act"]` wins only if it is one of the 22; otherwise the rules
+    decide. `ctx={"timed_out": True}` is the only way to reach `timeout`.
     """
     ctx = ctx or {}
     hint = ctx.get("dialog_act")
@@ -402,12 +349,9 @@ def _runs(sentence: str) -> List[List[str]]:
 
 def _talk_positions(words: Sequence[str], anchor: int, turn_key: str,
                     chunk_index: int, si: int) -> List[int]:
-    """Word indices where a `Gesture_Talk` falls, by the floor's own spacing rules.
-
-    One every `TALK_EVERY` words after the clause's carrying gesture, never inside the
-    last `TALK_TAIL` words (where it would fight the closing rest pose), and gated by the
-    same stable digest the floor uses in place of OpenMoxie's 80 % die roll.
-    """
+    """Word indices where a `Gesture_Talk` falls, by the floor's spacing rules: every
+    `TALK_EVERY` words after the carrying gesture, never in the last `TALK_TAIL`, gated by
+    the floor's stable digest."""
     if len(words) < TALK_MIN_WORDS:
         return []
     hits, pos, limit = [], anchor + TALK_EVERY, len(words) - TALK_TAIL
@@ -421,25 +365,20 @@ def _talk_positions(words: Sequence[str], anchor: int, turn_key: str,
 def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
     """Score one spoken line into a `Performance`. `None` means "let the floor answer".
 
-    Pure and deterministic: no clock, no `random`, no I/O, **no model call**. It reads the
-    brain's own suggestions out of `ctx` when there are any and falls back to rules.
-
-    `ctx` keys, all optional and all treated as *hints* (validated, never trusted):
+    Pure and deterministic. `ctx` keys, all optional *hints* (validated, never trusted):
       `dialog_act`, `mood` (name/alias or 0-10 int), `gesture`, `emotion`, `signal`,
       `intensity` (0-2), `look` (a `vocab.GAZE_TREES` id), `timed_out` (bool),
       `icons` / `sfx` (bool, both off by default — `vocab` records why),
       `turn_key` + `chunk_index` (chunk bookkeeping: a chunk past the first plans **no**
       mood, so a streamed answer holds one face instead of flipping it every sentence).
 
-    Returns `None` — never raises — for: empty text, text that already carries markup
-    (the idempotence rule S1: an authored line is not ours to restage), and text past
-    `MAX_PLAN_CHARS` (the budget guard).
+    Returns `None` — never raises — for empty text, text already carrying markup (S1:
+    an authored line is not ours to restage), and text past `MAX_PLAN_CHARS`.
     """
     ctx = dict(ctx or {})
     if not text or not text.strip():
         return None
-    # S1 idempotence, and the same defensive angle-bracket guard the floor keeps: a stray
-    # `<` would change how `tts.strip_markup` tokenizes and could eat a spoken word.
+    # S1 idempotence; a stray `<` would also change how `tts.strip_markup` tokenizes.
     if "<" in text or ">" in text:
         return None
     if len(text) > MAX_PLAN_CHARS:
@@ -459,13 +398,8 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
     profile = ACT_PROFILES.get(act, ACT_PROFILES["other"])
 
     # ---- the line's mood: a hint wins, then the WORDS, then the act --------- #
-    # The words come before the act on purpose. The floor's mood cues are not guesses:
-    # each one is what shipped content actually used for that phrase ("Oops." -> 4 Shy,
-    # 2 occurrences; "Oh!" -> 5 Surprised, 14; "I'm sorry" -> 2 Sad, 8 —
-    # behavior-markup.md:117-127). An act profile that overrode them would trade recovered
-    # evidence for a rule of ours, so the profile fills the SILENCE instead: it supplies a
-    # face for every line whose words score plain Neutral, which is most of them and is
-    # exactly where the floor had nothing to say.
+    # Words beat the act: the floor's mood cues are recovered evidence
+    # (behavior-markup.md:117-127); the act profile only fills lines that score Neutral.
     rule_mood, rule_strength = _score_mood(text)
     mood = rule_mood if rule_mood else (profile.mood if profile.mood is not None else 0)
     strength = profile.intensity if profile.intensity is not None else rule_strength
@@ -479,8 +413,7 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
             resolved = vocab.MOOD_ALIASES.get(str(hint_mood).strip().lower())
         if resolved is not None:
             mood = resolved
-        # An unrecognized hint is left for `validate()` to count, so the drop is visible
-        # in one place; the rules answer this line.
+        # An unrecognized hint falls through to the rules.
     if ctx.get("intensity") is not None:
         try:
             strength = max(0, min(vocab.MAX_INTENSITY, int(ctx["intensity"])))
@@ -502,13 +435,8 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
         gaze, tree = (str(look), None)       # an explicit look overrides both
 
     # ---- icons / sfx: gated off, exactly as in the floor -------------------- #
-    # Two ways in, both closed: an explicit id the caller chose (`ctx["icon"]` /
-    # `ctx["sfx"]` — an app's `Reply.icon`/`Reply.sfx`), or the boolean gate that lets the
-    # cue rules pick one. Either way `validate()` is the only thing that authorizes it, so
-    # an id nobody recovered is dropped rather than shown on a child's screen. Both stay
-    # OFF by default: all four confirmed icons are calendar cues and one of the two
-    # confirmed sounds is a music bed for a cast segment (see `vocab.ICON_VALUES` /
-    # `vocab.SFX_IDS` for the honest reasons).
+    # Either an explicit id (`Reply.icon`/`Reply.sfx`) or the boolean gate that lets cue
+    # rules pick one; off by default (see `vocab.ICON_VALUES` / `vocab.SFX_IDS` for why).
     icon = None
     if isinstance(ctx.get("icon"), str) and ctx["icon"] in vocab.ICON_SET:
         icon = ctx["icon"]
@@ -620,10 +548,8 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
 
     if not beats:
         return None
-    # A hint is taken only when it is IN the catalog; an unrecognized one falls through
-    # to the rules rather than blanking the field. Leaving the bad value in for `validate`
-    # to drop would cost the line its emotion/signal entirely — a suggestion nobody can
-    # honor should cost nothing, which is the same shape as the mood and gesture hints.
+    # A hint is taken only when it is in the catalog; otherwise the rules answer (an
+    # unhonorable suggestion must not blank the field).
     emotion = str(ctx.get("emotion") or "")
     signal = str(ctx.get("signal") or "")
     return Performance(
@@ -636,13 +562,8 @@ def plan(text: str, *, ctx: Optional[dict] = None) -> Optional[Performance]:
 
 
 def _clause_mood(clause: str, line_mood: int, current: int) -> Optional[int]:
-    """A clause's own mood, or None to hold the line's face.
-
-    This is §2.1's "a mood per clause", bounded: a clause changes the face only when its
-    *own* words score a mood that differs from the one currently showing, and
-    `MAX_MOOD_MARKS` caps how often that can happen. A face that flips on every comma is
-    the twitchiness the anti-twitch rules exist to prevent.
-    """
+    """A clause's own mood, or None to hold the line's face (§2.1, bounded by
+    `MAX_MOOD_MARKS`): changes only when the clause's own words score a different mood."""
     scored, _ = _score_mood(clause)
     if scored and scored != current:
         return scored
@@ -663,15 +584,12 @@ def _check(value, catalog, slot: str, bad: List[str]):
 
 
 def validate(p: Optional[Performance], *, strict: bool = False) -> Optional[Performance]:
-    """Every id in `p` checked against the frozen catalog in `vocab.py`.
+    """Every id in `p` checked against the frozen catalog in `vocab.py` — the single gate
+    for rule- and model-chosen ids alike.
 
-    **Drops, does not raise**, on the hot path: an id we cannot justify is removed and
-    recorded in `Performance.dropped` (and counted on the module counter a test asserts is
-    zero), so one bad suggestion costs a gesture rather than a turn. `strict=True` raises
-    instead, which is what the property test uses to prove nothing slips past.
-
-    This is the single gate the brief's rule rests on: *a brain may suggest, it may never
-    authorize*. A rule-chosen id and a model-chosen id take exactly this path.
+    **Drops, does not raise**: an unjustified id is removed, recorded in
+    `Performance.dropped` and counted, costing a gesture rather than a turn.
+    `strict=True` raises instead (the property test).
     """
     if p is None:
         return None
@@ -679,9 +597,7 @@ def validate(p: Optional[Performance], *, strict: bool = False) -> Optional[Perf
     beats: List[Beat] = []
     for b in p.beats:
         mood = b.mood
-        # `bool` is an `int` in Python, so `True` would pass the membership test, render
-        # as mood 1 and then SERIALIZE as `true` in a golden — two representations of one
-        # face. Refuse it at the gate rather than let the two drift.
+        # `bool` is an `int`: `True` would render as mood 1 but serialize as `true`.
         if isinstance(mood, bool) or (mood is not None and mood not in vocab.MOOD_IDS):
             _drop(bad, f"mood={mood}")
             mood = None
@@ -740,15 +656,9 @@ def validate(p: Optional[Performance], *, strict: bool = False) -> Optional[Perf
 def render(p: Optional[Performance]) -> str:
     """A validated `Performance` -> behavior markup. The one string-producing function.
 
-    Order within a beat: screen, face, sound, whole body, arm, then the words (wrapped in
-    their `<usel>` delivery), then the pause. The body starts moving with the line rather
-    than after it, which is the one deliberate departure from the floor's layout (the
-    floor mints its tree after the sentence text).
-
-    The line closes the way every chunk must: a terminal `Gesture_None` so the body comes
-    back to rest between spoken segments, and an `icons-v2` clear if the line showed one.
-    Both are *derived* from the structure — no beat carries them — because they are a
-    rendering convention, not a decision.
+    Per beat: screen, face, sound, whole body, arm, words (in their `<usel>`), pause —
+    the body moves with the line, not after it (unlike the floor). Every line ends with a
+    derived `Gesture_None` (back to rest) and an `icons-v2` clear if it showed one.
     """
     if p is None or not p.beats:
         return ""
@@ -791,11 +701,7 @@ def render(p: Optional[Performance]) -> str:
 # JSON — goldens, and the preview console's panel
 # --------------------------------------------------------------------------- #
 def to_json(p: Optional[Performance]) -> Optional[dict]:
-    """A `Performance` as plain JSON — what the goldens store and the preview returns.
-
-    Empty slots are omitted so a golden diff shows what a line actually performs instead
-    of a wall of nulls.
-    """
+    """A `Performance` as plain JSON (goldens, preview). Empty slots are omitted."""
     if p is None:
         return None
     beats = []
@@ -819,11 +725,8 @@ _BEAT_FIELDS = tuple(f for f in Beat.__dataclass_fields__)          # noqa: SLF0
 
 
 def from_json(data: Optional[dict]) -> Optional[Performance]:
-    """The inverse of `to_json` — used by the golden test and by any tool that edits one.
-
-    Unknown keys are ignored rather than raising: a `Performance` that came from outside
-    is data, and `validate()` is what decides whether its ids may be performed.
-    """
+    """The inverse of `to_json`. Unknown keys are ignored; `validate()` decides what
+    may be performed."""
     if not data:
         return None
     beats = tuple(
