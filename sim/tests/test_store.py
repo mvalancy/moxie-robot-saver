@@ -1,16 +1,10 @@
-"""
-Unit tests for the durable per-robot store (mqtt/moxie_sdk/store.py) — the stepping
-stone under `mentor_behaviors` (openmoxie-feature-audit.md ADOPT #2/#8).
-
-Pure: a tmp directory, no MQTT, no broker.
-"""
+"""The durable per-robot store (`moxie_sdk/store.py`) under `mentor_behaviors`. Pure:
+a tmp directory, no MQTT."""
 import json
 import os
 import threading
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from moxie_sdk.store import JsonStore, data_dir, safe_name   # noqa: E402
+from moxie_sdk.store import JsonStore, data_dir, safe_name
 
 
 def test_read_of_a_missing_store_returns_the_default(tmp_path):

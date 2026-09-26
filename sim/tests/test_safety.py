@@ -1,22 +1,10 @@
 """
-Child safety as an enforced contract — the `InputSafety` stage, both sides of a turn
-(`RemoteChatInput.InputSafety`, ai-seam.md §2). Streaming makes it urgent: a sentence is
-published before the rest exists, so a bad one must be stopped before its chunk is sent.
-
-Proven here:
-  * the rule tables — positives, near-miss negatives and false-positive guards ("shoot a
-    photo", "kill the lights"), plus case/accent/leet/elongation/invisible-char folding;
-  * the role split — a child swearing is flagged, Moxie swearing is blocked;
-  * pre-inference: a hard block never reaches the brain, the redirect carries
-    `input.safety`, and the blocked words never enter history;
-  * flagged-but-allowed: the brain IS called and the event is recorded;
-  * post-inference per chunk: earlier chunks stay, the blocked one is never sent, the
-    sequence closes with SUCCESS + `is_completed`, and the generator is cancelled
-    (observed via its `GeneratorExit` latch, no sleeps); and the whole-reply check;
-  * the review queue (store → serve → acknowledge) and `NO_DATA` (counts only);
-  * the console's pure transforms.
-
-No network, broker or model: `FakeClient` transport and a latch-scripted stream.
+Child safety as an enforced contract — the `InputSafety` stage on both sides of a turn
+(ai-seam.md §2). Streaming makes it urgent: a bad sentence must be stopped before its
+chunk is sent. Covers the rule tables (positives, near-misses, folding), the child/Moxie
+role split, pre-inference blocks that never reach the brain or history, flag-and-allow,
+per-chunk post-inference blocks with generator cancellation, the parent review queue and
+`NO_DATA`, and the console's pure transforms. Hermetic: fake transport, scripted stream.
 """
 import json
 import os
@@ -30,20 +18,18 @@ import pytest
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "server"))
 
-from helpers_runtime import CHAT_TOPIC, LatchClient, make_runtime, drive_turn  # noqa: E402
+from helpers_runtime import LatchClient, make_runtime, drive_turn              # noqa: E402
 from moxie_sdk import safety as S                                             # noqa: E402
 from moxie_sdk.app import MoxieApp                                            # noqa: E402
 from moxie_sdk.cloud_config import LoggingPolicy                              # noqa: E402
 from moxie_sdk.store import JsonStore                                         # noqa: E402
-from moxie_sdk.types import Reply, ReplyChunk, ResultCode                     # noqa: E402
+from moxie_sdk.types import Reply, ReplyChunk                                 # noqa: E402
 from moxie_sdk.wire import build_chat_response                                # noqa: E402
 
 PATIENCE = 10.0
 
 
-# --------------------------------------------------------------------------- #
 # 1. the rule tables
-# --------------------------------------------------------------------------- #
 # (category, role, text, expected action). Every category gets positives AND the
 # near-misses that must NOT trip it.
 CASES = [
@@ -121,8 +107,7 @@ def test_normalization_case_accents_leet_and_elongation():
     """The same word survives shouting, accents, full-width forms, leet and elongation."""
     for spelling in ("SHIT", "Shít", "ｓｈｉｔ", "sh1t", "$hit", "shiiiiit"):
         assert S.assess(spelling).categories == ["profanity"], spelling
-    # ...and the leet fold must not BREAK an ordinary word: substituting a trailing "!"
-    # would turn "shoot!" into "shooti" and lose the match entirely.
+    # The leet fold must not break a word: a trailing "!" → "i" would lose "shoot".
     assert S.normalize("shoot!") == "shoot!"
     assert S.assess("I'm gonna shoot you!").action == S.BLOCK
 
@@ -134,16 +119,14 @@ def test_empty_and_none_text_are_allowed():
 
 
 def test_allow_guard_removes_only_the_guarded_span():
-    """A guard is a subtraction, not an amnesty: it deletes its own span, so a second,
-    unexcused use of the same word in the same sentence still counts."""
+    """A guard deletes only its own span: a second, unexcused use still counts."""
     assert S.assess("I killed it at the game").action == S.ALLOW
     second = S.assess("I killed it at the game and killed my sister's plant")
     assert second.action == S.FLAG and "violence_talk" in second.categories
 
 
 def test_every_category_has_a_role_policy_and_a_phrase_set():
-    """Guards the rules FILE, not the code: a category with no phrase set would leave a
-    blocked child with no line to hear."""
+    """Guards the rules FILE: a blocking category with no phrase set leaves a child silent."""
     c = S.RuleClassifier()
     assert c.categories, "the shipped rules file has no categories"
     for cat in c.categories:
@@ -163,16 +146,12 @@ def test_a_broken_rules_file_raises_rather_than_failing_open(tmp_path):
         S.RuleClassifier(path=str(bad))
 
 
-# --------------------------------------------------------------------------- #
 # 1b. the floor cannot be walked past with an invisible character
-# --------------------------------------------------------------------------- #
-# Stripping only U+200B/C/D and U+FEFF let a word spread with U+00AD or U+2060 render
-# identically yet not block — and this floor runs BEFORE the brain. This module is what
-# a self-hosted robot runs, so it must block at least what `functions/api/_lib/safety.js`
-# (the hosted demo) blocks. Triggers are deliberately the mildest self-harm phrasing.
+# A word spread with an invisible character renders identically, so it must still block —
+# and at least whatever `functions/api/_lib/safety.js` (the hosted demo) blocks.
 
-#: (name, character) — everything `normalize()` must delete before matching. Every entry
-#: was probed against THIS interpreter's `unicodedata`, not carried over from the JS side.
+#: (name, character) — everything `normalize()` must delete before matching, probed
+#: against THIS interpreter's `unicodedata`.
 INVISIBLE = [
     ("U+00AD SOFT HYPHEN", "­"),                # Cf — the original reported bypass
     ("U+061C ARABIC LETTER MARK", "؜"),         # Cf
@@ -225,25 +204,22 @@ def _spread(word, sep):
 
 
 def test_the_plain_forms_block_at_all():
-    """The control. Every case below is `is this still true with X injected?`, and the
-    question is worthless if the plain answer was ever no."""
+    """The control for every "still blocks with X injected?" case below."""
     assert S.assess("suicide").blocked_by == ["self_harm"]
     assert S.assess("i want to kill myself").blocked_by == ["self_harm"]
 
 
 @pytest.mark.parametrize("name,ch", INVISIBLE, ids=[n.split()[0] for n, _ in INVISIBLE])
 def test_an_invisible_character_cannot_split_a_blocked_word(name, ch):
-    """Injected between EVERY letter of a blocked word, and used as a word separator
-    inside a blocked phrase. Both must still block."""
+    """Between every letter of a blocked word, and as a separator in a blocked phrase."""
     assert S.assess(_spread("suicide", ch)).blocked_by == ["self_harm"], name
     assert S.assess("i want to " + _spread("kill", ch) + " myself").blocked_by == \
         ["self_harm"], name
 
 
 def test_the_stripped_set_is_a_unicode_category_not_a_hand_picked_list():
-    """The shape of the fix, pinned. `_is_invisible` must answer for the CATEGORY, so a
-    code point nobody thought of is covered the day this interpreter learns about it.
-    Naming code points one at a time is exactly how the original hole happened."""
+    """`_is_invisible` answers for the `Cf` CATEGORY, so an unlisted code point is covered —
+    naming code points one at a time is how the original hole happened."""
     import unicodedata
     cf = [chr(cp) for cp in range(0x11000) if unicodedata.category(chr(cp)) == "Cf"]
     assert len(cf) > 20, "the sweep found almost no Cf characters — the probe is wrong"
@@ -272,9 +248,8 @@ def test_the_combining_grapheme_joiner_is_closed_by_the_category_test_not_by_nfk
 
 
 def test_the_hangul_fillers_are_letters_and_still_have_to_go():
-    """The four glyphless fillers are category `Lo`, so the `Cf` sweep cannot reach them.
-    Two of the four NFKD-fold onto U+1160 before the sweep sees them; all four are named
-    because a reader should not have to know that."""
+    """The glyphless fillers are `Lo`, out of the `Cf` sweep's reach, so all four are named
+    (two NFKD-fold onto U+1160 first)."""
     import unicodedata
     for ch in "ᅟᅠㅤﾠ":
         assert unicodedata.category(ch) == "Lo", ch
@@ -307,20 +282,15 @@ def test_the_punctuation_variant_closes_separators_inside_a_word(text):
 
 
 def test_the_punctuation_variant_is_a_fourth_form_not_a_replacement():
-    """It is added to `_variants`, never substituted for the base — so it can only ADD a
-    match, never lose one the base form already had."""
+    """Added to `_variants`, never substituted for the base: it can only ADD a match."""
     assert S._variants("s.u.i.c.i.d.e") == ("s.u.i.c.i.d.e", "suicide")
     assert S._variants("fuuuuck")[0] == "fuuuuck", "the base form is always first"
     assert "fuck" in S._variants("fuuuuck"), "the de-elongated forms are still there"
 
 
-# --- the false-positive guard, and why the punctuation variant is the NARROW one ------
-#
-# Blocking ordinary speech is its own harm, so the innocent corpus GATES this change. The
-# (*) sentences decided it, measured in Python: stripping all punctuation (`[^a-z0-9 ]+`)
-# erases sentence boundaries and makes both block as self_harm (phrase regexes span
-# `\s+`). Requiring a letter/digit on both sides keeps `want. ` intact and still closes
-# `s.u.i.c.i.d.e`: broad form 2 false positives, narrow form 0.
+# The false-positive guard: blocking ordinary speech is its own harm. Stripping all
+# punctuation erases sentence boundaries and blocks the two (*) sentences; the shipped
+# form needs a letter/digit on both sides, keeping `want. ` and still closing `s.u.i.c.i.d.e`.
 INNOCENT = [
     "that's what i want. To die of laughter would be great, honestly",   # (*)
     "i don't know what i want. To not be so shy would be nice",          # (*)
@@ -360,9 +330,8 @@ def test_an_innocent_sentence_is_not_blocked(text):
 
 
 def test_the_broad_punctuation_transform_is_the_one_that_was_measured_and_rejected():
-    """The measurement, kept executable: with the broad `[^a-z0-9 ]+` form the two (*)
-    sentences block. If this ever reads zero, the corpus or table changed and the narrow
-    form's justification needs re-deriving."""
+    """The measurement, executable: the broad `[^a-z0-9 ]+` form blocks exactly the two (*)
+    sentences. If this reads zero, the narrow form's justification needs re-deriving."""
     import re as _re
 
     class _Broad:
@@ -385,9 +354,8 @@ def test_the_broad_punctuation_transform_is_the_one_that_was_measured_and_reject
 
 
 def test_normalize_output_never_reaches_the_verdict_a_parent_or_the_child():
-    """`normalize()` is a MATCHING transform, never a display one: its output never escapes
-    (`assess()` uses it internally, the excerpt redacts the ORIGINAL text, spoken lines come
-    from the table). Pinned so a caller that echoes it breaks a test first."""
+    """`normalize()` is for matching only: its output never reaches the wire, the excerpt
+    (which redacts the ORIGINAL text) or the spoken redirect."""
     weird = "i want to­ kill​ myself"
     v = S.assess(weird)
     assert v.blocked_by == ["self_harm"]
@@ -398,8 +366,7 @@ def test_normalize_output_never_reaches_the_verdict_a_parent_or_the_child():
 
 # --- parity with the hosted demo -------------------------------------------------------
 def _js_probe(tmp_path, cases):
-    """Run `functions/api/_lib/safety.js` over `cases` via a tiny ES module in `tmp_path`
-    and `node` (a hard CI dependency already). Hermetic: no network, no fixture to sync."""
+    """Run `functions/api/_lib/safety.js` over `cases` with `node` (a CI dependency)."""
     node = shutil.which("node")
     if not node:                                # pragma: no cover - CI always has node
         pytest.skip("node is not installed; the Python↔JS parity guarantee is UNCHECKED")
@@ -416,8 +383,7 @@ def _js_probe(tmp_path, cases):
     return json.loads(out.stdout)
 
 
-#: Cases where the two sides must agree. Every evasion from the tables above, the whole
-#: innocent corpus, and the shapes `normalize()` is responsible for.
+#: Where the two sides must agree: every evasion above, the innocent corpus, `normalize` shapes.
 PARITY_CASES = (
     ["suicide", "i want to kill myself", "SHIT", "Shít", "ｓｈｉｔ", "sh1t", "$hit",
      "shiiiiit", "don’t", "shoot!", "s.u.i.c.i.d.e", "s-u-i-c-i-d-e", "s_u_i_c_i_d_e",
@@ -429,17 +395,14 @@ PARITY_CASES = (
     + INNOCENT
 )
 
-#: The ONE known divergence, and it is not in this fix. Python `casefold()` folds the
-#: German sharp S onto `ss`; JS `toLowerCase()` does not. Python is therefore the stricter
-#: side, no table word contains it, and closing it means changing one of the two engines'
-#: case folding for a case neither table can match. Listed rather than papered over.
+#: The ONE known divergence: Python `casefold()` folds ß onto `ss`, JS `toLowerCase()` does
+#: not. Python is the stricter side and no table word contains it.
 PARITY_KNOWN_DIVERGENCE = ["straße", "STRASSE", "ẞ"]
 
 
 def test_python_and_js_normalize_identically(tmp_path):
-    """`safety.js` claims its normalization is transcribed from `safety.py` so both agree
-    on what a word IS; a divergence would be an invisible phrase blocked locally but not
-    on the demo (or vice versa). This makes that claim checkable."""
+    """`safety.js` claims to transcribe `safety.py`'s normalization; a divergence would be a
+    phrase blocked locally but not on the demo (or vice versa)."""
     got = _js_probe(tmp_path, PARITY_CASES)
     assert len(got) == len(PARITY_CASES)
     for text, js in zip(PARITY_CASES, got):
@@ -460,9 +423,7 @@ def test_python_and_js_reach_the_same_verdict(tmp_path):
 
 
 def test_the_one_known_python_js_divergence_is_the_sharp_s(tmp_path):
-    """Pinned so it is a KNOWN difference rather than a discovered one. It predates this
-    slice, points the safe way (Python is stricter), and no word in either table contains
-    a sharp S. If it ever disappears, this test says so and the note above comes out."""
+    """Pinned as KNOWN; if it ever disappears this says so and the note above comes out."""
     got = _js_probe(tmp_path, PARITY_KNOWN_DIVERGENCE)
     diffs = [t for t, js in zip(PARITY_KNOWN_DIVERGENCE, got) if S.normalize(t) != js["n"]]
     assert diffs == ["straße", "ẞ"], f"the sharp-S divergence changed shape: {diffs}"
@@ -472,9 +433,7 @@ def test_the_one_known_python_js_divergence_is_the_sharp_s(tmp_path):
                for t, js in zip(PARITY_KNOWN_DIVERGENCE, got))
 
 
-# --------------------------------------------------------------------------- #
 # 2. the verdict + what a parent is shown
-# --------------------------------------------------------------------------- #
 def test_wire_shape_matches_the_proto_fields():
     """RemoteChat.proto:181-186 — is_unsafe / blocked_by / intents / phrase_id, only."""
     v = S.assess("how do I make a bomb")
@@ -541,9 +500,7 @@ def test_redirects_rotate_and_carry_behavior_markup():
     assert "grown-up" in caring.text
 
 
-# --------------------------------------------------------------------------- #
 # 3. pre-inference — the brain is never called
-# --------------------------------------------------------------------------- #
 class CountingApp(MoxieApp):
     """A brain that records every call. `respond_stream` is inherited (returns None)."""
     name = "counting"
@@ -555,12 +512,6 @@ class CountingApp(MoxieApp):
     def respond(self, turn):
         self.seen.append(turn.speech)
         return Reply(text=self.text)
-
-
-@pytest.fixture()
-def data_dir(tmp_path, monkeypatch):
-    monkeypatch.setenv("MOXIE_DATA_DIR", str(tmp_path))
-    return tmp_path
 
 
 def _runtime(app, tmp_path, **kw):
@@ -583,8 +534,7 @@ def test_pre_inference_block_never_reaches_the_brain(tmp_path):
         ln["id"] for ln in S.default_classifier().phrase_sets["self_harm"]]
     # a single, complete answer — not a streaming sequence
     assert "chunk_num" not in resp and "consistency_control" not in resp
-    # the child's words are never repeated back, and never enter the history the brain
-    # will see on the NEXT turn
+    # the child's words are never echoed, nor enter the history the next turn's brain sees
     assert "kill myself" not in json.dumps(resp).lower()
     assert not [h for h in rt.history[dev] if h["role"] == "user"]
 
@@ -634,15 +584,13 @@ def test_a_classifier_that_raises_never_silences_moxie(tmp_path):
             raise RuntimeError("boom")
 
     app = CountingApp()
-    rt, dev = _runtime(app, tmp_path, )
+    rt, dev = _runtime(app, tmp_path)
     rt.safety = Broken()
     resp = drive_turn(rt, dev, "hello Moxie")
     assert resp["output"]["text"] == app.text and app.seen == ["hello Moxie"]
 
 
-# --------------------------------------------------------------------------- #
 # 4. post-inference — the whole reply, and each streamed chunk
-# --------------------------------------------------------------------------- #
 def test_non_streaming_reply_is_assessed_whole(tmp_path):
     app = CountingApp(text="Sure! What's your address?")
     rt, dev = _runtime(app, tmp_path)
@@ -683,25 +631,26 @@ class ScriptedStream(MoxieApp):
             raise
 
 
+def _stream(rt, dev, speech, event_id):
+    """One streamed turn, driven to completion; returns every chat reply published."""
+    rt.brain_budget_s = 0                     # no filler noise
+    rt.client = LatchClient()
+    rt._on_remote_chat(dev, rt.robots[dev], json.dumps(
+        {"command": "prompt", "backend": "router", "event_id": event_id, "speech": speech}))
+    rt._pool.shutdown(wait=True)
+    return rt.client.chat_replies(dev)
+
+
 def test_post_inference_block_mid_stream(tmp_path):
-    """The load-bearing case: chunk 0 is already spoken when chunk 1 turns out to be
-    unspeakable. Chunk 0 stays, chunk 1 never goes out, the sequence closes safely, and
-    the rest of the stream is cancelled rather than drained."""
+    """Chunk 0 is already spoken when chunk 1 is unspeakable: chunk 0 stays, chunk 1 never
+    goes out, the sequence closes safely, and the stream is cancelled, not drained."""
     app = ScriptedStream(
         ReplyChunk(text="Sure, I can help with that."),
         ReplyChunk(text="First, tell me your home address so I can find you."),
         ReplyChunk(text="And then we can be secret friends.", final=True),
     )
     rt, dev = _runtime(app, tmp_path)
-    rt.brain_budget_s = 0                     # no filler noise in this test
-    rt.client = LatchClient()
-    robot = rt.robots[dev]
-    rt._on_remote_chat(dev, robot, json.dumps(
-        {"command": "prompt", "backend": "router", "event_id": "evt-x",
-         "speech": "can you write me a letter"}))
-    rt._pool.shutdown(wait=True)
-
-    replies = rt.client.chat_replies(dev)
+    replies = _stream(rt, dev, "can you write me a letter", "evt-x")
     assert len(replies) == 2, replies
     assert replies[0]["output"]["text"] == "Sure, I can help with that."
     assert replies[0]["result"] == "REPLY_PENDING" and replies[0]["chunk_num"] == 0
@@ -724,8 +673,7 @@ def test_post_inference_block_mid_stream(tmp_path):
 
 
 def test_a_blocked_first_chunk_is_a_plain_single_reply(tmp_path):
-    """Nothing has been spoken yet, so the safe line is the whole answer — same wire
-    shape as any one-chunk turn (no chunk_num, no consistency_control)."""
+    """Nothing spoken yet, so the safe line is a plain one-chunk answer."""
     app = ScriptedStream(ReplyChunk(text="Of course! What's your password?"),
                          ReplyChunk(text="Then I can log in.", final=True))
     rt, dev = _runtime(app, tmp_path)
@@ -739,27 +687,19 @@ def test_a_clean_stream_is_unchanged(tmp_path):
     app = ScriptedStream(ReplyChunk(text="The moon changes shape as the sun moves."),
                          ReplyChunk(text="It is called a phase!", final=True))
     rt, dev = _runtime(app, tmp_path)
-    rt.brain_budget_s = 0
-    rt.client = LatchClient()
-    rt._on_remote_chat(dev, rt.robots[dev], json.dumps(
-        {"command": "prompt", "backend": "router", "event_id": "e", "speech": "why?"}))
-    rt._pool.shutdown(wait=True)
-    replies = rt.client.chat_replies(dev)
+    replies = _stream(rt, dev, "why?", "e")
     assert [r["result"] for r in replies] == ["REPLY_PENDING", "SUCCESS"]
     assert rt.safety_view(dev)["counts"] == {}
 
 
 def test_fillers_are_trusted(tmp_path):
-    """Our own written filler lines are not run through the classifier — they are not
-    model output, and a filler that "failed" safety would be a bug in our own text."""
+    """Fillers skip the classifier (not model output) — so they must pass it anyway."""
     from moxie_sdk.filler import FILLERS
     for text, _markup in FILLERS:
         assert S.assess(text, role=S.MOXIE).action == S.ALLOW, text
 
 
-# --------------------------------------------------------------------------- #
 # 5. the parent review queue — store, serve, acknowledge, and the privacy gate
-# --------------------------------------------------------------------------- #
 def test_queue_is_capped_and_newest_first(tmp_path):
     app = CountingApp()
     rt, dev = _runtime(app, tmp_path)
@@ -796,9 +736,8 @@ def test_unknown_device_is_a_404_shape(tmp_path):
 
 
 def test_logging_policy_no_data_keeps_counts_only(tmp_path):
-    """LoggingPolicy NO_DATA is the child-privacy gate (cloud_config.py). Under it the
-    journal keeps *nothing but counts* — no rows, no excerpt, none of the child's words —
-    and the block itself still happens, because the block is not a recording."""
+    """NO_DATA (the child-privacy gate) keeps counts only — no rows, no excerpt — while the
+    block itself still happens (a block is not a recording)."""
     app = CountingApp()
     rt, dev = _runtime(app, tmp_path)
     rt._config_overrides[dev] = {"logging_policy": int(LoggingPolicy.NO_DATA)}
@@ -816,9 +755,8 @@ def test_logging_policy_no_data_keeps_counts_only(tmp_path):
 
 
 def test_the_journal_default_is_not_the_upload_default(tmp_path):
-    """The pushed RobotCloudConfig defaults LoggingPolicy to NO_DATA — that gate is about
-    what the ROBOT uploads. The review queue is our own server's record of turns that
-    already reached it, so it keeps rows until a parent explicitly says NO_DATA."""
+    """The pushed config's NO_DATA default governs what the ROBOT uploads; the review queue
+    records turns our server already has, so it keeps rows until a parent says NO_DATA."""
     import moxie_runtime
     rt, dev = _runtime(CountingApp(), tmp_path)
     assert rt.safety_policy(dev) == moxie_runtime.SAFETY_JOURNAL_POLICY
@@ -834,9 +772,7 @@ def test_status_snapshot_surfaces_the_queue(tmp_path):
     assert robot["safety_total"] == 1 and robot["safety_unreviewed"] == 1
 
 
-# --------------------------------------------------------------------------- #
 # 6. the console's pure transforms (no fastapi — this runs in the hermetic suite)
-# --------------------------------------------------------------------------- #
 from moxie_server.fleet import (  # noqa: E402
     normalize_fleet, normalize_safety, normalize_safety_event, safety_counts,
 )

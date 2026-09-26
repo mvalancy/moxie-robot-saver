@@ -13,29 +13,16 @@ effect list becomes a `RemoteChatAction` spelled the way the recovered contract 
 
 Design: `sandboxed-extensions.md` §4.5/§5.3; wire shape: `qr-launch-cards.md` §P0-a/§P0-b.
 """
-import os
-
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+from helpers_ext import CHAT_MODULE as MODULE, app_with, robot
+from moxie_sdk.content import ext as E
+from moxie_sdk.content import content_app as CA
+from moxie_sdk.content.volley import Volley
+from moxie_sdk.types import Turn, ActionType
+from moxie_sdk.wire import build_chat_response
 
-from moxie_sdk.content import ext as E                              # noqa: E402
-from moxie_sdk.content import content_app as CA                     # noqa: E402
-from moxie_sdk.content.content_app import ContentApp                # noqa: E402
-from moxie_sdk.content.module import load_modules                   # noqa: E402
-from moxie_sdk.content.volley import Volley                         # noqa: E402
-from moxie_sdk.types import Turn, RobotContext, ChildProfile, ActionType   # noqa: E402
-from moxie_sdk.wire import build_chat_response                      # noqa: E402
-
-
-def robot(device_id="robot-act"):
-    return RobotContext(device_id=device_id, module_id="", content_id="",
-                        child=ChildProfile(nickname="Sam"))
-
-
-#: A global whose whole behaviour is one action and one line: *"set a timer"* arms the
-#: robot's own timer and says so. The §4.1 worked example, shrunk to the one thing this
-#: file is about.
+#: §4.1's worked example, shrunk: "set a timer" arms the robot's timer and says so.
 TIMER = {
     "ext_format": 1,
     "capabilities": ["say", "handled", "act.eb_timer_request"],
@@ -45,8 +32,8 @@ TIMER = {
                       {"handled": True}]}],
 }
 
-#: The `turn.before` half — `MoxieGo`'s opening move, arming the QR scanner. It does **not**
-#: speak and does **not** handle the turn, which is the case a naive implementation loses.
+#: `MoxieGo`'s opening move: arm the QR scanner without speaking or handling the turn —
+#: the case a naive implementation loses.
 ARM_QR = {
     "ext_format": 1,
     "capabilities": ["act.eb_enable_qr"],
@@ -54,16 +41,9 @@ ARM_QR = {
     "rules": [{"do": [{"act": {"name": "eb_enable_qr", "args": ["true"]}}]}],
 }
 
-MODULE = {"conversations": [{"name": "Chat", "module_id": "CHAT", "content_id": "default",
-                             "prompt": "You are Moxie."}]}
-
 ACT_GRANTS = (E.DEFAULT_GRANTS | {"act.eb_timer_request", "act.eb_enable_qr"})
-
-
-def app_with(module_json, chat=None, **kw):
-    return ContentApp(load_modules(module_json), chat or (lambda m: "the model answered"),
-                      default_module_id="CHAT", memory=False, safety_classifier=False,
-                      **kw)
+EMPTY_FACTS = {"speech": "", "entities": [], "input_vars": {}, "scratch": {},
+               "child": {}, "memory": {}, "session": {}, "presence": {}}
 
 
 # --------------------------------------------------------------------------- #
@@ -71,9 +51,8 @@ def app_with(module_json, chat=None, **kw):
 # --------------------------------------------------------------------------- #
 
 def test_an_act_effect_reaches_the_volley_as_an_execution_action():
-    """Link 3 — `apply_ext_effects` is what puts an action on the volley, and it puts the
-    args on as **strings**, because both wire fields are `string` in the proto
-    (`RemoteChat.proto`:271-273,:280) and `wire._arg_str` should never have to guess."""
+    """`apply_ext_effects` puts the action on the volley with args as strings — both wire
+    fields are `string` in RemoteChat.proto, so `wire._arg_str` never has to guess."""
     v = Volley("set a timer")
     stats = CA.apply_ext_effects(
         [{"kind": "act", "name": "eb_timer_request", "args": ["1", "300000"]}], volley=v)
@@ -83,11 +62,8 @@ def test_an_act_effect_reaches_the_volley_as_an_execution_action():
 
 
 def test_an_execution_action_becomes_an_execute_action_not_an_invented_verb():
-    """Link 4 — every robot function goes out as `execute` + `function_id` (ActionID
-    `execute` = 6; `function_id` field 7, `function_args` field 8). `ActionType.ENABLE_QR`
-    is NOT used: `"enable_qr"` is not in that enum (a known defect pinned in
-    `test_actions_reach_the_robot.py`, owned by `qr-launch-cards.md` §P0-a).
-    """
+    """Every robot function goes out as `execute` + `function_id` (fields 7/8), never
+    `ActionType.ENABLE_QR` — `"enable_qr"` is not in the proto's ActionID enum."""
     v = Volley("hi")
     v.add_execution_action("eb_enable_qr", ["true"])
     actions = CA.execution_actions_of(v)
@@ -97,7 +73,7 @@ def test_an_execution_action_becomes_an_execute_action_not_an_invented_verb():
 
 
 def test_the_wire_shape_is_the_briefs_own_worked_example():
-    """Link 5 — key for key against `qr-launch-cards.md` §P0-a's JSON: a LIST of args lands in
+    """Key for key against `qr-launch-cards.md` §P0-a: a LIST of args lands in
     `function_args` (a dict would go to `action_args`)."""
     v = Volley("hi")
     v.add_execution_action("eb_enable_qr", ["true"])
@@ -109,8 +85,7 @@ def test_the_wire_shape_is_the_briefs_own_worked_example():
 
 
 def test_a_global_extension_acts_and_speaks_in_one_reply():
-    """The whole chain through `ContentApp.respond()`: a program produces an action and a
-    line, and `handled` means no model call."""
+    """Through `ContentApp.respond()`: one action and one line; `handled` = no model call."""
     calls = []
     app = app_with({**MODULE, "globals": [{"name": "Timer", "pattern": "set a timer",
                                            "extension": TIMER}]},
@@ -124,8 +99,8 @@ def test_a_global_extension_acts_and_speaks_in_one_reply():
 
 
 def test_a_turn_before_extension_that_only_acts_does_not_lose_its_action():
-    """`ARM_QR` neither speaks nor sets `handled`, so the model answers — and the robot must
-    STILL be told to arm its scanner (an action alongside a model answer)."""
+    """`ARM_QR` neither speaks nor handles, so the model answers — and the action must
+    still ride along with that answer."""
     app = app_with({**MODULE,
                     "conversations": [{**MODULE["conversations"][0],
                                        "extension": ARM_QR}]},
@@ -136,8 +111,7 @@ def test_a_turn_before_extension_that_only_acts_does_not_lose_its_action():
 
 
 def test_a_turn_before_extension_that_acts_and_handles_answers_the_turn():
-    """The other branch: acting *is* handling. A rule that answers the turn by arming the
-    scanner rather than by speaking has handled it, and the model must not run."""
+    """A rule that answers the turn by acting instead of speaking has handled it."""
     handling = {**ARM_QR, "capabilities": ["act.eb_enable_qr", "handled"],
                 "rules": [{"do": [{"act": {"name": "eb_enable_qr", "args": ["true"]}},
                                   {"handled": True}]}]}
@@ -157,9 +131,8 @@ def test_a_turn_before_extension_that_acts_and_handles_answers_the_turn():
 # --------------------------------------------------------------------------- #
 
 def test_the_nameable_functions_are_exactly_the_ones_with_parent_facing_words():
-    """`ext.ACTION_WORDS` is both the allowlist and the source of the parent-facing sentence,
-    so a function with no English cannot be declared, granted or emitted (§P0-b: a safety
-    property, not tidiness)."""
+    """`ext.ACTION_WORDS` is both the allowlist and the parent-facing sentence, so a function
+    with no English cannot be declared, granted or emitted (§P0-b)."""
     assert CA.robot_functions() == frozenset(E.ACTION_WORDS)
     for name in CA.robot_functions():
         assert E.ACTION_WORDS[name].startswith("Can "), name
@@ -177,14 +150,11 @@ def test_the_nameable_functions_are_exactly_the_ones_with_parent_facing_words():
     (["say", "handled", "act.eb_wake"], ACT_GRANTS, "declared the wrong one"),
 ])
 def test_an_act_that_is_not_declared_and_granted_fails_at_load_not_at_runtime(caps, grants, why):
-    """"Absent, not refused, when not granted" (§4.2): each is a LOAD refusal, so the program
-    never runs and the child gets the model's answer; a runtime refusal could half-apply
-    effects (§4.5)."""
+    """A LOAD refusal (§4.2): the program never runs and the child gets the model's answer;
+    a runtime refusal could half-apply effects (§4.5)."""
     e = {**TIMER, "capabilities": caps}
     assert E.validate(e, grants=grants), why
-    r = E.evaluate(e, {"speech": "", "entities": [], "input_vars": {}, "scratch": {},
-                       "child": {}, "memory": {}, "session": {}, "presence": {}},
-                   grants=grants)
+    r = E.evaluate(e, EMPTY_FACTS, grants=grants)
     assert not r.ok and r.effects == [], why
 
     app = app_with({**MODULE, "globals": [{"name": "Timer", "pattern": "set a timer",
@@ -195,13 +165,11 @@ def test_an_act_that_is_not_declared_and_granted_fails_at_load_not_at_runtime(ca
 
 
 def test_four_actions_is_the_cap_and_the_fifth_applies_nothing():
-    """§6.3's output cap, on the path that now reaches a robot. Over the cap the whole
-    effect list is discarded — not the prefix that fitted (§4.5) — so a pack cannot flood a
-    robot with execution actions by writing a fifth statement."""
+    """§6.3: over the cap the WHOLE effect list is discarded, not the prefix that fitted
+    (§4.5), so a pack cannot flood a robot with actions."""
     stmt = {"act": {"name": "eb_wake", "args": []}}
     grants = E.DEFAULT_GRANTS | {"act.eb_wake"}
-    facts = {"speech": "", "entities": [], "input_vars": {}, "scratch": {},
-             "child": {}, "memory": {}, "session": {}, "presence": {}}
+    facts = EMPTY_FACTS
     ok = {"ext_format": 1, "capabilities": ["act.eb_wake"], "on": "global",
           "rules": [{"do": [stmt] * E.MAX_ACTIONS}]}
     r = E.evaluate(ok, facts, grants=grants)

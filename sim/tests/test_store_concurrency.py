@@ -1,9 +1,7 @@
 """
-T1–T11 — two processes writing one appliance's data must not lose each other's writes.
-
-The §6 T-series of `docs/architecture/backlog/production-hardening.md`. The decision under
-test (§3.2): advisory `flock` on a per-record sidecar lock file behind a public
-`JsonStore.transaction()`, JSON staying on disk. The tests target what a plausible `flock`
+T1–T11 (production-hardening.md §6) — two processes writing one appliance's data must not
+lose each other's writes. Under test (§3.2): advisory `flock` on a per-record sidecar lock
+behind `JsonStore.transaction()`, JSON staying on disk. Aimed at what a plausible `flock`
 patch gets wrong (§3.3):
 
 * **T4** — locking the *data* file locks an inode `os.replace` swaps out; the sidecar's
@@ -17,6 +15,7 @@ Hermetic: tmp dir, real subprocesses, no broker. No wall-clock reads — tests c
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -33,27 +32,30 @@ from moxie_sdk.store import JsonStore, MemoryStore, StoreLockTimeout   # noqa: E
 DEVICE = "d_conc"
 COLLECTION = "safety_events"
 
-#: Appends per writer process. 250 × 2 already loses about half on an unlocked store (the
-#: brief's 5 000 would be ~750 MB of fsync'd I/O); `MOXIE_TEST_STORE_APPENDS` raises it.
+#: Appends per writer. 250 × 2 already loses ~half unlocked; `MOXIE_TEST_STORE_APPENDS`
+#: raises it.
 APPENDS = int(os.environ.get("MOXIE_TEST_STORE_APPENDS") or 250)
 
 
-# --------------------------------------------------------------------------- #
-# A real second process — not a thread, not a fork of the pytest interpreter
-# --------------------------------------------------------------------------- #
-WRITER = r'''
-import os, sys
-sys.path.insert(0, os.path.join(%(repo)r, "mqtt"))
-from moxie_sdk.store import JsonStore
-root, tag, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
-# A generous lock budget on purpose: `flock` has no queue, so a tight-loop writer can
-# starve its peer, and a starved poller giving up (T5) would look like a lost update. 30 s
-# keeps T1 measuring lost updates only; the refusal path has its own test.
+
+def _script(body: str) -> str:
+    """A `python -c` program (a real second process, not a thread) with the store importable
+    and `root`/`tag`/`n` read from argv; `%(device)r`/`%(collection)r` are filled in."""
+    head = ("import os, sys\n"
+            f"sys.path.insert(0, os.path.join({REPO!r}, 'mqtt'))\n"
+            "from moxie_sdk.store import JsonStore\n"
+            "root, tag, n = sys.argv[1], sys.argv[2], sys.argv[3]\n")
+    return head + body % {"device": DEVICE, "collection": COLLECTION}
+
+
+# 30 s lock budget on purpose: `flock` has no queue, so a tight-loop writer can starve its
+# peer, and a starved poller giving up (T5) would look like a lost update.
+WRITER = _script(r'''
 s = JsonStore(root, lock_timeout_s=30.0)
-for i in range(n):
+for i in range(int(n)):
     assert s.append(%(device)r, %(collection)r, {"who": tag, "i": i}) is not None, \
         "the writer was REFUSED the lock, which is starvation (T5), not a lost update"
-''' % {"repo": REPO, "device": DEVICE, "collection": COLLECTION}
+''')
 
 
 def _spawn_writers(root: str, tags, n: int, script: str = WRITER):
@@ -92,20 +94,15 @@ def test_t1_two_processes_appending_lose_nothing(tmp_path):
 def test_t1b_the_test_can_actually_see_a_lost_update(tmp_path):
     """Teeth for T1: the UNLOCKED read-modify-write run through the same harness must lose
     something, or T1 has stopped testing anything."""
-    unlocked = r'''
-import json, os, sys
-sys.path.insert(0, os.path.join(%(repo)r, "mqtt"))
-from moxie_sdk.store import JsonStore
-root, tag, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+    # The pre-flock `append`: read, mutate, write, with only an in-process lock.
+    unlocked = _script(r'''
 s = JsonStore(root)
 path = s.path(%(device)r, %(collection)r)
-for i in range(n):
-    # `JsonStore.append` as it stood on origin/dev: read, mutate, write — with only an
-    # in-process lock between them, which two processes do not share.
+for i in range(int(n)):
     items = s._read_path(path, [])
     items.append({"who": tag, "i": i})
     s._write_path(path, items)
-''' % {"repo": REPO, "device": DEVICE, "collection": COLLECTION}
+''')
 
     root = str(tmp_path / "data")
     _spawn_writers(root, ("a", "b"), APPENDS, script=unlocked)
@@ -121,10 +118,9 @@ for i in range(n):
 # --------------------------------------------------------------------------- #
 
 def test_t2_nested_transaction_on_one_record_does_not_deadlock(tmp_path):
-    """T2 — reentrancy: a second `open()` + `LOCK_EX` from the same thread would block on
-    itself, and `MemoryStore` call sites nest, so only the outermost acquisition opens an
-    fd. A watchdog turns a regression into "deadlock" instead of a CI timeout.
-    """
+    """T2 — a second `open()` + `LOCK_EX` in the same thread blocks on itself and
+    `MemoryStore` sites nest, so only the outermost acquisition opens an fd. The watchdog
+    turns a regression into "deadlock" rather than a CI timeout."""
     s = JsonStore(str(tmp_path))
     done = threading.Event()
 
@@ -250,16 +246,14 @@ def test_t4c_a_sidecar_is_not_mistaken_for_a_device_or_a_record(tmp_path):
 # --------------------------------------------------------------------------- #
 # T5 — a bounded wait that fails loudly (§3.3 #3)
 # --------------------------------------------------------------------------- #
-HOLDER = r'''
-import os, sys, time
-sys.path.insert(0, os.path.join(%(repo)r, "mqtt"))
-from moxie_sdk.store import JsonStore
-root, ready, hold = sys.argv[1], sys.argv[2], float(sys.argv[3])
+HOLDER = _script(r'''
+import time
+ready, hold = tag, float(n)
 s = JsonStore(root)
 with s.transaction(%(device)r, %(collection)r):
     open(ready, "w").write("held")
     time.sleep(hold)
-''' % {"repo": REPO, "device": DEVICE, "collection": COLLECTION}
+''')
 
 
 @pytest.mark.skipif(store_mod.fcntl is None, reason="no fcntl on this platform")
@@ -328,9 +322,8 @@ def test_t5b_the_wait_is_bounded_by_backoff_not_by_a_spin(tmp_path):
 
 
 def test_t5c_a_refused_write_from_memorystore_returns_nothing_stored(tmp_path):
-    """The five `MemoryStore` sites (§2.1 :562/:653/:691/:727/:753) reach the same
-    transaction, so a lock they cannot get must produce the *"nothing was stored"* answer
-    each of them already has — never a traceback out of a turn."""
+    """The `MemoryStore` write sites (§2.1) share the transaction, so a lock they cannot
+    get yields their existing "nothing was stored" answer — never a traceback in a turn."""
     s = JsonStore(str(tmp_path), lock_timeout_s=0.05)
     m = MemoryStore(s)
     m.merge(DEVICE, "quiz", {"likes": ["dinosaurs"]})
@@ -346,7 +339,7 @@ def test_t5c_a_refused_write_from_memorystore_returns_nothing_stored(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# T6 — the config guard, in the shape of MOXIE_EXT_BUDGET_S (config.py:311-317)
+# T6 — the config guard, in the shape of MOXIE_EXT_BUDGET_S
 # --------------------------------------------------------------------------- #
 
 def test_t6_the_lock_timeout_must_be_inside_the_turn_budget(monkeypatch):
@@ -368,8 +361,8 @@ def test_t6_the_lock_timeout_must_be_inside_the_turn_budget(monkeypatch):
 
 
 def test_t6b_the_store_reads_the_env_var_itself(tmp_path, monkeypatch):
-    """`store.py` imports no config (its docstring's *"pure"* property), so the env var has
-    to be read where the store is — otherwise the knob exists and does nothing."""
+    """`store.py` imports no config (it is pure), so it must read the env var itself or
+    the knob does nothing."""
     monkeypatch.setenv("MOXIE_STORE_LOCK_TIMEOUT_S", "0.75")
     assert JsonStore(str(tmp_path)).lock_timeout_s == pytest.approx(0.75)
     monkeypatch.setenv("MOXIE_STORE_LOCK_TIMEOUT_S", "not-a-number")
@@ -405,16 +398,16 @@ def test_t7_without_fcntl_the_store_still_works_and_says_so(tmp_path, monkeypatc
 
 @pytest.mark.skipif(store_mod.fcntl is None, reason="no fcntl on this platform")
 def test_t7b_with_fcntl_there_is_no_warning_line(capsys):
-    """The reverse direction: on Linux — CI and the appliance both — the note is empty and
-    nothing is printed, so the line means what it says when it does appear."""
+    """The reverse: with fcntl (CI, the appliance) nothing is printed, so the line means
+    what it says when it appears."""
     assert store_mod.locking_note() == ""
     store_mod.warn_no_locking()
     assert capsys.readouterr().out == ""
 
 
 def test_t7c_run_py_prints_the_note_at_startup(tmp_path):
-    """The note has to be printed by something a person runs. `mqtt/run.py::assemble` is
-    where the store is built, so that is where it is said."""
+    """The note must be printed by something a person runs: `mqtt/run.py`, where the store
+    is built."""
     src = open(os.path.join(REPO, "mqtt", "run.py")).read()
     assert "warn_no_locking" in src, (
         "nothing calls store.warn_no_locking() — the fallback is silent after all")
@@ -423,25 +416,20 @@ def test_t7c_run_py_prints_the_note_at_startup(tmp_path):
 # --------------------------------------------------------------------------- #
 # T8/T9 — durability: the old value or the new one, and a durable rename
 # --------------------------------------------------------------------------- #
-KILLER = r'''
-import os, sys
-sys.path.insert(0, os.path.join(%(repo)r, "mqtt"))
-from moxie_sdk.store import JsonStore
-root, tag, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+KILLER = _script(r'''
 s = JsonStore(root)
 real = os.replace
 count = {"n": 0}
 def replace(src, dst):
-    # SIGKILL the writer between the temp file being complete and the rename that
-    # publishes it — the exact window a reader could see a truncated record in.
+    # SIGKILL between a complete temp file and the rename that publishes it.
     count["n"] += 1
-    if count["n"] > n:
+    if count["n"] > int(n):
         os.kill(os.getpid(), 9)
     return real(src, dst)
 os.replace = replace
 for i in range(1000):
     s.write(%(device)r, %(collection)r, [{"who": tag, "i": j} for j in range(i + 1)])
-''' % {"repo": REPO, "device": DEVICE, "collection": COLLECTION}
+''')
 
 
 def test_t8_a_sigkill_between_write_and_replace_never_leaves_a_torn_file(tmp_path):
@@ -464,10 +452,8 @@ def test_t8_a_sigkill_between_write_and_replace_never_leaves_a_torn_file(tmp_pat
     for item in value:
         assert set(item) == {"who", "i"}, item
 
-    # A killed writer can leave its own pid'd scratch file behind — `os.unlink(tmp)` never
-    # runs when the process is SIGKILLed, and no design short of a startup sweep changes
-    # that. What must hold is that the scratch is never mistaken for the record: the temp
-    # names carry a pid and the store only ever reads `<collection>.json`.
+    # A SIGKILLed writer may leave its pid'd `.tmp` behind (no unlink runs); what must hold
+    # is that scratch is never mistaken for the record, which is only `<collection>.json`.
     names = os.listdir(os.path.dirname(s.path(DEVICE, COLLECTION)))
     assert f"{COLLECTION}.json" in names
     assert JsonStore(root).read(DEVICE, COLLECTION) == value
@@ -500,10 +486,8 @@ def test_t9_the_directory_is_fsynced_after_the_rename(tmp_path):
 
 
 def test_t9b_a_directory_fsync_failure_does_not_fail_the_write(tmp_path):
-    """Not every filesystem lets you `open(dir, O_DIRECTORY)` and fsync it — some network
-    and container filesystems refuse with EINVAL. The write already succeeded at that
-    point, so a refused directory sync is a durability *downgrade*, not a failure, and
-    reporting it as one would turn a working appliance into a broken one."""
+    """Some network/container filesystems refuse a directory fsync (EINVAL). The write has
+    already landed, so that is a durability downgrade, not a failed write."""
     s = JsonStore(str(tmp_path))
 
     def boom(fd):
@@ -520,10 +504,8 @@ def test_t9b_a_directory_fsync_failure_does_not_fail_the_write(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_the_on_disk_layout_is_unchanged_apart_from_the_sidecars(tmp_path):
-    """§7 #5: *"A parent can still `cat` and `rm` their child's data. The on-disk layout is
-    byte-identical to today's, `.lock` sidecars aside."* The most legible privacy property
-    this appliance has is the one a hardening slice is most likely to trade away by
-    accident, so it is asserted, not assumed."""
+    """§7 #5: a parent can still `cat` and `rm` their child's data; the on-disk layout is
+    unchanged, `.lock` sidecars aside. The most legible privacy property, so asserted."""
     s = JsonStore(str(tmp_path))
     s.write("d_1", "memory", {"quiz": {"likes": ["dinosaurs"]}})
     s.write_shared("config", {"volume": 3})
@@ -538,9 +520,8 @@ def test_the_on_disk_layout_is_unchanged_apart_from_the_sidecars(tmp_path):
 
 
 def test_a_hand_written_file_is_still_read_back(tmp_path):
-    """`test_device_permits.py`:239-250 already asserts the READ side of cross-process
-    sharing — a permit written behind the runtime's back must take effect. Locking must
-    not have turned that into "only files this process wrote are visible"."""
+    """A file written behind the store's back (no lock taken) must still be read — locking
+    must not mean "only files this process wrote are visible"."""
     s = JsonStore(str(tmp_path))
     s.write_shared("permits", {"d_1": True})
     path = s.shared_path("permits")
@@ -550,9 +531,8 @@ def test_a_hand_written_file_is_still_read_back(tmp_path):
 
 
 def test_transaction_shared_covers_the_fleet_tier(tmp_path):
-    """The fleet tier (`fleet/<collection>.json`) is where the appliance-wide records live
-    — `config`, `permits`, `voice`, the content overlay — and it is the tier two processes
-    are most likely to fight over, because it is not partitioned by device."""
+    """The fleet tier (`config`, `permits`, `voice`, the content overlay) is not
+    partitioned by device, so it is the tier two processes most likely fight over."""
     s = JsonStore(str(tmp_path))
     with s.transaction_shared("config"):
         cfg = s.read_shared("config", {})
@@ -563,10 +543,8 @@ def test_transaction_shared_covers_the_fleet_tier(tmp_path):
 
 
 def test_a_transaction_on_one_record_does_not_block_another(tmp_path):
-    """The lock is **per record**, not per store: holding `memory` must not stop a write to
-    `safety_events`. (In-process the store-wide `RLock` still serializes them — that is
-    today's behaviour and T3 asserts it — but the *file* locks must be distinct, which is
-    what a second process sees.)"""
+    """File locks are per record: holding `memory` must not block `safety_events` in a
+    second process (in-process the store `RLock` still serializes them, per T3)."""
     s = JsonStore(str(tmp_path))
     s.write(DEVICE, "memory", {})
     s.write(DEVICE, COLLECTION, [])
@@ -577,13 +555,8 @@ def test_a_transaction_on_one_record_does_not_block_another(tmp_path):
 # --------------------------------------------------------------------------- #
 # T10 — `append` reads the write's return code
 # --------------------------------------------------------------------------- #
-#
-# `append()` must not report success for an item a failed `write()` (full disk, read-only
-# `/data`) never stored. The soak's contention probe depends on the identity
-#
-#     attempted == items_on_disk + refusals
-#
-# which separates a recorded refusal (§3.2 point 4, A11) from a silent loss (A5).
+# `append()` must not report success for an item a failed `write()` never stored; the soak
+# relies on `attempted == on_disk + refusals` to tell a refusal (A11) from a loss (A5).
 
 def test_t10_append_reports_failure_when_the_write_failed(tmp_path, monkeypatch):
     """A write that did not land must not come back as a list that says it did."""
@@ -599,9 +572,8 @@ def test_t10_append_reports_failure_when_the_write_failed(tmp_path, monkeypatch)
 
 
 def test_t10b_a_read_only_data_directory_is_a_refusal_not_a_lie(tmp_path):
-    """The realistic version of T10, end to end through the real write path: an
-    unwritable tree. `None` is the store's own *"nothing was stored"* answer, and it is
-    what the caller already handles for a refused lock."""
+    """T10 through the real write path: an unwritable tree answers `None`, the same
+    "nothing was stored" a refused lock gives."""
     s = JsonStore(str(tmp_path))
     s.append(DEVICE, COLLECTION, "first")
     device_dir = s.device_dir(DEVICE)
@@ -615,8 +587,7 @@ def test_t10b_a_read_only_data_directory_is_a_refusal_not_a_lie(tmp_path):
 
 
 def test_t10c_append_shared_reports_the_same_way(tmp_path, monkeypatch):
-    """The fleet tier is where the appliance's own history lives (`conn_events`), so a
-    silent failure there is a connection outage nobody can read about afterwards."""
+    """A silent failure on `conn_events` is an outage nobody can read about afterwards."""
     s = JsonStore(str(tmp_path))
     assert s.append_shared("conn_events", {"kind": "connect"}) == [{"kind": "connect"}]
     monkeypatch.setattr(s, "_write_path", lambda *a, **kw: False)
@@ -650,25 +621,30 @@ def test_t10d_the_identity_the_soak_rests_on_holds_under_real_contention(tmp_pat
 # --------------------------------------------------------------------------- #
 # T11 — a raised lock budget must time out, not crash the caller
 # --------------------------------------------------------------------------- #
-#
-# `_wait_flock`'s backoff was `BASE * (2 ** attempt)` with an unbounded int exponent. The
-# loop runs ~`timeout / CAP` polls, so at `attempt == 1024` the float conversion raised
-# `OverflowError` straight out of `transaction()`, past `append`'s `StoreLockTimeout`
-# handler — on the paho thread. The 2.0 s default sat 24 polls short of it; 5 s and 30 s
-# crashed. It needs real contention to reach, so it looked like a rare T1 flake.
+# A backoff of `BASE * (2 ** attempt)` overflows to `OverflowError` at attempt 1024 —
+# past `append`'s `StoreLockTimeout` handler, on the paho thread. ~`timeout / CAP` polls
+# means the 2.0 s default sits just short of it and 5 s / 30 s cross it.
+
+@contextlib.contextmanager
+def _held_elsewhere(s):
+    """The record's sidecar `flock`ed on a separate fd, as another process would hold it."""
+    lock = s.lock_path(s.path(DEVICE, COLLECTION))
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_UN)
+        os.close(fd)
+
 
 @pytest.mark.parametrize("timeout_s", [2.0, 5.0, 30.0, 120.0])
 def test_t11_a_contended_waiter_times_out_at_any_budget(tmp_path, timeout_s):
-    """Whatever the budget, exhausting it is a `StoreLockTimeout`, never an
-    `OverflowError`. The injected sleep does nothing, so ~15 000 polls take milliseconds —
-    measuring the poll count, the axis the bug lives on."""
+    """Any budget, exhausted, is a `StoreLockTimeout`, never an `OverflowError`. A no-op
+    sleep makes ~15 000 polls take milliseconds — the poll count is the bug's axis."""
     s = JsonStore(str(tmp_path), lock_timeout_s=timeout_s, sleep=lambda _: None)
-    path = s.path(DEVICE, COLLECTION)
-    lock = s.lock_path(path)
-    os.makedirs(os.path.dirname(lock), exist_ok=True)
-    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
-    store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_EX)     # another process holds it
-    try:
+    with _held_elsewhere(s):
         with pytest.raises(StoreLockTimeout):
             with s.transaction(DEVICE, COLLECTION):
                 pass
@@ -676,9 +652,6 @@ def test_t11_a_contended_waiter_times_out_at_any_budget(tmp_path, timeout_s):
         assert s.append(DEVICE, COLLECTION, "x") is None
         assert s.write(DEVICE, COLLECTION, ["x"]) is False
         assert s.lock_timeouts >= 2
-    finally:
-        store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_UN)
-        os.close(fd)
 
 
 def test_t11b_the_backoff_never_computes_an_unbounded_exponent(tmp_path):
@@ -686,18 +659,10 @@ def test_t11b_the_backoff_never_computes_an_unbounded_exponent(tmp_path):
     refactor that changes the poll count cannot hide a regression."""
     delays: list = []
     s = JsonStore(str(tmp_path), lock_timeout_s=30.0, sleep=delays.append)
-    path = s.path(DEVICE, COLLECTION)
-    lock = s.lock_path(path)
-    os.makedirs(os.path.dirname(lock), exist_ok=True)
-    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
-    store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_EX)
-    try:
+    with _held_elsewhere(s):
         with pytest.raises(StoreLockTimeout):
             with s.transaction(DEVICE, COLLECTION):
                 pass
-    finally:
-        store_mod.fcntl.flock(fd, store_mod.fcntl.LOCK_UN)
-        os.close(fd)
     assert len(delays) > 1024, (
         f"only {len(delays)} polls — this budget no longer crosses the overflow cliff, so "
         "the test has stopped exercising the bug it was written for")

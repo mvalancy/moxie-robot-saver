@@ -5,18 +5,12 @@
     pack JSON → parse_pack → review_pack/diff_item → apply_pack → JsonStore
               → reload_content → build_module → ContentApp → render_prompt → the brain
 
-* Review is a read, not an evaluation: `render.BLOCKED`/`STRIPPED` must not move across
-  parse, review, diff, inventory, scan and export (else the safe-looking step is the
-  dangerous one).
+* Review is a read: `render.BLOCKED`/`STRIPPED` must not move across parse, review, diff,
+  inventory, scan and export.
 * What the brain receives is inert: import as `POST /content/import` does, take a real
-  turn through `MoxieRuntime`, and read the system message.
-* The probes walk what a pack can actually reach: OUR objects (`volley`, `session`,
-  `presence` — `content_app.py`:200), not jinja2's globals.
-
-Parity half: an ordinary imported pack must still personalise its prompt.
-
-The hostile strings are inert data; `packs.py` is pinned as pure data handling (no renderer
-import, no `eval`/`exec`/`compile`).
+  turn, read the system message. Probes walk what a pack can reach (`volley`, `session`,
+  `presence`), not jinja2's globals.
+* Parity: an ordinary imported pack still personalises its prompt.
 """
 from __future__ import annotations
 
@@ -28,22 +22,21 @@ import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from helpers_content import boot_runtime, free_chat_pack, recording_brain  # noqa: E402
 from moxie_sdk.content import packs as P              # noqa: E402
 from moxie_sdk.content import render as R             # noqa: E402
 
 jinja2 = pytest.importorskip("jinja2", reason="the sandbox only exists when jinja2 does")
 
-#: Substrings that prove a template reached off its own leash — the list
-#: `test_render_sandbox.py` uses, plus the two sentinels this file plants itself.
-#: Deliberately not `sk-`-shaped, so the repo's pre-commit secret scan stays quiet.
+#: Substrings that prove a template reached off its leash (`test_render_sandbox.py`'s list
+#: plus two planted sentinels; not `sk-`-shaped, so the secret scan stays quiet).
 SENTINEL_ENV = "MOXIE-PACK-SENTINEL-never-render"
 SENTINEL_MEMORY = "packsentinel-remembered-fact"
 LEAKS = ("posix", "nt=", "/home/", "C:\\", "<class ", "Environment", "subprocess",
          "builtins", "environ", SENTINEL_ENV, SENTINEL_MEMORY)
 
-#: Escapes reachable from a pack's own render context — `volley`, `session`, `presence`
-#: (`content_app.py`:163,200). A pack author cannot choose the context; they can choose
-#: every attribute walked over it, which is exactly what these do.
+#: Escapes over a pack's render context: the author cannot choose the context, only every
+#: attribute walked over it.
 ESCAPES = {
     "volley_class_globals": "{{ volley.__class__.__init__.__globals__ }}",
     "volley_init_globals_os": "{{ volley.__init__.__globals__['os'].environ }}",
@@ -56,7 +49,7 @@ ESCAPES = {
     "builtins_open": "{{ open('/etc/passwd').read() }}",
     "import_os_environ": "{{ __import__('os').environ }}",
     "lipsum_globals": "{{ lipsum.__globals__['os'].environ }}",
-    # The one that was live. See `test_the_dotted_path_walk_cannot_reach_the_environment`.
+    # Was live once: see `test_the_dotted_path_walk_cannot_reach_the_environment`.
     "globals_walk_to_environ":
         "{{ session.__class__.__repr__.__globals__.inspect.os.environ }}",
 }
@@ -73,22 +66,16 @@ def assert_inert(out, label=""):
     assert len(out) < 400, f"{label} returned {len(out)} chars: {out[:200]!r}"
 
 
-# --------------------------------------------------------------------------- #
-# Fixtures — a pack built exactly the way an exporter builds one
-# --------------------------------------------------------------------------- #
+# --- Fixtures — a pack built exactly the way an exporter builds one ---
 
 NOW = 1788400000
 IDENT = "conversation:FREE_CHAT/default"
 
 
 def hostile_pack(prompt, *, opener="Hi!", version=2, **kw) -> dict:
-    item = {"kind": "conversation", "key": "FREE_CHAT/default",
-            "source_version": version,
-            "data": dict({"name": "Free Chat", "module_id": "FREE_CHAT",
-                          "content_id": "default", "prompt": prompt,
-                          "opener": opener}, **kw)}
-    return P.export_pack([item], name="Totally normal bedtime pack",
-                         pack_id="totally-normal", author="a stranger", now=NOW)
+    return free_chat_pack(prompt, opener=opener, version=version, now=NOW,
+                          name="Totally normal bedtime pack", pack_id="totally-normal",
+                          author="a stranger", **kw)
 
 
 def shipped_module(prompt="You are Moxie, the shipped starter chat.") -> dict:
@@ -98,19 +85,7 @@ def shipped_module(prompt="You are Moxie, the shipped starter chat.") -> dict:
 
 
 def runtime_with(tmp_path, chat, *, defaults=None):
-    """A real `MoxieRuntime` over a real `ContentApp`, booted the way
-    `config.build_content_app()` boots: shipped defaults, then the overlay on disk."""
-    from helpers_runtime import make_runtime
-    from moxie_sdk.content import ContentApp
-    from moxie_sdk.store import JsonStore
-
-    store = JsonStore(str(tmp_path / "data"))
-    shipped = P.shipped_items(defaults or shipped_module())
-    stored = store.read_shared("content_items", {}) or {}
-    overlay = stored.get("items") if isinstance(stored, dict) else {}
-    app = ContentApp(P.build_module(shipped, overlay if isinstance(overlay, dict) else {}),
-                     chat, memory=False, content_defaults=shipped)
-    return make_runtime(app, store=store)
+    return boot_runtime(tmp_path / "data", defaults or shipped_module(), chat)
 
 
 def import_through_the_runtime(rt, pack):
@@ -120,16 +95,12 @@ def import_through_the_runtime(rt, pack):
                              reviewed["expect_digest"])
 
 
-# --------------------------------------------------------------------------- #
-# 1 · The review is a read. Looking at a pack must never evaluate it.
-# --------------------------------------------------------------------------- #
+# --- 1 · The review is a read. Looking at a pack must never evaluate it. ---
 
 @pytest.mark.parametrize("name", sorted(ESCAPES))
 def test_reviewing_a_hostile_pack_never_renders_a_single_construct(name):
-    """The step whose whole purpose is "look before you install" must not be the step
-    that runs it. Both counters are checked because the two renderers fail differently:
-    the sandbox refuses an attribute (`BLOCKED`), the fallback removes a construct
-    (`STRIPPED`), and either moving here would mean something rendered."""
+    """"Look before you install" must not run anything. Both counters, because the sandbox
+    refuses (`BLOCKED`) and the fallback removes (`STRIPPED`)."""
     pack = hostile_pack(ESCAPES[name], opener=ESCAPES[name])
     before = (R.BLOCKED, R.STRIPPED)
 
@@ -149,9 +120,7 @@ def test_reviewing_a_hostile_pack_never_renders_a_single_construct(name):
 
 
 def test_the_review_shows_the_hostile_prompt_verbatim():
-    """R4's answer: a pack that cannot execute can still *say* something, so the review
-    shows the whole prompt and never a summary. Truncating or sanitising it here would
-    hide the one thing a parent has to read."""
+    """R4: a pack can still *say* something, so the review shows the whole prompt."""
     probe = ESCAPES["volley_class_globals"]
     pack = hostile_pack(probe)
     rows = P.review_pack(pack, {})
@@ -160,32 +129,25 @@ def test_the_review_shows_the_hostile_prompt_verbatim():
 
 
 def test_packs_py_handles_data_and_never_renders_it():
-    """Pin the mechanism, not just the symptom (the pattern
-    `test_render_sandbox.py::test_the_renderer_uses_the_sandboxed_environment` sets).
-    A future refactor that reached for the renderer — to preview a prompt in the review,
-    say — would move the evaluation into the step this design promises is inert."""
+    """Pin the mechanism: a refactor reaching for the renderer (say, to preview a prompt
+    in the review) would move evaluation into the step promised inert."""
     pkg = os.path.join(REPO, "mqtt", "moxie_sdk", "content", "packs")
     src = "\n".join(open(os.path.join(pkg, f)).read()
                     for f in sorted(os.listdir(pkg)) if f.endswith(".py"))
     assert "def review_pack" in src and "def apply_pack" in src
     code = "\n".join(l for l in src.splitlines()
                      if not l.strip().startswith(("#", '"', "'", "*", ":")))
-    # `re.compile` is the one legitimate compile here — a pack's `pattern` is validated
-    # by compiling it (`validate_item`), which is why a bad regex is refused at review.
+    # `re.compile` is legitimate: `validate_item` compiles a pack's `pattern` to refuse it.
     code = code.replace("re.compile(", "")
     for forbidden in ("render_prompt", "jinja2", "eval(", "exec(", "compile(",
                       "__import__", "importlib", "subprocess", "os.system"):
         assert forbidden not in code, f"packs.py must not reach for {forbidden!r}"
 
 
-# --------------------------------------------------------------------------- #
-# 2 · Apply stores it as data — the same treatment `code` gets
-# --------------------------------------------------------------------------- #
+# --- 2 · Apply stores it as data — the same treatment `code` gets ---
 
 def test_a_hostile_prompt_is_stored_byte_for_byte_as_inert_data(tmp_path):
-    """It is not scrubbed, escaped or rewritten on the way in. Storing a mangled version
-    would make the review a lie (what you approved is not what runs) and would be a much
-    worse guarantee than "it cannot do anything anyway"."""
+    """Not scrubbed or rewritten: a mangled copy would make the review a lie."""
     probe = ESCAPES["session_mro"]
     rt, _device_id = runtime_with(tmp_path, lambda m: "ok")
     import_through_the_runtime(rt, hostile_pack(probe))
@@ -195,23 +157,15 @@ def test_a_hostile_prompt_is_stored_byte_for_byte_as_inert_data(tmp_path):
     assert rt.content_items()[IDENT]["data"]["prompt"] == probe
 
 
-# --------------------------------------------------------------------------- #
-# 3 · The whole path: import → turn → what the brain was actually handed
-# --------------------------------------------------------------------------- #
+# --- 3 · The whole path: import → turn → what the brain was actually handed ---
 
 @pytest.mark.parametrize("name", sorted(ESCAPES))
 def test_a_hostile_pack_reaches_the_brain_inert(tmp_path, name):
-    """The assertion this file exists for. Real runtime, real `ContentApp`, real store,
-    real import verb; the brain is fake **only** so the test can read the system message
-    it was given. Everything upstream of it is production code."""
+    """The assertion this file exists for: everything is production code except the brain,
+    faked only to read the system message."""
     from helpers_runtime import drive_turn
 
-    seen = {}
-
-    def brain(messages):
-        seen["system"] = messages[0]["content"]
-        return "Sure!"
-
+    seen, brain = recording_brain()
     rt, device_id = runtime_with(tmp_path, brain)
     before = (R.BLOCKED, R.STRIPPED)
     applied = import_through_the_runtime(rt, hostile_pack(ESCAPES[name]))
@@ -224,9 +178,7 @@ def test_a_hostile_pack_reaches_the_brain_inert(tmp_path, name):
 
 
 def test_a_hostile_opener_is_inert_in_the_line_the_child_hears(tmp_path):
-    """`greeting()` renders `opener` through the same sandbox, and that output is spoken
-    verbatim (`content_app.py`:163) — the one render with no model between it and a
-    child."""
+    """`greeting()` speaks the rendered `opener` verbatim — no model between it and a child."""
     from moxie_sdk.types import ChildProfile, RobotContext
 
     probe = ESCAPES["volley_init_globals_os"]
@@ -236,23 +188,16 @@ def test_a_hostile_opener_is_inert_in_the_line_the_child_hears(tmp_path):
     robot = RobotContext(device_id="d_open", child=ChildProfile(nickname="Sam"),
                          module_id="FREE_CHAT", content_id="default")
     reply = rt.app.greeting(robot)
-    # An inert opener renders empty, and an empty opener is *no line at all* rather than
-    # a blank utterance — either shape is safe, neither may carry the host.
+    # An inert opener renders empty (no line at all); neither shape may carry the host.
     assert_inert("" if reply is None else reply.text, "opener")
 
 
 def test_a_hostile_pack_cannot_read_a_secret_this_process_holds(tmp_path, monkeypatch):
-    """The concrete version of "reads nothing it shouldn't": the process really is
-    holding an API key and a remembered fact about a child while the turn runs."""
+    """The process really holds an API key and a remembered fact while the turn runs."""
     from helpers_runtime import drive_turn
 
     monkeypatch.setenv("MOXIE_LLM_API_KEY", SENTINEL_ENV)
-    seen = {}
-
-    def brain(messages):
-        seen["system"] = messages[0]["content"]
-        return "Sure!"
-
+    seen, brain = recording_brain()
     rt, device_id = runtime_with(tmp_path, brain)
     rt.store.write("d_test", "memory", {"free_chat": {
         "facts": [{"id": "f1", "text": SENTINEL_MEMORY}]}})
@@ -267,21 +212,16 @@ def test_a_hostile_pack_cannot_read_a_secret_this_process_holds(tmp_path, monkey
 
 
 def test_a_hostile_pack_writes_no_file_outside_the_data_dir(tmp_path):
-    """Item keys and a memory namespace are strings a stranger chose. They index dicts
-    and (via `store.safe_name`) never a path — asserted rather than reasoned about,
-    because "it is only a dict key" is exactly the sentence that precedes a traversal."""
+    """A stranger-chosen memory namespace never becomes a path (asserted, not reasoned:
+    "it is only a dict key" precedes every traversal)."""
     from helpers_runtime import drive_turn
 
     root = tmp_path / "data"
     outside = tmp_path / "outside"
     outside.mkdir()
     traversal = "../../../../" + str(outside / "pwned")
-    item = {"kind": "conversation", "key": "FREE_CHAT/default", "source_version": 2,
-            "data": {"name": "Free Chat", "module_id": "FREE_CHAT",
-                     "content_id": "default", "prompt": "You are Moxie.",
-                     "opener": "Hi!",
-                     "memory": {"namespace": traversal, "summarize": True}}}
-    pack = P.export_pack([item], name="traversal", pack_id="traversal", now=NOW)
+    pack = free_chat_pack("You are Moxie.", name="traversal", pack_id="traversal", now=NOW,
+                          memory={"namespace": traversal, "summarize": True})
 
     rt, device_id = runtime_with(tmp_path, lambda m: "ok")
     import_through_the_runtime(rt, pack)
@@ -295,15 +235,11 @@ def test_a_hostile_pack_writes_no_file_outside_the_data_dir(tmp_path):
         assert os.path.realpath(path).startswith(os.path.realpath(str(root)))
 
 
-# --------------------------------------------------------------------------- #
-# 4 · The renderer a bare-metal install still uses
-# --------------------------------------------------------------------------- #
+# --- 4 · The renderer a bare-metal install still uses ---
 
 def _no_jinja2_render(template: str, context: dict) -> str:
-    """`render_prompt` with jinja2 made unimportable — the code path a bare
-    `pip install moxie-cloud-sdk` (no `content` extra) takes. Blocks the import rather
-    than uninstalling anything, so this holds in a full-fat venv too; the technique is
-    `test_render_sandbox_parity.py`'s."""
+    """`render_prompt` with jinja2 unimportable (a bare install, no `content` extra);
+    blocks the import so it holds in a full venv too."""
     import builtins
     real_import = builtins.__import__
 
@@ -324,15 +260,8 @@ def _no_jinja2_render(template: str, context: dict) -> str:
 
 
 def test_the_dotted_path_walk_cannot_reach_the_environment(monkeypatch):
-    """The hole this file found: `_minimal_render` resolved dotted paths with `getattr` on
-    live objects, so
-
-        {{ session.__class__.__repr__.__globals__.inspect.os.environ }}
-
-    rendered the process environment (API key included) into the system prompt. Only
-    installs WITHOUT jinja2 were exposed (the sandbox refuses `_` attributes). `_resolve`
-    now refuses any `_`-leading segment and counts it in `BLOCKED`.
-    """
+    """The hole this file found: the jinja2-less fallback walked `getattr` on live objects
+    into `os.environ`. `_resolve` now refuses any `_`-leading segment and counts it."""
     from moxie_sdk.content.volley import Session, Volley
 
     monkeypatch.setenv("MOXIE_LLM_API_KEY", SENTINEL_ENV)
@@ -351,10 +280,7 @@ def test_the_dotted_path_walk_cannot_reach_the_environment(monkeypatch):
 
 
 def test_a_private_attribute_is_refused_but_an_ordinary_one_is_not():
-    """The guard is `_`-leading segments, and nothing wider. `content-module-contract.md`
-    documents `{{ volley.config.child_pii.nickname }}`; `child_pii` merely *contains* an
-    underscore and must keep resolving, or the fix would have broken every shipped
-    prompt."""
+    """Only `_`-LEADING segments are refused: `child_pii` must keep resolving."""
     from moxie_sdk.content.volley import Volley
 
     v = Volley(speech="hi", config={"child_pii": {"nickname": "Sam"}})
@@ -366,10 +292,8 @@ def test_a_private_attribute_is_refused_but_an_ordinary_one_is_not():
 
 @pytest.mark.parametrize("name", sorted(ESCAPES))
 def test_a_hostile_pack_is_inert_without_jinja2_too(name):
-    """No sandbox there at all — the fallback's guarantee is different in kind: it
-    *evaluates* only a bare dotted path and removes everything else, so an escape has
-    nothing to walk. Both renderers must hold, because which one runs depends on how the
-    appliance was installed, not on what the pack says."""
+    """The fallback evaluates only bare dotted paths and removes the rest; both renderers
+    must hold, since which runs depends on the install, not the pack."""
     from moxie_sdk.content.volley import Session, Volley
 
     pack = hostile_pack(ESCAPES[name])
@@ -380,22 +304,13 @@ def test_a_hostile_pack_is_inert_without_jinja2_too(name):
     assert_inert(out, f"{name} (no jinja2)")
 
 
-# --------------------------------------------------------------------------- #
-# 5 · Parity — the sandbox must not have cost packs their reason to exist
-# --------------------------------------------------------------------------- #
+# --- 5 · Parity — the sandbox must not have cost packs their reason to exist ---
 
 def test_an_ordinary_imported_pack_still_personalises_the_prompt(tmp_path):
-    """Every assertion above would also pass if importing a pack simply did nothing.
-    This is the test that says it did something: a stranger's pack, imported, greets the
-    child by name on the very next turn."""
+    """Everything above would pass if importing did nothing; this proves it did."""
     from helpers_runtime import drive_turn
 
-    seen = {}
-
-    def brain(messages):
-        seen["system"] = messages[0]["content"]
-        return "Hello!"
-
+    seen, brain = recording_brain("Hello!")
     rt, device_id = runtime_with(tmp_path, brain)
     import_through_the_runtime(rt, hostile_pack(
         "You are Moxie, talking to {{ volley.config.child_pii.nickname }}."
@@ -408,8 +323,7 @@ def test_an_ordinary_imported_pack_still_personalises_the_prompt(tmp_path):
 
 
 def test_a_legitimate_pack_never_trips_the_refusal_counter(tmp_path):
-    """`BLOCKED` is the alarm that says "somebody tried". An alarm that ordinary content
-    sets off is an alarm nobody reads."""
+    """`BLOCKED` means "somebody tried"; ordinary content must never set it off."""
     from helpers_runtime import drive_turn
 
     rt, device_id = runtime_with(tmp_path, lambda m: "Hello!")

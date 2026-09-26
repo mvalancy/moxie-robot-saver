@@ -1,13 +1,8 @@
 """
-📦 Content packs through the REAL runtime — the store, the five routes, the live swap.
-
-Tests 10-11 of `docs/architecture/backlog/content-packs.md` §3, against a real
-`MoxieRuntime` (`helpers_runtime.make_runtime`) with its own status HTTP server
-(`helpers_runtime.status_server`). No broker, gateway, robot or sleeps.
-
-* An imported pack is live on the NEXT TURN with no restart (read back from a real reply).
-* Nothing else moves: an import publishes nothing and never re-pushes config (a P0 pack
-  carries no `RobotCloudConfig` field).
+📦 Content packs through the REAL runtime — the store, the five routes, the live swap
+(`backlog/content-packs.md` §3 tests 10-11). Real `MoxieRuntime` + status HTTP server; no
+broker, gateway, robot or sleeps. An imported pack is live on the NEXT TURN with no
+restart, and an import publishes nothing (a P0 pack carries no `RobotCloudConfig` field).
 """
 from __future__ import annotations
 
@@ -17,25 +12,19 @@ import urllib.error
 
 import pytest
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
 pytest.importorskip("paho.mqtt.client", reason="the runtime's transport")
 pytest.importorskip("jinja2", reason="content prompts are Jinja templates")
 
-from helpers_runtime import (drive_turn, http_json, make_runtime,  # noqa: E402
-                             status_server)
-from moxie_sdk.content import ContentApp                            # noqa: E402
+from helpers_content import boot_runtime, free_chat_pack, post_status  # noqa: E402
+from helpers_runtime import drive_turn, http_json, status_server   # noqa: E402
 from moxie_sdk.content import packs as P                            # noqa: E402
-from moxie_sdk.store import JsonStore                               # noqa: E402
 
 SHIPPED_PROMPT = "You are Moxie, the shipped starter chat."
 PACK_PROMPT = "You are Moxie, and the imported pack wrote this line."
 IDENT = "conversation:FREE_CHAT/default"
 
 
-# --------------------------------------------------------------------------- #
-# Fixtures
-# --------------------------------------------------------------------------- #
+# --- Fixtures ---
 
 def shipped_module(prompt=SHIPPED_PROMPT, version=1) -> dict:
     """The `MOXIE_CONTENT_MODULE` file every appliance has on disk today."""
@@ -51,47 +40,25 @@ def echo_prompt(messages):
     return messages[0]["content"].splitlines()[0]
 
 
-def build(tmp_path, *, prompt=SHIPPED_PROMPT, version=1, chat=echo_prompt,
-          defaults=None):
-    """A real runtime over a real `ContentApp`, booted like `config.build_content_app()`
-    (shipped defaults, then this data dir's overlay) — two calls are a faithful restart."""
-    store = JsonStore(str(tmp_path))
-    shipped = P.shipped_items(shipped_module(prompt, version) if defaults is None
-                              else defaults)
-    stored = store.read_shared("content_items", {}) or {}
-    overlay = stored.get("items") if isinstance(stored, dict) else None
-    app = ContentApp(P.build_module(shipped, overlay if isinstance(overlay, dict) else {}),
-                     chat, memory=False, content_defaults=shipped)
-    rt, device_id = make_runtime(app, store=store)
-    return rt, device_id
+def build(tmp_path, *, prompt=SHIPPED_PROMPT, version=1, chat=echo_prompt, defaults=None):
+    """`(rt, device_id)`; two calls over one `tmp_path` are a faithful restart."""
+    return boot_runtime(tmp_path, shipped_module(prompt, version) if defaults is None
+                        else defaults, chat)
 
 
 def pack_of(prompt=PACK_PROMPT, version=2, now=1788400000, **kw) -> dict:
-    item = {"kind": "conversation", "key": "FREE_CHAT/default",
-            "source_version": version,
-            "data": dict({"name": "Free Chat", "module_id": "FREE_CHAT",
-                          "content_id": "default", "prompt": prompt,
-                          "opener": "Hello from the pack!"}, **kw)}
-    return P.export_pack([item], name="Bedtime wind-down", pack_id="bedtime-wind-down",
-                         now=now)
+    return free_chat_pack(prompt, version=version, now=now, opener="Hello from the pack!",
+                          name="Bedtime wind-down", pack_id="bedtime-wind-down", **kw)
 
 
-def post(base, path, body=None, *, method="POST"):
-    """`(status, payload)` — `http_json` raises on 4xx/5xx and we want to read the body."""
-    try:
-        return 200, http_json(base + path, method=method, body=body if body is not None
-                              else {})
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode() or "{}")
+post = post_status
 
 
 def review(rt, pack):
     return rt.content_review(json.dumps(pack))
 
 
-# --------------------------------------------------------------------------- #
-# 10 · The runtime: the overlay, the swap, and the next turn
-# --------------------------------------------------------------------------- #
+# --- 10 · The runtime: the overlay, the swap, and the next turn ---
 
 def test_a_fresh_appliance_loads_exactly_the_shipped_defaults(tmp_path):
     """Acceptance criterion 9 — nothing imported, nothing changed."""
@@ -140,8 +107,7 @@ def test_a_turn_that_has_already_started_finishes_on_the_module_it_started_with(
 
 
 def test_the_overlay_is_written_never_the_merged_view(tmp_path):
-    """Only the accepted items land in `fleet/content_items.json` — so a later release's
-    improved shipped item is still an upgrade rather than something the overlay shadows."""
+    """Only accepted items land in the overlay, so a later shipped release still upgrades."""
     rt, _ = build(tmp_path)
     rt.content_import(pack_of(), [IDENT])
     assert list(rt._content_overlay()) == [IDENT]
@@ -310,8 +276,8 @@ def test_a_code_carrying_pack_imports_and_the_string_is_never_executed(tmp_path)
 
 
 def test_a_pack_sent_as_raw_text_is_digested_over_exactly_those_bytes(tmp_path):
-    """What the 📦 card actually sends. The console never re-serializes a pack: a browser
-    would turn `1.0` into `1` and make a perfectly good file report as tampered."""
+    """The 📦 card sends raw text: a browser re-serializing would turn `1.0` into `1` and
+    make a good file read as tampered."""
     rt, _ = build(tmp_path)
     raw = P.dumps_pack(pack_of(temperature=1.0))
     assert '"temperature": 1.0' in raw
@@ -330,9 +296,7 @@ def test_the_pack_size_cap_is_env_configurable(tmp_path, monkeypatch):
     assert moxie_runtime.MoxieRuntime.pack_max_bytes() == P.DEFAULT_MAX_BYTES
 
 
-# --------------------------------------------------------------------------- #
-# 11 · The five routes, through the runtime's own status HTTP server
-# --------------------------------------------------------------------------- #
+# --- 11 · The five routes, through the runtime's own status HTTP server ---
 
 @pytest.fixture()
 def served(tmp_path):
@@ -477,11 +441,8 @@ def test_the_whole_round_trip_over_http(served):
 
 
 def test_a_second_appliance_re_exports_the_file_the_first_one_sent_it(tmp_path):
-    """Two appliances, one file: A imports and exports; B (fresh data dir) imports A's export
-    and exports again; the files must be byte-identical, catching anything the STORE
-    normalises (dropped field, reset `source_version`, float→int). `now` is pinned because
-    `created_at` legitimately differs.
-    """
+    """A imports and exports; B imports A's export and exports again: byte-identical, so
+    nothing the STORE normalises slips through (`now` pinned: `created_at` differs)."""
     a, _ = build(tmp_path / "a")
     b, _ = build(tmp_path / "b")
 
