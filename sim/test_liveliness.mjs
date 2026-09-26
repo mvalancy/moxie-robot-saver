@@ -1,9 +1,10 @@
-/* test_liveliness.mjs — four liveliness behaviours, in a real browser on the real page:
+/* test_liveliness.mjs — liveliness behaviours, in a real browser on the real page:
  *   1. Moxie stops muttering while you talk to her, and resumes once you stop
  *      (`ambient.js`'s conversation hold).
  *   2. Her self-talk appears in the comms log.
  *   3. The chat dock fills the width available to it, rail open or closed, desktop and phone.
  *   4. The speech bubble hangs on her HEAD in the 3-D scene and follows her.
+ *   6. The presence badge stays hidden until a face event (§5 is her diagrams).
  *
  * EVERY ASSERTION READS RECORDED STATE, NEVER A LIVE SAMPLE (playbook rule 11): the page's
  * test seams are read back, and the hold's quiet period is shortened through its seam.
@@ -614,6 +615,34 @@ for (const [label, w, h] of [
   eq(await page.evaluate(() => window.moxieDiagram.render("")), false,
      "an empty diagram draws nothing and does not throw");
 
+  await page.close();
+}
+
+/* ======================================================================== *
+ * 6. THE PRESENCE BADGE STAYS HIDDEN UNTIL HER EYES REPORT SOMETHING
+ * ======================================================================== *
+ * It carried `hidden` from the start, but an inline `display:flex` beat the UA's
+ * `[hidden]` rule, so "PRESENCE UNKNOWN" showed on every local serve. Asserted on the
+ * RENDERED box (computed display + size), which is what the visitor sees, not the attribute.
+ */
+for (const [label, w, h, mobile] of [["desktop", 1280, 900, false], ["phone", 390, 844, true]]) {
+  const page = await open(w, h, mobile);
+  const shown = () => page.evaluate(() => {
+    const b = document.getElementById("presence-badge");
+    const r = b.getBoundingClientRect();
+    return { display: getComputedStyle(b).display, area: r.width * r.height,
+             state: b.getAttribute("data-presence"),
+             label: document.getElementById("presence-state").textContent };
+  });
+  const before = await shown();
+  eq(before.state, "unknown", `${label}: no face event yet, so presence is unknown…`);
+  ok(before.display === "none" && before.area === 0,
+     `${label}: …and the badge is NOT rendered (got display=${before.display}, area=${before.area})`);
+  await page.evaluate(() => window.moxieBridge.faceEvent("found"));
+  const after = await shown();
+  eq(after.label, "HERE", `${label}: a face event names what she saw`);
+  ok(after.display === "flex" && after.area > 0,
+     `${label}: …and reveals the badge (got display=${after.display}, area=${after.area})`);
   await page.close();
 }
 
