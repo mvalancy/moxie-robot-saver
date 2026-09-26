@@ -8,21 +8,11 @@ import {
 /* =========================================================================== *
  * 15j. THE EXPRESSIVE ENVELOPE — Moxie chooses her own face
  * =========================================================================== *
- *
- * WHAT THIS REPLACED, measured on the live site before it shipped. The hosted model was
- * asked for prose, and `wire.js`'s six regexes then GUESSED her mood from that prose. Any
- * reply that was not a question, not an exclamation, and contained none of ~20 keywords
- * fell to the same default — happy + `Gesture_Talk` — so she wore one grin through almost
- * every conversation. "Quantum entanglement is like having two magic dice" got the same
- * face as "I'm sorry you had a bad day".
- *
- * Now the model is asked for `{say, mood, gesture}` and the floor is the FALLBACK. The two
- * properties that matter are asserted here in both directions:
- *
- *   1. a model that answers the envelope drives the face, across all eleven moods —
- *      including the six the floor can never reach;
- *   2. a model that ignores it is not broken by it. Prose, fenced JSON, half an envelope,
- *      an array, a truncated brace: every one of them still SPEAKS, and never speaks JSON.
+ * The model is asked for `{say, mood, gesture}`; `wire.js`'s regex floor (which guessed
+ * happy + Gesture_Talk for almost every reply) is only the FALLBACK. Asserted both ways:
+ *   1. an envelope drives the face, across all eleven moods (six the floor cannot reach);
+ *   2. a model that ignores it is unharmed — prose, fenced JSON, half an envelope, an
+ *      array, a truncated brace all still SPEAK, and never speak JSON.
  */
 {
   const vocab = wire.expressiveVocab();
@@ -111,12 +101,9 @@ import {
   }
 
   // ---- 4b. A GATEWAY THAT REJECTS THE PENALTIES COSTS ONE CALL, NOT THE DEMO -- //
-  //
-  // `frequency_penalty` and `presence_penalty` are core OpenAI fields, but this deployment
-  // points at whatever gateway the operator configured, and one that has never heard of
-  // them answers 400 — which `callGateway` would otherwise turn into `upstream_down` and a
-  // SCRIPTED page. A repetition fix that can take the demo down on an unfamiliar backend
-  // is not a fix, so the first such 400 disables them for the isolate and retries once.
+  // A gateway that has never heard of `frequency_penalty`/`presence_penalty` answers 400,
+  // which would otherwise be `upstream_down` and a SCRIPTED page. The first such 400
+  // disables them for the isolate and retries once.
   {
     fresh();
     chat.__resetPenaltyProbe();
@@ -158,15 +145,10 @@ import {
   }
 
   // ---- 4d. A WRONG `happy` IS OVERRULED, AND ONLY A WRONG ONE --------------- //
-  //
-  // Measured twice live: this model collapses onto `happy`. Prompting took it from two
-  // faces to three and no further — it answered "I'm sorry you felt left out" with a happy
-  // face. So when the model says HAPPY and the sentence carries one of the floor's
-  // high-precision cues, the floor wins: those regexes read the words in front of them,
-  // and `happy` is this model's null answer rather than a judgement.
-  //
-  // All three conditions are asserted, because the risk in this change is that it quietly
-  // becomes the floor taking the whole channel back.
+  // Measured live: this model collapses onto `happy` (it answered "I'm sorry you felt left
+  // out" with a grin). When the model says HAPPY and the sentence carries one of the
+  // floor's high-precision cues, the floor wins. All three conditions are asserted, so the
+  // floor cannot quietly take the whole channel back.
   {
     const mood = (mk) => (/\+mood\+:(\d+)/.exec(mk) || [])[1];
     eq(mood(wire.markupFloor("I am sorry you felt left out.", { mood: "happy", gesture: "self" })), "2",
@@ -199,16 +181,10 @@ import {
 /* =========================================================================== *
  * 15k. AN EXPIRED CONVERSATION IS FORGOTTEN, NOT REFUSED
  * =========================================================================== *
- *
- * `CONTEXT_TTL_S` is one hour. Until 2026-09-06 a blob older than that failed the same
- * check as a FORGED one and answered `bad_request` — and `cloud-transport.js` only
- * replaces its stored blob on a successful reply, so the stale blob was sent again on the
- * next turn, and the next. A tab left open over lunch was refused for ever until reload.
- * The conversation did not degrade; it stopped.
- *
- * The two cases want opposite answers, and both are asserted here: a bad signature is
- * somebody editing history they were not given, and stays refused; an expiry is a blob we
- * minted ourselves that got old, and the turn is served with the history dropped.
+ * `cloud-transport.js` only replaces its blob on a successful reply, so refusing an
+ * expired blob (`CONTEXT_TTL_S`, one hour) refused a tab left open over lunch for ever.
+ * A bad signature is forged history and stays refused; an expiry is our own blob grown
+ * old, and the turn is served with the history dropped.
  */
 {
   const cfg = wire2.readConfig(FULL);
@@ -255,16 +231,10 @@ import {
 /* =========================================================================== *
  * 15m. SHE CAN DRAW — AND THE SYNTAX IS NEVER SPOKEN
  * =========================================================================== *
- *
- * `say` is read aloud. A fenced mermaid block left inside it is synthesised verbatim, so
- * a child hears "backtick backtick backtick mermaid graph T D semicolon" in Moxie's
- * voice — and it is minted into the TTS ticket and PAID FOR, and it lands in the
- * transcript as syntax. Extracting the diagram is the easy half; this section is about
- * the other one, which is the half a listener notices.
- *
- * The split happens at the gateway boundary, so the guarantee is structural rather than
- * a discipline: everything downstream — the safety sweep, the ticket, the wire text, the
- * markup floor — only ever sees words, because by then the diagram is somewhere else.
+ * A mermaid fence left in `say` would be read aloud ("backtick backtick backtick…"),
+ * minted into the paid TTS ticket and written to the transcript. The split happens at the
+ * gateway boundary, so everything downstream — safety sweep, ticket, wire text, markup
+ * floor — only ever sees words.
  */
 {
   const DIAGRAM = "graph TD;\n  Child-->Moxie;\n  Moxie-->Gateway;";
@@ -283,10 +253,8 @@ import {
 
   eq(r.body.diagram, DIAGRAM, "the diagram itself rides the envelope as source text");
   ok(r.body.diagram.includes("graph TD"), "…carrying what she actually drew");
-  /* NEWLINES SURVIVE, and this assertion is the whole reason `completionText` no longer
-   * flattens whitespace. Mermaid is newline-delimited: a diagram collapsed to one line is
-   * not a diagram, it is a parse error. The flattening now happens once, on the spoken
-   * half only, after the fence is out. */
+  /* NEWLINES SURVIVE: mermaid is newline-delimited, so whitespace is flattened only on
+   * the spoken half, after the fence is out. */
   ok(r.body.diagram.includes("\n"),
      `…with its line breaks intact — mermaid is newline-delimited (${JSON.stringify(r.body.diagram)})`);
 
@@ -298,13 +266,9 @@ import {
   ok(!/```|graph TD|-->/.test(ticketed.claims.t || ""),
      "…and the TEXT IT AUTHORISES carries no diagram: nothing pays to synthesise syntax");
 
-  /* THE GATE — asked in both directions, because a diagram in a conversation about
-   * feelings is the exact noise the feature must not become.
-   *
-   * It exists at all because of a measurement: buried at 88 % through a 5 337-character
-   * system message, the drawing instruction was never once obeyed, and TWO rewrites of the
-   * wording changed nothing. Louder wording in a diluted position is not a fix; the
-   * instruction now appears only when it applies, in a message of its own. */
+  /* THE GATE, both directions: a diagram in a conversation about feelings is noise. The
+   * drawing instruction appears only when it applies, in a message of its own — buried
+   * deep in one long system message it was measured never to be obeyed. */
   for (const q of ["can you show me the steps of how a seed becomes a tree?",
                    "how does the robot talk to the cloud?", "how does a car engine work?",
                    "what happens when i press your button?", "how is bread made?"]) {
@@ -327,14 +291,8 @@ import {
        `…which also shortens the common prompt (${tail.length} chars, was 5337)`);
   }
 
-  /* THE WORKED EXAMPLE IN THE PROMPT MUST ROUND-TRIP THROUGH THE EXTRACTOR.
-   *
-   * The instruction shows her a sample envelope with a fence inside the `say` string,
-   * because that interaction is the one mechanically confusing part. If the extractor
-   * would not accept the exact shape we teach, we are training the model to produce
-   * something we then throw away — and the symptom would be "she never draws", which is
-   * precisely the state this replaced. So the example is asserted against the real parser
-   * rather than eyeballed. */
+  /* THE WORKED EXAMPLE IN THE PROMPT MUST ROUND-TRIP THROUGH THE EXTRACTOR, or we train
+   * the model to produce something we then throw away ("she never draws"). */
   {
     const taught = "A seed grows in three steps! ```mermaid\ngraph TD;\n  Seed-->Roots;\n  Roots-->Tree;\n```";
     const r = chat.splitDiagram(taught);
@@ -344,14 +302,9 @@ import {
        "…and a diagram with its newlines: we do not teach a shape we then discard");
   }
 
-  /* THE SIBLING FIELD — the shape she is actually asked for now, and the reason the
-   * nested fence was replaced.
-   *
-   * Three prompt rewrites produced zero diagrams and the token budget had 125 tokens
-   * spare, so it was never refusal or truncation. What the prompt asked for was a fenced
-   * markdown block with escaped newlines INSIDE a JSON string value — awkward to emit
-   * correctly, easy to decline, and my design. A sibling string field is ordinary JSON with
-   * one level of escaping, exactly like `mood` and `gesture`. */
+  /* THE SIBLING FIELD — the shape she is asked for now. A fenced block with escaped
+   * newlines inside a JSON string was measured to be declined; a sibling string field is
+   * ordinary JSON with one level of escaping, like `mood` and `gesture`. */
   {
     fresh();
     P.plan = { chat: { content: JSON.stringify({
@@ -403,17 +356,10 @@ import {
 /* =========================================================================== *
  * 15n. SHE READS HER OWN DOCUMENTATION
  * =========================================================================== *
- *
- * This deployment ships 152 documents about how the real Moxie works — the
- * reverse-engineered protocol, the firmware, the behaviour markup — as public static
- * assets. They were already served; the robot they describe just could not read them.
- *
  * THE PROPERTY THIS SECTION EXISTS FOR IS THE SECURITY ONE. Retrieval runs on the SERVER
- * and the text that reaches the prompt is always bytes we wrote and committed, fetched
- * through the `ASSETS` binding. The visitor's words only CHOOSE a document. The browser
- * design — rank on the page, post the passage along with the question — would hand a
- * visitor a field spliced straight into a system message, which is a prompt-injection
- * channel we would have opened ourselves.
+ * and the text reaching the prompt is always committed bytes fetched through the `ASSETS`
+ * binding; the visitor's words only CHOOSE a document. Posting a passage from the browser
+ * would be a prompt-injection channel we opened ourselves.
  */
 {
   const docsearch = await import(join(repo, "functions", "api", "_lib", "docsearch.js"));
@@ -454,15 +400,9 @@ import {
     ok(long.length <= 321, `the passage is bounded for the deployed 2k-token brain (${long.length} chars)`);
   }
 
-  /* A TITLE IS NOT AN ANSWER — the bug that reached production.
-   *
-   * Asked "what is your protocol?" on the live site she answered "I don't have a special
-   * protocol like a big robot": confidently, and wrong. Retrieval had worked and picked
-   * `remote-chat-protocol.md` correctly. What it handed her was the document's TITLE, which
-   * is over sixty characters and matched the query, so it beat every real paragraph. A
-   * title names a subject; it does not explain one, and there was nothing in it to answer
-   * from. That is the worst shape of failure here: the lookup succeeds, the citation is
-   * right, and the answer is invented. */
+  /* A TITLE IS NOT AN ANSWER. A long document title that matches the query used to beat
+   * every real paragraph, so retrieval "worked", the citation was right, and the answer
+   * ("I don't have a special protocol") was invented. */
   {
     const md = "# RemoteChat — the robot to brain conversation protocol (v3.6.4-Zephyr / OTA v24.10.803)\n\n" +
                "The protocol carries one turn at a time: the robot posts what it heard and " +
@@ -475,18 +415,10 @@ import {
        "…and a document that is ONLY headings yields no excerpt, rather than its title");
   }
 
-  /* A TITLE IS NOT AN ANSWER, ONE LEVEL DOWN: right document, WRONG PARAGRAPH.
-   *
-   * Found by the control arm in `sim/tools/grounding_probe.mjs`, not by reading output.
-   * Asked "how does the robot talk to the cloud?" the ranking picked the right document and
-   * `bestPassage` returned a paragraph about QR PAIRING STAGES. The query reduces to two
-   * terms — `talk`, `cloud` — so term hits saturate at 2 across many paragraphs and the
-   * capped LENGTH bonus became the whole selector: the QR paragraph scored 24.0 on 1157
-   * characters against 22.9 for the paragraph that answers the question, a gap made
-   * entirely of characters. Length also double-counts, since a longer paragraph is likelier
-   * to contain a term by chance and then gets paid again for containing it.
-   *
-   * The section heading settles it instead, at the same weight `rank` gives headings. */
+  /* …ONE LEVEL DOWN: right document, WRONG PARAGRAPH (found by the control arm in
+   * `sim/tools/grounding_probe.mjs`). With a two-term query the term hits saturate and the
+   * capped LENGTH bonus became the whole selector, so a QR-pairing paragraph beat the one
+   * that answers. The section heading now settles it, at the weight `rank` gives headings. */
   {
     const md = "## Where the batteries live\n\n" +
                "The pack is a sealed unit under the chest plate and the cloud is not involved " +
@@ -495,10 +427,8 @@ import {
                "## Talking to the cloud\n\n" +
                "She talks to the cloud over an encrypted link and each turn is one message.\n";
     const p = docsearch.bestPassage(md, "how does the robot talk to the cloud?");
-    /* Both paragraphs contain BOTH query terms, which is the tie the live failure was made
-     * of. Under the old scoring the longer one wins on characters alone (21.2 vs 20.4);
-     * the heading is what tells them apart. The fixture is built to fail without the fix
-     * rather than to pass with it. */
+    /* Both paragraphs contain BOTH query terms; under length-scoring the longer wins, so
+     * this fixture fails without the heading fix rather than merely passing with it. */
     ok(p.startsWith("She talks to the cloud"),
        `on EQUAL term hits the paragraph under the matching heading wins, even though the ` +
        `other is 3x longer (got ${JSON.stringify(p.slice(0, 60))})`);
@@ -567,12 +497,8 @@ import {
   }
 
   // ---- 4b. SHE CITES WHAT SHE READ ----------------------------------------- //
-  //
-  // Two jobs, and neither is debug scaffolding. A robot that says "I looked it up" and
-  // cannot show you where is asserting, not citing. And retrieval runs server-side, so
-  // whether it fired was previously INVISIBLE from outside — a lookup that silently never
-  // happened and a model that ignored the excerpt produce the identical bad answer. That
-  // cost a live measurement to notice; this is what stops the next one costing another.
+  // A robot that says "I looked it up" must show where, and server-side retrieval is
+  // otherwise invisible: a lookup that never fired and an ignored excerpt look identical.
   {
     const assets = {
       fetch: async (req) => {

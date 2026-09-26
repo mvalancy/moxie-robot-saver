@@ -5,43 +5,27 @@ import {
 } from "./harness.mjs";
 
 /* =========================================================================== *
- * 15. THE CACHE API TIER — a second per-IP minute window, shared across the
+ * 15. THE CACHE API TIER — per-IP windows and the unit budget, shared across the
  *     isolates of one colo
  * =========================================================================== *
+ * Spec: live-sim-demo.md §4.6/§4.6.1 (counters, honestly), §4.1, §4.5.
  *
- * Spec: docs/architecture/backlog/live-sim-demo.md §4.6 ('Counters, honestly') and §4.6.1
- * (the preview measurement that cleared this tier to be built), §4.1 (the per-IP windows),
- * §4.5 (the status and `Retry-After` table).
- *
- * `caches.default` DOES NOT EXIST UNDER BARE NODE, so the tier is driven here against a
- * fake with the same two-method surface. The fake is not a convenience: it is the only way
- * to make the failure modes happen ON PURPOSE. A real cache will not hang for you, will
- * not hand you an entry past its own `max-age`, and will not throw on `put` on the day you
- * are looking. Each of those is simulated below and each one has the SAME required
- * outcome — **the visitor is admitted** — because every error this tier can make is an
- * undercount and it must fail OPEN.
- *
- * The two properties this section exists to prove, above the arithmetic:
- *
- *   1. **IT ONLY EVER ADDS REFUSALS.** With the tier off, absent, broken, slow or lying,
- *      `admit()` answers exactly what it answered before the tier existed. 15a and 15e.
- *   2. **IT NEVER REFUSES A VISITOR WHO SHOULD BE ALLOWED.** Asserted in that direction
- *      explicitly, for each failure mode by name, against a cache entry that a WORKING
- *      cache would have refused on. 15e.
- *
- * And the thing this section deliberately does NOT assert, because it is not true: that
- * the tier is a global ceiling. It is per-colo, a burst loses about two thirds of its
- * writes (§4.6.1 row f), and 15d's op count is the whole of what it costs.
+ * `caches.default` does not exist under node, so the tier runs against a fake with the
+ * same two methods — the only way to make it hang, serve a stale entry or throw ON
+ * PURPOSE. Every such failure has one required outcome, **the visitor is admitted**,
+ * because every error this tier can make must be an undercount (fail OPEN):
+ *   1. IT ONLY EVER ADDS REFUSALS: off, absent, broken, slow or lying, `admit()` answers
+ *      what it answered without the tier (15a, 15e).
+ *   2. IT NEVER REFUSES A VISITOR WHO SHOULD BE ALLOWED, per failure mode, against an
+ *      entry a WORKING cache would have refused on (15e).
+ * Not asserted, because it is not true: that the tier is a global ceiling. It is
+ * per-colo and a burst loses writes (§4.6.1 row f).
  */
 {
-  /** A fake `caches.default`. `match`/`put` only — the two methods the tier uses — plus a
-   *  log of what it was actually asked, so every assertion below is on a RECORDED fact
-   *  rather than on an inference from behaviour (playbook rule 11).
-   *
-   *  Each failure switch is a DIFFERENT SHAPE of failure on purpose: a synchronous throw
-   *  (before any promise exists), a rejected promise, and a promise that never settles.
-   *  The first is the one a naive `try { await x() }` still catches and a naive
-   *  `Promise.resolve(x()).catch()` does not. */
+  /** A fake `caches.default` (`match`/`put` only) with a log of what it was asked, so
+   *  assertions are on recorded facts. The failure switches are different SHAPES on
+   *  purpose — a synchronous throw, a rejection, a promise that never settles — because a
+   *  naive `Promise.resolve(x()).catch()` misses the first. */
   function fakeCache(opts) {
     const o = opts || {};
     const store = new Map();
@@ -67,12 +51,9 @@ import {
         if (o.matchThrowsSync) throw new Error("match threw synchronously");
         if (o.matchHangs) return hang();
         if (o.matchRejects) return Promise.reject(new Error("match rejected"));
-        // THE BUDGET ENTRY, WITHOUT READING THE CLOCK. `/api/chat` derives its own hour
-        // bucket from `Date.now()`, so a test that pre-seeded that exact key would have to
-        // read the wall clock too — which `sim/tests/test_clock_dependence.py` refuses on
-        // sight, and rightly: the result would then depend on which side of an hour
-        // boundary the suite happened to run. `unitsCount` answers whatever hour the route
-        // asks for, which is the same assertion with no clock in it.
+        // The budget entry for WHATEVER hour the route asks: pre-seeding the exact key
+        // would mean reading the wall clock (`test_clock_dependence.py`) and depending on
+        // which side of an hour boundary the suite ran.
         if (o.unitsCount !== undefined && String(key).indexOf("/__moxie/rl/units/") >= 0) {
           return Promise.resolve(new Response(JSON.stringify({ n: o.unitsCount }), {
             headers: { "Content-Type": "application/json", "Cache-Control": "max-age=3600" },
@@ -164,11 +145,9 @@ import {
   }
 
   // ---- 15b. IT ADDS A REFUSAL THE IN-ISOLATE MAP WOULD NOT MAKE ------------ //
-  //
-  // Two isolates, one colo. `__reset()` between them is the isolate boundary: a brand new
-  // `Map`, the SAME cache. `chat_per_min` is 5, so the second isolate's map alone would
-  // allow five more turns. The tier stops it at the shared fifth — which is the entire
-  // reason this tier exists, and the measured ×7 isolate multiplier collapsing to ×1.
+  // Two isolates, one colo: `__reset()` is the isolate boundary (new `Map`, SAME cache).
+  // The second isolate's map alone would allow five more turns; the tier stops it at the
+  // shared fifth — the measured ×7 isolate multiplier collapsing to ×1.
   const IP = "198.51.100.7";
   {
     const shared = fakeCache();
@@ -218,18 +197,10 @@ import {
   }
 
   // ---- 15d. THE LATENCY BUDGET, AS A COUNT OF OPS -------------------------- //
-  //
-  // §4.6.1 row h measured THREE cache ops at <=44 ms. `admit()` sits in the request path of
-  // every turn, so the op count is the budget and it is asserted, not intended.
-  //
-  // **THE NUMBERS BELOW DOUBLED ON 2026-09-06 AND THAT IS A DESIGN CHANGE, NOT A LOOSENED
-  // ASSERTION.** §4.6.3 lifted the remaining ceilings onto this tier: the per-IP HOUR and
-  // DAY windows (which SHARE ONE ENTRY, so both scales cost one round trip between them —
-  // that is the whole answer to the latency objection §4.6.1 rejected them on) and the
-  // unit budget's DAY. Four sub-tiers, so four reads. Each pin below is re-pinned to an
-  // EXACT new value rather than relaxed to an inequality, and the one that WAS an
-  // inequality (`<= 3`) is now an equality, because the claim it made — "still inside row
-  // h's three ops" — is false and a bound that no longer bounds is worse than a red one.
+  // `admit()` is in every turn's path, so the op count IS the latency budget and is pinned
+  // EXACTLY: four sub-tiers (per-IP minute; per-IP hour+day sharing ONE entry; the unit
+  // budget's hour; its day), four reads. An inequality that no longer bounds anything is
+  // worse than a red check.
   {
     fresh();
     const c = fakeCache();
@@ -285,11 +256,8 @@ import {
   }
 
   // ---- 15e. FAIL OPEN — every failure mode, asserted in that direction ----- //
-  //
-  // Each case seeds the shared entry AT the limit, so a WORKING cache would refuse. The
-  // required answer in every single one is `ok: true`. This is the assertion that says the
-  // tier can cost a refusal that should have happened and can NEVER cost a turn that
-  // should have been served.
+  // Each case seeds the entry AT the limit, so a WORKING cache would refuse; the required
+  // answer is `ok: true` every time. The tier may miss a refusal, never cost a turn.
   {
     // First learn the key this IP/route/minute uses, so every case below can seed it.
     fresh();
@@ -338,11 +306,8 @@ import {
       r.release();
     }
 
-    // THE OUTER SEATBELT. Everything above fails INSIDE a cache op, where `withDeadline`
-    // catches it. This one throws OUTSIDE any of them — a config whose deadline cannot even
-    // be read, standing in for a `crypto.subtle` that is not there or a URL that will not
-    // parse — so it can only be caught by `sharedThenGrant`'s own `try`. Same requirement:
-    // the visitor keeps their turn.
+    // THE OUTER SEATBELT: a throw OUTSIDE any cache op (an unreadable deadline, standing
+    // in for a missing `crypto.subtle`), caught only by `sharedThenGrant`'s own `try`.
     fresh();
     const hostileCfg = new Proxy(FAST, {
       get(t, k) {
@@ -443,11 +408,8 @@ import {
   }
 
   // ---- 15h. THE WHOLE ROUTE, THROUGH THE REAL `caches.default` LOOKUP ------ //
-  //
-  // Everything above injects the store. This block installs a fake as the GLOBAL
-  // `caches.default`, which is the branch production actually takes, and drives
-  // `/api/chat` end to end: the §4.5 envelope, the 429, the `Retry-After` header, and zero
-  // upstream calls.
+  // A fake installed as the GLOBAL `caches.default` (production's branch), driving
+  // `/api/chat` end to end: the envelope, the 429, `Retry-After`, zero upstream calls.
   {
     fresh();
     const c = fakeCache();
@@ -475,30 +437,17 @@ import {
   }
 
   /* ---- 15i. THE UNIT BUDGET SUB-TIER — the deployment's HOUR, shared across a colo -- //
+   * Spec: live-sim-demo.md §4.1, §4.6.1, §4.5 (`budget_exhausted` is a 503).
    *
-   * Spec: live-sim-demo.md §4.1 (`DEMO_UNIT_BUDGET_HOUR`), §4.6.1 (which orders this tier
-   * second, after the per-IP window), §4.5 (`budget_exhausted` is a 503 with a
-   * `Retry-After`).
-   *
-   * THE ONE THING THIS BLOCK EXISTS TO PROVE, and it is not "the counter adds up".
-   * `_lib/limits.js::sharedBudgetVerdict` carries the argument; the assertions are here.
-   * The window sub-tier fails open because every write it makes is a `prev + 1`. The unit
-   * budget has `slot.refundBudget()` underneath it, and a refund is a `prev - cost`: LOSE
-   * ONE AND THE COUNTER IS TOO HIGH, which refuses a visitor who should have been served.
-   * That is the direction §15's own notes say this tier may never fail in — it is why the
-   * concurrency ceiling was refused a place here.
-   *
-   * So the shipped design has no refund write at all: units reach the colo only after a
-   * request has been RELEASED WITHOUT A REFUND, held until then in this isolate's own
-   * ledger (`__state().units`). Everything below is that property, from both sides:
-   *
-   *   1. the budget really is shared — 15i-b drives it from two isolate-like contexts and
-   *      shows the second refused on the first's spend;
-   *   2. every failure mode is an UNDERCOUNT — 15i-d, each one by name, against an entry
-   *      a WORKING cache would have refused on;
-   *   3. NO LOST WRITE CAN REFUSE A VISITOR WHO SHOULD BE SERVED — 15i-e, including the
-   *      nastiest shape: a `put` that lands and then times out, which is what makes
-   *      "retry the unpublished units" a double charge.
+   * The window sub-tier fails open because each write is `prev + 1`. The budget has
+   * `refundBudget()` underneath it, and a lost `prev - cost` write leaves the counter TOO
+   * HIGH — refusing a visitor who should be served. So there is no refund write at all:
+   * units reach the colo only after a request is RELEASED WITHOUT A REFUND, held until
+   * then in the isolate's ledger (`__state().units`) (see `sharedBudgetVerdict`). Proven:
+   *   1. the budget is shared — 15i-b, isolate B refused on A's spend;
+   *   2. every failure mode is an UNDERCOUNT — 15i-d;
+   *   3. no lost write can refuse a visitor — 15i-e, including a `put` that lands and then
+   *      times out (why "retry the unpublished units" would double-charge).
    */
   const UNITS_HOUR = 12;                       // 4 chat turns, so the arithmetic is readable
   const TWELVE = wire2.readConfig({ ...FULL, DEMO_UNIT_BUDGET_HOUR: String(UNITS_HOUR) });
@@ -528,13 +477,9 @@ import {
     fresh();
     const c = fakeCache();
     (await admitWith(TWELVE, c, "203.0.113.50", "chat", HOUR2)).release();
-    // THE READ ORDER, PINNED AS A WHOLE RATHER THAN BY INDEX. Before §4.6.3 the budget
-    // entry was `keys[1]`, and re-pinning it to `keys[2]` would have kept a passing
-    // assertion while quietly dropping what the index was worth — that the per-IP window
-    // is consulted BEFORE the deployment's budget (15i-h, and `unit_budget_mutation_check`
-    // row U10). So the whole sequence is asserted: every per-IP window scale, narrowest
-    // first, then every budget scale, narrowest first. Reordering ANY of it now reddens
-    // here rather than silently answering a per-visitor condition with a 503.
+    // THE READ ORDER, pinned as a whole rather than by index: every per-IP window scale,
+    // narrowest first, then every budget scale. Reordering any of it would answer a
+    // per-visitor condition with a deployment-wide 503 (15i-h, mutation row U10).
     eq(c.log.keys.length, 4,
        "an admitted turn reads four entries: both window scales, then both budget scales (§4.6.3; it was 2)");
     const wk = String(c.log.keys[0] || "");
@@ -562,11 +507,8 @@ import {
   }
 
   // ---- 15i-b. IT IS SHARED: isolate B is refused on isolate A's spend --------- //
-  //
-  // `__reset()` between them is the isolate boundary, exactly as §15b uses it: a brand new
-  // `Map` and a brand new LEDGER, the same colo cache. Four addresses rather than one, so
-  // the per-IP window never gets a word in and the only thing that can refuse is the
-  // budget.
+  // Four addresses, so the per-IP window never gets a word in and only the budget can
+  // refuse.
   {
     const shared = fakeCache();
     fresh();
@@ -621,13 +563,9 @@ import {
   }
 
   // ---- 15i-c. THE FREE DRAIN, CLOSED STRUCTURALLY ---------------------------- //
-  //
-  // `sim/test_turnstile.mjs` §12's attack, aimed at the SHARED counter instead of the
-  // isolate's: 200 requests that admission charges and the route body then refuses. Under
-  // the design this file rejected — charge the colo at admission, refund only locally —
-  // 200 x 3 units is exactly `DEMO_UNIT_BUDGET_HOUR`, and every isolate in the colo would
-  // then read an exhausted hour for an attack that made no gateway call. Here the colo is
-  // never told, because there is nothing to un-tell.
+  // `test_turnstile.mjs` §12's attack on the SHARED counter: 200 requests admission
+  // charges and the route then refuses. Charging the colo at admission would read an
+  // exhausted hour for an attack that made no gateway call; here the colo is never told.
   {
     fresh();
     const c = fakeCache();
@@ -753,17 +691,11 @@ import {
       }
     }
 
-    // (3) A PUBLISH THAT LANDS AND THEN TIMES OUT IS NOT PUBLISHED TWICE.
-    //     The failure that would make the obvious "keep the units and retry" design wrong:
-    //     the write committed, the promise was lost to the deadline, and retrying the same
-    //     units would charge the colo for them a second time — an OVERCOUNT, which refuses
-    //     somebody. The ledger is therefore cleared on every ATTEMPT, confirmed or not.
-    //     Driven at PRODUCTION's 600-unit ceiling rather than this block's 12, and that is
-    //     not incidental: under the retry design the over-publish crosses 12 by the fourth
-    //     turn, so the suite reddens on "isolate A turn 4 is admitted" and the assertion
-    //     that NAMES the double charge is never the one that fails. A guard whose own check
-    //     cannot be the failing one proves nothing (`turnstile_mutation_check.py`'s rule),
-    //     and this row is why the ceiling here is out of the way.
+    // (3) A PUBLISH THAT LANDS AND THEN TIMES OUT IS NOT PUBLISHED TWICE. Retrying the
+    //     units would charge the colo twice (an overcount that refuses somebody), so the
+    //     ledger is cleared on every ATTEMPT. Run at production's 600-unit ceiling so the
+    //     assertion that NAMES the double charge is the one that fails, not an earlier
+    //     "turn 4 is admitted" (mutation-table rule).
     fresh();
     const slow = fakeCache({ putStoresThenHangs: true });
     for (let i = 1; i <= 4; i++) {
@@ -806,13 +738,8 @@ import {
   }
 
   // ---- 15i-h. THE ORDER: the per-IP window first, the deployment's budget second - //
-  //
-  // A visitor over their own MINUTE, in a colo whose HOUR is also spent. Both sub-tiers
-  // would refuse and the order decides which answer they get, which is not cosmetic:
-  // `rate_limited` is a 429 the browser paces itself against (§4.5) while
-  // `budget_exhausted` is a 503 that paints the page SCRIPTED for everybody. Answering a
-  // per-visitor condition with a deployment-wide verdict is the wrong information, and it
-  // would also make the two tiers disagree about what the same request earns.
+  // Over their own MINUTE in a colo whose HOUR is spent: `rate_limited` (429, the browser
+  // paces itself) must win over `budget_exhausted` (503, SCRIPTED for everybody).
   {
     fresh();
     const learn = fakeCache();
@@ -839,12 +766,8 @@ import {
     eq(c.log.match + c.log.put, 0, "DEMO_CACHE_COUNTER=0 makes ZERO cache calls for the budget half too");
     eq(cacheStats().units.checked, 0, "…recorded as never checked");
 
-    // AN UNCAPPED HOUR MUST NOT SWITCH OFF THE DAY, and this assertion is why the code
-    // says so. It read `…length, 0` — "no budget entry is ever asked for" — until §4.6.3,
-    // and it was correct while the hour was the only budget scale on this tier. With a day
-    // scale beside it, the same line would have passed only because the hour's early
-    // return skipped the day too: one variable silently switching off a ceiling the
-    // operator set with a different one. This pin is therefore SPLIT rather than moved.
+    // AN UNCAPPED HOUR MUST NOT SWITCH OFF THE DAY: the hour's early return must not
+    // skip the day scale too, so this pin is split per scale.
     fresh();
     const c2 = fakeCache();
     const NOBUDGET = wire2.readConfig({ ...FULL, DEMO_UNIT_BUDGET_HOUR: "0" });
