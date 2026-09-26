@@ -75,12 +75,12 @@ RECORDER = r"""
   const R = { fetches: [], decodes: [], plays: [], edges: [], destIds: [], status: [] };
   window.__childVoice = R;
 
-  // `bridge.js::replay` says when it is DONE — `status("replay done (N events)")` into
+  // `bridge/replay` says when it is DONE — `status("replay done (N events)")` into
   // #bus-status, set as `replaying` flips back to false. That is a fact the page states
   // about itself, and it is what the fixture waits on: a tally of side effects cannot
   // tell "not finished yet" from "this will never happen", so a missing clip used to be
   // a 30 s hang instead of an assertion. Recorded as it changes rather than read at the
-  // end, because audio.js writes its own playback text into the SAME element and would
+  // end, because voice/ writes its own playback text into the SAME element and would
   // overwrite it (rule 11: assert the record, never a live sample).
   (function watchStatus() {
     const el = document.getElementById("bus-status");
@@ -276,7 +276,7 @@ def replayed(browser, server):
     # scripted turns. (It is also a user gesture, which the autoplay policy is happy with.)
     page.click("#alive-toggle")
     page.click("#rec-demo")
-    # Wait for the page's own completion signal (`bridge.js::replay` reports `replay done
+    # Wait for the page's own completion signal (`bridge/replay` reports `replay done
     # (N events)`), then let the assertions judge the record. Waiting on a tally of side
     # effects cannot tell "not finished yet" from "will never happen" and turns every
     # missing clip into an anonymous timeout.

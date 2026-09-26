@@ -38,7 +38,7 @@ for (const [group, entries] of Object.entries(manifest)) {
       // 2 KB: far under the shortest real clip (~14 KB), far over a truncated write.
       ok(size > 2048, `${group}: clip file is implausibly small (${size} B) — truncated or silent: ${rel}`);
     }
-    // The key is the EXACT string `audio.js::speak` looks up; surrounding space orphans it.
+    // The key is the EXACT string `voice/speak` looks up; surrounding space orphans it.
     eq(phrase, phrase.trim(), `${group}: a manifest key has surrounding whitespace: ${JSON.stringify(phrase)}`);
   }
 }

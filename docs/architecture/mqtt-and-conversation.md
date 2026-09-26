@@ -304,7 +304,7 @@ built; `sim/run_acl_proof.sh` re-proves it.) So the supervisor's identity lives 
 | `9001` websockets | the browser UI | ✓ | `acl` | supervisor only |
 
 **The browser SIM is the one client that needs more than its own subtree.**
-[`sim/web/bridge.js`](../../sim/web/bridge.js) is a console-side *observer* as much as a
+[`sim/web/bridge/`](../../sim/web/bridge/) is a console-side *observer* as much as a
 robot double: it renders whichever robot is talking, so it subscribes `/devices/+/…`. A
 page served to a browser cannot hold a secret, so `acl` grants that read **anonymously and
 read-only**, plus writes as the fixed SIM device id `d_sim` — and nothing else. It cannot
@@ -597,7 +597,7 @@ would be worse than telling the operator the truth.
 **Where it lives.** Six runtime verbs (`telehealth_enable` / `_session` / `_speak` /
 `_interrupt` / `_view` and the `_on_activity` branch) plus `GET`/`POST /telehealth` on the
 supervisor's status server; the console's 🎭 **Be Moxie** card
-(`GET`/`POST /local/robots/{id}/telehealth`); and `sim/web/bridge.js` +
+(`GET`/`POST /local/robots/{id}/telehealth`); and `sim/web/bridge/` +
 `sim/virtual_moxie.py --telehealth`, which is how CI proves a person can type a sentence
 and a robot-shaped thing says it — `sim/run_smoke.sh --telehealth`.
 

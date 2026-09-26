@@ -107,7 +107,7 @@ async function open(url, opts) {
   });
 
   /* Web Audio, instrumented where sound is made: `createBuffer` + wrapped `start()` is the
-   * GATEWAY voice (audio.js builds it from int16 PCM), `decodeAudioData` the PIPER voice. The
+   * GATEWAY voice (voice/ builds it from int16 PCM), `decodeAudioData` the PIPER voice. The
    * peak amplitude of what was scheduled is recorded, so a silent buffer cannot pass. */
   await page.evaluateOnNewDocument(() => {
     window.__audio = { created: 0, decoded: 0, started: 0, frames: 0, rate: 0, peak: 0 };
@@ -348,7 +348,7 @@ try {
    * ===================================================================== */
   {
     /* `health: null` -> /api/health 404s = `offline` (sim/serve.py, no Functions): the
-     * deployment a sidecar belongs to. In `degraded`, `audio.js::skipProbe` never looks for
+     * deployment a sidecar belongs to. In `degraded`, `voice/skipProbe` never looks for
      * Piper, so this block would prove nothing. */
     const { page, errs, reqs, bodies, aborted } = await open(LOCAL, { health: null, piper: true });
     const before = await page.evaluate(snapshot);

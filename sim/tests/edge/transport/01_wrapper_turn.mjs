@@ -1,4 +1,4 @@
-/* §1–2: the transport WRAPS bridge.js (§3.5) rather than replacing it, and a whole live
+/* §1–2: the transport WRAPS bridge/ (§3.5) rather than replacing it, and a whole live
  * turn — what reached the network and what reached the avatar.
  */
 import {
@@ -21,12 +21,12 @@ import {
   await advance(1);
 
   const outer = globalThis.window.moxieBridge;
-  // The seven members §3.5 names, and every other one bridge.js publishes.
+  // The seven members §3.5 names, and every other one bridge/ publishes.
   for (const m of ["route", "sendUserTurn", "isLive", "faceEvent", "presenceStats", "telehealthStats", "hasCloudVoice"]) {
     eq(typeof outer[m], "function", `the wrapped surface still exposes ${m} (§3.5's seven)`);
   }
   for (const m of innerMembers) {
-    ok(m in outer, `every member bridge.js published survives the wrap: ${m}`);
+    ok(m in outer, `every member bridge/ published survives the wrap: ${m}`);
   }
   ok(Object.keys(outer).length >= innerMembers.length,
      "the wrap is ADDITIVE — it removes nothing");
@@ -54,19 +54,19 @@ import {
    * `<script src>` tags, since prose in an HTML comment may name the files first. */
   const html = readFileSync(join(repo, "sim", "web", "sim.html"), "utf8");
   const loadsAt = (f) => html.indexOf('src="' + f);
-  for (const f of ["bridge.js", "mode.js", "cloud-transport.js"])
+  for (const f of ["bridge/index.js", "mode.js", "cloud-transport.js"])
     ok(loadsAt(f) > -1, `sim.html has a <script src> for ${f}`);
-  ok(loadsAt("bridge.js") < loadsAt("mode.js"), "sim.html loads bridge.js before mode.js");
+  ok(loadsAt("bridge/index.js") < loadsAt("mode.js"), "sim.html loads bridge/ before mode.js");
   ok(loadsAt("mode.js") < loadsAt("cloud-transport.js"),
-     "sim.html loads cloud-transport.js AFTER mode.js (it wraps what bridge.js published)");
+     "sim.html loads cloud-transport.js AFTER mode.js (it wraps what bridge/ published)");
 
-  // With bridge.js absent the transport must do nothing rather than half-wire a page.
+  // With bridge/ absent the transport must do nothing rather than half-wire a page.
   installClock();
   makeWorld({});
   delete globalThis.window.moxieBridge;
   (0, eval)(SRC.transport);
   eq(globalThis.window.moxieCloudTransport, undefined,
-     "with no bridge.js, the transport installs nothing and does NOT claim to be live");
+     "with no bridge/, the transport installs nothing and does NOT claim to be live");
 }
 
 /* =========================================================================== *

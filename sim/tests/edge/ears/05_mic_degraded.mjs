@@ -103,7 +103,7 @@ import {
   }
 
   // A page that CANNOT spend takes exactly the path it takes today: sendUserTurn, which is
-  // bridge.js's own and answers from stub.js for free. Nothing here needed changing.
+  // bridge/'s own and answers from stub.js for free. Nothing here needed changing.
   {
     const w = bootMic({ answer: () => ({ reject: true }) });      // no canSpendLiveTurn at all
     await recordToCap(w);

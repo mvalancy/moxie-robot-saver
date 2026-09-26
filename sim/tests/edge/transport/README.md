@@ -1,7 +1,7 @@
 # 🔌 test_cloud_transport sections
 
 The sections of [`sim/test_cloud_transport.mjs`](../../../test_cloud_transport.mjs), in run order,
-over one [`harness.mjs`](harness.mjs): the REAL `stub.js`, `bridge.js`, `mode.js` and
+over one [`harness.mjs`](harness.mjs): the REAL `stub.js`, `bridge/`, `mode.js` and
 `cloud-transport.js` loaded as source under a fake DOM/audio/mqtt/fetch on a virtual clock, plus
 answer builders (`live`, `serve`, `said`, `ticket`, `voiced`).
 

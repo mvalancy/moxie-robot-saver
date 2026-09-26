@@ -122,7 +122,7 @@ import {
     eq(globalThis.window.moxieMode.badge(), "HOSTED DEMO · SCRIPTED",
        "…with the SCRIPTED badge, like every other unreachable transport");
 
-    // The degrade has teeth: a degraded page STOPS SPENDING and delegates to bridge.js.
+    // The degrade has teeth: a degraded page STOPS SPENDING and delegates to bridge/.
     const before = globalThis.window.moxieBridge.transportStats().botUnavailable;
     await say("four");
     st = globalThis.window.moxieBridge.transportStats();

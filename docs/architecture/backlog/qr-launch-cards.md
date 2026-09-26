@@ -142,7 +142,7 @@ with a greeting or `ResultCode.NOREPLY_ACK` and **never** carries an action.
 >    [`ext.py`](../../../mqtt/moxie_sdk/content/ext/)'s `_is_p1` / `P1_CAPABILITIES` plus
 >    `content_app._reply_from_volley`.
 > 3. ~~**The browser SIM still cannot read it.**~~ — **fixed 2026-09-04.**
->    [`bridge.js::applyAction`](../../../sim/web/bridge.js) now reads `function_id` before the SIM's
+>    [`bridge.js::applyAction`](../../../sim/web/bridge/) now reads `function_id` before the SIM's
 >    older `function`, and decodes `function_args` (proto field 8, a list) and `action_args` (field 10,
 >    a `{key, value}` list) into the same `args` the SIL robot records — falling through on
 >    **absence**, not falsiness, so a `function_args` a server really sent is never silently replaced
@@ -162,7 +162,7 @@ with a greeting or `ResultCode.NOREPLY_ACK` and **never** carries an action.
 >    `subscribe`**, whose effect still has no host (nothing joins `Volley.subscriptions` to
 >    `wire.build_chat_response(subscribe_events=…)`). *Two* predictions, *two* measurements, and neither
 >    prediction survived — which is why this brief now states measured counts and not expected ones.
-> 3. **The browser SIM still cannot read it.** [`bridge.js`](../../../sim/web/bridge.js):258 reads
+> 3. **The browser SIM still cannot read it.** [`bridge.js`](../../../sim/web/bridge/):258 reads
 >    `entry.function` only — not `function_id`, and no args at all — so an armed `execute` renders as
 >    `(unnamed)` there while the SIL robot names it. Two clients that disagree is exactly what DoD
 >    criterion 4 forbids. ⚠️ **Being fixed in `feat/client-parity` as of 2026-09-04 — do not take this
@@ -204,7 +204,7 @@ wire value the enum does not define — the same rule `actions.py` already appli
 `launch_if_confirmed` ([`actions.py`](../../../mqtt/moxie_sdk/actions.py):44-56).
 
 > ⚠️ `ActionType.EXIT = "exit"` has the same smell (the enum's name is `exit_module`) and the browser
-> SIM agrees with us rather than with the proto ([`bridge.js`](../../../sim/web/bridge.js):206). **Do
+> SIM agrees with us rather than with the proto ([`bridge.js`](../../../sim/web/bridge/):206). **Do
 > not change it in this slice** — it is a shipped, field-untested spelling on a different verb, and
 > changing it would put an unrelated regression inside a delight feature. Record it; see §7 R3.
 

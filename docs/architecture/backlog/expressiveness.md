@@ -63,7 +63,7 @@ flowchart LR
 | The one app that bypasses it | [`mqtt/moxie_sdk/apps/llm_app.py`](../../../mqtt/moxie_sdk/apps/llm_app.py) | `build_markup(text, mood, gesture)` emits exactly **two marks**: one `cmd:playback-mood` and one `cmd:behaviour-tree` carrying a `Gesture_*`, both chosen by the *model* from a 5-mood / 10-gesture menu. |
 | Mid-stream | same file, `stream_style(text)` | while a reply is still streaming the model's `"mood"`/`"gesture"` have not arrived yet, so an in-flight chunk gets a punctuation-only guess (`?` → question, `!` → positive) and the **closing** chunk uses what the model actually chose. |
 | Also emits marks | [`mqtt/moxie_sdk/filler.py`](../../../mqtt/moxie_sdk/filler.py) | the "let me think" lines ship hand-written mood + thinking-tree markup — the only place in the tree where markup is *authored* rather than generated. |
-| Renders it | [`sim/web/bridge.js`](../../../sim/web/bridge.js) | `applyMarkup()` parses `cmd:playback-mood` → one of 11 faces, `Gesture_*` → arm poses, `Bht_*` → whole-body animations, `cmd:icons-v2` → screen badges. **Our only renderer we can assert against.** |
+| Renders it | [`sim/web/bridge/`](../../../sim/web/bridge/) | `applyMarkup()` parses `cmd:playback-mood` → one of 11 faces, `Gesture_*` → arm poses, `Bht_*` → whole-body animations, `cmd:icons-v2` → screen badges. **Our only renderer we can assert against.** |
 | Strips it | [`mqtt/moxie_sdk/tts.py`](../../../mqtt/moxie_sdk/tts.py) | `strip_markup()` drops `<mark/>`, all tags and emoji before the SIM's external TTS speaks the words. |
 
 **What `build_markup` costs: nothing.** It is pure local string work — no model call, no I/O
@@ -311,7 +311,7 @@ New `sim/tests/test_annotate.py` (hermetic, no creds, runs in the fast CI tier):
 | T6 | **Purity / reproducibility** | the same input renders identically in three subprocesses launched with different `PYTHONHASHSEED`; a `sys.modules` guard asserts `annotate` imports nothing outside the stdlib |
 | T7 | **Grammar** | every `data:{…}` payload, with `+` mapped back to `"`, parses as JSON; the whole output parses as XML once wrapped in a root element (no unbalanced `<usel>`) |
 | T8 | **Rate limits** | on a 120-word paragraph: ≤ `1 + ceil(words/5)` marks, ≤ 6 gestures, ≤ 1 tree, ≤ 1 mood, no `<break>` after the final word |
-| T9 | **The SIM can render it** | every id the corpus emits appears in `sim/web/bridge.js`'s `MOOD_TO_FACE` / `gesture()` / `behaviourTree()` switches, or is listed in an explicit `ROBOT_ONLY` allowlist with a reason |
+| T9 | **The SIM can render it** | every id the corpus emits appears in `sim/web/bridge/`'s `MOOD_TO_FACE` / `gesture()` / `behaviourTree()` switches, or is listed in an explicit `ROBOT_ONLY` allowlist with a reason |
 | T10 | **Budget** | 1,000 annotations of a 300-char line complete under 1 s (p95 < 1 ms), so a regression that adds I/O fails loudly |
 
 ### 1.8 Acceptance criteria

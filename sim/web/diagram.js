@@ -78,9 +78,8 @@
             if (!log) return false;
             var row = document.createElement("div");
             row.className = "diagram";
-            // NOT a `.turn`: `bridge.js::addTranscript` appends streamed reply chunks into
-            // the last `.turn.moxie`, and a diagram carrying that class would have half a
-            // sentence welded into it. Same reasoning as ambient's `.mutter` rows.
+            // NOT a `.turn`: `bridge/index.js::addTranscript` appends streamed chunks into
+            // the last `.turn.moxie` (same reasoning as ambient's `.mutter` rows).
             row.setAttribute("role", "img");
             row.setAttribute("aria-label", "A diagram Moxie drew");
             row.innerHTML = svg;                 // mermaid's own output, strict mode

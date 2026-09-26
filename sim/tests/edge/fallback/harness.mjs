@@ -1,7 +1,8 @@
 /* Harness for `sim/test_fallback_coverage.mjs`: the shipped fallback assets (the clip manifest,
- * `stub.js`, `ambient.js`/`ambient.json`, `audio.js`), a ledger that also collects the summary
+ * `stub.js`, `ambient.js`/`ambient.json`, `voice/`), a ledger that also collects the summary
  * notes, and the fake browser pieces the behavioural sections boot the real scripts under.
  */
+import { BRIDGE_SRC, VOICE_SRC } from "../../../bridge_harness.mjs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { repo, ledger } from "../common.mjs";
@@ -26,7 +27,7 @@ export const manifest = JSON.parse(readFileSync(join(audioDir, "index.json"), "u
 export const ambient = JSON.parse(readFileSync(join(web, "ambient.json"), "utf8"));
 export const stubSrc = readFileSync(join(web, "stub.js"), "utf8");
 export const ambientSrc = readFileSync(join(web, "ambient.js"), "utf8");
-export const audioSrc = readFileSync(join(web, "audio.js"), "utf8");
+export const audioSrc = VOICE_SRC;
 
 /** The line ambient.js says once on entering `degraded`. */
 export const degradedText = ((ambient.degraded || {}).text || "").trim();

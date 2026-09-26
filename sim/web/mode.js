@@ -3,9 +3,8 @@
  * Spec: docs/architecture/backlog/live-sim-demo.md §6.3 (state machine, poll schedule),
  * §7 (capacity signalling + copy), §3.2 (envelope), §4.5 (what a 429/503 means).
  *
- * Asks one same-origin route, `GET /api/health`, and publishes the answer as
- * `window.moxieMode`; env.js paints the badge, pill and `needs-backend` marks from it.
- * Nothing here decides what Moxie SAYS (bridge.js / stub.js).
+ * Asks one same-origin route, `GET /api/health`, and publishes `window.moxieMode`; env.js
+ * paints from it. Nothing here decides what Moxie SAYS (bridge/, stub.js).
  *
  *   offline  — no /api/health (fork without Functions, file://, plain CDN, 404): the page
  *              behaves exactly as without this module, and is never polled again.
@@ -17,10 +16,9 @@
  * HONESTY GUARD: `live` only DISPLAYS as live when cloud-transport.js has loaded
  * (`window.moxieCloudTransport`); otherwise it reads SCRIPTED with a line saying why.
  *
- * No secret and no hostname: the base is `location.origin`, so a fork works unconfigured.
- * The one public value returned is the Turnstile SITEKEY ("" = not enforced), delivered
- * at runtime so forks and previews never render this deployment's widget;
- * turnstile.js reads it via `window.moxieMode.turnstile()`.
+ * No secret and no hostname (base = `location.origin`). The one public value returned is
+ * the Turnstile SITEKEY ("" = not enforced), delivered at runtime so forks and previews
+ * never render this deployment's widget.
  */
 (function () {
   "use strict";
@@ -96,7 +94,7 @@
     } catch (e) { return null; }
   }
 
-  /** Are live turns spendable right now? The transport (P0-b) asks before every turn. */
+  /** Are live turns spendable right now? The transport asks before every turn. */
   function canSpendLiveTurn() {
     return state === "live" && hasTransport() && now() >= suppressUntil;
   }
@@ -139,18 +137,10 @@
   function snapshot() {
     var s = surface();
     return {
-      state: state,
-      reason: reason,
-      badge: s.badge,
-      message: s.message,
-      level: load.level,
+      state: state, reason: reason, badge: s.badge, message: s.message, level: load.level,
       load: { level: load.level, inflight: load.inflight, capacity: load.capacity },
-      limits: limits,
-      voice: voice,
-      ears: ears,
-      turnstile: turnstile,
-      liveTurns: canSpendLiveTurn(),
-      retryAfterS: retryAfterS(),
+      limits: limits, voice: voice, ears: ears, turnstile: turnstile,
+      liveTurns: canSpendLiveTurn(), retryAfterS: retryAfterS(),
     };
   }
 
@@ -277,17 +267,14 @@
     if (state === "live") {
       strikes++;
       stats.transportErrors++;
-      if (strikes >= STRIKES_TO_DEGRADE) { setState("degraded", "upstream_down"); }
+      if (strikes >= STRIKES_TO_DEGRADE) setState("degraded", "upstream_down");
     }
     schedule(backoff());
   }
 
   // ---- what the transport reports back (§4.5) ------------------------------
-  /**
-   * The live transport calls this after every `/api/*` reply so the mode follows reality
-   * without waiting for the next poll. P0-b's cloud-transport.js is the caller.
-   * @param {{status?:number, reason?:string, retry_after_s?:number}} res
-   */
+  /** cloud-transport.js calls this after every `/api/*` reply so the mode follows reality
+   *  without waiting for the next poll. @param {{status?, reason?, retry_after_s?}} res */
   function note(res) {
     stats.notes++;
     var r = res && res.reason ? String(res.reason) : null;
@@ -340,11 +327,10 @@
       emit();
       return snapshot();
     }
-    // A clean turn: the deployment is healthy.
+    // A clean turn: healthy. It also clears a lingering turnstile_failed note now (that
+    // note has no suppression window to expire).
     strikes = 0;
     delay = POLL_MIN_MS;
-    // A successful turn clears a lingering turnstile_failed note now, not at the next poll
-    // (it has no suppression window to expire).
     if (state === "live" && reason === "turnstile_failed") { reason = null; emit(); }
     if (state === "degraded" && !sticky) { setState("live", null); schedule(delay); }
     return snapshot();

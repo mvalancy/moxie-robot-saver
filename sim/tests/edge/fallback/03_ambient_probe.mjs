@@ -1,4 +1,4 @@
-/* §7–8: the degraded line driven for real through `ambient.js`, and when `audio.js`'s
+/* §7–8: the degraded line driven for real through `ambient.js`, and when `voice/`'s
  * 1.4 s Piper probe may fire — watched on the wire, not grepped.
  */
 import {
@@ -164,7 +164,7 @@ async function ambientRig(g, script) {
 /* --------------------------------------------------------------------------- *
  * 8. When the 1.4 s Piper probe fires, and when it must not
  *
- * The real `audio.js` is loaded under a stubbed window and asked to speak a line with no
+ * The real `voice/` is loaded under a stubbed window and asked to speak a line with no
  * clip. What is asserted is whether a request to the sidecar port actually left the page.
  *   1. §6.2 row 4 — skip in `degraded`: that deployment has Functions and no sidecar, so the
  *      1.4 s wait is dead air.
@@ -217,7 +217,7 @@ async function probeRig(g, modeState, opts) {
      "a LOCAL `live` page keeps the probe — that path is only reached when the gateway voice " +
      "did not arrive, and a sidecar on this machine really could answer");
   eq(await probeFired(null), true,
-     "with no mode machine at all (audio.js loaded standalone) the probe must still run");
+     "with no mode machine at all (voice/ loaded standalone) the probe must still run");
   eq(await probeFired("degraded", { ttsBase: "http://127.0.0.1:8081" }), true,
      "an explicit moxie.ttsBase beats the mode — somebody who typed a TTS address asked for the probe");
   for (const h of ["localhost", "192.168.1.40", "10.0.0.9", "moxie.local"])

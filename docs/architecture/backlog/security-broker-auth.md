@@ -291,7 +291,7 @@ compose-smoke and any host-networking setup must pass `MOXIE_BIND_HOST_PLAIN=0.0
 | [`sim/compose-smoke.env`](../../../sim/compose-smoke.env) | binds shifted ports | add `MOXIE_BIND_HOST_PLAIN=0.0.0.0` (the smoke drives 1883 from the host) |
 | [`sim/tests/test_compose.py`](../../../sim/tests/test_compose.py) | **PR #34's parity guards will fail the PR** unless the clone and prebuilt compose files change together, and unless the inlined broker config is updated byte-for-byte | that is the guard working; treat it as the checklist |
 | `docker-compose.images.yml` | the inlined `configs:` block must gain the same three lines, and the ACL/passwd need a path inside the volume | mount them from `moxie-certs` exactly as the keys are |
-| Browser SIM ([`bridge.js`](../../../sim/web/bridge.js)) | subscribes `/devices/+/commands/remote_chat`, `/commands/tts`, `/events/remote-chat`, `/+/config` — **all wildcards, all denied by the `%c` pattern** | 🔴 **the real P0 breakage.** See below. |
+| Browser SIM ([`bridge.js`](../../../sim/web/bridge/)) | subscribes `/devices/+/commands/remote_chat`, `/commands/tts`, `/events/remote-chat`, `/+/config` — **all wildcards, all denied by the `%c` pattern** | 🔴 **the real P0 breakage.** See below. |
 
 > **The browser SIM is the one genuine casualty, and it deserves a decision rather than a workaround.**
 > `bridge.js` is a *console-side observer* as much as a robot double: it renders whatever robot is talking.
@@ -473,7 +473,7 @@ because of the browser-SIM wildcard decision in §2.5.
 
 | Phase | Files to touch |
 |---|---|
-| P0 | `mqtt/broker/{compose-mosquitto.conf,mosquitto.conf,acl,docker-certs-init.sh,README.md}` · `docker-compose.yml` · `docker-compose.images.yml` (inlined block) · `mqtt/config.py` · `mqtt/supervisor/moxie_runtime.py` (`_build_client`, permit writers) · **new** `mqtt/moxie_sdk/broker_acl.py` · `sim/virtual_moxie.py` · `sim/broker/ci-mosquitto.conf` · `sim/compose-smoke.env` · `sim/run_compose_smoke.sh` · `sim/web/bridge.js` · **new** `sim/tests/test_broker_acl.py` · `sim/tests/test_compose.py` · `docs/architecture/mqtt-and-conversation.md` §3.1/§3b |
+| P0 | `mqtt/broker/{compose-mosquitto.conf,mosquitto.conf,acl,docker-certs-init.sh,README.md}` · `docker-compose.yml` · `docker-compose.images.yml` (inlined block) · `mqtt/config.py` · `mqtt/supervisor/moxie_runtime.py` (`_build_client`, permit writers) · **new** `mqtt/moxie_sdk/broker_acl.py` · `sim/virtual_moxie.py` · `sim/broker/ci-mosquitto.conf` · `sim/compose-smoke.env` · `sim/run_compose_smoke.sh` · `sim/web/bridge/` · **new** `sim/tests/test_broker_acl.py` · `sim/tests/test_compose.py` · `docs/architecture/mqtt-and-conversation.md` §3.1/§3b |
 | P1 | **new** `mqtt/moxie_sdk/device_auth.py` · `moxie_runtime.py` (status-server region: `/broker/auth`, `/broker/acl`, `POST /permits/{id}/pubkey`) · `mqtt/status_proxy.py` · broker image/compose for the plugin · **new** `tools/pairing/enroll_device_key.py` · `server/moxie_server/{main.py,fleet.py}` · `server/static/{index.html,app.js}` · **new** `sim/tests/test_device_auth.py` · `sim/tests/test_device_permits.py` · `docs/architecture/config-and-telemetry-contract.md` |
 | P2 | `moxie_runtime.py` (the `require_key` branch) · `mqtt/moxie_sdk/broker_acl.py` · console states · `docs/architecture/openmoxie-feature-audit.md` §3.1 · `RELEASING.md` |
 

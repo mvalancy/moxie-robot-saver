@@ -14,7 +14,7 @@ sim. Instead:
 | Layer | Approach | Status |
 |---|---|---|
 | **Protocol** (MQTT topics, JSON envelopes, JWT) | A **virtual robot** that speaks it exactly ([`sim/virtual_moxie.py`](../../sim/virtual_moxie.py)) | ✅ working — round-trips against the real [`mqtt/`](../../mqtt/) supervisor |
-| **Behavior** (`<mark cmd:…>` markup, moods, gestures) | `sim/web/bridge.js` parses the marks → drives face + arm gestures | 🟡 wired (D3 refining) |
+| **Behavior** (`<mark cmd:…>` markup, moods, gestures) | `sim/web/bridge/` parses the marks → drives face + arm gestures | 🟡 wired (D3 refining) |
 | **Motion** (arms/head/body DOF) | Drive a **WebGL (three.js) 3D Moxie** from the `libmotionlib` motor indices ([hardware-map](../reverse-engineering/hardware/hardware-map.md#native-motion-api-factory-libmotionlib-liblizardjni)) | 🟢 model+rig+API + live bus bridge |
 | **Face** (DLP expressions/visemes) | Render the animated face to a canvas **texture on the face-screen mesh**, from TTS marks + mood verbs | 🟢 6 expressions + mood-driven + icons-v2 badges |
 | **Component golden-tests** (optional, later) | Run specific ARM `.so` (`libchatscript`) under **qemu-user** for reference outputs | ⏸ backlog |
@@ -167,7 +167,7 @@ Each day = one shippable milestone. The build loop picks the next unchecked item
 - [x] **D2 — 3D Moxie + bus to the browser.** ✅ WebGL 3D Moxie (`sim/web/`, three.js r160, Fable 5):
   teal teardrop shell, oval canvas face, two-segment arms, 7-DOF rig on the `libmotionlib` indices,
   `window.moxie` API + control panel. ✅ **Live bus**: broker `listener 9001 / websockets` +
-  `sim/web/bridge.js` (MQTT.js) subscribes `/devices/+/commands/remote_chat` and drives the avatar —
+  `sim/web/bridge/` (MQTT.js) subscribes `/devices/+/commands/remote_chat` and drives the avatar —
   verified end-to-end (WS client receives a supervisor reply over `:9001`). ✅ **three.js + mqtt.js
   vendored** in `sim/web/vendor/` — the sim runs with **no network/CDN** (self-sufficiency).
 - [x] **D3 — Behavior markup → animation.** `bridge.js` parses `<mark cmd:…>` — full `Gesture_*` set +

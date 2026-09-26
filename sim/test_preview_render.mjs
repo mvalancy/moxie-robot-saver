@@ -1,4 +1,4 @@
-/* The 🎬 rehearsal, replayed through the only renderer we can execute.
+/* The rehearsal, replayed through the only renderer we can execute.
  *
  * Unlike test_performance_render.mjs (goldens), this plays the bytes a REAL robot received
  * from a REAL supervisor over a REAL broker, captured by sim/tests/test_sil_performance_e2e.py
@@ -94,5 +94,5 @@ if (fails.length) {
 }
 const moved = [...peakOverall.values()].filter((d) => d > 0).length;
 console.log(`✅ preview render: ${asserted} published message(s) from ${source} played `
-  + `through sim/web/bridge.js; ${facesSeen.size} distinct face(s) `
+  + `through sim/web/bridge/; ${facesSeen.size} distinct face(s) `
   + `(${[...facesSeen].join(", ")}); ${moved} motor(s) left rest`);

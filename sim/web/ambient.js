@@ -75,21 +75,13 @@
     return !c || c.checked;   // default on if the control is absent
   }
 
-  /* ======================================================================== *
-   * THE CONVERSATION HOLD — no muttering while you are talking to her.
-   *
-   * moxieBusy() only covers AUDIO; a visitor reading her reply and typing the next line
-   * sits in exactly the 11-24 s ambient window with nothing playing. A turn is detected by
-   * a MutationObserver on #transcript counting `.turn` rows — the one place every turn
-   * source (composer, mic, scripted session, cloud-transport, MQTT bridge) already meets.
-   * Our own quips are `.mutter` rows so they never count.
-   *
-   * CHAT_QUIET_MS (45 s, a judgement): longer than read-and-reply, shorter than "the page
-   * feels dead"; the first quip then lands 45-69 s after the last turn.
-   *
-   * The visitor's #idle-on is never touched — the hold can only ADD silence. `#hud` gets
-   * `chatting` so the UI can say it is paused.
-   * ======================================================================== */
+  /* THE CONVERSATION HOLD — no muttering while you are talking to her.
+   * moxieBusy() only covers AUDIO; a visitor reading a reply and typing the next line sits
+   * in the ambient window with nothing playing. Turns are counted by a MutationObserver on
+   * #transcript `.turn` rows — where every turn source meets; our quips are `.mutter` rows.
+   * CHAT_QUIET_MS (a judgement): longer than read-and-reply, shorter than "the page feels
+   * dead". #idle-on is never touched (the hold only ADDS silence); `#hud.chatting` lets the
+   * UI say it is paused. */
   var CHAT_QUIET_MS = 45000;
 
   /** True while a conversation is live enough that a quip would be an interruption. */
@@ -144,11 +136,10 @@
     }).observe(el, { childList: true, subtree: true, characterData: true });
   }
 
-  /** Put one quip in the comms log. NOT a `.turn`, because: a streamed reply appends into
-   *  the last `.turn.moxie` (it would concatenate onto a quip); #chat-cue hides once a
-   *  `.turn` exists; and the observer above must not count her own voice.
-   *  aria-hidden: #transcript is aria-live, and announcing a quip every 11-24 s would talk
-   *  over real answers. She still says it aloud and #bubble stays browsable. */
+  /** One quip in the comms log. NOT a `.turn`: a streamed reply appends into the last
+   *  `.turn.moxie`, #chat-cue hides once a `.turn` exists, and the observer must not count
+   *  her own voice. aria-hidden: #transcript is aria-live, and a quip every 11-24 s would
+   *  talk over real answers (she still says it aloud). */
   function logMutter(text) {
     var el = document.getElementById("transcript");
     if (!el || !text) return;
@@ -212,11 +203,9 @@
     return true;
   }
 
-  /* MOXIE IS MID-ANSWER — never talk over it (perform() -> speak() stop()s her reply).
-   * isMoxieBusy is audio.js's BROAD predicate: isSpeaking() would miss clips, which the
-   * degraded/scripted paths and ambient itself play. SPEAK_GRACE_MS: `onended` is the end
-   * of the audio, not of the sentence, so leave a beat. A refusal re-arms
-   * (`schedule(false)`), so a long answer costs at most one skipped quip. */
+  /* Never talk over her answer (perform() -> speak() stop()s it). isMoxieBusy is voice/'s
+   * BROAD predicate (isSpeaking() misses clips); SPEAK_GRACE_MS leaves a beat after the
+   * audio ends. A refusal re-arms, so a long answer costs at most one skipped quip. */
   var SPEAK_GRACE_MS = 1600;
   function moxieBusy() {
     var a = window.moxieAudio;
@@ -248,19 +237,11 @@
     reflectHold();   // liveness off: the paused hint must not outlive the feature
   }
 
-  /* ======================================================================== *
-   * THE ONE DEGRADED LINE (live-sim-demo.md §6.2, §6.3)
-   *
-   * When `mode.js` enters `degraded` (unconfigured — every fresh deployment and branch
-   * preview — over budget, at capacity, upstream down), Moxie says one sentence about it
-   * in her own voice, ONCE per session: re-announcing failure reads as broken.
-   *  · Fires on the state TRANSITION, not on a turn.
-   *  · `offline` is excluded: a deployment with no Functions must stay byte-identical to
-   *    the plain page (§6.3); `degraded` means /api/health answered honestly.
-   *  · Cannot become a quip: it lives outside `lines[]`, its clip in the "moxie" group.
-   *  · Waits rather than fails: locked autoplay, a hidden tab or liveness off ARM it, and
-   *    the hooks below fire it once the condition clears.
-   * ======================================================================== */
+  /* THE ONE DEGRADED LINE (live-sim-demo.md §6.2, §6.3): when mode.js enters `degraded`
+   * she says one sentence about it, ONCE per session (re-announcing failure reads as
+   * broken), on the state TRANSITION. `offline` is excluded (a Functions-less deploy stays
+   * byte-identical). Outside `lines[]`, clip in the "moxie" group. Locked autoplay, a
+   * hidden tab or liveness off ARM it; the hooks below fire it once that clears. */
 
   /** Say it, or arm it and wait. Never says it twice. */
   function sayDegraded() {

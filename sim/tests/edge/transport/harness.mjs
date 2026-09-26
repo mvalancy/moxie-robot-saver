@@ -1,8 +1,9 @@
-/* Harness for `sim/test_cloud_transport.mjs`: the REAL `stub.js`, `bridge.js`, `mode.js` and
+/* Harness for `sim/test_cloud_transport.mjs`: the REAL `stub.js`, `bridge/`, `mode.js` and
  * `cloud-transport.js` loaded as source under a fake DOM/audio/mqtt/fetch, on a VIRTUAL CLOCK
  * so the 2500 ms speech wait and 450 ms fallback beat run deterministically. Assertions read
  * recorded state (`transportStats()`, spy logs), never live samples.
  */
+import { BRIDGE_SRC, VOICE_SRC } from "../../../bridge_harness.mjs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { repo, ledger } from "../common.mjs";
@@ -13,7 +14,7 @@ export const { fails, C, ok, eq, deep } = ledger();
 export const SRC = {
 
   stub: readFileSync(join(repo, "sim", "web", "stub.js"), "utf8"),
-  bridge: readFileSync(join(repo, "sim", "web", "bridge.js"), "utf8"),
+  bridge: BRIDGE_SRC,
   mode: readFileSync(join(repo, "sim", "web", "mode.js"), "utf8"),
   transport: readFileSync(join(repo, "sim", "web", "cloud-transport.js"), "utf8"),
 };
@@ -124,7 +125,7 @@ export function makeWorld(opts) {
     walk(child);
   }
 
-  // The ids the real page has, and that bridge.js/mode.js look for. Everything else
+  // The ids the real page has, and that bridge//mode.js look for. Everything else
   // answers null.
   for (const id of ["transcript", "bus-status", "bus-host", "bus-connect", "presence-badge",
                     "presence-state", "presence-status", "presence-toggle", "rec-toggle",
@@ -242,7 +243,7 @@ export const voiced = (eid, over) => Object.assign({ status: 200, json: envelope
 /** A 200 `/api/chat` reply with Moxie saying "Hi!" and no voice ticket. */
 export const HI = Object.freeze({ status: 200, json: envelope({ messages: [chatMsg("Hi!", "e1")], speech: [] }) });
 
-/** Boot the page: stub.js, bridge.js, mode.js, cloud-transport.js — sim.html's order. */
+/** Boot the page: stub.js, bridge/, mode.js, cloud-transport.js — sim.html's order. */
 export async function boot(opts) {
   installClock();
   const world = makeWorld(opts);

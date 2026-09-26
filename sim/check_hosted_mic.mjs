@@ -83,7 +83,7 @@ async function selftest(puppeteer, chrome, fx) {
        `…and the DECOY clause — got ${JSON.stringify(m.fails)}`);
 
   /* ---- the browser cases, `/api/*` answered at the browser ----
-   * A MAPPED `.test` host, not 127.0.0.1: on loopback env.js/audio.js probe the :8081/:8082
+   * A MAPPED `.test` host, not 127.0.0.1: on loopback env.js/voice/ probe the :8081/:8082
    * sidecars, the CSP refuses them, and clause 6 would redden a healthy tree. `/api/transcribe`
    * always answers the SPOKEN sentence — the mutations move the SOUND, not the words. */
   const site = await serveWeb({ headers: true });

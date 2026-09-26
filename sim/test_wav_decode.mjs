@@ -4,7 +4,7 @@
  *
  * The server half (`functions/api/_lib/wav.js`: whatever `/audio/speech` returned -> raw
  * LE int16 PCM + the header's own rate/channels) and the browser half
- * (`sim/web/audio.js::decodeCloudTTS`: base64 PCM -> planar Float32) are written
+ * (`sim/web/voice/cloud.js::decodeCloudTTS`: base64 PCM -> planar Float32) are written
  * separately. If they drift (endianness, /32768 scale, frame count, rate, interleave) Moxie
  * plays noise or nothing, silently. So a WAV goes through the real server decoder into a
  * real CloudTTSResponse and through the real browser decoder, compared sample for sample.
@@ -18,6 +18,7 @@ import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { VOICE_SRC } from "./bridge_harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -32,10 +33,10 @@ const wire = await import(join(repo, "functions", "api", "_lib", "wire.js"));
 const hmac = await import(join(repo, "functions", "api", "_lib", "hmac.js"));
 
 /* --------------------------------------------------------------------------- *
- * Load the REAL sim/web/audio.js under a minimal fake Web Audio + DOM; only the pure
+ * Load the REAL sim/web/voice/*.js under a minimal fake Web Audio + DOM; only the pure
  * `decodeCloudTTS` is exercised.
  * --------------------------------------------------------------------------- */
-const AUDIO_SRC = readFileSync(join(repo, "sim", "web", "audio.js"), "utf8");
+const AUDIO_SRC = VOICE_SRC;
 globalThis.window = { addEventListener() {}, moxie: null };
 globalThis.document = {
   getElementById: () => null,
@@ -62,7 +63,7 @@ globalThis.SpeechSynthesisUtterance = class {};
 globalThis.fetch = () => Promise.reject(new Error("no network in this test"));
 (0, eval)(AUDIO_SRC);
 const decodeCloudTTS = globalThis.window.moxieAudio && globalThis.window.moxieAudio.decodeCloudTTS;
-ok(typeof decodeCloudTTS === "function", "sim/web/audio.js must expose decodeCloudTTS");
+ok(typeof decodeCloudTTS === "function", "sim/web/voice/ must expose decodeCloudTTS");
 
 /* --------------------------------------------------------------------------- *
  * Fixtures
@@ -208,7 +209,7 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
     eq(threw && threw.kind, "bit_depth", `…of kind bit_depth (${bits}-bit)`);
     ok(threw && String(threw.message).includes(String(bits)), `…naming the depth (${bits})`);
   }
-  // 16-bit is the one that passes, because `audio.js`:641-683 reads getInt16 with no width
+  // 16-bit is the one that passes, because `voice/cloud.js::decodeCloudTTS` reads getInt16 with no width
   // branch — a silent conversion here would be inaudible to us and audible to a child.
   const good = wav.writeWav(makePcm(64, 1), { sampleRate: 22050, channels: 1, bitsPerSample: 16 });
   eq(wav.pcmFromAudio(good, { sampleRate: 22050 }).container, "wav", "16-bit passes");
@@ -364,7 +365,7 @@ const asciiAt = (bytes, at, s) => { for (let i = 0; i < s.length; i++) bytes[at 
        "…while under pcm it is still not parsed as a WAV");
   }
 
-  // A wild header rate is clamped into the window `audio.js`:617-618 accepts, so a strange
+  // A wild header rate is clamped into the window `voice/cloud.js::decodeCloudTTS` accepts, so a strange
   // header can never produce a payload the browser decoder would refuse.
   {
     const file = wav.writeWav(pcm, { sampleRate: 22050, channels: 1, bitsPerSample: 16 });

@@ -14,7 +14,7 @@ through a real mosquitto, `mqtt/run.py` as its own process, and robots reading
   3. Zero unknown ids in the markup a robot actually received.
   4. The 🎬 rehearsal card end to end: `POST /preview` on the supervisor and
      `POST /local/robots/{id}/preview` on the console, then the captured payloads played
-     through the real `sim/web/bridge.js`.
+     through the real `sim/web/bridge/`.
   5. All four slices at once: extensions, per-robot brains, the planner and the child's
      voice — `content`, `echo` and streaming `llm` robots on one supervisor.
   6. `MOXIE_EXPRESSIVE=floor` (the rollback lever) does not strip the score.
@@ -496,7 +496,7 @@ def test_the_console_route_drives_the_same_rehearsal(lab, plain, tmp_path_factor
 
 def test_the_sim_renders_what_the_rehearsal_published(rehearsed, tmp_path):
     """"…and confirm the SIM renders what comes back": the exact payloads the robot got are
-    played through the real `sim/web/bridge.js`, so an id the SIM does not animate fails."""
+    played through the real `sim/web/bridge/`, so an id the SIM does not animate fails."""
     if not any(os.path.exists(os.path.join(d, "node"))
                for d in os.environ.get("PATH", "").split(os.pathsep)):
         pytest.skip("node is not installed")

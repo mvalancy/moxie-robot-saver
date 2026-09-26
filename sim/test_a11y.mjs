@@ -43,8 +43,7 @@ async function open(o = {}) {
     if (SPENDY.test(u)) { spent.push(u); aborted.n++; return r.abort(); }   // never spend
     if (o.health != null && /\/api\/health\b/.test(u))
       return r.respond({ status: 200, contentType: "application/json", body: o.health });
-    /* No `health` fixture: the probe 404s at the static server, counted here so `notable()`
-     * forgives exactly that one. */
+    // No fixture: the probe 404s at the static server; counted so `notable()` forgives just it.
     if (o.health == null && /\/api\/health\b/.test(u)) aborted.refused++;
     return r.continue();
   });
@@ -59,20 +58,15 @@ async function open(o = {}) {
 /* ==========================================================================
  * WHAT THE BROWSER ITSELF SAID
  *
- * Not `errs.length === 0`: on a 127.0.0.1 origin under the real CSP, env.js probes the
- * :8081/:8082 sidecars and `connect-src 'self'` refuses both, each reported twice — four
- * errors the page is RIGHT to produce. Only messages naming those ports on this origin AND
- * a CSP refusal are forgiven, capped at four; any other refusal (script, style, gateway)
- * fails, because `script-src` is how this page breaks silently in production.
+ * On 127.0.0.1 under the real CSP, env.js's :8081/:8082 sidecar probes are refused (each
+ * reported twice) — four errors the page is RIGHT to produce, forgiven only when they name
+ * those ports AND a CSP refusal. Any other refusal fails: it is how this page breaks.
  * ======================================================================= */
 const SIDECAR_CSP = /127\.0\.0\.1:(8081|8082)\/health/;
 const CSP_REFUSAL = /Content Security Policy|Refused to connect/;
 const isSidecarProbe = (e) => SIDECAR_CSP.test(e) && CSP_REFUSAL.test(e);
 
-/**
- * Assert one page's console output: the sidecar-probe refusals are expected and capped,
- * and NOTHING else may be there.
- */
+/** One page's console: the sidecar-probe refusals capped at four, and NOTHING else. */
 function eyes(label, { errs, aborted }) {
   const probes = errs.filter(isSidecarProbe);
   const rest = notable(errs.filter((e) => !isSidecarProbe(e)), aborted);

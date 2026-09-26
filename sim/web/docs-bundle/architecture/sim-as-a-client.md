@@ -95,7 +95,7 @@ The supervisor synthesizes the turn and publishes a `CloudTTSResponse` on
 | client | module | what "playing" means |
 |---|---|---|
 | headless SIL robot | `sim/virtual_moxie.py::_play_tts` | decodes + records that Moxie spoke (bytes, rate, marks) — asserted by `sim/run_smoke.sh --expect-tts` |
-| browser SIM | `sim/web/audio.js::playCloudTTS` (routed in by `bridge.js`) | **real sound** through the shared Web Audio context, with the face's mouth animating while it plays |
+| browser SIM | `sim/web/voice/::playCloudTTS` (routed in by `bridge.js`) | **real sound** through the shared Web Audio context, with the face's mouth animating while it plays |
 
 **The decode contract.** `AudioBuffer{buffer, channels, sample_rate}` +
 `TTSMark{time, start, end, type, value}` — a client must honor all of this itself:

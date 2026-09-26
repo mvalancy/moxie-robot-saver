@@ -37,9 +37,9 @@ from moxie_sdk import performance as perf          # noqa: E402
 from moxie_sdk import vocab                        # noqa: E402
 from moxie_sdk.tts import strip_markup             # noqa: E402
 from moxie_sdk.filler import FILLERS               # noqa: E402
+from helpers_web import script_group               # noqa: E402
 
 GOLDENS = os.path.join(HERE, "goldens", "performance.json")
-BRIDGE_JS = os.path.join(REPO, "sim", "web", "bridge.js")
 
 
 @pytest.fixture(autouse=True)
@@ -728,10 +728,11 @@ def test_an_unknown_mode_falls_back_to_the_default(monkeypatch):
 
 # (d)'s prerequisite — every id we emit is one the SIM can actually render
 def test_every_emitted_id_is_rendered_by_the_browser_sim():
-    """The SIM is the only renderer we can assert against, so an id it ignores does nothing
-    anywhere we can see. Comment lines do not count as rendering."""
-    with open(BRIDGE_JS) as fh:
-        src = "\n".join(ln for ln in fh if not ln.strip().startswith("//"))
+    """The SIM is the only renderer we can assert against (no hardware has ever played
+    our markup), so an id it silently ignores is an id that does nothing anywhere we can
+    see. Comment lines are ignored: citing an id in a comment is not rendering it."""
+    src = "\n".join(ln for ln in script_group("bridge").splitlines()
+                    if not ln.strip().startswith("//"))
     emitted_g, emitted_b = set(), set()
     for line in CORPUS:
         p = staged(line, turn_key="sim", icons=True, sfx=True)
@@ -920,8 +921,10 @@ def test_preview_does_not_speak_unless_asked():
 
 
 def test_preview_renders_at_least_ten_lines_on_the_sim_contract():
-    """(d)'s Python half: the SIM harness's rehearsal lines all publish a valid,
-    distinguishable performance (browser half: `sim/test_performance_render.mjs`)."""
+    """(d)'s Python half: the ten rehearsal lines the SIM harness plays all publish a
+    valid, distinguishable performance. The browser half is
+    `sim/test_performance_render.mjs`, which drives the same lines through the real
+    `bridge/` and writes the contact sheet."""
     rt, device_id = _preview_runtime()
     lines = [c["line"] for c in _goldens()["cases"]][:12]
     faces = set()

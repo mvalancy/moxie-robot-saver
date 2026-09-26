@@ -1,16 +1,10 @@
 /* life.js — Moxie's autonomous "imaginary life" for the SIL.
  *
- * A standalone consumer of the window.moxie API (like bridge.js / ambient.js). While
- * ALIVE it plays coordinated idle "beats" — look around, weight-shift, attentive
- * listen, curious tilt, arm fidget, mood shifts, the occasional stretch or wonder —
- * mirroring the robot's NodeCanvas idle states (behavior-tree-engine.md). It drives
- * the REAL motor targets through window.moxie.setMotor, so the sliders animate
- * smoothly exactly like the 60 Hz Lizard servo loop.
- *
- * It NEVER touches a joint you grabbed in the last few seconds (window.moxie
- * .isUserHeld), so you can override any control live while Moxie keeps living around
- * it. Toggle with the ALIVE button; off = the loop stops and you have full manual
- * control (joints stay wherever they are).
+ * While ALIVE it plays coordinated idle "beats" (look around, weight-shift, listen, tilt,
+ * fidget, mood shifts…) mirroring the robot's NodeCanvas idle states
+ * (behavior-tree-engine.md), through the REAL motor targets so the sliders animate too.
+ * It never touches a joint you grabbed in the last few seconds (moxie.isUserHeld). ALIVE
+ * off = the loop stops and joints stay where they are.
  */
 (function () {
   "use strict";

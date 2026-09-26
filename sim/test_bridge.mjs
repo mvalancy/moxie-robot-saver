@@ -1,4 +1,4 @@
-/* Unit test for sim/web/bridge.js — loads the REAL bridge with stubbed
+/* Unit test for sim/web/bridge/ — loads the REAL bridge with stubbed
  * window/document/mqtt and asserts it drives window.moxie correctly from firmware
  * markup. No browser, no network. Run: node sim/test_bridge.mjs
  */
@@ -6,7 +6,7 @@ import { loadBridge, audioSpy, readGolden } from "./bridge_harness.mjs";
 
 /* A RECORDING audio stub: `speakClipOnly` is how a child turn becomes audible, and plain
  * `speak()` for a child line would read a visitor's own words back at them
- * (audio.js::speakClipOnly), so both are spied and the WRONG one can fail the test.
+ * (voice/local.js::speakClipOnly), so both are spied and the WRONG one can fail the test.
  * The stub client is CONNECTED and records publishes: what the bridge puts on
  * `events/...` is under test too. */
 const { voice, audio } = audioSpy();
@@ -164,14 +164,11 @@ ok(JSON.stringify(calls.showIcons).includes("Birthday"), `icons-v2 → showIcons
 ok(calls.transcript.includes("I feel happy today"), `child turn → transcript; got ${JSON.stringify(calls.transcript)}`);
 ok(!calls.transcript.includes("echo of Moxie"), "notify turn must NOT appear in transcript");
 
-/* 🗣️ The child is HEARD, not only read. `handleUserTurn` used to add the transcript row,
- * fire sfx("listen") and stop — so half of the shipped `sessions/demo.json` conversation
- * was silent while two child MP3s sat in `audio/index.json` with no caller. */
+// The child is HEARD, not only read: the scripted child lines have shipped clips.
 ok(voice.speakClipOnly.some(([t, w]) => t === "I feel happy today" && w === "child"),
    `child turn → speakClipOnly(text, "child"); got ${JSON.stringify(voice.speakClipOnly)}`);
-/* …and through the CLIP-ONLY door, never `speak()`. This is the whole safety property:
- * the same handler carries whatever a visitor typed into the Talk box or said into the
- * mic, and `speak()` would synthesize it back at them in a stranger's voice. */
+/* …through the CLIP-ONLY door, never `speak()`: the same handler carries whatever a visitor
+ * typed or said, and `speak()` would synthesize it back at them in a stranger's voice. */
 ok(!voice.speak.includes("I feel happy today"),
    `a child line must NEVER reach speak() — it falls through to Piper/browser TTS and reads ` +
    `the visitor's own words back at them; got ${JSON.stringify(voice.speak)}`);

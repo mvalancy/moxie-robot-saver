@@ -1,4 +1,4 @@
-/* Presence half of sim/web/bridge.js: "someone walked in" goes out as the `speech` of a
+/* Presence half of sim/web/bridge/: "someone walked in" goes out as the `speech` of a
  * RemoteChatRequest on the ordinary remote-chat topic (vision.md §1.1), never lands in the
  * comms log, updates the badge, and the answer to that event_id is recorded as a greeting.
  * No browser, no network. Run: node sim/test_presence_bridge.mjs
@@ -15,6 +15,7 @@ const B = window.moxieBridge;
 ok(B.presenceStats().present === null, "presence starts UNKNOWN, not false");
 ok(attrs["presence-badge/data-presence"] === "unknown",
    `badge starts 'unknown'; got ${attrs["presence-badge/data-presence"]}`);
+ok(els["presence-badge"].hidden === true, "…and stays hidden (the rendered check is test_liveliness.mjs §6)");
 
 // ---- 2. "walk in" publishes the recovered event as an ordinary chat request ----
 const foundId = B.faceEvent("found");
@@ -32,6 +33,7 @@ ok(stats.arrivals === 1 && stats.departures === 0, `counters; got ${JSON.stringi
 ok(attrs["presence-badge/data-presence"] === "here",
    `badge → 'here'; got ${attrs["presence-badge/data-presence"]}`);
 ok(els["presence-state"].textContent === "HERE", "badge label");
+ok(els["presence-badge"].hidden === false, "a face event reveals the badge");
 ok(els["presence-toggle"].textContent === "Walk away", "the button becomes 'walk away'");
 
 // ---- 3. a perception event is NOT something a child said ----

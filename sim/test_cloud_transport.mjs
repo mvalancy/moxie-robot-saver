@@ -1,7 +1,7 @@
 /* test_cloud_transport.mjs — the live turn in the browser, on a virtual clock (live-sim-demo.md
  * §8.1 test 5, §3.4, §3.5, §6.3).
  *
- * The hazard: with no MQTT broker `bridge.js::speakLocally` speaks IMMEDIATELY, so a transport
+ * The hazard: with no MQTT broker `bridge/speakLocally` speaks IMMEDIATELY, so a transport
  * that routed the chat message before the TTS message would play two voices at once. §4 drives
  * that naive order through the real bridge and proves the double voice happens; §2–3 prove the
  * shipped voice-first order makes it impossible. Sections live in `sim/tests/edge/transport/`.

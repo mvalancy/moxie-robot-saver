@@ -79,7 +79,7 @@ import {
     ["ticketTtlS", 60, "DEMO_TICKET_TTL_S default"],
     ["ttsFormat", "wav", "DEMO_TTS_FORMAT default"],
     ["ttsSampleRate", 22050, "DEMO_TTS_SAMPLE_RATE default"],
-    ["deviceId", "d_sim", "DEMO_DEVICE_ID default (matches bridge.js:453)"],
+    ["deviceId", "d_sim", "DEMO_DEVICE_ID default (matches bridge/)"],
   ]) eq(d[k], want, label);
   ok(d.persona.length > 40, "a built-in persona must ship, so a fork is not a bare model");
 
@@ -91,10 +91,10 @@ import {
   eq(lib.readConfig({ DEMO_MAX_INPUT_CHARS: "12.5" }).maxInputChars, 500, "non-integer falls back");
   eq(lib.readConfig({ DEMO_MAX_INPUT_CHARS: " 250 " }).maxInputChars, 250, "a good value is taken");
   eq(lib.readConfig({ DEMO_MAX_TOKENS: "999999" }).maxTokens, 160, "an absurd token cap falls back");
-  // Only wav/pcm are decodable by audio.js (§5, mirroring mqtt/config.py:101).
+  // Only wav/pcm are decodable by voice/ (§5, mirroring mqtt/config.py:101).
   eq(lib.readConfig({ DEMO_TTS_FORMAT: "mp3" }).ttsFormat, "wav", "an undecodable format falls back to wav");
   eq(lib.readConfig({ DEMO_TTS_FORMAT: "PCM" }).ttsFormat, "pcm", "pcm is accepted, case-insensitively");
-  // audio.js:617-618 clamps the rate; a configured rate the decoder would refuse is not
+  // voice/:617-618 clamps the rate; a configured rate the decoder would refuse is not
   // allowed to reach it.
   eq(lib.readConfig({ DEMO_TTS_SAMPLE_RATE: "1000" }).ttsSampleRate, 22050, "a sub-3 kHz rate falls back");
   eq(lib.readConfig({ DEMO_TTS_SAMPLE_RATE: "16000" }).ttsSampleRate, 16000, "a good rate is taken");

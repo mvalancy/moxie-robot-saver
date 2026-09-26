@@ -111,7 +111,7 @@ async function probe(browser, url, { settleMs = 2000 } = {}) {
     ran: {
       stage: document.querySelectorAll("#app canvas").length,
       motors: document.querySelectorAll("#motors .motor").length,
-      faces: document.querySelectorAll("#faces .face-emoji").length,
+      faces: document.querySelectorAll("#faces .face-chip").length,
       named: document.querySelectorAll('#motors input[type="range"][aria-label]').length,
       mode: document.body ? document.body.getAttribute("data-mode") : null,
       badge: (document.querySelector("#topbar .env-badge") || {}).textContent || "",
@@ -267,7 +267,7 @@ function report(p, { expectBeacon }) {
  * overlay tripped nothing. D deletes a script (clause 3); E-I serve one script 200 OK and
  * inert (clause 4) — E must fire the MOXIE clause and F the HUD one, since gutting moxie.js
  * also leaves hud.js nothing to name. Served under MAPPED `.test` hosts: on a loopback
- * origin env.js/audio.js probe the :8081/:8082 sidecars and the CSP refuses them.
+ * origin env.js/voice/ probe the :8081/:8082 sidecars and the CSP refuses them.
  */
 const GUT = "/* --selftest mutation: this file was served 200 OK and did nothing. */\n";
 const gut = (name) => (dir) => writeFileSync(join(dir, name), GUT);

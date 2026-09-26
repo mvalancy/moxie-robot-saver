@@ -1,7 +1,7 @@
 /* The markup floor, seen from the only renderer we can assert against.
  *
  * Drives the EIGHT byte-exact goldens from sim/tests/goldens/annotate.json (pinned by
- * sim/tests/test_automarkup.py) through the REAL sim/web/bridge.js and asserts the avatar
+ * sim/tests/test_automarkup.py) through the REAL sim/web/bridge/ and asserts the avatar
  * does something different for each — a face per mood, motors for arm gestures, badges for
  * icons. An id the floor emits but the SIM does not animate fails here.
  *
@@ -18,7 +18,7 @@ const play = (markup, text) => {
     Buffer.from(JSON.stringify({ command: "remote_chat", output: { text, markup } })));
 };
 
-// What each golden must make the avatar do. The faces come from bridge.js's MOOD_TO_FACE,
+// What each golden must make the avatar do. The faces come from bridge/'s MOOD_TO_FACE,
 // which maps the authoritative ePlaybackMood 1:1 onto the 11 Bht_Eyeseme_* expressions.
 const EXPECT = {
   G1: { face: "happy",     motors: true,  why: "'!' -> Happy, and Gesture_Self moves an arm" },

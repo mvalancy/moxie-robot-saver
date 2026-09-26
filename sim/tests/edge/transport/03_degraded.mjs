@@ -9,7 +9,7 @@ import {
  * =========================================================================== */
 {
   // (a) `gateway_not_configured`: the mode is degraded, the transport delegates, and
-  // `bridge.js` + `stub.js` answer exactly as they do on today's site.
+  // `bridge/` + `stub.js` answer exactly as they do on today's site.
   {
     const world = await boot({
       answer: (path) => (path === "/api/health"
@@ -22,7 +22,7 @@ import {
     const posts = world.spy.fetches.filter(([p]) => p !== "/api/health");
     deep(posts, [], "NO /api/chat request is made at all when the mode is not live");
     const st = globalThis.window.moxieBridge.transportStats();
-    eq(st.delegated, 1, "the turn was delegated to bridge.js");
+    eq(st.delegated, 1, "the turn was delegated to bridge/");
     eq(st.live, 0, "…and no live turn was attempted");
     deep(world.spy.transcript, ["hi moxie", "Hi there! It's so good to see you."],
          "…and stub.js answered, through the real bridge");
@@ -178,6 +178,6 @@ import {
     deep(world.spy.fetches.filter(([p]) => p !== "/api/health"), [],
          "with a broker connected, NO /api/chat request is made — the supervisor gets the turn");
     ok(published.some(([t]) => t.endsWith("/events/remote-chat")), "…and the turn went onto the bus");
-    eq(globalThis.window.moxieBridge.transportStats().delegated, 1, "…delegated to bridge.js");
+    eq(globalThis.window.moxieBridge.transportStats().delegated, 1, "…delegated to bridge/");
   }
 }

@@ -1,14 +1,14 @@
 """Are the two SIM clients really interchangeable? — asserted, not claimed.
 
 `docs/architecture/sim-as-a-client.md` promises the headless SIL robot
-(`sim/virtual_moxie.py`) and the browser SIM (`sim/web/bridge.js`) are drop-in
+(`sim/virtual_moxie.py`) and the browser SIM (`sim/web/bridge/`) are drop-in
 replacements (DoD criterion 4). Downstream both decode the same payloads; this guards the
 robot→cloud direction (`events/client-service-activity-log`: schedule pull,
 `mentor_behavior`, telehealth state), which the browser SIM once did not publish at all:
 
 1. **The reference.** `sim/tests/goldens/robot_to_cloud_activity.json` is exactly what the
    SIL robot publishes — asserted against the live `VirtualMoxie`, so it cannot go stale.
-2. **The other client.** `bridge.js` builds the same envelopes with the same keys in the
+2. **The other client.** `bridge/` builds the same envelopes with the same keys in the
    same order, read structurally from the JS source so a Python-only run catches drift
    (`sim/test_bridge.mjs` compares the runtime envelopes against the same golden).
 3. **The delta.** Only the golden's `identity_keys` (which robot, when) may differ.
@@ -29,13 +29,14 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "sim"))
 sys.path.insert(0, os.path.join(REPO, "mqtt"))
 
+from helpers_web import script_group  # noqa: E402
+
 GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "goldens",
                            "robot_to_cloud_activity.json")
-BRIDGE_PATH = os.path.join(REPO, "sim", "web", "bridge.js")
 
 with open(GOLDEN_PATH) as _fh:
     GOLDEN = json.load(_fh)
-BRIDGE = open(BRIDGE_PATH, encoding="utf-8").read()
+BRIDGE = script_group("bridge")
 
 
 # --------------------------------------------------------------------------- #
@@ -51,7 +52,7 @@ def _balanced(src: str, start: int) -> str:
             depth -= 1
             if depth == 0:
                 return src[start:i + 1]
-    raise AssertionError("unbalanced object literal in bridge.js")
+    raise AssertionError("unbalanced object literal in sim/web/bridge/")
 
 
 def _literal(anchor: str, opener: str = "publishActivity({") -> str:
@@ -82,7 +83,7 @@ def _keys(literal: str) -> list:
 
 
 def _js_string_map(name: str) -> dict:
-    """A `const NAME = { a: "x", … };` table in bridge.js, as a dict."""
+    """A `const NAME = { a: "x", … };` table in bridge/, as a dict."""
     at = BRIDGE.index(f"const {name} = {{")
     body = _balanced(BRIDGE, BRIDGE.index("{", at))
     return dict(re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"([^"]*)"', body))
@@ -164,7 +165,7 @@ def test_the_goldens_documented_key_order_is_its_own_key_order():
 # --------------------------------------------------------------------------- #
 def test_the_browser_sim_publishes_on_the_recovered_topic():
     assert f'dev("{GOLDEN["topic_suffix"]}")' in BRIDGE, (
-        "bridge.js must publish the activity log on the topic the SIL robot uses")
+        "bridge/ must publish the activity log on the topic the SIL robot uses")
 
 
 @pytest.mark.parametrize("kind,anchor", [
@@ -175,7 +176,7 @@ def test_the_browser_sim_publishes_on_the_recovered_topic():
 def test_the_browser_sim_uses_the_same_envelope_keys_in_the_same_order(kind, anchor):
     literal = _literal(anchor)
     assert _keys(literal) == GOLDEN["envelopes"][kind]["key_order"], (
-        f"{kind}: bridge.js key order {_keys(literal)} != the SIL robot's "
+        f"{kind}: bridge/ key order {_keys(literal)} != the SIL robot's "
         f"{GOLDEN['envelopes'][kind]['key_order']}")
 
 
@@ -221,7 +222,7 @@ def test_the_browser_sim_knows_every_action_type_the_server_can_send():
     at = BRIDGE.index("const ACTION_KINDS = [")
     kinds = set(re.findall(r'"([a-z_]+)"', _balanced_list(BRIDGE, at)))
     assert kinds == {a.value for a in ActionType}, (
-        f"bridge.js implements {sorted(kinds)}; ActionType defines "
+        f"bridge/ implements {sorted(kinds)}; ActionType defines "
         f"{sorted(a.value for a in ActionType)}")
 
 
@@ -274,7 +275,7 @@ def test_the_sil_robot_acts_on_response_actions_at_all():
 
 
 def test_all_three_action_vocabularies_are_the_same_list():
-    """`ActionType` (what the server can send), `bridge.js::ACTION_KINDS` (what the
+    """`ActionType` (what the server can send), `bridge/ACTION_KINDS` (what the
     browser implements) and `virtual_moxie.ACTION_KINDS` (what the SIL robot implements).
     Two clients that implement different verbs are not interchangeable."""
     from moxie_sdk.types import ActionType
@@ -287,10 +288,10 @@ def test_all_three_action_vocabularies_are_the_same_list():
 
 
 def test_both_clients_report_what_an_action_did_under_the_same_names():
-    """`bridge.js::actionStats()` and `VirtualMoxie.action_stats()` are the surface every
+    """`bridge/actionStats()` and `VirtualMoxie.action_stats()` are the surface every
     test reads. Same keys, or a test written against one client means something else
     against the other."""
-    at = BRIDGE.index("actionStats: function ()")
+    at = BRIDGE.index("actionStats = function ()")
     browser = set(_keys(_balanced(BRIDGE, BRIDGE.index("{", BRIDGE.index("return", at)))))
     vm = _sil().VirtualMoxie(host="127.0.0.1", port=1, device_id="d_keys", verbose=False)
     assert browser == set(vm.action_stats()) == set(ACTIONS_GOLDEN["stat_keys"]), (
@@ -357,11 +358,11 @@ def test_the_sil_robot_decodes_the_execute_payload_exactly_as_the_golden_says():
 
 @pytest.mark.parametrize("field", ["function_id", "function_args", "action_args"])
 def test_the_browser_sim_reads_every_field_the_contract_puts_an_execute_in(field):
-    """`bridge.js`:258 used to read `entry.function` and nothing else. Each of these three
+    """`bridge/`:258 used to read `entry.function` and nothing else. Each of these three
     is a field our own `wire.py::encode_action` emits, so a client that skips one is a
     client that mis-reads a message this appliance actually sends."""
     assert f"entry.{field}" in APPLY_ACTION, (
-        f"bridge.js::applyAction never reads `entry.{field}` — the SIL robot does, so an "
+        f"bridge/applyAction never reads `entry.{field}` — the SIL robot does, so an "
         f"`execute` carrying it means two different things to the two clients")
 
 
@@ -417,7 +418,7 @@ def test_the_browser_sims_actionStats_does_not_drop_the_payload_on_the_way_out()
     """The SECOND place the payload can be lost: `actionStats()` projecting fewer keys
     than `applyAction` records shows every caller an unarmed `execute`. The reader's
     shape is as much of the contract as the writer's."""
-    at = BRIDGE.index("actionStats: function ()")
+    at = BRIDGE.index("actionStats = function ()")
     projection = _balanced(BRIDGE, BRIDGE.index("({", BRIDGE.index("applied:", at)) + 1)
     assert _keys(projection) == ACTIONS_GOLDEN["applied_keys"], _keys(projection)
 

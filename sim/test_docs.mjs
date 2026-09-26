@@ -1,7 +1,5 @@
-/* Docs-explorer test. The static site ships a docs explorer (sim/web/docs.html)
- * that browses every Markdown doc with Mermaid rendered — deployable to Cloudflare
- * Pages with NO build step, which means the bundle must be committed and current.
- * This asserts:
+/* Docs-explorer bundle test. sim/web/docs.html ships with NO build step, so the bundle
+ * must be committed and current. Asserts:
  *   1. docs-index.json exists and covers every docs/*.md in the repo (no drift),
  *   2. each indexed file was actually copied into docs-bundle/,
  *   3. mermaid counts are right, and the vendored renderers are present,

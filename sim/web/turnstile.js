@@ -1,11 +1,8 @@
 /* turnstile.js — the browser half of the bot control: one fresh token per send, per route.
+ * Server half: `functions/api/_lib/turnstile.js` (+ chat.js / transcribe.js).
  *
- * Server half: `functions/api/_lib/turnstile.js`, `functions/api/chat.js` step 7 and
- * `functions/api/transcribe.js` step 4d.
- *
- * Publishes `window.moxieTurnstile.getToken(action)`; `cloud-transport.js` and `mic.js` each
- * call it on ONE line of their send path, so the whole widget lifecycle (load, render,
- * reset, time out, give up) lives here behind a promise of a string.
+ * `window.moxieTurnstile.getToken(action)` is called on ONE line of cloud-transport.js's
+ * and mic.js's send paths; the whole widget lifecycle lives here behind a promise.
  *
  * ONE WIDGET PER ACTION. The server requires a different `action` per spending route so a
  * token minted for a cheap typed turn cannot pay for a costly microphone turn. An action is
@@ -34,20 +31,15 @@
    * `turnstile_failed`. `sim/test_turnstile.mjs` §10 compares the two sources. */
   var ACTIONS = { chat: "chat", transcribe: "transcribe" };
 
-  /* How long one `execute()` may take. Shorter than the server's own patience (the transport
-   * gives /api/chat 25 s) so a visitor who must retry is told quickly. An interactive
-   * challenge can take longer: `mint()` spends a late solve via `getResponse()` and never
-   * resets a challenge still on screen (`outstanding`). */
+  /* How long one `execute()` may take: well inside /api/chat's 25 s so a visitor who must
+   * retry is told quickly. A slower interactive solve is not lost: `mint()` spends it via
+   * `getResponse()` and never resets a challenge still on screen (`outstanding`). */
   var EXECUTE_TIMEOUT_MS = 8000;
+  var deadlineMs = EXECUTE_TIMEOUT_MS;   // only the `__deadlineMs()` TEST HOOK changes it
 
-  /** Current mint deadline; only the `__deadlineMs()` TEST HOOK changes it (test_turnstile
-   *  §9 pins the shipped 8000 from this source separately). */
-  var deadlineMs = EXECUTE_TIMEOUT_MS;
-
-  /* Script requests allowed per page. A failed load (ad-blocker, captive portal, one 5xx,
-   * or merely slow) must not disable live turns for the whole session, so failures are
-   * never memoised — but bounded, because a permanently blocked host must not get a
-   * `<script>` appended per Send. */
+  /* Script requests per page. Failures (ad-blocker, captive portal, a 5xx, slowness) are
+   * never memoised, so one cannot disable live turns for the session — but bounded, so a
+   * blocked host does not get a `<script>` per Send. */
   var MAX_SCRIPT_TRIES = 3;
 
   /** Recorded facts, for the tests. Never a live sample (playbook rule 11). */
@@ -58,10 +50,8 @@
     renders: 0,         // turnstile.render() calls — one per ACTION, not per send
     renderErrors: 0,
     mints: 0,           // getToken() calls that asked the widget for a new challenge
-    rejoined: 0,        // ...and the ones that WAITED on a challenge already on screen
-                        //    instead of resetting it out from under the visitor
-    reused: 0,          // ...and the ones answered by a token the widget already held,
-                        //    unspent, from a challenge that finished past the deadline
+    rejoined: 0,        // ...that WAITED on a challenge already on screen (not reset)
+    reused: 0,          // ...answered by an unspent token from a late-finishing challenge
     tokens: 0,          // sends that ended up with a token, by any of those routes
     timeouts: 0,        // ...and the ones the 8 s deadline gave up on
     widgetErrors: 0,    // error-callback fired
@@ -109,13 +99,10 @@
   }
 
   /* ---- the element the widgets draw into --------------------------------- *
-   * A full-viewport, `pointer-events: none` centring layer on `document.body`:
-   *   · not inside a panel, whose overflow/collapse could clip a challenge to nothing;
-   *   · not anchored to the bottom, where it covered #rail-toggle and the composer;
-   *   · the layer takes no pointer events (children do), so an empty holder can never
-   *     swallow a tap and elementFromPoint skips it.
-   * `place()` keeps it above the bottom controls. Styled by an injected `<style>` so the
-   * rule ships with (and cannot drift from) this script; an attribute cannot express
+   * A full-viewport centring layer on `document.body`: not inside a panel (overflow could
+   * clip a challenge), not bottom-anchored (it covered #rail-toggle and the composer), and
+   * `pointer-events: none` itself so an empty holder never swallows a tap. `place()` keeps
+   * it above the bottom controls. An injected `<style>` because an attribute cannot express
    * `#turnstile-holder > *`. */
   var HOLDER_CSS =
     "#turnstile-holder{position:fixed;inset:0;z-index:210;display:flex;align-items:center;" +
@@ -144,15 +131,11 @@
   }
 
   /* ---- where "the middle of the viewport" is ----------------------------- *
-   * `#chat-dock` grows as the log fills (to #transcript's max-height), carrying
-   * #rail-toggle up into a viewport-centred challenge — overlapping for 683 < vh < 909, i.e.
-   * ordinary modern phones. Cloudflare's `render()` has no position option; placement is
-   * ours. So the layer's `bottom` is set from the measured top of the bottom stack, with the
-   * dock's REMAINING growth already reserved (`growth()`), so the answer does not change as
-   * she rambles. (Deliberately not env.js's `--eb-lift`, which skips a panel whose bottom is
-   * in the upper half — see docs/architecture/backlog/turnstile-layout-collision.md.)
-   * The observers are for changes a person makes: rotation, opening the drawer.
-   * ------------------------------------------------------------------------ */
+   * `#chat-dock` grows as the log fills, carrying #rail-toggle up into a centred challenge
+   * on ordinary phones (683 < vh < 909), and `render()` has no position option. So the
+   * layer's `bottom` is the measured top of the bottom stack with the dock's REMAINING
+   * growth reserved, and does not move as she rambles. Not env.js's `--eb-lift` (see
+   * docs/architecture/backlog/turnstile-layout-collision.md). */
   var DRAWER_MQ = "(max-width: 899px)";   // must match the CSS drawer breakpoint
   var PLACE_GAP = 8;                      // clear air between challenge and controls
   /* Below this much room, fall back to the whole viewport: a challenge in the way beats a
@@ -332,11 +315,8 @@
     if (p) p(v);
   }
 
-  /* ---- one fresh token -------------------------------------------------- */
-  /**
-   * Ask one action's widget for a token. Serialised per action through `w.chain`, because
-   * `w.pending` is a single resolver and overlapping mints would hang.
-   */
+  /* ---- one fresh token: serialised per action through `w.chain`, because `w.pending`
+   * is a single resolver and overlapping mints would hang. */
   function mint(w) {
     var run = function () {
       return new Promise(function (resolve) {
@@ -361,10 +341,8 @@
         if (held && held !== w.spent) { stats.reused++; done(held); return; }
         try {
           if (w.outstanding) {
-            /* A challenge is still on the visitor's screen: do NOT reset it (the page's
-             * "try me once more" would otherwise discard their half-solved puzzle every
-             * time). Become the waiter for it under a fresh deadline. If they abandon it,
-             * Cloudflare's expired/error callback settles and clears `outstanding`. */
+            /* A challenge is still on screen: do NOT reset away their half-solved puzzle;
+             * wait for it under a fresh deadline (abandoning it fires expired/error). */
             stats.rejoined++;
           } else {
             // Reset first: `execute()` on a widget holding a token can return the SAME
@@ -384,18 +362,10 @@
     return w.chain;
   }
 
-  /**
-   * A token for ONE send of ONE route.
-   *
-   * @param {string} action `"chat"` or `"transcribe"`. REQUIRED: an unknown name resolves
-   *   `null` rather than defaulting to chat (that default is the cross-route replay check 2
-   *   refuses).
-   * @returns {Promise<string|null>} never rejects:
-   *   · `""`      — enforcement off on this deployment; send as-is.
-   *   · `"<tok>"` — a fresh single-use token.
-   *   · `null`    — enforcement on and no token; do NOT send, say something human
-   *                 (`cloud-transport.js::botUnavailable`).
-   */
+  /** A token for ONE send of `action` ("chat" | "transcribe"; unknown -> null, never a
+   *  chat default — that is the cross-route replay). Never rejects: `""` = enforcement
+   *  off, send as-is; a string = a fresh single-use token; `null` = enforced and no token,
+   *  do NOT send (`cloud-transport.js::botUnavailable` says something human). */
   function getToken(action) {
     if (!sitekey()) { stats.skipped++; return Promise.resolve(""); }
     var w = slot(action);
@@ -416,16 +386,11 @@
 
   window.moxieTurnstile = {
     getToken: getToken,
-    /** The sitekey in force, or "" — the same value the module decides everything from. */
-    sitekey: sitekey,
-    /** Whether the bot control is enforced on this deployment. */
+    sitekey: sitekey,                                   // the value everything keys off, or ""
     enforced: function () { return !!sitekey(); },
-    /** Route-name -> action table (test_turnstile §10 compares it to the server's). */
-    actions: function () { return JSON.parse(JSON.stringify(ACTIONS)); },
-    /** What actually happened, for the tests. */
+    actions: function () { return JSON.parse(JSON.stringify(ACTIONS)); },   // test_turnstile §10
     stats: function () { return JSON.parse(JSON.stringify(stats)); },
-    /** TEST ONLY — shorten the mint deadline (see `deadlineMs`). Clamped positive so it
-     *  can never switch the deadline off. */
+    /** TEST ONLY — shorten the mint deadline; clamped positive so it can never be switched off. */
     __deadlineMs: function (ms) {
       var n = Number(ms);
       deadlineMs = isFinite(n) && n > 0 ? n : EXECUTE_TIMEOUT_MS;

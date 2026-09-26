@@ -308,6 +308,26 @@ body[data-bus="wait"] #link-label { color: var(--cyan); }
 #hud-frame .bl { bottom: 0; left: 0;    border-bottom: 1px solid var(--glow-30); border-left: 1px solid var(--glow-30); }
 #hud-frame .br { bottom: 0; right: 0;   border-bottom: 1px solid var(--glow-30); border-right: 1px solid var(--glow-30); }
 
+/* ---- presence badge ------------------------------------------------------ */
+/* Top-right of the stage. `display` lives HERE, not inline: an inline
+   `display:flex` beat the UA's `[hidden] { display: none }`, so the badge the markup hides
+   until a face event showed "PRESENCE UNKNOWN" forever (test_liveliness.mjs §6). */
+#presence-badge {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 4px;
+  background: rgba(10, 10, 15, 0.72);
+  border: 1px solid rgba(18, 181, 176, 0.45);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+#presence-badge[hidden] { display: none; }
+
 /* ---- speech callout ------------------------------------------------------- */
 /* Anchored to her head by moxie/bubble.js, which writes `--bx`/`--by` (stage-relative
    px) every frame and adds `.anchored`. Without `.anchored` (WebGL never started) it stays

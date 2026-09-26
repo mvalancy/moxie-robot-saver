@@ -45,6 +45,9 @@ agent brief again; four separate defects came out of doing that, all in the same
 (a missing package makes the tests that need it `importorskip` themselves away, which is a
 skip that reads as a pass). Read either file's header for the whole post-mortem.
 
+- **`helpers_web.py`** — `script_group("bridge"|"voice")`: the SIM's split classic-script
+  groups as the page runs them (sim.html's parts, in order, concatenated) — the pytest twin
+  of `sim/bridge_harness.mjs::scriptGroup`, used by every guard that reads the bridge source.
 - **`helpers_runtime.py`** — the shared harness for anything that drives a turn
   through the real `MoxieRuntime`: a `FakeClient` that records publishes,
   `make_runtime` / `drive_turn` / `drive_once`, and `assert_spec_response` (the
@@ -181,7 +184,7 @@ skip that reads as a pass). Read either file's header for the whole post-mortem.
   and no `openai` import. It is the **delivery** half only: that a SIM client then *acts* on
   what it was handed is asserted in `test_actions_reach_the_robot.py` (SIL, against
   `VirtualMoxie.action_stats()`) and `sim/test_bridge.mjs` (browser, against
-  `bridge.js::actionStats()`) — both clients have read `response_actions` since PR #52 /
+  `bridge/actions.js::actionStats()`) — both clients have read `response_actions` since PR #52 /
   PR #116, closing the DoD criterion-4 gap this entry used to describe.
 - **`test_launch_cards_sil.py`** — 🎴 T10, the launch-card round trip on a wire. The other two
   card suites are units: `test_launch_cards.py` is the decoder, `test_launch_cards_runtime.py`
@@ -577,7 +580,7 @@ the *code under test*, not of the assertions:
 - **Never assert on a live animation; assert on what the page recorded.** The mouth is
   driven by the audio envelope for the ~1 s an utterance lasts, so a test that samples
   `getMouthOpen()` has to catch it mid-open and loses that race on a loaded runner.
-  `audio.js` therefore remembers the loudest frame of each cloud-TTS utterance and keeps
+  `voice/` therefore remembers the loudest frame of each cloud-TTS utterance and keeps
   it after playback ends — `moxieAudio.lastMouthPeak()` — so the assertion happens once
   the utterance is *over*. It is 0 when no PCM rendered and ~1.0 when it did, so it still
   fails loudly if the Web Audio graph breaks. Same idea as reading the whole speaking

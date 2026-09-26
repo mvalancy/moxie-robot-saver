@@ -1,9 +1,7 @@
-/* The behavior planner, seen from the only renderer we can assert against.
- *
- * No hardware has played our markup; the browser SIM is where the inference is executable.
- * This drives the planner's 22 dialog-act goldens (one per `RemoteDialog.DialogAct`,
+/* The behavior planner, seen from the only renderer we can assert against (no hardware has
+ * played our markup). Drives the planner's 22 dialog-act goldens (one per `RemoteDialog.DialogAct`,
  * written by sim/tools/build_performance_goldens.py and pinned by sim/tests/test_performance.py)
- * through the REAL bridge.js as the ordinary `commands/remote_chat` that
+ * through the REAL bridge/ as the ordinary `commands/remote_chat` that
  * `MoxieRuntime.preview` publishes, and asserts each act performs differently —
  * backlog/expressiveness.md §2.7 P1 (d). An id the SIM does not animate fails here.
  *
@@ -35,7 +33,7 @@ const play = (markup, text) => {
     })));
 };
 
-/* The face each act must reach (bridge.js MOOD_TO_FACE). `motors:false` asserts the act
+/* The face each act must reach (bridge/ MOOD_TO_FACE). `motors:false` asserts the act
  * performs by NOT moving the arms (backchannelling, pos_answer). */
 const EXPECT = {
   abandon:               { face: "shy",       motors: true,  why: "a dropped line goes Shy and the eyes go searching (Bht_Search)" },
@@ -157,7 +155,7 @@ const html = `<!doctype html><meta charset="utf-8">
 </style>
 <h1>Behavior planner — 22 dialog acts on the SIM</h1>
 <p class="sub">Every line published through the preview hook as an ordinary
-<code>commands/remote_chat</code> and played through the real <code>sim/web/bridge.js</code>.
+<code>commands/remote_chat</code> and played through the real <code>sim/web/bridge/</code>.
 ${asserted} acts &middot; ${facesSeen.size} distinct faces &middot; ${withMotion} moved the body.
 No hardware has ever played our markup: the SIM is the only renderer we can assert against.</p>
 <div class="grid">${cells}</div>

@@ -1,13 +1,10 @@
 /* stub.js — offline stand-ins so the SIL works as a fully STATIC deploy.
  *
- * When no backend is reachable (Cloudflare Pages, file://, a plain CDN), these
- * stubs stand in for the three server-side pieces, using the SAME protocol
- * shapes the real services use — so nothing else in the app changes, and the
- * real backend transparently takes over when it IS reachable:
- *
+ * With no backend reachable, these stand in for the server pieces in the SAME protocol
+ * shapes, so the real backend takes over transparently when it IS reachable:
  *   brain : canned replies WITH real behavior markup (mood/gesture/icons)
  *   STT   : matches the mic clip to a scripted child line (no model needed)
- *   TTS   : handled by audio.js's pre-rendered clip manifest (audio/index.json)
+ *   TTS   : voice/local.js's pre-rendered clip manifest (audio/index.json)
  *
  * Exposes window.moxieStub = { enabled, reply, scriptedLines }.
  */

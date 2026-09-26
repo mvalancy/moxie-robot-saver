@@ -4,7 +4,7 @@
  * When the live brain is unreachable the page answers from `stub.js` and speaks from
  * `sim/web/audio/index.json`, keyed by the EXACT line text: re-punctuate a line and its clip
  * is silently orphaned. This builds one inventory of every line the degraded page can utter
- * and requires a clip for each, and drives the real `ambient.js`/`audio.js`/`bridge.js` for
+ * and requires a clip for each, and drives the real `ambient.js`/`voice/`/`bridge/` for
  * the behaviour a grep cannot prove. Sections live in `sim/tests/edge/fallback/`.
  *
  *   node sim/test_fallback_coverage.mjs

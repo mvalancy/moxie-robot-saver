@@ -14,26 +14,26 @@ import { sessionLines, childSessionLines } from "./01_manifest_sessions.mjs";
 {
   const html = readFileSync(join(web, "sim.html"), "utf8");
   // The files a degraded turn actually needs, in the order sim.html must load them:
-  // stub.js publishes the offline brain, bridge.js consumes it, mode.js decides which
-  // mode we are in, cloud-transport.js delegates to bridge.js when it is not `live`.
-  for (const f of ["stub.js", "bridge.js", "mode.js", "cloud-transport.js", "audio.js", "ambient.js"]) {
+  // stub.js publishes the offline brain, bridge/ consumes it, mode.js decides which
+  // mode we are in, cloud-transport.js delegates to bridge/ when it is not `live`.
+  for (const f of ["stub.js", "bridge/index.js", "mode.js", "cloud-transport.js", "voice/index.js", "ambient.js"]) {
     ok(html.includes(f), `sim.html must load ${f} — the fallback is not wired without it`);
     ok(existsSync(join(web, f)), `${f} must exist`);
   }
   // Order is measured on the `<script src>` tags: prose in an HTML comment may name them first.
   const loadsAt = (f) => html.indexOf('src="' + f);
-  for (const f of ["stub.js", "bridge.js", "cloud-transport.js"])
+  for (const f of ["stub.js", "bridge/core.js", "bridge/index.js", "cloud-transport.js"])
     ok(loadsAt(f) > -1, `sim.html has a <script src> for ${f}`);
-  ok(loadsAt("stub.js") < loadsAt("bridge.js"), "stub.js loads before bridge.js");
-  ok(loadsAt("bridge.js") < loadsAt("cloud-transport.js"),
-     "cloud-transport.js loads after bridge.js (it wraps what bridge.js published)");
+  ok(loadsAt("stub.js") < loadsAt("bridge/core.js"), "stub.js loads before bridge/");
+  ok(loadsAt("bridge/index.js") < loadsAt("cloud-transport.js"),
+     "cloud-transport.js loads after bridge/ (it wraps what bridge/ published)");
   // §7 below drives `ambient.js`'s degraded announcer through `window.moxieMode`, which
   // only exists because mode.js ran first. In the page that is load ORDER, not luck.
   ok(loadsAt("mode.js") > -1 && loadsAt("ambient.js") > -1 &&
      loadsAt("mode.js") < loadsAt("ambient.js"),
      "mode.js must load before ambient.js — the degraded line subscribes to window.moxieMode at load");
 
-  // `bridge.js` and `cloud-transport.js` gate the degraded answer on moxieStub.enabled.
+  // `bridge/` and `cloud-transport.js` gate the degraded answer on moxieStub.enabled.
   ok(/enabled:\s*true/.test(stubSrc), "window.moxieStub.enabled must be TRUE or a refused turn is silent");
   ok(stubSrc.includes("window.moxieStub"), "stub.js must publish window.moxieStub");
 
@@ -57,7 +57,7 @@ import { sessionLines, childSessionLines } from "./01_manifest_sessions.mjs";
 const ESCAPES = { n: "\n", t: "\t" };
 const unescape1 = (s) => s.replace(/\\(["'\\nt])/g, (_, c) => (ESCAPES[c] !== undefined ? ESCAPES[c] : c));
 
-/** `stub.js`'s SCRIPT + FALLBACK replies — the exact strings `bridge.js` hands `speak()`. */
+/** `stub.js`'s SCRIPT + FALLBACK replies — the exact strings `bridge/` hands `speak()`. */
 function stubReplies() {
   return [...stubSrc.matchAll(/say:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => unescape1(m[1]));
 }

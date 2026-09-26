@@ -319,7 +319,7 @@ def test_cloud_tts_chunks_play_in_order_then_stop(page, server):
         page.evaluate(_INJECT_TTS, {"frames": 8820, "rate": 22050, "eventId": "evt-chunks",
                                     "chunk": chunk, "marks": []})
     # Assert on what the page RECORDED once the utterance is over: sampling the queue
-    # live raced a fast runner (the audio can drain inside one polling gap). audio.js
+    # live raced a fast runner (the audio can drain inside one polling gap). voice/
     # records each playback's chunk order and deepest queue, and holds a chunk until its
     # turn, so ORDER is not a matter of timing either.
     done = page.wait_for_function(_PLAYED, arg={"event": "evt-chunks", "want": 3},

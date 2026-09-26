@@ -2,7 +2,7 @@
 
 The sections of [`sim/test_fallback_coverage.mjs`](../../../test_fallback_coverage.mjs), in run
 order, over one [`harness.mjs`](harness.mjs) (the shipped manifest, `stub.js`, `ambient.js`,
-`audio.js`, a `withGlobals` save/restore and a fake Web Audio stack). Later sections import the
+`voice/`, a `withGlobals` save/restore and a fake Web Audio stack). Later sections import the
 lines earlier ones extracted.
 
 - [`01_manifest_sessions.mjs`](01_manifest_sessions.mjs) — §1–2b: the manifest is whole; every session line, both speakers; the child has room to speak and to finish.

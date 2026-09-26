@@ -51,7 +51,7 @@ def is_echo_reply(text: str, prompt: str = SMOKE_PROMPT) -> bool:
 
 
 #: 🎬 The action verbs this client implements: our server's `ActionType` and
-#: `sim/web/bridge.js::ACTION_KINDS`. A literal on purpose (no SDK import);
+#: `sim/web/bridge/actions.js::ACTION_KINDS`. A literal on purpose (no SDK import);
 #: `test_sim_client_parity.py` pins the three lists together.
 #: ⚠️ `exit` and `enable_qr` are not recovered `ActionID` names (proto-catalog.md:2091:
 #: `exit_module`; `execute` + `function_id: "eb_enable_qr"`). This client decodes what our
@@ -92,7 +92,7 @@ class VirtualMoxie:
         self.got_telehealth = threading.Event()
         self.telehealth: list = []
         self.telehealth_state: str = ""
-        # 🎬 What `response_actions` did to this robot, shaped like bridge.js's
+        # 🎬 What `response_actions` did to this robot, shaped like bridge/actions.js's
         # `actionStats()`. Client lifetime, not per turn (as on the browser SIM).
         self.got_action = threading.Event()
         self.actions: dict = {
@@ -251,11 +251,11 @@ class VirtualMoxie:
     # -- 🎬 response_actions: the brain drives this robot, not just its mouth --
     # `RemoteChatAction`s (remote-chat-protocol.md) launch/exit modules, sleep, run a named
     # function, and subscribe to perception events. This client RECORDS them, state for
-    # state like `bridge.js::applyAction`, and runs nothing: no module engine, no
+    # state like `bridge/actions.js::applyAction`, and runs nothing: no module engine, no
     # `execute_returns[]` (it would have to invent a return value), no sleep/wake, no camera.
 
     def _on_actions(self, payload: dict):
-        """Consume one response's `response_actions` (mirror of `bridge.js::handleActions`).
+        """Consume one response's `response_actions` (mirror of `bridge/actions.js::handleActions`).
 
         The legacy singular `response_action` mirrors `[0]`, so it is read only when the
         plural is absent. An entry with no `action` is a subscription-only entry. Never
@@ -348,7 +348,7 @@ class VirtualMoxie:
         return True
 
     def action_stats(self) -> dict:
-        """What the cloud's actions did to this robot — same keys as bridge.js's
+        """What the cloud's actions did to this robot — same keys as bridge/actions.js's
         `actionStats()` (parity: `test_sim_client_parity.py`)."""
         a = self.actions
         return {"applied": [dict(x) for x in a["applied"]], "unknown": a["unknown"],

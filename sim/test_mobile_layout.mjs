@@ -9,30 +9,16 @@
  *
  *   node sim/test_mobile_layout.mjs
  */
-import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable, launchBrowser }
+import { requireBrowser, serveWeb, makeChecks, finish, pageEyes, launchBrowser }
   from "./browser_harness.mjs";
 
 const LABEL = "mobile-layout test";
 const { puppeteer, chrome } = await requireBrowser(LABEL);
 const { fails, ok, eq, count } = makeChecks();
 
-/* ---- EYES: what the browser itself reported ------------------------------- *
- * Kept in a WeakMap keyed by the page rather than threaded through `load()`'s return,
- * because both loaders hand back a bare `page` and eight call sites destructure nothing.
- * `eyes(label, page)` is then the only line a block has to add. */
-const EYES = new WeakMap();
-/**
- * Assert one page's console output. `=== 0`, unlike test_a11y's capped allowance: this
- * suite drives `moxie.hosted.test` (not local, so no sidecar probes) without the CSP header,
- * and every page here is silent. The abort budget is wired in for future fixtures.
- */
-const eyes = (label, page) => {
-  const seen = EYES.get(page) || { errs: [], aborted: null };
-  const left = notable(seen.errs, seen.aborted);
-  eq(left.length, 0,
-     `${label}: the page raised console errors nobody asked for — ${left.length}, ` +
-     `first: ${left.slice(0, 3).join(" | ")}`);
-};
+/* EYES: a 404'd or throwing page script fails a block instead of timing out silently. */
+const EYES = pageEyes(eq);
+const eyes = EYES.check;
 
 const site = await serveWeb();
 
@@ -49,13 +35,8 @@ const PHONES = [
 
 const browser = await launchBrowser(puppeteer, chrome, { hosts: { "moxie.hosted.test": site.port } });
 
-/**
- * Who would actually receive a tap at the centre of `sel`?
- *
- * Returns the hit element's own identity AND whether it is `sel` or something inside it —
- * a tap that lands on the `<span class="tick">` inside the button is a tap on the button,
- * and a test that demanded strict identity would fail on a correct page.
- */
+/** Who receives a tap at the centre of `sel`? `self` counts descendants: a tap on the
+ *  `<span class="tick">` inside a button is a tap on the button. */
 const hitTest = (sel) => {
   const el = document.querySelector(sel);
   if (!el) return { found: false };
@@ -70,50 +51,42 @@ const hitTest = (sel) => {
   };
 };
 
-async function load(w, h) {
+/** A phone-sized page on HOSTED; `route(r, url)` may answer a request (truthy = handled). */
+async function phonePage(w, h, route) {
   const page = await browser.newPage();
   await page.setViewport({ width: w, height: h, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
-  const seen = watchPage(page);
-  EYES.set(page, seen);
+  const seen = EYES.watch(page);
   await page.setRequestInterception(true);
   page.on("request", (r) => {
     if (r.isInterceptResolutionHandled()) return;
-    // `degraded` keeps today's copy AND the banner, and fires exactly one request — the
-    // state the collision was measured in. No live turn is reachable from this suite.
-    if (/\/api\/health\b/.test(r.url()))
-      return r.respond({ status: 200, contentType: "application/json",
-                         body: JSON.stringify({ ok: false, reason: "gateway_not_configured", mode: "degraded" }) });
-    if (/:808[12]\//.test(r.url())) { seen.aborted.n++; return r.abort("connectionrefused"); }
+    const u = r.url();
+    if (route(r, u)) return;
+    if (/:808[12]\//.test(u)) { seen.aborted.n++; return r.abort("connectionrefused"); }
     return r.continue();
   });
   await page.goto(HOSTED, { waitUntil: "domcontentloaded", timeout: 20000 });
+  return page;
+}
+const health = (r, body) => r.respond({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+
+async function load(w, h) {
+  // `degraded` keeps the banner and fires exactly one request — the state the collision was
+  // measured in. No live turn is reachable from this suite.
+  const page = await phonePage(w, h, (r, u) => /\/api\/health\b/.test(u) &&
+    (health(r, { ok: false, reason: "gateway_not_configured", mode: "degraded" }), true));
   await page.waitForFunction("!!document.getElementById('env-banner')", { timeout: 10000 }).catch(() => {});
   await new Promise((r) => setTimeout(r, 1200));   // mode probe + the lift measurement
   return page;
 }
 
-/**
- * The same page, but with the BOT CONTROL ARMED and Cloudflare's script stubbed: `/api/health`
- * publishes a sitekey and `turnstile/v0/api.js` is answered with a fake `window.turnstile`
- * whose `render()` injects a 300x65 box — the CHALLENGED visitor, the only state in which the
- * widget takes space. No real sitekey, no network.
- */
+/** The CHALLENGED visitor (the only state in which the widget takes space): `/api/health`
+ *  publishes a sitekey and Cloudflare's api.js is a fake whose `render()` injects 300x65. */
 async function loadChallenged(w, h) {
-  const page = await browser.newPage();
-  await page.setViewport({ width: w, height: h, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
-  const seen = watchPage(page);
-  EYES.set(page, seen);
-  await page.setRequestInterception(true);
-  page.on("request", (r) => {
-    if (r.isInterceptResolutionHandled()) return;
-    const u = r.url();
-    if (/\/api\/health\b/.test(u)) {
-      return r.respond({ status: 200, contentType: "application/json",
-                         body: JSON.stringify({ ok: true, reason: null, mode: "live",
-                                                turnstile: "1x00000000000000000000BB",
-                                                voice: false, ears: false }) });
-    }
-    if (/^https:\/\/challenges\.cloudflare\.com\//.test(u)) {
+  const page = await phonePage(w, h, (r, u) => {
+    if (/\/api\/health\b/.test(u))
+      return health(r, { ok: true, reason: null, mode: "live", turnstile: "1x00000000000000000000BB",
+                         voice: false, ears: false }), true;
+    if (/^https:\/\/challenges\.cloudflare\.com\//.test(u))
       return r.respond({ status: 200, contentType: "text/javascript",
                          headers: { "Access-Control-Allow-Origin": "*" },
                          body: `window.turnstile = {
@@ -127,12 +100,9 @@ async function loadChallenged(w, h) {
                            },
                            reset: function () {}, execute: function () {},
                            getResponse: function () { return ""; },
-                         };` });
-    }
-    if (/:808[12]\//.test(u)) { seen.aborted.n++; return r.abort("connectionrefused"); }
-    return r.continue();
+                         };` }), true;
+    return false;
   });
-  await page.goto(HOSTED, { waitUntil: "domcontentloaded", timeout: 20000 });
   await page.waitForFunction("!!document.getElementById('fake-cf-widget')", { timeout: 10000 })
     .catch(() => {});
   await new Promise((r) => setTimeout(r, 800));
@@ -176,15 +146,8 @@ try {
 
     /* Scroll a control that is still genuinely INSIDE the drawer into view and check it the
      * same way (the mic lives in the composer; block 6 hit-tests it there). */
-    const ctrl = await page.evaluate(() => {
-      const b = document.getElementById("center-btn");
-      b.scrollIntoView({ block: "center" });
-      const r = b.getBoundingClientRect();
-      const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
-      return { self: !!hit && (hit === b || b.contains(hit)),
-               hit: hit ? (hit.id ? "#" + hit.id : hit.tagName) : "null",
-               w: Math.round(r.width), h: Math.round(r.height) };
-    });
+    await page.evaluate(() => document.getElementById("center-btn").scrollIntoView({ block: "center" }));
+    const ctrl = await page.evaluate(hitTest, "#center-btn");
     ok(ctrl.self, `${label}: #center-btn inside the open drawer is hittable (got ${ctrl.hit})`);
     ok(ctrl.h >= 40, `${label}: …at a real touch size (${ctrl.w}x${ctrl.h})`);
 
@@ -263,8 +226,7 @@ try {
        `starts below the top chrome (ends ${between.chrome}) and does not touch ` +
        `#rail-toggle (y=${between.ctl}) — ${between.oy}px of bleed`);
 
-    // The composer is bottom-anchored at every width since 2026-09-05, so it is the
-    // control a `bottom: 16px` widget would land on now. Both are asserted.
+    // The composer is bottom-anchored at every width: where a `bottom: 16px` widget lands.
     const box = await page.evaluate(hitTest, "#speech-input");
     ok(box.self,
        `${label}: …and the message box owns its own centre too (got ${box.hit})`);
@@ -334,10 +296,7 @@ try {
    * a COLD load (no tap, no scroll, no drawer), with `railShut` re-read after every measure.
    * =================================================================== */
 
-  /**
-   * Is `sel` reachable by a visitor who has done NOTHING but load the page? Returns the raw
-   * numbers too, so a failure message carries the measurement.
-   */
+  /** Is `sel` reachable on a cold load? Raw numbers too, for the failure message. */
   const reach = (sel) => {
     const el = document.querySelector(sel);
     if (!el) return { found: false, sel };
@@ -722,8 +681,7 @@ try {
       };
     };
 
-    /* Every bottom-anchored control a challenge could land on: the rail handle and the
-     * composer strip. */
+    // Every bottom-anchored control a challenge could land on.
     const CONTROLS = ["#rail-toggle", "#chat-openers", "#speech-input", "#speech-btn"];
 
     for (const [label, w, h, inWindow] of [
