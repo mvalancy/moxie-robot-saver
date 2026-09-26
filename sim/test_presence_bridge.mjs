@@ -1,11 +1,7 @@
-/* Unit test for the presence half of sim/web/bridge.js — loads the REAL bridge with a
- * stubbed window/document/mqtt and asserts that "someone walked in" behaves like the
- * recovered vision contract: the event goes out as the `speech` of a RemoteChatRequest
- * on the ordinary remote-chat topic (docs/architecture/vision.md §1.1), it never lands
- * in the comms log, the badge records it, and the server's answer to that event_id is
- * recorded as a greeting. No browser, no network.
- *
- * Run: node sim/test_presence_bridge.mjs
+/* Presence half of sim/web/bridge.js: "someone walked in" goes out as the `speech` of a
+ * RemoteChatRequest on the ordinary remote-chat topic (vision.md §1.1), never lands in the
+ * comms log, updates the badge, and the answer to that event_id is recorded as a greeting.
+ * No browser, no network. Run: node sim/test_presence_bridge.mjs
  */
 import { loadBridge } from "./bridge_harness.mjs";
 

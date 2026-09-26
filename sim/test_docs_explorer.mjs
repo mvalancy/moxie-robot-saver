@@ -1,14 +1,11 @@
 // test_docs_explorer.mjs — headless functional test of the docs explorer (docs.html).
 //
-// test_docs.mjs checks the STATIC wiring (bundle built, files indexed, vendored
-// renderers present). This checks the RUNTIME behavior in a real browser: the tree
-// populates, markdown + Mermaid render, code is highlighted, full-text search
-// filters the tree, and opening a search hit highlights the term in the document
-// and scrolls to it. Skips gracefully (exit 0) when puppeteer/Chrome are absent,
-// so CI passes without a browser.
+// test_docs.mjs checks the STATIC wiring; this checks RUNTIME behavior in a real browser:
+// the tree populates, markdown + Mermaid render, code is highlighted, search filters the
+// tree, and opening a hit highlights and scrolls to the term. Skips without a browser
+// locally; fails under CI (browser_harness.requireBrowser).
 //
 //   node sim/test_docs_explorer.mjs
-//   PUPPETEER_PATH=/dir/with/node_modules/puppeteer node sim/test_docs_explorer.mjs
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -19,12 +16,8 @@ const LABEL = "docs-explorer tests";
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
 
-/* Browser discovery lives in ONE place. This file used to carry its own copy of
- * `loadPuppeteer` + `findChrome`, and a second copy is exactly how the defect this branch
- * exists to fix survived unnoticed: the scan for `node_modules/puppeteer` under `~/Code`
- * is a developer-machine path that cannot exist on a runner, so every CI run skipped and
- * the badge stayed green. `requireBrowser` is that discovery plus the rule that a missing
- * browser is a FAILURE under CI, and it cannot drift from what the other suites do. */
+/* Browser discovery lives in ONE place (requireBrowser): a private copy is how a suite
+ * skipped on every runner while the badge stayed green. */
 const { puppeteer, chrome, skip } = await requireBrowser(LABEL);
 
 const port = await new Promise((res) => {
@@ -41,10 +34,8 @@ async function waitUp(n = 50) {
 }
 function cleanup() { try { server.kill("SIGKILL"); } catch {} }
 
-/* `makeChecks` rather than a local two-liner, for the COUNT. A conditional assertion that
- * stops running (see check 7 below, which used to sit inside a bare `if`) leaves no trace
- * at all when the only output is "no failures"; "N checks passed" changes when coverage
- * silently drops, which is the failure this whole branch is about. */
+/* `makeChecks` for the COUNT: "N checks passed" changes when a conditional assertion
+ * silently stops running. */
 const { fails, ok, count } = makeChecks();
 
 if (!(await waitUp())) { cleanup(); skip("serve.py did not come up"); }
@@ -57,23 +48,10 @@ try {
   page.on("console", (m) => { if (m.type() === "error") errs.push(m.text()); });
   page.on("pageerror", (e) => errs.push("PAGEERR " + e.message));
 
-  /* THE PUBLIC INTERNET IS NOT A TEST DEPENDENCY — the third shape of the same defect.
-   *
-   * `test_responsive.mjs` and `test_env_hosted.mjs` asserted zero console errors and
-   * passed only because the author's :8081/:8082 sidecars happen to answer. This suite
-   * asserts zero console errors (check 10, below) and passes only because GITHUB ANSWERS:
-   * `README.md` embeds an `<img>` from `github.com/user-attachments`, that README is
-   * bundled into `sim/web/docs-bundle/_root/README.md`, and `docs.html` renders it with no
-   * CSP to refuse it. On a runner behind an egress proxy — or on the day that attachment
-   * URL rots — the fetch fails, Chrome logs an error the page cannot suppress, and this
-   * goes red for a reason that has nothing to do with the docs explorer.
-   *
-   * These are LOCAL-SERVER suites. So every off-origin http(s) request is aborted here,
-   * which makes the suite hermetic in BOTH directions: it can no longer depend on the
-   * network being up, and it can no longer quietly start depending on a new remote asset.
-   * Exactly as many refusals are then forgiven as were provoked, and no more — the rule
-   * the two fixes above established — so a console error from anything else still fails.
-   * `data:` and `blob:` are untouched: they never leave the page. */
+  /* THE PUBLIC INTERNET IS NOT A TEST DEPENDENCY. Every off-origin http(s) request is
+   * aborted, so the suite neither depends on the network nor quietly starts depending on a
+   * new remote asset; exactly as many refusals are forgiven as were provoked.
+   * `data:`/`blob:` are untouched. */
   const blocked = { n: 0, urls: [] };
   await page.setRequestInterception(true);
   page.on("request", (r) => {
@@ -86,12 +64,8 @@ try {
     return r.continue();
   });
 
-  /* What the NETWORK did with each image, so check 1a below can say WHICH of the three
-   * causes of `naturalWidth === 0` it hit. Reading the DOM alone cannot tell an aborted
-   * request from a 404 from bytes that simply have not arrived, and that ambiguity is
-   * exactly what cost a full diagnosis cycle when CI run 34021460344 went red: the message
-   * printed `{"src":"img/sim-hero.png","w":0,"h":0}` and nothing else, which is equally
-   * consistent with a broken hero and a healthy one. It never has to be guessed again. */
+  /* What the NETWORK did with each image, so check 1a can say WHICH cause of
+   * `naturalWidth === 0` it hit (aborted vs 404 vs not yet arrived). */
   const imgNet = [];
   page.on("response", (r) => {
     if (/\/img\//.test(r.url())) imgNet.push(`${r.status()} ${new URL(r.url()).pathname}`);
@@ -106,56 +80,20 @@ try {
   await page.waitForSelector("a.doc", { timeout: 8000 }).catch(() => {});
   const treeCount = await page.$$eval("a.doc", (els) => els.length).catch(() => 0);
   ok(treeCount >= 60, `tree should list the docs (got ${treeCount})`);
-  /* `article p` IS THE LOADING PLACEHOLDER, so this check used to have no teeth at all.
-   * Found while measuring 1a below: `docs.html` ships
-   * `<div id="content"><article><p class="muted">Loading docs…</p></article></div>` as
-   * static markup, and `article p` matches that spinner exactly as well as it matches
-   * rendered prose. At 150–200 ms of emulated latency this assertion passes against an
-   * article whose entire content is the word "Loading" — measured, not supposed. The tree
-   * (`a.doc`) comes from `docs-index.json`; the prose is a SECOND fetch of README.md that
-   * lands later, so on any runner slow enough the suite was reporting "markdown renders"
-   * for a page that had rendered none.
-   *
-   * Assert a HEADING instead: `marked` output starts with the README's `<h1>`, and the
-   * placeholder has no heading of any kind. That is strictly stronger than what was here
-   * (`h1, h2` is a subset of `h1, h2, p`), and waiting on the same selector removes the
-   * machine-speed term without softening it — if the prose never renders, the wait simply
-   * expires and the assertion still fails. */
+  /* Assert a HEADING, not `article p`: docs.html's static "Loading docs…" placeholder is an
+   * `article p`, so on a slow runner that check passed with nothing rendered. The placeholder
+   * has no heading; if the prose never renders the wait expires and the assertion fails. */
   await page.waitForSelector("article h1, article h2", { timeout: 8000 }).catch(() => {});
   ok(await page.evaluate(() => {
     const a = document.querySelector("article");
     return !!a && !!a.querySelector("h1, h2") && !/^\s*Loading/.test(a.textContent);
   }), "home document markdown should render (not the “Loading docs…” placeholder)");
 
-  /* 1a) …INCLUDING its hero image, from this origin, actually decoded.
-   *
-   * The home document is README.md and its hero used to be an `<img>` from
-   * `github.com/user-attachments` — refused by the shipped `img-src` in production and
-   * aborted by the interceptor above in here, which is why the preamble names it. Vendored
-   * 2026-09-04 to `sim/web/img/sim-hero.png`. Two things are asserted and neither is "an
-   * `<img>` is present": the src must have been REMAPPED (the README writes it repo-relative
-   * as `sim/web/img/…` so GitHub renders it; this page is served FROM `sim/web`, so
-   * `docs.js` has to strip that prefix or the URL 404s), and the bytes must have DECODED —
-   * `naturalWidth` is 0 for a broken-image icon and 0 for a blocked one.
-   *
-   * …AND 0 FOR ONE THAT HAS NOT FINISHED LOADING YET. That third cause is the one the
-   * sentence above missed, and missing it is what made this check red on CI run
-   * 34021460344 against a diff of one perf test plus two comments. Kept rather than
-   * rewritten because the omission is the reusable part: an enumeration of failure causes
-   * that forgets "not yet" turns a sampling boundary into a phantom product bug.
-   *
-   * Measured, not reasoned. Under 100 ms of emulated latency the old sample came back
-   * {"src":"img/sim-hero.png","complete":false,"w":0,"h":0} — the CI string exactly — with
-   * the interceptor above having aborted NOTHING and no image response yet on the wire.
-   * The hero is 612 KB and its request is issued only once `docs.js` has fetched and
-   * rendered README.md, so on a loaded runner it is still in flight when the two `evaluate`
-   * round-trips of checks 1 and 1a are done.
-   *
-   * `img.complete` is the terminator, and it is sound PRECISELY BECAUSE IT DOES NOT
-   * DISTINGUISH SUCCESS: it flips true on load and on error alike. Waiting on it removes
-   * the machine-speed term without removing a single tooth — a hero that 404s, is refused,
-   * or is aborted settles `complete` immediately and then has to get past `naturalWidth > 0`
-   * on its own, which it cannot. A bare "sleep longer" would instead have masked all three. */
+  /* 1a) …INCLUDING its hero image, from this origin, actually decoded. The README writes it
+   * repo-relative (`sim/web/img/…`) so docs.js must REMAP it, and the bytes must DECODE.
+   * `naturalWidth` is 0 when broken, blocked — or NOT YET LOADED (the 612 KB hero is requested
+   * only after README renders). Wait on `img.complete`, which flips on load AND error, so a
+   * 404/refusal/abort still has to clear `naturalWidth > 0`. */
   await page.waitForFunction(() => {
     const i = document.querySelector("article img");
     return !!i && i.complete;
@@ -166,17 +104,8 @@ try {
   });
   ok(hero && /^img\//.test(hero.src || ""),
      `the README hero should be remapped onto the site root (got ${hero && hero.src})`);
-  /* `complete` IS PART OF THE ASSERTION. The wait above `.catch(() => {})`s, so an
-   * expired wait leaves this check running against whatever the DOM happens to hold — and
-   * the comment above is wrong about what that is. A PNG still on the wire does NOT report
-   * `naturalWidth === 0`: Chrome fills the dimensions in from the IHDR header long before
-   * the pixels arrive. Measured 2026-09-06 by `sim/tools/page_teeth_check.py`, with this
-   * 612 KB hero padded to 24 MB behind a 1 MB/s throttle —
-   * `{"src":"img/sim-hero.png","complete":false,"w":1424,"h":1251}`, GREEN, on an image
-   * the page had not decoded. So the third cause of a false reading was named here and
-   * then not actually guarded against. Requiring `complete` costs nothing: it flips true
-   * on error as well as on load, so a 404, a refusal and an abort all still have to clear
-   * `naturalWidth > 0`, which none of them can. */
+  /* `complete` IS PART OF THE ASSERTION: the wait above swallows expiry, and a PNG still on
+   * the wire reports real dimensions from its IHDR header before its pixels arrive. */
   ok(hero && hero.complete && hero.w > 0 && hero.h > 0,
      `the README hero should actually decode (got ${JSON.stringify(hero)}; ` +
      `image responses: ${imgNet.join(" | ") || "NONE — no request was ever issued"})`);
@@ -203,13 +132,8 @@ try {
 
   // 3) code highlighting applies (hljs token spans)
   await page.goto(base + "/docs.html#reverse-engineering/hardware/hardware-map.md", { waitUntil: "domcontentloaded" });
-  /* Wait for the TOKENS, not merely for the `<code>` that will hold them. Waiting on the
-   * container and then reading the spans assumes highlight.js finishes inside whatever
-   * slack the machine happens to leave — this check went red the moment request
-   * interception (below) slowed the page down, and would do the same on a slow runner.
-   * Waiting on the assertion's own subject removes the machine-speed term without
-   * weakening it: if the highlighting never happens the wait simply expires and the
-   * assertion still fails. */
+  /* Wait for the highlight TOKENS, not the `<code>` container: highlight.js may finish later
+   * on a slow runner; if it never happens the wait expires and the check fails. */
   const HLJS = 'article pre code .hljs-keyword, article pre code .hljs-string, ' +
                'article pre code .hljs-comment, article pre code .hljs-number, ' +
                'article pre code .hljs-title, article pre code .hljs-attr';
@@ -336,12 +260,8 @@ try {
   /* …and say what was cut off, so a doc that quietly grows a remote dependency is visible
    * in the log rather than silently tolerated. */
   if (blocked.n) console.log(`   (blocked ${blocked.n} off-origin request(s): ${blocked.urls.join(", ")})`);
-  /* The interceptor exists so the suite cannot DEPEND on the network. This asserts the
-   * stronger property it was always one step away from: the explorer does not REACH for
-   * the network at all. Until the README hero was vendored on 2026-09-04 this counted 3
-   * (the same attachment URL, once per render of the home doc) and the forgiveness loop
-   * above quietly absorbed all three. A doc that grows a remote asset now fails here
-   * instead of being logged and tolerated. */
+  /* Stronger than "cannot depend on the network": the explorer must not REACH for it at all.
+   * A doc that grows a remote asset fails here instead of being forgiven. */
   ok(blocked.n === 0,
      `the docs explorer should make ZERO off-origin requests (blocked ${blocked.n}: ${blocked.urls.join(", ")})`);
 } finally {

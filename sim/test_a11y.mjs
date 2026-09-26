@@ -1,31 +1,13 @@
 /* test_a11y.mjs — the Sim page as a screen reader and a keyboard actually meet it.
  *
- * WHAT THIS SUITE IS FOR. https://moxie.mattvalancy.com/sim is a demo whose subject is a
- * robot built for children, including children with communication differences. A page
- * about that robot that a screen reader cannot navigate is a failure on the merits, not
- * an audit line — so this suite asserts the page's accessibility semantics the way the
- * other browser suites assert layout: in a real Chrome, against the real files.
+ * The robot is built for children, including children with communication differences, so
+ * the demo's accessibility semantics are asserted like layout: in real Chrome, real files.
+ * Every check is an IDENTITY check, never a count: names are read out of Chrome's own a11y
+ * tree against a table of selector -> exact expected name, and the unnamed-control sweep
+ * reports the offenders themselves.
  *
- * HOW IT ASSERTS, and why it matters. Every check here is an IDENTITY check, never a
- * count. "Nine controls are unnamed" is a number that goes green the moment somebody
- * deletes a control; "the slider for `Head tilt (nod)` is named `Head tilt (nod), motor 4`"
- * can only go green by being true. So the name assertions walk a table of
- * selector -> exact expected accessible name and read each one out of Chrome's own
- * accessibility tree (`page.accessibility.snapshot({ root })`), and the sweep for
- * unnamed controls REPORTS the offenders rather than their number.
- *
- * MEASURED BASELINE (live site, 2026-09-04, Chrome headless): nine interactive nodes had
- * an empty accessible name — the seven motor sliders, `#led-color` and `#qr-kind` — the
- * comms log was in no live region, and there was no <noscript> anywhere in the bundle.
- *
- * ZERO GATEWAY SPEND. `/api/chat`, `/api/speech` and `/api/transcribe` are aborted by the
- * request interceptor and the suite FAILS if the page ever asked for one. `/api/health`
- * is fulfilled locally, which is also how the live-mode copy branch is exercised without
- * a backend.
- *
- * NOT WIRED INTO CI YET — registered in sim/tests/test_ci_test_coverage.py::KNOWN_UNRUN
- * (a concurrent pass owns sim/ci/ci.yml). Run it directly:
- *     PUPPETEER_PATH=~/Code/valancy-resume node sim/test_a11y.mjs
+ * ZERO GATEWAY SPEND: `/api/chat`, `/api/speech`, `/api/transcribe` are aborted and the
+ * suite FAILS if the page asks for one; `/api/health` is fulfilled locally.
  */
 import { requireBrowser, serveWeb, makeChecks, finish, watchPage, notable, launchBrowser }
   from "./browser_harness.mjs";
@@ -61,9 +43,8 @@ async function open(o = {}) {
     if (SPENDY.test(u)) { spent.push(u); aborted.n++; return r.abort(); }   // never spend
     if (o.health != null && /\/api\/health\b/.test(u))
       return r.respond({ status: 200, contentType: "application/json", body: o.health });
-    /* With no `health` fixture the probe is CONTINUED to the static server, which has no
-     * such file — so the page legitimately logs one 404. Counted here, at the request
-     * that causes it, so `notable()` forgives exactly that one and no other. */
+    /* No `health` fixture: the probe 404s at the static server, counted here so `notable()`
+     * forgives exactly that one. */
     if (o.health == null && /\/api\/health\b/.test(u)) aborted.refused++;
     return r.continue();
   });
@@ -76,25 +57,13 @@ async function open(o = {}) {
 }
 
 /* ==========================================================================
- * WHAT THE BROWSER ITSELF SAID — measured, then asserted
+ * WHAT THE BROWSER ITSELF SAID
  *
- * WHY THIS IS NOT `errs.length === 0`. This suite serves the page with the REAL
- * `sim/web/_headers` CSP (`serveWeb({ headers: true })`) on a 127.0.0.1 origin, which is
- * `isLocal` — so `env.js` fires its two optional-sidecar probes at `:8081` (Piper) and
- * `:8082` (STT), and `connect-src 'self'` refuses both. Chrome reports each refusal
- * TWICE, once as the violation and once as the failed fetch, so every page load in this
- * suite carries exactly four console errors that the page is RIGHT to produce and the
- * fixture is right to see. An `errs.length === 0` here would be red on a correct page and
- * would be loosened by the next person into something that proves nothing.
- *
- * So the allowance is narrow and identified: a message is forgiven only if it names one of
- * the two sidecar ports on THIS origin *and* says the CSP refused it. A CSP refusal of
- * anything else — a script, a style, a gateway fetch — matches neither half and is a
- * failure, which is the case that matters: `script-src` is exactly how this page breaks in
- * production, and it breaks silently.
- *
- * The cap is what stops the allowance from becoming a blanket. Four is what the two probes
- * cost; a fifth means something else on the page is talking to those ports.
+ * Not `errs.length === 0`: on a 127.0.0.1 origin under the real CSP, env.js probes the
+ * :8081/:8082 sidecars and `connect-src 'self'` refuses both, each reported twice — four
+ * errors the page is RIGHT to produce. Only messages naming those ports on this origin AND
+ * a CSP refusal are forgiven, capped at four; any other refusal (script, style, gateway)
+ * fails, because `script-src` is how this page breaks silently in production.
  * ======================================================================= */
 const SIDECAR_CSP = /127\.0\.0\.1:(8081|8082)\/health/;
 const CSP_REFUSAL = /Content Security Policy|Refused to connect/;
@@ -151,9 +120,8 @@ async function unnamedControls(page) {
   const bare = await unnamedControls(page);
   ok(bare.length === 0, `interactive controls with NO accessible name: [${bare.join(", ")}]`);
 
-  // The seven motor sliders, in panel order. moxie.js writes the joint names into a
-  // <label> that labels nothing (no `for`, and the <input> is its SIBLING) — this asserts
-  // the names the HUD glue copies across, not that "seven sliders have some name".
+  // The seven motor sliders, in panel order: asserts the exact names the HUD glue copies
+  // from the non-labelling <label> text.
   const sliderNames = await page.$$eval('#motors .motor input[type="range"]',
     (els) => els.map((e) => e.getAttribute("aria-label")));
   const WANT_SLIDERS = [
@@ -259,11 +227,9 @@ async function unnamedControls(page) {
      `focused #transcript shows an outline — got ${ring.style} ${ring.w}`);
 
   /* ---- AMBIENT MUST NOT BE ANNOUNCED ----
-   * Moxie says an unprompted quip every 11-24 s. Those go to #bubble, never to the log.
-   * Two assertions, because either alone can be satisfied by accident: the bubble is in
-   * no live region (structure), AND driving five real quips leaves the log's CONTENT
-   * byte-identical while the bubble's content changes (behaviour). Identity, not counts —
-   * "the log did not grow" would also pass if ambient were broken and said nothing. */
+   * Unprompted quips go to #bubble, never the log. Structure (the bubble is in no live
+   * region) AND behaviour (five real quips leave the log byte-identical while the bubble
+   * changes) — "the log did not grow" alone would pass if ambient said nothing. */
   const bubble = await page.$eval("#bubble", (e) => {
     let n = e, live = null, log = false;
     while (n && n.getAttribute) {
@@ -318,14 +284,8 @@ async function unnamedControls(page) {
 }
 
 /* ==========================================================================
- * 3. FINDING 2 — the standing note must describe what the button actually does
- *
- * It was written as "the Voice panel must describe the button BESIDE it", and until
- * 2026-09-05 that was literally the geometry: `#voice-note` and `#speech-btn` were two
- * lines apart in the same rail section. The button is in the page's composer now and the
- * note stayed with the phrase chips it also describes, so the note points at the box
- * rather than sitting next to it — and the assertions are unchanged, because what they
- * were always guarding is that the note and the button cannot describe different pages.
+ * 3. The standing voice note must describe what the composer's button actually does —
+ *    the note and the button cannot describe different pages.
  * ======================================================================= */
 {
   // (a) scripted / no backend: typing reaches a SCRIPTED Moxie, not the browser's voice.
@@ -363,18 +323,10 @@ async function unnamedControls(page) {
 }
 
 /* ==========================================================================
- * 4. KEYBOARD — the rail drawer, its announced state, and no phantom tab stops
- *
- * REWRITTEN 2026-09-05, and the rewrite is the point. This block used to prove that
- * `#speech-input` and `#transcript` were UNREACHABLE while the drawer was shut — which
- * was true, and was the defect: on a phone the only way to say anything to Moxie was
- * two thousand pixels inside a drawer labelled CONTROLS
- * (docs/architecture/backlog/mobile-first-visit.md). Both now live in the page's
- * composer, outside the rail, so the same two ids are asserted the OPPOSITE way round.
- *
- * The invariant the old block was really guarding has not moved and is still asserted
- * below with rail-only controls: a collapsed disclosure must not leave tab stops behind
- * it. What changed is which elements are inside it.
+ * 4. KEYBOARD — the rail drawer, its announced state, and no phantom tab stops.
+ * The composer (#speech-input, #transcript) lives OUTSIDE the rail and must be reachable
+ * with the drawer shut (backlog/mobile-first-visit.md); a collapsed drawer must leave no
+ * tab stops behind it.
  * ======================================================================= */
 {
   const view = await open({ width: 390, height: 780 });
@@ -401,10 +353,8 @@ async function unnamedControls(page) {
      `out of ${JSON.stringify(shut)}`);
   ok(shut.includes("rail-toggle"), "the toggle itself is reachable");
 
-  /* THE HALF THIS BLOCK EXISTS FOR SINCE 2026-09-05: with the drawer shut and nothing
-   * tapped, a keyboard visitor can still reach the whole conversation. If this ever goes
-   * back to failing, the page has gone back to requiring an engineering panel in order to
-   * say hello. */
+  /* With the drawer shut and nothing tapped, a keyboard visitor reaches the whole
+   * conversation — no engineering panel needed to say hello. */
   for (const id of ["transcript", "speech-input", "mic-btn", "speech-btn"])
     ok(shut.includes(id),
        `#${id} is reachable with the rail SHUT — the composer is not panel content ` +

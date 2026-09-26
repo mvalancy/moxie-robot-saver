@@ -1,20 +1,10 @@
-/* Responsive UI tests for the static site — does it actually work on a phone,
- * tablet, laptop, desktop and ultrawide?  Drives real Chrome (puppeteer) across
- * representative viewports and asserts the things that break responsive layouts:
- *
- *   - NO horizontal page scroll (the classic "off-screen content" bug),
- *   - NO uncaught console errors,
- *   - the SIMULATOR: Moxie's WebGL canvas fills the viewport, its window.moxie API
- *     comes up, and every control is reachable — the rail fits with no internal
- *     scroll on desktop/tablet, and collapses to a working drawer on phones,
+/* Responsive UI tests for the static site across phone, tablet, laptop, desktop and
+ * ultrawide viewports in real Chrome:
+ *   - NO horizontal page scroll and NO uncaught console errors,
+ *   - the SIMULATOR: the WebGL canvas fills the viewport, window.moxie comes up, and every
+ *     control is reachable (side rail on wide screens, working drawer on phones),
  *   - HUB / SETUP / CLOUD / DOCS: no h-scroll + no errors at phone and desktop.
- *
- * Self-contained: it starts its own `sim/serve.py` on a free port and tears it
- * down. Like test_voice, it SKIPS cleanly (exit 0 with a notice) when a browser
- * isn't available — so CI without Chrome still passes. To run it, either install
- * puppeteer here or point it at an existing one:
- *   PUPPETEER_PATH=/path/to/dir/with/node_modules/puppeteer \
- *   PUPPETEER_EXECUTABLE_PATH=/path/to/chrome  node sim/test_responsive.mjs
+ * Skips cleanly without a browser (set PUPPETEER_PATH / PUPPETEER_EXECUTABLE_PATH).
  *
  * Run: node sim/test_responsive.mjs
  */
@@ -110,34 +100,18 @@ try {
     p.on("console", (m) => { if (m.type() === "error") raw.push(m.text()); });
     p.on("pageerror", (e) => raw.push("pageerror: " + e.message));
     p.on("response", (r) => { if (r.status() === 404) notFound.push(r.url()); });
-    // The OPTIONAL local sidecars (Piper on :8081, STT on :8082) are absent for almost
-    // everyone. `audio.js` probes them from a localhost origin ON PURPOSE — that is what a
-    // contributor running `sim/serve.py` with a real Piper gets — and Chrome logs the
-    // refusal as a console error the page cannot suppress. Correlated the same way the
-    // `/api/health` miss below is: by the requests that actually failed, so a refusal to
-    // ANY other host still fails the suite.
+    // The optional local sidecars (Piper :8081, STT :8082) are probed on purpose from a
+    // localhost origin and are usually absent; forgiven only by the requests that actually
+    // failed, so a refusal to ANY other host still fails the suite.
     const refused = [];
     p.on("requestfailed", (r) => refused.push(r.url()));
     await p.goto(base + "/" + path, { waitUntil: "domcontentloaded", timeout: 30000 });
-    // Chrome logs a 404 SUBRESOURCE as a console error, and `sim/web/mode.js` probes the
-    // OPTIONAL same-origin capability route `/api/health` on every load. `sim/serve.py`
-    // is a static server with no Pages Functions behind it, so that probe 404s — which
-    // is the `offline` path working exactly as designed (spec
-    // docs/architecture/backlog/live-sim-demo.md §6.3: an absent route means the page
-    // stays byte-identical to the pre-Functions site). The guard was too coarse, not the
-    // code: it treated any console error as a broken page, including a capability
-    // probe's expected miss. So that one line is separated out PRECISELY — by
-    // correlating the console text with the 404 responses actually observed — and any
-    // other missing asset still fails, because it lands in `notFound` too.
-    // THIS SUITE PASSED FOR MONTHS ONLY BECAUSE OF STALE LOCAL STATE. It asserts zero
-    // console errors, and on the author's machine two leftover processes happened to be
-    // listening on :8081 and :8082, so the probes succeeded. On a clean runner — and on
-    // any contributor's laptop without Piper — they are refused, two per viewport, and the
-    // suite fails. It had never run in CI to reveal that (no browser was ever installed),
-    // so the whole thing was green on a lie in both directions at once.
-    // Host AND colon are both required. With them optional, `http://8081.evil.com/x` also
-    // matched — cosmetic here, but the same laxness in test_env_hosted.mjs forgave a
-    // refusal to a genuinely foreign host, so both files now use the strict form.
+    // mode.js probes the optional same-origin `/api/health`, which 404s on a static server —
+    // the `offline` path working as designed (live-sim-demo.md §6.3). That one console line is
+    // forgiven by correlating it with the 404s actually observed; any other missing asset
+    // still fails. Without these two exemptions the suite only passed on a machine that
+    // happened to have sidecars listening. Host AND colon are required in the pattern, so a
+    // foreign host like `8081.evil.com` is never forgiven.
     const SIDECAR = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]):(8081|8082)(\/|$)/;
     const errors = () => {
       const onlyProbe = notFound.length > 0 && notFound.every((u) => /\/api\/health\b/.test(u));
@@ -211,22 +185,9 @@ try {
       // no internal scroll (a single-column panel is allowed to scroll).
       ok(s.clippedGroups === 0, `[sim ${label}] ${s.clippedGroups} control group(s) off-screen`);
       ok(s.panelWidth > 0 && s.panelWidth < s.innerW * 0.7, `[sim ${label}] control panel is ${Math.round(s.panelWidth / s.innerW * 100)}% of width`);
-      /* THE MULTI-COLUMN ASSERTION THAT WAS DELETED HERE, and why deleting beats keeping.
-       *
-       * `s.columns` is `parseInt(getComputedStyle(rail).columnCount)`, and that computes to
-       * "auto" — so NaN — at every width this loop visits. `NaN > 1` is false, so the guard
-       * never opened and the assertion inside it has never once executed. It is not merely
-       * dead: measured, the rail's internal overflow is 1492-1738px, so if the guard ever
-       * DID open the assertion would fail on a layout that is working exactly as designed.
-       *
-       * Designed, deliberately: `sim/web/style.css` (the `@media (min-width: 900px)` block)
-       * abandoned the multi-column rail on purpose — "~4 non-splittable control groups into
-       * 3 columns is inherently fragile … a single scrolling column always fits with zero
-       * clipped groups". A single-column panel is ALLOWED to scroll, which the comment above
-       * already says. So this guarded a layout the CSS stopped producing, and it read as
-       * coverage while providing none — the same lie, in miniature, that this whole branch
-       * is about. What actually holds the panel honest are the two assertions above it:
-       * no clipped group, and the panel stays under 70% of the width. */
+      /* No multi-column assertion: the >=900px rail is deliberately a single scrolling column
+       * (style.css), which is allowed to scroll. The panel is held honest by the two assertions
+       * above: no clipped group, and under 70% of the width. */
     }
     await p.close();
   }

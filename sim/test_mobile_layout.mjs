@@ -1,30 +1,11 @@
 /* test_mobile_layout.mjs — on a phone, is the control under your thumb the one you meant?
  *
- * THE DEFECT THIS FILE EXISTS FOR (measured in Chrome against the live site, 2026-09-03,
- * 375x667 with touch emulation):
- *
- *     #rail-toggle           357x48 at y=610, visible, pointer-events:auto
- *     elementFromPoint(centre of #rail-toggle) -> div#env-banner
- *     tap()      -> refused, element obscured
- *     force-click-> aria-expanded STAYS false (the hit landed on the banner)
- *     JS .click()-> works, drawer opens, mic records
- *
- * `#env-banner` is `position: fixed; bottom: …; z-index: 30` and stretches to
- * `left:10px; right:10px` on phones — landing exactly on top of the bottom-anchored rail
- * handle. On the demo's most likely device, "open the controls" did nothing, with no
- * feedback of any kind, until the visitor dismissed a notice that never said it was in the
- * way. Everything about the toggle looked fine: it was visible, sized, unclipped, not
- * `display:none`, `pointer-events:auto`. **A visibility check could not have caught this.**
- * `document.elementFromPoint()` is the assertion that could, so that is the assertion here.
- *
- * IT HAS TEETH, and block 3 is why: it forces `--eb-lift` back to 0 (the pre-fix geometry)
- * and requires the collision to REAPPEAR. A layout test that only shows the fixed state is
- * green is indistinguishable from one whose selector silently matches nothing.
- *
- * SINCE 2026-09-06 IT ALSO CARRIES THE OPENERS (block 8). Blocks 6-7 proved a visitor can
- * REACH the message box; block 8 is about a visitor who can see it and still has nothing
- * to say to a robot nobody introduced. Three buttons in the dock, one tap, a real turn —
- * and a height budget that block 4 turned out to be enforcing all along.
+ * A control can be visible, sized, unclipped and `pointer-events:auto` and still be
+ * untappable because something else sits on top of it (the env banner once covered
+ * #rail-toggle; the Turnstile challenge once did too). Only `document.elementFromPoint()`
+ * catches that, so that is the assertion here — plus TEETH blocks that restore each
+ * pre-fix geometry and require the collision to REAPPEAR, so a selector matching nothing
+ * cannot read as green. Block 8 covers the three chat openers and their height budget.
  *
  *   node sim/test_mobile_layout.mjs
  */
@@ -41,18 +22,9 @@ const { fails, ok, eq, count } = makeChecks();
  * `eyes(label, page)` is then the only line a block has to add. */
 const EYES = new WeakMap();
 /**
- * Assert one page's console output.
- *
- * WHY IT IS `=== 0` HERE AND A CAPPED ALLOWANCE IN `test_a11y.mjs`. That suite serves the
- * real `_headers` CSP on a 127.0.0.1 origin, so `env.js` fires two localhost sidecar
- * probes the policy then refuses — four console errors a correct page produces. This one
- * drives `moxie.hosted.test`, which is NOT local, so `env.js` never fires those probes at
- * all, and it serves without the CSP header. MEASURED across every page this file opens,
- * all four phones and every block: 0 raw console messages of type `error`, 0 `pageerror`,
- * on every one. So silence is the honest bar here and the budget below is forgiving
- * nothing — `aborted.n` counts the `:808x` aborts the interceptor provokes, which this
- * fixture never actually reaches, and it is wired up so that a future fixture that DOES
- * refuse a request has the correlation already in place instead of a widened pattern.
+ * Assert one page's console output. `=== 0`, unlike test_a11y's capped allowance: this
+ * suite drives `moxie.hosted.test` (not local, so no sidecar probes) without the CSP header,
+ * and every page here is silent. The abort budget is wired in for future fixtures.
  */
 const eyes = (label, page) => {
   const seen = EYES.get(page) || { errs: [], aborted: null };
@@ -121,17 +93,10 @@ async function load(w, h) {
 }
 
 /**
- * The same page, but with the BOT CONTROL ARMED and Cloudflare's script stubbed.
- *
- * `/api/health` publishes a sitekey (which is the browser's only source of one) and the
- * request for `challenges.cloudflare.com/turnstile/v0/api.js` is answered with a fake
- * `window.turnstile` whose `render()` injects a box of the size Turnstile's own
- * `size: "flexible"` produces — min-width 300px, height 65px. That is the CHALLENGED
- * visitor, which is the only state in which the widget occupies any space at all, and
- * therefore the only state in which it can be in the way of anything.
- *
- * A REAL SITEKEY IS NOT NEEDED AND MUST NOT BE USED: no challenge is solved here and no
- * network is touched — the interceptor answers before the request leaves.
+ * The same page, but with the BOT CONTROL ARMED and Cloudflare's script stubbed: `/api/health`
+ * publishes a sitekey and `turnstile/v0/api.js` is answered with a fake `window.turnstile`
+ * whose `render()` injects a 300x65 box — the CHALLENGED visitor, the only state in which the
+ * widget takes space. No real sitekey, no network.
  */
 async function loadChallenged(w, h) {
   const page = await browser.newPage();
@@ -194,8 +159,7 @@ try {
     ok(alive.self, `${label}: the topbar ALIVE toggle is hittable (got ${alive.hit})`);
 
     /* --- 2. open the drawer FOR REAL and drive a control ------------------ */
-    // `page.tap()` refuses on an obscured element, which is the whole point: before the
-    // fix this line threw. It is the strongest form of the assertion above.
+    // `page.tap()` refuses on an obscured element — the strongest form of the assertion above.
     await page.tap("#rail-toggle");
     await new Promise((r) => setTimeout(r, 600));
     const open = await page.evaluate(() => ({
@@ -210,10 +174,8 @@ try {
     ok(reopened.self,
        `${label}: the handle is STILL reachable with the drawer open (got ${reopened.hit})`);
 
-    /* Scroll a real control into the rail's view and check the same way. This used to
-     * drive `#mic-btn`; the mic moved out of the drawer and into the page's composer on
-     * 2026-09-05 (block 6 hit-tests it there, on a page nobody has tapped), so the
-     * control driven here is one that is still genuinely INSIDE the drawer. */
+    /* Scroll a control that is still genuinely INSIDE the drawer into view and check it the
+     * same way (the mic lives in the composer; block 6 hit-tests it there). */
     const ctrl = await page.evaluate(() => {
       const b = document.getElementById("center-btn");
       b.scrollIntoView({ block: "center" });
@@ -237,24 +199,9 @@ try {
 
   /* =====================================================================
    * 4. THE TURNSTILE CHALLENGE IS NOT ON TOP OF THE CONTROLS EITHER.
-   *
-   * THE DEFECT THIS BLOCK EXISTS FOR — the same one as block 1, by a different element.
-   * The first version of `sim/web/turnstile.js` put its widget holder at
-   * `position: fixed; left: 50%; bottom: 16px; z-index: 70`, which on a phone is exactly
-   * where `#rail-toggle` lives. Measured at 393x851: the holder at (47,770) 300x65 and the
-   * toggle at (9,794) 375x48, with `elementFromPoint()` at the toggle's centre returning
-   * `div#fake-cf-widget`. So a visitor Cloudflare decided to challenge could not open the
-   * drawer that contains the text box — the one control that matters — and the widget was
-   * two z-index layers above the banner that had needed `--eb-lift` for the identical
-   * reason.
-   *
-   * It could not be caught here before because this suite's `/api/health` published no
-   * sitekey, so no holder was ever created. `loadChallenged()` publishes one.
-   *
-   * BOTH DIRECTIONS ARE ASSERTED, and the second is what keeps the first honest: the
-   * controls must own their own centres, AND THE CHALLENGE ITSELF MUST BE HITTABLE. Moving
-   * the widget somewhere harmless by making it unclickable would be a worse bug than the
-   * one being fixed — an unsolvable challenge is a page that can never send anything.
+   * A bottom-anchored widget holder once covered #rail-toggle, so a challenged visitor could
+   * not open the drawer. BOTH DIRECTIONS are asserted: the controls own their centres AND the
+   * challenge itself stays hittable — an unsolvable challenge would be a worse bug.
    * =================================================================== */
   for (const [label, w, h] of [PHONES[1], PHONES[2]]) {
     const page = await loadChallenged(w, h);
@@ -277,12 +224,8 @@ try {
 
     // The whole point: the bottom-anchored controls still own their own centres.
     const toggle = await page.evaluate(hitTest, "#rail-toggle");
-    /* `drew.drew &&` IS PART OF THE ASSERTION, not belt and braces. Both of these say
-     * "with a challenge on screen", and with NO challenge on screen both are trivially
-     * true — which `sim/tools/page_teeth_check.py`'s `turnstilejs-inert` row measured:
-     * gut `turnstile.js` and these two stayed green while naming the thing that had just
-     * been deleted. A check whose message describes a state it does not require is a
-     * check that reads as coverage and is not. */
+    /* `drew.drew &&` is part of the assertion: with no challenge on screen both checks are
+     * trivially true (page_teeth_check.py's `turnstilejs-inert` row proved it). */
     ok(drew.drew && toggle.self,
        `${label}: with a challenge ON SCREEN (drawn=${drew.drew}), a tap at #rail-toggle ` +
        `STILL reaches the toggle (got ${toggle.hit})`);
@@ -300,18 +243,9 @@ try {
     ok(widget.self,
        `${label}: …while the challenge itself is hittable, not decoration (got ${widget.hit})`);
 
-    /* IT IS IN THE OPEN STAGE, BETWEEN THE TWO STRIPS OF CHROME — asserted as CLEARANCE
-     * FROM THE STRIPS THEMSELVES, not as a fraction of the viewport.
-     *
-     * This used to read `y > vh*0.25 && y+h < vh*0.75`, which was a restatement of
-     * `align-items: center` on a full-viewport layer rather than a fact about the page.
-     * `turnstile.js` no longer centres in the viewport — it centres in the space ABOVE the
-     * bottom-anchored controls, because the viewport's middle stops being empty as
-     * `#chat-dock` grows (block 9 below has the measurements and the 683 < vh < 909
-     * window). The fraction then went red on a page that was MORE correct, which is the
-     * signature of a check pinned to an implementation. What actually has to be true is
-     * this: clear of the top chrome, and not touching the drawer handle — in the
-     * drawer-OPEN state this line runs in as much as in the cold one. */
+    /* In the open stage, asserted as CLEARANCE from the chrome strips (clear of the top chrome,
+     * not touching the drawer handle) rather than a viewport fraction — turnstile.js centres in
+     * the space ABOVE the bottom controls, which moves as #chat-dock grows (block 9). */
     const between = await page.evaluate(() => {
       const cf = document.getElementById("fake-cf-widget");
       const top = document.getElementById("notice") || document.getElementById("topbar");
@@ -335,12 +269,9 @@ try {
     ok(box.self,
        `${label}: …and the message box owns its own centre too (got ${box.hit})`);
 
-    /* TEETH, in the same block: put the pre-fix geometry back and require the collision to
-     * return. Without this the assertions above are equally consistent with "the fix works"
-     * and "the fake widget has no size". It is aimed at `#speech-input` rather than
-     * `#rail-toggle` because that is where the pre-fix holder now lands: the handle moved
-     * up the page when the composer took the bottom row, so a test still aimed at the
-     * handle would report "no collision" and quietly stop having teeth. */
+    /* TEETH: put the pre-fix geometry back and require the collision to return. Aimed at
+     * `#speech-input`, which is where the pre-fix holder lands now that the composer is the
+     * bottom row. */
     const broken = await page.evaluate((fn) => {
       const holder = document.getElementById("turnstile-holder");
       holder.setAttribute("style",
@@ -362,10 +293,8 @@ try {
   }
 
   /* =====================================================================
-   * 5. TEETH. Put the pre-fix geometry back and require the bug to return.
-   *
-   * Without this block, a green suite would be equally consistent with "the fix works"
-   * and "the selector matched nothing" — and this repo has shipped that mistake before.
+   * 5. TEETH. Put the pre-fix geometry back and require the bug to return, so a green suite
+   * cannot mean "the selector matched nothing".
    * =================================================================== */
   {
     const page = await load(375, 667);
@@ -379,10 +308,8 @@ try {
     ok(/^\d+px$/.test(lift) && parseInt(lift, 10) > 0,
        `teeth: env.js measured a real lift, not a constant (--eb-lift: ${JSON.stringify(lift)})`);
 
-    /* Aimed at `#speech-input`: `#chat-dock` is the bottom row of the HUD grid since
-     * 2026-09-05, so the rail handle is no longer the lowest thing on the page and a
-     * `--eb-lift: 0` banner reaches the composer instead. A teeth block still aimed at
-     * the handle would find no collision and report green while measuring nothing. */
+    /* Aimed at `#speech-input`: the composer is the bottom row, so a `--eb-lift: 0` banner
+     * reaches it rather than the rail handle. */
     const broken = await page.evaluate((fn) => {
       document.documentElement.style.setProperty("--eb-lift", "0px");
       // eslint-disable-next-line no-eval
@@ -391,11 +318,8 @@ try {
     eq(broken.self, false,
        `teeth: with --eb-lift back at 0 the collision RETURNS (hit ${broken.hit}) — ` +
        "if this passes, the assertion above is not measuring anything");
-    /* The banner or anything INSIDE it. Aimed at the composer this now resolves to
-     * `span.eb-text` — the banner's own copy, which is a wider box than the dismiss row
-     * the rail handle used to collide with. A tap swallowed by the banner's text is
-     * swallowed by the banner; demanding the exact `div#env-banner` would be asserting
-     * which child happened to be under one particular coordinate. */
+    /* The banner or anything INSIDE it (here `span.eb-text`): a tap swallowed by the banner's
+     * text is swallowed by the banner. */
     ok(/env-banner|\beb-/.test(broken.hit),
        `teeth: …and it is the banner LAYER that swallows the tap (got ${broken.hit})`);
     eyes("teeth: the --eb-lift page", page);
@@ -404,42 +328,15 @@ try {
 
   /* =====================================================================
    * 6. THE COMPOSER — REACHABLE ON THE FIRST PAINTED FRAME.
-   *
-   * THE DEFECT THIS BLOCK EXISTS FOR (measured against
-   * `https://moxie.mattvalancy.com/sim` in a fresh incognito profile, real iOS UA,
-   * 390x844, and written up in docs/architecture/backlog/mobile-first-visit.md):
-   *
-   *     #speech-input on load            0 x 0        (present in the DOM, inside <aside id="panel">)
-   *     after tapping CONTROLS           262x40 at y = 2095   (~2000 px below an 844 px fold)
-   *     after scrollIntoView             y = 663, and the turn COMPLETES normally
-   *
-   * So the turn always worked. It was UNREACHABLE — buried at the bottom of a
-   * scrolling engineering drawer behind a button labelled `CONTROLS`, on a page whose
-   * six visible controls (Hub, ALIVE, GITHUB, CONTROLS, Run it locally, X) said nothing
-   * about talking to Moxie at all. She speaks unprompted at ~7 s, so a visitor heard her
-   * and had no visible way to answer.
-   *
-   * WHY THE ASSERTION IS A RECT AND A HIT TEST, NEVER `element.exists`. That distinction
-   * IS the finding: `document.getElementById("speech-input")` was truthy the entire time
-   * the box was 0x0 and two thousand pixels below the fold. So every check below asks
-   * three separate questions and needs all three: does the box have a non-zero rect, does
-   * that rect lie INSIDE the initial viewport, and does `elementFromPoint()` at its centre
-   * come back as the box itself (the banner and the Turnstile challenge have each already
-   * swallowed a bottom-anchored control on this page — blocks 1 and 4 above).
-   *
-   * AND IT IS MEASURED ON A COLD LOAD: no `page.tap()`, no `scrollIntoView`, no drawer.
-   * `railShut` is re-read after every measurement so a check can never be satisfied by a
-   * rail that quietly opened itself — "the composer is reachable" and "the rail is
-   * required" must not both be true.
+   * #speech-input once existed in the DOM but was 0x0 on load and ~2000 px below the fold
+   * inside the drawer (backlog/mobile-first-visit.md). So never `element.exists`: every check
+   * needs a non-zero rect, INSIDE the initial viewport, whose centre hit-tests to itself — on
+   * a COLD load (no tap, no scroll, no drawer), with `railShut` re-read after every measure.
    * =================================================================== */
 
   /**
-   * Is `sel` reachable by a visitor who has done NOTHING but load the page?
-   *
-   * Deliberately returns the raw numbers as well as the verdicts: a failure message that
-   * says `262x40 at y=2095 of 844` is the measurement this whole slice exists to fix,
-   * and a bare `false` would make the next reader take the same production screenshots
-   * again.
+   * Is `sel` reachable by a visitor who has done NOTHING but load the page? Returns the raw
+   * numbers too, so a failure message carries the measurement.
    */
   const reach = (sel) => {
     const el = document.querySelector(sel);
@@ -518,10 +415,8 @@ try {
     ok(beside.dy <= 6, `${label}: …on the same line (${beside.dy}px of vertical drift)`);
 
     /* ---- AC2: something on first paint TELLS a stranger they can talk ----
-     * The measured gap was not only geometric: of the six controls a phone visitor could
-     * see, not one named the action. A placeholder inside a box is not enough on its own
-     * — it disappears the moment anything is typed and it is not read as page copy — so
-     * the affordance asserted here is a real, visible element with real words in it. */
+     * A real visible element with real words — a placeholder vanishes on typing and is not
+     * read as page copy. */
     const cue = await page.evaluate(reach, "#chat-cue");
     reachable(label, cue, "the 'talk to Moxie' cue");
     ok(/talk to moxie/i.test(cue.text || ""),
@@ -584,10 +479,8 @@ try {
     eq(opened.expanded, "true", "the rail still opens on demand");
     ok(opened.railH > 0 && opened.groups >= 4,
        `…with all its groups intact (${opened.groups} groups, ${opened.railH}px)`);
-    /* A control inside it still does its job. `#axes-on` is chosen because its effect is
-     * a DETERMINISTIC DOM change (`#axis-legend` loses `hidden`) rather than an eased
-     * animation — a motor assertion would race the liveness loop and teach the next
-     * reader to widen a timeout. */
+    /* A control inside it still works. `#axes-on` is chosen for its deterministic DOM effect
+     * (`#axis-legend` loses `hidden`); a motor assertion would race the liveness loop. */
     const worked = await page.evaluate(async () => {
       const cb = document.getElementById("axes-on");
       const lg = document.getElementById("axis-legend");
@@ -611,11 +504,8 @@ try {
        `the message box is STILL reachable with the rail open — y=${stillThere.top}..${stillThere.bottom} ` +
        `of ${stillThere.vh}, hit ${stillThere.hit}`);
 
-    /* ---- TEETH. Put the composer back where it was and require the bug to return. ----
-     * Without this, everything in blocks 6-7 is equally consistent with "the fix works"
-     * and "the selectors match nothing" — a mistake this repo has shipped before. The
-     * mutation is the exact pre-2026-09-05 arrangement: the whole dock inside
-     * `#rail-scroll`, drawer shut. */
+    /* ---- TEETH. Put the composer back inside `#rail-scroll`, drawer shut, and require the
+     * bug to return. */
     const broken = await page.evaluate((fn) => {
       document.getElementById("hud").classList.add("rail-closed");
       document.getElementById("rail-scroll").appendChild(document.getElementById("chat-dock"));
@@ -635,32 +525,12 @@ try {
 
   /* =====================================================================
    * 8. THE THREE OPENERS — a first turn that costs ONE TAP and no typing.
-   *
-   * WHAT THIS BLOCK ADDS TO 6-7. Those two closed "the box is reachable". They did not
-   * close the other half of the same finding: a stranger who can now SEE the box still
-   * has to think of something to say to a robot, having been told nothing about her.
-   * `#chat-openers` — three buttons in the dock, under the log — is
-   * docs/architecture/backlog/gamify-the-public-sim.md's 🅐, verbatim: *"three tappable
-   * openers — Tell me a silly joke, What makes you happy?, Surprise me!"*
-   *
-   * THE DISTINCTION THIS BLOCK PINS, and the reason the feature was not already shipped:
-   * `#speech-chips` in the ENGINEERING RAIL look like these and are not these. They play
-   * PRE-CACHED SHIPPED AUDIO and send no turn at all (`sim.html`:174-178 says so in its
-   * own words). So the assertions below are about WHERE each control lives and WHAT a tap
-   * produces — never about "a chip exists somewhere on the page", which was true the
-   * whole time the openers did not exist.
-   *
-   * AND THE COST IS MEASURED, NOT WAVED AT. Three 44 px targets above the composer take
-   * vertical space an 844 px phone did not have spare, so the composer's rect is measured
-   * with them on the page, before the tap and after it, and the teeth at the end inflate
-   * them until it really does leave the fold. `inFold` is then something that has been
-   * SEEN to fail, not something assumed capable of failing.
-   *
-   * The turn here is SCRIPTED — `/api/health` answers `degraded` (see `load()`), so not
-   * one request leaves the page. "She really answered over the wire" is the claim of
-   * `sim/test_typed_turn.mjs` block 7, which asserts the opener's words in the
-   * `/api/chat` body; this block's claim is the geometric one plus "one tap, no
-   * scrolling, no drawer, and the log grew".
+   * `#chat-openers` (backlog/gamify-the-public-sim.md) must live in the dock and SEND A TURN;
+   * the rail's `#speech-chips` look similar but only play shipped audio, so assertions are
+   * about where each control lives and what a tap produces. The composer is measured with the
+   * openers present, and the teeth inflate them until it really leaves the fold. The turn is
+   * SCRIPTED (`/api/health` answers `degraded`); the over-the-wire claim is
+   * `sim/test_typed_turn.mjs` block 7's.
    * =================================================================== */
   {
     const L = "iPhone 12  390x844";
@@ -700,14 +570,9 @@ try {
     ok(openers.heights.length === 3 && openers.heights.every((h) => h >= 44),
        `${L}: every opener is a 44 px touch target, like the controls beside it — ` +
        `got ${JSON.stringify(openers.heights)}`);
-    /* ONE ROW, AND THIS IS A HEIGHT BUDGET, NOT A STYLE PREFERENCE. The dock's growth is
-     * taken out of the `1fr` stage row, so everything above the dock — `#rail-toggle`
-     * included — rides up by exactly as much as the openers cost. Measured at 375x667: at
-     * one row the handle sits at y=373; at two rows of natural-width pills it sat at
-     * y=323, inside the vertically-centred Turnstile challenge (301..366), and block 4 of
-     * this file went red because a challenged visitor could no longer open the drawer. So
-     * the row count is load-bearing and is asserted here, where the reason is written
-     * down, as well as enforced there by its consequence. */
+    /* ONE ROW — a height budget, not a style: dock growth comes out of the stage row, so a
+     * second row of openers lifted #rail-toggle into the centred Turnstile challenge (block 4
+     * went red). */
     ok(openers.rows === 1,
        `${L}: the three openers share ONE row (${openers.rows} row(s), ${openers.boxH}px). ` +
        "Two rows cost ~100px of an 844px phone, all of it taken from the stage, and it " +
@@ -771,11 +636,8 @@ try {
     eq(stepped, "none",
        `${L}: …because an opener has done its job once the log has a turn in it (got ${stepped})`);
 
-    /* ---- TEETH. Inflate the openers and require the composer to leave the fold.
-     * Without this, every `inFold` above is equally consistent with "the openers cost
-     * nothing" and with "this assertion cannot fail" — and this repo found nine checks of
-     * the second kind on 2026-09-06. The mutation is CSS only, applied to the shipped
-     * elements: nothing here can pass by matching a selector that was never there. */
+    /* ---- TEETH. Inflate the openers (CSS only, on the shipped elements) and require the
+     * composer to leave the fold, so `inFold` is seen to be able to fail. */
     const broken = await page.evaluate((fn) => {
       const s = document.createElement("style");
       s.textContent = "#chat-dock:has(#transcript .turn) #chat-openers { display: grid }" +
@@ -795,45 +657,18 @@ try {
 
   /* =====================================================================
    * 9. THE CHALLENGE, MEASURED AT THE MOMENT IT CAN ACTUALLY BE IN THE WAY.
-   *
-   * WHAT BLOCK 4 CANNOT SEE, AND WHY. Block 4 loads the challenged page and measures it
-   * about a second later, while `#transcript` is empty and `#chat-dock` is at its 237 px
-   * minimum. But the dock GROWS: her ambient self-talk writes a `.mutter` into the log
-   * every 11-24 s, the log runs to its `min(26vh, 168px)` cap, and every pixel of that
-   * comes out of the `1fr` stage row — so everything above the dock rides UP. Measured
-   * here at 390x844: `#chat-dock` 237 -> 365 px and `#rail-toggle` y=550..598 -> 422..470,
-   * a 128 px climb that takes ~30 s of real time to happen. Block 4's assertions are not
-   * wrong; they simply run before the state they would catch exists. That is the defect
-   * class this repo spent 2026-09-06 closing — A CHECK THAT MEASURES AT THE WRONG MOMENT —
-   * and it had nine instances. This block is the tenth NOT being added.
-   *
-   * HOW IT REACHES THE STATE WITHOUT WAITING 30 SECONDS, AND WITHOUT A SLEEP. It drives
-   * `window.__ambient.say()` — `sim/web/ambient.js`'s declared test seam, which calls the
-   * page's OWN `logMutter()`, so the rows are the real rows, written by the real code.
-   * The loop's stop condition is a MEASUREMENT, not a timer: append, re-read
-   * `#chat-dock`'s height, and stop once four appends in a row have not changed it. Then
-   * `atCap` re-derives that the log really is pinned to its computed `max-height` and
-   * really is overflowing, and every assertion below is gated on it. A fixed sleep here
-   * would be the same mistake in a different costume, and this repo has removed several.
-   *
-   * THE ASSERTION IS RECT INTERSECTION, NOT A CENTRE HIT TEST, and that distinction is a
-   * measurement too. Swept across 17 viewport heights, the challenge covers the TOP of a
-   * 48 px handle at 870 and 896 while `elementFromPoint()` at the handle's exact centre
-   * still answers `#rail-toggle` — a challenged visitor loses a third of a touch target
-   * and a centre-only check calls it green. So a control's box must not intersect the
-   * challenge's box AT ALL, and the hit test is kept alongside as the second question.
-   *
-   * WHICH VIEWPORTS, AND WHY THESE. With the dock at its cap the handle sits at
-   * `vh-422..vh-374` and a viewport-centred 65 px challenge at `(vh±65)/2`, so they
-   * overlap for **683 < vh < 909** and nowhere else. 844 and 851 are inside that window
-   * (and are the two commonest modern phones); 375x667 is BELOW it — its dock eats enough
-   * that the handle overshoots ABOVE the challenge — and is here to pin that the fix does
-   * not move something that was already clear.
+   * Block 4 measures while the log is empty; ambient self-talk later grows #chat-dock to its
+   * cap and lifts everything above it (~128 px at 390x844). This drives the page's own
+   * `window.__ambient.say()` until the dock height stops changing (a measurement, not a
+   * sleep), gates every assertion on `atCap`, and asserts RECT INTERSECTION — a centre hit
+   * test stayed green while the challenge covered a third of the handle.
+   * With the dock at cap the handle and a viewport-centred challenge overlap only for
+   * 683 < vh < 909: 844 and 851 are inside; 375x667 is below and pins that nothing already
+   * clear was moved.
    * =================================================================== */
   {
-    /* Drive the comms log to the dock's cap using the page's own mutter writer, stopping
-     * on a measurement rather than a clock. Returns what it actually achieved so the
-     * assertions can refuse to run against a state that never arrived. */
+    /* Drive the log to the dock's cap with the page's own mutter writer; returns what it
+     * achieved so assertions refuse a state that never arrived. */
     const fillLog = (page) => page.evaluate(() => {
       const dock = document.getElementById("chat-dock");
       const log = document.getElementById("transcript");
@@ -887,9 +722,8 @@ try {
       };
     };
 
-    /* Every bottom-anchored control a challenge could land on. `#rail-toggle` is the one
-     * the collision was found on; the other three are the strip the composer moved into
-     * on 2026-09-05, which is where a `bottom: 16px` widget lands now (block 4's note). */
+    /* Every bottom-anchored control a challenge could land on: the rail handle and the
+     * composer strip. */
     const CONTROLS = ["#rail-toggle", "#chat-openers", "#speech-input", "#speech-btn"];
 
     for (const [label, w, h, inWindow] of [
@@ -926,9 +760,7 @@ try {
            `(got ${m.hit})`);
       }
 
-      /* THE OTHER HALF, and it is what stops "move it somewhere harmless" from becoming
-       * "move it somewhere unusable": an unsolvable challenge is a page that can never
-       * send anything, which is worse than the bug being fixed. */
+      /* The other half: the challenge must stay hittable, or no turn can ever be sent. */
       const cfm = await page.evaluate(reach, "#fake-cf-widget");
       ok(cfm.shown && cfm.self,
          `${label}: the challenge itself is still hittable (${cfm.w}x${cfm.h}, hit ${cfm.hit})`);
@@ -937,14 +769,8 @@ try {
       ok(cfm.top > 0 && cfm.bottom < cfm.vh,
          `${label}: …not flush against either edge (y=${cfm.top}..${cfm.bottom} of ${cfm.vh})`);
 
-      /* TEETH, and they are the point of the block. Put the challenge back where `dev`
-       * puts it — centred in the WHOLE viewport — and require the collision to return on
-       * the viewports where the arithmetic says it must. Without this, every `overlap: 0`
-       * above is equally consistent with "the fix works" and "the stand-in widget has no
-       * size", and `sim/tools/page_teeth_check.py` exists because this repo has shipped
-       * the second kind. On 375x667 the SAME mutation must NOT collide — that viewport is
-       * below the 683..909 window, and a teeth block that bit everywhere would be
-       * asserting a mutation, not a defect. */
+      /* TEETH: centre the challenge in the WHOLE viewport again and require the collision on
+       * the viewports the arithmetic says — and NOT on 375x667, which is outside 683..909. */
       const broken = await page.evaluate((fn) => {
         const holder = document.getElementById("turnstile-holder");
         holder.style.bottom = "0px";              // the pre-fix, whole-viewport layer

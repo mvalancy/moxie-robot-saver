@@ -1,20 +1,12 @@
 /* Cloud-TTS playback tests — the browser SIM's half of AI seam ③.
  *
- * The supervisor publishes a `CloudTTSResponse` on `/devices/{id}/commands/tts`
- * (base64 RAW little-endian 16-bit PCM + `marks[]` + `event_id`/`chunk_num`).
- * sim/web/audio.js decodes that wire ITSELF — like robot firmware, never importing
- * the server SDK — and plays it through the shared Web Audio context.
+ * A `CloudTTSResponse` on `/devices/{id}/commands/tts` (base64 raw LE int16 PCM + marks[] +
+ * event_id/chunk_num) is decoded by sim/web/audio.js ITSELF, like firmware. A drifted decode
+ * plays noise or nothing, silently, so the pure decode is tested against hand-built PCM and
+ * the REAL server encoder (mqtt/moxie_sdk/tts.py), then the playback path on a fake
+ * AudioContext: queueing, chunk order, autoplay policy, mouth, speaking state, mute.
  *
- * This matters: if the decode drifts (endianness, the /32768 scale, the frame
- * count, the sample rate) Moxie plays noise, or nothing, and the failure is silent
- * — the audio just sounds wrong on a machine nobody is listening to. So we test
- * the pure decode against hand-built PCM AND against the REAL server encoder
- * (mqtt/moxie_sdk/tts.py), then drive the whole playback path on a fake
- * AudioContext: queueing, chunk ordering, the autoplay policy, mouth animation,
- * the speaking state, and mute.
- *
- * Wire shape: docs/architecture/ai-seam.md §3 (embodied/unity/CloudTTS.proto).
- * Run: node sim/test_audio.mjs
+ * Wire shape: docs/architecture/ai-seam.md §3. Run: node sim/test_audio.mjs
  */
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -274,11 +266,9 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
   ok(A.isSpeaking() === false, "speaking clears after the last chunk");
   ok(A.ttsPending() === 0, "the queue must drain");
 
-  /* ...and the page's RECORD of that playback, which outlives it. `ttsPending()` is a
-   * live gauge: by the time an outside observer asks, a short chunk has drained and the
-   * queue that proves the chunks were pipelined is gone (that raced ~50% in CI run
-   * 33629395950). `lastPlaybackStats()` is the same fact, frozen — sim/tests/test_sil.py
-   * asserts on it instead of sampling. */
+  /* ...and the RECORD of that playback: `ttsPending()` is a live gauge that races a short
+   * chunk draining, so `lastPlaybackStats()` (frozen; also used by sim/tests/test_sil.py) is
+   * asserted instead. */
   const st = A.lastPlaybackStats();
   ok(st && st.event_id === "chunky", `stats must name the event, got ${JSON.stringify(st)}`);
   ok(st.chunks_played === 3, `stats must count every chunk, got ${st.chunks_played}`);
@@ -320,16 +310,10 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 }
 
 // --------------------------------------------------------------------------- //
-// 6. Chunk order is STRUCTURAL — the same three chunks, however they are timed
-//
-// Sorting the queue orders only what is WAITING in it, which is a fact about timing:
-// with short chunks and one message per round trip, chunk 0 finishes and empties the
-// queue before chunk 1 lands, and chunk 2 — alone in the queue, therefore "first" —
-// starts ahead of it (recorded order [0,2,1], CI run 33632125915; the identical code
-// passed on a slower box the day before). The player now holds a chunk until its turn
-// has come, so these cases are about the DESIGN, not about who wins a race: in order,
-// out of order while the player is idle, a shuffled burst, and a chunk that never
-// arrives at all. In every one of them the recorded order must be ascending.
+// 6. Chunk order is STRUCTURAL — the same three chunks, however they are timed.
+// Sorting only orders what is WAITING, so a lone later chunk could start first; the player
+// holds each chunk until its turn. In order, out of order while idle, a shuffled burst, and
+// a chunk that never arrives: the recorded order must always ascend.
 // --------------------------------------------------------------------------- //
 {
   const TTS_GAP_MS = 1200;                    // audio.js's bounded wait for a lost chunk
@@ -340,10 +324,8 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
   const endLast = async () => { lastSrc().onended(); await sleep(3); };
   const orderOf = () => A.lastPlaybackStats().order.join(",");
 
-  // There is no async decode for a chunk to overtake another in: decodeCloudTTS is
-  // pure synchronous maths, so a payload is queued (or playing) before playCloudTTS
-  // returns. Nothing can reorder between the wire and the queue — which is why the
-  // ordering gate is the only thing that has to be right.
+  // decodeCloudTTS is synchronous, so a payload is queued before playCloudTTS returns —
+  // the ordering gate is the only thing that has to be right.
   const settled = () => A.ttsPending() + (A.isSpeaking() ? 1 : 0);
   const before = settled();
   const sync = A.playCloudTTS(wire(tone(4), { eventId: "ord-sync", chunk: 0 }));
@@ -445,11 +427,8 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
 }
 
 // --------------------------------------------------------------------------- //
-// 7. #tts-status ownership — one line, two writers. env.js probes the optional
-//    Piper sidecar asynchronously and used to write this element directly, so a
-//    slow probe landing mid-utterance wiped the live "speaking" indicator (and
-//    was itself wiped when playback restored the pre-probe text). audio.js owns
-//    the element now: hints are deferred, never painted over a live utterance.
+// 7. #tts-status ownership — one line, two writers. audio.js owns it; env.js's async
+//    sidecar hints are deferred, never painted over a live "speaking" indicator.
 // --------------------------------------------------------------------------- //
 {
   ok(typeof A.setTtsHint === "function", "moxieAudio.setTtsHint must exist (env.js hands it the hint)");
@@ -503,11 +482,8 @@ ok(ttsEvents.includes("moxie-tts-end"), "a moxie-tts-end event must fire");
      "audio.js must build the AudioBuffer by hand (raw PCM is not a container)");
   ok(!/decodeAudioData[\s\S]{0,400}playCloudTTS/.test(audioSrc),
      "the CloudTTS path must not use decodeAudioData (raw PCM has no header)");
-  // Client/server independence, checked against CODE and not against comments. The
-  // invariant is that these files never reach into the server SDK — they decode the wire
-  // themselves, exactly like robot firmware. A *citation* of where a wire shape came from
-  // is the house style everywhere else in this repo and cannot import anything, so a
-  // comment naming `moxie_sdk` is fine; the same token in code is the bug this guards.
+  // Client/server independence, checked against CODE, not comments: citing `moxie_sdk` in a
+  // comment is fine; the token in code is the bug.
   for (const f of ["audio.js", "bridge.js"]) {
     const code = readFileSync(join(here, "web", f), "utf8")
       .split("\n")

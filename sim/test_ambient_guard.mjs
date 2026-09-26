@@ -1,63 +1,25 @@
 /* test_ambient_guard.mjs — Moxie's ambient self-talk must never talk over her own answer.
  *
- * THE DEFECT THIS GUARDS. `ambient.js::tick()` fires every 11–24 s and `perform()` calls
- * `moxieAudio.speak()`, which calls `stop()` UNCONDITIONALLY. Nothing checked whether
- * Moxie was mid-answer. A live turn is ~1.2 s of `/api/chat` plus 2–3 s of `/api/speech`,
- * and the reply audio itself measured 4.78 s (105 332 frames @ 22 050 Hz) on a real turn
- * against the hosted site — so a visitor's answer sat squarely inside the ambient window
- * and was very likely cut off mid-sentence and replaced by a non-sequitur. Everything up
- * to that point works: brain, voice, mouth. Then she talks over herself, and a stranger's
- * reasonable read is "this is broken".
+ * The defect: ambient.js's tick (every 11–24 s) called `moxieAudio.speak()`, which
+ * `stop()`s unconditionally, so a multi-second answer was likely cut mid-sentence.
  *
- * WHY THE ASSERTIONS ARE AT THE WEB AUDIO LAYER. This repo shipped 770 assertions in
- * PR #82 that all read a FILE while Web Audio was stubbed, and a silent clip passed every
- * one of them. So nothing here is asserted on a label, a status line or a counter the page
- * keeps about itself. Every claim is read off the objects Chrome was actually handed:
+ * Assertions are at the WEB AUDIO layer (a file-reading suite with Web Audio stubbed once
+ * passed a silent clip): which AudioBuffer reached a source node and when, whether `.stop()`
+ * cut it early, and its peak amplitude. The two voices are told apart structurally:
+ * "pcm" = createBuffer + hand-filled samples (the gateway answer); "clip" =
+ * decodeAudioData of a fetched file (ambient and scripted replies).
  *
- *   · which AudioBuffer reached an AudioBufferSourceNode, and WHEN it started;
- *   · whether `.stop()` was ever called on that node before its own audio ran out;
- *   · the PEAK SAMPLE AMPLITUDE of the buffer, so a silent clip cannot pass.
+ * Blocks: 1 hosted+live end to end (ambient fires idle, the answer is never cut, the hold,
+ * resume); 2 NEGATIVE CONTROL (the guard bypassed really does cut — what makes 1 mean
+ * something); 3 hosted+degraded (the narrow `isSpeaking()` is false while she talks); 4 the
+ * ~400 ms seam between stop() and the next clip; 5 the loading seam (a quip still fetching
+ * when the answer lands).
  *
- * The two voices are told apart at that same layer, by how their buffer was BUILT — which
- * is a structural fact, not a name the page chose:
- *   · "pcm"  — `createBuffer()` + a hand-filled Float32Array. Only `audio.js`'s
- *              CloudTTSResponse path does this; it is the GATEWAY ANSWER.
- *   · "clip" — `decodeAudioData()` of a fetched file. That is the pre-cached clip path,
- *              which is what ambient self-talk (and the degraded/scripted reply) plays.
- *
- * WHAT IS PROVEN, one block each:
- *   1. hosted + live — ambient fires when Moxie is IDLE (the feature still works), then
- *      the answer plays as ONE uninterrupted utterance with ambient ticking throughout,
- *      then the grace beat holds and ambient resumes. The whole defect, end to end.
- *   2. NEGATIVE CONTROL — the same drive with the guard bypassed really does cut the
- *      answer. Without this, block 1 could be passing because the fixture never fired
- *      ambient at all. This is the check that makes block 1 mean something.
- *   3. hosted + degraded — the SCRIPTED path, which plays a clip. The narrow exported
- *      `isSpeaking()` is asserted FALSE while she is plainly speaking, which is the
- *      whole reason the guard uses the broad predicate instead.
- *   5. THE LOADING SEAM — a quip already FETCHING when the answer landed. Neither
- *      existing guard can see it: the tick was taken while she was silent, and there is
- *      no node yet for the answer to stop. Held open deliberately, not waited for.
- *   4. THE SEAM — the measured ~385 ms between `speak()` cutting the old clip and the new
- *      one finishing its fetch-and-decode, in which even the BROAD predicate reads false
- *      while Moxie is mid-reply. This is why the guard needed a timestamped grace beat and
- *      not just a boolean.
- *
- * WHAT IS DELIBERATELY NOT ASSERTED. That ambient never starts during the ~450 ms + decode
- * a scripted reply spends before it has any audio, or the ~4 s a live turn spends in
- * flight. She is genuinely SILENT there, so a tick is the guard working as specified.
- * Closing that needs a turn-in-flight signal from `bridge.js` — not this slice's file, and
- * recorded as an honest gap in docs/architecture/implementation-plan.md. On the LIVE path
- * it is moot: `ttsPump` cuts a local voice the moment the server voice arrives.
- *
- * No gateway, no Cloudflare account, no network: `/api/*` is answered at the browser and
- * the site is served from a loopback static server.
+ * Not asserted: silence while a turn is in flight before any audio exists — she is genuinely
+ * silent there (gap recorded in docs/architecture/implementation-plan.md).
+ * No gateway or network: `/api/*` is answered at the browser.
  *
  *   node sim/test_ambient_guard.mjs
- *
- * DELIBERATELY NOT WIRED INTO CI (sim/ci/ci.yml, .github/workflows/ci.yml) — a concurrent
- * audit is rewriting those files and the nine existing browser suites. Wire it after that
- * lands; it passes locally today.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -85,10 +47,8 @@ const HEALTH_LIVE = await (await health.onRequestGet({
   },
 })).text();
 
-/* THE ANSWER, at the length that was actually measured. 105 332 frames @ 22 050 Hz is the
- * real turn recorded against moxie.mattvalancy.com — 4.78 s of speech, which is what makes
- * the collision with the 11–24 s ambient window so likely. Using the measured figure rather
- * than a convenient short tone is the point: a 0.3 s fixture would hide the bug. */
+/* THE ANSWER at a real turn's measured length (105 332 frames @ 22 050 Hz = 4.78 s): a
+ * short tone would hide the collision with the ambient window. */
 const RATE = 22050, WANT_FRAMES = 105332;
 const TONE = pcmToneBase64({ seconds: WANT_FRAMES / RATE, rate: RATE, freq: 440, amp: 0.8 });
 const ANSWER_MS = (TONE.frames / RATE) * 1000;
@@ -139,10 +99,8 @@ async function open(url, opts) {
    * a few runs in ten, so the fixture creates the condition instead of hoping for it. */
   const clipNet = { stall: false, held: [] };
 
-  /* THE RECORDER. A timeline of every buffer source that started or was stopped, tagged
-   * by how its buffer was built (see the header). `stop` is recorded because that is the
-   * literal mechanism of the defect — `speak()` -> `stop()` on the node carrying the
-   * answer — so "was the answer cut?" is a fact about the node, not an inference. */
+  /* THE RECORDER: every buffer source started or stopped, tagged by how its buffer was
+   * built. `stop` is the literal mechanism of the defect, so "was the answer cut?" is a fact. */
   await page.evaluateOnNewDocument(() => {
     const rec = (window.__rec = { events: [], seq: 0 });
     const tag = new WeakMap();
@@ -213,12 +171,8 @@ async function open(url, opts) {
   return { page, errs, aborted, clipNet };
 }
 
-/* Console errors, minus the ones this fixture CAUSED on purpose, live in
- * `browser_harness.mjs` now — `watchPage()` installs both listeners and `notable()`
- * forgives provoked noise exactly as many times as the interceptor provoked it. They were
- * hoisted out of this file on 2026-09-06 so the four suites that had NO listener at all
- * could share the definition rather than fork it. Same correlation trick as
- * sim/test_typed_turn.mjs and sim/test_env_hosted.mjs. */
+/* Console errors minus fixture-provoked noise: `watchPage()` + `notable()` from
+ * browser_harness.mjs. */
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const starts = (evs, src) => evs.filter((e) => e.ev === "start" && (!src || e.src === src));
@@ -239,75 +193,36 @@ async function type(page, text) {
   await page.click("#speech-btn");
 }
 
-/* Wait out the degraded page's own one-time spoken announcement (ambient.js §6.2).
- * `degradedState().said` flips when the line is DISPATCHED, but `perform()` -> `speak()`
- * -> fetch -> decode means its clip starts a few hundred ms later — so waiting on the
- * flag alone races it, and the next clip measured would be the announcement rather than
- * the reply. Wait for the clip to actually start, then for it to finish and its grace
- * beat to lapse. */
+/* Wait out the degraded page's one-time announcement (ambient.js §6.2): the flag flips at
+ * dispatch but the clip starts later, so wait for the clip to start, finish, and its grace
+ * beat to lapse — or the next clip measured would be the announcement. */
 async function settleDegradedLine(page) {
   await page.waitForFunction("window.moxieAmbient.degradedState().said === true", { timeout: 15000 });
   await page.waitForFunction(
     `window.__rec.events.some(e => e.ev === "start" && e.src === "clip")`, { timeout: 15000 });
 
-  /* STOP THE SCHEDULER *BEFORE* WAITING OUT THE ANNOUNCEMENT, NOT AFTER.
-   *
-   * This used to be the other way round, and the two steps were perfectly correlated: the
-   * wait below resolves 1600 ms after the announcement's last sample, which is the exact
-   * instant `moxieBusy()` stops holding ambient off — so the test asked the scheduler to
-   * stop at precisely the moment the scheduler was first allowed to speak, and lost that
-   * race roughly one run in five. Measured on a losing run: `stop()` landed at ~15.1 s and
-   * ambient's own timer had fired at 15.173 s.
-   *
-   * The damage was not a stray quip; it was a MISIDENTIFIED SUBJECT. Block 3 takes "the
-   * first clip after `mark`" to be the scripted reply, so it measured the ambient line
-   * instead, and then reported the real reply — which correctly `stop()`s ambient when it
-   * arrives — as an interruption *of* the reply. Two red assertions about the wrong
-   * object, describing the feature working.
-   *
-   * Stopping first is safe and is not a weakening: `stop()` only prevents FUTURE ticks, it
-   * does not cancel the announcement already in the air, so the wait below still waits out
-   * exactly what it always waited out. It just cannot race any more. */
+  /* STOP THE SCHEDULER *BEFORE* WAITING OUT THE ANNOUNCEMENT: the wait ends at exactly the
+   * instant ambient may speak again, so stopping after it raced (~1 in 5) and block 3 then
+   * measured an ambient line as "the reply". `stop()` only prevents FUTURE ticks. */
   await page.evaluate(() => window.moxieAmbient.stop());
   await page.waitForFunction("!window.moxieAudio.isMoxieBusy(1600)", { timeout: 25000 });
-  /* Then QUIET the free-running scheduler, and be honest about why.
-   *
-   * The guard's promise is "ambient does not start while Moxie is SPEAKING". On the
-   * degraded path a reply is a 450 ms fallback beat plus a fetch-and-decode before any
-   * audio exists, and through all of that she is genuinely silent — so a scheduler tick
-   * landing there is the guard working as specified, not failing. It is also a REAL
-   * residual, recorded as an honest gap in docs/architecture/implementation-plan.md:
-   * closing it needs a turn-in-flight signal, which lives in `bridge.js` and is not this
-   * slice's file.
-   *
-   * THIS COMMENT USED TO SAY the LIVE path has no such hole, on the grounds that `ttsPump`
-   * cuts a local voice when the server voice arrives. That was wrong, and believing it is
-   * what let the hole ship: `ttsPump` can only cut a NODE, and a clip still fetching has
-   * none. The live path had the same gap one layer earlier — it reddened this suite on
-   * 2026-09-04 from the free-running scheduler block 1 deliberately leaves running. Block 5
-   * now holds that gap open on purpose, and audio.js's `floor` closes it.
-   *
-   * So the blocks below drive `tick()` explicitly rather than racing a 11–24 s timer, and
-   * assert the promise that was actually made. Asserting the other thing would be a test
-   * that fails a few runs in ten for a behaviour nobody claimed. */
+  /* Then drive `tick()` explicitly instead of racing the free-running timer. The promise is
+   * "ambient does not start while Moxie is SPEAKING"; a degraded reply's fetch/decode beat is
+   * genuine silence (a recorded gap). The live path's equivalent loading gap is block 5,
+   * closed by audio.js's `floor`. */
   await page.evaluate(() => window.moxieAmbient.stop());   // idempotent; see the note above
 }
 
 try {
   /* =======================================================================
-   * 1. HOSTED + LIVE — the defect, end to end.
-   *
-   * Four phases on one page, in the order a visitor lives them: she is alive when idle,
-   * she is not interrupted while answering, she is given a beat to finish, and she comes
-   * back to life afterwards.
+   * 1. HOSTED + LIVE — the defect, end to end: alive when idle, not interrupted while
+   * answering, a beat to finish, back to life afterwards.
    * ===================================================================== */
   {
     const { page, errs, aborted } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });
 
-    /* --- 1a. AMBIENT STILL FIRES WHEN SHE IS IDLE ---------------------
-     * First, because a fix that quietly kills ambient is worse than the bug. This also
-     * warms `ambient.json` and the clip manifest, so the later mid-answer ticks are not
-     * silently excused by a cold fetch. */
+    /* --- 1a. AMBIENT STILL FIRES WHEN SHE IS IDLE (a fix that kills ambient is worse than the
+     * bug). Also warms ambient.json and the manifest so later ticks are not cold fetches. */
     await page.click("body");                    // browser autoplay unlock
     const idle = await tickAmbient(page);
     await page.waitForFunction(
@@ -337,10 +252,8 @@ try {
     await sleep(1800);
     const mid2 = await tickAmbient(page);
 
-    /* Wait for the answer's audio to actually RUN OUT rather than sleeping a computed
-     * duration: the tail assertions below are about the instant after her last sample,
-     * and a few hundred ms of accumulated `evaluate` overhead would silently walk the
-     * probe past the 1.6 s grace beat and test nothing. */
+    /* Wait for the answer's audio to RUN OUT rather than sleeping a computed duration, so
+     * evaluate overhead cannot walk the probe past the 1.6 s grace beat. */
     await sleep(Math.max(0, ANSWER_MS - 2400 - 900));
     await page.waitForFunction("!window.moxieAudio.isMoxieSpeaking()", { timeout: 20000 });
     evs = await timeline(page);
@@ -393,23 +306,10 @@ try {
     const after = await tickAmbient(page);
     eq(after.pred.busy, false, "past the grace beat she is free again…");
 
-    /* --- 1e. …AND STILL SILENT, BECAUSE THE CONVERSATION HOLD OUTLIVES THE GRACE BEAT.
-     *
-     * THIS BLOCK USED TO ASSERT THE OPPOSITE, and the change is a deliberate contract
-     * change rather than a test being bent to fit (2026-09-06, owner-reported). The
-     * AUDIO guard above lifts 1600 ms after her last sample, which is the right rule for
-     * "do not talk over her". It is the wrong rule for "do not interrupt the person
-     * talking to her": this test reaches here by TYPING a turn into the composer, and a
-     * visitor who has just typed is about to read an answer and type again. The old
-     * behaviour — quip 1.6 s after her reply finishes — is exactly the interruption the
-     * owner reported, and `ambient.js`'s conversation hold (45 s past the last turn) is
-     * what fixes it.
-     *
-     * So the guard now proves both halves, which is more than it proved before:
-     *   · while the hold is on she stays quiet even though the audio guard has lifted;
-     *   · once it lapses she really does come back — nothing here can make her
-     *     permanently silent, which was this block's actual point all along.
-     * The hold is released through `__ambient.quietMs()` rather than by sleeping 45 s. */
+    /* --- 1e. …AND STILL SILENT: the conversation hold (45 s past the last turn) outlives the
+     * 1600 ms audio grace, because a visitor who just typed is about to read and type again.
+     * Both halves: quiet while the hold is on, and she really comes back once it lapses
+     * (released via `__ambient.quietMs()`, not by sleeping 45 s). */
     await sleep(2500);
     const heldTotal = starts(await timeline(page), "clip").length;
     eq(heldTotal, before,
@@ -433,12 +333,9 @@ try {
   }
 
   /* =======================================================================
-   * 2. NEGATIVE CONTROL — the fixture can see an interruption.
-   *
-   * Block 1 proves "no ambient line started inside the answer". That claim is only worth
-   * something if this fixture WOULD have caught one. So: the same drive, but speaking the
-   * ambient line through `moxieAudio.speak(text, "ambient")` — which is precisely what
-   * `perform()` does, minus the guard. The answer must be visibly cut.
+   * 2. NEGATIVE CONTROL — the same drive speaking the ambient line through
+   * `moxieAudio.speak(text, "ambient")` (what `perform()` does, minus the guard) must visibly
+   * cut the answer, or block 1 proves nothing.
    * ===================================================================== */
   {
     const { page } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });
@@ -463,20 +360,14 @@ try {
   }
 
   /* =======================================================================
-   * 3. HOSTED + DEGRADED — the scripted path, and why the NARROW predicate is wrong.
-   *
-   * With no live brain, `bridge.js` answers from `stub.js` and speaks it through
-   * `moxieAudio.speak()` — a pre-cached CLIP, not cloud TTS. `speaking` is never set, so
-   * the exported `isSpeaking()` reports FALSE while Moxie is plainly talking. A guard
-   * built on it would leave every fallback deployment — the ones with least room to look
-   * broken — completely unguarded. Asserted directly, both halves.
+   * 3. HOSTED + DEGRADED — the stub reply is a pre-cached CLIP, so the exported
+   * `isSpeaking()` reads FALSE while she talks. A guard built on it would leave every
+   * fallback deployment unguarded. Both halves asserted.
    * ===================================================================== */
   {
     const { page, errs, aborted } = await open(HOSTED, { health: HEALTH_BARE });
-    /* A degraded page speaks ONE thing of its own first — ambient.js's `degraded` line,
-     * armed by `mode.js` and fired by the autoplay unlock (live-sim-demo.md §6.2). It is
-     * a ~5 s clip, so it has to play out before this block can drive a turn, or the
-     * "reply" measured below would be that announcement instead. */
+    /* A degraded page first speaks its own ~5 s `degraded` line (live-sim-demo.md §6.2); it
+     * must play out or it would be measured as the reply. */
     await page.click("body");
     await settleDegradedLine(page);
 
@@ -513,18 +404,10 @@ try {
   }
 
   /* =======================================================================
-   * 4. THE SEAM — the ~400 ms hole a bare `isMoxieSpeaking()` guard would still leave.
-   *
-   * `speak()` calls `stop()` and only THEN fetches and decodes the next clip, so between
-   * one utterance being cut and its replacement starting there is a real gap in which
-   * `current` is null and the broad predicate answers FALSE — while Moxie is, to the
-   * visitor, plainly mid-reply. Measured on the degraded path: `stop` at t=13633,
-   * next clip start at t=14018, a 385 ms window.
-   *
-   * An ambient tick landing there would slip straight through a guard written as
-   * `if (isMoxieSpeaking()) return;` and be cut off half a syllable later by the reply it
-   * raced. The grace beat closes it, because `spokeUntil` was stamped on the way into the
-   * gap. This block holds the page inside that seam and asserts all three predicates.
+   * 4. THE SEAM — `speak()` stops the old clip and only THEN fetches/decodes the next, so for
+   * ~400 ms the broad predicate reads FALSE mid-reply. A bare `if (isMoxieSpeaking())` guard
+   * would let a tick through; the `spokeUntil` grace beat closes it. The page is held inside
+   * the seam and all three predicates asserted.
    * ===================================================================== */
   {
     const { page } = await open(HOSTED, { health: HEALTH_BARE });
@@ -550,22 +433,10 @@ try {
   }
 
   /* =======================================================================
-   * 5. THE LOADING SEAM — a quip that was already FETCHING when the answer landed.
-   *
-   * Blocks 1-4 cover the two guards that exist, and the defect survives both. ambient.js
-   * checks `moxieBusy()` at TICK time; `ttsPump` stops a local voice at ANSWER time. A
-   * clip whose fetch-and-decode is still in flight is invisible to each: the tick was
-   * legitimately taken while Moxie was silent, and when the answer arrives there is no
-   * node yet for it to stop. The clip then starts a few hundred ms later, over her.
-   *
-   * That is not a hypothesis. It is what reddened this suite in CI on 2026-09-04 — one
-   * clip inside the 4.78 s window with BOTH mid-answer ticks correctly standing down, on
-   * a branch whose diff was Python and Markdown only. The free-running 11-24 s scheduler,
-   * which block 1 deliberately leaves running, happened to land in the loading gap.
-   *
-   * Here the gap is held open on purpose rather than waited for: the clip's fetch is
-   * stalled, the turn is driven to real audio, and only then is the clip released. Before
-   * `floor` (audio.js, THE THIRD SEAM) it started on top of the answer every single time.
+   * 5. THE LOADING SEAM — a quip already FETCHING when the answer landed. The tick-time
+   * `moxieBusy()` check and the answer-time `ttsPump` stop both miss it (no node yet). The
+   * clip's fetch is stalled, the turn driven to real audio, then the clip released: without
+   * `floor` (audio.js, THE THIRD SEAM) it starts on top of the answer every time.
    * ===================================================================== */
   {
     const { page, errs, aborted, clipNet } = await open(HOSTED, { health: HEALTH_LIVE, chat: true });

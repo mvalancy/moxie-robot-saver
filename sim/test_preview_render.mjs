@@ -1,29 +1,15 @@
 /* The 🎬 rehearsal, replayed through the only renderer we can execute.
  *
- * `sim/test_performance_render.mjs` plays the planner's 22 dialog-act **goldens** through
- * `sim/web/bridge.js`. This plays something different and, for an integration pass, more
- * load-bearing: the bytes a REAL robot was handed by a REAL supervisor over a REAL
- * broker, captured by `sim/tests/test_sil_performance_e2e.py` at the moment
- * `MoxieRuntime.preview` published them.
- *
- * The distinction matters because everything between `render()` and the robot — the
- * `Staged` tuple, `_publish_chat`, `build_chat_response`, `json.dumps`, mosquitto, the
- * client's own JSON parse — is invisible to a golden file. A markup string that survives
- * `json.dumps` but not the SIM's `<mark …>` parser, or a payload whose `output.markup`
- * arrives under a different key, is a robot standing perfectly still while every Python
- * test in the tree stays green.
- *
- * Usage (the Python test writes the file and calls this):
+ * Unlike test_performance_render.mjs (goldens), this plays the bytes a REAL robot received
+ * from a REAL supervisor over a REAL broker, captured by sim/tests/test_sil_performance_e2e.py
+ * — so a markup string mangled anywhere between `render()` and the client's JSON parse is
+ * caught instead of leaving the robot standing still while every Python test is green.
  *
  *     node sim/test_preview_render.mjs <capture.json>
  *
- * where the capture is `{"messages": [ <remote_chat payload>, … ]}` — payloads exactly as
- * received off `/devices/<id>/commands/remote_chat`.
- *
- * Run standalone with no argument and it self-checks against the committed goldens
- * instead, so this file is never un-runnable by hand.
- *
- * No browser, no network.
+ * capture = `{"messages": [ <remote_chat payload>, … ]}` as received off
+ * `/devices/<id>/commands/remote_chat`. With no argument it self-checks against the
+ * committed goldens. No browser, no network.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { loadBridge, readGolden } from "./bridge_harness.mjs";
@@ -81,11 +67,8 @@ for (const msg of messages) {
   ok(calls.setMotor.length > 0,
      `${label}: the body never moved for ${JSON.stringify(out.markup)}`);
 
-  /* Peak displacement per motor — the recorded state, never a live sample (the SIM
-   * test rule: sampling a live value on a loaded runner is how three fast-tier flakes
-   * were born). Not asserted per message: `other` is the act with nothing to perform,
-   * and its tree legitimately drives every motor straight back to rest. The batch is
-   * asserted instead, below. */
+  /* Peak displacement per motor — recorded state, never a live sample. Asserted over the
+   * batch, not per message: `other` legitimately drives every motor back to rest. */
   for (const [i, v] of calls.setMotor) {
     const d = Math.abs(v - REST);
     if (d > (peakOverall.get(i) || 0)) peakOverall.set(i, d);

@@ -1,27 +1,14 @@
 /* The behavior planner, seen from the only renderer we can assert against.
  *
- * No hardware has ever played our markup: everything we believe about how a robot
- * performs a `<mark cmd:…>` is inferred from the recovered generators
- * (docs/reverse-engineering/runtime/behavior-markup.md). The browser SIM is the one place
- * that inference is executable, so this drives the planner's TWENTY-TWO dialog-act
- * goldens — one line per `RemoteDialog.DialogAct` — through the REAL sim/web/bridge.js
- * and asserts the avatar actually performs each of them differently.
+ * No hardware has played our markup; the browser SIM is where the inference is executable.
+ * This drives the planner's 22 dialog-act goldens (one per `RemoteDialog.DialogAct`,
+ * written by sim/tools/build_performance_goldens.py and pinned by sim/tests/test_performance.py)
+ * through the REAL bridge.js as the ordinary `commands/remote_chat` that
+ * `MoxieRuntime.preview` publishes, and asserts each act performs differently —
+ * backlog/expressiveness.md §2.7 P1 (d). An id the SIM does not animate fails here.
  *
- * This is acceptance criterion (d) of backlog/expressiveness.md §2.7 P1: the preview hook
- * renders ≥10 lines on the SIM, with a contact sheet as an artifact. The messages it
- * plays are exactly what `MoxieRuntime.preview` publishes — an ordinary
- * `commands/remote_chat` — because the preview hook deliberately has no SIM-specific API
- * (docs/architecture/sim-as-a-client.md).
- *
- * The goldens file is written by the Python side (sim/tools/build_performance_goldens.py,
- * pinned byte for byte by sim/tests/test_performance.py), so this is a genuine
- * cross-language contract check: if the planner stages an id the SIM does not animate,
- * this fails rather than the robot silently doing nothing.
- *
- * The contact sheet it writes (`sim/artifacts/performance-contact-sheet.html`, or
- * `--out <path>`) is one cell per act showing the face the avatar reached, which motors
- * moved and how far, the whole-body tree, and the beats behind it — an author's-eye view
- * of the whole taxonomy on one page, and the artifact a CI run attaches.
+ * Writes a contact sheet (`sim/artifacts/performance-contact-sheet.html`, or `--out`): per
+ * act, the face reached, motors moved, the tree and its beats.
  *
  * No browser, no network. Run: node sim/test_performance_render.mjs
  */
@@ -48,10 +35,8 @@ const play = (markup, text) => {
     })));
 };
 
-/* The face each act must reach, and why. The faces come from bridge.js's MOOD_TO_FACE,
- * which maps the authoritative ePlaybackMood 1:1 onto the 11 Bht_Eyeseme_* expressions.
- * `motors:false` is not an omission — it is the assertion that an act performs by NOT
- * moving the arms, which is the whole point of backchannelling and pos_answer. */
+/* The face each act must reach (bridge.js MOOD_TO_FACE). `motors:false` asserts the act
+ * performs by NOT moving the arms (backchannelling, pos_answer). */
 const EXPECT = {
   abandon:               { face: "shy",       motors: true,  why: "a dropped line goes Shy and the eyes go searching (Bht_Search)" },
   apology:               { face: "sad",       motors: true,  why: "'I am sorry' -> Sad (mood 2, 8x in shipped content) + Gesture_Self" },

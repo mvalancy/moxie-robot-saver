@@ -1,16 +1,9 @@
 /* The markup floor, seen from the only renderer we can assert against.
  *
- * No hardware has ever played our markup: everything we believe about how a robot
- * performs a `<mark cmd:…>` is inferred from the recovered generators
- * (docs/reverse-engineering/runtime/behavior-markup.md). The browser SIM is the one place
- * the inference is executable, so this drives the EIGHT byte-exact goldens from
- * sim/tests/goldens/annotate.json through the REAL sim/web/bridge.js and asserts the
- * avatar actually does something different for each of them — a face per mood, motors for
- * the arm gestures, badges for the icons.
- *
- * The goldens file is written by the Python side (sim/tests/test_automarkup.py pins it
- * byte for byte), so this is a genuine cross-language contract check: if the floor emits
- * an id the SIM does not animate, this fails rather than the robot silently doing nothing.
+ * Drives the EIGHT byte-exact goldens from sim/tests/goldens/annotate.json (pinned by
+ * sim/tests/test_automarkup.py) through the REAL sim/web/bridge.js and asserts the avatar
+ * does something different for each — a face per mood, motors for arm gestures, badges for
+ * icons. An id the floor emits but the SIM does not animate fails here.
  *
  * No browser, no network. Run: node sim/test_automarkup_render.mjs
  */

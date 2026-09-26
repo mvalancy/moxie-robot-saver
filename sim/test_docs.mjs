@@ -79,17 +79,10 @@ if (existsSync(searchPath)) {
 }
 
 // ---- the two committed artifacts must stay MERGE-SAFE ----
-/* Both files are generated AND committed, so every branch that touches a doc rewrites
- * them. Two properties keep a plain 3-way merge able to reconcile branches that edited
- * different docs; both were absent once and made these files conflict on EVERY pair of
- * doc-touching branches, at a merge-forward plus a full CI cycle each time.
- *   (a) no global, content-derived value in docs-index.json — a top-level `generated`
- *       sha256 stamp is rewritten by both sides of every merge, so it is an
- *       unconditional conflict. Nothing read it. Do not reintroduce one.
- *   (b) docs-search.json is line-granular — it was one ~3 MB line, so any two edits
- *       collided on that single line. One doc per line, blank-line separated (the blank
- *       line is the common context that lets ADJACENT docs merge too).
- * See the header comment in sim/tools/build_docs_bundle.py. */
+/* Both files are generated AND committed, so they must stay MERGE-SAFE for branches that
+ * edited different docs: (a) no global content-derived stamp in docs-index.json (an
+ * unconditional conflict); (b) docs-search.json one doc per line, blank-line separated.
+ * See sim/tools/build_docs_bundle.py. */
 ok(JSON.stringify(Object.keys(idx).sort()) === '["files","firmware"]',
    `docs-index.json top level must be exactly {firmware, files} — got ${Object.keys(idx).join(", ")}. ` +
    "A global content-derived key (e.g. a `generated` hash) conflicts on every merge; see build_docs_bundle.py.");
@@ -110,10 +103,8 @@ for (const v of ["marked.min.js", "mermaid.min.js", "highlight.min.js"])
 }
 
 // ---- docs.html wiring ----
-/* Page + its own scripts: the explorer's 405-line inline block became `docs.js` on
- * 2026-09-04 so `script-src` could drop `'unsafe-inline'` (see `sim/web/_headers`).
- * `vendor/` is excluded by `pageSource`, so `mermaid.render` below still has to be
- * OUR call and cannot be satisfied by the library's own copy of the string. */
+/* Page + its own scripts (docs.js). `vendor/` is excluded by `pageSource`, so
+ * `mermaid.render` below must be OUR call, not the library's own string. */
 const html = pageSource("docs.html");
 ok(html.includes("vendor/marked.min.js") && html.includes("vendor/mermaid.min.js"),
    "docs.html must load the vendored marked + mermaid");
@@ -125,11 +116,8 @@ ok(html.includes("vendor/highlight.min.js") && html.includes("highlightElement")
 ok(html.includes("docs-bundle/"), "docs.html must fetch docs from docs-bundle/");
 
 // ---- within-section reading order follows each section's README ----
-// The bundler orders docs in a section by that section's README link list (README
-// first, then the curated order, unlisted docs after). This guards, for EVERY section
-// that has a README, that the tree + pager read in the intended narrative order and
-// that no top-level doc silently fell out of the README (which would orphan it into
-// the alphabetical tail — disconnected from the curated navigation).
+// For every section with a README: tree + pager follow its link order, and no doc silently
+// fell out of the README into the alphabetical tail.
 {
   const sections = [...new Set(idx.files.map(f => f.section))].filter(s => s !== "_root" && s !== "docs");
   for (const sec of sections) {
