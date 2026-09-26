@@ -4,46 +4,30 @@
  * (both route response shapes), §2.6 (the "minimal markup floor" that stands in for
  * `automarkup.annotate`).
  *
- * WHY A WHOLE MODULE FOR THIS. The SIM front end is a PROTOCOL client, not an SDK client:
- * `bridge.js`'s `route(topic, payloadString)` dispatches on the topic suffix and parses
- * the JSON itself, and `audio.js` decodes the `CloudTTSResponse` wire itself "exactly like
- * robot firmware, never importing the server SDK". So the entire job of the hosted demo's
- * brain is to produce the same two JSON strings the supervisor produces — and this file is
- * the only place that shape is written down on the edge. It is a deliberate, cited
- * transcription of `mqtt/moxie_sdk/wire.py::build_chat_response` (:56-62) and
- * `mqtt/moxie_sdk/tts.py::build_cloud_tts_response` (:369-382), NOT an import: a Pages
- * Function cannot import Python, and a SIM client that decoded its own wire deserves a
- * server that builds its own wire.
+ * The SIM front end is a PROTOCOL client: `bridge.js::route(topic, payloadString)` parses
+ * the JSON itself and `audio.js` decodes `CloudTTSResponse` itself. So the hosted brain
+ * must produce the same JSON strings the supervisor does. This is a cited transcription
+ * of `mqtt/moxie_sdk/wire.py::build_chat_response` and
+ * `mqtt/moxie_sdk/tts.py::build_cloud_tts_response` (a Function cannot import Python).
  *
- * The four field-set rules, each one proven in the spec's §10 assumption ledger and
- * asserted by `sim/test_demo_proxy.mjs`:
- *
- *   1. The chat field set is EXACTLY `command`, `result` (the enum NAME), `backend`,
- *      `event_id`, `output.{text, markup}`, `end_turn`. Nothing else.
- *   2. `chunk_num` and `consistency_control` are OMITTED ENTIRELY on a single-chunk turn
- *      (`wire.py`:78-81; the runtime's `solo = final and n == 0` rule at
- *      `moxie_runtime.py`:1846-1855). That is what makes a non-streaming reply
- *      byte-identical to the pre-streaming wire, and P0 sends single-chunk turns only.
- *   3. NO `emotion` field. `bridge.js`:224 reads one, but `build_chat_response` never
- *      emits one (§10 assumption 20), so emitting it here would put a field on the wire
- *      that no real server sends. The mood MARK carries the face instead.
+ * Field-set rules (spec §10; asserted by `sim/test_demo_proxy.mjs`):
+ *   1. Chat fields are EXACTLY `command`, `result` (enum NAME), `backend`, `event_id`,
+ *      `output.{text, markup}`, `end_turn`.
+ *   2. `chunk_num`/`consistency_control` are OMITTED on a single-chunk turn, keeping it
+ *      byte-identical to the pre-streaming wire.
+ *   3. NO `emotion` field — no real server emits one; the mood MARK carries the face.
  *   4. `payload` is a STRING, because `route()` calls `JSON.parse` itself.
  *
- * Nothing in this file is configurable by a request. The device id comes from
- * `DEMO_DEVICE_ID` and everything else is a constant, so a visitor cannot influence the
- * topic, the result code or the shape of what their own browser is handed.
+ * Nothing here is configurable by a request: the device id is `DEMO_DEVICE_ID` and the
+ * rest are constants.
  */
 
 /* ---------------------------------------------------------------------------- *
  * The gateway URL
  * ---------------------------------------------------------------------------- */
 
-/** `base` + `/path`, tolerant of a trailing slash on the base.
- *
- *  It lives here rather than in a route so that BOTH routes build the upstream URL the
- *  same way and neither has to import the other. `base` is `DEMO_GATEWAY_BASE_URL`, which
- *  §4.2 forbids the browser from ever seeing: this function's output goes into `fetch()`
- *  and nowhere else — never into a response body, a header or an error string. */
+/** `base` + `/path`, tolerant of a trailing slash on the base. `base` is the secret
+ *  `DEMO_GATEWAY_BASE_URL` (§4.2): the result goes into `fetch()` and nowhere else. */
 export function joinUrl(base, path) {
   return String(base).replace(/\/+$/, "") + "/" + String(path).replace(/^\/+/, "");
 }
@@ -52,14 +36,13 @@ export function joinUrl(base, path) {
  * Topics and ids
  * ---------------------------------------------------------------------------- */
 
-/** `/devices/<id>/<suffix>` — the topic layout `bridge.js`:53 builds and :599 matches.
- *  `route()` dispatches on the SUFFIX only, so the prefix is identity, not routing. */
+/** `/devices/<id>/<suffix>` — `bridge.js::route()` dispatches on the suffix only. */
 export function topic(deviceId, suffix) {
   return "/devices/" + String(deviceId || "d_sim") + "/" + String(suffix || "");
 }
 
-/** A per-turn `event_id`. `sim-` prefixed like the SIM's own ids (`bridge.js`:436) so a
- *  recorded hosted turn is visibly a SIM turn and never collides with a robot's. */
+/** A per-turn `event_id`, `sim-` prefixed like the SIM's own ids so it never collides
+ *  with a robot's. */
 export function eventId() {
   const b = new Uint8Array(6);
   crypto.getRandomValues(b);
@@ -72,17 +55,14 @@ export function eventId() {
  * The chat response
  * ---------------------------------------------------------------------------- */
 
-/** The `ResultCode` NAMES the contract uses. `result` is a name, never a number
- *  (`wire.py`:56). The SIM ignores it entirely (§10 assumption 5) — we send the honest
- *  one anyway, because the next client to read this wire might not. */
+/** The `ResultCode` NAMES the contract uses (a name, never a number). The SIM ignores
+ *  it; the honest one is sent anyway for other clients. */
 export const RESULT = Object.freeze({ SUCCESS: "SUCCESS", ERROR_OFFLINE: "ERROR_OFFLINE" });
 
 /**
  * `wire.build_chat_response`'s output, field for field.
  *
- * `end_turn` defaults to FALSE, matching `wire.py`:13's own default. It means "Moxie stops
- * listening after this" (`types.py`:99), and a demo conversation is meant to continue — a
- * `true` here would tell a real robot to stop listening after every single reply.
+ * `end_turn` defaults to FALSE like `wire.py`: `true` means "stop listening after this".
  *
  * @param {{result?:string, backend?:string, eventId:string, text:string, markup?:string, endTurn?:boolean}} o
  */
@@ -109,15 +89,9 @@ export function chatMessage(deviceId, response) {
  * ---------------------------------------------------------------------------- */
 
 /**
- * `tts.build_cloud_tts_response`'s output (:369-382), which is the exact inverse of
- * `audio.js`'s `decodeCloudTTS` (:260-282). `buffer` is base64 of RAW little-endian
- * signed 16-bit PCM — NOT a container: `audio.js`:838-848 says so in its own comment, and
- * `decodeAudioData()` could not read it. `audio.js` ignores `request_source`; it is sent
- * because a real server sends it.
- *
- * `marks` is `[]` in P0. That is not a lost feature: with no marks the mouth follows the
- * audio ENVELOPE (`audio.js`:551-566 and `sim/web/README.md`:58-62), so lip-sync still
- * happens — it is driven by amplitude instead of by visemes.
+ * `tts.build_cloud_tts_response`'s output — the inverse of `audio.js::decodeCloudTTS`.
+ * `buffer` is base64 of RAW little-endian 16-bit PCM, not a container. `marks` is `[]`:
+ * with no marks the mouth follows the audio envelope, so lip-sync still happens.
  */
 export function buildCloudTtsResponse(o) {
   return {
@@ -141,12 +115,8 @@ export function ttsMessage(deviceId, response) {
  * The minimal markup floor
  * ---------------------------------------------------------------------------- */
 
-/**
- * The three mark templates, byte-for-byte the ones `sim/web/stub.js`:17-31 already emits —
- * which is exactly why the avatar is guaranteed to render them: `sim/test_bridge.mjs`
- * asserts against this markup today, and `applyMarkup` (`bridge.js`:131-160) parses these
- * three families and no others.
- */
+/** The three mark templates, byte-for-byte the ones `sim/web/stub.js` emits and
+ *  `bridge.js::applyMarkup` parses (the only three families it knows). */
 export const MK = Object.freeze({
   mood(m) {
     return '<mark name="cmd:playback-mood,data:{+mood+:' + Number(m) + ',+intensity+:1}"/>';
@@ -173,34 +143,20 @@ export const MK = Object.freeze({
   },
 });
 
-/** `ePlaybackMood`, the AUTHORITATIVE eleven, recovered from Assembly-CSharp and
- *  documented at `docs/reverse-engineering/runtime/behavior-markup.md`:107-133. Each value
- *  plays `Bht_Eyeseme_<name>` on the real device and is mapped 1:1 to a SIL face by
- *  `sim/web/bridge.js`:39-42.
- *
- *  ALL ELEVEN ARE NAMED HERE NOW. The regex floor below still only picks five of them —
- *  that is a property of the floor, not of the avatar — but since 2026-09-06 the MODEL may
- *  choose any of the eleven (`chat.js`'s expressive envelope), and a mood it names has to
- *  be resolvable to a number here or it cannot reach the face at all. Five was the reason
- *  Moxie could not look angry, shy, afraid, concerned, confused or embarrassed on a site
- *  whose avatar has always been able to. */
+/** `ePlaybackMood`, the authoritative eleven (recovered from Assembly-CSharp;
+ *  `docs/reverse-engineering/runtime/behavior-markup.md`), mapped 1:1 to SIL faces by
+ *  `bridge.js`. The regex floor picks five; the MODEL may name any of the eleven. */
 export const MOOD = Object.freeze({
   NEUTRAL: 0, HAPPY: 1, SAD: 2, ANGRY: 3, SHY: 4, SURPRISED: 5,
   AFRAID: 6, CONCERNED: 7, CONFUSED: 8, CURIOUS: 9, EMBARRASSED: 10,
 });
 
-/** The name -> number table for a mood the MODEL wrote. Lower-cased, closed set: anything
- *  outside it is ignored rather than guessed at, and the floor then decides. */
-const MOOD_BY_NAME = Object.freeze({
-  neutral: 0, happy: 1, sad: 2, angry: 3, shy: 4, surprised: 5,
-  afraid: 6, concerned: 7, confused: 8, curious: 9, embarrassed: 10,
-});
+/** Name -> number for a mood the MODEL wrote. Closed set: anything else is ignored. */
+const MOOD_BY_NAME = Object.freeze(
+  Object.fromEntries(Object.entries(MOOD).map(([k, v]) => [k.toLowerCase(), v])));
 
-/** The twelve gestures `sim/web/bridge.js`'s `gesture()` switch actually implements
- *  (`behavior-markup.md`:191-198). A model-chosen gesture is accepted only if it is one of
- *  these — the short lower-case name it writes, mapped to the wire's `Gesture_*` form.
- *  An unknown name is dropped, never passed through: `bridge.js` would silently do nothing
- *  with it, which is a gesture that looks like a bug rather than an absent one. */
+/** The gestures `bridge.js::gesture()` implements, by the short name the model writes.
+ *  An unknown name is dropped, never passed through (it would silently do nothing). */
 const GESTURE_BY_NAME = Object.freeze({
   none: "Gesture_None", talk: "Gesture_Talk", think: "Gesture_Think",
   question: "Gesture_Question", point: "Gesture_Point", self: "Gesture_Self",
@@ -208,8 +164,7 @@ const GESTURE_BY_NAME = Object.freeze({
   down: "Gesture_Lower", celebrate: "Gesture_Celebrate",
 });
 
-/** The vocabulary the prompt has to hand the model, built FROM the tables above so the
- *  two can never drift. `chat.js` interpolates these into the expressive envelope. */
+/** The vocabulary `chat.js` hands the model, built from the tables above. */
 export function expressiveVocab() {
   return {
     moods: Object.keys(MOOD_BY_NAME),
@@ -218,12 +173,9 @@ export function expressiveVocab() {
 }
 
 /**
- * The floor's whole rule set, in evaluation order. DELIBERATELY TINY and deliberately
- * deterministic: `automarkup.annotate` is a pure, golden-tested Python function whose
- * determinism rests on a `blake2b` digest (`automarkup.py`:29-31, :60-70), and a faithful
- * JS port with the Python goldens as its oracle is P2 (§9). Guessing at a port would give
- * the demo a second, subtly different behaviour language; this gives it a small, honest
- * one. Every gesture name here is one `bridge.js`'s `gesture()` switch actually implements.
+ * The floor's rule set, in evaluation order. Deliberately tiny and deterministic: a
+ * faithful port of `automarkup.annotate` (golden-tested Python) is P2 (§9), and a guessed
+ * port would be a second, subtly different behaviour language.
  */
 const FLOOR = [
   { re: /\b(sorry|sad|miss|lonely|hurt|cry|crying|upset)\b/i, mood: MOOD.SAD, gesture: "Gesture_Self" },
@@ -237,9 +189,7 @@ const FLOOR = [
 /** The default: warm, talking. `Gesture_Talk` is what a line with no other signal gets. */
 const FLOOR_DEFAULT = { mood: MOOD.HAPPY, gesture: "Gesture_Talk" };
 
-/** A handful of on-face badges, matched on the reply's own words. Icon names are free
- *  text as far as the avatar is concerned (`moxie.js::showIcons` renders the label), so
- *  this table exists to make the face do something recognisable, not to be exhaustive. */
+/** A handful of on-face badges, matched on the reply's own words (not exhaustive). */
 const ICONS = [
   { re: /\bbirthday\b/i, icon: "Birthday" },
   { re: /\bschool\b/i, icon: "School" },
@@ -248,33 +198,16 @@ const ICONS = [
 ];
 
 /**
- * Text -> markup, deterministically. Mood + one gesture + an optional icon pair, which is
- * precisely the floor §2.6 specifies. The text itself is embedded between the show and
- * clear icon marks the way `stub.js::build` does it, so a turn shows a badge at the start
- * and clears it at the end.
- *
- * PURE: same input, same output, no clock, no randomness. That is what lets
- * `sim/test_demo_proxy.mjs` assert the markup a given reply produces instead of merely
- * asserting that some markup came out.
+ * Text -> markup: mood + one gesture + an optional icon pair around the text (as
+ * `stub.js::build` does), the floor §2.6 specifies. PURE, so tests assert exact markup.
  */
 export function markupFloor(text, chosen) {
   const s = String(text || "");
   if (!s) return "";
-  /* THE MODEL'S OWN CHOICE WINS, WHERE IT MADE ONE.
-   *
-   * `chosen` is `{mood, gesture}` as the model wrote them (short lower-case names) and is
-   * absent whenever it answered plain prose, whenever the envelope failed to parse, and
-   * whenever the deployment has the expressive envelope switched off. Each field is
-   * validated independently against the closed tables above, so a model that names a good
-   * mood and a nonsense gesture keeps the mood — half an answer is still better than the
-   * regex guess, and the floor fills whatever is left.
-   *
-   * WHY THIS ORDER, rather than letting the floor override. The floor is six regexes over
-   * the reply's own words; it cannot tell "I'm not sure" from "I'm sad", and its default —
-   * reached by any statement that is not a question, not an exclamation, and contains none
-   * of ~20 keywords — is HAPPY + `Gesture_Talk`. That default is why the live site wore one
-   * fixed grin through almost every conversation. The model has the actual sentence and its
-   * intent; the floor is the fallback it always was. */
+  /* The model's own choice (`chosen = {mood, gesture}`, short names; absent for plain
+   * prose or when the envelope is off) wins over the floor, field by field, each checked
+   * against the closed tables. The floor's default is HAPPY + talk, which is why the site
+   * once wore one fixed grin; the model has the actual intent. */
   const pick = chosen && typeof chosen === "object" ? chosen : null;
   const moodName = pick && typeof pick.mood === "string" ? pick.mood.trim().toLowerCase() : "";
   const gestName = pick && typeof pick.gesture === "string" ? pick.gesture.trim().toLowerCase() : "";
@@ -286,21 +219,10 @@ export function markupFloor(text, chosen) {
   const matched = FLOOR.find((r) => r.re.test(s));
   const floor = matched || FLOOR_DEFAULT;
 
-  /* THE ONE PLACE THE FLOOR OVERRULES THE MODEL, and it is narrow on purpose.
-   *
-   * Measured twice at the live site: the model collapses onto `happy`. Prompting moved it
-   * from two faces to three and no further — it answered "I'm sorry you felt left out"
-   * with a happy face. When the model says HAPPY and the sentence contains one of the
-   * floor's high-precision emotional cues (sorry, sad, lonely, hurt, cry...), the floor is
-   * simply more right: those regexes fire on the words in front of them, and `happy` is
-   * this model's null answer rather than a judgement.
-   *
-   * THE CONDITIONS ARE ALL THREE, so this cannot become the floor quietly taking the
-   * channel back: the model must have said `happy` specifically, a floor rule must have
-   * ACTUALLY matched (never `FLOOR_DEFAULT`, which is itself happy and would make this
-   * unconditional), and that rule must disagree. Any other mood the model picks — sad,
-   * curious, concerned, surprised — is taken as written, because a model that chose a
-   * non-default mood was making a real choice. */
+  /* The one overrule: this model collapses onto `happy` as a null answer (measured — it
+   * answered "I'm sorry you felt left out" happily). So when it says HAPPY and a floor
+   * rule ACTUALLY matched (never FLOOR_DEFAULT) with a different mood, the floor wins.
+   * Any non-happy choice is taken as written. */
   const overrule = moodNum === MOOD.HAPPY && matched && matched.mood !== MOOD.HAPPY;
   const rule = {
     mood: overrule ? matched.mood : (moodNum === null ? floor.mood : moodNum),
