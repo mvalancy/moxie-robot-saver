@@ -1,8 +1,6 @@
 """
-Unit tests for the durable per-robot store (mqtt/moxie_sdk/store.py) — the stepping
-stone under `mentor_behaviors` (openmoxie-feature-audit.md ADOPT #2/#8).
-
-Pure: a tmp directory, no MQTT, no broker.
+Unit tests for the durable per-robot store (`mqtt/moxie_sdk/store.py`). Pure: a tmp
+directory, no MQTT. Cross-process locking is `test_store_concurrency.py`.
 """
 import json
 import os

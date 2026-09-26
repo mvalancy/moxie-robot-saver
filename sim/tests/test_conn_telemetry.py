@@ -1,13 +1,12 @@
 """
-🔌 The broker connection's own durable history — the shapes, and the runtime wiring.
+The broker connection's own durable history — the shapes, and the runtime wiring.
 
-`production-hardening.md` §8 P1: a connection telemetry stream (connects, disconnects,
-CONNACK codes, gap durations, dropped publishes) on the `JsonStore` telemetry shape. P0's
-`/status` scalars live in one process's RAM and remember only the latest gap; this answers
-"how many times has it been down, and for how long?" across restarts.
+A stream of connects, disconnects, CONNACK refusals, gaps and dropped publishes that
+answers "how many times has it been down, and for how long?" across restarts, where the
+`/status` scalars remember only the latest gap in one process's RAM.
 
-Hermetic: every store is its own `tmp_path` (a fleet-tier ring would otherwise accumulate
-across the suite), and every timestamp/gap is injected — no wall clock, exact gap values.
+Hermetic: every store is its own `tmp_path` and every timestamp/gap is injected. Test
+names are `-k` selectors in `sim/tools/hardening_p1_mutation_check.py` — keep them.
 """
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ class EchoApp(MoxieApp):
 
 
 def _rt(tmp_path, **kw):
-    """A runtime whose store is its own — so one test's ring is never another's."""
+    """A runtime whose store is its own, so one test's ring is never another's."""
     return make_runtime(EchoApp(), store=JsonStore(str(tmp_path)), **kw)
 
 
@@ -43,8 +42,8 @@ def _rt(tmp_path, **kw):
 # --------------------------------------------------------------------------- #
 
 def test_a_row_carries_only_the_fields_its_kind_means():
-    """An absent key is an answer. `gap_s: 0.0` on a first connect would be
-    indistinguishable from a zero-second outage, so the key is simply not there."""
+    """An absent key is an answer: `gap_s: 0.0` on a first connect would read as a
+    zero-second outage."""
     first = conn.build_event(conn.CONNECT, at=T0)
     assert first == {"kind": "connect", "at": T0}
     assert "gap_s" not in first and "device_id" not in first
@@ -59,24 +58,21 @@ def test_a_row_carries_only_the_fields_its_kind_means():
 
 
 def test_a_reason_off_the_wire_is_truncated_not_trusted():
-    """`reason` is `connack_string(rc)` today, but `rc` arrives from the broker. A row is
-    a bounded thing in a bounded ring; an unbounded one from the wire would be the ring's
-    cap quietly not applying."""
+    """`reason` derives from a broker-supplied `rc`; an unbounded row would quietly defeat
+    the ring's cap."""
     row = conn.build_event(conn.REFUSED, at=T0, reason="x" * 5000)
     assert len(row["reason"]) == conn.MAX_REASON_CHARS
 
 
 def test_a_timestamp_before_the_epoch_floor_is_refused():
-    """A row stamped 1970 sorts to the front of the ring forever. Both the nonsense value
-    and an unparseable one fall back to now — which is the only honest guess — and `now`
-    is necessarily ≥ the floor, so the assertion needs no clock of its own."""
+    """A row stamped 1970 sorts to the front forever; nonsense and unparseable values fall
+    back to now (necessarily ≥ the floor, so no clock is needed here)."""
     for bad in (0, -1, 12345, "not a time", None):
         assert conn.build_event(conn.CONNECT, at=bad)["at"] >= conn._EPOCH_FLOOR
 
 
 def test_a_negative_duration_is_clamped_rather_than_stored():
-    """The realistic way to get one is NTP stepping the appliance's clock backwards at
-    boot. A negative gap in a roll-up poisons every average computed from it."""
+    """NTP stepping the clock back at boot; a negative gap poisons every average."""
     assert conn.build_event(conn.CONNECT, at=T0, gap_s=-30.0)["gap_s"] == 0.0
     assert conn.gap_since(T0 + 10, now=T0) == 0.0
 
@@ -99,8 +95,7 @@ def test_summarize_counts_kinds_and_measures_only_real_gaps():
     s = conn.summarize(events)
     assert s["count"] == 6
     assert s["by_kind"] == {"connect": 3, "disconnect": 2, "publish_drop": 1}
-    # Two reconnects, not three connects: the first connect was not a recovery from
-    # anything, and counting it would put a phantom outage in every appliance's history.
+    # two reconnects, not three connects: the first connect recovered from nothing
     assert s["gaps"]["count"] == 2
     assert s["gaps"]["total_s"] == 62.0
     assert s["gaps"]["max_s"] == 60.0
@@ -113,8 +108,7 @@ def test_an_appliance_that_never_dropped_reports_no_gaps_not_a_zero_average():
 
 
 def test_p95_is_a_rank_over_observed_gaps_never_an_invented_value():
-    """§5.3's A3 bar is stated as a p95 over observed reconnects. Nearest-rank returns a
-    gap that actually happened; interpolation would return one that did not."""
+    """Nearest-rank returns a gap that actually happened; interpolation would not."""
     events = [conn.build_event(conn.CONNECT, at=T0 + i, gap_s=float(i))
               for i in range(1, 21)]                    # gaps 1.0 … 20.0
     gaps = conn.summarize(events)["gaps"]
@@ -125,8 +119,7 @@ def test_p95_is_a_rank_over_observed_gaps_never_an_invented_value():
 
 
 def test_summarize_tolerates_a_ring_of_rubbish():
-    """A store file a person edited, a row from a future version. A history that raises is
-    a history nobody can read at exactly the moment they need it."""
+    """A hand-edited file or a future version's row must not make the history unreadable."""
     s = conn.summarize([None, "nope", 7, {"kind": "connect", "at": T0},
                         {"gap_s": "not a number"}])
     assert s["count"] == 2 and s["by_kind"]["connect"] == 1
@@ -140,9 +133,8 @@ def test_summarize_of_nothing_is_a_whole_answer():
 
 
 def test_health_reads_the_recorded_state_not_the_newest_row():
-    """A ring whose newest row is a `disconnect` is very often a **connected** appliance
-    whose reconnect row has not landed yet. A card that derived the verdict from the rows
-    would flicker "down" once per reconnect."""
+    """A newest `disconnect` row is often a connected appliance whose reconnect row has not
+    landed yet; deriving the verdict from rows would flicker "down" per reconnect."""
     ring = [conn.build_event(conn.CONNECT, at=T0),
             conn.build_event(conn.DISCONNECT, at=T0 + 10)]
     s = conn.summarize(ring)
@@ -153,8 +145,7 @@ def test_health_reads_the_recorded_state_not_the_newest_row():
 
 
 def test_health_counts_a_refusal_apart_from_an_outage():
-    """The operator action is completely different: one is "the broker is down", the other
-    is "your credential is wrong". A single "problems" number would hide that."""
+    """"Broker is down" and "credential is wrong" need different operator actions."""
     s = conn.summarize([conn.build_event(conn.REFUSED, at=T0, reason="not authorised"),
                         conn.build_event(conn.CONNECT_FAIL, at=T0 + 1)])
     h = conn.health(s, connected=False)
@@ -173,8 +164,7 @@ def test_the_cap_is_an_env_knob_and_a_bad_one_does_not_disable_it(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 def test_a_connect_a_drop_and_a_reconnect_are_all_on_disk(tmp_path):
-    """The sequence that six scalars cannot express: two outages, both still readable
-    after the second recovery."""
+    """Two outages, both still readable, in order, after the second recovery."""
     rt, device_id = _rt(tmp_path)
     rt.client.up()
     rt.client.drop()
@@ -185,8 +175,6 @@ def test_a_connect_a_drop_and_a_reconnect_are_all_on_disk(tmp_path):
     kinds = [e["kind"] for e in rt.conn_events()]
     assert kinds.count(conn.CONNECT) == 3
     assert kinds.count(conn.DISCONNECT) == 2
-    # And they are in the order they happened — the property a stream has and a scalar
-    # cannot: connect, disconnect, connect, disconnect, connect.
     assert kinds == [conn.CONNECT, conn.DISCONNECT, conn.CONNECT,
                      conn.DISCONNECT, conn.CONNECT]
 
@@ -195,9 +183,7 @@ def test_the_second_connect_carries_the_gap_and_the_first_does_not(tmp_path):
     rt, _ = _rt(tmp_path)
     rt.client.up()
     assert "gap_s" not in rt.conn_events()[0]
-    # Move the recorded disconnect back by a known amount rather than sleeping: the gap is
-    # computed from `last_broker_disconnect`, so an injected value gives an exact assertion
-    # and reads no clock of its own.
+    # move the recorded disconnect back rather than sleeping: exact, and no clock read
     rt.client.drop()
     rt.last_broker_disconnect -= 7.0
     rt.client.up()
@@ -207,8 +193,7 @@ def test_the_second_connect_carries_the_gap_and_the_first_does_not(tmp_path):
 
 
 def test_a_connack_refusal_is_recorded_as_a_refusal_not_a_connect(tmp_path):
-    """The row that keeps C3 honest in the *history* as well as in the log: `rc=5` must
-    never read as a connect after the fact either."""
+    """`rc=5` must never read as a connect in the history either."""
     rt, _ = _rt(tmp_path)
     rt.client.refuse(rc=5)
     rows = rt.conn_events()
@@ -218,9 +203,8 @@ def test_a_connack_refusal_is_recorded_as_a_refusal_not_a_connect(tmp_path):
 
 
 def test_a_connect_fail_is_its_own_kind(tmp_path):
-    """`on_connect_fail` (the socket never opened) is neither a refusal nor a disconnect,
-    and without a distinct row the retry loop is invisible in the history the way it used
-    to be invisible in the log."""
+    """A socket that never opened is neither a refusal nor a disconnect; without its own
+    row the retry loop is invisible."""
     rt, _ = _rt(tmp_path)
     rt._on_connect_fail(rt.client)
     assert [e["kind"] for e in rt.conn_events()] == [conn.CONNECT_FAIL]
@@ -237,15 +221,13 @@ def test_a_dropped_publish_is_recorded_with_the_robot_it_was_meant_for(tmp_path)
     assert len(drops) == 1
     assert drops[0]["device_id"] == device_id
     assert drops[0]["topic"].endswith("remote_chat")
-    # In the same ring as the disconnect that caused it, and after it — the ordering is
-    # the reason this is one stream rather than a per-robot record.
+    # after the disconnect that caused it, in the same ring — why this is one stream
     kinds = [e["kind"] for e in rt.conn_events()]
     assert kinds.index(conn.DISCONNECT) < kinds.index(conn.PUBLISH_DROP)
 
 
 def test_a_store_lock_timeout_is_recorded_with_how_long_it_waited(tmp_path):
-    """The row that measures A13. Without `waited_s` there is nothing to retune
-    `MOXIE_STORE_LOCK_TIMEOUT_S` *from*, which is what §8's P1 line asks for."""
+    """`waited_s` is what `MOXIE_STORE_LOCK_TIMEOUT_S` gets retuned from."""
     rt, _ = _rt(tmp_path)
     rt._on_store_lock_timeout("/data/robots/d_1/memory.json.lock", 1.87)
     rows = [e for e in rt.conn_events() if e["kind"] == conn.LOCK_TIMEOUT]
@@ -254,9 +236,8 @@ def test_a_store_lock_timeout_is_recorded_with_how_long_it_waited(tmp_path):
 
 
 def test_the_recorder_never_recurses_into_itself(tmp_path):
-    """`_on_store_lock_timeout` records by writing to the store — exactly when the store is
-    contended. With the store's append firing the hook every time, the call must return
-    rather than recurse (without `_recording_conn` this is unbounded recursion)."""
+    """The lock-timeout recorder writes to the store exactly when it is contended; with the
+    append re-firing the hook, the guard must stop unbounded recursion."""
     rt, _ = _rt(tmp_path)
     depth = {"max": 0, "now": 0}
     real_append = rt.store.append_shared
@@ -276,8 +257,8 @@ def test_the_recorder_never_recurses_into_itself(tmp_path):
 
 
 def test_a_broken_store_never_costs_a_turn(tmp_path):
-    """`_record_conn` runs on the paho network thread and inside `_publish`. A telemetry
-    write that raised there would take the MQTT loop down for a history nobody asked for."""
+    """`_record_conn` runs on the paho thread and inside `_publish`; a raising write there
+    would take the MQTT loop down."""
     rt, _ = _rt(tmp_path)
 
     def boom(*a, **kw):
@@ -291,8 +272,7 @@ def test_a_broken_store_never_costs_a_turn(tmp_path):
 
 
 def test_the_ring_is_capped_and_keeps_the_newest(monkeypatch, tmp_path):
-    """§5.3 A9 — no state grows without bound. The cap is also the write cost: the store
-    rewrites the whole file on every append."""
+    """No unbounded state; the cap is also the write cost (whole-file rewrite per append)."""
     monkeypatch.setenv("MOXIE_CONN_MAX_EVENTS", "5")
     rt, _ = _rt(tmp_path)
     for i in range(20):
@@ -303,8 +283,7 @@ def test_the_ring_is_capped_and_keeps_the_newest(monkeypatch, tmp_path):
 
 
 def test_conn_view_carries_both_the_live_scalars_and_the_history(tmp_path):
-    """Both halves on purpose: an operator needs to tell "down right now" from "dropped
-    nine times this hour and is up at the moment", and neither half answers alone."""
+    """"Down right now" and "dropped nine times, up at the moment" need both halves."""
     rt, _ = _rt(tmp_path)
     rt.client.up()
     rt.client.drop()
@@ -316,7 +295,7 @@ def test_conn_view_carries_both_the_live_scalars_and_the_history(tmp_path):
     assert view["health"]["state"] == "recovered"
     assert view["retention"]["events"] == conn.max_events()
     assert view["events"], "the view must carry the rows, not only their counts"
-    # Newest first, so a card renders it without re-sorting.
+    # newest first, so a card renders it without re-sorting
     ats = [e["at"] for e in view["events"]]
     assert ats == sorted(ats, reverse=True)
 
@@ -331,8 +310,7 @@ def test_status_carries_the_connection_health_headline(tmp_path):
 
 
 def test_the_history_survives_the_process_that_wrote_it(tmp_path):
-    """The whole point. A second `JsonStore` over the same directory — which is what a
-    restarted supervisor is — reads what the first one recorded."""
+    """A restarted supervisor (a second `JsonStore` on the same dir) reads the history."""
     rt, _ = _rt(tmp_path)
     rt.client.up()
     rt.client.drop()
@@ -342,10 +320,8 @@ def test_the_history_survives_the_process_that_wrote_it(tmp_path):
 
 
 def test_no_child_data_is_ever_in_a_connection_row(tmp_path):
-    """The asymmetry with `telemetry.py` stated as a test. `storable_packet` gates on
-    `LoggingPolicy` because a Packet carries the child; these rows carry a topic, a device
-    id, a reason code and a duration, so a `NO_DATA` appliance still gets its own health.
-    A row that grew a payload field would silently make that untrue."""
+    """Unlike Packets, these rows are not gated on `LoggingPolicy` because they carry no
+    child data — a row that grew a payload field would silently make that untrue."""
     rt, device_id = _rt(tmp_path)
     rt.client.up()
     rt.client.drop()
@@ -360,8 +336,7 @@ def test_no_child_data_is_ever_in_a_connection_row(tmp_path):
 
 @pytest.mark.parametrize("kind", conn.KINDS)
 def test_every_declared_kind_round_trips_through_the_store(kind, tmp_path):
-    """A kind the module declares but the store cannot hold is a kind nobody will notice
-    is missing until they go looking for it."""
+    """A declared kind the store cannot hold would go unnoticed until someone looked."""
     rt, _ = _rt(tmp_path)
     assert rt._record_conn(kind, at=T0) is True
     assert rt.conn_events()[-1]["kind"] == kind

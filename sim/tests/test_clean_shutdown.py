@@ -1,15 +1,13 @@
 """
-👋 The supervisor stops on purpose — and the broker finds out now, not in 45 seconds.
+The supervisor stops on purpose — and the broker finds out now, not in 45 seconds.
 
-`production-hardening.md` §8 P1: SIGTERM/SIGINT (`docker stop`, `compose restart`,
-`systemctl stop`, Ctrl-C) call `disconnect()`. With keepalive 30 s the broker waits
-1.5 × keepalive = 45 s to declare a killed client dead, holding a ghost session for
-`client_id="supervisor"` and emitting nothing on `$SYS/broker/log` (so `DISCONNECT_RE`
-never fires).
+SIGTERM/SIGINT (`docker stop`, Ctrl-C) call `disconnect()`; otherwise the broker waits
+1.5 × keepalive to declare the client dead, holding a ghost session and logging nothing.
 
-One test starts a REAL supervisor subprocess and sends a REAL SIGTERM (a mocked
-`signal.signal` would assert the mock), pointed at a closed port — the stop-during-
-reconnect-backoff case `docker stop` actually hits, with no socket to close.
+One test starts a REAL supervisor and sends a REAL SIGTERM (a mocked `signal.signal`
+would assert the mock), pointed at a closed port — the stop-during-reconnect-backoff
+case `docker stop` actually hits. Test names are `-k` selectors in
+`sim/tools/hardening_p1_mutation_check.py` — keep them.
 """
 from __future__ import annotations
 
@@ -30,9 +28,7 @@ from moxie_sdk.app import MoxieApp                                # noqa: E402
 from moxie_sdk.store import JsonStore                             # noqa: E402
 from moxie_sdk.types import Reply, RobotContext                   # noqa: E402
 
-#: A port nothing listens on, so `connect_async` fails instantly and forever. Port 1 is
-#: reserved and unbindable by an unprivileged process, which is what makes "refused" the
-#: deterministic answer rather than a race with whatever else the machine is running.
+#: Reserved and unbindable unprivileged, so "refused" is deterministic, not a race.
 DEAD_PORT = "1"
 
 
@@ -47,10 +43,18 @@ def _rt(tmp_path, **kw):
     return make_runtime(EchoApp(), store=JsonStore(str(tmp_path)), **kw)
 
 
+def _counting_disconnects(tmp_path):
+    """A connected runtime whose `disconnect()` calls are counted."""
+    rt, _ = _rt(tmp_path)
+    rt.client.up()
+    calls = []
+    rt.client.disconnect = lambda: calls.append(1)
+    return rt, calls
+
+
 @pytest.fixture
 def restore_signals():
-    """Restore the process's own signal handlers, so pytest's SIGINT handling is not left
-    replaced by a collected runtime (surfacing later as a Ctrl-C that does nothing)."""
+    """Restore the process's handlers, or pytest's Ctrl-C is left replaced by a runtime's."""
     previous = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
     yield
     for sig, handler in previous.items():
@@ -62,26 +66,16 @@ def restore_signals():
 # --------------------------------------------------------------------------- #
 
 def test_request_stop_closes_the_socket_rather_than_dropping_it(tmp_path):
-    """`disconnect()` sends a DISCONNECT packet. That is the entire difference between the
-    broker knowing now and the broker knowing at the keepalive expiry."""
-    rt, _ = _rt(tmp_path)
-    rt.client.up()
-    calls = []
-    rt.client.disconnect = lambda: calls.append(1)
-
+    """The DISCONNECT packet is the whole difference between now and keepalive expiry."""
+    rt, calls = _counting_disconnects(tmp_path)
     assert rt.request_stop(reason="SIGTERM") is True
     assert calls == [1]
     assert rt._stopping is True
 
 
 def test_request_stop_is_idempotent(tmp_path):
-    """A container runtime that sends SIGTERM and then SIGTERM again, or a SIGINT chasing
-    a SIGTERM, must not start two shutdowns — and must not write two `shutdown` rows."""
-    rt, _ = _rt(tmp_path)
-    rt.client.up()
-    calls = []
-    rt.client.disconnect = lambda: calls.append(1)
-
+    """A repeated or chasing signal must not start two shutdowns or write two rows."""
+    rt, calls = _counting_disconnects(tmp_path)
     assert rt.request_stop() is True
     assert rt.request_stop() is False
     assert rt.request_stop() is False
@@ -90,9 +84,8 @@ def test_request_stop_is_idempotent(tmp_path):
 
 
 def test_the_shutdown_row_is_written_before_the_socket_closes(tmp_path):
-    """Ordering, and it is deliberate. Once the socket is closing the store write is racing
-    the interpreter's teardown — so a history whose last row is missing would be missing it
-    in exactly the case an operator cares about."""
+    """Once the socket closes, the store write races interpreter teardown — the last row
+    would go missing in exactly the case an operator cares about."""
     rt, _ = _rt(tmp_path)
     rt.client.up()
     seen = []
@@ -104,8 +97,7 @@ def test_the_shutdown_row_is_written_before_the_socket_closes(tmp_path):
 
 
 def test_a_deliberate_stop_is_not_recorded_as_an_outage(tmp_path):
-    """An operator reading a history where every planned stop looks like an outage learns
-    nothing from the outages. One `shutdown`, no `disconnect`."""
+    """If every planned stop looked like an outage, the outages would mean nothing."""
     rt, _ = _rt(tmp_path)
     rt.client.up()
     rt.request_stop(reason="SIGTERM")
@@ -118,9 +110,8 @@ def test_a_deliberate_stop_is_not_recorded_as_an_outage(tmp_path):
 
 
 def test_a_stop_still_abandons_every_in_flight_turn(tmp_path):
-    """The clean path must not quietly re-open §4.2. A worker that was mid-answer when the
-    stop arrived would otherwise publish into a socket that is closing — and if the process
-    survives long enough, at a child who has moved on."""
+    """A worker mid-answer at the stop must not publish into a closing socket (or, if the
+    process lingers, at a child who has moved on)."""
     rt, device_id = _rt(tmp_path)
     rt.client.up()
     rt.robots["d_other"] = RobotContext(device_id="d_other", child=rt.child)
@@ -134,9 +125,8 @@ def test_a_stop_still_abandons_every_in_flight_turn(tmp_path):
 
 
 def test_a_disconnect_that_is_not_a_stop_is_still_an_outage(tmp_path):
-    """The other direction of the same guard: `_stopping` must not swallow a real drop.
-    (Without this pair, setting `_stopping = True` unconditionally would pass the test
-    above and silently erase every outage the appliance ever has.)"""
+    """The other direction: `_stopping` must not swallow a real drop (an unconditional
+    `_stopping = True` would pass the test above and erase every outage)."""
     rt, _ = _rt(tmp_path)
     rt.client.up()
     rt.client.drop()
@@ -145,8 +135,7 @@ def test_a_disconnect_that_is_not_a_stop_is_still_an_outage(tmp_path):
 
 
 def test_a_client_that_will_not_disconnect_does_not_stop_the_stop(tmp_path):
-    """A broker that has already gone away can make `disconnect()` raise. The appliance is
-    on its way out; refusing to leave because the goodbye failed is not an improvement."""
+    """A gone broker can make `disconnect()` raise; the stop proceeds anyway."""
     rt, _ = _rt(tmp_path)
     rt.client.up()
 
@@ -159,8 +148,7 @@ def test_a_client_that_will_not_disconnect_does_not_stop_the_stop(tmp_path):
 
 
 def test_a_runtime_with_no_client_can_still_be_stopped(tmp_path):
-    """`run()` builds the client; a stop before that (a crash-loop in compose, a fast
-    Ctrl-C) must not raise out of a signal handler."""
+    """A stop before `run()` built the client must not raise out of a signal handler."""
     rt, _ = _rt(tmp_path)
     rt.client = None
     assert rt.request_stop(reason="SIGINT") is True
@@ -179,17 +167,15 @@ def test_both_stop_signals_are_installed_on_the_main_thread(restore_signals, tmp
 
 
 def test_sigkill_is_deliberately_not_in_the_list():
-    """It cannot be caught. The case it stands for is covered by the store's atomic
-    `os.replace` instead, which is why §5.3's A6 kills the writer twenty times."""
+    """It cannot be caught; the store's atomic `os.replace` covers that case instead."""
     import moxie_runtime
     assert "SIGKILL" not in moxie_runtime.MoxieRuntime.STOP_SIGNALS
 
 
 def test_an_embedded_runtime_installs_nothing_and_does_not_raise(tmp_path):
-    """`signal.signal` only works on the main thread of the main interpreter, and the
-    runtime is legitimately embedded — the SIL harness, a test, a supervisor-in-a-thread.
-    Silently doing nothing *there* is right; silently doing nothing in the container is the
-    bug, which is why the method says out loud which it did."""
+    """`signal.signal` works only on the main thread; an embedded runtime (SIL harness,
+    a test) installs nothing — and says so, since doing nothing in the container is the
+    bug."""
     rt, _ = _rt(tmp_path)
     out = {}
 
@@ -203,10 +189,7 @@ def test_an_embedded_runtime_installs_nothing_and_does_not_raise(tmp_path):
 
 
 def test_the_handler_starts_a_real_stop(restore_signals, tmp_path):
-    rt, _ = _rt(tmp_path)
-    rt.client.up()
-    calls = []
-    rt.client.disconnect = lambda: calls.append(1)
+    rt, calls = _counting_disconnects(tmp_path)
     rt._on_stop_signal(signal.SIGTERM, None)
     assert calls == [1] and rt._stopping is True
 
@@ -217,16 +200,14 @@ def test_the_handler_starts_a_real_stop(restore_signals, tmp_path):
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX signals")
 def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
-    """The un-fakeable case: SIGTERM while inside `loop_forever`'s reconnect backoff (closed
-    port, no socket). The default disposition also "exits", so the assertions are on what
-    only a HANDLED stop produces — the two log lines and `rc == 0`.
-    """
+    """SIGTERM inside `loop_forever`'s reconnect backoff (closed port, no socket). The
+    default disposition also "exits", so assert what only a HANDLED stop produces: the
+    two log lines and `rc == 0`."""
     env = dict(os.environ)
     env.update(MOXIE_APP="echo", MOXIE_MQTT_HOST="127.0.0.1", MOXIE_MQTT_PORT=DEAD_PORT,
                MOXIE_STATUS_PORT="0", MOXIE_DATA_DIR=str(tmp_path),
                PYTHONUNBUFFERED="1",
-               # Creds blanked: a supervisor that reached a gateway from a unit test would
-               # be spending money to prove a signal handler works.
+               # creds blanked: no gateway spend to prove a signal handler
                MOXIE_LLM_API_KEY="", MOXIE_LLM_BASE_URL="",
                MOXIE_VOICE_BASE_URL="", MOXIE_STT_BASE_URL="")
     proc = subprocess.Popen([sys.executable, os.path.join(REPO, "mqtt", "run.py")],
@@ -234,24 +215,20 @@ def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     tail = _Tail(proc)
     try:
-        # Generous for the BOOT, which is not the subject (seen at 40 s on a saturated box).
-        # rc == 0 and the log lines don't depend on boot time, and `_Tail` fails fast if the
-        # child dies instead of printing.
+        # generous for the BOOT, which is not the subject; `_Tail` fails fast on a death
         assert tail.wait_for("clean shutdown armed", timeout=180), \
             ("the supervisor never armed its stop signals "
              f"(alive={proc.poll() is None}):\n{tail.text()}")
         proc.send_signal(signal.SIGTERM)
-        # OBSERVE the exit, don't sample it: stdout EOF arrives while the kernel is still
-        # tearing the process down, so `poll()` right after can be None for a process that
-        # already exited 0. `proc.wait(timeout=30)` blocks in `waitpid` — same bound, no race.
+        # OBSERVE the exit, don't sample it: `poll()` right after stdout EOF can be None for
+        # a process that already exited 0; `wait()` blocks in `waitpid`, no race
         try:
             proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
             proc.kill()
             pytest.fail("SIGTERM did not stop the supervisor within 30s — a `docker stop` "
                         f"would have had to SIGKILL it:\n{tail.text()}")
-        # The reader thread still has to run out the pipe before the log is complete; the
-        # process is already gone, so this can only be a scheduling wait.
+        # the reader thread must still drain the pipe; the process is already gone
         assert tail.wait_closed(timeout=30), \
             f"the supervisor exited but its output never ended:\n{tail.text()}"
     finally:
@@ -260,18 +237,14 @@ def test_a_real_supervisor_exits_promptly_on_a_real_sigterm(tmp_path):
     out = tail.text()
     assert proc.returncode == 0, f"a handled stop must exit 0, got {proc.returncode}\n{out}"
     assert "closing the broker connection cleanly" in out, out
-    # `loop_forever` **returned** rather than the process being torn down under it — the
-    # line after it is the proof, and it is unreachable on the default SIGTERM disposition,
-    # which is what the process had before this slice.
+    # `loop_forever` RETURNED: this line is unreachable on the default SIGTERM disposition
     assert "supervisor stopped" in out, out
 
 
 @pytest.mark.skipif(os.name != "posix", reason="fd surgery on the child's stdout")
 def test_a_closed_stdout_is_not_proof_that_the_process_has_exited():
-    """Teeth for the line above: a child that closes fd 1 and then blocks on stdin is alive
-    with its output ended — so "EOF + `poll() is None`" proves nothing. Then closing stdin
-    and `wait()` reports the true exit. No wall clock involved.
-    """
+    """Teeth for `wait()` above: a child that closes fd 1 and blocks on stdin is alive
+    with its output ended, so "EOF + `poll()`" proves nothing."""
     child = subprocess.Popen(
         [sys.executable, "-c",
          "import os, sys; sys.stdout.write('bye\\n'); sys.stdout.flush(); "
@@ -295,9 +268,8 @@ def test_a_closed_stdout_is_not_proof_that_the_process_has_exited():
 
 
 class _Tail:
-    """Drain a child's stdout on one thread, keeping every line; `wait_for` watches what was
-    collected rather than consuming it (handing a buffered pipe to a second reader loses
-    lines)."""
+    """Drain a child's stdout on one thread, keeping every line; `wait_for` watches the
+    collected text (a second reader on a buffered pipe loses lines)."""
 
     def __init__(self, proc):
         self._lines: list = []
@@ -317,8 +289,7 @@ class _Tail:
         return "".join(self._lines)
 
     def wait_for(self, needle: str, *, timeout: float) -> bool:
-        """True once `needle` has been printed. Polls the collected text rather than the
-        pipe, so it cannot consume anything a later assertion needs."""
+        """True once `needle` has been printed."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if needle in self.text():
